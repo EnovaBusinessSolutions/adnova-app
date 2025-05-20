@@ -6,6 +6,9 @@ const bodyParser = require('body-parser');
 
 const app = express();
 const PORT = 3000;
+app.get("/", (req, res) => {
+  res.send("🚀 Adnova AI está en línea");
+});
 
 app.use(cors());
 app.use(bodyParser.json());
