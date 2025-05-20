@@ -1,0 +1,126 @@
+/* Reset básico */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  background: linear-gradient(to bottom right, #1e0c2b, #0a0a23);
+  color: white;
+  min-height: 100vh;
+  display: flex;
+  align-items: stretch;
+}
+
+/* Layout */
+.config-container {
+  display: flex;
+  width: 100%;
+}
+
+/* Sidebar */
+.config-sidebar {
+  width: 260px;
+  background-color: #0f0f1a;
+  padding: 2rem;
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.logo {
+  font-size: 1.5rem;
+  font-weight: 700;
+  background: linear-gradient(to right, #ffffff, #ffffff);
+  -webkit-background-clip: text;
+  color: transparent;
+  margin-bottom: 2rem;
+}
+
+.sidebar-nav ul {
+  list-style: none;
+}
+
+.sidebar-nav li {
+  margin-bottom: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  transition: 0.2s;
+}
+
+.sidebar-nav li.active,
+.sidebar-nav li:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+/* Main */
+.config-content {
+  flex: 1;
+  padding: 2.5rem;
+}
+
+.config-content h2 {
+  font-size: 1.75rem;
+  margin-bottom: 2rem;
+}
+
+/* Formulario */
+.config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  max-width: 500px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+}
+
+label {
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+input,
+select {
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  border: none;
+  background-color: rgba(255, 255, 255, 0.05);
+  color: white;
+  font-size: 1rem;
+  outline: none;
+}
+
+input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+input:focus,
+select:focus {
+  border: 1px solid #a855f7;
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Botón */
+.btn-guardar {
+  margin-top: 2rem;
+  padding: 0.75rem 2rem;
+  border: none;
+  border-radius: 6px;
+  background: linear-gradient(to right, #a855f7, #ec4899);
+  color: white;
+  font-weight: 600;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: opacity 0.3s;
+}
+
+.btn-guardar:hover {
+  opacity: 0.9;
+}

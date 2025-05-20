@@ -1,0 +1,217 @@
+
+/* Estilos para ADNOVA Login - Versión separada */
+
+/* Estilos base */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  border-color: hsla(240, 10%, 30%, 1);
+}
+
+body, html {
+  font-family: 'Inter', sans-serif;
+  height: 100%;
+  width: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  background: linear-gradient(to bottom right, #5B1899, black, #0F172A);
+  color: hsla(240, 20%, 98%, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Contenedor principal */
+.login-container {
+  width: 100%;
+  max-width: 28rem;
+  background-color: rgba(0, 0, 0, 0.8);
+  border-radius: 0.75rem;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.3);
+  padding: 2rem;
+}
+
+/* Encabezado */
+.header {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.header h1 {
+  font-size: 1.875rem;
+  font-weight: 700;
+  color: white;
+}
+
+.header p {
+  font-size: 0.875rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.subtitle {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: white;
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+/* Formulario */
+.form {
+  margin-bottom: 1.5rem;
+}
+
+.form-group {
+  margin-bottom: 1rem;
+}
+
+.form-label {
+  display: block;
+  font-size: 0.875rem;
+  color: white;
+  margin-bottom: 0.25rem;
+}
+
+.form-input {
+  width: 100%;
+  border-radius: 0.375rem;
+  background-color: #262626;
+  color: white;
+  padding: 0.5rem 1rem;
+  border: 1px solid #404040;
+  outline: none;
+  font-size: 1rem;
+}
+
+.form-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px hsla(265, 90%, 60%, 0.5);
+}
+
+/* Botones */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: none;
+}
+
+.btn-primary {
+  background: linear-gradient(to right, #d946ef, #9333ea);
+  color: white;
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
+}
+
+.btn-outline {
+  background-color: #262626;
+  color: white;
+  border: 1px solid #404040;
+}
+
+.btn-outline:hover {
+  background-color: #333333;
+}
+
+/* Separadores */
+.divider {
+  position: relative;
+  text-align: center;
+  margin: 1.5rem 0;
+  border-top: 1px solid #404040;
+}
+
+.divider-text {
+  position: relative;
+  top: -0.75rem;
+  background-color: rgba(0, 0, 0, 0.8);
+  padding: 0 0.5rem;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.7);
+  text-transform: uppercase;
+}
+
+/* Social buttons grid */
+.social-buttons {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  justify-items: center;
+}
+/* Enlaces */
+.text-center {
+  text-align: center;
+}
+
+.text-sm {
+  font-size: 0.875rem;
+}
+
+.text-muted {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.link {
+  color: hsla(265, 90%, 60%, 1);
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+/* Media queries para responsividad */
+@media (max-width: 640px) {
+  .login-container {
+    margin: 1rem;
+    padding: 1.5rem;
+  }
+
+  .social-buttons {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Iconos Bootstrap */
+.bi {
+  display: inline-block;
+  vertical-align: -0.125em;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.25rem;
+}
+.forgot-password {
+  margin-top: 1.5rem;
+  color: #ccc;
+  font-size: 0.9rem;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+.forgot-password .recovery-link {
+  color: #a96bff;
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.2s ease;
+}
+.forgot-password .recovery-link:hover {
+  color: #d8b3ff;
+  text-decoration: underline;
+}

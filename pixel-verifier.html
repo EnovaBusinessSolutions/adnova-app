@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Verificador de Píxeles - ADNOVA</title>
+  <link rel="stylesheet" href="pixel-verifier.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="dashboard-layout">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <span class="text-shopify">AD</span>NOVA AI 🤖
+        </div>
+        <button class="sidebar-toggle">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+        </button>
+      </div>
+      
+      <nav class="sidebar-nav">
+        <ul>
+          <li class="nav-item">
+            <a href="dashboard.html">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7" />
+                <rect x="14" y="3" width="7" height="7" />
+                <rect x="14" y="14" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" />
+              </svg>
+              <span>Panel</span>
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="audit.html">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <path d="M14 2v6h6" />
+                <path d="M16 13H8" />
+                <path d="M16 17H8" />
+                <path d="M10 9H8" />
+              </svg>
+              <span>Auditoría</span>
+            </a>
+          </li>
+          <li class="nav-item active">
+            <a href="pixel-verifier.html">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+              </svg>
+              <span>Verificador de Píxeles</span>
+            </a>
+          </li>
+          <li class="nav-item disabled">
+            <a href="#">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                <line x1="16" y1="2" x2="16" y2="6" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+              </svg>
+              <span>Próximamente</span>
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="configuracion.html">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+              <span>Configuración</span>
+            </a>
+          </li>
+        </ul>
+      </nav>
+      
+      <div class="sidebar-footer">
+        <div class="user-profile">
+          <div class="avatar">
+            <span>JP</span>
+          </div>
+          <div class="user-info">
+            <p class="user-name">Juan Pérez</p>
+            <p class="user-email">juan@ejemplo.com</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Main content -->
+    <main class="main-content">
+      <div class="space-y-6">
+        <div>
+          <h1 class="page-title">Verificador de Píxeles</h1>
+          <p class="text-muted-foreground">
+            Verifica que tus píxeles de seguimiento funcionan correctamente en todas las plataformas
+          </p>
+        </div>
+        
+        <!-- Pixel Table Section -->
+        <div class="space-y-4">
+          <div class="flex justify-between items-center">
+            <div>
+              <h2 class="section-title">Pixel Events</h2>
+              <p class="text-sm text-muted-foreground">
+                Analysis of required tracking events for your marketing platforms
+              </p>
+            </div>
+            
+            <button class="btn-fix-all">
+              Fix All Missing Events
+            </button>
+          </div>
+          
+          <div class="table-container">
+            <table class="pixel-table">
+              <thead>
+                <tr>
+                  <th>Event Name</th>
+                  <th>Platform</th>
+                  <th>Required</th>
+                  <th>Status</th>
+                  <th class="text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="font-medium">PageView</td>
+                  <td>Facebook</td>
+                  <td>Yes</td>
+                  <td>
+                    <span class="status-badge status-badge-success">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                      </svg>
+                      Detected
+                    </span>
+                  </td>
+                  <td class="text-right">
+                  </td>
+                </tr>
+                <tr>
+                  <td class="font-medium">ViewContent</td>
+                  <td>Facebook</td>
+                  <td>Yes</td>
+                  <td>
+                    <span class="status-badge status-badge-success">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                      </svg>
+                      Detected
+                    </span>
+                  </td>
+                  <td class="text-right">
+                  </td>
+                </tr>
+                <tr>
+                  <td class="font-medium">AddToCart</td>
+                  <td>Facebook</td>
+                  <td>Yes</td>
+                  <td>
+                    <span class="status-badge status-badge-success">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                      </svg>
+                      Detected
+                    </span>
+                  </td>
+                  <td class="text-right">
+                  </td>
+                </tr>
+                <tr>
+                  <td class="font-medium">InitiateCheckout</td>
+                  <td>Facebook</td>
+                  <td>Yes</td>
+                  <td>
+                    <span class="status-badge status-badge-error">
+                      Missing
+                    </span>
+                  </td>
+                  <td class="text-right">
+                    <button class="btn-inject">
+                      Inject Fix
+                    </button>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="font-medium">Purchase</td>
+                  <td>Facebook</td>
+                  <td>Yes</td>
+                  <td>
+                    <span class="status-badge status-badge-error">
+                      Missing
+                    </span>
+                  </td>
+                  <td class="text-right">
+                    <button class="btn-inject">
+                      Inject Fix
+                    </button>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="font-medium">page_view</td>
+                  <td>Google</td>
+                  <td>Yes</td>
+                  <td>
+                    <span class="status-badge status-badge-success">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                      </svg>
+                      Detected
+                    </span>
+                  </td>
+                  <td class="text-right">
+                  </td>
+                </tr>
+                <tr>
+                  <td class="font-medium">view_item</td>
+                  <td>Google</td>
+                  <td>Yes</td>
+                  <td>
+                    <span class="status-badge status-badge-success">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                      </svg>
+                      Detected
+                    </span>
+                  </td>
+                  <td class="text-right">
+                  </td>
+                </tr>
+                <tr>
+                  <td class="font-medium">add_to_cart</td>
+                  <td>Google</td>
+                  <td>Yes</td>
+                  <td>
+                    <span class="status-badge status-badge-success">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                      </svg>
+                      Detected
+                    </span>
+                  </td>
+                  <td class="text-right">
+                  </td>
+                </tr>
+                <tr>
+                  <td class="font-medium">begin_checkout</td>
+                  <td>Google</td>
+                  <td>Yes</td>
+                  <td>
+                    <span class="status-badge status-badge-error">
+                      Missing
+                    </span>
+                  </td>
+                  <td class="text-right">
+                    <button class="btn-inject">
+                      Inject Fix
+                    </button>
+                  </td>
+                </tr>
+                <tr>
+                  <td class="font-medium">purchase</td>
+                  <td>Google</td>
+                  <td>Yes</td>
+                  <td>
+                    <span class="status-badge status-badge-error">
+                      Missing
+                    </span>
+                  </td>
+                  <td class="text-right">
+                    <button class="btn-inject">
+                      Inject Fix
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        <!-- Implementation Quality Section -->
+        <div class="dashboard-section">
+          <h2 class="section-title">Calidad de Implementación de Eventos</h2>
+          <p class="text-sm text-muted-foreground mb-4">
+            Análisis de tu implementación de seguimiento comparado con las mejores prácticas
+          </p>
+          
+          <div class="space-y-4">
+            <div class="implementation-card">
+              <div class="flex items-start gap-3">
+                <div class="severity-indicator severity-high mt-1.5"></div>
+                <div>
+                  <h3 class="font-medium">Parámetros de Valor Faltantes</h3>
+                  <p class="text-sm text-muted-foreground">
+                    A tus eventos de Compra de Facebook les faltan parámetros de valor, lo que resulta en 
+                    cálculos inexactos de ROAS en tus informes de anuncios.
+                  </p>
+                  <div class="mt-2">
+                    <button class="btn-gradient">
+                      Corregir Implementación
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div class="implementation-card">
+              <div class="flex items-start gap-3">
+                <div class="severity-indicator severity-medium mt-1.5"></div>
+                <div>
+                  <h3 class="font-medium">Eventos Duplicados</h3>
+                  <p class="text-sm text-muted-foreground">
+                    Los eventos de Google Analytics se están disparando dos veces en algunas páginas, lo que 
+                    potencialmente afecta la precisión de tus informes de conversión.
+                  </p>
+                  <div class="mt-2">
+                    <button class="btn-gradient">
+                      Corregir Implementación
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div class="implementation-card">
+              <div class="flex items-start gap-3">
+                <div class="severity-indicator severity-low mt-1.5"></div>
+                <div>
+                  <h3 class="font-medium">Ecommerce Mejorado No Completamente Utilizado</h3>
+                  <p class="text-sm text-muted-foreground">
+                    No estás aprovechando al máximo el seguimiento de Ecommerce Mejorado en Google Analytics,
+                    perdiendo información valiosa sobre el comportamiento de compra.
+                  </p>
+                  <div class="mt-2">
+                    <button class="btn-gradient">
+                      Mejorar Implementación
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

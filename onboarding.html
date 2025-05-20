@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Onboarding - ADNOVA AI</title>
+  <link rel="stylesheet" href="onboarding.css" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+</head>
+<body data-page="onboarding">
+  <div class="onboarding-container">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="logo">
+        <h1>ADNOVA AI<span class="emoji">🤖</span></h1>
+      </div>
+
+      <div class="steps">
+        <div class="step active" data-step="1">
+          <div class="step-indicator"><span class="step-number">1</span></div>
+          <div class="step-text">
+            <h3>Connect your accounts</h3>
+            <p>Add your store and marketing accounts</p>
+          </div>
+        </div>
+        <div class="step" data-step="2">
+          <div class="step-indicator"><span class="step-number">2</span></div>
+          <div class="step-text">
+            <h3>Review permissions</h3>
+            <p>Check and accept required permissions</p>
+          </div>
+        </div>
+        <div class="step" data-step="3">
+          <div class="step-indicator"><span class="step-number">3</span></div>
+          <div class="step-text">
+            <h3>Analysis</h3>
+            <p>We'll analyze your store data</p>
+          </div>
+        </div>
+        <div class="step" data-step="4">
+          <div class="step-indicator"><span class="step-number">4</span></div>
+          <div class="step-text">
+            <h3>Dashboard</h3>
+            <p>View your optimization results</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main content -->
+    <div class="main-content">
+      <div class="content-panel" id="step1-content">
+        <h2>Connect your accounts</h2>
+        <p class="panel-description">Connect your online store and marketing platforms to get started with ADNOVA AI.</p>
+
+        <div class="connection-cards">
+          <!-- Shopify -->
+          <div class="connection-card">
+            <div class="connection-details">
+              <div class="connection-icon">
+                <img src="https://img.icons8.com/ios-filled/50/FFFFFF/shopify.png" alt="Shopify" width="36" height="36" />
+              </div>
+              <div class="connection-info">
+                <h3>Shopify Store</h3>
+                <p>Connect your store to optimize marketing</p>
+                <span class="required-badge">Required</span>
+              </div>
+            </div>
+            <button class="btn-connect" id="connect-shopify">Connect</button>
+          </div>
+
+          <!-- Google -->
+          <div class="connection-card">
+            <div class="connection-details">
+              <div class="connection-icon">
+                <img src="https://img.icons8.com/ios-filled/50/FFFFFF/google-logo.png" alt="Google Analytics" width="36" height="36" />
+              </div>
+              <div class="connection-info">
+                <h3>Google Analytics & Ads</h3>
+                <p>Import conversion data and campaigns</p>
+                <span class="optional-badge">Optional</span>
+              </div>
+            </div>
+            <button class="btn-connect" id="connect-google">Connect</button>
+          </div>
+
+          <!-- Meta -->
+          <div class="connection-card">
+            <div class="connection-details">
+              <div class="connection-icon">
+                <img src="https://img.icons8.com/ios-filled/50/FFFFFF/facebook-new.png" alt="Meta" width="36" height="36" />
+              </div>
+              <div class="connection-info">
+                <h3>Meta Business Manager</h3>
+                <p>Connect Facebook & Instagram ads</p>
+                <span class="optional-badge">Optional</span>
+              </div>
+            </div>
+            <button class="btn-connect" id="connect-meta">Connect</button>
+          </div>
+        </div>
+
+        <div class="bottom-actions">
+          <button class="btn-continue" id="continue-btn" disabled>Continue</button>
+        </div>
+      </div>
+
+      <!-- Step 2 -->
+      <div class="content-panel hidden" id="step2-content">
+        <h2>Review permissions</h2>
+        <p class="panel-description">ADNOVA requires access to your store data to optimize your marketing campaigns.</p>
+
+        <div class="permissions-list">
+          <div class="permission-item">
+            <div class="permission-icon">✓</div>
+            <div class="permission-text">
+              <h3>Read product data</h3>
+              <p>Access to your product catalog, variants and prices</p>
+            </div>
+          </div>
+          <div class="permission-item">
+            <div class="permission-icon">✓</div>
+            <div class="permission-text">
+              <h3>Read customer data</h3>
+              <p>Access to customer demographics and purchase history</p>
+            </div>
+          </div>
+          <div class="permission-item">
+            <div class="permission-icon">✓</div>
+            <div class="permission-text">
+              <h3>Read analytics</h3>
+              <p>Access to store analytics and metrics</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="bottom-actions">
+          <button class="btn-secondary" id="back-btn-2">Back</button>
+          <button class="btn-continue" id="continue-btn-2">Authorize access</button>
+        </div>
+      </div>
+
+      <!-- Step 3 -->
+      <div class="content-panel hidden" id="step3-content">
+        <h2>Analysis</h2>
+        <p class="panel-description">We're analyzing your store data to provide personalized marketing recommendations.</p>
+
+        <div class="analysis-progress">
+          <div class="progress-container">
+            <div class="progress-bar">
+              <div class="progress-indicator"></div>
+            </div>
+            <p class="progress-text">Analyzing products and customers...</p>
+          </div>
+          <div class="analysis-steps">
+            <div class="analysis-step completed"><div class="analysis-step-icon">✓</div><div class="analysis-step-text">Connecting to Shopify</div></div>
+            <div class="analysis-step active"><div class="analysis-step-icon">⟳</div><div class="analysis-step-text">Analyzing product catalog</div></div>
+            <div class="analysis-step"><div class="analysis-step-icon">○</div><div class="analysis-step-text">Analyzing customer segments</div></div>
+            <div class="analysis-step"><div class="analysis-step-icon">○</div><div class="analysis-step-text">Generating recommendations</div></div>
+          </div>
+        </div>
+
+        <div class="bottom-actions">
+          <button class="btn-continue" id="continue-btn-3">Continue</button>
+        </div>
+      </div>
+
+      <!-- Step 4 -->
+      <div class="content-panel hidden" id="step4-content">
+        <h2>Ready to start!</h2>
+        <p class="panel-description">Your ADNOVA AI account is now fully configured and ready to use.</p>
+
+        <div class="success-message">
+          <div class="success-icon">✓</div>
+          <h3>Setup complete!</h3>
+          <p>Your store is now connected and ADNOVA is ready to optimize your marketing campaigns.</p>
+        </div>
+
+        <div class="features-summary">
+          <div class="feature-item">
+            <div class="feature-icon">📊</div>
+            <div class="feature-text"><h3>Dashboard</h3><p>View your store performance and marketing metrics</p></div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">🎯</div>
+            <div class="feature-text"><h3>Campaign Optimization</h3><p>AI-powered optimization for your marketing campaigns</p></div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon">📱</div>
+            <div class="feature-text"><h3>Mobile App</h3><p>Monitor performance on the go with our mobile app</p></div>
+          </div>
+        </div>
+
+        <div class="bottom-actions">
+          <button class="btn-gradient" id="go-to-dashboard">Go to dashboard</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      let currentStep = 1;
+      const steps = document.querySelectorAll('.step');
+      const contentPanels = document.querySelectorAll('.content-panel');
+      const continueBtn = document.getElementById('continue-btn');
+      const connectShopifyBtn = document.getElementById('connect-shopify');
+      const connectGoogleBtn = document.getElementById('connect-google');
+      const connectMetaBtn = document.getElementById('connect-meta');
+      let shopifyConnected = false;
+
+      connectShopifyBtn.addEventListener('click', function () {
+        this.classList.add('connected');
+        this.innerHTML = 'Connected ✓';
+        shopifyConnected = true;
+        continueBtn.disabled = false;
+      });
+
+      connectGoogleBtn.addEventListener('click', function () {
+        this.classList.add('connected');
+        this.innerHTML = 'Connected ✓';
+      });
+
+      connectMetaBtn.addEventListener('click', function () {
+        this.classList.add('connected');
+        this.innerHTML = 'Connected ✓';
+      });
+
+      continueBtn.addEventListener('click', function () {
+        if (shopifyConnected) goToStep(2);
+      });
+
+      document.getElementById('back-btn-2').addEventListener('click', () => goToStep(1));
+      document.getElementById('continue-btn-2').addEventListener('click', () => {
+        goToStep(3);
+        simulateAnalysis();
+      });
+      document.getElementById('continue-btn-3').addEventListener('click', () => goToStep(4));
+      document.getElementById('go-to-dashboard').addEventListener('click', () => {
+        localStorage.setItem('onboardingCompletado', 'true');
+        window.location.href = 'dashboard.html';
+      });
+
+      function goToStep(step) {
+        steps.forEach(stepEl => {
+          const stepNumber = parseInt(stepEl.dataset.step);
+          stepEl.classList.remove('active', 'completed');
+          if (stepNumber < step) stepEl.classList.add('completed');
+          else if (stepNumber === step) stepEl.classList.add('active');
+        });
+
+        contentPanels.forEach(panel => panel.classList.add('hidden'));
+        document.getElementById(`step${step}-content`).classList.remove('hidden');
+        currentStep = step;
+      }
+
+      function simulateAnalysis() {
+        const progressBar = document.querySelector('.progress-indicator');
+        const progressText = document.querySelector('.progress-text');
+        const analysisSteps = document.querySelectorAll('.analysis-step');
+        let progress = 0;
+        progressBar.style.width = '0%';
+        const interval = setInterval(() => {
+          progress += 5;
+          progressBar.style.width = `${progress}%`;
+
+          if (progress >= 25) {
+            analysisSteps[0].classList.add('completed');
+            analysisSteps[0].classList.remove('active');
+            analysisSteps[1].classList.add('active');
+          }
+          if (progress >= 50) {
+            analysisSteps[1].classList.add('completed');
+            analysisSteps[1].classList.remove('active');
+            analysisSteps[2].classList.add('active');
+            progressText.textContent = 'Analyzing customer segments...';
+          }
+          if (progress >= 75) {
+            analysisSteps[2].classList.add('completed');
+            analysisSteps[2].classList.remove('active');
+            analysisSteps[3].classList.add('active');
+            progressText.textContent = 'Generating recommendations...';
+          }
+          if (progress >= 100) {
+            clearInterval(interval);
+            analysisSteps[3].classList.add('completed');
+            analysisSteps[3].classList.remove('active');
+            progressText.textContent = 'Analysis complete!';
+            document.getElementById('continue-btn-3').disabled = false;
+          }
+        }, 100);
+      }
+
+      goToStep(1);
+    });
+  </script><script src='script.js' defer></script></body>
+</html>

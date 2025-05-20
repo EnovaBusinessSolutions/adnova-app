@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ADNOVA - IA para Marketing de Shopify</title>
+
+    <!-- Google Fonts - Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+    <!-- Estilos CSS -->
+    <link rel="stylesheet" href="adnova-login.css" />
+  </head>
+
+  <body data-page="login">
+    <div class="login-container">
+      <div class="header">
+        <h1>ADNOVA AI <span>🤖</span></h1>
+        <p>Optimización de marketing con IA para tu tienda Shopify</p>
+      </div>
+
+      <h2 class="subtitle">Bienvenido de nuevo</h2>
+
+      <form class="form" id="loginForm">
+        <div class="form-group">
+          <label class="form-label" for="email">Correo electrónico</label>
+          <input
+            type="email"
+            id="email"
+            class="form-input"
+            placeholder="tu@correo.com"
+            required
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="password">Contraseña</label>
+          <input
+            type="password"
+            id="password"
+            class="form-input"
+            required
+          />
+        </div>
+
+        <button type="submit" class="btn btn-primary">Iniciar sesión</button>
+      </form>
+
+      <div class="divider">
+        <span class="divider-text">CONTINÚA CON</span>
+      </div>
+
+      <div class="social-buttons">
+        <button class="btn btn-outline">
+          <img src="https://img.icons8.com/color/20/google-logo.png" alt="Google" />
+          Google
+        </button>
+        <button class="btn btn-outline">
+          <img src="https://img.icons8.com/color/20/windows-10.png" alt="Microsoft" />
+          Microsoft
+        </button>
+        <button class="btn btn-outline">
+          <img src="https://img.icons8.com/color/20/shopify.png" alt="Shopify" />
+          Shopify
+        </button>
+      </div>
+      <p class="forgot-password">¿Olvidaste tu contraseña? <a href="#" class="recovery-link">Recupérala aquí</a></p>
+    </div>
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        const form = document.querySelector('form');
+        form.addEventListener('submit', function (e) {
+          e.preventDefault();
+          const email = document.getElementById('email').value;
+          const password = document.getElementById('password').value;
+
+          const submitButton = form.querySelector('button[type="submit"]');
+          const originalText = submitButton.innerText;
+          submitButton.innerText = 'Procesando...';
+          submitButton.disabled = true;
+
+          setTimeout(() => {
+            submitButton.innerText = originalText;
+            submitButton.disabled = false;
+            alert('Has iniciado sesión correctamente.');
+          }, 1500);
+        });
+
+        const socialButtons = document.querySelectorAll('.social-buttons .btn');
+        socialButtons.forEach((button) => {
+          button.addEventListener('click', function () {
+            const provider = this.innerText.trim();
+            const allButtons = document.querySelectorAll('.btn');
+            allButtons.forEach((btn) => (btn.disabled = true));
+
+            setTimeout(() => {
+              allButtons.forEach((btn) => (btn.disabled = false));
+              alert(`Iniciado sesión con ${provider} correctamente.`);
+            }, 1500);
+          });
+        });
+      });
+    </script><script src='script.js' defer></script></body>
+</html>

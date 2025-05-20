@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Configuración - ADNOVA AI</title>
+  <link rel="stylesheet" href="configuracion.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="config-container">
+    <aside class="config-sidebar">
+      <h1 class="logo">ADNOVA AI<span> ⚙️</span></h1>
+      <nav class="sidebar-nav">
+        <ul>
+          <li class="active">Preferencias</li>
+          <li>Cuentas conectadas</li>
+          <li>Notificaciones</li>
+          <li>Seguridad</li>
+        </ul>
+      </nav>
+    </aside>
+
+    <main class="config-content">
+      <h2>Preferencias generales</h2>
+
+      <form class="config-form">
+        <div class="form-group">
+          <label for="idioma">Idioma</label>
+          <select id="idioma">
+            <option>Español</option>
+            <option>Inglés</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="tema">Tema visual</label>
+          <select id="tema">
+            <option>Oscuro (predeterminado)</option>
+            <option>Claro</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="correo">Correo de notificación</label>
+          <input type="email" id="correo" placeholder="tu@correo.com" />
+        </div>
+
+        <button type="submit" class="btn-guardar">Guardar cambios</button>
+      </form>
+    </main>
+  </div>
+</body>
+</html>

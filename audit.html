@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Informe de Auditoría - ADNOVA</title>
+  <link rel="stylesheet" href="audit.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="dashboard-layout">
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <div class="logo">
+          <span class="text-shopify">AD</span>NOVA AI 🤖
+        </div>
+        <button class="sidebar-toggle">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+        </button>
+      </div>
+      
+      <nav class="sidebar-nav">
+        <ul>
+          <li class="nav-item">
+            <a href="dashboard.html">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="7" height="7" />
+                <rect x="14" y="3" width="7" height="7" />
+                <rect x="14" y="14" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" />
+              </svg>
+              <span>Panel</span>
+            </a>
+          </li>
+          <li class="nav-item active">
+            <a href="audit.html">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <path d="M14 2v6h6" />
+                <path d="M16 13H8" />
+                <path d="M16 17H8" />
+                <path d="M10 9H8" />
+              </svg>
+              <span>Auditoría</span>
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="pixel-verifier.html">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+              </svg>
+              <span>Verificador de Píxeles</span>
+            </a>
+          </li>
+          <li class="nav-item disabled">
+            <a href="#">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                <line x1="16" y1="2" x2="16" y2="6" />
+                <line x1="8" y1="2" x2="8" y2="6" />
+                <line x1="3" y1="10" x2="21" y2="10" />
+              </svg>
+              <span>Próximamente</span>
+            </a>
+          </li>
+          <li class="nav-item">
+            <a href="configuracion.html">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+              </svg>
+              <span>Configuración</span>
+            </a>
+          </li>
+        </ul>
+      </nav>
+      
+      <div class="sidebar-footer">
+        <div class="user-profile">
+          <div class="avatar">
+            <span>JP</span>
+          </div>
+          <div class="user-info">
+            <p class="user-name">Juan Pérez</p>
+            <p class="user-email">juan@ejemplo.com</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Main content -->
+    <main class="main-content">
+      <div class="space-y-6">
+        <div>
+          <h1 class="page-title">Informe de Auditoría del Sitio</h1>
+          <p class="text-muted-foreground">
+            Análisis completo de tu tienda con recomendaciones accionables
+          </p>
+        </div>
+        
+        <div class="audit-tabs">
+          <div class="tab-list">
+            <button class="tab-trigger active" data-tab="ux">Problemas UX</button>
+            <button class="tab-trigger" data-tab="seo">SEO</button>
+            <button class="tab-trigger" data-tab="performance">Rendimiento</button>
+            <button class="tab-trigger" data-tab="media">Medios</button>
+          </div>
+          
+          <div class="tab-content active" data-tab="ux">
+            <div class="audit-items space-y-4">
+              <div class="audit-item">
+                <div class="audit-item-header">
+                  <div class="flex items-center gap-3">
+                    <div class="severity-indicator severity-high"></div>
+                    <h3 class="font-medium">Menú Móvil Difícil de Acceder</h3>
+                  </div>
+                  <button class="expand-button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
+                </div>
+                
+                <div class="audit-item-details">
+                  <p class="text-sm mb-4">Tu menú de navegación móvil requiere que los usuarios hagan 2 toques para acceder a las secciones clave de la tienda. Esto crea fricción innecesaria para los usuarios móviles, que representan el 64% de tu tráfico.</p>
+                  
+                  <div class="mb-4">
+                    <p class="text-xs text-muted-foreground mb-2">Screenshot</p>
+                    <div class="screenshot-container">
+                      <img src="https://images.unsplash.com/photo-1581091226825-a6a2a5aee158" alt="Screenshot mostrando el menú móvil" />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <p class="text-xs text-muted-foreground mb-2">Recommended Solution</p>
+                    <p class="text-sm">Rediseñar el encabezado móvil para hacer que los elementos principales de navegación sean directamente visibles o accesibles con un solo toque.</p>
+                  </div>
+                  
+                  <div class="flex gap-2 mt-4">
+                    <button class="button-fix">Fix Issue</button>
+                    <button class="button-ignore">Ignore</button>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="audit-item">
+                <div class="audit-item-header">
+                  <div class="flex items-center gap-3">
+                    <div class="severity-indicator severity-medium"></div>
+                    <h3 class="font-medium">Imágenes de Producto Sin Zoom</h3>
+                  </div>
+                  <button class="expand-button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
+                </div>
+                
+                <div class="audit-item-details hidden">
+                  <p class="text-sm mb-4">Las páginas de detalle de producto no permiten a los clientes hacer zoom en las imágenes, lo que dificulta ver los detalles antes de la compra.</p>
+                  
+                  <div class="mb-4">
+                    <p class="text-xs text-muted-foreground mb-2">Screenshot</p>
+                    <div class="screenshot-container">
+                      <img src="https://images.unsplash.com/photo-1605810230434-7631ac76ec81" alt="Screenshot mostrando la imagen del producto sin zoom" />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <p class="text-xs text-muted-foreground mb-2">Recommended Solution</p>
+                    <p class="text-sm">Implementar una función de zoom en las imágenes de productos que funcione tanto en escritorio como en dispositivos móviles.</p>
+                  </div>
+                  
+                  <div class="flex gap-2 mt-4">
+                    <button class="button-fix">Fix Issue</button>
+                    <button class="button-ignore">Ignore</button>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="audit-item">
+                <div class="audit-item-header">
+                  <div class="flex items-center gap-3">
+                    <div class="severity-indicator severity-medium"></div>
+                    <h3 class="font-medium">El Carrito se Cierra Automáticamente</h3>
+                  </div>
+                  <button class="expand-button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
+                </div>
+                
+                <div class="audit-item-details hidden">
+                  <p class="text-sm mb-4">El panel del carrito se cierra automáticamente después de 5 segundos, interrumpiendo el proceso de pago para algunos usuarios.</p>
+                  
+                  <div>
+                    <p class="text-xs text-muted-foreground mb-2">Recommended Solution</p>
+                    <p class="text-sm">Eliminar el comportamiento de cierre automático y cerrar el panel del carrito solo cuando el usuario lo cierre explícitamente.</p>
+                  </div>
+                  
+                  <div class="flex gap-2 mt-4">
+                    <button class="button-fix">Fix Issue</button>
+                    <button class="button-ignore">Ignore</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="tab-content" data-tab="seo">
+            <div class="audit-items space-y-4">
+              <div class="audit-item">
+                <div class="audit-item-header">
+                  <div class="flex items-center gap-3">
+                    <div class="severity-indicator severity-medium"></div>
+                    <h3 class="font-medium">Meta Descripciones Faltantes</h3>
+                  </div>
+                  <button class="expand-button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
+                </div>
+                
+                <div class="audit-item-details hidden">
+                  <p class="text-sm mb-4">8 páginas de productos carecen de meta descripciones, lo que perjudica su visibilidad potencial en los resultados de búsqueda.</p>
+                  
+                  <div class="mb-4">
+                    <p class="text-xs text-muted-foreground mb-2">Screenshot</p>
+                    <div class="screenshot-container">
+                      <img src="https://images.unsplash.com/photo-1487058792275-0ad4aaf24ca7" alt="Screenshot mostrando metadescripciones faltantes" />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <p class="text-xs text-muted-foreground mb-2">Recommended Solution</p>
+                    <p class="text-sm">Generar meta descripciones únicas y ricas en palabras clave para cada página de producto.</p>
+                  </div>
+                  
+                  <div class="flex gap-2 mt-4">
+                    <button class="button-fix">Fix Issue</button>
+                    <button class="button-ignore">Ignore</button>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="audit-item">
+                <div class="audit-item-header">
+                  <div class="flex items-center gap-3">
+                    <div class="severity-indicator severity-medium"></div>
+                    <h3 class="font-medium">Enlaces Internos Rotos</h3>
+                  </div>
+                  <button class="expand-button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
+                </div>
+                
+                <div class="audit-item-details hidden">
+                  <p class="text-sm mb-4">Se encontraron 3 enlaces internos rotos en tus publicaciones de blog que conducen a errores 404.</p>
+                  
+                  <div>
+                    <p class="text-xs text-muted-foreground mb-2">Recommended Solution</p>
+                    <p class="text-sm">Actualizar o eliminar estos enlaces rotos para mejorar la experiencia del usuario y el SEO.</p>
+                  </div>
+                  
+                  <div class="flex gap-2 mt-4">
+                    <button class="button-fix">Fix Issue</button>
+                    <button class="button-ignore">Ignore</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="tab-content" data-tab="performance">
+            <div class="audit-items space-y-4">
+              <div class="audit-item">
+                <div class="audit-item-header">
+                  <div class="flex items-center gap-3">
+                    <div class="severity-indicator severity-high"></div>
+                    <h3 class="font-medium">Imágenes Grandes No Optimizadas</h3>
+                  </div>
+                  <button class="expand-button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
+                </div>
+                
+                <div class="audit-item-details hidden">
+                  <p class="text-sm mb-4">12 imágenes de productos superan los 500KB de tamaño, lo que ralentiza significativamente los tiempos de carga de las páginas.</p>
+                  
+                  <div class="mb-4">
+                    <p class="text-xs text-muted-foreground mb-2">Screenshot</p>
+                    <div class="screenshot-container">
+                      <img src="https://images.unsplash.com/photo-1498050108023-c5249f4df085" alt="Screenshot mostrando imágenes no optimizadas" />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <p class="text-xs text-muted-foreground mb-2">Recommended Solution</p>
+                    <p class="text-sm">Comprimir y redimensionar estas imágenes a menos de 200KB sin perder calidad visual.</p>
+                  </div>
+                  
+                  <div class="flex gap-2 mt-4">
+                    <button class="button-fix">Fix Issue</button>
+                    <button class="button-ignore">Ignore</button>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="audit-item">
+                <div class="audit-item-header">
+                  <div class="flex items-center gap-3">
+                    <div class="severity-indicator severity-high"></div>
+                    <h3 class="font-medium">JavaScript que Bloquea el Renderizado</h3>
+                  </div>
+                  <button class="expand-button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
+                </div>
+                
+                <div class="audit-item-details hidden">
+                  <p class="text-sm mb-4">Varios archivos JavaScript están bloqueando el renderizado de tus páginas, aumentando el tiempo de carga en 2.3 segundos.</p>
+                  
+                  <div>
+                    <p class="text-xs text-muted-foreground mb-2">Recommended Solution</p>
+                    <p class="text-sm">Diferir JavaScript no crítico y optimizar la secuencia de carga.</p>
+                  </div>
+                  
+                  <div class="flex gap-2 mt-4">
+                    <button class="button-fix">Fix Issue</button>
+                    <button class="button-ignore">Ignore</button>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="audit-item">
+                <div class="audit-item-header">
+                  <div class="flex items-center gap-3">
+                    <div class="severity-indicator severity-low"></div>
+                    <h3 class="font-medium">Sin Caché del Navegador</h3>
+                  </div>
+                  <button class="expand-button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
+                </div>
+                
+                <div class="audit-item-details hidden">
+                  <p class="text-sm mb-4">Tu tienda no está utilizando el almacenamiento en caché del navegador para activos estáticos.</p>
+                  
+                  <div>
+                    <p class="text-xs text-muted-foreground mb-2">Recommended Solution</p>
+                    <p class="text-sm">Configurar el almacenamiento en caché del navegador para mejorar la velocidad de la página para los visitantes recurrentes.</p>
+                  </div>
+                  
+                  <div class="flex gap-2 mt-4">
+                    <button class="button-fix">Fix Issue</button>
+                    <button class="button-ignore">Ignore</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div class="tab-content" data-tab="media">
+            <div class="audit-items space-y-4">
+              <div class="audit-item">
+                <div class="audit-item-header">
+                  <div class="flex items-center gap-3">
+                    <div class="severity-indicator severity-low"></div>
+                    <h3 class="font-medium">Faltan Videos de Productos</h3>
+                  </div>
+                  <button class="expand-button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
+                </div>
+                
+                <div class="audit-item-details hidden">
+                  <p class="text-sm mb-4">Ninguno de tus 5 productos más vendidos tiene videos de producto, lo que podría mejorar las tasas de conversión.</p>
+                  
+                  <div>
+                    <p class="text-xs text-muted-foreground mb-2">Recommended Solution</p>
+                    <p class="text-sm">Agregar videos de demostración de productos al menos a tus productos más vendidos.</p>
+                  </div>
+                  
+                  <div class="flex gap-2 mt-4">
+                    <button class="button-fix">Fix Issue</button>
+                    <button class="button-ignore">Ignore</button>
+                  </div>
+                </div>
+              </div>
+              
+              <div class="audit-item">
+                <div class="audit-item-header">
+                  <div class="flex items-center gap-3">
+                    <div class="severity-indicator severity-medium"></div>
+                    <h3 class="font-medium">Proporciones de Imagen Inconsistentes</h3>
+                  </div>
+                  <button class="expand-button">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="6 9 12 15 18 9"></polyline>
+                    </svg>
+                  </button>
+                </div>
+                
+                <div class="audit-item-details hidden">
+                  <p class="text-sm mb-4">Las imágenes de los productos tienen proporciones de aspecto inconsistentes, creando una vista de cuadrícula desalineada.</p>
+                  
+                  <div class="mb-4">
+                    <p class="text-xs text-muted-foreground mb-2">Screenshot</p>
+                    <div class="screenshot-container">
+                      <img src="https://images.unsplash.com/photo-1531297484001-80022131f5a1" alt="Screenshot mostrando proporciones de imagen inconsistentes" />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <p class="text-xs text-muted-foreground mb-2">Recommended Solution</p>
+                    <p class="text-sm">Estandarizar todas las dimensiones de las imágenes de los productos para mantener la consistencia visual.</p>
+                  </div>
+                  
+                  <div class="flex gap-2 mt-4">
+                    <button class="button-fix">Fix Issue</button>
+                    <button class="button-ignore">Ignore</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+  
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      // Tab functionality
+      const tabTriggers = document.querySelectorAll('.tab-trigger');
+      const tabContents = document.querySelectorAll('.tab-content');
+      
+      tabTriggers.forEach(trigger => {
+        trigger.addEventListener('click', () => {
+          const tabId = trigger.getAttribute('data-tab');
+          
+          // Update active tab trigger
+          tabTriggers.forEach(t => t.classList.remove('active'));
+          trigger.classList.add('active');
+          
+          // Show corresponding content
+          tabContents.forEach(content => {
+            content.classList.remove('active');
+            if (content.getAttribute('data-tab') === tabId) {
+              content.classList.add('active');
+            }
+          });
+        });
+      });
+      
+      // Expand/collapse audit items
+      const expandButtons = document.querySelectorAll('.expand-button');
+      
+      expandButtons.forEach(button => {
+        button.addEventListener('click', () => {
+          const auditItem = button.closest('.audit-item');
+          const details = auditItem.querySelector('.audit-item-details');
+          
+          details.classList.toggle('hidden');
+          
+          // Update icon
+          if (details.classList.contains('hidden')) {
+            button.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>`;
+          } else {
+            button.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="18 15 12 9 6 15"></polyline>
+            </svg>`;
+          }
+        });
+      });
+      
+      // First item is expanded by default (matches the screenshot)
+      const firstExpandButton = document.querySelector('.expand-button');
+      if (firstExpandButton) {
+        firstExpandButton.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="18 15 12 9 6 15"></polyline>
+        </svg>`;
+      }
+    });
+  </script>
+</body>
+</html>
