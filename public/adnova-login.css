@@ -215,3 +215,22 @@ body {
   color: #d8b3ff;
   text-decoration: underline;
 }
+.register-wrapper {
+  text-align: center;
+  margin-top: 12px;
+}
+
+.btn-secondary {
+  background-color: #2e2e2e;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.3s;
+}
+
+.btn-secondary:hover {
+  background-color: #444;
+}
