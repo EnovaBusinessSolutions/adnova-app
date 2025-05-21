@@ -1,37 +1,73 @@
 // backend/index.js
-
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
+const mongoose = require('mongoose');
+const bcrypt = require('bcrypt');
+const User = require('./models/User');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Mostrar mensaje si acceden al inicio
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/index.html'));
-});
+// Conexión a MongoDB
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => console.log("✅ Conectado a MongoDB Atlas"))
+.catch((err) => console.error("❌ Error al conectar con MongoDB", err));
+
+// Middleware
+app.use(cors());
+app.use(bodyParser.json());
 
 // Servir archivos estáticos del frontend
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Permitir CORS y JSON
-app.use(cors());
-app.use(bodyParser.json());
-
-// Endpoint de login simulado
-app.post('/api/login', (req, res) => {
-  const { email, password } = req.body;
-
-  if (email === 'admin@adnova.com' && password === '123456') {
-    return res.status(200).json({ success: true, token: 'fake-token' });
-  }
-
-  return res.status(401).json({ success: false, message: 'Credenciales incorrectas' });
+// Página principal
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
-// RUTAS LIMPIAS SIN .html
+// Registro de usuarios
+app.post('/api/register', async (req, res) => {
+  const { email, password } = req.body;
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = await User.create({ email, password: hashedPassword });
+    res.status(201).json({ success: true, message: 'Usuario registrado con éxito' });
+  } catch (err) {
+    console.error("❌ Error al registrar usuario:", err);
+    res.status(400).json({ success: false, message: 'No se pudo registrar el usuario' });
+  }
+});
+
+// Login de usuarios
+app.post('/api/login', async (req, res) => {
+  const { email, password } = req.body;
+  console.log('Login recibido:', email);
+
+  try {
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'Usuario no encontrado' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, message: 'Contraseña incorrecta' });
+    }
+
+    res.status(200).json({ success: true, token: 'fake-token' }); // Aquí puedes agregar JWT más adelante
+  } catch (err) {
+    console.error("❌ Error al hacer login:", err);
+    res.status(500).json({ success: false, message: 'Error del servidor' });
+  }
+});
+
+// Rutas de frontend
 app.get("/onboarding", (req, res) => {
   res.sendFile(path.join(__dirname, '../public/onboarding.html'));
 });
@@ -50,6 +86,11 @@ app.get("/audit", (req, res) => {
 
 app.get("/pixel-verifier", (req, res) => {
   res.sendFile(path.join(__dirname, '../public/pixel-verifier.html'));
+});
+
+// Ruta 404
+app.use((req, res) => {
+  res.status(404).send('Página no encontrada');
 });
 
 app.listen(PORT, () => {

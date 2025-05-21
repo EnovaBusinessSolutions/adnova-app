@@ -3,16 +3,19 @@
   "version": "1.0.0",
   "main": "script.js",
   "scripts": {
-  "start": "node backend/index.js",
-  "test": "echo \"Error: no test specified\" && exit 1"
-},
+    "start": "node backend/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "bcrypt": "^6.0.0",
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",
-    "express": "^5.1.0"
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "mongoose": "^8.15.0"
   }
 }
