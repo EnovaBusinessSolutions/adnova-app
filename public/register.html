@@ -10,23 +10,23 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-  <!-- Estilos compartidos con login -->
+  <!-- Estilos del login -->
   <link rel="stylesheet" href="adnova-login.css" />
 
   <style>
     .register-container {
-      max-width: 400px;
+      max-width: 420px;
       margin: 100px auto;
       background: #0a0a0a;
-      padding: 2rem;
+      padding: 2.5rem;
       border-radius: 12px;
-      box-shadow: 0 0 20px rgba(128, 0, 255, 0.2);
+      box-shadow: 0 0 25px rgba(128, 0, 255, 0.2);
     }
 
     .register-title {
       text-align: center;
-      font-size: 1.5rem;
-      margin-bottom: 1.5rem;
+      font-size: 1.6rem;
+      margin-bottom: 2rem;
       color: white;
     }
 
@@ -36,14 +36,27 @@
       color: #ccc;
     }
 
+    .form-input-wrapper {
+      position: relative;
+    }
+
     .form-input {
       width: 100%;
-      padding: 10px;
-      margin-bottom: 1.2rem;
+      padding: 10px 40px 10px 10px;
+      margin-bottom: 1.5rem;
       border-radius: 6px;
       border: none;
       background-color: #1f1f1f;
       color: white;
+    }
+
+    .toggle-password {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      cursor: pointer;
+      color: #888;
     }
 
     .btn-register {
@@ -78,7 +91,16 @@
       <input type="email" id="email" class="form-input" required />
 
       <label class="form-label" for="password">Contraseña:</label>
-      <input type="password" id="password" class="form-input" required />
+      <div class="form-input-wrapper">
+        <input type="password" id="password" class="form-input" required />
+        <span class="toggle-password" onclick="togglePassword('password', this)">&#128065;</span>
+      </div>
+
+      <label class="form-label" for="confirm">Confirmar contraseña:</label>
+      <div class="form-input-wrapper">
+        <input type="password" id="confirm" class="form-input" required />
+        <span class="toggle-password" onclick="togglePassword('confirm', this)">&#128065;</span>
+      </div>
 
       <button type="submit" class="btn-register">Registrarse</button>
     </form>
@@ -94,6 +116,13 @@
 
       const email = document.getElementById('email').value;
       const password = document.getElementById('password').value;
+      const confirm = document.getElementById('confirm').value;
+
+      if (password !== confirm) {
+        msg.textContent = '❌ Las contraseñas no coinciden';
+        msg.style.color = '#f87171';
+        return;
+      }
 
       const res = await fetch('/api/register', {
         method: 'POST',
@@ -104,6 +133,7 @@
       const data = await res.json();
       if (data.success) {
         msg.textContent = '✅ Cuenta creada con éxito. Redirigiendo...';
+        msg.style.color = '#4ade80';
         setTimeout(() => {
           window.location.href = 'index.html';
         }, 1800);
@@ -112,6 +142,13 @@
         msg.style.color = '#f87171';
       }
     });
+
+    function togglePassword(id, el) {
+      const input = document.getElementById(id);
+      const isVisible = input.type === 'text';
+      input.type = isVisible ? 'password' : 'text';
+      el.textContent = isVisible ? '👁' : '👁';
+    }
   </script>
 </body>
 </html>

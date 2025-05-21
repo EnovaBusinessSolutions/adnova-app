@@ -1,7 +1,7 @@
 // backend/index.js
 require('dotenv').config();
 const express = require('express');
-const app = express(); // ✅ Instancia de Express
+const app = express();
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
@@ -11,19 +11,17 @@ const User = require('./models/User');
 
 const PORT = process.env.PORT || 3000;
 
-// Conexión a MongoDB
-mongoose.connect(process.env.MONGODB_URI, {
+// ✅ Conexión a MongoDB usando la variable MONGO_URI
+mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
 .then(() => console.log("✅ Conectado a MongoDB Atlas"))
-.catch((err) => console.error("❌ Error al conectar con MongoDB", err));
+.catch((err) => console.error("❌ Error al conectar con MongoDB:", err));
 
-// Middleware
+// Middlewares
 app.use(cors());
 app.use(bodyParser.json());
-
-// Servir archivos estáticos del frontend
 app.use(express.static(path.join(__dirname, '../public')));
 
 // Página principal
@@ -69,7 +67,7 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Contraseña incorrecta' });
     }
 
-    res.status(200).json({ success: true, token: 'fake-token' }); // Puedes reemplazar por JWT más adelante
+    res.status(200).json({ success: true, token: 'fake-token' }); // Puedes cambiar a JWT después
   } catch (err) {
     console.error("❌ Error al hacer login:", err);
     res.status(500).json({ success: false, message: 'Error del servidor' });
