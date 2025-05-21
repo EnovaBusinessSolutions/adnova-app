@@ -111,11 +111,12 @@
     });
 
     function togglePassword(id, el) {
-      const input = document.getElementById(id);
-      const isVisible = input.type === 'text';
-      input.type = isVisible ? 'password' : 'text';
-      el.textContent = isVisible ? '👁️' : '👁️';
-    }
+  const input = document.getElementById(id);
+  const isVisible = input.type === 'text';
+  input.type = isVisible ? 'password' : 'text';
+  el.classList.toggle('eye-visible', !isVisible);
+  el.classList.toggle('eye-hidden', isVisible);
+}
   </script>
 </body>
 </html>
