@@ -10,30 +10,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-  <!-- Estilos reutilizados del login -->
+  <!-- Estilos reutilizados del login y propios de register -->
   <link rel="stylesheet" href="adnova-login.css" />
-  <style>
-    .form-input-wrapper {
-      display: flex;
-      align-items: center;
-      position: relative;
-    }
-
-    .toggle-password {
-      position: absolute;
-      right: 10px;
-      cursor: pointer;
-      color: #888;
-      font-size: 1.1rem;
-    }
-
-    .success-message {
-      text-align: center;
-      margin-top: 1rem;
-      color: #4ade80;
-      transition: all 0.3s ease-in-out;
-    }
-  </style>
+  <link rel="stylesheet" href="register.css" />
 </head>
 
 <body>
@@ -52,7 +31,7 @@
         <label for="password" class="form-label">Contraseña:</label>
         <div class="form-input-wrapper">
           <input type="password" id="password" class="form-input" required />
-          <span class="toggle-password" onclick="togglePassword('password', this)">👁️</span>
+          <button type="button" class="toggle-password eye-hidden" onclick="togglePassword('password', this)"></button>
         </div>
       </div>
 
@@ -60,7 +39,7 @@
         <label for="confirm" class="form-label">Confirmar contraseña:</label>
         <div class="form-input-wrapper">
           <input type="password" id="confirm" class="form-input" required />
-          <span class="toggle-password" onclick="togglePassword('confirm', this)">👁️</span>
+          <button type="button" class="toggle-password eye-hidden" onclick="togglePassword('confirm', this)"></button>
         </div>
       </div>
 
@@ -111,12 +90,12 @@
     });
 
     function togglePassword(id, el) {
-  const input = document.getElementById(id);
-  const isVisible = input.type === 'text';
-  input.type = isVisible ? 'password' : 'text';
-  el.classList.toggle('eye-visible', !isVisible);
-  el.classList.toggle('eye-hidden', isVisible);
-}
+      const input = document.getElementById(id);
+      const isVisible = input.type === 'text';
+      input.type = isVisible ? 'password' : 'text';
+      el.classList.toggle('eye-visible', !isVisible);
+      el.classList.toggle('eye-hidden', isVisible);
+    }
   </script>
 </body>
 </html>
