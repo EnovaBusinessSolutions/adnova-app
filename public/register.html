@@ -10,101 +10,63 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-  <!-- Estilos del login -->
+  <!-- Estilos reutilizados del login -->
   <link rel="stylesheet" href="adnova-login.css" />
-
   <style>
-    .register-container {
-      max-width: 420px;
-      margin: 100px auto;
-      background: #0a0a0a;
-      padding: 2.5rem;
-      border-radius: 12px;
-      box-shadow: 0 0 25px rgba(128, 0, 255, 0.2);
-    }
-
-    .register-title {
-      text-align: center;
-      font-size: 1.6rem;
-      margin-bottom: 2rem;
-      color: white;
-    }
-
-    .form-label {
-      display: block;
-      margin-bottom: 0.5rem;
-      color: #ccc;
-    }
-
     .form-input-wrapper {
+      display: flex;
+      align-items: center;
       position: relative;
-    }
-
-    .form-input {
-      width: 100%;
-      padding: 10px 40px 10px 10px;
-      margin-bottom: 1.5rem;
-      border-radius: 6px;
-      border: none;
-      background-color: #1f1f1f;
-      color: white;
     }
 
     .toggle-password {
       position: absolute;
       right: 10px;
-      top: 50%;
-      transform: translateY(-50%);
       cursor: pointer;
       color: #888;
-    }
-
-    .btn-register {
-      width: 100%;
-      background-color: #a855f7;
-      color: white;
-      font-weight: 500;
-      border: none;
-      padding: 12px;
-      border-radius: 6px;
-      cursor: pointer;
-      transition: background-color 0.3s;
-    }
-
-    .btn-register:hover {
-      background-color: #9333ea;
+      font-size: 1.1rem;
     }
 
     .success-message {
       text-align: center;
       margin-top: 1rem;
       color: #4ade80;
+      transition: all 0.3s ease-in-out;
     }
   </style>
 </head>
 
-<body data-page="register">
-  <div class="register-container">
-    <h2 class="register-title">Crear cuenta</h2>
-    <form id="register-form">
-      <label class="form-label" for="email">Correo:</label>
-      <input type="email" id="email" class="form-input" required />
+<body>
+  <div class="login-container">
+    <div class="header">
+      <h1>Crear cuenta</h1>
+    </div>
 
-      <label class="form-label" for="password">Contraseña:</label>
-      <div class="form-input-wrapper">
-        <input type="password" id="password" class="form-input" required />
-        <span class="toggle-password" onclick="togglePassword('password', this)">&#128065;</span>
+    <form id="register-form" class="form">
+      <div class="form-group">
+        <label for="email" class="form-label">Correo:</label>
+        <input type="email" id="email" class="form-input" required />
       </div>
 
-      <label class="form-label" for="confirm">Confirmar contraseña:</label>
-      <div class="form-input-wrapper">
-        <input type="password" id="confirm" class="form-input" required />
-        <span class="toggle-password" onclick="togglePassword('confirm', this)">&#128065;</span>
+      <div class="form-group">
+        <label for="password" class="form-label">Contraseña:</label>
+        <div class="form-input-wrapper">
+          <input type="password" id="password" class="form-input" required />
+          <span class="toggle-password" onclick="togglePassword('password', this)">👁️</span>
+        </div>
       </div>
 
-      <button type="submit" class="btn-register">Registrarse</button>
+      <div class="form-group">
+        <label for="confirm" class="form-label">Confirmar contraseña:</label>
+        <div class="form-input-wrapper">
+          <input type="password" id="confirm" class="form-input" required />
+          <span class="toggle-password" onclick="togglePassword('confirm', this)">👁️</span>
+        </div>
+      </div>
+
+      <button type="submit" class="btn btn-primary">Registrarse</button>
+      <p class="success-message" id="register-msg"></p>
     </form>
-    <p class="success-message" id="register-msg"></p>
   </div>
 
   <script>
@@ -124,21 +86,26 @@
         return;
       }
 
-      const res = await fetch('/api/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
+      try {
+        const res = await fetch('/api/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
 
-      const data = await res.json();
-      if (data.success) {
-        msg.textContent = '✅ Cuenta creada con éxito. Redirigiendo...';
-        msg.style.color = '#4ade80';
-        setTimeout(() => {
-          window.location.href = 'index.html';
-        }, 1800);
-      } else {
-        msg.textContent = '❌ ' + (data.message || 'Hubo un problema');
+        const data = await res.json();
+        if (data.success) {
+          msg.textContent = '✅ Cuenta creada con éxito. Redirigiendo...';
+          msg.style.color = '#4ade80';
+          setTimeout(() => {
+            window.location.href = 'index.html';
+          }, 1800);
+        } else {
+          msg.textContent = '❌ ' + (data.message || 'Hubo un problema');
+          msg.style.color = '#f87171';
+        }
+      } catch (error) {
+        msg.textContent = '❌ Error al conectar con el servidor';
         msg.style.color = '#f87171';
       }
     });
@@ -147,7 +114,7 @@
       const input = document.getElementById(id);
       const isVisible = input.type === 'text';
       input.type = isVisible ? 'password' : 'text';
-      el.textContent = isVisible ? '👁' : '👁';
+      el.textContent = isVisible ? '👁️' : '👁️';
     }
   </script>
 </body>
