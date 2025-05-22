@@ -74,23 +74,42 @@
     </div>
     <script>
       document.addEventListener('DOMContentLoaded', function () {
+        localStorage.removeItem('onboardingCompletado');
         const form = document.querySelector('form');
-        form.addEventListener('submit', function (e) {
-          e.preventDefault();
-          const email = document.getElementById('email').value;
-          const password = document.getElementById('password').value;
+        form.addEventListener('submit', async function (e) {
+  e.preventDefault();
 
-          const submitButton = form.querySelector('button[type="submit"]');
-          const originalText = submitButton.innerText;
-          submitButton.innerText = 'Procesando...';
-          submitButton.disabled = true;
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
 
-          setTimeout(() => {
-            submitButton.innerText = originalText;
-            submitButton.disabled = false;
-            alert('Has iniciado sesión correctamente.');
-          }, 1500);
-        });
+  const submitButton = form.querySelector('button[type="submit"]');
+  const originalText = submitButton.innerText;
+  submitButton.innerText = 'Procesando...';
+  submitButton.disabled = true;
+
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+
+    const data = await res.json();
+
+    if (data.success && data.redirect) {
+      localStorage.setItem('userEmail', email); // Guarda el correo
+      window.location.href = data.redirect;     // Redirige a onboarding o dashboard
+    } else {
+      alert(data.message || 'Credenciales incorrectas');
+    }
+  } catch (err) {
+    console.error('Login error:', err);
+    alert('❌ Error al conectar con el servidor');
+  } finally {
+    submitButton.innerText = originalText;
+    submitButton.disabled = false;
+  }
+});
 
         const socialButtons = document.querySelectorAll('.social-buttons .btn');
         socialButtons.forEach((button) => {
