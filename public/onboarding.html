@@ -236,10 +236,32 @@
         simulateAnalysis();
       });
       document.getElementById('continue-btn-3').addEventListener('click', () => goToStep(4));
-      document.getElementById('go-to-dashboard').addEventListener('click', () => {
-        localStorage.setItem('onboardingCompletado', 'true');
-        window.location.href = 'dashboard.html';
-      });
+      document.getElementById('go-to-dashboard').addEventListener('click', async () => {
+  const email = localStorage.getItem('userEmail'); // guardado desde login
+
+  if (!email) {
+    alert('No se encontró el correo del usuario');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/complete-onboarding', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+
+    const data = await res.json();
+    if (data.success) {
+      window.location.href = 'dashboard.html';
+    } else {
+      alert('❌ Error al completar onboarding');
+    }
+  } catch (err) {
+    console.error('Error:', err);
+    alert('❌ Error de conexión con el servidor');
+  }
+});
 
       function goToStep(step) {
         steps.forEach(stepEl => {

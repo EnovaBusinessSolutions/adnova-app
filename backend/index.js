@@ -67,10 +67,27 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Contraseña incorrecta' });
     }
 
-    res.status(200).json({ success: true, token: 'fake-token' }); // Puedes cambiar a JWT después
+    // ✅ Redirección según onboardingCompletado
+    return res.status(200).json({
+      success: true,
+      redirect: user.onboardingCompletado ? '/dashboard' : '/onboarding'
+    });
+
   } catch (err) {
     console.error("❌ Error al hacer login:", err);
     res.status(500).json({ success: false, message: 'Error del servidor' });
+  }
+});
+
+// Ruta para marcar onboarding como completado
+app.post('/api/complete-onboarding', async (req, res) => {
+  const { email } = req.body;
+  try {
+    await User.updateOne({ email }, { onboardingCompletado: true });
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ Error al completar onboarding:", err);
+    res.status(500).json({ success: false, message: 'Error al actualizar usuario' });
   }
 });
 
