@@ -83,7 +83,7 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/complete-onboarding', async (req, res) => {
   const { email } = req.body;
   try {
-    await User.updateOne({ email }, { onboardingCompletado: true });
+    await User.updateOne({ email }, { onboardingComplete: true });
     res.json({ success: true });
   } catch (err) {
     console.error("❌ Error al completar onboarding:", err);
