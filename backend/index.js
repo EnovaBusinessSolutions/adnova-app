@@ -70,7 +70,7 @@ app.post('/api/login', async (req, res) => {
     // ✅ Redirección según onboardingCompletado
     return res.status(200).json({
       success: true,
-      redirect: user.onboardingCompletado ? '/dashboard' : '/onboarding'
+      redirect: user.onboardingComplete ? '/dashboard' : '/onboarding'
     });
 
   } catch (err) {
