@@ -67,7 +67,6 @@
     </div>
     <script>
       document.addEventListener('DOMContentLoaded', function () {
-        localStorage.removeItem('onboardingCompletado');
         const form = document.querySelector('form');
         form.addEventListener('submit', async function (e) {
   e.preventDefault();
@@ -89,10 +88,17 @@
 
     const data = await res.json();
 
-    if (data.success && data.redirect) {
-      localStorage.setItem('userEmail', email); // Guarda el correo
-      window.location.href = data.redirect;     // Redirige a onboarding o dashboard
-    } else {
+    if (data.success) {
+  // Reconsulta el estado real desde el backend
+  const resUser = await fetch('/api/user');
+  const user = await resUser.json();
+
+  if (user.onboardingComplete) {
+    window.location.href = '/dashboard';
+  } else {
+    window.location.href = '/onboarding';
+  }
+} else {
       alert(data.message || 'Credenciales incorrectas');
     }
   } catch (err) {
