@@ -13,6 +13,7 @@ passport.use(new GoogleStrategy({
 
     if (!user) {
       user = await User.create({
+        googleId: profile.id,
         email,
         password: '', // no tiene password
         onboardingComplete: false

@@ -92,9 +92,12 @@ app.post('/api/login', async (req, res) => {
 
 // Ruta para marcar onboarding como completado
 app.post('/api/complete-onboarding', async (req, res) => {
-  const { email } = req.body;
+  if (!req.isAuthenticated()) {
+    return res.status(401).json({ success: false, message: 'No autenticado' });
+  }
+
   try {
-    await User.updateOne({ email }, { onboardingComplete: true });
+    await User.findByIdAndUpdate(req.user._id, { onboardingComplete: true });
     res.json({ success: true });
   } catch (err) {
     console.error("❌ Error al completar onboarding:", err);
@@ -136,6 +139,17 @@ app.get('/auth/google/callback',
     res.redirect(redirectUrl);
   }
 );
+
+app.get('/api/user', (req, res) => {
+  if (req.isAuthenticated()) {
+    res.json({
+      email: req.user.email,
+      onboardingComplete: req.user.onboardingComplete
+    });
+  } else {
+    res.status(401).json({ message: 'No autenticado' });
+  }
+});
 
 // Ruta 404
 app.use((req, res) => {

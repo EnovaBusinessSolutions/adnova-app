@@ -296,5 +296,17 @@
     }
   });
 </script>
+<h2>Bienvenido: <span id="user-email"></span></h2>
+
+<script>
+  fetch('/api/user')
+    .then(res => res.json())
+    .then(data => {
+      document.getElementById('user-email').innerText = data.email;
+    })
+    .catch(() => {
+      document.getElementById('user-email').innerText = 'Usuario desconocido';
+    });
+</script>
 </body>
 </html>

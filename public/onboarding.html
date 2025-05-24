@@ -239,18 +239,9 @@
       const goBtn = document.getElementById('go-to-dashboard');
 if (goBtn) {
   goBtn.addEventListener('click', async () => {
-    const email = localStorage.getItem('userEmail'); // guardado desde login
-
-    if (!email) {
-      alert('No se encontró el correo del usuario');
-      return;
-    }
-
     try {
       const res = await fetch('/api/complete-onboarding', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
+        method: 'POST'
       });
 
       const data = await res.json();
