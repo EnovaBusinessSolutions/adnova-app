@@ -58,8 +58,8 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
-// Login de usuarios
-app.post('/api/login', async (req, res) => {
+// Login de usuarios (con integración de sesión)
+app.post('/api/login', async (req, res, next) => {
   const { email, password } = req.body;
   console.log('Login recibido:', email);
 
@@ -78,10 +78,17 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ success: false, message: 'Contraseña incorrecta' });
     }
 
-    // ✅ Redirección según onboardingCompletado
-    return res.status(200).json({
-      success: true,
-      redirect: user.onboardingComplete ? '/dashboard' : '/onboarding'
+    // 🔑 Aquí se activa la sesión con Passport
+    req.login(user, (err) => {
+      if (err) {
+        console.error("❌ Error al iniciar sesión con Passport:", err);
+        return next(err);
+      }
+
+      return res.status(200).json({
+        success: true,
+        redirect: user.onboardingComplete ? '/dashboard' : '/onboarding'
+      });
     });
 
   } catch (err) {
@@ -89,6 +96,7 @@ app.post('/api/login', async (req, res) => {
     res.status(500).json({ success: false, message: 'Error del servidor' });
   }
 });
+
 
 // Ruta para marcar onboarding como completado
 app.post('/api/complete-onboarding', async (req, res) => {
