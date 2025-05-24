@@ -34,6 +34,20 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
+// 🔐 Middlewares para proteger rutas
+function ensureAuthenticated(req, res, next) {
+  if (req.isAuthenticated()) {
+    return next();
+  }
+  return res.redirect('/');
+}
+
+function ensureNotOnboarded(req, res, next) {
+  if (req.isAuthenticated() && !req.user.onboardingComplete) {
+    return next();
+  }
+  return res.redirect('/dashboard');
+}
 
 // Página principal
 app.get("/", (req, res) => {
@@ -114,11 +128,11 @@ app.post('/api/complete-onboarding', async (req, res) => {
 });
 
 // Rutas de frontend
-app.get("/onboarding", (req, res) => {
+app.get("/onboarding", ensureNotOnboarded, (req, res) => {
   res.sendFile(path.join(__dirname, '../public/onboarding.html'));
 });
 
-app.get("/dashboard", (req, res) => {
+app.get("/dashboard", ensureAuthenticated, (req, res) => {
   res.sendFile(path.join(__dirname, '../public/dashboard.html'));
 });
 
