@@ -151,6 +151,19 @@ app.get('/api/user', (req, res) => {
   }
 });
 
+app.get('/logout', (req, res) => {
+  req.logout(err => {
+    if (err) {
+      console.error('Error al cerrar sesión:', err);
+      return res.redirect('/');
+    }
+    req.session.destroy(() => {
+      res.clearCookie('connect.sid');
+      res.redirect('/');
+    });
+  });
+});
+
 // Ruta 404
 app.use((req, res) => {
   res.status(404).send('Página no encontrada');

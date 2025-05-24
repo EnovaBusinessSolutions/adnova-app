@@ -216,3 +216,18 @@ body{
   .action-content{margin-bottom:.75rem}
   .btn-action{width:100%}
 }
+
+.logout-btn {
+  padding: 10px 16px;
+  background-color: #1f1f1f;
+  border: 1px solid #444;
+  color: white;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background-color 0.2s ease;
+}
+
+.logout-btn:hover {
+  background-color: #2a2a2a;
+}
