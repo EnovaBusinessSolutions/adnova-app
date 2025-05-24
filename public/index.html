@@ -90,14 +90,32 @@
 
     if (data.success) {
   // Reconsulta el estado real desde el backend
-  const resUser = await fetch('/api/user');
-  const user = await resUser.json();
+  async function waitForSessionAndRedirect() {
+  let attempts = 0;
+  let user = null;
 
-  if (user.onboardingComplete) {
-    window.location.href = '/dashboard';
-  } else {
-    window.location.href = '/onboarding';
+  while (attempts < 5) {
+    try {
+      const resUser = await fetch('/api/user');
+      if (resUser.ok) {
+        user = await resUser.json();
+        break;
+      }
+    } catch (err) {
+      console.warn("Esperando a que la sesión esté disponible...");
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 300)); // espera 300ms
+    attempts++;
   }
+
+  if (user) {
+    const redirectUrl = user.onboardingComplete ? '/dashboard' : '/onboarding';
+    window.location.href = redirectUrl;
+  } else {
+    alert("⚠️ No se pudo establecer sesión. Intenta iniciar sesión de nuevo.");
+  }
+}
 } else {
       alert(data.message || 'Credenciales incorrectas');
     }
