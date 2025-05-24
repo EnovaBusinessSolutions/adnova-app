@@ -1,5 +1,8 @@
 // backend/index.js
 require('dotenv').config();
+const session = require('express-session');
+const passport = require('passport');
+require('./auth'); // este archivo lo vas a crear también en /backend/
 const express = require('express');
 const app = express();
 const cors = require('cors');
@@ -23,6 +26,14 @@ mongoose.connect(process.env.MONGO_URI, {
 app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, '../public')));
+app.use(session({
+  secret: 'adnova-secret',
+  resave: false,
+  saveUninitialized: false
+}));
+app.use(passport.initialize());
+app.use(passport.session());
+
 
 // Página principal
 app.get("/", (req, res) => {
@@ -111,6 +122,20 @@ app.get("/audit", (req, res) => {
 app.get("/pixel-verifier", (req, res) => {
   res.sendFile(path.join(__dirname, '../public/pixel-verifier.html'));
 });
+
+// Ruta para iniciar sesión con Google
+app.get('/auth/google',
+  passport.authenticate('google', { scope: ['profile', 'email'] })
+);
+
+// Ruta de callback de Google
+app.get('/auth/google/callback',
+  passport.authenticate('google', { failureRedirect: '/' }),
+  (req, res) => {
+    const redirectUrl = req.user.onboardingComplete ? '/dashboard' : '/onboarding';
+    res.redirect(redirectUrl);
+  }
+);
 
 // Ruta 404
 app.use((req, res) => {
