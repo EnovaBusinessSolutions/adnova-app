@@ -66,70 +66,43 @@
       <p class="forgot-password">¿Olvidaste tu contraseña? <a href="#" class="recovery-link">Recupérala aquí</a></p>
     </div>
     <script>
-  document.addEventListener('DOMContentLoaded', function () {
-    const form = document.querySelector('form');
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.querySelector('#loginForm');
 
-    form.addEventListener('submit', async function (e) {
-      e.preventDefault();
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
 
-      const email = document.getElementById('email').value;
-      const password = document.getElementById('password').value;
+    const email = document.getElementById('email').value;
+    const password = document.getElementById('password').value;
+    const btn = form.querySelector('button[type="submit"]');
+    const original = btn.innerText;
 
-      const submitButton = form.querySelector('button[type="submit"]');
-      const originalText = submitButton.innerText;
-      submitButton.innerText = 'Procesando...';
-      submitButton.disabled = true;
+    btn.innerText = 'Procesando…';
+    btn.disabled  = true;
 
-      try {
-        const res = await fetch('/api/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password })
-        });
+    try {
+      const res  = await fetch('/api/login', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ email, password })
+      });
 
-        const data = await res.json();
+      const data = await res.json();
 
-        if (data.success) {
-          waitForSessionAndRedirect();
-        } else {
-          alert(data.message || 'Credenciales incorrectas');
-        }
-      } catch (err) {
-        console.error('Login error:', err);
-        alert('❌ Error al conectar con el servidor');
-      } finally {
-        submitButton.innerText = originalText;
-        submitButton.disabled = false;
-      }
-    });
-
-    async function waitForSessionAndRedirect() {
-      let attempts = 0;
-      let user = null;
-
-      while (attempts < 5) {
-        try {
-          const resUser = await fetch('/api/user');
-          if (resUser.ok) {
-            user = await resUser.json();
-            break;
-          }
-        } catch (err) {
-          console.warn("Esperando a que la sesión esté disponible...");
-        }
-
-        await new Promise(resolve => setTimeout(resolve, 300));
-        attempts++;
-      }
-
-      if (user) {
-        const redirectUrl = user.onboardingComplete ? '/dashboard' : '/onboarding';
-        window.location.href = redirectUrl;
+      if (data.success && data.redirect) {
+        window.location.href = data.redirect;   // 👉 la cookie ya viaja
       } else {
-        alert("⚠️ No se pudo establecer sesión. Intenta iniciar sesión de nuevo.");
+        alert(data.message || 'Credenciales incorrectas');
       }
+    } catch (err) {
+      console.error('Login error:', err);
+      alert('❌ Error al conectar con el servidor');
+    } finally {
+      btn.innerText = original;
+      btn.disabled  = false;
     }
   });
+});
 </script>
     <script src='script.js' defer></script></body>
 </html>
