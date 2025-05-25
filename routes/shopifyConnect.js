@@ -1,14 +1,15 @@
-const express       = require('express');
-const router        = express.Router();
-const querystring   = require('querystring');
+const express     = require('express');
+const router      = express.Router();
+const qs          = require('querystring');
 
-const SHOPIFY_API_KEY   = process.env.SHOPIFY_API_KEY;
-const REDIRECT_URI_RAW  = process.env.SHOPIFY_REDIRECT_URI;           // ← texto puro
-const REDIRECT_URI_ENC  = encodeURIComponent(REDIRECT_URI_RAW);       // ← codificada UNA VEZ
+const SHOPIFY_API_KEY  = process.env.SHOPIFY_API_KEY;
+const REDIRECT_URI     = process.env.SHOPIFY_REDIRECT_URI.trim(); // ← limpia \n
 
 router.get('/connect', (req, res) => {
   const { shop, userId } = req.query;
-  if (!shop || !userId) return res.status(400).send('Faltan shop o userId');
+  if (!shop || !userId) {
+    return res.status(400).send('Faltan parámetros: shop o userId');
+  }
 
   const scopes = [
     'read_products',
@@ -17,19 +18,16 @@ router.get('/connect', (req, res) => {
     'read_analytics'
   ].join(',');
 
-  /* Construimos la URL final */
   const authUrl =
     `https://${shop}/admin/oauth/authorize?` +
-    querystring.stringify({
-      client_id    : SHOPIFY_API_KEY,
-      scope        : scopes,
-      redirect_uri : REDIRECT_URI_ENC,   // ← ya codificada una sola vez
-      state        : userId
+    qs.stringify({
+      client_id   : SHOPIFY_API_KEY,
+      scope       : scopes,
+      redirect_uri: REDIRECT_URI,   // ← SIN encodeURIComponent
+      state       : userId
     });
 
-  /* (opcional) log para depurar */
-  console.log('Auth URL:', decodeURIComponent(authUrl));
-
+  console.log('[ShopifyOAuth] Auth URL:\n', decodeURIComponent(authUrl));
   res.redirect(authUrl);
 });
 
