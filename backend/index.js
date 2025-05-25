@@ -11,6 +11,8 @@ const path = require('path');
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const User = require('./models/User');
+const shopifyConnect = require('./routes/shopifyConnect');
+
 
 const PORT = process.env.PORT || 3000;
 
@@ -127,10 +129,25 @@ app.post('/api/complete-onboarding', async (req, res) => {
   }
 });
 
-// Rutas de frontend
+// Rutas API externas
+app.use('/api/shopify', shopifyConnect);
+
+const fs = require('fs');
+
 app.get("/onboarding", ensureNotOnboarded, (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/onboarding.html'));
+  const filePath = path.join(__dirname, '../public/onboarding.html');
+
+  fs.readFile(filePath, 'utf8', (err, html) => {
+    if (err) {
+      console.error("❌ Error al leer onboarding.html:", err);
+      return res.status(500).send("Error al cargar la página de onboarding.");
+    }
+
+    const updatedHtml = html.replace('USER_ID_REAL', req.user._id.toString());
+    res.send(updatedHtml);
+  });
 });
+
 
 app.get("/dashboard", ensureAuthenticated, (req, res) => {
   res.sendFile(path.join(__dirname, '../public/dashboard.html'));

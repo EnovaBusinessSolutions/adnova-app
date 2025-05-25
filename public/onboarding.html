@@ -210,11 +210,17 @@
       let shopifyConnected = false;
 
       connectShopifyBtn.addEventListener('click', function () {
-        this.classList.add('connected');
-        this.innerHTML = 'Connected ✓';
-        shopifyConnected = true;
-        continueBtn.disabled = false;
-      });
+  // Redirige a Shopify OAuth (ajusta el dominio si estás en local)
+  const userId = 'USER_ID_REAL'; // Aquí deberías inyectar el ID real del usuario con JS o servidor
+  const shop = prompt("Ingresa el dominio de tu tienda Shopify (ej: mitienda.myshopify.com):");
+
+  if (shop) {
+    window.location.href = `/api/shopify/connect?shop=${shop}&userId=${userId}`;
+  } else {
+    alert("❌ No se ingresó ningún dominio de tienda.");
+  }
+});
+
 
       connectGoogleBtn.addEventListener('click', function () {
         this.classList.add('connected');
