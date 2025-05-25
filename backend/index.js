@@ -13,6 +13,8 @@ const bcrypt = require('bcrypt');
 const User = require('./models/User');
 const shopifyConnect = require('../routes/shopifyConnect');
 const shopifyCallback = require('../routes/shopifyCallback');
+const privacyRoutes = require('../routes/privacyRoutes');
+
 
 
 
@@ -134,6 +136,8 @@ app.post('/api/complete-onboarding', async (req, res) => {
 // Rutas API externas
 app.use('/api/shopify', shopifyConnect);
 app.use('/api/shopify', shopifyCallback);
+app.use('/', privacyRoutes);
+
 
 
 const fs = require('fs');
