@@ -12,6 +12,8 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const User = require('./models/User');
 const shopifyConnect = require('./routes/shopifyConnect');
+const shopifyCallback = require('./routes/shopifyCallback');
+
 
 
 const PORT = process.env.PORT || 3000;
@@ -131,6 +133,8 @@ app.post('/api/complete-onboarding', async (req, res) => {
 
 // Rutas API externas
 app.use('/api/shopify', shopifyConnect);
+app.use('/api/shopify', shopifyCallback);
+
 
 const fs = require('fs');
 
