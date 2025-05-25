@@ -11,8 +11,8 @@ const path = require('path');
 const mongoose = require('mongoose');
 const bcrypt = require('bcrypt');
 const User = require('./models/User');
-const shopifyConnect = require('./routes/shopifyConnect');
-const shopifyCallback = require('./routes/shopifyCallback');
+const shopifyConnect = require('../routes/shopifyConnect');
+const shopifyCallback = require('../routes/shopifyCallback');
 
 
 
