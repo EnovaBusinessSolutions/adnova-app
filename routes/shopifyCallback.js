@@ -1,7 +1,7 @@
 const express = require('express');
 const axios = require('axios');
 const router = express.Router();
-const User = require('../models/User');
+const User = require('../backend/models/User');
 
 const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY;
 const SHOPIFY_SECRET = process.env.SHOPIFY_SECRET;
