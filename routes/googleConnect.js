@@ -27,9 +27,14 @@ router.get('/google', (req, res) => {
   res.redirect(authUrl);
 });
 
-// 🔹 2. Ruta callback que recibe el code y guarda los tokens
+// 🔹 2. Callback después del consentimiento de Google
 router.get('/google/callback', async (req, res) => {
   const { code } = req.query;
+
+  if (!code) {
+    console.error('❌ No se recibió código de autorización');
+    return res.redirect('/onboarding?error=missing_code');
+  }
 
   try {
     const tokenRes = await axios.post(
@@ -46,12 +51,12 @@ router.get('/google/callback', async (req, res) => {
 
     const { access_token, refresh_token } = tokenRes.data;
 
-    const userId = req.user?._id;
-if (!userId) {
-  console.warn('⚠️ Usuario no autenticado al volver del flujo Google');
-  return res.redirect('/');
-}
+    const userId = req.session.userId || req.user?._id;
 
+    if (!userId) {
+      console.warn('⚠️ No hay sesión activa al volver de Google');
+      return res.redirect('/onboarding?google=fail');
+    }
 
     await User.findByIdAndUpdate(userId, {
       googleAccessToken: access_token,
@@ -59,10 +64,12 @@ if (!userId) {
       googleConnected: true
     });
 
-    return res.redirect('/onboarding/connect'); // Puedes cambiar esto si quieres redirigir a otro paso
+    console.log('✅ Google conectado para el usuario:', userId);
+    return res.redirect('/onboarding'); // vuelve al paso de conexión
+
   } catch (err) {
     console.error('❌ Error al obtener access token:', err.response?.data || err.message);
-    res.status(500).send('Error al conectar con Google');
+    return res.redirect('/onboarding?google=error');
   }
 });
 
