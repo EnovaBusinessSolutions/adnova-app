@@ -206,6 +206,25 @@
       const continueBtn = document.getElementById('continue-btn');
       const connectShopifyBtn = document.getElementById('connect-shopify');
       const connectGoogleBtn = document.getElementById('connect-google');
+
+// Verifica desde el backend si el usuario ya está conectado con Google
+fetch('/api/user')
+  .then(res => res.json())
+  .then(user => {
+    if (user.googleConnected) {
+  connectGoogleBtn.innerText = 'Connected ✓';
+  connectGoogleBtn.disabled = true;
+  connectGoogleBtn.classList.add('connected'); // ✅ usa tu clase ya estilizada
+} else {
+      connectGoogleBtn.addEventListener('click', function () {
+        window.location.href = '/google';
+      });
+    }
+  })
+  .catch(err => {
+    console.error('Error al verificar estado de Google:', err);
+  });
+
       const connectMetaBtn = document.getElementById('connect-meta');
       let shopifyConnected = false;
 
@@ -223,9 +242,9 @@
 
 
       connectGoogleBtn.addEventListener('click', function () {
-        this.classList.add('connected');
-        this.innerHTML = 'Connected ✓';
+        window.location.href = '/google';
       });
+
 
       connectMetaBtn.addEventListener('click', function () {
         this.classList.add('connected');

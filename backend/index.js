@@ -195,7 +195,8 @@ app.get('/api/user', (req, res) => {
   if (req.isAuthenticated()) {
     res.json({
       email: req.user.email,
-      onboardingComplete: req.user.onboardingComplete
+      onboardingComplete: req.user.onboardingComplete,
+      googleConnected: req.user.googleConnected || false
     });
   } else {
     res.status(401).json({ message: 'No autenticado' });
