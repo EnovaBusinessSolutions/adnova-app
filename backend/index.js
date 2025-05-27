@@ -15,6 +15,7 @@ const shopifyConnect = require('../routes/shopifyConnect');
 const shopifyCallback = require('../routes/shopifyCallback');
 const privacyRoutes = require('../routes/privacyRoutes');
 const googleConnectRoutes = require('../routes/googleConnect');
+const googleAnalyticsRoutes = require('./routes/googleAnalytics');
 
 
 
@@ -139,6 +140,7 @@ app.use('/api/shopify', shopifyConnect);
 app.use('/api/shopify', shopifyCallback);
 app.use('/', privacyRoutes);
 app.use('/', googleConnectRoutes);
+app.use('/', googleAnalyticsRoutes);
 
 
 
