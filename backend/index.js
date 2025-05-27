@@ -107,6 +107,8 @@ app.post('/api/login', async (req, res, next) => {
         return next(err);
       }
 
+      req.session.userId = user._id;
+
       return res.status(200).json({
         success: true,
         redirect: user.onboardingComplete ? '/dashboard' : '/onboarding'
