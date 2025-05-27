@@ -8,6 +8,7 @@ const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const REDIRECT_URI = 'https://adnova-app.onrender.com/google/callback';
 
+// 🔹 1. Ruta para iniciar la conexión con Google (flujo OAuth)
 router.get('/google', (req, res) => {
   const scope = [
     'https://www.googleapis.com/auth/analytics.readonly',
@@ -26,8 +27,10 @@ router.get('/google', (req, res) => {
   res.redirect(authUrl);
 });
 
+// 🔹 2. Ruta callback que recibe el code y guarda los tokens
 router.get('/google/callback', async (req, res) => {
   const { code } = req.query;
+
   try {
     const tokenRes = await axios.post(
       'https://oauth2.googleapis.com/token',
@@ -43,7 +46,7 @@ router.get('/google/callback', async (req, res) => {
 
     const { access_token, refresh_token } = tokenRes.data;
 
-    const userId = req.session.userId;
+    const userId = req.session.userId || req.user?._id;
     if (!userId) return res.status(401).send('No autenticado');
 
     await User.findByIdAndUpdate(userId, {
@@ -52,10 +55,10 @@ router.get('/google/callback', async (req, res) => {
       googleConnected: true
     });
 
-    return res.redirect('/onboarding/connect'); // o siguiente paso
+    return res.redirect('/onboarding/connect'); // Puedes cambiar esto si quieres redirigir a otro paso
   } catch (err) {
-    console.error('Error al conectar con Google:', err.response?.data || err.message);
-    res.status(500).send('Error durante la autenticación con Google');
+    console.error('❌ Error al obtener access token:', err.response?.data || err.message);
+    res.status(500).send('Error al conectar con Google');
   }
 });
 
