@@ -46,8 +46,12 @@ router.get('/google/callback', async (req, res) => {
 
     const { access_token, refresh_token } = tokenRes.data;
 
-    const userId = req.session.userId || req.user?._id;
-    if (!userId) return res.status(401).send('No autenticado');
+    const userId = req.user?._id;
+if (!userId) {
+  console.warn('⚠️ Usuario no autenticado al volver del flujo Google');
+  return res.redirect('/');
+}
+
 
     await User.findByIdAndUpdate(userId, {
       googleAccessToken: access_token,
