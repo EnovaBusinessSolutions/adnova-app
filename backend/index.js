@@ -179,7 +179,14 @@ app.get("/pixel-verifier", (req, res) => {
 
 // Ruta para iniciar sesión con Google
 app.get('/auth/google',
-  passport.authenticate('google', { scope: ['profile', 'email'] })
+  passport.authenticate('google', {
+  scope: [
+    'profile',
+    'email',
+    'https://www.googleapis.com/auth/analytics.readonly',
+    'https://www.googleapis.com/auth/adwords'
+  ]
+})
 );
 
 // Ruta de callback de Google
