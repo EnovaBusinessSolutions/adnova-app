@@ -16,6 +16,8 @@ const shopifyCallback = require('../routes/shopifyCallback');
 const privacyRoutes = require('../routes/privacyRoutes');
 const googleConnectRoutes = require('../routes/googleConnect');
 const googleAnalyticsRoutes = require('../routes/googleAnalytics');
+const metaAuthRoutes = require('./routes/auth/meta');
+const userRoutes = require('./routes/user');
 
 
 
@@ -143,6 +145,8 @@ app.use('/api/shopify', shopifyCallback);
 app.use('/', privacyRoutes);
 app.use('/', googleConnectRoutes);
 app.use('/', googleAnalyticsRoutes);
+app.use('/auth/meta', metaAuthRoutes);
+app.use('/api', userRoutes);
 
 
 
@@ -203,9 +207,12 @@ app.get('/auth/google/callback',
 app.get('/api/user', (req, res) => {
   if (req.isAuthenticated()) {
     res.json({
+      _id: req.user._id,
       email: req.user.email,
       onboardingComplete: req.user.onboardingComplete,
-      googleConnected: req.user.googleConnected || false
+      googleConnected: req.user.googleConnected || false,
+      metaConnected: req.user.metaConnected || false,
+      shopifyConnected: req.user.shopifyConnected || false
     });
   } else {
     res.status(401).json({ message: 'No autenticado' });
