@@ -16,7 +16,7 @@ const shopifyCallback = require('../routes/shopifyCallback');
 const privacyRoutes = require('../routes/privacyRoutes');
 const googleConnectRoutes = require('../routes/googleConnect');
 const googleAnalyticsRoutes = require('../routes/googleAnalytics');
-const metaAuthRoutes = require('../routes/auth/meta');
+const metaAuthRoutes = require('../routes/meta');
 const userRoutes = require('../routes/user');
 
 
