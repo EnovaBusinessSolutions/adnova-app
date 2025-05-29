@@ -96,7 +96,7 @@
                 <span class="optional-badge">Optional</span>
               </div>
             </div>
-            <button class="btn-connect" id="connect-meta">Connect</button>
+            <a href="/auth/meta/login" class="btn-connect" id="connect-meta-btn">Connect</a>
           </div>
         </div>
 
@@ -199,134 +199,159 @@
   </div>
 
   <script>
-    document.addEventListener('DOMContentLoaded', function () {
-      let currentStep = 1;
-      const steps = document.querySelectorAll('.step');
-      const contentPanels = document.querySelectorAll('.content-panel');
-      const continueBtn = document.getElementById('continue-btn');
-      const connectShopifyBtn = document.getElementById('connect-shopify');
-      const connectGoogleBtn = document.getElementById('connect-google');
+  document.addEventListener('DOMContentLoaded', function () {
+    let currentStep = 1;
+    const steps = document.querySelectorAll('.step');
+    const contentPanels = document.querySelectorAll('.content-panel');
+    const continueBtn = document.getElementById('continue-btn');
+    const connectShopifyBtn = document.getElementById('connect-shopify');
+    const connectGoogleBtn = document.getElementById('connect-google');
+    const connectMetaBtn = document.getElementById('connect-meta-btn');
 
-// Verifica desde el backend si el usuario ya está conectado con Google
-fetch('/api/user')
-  .then(res => res.json())
-  .then(user => {
-    if (user.googleConnected) {
-  connectGoogleBtn.innerText = 'Connected ✓';
-  connectGoogleBtn.disabled = true;
-  connectGoogleBtn.classList.add('connected'); // ✅ usa tu clase ya estilizada
-} else {
-      connectGoogleBtn.addEventListener('click', function () {
-        window.location.href = '/google';
+    let shopifyConnected = false;
+    let userId = null;
+
+    // Consulta único al estado del usuario
+    fetch('/api/user')
+      .then(res => res.json())
+      .then(user => {
+        userId = user._id; 
+        // Estado real de Shopify
+        shopifyConnected = user.shopifyConnected || false;
+
+        // Google conectado
+        if (user.googleConnected) {
+          connectGoogleBtn.innerText = 'Connected ✓';
+          connectGoogleBtn.disabled = true;
+          connectGoogleBtn.classList.add('connected');
+        } else {
+          connectGoogleBtn.addEventListener('click', function () {
+            window.location.href = '/google';
+          });
+        }
+
+        // Meta conectado
+        if (user.metaConnected) {
+          connectMetaBtn.innerText = 'Connected ✓';
+          connectMetaBtn.classList.add('connected');
+          connectMetaBtn.removeAttribute('href');
+        } else {
+          connectMetaBtn.addEventListener('click', function () {
+            window.location.href = '/auth/meta/login';
+          });
+        }
+
+        // Validación: activar botón Continue + mensaje
+        const ready = shopifyConnected;
+        if (ready) {
+          continueBtn.disabled = false;
+
+          if (!document.getElementById('continue-msg')) {
+            const msg = document.createElement('p');
+            msg.id = 'continue-msg';
+            msg.textContent = '✅ Listo para continuar';
+            msg.style.color = '#00c37e';
+            msg.style.fontWeight = 'bold';
+            msg.style.marginTop = '10px';
+            msg.style.textAlign = 'center';
+            continueBtn.parentElement.appendChild(msg);
+          }
+        }
+      })
+      .catch(err => {
+        console.error('Error al verificar estado del usuario:', err);
       });
-    }
-  })
-  .catch(err => {
-    console.error('Error al verificar estado de Google:', err);
-  });
 
-      const connectMetaBtn = document.getElementById('connect-meta');
-      let shopifyConnected = false;
-
-      connectShopifyBtn.addEventListener('click', function () {
-  // Redirige a Shopify OAuth (ajusta el dominio si estás en local)
-  const userId = 'USER_ID_REAL'; // Aquí deberías inyectar el ID real del usuario con JS o servidor
-  const shop = prompt("Ingresa el dominio de tu tienda Shopify (ej: mitienda.myshopify.com):");
-
-  if (shop) {
-    window.location.href = `/api/shopify/connect?shop=${shop}&userId=${userId}`;
-  } else {
-    alert("❌ No se ingresó ningún dominio de tienda.");
-  }
+    // Shopify: flujo de conexión
+    connectShopifyBtn.addEventListener('click', function () {
+  window.location.href = 'https://admin.shopify.com/store/store-preview-com/oauth/install_custom_app?client_id=c8ccb7768320f88fab4c0899e70a33a7&no_redirect=true&signature=...';
 });
 
-    connectMetaBtn.addEventListener('click', function () {
-        this.classList.add('connected');
-        this.innerHTML = 'Connected ✓';
-      });
-
-      continueBtn.addEventListener('click', function () {
-        if (shopifyConnected) goToStep(2);
-      });
-
-      document.getElementById('back-btn-2').addEventListener('click', () => goToStep(1));
-      document.getElementById('continue-btn-2').addEventListener('click', () => {
-        goToStep(3);
-        simulateAnalysis();
-      });
-      document.getElementById('continue-btn-3').addEventListener('click', () => goToStep(4));
-      const goBtn = document.getElementById('go-to-dashboard');
-if (goBtn) {
-  goBtn.addEventListener('click', async () => {
-    try {
-      const res = await fetch('/api/complete-onboarding', {
-        method: 'POST'
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        window.location.href = 'dashboard.html';
-      } else {
-        alert('❌ Error al completar onboarding');
-      }
-    } catch (err) {
-      console.error('Error:', err);
-      alert('❌ Error de conexión con el servidor');
-    }
-  });
-}
-
-      function goToStep(step) {
-        steps.forEach(stepEl => {
-          const stepNumber = parseInt(stepEl.dataset.step);
-          stepEl.classList.remove('active', 'completed');
-          if (stepNumber < step) stepEl.classList.add('completed');
-          else if (stepNumber === step) stepEl.classList.add('active');
-        });
-
-        contentPanels.forEach(panel => panel.classList.add('hidden'));
-        document.getElementById(`step${step}-content`).classList.remove('hidden');
-        currentStep = step;
-      }
-
-      function simulateAnalysis() {
-        const progressBar = document.querySelector('.progress-indicator');
-        const progressText = document.querySelector('.progress-text');
-        const analysisSteps = document.querySelectorAll('.analysis-step');
-        let progress = 0;
-        progressBar.style.width = '0%';
-        const interval = setInterval(() => {
-          progress += 5;
-          progressBar.style.width = `${progress}%`;
-
-          if (progress >= 25) {
-            analysisSteps[0].classList.add('completed');
-            analysisSteps[0].classList.remove('active');
-            analysisSteps[1].classList.add('active');
-          }
-          if (progress >= 50) {
-            analysisSteps[1].classList.add('completed');
-            analysisSteps[1].classList.remove('active');
-            analysisSteps[2].classList.add('active');
-            progressText.textContent = 'Analyzing customer segments...';
-          }
-          if (progress >= 75) {
-            analysisSteps[2].classList.add('completed');
-            analysisSteps[2].classList.remove('active');
-            analysisSteps[3].classList.add('active');
-            progressText.textContent = 'Generating recommendations...';
-          }
-          if (progress >= 100) {
-            clearInterval(interval);
-            analysisSteps[3].classList.add('completed');
-            analysisSteps[3].classList.remove('active');
-            progressText.textContent = 'Analysis complete!';
-            document.getElementById('continue-btn-3').disabled = false;
-          }
-        }, 100);
-      }
-
-      goToStep(1);
+    // Botón Continue
+    continueBtn.addEventListener('click', function () {
+      if (shopifyConnected) goToStep(2);
     });
-  </script><script src='script.js' defer></script></body>
+
+    document.getElementById('back-btn-2').addEventListener('click', () => goToStep(1));
+    document.getElementById('continue-btn-2').addEventListener('click', () => {
+      goToStep(3);
+      simulateAnalysis();
+    });
+    document.getElementById('continue-btn-3').addEventListener('click', () => goToStep(4));
+
+    const goBtn = document.getElementById('go-to-dashboard');
+    if (goBtn) {
+      goBtn.addEventListener('click', async () => {
+        try {
+          const res = await fetch('/api/complete-onboarding', {
+            method: 'POST'
+          });
+
+          const data = await res.json();
+          if (data.success) {
+            window.location.href = 'dashboard.html';
+          } else {
+            alert('❌ Error al completar onboarding');
+          }
+        } catch (err) {
+          console.error('Error:', err);
+          alert('❌ Error de conexión con el servidor');
+        }
+      });
+    }
+
+    // Funciones auxiliares
+    function goToStep(step) {
+      steps.forEach(stepEl => {
+        const stepNumber = parseInt(stepEl.dataset.step);
+        stepEl.classList.remove('active', 'completed');
+        if (stepNumber < step) stepEl.classList.add('completed');
+        else if (stepNumber === step) stepEl.classList.add('active');
+      });
+
+      contentPanels.forEach(panel => panel.classList.add('hidden'));
+      document.getElementById(`step${step}-content`).classList.remove('hidden');
+      currentStep = step;
+    }
+
+    function simulateAnalysis() {
+      const progressBar = document.querySelector('.progress-indicator');
+      const progressText = document.querySelector('.progress-text');
+      const analysisSteps = document.querySelectorAll('.analysis-step');
+      let progress = 0;
+      progressBar.style.width = '0%';
+      const interval = setInterval(() => {
+        progress += 5;
+        progressBar.style.width = `${progress}%`;
+
+        if (progress >= 25) {
+          analysisSteps[0].classList.add('completed');
+          analysisSteps[0].classList.remove('active');
+          analysisSteps[1].classList.add('active');
+        }
+        if (progress >= 50) {
+          analysisSteps[1].classList.add('completed');
+          analysisSteps[1].classList.remove('active');
+          analysisSteps[2].classList.add('active');
+          progressText.textContent = 'Analyzing customer segments...';
+        }
+        if (progress >= 75) {
+          analysisSteps[2].classList.add('completed');
+          analysisSteps[2].classList.remove('active');
+          analysisSteps[3].classList.add('active');
+          progressText.textContent = 'Generating recommendations...';
+        }
+        if (progress >= 100) {
+          clearInterval(interval);
+          analysisSteps[3].classList.add('completed');
+          analysisSteps[3].classList.remove('active');
+          progressText.textContent = 'Analysis complete!';
+          document.getElementById('continue-btn-3').disabled = false;
+        }
+      }, 100);
+    }
+
+    goToStep(1);
+  });
+</script><script src='script.js' defer></script></body>
 </html>
