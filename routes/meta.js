@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
-const User = require('../../models/User');
+const User = require('../models/User');
 
 const clientId = process.env.META_APP_ID;
 const clientSecret = process.env.META_APP_SECRET;
