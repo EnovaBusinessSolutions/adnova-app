@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../backend/models/User');   // ✅ ruta correcta
-const User = require('../backend/models/User.js');
 
 
 // Ruta para obtener estado de conexión del usuario
