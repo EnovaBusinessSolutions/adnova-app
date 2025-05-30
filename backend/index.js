@@ -12,7 +12,7 @@ const bcrypt   = require('bcrypt');
 const bodyParser = require('body-parser');
 
 require('./auth');                 // tu configuración de Passport
-const User           = require('./models/User');
+const User           = require('./backend/models/User');
 const googleConnect  = require('../routes/googleConnect');
 const googleAnalytics= require('../routes/googleAnalytics');
 const metaAuthRoutes = require('../routes/meta');
