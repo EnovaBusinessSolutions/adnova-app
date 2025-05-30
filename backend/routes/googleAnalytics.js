@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
-const User = require('../backend/models/User');
+const User = require('../models/User');
 
 // POST /api/google/analytics
 router.post('/api/google/analytics', async (req, res) => {

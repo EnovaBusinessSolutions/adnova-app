@@ -1,7 +1,7 @@
 // routes/mockShopify.js
 const express = require('express');
 const router  = express.Router();
-const User    = require('../backend/models/User');
+const User    = require('../models/User');
 
 // Se llama justo antes de redirigir al enlace de instalación
 router.post('/mock-shopify-connected', async (req, res) => {

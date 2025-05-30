@@ -12,14 +12,14 @@ const bcrypt   = require('bcrypt');
 const bodyParser = require('body-parser');
 
 require('./auth');                 // tu configuración de Passport
-const User           = require('./backend/models/User');
-const googleConnect  = require('../routes/googleConnect');
-const googleAnalytics= require('../routes/googleAnalytics');
-const metaAuthRoutes = require('../routes/meta');
-const privacyRoutes  = require('../routes/privacyRoutes');
-const userRoutes     = require('../routes/user');
-const mockShopify    = require('../routes/mockShopify');
-const shopifyRoutes  = require('../routes/shopify');   // ← NUEVO router único
+const User = require('./models/User');           // ✅  esta es la buena
+const googleConnect  = require('./routes/googleConnect');
+const googleAnalytics= require('./routes/googleAnalytics');
+const metaAuthRoutes = require('./routes/meta');
+const privacyRoutes  = require('./routes/privacyRoutes');
+const userRoutes     = require('./routes/user');
+const mockShopify    = require('./routes/mockShopify');
+const shopifyRoutes  = require('./routes/shopify');   // ← NUEVO router único
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
