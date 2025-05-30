@@ -18,6 +18,7 @@ const googleConnectRoutes = require('../routes/googleConnect');
 const googleAnalyticsRoutes = require('../routes/googleAnalytics');
 const metaAuthRoutes = require('../routes/meta');
 const userRoutes = require('../routes/user');
+const mockShopify = require('../routes/mockShopify');
 
 
 
@@ -147,7 +148,7 @@ app.use('/', googleConnectRoutes);
 app.use('/', googleAnalyticsRoutes);
 app.use('/auth/meta', metaAuthRoutes);
 app.use('/api', userRoutes);
-
+app.use('/api', mockShopify);
 
 
 const fs = require('fs');
