@@ -1,225 +1,191 @@
 // backend/index.js
 require('dotenv').config();
-const session = require('express-session');
+
+const express  = require('express');
+const session  = require('express-session');
 const passport = require('passport');
-require('./auth'); // este archivo lo vas a crear también en /backend/
-const express = require('express');
-const app = express();
-const cors = require('cors');
-const bodyParser = require('body-parser');
-const path = require('path');
 const mongoose = require('mongoose');
-const bcrypt = require('bcrypt');
-const User = require('./models/User');
-const shopifyConnect = require('../routes/shopifyConnect');
-const shopifyCallback = require('../routes/shopifyCallback');
-const privacyRoutes = require('../routes/privacyRoutes');
-const googleConnectRoutes = require('../routes/googleConnect');
-const googleAnalyticsRoutes = require('../routes/googleAnalytics');
+const cors     = require('cors');
+const path     = require('path');
+const fs       = require('fs');
+const bcrypt   = require('bcrypt');
+const bodyParser = require('body-parser');
+
+require('./auth');                 // tu configuración de Passport
+const User           = require('./models/User');
+const googleConnect  = require('../routes/googleConnect');
+const googleAnalytics= require('../routes/googleAnalytics');
 const metaAuthRoutes = require('../routes/meta');
-const userRoutes = require('../routes/user');
-const mockShopify = require('../routes/mockShopify');
+const privacyRoutes  = require('../routes/privacyRoutes');
+const userRoutes     = require('../routes/user');
+const mockShopify    = require('../routes/mockShopify');
+const shopifyRoutes  = require('../routes/shopify');   // ← NUEVO router único
 
-
-
-
+const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// ✅ Conexión a MongoDB usando la variable MONGO_URI
+/* ===== Conexión a MongoDB ===== */
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 })
-.then(() => console.log("✅ Conectado a MongoDB Atlas"))
-.catch((err) => console.error("❌ Error al conectar con MongoDB:", err));
+.then(() => console.log('✅ Conectado a MongoDB Atlas'))
+.catch(err => console.error('❌ Error al conectar con MongoDB:', err));
 
-// Middlewares
+/* ===== Middlewares globales ===== */
 app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, '../public')));
+
+/* ---- Cookies seguras detrás de Render ---- */
+app.set('trust proxy', 1);   // importante para cookies Secure
+
 app.use(session({
-  secret: 'adnova-secret',
+  secret: process.env.SESSION_SECRET,
   resave: false,
-  saveUninitialized: false
+  saveUninitialized: false,
+  cookie: { sameSite: 'none', secure: true }
 }));
+
 app.use(passport.initialize());
 app.use(passport.session());
 
-// 🔐 Middlewares para proteger rutas
+/* ===== Helpers de autenticación ===== */
 function ensureAuthenticated(req, res, next) {
-  if (req.isAuthenticated()) {
-    return next();
-  }
-  return res.redirect('/');
+  if (req.isAuthenticated()) return next();
+  res.redirect('/');
 }
 
 function ensureNotOnboarded(req, res, next) {
-  if (req.isAuthenticated() && !req.user.onboardingComplete) {
-    return next();
-  }
-  return res.redirect('/dashboard');
+  if (req.isAuthenticated() && !req.user.onboardingComplete) return next();
+  res.redirect('/dashboard');
 }
 
-// Página principal
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/index.html'));
-});
+/* ===== Rutas públicas ===== */
+app.get('/', (req, res) =>
+  res.sendFile(path.join(__dirname, '../public/index.html'))
+);
 
-// Registro de usuarios
+/* ===== Registro ===== */
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
-
-  if (!email || !password) {
+  if (!email || !password)
     return res.status(400).json({ success: false, message: 'Correo y contraseña son requeridos' });
-  }
 
   try {
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const user = await User.create({ email, password: hashedPassword });
+    const hashed = await bcrypt.hash(password, 10);
+    await User.create({ email, password: hashed });
     res.status(201).json({ success: true, message: 'Usuario registrado con éxito' });
   } catch (err) {
-    console.error("❌ Error al registrar usuario:", err);
+    console.error('❌ Error al registrar usuario:', err);
     res.status(400).json({ success: false, message: 'No se pudo registrar el usuario' });
   }
 });
 
-// Login de usuarios (con integración de sesión)
+/* ===== Login ===== */
 app.post('/api/login', async (req, res, next) => {
   const { email, password } = req.body;
-  console.log('Login recibido:', email);
-
-  if (!email || !password) {
+  if (!email || !password)
     return res.status(400).json({ success: false, message: 'Correo y contraseña son requeridos' });
-  }
 
   try {
     const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(401).json({ success: false, message: 'Usuario no encontrado' });
-    }
+    if (!user) return res.status(401).json({ success: false, message: 'Usuario no encontrado' });
 
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(401).json({ success: false, message: 'Contraseña incorrecta' });
-    }
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) return res.status(401).json({ success: false, message: 'Contraseña incorrecta' });
 
-    // 🔑 Aquí se activa la sesión con Passport
-    req.login(user, (err) => {
-      if (err) {
-        console.error("❌ Error al iniciar sesión con Passport:", err);
-        return next(err);
-      }
-
+    req.login(user, err => {
+      if (err) return next(err);
       req.session.userId = user._id;
-
-      return res.status(200).json({
+      res.status(200).json({
         success: true,
         redirect: user.onboardingComplete ? '/dashboard' : '/onboarding'
       });
     });
-
   } catch (err) {
-    console.error("❌ Error al hacer login:", err);
+    console.error('❌ Error al hacer login:', err);
     res.status(500).json({ success: false, message: 'Error del servidor' });
   }
 });
 
-
-// Ruta para marcar onboarding como completado
-app.post('/api/complete-onboarding', async (req, res) => {
-  if (!req.isAuthenticated()) {
-    return res.status(401).json({ success: false, message: 'No autenticado' });
-  }
-
+/* ===== Completar onboarding ===== */
+app.post('/api/complete-onboarding', ensureAuthenticated, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.user._id, { onboardingComplete: true });
     res.json({ success: true });
   } catch (err) {
-    console.error("❌ Error al completar onboarding:", err);
+    console.error('❌ Error al completar onboarding:', err);
     res.status(500).json({ success: false, message: 'Error al actualizar usuario' });
   }
 });
 
-// Rutas API externas
-app.use('/api/shopify', shopifyConnect);
-app.use('/api/shopify', shopifyCallback);
-app.use('/', privacyRoutes);
-app.use('/', googleConnectRoutes);
-app.use('/', googleAnalyticsRoutes);
+/* ===== Rutas externas / integraciones ===== */
+app.use('/api/shopify', shopifyRoutes);          // ← único router de Shopify
+app.use('/',        privacyRoutes);
+app.use('/',        googleConnect);
+app.use('/',        googleAnalytics);
 app.use('/auth/meta', metaAuthRoutes);
-app.use('/api', userRoutes);
-app.use('/api', mockShopify);
+app.use('/api',    userRoutes);
+app.use('/api',    mockShopify);
 
-
-const fs = require('fs');
-
-app.get("/onboarding", ensureNotOnboarded, (req, res) => {
-  const filePath = path.join(__dirname, '../public/onboarding.html');
-
-  fs.readFile(filePath, 'utf8', (err, html) => {
-    if (err) {
-      console.error("❌ Error al leer onboarding.html:", err);
-      return res.status(500).send("Error al cargar la página de onboarding.");
-    }
-
-    const updatedHtml = html.replace('USER_ID_REAL', req.user._id.toString());
-    res.send(updatedHtml);
+/* ===== Vistas protegidas ===== */
+app.get('/onboarding', ensureNotOnboarded, (req, res) => {
+  const file = path.join(__dirname, '../public/onboarding.html');
+  fs.readFile(file, 'utf8', (err, html) => {
+    if (err) return res.status(500).send('Error al cargar onboarding');
+    res.send(html.replace('USER_ID_REAL', req.user._id.toString()));
   });
 });
 
-
-app.get("/dashboard", ensureAuthenticated, (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/dashboard.html'));
-});
-
-app.get("/configuracion", (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/configuracion.html'));
-});
-
-app.get("/audit", (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/audit.html'));
-});
-
-app.get("/pixel-verifier", (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/pixel-verifier.html'));
-});
-
-// Ruta para iniciar sesión con Google
-app.get('/auth/google',
-  passport.authenticate('google', {
-  scope: [
-    'profile',
-    'email',
-    'https://www.googleapis.com/auth/analytics.readonly',
-    'https://www.googleapis.com/auth/adwords'
-  ]
-})
+app.get('/dashboard',      ensureAuthenticated, (r, s) =>
+  s.sendFile(path.join(__dirname, '../public/dashboard.html'))
+);
+app.get('/configuracion',  (r, s) =>
+  s.sendFile(path.join(__dirname, '../public/configuracion.html'))
+);
+app.get('/audit',          (r, s) =>
+  s.sendFile(path.join(__dirname, '../public/audit.html'))
+);
+app.get('/pixel-verifier', (r, s) =>
+  s.sendFile(path.join(__dirname, '../public/pixel-verifier.html'))
 );
 
-// Ruta de callback de Google
+/* ===== Google OAuth ===== */
+app.get('/auth/google',
+  passport.authenticate('google', {
+    scope: [
+      'profile',
+      'email',
+      'https://www.googleapis.com/auth/analytics.readonly',
+      'https://www.googleapis.com/auth/adwords'
+    ]
+  })
+);
+
 app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
-    const redirectUrl = req.user.onboardingComplete ? '/dashboard' : '/onboarding';
-    res.redirect(redirectUrl);
+    res.redirect(req.user.onboardingComplete ? '/dashboard' : '/onboarding');
   }
 );
 
+/* ===== API: datos de usuario ===== */
 app.get('/api/user', (req, res) => {
-  if (req.isAuthenticated()) {
-    res.json({
-      _id: req.user._id,
-      email: req.user.email,
-      onboardingComplete: req.user.onboardingComplete,
-      googleConnected: req.user.googleConnected || false,
-      metaConnected: req.user.metaConnected || false,
-      shopifyConnected: req.user.shopifyConnected || false
-    });
-  } else {
-    res.status(401).json({ message: 'No autenticado' });
-  }
+  if (!req.isAuthenticated())
+    return res.status(401).json({ message: 'No autenticado' });
+
+  res.json({
+    _id: req.user._id,
+    email: req.user.email,
+    onboardingComplete: req.user.onboardingComplete,
+    googleConnected:  req.user.googleConnected  || false,
+    metaConnected:    req.user.metaConnected    || false,
+    shopifyConnected: req.user.shopifyConnected || false
+  });
 });
 
+/* ===== Logout ===== */
 app.get('/logout', (req, res) => {
   req.logout(err => {
     if (err) {
@@ -233,12 +199,10 @@ app.get('/logout', (req, res) => {
   });
 });
 
-// Ruta 404
-app.use((req, res) => {
-  res.status(404).send('Página no encontrada');
-});
+/* ===== 404 ===== */
+app.use((req, res) => res.status(404).send('Página no encontrada'));
 
-// Iniciar servidor
-app.listen(PORT, () => {
-  console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
-});
+/* ===== Server ===== */
+app.listen(PORT, () =>
+  console.log(`✅ Servidor corriendo en http://localhost:${PORT}`)
+);
