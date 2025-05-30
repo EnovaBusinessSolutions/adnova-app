@@ -4,7 +4,7 @@ const axios   = require('axios');
 const crypto  = require('crypto');
 const qs      = require('querystring');
 const router  = express.Router();
-const User    = require('../models/User');
+const User    = require('../backend/models/User');
 
 const {
   SHOPIFY_API_KEY,
