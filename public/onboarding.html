@@ -263,18 +263,11 @@
       });
 
     // --- Shopify: demo con link directo + actualización de estado ---
-connectShopifyBtn.addEventListener('click', async () => {
-  try {
-    // 1) Avisamos al backend que “ya está conectado” (modo demo)
-    await fetch('/api/mock-shopify-connected', { method: 'POST' });
-
-    // 2) Lanzamos la instalación real de la app privada
-    window.location.href =
-      'https://admin.shopify.com/store/store-preview-com/oauth/install_custom_app?client_id=c8ccb7768320f88fab4c0899e70a33a7&no_redirect=true&signature=eyJleHBpcmVzX2F0IjoxNzQ5MDk2NDk4LCJwZXJtYW5lbnRfZG9tYWluIjoic3RvcmUtcHJldmlldy1jb20ubXlzaG9waWZ5LmNvbSIsImNsaWVudF9pZCI6ImM4Y2NiNzc2ODMyMGY4OGZhYjRjMDg5OWU3MGEzM2E3IiwicHVycG9zZSI6ImN1c3RvbV9hcHAifQ%3D%3D--cbb5fff4bed4c1010d892562d09f61fa1d66d93a';
-  } catch (err) {
-    console.error('❌ Mock Shopify:', err);
-    alert('Error al iniciar la conexión con Shopify');
-  }
+    // --- Shopify: flujo real OAuth (usa DEFAULT_SHOP) ---
+connectShopifyBtn.addEventListener('click', () => {
+  // `userId` ya lo obtuvimos del endpoint /api/user
+  const url = `/api/shopify/connect?userId=${userId}`;   // el backend añadirá DEFAULT_SHOP
+  window.location.href = url;
 });
 
 
