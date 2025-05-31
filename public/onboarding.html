@@ -261,12 +261,15 @@
       .catch(err => {
         console.error('Error al verificar estado del usuario:', err);
       });
+  
 
-    // --- Shopify: demo con link directo + actualización de estado ---
-    // --- Shopify: flujo real OAuth (usa DEFAULT_SHOP) ---
-connectShopifyBtn.addEventListener('click', () => {
-  window.location.href = INSTALL_LINK;       // redirige directo
-});
+const INSTALL_LINK = 'INSTALL_LINK_PLACEHOLDER';
+
+  document
+    .getElementById('connect-shopify')
+    .addEventListener('click', () => {
+      window.location.href = INSTALL_LINK;   // redirección directa
+    });
 
 
     // Botón Continue

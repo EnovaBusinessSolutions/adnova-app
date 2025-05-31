@@ -110,14 +110,25 @@ app.post('/api/login', async (req, res, next) => {
 });
 
 /* ===== Completar onboarding ===== */
-app.post('/api/complete-onboarding', ensureAuthenticated, async (req, res) => {
-  try {
-    await User.findByIdAndUpdate(req.user._id, { onboardingComplete: true });
-    res.json({ success: true });
-  } catch (err) {
-    console.error('❌ Error al completar onboarding:', err);
-    res.status(500).json({ success: false, message: 'Error al actualizar usuario' });
-  }
+app.get("/onboarding", ensureNotOnboarded, (req, res) => {
+  const filePath = path.join(__dirname, "../public/onboarding.html");
+
+  fs.readFile(filePath, "utf8", (err, html) => {
+    if (err) {
+      console.error("❌ Error al leer onboarding.html:", err);
+      return res.status(500).send("Error al cargar la página de onboarding.");
+    }
+
+    // ▸ Sustituir marcador de USER_ID y del INSTALL_LINK
+    const updatedHtml = html
+      .replace("USER_ID_REAL", req.user._id.toString())
+      .replace(
+        "INSTALL_LINK_PLACEHOLDER",
+        process.env.CUSTOM_APP_INSTALL_LINK || ""
+      );
+
+    res.send(updatedHtml);
+  });
 });
 
 /* ===== Rutas externas / integraciones ===== */
