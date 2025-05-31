@@ -265,11 +265,16 @@
 
 const INSTALL_LINK = 'INSTALL_LINK_PLACEHOLDER';
 
-  document
-    .getElementById('connect-shopify')
-    .addEventListener('click', () => {
-      window.location.href = INSTALL_LINK;   // redirección directa
-    });
+ document
+  .getElementById('connect-shopify')
+  .addEventListener('click', () => {
+    const shop = prompt("Ingresa el dominio de tu tienda (ej: mi-tienda.myshopify.com):");
+    if (shop && shop.endsWith('.myshopify.com')) {
+      window.location.href = `/api/shopify/connect?shop=${shop}`;
+    } else {
+      alert('Dominio de tienda inválido.');
+    }
+});
 
 
     // Botón Continue
