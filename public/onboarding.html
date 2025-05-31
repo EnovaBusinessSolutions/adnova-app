@@ -268,14 +268,16 @@ const INSTALL_LINK = 'INSTALL_LINK_PLACEHOLDER';
 document
   .getElementById('connect-shopify')
   .addEventListener('click', () => {
-    const shop = prompt("Ingresa el dominio de tu tienda (ej: mi-tienda.myshopify.com)");
+    const shop = prompt("Ingresa el dominio de tu tienda (ej: mi-tienda.myshopify.com):");
+
     if (shop && shop.endsWith('.myshopify.com')) {
-      if (!userId) return alert("Error: No se encontró el ID del usuario.");
+      const userId = USER_ID_REAL; // este valor lo reemplaza el backend dinámicamente
       window.location.href = `/api/shopify/connect?shop=${shop}&userId=${userId}`;
     } else {
       alert('Dominio de tienda inválido.');
     }
   });
+
 
 
 
