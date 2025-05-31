@@ -265,9 +265,7 @@
     // --- Shopify: demo con link directo + actualización de estado ---
     // --- Shopify: flujo real OAuth (usa DEFAULT_SHOP) ---
 connectShopifyBtn.addEventListener('click', () => {
-  // `userId` ya lo obtuvimos del endpoint /api/user
-  const url = `/api/shopify/connect?userId=${userId}`;   // el backend añadirá DEFAULT_SHOP
-  window.location.href = url;
+  window.location.href = INSTALL_LINK;       // redirige directo
 });
 
 
