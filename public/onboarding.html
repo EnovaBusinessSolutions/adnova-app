@@ -208,8 +208,11 @@
     const connectGoogleBtn = document.getElementById('connect-google');
     const connectMetaBtn = document.getElementById('connect-meta-btn');
 
+
+
     let shopifyConnected = false;
-    let userId = null;
+    let userId = "USER_ID_REAL"; // ya queda definido con el valor real
+
 
     // Consulta único al estado del usuario
     fetch('/api/user')
@@ -268,14 +271,13 @@ const INSTALL_LINK = 'INSTALL_LINK_PLACEHOLDER';
 document
   .getElementById('connect-shopify')
   .addEventListener('click', () => {
-    const shop = prompt("Ingresa el dominio de tu tienda (ej: mi-tienda.myshopify.com):");
-
-    if (shop && shop.endsWith('.myshopify.com')) {
-      const userId = USER_ID_REAL; // este valor lo reemplaza el backend dinámicamente
-      window.location.href = `/api/shopify/connect?shop=${shop}&userId=${userId}`;
-    } else {
-      alert('Dominio de tienda inválido.');
-    }
+    const shop = prompt("Ingresa el dominio de tu tienda (ej: mi-tienda.myshopify.com)");
+if (shop && shop.endsWith('.myshopify.com') && userId) {
+  const encodedShop = encodeURIComponent(shop);
+  window.location.href = `/api/shopify/connect?shop=${encodedShop}&userId=${userId}`;
+} else {
+  alert('❌ Dominio inválido o falta userId');
+}
   });
 
 
