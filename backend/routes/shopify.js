@@ -5,6 +5,7 @@ const crypto  = require('crypto');
 const qs      = require('querystring');
 const router  = express.Router();
 const User    = require('../models/User');
+const INSTALL_LINK = process.env.CUSTOM_APP_INSTALL_LINK;
 
 const {
   SHOPIFY_API_KEY,
