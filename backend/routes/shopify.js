@@ -50,6 +50,9 @@ router.get('/callback', async (req, res) => {
   const { shop, hmac, code, state } = req.query;
   if (!shop || !hmac || !code || !state) return res.status(400).send('Params faltantes');
   if (state !== req.session.shopifyState)  return res.status(403).send('State inválido');
+  console.log('🔁 Estado recibido:', state);
+console.log('🧠 Estado de sesión:', req.session.shopifyState);
+
 
   const msg = Object.keys(req.query)
     .filter(k => k !== 'signature' && k !== 'hmac')
