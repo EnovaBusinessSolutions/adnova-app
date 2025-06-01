@@ -229,6 +229,14 @@ app.get('/logout', (req, res) => {
   });
 });
 
+app.get('/api/test-shopify-token', verifyShopifyToken, (req, res) => {
+  res.json({
+    success: true,
+    shop: req.shopifySession.dest,
+    message: '✅ Token válido y verificado',
+  });
+});
+
 /* ===== 404 ===== */
 app.use((req, res) => res.status(404).send('Página no encontrada'));
 

@@ -6,6 +6,8 @@ const qs      = require('querystring');
 const router  = express.Router();
 const User    = require('../models/User');
 const INSTALL_LINK = process.env.CUSTOM_APP_INSTALL_LINK;
+const verifyShopifyToken = require('./middlewares/verifyShopifyToken');
+
 
 const {
   SHOPIFY_API_KEY,
@@ -86,6 +88,11 @@ console.log('🧠 Estado de sesión:', req.session.shopifyState);
     console.error('❌ Token error:', err.response?.data || err);
     res.redirect('/onboarding?shopify=error');
   }
+});
+
+// Ruta protegida de ejemplo
+router.get('/protected', verifyShopifyToken, (req, res) => {
+  res.json({ success: true, message: 'Access granted via verified Shopify token' });
 });
 
 module.exports = router;
