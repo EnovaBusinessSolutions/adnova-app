@@ -131,6 +131,25 @@ app.get("/onboarding", ensureNotOnboarded, (req, res) => {
   });
 });
 
+/* ===== Marcar onboarding como completo ===== */
+app.post('/api/complete-onboarding', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res.status(401).json({ success: false, message: 'No autenticado' });
+    }
+
+    await User.findByIdAndUpdate(req.user._id, {
+      onboardingComplete: true,
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('❌ Error al completar onboarding:', err);
+    res.status(500).json({ success: false, message: 'Error del servidor' });
+  }
+});
+
+
 /* ===== Rutas externas / integraciones ===== */
 app.use('/api/shopify', shopifyRoutes);          // ← único router de Shopify
 app.use('/',        privacyRoutes);
