@@ -221,6 +221,11 @@
         userId = user._id; 
         // Estado real de Shopify
         shopifyConnected = user.shopifyConnected || false;
+        if (shopifyConnected) {
+  connectShopifyBtn.innerText = 'Connected ✓';
+  connectShopifyBtn.disabled = true;
+  connectShopifyBtn.classList.add('connected');
+}
 
         // Google conectado
         if (user.googleConnected) {
@@ -252,7 +257,6 @@
           if (!document.getElementById('continue-msg')) {
             const msg = document.createElement('p');
             msg.id = 'continue-msg';
-            msg.textContent = '✅ Listo para continuar';
             msg.style.color = '#00c37e';
             msg.style.fontWeight = 'bold';
             msg.style.marginTop = '10px';
