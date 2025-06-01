@@ -20,6 +20,8 @@ const privacyRoutes  = require('./routes/privacyRoutes');
 const userRoutes     = require('./routes/user');
 const mockShopify    = require('./routes/mockShopify');
 const shopifyRoutes  = require('./routes/shopify');   // ← NUEVO router único
+const verifyShopifyToken = require('./middlewares/verifyShopifyToken');
+
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
