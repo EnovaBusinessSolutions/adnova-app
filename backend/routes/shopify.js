@@ -47,6 +47,7 @@ router.get('/connect', (req, res) => {
 
 /* ----------  /callback  ---------- */
 router.get('/callback', async (req, res) => {
+   console.log('🔥 Entró a /callback con query:', req.query); // ← AGREGA ESTA LÍNEA
   const { shop, hmac, code, state } = req.query;
   if (!shop || !hmac || !code || !state) return res.status(400).send('Params faltantes');
   if (state !== req.session.shopifyState)  return res.status(403).send('State inválido');
