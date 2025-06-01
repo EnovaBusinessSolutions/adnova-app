@@ -6,6 +6,8 @@
   <title>Onboarding - ADNOVA AI</title>
   <link rel="stylesheet" href="onboarding.css" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+  <script src="https://unpkg.com/@shopify/app-bridge@3"></script>
+<script src="https://unpkg.com/@shopify/app-bridge-utils@3"></script>
 </head>
 <body data-page="onboarding">
   <div class="onboarding-container">
@@ -199,35 +201,49 @@
   </div>
 
   <script>
-  document.addEventListener('DOMContentLoaded', function () {
-    let currentStep = 1;
-    const steps = document.querySelectorAll('.step');
-    const contentPanels = document.querySelectorAll('.content-panel');
-    const continueBtn = document.getElementById('continue-btn');
-    const connectShopifyBtn = document.getElementById('connect-shopify');
-    const connectGoogleBtn = document.getElementById('connect-google');
-    const connectMetaBtn = document.getElementById('connect-meta-btn');
+document.addEventListener('DOMContentLoaded', function () {
+  const AppBridge = window['app-bridge'];
+  const createApp = AppBridge.default;
+  const actions = AppBridge.actions;
+  const utils = window['app-bridge-utils'];
 
+  const urlParams = new URLSearchParams(window.location.search);
+  const shopOrigin = urlParams.get('shop');
 
+  const app = createApp({
+    apiKey: 'c8ccb7768320f88fab4c0899e70a33a7',
+    shopOrigin: shopOrigin,
+    host: urlParams.get('host'),
+    forceRedirect: true,
+  });
 
-    let shopifyConnected = false;
-    let userId = "USER_ID_REAL"; // ya queda definido con el valor real
+  let currentStep = 1;
+  const steps = document.querySelectorAll('.step');
+  const contentPanels = document.querySelectorAll('.content-panel');
+  const continueBtn = document.getElementById('continue-btn');
+  const connectShopifyBtn = document.getElementById('connect-shopify');
+  const connectGoogleBtn = document.getElementById('connect-google');
+  const connectMetaBtn = document.getElementById('connect-meta-btn');
 
+  let shopifyConnected = false;
+  let userId = "USER_ID_REAL";
 
-    // Consulta único al estado del usuario
-    fetch('/api/user')
+  utils.getSessionToken(app).then((token) => {
+    fetch('/api/user', {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    })
       .then(res => res.json())
       .then(user => {
-        userId = user._id; 
-        // Estado real de Shopify
+        userId = user._id;
         shopifyConnected = user.shopifyConnected || false;
         if (shopifyConnected) {
-  connectShopifyBtn.innerText = 'Connected ✓';
-  connectShopifyBtn.disabled = true;
-  connectShopifyBtn.classList.add('connected');
-}
+          connectShopifyBtn.innerText = 'Connected ✓';
+          connectShopifyBtn.disabled = true;
+          connectShopifyBtn.classList.add('connected');
+        }
 
-        // Google conectado
         if (user.googleConnected) {
           connectGoogleBtn.innerText = 'Connected ✓';
           connectGoogleBtn.disabled = true;
@@ -238,7 +254,6 @@
           });
         }
 
-        // Meta conectado
         if (user.metaConnected) {
           connectMetaBtn.innerText = 'Connected ✓';
           connectMetaBtn.classList.add('connected');
@@ -249,11 +264,9 @@
           });
         }
 
-        // Validación: activar botón Continue + mensaje
         const ready = shopifyConnected;
         if (ready) {
           continueBtn.disabled = false;
-
           if (!document.getElementById('continue-msg')) {
             const msg = document.createElement('p');
             msg.id = 'continue-msg';
@@ -268,110 +281,101 @@
       .catch(err => {
         console.error('Error al verificar estado del usuario:', err);
       });
-  
+  });
 
-const INSTALL_LINK = 'INSTALL_LINK_PLACEHOLDER';
-
-document
-  .getElementById('connect-shopify')
-  .addEventListener('click', () => {
+  document.getElementById('connect-shopify').addEventListener('click', () => {
     const shop = prompt("Ingresa el dominio de tu tienda (ej: mi-tienda.myshopify.com)");
-if (shop && shop.endsWith('.myshopify.com') && userId) {
-  const encodedShop = encodeURIComponent(shop);
-  window.location.href = `/api/shopify/connect?shop=${encodedShop}&userId=${userId}`;
-} else {
-  alert('❌ Dominio inválido o falta userId');
-}
+    if (shop && shop.endsWith('.myshopify.com') && userId) {
+      const encodedShop = encodeURIComponent(shop);
+      window.location.href = `/api/shopify/connect?shop=${encodedShop}&userId=${userId}`;
+    } else {
+      alert('❌ Dominio inválido o falta userId');
+    }
   });
 
-
-
-
-    // Botón Continue
-    continueBtn.addEventListener('click', function () {
-      if (shopifyConnected) goToStep(2);
-    });
-
-    document.getElementById('back-btn-2').addEventListener('click', () => goToStep(1));
-    document.getElementById('continue-btn-2').addEventListener('click', () => {
-      goToStep(3);
-      simulateAnalysis();
-    });
-    document.getElementById('continue-btn-3').addEventListener('click', () => goToStep(4));
-
-    const goBtn = document.getElementById('go-to-dashboard');
-    if (goBtn) {
-      goBtn.addEventListener('click', async () => {
-        try {
-          const res = await fetch('/api/complete-onboarding', {
-            method: 'POST'
-          });
-
-          const data = await res.json();
-          if (data.success) {
-            window.location.href = 'dashboard.html';
-          } else {
-            alert('❌ Error al completar onboarding');
-          }
-        } catch (err) {
-          console.error('Error:', err);
-          alert('❌ Error de conexión con el servidor');
-        }
-      });
-    }
-
-    // Funciones auxiliares
-    function goToStep(step) {
-      steps.forEach(stepEl => {
-        const stepNumber = parseInt(stepEl.dataset.step);
-        stepEl.classList.remove('active', 'completed');
-        if (stepNumber < step) stepEl.classList.add('completed');
-        else if (stepNumber === step) stepEl.classList.add('active');
-      });
-
-      contentPanels.forEach(panel => panel.classList.add('hidden'));
-      document.getElementById(`step${step}-content`).classList.remove('hidden');
-      currentStep = step;
-    }
-
-    function simulateAnalysis() {
-      const progressBar = document.querySelector('.progress-indicator');
-      const progressText = document.querySelector('.progress-text');
-      const analysisSteps = document.querySelectorAll('.analysis-step');
-      let progress = 0;
-      progressBar.style.width = '0%';
-      const interval = setInterval(() => {
-        progress += 5;
-        progressBar.style.width = `${progress}%`;
-
-        if (progress >= 25) {
-          analysisSteps[0].classList.add('completed');
-          analysisSteps[0].classList.remove('active');
-          analysisSteps[1].classList.add('active');
-        }
-        if (progress >= 50) {
-          analysisSteps[1].classList.add('completed');
-          analysisSteps[1].classList.remove('active');
-          analysisSteps[2].classList.add('active');
-          progressText.textContent = 'Analyzing customer segments...';
-        }
-        if (progress >= 75) {
-          analysisSteps[2].classList.add('completed');
-          analysisSteps[2].classList.remove('active');
-          analysisSteps[3].classList.add('active');
-          progressText.textContent = 'Generating recommendations...';
-        }
-        if (progress >= 100) {
-          clearInterval(interval);
-          analysisSteps[3].classList.add('completed');
-          analysisSteps[3].classList.remove('active');
-          progressText.textContent = 'Analysis complete!';
-          document.getElementById('continue-btn-3').disabled = false;
-        }
-      }, 100);
-    }
-
-    goToStep(1);
+  continueBtn.addEventListener('click', function () {
+    if (shopifyConnected) goToStep(2);
   });
+
+  document.getElementById('back-btn-2').addEventListener('click', () => goToStep(1));
+  document.getElementById('continue-btn-2').addEventListener('click', () => {
+    goToStep(3);
+    simulateAnalysis();
+  });
+  document.getElementById('continue-btn-3').addEventListener('click', () => goToStep(4));
+
+  const goBtn = document.getElementById('go-to-dashboard');
+  if (goBtn) {
+    goBtn.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/complete-onboarding', {
+          method: 'POST'
+        });
+
+        const data = await res.json();
+        if (data.success) {
+          window.location.href = 'dashboard.html';
+        } else {
+          alert('❌ Error al completar onboarding');
+        }
+      } catch (err) {
+        console.error('Error:', err);
+        alert('❌ Error de conexión con el servidor');
+      }
+    });
+  }
+
+  function goToStep(step) {
+    steps.forEach(stepEl => {
+      const stepNumber = parseInt(stepEl.dataset.step);
+      stepEl.classList.remove('active', 'completed');
+      if (stepNumber < step) stepEl.classList.add('completed');
+      else if (stepNumber === step) stepEl.classList.add('active');
+    });
+
+    contentPanels.forEach(panel => panel.classList.add('hidden'));
+    document.getElementById(`step${step}-content`).classList.remove('hidden');
+    currentStep = step;
+  }
+
+  function simulateAnalysis() {
+    const progressBar = document.querySelector('.progress-indicator');
+    const progressText = document.querySelector('.progress-text');
+    const analysisSteps = document.querySelectorAll('.analysis-step');
+    let progress = 0;
+    progressBar.style.width = '0%';
+    const interval = setInterval(() => {
+      progress += 5;
+      progressBar.style.width = `${progress}%`;
+
+      if (progress >= 25) {
+        analysisSteps[0].classList.add('completed');
+        analysisSteps[0].classList.remove('active');
+        analysisSteps[1].classList.add('active');
+      }
+      if (progress >= 50) {
+        analysisSteps[1].classList.add('completed');
+        analysisSteps[1].classList.remove('active');
+        analysisSteps[2].classList.add('active');
+        progressText.textContent = 'Analyzing customer segments...';
+      }
+      if (progress >= 75) {
+        analysisSteps[2].classList.add('completed');
+        analysisSteps[2].classList.remove('active');
+        analysisSteps[3].classList.add('active');
+        progressText.textContent = 'Generating recommendations...';
+      }
+      if (progress >= 100) {
+        clearInterval(interval);
+        analysisSteps[3].classList.add('completed');
+        analysisSteps[3].classList.remove('active');
+        progressText.textContent = 'Analysis complete!';
+        document.getElementById('continue-btn-3').disabled = false;
+      }
+    }, 100);
+  }
+
+  goToStep(1);
+});
 </script><script src='script.js' defer></script></body>
 </html>
