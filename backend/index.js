@@ -200,7 +200,7 @@ app.get('/auth/google/callback',
   (req, res) => {
     const redirectPath = req.user.onboardingComplete ? '/dashboard.html' : '/onboarding.html';
 const query = req.user.shop ? `?shop=${req.user.shop}` : '';
-res.redirect(`${redirectPath}${query}`);
+res.redirect(redirectPath); 
   }
 );
 
