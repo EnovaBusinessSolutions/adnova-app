@@ -198,7 +198,9 @@ app.get('/auth/google',
 app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
-    res.redirect(req.user.onboardingComplete ? '/dashboard' : '/onboarding');
+    const redirectPath = req.user.onboardingComplete ? '/dashboard.html' : '/onboarding.html';
+const query = req.user.shop ? `?shop=${req.user.shop}` : '';
+res.redirect(`${redirectPath}${query}`);
   }
 );
 
