@@ -252,58 +252,55 @@ if (shopOrigin && host) {
   let shopifyConnected = false;
   let userId = "USER_ID_REAL";
 
-  function fetchUserData() {
-  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const User = require('../backend/models/User');
 
-  fetch('/api/user', { headers })
-    .then(res => res.json())
-    .then(user => {
-      userId = user._id;
-      shopifyConnected = user.shopifyConnected || false;
-      if (shopifyConnected) {
-        connectShopifyBtn.innerText = 'Connected ✓';
-        connectShopifyBtn.disabled = true;
-        connectShopifyBtn.classList.add('connected');
-      }
+const SCOPES = [
+  'read_products',
+  'read_orders',
+  'read_customers',
+  'read_analytics',
+].join(',');
 
-      if (user.googleConnected) {
-        connectGoogleBtn.innerText = 'Connected ✓';
-        connectGoogleBtn.disabled = true;
-        connectGoogleBtn.classList.add('connected');
-      } else {
-        connectGoogleBtn.addEventListener('click', function () {
-          window.location.href = '/google';
-        });
-      }
+const scopeHash = crypto.createHash('sha256').update(SCOPES).digest('hex');
 
-      if (user.metaConnected) {
-        connectMetaBtn.innerText = 'Connected ✓';
-        connectMetaBtn.classList.add('connected');
-        connectMetaBtn.removeAttribute('href');
-      } else {
-        connectMetaBtn.addEventListener('click', function () {
-          window.location.href = '/auth/meta/login';
-        });
-      }
+module.exports = async function verifyShopifyToken(req, res, next) {
+  const authHeader = req.get('Authorization');
+  if (!authHeader) return res.status(401).json({ error: 'No token provided' });
 
-      const ready = shopifyConnected;
-      if (ready) {
-        continueBtn.disabled = false;
-        if (!document.getElementById('continue-msg')) {
-          const msg = document.createElement('p');
-          msg.id = 'continue-msg';
-          msg.style.color = '#00c37e';
-          msg.style.fontWeight = 'bold';
-          msg.style.marginTop = '10px';
-          msg.style.textAlign = 'center';
-          continueBtn.parentElement.appendChild(msg);
-        }
-      }
-    })
-    .catch(err => {
-      console.error('Error al verificar estado del usuario:', err);
+  const token = authHeader.replace('Bearer ', '');
+  try {
+    const payload = jwt.verify(token, process.env.SHOPIFY_API_SECRET, {
+      algorithms: ['HS256'],
     });
-}
+
+    const shop = payload.dest.replace(/^https:\/\//, '');
+
+    const user = await User.findOne({ shop });
+
+    if (!user || !user.shopifyAccessToken)
+      return res.status(401).json({ error: 'Usuario no registrado o token faltante' });
+
+    // VALIDACIÓN: si los scopes han cambiado, pedir nueva instalación
+    if (user.shopifyScopeHash !== scopeHash) {
+      return res.status(403).json({
+        error: 'Los permisos han cambiado. Por favor reinstala la app.',
+        reinstall: true,
+        reinstallUrl: `https://${shop}/admin/oauth/authorize?client_id=${process.env.SHOPIFY_API_KEY}&scope=${SCOPES}&redirect_uri=${process.env.SHOPIFY_REDIRECT_URI}`,
+      });
+    }
+
+    req.shopifyTokenPayload = payload;
+    req.shop = shop;
+    req.shopifySession = payload;
+    next();
+  } catch (err) {
+    console.error('❌ Error al verificar token Shopify:', err);
+    res.status(401).json({ error: 'Token inválido' });
+  }
+};
+
 
 
   document.getElementById('connect-shopify').addEventListener('click', () => {
@@ -399,6 +396,27 @@ if (shopOrigin && host) {
   }
 
   goToStep(1);
+  // Mostrar errores si vienen desde el OAuth
+const errorParam = new URLSearchParams(window.location.search).get("error");
+if (errorParam) {
+  const msg = {
+    missing_params: "Faltan parámetros para conectar con Shopify.",
+    invalid_state: "Error de validación OAuth. Intenta de nuevo.",
+    default: "Ocurrió un error al conectar tu tienda.",
+  };
+
+  const alertBox = document.createElement("div");
+  alertBox.textContent = msg[errorParam] || msg.default;
+  alertBox.style.backgroundColor = "#ffdddd";
+  alertBox.style.color = "#900";
+  alertBox.style.padding = "12px";
+  alertBox.style.borderRadius = "6px";
+  alertBox.style.marginBottom = "16px";
+  alertBox.style.fontWeight = "bold";
+  alertBox.style.textAlign = "center";
+  document.querySelector(".main-content").prepend(alertBox);
+}
+
 });
 </script><script src='script.js' defer></script></body>
 </html>
