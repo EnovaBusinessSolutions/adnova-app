@@ -10,23 +10,22 @@ const path     = require('path');
 const fs       = require('fs');
 const bcrypt   = require('bcrypt');
 const bodyParser = require('body-parser');
+const crypto = require('crypto');
 
-require('./auth');                 // tu configuración de Passport
-const User = require('./models/User');           // ✅  esta es la buena
+require('./auth');
+const User = require('./models/User');
 const googleConnect  = require('./routes/googleConnect');
 const googleAnalytics= require('./routes/googleAnalytics');
 const metaAuthRoutes = require('./routes/meta');
 const privacyRoutes  = require('./routes/privacyRoutes');
 const userRoutes     = require('./routes/user');
 const mockShopify    = require('./routes/mockShopify');
-const shopifyRoutes  = require('./routes/shopify');   // ← NUEVO router único
+const shopifyRoutes  = require('./routes/shopify');
 const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
-
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-/* ===== Conexión a MongoDB ===== */
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
@@ -34,13 +33,11 @@ mongoose.connect(process.env.MONGO_URI, {
 .then(() => console.log('✅ Conectado a MongoDB Atlas'))
 .catch(err => console.error('❌ Error al conectar con MongoDB:', err));
 
-/* ===== Middlewares globales ===== */
 app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
-/* ---- Cookies seguras detrás de Render ---- */
-app.set('trust proxy', 1);   // importante para cookies Secure
+app.set('trust proxy', 1);
 
 app.use(session({
   secret: process.env.SESSION_SECRET,
@@ -52,7 +49,6 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-/* ===== Helpers de autenticación ===== */
 function ensureAuthenticated(req, res, next) {
   if (req.isAuthenticated()) return next();
   res.redirect('/');
@@ -63,12 +59,10 @@ function ensureNotOnboarded(req, res, next) {
   res.redirect('/dashboard');
 }
 
-/* ===== Rutas públicas ===== */
 app.get('/', (req, res) =>
   res.sendFile(path.join(__dirname, '../public/index.html'))
 );
 
-/* ===== Registro ===== */
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password)
@@ -79,12 +73,11 @@ app.post('/api/register', async (req, res) => {
     await User.create({ email, password: hashed });
     res.status(201).json({ success: true, message: 'Usuario registrado con éxito' });
   } catch (err) {
-    console.error('❌ Error al registrar usuario:', err);
+    console.error('❌ Error al registrar usuario:', err.stack || err);
     res.status(400).json({ success: false, message: 'No se pudo registrar el usuario' });
   }
 });
 
-/* ===== Login ===== */
 app.post('/api/login', async (req, res, next) => {
   const { email, password } = req.body;
   if (!email || !password)
@@ -106,54 +99,68 @@ app.post('/api/login', async (req, res, next) => {
       });
     });
   } catch (err) {
-    console.error('❌ Error al hacer login:', err);
+    console.error('❌ Error al hacer login:', err.stack || err);
     res.status(500).json({ success: false, message: 'Error del servidor' });
   }
 });
 
-/* ===== Completar onboarding ===== */
 app.get("/onboarding", ensureNotOnboarded, (req, res) => {
   const filePath = path.join(__dirname, "../public/onboarding.html");
 
   fs.readFile(filePath, "utf8", (err, html) => {
     if (err) {
-      console.error("❌ Error al leer onboarding.html:", err);
+      console.error("❌ Error al leer onboarding.html:", err.stack || err);
       return res.status(500).send("Error al cargar la página de onboarding.");
     }
 
-    // ▸ Sustituir marcador de USER_ID y del INSTALL_LINK
     const updatedHtml = html
       .replace("USER_ID_REAL", req.user._id.toString())
-      .replace(
-        "INSTALL_LINK_PLACEHOLDER",
-        process.env.CUSTOM_APP_INSTALL_LINK || ""
-      );
+      .replace("INSTALL_LINK_PLACEHOLDER", process.env.CUSTOM_APP_INSTALL_LINK || "");
 
     res.send(updatedHtml);
   });
 });
 
-/* ===== Marcar onboarding como completo ===== */
 app.post('/api/complete-onboarding', async (req, res) => {
   try {
     if (!req.isAuthenticated()) {
       return res.status(401).json({ success: false, message: 'No autenticado' });
     }
 
-    await User.findByIdAndUpdate(req.user._id, {
+    const result = await User.findByIdAndUpdate(req.user._id, {
       onboardingComplete: true,
     });
 
+    if (!result) {
+      console.warn('⚠️ No se encontró el usuario para completar onboarding:', req.user._id);
+      return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
+    }
+
     res.json({ success: true });
   } catch (err) {
-    console.error('❌ Error al completar onboarding:', err);
+    console.error('❌ Error al completar onboarding:', err.stack || err);
     res.status(500).json({ success: false, message: 'Error del servidor' });
   }
 });
 
+app.post('/webhooks', express.raw({ type: 'application/json' }), (req, res) => {
+  const hmac = req.get('X-Shopify-Hmac-Sha256');
+  const body = req.body;
+  const generatedHash = crypto
+    .createHmac('sha256', process.env.SHOPIFY_API_SECRET)
+    .update(body, 'utf8')
+    .digest('base64');
 
-/* ===== Rutas externas / integraciones ===== */
-app.use('/api/shopify', shopifyRoutes);          // ← único router de Shopify
+  if (crypto.timingSafeEqual(Buffer.from(hmac, 'utf8'), Buffer.from(generatedHash, 'utf8'))) {
+    console.log('✅ Webhook verificado');
+    res.status(200).send('Webhook recibido');
+  } else {
+    console.warn('⚠️ Webhook NO verificado');
+    res.status(401).send('Firma no válida');
+  }
+});
+
+app.use('/api/shopify', shopifyRoutes);
 app.use('/',        privacyRoutes);
 app.use('/',        googleConnect);
 app.use('/',        googleAnalytics);
@@ -161,29 +168,19 @@ app.use('/auth/meta', metaAuthRoutes);
 app.use('/api',    userRoutes);
 app.use('/api',    mockShopify);
 
-/* ===== Vistas protegidas ===== */
-app.get('/onboarding', ensureNotOnboarded, (req, res) => {
-  const file = path.join(__dirname, '../public/onboarding.html');
-  fs.readFile(file, 'utf8', (err, html) => {
-    if (err) return res.status(500).send('Error al cargar onboarding');
-    res.send(html.replace('USER_ID_REAL', req.user._id.toString()));
-  });
-});
-
-app.get('/dashboard',      ensureAuthenticated, (r, s) =>
+app.get('/dashboard', ensureAuthenticated, (r, s) =>
   s.sendFile(path.join(__dirname, '../public/dashboard.html'))
 );
-app.get('/configuracion',  (r, s) =>
+app.get('/configuracion', (r, s) =>
   s.sendFile(path.join(__dirname, '../public/configuracion.html'))
 );
-app.get('/audit',          (r, s) =>
+app.get('/audit', (r, s) =>
   s.sendFile(path.join(__dirname, '../public/audit.html'))
 );
 app.get('/pixel-verifier', (r, s) =>
   s.sendFile(path.join(__dirname, '../public/pixel-verifier.html'))
 );
 
-/* ===== Google OAuth ===== */
 app.get('/auth/google',
   passport.authenticate('google', {
     scope: [
@@ -199,12 +196,11 @@ app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
     const redirectPath = req.user.onboardingComplete ? '/dashboard.html' : '/onboarding.html';
-const query = req.user.shop ? `?shop=${req.user.shop}` : '';
-res.redirect(redirectPath); 
+    const query = req.user.shop ? `?shop=${req.user.shop}` : '';
+    res.redirect(redirectPath);
   }
 );
 
-/* ===== Logout ===== */
 app.get('/logout', (req, res) => {
   req.logout(err => {
     if (err) {
@@ -226,10 +222,8 @@ app.get('/api/test-shopify-token', verifyShopifyToken, (req, res) => {
   });
 });
 
-/* ===== 404 ===== */
 app.use((req, res) => res.status(404).send('Página no encontrada'));
 
-/* ===== Server ===== */
 app.listen(PORT, () =>
   console.log(`✅ Servidor corriendo en http://localhost:${PORT}`)
 );
