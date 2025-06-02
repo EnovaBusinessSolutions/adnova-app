@@ -1,5 +1,5 @@
 const express = require('express');
-const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
+const verifyShopifyToken = require('../../middlewares/verifyShopifyToken');
 const User = require('../models/User');
 
 const router = express.Router();
