@@ -202,21 +202,6 @@ app.get('/auth/google/callback',
   }
 );
 
-/* ===== API: datos de usuario ===== */
-app.get('/api/user', (req, res) => {
-  if (!req.isAuthenticated())
-    return res.status(401).json({ message: 'No autenticado' });
-
-  res.json({
-    _id: req.user._id,
-    email: req.user.email,
-    onboardingComplete: req.user.onboardingComplete,
-    googleConnected:  req.user.googleConnected  || false,
-    metaConnected:    req.user.metaConnected    || false,
-    shopifyConnected: req.user.shopifyConnected || false
-  });
-});
-
 /* ===== Logout ===== */
 app.get('/logout', (req, res) => {
   req.logout(err => {

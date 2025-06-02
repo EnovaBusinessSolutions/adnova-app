@@ -1,22 +1,37 @@
 const express = require('express');
+const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
+const User = require('../models/User');
+
 const router = express.Router();
-const User = require('../models/User');   // ✅ ruta correcta
 
+router.get('/user', verifyShopifyToken, async (req, res) => {
+  const payload = req.shopifyTokenPayload;
+  const shop = req.shop;
 
-// Ruta para obtener estado de conexión del usuario
-router.get('/user', async (req, res) => {
   try {
-    const user = await User.findById(req.session.userId); // Ajusta según tu auth
-    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+    let user = await User.findOne({ shop });
 
-    res.json({
-      _id: user._id,
-      googleConnected: user.googleConnected || false,
-      metaConnected: user.metaConnected || false,
-      shopifyConnected: user.shopifyConnected || false
+if (!user) {
+  user = await User.create({
+    shop,
+    shopifyConnected: true,
+    onboardingComplete: false
+  });
+  console.log("🆕 Usuario Shopify creado automáticamente:", shop);
+}
+
+
+    return res.status(200).json({
+      userId: user._id,
+      shop,
+      onboardingComplete: user.onboardingComplete,
+      googleConnected: user.googleConnected,
+      metaConnected: user.metaConnected,
+      shopifyConnected: user.shopifyConnected,
     });
   } catch (err) {
-    res.status(500).json({ error: 'Error al obtener el usuario' });
+    console.error("Error al consultar usuario:", err);
+    return res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
 
