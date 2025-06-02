@@ -209,19 +209,37 @@ if (shop && window.top === window.self) {
   window.location.href = `/onboarding.html?shop=${shop}`;
 }
   const AppBridge = window['app-bridge'];
-  const createApp = AppBridge.default;
-  const actions = AppBridge.actions;
-  const utils = window['app-bridge-utils'];
+const createApp = AppBridge.default;
+const actions = AppBridge.actions;
+const utils = window['app-bridge-utils'];
 
-  const urlParams = new URLSearchParams(window.location.search);
-  const shopOrigin = urlParams.get('shop');
+const urlParams = new URLSearchParams(window.location.search);
+const shopOrigin = urlParams.get('shop');
+const host = urlParams.get('host');
 
-  const app = createApp({
+let app = null;
+let token = null;
+
+if (shopOrigin && host) {
+  app = createApp({
     apiKey: 'c8ccb7768320f88fab4c0899e70a33a7',
-    shopOrigin: shopOrigin,
-    host: urlParams.get('host'),
+    shopOrigin,
+    host,
     forceRedirect: true,
   });
+
+  utils.getSessionToken(app)
+    .then(t => {
+      token = t;
+      fetchUserData();
+    })
+    .catch(err => {
+      console.warn('⚠️ No se pudo obtener el token de sesión de Shopify:', err);
+      fetchUserData(); // Continuar sin token
+    });
+} else {
+  fetchUserData(); // Usuario accedió directamente
+}
 
   let currentStep = 1;
   const steps = document.querySelectorAll('.step');
@@ -234,60 +252,59 @@ if (shop && window.top === window.self) {
   let shopifyConnected = false;
   let userId = "USER_ID_REAL";
 
-  utils.getSessionToken(app).then((token) => {
-    fetch('/api/user', {
-      headers: {
-        Authorization: `Bearer ${token}`
+  function fetchUserData() {
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+  fetch('/api/user', { headers })
+    .then(res => res.json())
+    .then(user => {
+      userId = user._id;
+      shopifyConnected = user.shopifyConnected || false;
+      if (shopifyConnected) {
+        connectShopifyBtn.innerText = 'Connected ✓';
+        connectShopifyBtn.disabled = true;
+        connectShopifyBtn.classList.add('connected');
+      }
+
+      if (user.googleConnected) {
+        connectGoogleBtn.innerText = 'Connected ✓';
+        connectGoogleBtn.disabled = true;
+        connectGoogleBtn.classList.add('connected');
+      } else {
+        connectGoogleBtn.addEventListener('click', function () {
+          window.location.href = '/google';
+        });
+      }
+
+      if (user.metaConnected) {
+        connectMetaBtn.innerText = 'Connected ✓';
+        connectMetaBtn.classList.add('connected');
+        connectMetaBtn.removeAttribute('href');
+      } else {
+        connectMetaBtn.addEventListener('click', function () {
+          window.location.href = '/auth/meta/login';
+        });
+      }
+
+      const ready = shopifyConnected;
+      if (ready) {
+        continueBtn.disabled = false;
+        if (!document.getElementById('continue-msg')) {
+          const msg = document.createElement('p');
+          msg.id = 'continue-msg';
+          msg.style.color = '#00c37e';
+          msg.style.fontWeight = 'bold';
+          msg.style.marginTop = '10px';
+          msg.style.textAlign = 'center';
+          continueBtn.parentElement.appendChild(msg);
+        }
       }
     })
-      .then(res => res.json())
-      .then(user => {
-        userId = user._id;
-        shopifyConnected = user.shopifyConnected || false;
-        if (shopifyConnected) {
-          connectShopifyBtn.innerText = 'Connected ✓';
-          connectShopifyBtn.disabled = true;
-          connectShopifyBtn.classList.add('connected');
-        }
+    .catch(err => {
+      console.error('Error al verificar estado del usuario:', err);
+    });
+}
 
-        if (user.googleConnected) {
-          connectGoogleBtn.innerText = 'Connected ✓';
-          connectGoogleBtn.disabled = true;
-          connectGoogleBtn.classList.add('connected');
-        } else {
-          connectGoogleBtn.addEventListener('click', function () {
-            window.location.href = '/google';
-          });
-        }
-
-        if (user.metaConnected) {
-          connectMetaBtn.innerText = 'Connected ✓';
-          connectMetaBtn.classList.add('connected');
-          connectMetaBtn.removeAttribute('href');
-        } else {
-          connectMetaBtn.addEventListener('click', function () {
-            window.location.href = '/auth/meta/login';
-          });
-        }
-
-        const ready = shopifyConnected;
-        if (ready) {
-          continueBtn.disabled = false;
-          if (!document.getElementById('continue-msg')) {
-            const msg = document.createElement('p');
-            msg.id = 'continue-msg';
-            msg.style.color = '#00c37e';
-            msg.style.fontWeight = 'bold';
-            msg.style.marginTop = '10px';
-            msg.style.textAlign = 'center';
-            continueBtn.parentElement.appendChild(msg);
-          }
-        }
-      })
-      .catch(err => {
-        console.error('Error al verificar estado del usuario:', err);
-      });
-  });
 
   document.getElementById('connect-shopify').addEventListener('click', () => {
     const shop = prompt("Ingresa el dominio de tu tienda (ej: mi-tienda.myshopify.com)");
