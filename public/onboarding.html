@@ -202,6 +202,12 @@
 
   <script>
 document.addEventListener('DOMContentLoaded', function () {
+  const shop = new URLSearchParams(window.location.search).get("shop");
+
+// Si venimos de Shopify y estamos fuera del iframe, redirigimos correctamente
+if (shop && window.top === window.self) {
+  window.location.href = `/onboarding.html?shop=${shop}`;
+}
   const AppBridge = window['app-bridge'];
   const createApp = AppBridge.default;
   const actions = AppBridge.actions;
