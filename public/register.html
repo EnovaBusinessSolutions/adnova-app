@@ -48,47 +48,8 @@
     </form>
   </div>
 
+  <!-- Conservamos aquí SOLO la función togglePassword: -->
   <script>
-    const form = document.getElementById('register-form');
-    const msg = document.getElementById('register-msg');
-
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-
-      const email = document.getElementById('email').value;
-      const password = document.getElementById('password').value;
-      const confirm = document.getElementById('confirm').value;
-
-      if (password !== confirm) {
-        msg.textContent = '❌ Las contraseñas no coinciden';
-        msg.style.color = '#f87171';
-        return;
-      }
-
-      try {
-        const res = await fetch('/api/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password })
-        });
-
-        const data = await res.json();
-        if (data.success) {
-          msg.textContent = '✅ Cuenta creada con éxito. Redirigiendo...';
-          msg.style.color = '#4ade80';
-          setTimeout(() => {
-            window.location.href = 'index.html';
-          }, 1800);
-        } else {
-          msg.textContent = '❌ ' + (data.message || 'Hubo un problema');
-          msg.style.color = '#f87171';
-        }
-      } catch (error) {
-        msg.textContent = '❌ Error al conectar con el servidor';
-        msg.style.color = '#f87171';
-      }
-    });
-
     function togglePassword(id, el) {
       const input = document.getElementById(id);
       const isVisible = input.type === 'text';
@@ -97,5 +58,10 @@
       el.classList.toggle('eye-hidden', isVisible);
     }
   </script>
+
+  <!-- Agregamos la referencia al archivo con la lógica de registro: -->
+  <script src="js/register.js" defer></script>
+  <!-- Si usas script.js para código global, mantenlo también (opcional): -->
+  <script src="script.js" defer></script>
 </body>
 </html>
