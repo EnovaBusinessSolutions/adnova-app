@@ -9,6 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
+const bodyParser = require('body-parser'); // <<< AGREGADO: faltaba importar body-parser
 
 require('./auth');
 const User = require('./models/User');
@@ -32,24 +33,32 @@ mongoose.connect(process.env.MONGO_URI, {
   .then(() => console.log('✅ Conectado a MongoDB Atlas'))
   .catch(err => console.error('❌ Error al conectar con MongoDB:', err));
 
+// +++ MIDDLEWARES +++
+
+// Habilitamos CORS
 app.use(cors());
+
+// +++ IMPORTANTE: ahora sí importamos bodyParser +++
 app.use(bodyParser.json());
+
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Ajuste de sesiones según entorno
+// Ajuste de sesiones según entorno (secure=true solo en producción)
 app.set('trust proxy', 1);
 app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: (process.env.NODE_ENV === 'production')
-    ? { sameSite: 'none', secure: true }
-    : { sameSite: 'lax', secure: false }
+  cookie: {
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    secure: process.env.NODE_ENV === 'production'
+  }
 }));
 
 app.use(passport.initialize());
 app.use(passport.session());
 
+// +++ FUNCIONES DE CONTROL DE ACCESO +++
 function ensureAuthenticated(req, res, next) {
   if (req.isAuthenticated()) return next();
   res.redirect('/');
@@ -60,15 +69,19 @@ function ensureNotOnboarded(req, res, next) {
   res.redirect('/dashboard');
 }
 
+// +++ RUTAS +++
+
+// Página de inicio (login)
 app.get('/', (req, res) =>
   res.sendFile(path.join(__dirname, '../public/index.html'))
 );
 
+// Registro de usuario
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password)
+  if (!email || !password) {
     return res.status(400).json({ success: false, message: 'Correo y contraseña son requeridos' });
-
+  }
   try {
     const hashed = await bcrypt.hash(password, 10);
     await User.create({ email, password: hashed });
@@ -79,11 +92,12 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
+// Login de usuario
 app.post('/api/login', async (req, res, next) => {
   const { email, password } = req.body;
-  if (!email || !password)
+  if (!email || !password) {
     return res.status(400).json({ success: false, message: 'Correo y contraseña son requeridos' });
-
+  }
   try {
     const user = await User.findOne({ email });
     if (!user) return res.status(401).json({ success: false, message: 'Usuario no encontrado' });
@@ -94,6 +108,7 @@ app.post('/api/login', async (req, res, next) => {
     req.login(user, err => {
       if (err) return next(err);
       req.session.userId = user._id;
+      // Devuelve al frontend la ruta correcta a donde redirigir
       res.status(200).json({
         success: true,
         redirect: user.onboardingComplete ? '/dashboard' : '/onboarding'
@@ -105,38 +120,34 @@ app.post('/api/login', async (req, res, next) => {
   }
 });
 
+// Onboarding (solo usuarios autenticados que aún no completaron onboarding)
 app.get("/onboarding", ensureNotOnboarded, (req, res) => {
   const filePath = path.join(__dirname, "../public/onboarding.html");
-
   fs.readFile(filePath, "utf8", (err, html) => {
     if (err) {
       console.error("❌ Error al leer onboarding.html:", err.stack || err);
       return res.status(500).send("Error al cargar la página de onboarding.");
     }
-
     const updatedHtml = html
       .replace("USER_ID_REAL", req.user._id.toString())
       .replace("INSTALL_LINK_PLACEHOLDER", process.env.CUSTOM_APP_INSTALL_LINK || "");
-
     res.send(updatedHtml);
   });
 });
 
+// Finalizar onboarding
 app.post('/api/complete-onboarding', async (req, res) => {
   try {
     if (!req.isAuthenticated()) {
       return res.status(401).json({ success: false, message: 'No autenticado' });
     }
-
     const result = await User.findByIdAndUpdate(req.user._id, {
       onboardingComplete: true,
     });
-
     if (!result) {
       console.warn('⚠️ No se encontró el usuario para completar onboarding:', req.user._id);
       return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
     }
-
     res.json({ success: true });
   } catch (err) {
     console.error('❌ Error al completar onboarding:', err.stack || err);
@@ -144,7 +155,10 @@ app.post('/api/complete-onboarding', async (req, res) => {
   }
 });
 
-// Sesión basada en Passport para front-end
+// ++++++++++++++++++++++++++++++
+// RUTA NUEVA: /api/session
+// Devuelve si hay sesión activa y datos mínimos del usuario
+// ++++++++++++++++++++++++++++++
 app.get('/api/session', (req, res) => {
   if (!req.isAuthenticated()) {
     return res.status(401).json({ authenticated: false });
@@ -162,6 +176,7 @@ app.get('/api/session', (req, res) => {
   });
 });
 
+// Webhooks de Shopify
 app.post('/webhooks', express.raw({ type: 'application/json' }), (req, res) => {
   const hmac = req.get('X-Shopify-Hmac-Sha256');
   const body = req.body;
@@ -179,6 +194,7 @@ app.post('/webhooks', express.raw({ type: 'application/json' }), (req, res) => {
   }
 });
 
+// Rutas externas y de API
 app.use('/api/shopify', shopifyRoutes);
 app.use('/', privacyRoutes);
 app.use('/', googleConnect);
@@ -187,17 +203,19 @@ app.use('/auth/meta', metaAuthRoutes);
 app.use('/api', userRoutes);
 app.use('/api', mockShopify);
 
+// Dashboard (solo para usuarios autenticados)
 app.get('/dashboard', ensureAuthenticated, (r, s) => {
   s.sendFile(path.join(__dirname, '../public/dashboard.html'));
 });
 app.get('/configuracion', (r, s) =>
   s.sendFile(path.join(__dirname, '../public/configuracion.html'))
 );
-// Eliminada ruta '/audit' (no existe audit.html)
+// Ruta para “pixel-verifier”
 app.get('/pixel-verifier', (r, s) =>
   s.sendFile(path.join(__dirname, '../public/pixel-verifier.html'))
 );
 
+// Google OAuth
 app.get('/auth/google',
   passport.authenticate('google', {
     scope: [
@@ -208,7 +226,6 @@ app.get('/auth/google',
     ]
   })
 );
-
 app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
@@ -217,6 +234,7 @@ app.get('/auth/google/callback',
   }
 );
 
+// Logout
 app.get('/logout', (req, res) => {
   req.logout(err => {
     if (err) {
@@ -230,6 +248,7 @@ app.get('/logout', (req, res) => {
   });
 });
 
+// Validación de token de Shopify
 app.get('/api/test-shopify-token', verifyShopifyToken, (req, res) => {
   res.json({
     success: true,
@@ -238,8 +257,10 @@ app.get('/api/test-shopify-token', verifyShopifyToken, (req, res) => {
   });
 });
 
+// 404 por defecto
 app.use((req, res) => res.status(404).send('Página no encontrada'));
 
+// Iniciar servidor
 app.listen(PORT, () =>
   console.log(`✅ Servidor corriendo en http://localhost:${PORT}`)
 );
