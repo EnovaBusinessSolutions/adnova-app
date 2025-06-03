@@ -3,32 +3,23 @@ const router = express.Router();
 const axios = require('axios');
 const User = require('../models/User');
 
-// POST /api/google/analytics
 router.post('/api/google/analytics', async (req, res) => {
   const { propertyId } = req.body;
 
   try {
-    // Validar sesión activa
     const userId = req.session.userId || req.user?._id;
     if (!userId) return res.status(401).json({ error: 'No autenticado' });
 
-    // Obtener tokens del usuario desde Mongo
     const user = await User.findById(userId);
     if (!user || !user.googleAccessToken) {
-      return res.status(403).json({ error: 'Usuario no ha conectado Google Analytics' });
+      return res.status(400).json({ error: 'Google no conectado' });
     }
 
-    // Hacer la consulta a la API de Google Analytics
     const response = await axios.post(
-      'https://analyticsdata.googleapis.com/v1beta/properties/' + propertyId + ':runReport',
+      `https://analyticsdata.googleapis.com/v1beta/properties/${propertyId}:runReport`,
       {
-        dimensions: [{ name: 'date' }],
-        metrics: [
-          { name: 'sessions' },
-          { name: 'activeUsers' },
-          { name: 'bounceRate' }
-        ],
-        dateRanges: [{ startDate: '7daysAgo', endDate: 'today' }]
+        dateRanges: [{ startDate: '7daysAgo', endDate: 'today' }],
+        metrics: [{ name: 'activeUsers' }]
       },
       {
         headers: {

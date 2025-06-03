@@ -1,6 +1,6 @@
-// routes/auth/meta.js
 const express = require('express');
 const router = express.Router();
+const qs = require('querystring');
 const axios = require('axios');
 const User = require('../models/User');
 
@@ -8,52 +8,41 @@ const clientId = process.env.META_APP_ID;
 const clientSecret = process.env.META_APP_SECRET;
 const redirectUri = 'https://adnova-app.onrender.com/auth/meta/callback';
 
-// 1. Redirige a Facebook con los permisos adecuados
 router.get('/login', (req, res) => {
-  const scope = [
-    'ads_read',
-    'ads_management',
-    'business_management',
-    'pages_show_list',
-    'pages_read_engagement',
-    'instagram_basic',
-    'public_profile',
-    'email',
-  ].join(',');
-
-  const authUrl = `https://www.facebook.com/v18.0/dialog/oauth?client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}&response_type=code`;
+  const state = req.sessionID;
+  const scope = ['ads_read', 'ads_management', 'business_management'].join(',');
+  const authUrl =
+    'https://www.facebook.com/v16.0/dialog/oauth?' +
+    qs.stringify({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      state,
+      scope
+    });
   res.redirect(authUrl);
 });
 
-// 2. Callback que recibe el `code` y guarda el access_token
 router.get('/callback', async (req, res) => {
-  const code = req.query.code;
-
-  if (!code || !req.session.userId) {
-    return res.redirect('/onboarding?meta=error');
-  }
+  const { code } = req.query;
+  if (!code) return res.redirect('/onboarding?meta=fail');
 
   try {
-    const response = await axios.get('https://graph.facebook.com/v18.0/oauth/access_token', {
-      params: {
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: redirectUri,
-        code,
-      },
-    });
+    const tokenRes = await axios.get(
+      `https://graph.facebook.com/v16.0/oauth/access_token?client_id=${clientId}` +
+      `&redirect_uri=${redirectUri}&client_secret=${clientSecret}&code=${code}`
+    );
+    const { access_token } = tokenRes.data;
 
-    const accessToken = response.data.access_token;
+    let userId = req.session.userId;
+    if (!userId) return res.redirect('/onboarding?meta=invalid_session');
 
-    // Guarda el token y marca conexión en MongoDB
-    await User.findByIdAndUpdate(req.session.userId, {
-      metaAccessToken: accessToken,
+    await User.findByIdAndUpdate(userId, {
+      metaAccessToken: access_token,
       metaConnected: true,
     });
 
-    console.log('✅ Meta conectado para el usuario:', req.session.userId);
+    console.log('✅ Meta conectado para el usuario:', userId);
     res.redirect('/onboarding');
-
   } catch (error) {
     console.error('❌ Error al obtener el token de Meta:', error.message);
     res.redirect('/onboarding?meta=fail');
