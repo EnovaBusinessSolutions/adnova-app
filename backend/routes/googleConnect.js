@@ -8,33 +8,27 @@ const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const REDIRECT_URI = 'https://adnova-app.onrender.com/google/callback';
 
-// 🔹 1. Ruta para iniciar la conexión con Google (flujo OAuth)
 router.get('/google', (req, res) => {
-  const scope = [
-    'https://www.googleapis.com/auth/analytics.readonly',
-    'https://www.googleapis.com/auth/adwords'
-  ].join(' ');
-
-  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${qs.stringify({
-    client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI,
-    response_type: 'code',
-    scope,
-    access_type: 'offline',
-    prompt: 'consent'
-  })}`;
-
+  const state = req.sessionID;
+  const authUrl =
+    'https://accounts.google.com/o/oauth2/v2/auth?' +
+    qs.stringify({
+      client_id: CLIENT_ID,
+      redirect_uri: REDIRECT_URI,
+      response_type: 'code',
+      access_type: 'offline',
+      scope: [
+        'https://www.googleapis.com/auth/analytics.readonly',
+        'https://www.googleapis.com/auth/adwords'
+      ].join(' '),
+      state
+    });
   res.redirect(authUrl);
 });
 
-// 🔹 2. Callback después del consentimiento de Google
 router.get('/google/callback', async (req, res) => {
   const { code } = req.query;
-
-  if (!code) {
-    console.error('❌ No se recibió código de autorización');
-    return res.redirect('/onboarding?error=missing_code');
-  }
+  if (!code) return res.redirect('/onboarding?google=fail');
 
   try {
     const tokenRes = await axios.post(
@@ -48,15 +42,10 @@ router.get('/google/callback', async (req, res) => {
       }),
       { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
     );
-
     const { access_token, refresh_token } = tokenRes.data;
 
-    const userId = req.session.userId || req.user?._id;
-
-    if (!userId) {
-      console.warn('⚠️ No hay sesión activa al volver de Google');
-      return res.redirect('/onboarding?google=fail');
-    }
+    let userId = req.session.userId;
+    if (!userId) return res.redirect('/onboarding?google=invalid_session');
 
     await User.findByIdAndUpdate(userId, {
       googleAccessToken: access_token,
@@ -65,8 +54,7 @@ router.get('/google/callback', async (req, res) => {
     });
 
     console.log('✅ Google conectado para el usuario:', userId);
-    return res.redirect('/onboarding'); // vuelve al paso de conexión
-
+    return res.redirect('/onboarding');
   } catch (err) {
     console.error('❌ Error al obtener access token:', err.response?.data || err.message);
     return res.redirect('/onboarding?google=error');
