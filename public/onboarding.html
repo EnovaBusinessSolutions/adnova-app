@@ -204,104 +204,67 @@
 document.addEventListener('DOMContentLoaded', function () {
   const shop = new URLSearchParams(window.location.search).get("shop");
 
-// Si venimos de Shopify y estamos fuera del iframe, redirigimos correctamente
-if (shop && window.top === window.self) {
-  window.location.href = `/onboarding.html?shop=${shop}`;
-}
+  // Redirección fuera del iframe si venimos desde Shopify
+  if (shop && window.top === window.self) {
+    window.location.href = `/onboarding.html?shop=${shop}`;
+  }
+
   const AppBridge = window['app-bridge'];
-const createApp = AppBridge.default;
-const actions = AppBridge.actions;
-const utils = window['app-bridge-utils'];
+  const createApp = AppBridge.default;
+  const actions = AppBridge.actions;
+  const utils = window['app-bridge-utils'];
 
-const urlParams = new URLSearchParams(window.location.search);
-const shopOrigin = urlParams.get('shop');
-const host = urlParams.get('host');
+  const urlParams = new URLSearchParams(window.location.search);
+  const shopOrigin = urlParams.get('shop');
+  const host = urlParams.get('host');
 
-let app = null;
-let token = null;
+  let app = null;
+  let token = null;
+  let userId = null;
+  let shopifyConnected = false;
 
-if (shopOrigin && host) {
-  app = createApp({
-    apiKey: 'c8ccb7768320f88fab4c0899e70a33a7',
-    shopOrigin,
-    host,
-    forceRedirect: true,
-  });
-
-  utils.getSessionToken(app)
-    .then(t => {
-      token = t;
-      fetchUserData();
-    })
-    .catch(err => {
-      console.warn('⚠️ No se pudo obtener el token de sesión de Shopify:', err);
-      fetchUserData(); // Continuar sin token
+  if (shopOrigin && host) {
+    app = createApp({
+      apiKey: 'c8ccb7768320f88fab4c0899e70a33a7',
+      shopOrigin,
+      host,
+      forceRedirect: true,
     });
-} else {
-  fetchUserData(); // Usuario accedió directamente
-}
 
+    utils.getSessionToken(app)
+      .then(t => {
+        token = t;
+        fetchUserData();
+      })
+      .catch(err => {
+        console.warn('⚠️ No se pudo obtener el token de sesión de Shopify:', err);
+        fetchUserData(); // Continuar sin token
+      });
+  } else {
+    fetchUserData(); // Usuario accedió directamente
+  }
+
+  async function fetchUserData() {
+    try {
+      const res = await fetch('/api/user');
+      const data = await res.json();
+      if (data.userId) {
+        userId = data.userId;
+        shopifyConnected = data.shopifyConnected;
+        if (shopifyConnected) {
+          document.getElementById('continue-btn').disabled = false;
+        }
+      }
+    } catch (err) {
+      console.error('❌ Error al obtener datos del usuario:', err);
+    }
+  }
+
+  // Paso entre pantallas del onboarding
   let currentStep = 1;
   const steps = document.querySelectorAll('.step');
   const contentPanels = document.querySelectorAll('.content-panel');
   const continueBtn = document.getElementById('continue-btn');
-  const connectShopifyBtn = document.getElementById('connect-shopify');
-  const connectGoogleBtn = document.getElementById('connect-google');
-  const connectMetaBtn = document.getElementById('connect-meta-btn');
-
-  let shopifyConnected = false;
-  let userId = "USER_ID_REAL";
-
-  const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
-const User = require('../backend/models/User');
-
-const SCOPES = [
-  'read_products',
-  'read_orders',
-  'read_customers',
-  'read_analytics',
-].join(',');
-
-const scopeHash = crypto.createHash('sha256').update(SCOPES).digest('hex');
-
-module.exports = async function verifyShopifyToken(req, res, next) {
-  const authHeader = req.get('Authorization');
-  if (!authHeader) return res.status(401).json({ error: 'No token provided' });
-
-  const token = authHeader.replace('Bearer ', '');
-  try {
-    const payload = jwt.verify(token, process.env.SHOPIFY_API_SECRET, {
-      algorithms: ['HS256'],
-    });
-
-    const shop = payload.dest.replace(/^https:\/\//, '');
-
-    const user = await User.findOne({ shop });
-
-    if (!user || !user.shopifyAccessToken)
-      return res.status(401).json({ error: 'Usuario no registrado o token faltante' });
-
-    // VALIDACIÓN: si los scopes han cambiado, pedir nueva instalación
-    if (user.shopifyScopeHash !== scopeHash) {
-      return res.status(403).json({
-        error: 'Los permisos han cambiado. Por favor reinstala la app.',
-        reinstall: true,
-        reinstallUrl: `https://${shop}/admin/oauth/authorize?client_id=${process.env.SHOPIFY_API_KEY}&scope=${SCOPES}&redirect_uri=${process.env.SHOPIFY_REDIRECT_URI}`,
-      });
-    }
-
-    req.shopifyTokenPayload = payload;
-    req.shop = shop;
-    req.shopifySession = payload;
-    next();
-  } catch (err) {
-    console.error('❌ Error al verificar token Shopify:', err);
-    res.status(401).json({ error: 'Token inválido' });
-  }
-};
-
-
 
   document.getElementById('connect-shopify').addEventListener('click', () => {
     const shop = prompt("Ingresa el dominio de tu tienda (ej: mi-tienda.myshopify.com)");
@@ -395,28 +358,28 @@ module.exports = async function verifyShopifyToken(req, res, next) {
     }, 100);
   }
 
-  goToStep(1);
   // Mostrar errores si vienen desde el OAuth
-const errorParam = new URLSearchParams(window.location.search).get("error");
-if (errorParam) {
-  const msg = {
-    missing_params: "Faltan parámetros para conectar con Shopify.",
-    invalid_state: "Error de validación OAuth. Intenta de nuevo.",
-    default: "Ocurrió un error al conectar tu tienda.",
-  };
+  const errorParam = new URLSearchParams(window.location.search).get("error");
+  if (errorParam) {
+    const msg = {
+      missing_params: "Faltan parámetros para conectar con Shopify.",
+      invalid_state: "Error de validación OAuth. Intenta de nuevo.",
+      default: "Ocurrió un error al conectar tu tienda.",
+    };
 
-  const alertBox = document.createElement("div");
-  alertBox.textContent = msg[errorParam] || msg.default;
-  alertBox.style.backgroundColor = "#ffdddd";
-  alertBox.style.color = "#900";
-  alertBox.style.padding = "12px";
-  alertBox.style.borderRadius = "6px";
-  alertBox.style.marginBottom = "16px";
-  alertBox.style.fontWeight = "bold";
-  alertBox.style.textAlign = "center";
-  document.querySelector(".main-content").prepend(alertBox);
-}
+    const alertBox = document.createElement("div");
+    alertBox.textContent = msg[errorParam] || msg.default;
+    alertBox.style.backgroundColor = "#ffdddd";
+    alertBox.style.color = "#900";
+    alertBox.style.padding = "12px";
+    alertBox.style.borderRadius = "6px";
+    alertBox.style.marginBottom = "16px";
+    alertBox.style.fontWeight = "bold";
+    alertBox.style.textAlign = "center";
+    document.querySelector(".main-content").prepend(alertBox);
+  }
 
+  goToStep(1);
 });
 </script><script src='script.js' defer></script></body>
 </html>
