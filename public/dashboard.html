@@ -277,43 +277,15 @@
       </div>
     </main>
   </div>
-  <script>
-  document.addEventListener('DOMContentLoaded', () => {
-    const email = localStorage.getItem('userEmail');
-    const token = localStorage.getItem('authToken');
-
-    // 🚫 Proteger el acceso si no hay sesión
-    if (!email || !token) {
-      alert('Debes iniciar sesión para acceder al dashboard.');
-      window.location.href = 'index.html';
-      return;
-    }
-
-    // ✅ Mostrar el correo
-    const emailEl = document.getElementById('user-email');
-    if (emailEl) {
-      emailEl.textContent = email;
-    }
-  });
-</script>
-
-
-<script>
-  fetch('/api/user')
-    .then(res => res.json())
-    .then(data => {
-      document.getElementById('user-email').innerText = data.email;
-    })
-    .catch(() => {
-      document.getElementById('user-email').innerText = 'Usuario desconocido';
-    });
-</script>
+  
 <!-- Botón de cerrar sesión -->
 <div style="margin-top: 10px; margin-left: 20px;">
   <button onclick="window.location.href='/logout'" class="btn btn-secondary logout-btn">
     Cerrar sesión
   </button>
 </div>
+<script src="js/sessionCheck.js" defer></script>
+  <script src="script.js" defer></script>
 
 </body>
 </html>
