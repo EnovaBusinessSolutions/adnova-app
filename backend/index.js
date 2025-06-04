@@ -123,14 +123,17 @@ app.post('/api/login', async (req, res, next) => {
 // Onboarding (solo usuarios autenticados que aún no completaron onboarding)
 app.get("/onboarding", ensureNotOnboarded, (req, res) => {
   const filePath = path.join(__dirname, "../public/onboarding.html");
+
   fs.readFile(filePath, "utf8", (err, html) => {
     if (err) {
       console.error("❌ Error al leer onboarding.html:", err.stack || err);
       return res.status(500).send("Error al cargar la página de onboarding.");
     }
+
+    // Sólo reemplazamos el USER_ID_REAL; eliminamos INSTALL_LINK_PLACEHOLDER porque ya no se usa.
     const updatedHtml = html
-      .replace("USER_ID_REAL", req.user._id.toString())
-      .replace("INSTALL_LINK_PLACEHOLDER", process.env.CUSTOM_APP_INSTALL_LINK || "");
+      .replace("USER_ID_REAL", req.user._id.toString());
+
     res.send(updatedHtml);
   });
 });

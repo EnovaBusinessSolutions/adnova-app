@@ -1,11 +1,10 @@
-const mongoose = require('mongoose');
-
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: false },
   onboardingComplete: { type: Boolean, default: false },
 
-  shop: { type: String, required: false, unique: true },
+  // ** shop ya existía para guardar "mi-tienda.myshopify.com" **
+  shop: { type: String, required: false /* quitar unique */, },
   shopifyAccessToken: { type: String },
   shopifyScopeHash: { type: String },
   shopifyScopeHashUpdatedAt: { type: Number },

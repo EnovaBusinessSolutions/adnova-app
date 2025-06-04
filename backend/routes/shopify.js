@@ -11,7 +11,7 @@ const {
   SHOPIFY_API_KEY,
   SHOPIFY_API_SECRET,
   SHOPIFY_REDIRECT_URI,
-  DEFAULT_SHOP,
+  // Eliminamos DEFAULT_SHOP: ya no lo usamos aquí
 } = process.env;
 
 const SCOPES = [
@@ -24,7 +24,7 @@ const SCOPES = [
 /* ---------- /connect ---------- */
 router.get('/connect', (req, res) => {
   const userId = req.query.userId;
-  const shop = req.query.shop || DEFAULT_SHOP;
+  const shop = req.query.shop; // Ya no usamos DEFAULT_SHOP
 
   if (!userId) return res.status(400).send('Falta userId');
   if (!shop || !/^[a-z0-9-]+\.myshopify\.com$/i.test(shop)) {
