@@ -1,76 +1,119 @@
-<form id="register-form" class="form">
-  <div class="form-group">
-    <label for="email" class="form-label">Correo:</label>
-    <input type="email" id="email" class="form-input" required />
-  </div>
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Registro - ADNOVA AI</title>
 
-  <div class="form-group">
-    <label for="password" class="form-label">Contraseña:</label>
-    <div class="form-input-wrapper">
-      <input type="password" id="password" class="form-input" required />
-      <button type="button" class="toggle-password eye-hidden" onclick="togglePassword('password', this)"></button>
+    <!-- Google Fonts - Inter (igual que en index.html) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- CSS comunes (adnova-login.css) y CSS propio de registro -->
+    <link rel="stylesheet" href="adnova-login.css" />
+    <link rel="stylesheet" href="register.css" />
+  </head>
+
+  <body data-page="register">
+    <div class="login-container">
+      <div class="header">
+        <h1>Crear cuenta</h1>
+      </div>
+
+      <!-- Aquí va tu formulario de registro -->
+      <form id="register-form" class="form">
+        <div class="form-group">
+          <label for="email" class="form-label">Correo:</label>
+          <input type="email" id="email" class="form-input" required />
+        </div>
+
+        <div class="form-group">
+          <label for="password" class="form-label">Contraseña:</label>
+          <div class="form-input-wrapper">
+            <input type="password" id="password" class="form-input" required />
+            <button
+              type="button"
+              class="toggle-password eye-hidden"
+              onclick="togglePassword('password', this)"
+            ></button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="confirm" class="form-label">Confirmar contraseña:</label>
+          <div class="form-input-wrapper">
+            <input type="password" id="confirm" class="form-input" required />
+            <button
+              type="button"
+              class="toggle-password eye-hidden"
+              onclick="togglePassword('confirm', this)"
+            ></button>
+          </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Registrarse</button>
+        <p class="success-message" id="register-msg"></p>
+      </form>
     </div>
-  </div>
 
-  <div class="form-group">
-    <label for="confirm" class="form-label">Confirmar contraseña:</label>
-    <div class="form-input-wrapper">
-      <input type="password" id="confirm" class="form-input" required />
-      <button type="button" class="toggle-password eye-hidden" onclick="togglePassword('confirm', this)"></button>
-    </div>
-  </div>
+    <!-- Si prefieres separar tu lógica en public/js/register.js, inclúyelo aquí: -->
+    <!-- <script src="js/register.js" defer></script> -->
 
-  <button type="submit" class="btn btn-primary">Registrarse</button>
-  <p class="success-message" id="register-msg"></p>
-</form>
+    <!-- En este ejemplo hemos dejado el script inline -->
+    <script>
+      const form = document.getElementById('register-form');
+      const msg = document.getElementById('register-msg');
 
-<script>
-  const form = document.getElementById('register-form');
-  const msg = document.getElementById('register-msg');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
 
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
+        const email = document.getElementById('email').value;
+        const password = document.getElementById('password').value;
+        const confirm = document.getElementById('confirm').value;
 
-    const email = document.getElementById('email').value;
-    const password = document.getElementById('password').value;
-    const confirm = document.getElementById('confirm').value;
+        if (password !== confirm) {
+          msg.textContent = '❌ Las contraseñas no coinciden';
+          msg.style.color = '#f87171';
+          return;
+        }
 
-    if (password !== confirm) {
-      msg.textContent = '❌ Las contraseñas no coinciden';
-      msg.style.color = '#f87171';
-      return;
-    }
+        try {
+          const res = await fetch('/api/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+          });
 
-    try {
-      const res = await fetch('/api/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+          const data = await res.json();
+          if (data.success) {
+            msg.textContent =
+              '✅ Cuenta creada con éxito. Redirigiendo a Iniciar Sesión...';
+            msg.style.color = '#4ade80';
+            setTimeout(() => {
+              // Redirigimos al login (ruta “/” que en tu servidor envía index.html)
+              window.location.href = '/';
+            }, 1500);
+          } else {
+            msg.textContent = '❌ ' + (data.message || 'Hubo un problema');
+            msg.style.color = '#f87171';
+          }
+        } catch (error) {
+          msg.textContent = '❌ Error al conectar con el servidor';
+          msg.style.color = '#f87171';
+        }
       });
 
-      const data = await res.json();
-      if (data.success) {
-        msg.textContent = '✅ Cuenta creada con éxito. Redirigiendo a Iniciar Sesión...';
-        msg.style.color = '#4ade80';
-        setTimeout(() => {
-          // Redirigimos al login usando la ruta que Express sirve (‘/’ o ‘/index.html’)
-          window.location.href = '/';
-        }, 1500);
-      } else {
-        msg.textContent = '❌ ' + (data.message || 'Hubo un problema');
-        msg.style.color = '#f87171';
+      function togglePassword(id, el) {
+        const input = document.getElementById(id);
+        const isVisible = input.type === 'text';
+        input.type = isVisible ? 'password' : 'text';
+        el.classList.toggle('eye-visible', !isVisible);
+        el.classList.toggle('eye-hidden', isVisible);
       }
-    } catch (error) {
-      msg.textContent = '❌ Error al conectar con el servidor';
-      msg.style.color = '#f87171';
-    }
-  });
-
-  function togglePassword(id, el) {
-    const input = document.getElementById(id);
-    const isVisible = input.type === 'text';
-    input.type = isVisible ? 'password' : 'text';
-    el.classList.toggle('eye-visible', !isVisible);
-    el.classList.toggle('eye-hidden', isVisible);
-  }
-</script>
+    </script>
+  </body>
+</html>
