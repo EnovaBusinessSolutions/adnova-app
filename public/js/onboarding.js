@@ -1,7 +1,7 @@
 // public/js/onboarding.js
 
 document.addEventListener('DOMContentLoaded', function () {
-  // Capturamos el JWT de Shopify si viene en la URL y lo guardamos en localStorage
+  // 1) Capturamos el JWT de Shopify si viene en la URL y lo guardamos en localStorage
   const params = new URLSearchParams(window.location.search);
   const jwtShopify = params.get('shopifyToken');
   if (jwtShopify) {
@@ -12,34 +12,46 @@ document.addEventListener('DOMContentLoaded', function () {
   const contents = document.querySelectorAll('.step-content');
   let currentStep = 1;
 
-  // Paso 1: Conectar Shopify
-  const connectShopifyBtn = document.getElementById('connectShopifyBtn');
+  // 2) Paso 1: Conectar Shopify
+  //    Ahora usamos el ID real: "connect-shopify" (coincide con onboarding.html)
+  const connectShopifyBtn = document.getElementById('connect-shopify');
   if (connectShopifyBtn) {
     connectShopifyBtn.addEventListener('click', () => {
-      const userId = "USER_ID_REAL";
+      // USER_ID_REAL ya fue reemplazado al renderizar index.js
+      const userId = document.body.dataset.userId; // alternativo a "USER_ID_REAL"
       const shop = prompt('Ingresa tu dominio (ejemplo.myshopify.com):');
-      if (!shop) return;
+      if (!shop || !shop.endsWith('.myshopify.com')) {
+        alert('Dominio inválido. Debe terminar en ".myshopify.com".');
+        return;
+      }
       window.location.href = `/api/shopify/connect?userId=${userId}&shop=${shop}`;
     });
   }
 
-  // Paso 2: Conectar Google
-  const connectGoogleBtn = document.getElementById('connectGoogleBtn');
+  // 3) Paso 2: Conectar Google
+  //    En onboarding.html el enlace es <a href="/auth/google" id="connect-google-btn">
+  const connectGoogleBtn = document.getElementById('connect-google-btn');
   if (connectGoogleBtn) {
-    connectGoogleBtn.addEventListener('click', () => {
-      window.location.href = '/google';
+    connectGoogleBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      window.location.href = '/auth/google';
     });
   }
 
-  // Paso 3: Conectar Meta
-  const connectMetaBtn = document.getElementById('connectMetaBtn');
+  // 4) Paso 3: Conectar Meta
+  //    En onboarding.html el enlace es <a href="/auth/meta/login" id="connect-meta-btn">
+  const connectMetaBtn = document.getElementById('connect-meta-btn');
   if (connectMetaBtn) {
-    connectMetaBtn.addEventListener('click', () => {
+    connectMetaBtn.addEventListener('click', (e) => {
+      e.preventDefault();
       window.location.href = '/auth/meta/login';
     });
   }
 
-  // Paso 4: Verificar Píxel
+  // 5) Paso 4: Verificar Píxel
+  //    En tu HTML no hay un botón con ID "verifyPixelBtn", así que lo removemos
+  //    Si quieres reactivar esa funcionalidad, añade en onboarding.html:
+  //    <button id="verifyPixelBtn" class="btn">Verificar Pixel</button>
   const verifyPixelBtn = document.getElementById('verifyPixelBtn');
   if (verifyPixelBtn) {
     verifyPixelBtn.addEventListener('click', async () => {
@@ -61,8 +73,9 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
-  // Paso 5: Finalizar Onboarding
-  const finishOnboardingBtn = document.getElementById('finishOnboardingBtn');
+  // 6) Paso 5: Finalizar Onboarding
+  //    El botón en onboarding.html se llama "go-to-dashboard", así que lo ajustamos
+  const finishOnboardingBtn = document.getElementById('go-to-dashboard');
   if (finishOnboardingBtn) {
     finishOnboardingBtn.addEventListener('click', async () => {
       try {
@@ -83,7 +96,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
-  // Navegación entre pasos si el usuario hace clic en el sidebar
+  // 7) Navegación entre pasos si el usuario hace clic en el sidebar
   steps.forEach(step => {
     step.addEventListener('click', () => {
       const target = parseInt(step.dataset.step);
