@@ -1,58 +1,91 @@
 // public/js/onboarding.js
 
 document.addEventListener('DOMContentLoaded', function () {
-  // 1) Capturamos el JWT de Shopify si viene en la URL y lo guardamos en localStorage
+  // ---------------------------------------------------
+  // 0) Revisar la bandera inyectada por el backend:
+  //    Si ya estaba conectado en una sesión anterior,
+  //    pintamos de verde el botón y habilitamos “Continue”.
+  // ---------------------------------------------------
+  const flagEl = document.getElementById('shopifyConnectedFlag');
+  const alreadyConnectedShopify = flagEl && flagEl.textContent.trim() === 'true';
+
+  if (alreadyConnectedShopify) {
+    // Mostrar botón Shopify como “Connected” (verde)
+    const connectBtn = document.getElementById('connect-shopify');
+    if (connectBtn) {
+      connectBtn.classList.add('connected');   // tu CSS .connected define fondo verde
+      connectBtn.textContent = 'Connected';     // cambiamos texto
+      connectBtn.disabled = true;               // opcional: evitar reclick
+    }
+    // Habilitar el botón “Continue”
+    const continueBtn = document.getElementById('continue-btn');
+    if (continueBtn) continueBtn.disabled = false;
+  }
+
+  // ---------------------------------------------------
+  // 1) Capturamos el JWT que venga en la URL (shopifyToken)
+  //    cuando Shopify redirige después de la autorización.
+  // ---------------------------------------------------
   const params = new URLSearchParams(window.location.search);
   const jwtShopify = params.get('shopifyToken');
   if (jwtShopify) {
+    // Guardamos el JWT en localStorage
     localStorage.setItem('shopifyToken', jwtShopify);
+
+    // Pintar el botón Shopify como "Connected" (verde) y habilitar "Continue"
+    const connectBtn = document.getElementById('connect-shopify');
+    if (connectBtn) {
+      connectBtn.classList.add('connected');
+      connectBtn.textContent = 'Connected';
+      connectBtn.disabled = true;
+    }
+    const continueBtn = document.getElementById('continue-btn');
+    if (continueBtn) continueBtn.disabled = false;
   }
 
-  const steps = document.querySelectorAll('.step');
-  const contents = document.querySelectorAll('.step-content');
-  let currentStep = 1;
-
-  // 2) Paso 1: Conectar Shopify
-  //    Ahora usamos el ID real: "connect-shopify" (coincide con onboarding.html)
+  // ---------------------------------------------------
+  // 2) Event Listener: Click en “Connect Shopify”
+  //    pedirá al usuario que ingrese su dominio y
+  //    redirige a /api/shopify/connect?userId=xxx&shop=xxx
+  // ---------------------------------------------------
   const connectShopifyBtn = document.getElementById('connect-shopify');
   if (connectShopifyBtn) {
     connectShopifyBtn.addEventListener('click', () => {
-      // USER_ID_REAL ya fue reemplazado al renderizar index.js
-      const userId = document.body.dataset.userId; // alternativo a "USER_ID_REAL"
-      const shop = prompt('Ingresa tu dominio (ejemplo.myshopify.com):');
+      const userId = "USER_ID_REAL"; // backend reemplaza "USER_ID_REAL" con el ID real
+      const shop = prompt('Ingresa tu dominio (ejemplo.mytienda.myshopify.com):');
       if (!shop || !shop.endsWith('.myshopify.com')) {
-        alert('Dominio inválido. Debe terminar en ".myshopify.com".');
+        alert('Dominio inválido. Debe terminar en ".myshopify.com"');
         return;
       }
-      window.location.href = `/api/shopify/connect?userId=${userId}&shop=${shop}`;
+      // Redirigimos al servidor para iniciar OAuth con Shopify
+      window.location.href = `/api/shopify/connect?userId=${userId}&shop=${encodeURIComponent(shop)}`;
     });
   }
 
-  // 3) Paso 2: Conectar Google
-  //    En onboarding.html el enlace es <a href="/auth/google" id="connect-google-btn">
-  const connectGoogleBtn = document.getElementById('connect-google-btn');
+  // ---------------------------------------------------
+  // 3) Event Listener: Click en “Connect Google” (paso opcional)
+  // ---------------------------------------------------
+  const connectGoogleBtn = document.getElementById('connect-google');
   if (connectGoogleBtn) {
-    connectGoogleBtn.addEventListener('click', (e) => {
-      e.preventDefault();
+    connectGoogleBtn.addEventListener('click', () => {
       window.location.href = '/auth/google';
     });
   }
 
-  // 4) Paso 3: Conectar Meta
-  //    En onboarding.html el enlace es <a href="/auth/meta/login" id="connect-meta-btn">
-  const connectMetaBtn = document.getElementById('connect-meta-btn');
+  // ---------------------------------------------------
+  // 4) Event Listener: Click en “Connect Meta” (paso opcional)
+  // ---------------------------------------------------
+  const connectMetaBtn = document.getElementById('connect-meta');
   if (connectMetaBtn) {
-    connectMetaBtn.addEventListener('click', (e) => {
-      e.preventDefault();
+    connectMetaBtn.addEventListener('click', () => {
       window.location.href = '/auth/meta/login';
     });
   }
 
-  // 5) Paso 4: Verificar Píxel
-  //    En tu HTML no hay un botón con ID "verifyPixelBtn", así que lo removemos
-  //    Si quieres reactivar esa funcionalidad, añade en onboarding.html:
-  //    <button id="verifyPixelBtn" class="btn">Verificar Pixel</button>
-  const verifyPixelBtn = document.getElementById('verifyPixelBtn');
+  // ---------------------------------------------------
+  // 5) Event Listener: Click en “Verify Pixel” (paso opcional)
+  // ---------------------------------------------------
+  const verifyPixelBtn = document.getElementById('verify-pixel-btn');
   if (verifyPixelBtn) {
     verifyPixelBtn.addEventListener('click', async () => {
       try {
@@ -73,9 +106,12 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
-  // 6) Paso 5: Finalizar Onboarding
-  //    El botón en onboarding.html se llama "go-to-dashboard", así que lo ajustamos
-  const finishOnboardingBtn = document.getElementById('go-to-dashboard');
+  // ---------------------------------------------------
+  // 6) Event Listener: Click en “Finish Onboarding” (último paso)
+  //    cuando el usuario apriete ese botón,
+  //    llamamos a /api/complete-onboarding y luego a /dashboard.
+  // ---------------------------------------------------
+  const finishOnboardingBtn = document.getElementById('finishOnboardingBtn');
   if (finishOnboardingBtn) {
     finishOnboardingBtn.addEventListener('click', async () => {
       try {
@@ -96,13 +132,18 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
-  // 7) Navegación entre pasos si el usuario hace clic en el sidebar
+  // ---------------------------------------------------
+  // 7) Navegación manual entre pasos haciendo click en el sidebar
+  // ---------------------------------------------------
+  const steps = document.querySelectorAll('.step');
+  const contents = document.querySelectorAll('.content-panel');
+  let currentStep = 1;
   steps.forEach(step => {
     step.addEventListener('click', () => {
       const target = parseInt(step.dataset.step);
       if (target <= currentStep) {
-        contents.forEach(c => c.classList.remove('active'));
-        document.querySelector(`.step-content[data-step="${target}"]`).classList.add('active');
+        contents.forEach(c => c.classList.add('hidden'));
+        document.getElementById(`step${target}-content`).classList.remove('hidden');
         currentStep = target;
       }
     });
