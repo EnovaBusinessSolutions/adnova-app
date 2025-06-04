@@ -93,6 +93,7 @@ app.post('/api/register', async (req, res) => {
 });
 
 // Login de usuario
+// Login de usuario
 app.post('/api/login', async (req, res, next) => {
   const { email, password } = req.body;
   if (!email || !password) {
@@ -108,10 +109,18 @@ app.post('/api/login', async (req, res, next) => {
     req.login(user, err => {
       if (err) return next(err);
       req.session.userId = user._id;
-      // Devuelve al frontend la ruta correcta a donde redirigir
-      res.status(200).json({
+
+      if (user.onboardingComplete && user.shopifyConnected) {
+        return res.status(200).json({
+          success: true,
+          redirect: '/dashboard'
+        });
+      }
+
+      // Si falta alguno, va a /onboarding
+      return res.status(200).json({
         success: true,
-        redirect: user.onboardingComplete ? '/dashboard' : '/onboarding'
+        redirect: '/onboarding'
       });
     });
   } catch (err) {
@@ -120,9 +129,14 @@ app.post('/api/login', async (req, res, next) => {
   }
 });
 
+
 // Onboarding (solo usuarios autenticados que aún no completaron onboarding)
-app.get("/onboarding", ensureNotOnboarded, (req, res) => {
+app.get("/onboarding", ensureNotOnboarded, async (req, res) => {
   const filePath = path.join(__dirname, "../public/onboarding.html");
+
+  // 1) Buscamos en BD para saber si ya tenía shopifyConnected = true
+  const user = await User.findById(req.user._id).lean();
+  const alreadyConnectedShopify = user.shopifyConnected || false;
 
   fs.readFile(filePath, "utf8", (err, html) => {
     if (err) {
@@ -130,13 +144,16 @@ app.get("/onboarding", ensureNotOnboarded, (req, res) => {
       return res.status(500).send("Error al cargar la página de onboarding.");
     }
 
-    // Sólo reemplazamos el USER_ID_REAL; eliminamos INSTALL_LINK_PLACEHOLDER porque ya no se usa.
-    const updatedHtml = html
-      .replace("USER_ID_REAL", req.user._id.toString());
+    let updatedHtml = html.replace("USER_ID_REAL", req.user._id.toString());
+    updatedHtml = updatedHtml.replace(
+      "SHOPIFY_CONNECTED_FLAG",
+      alreadyConnectedShopify ? "true" : "false"
+    );
 
     res.send(updatedHtml);
   });
 });
+
 
 // Finalizar onboarding
 app.post('/api/complete-onboarding', async (req, res) => {
