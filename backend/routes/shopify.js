@@ -5,7 +5,7 @@ const qs = require('querystring');
 const jwt = require('jsonwebtoken');
 const router = express.Router();
 const User = require('../models/User');
-const verifyShopifyToken = require('../../middlewares/verifyShopifyToken');
+const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
 
 const {
   SHOPIFY_API_KEY,
