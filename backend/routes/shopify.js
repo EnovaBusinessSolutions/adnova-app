@@ -5,6 +5,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const { ensureAuthenticated } = require('../auth');
 const verifyShopifyToken = require('../../middlewares/verifyShopifyToken');
 
 const router = express.Router();
@@ -13,10 +14,6 @@ const router = express.Router();
 const SCOPES = 'read_products,read_customers,read_orders'; // ajusta según lo que necesites
 const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY;
 const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
-
-// ─────────────────────────────────────────────────────────────────
-// 1) Endpoint para iniciar el OAuth con Shopify
-// ─────────────────────────────────────────────────────────────────
 
 // GET /api/shopify/connect?userId=...&shop=mi-tienda.myshopify.com
 router.get(
