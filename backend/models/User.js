@@ -6,6 +6,9 @@ const userSchema = new mongoose.Schema({
 
   // ** shop ya existía para guardar "mi-tienda.myshopify.com" **
   shop: { type: String, required: false /* quitar unique */, },
+  
+  // Aquí agregamos shopifyConnected:
+  shopifyConnected: { type: Boolean, default: false },
   shopifyAccessToken: { type: String },
   shopifyScopeHash: { type: String },
   shopifyScopeHashUpdatedAt: { type: Number },

@@ -1,5 +1,4 @@
-// ───────────────────────────────────────────────────────────────── 
-// onboarding.js (MODIFICADO; rutas reales: public/js/onboarding.js)
+// public/js/onboarding.js (MODIFICADO)
 document.addEventListener('DOMContentLoaded', async () => {
   // (Opcional) Leer el flag oculto que inyecta el servidor:
   const flagElem = document.getElementById('shopifyConnectedFlag');
