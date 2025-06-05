@@ -1,11 +1,17 @@
+// models/User.js
+
 const mongoose = require('mongoose');
+
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: false },
   onboardingComplete: { type: Boolean, default: false },
 
   // ** shop ya existía para guardar "mi-tienda.myshopify.com" **
-  shop: { type: String, required: false /* quitar unique */, },
+  shop: { type: String, required: false },
+
+  // Campo para saber si ya conectó Shopify
+  shopifyConnected: { type: Boolean, default: false },
   shopifyAccessToken: { type: String },
   shopifyScopeHash: { type: String },
   shopifyScopeHashUpdatedAt: { type: Number },
@@ -18,4 +24,4 @@ const userSchema = new mongoose.Schema({
   metaAccessToken: { type: String }
 });
 
-module.exports = mongoose.model("User", userSchema);
+module.exports = mongoose.model('User', userSchema);
