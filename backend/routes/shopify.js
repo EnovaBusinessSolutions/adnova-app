@@ -5,7 +5,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const { ensureAuthenticated } = require('../middleware/auth'); // ajusta ruta si tu middleware está en otro lugar
+const { ensureAuthenticated } = require('../../middlewares/auth');
 
 const router = express.Router();
 
