@@ -1,3 +1,5 @@
+// backend/index.js
+
 require('dotenv').config();
 
 const express = require('express');
@@ -11,9 +13,14 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const bodyParser = require('body-parser');
 
-require('./auth');
-const User = require('./models/User');
+// Si tuvieras un auth.js en la raíz de /backend, harías:
+//   require('./auth');
+// Si está en routes/auth.js, harías:
+//   require('./routes/auth');
+// Ajusta según dónde esté tu auth.js
+require('./routes/auth');
 
+const User = require('./models/User');
 const googleConnect = require('./routes/googleConnect');
 const googleAnalytics = require('./routes/googleAnalytics');
 const metaAuthRoutes = require('./routes/meta');
@@ -21,17 +28,21 @@ const privacyRoutes = require('./routes/privacyRoutes');
 const userRoutes = require('./routes/user');
 const mockShopify = require('./routes/mockShopify');
 const shopifyRoutes = require('./routes/shopify');
-const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
+
+// IMPORT CORRECTO: aquí subimos un nivel para llegar a la raíz, 
+// y cargamos verifyShopifyToken.js que está justo al lado de backend/
+const verifyShopifyToken = require('../verifyShopifyToken');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
+mongoose
+  .connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
   .then(() => console.log('✅ Conectado a MongoDB Atlas'))
-  .catch(err => console.error('❌ Error al conectar con MongoDB:', err));
+  .catch((err) => console.error('❌ Error al conectar con MongoDB:', err));
 
 // +++ MIDDLEWARES +++
 app.use(cors());
@@ -39,42 +50,42 @@ app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
 app.set('trust proxy', 1);
-app.use(session({
-  secret: process.env.SESSION_SECRET,
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    secure: process.env.NODE_ENV === 'production'
-  }
-}));
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      secure: process.env.NODE_ENV === 'production',
+    },
+  })
+);
 
 app.use(passport.initialize());
 app.use(passport.session());
 
-// +++ FUNCIONES DE CONTROL DE ACCESO +++
+// Funciones de control (si las usas globalmente)
 function ensureAuthenticated(req, res, next) {
   if (req.isAuthenticated()) return next();
   res.redirect('/');
 }
-
 function ensureNotOnboarded(req, res, next) {
   if (req.isAuthenticated() && !req.user.onboardingComplete) return next();
   res.redirect('/dashboard');
 }
 
-// +++ RUTAS +++
-
-// Página de inicio (login)
+// RUTAS
 app.get('/', (req, res) =>
   res.sendFile(path.join(__dirname, '../public/index.html'))
 );
 
-// Registro de usuario
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
-    return res.status(400).json({ success: false, message: 'Correo y contraseña son requeridos' });
+    return res
+      .status(400)
+      .json({ success: false, message: 'Correo y contraseña son requeridos' });
   }
   try {
     const hashed = await bcrypt.hash(password, 10);
@@ -86,11 +97,12 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
-// Login de usuario
 app.post('/api/login', async (req, res, next) => {
   const { email, password } = req.body;
   if (!email || !password) {
-    return res.status(400).json({ success: false, message: 'Correo y contraseña son requeridos' });
+    return res
+      .status(400)
+      .json({ success: false, message: 'Correo y contraseña son requeridos' });
   }
   try {
     const user = await User.findOne({ email });
@@ -99,21 +111,19 @@ app.post('/api/login', async (req, res, next) => {
     const match = await bcrypt.compare(password, user.password);
     if (!match) return res.status(401).json({ success: false, message: 'Contraseña incorrecta' });
 
-    req.login(user, err => {
+    req.login(user, (err) => {
       if (err) return next(err);
       req.session.userId = user._id;
 
       if (user.onboardingComplete && user.shopifyConnected) {
         return res.status(200).json({
           success: true,
-          redirect: '/dashboard'
+          redirect: '/dashboard',
         });
       }
-
-      // Si falta alguno, va a /onboarding
       return res.status(200).json({
         success: true,
-        redirect: '/onboarding'
+        redirect: '/onboarding',
       });
     });
   } catch (err) {
@@ -122,31 +132,27 @@ app.post('/api/login', async (req, res, next) => {
   }
 });
 
-// Onboarding (solo usuarios autenticados que aún no completaron onboarding)
-app.get("/onboarding", ensureNotOnboarded, async (req, res) => {
-  const filePath = path.join(__dirname, "../public/onboarding.html");
-
-  // 1) Buscamos en BD para saber si ya tenía shopifyConnected = true
+app.get('/onboarding', ensureNotOnboarded, async (req, res) => {
+  const filePath = path.join(__dirname, '../public/onboarding.html');
   const user = await User.findById(req.user._id).lean();
   const alreadyConnectedShopify = user.shopifyConnected || false;
 
-  fs.readFile(filePath, "utf8", (err, html) => {
+  fs.readFile(filePath, 'utf8', (err, html) => {
     if (err) {
-      console.error("❌ Error al leer onboarding.html:", err.stack || err);
-      return res.status(500).send("Error al cargar la página de onboarding.");
+      console.error('❌ Error al leer onboarding.html:', err.stack || err);
+      return res.status(500).send('Error al cargar la página de onboarding.');
     }
 
-    let updatedHtml = html.replace("USER_ID_REAL", req.user._id.toString());
+    let updatedHtml = html.replace('USER_ID_REAL', req.user._id.toString());
     updatedHtml = updatedHtml.replace(
-      "SHOPIFY_CONNECTED_FLAG",
-      alreadyConnectedShopify ? "true" : "false"
+      'SHOPIFY_CONNECTED_FLAG',
+      alreadyConnectedShopify ? 'true' : 'false'
     );
 
     res.send(updatedHtml);
   });
 });
 
-// Finalizar onboarding
 app.post('/api/complete-onboarding', async (req, res) => {
   try {
     if (!req.isAuthenticated()) {
@@ -156,7 +162,10 @@ app.post('/api/complete-onboarding', async (req, res) => {
       onboardingComplete: true,
     });
     if (!result) {
-      console.warn('⚠️ No se encontró el usuario para completar onboarding:', req.user._id);
+      console.warn(
+        '⚠️ No se encontró el usuario para completar onboarding:',
+        req.user._id
+      );
       return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
     }
     res.json({ success: true });
@@ -166,10 +175,6 @@ app.post('/api/complete-onboarding', async (req, res) => {
   }
 });
 
-// ++++++++++++++++++++++++++++++
-// RUTA NUEVA: /api/session
-// Devuelve si hay sesión activa y datos mínimos del usuario
-// ++++++++++++++++++++++++++++++
 app.get('/api/session', (req, res) => {
   if (!req.isAuthenticated()) {
     return res.status(401).json({ authenticated: false });
@@ -182,12 +187,11 @@ app.get('/api/session', (req, res) => {
       onboardingComplete: req.user.onboardingComplete,
       googleConnected: req.user.googleConnected,
       metaConnected: req.user.metaConnected,
-      shopifyConnected: req.user.shopifyConnected
-    }
+      shopifyConnected: req.user.shopifyConnected,
+    },
   });
 });
 
-// Webhooks de Shopify
 app.post('/webhooks', express.raw({ type: 'application/json' }), (req, res) => {
   const hmac = req.get('X-Shopify-Hmac-Sha256');
   const body = req.body;
@@ -214,7 +218,6 @@ app.use('/auth/meta', metaAuthRoutes);
 app.use('/api', userRoutes);
 app.use('/api', mockShopify);
 
-// Dashboard (solo para usuarios autenticados)
 app.get('/dashboard', ensureAuthenticated, (r, s) => {
   s.sendFile(path.join(__dirname, '../public/dashboard.html'));
 });
@@ -225,18 +228,19 @@ app.get('/pixel-verifier', (r, s) =>
   s.sendFile(path.join(__dirname, '../public/pixel-verifier.html'))
 );
 
-// Google OAuth
-app.get('/auth/google',
+app.get(
+  '/auth/google',
   passport.authenticate('google', {
     scope: [
       'profile',
       'email',
       'https://www.googleapis.com/auth/analytics.readonly',
-      'https://www.googleapis.com/auth/adwords'
-    ]
+      'https://www.googleapis.com/auth/adwords',
+    ],
   })
 );
-app.get('/auth/google/callback',
+app.get(
+  '/auth/google/callback',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
     const redirectPath = req.user.onboardingComplete ? '/dashboard' : '/onboarding';
@@ -244,9 +248,8 @@ app.get('/auth/google/callback',
   }
 );
 
-// Logout
 app.get('/logout', (req, res) => {
-  req.logout(err => {
+  req.logout((err) => {
     if (err) {
       console.error('Error al cerrar sesión:', err);
       return res.redirect('/');
@@ -258,7 +261,7 @@ app.get('/logout', (req, res) => {
   });
 });
 
-// Validación de token de Shopify
+// Aquí sí usamos el middleware importado arriba
 app.get('/api/test-shopify-token', verifyShopifyToken, (req, res) => {
   res.json({
     success: true,
@@ -267,10 +270,8 @@ app.get('/api/test-shopify-token', verifyShopifyToken, (req, res) => {
   });
 });
 
-// 404 por defecto
 app.use((req, res) => res.status(404).send('Página no encontrada'));
 
-// Iniciar servidor
 app.listen(PORT, () =>
   console.log(`✅ Servidor corriendo en http://localhost:${PORT}`)
 );
