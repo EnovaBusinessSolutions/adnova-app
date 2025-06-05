@@ -23,10 +23,7 @@ const privacyRoutes = require('./routes/privacyRoutes');
 const userRoutes = require('./routes/user');
 const mockShopify = require('./routes/mockShopify');
 const shopifyRoutes = require('./routes/shopify');
-
-// IMPORT CORRECTO: aquí subimos un nivel para llegar a la raíz, 
-// y cargamos verifyShopifyToken.js que está justo al lado de backend/
-const verifyShopifyToken = require('../verifyShopifyToken');
+const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
