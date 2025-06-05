@@ -5,7 +5,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
-const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
+const verifyShopifyToken = require('../../middlewares/verifyShopifyToken');
 
 const router = express.Router();
 
