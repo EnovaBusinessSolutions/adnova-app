@@ -13,12 +13,7 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const bodyParser = require('body-parser');
 
-// Si tuvieras un auth.js en la raíz de /backend, harías:
-//   require('./auth');
-// Si está en routes/auth.js, harías:
-//   require('./routes/auth');
-// Ajusta según dónde esté tu auth.js
-require('./routes/auth');
+require('./auth')
 
 const User = require('./models/User');
 const googleConnect = require('./routes/googleConnect');
