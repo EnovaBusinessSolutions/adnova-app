@@ -12,6 +12,8 @@ const fs = require('fs');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const bodyParser = require('body-parser');
+const axios = require('axios');
+const qs    = require('querystring');
 
 require('./auth')
 
@@ -221,24 +223,110 @@ app.get('/pixel-verifier', (r, s) =>
 );
 
 app.get(
-  '/auth/google',
+  '/auth/google/login',
   passport.authenticate('google', {
     scope: [
       'profile',
       'email',
-      'https://www.googleapis.com/auth/analytics.readonly',
-      'https://www.googleapis.com/auth/adwords',
     ],
   })
 );
+
 app.get(
-  '/auth/google/callback',
+  '/auth/google/login/callback',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
-    const redirectPath = req.user.onboardingComplete ? '/dashboard' : '/onboarding';
-    res.redirect(redirectPath);
+    const destino = req.user.onboardingComplete ? '/dashboard' : '/onboarding';
+    res.redirect(destino);
   }
 );
+
+// 1) Dispara el OAuth únicamente para Analytics & Ads
+app.get('/auth/google/connect', (req, res) => {
+  // 1A) Si no está logueado en tu app, no puede conectar Analytics → redirigir al login
+  if (!req.isAuthenticated()) {
+    return res.redirect('/');
+  }
+
+  // 1B) Armar la URL de autorización de Google SOLO para los scopes de Analytics/Ads
+  const params = new URLSearchParams({
+    client_id:     process.env.GOOGLE_CLIENT_ID,
+    redirect_uri:  process.env.GOOGLE_CONNECT_CALLBACK_URL, 
+    response_type: 'code',
+    access_type:   'offline',
+    scope: [
+      'https://www.googleapis.com/auth/analytics.readonly',
+      'https://www.googleapis.com/auth/adwords'
+    ].join(' '),
+    state:         req.sessionID // opcional, ayuda a checar CSRF
+  });
+
+  // Redirigimos al diálogo de Google
+  return res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+});
+
+
+// 2) Callback de Google tras aceptar Analytics/Ads
+app.get('/auth/google/connect/callback', async (req, res) => {
+  // 2A) Validar que el usuario siga logueado
+  if (!req.isAuthenticated()) {
+    return res.redirect('/');
+  }
+
+  const { code } = req.query;
+  if (!code) {
+    // Si Google devolvió error o usuario canceló, volvemos a onboarding con query “?google=fail”
+    return res.redirect('/onboarding?google=fail');
+  }
+
+  try {
+    // 2B) Intercambiar el “code” por tokens en Google
+    const tokenRes = await axios.post(
+      'https://oauth2.googleapis.com/token',
+      qs.stringify({
+        code,
+        client_id:     process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri:  process.env.GOOGLE_CONNECT_CALLBACK_URL,
+        grant_type:    'authorization_code'
+      }),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+
+    const { access_token, refresh_token, id_token } = tokenRes.data;
+
+    // 2C) (Opcional) Decodificamos el id_token para obtener el email de Google
+    let decodedEmail = '';
+    if (id_token) {
+      const payload = JSON.parse(
+        Buffer.from(id_token.split('.')[1], 'base64').toString()
+      );
+      decodedEmail = payload.email || '';
+    }
+
+    // 2D) Actualizamos SOLO el documento existente en Mongo
+    const updateData = {
+      googleConnected:    true,
+      googleAccessToken:  access_token,
+      googleRefreshToken: refresh_token
+    };
+    if (decodedEmail) {
+      updateData.googleEmail = decodedEmail;
+    }
+
+    await User.findByIdAndUpdate(req.user._id, updateData);
+    console.log('✅ Google Analytics/Ads conectado para usuario:', req.user._id);
+
+    // 2E) Volvemos a /onboarding para que la UI se pinte como “Connected”
+    return res.redirect('/onboarding');
+  } catch (err) {
+    console.error(
+      '❌ Error intercambiando tokens de Analytics/Ads:',
+      err.response?.data || err.message
+    );
+    return res.redirect('/onboarding?google=error');
+  }
+});
 
 app.get('/logout', (req, res) => {
   req.logout((err) => {

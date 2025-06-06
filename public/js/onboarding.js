@@ -8,11 +8,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   const connectGoogleBtn  = document.getElementById('connect-google-btn');
   const continueBtn       = document.getElementById('continue-btn');
   const flagElem          = document.getElementById('shopifyConnectedFlag');
+  const flagGoogleElem    = document.getElementById('googleConnectedFlag');
 
   console.log('🕵️ onboarding.js cargado');
   console.log('   connectShopifyBtn =', connectShopifyBtn);
   console.log('   continueBtn       =', continueBtn);
   console.log('   flagElem          =', flagElem);
+  console.log('   flagGoogleElem    =', flagGoogleElem);
 
   //
   // 2) Definimos la función que pinta el botón y habilita “Continue”
@@ -33,12 +35,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  //
-  // 3) Si el servidor ya inyectó “true” en el flag (flagElem),
-  //    marcamos la UI de Shopify como conectado
-  //
+  function marcarGoogleConectadoUI() {
+    console.log('🕹️ Pintando Google como conectado');
+    if (connectGoogleBtn) {
+      connectGoogleBtn.textContent = 'Connected';
+      connectGoogleBtn.classList.add('connected');
+      connectGoogleBtn.disabled = true;
+    }
+    if (continueBtn) {
+      continueBtn.disabled = false;
+      continueBtn.classList.remove('btn-continue--disabled');
+      continueBtn.classList.add('btn-continue--enabled');
+    }
+  }
+
   if (flagElem && flagElem.textContent.trim() === 'true') {
     marcarShopifyConectadoUI();
+  }
+
+  if (flagGoogleElem && flagGoogleElem.textContent.trim() === 'true') {
+    marcarGoogleConectadoUI();
   }
 
   //
@@ -63,6 +79,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Si está autenticado y ya conectó Shopify, pintamos UI
     if (sessionData.user.shopifyConnected) {
       marcarShopifyConectadoUI();
+    }
+    if (sessionData.user.googleConnected) {
+      marcarGoogleConectadoUI();
     }
   } else {
     // 401 o cualquier otro error → redirigir a login
@@ -90,6 +109,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         ) {
           marcarShopifyConectadoUI();
         }
+        if (
+          newSessionData.authenticated &&
+          newSessionData.user.googleConnected
+        ) {
+          marcarGoogleConectadoUI();
+       }
       }
     } catch (err) {
       console.error(
