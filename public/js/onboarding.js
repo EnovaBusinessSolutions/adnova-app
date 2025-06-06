@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 1) Primero recuperamos los nodos del DOM que vamos a usar:
   //
   const connectShopifyBtn = document.getElementById('connect-shopify');
+  const connectGoogleBtn  = document.getElementById('connect-google-btn');
   const continueBtn       = document.getElementById('continue-btn');
   const flagElem          = document.getElementById('shopifyConnectedFlag');
 
@@ -113,6 +114,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       );
       if (!shop) return;
       window.location.href = `/api/shopify/connect?userId=${userId}&shop=${shop}`;
+    });
+  }
+
+   // --- (4) Listener para “Connect Google” (nuevo) ---
+  if (connectGoogleBtn) {
+    connectGoogleBtn.addEventListener('click', () => {
+      window.location.href = '/auth/google';
     });
   }
 
