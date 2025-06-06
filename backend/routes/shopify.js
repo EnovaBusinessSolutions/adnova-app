@@ -35,7 +35,7 @@ router.get(
     req.session.shopifyState = state;
 
     // 1.3) Construimos la URL de autorización de Shopify
-    const redirectUri = `${process.env.APP_URL}/api/shopify/callback`;
+    const redirectUri = process.env.SHOPIFY_REDIRECT_URI;
     const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_API_KEY}` +
       `&scope=${encodeURIComponent(SCOPES)}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
