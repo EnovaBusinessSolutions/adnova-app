@@ -1,7 +1,5 @@
 // backend/index.js
 
-require('dotenv').config();
-
 const express = require('express');
 const session = require('express-session');
 const passport = require('passport');
@@ -14,6 +12,7 @@ const crypto = require('crypto');
 const bodyParser = require('body-parser');
 const axios = require('axios');
 const qs    = require('querystring');
+require('dotenv').config();
 
 require('./auth')
 
@@ -206,7 +205,7 @@ app.post('/webhooks', express.raw({ type: 'application/json' }), (req, res) => {
 // Rutas externas y de API
 app.use('/api/shopify', shopifyRoutes);
 app.use('/', privacyRoutes);
-app.use('/', googleConnect);
+app.use('/auth/google', googleConnect);
 app.use('/', googleAnalytics);
 app.use('/auth/meta', metaAuthRoutes);
 app.use('/api', userRoutes);
