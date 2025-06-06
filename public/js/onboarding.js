@@ -1,14 +1,48 @@
 // public/js/onboarding.js
+
 document.addEventListener('DOMContentLoaded', async () => {
-  // (Opcional) Leer el flag oculto que inyecta el servidor:
-  const flagElem = document.getElementById('shopifyConnectedFlag');
-  if (flagElem && flagElem.textContent.trim() === 'true') {
-    // Si el servidor ya nos devolvió “true” en el HTML, pintamos desde el inicio:
-    marcarShopifyConectadoUI();
-    // Nota: igual haremos el fetch a /api/session para sincronizar estado.
+  //
+  // 1) Primero recuperamos los nodos del DOM que vamos a usar:
+  //
+  const connectShopifyBtn = document.getElementById('connect-shopify');
+  const continueBtn       = document.getElementById('continue-btn');
+  const flagElem          = document.getElementById('shopifyConnectedFlag');
+
+  console.log('🕵️ onboarding.js cargado');
+  console.log('   connectShopifyBtn =', connectShopifyBtn);
+  console.log('   continueBtn       =', continueBtn);
+  console.log('   flagElem          =', flagElem);
+
+  //
+  // 2) Definimos la función que pinta el botón y habilita “Continue”
+  //    Esta función ya puede usar `connectShopifyBtn` y `continueBtn`
+  //    porque las declaramos en el paso 1.
+  //
+  function marcarShopifyConectadoUI() {
+    console.log('🕹️ Pintando Shopify como conectado');
+    if (connectShopifyBtn) {
+      connectShopifyBtn.textContent = 'Connected';
+      connectShopifyBtn.classList.add('connected');
+      connectShopifyBtn.disabled = true;
+    }
+    if (continueBtn) {
+      continueBtn.disabled = false;
+      continueBtn.classList.remove('btn-continue--disabled');
+      continueBtn.classList.add('btn-continue--enabled');
+    }
   }
 
-  // 1) Fetch a /api/session:
+  //
+  // 3) Si el servidor ya inyectó “true” en el flag (flagElem),
+  //    marcamos la UI de Shopify como conectado
+  //
+  if (flagElem && flagElem.textContent.trim() === 'true') {
+    marcarShopifyConectadoUI();
+  }
+
+  //
+  // 4) Luego hacemos el fetch a /api/session para sincronizar estado
+  //
   let sessionResponse;
   try {
     sessionResponse = await fetch('/api/session', {
@@ -20,29 +54,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (sessionResponse && sessionResponse.ok) {
     const sessionData = await sessionResponse.json();
-    if (sessionData.authenticated) {
-      if (sessionData.user.shopifyConnected) {
-        marcarShopifyConectadoUI();
-      }
-    } else {
-      // No autenticado → redirigir a login
+    if (!sessionData.authenticated) {
+      // Si no está autenticado, redirigimos a login
       window.location.href = '/';
       return;
     }
+    // Si está autenticado y ya conectó Shopify, pintamos UI
+    if (sessionData.user.shopifyConnected) {
+      marcarShopifyConectadoUI();
+    }
   } else {
-    // 401 u otro → redirigir a login
+    // 401 o cualquier otro error → redirigir a login
     window.location.href = '/';
     return;
   }
 
-  // 2) Revisar si llegó shopifyToken en querystring:
-  const params = new URLSearchParams(window.location.search);
+  //
+  // 5) Si existe ?shopifyToken en la URL (callback de Shopify),
+  //    guardamos el JWT y volvemos a recargar /api/session
+  //
+  const params     = new URLSearchParams(window.location.search);
   const jwtShopify = params.get('shopifyToken');
   if (jwtShopify) {
-    // Guardar JWT localmente si lo necesitas más adelante
     localStorage.setItem('shopifyToken', jwtShopify);
-
-    // Vuelvo a pedir /api/session para “refrescar” estado
     try {
       const newSession = await fetch('/api/session', {
         credentials: 'include',
@@ -64,11 +98,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // 3) Selectores del DOM (ahora coincide con el HTML modificado)
-  const connectShopifyBtn = document.getElementById('connect-shopify');
-  const continueBtn       = document.getElementById('continue-btn');
-
-  // 4) Listener para “Connect” (inicia OAuth con Shopify)
+  //
+  // 6) Listener para “Connect” (inicia OAuth con Shopify)
+  //
   if (connectShopifyBtn) {
     connectShopifyBtn.addEventListener('click', () => {
       const userId = document.body.getAttribute('data-user-id');
@@ -84,24 +116,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   }
 
-  // 5) Listener para “Continue”
+  //
+  // 7) Listener para “Continue” (solo redirige al dashboard)
+  //
   if (continueBtn) {
     continueBtn.addEventListener('click', () => {
       window.location.href = '/dashboard';
     });
-  }
-
-  // 6) Función que pinta el botón Connect en verde y habilita Continue
-  function marcarShopifyConectadoUI() {
-    if (connectShopifyBtn) {
-      connectShopifyBtn.textContent = 'Connected';
-      connectShopifyBtn.classList.add('connected'); // .connected { background: green; }
-      connectShopifyBtn.disabled = true;
-    }
-    if (continueBtn) {
-      continueBtn.disabled = false;
-      continueBtn.classList.remove('btn-continue--disabled');
-      continueBtn.classList.add('btn-continue--enabled');
-    }
   }
 });
