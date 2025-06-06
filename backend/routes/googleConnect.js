@@ -6,7 +6,7 @@ const User = require('../models/User');
 
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-const REDIRECT_URI = 'https://adnova-app.onrender.com/google/callback';
+const REDIRECT_URI = 'https://adnova-app.onrender.com/auth/google/login/callback';
 
 router.get('/google', (req, res) => {
   const state = req.sessionID;
