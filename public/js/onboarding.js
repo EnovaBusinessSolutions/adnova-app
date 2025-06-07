@@ -27,8 +27,12 @@ function habilitarContinueSiShopify() {
     continueBtn.disabled = false;
     continueBtn.classList.remove('btn-continue--disabled');
     continueBtn.classList.add('btn-continue--enabled');
+    sessionStorage.removeItem('shopifyConnected');
   }
 }
+
+ habilitarContinueSiShopify();
+
   // 2) Definimos la función que pinta el botón y habilita “Continue”
   //    Esta función ya puede usar `connectShopifyBtn` y `continueBtn`
   //    porque las declaramos en el paso 1.
@@ -39,13 +43,9 @@ function habilitarContinueSiShopify() {
       connectShopifyBtn.textContent = 'Connected';
       connectShopifyBtn.classList.add('connected');
       connectShopifyBtn.disabled = true;
+
     }
-    if (continueBtn) {
-      continueBtn.disabled = false;
-      continueBtn.classList.remove('btn-continue--disabled');
-      continueBtn.classList.add('btn-continue--enabled');
-    }
-   habilitarContinueSiShopify();
+    habilitarContinueSiShopify();
   }
 
   function marcarGoogleConectadoUI() {
