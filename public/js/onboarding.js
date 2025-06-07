@@ -145,7 +145,7 @@ document.addEventListener('DOMContentLoaded', async () => {
    // --- (4) Listener para “Connect Google” (nuevo) ---
   if (connectGoogleBtn) {
     connectGoogleBtn.addEventListener('click', () => {
-      window.location.href = '/google';
+      window.location.href = '/auth/google/connect';
     });
   }
 
