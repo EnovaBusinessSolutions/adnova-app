@@ -142,6 +142,11 @@ app.get('/onboarding', ensureNotOnboarded, async (req, res) => {
       alreadyConnectedShopify ? 'true' : 'false'
     );
 
+    updatedHtml = updatedHtml.replace(
+      'GOOGLE_CONNECTED_FLAG',
+      user.googleConnected ? 'true' : 'false'
+    );
+
     res.send(updatedHtml);
   });
 });
