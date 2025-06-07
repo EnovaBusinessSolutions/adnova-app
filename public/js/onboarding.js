@@ -165,7 +165,7 @@ function habilitarContinueSiShopify() {
   //
   if (continueBtn) {
     continueBtn.addEventListener('click', () => {
-      window.location.href = '/continue-btn';
+      window.location.href = '/continue-btn-1';
     });
   }
 });
