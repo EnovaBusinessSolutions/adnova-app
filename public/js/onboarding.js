@@ -16,7 +16,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   console.log('   flagElem          =', flagElem);
   console.log('   flagGoogleElem    =', flagGoogleElem);
 
-  //
+  // Helper: sólo habilita el botón Continue si Shopify está conectado
+function habilitarContinueSiShopify() {
+  if (!continueBtn) return;
+  const shopifyYaConectado =
+    flagElem?.textContent.trim() === 'true' ||   
+    sessionStorage.getItem('shopifyConnected') === 'true'; 
+
+  if (shopifyYaConectado) {
+    continueBtn.disabled = false;
+    continueBtn.classList.remove('btn-continue--disabled');
+    continueBtn.classList.add('btn-continue--enabled');
+  }
+}
   // 2) Definimos la función que pinta el botón y habilita “Continue”
   //    Esta función ya puede usar `connectShopifyBtn` y `continueBtn`
   //    porque las declaramos en el paso 1.
@@ -33,6 +45,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       continueBtn.classList.remove('btn-continue--disabled');
       continueBtn.classList.add('btn-continue--enabled');
     }
+   habilitarContinueSiShopify();
   }
 
   function marcarGoogleConectadoUI() {
@@ -41,11 +54,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       connectGoogleBtn.textContent = 'Connected';
       connectGoogleBtn.classList.add('connected');
       connectGoogleBtn.disabled = true;
-    }
-    if (continueBtn) {
-      continueBtn.disabled = false;
-      continueBtn.classList.remove('btn-continue--disabled');
-      continueBtn.classList.add('btn-continue--enabled');
     }
   }
 
@@ -79,6 +87,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Si está autenticado y ya conectó Shopify, pintamos UI
     if (sessionData.user.shopifyConnected) {
       marcarShopifyConectadoUI();
+      habilitarContinueSiShopify();
     }
     if (sessionData.user.googleConnected) {
       marcarGoogleConectadoUI();
@@ -108,6 +117,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           newSessionData.user.shopifyConnected
         ) {
           marcarShopifyConectadoUI();
+          habilitarContinueSiShopify();
         }
         if (
           newSessionData.authenticated &&
@@ -137,7 +147,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       const shop = prompt(
         'Ingresa tu dominio (por ejemplo: ejemplo.myshopify.com):'
       );
-      if (!shop) return;
+  if (!shop) return;
+    sessionStorage.setItem('shopifyConnected', 'true');
       window.location.href = `/api/shopify/connect?userId=${userId}&shop=${shop}`;
     });
   }
@@ -154,7 +165,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   //
   if (continueBtn) {
     continueBtn.addEventListener('click', () => {
-      window.location.href = '/dashboard';
+      window.location.href = '/continue-btn-1';
     });
   }
 });
