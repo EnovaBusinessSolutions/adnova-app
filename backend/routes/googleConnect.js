@@ -8,12 +8,13 @@ const User  = require('../models/User');
 const CLIENT_ID     = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 // Este es ahora el connect callback correcto:
-const REDIRECT_URI  = 'https://adnova-app.onrender.com/auth/google/connect/callback';
+const REDIRECT_URI = process.env.GOOGLE_CONNECT_CALLBACK_URL;
+
 
 //
 // 1) Dispara el OAuth únicamente para Analytics & Ads
 //
-router.get('/auth/google/connect', (req, res) => {
+router.get('/connect', (req, res) => {
   // 1A) Si no está logueado, no puede conectar Analytics → redirigir a login
   if (!req.isAuthenticated()) {
     return res.redirect('/');
@@ -40,7 +41,7 @@ router.get('/auth/google/connect', (req, res) => {
 //
 // 2) Callback de Google tras aceptar Analytics/Ads
 //
-router.get('/auth/google/connect/callback', async (req, res) => {
+router.get('/connect/callback', async (req, res) => {
   // 2A) Validar que el usuario siga logueado
   if (!req.isAuthenticated()) {
     return res.redirect('/');
