@@ -25,7 +25,7 @@ const userRoutes = require('./routes/user');
 const mockShopify = require('./routes/mockShopify');
 const shopifyRoutes = require('./routes/shopify');
 const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
-const shopifyWebhooks = require('./routes/shopifyWebhooks');
+const connector = require('./routes/shopifyConnector');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -209,7 +209,7 @@ app.use('/', googleAnalytics);
 app.use('/auth/meta', metaAuthRoutes);
 app.use('/api', userRoutes);
 app.use('/api', mockShopify);
-app.use('/webhooks', shopifyWebhooks);
+app.use('/connector', connector); 
 
 app.get('/dashboard', ensureAuthenticated, (r, s) => {
   s.sendFile(path.join(__dirname, '../public/dashboard.html'));
