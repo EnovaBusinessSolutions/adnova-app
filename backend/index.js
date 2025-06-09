@@ -70,18 +70,17 @@ function ensureNotOnboarded(req, res, next) {
 
 // RUTAS
 
-// Si el usuario llega con ?shop=… (después de instalar), redirige a iniciar OAuth
-app.get('/', (req, res, next) => {
+app.get('/', (req, res) => {
   const { shop, host } = req.query;
+
+  // Si viene desde la instalación (Shopify test automático)
   if (shop && host) {
     return res.redirect(`/auth/shopify?shop=${shop}&host=${host}`);
   }
-  return next(); // continúa con el handler normal si no viene de instalación
-});
 
-app.get('/', (req, res) =>
-  res.sendFile(path.join(__dirname, '../public/index.html'))
-);
+  // Si no viene desde la instalación → servir index normal
+  return res.sendFile(path.join(__dirname, '../public/index.html'));
+});
 
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
@@ -201,22 +200,22 @@ app.get('/api/session', (req, res) => {
 });
 
 // Webhook verificado correctamente
-app.post('/webhooks', express.raw({ type: 'application/json' }), (req, res) => {
-  const hmacHeader = req.get('X-Shopify-Hmac-Sha256');
+app.post('/webhooks/shop/redact', express.raw({ type: 'application/json' }), (req, res) => {
+  const hmac = req.get('X-Shopify-Hmac-Sha256');
   const digest = crypto
     .createHmac('sha256', process.env.SHOPIFY_API_SECRET)
     .update(req.body, 'utf8')
     .digest('base64');
 
-  if (crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(hmacHeader))) {
-    console.log('✅ Webhook recibido y verificado');
-    res.status(200).send('OK');
-    // Aquí podrías procesar datos si quieres, pero fuera del response.
+  if (crypto.timingSafeEqual(Buffer.from(hmac, 'utf8'), Buffer.from(digest, 'utf8'))) {
+    console.log('✅ Webhook shop/redact verificado');
+    return res.status(200).send('OK');
   } else {
-    console.warn('⚠️ Webhook no verificado');
-    res.status(401).send('Unauthorized');
+    console.warn('⚠️ Webhook shop/redact no verificado');
+    return res.status(401).send('Firma inválida');
   }
 });
+
 
 // Rutas externas y de API
 app.use('/api/shopify', shopifyRoutes);
