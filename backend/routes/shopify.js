@@ -141,3 +141,14 @@ router.get(
 );
 
 module.exports = router;
+
+// Ruta que Shopify invoca automáticamente tras instalación desde App Store
+router.get('/auth/shopify', (req, res) => {
+  const { shop } = req.query;
+  if (!shop) {
+    return res.status(400).send('Falta el parámetro ?shop');
+  }
+
+  // Redirige a tu flujo de conexión ya existente
+  return res.redirect(`/api/shopify/connect?shop=${shop}&userId=auto`);
+});
