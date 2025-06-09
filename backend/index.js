@@ -69,6 +69,16 @@ function ensureNotOnboarded(req, res, next) {
 }
 
 // RUTAS
+
+// Si el usuario llega con ?shop=… (después de instalar), redirige a iniciar OAuth
+app.get('/', (req, res, next) => {
+  const { shop, host } = req.query;
+  if (shop && host) {
+    return res.redirect(`/auth/shopify?shop=${shop}&host=${host}`);
+  }
+  return next(); // continúa con el handler normal si no viene de instalación
+});
+
 app.get('/', (req, res) =>
   res.sendFile(path.join(__dirname, '../public/index.html'))
 );
@@ -190,20 +200,21 @@ app.get('/api/session', (req, res) => {
   });
 });
 
+// Webhook verificado correctamente
 app.post('/webhooks', express.raw({ type: 'application/json' }), (req, res) => {
-  const hmac = req.get('X-Shopify-Hmac-Sha256');
-  const body = req.body;
-  const generatedHash = crypto
+  const hmacHeader = req.get('X-Shopify-Hmac-Sha256');
+  const digest = crypto
     .createHmac('sha256', process.env.SHOPIFY_API_SECRET)
-    .update(body, 'utf8')
+    .update(req.body, 'utf8')
     .digest('base64');
 
-  if (crypto.timingSafeEqual(Buffer.from(hmac, 'utf8'), Buffer.from(generatedHash, 'utf8'))) {
-    console.log('✅ Webhook verificado');
-    res.status(200).send('Webhook recibido');
+  if (crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(hmacHeader))) {
+    console.log('✅ Webhook recibido y verificado');
+    res.status(200).send('OK');
+    // Aquí podrías procesar datos si quieres, pero fuera del response.
   } else {
-    console.warn('⚠️ Webhook NO verificado');
-    res.status(401).send('Firma no válida');
+    console.warn('⚠️ Webhook no verificado');
+    res.status(401).send('Unauthorized');
   }
 });
 
