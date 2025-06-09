@@ -25,6 +25,7 @@ const userRoutes = require('./routes/user');
 const mockShopify = require('./routes/mockShopify');
 const shopifyRoutes = require('./routes/shopify');
 const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
+const shopifyWebhooks = require('./routes/shopifyWebhooks');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -199,23 +200,6 @@ app.get('/api/session', (req, res) => {
   });
 });
 
-// Webhook verificado correctamente
-app.post('/webhooks/shop/redact', express.raw({ type: 'application/json' }), (req, res) => {
-  const hmac = req.get('X-Shopify-Hmac-Sha256');
-  const digest = crypto
-    .createHmac('sha256', process.env.SHOPIFY_API_SECRET)
-    .update(req.body, 'utf8')
-    .digest('base64');
-
-  if (crypto.timingSafeEqual(Buffer.from(hmac, 'utf8'), Buffer.from(digest, 'utf8'))) {
-    console.log('✅ Webhook shop/redact verificado');
-    return res.status(200).send('OK');
-  } else {
-    console.warn('⚠️ Webhook shop/redact no verificado');
-    return res.status(401).send('Firma inválida');
-  }
-});
-
 
 // Rutas externas y de API
 app.use('/api/shopify', shopifyRoutes);
@@ -225,6 +209,7 @@ app.use('/', googleAnalytics);
 app.use('/auth/meta', metaAuthRoutes);
 app.use('/api', userRoutes);
 app.use('/api', mockShopify);
+app.use('/webhooks', shopifyWebhooks);
 
 app.get('/dashboard', ensureAuthenticated, (r, s) => {
   s.sendFile(path.join(__dirname, '../public/dashboard.html'));
