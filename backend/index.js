@@ -26,6 +26,7 @@ const mockShopify = require('./routes/mockShopify');
 const shopifyRoutes = require('./routes/shopify');
 const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
 const connector = require('./routes/shopifyConnector');
+const shopifyWebhooks = require('./routes/shopifyConnector/webhooks');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -38,6 +39,9 @@ mongoose
   .then(() => console.log('✅ Conectado a MongoDB Atlas'))
   .catch((err) => console.error('❌ Error al conectar con MongoDB:', err));
 
+
+app.use('/connector/webhook', webhookRoutes);
+ 
 // +++ MIDDLEWARES +++
 app.use(cors());
 app.use(bodyParser.json());
