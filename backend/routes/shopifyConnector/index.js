@@ -34,6 +34,25 @@ router.get('/', (req, res) => {
   return res.redirect(url);
 });
 
+/* ───────────── 0-bis)  /grant (llamado por el robot) ───────────── */
+router.get('/grant', (req, res) => {
+  const { shop } = req.query;
+  if (!shop) return res.status(400).send('Missing shop param');
+
+  const state = crypto.randomBytes(16).toString('hex');
+  req.session.shopifyState = state;
+
+  const url =
+    `https://${shop}/admin/oauth/authorize` +
+    `?client_id=${SHOPIFY_API_KEY}` +
+    `&scope=${encodeURIComponent(SCOPES)}` +
+    `&redirect_uri=${encodeURIComponent(REDIRECT)}` +
+    `&state=${state}`;
+
+  return res.redirect(url);          // ← lo que el test comprueba
+});
+
+
 /* ───────────── 2) Callback OAuth ───────────── */
 router.get('/auth/callback', async (req, res) => {
   // ←  host YA viene en este callback
