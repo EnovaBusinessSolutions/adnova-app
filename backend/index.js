@@ -40,6 +40,14 @@ mongoose
   .then(() => console.log('✅ Conectado a MongoDB Atlas'))
   .catch((err) => console.error('❌ Error al conectar con MongoDB:', err));
  
+
+  app.use(
+  '/connector/webhooks',
+  express.raw({ type: 'application/json' }), // cuerpo crudo para HMAC
+  webhookRoutes
+);
+app.use('/connector', connector);
+
 // +++ MIDDLEWARES +++
 app.use(cors());
 app.use(bodyParser.json());
