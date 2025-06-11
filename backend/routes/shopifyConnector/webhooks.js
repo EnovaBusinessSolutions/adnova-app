@@ -27,3 +27,4 @@ router.use(express.raw({ type: 'application/json' }));
   });
 });
 
+module.exports = router;   
