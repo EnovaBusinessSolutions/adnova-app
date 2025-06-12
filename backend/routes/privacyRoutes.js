@@ -7,10 +7,11 @@ const bodyParser = require('body-parser');
 const router = express.Router();
 
 // ---------- Webhooks de privacidad obligatorios ----------
-const rawBodyParser = bodyParser.json({
-  verify: (req, res, buf) => {
-    req.rawBody = buf;
-  }
+ const rawBodyParser = bodyParser.raw({
+   type: 'application/json',
+   verify: (req, _res, buf) => {
+     req.rawBody = buf;
+   }
 });
 
 function isValidShopifyWebhook(req) {
@@ -25,18 +26,21 @@ function isValidShopifyWebhook(req) {
 
 router.post('/webhooks/customers/data_request', rawBodyParser, (req, res) => {
   if (!isValidShopifyWebhook(req)) return res.status(401).send('Invalid HMAC');
+    const payload = JSON.parse(req.rawBody.toString('utf8'));
   console.log('🔍 Shopify Webhook - Data request:', req.body);
   res.status(200).send('OK');
 });
 
 router.post('/webhooks/customers/redact', rawBodyParser, (req, res) => {
   if (!isValidShopifyWebhook(req)) return res.status(401).send('Invalid HMAC');
+    const payload = JSON.parse(req.rawBody.toString('utf8'));
   console.log('🗑️ Shopify Webhook - Customer redact:', req.body);
   res.status(200).send('OK');
 });
 
 router.post('/webhooks/shop/redact', rawBodyParser, (req, res) => {
   if (!isValidShopifyWebhook(req)) return res.status(401).send('Invalid HMAC');
+    const payload = JSON.parse(req.rawBody.toString('utf8'));
   console.log('🧹 Shopify Webhook - Shop redact:', req.body);
   res.status(200).send('OK');
 });
