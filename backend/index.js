@@ -41,12 +41,14 @@ mongoose
   .catch((err) => console.error('❌ Error al conectar con MongoDB:', err));
  
 
+  app.use('/connector', connector);
+  
   app.use(
   '/connector/webhooks',
   express.raw({ type: 'application/json' }), // cuerpo crudo para HMAC
   webhookRoutes
 );
-app.use('/connector', connector);
+
 
 
 app.set('trust proxy', 1);
