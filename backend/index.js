@@ -41,8 +41,6 @@ mongoose
   .catch((err) => console.error('❌ Error al conectar con MongoDB:', err));
  
 
-  app.use('/connector', connector);
-  
   app.use(
   '/connector/webhooks',
   express.raw({ type: 'application/json' }), // cuerpo crudo para HMAC
@@ -67,7 +65,7 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
-app.use('/connector', connector); 
+app.use('/connector', connector);
 
 // +++ MIDDLEWARES +++
 app.use(cors());
