@@ -17,33 +17,29 @@ document.addEventListener('DOMContentLoaded', async () => {
   console.log('   flagGoogleElem    =', flagGoogleElem);
 
   // Helper: sólo habilita el botón Continue si Shopify está conectado
-function habilitarContinueSiShopify() {
-  if (!continueBtn) return;
-  const shopifyYaConectado =
-    flagElem?.textContent.trim() === 'true' ||   
-    sessionStorage.getItem('shopifyConnected') === 'true'; 
+  function habilitarContinueSiShopify() {
+    if (!continueBtn) return;
+    const shopifyYaConectado =
+      flagElem?.textContent.trim() === 'true' ||
+      sessionStorage.getItem('shopifyConnected') === 'true';
 
-  if (shopifyYaConectado) {
-    continueBtn.disabled = false;
-    continueBtn.classList.remove('btn-continue--disabled');
-    continueBtn.classList.add('btn-continue--enabled');
-    sessionStorage.removeItem('shopifyConnected');
+    if (shopifyYaConectado) {
+      continueBtn.disabled = false;
+      continueBtn.classList.remove('btn-continue--disabled');
+      continueBtn.classList.add('btn-continue--enabled');
+      sessionStorage.removeItem('shopifyConnected');
+    }
   }
-}
 
- habilitarContinueSiShopify();
+  habilitarContinueSiShopify();
 
-  // 2) Definimos la función que pinta el botón y habilita “Continue”
-  //    Esta función ya puede usar `connectShopifyBtn` y `continueBtn`
-  //    porque las declaramos en el paso 1.
-  //
+  // 2) Funciones de UI para marcar conectado
   function marcarShopifyConectadoUI() {
     console.log('🕹️ Pintando Shopify como conectado');
     if (connectShopifyBtn) {
       connectShopifyBtn.textContent = 'Connected';
       connectShopifyBtn.classList.add('connected');
       connectShopifyBtn.disabled = true;
-
     }
     habilitarContinueSiShopify();
   }
@@ -57,10 +53,10 @@ function habilitarContinueSiShopify() {
     }
   }
 
+  // Si los flags iniciales vienen en el HTML, pintamos
   if (flagElem && flagElem.textContent.trim() === 'true') {
     marcarShopifyConectadoUI();
   }
-
   if (flagGoogleElem && flagGoogleElem.textContent.trim() === 'true') {
     marcarGoogleConectadoUI();
   }
@@ -84,7 +80,7 @@ function habilitarContinueSiShopify() {
       window.location.href = '/';
       return;
     }
-    // Si está autenticado y ya conectó Shopify, pintamos UI
+    // Si ya conectó, pintamos UI
     if (sessionData.user.shopifyConnected) {
       marcarShopifyConectadoUI();
       habilitarContinueSiShopify();
@@ -93,7 +89,7 @@ function habilitarContinueSiShopify() {
       marcarGoogleConectadoUI();
     }
   } else {
-    // 401 o cualquier otro error → redirigir a login
+    // 401 o error → redirigir
     window.location.href = '/';
     return;
   }
@@ -112,48 +108,44 @@ function habilitarContinueSiShopify() {
       });
       if (newSession.ok) {
         const newSessionData = await newSession.json();
-        if (
-          newSessionData.authenticated &&
-          newSessionData.user.shopifyConnected
-        ) {
+        if (newSessionData.authenticated && newSessionData.user.shopifyConnected) {
           marcarShopifyConectadoUI();
           habilitarContinueSiShopify();
         }
-        if (
-          newSessionData.authenticated &&
-          newSessionData.user.googleConnected
-        ) {
+        if (newSessionData.authenticated && newSessionData.user.googleConnected) {
           marcarGoogleConectadoUI();
-       }
+        }
       }
     } catch (err) {
-      console.error(
-        '❌ Error al recargar /api/session tras callback:',
-        err
-      );
+      console.error('❌ Error al recargar /api/session tras callback:', err);
     }
   }
 
   //
-  // 6) Listener para “Connect” (inicia OAuth con Shopify)
+  // 6) Listener para “Connect Shopify” — arranca OAuth embebido
   //
   if (connectShopifyBtn) {
     connectShopifyBtn.addEventListener('click', () => {
-      const userId = document.body.getAttribute('data-user-id');
-      if (!userId) {
-        console.error('⚠️ No encontramos "data-user-id" en el body');
+      // Leemos shop y host que Shopify inyecta en la URL
+      const params = new URLSearchParams(window.location.search);
+      const shop  = params.get('shop');
+      const host  = params.get('host');
+
+      if (!shop || !host) {
+        console.error('❌ Faltan parámetros shop o host en la URL');
         return;
       }
-      const shop = prompt(
-        'Ingresa tu dominio (por ejemplo: ejemplo.myshopify.com):'
-      );
-  if (!shop) return;
-    sessionStorage.setItem('shopifyConnected', 'true');
-      window.location.href = `/api/shopify/connect?userId=${userId}&shop=${shop}`;
+
+      // Redirigimos al endpoint que inicia OAuth de Shopify
+      window.location.href =
+        `/connector?shop=${encodeURIComponent(shop)}` +
+        `&host=${encodeURIComponent(host)}`;
     });
   }
 
-   // --- (4) Listener para “Connect Google” (nuevo) ---
+  //
+  // 7) Listener para “Connect Google”
+  //
   if (connectGoogleBtn) {
     connectGoogleBtn.addEventListener('click', () => {
       window.location.href = '/auth/google/connect';
@@ -161,7 +153,7 @@ function habilitarContinueSiShopify() {
   }
 
   //
-  // 7) Listener para “Continue” (solo redirige al dashboard)
+  // 8) Listener para “Continue” (solo redirige al dashboard)
   //
   if (continueBtn) {
     continueBtn.addEventListener('click', () => {
