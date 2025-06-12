@@ -2,7 +2,6 @@
 const express = require('express');
 const crypto  = require('crypto');
 const axios   = require('axios');
-const jwt     = require('jsonwebtoken');
 const User    = require('../../models/User');
 
 const router  = express.Router();
@@ -10,99 +9,114 @@ const router  = express.Router();
 const {
   SHOPIFY_API_KEY,
   SHOPIFY_API_SECRET,
-  SHOPIFY_APP_HANDLE   // p.ej. adnova-ai-connector-1  ➜  .env
+  SHOPIFY_APP_HANDLE
 } = process.env;
 
-const SCOPES   = 'read_products,read_customers,read_orders';
-const REDIRECT = 'https://adnova-app.onrender.com/connector/auth/callback';
+const SCOPES      = 'read_products,read_customers,read_orders';
+const REDIRECT_URI = 'https://adnova-app.onrender.com/connector/auth/callback';
 
-/* ───────────── 1) Landing pública ───────────── */
+// ─── 1) Función que inicia el flujo OAuth ───
+function startOAuth(req, res) {
+  const { shop, host } = req.query;
+  if (!shop || !host) {
+    return res.status(400).send('Faltan shop o host en la query');
+  }
+
+  // Generamos y guardamos state para proteger contra CSRF
+  const state = crypto.randomBytes(16).toString('hex');
+  req.session.shopifyState = state;
+
+  // Construimos la URL de autorización de Shopify
+  const installUrl =
+    `https://${shop}/admin/oauth/authorize` +
+    `?client_id=${SHOPIFY_API_KEY}` +
+    `&scope=${encodeURIComponent(SCOPES)}` +
+    `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+    `&state=${state}`;
+
+  return res.redirect(installUrl);
+}
+
+// ─── 2) Rutas que Shopify usará para iniciar la instalación ───
+// Soportamos tanto /grant como /app/grant
+['/grant', '/app/grant'].forEach(path => {
+  router.get(path, startOAuth);
+});
+
+// ─── 3) También capturamos GET /connector?shop=…&host=… ───
 router.get('/', (req, res) => {
-  const { shop } = req.query;
-  if (!shop) return res.send('👍 Adnova Connector online');
-
-  const state = crypto.randomBytes(16).toString('hex');
-  req.session.shopifyState = state;
-
-  const url =
-    `https://${shop}/admin/oauth/authorize` +
-    `?client_id=${SHOPIFY_API_KEY}` +
-    `&scope=${encodeURIComponent(SCOPES)}` +
-    `&redirect_uri=${encodeURIComponent(REDIRECT)}` +
-    `&state=${state}`;
-
-  return res.redirect(url);
+  const { shop, host } = req.query;
+  if (shop && host) return startOAuth(req, res);
+  // Si se entra sin parámetros, devolvemos un simple “online”
+  return res.send('👍 Adnova Connector online');
 });
 
-/* ───────────── 0-bis)  /grant (llamado por el robot) ───────────── */
-router.get('/grant', (req, res) => {
-  const { shop } = req.query;
-  if (!shop) return res.status(400).send('Missing shop param');
-
-  const state = crypto.randomBytes(16).toString('hex');
-  req.session.shopifyState = state;
-
-  const url =
-    `https://${shop}/admin/oauth/authorize` +
-    `?client_id=${SHOPIFY_API_KEY}` +
-    `&scope=${encodeURIComponent(SCOPES)}` +
-    `&redirect_uri=${encodeURIComponent(REDIRECT)}` +
-    `&state=${state}`;
-
-  return res.redirect(url);          // ← lo que el test comprueba
-});
-
-
-/* ───────────── 2) Callback OAuth ───────────── */
+// ─── 4) Callback de OAuth ───
 router.get('/auth/callback', async (req, res) => {
-  // ←  host YA viene en este callback
-  const { shop, code, state, hmac, host } = req.query;
+  const { shop, code, state, host, hmac, signature } = req.query;
 
-  /* 2-A State */
+  // 4-A) Verificar state
   if (state !== req.session.shopifyState) {
-    return res.status(400).send('Bad state');
+    return res.status(400).send('State no coincide');
   }
 
-  /* 2-B HMAC (igual que antes) */
-  const msg = Object.entries({ ...req.query, hmac: undefined, signature: undefined })
-                    .filter(([k]) => k !== 'hmac' && k !== 'signature')
-                    .sort()
-                    .map(([k, v]) => `${k}=${v}`)
-                    .join('&');
+  // 4-B) Validar HMAC de la query
+  const mapParams = Object.entries(req.query)
+    .filter(([k]) => k !== 'hmac' && k !== 'signature')
+    .sort()
+    .map(([k, v]) => `${k}=${v}`)
+    .join('&');
 
-  const digest = crypto.createHmac('sha256', SHOPIFY_API_SECRET)
-                       .update(msg)
-                       .digest('hex');
+  const generatedDigest = crypto
+    .createHmac('sha256', SHOPIFY_API_SECRET)
+    .update(mapParams)
+    .digest('hex');
 
-  if (!crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(hmac))) {
-    return res.status(400).send('Invalid HMAC');
+  if (!crypto.timingSafeEqual(Buffer.from(generatedDigest), Buffer.from(hmac))) {
+    return res.status(400).send('HMAC inválido');
   }
 
-  /* 2-C Access-token */
-  const { data } = await axios.post(
-    `https://${shop}/admin/oauth/access_token`,
-    { client_id: SHOPIFY_API_KEY,
-      client_secret: SHOPIFY_API_SECRET,
-      code },
-    { headers: { 'Content-Type': 'application/json' } }
-  );
+  // 4-C) Intercambiar `code` por access token
+  let tokenResponse;
+  try {
+    tokenResponse = await axios.post(
+      `https://${shop}/admin/oauth/access_token`,
+      {
+        client_id:     SHOPIFY_API_KEY,
+        client_secret: SHOPIFY_API_SECRET,
+        code
+      },
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+  } catch (err) {
+    console.error('Error obteniendo access token:', err.response?.data || err.message);
+    return res.status(500).send('Error obteniendo access token');
+  }
 
-  /* 2-D Guarda en Mongo */
-  await User.findByIdAndUpdate(req.session.userId, {
-    shop,
-    shopifyAccessToken: data.access_token,
-    shopifyConnected: true
-  });
+  const accessToken = tokenResponse.data.access_token;
 
-  /* 2-E Redirección EXACTA que pide Shopify */
+  // 4-D) Guardar en MongoDB
+  try {
+    await User.findByIdAndUpdate(req.session.userId, {
+      shop,
+      shopifyAccessToken: accessToken,
+      shopifyConnected:   true
+    });
+  } catch (err) {
+    console.error('Error guardando token en DB:', err);
+    // No interrumpimos el flujo, pero avisamos
+  }
+
+  // 4-E) Redirigir al UI embebido
   const uiUrl =
     `https://admin.shopify.com/apps/${SHOPIFY_APP_HANDLE}` +
-    `?host=${host}&shop=${shop}`;
+    `?host=${encodeURIComponent(host)}` +
+    `&shop=${encodeURIComponent(shop)}`;
 
   return res.redirect(uiUrl);
 });
 
-/* ───────────── 3) Webhooks obligatorios ───────────── */
+// ─── 5) Webhooks obligatorios ───
 router.use('/webhooks', require('./webhooks'));
 
 module.exports = router;
