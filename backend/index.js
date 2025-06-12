@@ -53,8 +53,6 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
-app.use('/connector/webhooks', webhookRoutes);
-
 app.set('trust proxy', 1);
 app.use(
   session({
@@ -84,16 +82,18 @@ function ensureNotOnboarded(req, res, next) {
 // RUTAS
 
 app.get('/', (req, res) => {
-  const { shop, host } = req.query;
+  const { shop } = req.query;
 
-  // Si viene desde la instalación (Shopify test automático)
-  if (shop && host) {
-    return res.redirect(`/auth/shopify?shop=${shop}&host=${host}`);
+  // Cualquier instalación (incluye las pruebas automáticas de Shopify)
+  if (shop) {
+    // Redirige al router del conector, que se encarga de iniciar OAuth
+    return res.redirect(`/connector?shop=${shop}`);
   }
 
-  // Si no viene desde la instalación → servir index normal
+  // Sitio público normal
   return res.sendFile(path.join(__dirname, '../public/index.html'));
 });
+
 
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
