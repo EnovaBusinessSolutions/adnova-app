@@ -125,7 +125,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 6) Listener para “Connect Shopify” — arranca OAuth embebido
   //
   if (connectShopifyBtn) {
-    connectShopifyBtn.addEventListener('click', () => {
+     connectShopifyBtn.addEventListener('click', (event) => {
+      event.preventDefault();
       // Leemos shop y host que Shopify inyecta en la URL
       const params = new URLSearchParams(window.location.search);
       const shop  = params.get('shop');
