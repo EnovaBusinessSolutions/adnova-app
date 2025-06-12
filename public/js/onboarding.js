@@ -4,7 +4,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   //
   // 1) Primero recuperamos los nodos del DOM que vamos a usar:
   //
-  const connectShopifyBtn = document.getElementById('connect-shopify');
+  const connectShopifyBtn = document.getElementById('connect-shopify-btn');
   const connectGoogleBtn  = document.getElementById('connect-google-btn');
   const continueBtn       = document.getElementById('continue-btn');
   const flagElem          = document.getElementById('shopifyConnectedFlag');
