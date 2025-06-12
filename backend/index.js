@@ -48,10 +48,6 @@ mongoose
 );
 app.use('/connector', connector);
 
-// +++ MIDDLEWARES +++
-app.use(cors());
-app.use(bodyParser.json());
-app.use(express.static(path.join(__dirname, '../public')));
 
 app.set('trust proxy', 1);
 app.use(
@@ -68,6 +64,13 @@ app.use(
 
 app.use(passport.initialize());
 app.use(passport.session());
+
+app.use('/connector', connector); 
+
+// +++ MIDDLEWARES +++
+app.use(cors());
+app.use(bodyParser.json());
+app.use(express.static(path.join(__dirname, '../public')));
 
 // Funciones de control (si las usas globalmente)
 function ensureAuthenticated(req, res, next) {
@@ -221,7 +224,7 @@ app.use('/', googleAnalytics);
 app.use('/auth/meta', metaAuthRoutes);
 app.use('/api', userRoutes);
 app.use('/api', mockShopify);
-app.use('/connector', connector); 
+
 
 app.get('/dashboard', ensureAuthenticated, (r, s) => {
   s.sendFile(path.join(__dirname, '../public/dashboard.html'));
