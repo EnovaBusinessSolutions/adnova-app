@@ -125,24 +125,29 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 6) Listener para “Connect Shopify” — arranca OAuth embebido
   //
   if (connectShopifyBtn) {
-     connectShopifyBtn.addEventListener('click', (event) => {
-      event.preventDefault();
-      // Leemos shop y host que Shopify inyecta en la URL
-      const params = new URLSearchParams(window.location.search);
-      const shop  = params.get('shop');
-      const host  = params.get('host');
+  connectShopifyBtn.addEventListener('click', (event) => {
+    event.preventDefault();
 
-      if (!shop || !host) {
-        console.error('❌ Faltan parámetros shop o host en la URL');
+    // 1. Intentamos leer shop y host desde la URL (caso: llegan desde Shopify)
+    const params = new URLSearchParams(window.location.search);
+    let shop = params.get('shop');
+    let host = params.get('host');
+
+    // 2. Si no vienen en la URL, mostramos prompt (caso: vienen desde Adnova AI)
+    if (!shop || !host) {
+      shop = prompt("Ingresa el dominio de tu tienda (ej: mitienda.myshopify.com):");
+      if (!shop || !shop.endsWith('.myshopify.com')) {
+        alert("❌ Dominio inválido. Asegúrate de ingresar algo como 'mitienda.myshopify.com'");
         return;
       }
 
-      // Redirigimos al endpoint que inicia OAuth de Shopify
-      window.location.href =
-        `/connector?shop=${encodeURIComponent(shop)}` +
-        `&host=${encodeURIComponent(host)}`;
-    });
-  }
+      host = btoa(`${shop}/admin`);
+    }
+
+    // 3. Redirigimos al flujo OAuth
+    window.location.href = `/connector?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
+  });
+}
 
   //
   // 7) Listener para “Connect Google”
