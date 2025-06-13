@@ -32,6 +32,15 @@ const webhookRoutes   = require('./routes/shopifyConnector/webhooks');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.use((req, res, next) => {
+  res.setHeader(
+    "Content-Security-Policy",
+    "frame-ancestors https://admin.shopify.com https://*.myshopify.com"
+  );
+  res.removeHeader("X-Frame-Options");
+  next();
+});
+
 mongoose
   .connect(process.env.MONGO_URI, {
     useNewUrlParser: true,
@@ -39,19 +48,6 @@ mongoose
   })
   .then(() => console.log('✅ Conectado a MongoDB Atlas'))
   .catch((err) => console.error('❌ Error al conectar con MongoDB:', err));
- 
-
-  // ─── Permitir carga en iframe de Shopify ───
- app.use((req, res, next) => {
-   // Solo permitimos iframes desde dominios oficiales de Shopify
-   res.setHeader(
-     "Content-Security-Policy",
-     "frame-ancestors https://admin.shopify.com https://*.myshopify.com"
-   );
-   // Eliminamos cualquier X-Frame-Options que bloquee el iframe
-   res.removeHeader("X-Frame-Options");
-   next();
- });
 
   app.use(
   '/connector/webhooks',
