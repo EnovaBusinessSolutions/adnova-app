@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const bodyParser = require('body-parser');
 const axios = require('axios');
 const qs    = require('querystring');
+const helmet = require('helmet');
 require('dotenv').config();
 
 require('./auth')
@@ -31,6 +32,10 @@ const webhookRoutes   = require('./routes/shopifyConnector/webhooks');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+app.use(helmet({
+  contentSecurityPolicy: false // 👈 Desactiva la política por defecto
+}));
 
 app.use((req, res, next) => {
   res.setHeader(
