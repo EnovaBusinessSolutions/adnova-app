@@ -51,9 +51,8 @@ router.get('/auth/callback', (req, res) => {
   }
 
   const uiUrl =
-    `https://admin.shopify.com/apps/${SHOPIFY_APP_HANDLE}` +
-    `?shop=${encodeURIComponent(shop)}` +
-    `&host=${encodeURIComponent(host)}`;
+    `https://admin.shopify.com/store/${shop.split('.')[0]}/apps/${SHOPIFY_APP_HANDLE}` +
+    `?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
 
   return res.redirect(uiUrl);
 });
