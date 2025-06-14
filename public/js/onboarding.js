@@ -9,6 +9,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const continueBtn       = document.getElementById('continue-btn');
   const flagElem          = document.getElementById('shopifyConnectedFlag');
   const flagGoogleElem    = document.getElementById('googleConnectedFlag');
+  const domainStep  = document.getElementById('shopify-domain-step');
+  const domainInput = document.getElementById('shop-domain-input');
+  const domainSend  = document.getElementById('shop-domain-send');
+
 
   console.log('🕵️ onboarding.js cargado');
   console.log('   connectShopifyBtn =', connectShopifyBtn);
@@ -146,6 +150,38 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 3. Redirigimos al flujo OAuth
     window.location.href = `/connector?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
+    if (domainStep) domainStep.classList.remove('step--hidden');
+  });
+}
+
+if (domainSend) {
+  domainSend.addEventListener('click', async () => {
+    const shop = domainInput.value.trim().toLowerCase();
+
+    if (!shop.endsWith('.myshopify.com')) {
+      alert('Dominio inválido.');
+      return;
+    }
+
+    try {
+      const res  = await fetch('/api/shopify/match', {
+        method : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body   : JSON.stringify({ shop })
+      });
+
+      const data = await res.json();
+
+      if (data.ok) {
+        marcarShopifyConectadoUI();
+        habilitarContinueSiShopify();
+      } else {
+        alert(data.error || 'No se pudo vincular la tienda.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error de red.');
+    }
   });
 }
 
