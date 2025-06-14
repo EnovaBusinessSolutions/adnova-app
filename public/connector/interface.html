@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Adnova Connector</title>
+    <style>
+      body{font-family:sans-serif;text-align:center;margin-top:20vh;}
+    </style>
+  </head>
+  <body>
+    <h2>✅ ¡Tienda conectada!</h2>
+    <p>
+      Ahora regresa a <b>Adnova AI</b>, inicia sesión o refresca tu pestaña 
+      y escribe el dominio <code id="shopDom"></code> cuando se te pida.
+    </p>
+    <script>
+      // Solo para mostrar dinámicamente el dominio en el mensaje
+      const params=new URLSearchParams(window.location.search);
+      document.getElementById('shopDom').textContent=params.get('shop')||'tu-tienda.myshopify.com';
+    </script>
+  </body>
+</html>
+
