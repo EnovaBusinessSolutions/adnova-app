@@ -30,6 +30,7 @@ const connector = require('./routes/shopifyConnector');
 const webhookRoutes   = require('./routes/shopifyConnector/webhooks');
 const shopifyMatch = require('./routes/shopifyMatch');
 const verifySessionToken = require('../middlewares/verifySessionToken');
+const secureRoutes     = require('./routes/secure'); 
 
 const app = express();
 const PORT = process.env.PORT || 3000;
