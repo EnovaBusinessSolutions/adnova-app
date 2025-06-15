@@ -239,7 +239,7 @@ app.use('/auth/meta', metaAuthRoutes);
 app.use('/api', userRoutes);
 app.use('/api', mockShopify);
 app.use('/api', shopifyMatch);
-app.use('/api/secure/*', verifySessionToken); 
+app.use('/api/secure', verifySessionToken, secureRoutes);
 
 
 app.get('/dashboard', ensureAuthenticated, (r, s) => {
