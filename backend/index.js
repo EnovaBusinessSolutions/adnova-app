@@ -29,7 +29,7 @@ const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
 const connector = require('./routes/shopifyConnector');
 const webhookRoutes   = require('./routes/shopifyConnector/webhooks');
 const shopifyMatch = require('./routes/shopifyMatch');
-
+const verifySessionToken = require('../middlewares/verifySessionToken');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -239,6 +239,7 @@ app.use('/auth/meta', metaAuthRoutes);
 app.use('/api', userRoutes);
 app.use('/api', mockShopify);
 app.use('/api', shopifyMatch);
+app.use('/api/secure/*', verifySessionToken); 
 
 
 app.get('/dashboard', ensureAuthenticated, (r, s) => {
