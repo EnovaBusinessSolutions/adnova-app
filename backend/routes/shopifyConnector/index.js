@@ -93,7 +93,7 @@ router.get('/interface', (req,res)=>{
     'frame-ancestors https://admin.shopify.com https://*.myshopify.com'
   );
   res.removeHeader('X-Frame-Options');
-  res.sendFile(path.join(__dirname,'../../public/connector/interface.html'));
+  res.sendFile(path.join(__dirname,'../../../public/connector/interface.html'));
 });
 
 module.exports = router;
