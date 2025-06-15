@@ -1,23 +1,74 @@
 <!DOCTYPE html>
 <html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <title>Adnova Connector</title>
-    <style>
-      body{font-family:sans-serif;text-align:center;margin-top:20vh;}
-    </style>
-  </head>
-  <body>
-    <h2>✅ ¡Tienda conectada!</h2>
-    <p>
-      Ahora regresa a <b>Adnova AI</b>, inicia sesión o refresca tu pestaña 
-      y escribe el dominio <code id="shopDom"></code> cuando se te pida.
-    </p>
-    <script>
-      // Solo para mostrar dinámicamente el dominio en el mensaje
-      const params=new URLSearchParams(window.location.search);
-      document.getElementById('shopDom').textContent=params.get('shop')||'tu-tienda.myshopify.com';
-    </script>
-  </body>
-</html>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Adnova Connector</title>
 
+  <!--  fuentes & estilo rápido -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --grad-from:#2d014f;
+      --grad-to:#00040e;
+      --text:#f6f6f9;
+      --accent:#9d4bff;
+      --accent-dark:#793bda;
+    }
+    *{box-sizing:border-box;margin:0;padding:0;font-family:Inter,system-ui,sans-serif;color:var(--text)}
+    body{
+      min-height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;
+      background:radial-gradient(circle at top left,var(--grad-from),var(--grad-to));
+      text-align:center;padding:0 1rem;
+    }
+    h1{font-size:clamp(1.8rem,3vw,2.4rem);font-weight:600;margin-bottom:.5rem}
+    p{max-width:36rem;line-height:1.5;margin-bottom:1.5rem}
+    code{background:#ffffff11;padding:.15em .35em;border-radius:4px;font-size:.95em}
+    .btn{
+      display:inline-block;padding:.75rem 2.25rem;border-radius:8px;
+      background:linear-gradient(90deg,var(--accent),var(--accent-dark));
+      font-weight:500;text-decoration:none;transition:transform .15s;
+    }
+    .btn:hover{transform:scale(1.03)}
+  </style>
+</head>
+<body>
+
+  <h1>✅ ¡Tienda conectada!</h1>
+  <p>
+    Ahora regresa a <b>Adnova AI</b>, inicia sesión o refresca tu pestaña y escribe el dominio
+    <code id="shopDom">mitienda.myshopify.com</code> cuando se te pida.
+  </p>
+  <a class="btn" href="#" id="openAdnova">Ir a Adnova AI</a>
+
+  <!--  Shopify App-Bridge v3  -->
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge@3.js"></script>
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge-utils@3.js"></script>
+  <script>
+    /* === 1 · Obtener parámetros shop & host y mostrarlos === */
+    const params = new URLSearchParams(location.search);
+    const shop   = params.get('shop') || 'mitienda.myshopify.com';
+    const host   = params.get('host');
+    document.getElementById('shopDom').textContent = shop;
+
+    /* === 2 · Inicializar App-Bridge v3 === */
+    window.app = window['app-bridge'].default.createApp({
+      apiKey: 'TU_API_KEY',           // <-- Sustituye por tu API Key
+      host
+    });
+
+    /* === 3 · Helper: fetch autenticado con Session Token === */
+    window.secureFetch = async (url, opts = {}) => {
+      const token   = await window['app-bridge-utils'].getSessionToken(window.app);
+      const headers = Object.assign({}, opts.headers, { Authorization: `Bearer ${token}` });
+      return fetch(url, Object.assign({}, opts, { headers }));
+    };
+
+    /* === 4 · (Ejemplo) PING al backend para que Shopify marque la checklist === */
+    secureFetch('/api/secure/ping').catch(() => { /* opcional: ignorar error */ });
+
+    /* Botón “Ir a Adnova AI” */
+    document.getElementById('openAdnova').href = 'https://adnova-app.onrender.com/';
+  </script>
+</body>
+</html>
