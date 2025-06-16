@@ -73,19 +73,29 @@
             <a href="#" class="btn-connect" id="connect-shopify-btn">Connect</a>
           </div>
           <!-- Paso: dominio Shopify -->
-          <div id="shopify-domain-step" class="step--hidden">
-            <p>Escribe el dominio de tu tienda para completar la conexión:</p>
+          <div id="shopify-domain-step" class="shop-step hidden">
+  <label for="shop-domain-input">Escribe el dominio de tu tienda:</label>
+  <div class="shop-input-row">
+    <input id="shop-domain-input"
+           placeholder="mitienda.myshopify.com" type="text" />
+    <button id="shop-domain-send">Enviar</button>
+  </div>
+</div>
 
-               <!-- Input para el dominio -->
-            <input
-              type="text"
-              id="shop-domain-input"
-              placeholder="mitienda.myshopify.com"
-              />
-
-                 <!-- Enviar dominio -->
-             <button id="shop-domain-send">Enviar</button>
-          </div>
+<style>
+  .hidden{display:none}
+  .shop-step{margin-top:18px}
+  .shop-input-row{display:flex;gap:8px;margin-top:6px}
+  #shop-domain-input{
+    flex:1;padding:10px 14px;border-radius:6px;border:1px solid #444;
+    background:#1e1e26;color:#fff;
+  }
+  #shop-domain-send{
+    padding:10px 20px;border:0;border-radius:6px;cursor:pointer;
+    background:#9a5bff;color:#fff;font-weight:600;
+  }
+  #shop-domain-send:hover{background:#8249e3}
+              </style>
 
 
           <!-- Google -->
