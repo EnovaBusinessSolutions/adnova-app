@@ -45,7 +45,15 @@ app.use(
           "'self'",
           "https://admin.shopify.com",
           "https://*.myshopify.com"
-           ],
+        
+          ],
+        /* 👇 PERMITIR JS */
+        "script-src": [
+          "'self'",          // tu propio dominio
+          "'unsafe-inline'", // script inline de interface.html
+          "https://cdn.shopify.com"  
+          
+        ],
         
         "img-src": [
           "'self'",
