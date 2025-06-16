@@ -81,7 +81,7 @@ router.use('/webhooks', require('./webhooks'));
 /* ---------- 4. Interfaz HTML dentro del iframe ---------- */
 router.get('/interface', (req, res) => {
   res.sendFile(
-    path.join(__dirname, '../../public/connector/interface.html')
+    path.join(__dirname, '../../../public/connector/interface.html')
   );
 });
 
