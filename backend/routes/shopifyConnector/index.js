@@ -1,32 +1,28 @@
-// routes/shopifyConnector/index.js
+// routes/shopifyConnector/index.js   ← versión “original” estable
 const express = require('express');
 const crypto  = require('crypto');
+const path    = require('path');
+const axios   = require('axios');
+
 const router  = express.Router();
-const path = require('path');               
-const axios = require('axios');               
-const ShopConnections = require('../../models/ShopConnections'); 
+const ShopConnections = require('../../models/ShopConnections');
 
 const {
   SHOPIFY_API_KEY,
-  SHOPIFY_APP_HANDLE
+  SHOPIFY_APP_HANDLE          // (por si lo usas en el futuro)
 } = process.env;
 
+/* --- Config --- */
 const SCOPES       = 'read_products,read_customers,read_orders';
 const REDIRECT_URI = 'https://adnova-app.onrender.com/connector/auth/callback';
 
-
+/* =========================================================
+   1) Inicio de OAuth (sin “state”)
+   ========================================================= */
 function startOAuth(req, res) {
   const { shop, host } = req.query;
-   if (!shop || !host) {
-    return res.status(400).send('Faltan shop o host en la query');
-  }
-
-  if (!/^[A-Za-z0-9+/=]+$/.test(host)) {
-    return res.status(400).send('Host inválido');
-  }
-  
   if (!shop || !host) {
-    return res.status(400).send('Faltan shop o host en la query');
+    return res.status(400).send('Faltan shop u host en la query');
   }
 
   const installUrl =
@@ -35,24 +31,22 @@ function startOAuth(req, res) {
     `&scope=${encodeURIComponent(SCOPES)}` +
     `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`;
 
-
   return res.redirect(installUrl);
 }
 
-['/grant', '/app/grant'].forEach(path => {
-  router.get(path, startOAuth);
-});
+/* Shopify prueba estos dos endpoints: */
+['/grant', '/app/grant'].forEach(p => router.get(p, startOAuth));
 
+/* GET /connector?shop=...&host=... (instalación desde Adnova) */
 router.get('/', (req, res) => {
   const { shop, host } = req.query;
-  if (shop && host) {
-    return startOAuth(req, res);
-  }
-
+  if (shop && host) return startOAuth(req, res);
   return res.send('👍 Adnova Connector online');
 });
 
-
+/* =========================================================
+   2) Callback OAuth
+   ========================================================= */
 router.get('/auth/callback', async (req, res) => {
   const { shop, host, code } = req.query;
   if (!shop || !host || !code) {
@@ -60,38 +54,51 @@ router.get('/auth/callback', async (req, res) => {
   }
 
   try {
+    /* Intercambia el “code” por access_token */
     const { data } = await axios.post(
       `https://${shop}/admin/oauth/access_token`,
       {
-        client_id:  SHOPIFY_API_KEY,
+        client_id:     SHOPIFY_API_KEY,
         client_secret: process.env.SHOPIFY_API_SECRET,
         code
       },
       { headers: { 'Content-Type': 'application/json' } }
     );
 
-
+    /* Guarda / actualiza conexión (todavía sin userId) */
     await ShopConnections.findOneAndUpdate(
       { shop },
       { shop, accessToken: data.access_token, installedAt: Date.now() },
       { upsert: true }
     );
-
   } catch (err) {
     console.error('❌ Error obteniendo access_token:', err.response?.data || err);
     return res.status(500).send('Falló intercambio de token');
   }
+
+  /* Redirige al interfaz embebido */
   return res.redirect(
     `/connector/interface?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`
   );
 });
 
+/* =========================================================
+   3) Webhooks de privacidad
+   ========================================================= */
 router.use('/webhooks', require('./webhooks'));
 
+/* =========================================================
+   4) Interfaz embebida (HTML dentro del iframe)
+   ========================================================= */
 router.get('/interface', (req, res) => {
-  res.sendFile(
-    path.join(__dirname, '../../public/connector/interface.html')
+  /* Estos headers eran los que cumplían la verificación de Shopify */
+  res.setHeader(
+    'Content-Security-Policy',
+    'frame-ancestors https://admin.shopify.com https://*.myshopify.com'
   );
+  res.removeHeader('X-Frame-Options');
+
+  res.sendFile(path.join(__dirname, '../../public/connector/interface.html'));
 });
 
 module.exports = router;
