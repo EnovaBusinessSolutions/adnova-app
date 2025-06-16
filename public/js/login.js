@@ -61,3 +61,16 @@ document.addEventListener('DOMContentLoaded', function () {
     }
   }
 });
+const registerBtn = document.getElementById('register-btn');
+if (registerBtn) {
+  registerBtn.addEventListener('click', () => {
+    window.location.href = 'register.html';
+  });
+}
+
+const googleBtn = document.getElementById('google-btn');
+if (googleBtn) {
+  googleBtn.addEventListener('click', () => {
+    window.location.href = '/auth/google/login';
+  });
+}

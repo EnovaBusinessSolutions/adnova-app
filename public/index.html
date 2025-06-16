@@ -1,71 +1,67 @@
 <!DOCTYPE html>
 <html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ADNOVA - IA para Marketing de Shopify</title>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ADNOVA - IA para Marketing de Shopify</title>
 
-    <!-- Google Fonts - Inter -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <!-- Inter font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-    <!-- Estilos CSS -->
-    <link rel="stylesheet" href="adnova-login.css" />
-  </head>
+  <!-- Estilos -->
+  <link rel="stylesheet" href="adnova-login.css" />
+</head>
 
-  <body data-page="login"> 
-    <div class="login-container">
-      <div class="header">
-        <h1>ADNOVA AI <span>🤖</span></h1>
-        <p>Optimización de marketing con IA para tu tienda Shopify</p>
-      </div>
-
-      <h2 class="subtitle">Bienvenido de nuevo</h2>
-
-      <form class="form" id="loginForm">
-        <div class="form-group">
-          <label class="form-label" for="email">Correo electrónico</label>
-          <input
-            type="email"
-            id="email"
-            class="form-input"
-            placeholder="tu@correo.com"
-            required
-          />
-        </div>
-
-        <div class="form-group">
-          <label class="form-label" for="password">Contraseña</label>
-          <input
-            type="password"
-            id="password"
-            class="form-input"
-            required
-          />
-        </div>
-
-        <button type="submit" class="btn btn-primary">Iniciar sesión</button>
-      </form>
-      <!-- Botón Registrarse -->
-<div class="register-wrapper">
- <button onclick="window.location.href='register.html'" class="btn btn-secondary">Registrarse</button>
-</div>
-
-      <div class="divider">
-        <span class="divider-text">CONTINÚA CON</span>
-      </div>
-
-      <div class="social-buttons">
-        <button class="btn btn-outline" onclick="window.location.href='/auth/google/login'">
-  <img src="https://img.icons8.com/color/20/google-logo.png" alt="Google" />
-  Google
-</button>
-
-      </div>
-      <p class="forgot-password">¿Olvidaste tu contraseña? <a href="#" class="recovery-link">Recupérala aquí</a></p>
+<body data-page="login">
+  <div class="login-container">
+    <div class="header">
+      <h1>ADNOVA AI <span>🤖</span></h1>
+      <p>Optimización de marketing con IA para tu tienda Shopify</p>
     </div>
-        <script src="js/login.js" defer></script>
-    <script src="script.js" defer></script>
-  </body>
+
+    <h2 class="subtitle">Bienvenido de nuevo</h2>
+
+    <form class="form" id="loginForm">
+      <div class="form-group">
+        <label class="form-label" for="email">Correo electrónico</label>
+        <input id="email" type="email" class="form-input" placeholder="tu@correo.com" required />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="password">Contraseña</label>
+        <input id="password" type="password" class="form-input" required />
+      </div>
+
+      <button type="submit" class="btn btn-primary">Iniciar sesión</button>
+    </form>
+
+    <!-- Botón Registrarse -->
+    <div class="register-wrapper">
+      <button id="register-btn" class="btn btn-secondary">Registrarse</button>
+    </div>
+
+    <div class="divider">
+      <span class="divider-text">CONTINÚA CON</span>
+    </div>
+
+    <div class="social-buttons">
+      <!-- Un solo botón, sin onclick inline -->
+      <button id="google-btn" class="btn btn-outline">
+        <img src="https://img.icons8.com/color/20/google-logo.png" alt="Google" />
+        Google
+      </button>
+    </div>
+
+    <p class="forgot-password">
+      ¿Olvidaste tu contraseña? <a href="#" class="recovery-link">Recupérala aquí</a>
+    </p>
+  </div>
+
+  <!-- scripts -->
+  <script src="js/login.js" defer></script>
+  <!-- si script.js es otro bundle tuyo, déjalo; si no hace falta, elimínalo -->
+  <!-- <script src="script.js" defer></script> -->
+</body>
 </html>
