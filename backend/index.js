@@ -45,6 +45,12 @@ app.use(
           "'self'",
           "https://admin.shopify.com",
           "https://*.myshopify.com"
+          ],
+    
+        "img-src": [
+          "'self'",
+          "data:",
+          "https://img.icons8.com" 
         ]
       }
     }
