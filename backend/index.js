@@ -35,18 +35,21 @@ const secureRoutes     = require('./routes/secure');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(helmet({
-  contentSecurityPolicy: false // 👈 Desactiva la política por defecto
-}));
-
-app.use((req, res, next) => {
-  res.setHeader(
-    "Content-Security-Policy",
-    "frame-ancestors https://admin.shopify.com https://*.myshopify.com"
-  );
-  res.setHeader("X-Frame-Options", "ALLOWALL"); 
-  next();
-});
+app.use(
+  helmet({
+    frameguard: false,                     
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        "frame-ancestors": [
+          "'self'",
+          "https://admin.shopify.com",
+          "https://*.myshopify.com"
+        ]
+      }
+    }
+  })
+);
 
 mongoose
   .connect(process.env.MONGO_URI, {
