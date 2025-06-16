@@ -37,18 +37,26 @@ const PORT = process.env.PORT || 3000;
 
 app.use(
   helmet({
-    contentSecurityPolicy: false          //  ← desactiva CSP por defecto
+    frameguard: false,
+    contentSecurityPolicy: {
+      useDefaults: true,
+      directives: {
+        "frame-ancestors": [
+          "'self'",
+          "https://admin.shopify.com",
+          "https://*.myshopify.com"
+           ],
+        
+        "img-src": [
+          "'self'",
+          "data:",
+          "https://img.icons8.com" 
+        ]
+      }
+    }
   })
 );
 
-app.use((req, res, next) => {
-  res.setHeader(
-    'Content-Security-Policy',
-    'frame-ancestors https://admin.shopify.com https://*.myshopify.com'
-  );
-  res.setHeader('X-Frame-Options', 'ALLOWALL');
-  next();
-});
 
 mongoose
   .connect(process.env.MONGO_URI, {
