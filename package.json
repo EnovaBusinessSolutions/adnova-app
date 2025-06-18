@@ -1,9 +1,9 @@
 {
   "name": "adnova-functional-app-dash-links-final-clean",
   "version": "1.0.0",
-  "main": "script.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node backend/index.js",
+    "start": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
