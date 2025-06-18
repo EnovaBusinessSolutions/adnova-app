@@ -1,7 +1,7 @@
 // backend/routes/secure.js
 const express = require('express');
 const router = express.Router();
-const verifySessionToken = require('../middlewares/verifySessionToken');
+const verifySessionToken = require('../../middlewares/verifySessionToken');
 
 router.use(verifySessionToken);
 
