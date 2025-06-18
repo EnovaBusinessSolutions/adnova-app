@@ -1,38 +1,56 @@
-/* public/js/onboarding.js */
+// public/js/onboarding.js
+
+import createApp from "@shopify/app-bridge";
+import { getSessionToken } from "@shopify/app-bridge/utilities";
+import { apiFetch } from "./apiFetch.js";
+
 document.addEventListener('DOMContentLoaded', async () => {
+  /* -------------------------------- App Bridge -------------------------------- */
+  const qs            = new URLSearchParams(location.search);
+  const hostFromQuery = qs.get('host');  // “host” en base64
+  const apiKey        = document
+    .querySelector("script[data-api-key]")
+    .dataset.apiKey;
+
+  // 1️⃣ Inicializa App Bridge con la API Key y el host
+  const app = createApp({ apiKey, host: hostFromQuery });
+  console.log("🪄 Shopify App Bridge loaded", app);
+
+  // 2️⃣ Llamada de prueba para generar un XHR con JWT
+  try {
+    const pingRes = await apiFetch("/api/secure/ping");
+    console.log("PING ok:", pingRes);
+  } catch (err) {
+    console.error("PING error:", err);
+  }
 
   /* -------------------------------- DOM -------------------------------- */
-  const qs                = new URLSearchParams(location.search);
-  const shopFromQuery     = qs.get('shop');                 // «shop» si viene de Shopify
-  const hostFromQuery     = qs.get('host');                 // «host» en base-64
+  const shopFromQuery    = qs.get('shop');     
+  const connectBtn       = document.getElementById('connect-shopify-btn');
+  const connectGoogleBtn = document.getElementById('connect-google-btn');
+  const continueBtn      = document.getElementById('continue-btn');
+  const flagShopify      = document.getElementById('shopifyConnectedFlag');
+  const flagGoogle       = document.getElementById('googleConnectedFlag');
+  const domainStep       = document.getElementById('shopify-domain-step');
+  const domainInput      = document.getElementById('shop-domain-input');
+  const domainSend       = document.getElementById('shop-domain-send');
 
-  const connectBtn        = document.getElementById('connect-shopify-btn');
-  const connectGoogleBtn  = document.getElementById('connect-google-btn');
-  const continueBtn       = document.getElementById('continue-btn');
-
-  const flagShopify       = document.getElementById('shopifyConnectedFlag');
-  const flagGoogle        = document.getElementById('googleConnectedFlag');
-
-  const domainStep        = document.getElementById('shopify-domain-step');
-  const domainInput       = document.getElementById('shop-domain-input');
-  const domainSend        = document.getElementById('shop-domain-send');
-
-  /* --------  Si venimos de /connector/interface?shop=... activamos el step  -------- */
+  /* ------- Si venimos de /connector/interface?shop=... activamos el step ------- */
   if (shopFromQuery) {
-    domainStep.classList.remove('step--hidden');      // muestra el bloque
-    domainInput.value = shopFromQuery;                // auto-rellena
+    domainStep.classList.remove('step--hidden');
+    domainInput.value = shopFromQuery;
     domainInput.focus();
   }
 
-  /* -------------------------------- Helpers -------------------------------- */
+  /* ----------------------- Funciones de estado ----------------------- */
   function habilitarContinue() {
     if (!continueBtn) return;
-    const done = flagShopify.textContent.trim() === 'true' ||
-                 sessionStorage.getItem('shopifyConnected') === 'true';
+    const done =
+      flagShopify.textContent.trim() === 'true' ||
+      sessionStorage.getItem('shopifyConnected') === 'true';
     if (done) {
       continueBtn.disabled = false;
-      continueBtn.classList.remove('btn-continue--disabled');
-      continueBtn.classList.add('btn-continue--enabled');
+      continueBtn.classList.replace('btn-continue--disabled', 'btn-continue--enabled');
       sessionStorage.removeItem('shopifyConnected');
     }
   }
@@ -50,29 +68,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectGoogleBtn.disabled = true;
   }
 
-  /* banderas pre-render */
+  /* ----------------------- Renderizado inicial ----------------------- */
   if (flagShopify.textContent.trim() === 'true') pintarShopifyConectado();
-  if (flagGoogle .textContent.trim() === 'true') pintarGoogleConectado();
+  if (flagGoogle.textContent.trim() === 'true') pintarGoogleConectado();
   habilitarContinue();
 
-  /* ---------------------------  /api/session sync --------------------------- */
-  try {
-    const r = await fetch('/api/session', {credentials:'include'});
-    if (r.ok) {
-      const s = await r.json();
-      if (s.user.shopifyConnected) pintarShopifyConectado();
-      if (s.user.googleConnected ) pintarGoogleConectado();
-    } else location.href = '/';
-  } catch { location.href = '/'; }
-
-  /* ---------------- “Connect Shopify” manual (sólo si no vino de Shopify) -- */
+  /* ---------------- “Connect Shopify” manual (sólo si no vino de Shopify) --------------- */
   connectBtn?.addEventListener('click', () => {
-    const params = new URLSearchParams(location.search);
-    let shop = params.get('shop');
-    let host = params.get('host');
+    let shop = qs.get('shop');
+    let host = hostFromQuery;
 
-    /* prompt si no venimos de Shopify */
-    if (!shop || !host){
+    if (!shop || !host) {
       shop = prompt('Ingresa tu dominio (ej: mitienda.myshopify.com):');
       if (!shop?.endsWith('.myshopify.com')) return alert('Dominio inválido');
       host = btoa(`${shop}/admin`);
@@ -80,24 +86,31 @@ document.addEventListener('DOMContentLoaded', async () => {
     location.href = `/connector?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
   });
 
-  /* -------------- “Enviar dominio” para vincular shop con el usuario ---------- */
+  /* ------------- “Enviar dominio” (usa apiFetch en lugar de fetch) -------------- */
   domainSend?.addEventListener('click', async () => {
     const shop = domainInput.value.trim().toLowerCase();
     if (!shop.endsWith('.myshopify.com')) return alert('Dominio inválido');
 
-    const res  = await fetch('/api/shopify/match', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({shop})
-    });
-    const data = await res.json();
-    if (data.ok) {
-      pintarShopifyConectado();
-      domainStep.classList.add('step--hidden');   // lo ocultamos
-    } else alert(data.error || 'No se pudo vincular la tienda.');
+    try {
+      // 🚀 llamas al endpoint seguro con JWT
+      const data = await apiFetch("/api/secure/shopify/match", {
+        method: "POST",
+        body: JSON.stringify({ shop }),
+      });
+
+      if (data.ok) {
+        pintarShopifyConectado();
+        domainStep.classList.add('step--hidden');
+      } else {
+        alert(data.error || 'No se pudo vincular la tienda.');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Error al conectar con el servidor.');
+    }
   });
 
-  /* -----------------------  Google / Continue  ------------------------- */
-  connectGoogleBtn?.addEventListener('click', () => location.href='/auth/google/connect');
-  continueBtn      ?.addEventListener('click', () => location.href='/');
+  /* ----------------------- Google / Continue ----------------------- */
+  connectGoogleBtn?.addEventListener('click', () => location.href = '/auth/google/connect');
+  continueBtn?.addEventListener('click', () => location.href = '/');
 });
