@@ -404,10 +404,9 @@ app.get('/connector/interface', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/connector/interface.html'));
 });
 
-// ✅ Captura las rutas embebidas de Shopify y redirige
-app.get(/^\/apps\/[^\/]+\/(.*)/, (req, res) => {
-  const subPath = req.params[0];
-  return res.redirect(`/connector/${subPath}`);
+// ✅ Intercepta rutas /apps/... y redirige al HTML embebido real
+app.get(/^\/apps\/[^\/]+\/(connector\/interface.*)/, (req, res) => {
+  return res.redirect(`/connector/${req.params[0]}`);
 });
 
 
