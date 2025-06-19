@@ -6,10 +6,7 @@
   <title>Onboarding - ADNOVA AI</title>
   <link rel="stylesheet" href="onboarding.css" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
-  <script
-  src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
-  data-api-key="TU_API_KEY_REAL"
-></script>
+
 </head>
 <body data-page="onboarding" data-user-id="USER_ID_REAL">
    <span id="shopifyConnectedFlag"  style="display:none">SHOPIFY_CONNECTED_FLAG</span>
@@ -72,7 +69,7 @@
                 <span class="required-badge">Required</span>
               </div>
             </div>
-            <a href="#" class="btn-connect" id="connect-shopify-btn">Connect</a>
+              <button type="button" class="btn-connect" id="connect-shopify-btn">Connect</button>
           </div>
           <!-- Paso: dominio Shopify -->
           <div id="shopify-domain-step" class="shop-step step--hidden">
@@ -112,7 +109,7 @@
                 <span class="optional-badge">Optional</span>
               </div>
             </div>
-             <button href="/auth/google/connect" class="btn-connect" id="connect-google-btn">Connect</button>
+             <button type="button" class="btn-connect" id="connect-google-btn">Connect</button>
           </div>
 
           <!-- Meta -->
@@ -228,8 +225,6 @@
       </div>
     </div>
   </div>
-<script type="module" src="/js/appBridgeInit.js"></script>
-<script type="module" src="/js/apiFetch.js"></script>
-<script type="module" src="/js/onboarding.js"></script>
+<script src="/js/onboarding.js" defer></script>
 </body>
 </html>
