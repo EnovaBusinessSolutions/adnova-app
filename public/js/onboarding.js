@@ -1,31 +1,13 @@
 // public/js/onboarding.js
 
-import createApp from "@shopify/app-bridge";
-import { getSessionToken } from "@shopify/app-bridge/utilities";
 import { apiFetch } from "./apiFetch.js";
+import { app } from "./appBridgeInit.js";  // app ya inicializado con el App Bridge global
 
 document.addEventListener('DOMContentLoaded', async () => {
-  /* -------------------------------- App Bridge -------------------------------- */
   const qs            = new URLSearchParams(location.search);
-  const hostFromQuery = qs.get('host');  // “host” en base64
-  const apiKey        = document
-    .querySelector("script[data-api-key]")
-    .dataset.apiKey;
+  const shopFromQuery = qs.get('shop');
+  const hostFromQuery = qs.get('host');
 
-  // 1️⃣ Inicializa App Bridge con la API Key y el host
-  const app = createApp({ apiKey, host: hostFromQuery });
-  console.log("🪄 Shopify App Bridge loaded", app);
-
-  // 2️⃣ Llamada de prueba para generar un XHR con JWT
-  try {
-    const pingRes = await apiFetch("/api/secure/ping");
-    console.log("PING ok:", pingRes);
-  } catch (err) {
-    console.error("PING error:", err);
-  }
-
-  /* -------------------------------- DOM -------------------------------- */
-  const shopFromQuery    = qs.get('shop');     
   const connectBtn       = document.getElementById('connect-shopify-btn');
   const connectGoogleBtn = document.getElementById('connect-google-btn');
   const continueBtn      = document.getElementById('continue-btn');
@@ -35,14 +17,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   const domainInput      = document.getElementById('shop-domain-input');
   const domainSend       = document.getElementById('shop-domain-send');
 
-  /* ------- Si venimos de /connector/interface?shop=... activamos el step ------- */
+  // 1️⃣ Prueba para Shopify checker: dispara un XHR con JWT
+  try {
+    const pingRes = await apiFetch("/api/secure/ping");
+    console.log("✅ PING OK:", pingRes);
+  } catch (err) {
+    console.error("❌ PING FAIL:", err);
+  }
+
+  // 2️⃣ Si venimos de /connector/interface?shop=... activamos el paso de dominio
   if (shopFromQuery) {
     domainStep.classList.remove('step--hidden');
     domainInput.value = shopFromQuery;
     domainInput.focus();
   }
 
-  /* ----------------------- Funciones de estado ----------------------- */
+  // Funciones para actualizar estado de botones
   function habilitarContinue() {
     if (!continueBtn) return;
     const done =
@@ -68,14 +58,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectGoogleBtn.disabled = true;
   }
 
-  /* ----------------------- Renderizado inicial ----------------------- */
+  // Estado inicial de los flags
   if (flagShopify.textContent.trim() === 'true') pintarShopifyConectado();
   if (flagGoogle.textContent.trim() === 'true') pintarGoogleConectado();
   habilitarContinue();
 
-  /* ---------------- “Connect Shopify” manual (sólo si no vino de Shopify) --------------- */
+  // “Connect Shopify” manual (solo si no viene de Shopify)
   connectBtn?.addEventListener('click', () => {
-    let shop = qs.get('shop');
+    let shop = shopFromQuery;
     let host = hostFromQuery;
 
     if (!shop || !host) {
@@ -86,13 +76,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     location.href = `/connector?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
   });
 
-  /* ------------- “Enviar dominio” (usa apiFetch en lugar de fetch) -------------- */
+  // “Enviar dominio” usa apiFetch para incluir JWT
   domainSend?.addEventListener('click', async () => {
     const shop = domainInput.value.trim().toLowerCase();
     if (!shop.endsWith('.myshopify.com')) return alert('Dominio inválido');
 
     try {
-      // 🚀 llamas al endpoint seguro con JWT
       const data = await apiFetch("/api/secure/shopify/match", {
         method: "POST",
         body: JSON.stringify({ shop }),
@@ -110,7 +99,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  /* ----------------------- Google / Continue ----------------------- */
-  connectGoogleBtn?.addEventListener('click', () => location.href = '/auth/google/connect');
-  continueBtn?.addEventListener('click', () => location.href = '/');
+  // “Connect Google” y “Continue”
+  connectGoogleBtn?.addEventListener('click', () => {
+    location.href = '/auth/google/connect';
+  });
+  continueBtn?.addEventListener('click', () => {
+    location.href = '/';
+  });
 });
