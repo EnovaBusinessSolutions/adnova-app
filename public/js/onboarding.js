@@ -1,5 +1,4 @@
-import { apiFetch } from './apiFetch.js';
-import { app }      from './appBridgeInit.js';   // ya inicializado
+import { apiFetch } from './apiFetch.js'; // versión SIN sessionToken
 
 document.addEventListener('DOMContentLoaded', async () => {
   const qs = new URLSearchParams(location.search);
@@ -16,7 +15,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const domainInput       = document.getElementById('shop-domain-input');
   const domainSend        = document.getElementById('shop-domain-send');
 
-  /* ------ Llamada de prueba para el checker ------ */
+  /* ------ Llamada de prueba ------ */
   try {
     const ping = await apiFetch('/api/secure/ping');
     console.log('✅ PING OK', ping);
@@ -74,9 +73,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!shop?.endsWith('.myshopify.com')) return alert('Dominio inválido');
       host = btoa(`${shop}/admin`);
     }
-    location.href = `/connector?shop=${encodeURIComponent(
-      shop
-    )}&host=${encodeURIComponent(host)}`;
+    location.href = `/connector?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
   });
 
   /* ------ Botón Enviar Dominio ------ */

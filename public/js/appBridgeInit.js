@@ -16,8 +16,13 @@ const AppBridge = await waitForAppBridge();
 const createApp = AppBridge.default;
 const { getSessionToken, authenticatedFetch } = AppBridge.utilities;
 
+// ✅ Revisión única del script
+const scriptEl = document.querySelector("script[data-api-key]");
+if (!scriptEl) throw new Error("No se encontró el script con data-api-key");
+const apiKey = scriptEl.dataset.apiKey;
+
 export const app = createApp({
-  apiKey: document.querySelector("script[data-api-key]").dataset.apiKey,
+  apiKey,
   host: new URLSearchParams(location.search).get("host"),
 });
 
