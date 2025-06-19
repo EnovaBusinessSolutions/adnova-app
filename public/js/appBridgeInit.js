@@ -1,5 +1,7 @@
-import createApp from "@shopify/app-bridge";
-import { getSessionToken, authenticatedFetch } from "@shopify/app-bridge/utilities";
+// appBridgeInit.js (versión sin imports)
+const AppBridge = window['app-bridge'] || window.AppBridge;
+const createApp = AppBridge.default;
+const { getSessionToken, authenticatedFetch } = AppBridge.utilities;
 
 export const app = createApp({
   apiKey: document.querySelector("script[data-api-key]").dataset.apiKey,
