@@ -129,7 +129,8 @@ router.get(
       const tokenJwt = jwt.sign(payload, SHOPIFY_API_SECRET);
 
       // 2.8) Redirigir al onboarding con el JWT en query
-      return res.redirect(`/onboarding?shopifyToken=${tokenJwt}`);
+      // ✅ Esta es la forma correcta de redirigir a una vista embebida
+      return res.redirect(`/apps/${SHOPIFY_API_KEY}/connector/interface?shop=${shop}`);
     } catch (err) {
       console.error(
         '❌ Error al intercambiar code por access_token en Shopify callback:',
