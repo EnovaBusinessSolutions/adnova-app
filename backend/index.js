@@ -399,6 +399,11 @@ app.get('/api/test-shopify-token', verifyShopifyToken, (req, res) => {
   });
 });
 
+// ✅ Muestra la interfaz embebida dentro de Shopify
+app.get('/connector/interface', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/connector/interface.html'));
+});
+
 app.use((req, res) => res.status(404).send('Página no encontrada'));
 
 app.listen(PORT, () =>
