@@ -10,8 +10,5 @@ export async function apiFetch(path, options = {}) {
       "Content-Type": "application/json",
     },
   });
-  if (res.status === 401) {
-    // token expiró → pide nuevo y reintenta (opcional)
-  }
   return res.json();
 }
