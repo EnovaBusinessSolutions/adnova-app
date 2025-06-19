@@ -404,6 +404,10 @@ app.get('/connector/interface', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/connector/interface.html'));
 });
 
+app.get(`/apps/${process.env.SHOPIFY_API_SECRET}`, (req, res) => {
+  res.redirect('/connector/interface' + req.url);
+});
+
 app.use((req, res) => res.status(404).send('Página no encontrada'));
 
 app.listen(PORT, () =>
