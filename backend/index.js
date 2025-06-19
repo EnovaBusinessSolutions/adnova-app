@@ -405,9 +405,9 @@ app.get('/connector/interface', (req, res) => {
 });
 
 // ✅ Captura las rutas embebidas de Shopify y redirige
-app.get('/apps/:whatever/*', (req, res) => {
-  const subPath = req.originalUrl.replace(`/apps/${req.params.whatever}`, '');
-  return res.redirect(`/connector${subPath}`);
+app.get(/^\/apps\/[^\/]+\/(.*)/, (req, res) => {
+  const subPath = req.params[0];
+  return res.redirect(`/connector/${subPath}`);
 });
 
 
