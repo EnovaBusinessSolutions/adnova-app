@@ -404,9 +404,12 @@ app.get('/connector/interface', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/connector/interface.html'));
 });
 
-app.get(`/apps/${process.env.SHOPIFY_API_SECRET}`, (req, res) => {
-  res.redirect('/connector/interface' + req.url);
+// ✅ Captura las rutas embebidas de Shopify y redirige
+app.get(`/apps/${process.env.SHOPIFY_API_KEY}/*`, (req, res) => {
+  const subPath = req.originalUrl.replace(`/apps/${process.env.SHOPIFY_API_KEY}`, '');
+  return res.redirect(`/connector${subPath}`);
 });
+
 
 app.use((req, res) => res.status(404).send('Página no encontrada'));
 
