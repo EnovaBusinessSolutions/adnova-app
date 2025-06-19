@@ -70,10 +70,18 @@
     document.getElementById('shopDom').textContent = shop;
 
     // Link de regreso al SAAS
-    const back = new URL('https://adnova-app.onrender.com/onboarding');
-    back.searchParams.set('shop', shop);
-    if (host) back.searchParams.set('host', host);
-    document.getElementById('backToAdnova').href = back.toString();
+const back = new URL('https://adnova-app.onrender.com/onboarding');
+back.searchParams.set('shop', shop);
+if (host) back.searchParams.set('host', host);
+document.getElementById('backToAdnova').href = back.toString();
+
+// Al hacer clic, guardamos dominio y redirigimos
+document.getElementById('backToAdnova').addEventListener('click', (e) => {
+  e.preventDefault();
+  if (shop) sessionStorage.setItem('shopDomain', shop);
+  sessionStorage.setItem('shopifyConnected', 'true');
+  window.top.location.href = back.toString();
+});
 
     // Espera a que AppBridge esté cargado
     function waitForAppBridge(timeout = 3000) {

@@ -25,12 +25,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   /* ------ Si venimos de /connector/interface ------- */
-  if (shopFromQuery) {
-    domainStep.classList.remove('step--hidden');
-    domainInput.value = shopFromQuery;
-    domainInput.focus();
-  }
+ const savedShop = sessionStorage.getItem('shopDomain');
+  if (shopFromQuery || savedShop) {
+  domainStep.classList.remove('step--hidden');
+  domainInput.value = shopFromQuery || savedShop;
+  domainInput.focus();
 
+  // si vino de sessionStorage, lo limpiamos para no reutilizarlo
+  if (savedShop) sessionStorage.removeItem('shopDomain');
+}
   function habilitarContinue() {
     if (!continueBtn) return;
     const listo =
@@ -51,12 +54,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectBtn.classList.add('connected');
     connectBtn.disabled = true;
     habilitarContinue();
+     sessionStorage.removeItem('shopifyConnected'); // opcional
+
   };
 
   const pintarGoogleConectado = () => {
     connectGoogleBtn.textContent = 'Connected';
     connectGoogleBtn.classList.add('connected');
     connectGoogleBtn.disabled = true;
+
   };
 
   /* ------ Estado inicial ------ */
