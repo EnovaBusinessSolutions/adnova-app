@@ -54,8 +54,8 @@ router.get('/auth/callback', async (req, res) => {
 
     /* 2-C. redirige al iframe de interfaz */
     return res.redirect(
-      `/connector/interface?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`
-    );
+  `/apps/${SHOPIFY_API_KEY}/connector/interface?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`
+);
   } catch (err) {
     console.error('❌ access_token error:', err.response?.data || err);
     return res.status(500).send('Token exchange failed');
