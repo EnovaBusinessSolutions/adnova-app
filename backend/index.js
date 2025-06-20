@@ -34,6 +34,7 @@ const secureRoutes     = require('./routes/secure');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const SHOPIFY_HANDLE = process.env.SHOPIFY_APP_HANDLE;
 
 app.use(
   helmet({
@@ -405,23 +406,12 @@ app.get('/connector/interface', (req, res) => {
 });
 
 // ✅ Intercepta rutas /apps/... y redirige al HTML embebido real
-app.get(`/apps/${process.env.SHOPIFY_APP_HANDLE}/*`, (req, res) => {
+const dynamicShopifyPath = new RegExp(`^/apps/${SHOPIFY_HANDLE}(?:/.*)?$`);
+app.get(dynamicShopifyPath, (req, res) => {
   const { shop, host } = req.query;
-
   const redirectUrl = new URL('/connector/interface', `https://${req.headers.host}`);
   if (shop) redirectUrl.searchParams.set('shop', shop);
   if (host) redirectUrl.searchParams.set('host', host);
-
-  return res.redirect(redirectUrl.toString());
-});
-
-app.get(`/apps/${process.env.SHOPIFY_APP_HANDLE}`, (req, res) => {
-  const { shop, host } = req.query;
-
-  const redirectUrl = new URL('/connector/interface', `https://${req.headers.host}`);
-  if (shop) redirectUrl.searchParams.set('shop', shop);
-  if (host) redirectUrl.searchParams.set('host', host);
-
   return res.redirect(redirectUrl.toString());
 });
 
