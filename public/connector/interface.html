@@ -56,71 +56,73 @@
       Ahora regresa a <b>Adnova AI</b>, inicia sesión o refresca tu pestaña y escribe el
       dominio <code id="shopDom">(dominio)</code> cuando se te pida.
     </p>
-    <a id="backToAdnova" class="btn" target="_top" href="#">Ir a Adnova AI</a>
+    <a id="backToAdnova" class="btn" href="#">Ir a Adnova AI</a>
   </main>
 
-  <!-- ✅ Módulo JS separado para usar Session Token y llamar al backend -->
   <script type="module">
-  const qs = new URLSearchParams(location.search);
-const sessionToken = qs.get('sessionToken');
-if (sessionToken) {
-  sessionStorage.setItem('sessionToken', sessionToken);
-}
+    if (window.top === window) {
+      alert("⚠️ No estás dentro de un iframe de Shopify. Abre esta app desde el Admin.");
+    }
 
-const shop = qs.get('shop') || '';
-const host = qs.get('host') || '';
-const apiKey = document.querySelector("script[data-api-key]").dataset.apiKey;
+    const qs = new URLSearchParams(location.search);
+    const sessionToken = qs.get('sessionToken');
+    if (sessionToken) {
+      sessionStorage.setItem('sessionToken', sessionToken);
+    }
 
-  // Pinta dominio
-  document.getElementById('shopDom').textContent = shop;
+    const shop = qs.get('shop') || '';
+    const host = qs.get('host') || '';
+    const apiKey = document.querySelector("script[data-api-key]").dataset.apiKey;
 
-  // Link de regreso al SAAS
-  const back = new URL('https://adnova-app.onrender.com/onboarding');
-  back.searchParams.set('shop', shop);
-  if (host) back.searchParams.set('host', host);
+    // Pinta dominio en el texto
+    document.getElementById('shopDom').textContent = shop;
 
-  const goBtn = document.getElementById('backToAdnova');
-  goBtn.href = back.toString();
+    // Construye la URL de regreso al SAAS
+    const back = new URL('https://adnova-app.onrender.com/onboarding');
+    back.searchParams.set('shop', shop);
+    if (host) back.searchParams.set('host', host);
 
-  goBtn.addEventListener('click', async (e) => {
-  e.preventDefault();
-  if (shop) sessionStorage.setItem('shopDomain', shop);
+    const goBtn = document.getElementById('backToAdnova');
+    goBtn.href = back.toString();
 
-  try {
-    const AB = await waitForAppBridge();
-    const createApp = AB.default;
-    const { getSessionToken } = AB.utilities;
+    goBtn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      if (shop) sessionStorage.setItem('shopDomain', shop);
 
-    const app = createApp({
-      apiKey,
-      host,
-      forceRedirect: false // Recomendado por Shopify si estás embebido
+      try {
+        const AB = await waitForAppBridge();
+        const createApp = AB.default;
+        const { getSessionToken } = AB.utilities;
+
+        const app = createApp({
+          apiKey,
+          host,
+          forceRedirect: false,
+        });
+
+        const token = await getSessionToken(app);
+        sessionStorage.setItem('sessionToken', token);
+        sessionStorage.setItem('shopifyConnected', 'true');
+
+        back.searchParams.set('sessionToken', token);
+        window.top.location.href = back.toString();
+      } catch (err) {
+        console.error("❌ Error obteniendo sessionToken:", err);
+        alert("No se pudo obtener el token de sesión");
+      }
     });
 
-    const token = await getSessionToken(app);
-    sessionStorage.setItem('sessionToken', token);
-    sessionStorage.setItem('shopifyConnected', 'true');
-
-    back.searchParams.set('sessionToken', token);
-    window.top.location.href = back.toString();
-  } catch (err) {
-    console.error("❌ Error obteniendo sessionToken:", err);
-    alert("No se pudo obtener el token de sesión");
-  }
-});
-
-  // Utilidad para esperar App Bridge
-  function waitForAppBridge(timeout = 3000) {
-    return new Promise((resolve, reject) => {
-      const start = Date.now();
-      (function check() {
-        const AB = window['app-bridge'] || window.AppBridge;
-        if (AB?.default && AB.utilities) return resolve(AB);
-        if (Date.now() - start > timeout) return reject(new Error("App Bridge not loaded"));
-        requestAnimationFrame(check);
-      })();
-    });
-  }
-</script>
+    function waitForAppBridge(timeout = 3000) {
+      return new Promise((resolve, reject) => {
+        const start = Date.now();
+        (function check() {
+          const AB = window['app-bridge'] || window.AppBridge;
+          if (AB?.default && AB.utilities) return resolve(AB);
+          if (Date.now() - start > timeout) return reject(new Error("App Bridge not loaded"));
+          requestAnimationFrame(check);
+        })();
+      });
+    }
+  </script>
 </body>
 </html>
