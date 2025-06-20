@@ -2,9 +2,21 @@ import { apiFetch } from './apiFetch.saas.js';
 
 
 document.addEventListener('DOMContentLoaded', async () => {
+
   const qs = new URLSearchParams(location.search);
+  const sessionToken = qs.get('sessionToken');
+  if (sessionToken) {
+    sessionStorage.setItem('sessionToken', sessionToken);
+
+    // ✅ Limpia la URL (opcional, para no dejar el token visible)
+    window.history.replaceState({}, document.title,
+      window.location.pathname + window.location.search.replace(/([&?])sessionToken=[^&]+(&|$)/, '$1').replace(/&$/, '')
+    );
+  }
+
   const shopFromQuery = qs.get('shop');
   const hostFromQuery = qs.get('host');
+
 
   /* ------ Elementos del DOM ------ */
   const connectBtn        = document.getElementById('connect-shopify-btn');
