@@ -405,15 +405,26 @@ app.get('/connector/interface', (req, res) => {
 });
 
 // ✅ Intercepta rutas /apps/... y redirige al HTML embebido real
+app.get(`/apps/${process.env.SHOPIFY_APP_HANDLE}/*`, (req, res) => {
+  const { shop, host } = req.query;
+
+  const redirectUrl = new URL('/connector/interface', `https://${req.headers.host}`);
+  if (shop) redirectUrl.searchParams.set('shop', shop);
+  if (host) redirectUrl.searchParams.set('host', host);
+
+  return res.redirect(redirectUrl.toString());
+});
+
 app.get(`/apps/${process.env.SHOPIFY_APP_HANDLE}`, (req, res) => {
   const { shop, host } = req.query;
 
-  // Redirige a tu iframe real
-  const url = new URL('/connector/interface', `https://${req.headers.host}`);
-  if (shop) url.searchParams.set('shop', shop);
-  if (host) url.searchParams.set('host', host);
-  return res.redirect(url.toString());
+  const redirectUrl = new URL('/connector/interface', `https://${req.headers.host}`);
+  if (shop) redirectUrl.searchParams.set('shop', shop);
+  if (host) redirectUrl.searchParams.set('host', host);
+
+  return res.redirect(redirectUrl.toString());
 });
+
 app.use((req, res) => res.status(404).send('Página no encontrada'));
 
 app.listen(PORT, () =>
