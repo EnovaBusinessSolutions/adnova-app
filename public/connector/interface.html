@@ -87,9 +87,12 @@ const apiKey = document.querySelector("script[data-api-key]").dataset.apiKey;
     if (shop) sessionStorage.setItem('shopDomain', shop);
 
     try {
-      const AppBridge = await waitForAppBridge();
-      const app = AppBridge.default({ apiKey, host });
-      const { getSessionToken } = AppBridge.utilities;
+      const AB = await waitForAppBridge();
+      const createApp = AB.default;
+      const { getSessionToken } = AB.utilities;
+
+      const app = createApp({ apiKey, host });
+
 
       const token = await getSessionToken(app);
       sessionStorage.setItem('sessionToken', token);
