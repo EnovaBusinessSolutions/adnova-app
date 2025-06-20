@@ -73,6 +73,8 @@
 const back = new URL('https://adnova-app.onrender.com/onboarding');
 back.searchParams.set('shop', shop);
 if (host) back.searchParams.set('host', host);
+back.searchParams.set('sessionToken', token);
+
 document.getElementById('backToAdnova').href = back.toString();
 
 // Al hacer clic, guardamos dominio y redirigimos

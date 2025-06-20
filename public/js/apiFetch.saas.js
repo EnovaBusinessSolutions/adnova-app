@@ -1,10 +1,19 @@
-export async function apiFetch(path, options = {}) {
-  const res = await fetch(path, {
+export async function apiFetch(url, options = {}) {
+  const token = sessionStorage.getItem('sessionToken');
+  if (!options.headers) options.headers = {};
+  if (token) {
+    options.headers.Authorization = `Bearer ${token}`;
+  }
+
+  const res = await fetch(url, {
+    credentials: 'include',
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      ...(options.headers || {}),
+      ...options.headers,
     },
   });
-  return res.json();
+
+  const json = await res.json();
+  return json;
 }
