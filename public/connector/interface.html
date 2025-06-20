@@ -83,29 +83,31 @@ const apiKey = document.querySelector("script[data-api-key]").dataset.apiKey;
   goBtn.href = back.toString();
 
   goBtn.addEventListener('click', async (e) => {
-    e.preventDefault();
-    if (shop) sessionStorage.setItem('shopDomain', shop);
+  e.preventDefault();
+  if (shop) sessionStorage.setItem('shopDomain', shop);
 
-    try {
-      const AB = await waitForAppBridge();
-      const createApp = AB.default;
-      const { getSessionToken } = AB.utilities;
+  try {
+    const AB = await waitForAppBridge();
+    const createApp = AB.default;
+    const { getSessionToken } = AB.utilities;
 
-      const app = createApp({ apiKey, host });
+    const app = createApp({
+      apiKey,
+      host,
+      forceRedirect: false // Recomendado por Shopify si estás embebido
+    });
 
+    const token = await getSessionToken(app);
+    sessionStorage.setItem('sessionToken', token);
+    sessionStorage.setItem('shopifyConnected', 'true');
 
-      const token = await getSessionToken(app);
-      sessionStorage.setItem('sessionToken', token);
-      sessionStorage.setItem('shopifyConnected', 'true');
-
-      // Redirige con el sessionToken
-      back.searchParams.set('sessionToken', token);
-      window.top.location.href = back.toString();
-    } catch (err) {
-      console.error("❌ Error obteniendo sessionToken:", err);
-      alert("No se pudo obtener el token de sesión");
-    }
-  });
+    back.searchParams.set('sessionToken', token);
+    window.top.location.href = back.toString();
+  } catch (err) {
+    console.error("❌ Error obteniendo sessionToken:", err);
+    alert("No se pudo obtener el token de sesión");
+  }
+});
 
   // Utilidad para esperar App Bridge
   function waitForAppBridge(timeout = 3000) {
