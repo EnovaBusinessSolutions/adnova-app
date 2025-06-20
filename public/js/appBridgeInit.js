@@ -4,26 +4,38 @@ function waitForAppBridge(timeout = 3000) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     (function check() {
-      const AppBridge = window['app-bridge'] || window.AppBridge;
-      if (AppBridge?.default && AppBridge.utilities) return resolve(AppBridge);
+      const AB = window['app-bridge'] || window.AppBridge;
+      if (AB?.default && AB.utilities) return resolve(AB);
       if (Date.now() - start > timeout) return reject(new Error("App Bridge not loaded"));
       requestAnimationFrame(check);
     })();
   });
 }
 
-const AppBridge = await waitForAppBridge();
-const createApp = AppBridge.default;
-const { getSessionToken, authenticatedFetch } = AppBridge.utilities;
+// IIFE que expone todo a window
+(async () => {
+  try {
+    const AB = await waitForAppBridge();
+    const createApp = AB.default;
+    const { getSessionToken, authenticatedFetch } = AB.utilities;
 
-// ✅ Revisión única del script
-const scriptEl = document.querySelector("script[data-api-key]");
-if (!scriptEl) throw new Error("No se encontró el script con data-api-key");
-const apiKey = scriptEl.dataset.apiKey;
+    const scriptEl = document.querySelector("script[data-api-key]");
+    if (!scriptEl) throw new Error("No se encontró el script con data-api-key");
 
-export const app = createApp({
-  apiKey,
-  host: new URLSearchParams(location.search).get("host"),
-});
+    const apiKey = scriptEl.dataset.apiKey;
+    const host = new URLSearchParams(location.search).get("host");
 
-export { getSessionToken, authenticatedFetch };
+    const app = createApp({
+      apiKey,
+      host,
+      forceRedirect: false,
+    });
+
+    // ✅ Exportar todo al scope global
+    window.app = app;
+    window.getSessionToken = getSessionToken;
+    window.authenticatedFetch = authenticatedFetch;
+  } catch (err) {
+    console.error("❌ Error iniciando App Bridge:", err);
+  }
+})();
