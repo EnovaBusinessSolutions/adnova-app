@@ -1,35 +1,37 @@
-if (window.top === window) {
-  alert("⚠️ No estás dentro de un iframe de Shopify. Abre esta app desde el Admin.");
-}
+import { app, getSessionToken } from './appBridgeInit.js';
 
-const qs = new URLSearchParams(location.search);
-const sessionToken = qs.get('sessionToken');
-if (sessionToken) {
-  sessionStorage.setItem('sessionToken', sessionToken);
-}
+document.addEventListener('DOMContentLoaded', () => {
+  const qs   = new URLSearchParams(location.search);
+  const shop = qs.get('shop') || '';
+  const host = qs.get('host') || '';
 
-const shop = qs.get('shop') || '';
-const host = qs.get('host') || '';
-document.getElementById('shopDom').textContent = shop;
+  // Mostrar dominio en pantalla
+  document.getElementById('shopDom').textContent = shop;
 
-// URL de regreso al SAAS
-const back = new URL('https://adnova-app.onrender.com/onboarding');
-back.searchParams.set('shop', shop);
-if (host) back.searchParams.set('host', host);
-document.getElementById('backToAdnova').href = back.toString();
+  // Construir URL de retorno al onboarding
+  const back = new URL('https://adnova-app.onrender.com/onboarding');
+  back.searchParams.set('shop', shop);
+  if (host) back.searchParams.set('host', host);
 
-document.getElementById('backToAdnova').addEventListener('click', async (e) => {
-  e.preventDefault();
-  if (shop) sessionStorage.setItem('shopDomain', shop);
+  const goBtn = document.getElementById('backToAdnova');
+  goBtn.href = back.toString();
 
-  try {
-    const token = await window.getSessionToken(window.app);
-    sessionStorage.setItem('sessionToken', token);
-    sessionStorage.setItem('shopifyConnected', 'true');
-    back.searchParams.set('sessionToken', token);
-    window.top.location.href = back.toString();
-  } catch (err) {
-    console.error("❌ Error obteniendo sessionToken:", err);
-    alert("No se pudo obtener el token de sesión");
-  }
+  goBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    if (shop) sessionStorage.setItem('shopDomain', shop);
+
+    try {
+      // Obtener sessionToken con App Bridge
+      const token = await getSessionToken(app);
+      sessionStorage.setItem('sessionToken', token);
+      sessionStorage.setItem('shopifyConnected', 'true');
+
+      // Añadirlo a la URL y redirigir fuera del iframe
+      back.searchParams.set('sessionToken', token);
+      window.top.location.href = back.toString();
+    } catch (err) {
+      console.error("❌ Error obteniendo sessionToken:", err);
+      alert("No se pudo obtener el token de sesión");
+    }
+  });
 });
