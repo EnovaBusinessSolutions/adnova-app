@@ -406,8 +406,7 @@ app.get('/connector/interface', (req, res) => {
 });
 
 // ✅ Intercepta rutas /apps/... y redirige al HTML embebido real
-const dynamicShopifyPath = new RegExp(`^/apps/${SHOPIFY_HANDLE}(?:/.*)?$`);
-app.get(dynamicShopifyPath, (req, res) => {
+app.get(/^\/apps\/[^\/]+\/?.*$/, (req, res) => {
   const { shop, host } = req.query;
   const redirectUrl = new URL('/connector/interface', `https://${req.headers.host}`);
   if (shop) redirectUrl.searchParams.set('shop', shop);
