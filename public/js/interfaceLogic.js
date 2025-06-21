@@ -19,13 +19,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     sessionStorage.setItem("shopDomain", shop);
 
     try {
-      const { app, getSessionToken } = await window.initAppBridge();
+      // Espera a que App Bridge esté listo
+      const { app, getSessionToken } = await window.initAppBridge(); // 👈 Asegúrate de que esto sí espera
       const token = await getSessionToken(app);
+
+      if (!token) throw new Error("No se recibió token de sesión");
 
       sessionStorage.setItem("sessionToken", token);
       sessionStorage.setItem("shopifyConnected", "true");
+
+      // ✅ Incluye el token en la URL de regreso al SAAS
       back.searchParams.set("sessionToken", token);
 
+      // Redirige al SAAS con todo
       window.top.location.href = back.toString();
     } catch (err) {
       console.error("❌ Error obteniendo sessionToken:", err);
