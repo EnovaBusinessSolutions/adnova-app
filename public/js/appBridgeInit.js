@@ -2,35 +2,33 @@ function waitForAppBridge(timeout = 7000) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     (function check() {
-      const AB = window['app-bridge'] || window.AppBridge;
-      if (AB?.default && AB.utilities) {
-        return resolve(AB);
+      const AB  = window['app-bridge'];
+      const ABU = window['app-bridge-utils'];
+      if (AB?.default && ABU?.getSessionToken) {
+        return resolve({ AB, ABU });
       }
       if (Date.now() - start > timeout) {
-        return reject(new Error("App Bridge no se cargó en el tiempo esperado"));
+        return reject(new Error("App Bridge o Utils no se cargaron a tiempo"));
       }
       requestAnimationFrame(check);
     })();
   });
 }
 
+
 window.initAppBridge = async function () {
-  const AB = await waitForAppBridge();
-  const createApp = AB.default;
-  const getSessionToken = AB.utilities.getSessionToken;
+  const { AB, ABU } = await waitForAppBridge();
 
   const apiKey = document.querySelector("meta[name='shopify-api-key']").content;
-  const host = new URLSearchParams(window.location.search).get("host");
+  const host   = new URLSearchParams(window.location.search).get("host");
 
-  if (!apiKey || !host) {
-    throw new Error("Faltan apiKey o host para iniciar App Bridge");
-  }
+  if (!apiKey || !host) throw new Error("Faltan apiKey u host");
 
-  const app = createApp({
+  const app = AB.default({
     apiKey,
     host,
     forceRedirect: false,
   });
 
-  return { app, getSessionToken };
+  return { app, getSessionToken: (app) => ABU.getSessionToken(app) };
 };
