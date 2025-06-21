@@ -3,12 +3,14 @@ function waitForAppBridge(timeout = 7000) {
     const start = Date.now();
     (function check() {
       const AB = window['app-bridge'] || window.AppBridge;
-      if (AB?.default && AB.utilities) {
-        return resolve(AB);
-      }
+      const isReady = AB?.default && AB.utilities?.getSessionToken;
+
+      if (isReady) return resolve(AB);
+
       if (Date.now() - start > timeout) {
         return reject(new Error("App Bridge no se cargó en el tiempo esperado"));
       }
+
       requestAnimationFrame(check);
     })();
   });
@@ -16,6 +18,7 @@ function waitForAppBridge(timeout = 7000) {
 
 window.initAppBridge = async function () {
   const AB = await waitForAppBridge();
+
   const createApp = AB.default;
   const getSessionToken = AB.utilities.getSessionToken;
 
