@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <title>Adnova AI Connector</title>
 
-  <!-- ✅ App Bridge correctamente configurado -->
+  <!-- Shopify App Bridge -->
   <meta name="shopify-api-key" content="168d118e58d5e1bd2bd787957e136f2b">
   <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
 
@@ -44,8 +44,11 @@
       transition: .2s background;
     }
     .btn:hover { background: var(--accentH); }
+    .btn:disabled {
+      background: #555;
+      cursor: not-allowed;
+    }
   </style>
-
 </head>
 <body>
   <main>
@@ -54,11 +57,11 @@
       Ahora regresa a <b>Adnova AI</b>, inicia sesión o refresca tu pestaña y escribe el
       dominio <code id="shopDom">(dominio)</code> cuando se te pida.
     </p>
-    <a id="backToAdnova" class="btn" href="#">Ir a Adnova AI</a>
+    <button id="goToAdnova" class="btn" disabled>Ir a Adnova AI</button>
   </main>
 
-  <!-- Lógica separada -->
- <script src="/js/appBridgeInit.js"></script>
- <script src="/js/interfaceLogic.js"></script>
+  <!-- AppBridge y lógica -->
+  <script src="/js/appBridgeInit.js"></script>
+  <script src="/js/interfaceLogic.js"></script>
 </body>
 </html>
