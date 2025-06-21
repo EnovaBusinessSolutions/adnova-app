@@ -1,41 +1,38 @@
 // public/js/interfaceLogic.js
-
-document.addEventListener('DOMContentLoaded', async () => {
+document.addEventListener('DOMContentLoaded', () => {
   const qs = new URLSearchParams(location.search);
   const shop = qs.get("shop") || "";
   const host = qs.get("host") || "";
 
+  // Mostrar dominio en la UI
   document.getElementById("shopDom").textContent = shop;
 
-  const back = new URL("https://adnova-app.onrender.com/onboarding");
-  back.searchParams.set("shop", shop);
-  if (host) back.searchParams.set("host", host);
-
   const goBtn = document.getElementById("backToAdnova");
-  goBtn.href = back.toString();
 
   goBtn.addEventListener("click", async (e) => {
     e.preventDefault();
-    sessionStorage.setItem("shopDomain", shop);
 
     try {
-      // Espera a que App Bridge esté listo
-      const { app, getSessionToken } = await window.initAppBridge(); // 👈 Asegúrate de que esto sí espera
+      const { app, getSessionToken } = await window.initAppBridge();
       const token = await getSessionToken(app);
 
-      if (!token) throw new Error("No se recibió token de sesión");
+      if (!token) throw new Error("Token vacío o no obtenido");
 
+      // Guardar en sessionStorage
+      sessionStorage.setItem("shopDomain", shop);
       sessionStorage.setItem("sessionToken", token);
       sessionStorage.setItem("shopifyConnected", "true");
 
-      // ✅ Incluye el token en la URL de regreso al SAAS
-      back.searchParams.set("sessionToken", token);
+      // Redirigir al SAAS con los datos
+      const redirectURL = new URL("https://adnova-app.onrender.com/onboarding");
+      redirectURL.searchParams.set("shop", shop);
+      redirectURL.searchParams.set("host", host);
+      redirectURL.searchParams.set("sessionToken", token);
 
-      // Redirige al SAAS con todo
-      window.top.location.href = back.toString();
+      window.top.location.href = redirectURL.toString();
     } catch (err) {
       console.error("❌ Error obteniendo sessionToken:", err);
-      alert("No se pudo obtener el token de sesión");
+      alert("No se pudo obtener el token de sesión. Intenta refrescar.");
     }
   });
 });
