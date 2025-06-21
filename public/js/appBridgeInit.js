@@ -19,7 +19,7 @@ window.initAppBridge = async function () {
   const createApp = AB.default;
   const getSessionToken = AB.utilities.getSessionToken;
 
-  const apiKey = document.querySelector("script[data-api-key]").dataset.apiKey;
+  const apiKey = document.querySelector("meta[name='shopify-api-key']").content;
   const host = new URLSearchParams(location.search).get("host");
 
   const app = createApp({
