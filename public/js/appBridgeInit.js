@@ -1,4 +1,4 @@
-function waitForAppBridge(timeout = 3000) {
+function waitForAppBridge(timeout = 7000) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
     (function check() {
