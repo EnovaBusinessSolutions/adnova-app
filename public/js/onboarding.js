@@ -7,11 +7,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const sessionToken = qs.get('sessionToken');
   if (sessionToken) {
     sessionStorage.setItem('sessionToken', sessionToken);
-
-    // ✅ Limpia la URL (opcional, para no dejar el token visible)
-    window.history.replaceState({}, document.title,
-      window.location.pathname + window.location.search.replace(/([&?])sessionToken=[^&]+(&|$)/, '$1').replace(/&$/, '')
-    );
   }
 
   const shopFromQuery = qs.get('shop');
