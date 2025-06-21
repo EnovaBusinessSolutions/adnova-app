@@ -1,7 +1,5 @@
 // public/js/interfaceLogic.js
 
-import { initAppBridge } from './appBridgeInit.js';
-
 document.addEventListener('DOMContentLoaded', async () => {
   const qs = new URLSearchParams(location.search);
   const shop = qs.get("shop") || "";
