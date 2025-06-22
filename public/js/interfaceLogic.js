@@ -33,7 +33,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     console.log("✅ Token obtenido correctamente");
   } catch (err) {
-    console.error("❌ Error obteniendo sessionToken:", err.message);
+    console.error("❌ Error obteniendo sessionToken:", err);
     alert("No se pudo obtener el token de sesión. Intenta refrescar.");
   }
 });
