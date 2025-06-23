@@ -1,32 +1,47 @@
 // public/js/appBridgeInit.js
-window.initAppBridge = async () => {
-  // 1) espera a que exista el core
-  const tryCore = () =>
-    new Promise((ok, fail) => {
-      let tries = 0;
-      (function poll () {
-        if (window['app-bridge']?.default) return ok();
-        if (++tries > 40) return fail(new Error('App Bridge no cargó'));
-        setTimeout(poll, 250);
-      })();
-    });
 
-  await tryCore();
+window.initAppBridge = async function () {
+  return new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    const tick = setInterval(() => {
+      // Intentamos detectar el global correcto
+      const ABglobal = window.appBridge || window['app-bridge'];
+      const AB = ABglobal?.default;
 
-  const AB   = window['app-bridge'].default;
-  const ABU  = window['app-bridge-utils'];
+      if (AB) {
+        clearInterval(tick);
 
-  const apiKey = document.querySelector(
-    'meta[name="shopify-api-key"]'
-  ).content;
-  const host   = new URLSearchParams(location.search).get('host');
+        // Leemos apiKey y host
+        const apiKeyMeta = document.querySelector('meta[name="shopify-api-key"]');
+        const apiKey = apiKeyMeta?.content || '';
+        const host = new URLSearchParams(location.search).get('host');
 
-  if (!apiKey || !host) throw new Error('Faltan apiKey u host');
+        if (!apiKey || !host) {
+          return reject(new Error('Faltan apiKey u host'));
+        }
 
-  const app = AB.createApp({ apiKey, host, forceRedirect: false });
+        // Inicializamos App Bridge
+        const app = AB({
+          apiKey,
+          host,
+          forceRedirect: false
+        });
 
-  return {
-    app,
-    getSessionToken: () => ABU.getSessionToken(app)
-  };
+        // Usamos la utilidad oficial
+        const getSessionToken = window.appBridgeUtils?.getSessionToken;
+
+        if (!getSessionToken) {
+          return reject(new Error('No se encontró appBridgeUtils.getSessionToken'));
+        }
+
+        return resolve({ app, getSessionToken });
+      }
+
+      // Timeout tras 3 segundos
+      if (Date.now() - t0 > 3000) {
+        clearInterval(tick);
+        return reject(new Error('App Bridge no cargó'));
+      }
+    }, 50);
+  });
 };
