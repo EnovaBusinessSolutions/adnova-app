@@ -1,39 +1,42 @@
 // public/js/appBridgeInit.js
+
+/**
+ * Inicializa Shopify App Bridge de forma segura, esperando a que
+ * el core y los utils estén disponibles en window.
+ */
 window.initAppBridge = async function () {
-  const AB = window['app-bridge'] || window.AppBridge;
-  const ABU = window['app-bridge-utils'];
-  if (!AB?.default) throw new Error('App Bridge aún no cargó');
-  if (!ABU) throw new Error('App Bridge Utils aún no cargó');
-
-  const apiKey = document
-                 .querySelector('meta[name="shopify-api-key"]').content;
-  const host   = new URLSearchParams(location.search).get('host');
-  if (!apiKey || !host) throw new Error('Faltan apiKey u host');
-
-   const app = AB({ apiKey, host, forceRedirect: false });
-
-  // 👉  NUEVO: función propia para pedir el token
-  function fetchSessionToken() {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error('Token timeout')),
-        7000
-      );
-
-      const unsubscribe = app.subscribe(
-        'APP::AUTH_TOKEN_FETCH::RESPONSE',
-        (payload) => {
-          clearTimeout(timeout);
-          unsubscribe();
-          const token = payload?.data?.token;
-          if (token) resolve(token);
-          else reject(new Error('Respuesta sin token'));
-        }
-      );
-
-      app.dispatch('APP::AUTH_TOKEN_FETCH::REQUEST');
-    });
+  // 1) Espera activa hasta que el core de App Bridge esté definido
+  while (!window['app-bridge']) {
+    await new Promise(resolve => requestAnimationFrame(resolve));
   }
 
-  return { app, getSessionToken: (app) => ABU.getSessionToken(app) };
+  // 2) Ya podemos sacar los objetos oficiales
+  const AB  = window['app-bridge'];         // core
+  const ABU = window['app-bridge-utils'];   // utils
+
+  // 3) Extrae apiKey del meta tag y host de la URL
+  const metaApiKey = document.querySelector('meta[name="shopify-api-key"]');
+  if (!metaApiKey) {
+    throw new Error("No se encontró <meta name=\"shopify-api-key\">");
+  }
+  const apiKey = metaApiKey.content;
+
+  const searchParams = new URLSearchParams(window.location.search);
+  const host = searchParams.get('host');
+  if (!host) {
+    throw new Error("Falta el parámetro 'host' en la URL");
+  }
+
+  // 4) Crea la app de App Bridge
+  const app = AB.default({
+    apiKey,
+    host,
+    forceRedirect: false,
+  });
+
+  // 5) Devuelve app y la función getSessionToken
+  return {
+    app,
+    getSessionToken: (appInstance) => ABU.getSessionToken(appInstance),
+  };
 };
