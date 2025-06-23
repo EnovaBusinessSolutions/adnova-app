@@ -2,45 +2,40 @@
 
 window.initAppBridge = async function () {
   return new Promise((resolve, reject) => {
-    const t0 = Date.now();
-    const tick = setInterval(() => {
-      // Intentamos detectar el global correcto
+    const started = Date.now();
+
+    const timer = setInterval(() => {
+      // Compatibilidad con cualquiera de los dos globals
       const ABglobal = window.appBridge || window['app-bridge'];
-      const AB = ABglobal?.default;
+      const AppBridge = ABglobal?.default;
 
-      if (AB) {
-        clearInterval(tick);
+      if (AppBridge) {
+        clearInterval(timer);
 
-        // Leemos apiKey y host
-        const apiKeyMeta = document.querySelector('meta[name="shopify-api-key"]');
-        const apiKey = apiKeyMeta?.content || '';
+        const apiKey = document
+          .querySelector('meta[name="shopify-api-key"]')
+          ?.content;
         const host = new URLSearchParams(location.search).get('host');
 
         if (!apiKey || !host) {
-          return reject(new Error('Faltan apiKey u host'));
+          return reject(new Error('No se encontraron apiKey u host'));
         }
 
-        // Inicializamos App Bridge
-        const app = AB({
-          apiKey,
-          host,
-          forceRedirect: false
-        });
-
-        // Usamos la utilidad oficial
+        const app = AppBridge({ apiKey, host, forceRedirect: false });
         const getSessionToken = window.appBridgeUtils?.getSessionToken;
 
         if (!getSessionToken) {
-          return reject(new Error('No se encontró appBridgeUtils.getSessionToken'));
+          return reject(
+            new Error('appBridgeUtils.getSessionToken no está disponible')
+          );
         }
 
         return resolve({ app, getSessionToken });
       }
 
-      // Timeout tras 3 segundos
-      if (Date.now() - t0 > 3000) {
-        clearInterval(tick);
-        return reject(new Error('App Bridge no cargó'));
+      if (Date.now() - started > 3000) {
+        clearInterval(timer);
+        reject(new Error('App Bridge no cargó'));
       }
     }, 50);
   });
