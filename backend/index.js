@@ -36,6 +36,23 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const SHOPIFY_HANDLE = process.env.SHOPIFY_APP_HANDLE;
 
+// 1️⃣ Ruta especial: SIN Helmet, SIN CSP restrictivo, SÓLO para el iframe embebido
+app.get('/connector/interface', (req, res) => {
+  const { shop, host } = req.query;
+  if (!shop || !host) {
+    return res.status(400).send("Faltan parámetros 'shop' o 'host'");
+  }
+  // Header CSP adecuado para Shopify Admin
+  res.setHeader(
+    'Content-Security-Policy',
+    "frame-ancestors 'self' https://admin.shopify.com https://*.myshopify.com"
+  );
+  // Elimina cualquier header X-Frame-Options (por si alguna config previa lo pone)
+  res.removeHeader && res.removeHeader('X-Frame-Options');
+  res.sendFile(path.join(__dirname, '../public/connector/interface.html'));
+});
+
+// 2️⃣ AHORA sí, aplica Helmet al RESTO del app
 app.use(
   helmet({
     frameguard: false,
@@ -46,27 +63,23 @@ app.use(
           "'self'",
           "https://admin.shopify.com",
           "https://*.myshopify.com"
-        
-          ],
-        /* 👇 PERMITIR JS */
-        "script-src": [
-          "'self'",          // tu propio dominio
-          "'unsafe-inline'", // script inline de interface.html
-            "'unsafe-eval'",    
-          "https://cdn.shopify.com"  
-          
         ],
-        
+        "script-src": [
+          "'self'",
+          "'unsafe-inline'",
+          "'unsafe-eval'",
+          "https://cdn.shopify.com",
+          "https://unpkg.com"
+        ],
         "img-src": [
           "'self'",
           "data:",
-          "https://img.icons8.com" 
+          "https://img.icons8.com"
         ]
       }
     }
   })
 );
-
 
 mongoose
   .connect(process.env.MONGO_URI, {
@@ -76,13 +89,11 @@ mongoose
   .then(() => console.log('✅ Conectado a MongoDB Atlas'))
   .catch((err) => console.error('❌ Error al conectar con MongoDB:', err));
 
-  app.use(
+app.use(
   '/connector/webhooks',
   express.raw({ type: 'application/json' }), // cuerpo crudo para HMAC
   webhookRoutes
 );
-
-
 
 app.set('trust proxy', 1);
 app.use(
