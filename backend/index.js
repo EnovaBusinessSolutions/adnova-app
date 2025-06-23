@@ -52,6 +52,7 @@ app.use(
         "script-src": [
           "'self'",          // tu propio dominio
           "'unsafe-inline'", // script inline de interface.html
+            "'unsafe-eval'",    
           "https://cdn.shopify.com"  
           
         ],
