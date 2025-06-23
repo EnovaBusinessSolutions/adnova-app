@@ -1,42 +1,32 @@
 // public/js/appBridgeInit.js
+window.initAppBridge = async () => {
+  // 1) espera a que exista el core
+  const tryCore = () =>
+    new Promise((ok, fail) => {
+      let tries = 0;
+      (function poll () {
+        if (window['app-bridge']?.default) return ok();
+        if (++tries > 40) return fail(new Error('App Bridge no cargó'));
+        setTimeout(poll, 250);
+      })();
+    });
 
-/**
- * Inicializa Shopify App Bridge de forma segura, esperando a que
- * el core y los utils estén disponibles en window.
- */
-window.initAppBridge = async function () {
-  // 1) Espera activa hasta que el core de App Bridge esté definido
-  while (!window['app-bridge']) {
-    await new Promise(resolve => requestAnimationFrame(resolve));
-  }
+  await tryCore();
 
-  // 2) Ya podemos sacar los objetos oficiales
-  const AB  = window['app-bridge'];         // core
-  const ABU = window['app-bridge-utils'];   // utils
+  const AB   = window['app-bridge'].default;
+  const ABU  = window['app-bridge-utils'];
 
-  // 3) Extrae apiKey del meta tag y host de la URL
-  const metaApiKey = document.querySelector('meta[name="shopify-api-key"]');
-  if (!metaApiKey) {
-    throw new Error("No se encontró <meta name=\"shopify-api-key\">");
-  }
-  const apiKey = metaApiKey.content;
+  const apiKey = document.querySelector(
+    'meta[name="shopify-api-key"]'
+  ).content;
+  const host   = new URLSearchParams(location.search).get('host');
 
-  const searchParams = new URLSearchParams(window.location.search);
-  const host = searchParams.get('host');
-  if (!host) {
-    throw new Error("Falta el parámetro 'host' en la URL");
-  }
+  if (!apiKey || !host) throw new Error('Faltan apiKey u host');
 
-  // 4) Crea la app de App Bridge
-  const app = AB.default({
-    apiKey,
-    host,
-    forceRedirect: false,
-  });
+  const app = AB.createApp({ apiKey, host, forceRedirect: false });
 
-  // 5) Devuelve app y la función getSessionToken
   return {
     app,
-    getSessionToken: (appInstance) => ABU.getSessionToken(appInstance),
+    getSessionToken: () => ABU.getSessionToken(app)
   };
 };
