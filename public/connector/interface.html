@@ -5,7 +5,6 @@
   <title>Adnova AI Connector</title>
   <!-- Shopify App Bridge - SOLO el script oficial CDN -->
   <meta name="shopify-api-key" content="168d118e58d5e1bd2bd787957e136f2b">
-  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
   <style>
     @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap");
     :root { --bg: #12002e; --bg2: #220045; --accent: #9a5bff; --accentH: #8249e3; --txt: #fff; }
@@ -35,6 +34,7 @@
     </p>
     <button id="goToAdnova" class="btn" disabled>Ir a Adnova AI</button>
   </main>
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
   <script>
     // Paso 1: Obtener el token de sesión siguiendo docs de Shopify
     const apiKey = document.querySelector('meta[name="shopify-api-key"]').content;
