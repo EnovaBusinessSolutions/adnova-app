@@ -5,6 +5,7 @@
   <title>Adnova AI Connector</title>
   <!-- Shopify App Bridge - SOLO el script oficial CDN -->
   <meta name="shopify-api-key" content="168d118e58d5e1bd2bd787957e136f2b">
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
   <style>
     @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap");
     :root { --bg: #12002e; --bg2: #220045; --accent: #9a5bff; --accentH: #8249e3; --txt: #fff; }
@@ -32,46 +33,36 @@
       Ahora regresa a <b>Adnova AI</b>, inicia sesión o refresca tu pestaña y escribe el
       dominio <code id="shopDom">(dominio)</code> cuando se te pida.
     </p>
-    <button id="goToAdnova" class="btn" disabled>Ir a Adnova AI</button>
+    <button id="goToAdnova" class="btn">Ir a Adnova AI</button>
   </main>
-  <script>
-    // Paso 1: Obtener el token de sesión siguiendo docs de Shopify
-    const apiKey = document.querySelector('meta[name="shopify-api-key"]').content;
-    const params = new URLSearchParams(window.location.search);
-    const host = params.get('host');
-    const shop = params.get('shop');
+ <script>
+  // Paso 1: Obtener el token de sesión siguiendo docs de Shopify
+  const apiKey = document.querySelector('meta[name="shopify-api-key"]').content;
+  const params = new URLSearchParams(window.location.search);
+  const host = params.get('host');
+  const shop = params.get('shop');
 
-    // Opcional: muestra el dominio en el HTML si existe
-    if (shop) document.getElementById("shopDom").textContent = shop;
+  // Opcional: muestra el dominio en el HTML si existe
+  if (shop) document.getElementById("shopDom").textContent = shop;
 
-    if (!apiKey || !host) {
-      document.body.innerHTML = "<h2>Error: Falta apiKey o host en la URL.<br>Debes abrir esta app desde el panel de Shopify.</h2>";
-      throw new Error("Falta apiKey o host en la URL");
+  if (!apiKey || !host) {
+    document.body.innerHTML = "<h2>Error: Falta apiKey o host en la URL.<br>Debes abrir esta app desde el panel de Shopify.</h2>";
+    throw new Error("Falta apiKey o host en la URL");
+  }
+
+  // Inicializa App Bridge y solicita el token (pero ya no muestra nada en consola)
+  document.addEventListener("DOMContentLoaded", async () => {
+    try {
+      const AppBridge = window['app-bridge'];
+      const createApp = AppBridge.default;
+      const app = createApp({ apiKey, host });
+      const token = await AppBridge.getSessionToken(app);
+      if (!token) throw new Error("Token vacío");
+      // Aquí podrías guardar el token si lo necesitas.
+    } catch (err) {
+      // Si quieres, puedes manejar el error de otra forma, pero ya no habrá alert ni logs.
     }
-
-    // Inicializa App Bridge
-    document.addEventListener("DOMContentLoaded", async () => {
-      try {
-        const AppBridge = window['app-bridge'];
-        const createApp = AppBridge.default;
-        const app = createApp({ apiKey, host });
-
-        // Usar helper oficial para obtener el token
-        const token = await AppBridge.getSessionToken(app);
-
-        if (!token) throw new Error("Token vacío");
-        // Puedes guardar el token donde gustes, ej: sessionStorage.setItem("sessionToken", token);
-
-        // Habilita el botón
-        document.getElementById("goToAdnova").disabled = false;
-
-        console.log("✅ Token de sesión obtenido:", token);
-      } catch (err) {
-        console.error("❌ Error al obtener token de sesión:", err);
-        alert("No se pudo obtener el token de sesión. Intenta recargar la página desde el panel de Shopify.");
-      }
-    });
-  </script>
-  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+  });
+</script>
 </body>
 </html>
