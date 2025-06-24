@@ -36,18 +36,6 @@
     <button id="goToAdnova" class="btn">Ir a Adnova AI</button>
   </main>
  <script>
-  document.addEventListener("DOMContentLoaded", async () => {
-    try {
-      const AppBridge = window['app-bridge'];
-      const createApp = AppBridge.default;
-      const app = createApp({ apiKey, host });
-      const token = await AppBridge.getSessionToken(app);
-      if (!token) throw new Error("Token vacío");
-      sessionStorage.setItem("sessionToken", token);
-    } catch (err) {
-      // Si quieres, puedes manejar el error de otra forma, pero ya no habrá alert ni logs.
-    }
-  });
 
   // Paso 1: Obtener el token de sesión siguiendo docs de Shopify
   const apiKey = document.querySelector('meta[name="shopify-api-key"]').content;
@@ -64,7 +52,18 @@
   }
 
   // Inicializa App Bridge y solicita el token (pero ya no muestra nada en consola)
- 
+ document.addEventListener("DOMContentLoaded", async () => {
+    try {
+      const AppBridge = window['app-bridge'];
+      const createApp = AppBridge.default;
+      const app = createApp({ apiKey, host });
+      const token = await AppBridge.getSessionToken(app);
+      if (!token) throw new Error("Token vacío");
+      sessionStorage.setItem("sessionToken", token);
+    } catch (err) {
+      // Si quieres, puedes manejar el error de otra forma, pero ya no habrá alert ni logs.
+    }
+  });
 </script>
 </body>
 </html>
