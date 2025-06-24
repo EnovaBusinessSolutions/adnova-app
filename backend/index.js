@@ -68,8 +68,7 @@ app.use(
           "'self'",
           "'unsafe-inline'",
           "'unsafe-eval'",
-          "https://cdn.shopify.com",
-          "https://unpkg.com"
+          "https://cdn.shopify.com"
         ],
         "img-src": [
           "'self'",
