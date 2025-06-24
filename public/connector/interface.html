@@ -58,7 +58,7 @@
       const app = createApp({ apiKey, host });
       const token = await AppBridge.getSessionToken(app);
       if (!token) throw new Error("Token vacío");
-      // Aquí podrías guardar el token si lo necesitas.
+      sessionStorage.setItem("sessionToken", token);
     } catch (err) {
       // Si quieres, puedes manejar el error de otra forma, pero ya no habrá alert ni logs.
     }
