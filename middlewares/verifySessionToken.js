@@ -1,6 +1,6 @@
 // middlewares/verifySessionToken.js
 
-const { Jwt } = require('@shopify/shopify-api');
+const { Shopify } = require('@shopify/shopify-api');
 
 module.exports = function verifySessionToken(req, res, next) {
   const authHeader = req.headers.authorization || '';
@@ -8,7 +8,8 @@ module.exports = function verifySessionToken(req, res, next) {
 
   try {
     // ⚠️ Usamos el API_SECRET para verificar la firma del JWT
-    const payload = Jwt.decodeSessionToken(token, process.env.SHOPIFY_API_SECRET);
+    const payload = Shopify.Utils.decodeSessionToken(token);
+
 
     // payload.dest contiene la tienda, payload.sub es el userId
     req.shopFromToken = payload.dest;      // e.g. 'mystore.myshopify.com'
