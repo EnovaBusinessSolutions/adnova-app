@@ -141,8 +141,6 @@ router.get(
   }
 );
 
-module.exports = router;
-
 // Ruta que Shopify invoca automáticamente tras instalación desde App Store
 router.get('/auth/shopify', (req, res) => {
   const { shop } = req.query;
@@ -153,3 +151,5 @@ router.get('/auth/shopify', (req, res) => {
   // Redirige a tu flujo de conexión ya existente
   return res.redirect(`/api/shopify/connect?shop=${shop}&userId=auto`);
 });
+
+module.exports = router; 
