@@ -35,35 +35,45 @@
     </p>
     <button id="goToAdnova" class="btn">Ir a Adnova AI</button>
   </main>
- <script>
-
-  // Paso 1: Obtener el token de sesión siguiendo docs de Shopify
-  const apiKey = document.querySelector('meta[name="shopify-api-key"]').content;
-  const params = new URLSearchParams(window.location.search);
-  const host = params.get('host');
-  const shop = params.get('shop');
-
-  // Opcional: muestra el dominio en el HTML si existe
-  if (shop) document.getElementById("shopDom").textContent = shop;
-
-  if (!apiKey || !host) {
-    document.body.innerHTML = "<h2>Error: Falta apiKey o host en la URL.<br>Debes abrir esta app desde el panel de Shopify.</h2>";
-    throw new Error("Falta apiKey o host en la URL");
-  }
-
-  // Inicializa App Bridge y solicita el token (pero ya no muestra nada en consola)
- document.addEventListener("DOMContentLoaded", async () => {
-    try {
-      const AppBridge = window['app-bridge'];
-      const createApp = AppBridge.default;
-      const app = createApp({ apiKey, host });
-      const token = await AppBridge.getSessionToken(app);
-      if (!token) throw new Error("Token vacío");
-      sessionStorage.setItem("sessionToken", token);
-    } catch (err) {
-      // Si quieres, puedes manejar el error de otra forma, pero ya no habrá alert ni logs.
+  <script>
+    // Helper robusto para esperar a que App Bridge esté disponible
+    function waitForAppBridge(cb, tries = 20) {
+      if (window['app-bridge']) {
+        cb(window['app-bridge']);
+      } else if (tries > 0) {
+        setTimeout(() => waitForAppBridge(cb, tries - 1), 300);
+      } else {
+        console.warn("❌ App Bridge nunca cargó.");
+        // (Opcional) Puedes mostrar un error al usuario aquí si quieres
+      }
     }
-  });
-</script>
+
+    document.addEventListener("DOMContentLoaded", () => {
+      const apiKey = document.querySelector('meta[name="shopify-api-key"]').content;
+      const params = new URLSearchParams(window.location.search);
+      const host = params.get('host');
+      const shop = params.get('shop');
+
+      if (shop) document.getElementById("shopDom").textContent = shop;
+
+      if (!apiKey || !host) {
+        document.body.innerHTML = "<h2>Error: Falta apiKey o host en la URL.<br>Debes abrir esta app desde el panel de Shopify.</h2>";
+        throw new Error("Falta apiKey o host en la URL");
+      }
+
+      waitForAppBridge(async (AppBridge) => {
+        try {
+          const createApp = AppBridge.default;
+          const app = createApp({ apiKey, host });
+          const token = await AppBridge.getSessionToken(app);
+          if (!token) throw new Error("Token vacío");
+          sessionStorage.setItem("sessionToken", token);
+          // (Opcional) console.log("Token de sesión obtenido:", token);
+        } catch (err) {
+          // (Opcional) console.error("Error al pedir token:", err);
+        }
+      });
+    });
+  </script>
 </body>
 </html>
