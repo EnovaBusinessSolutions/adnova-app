@@ -88,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
         alert('El token de sesión aún no está listo. Intenta de nuevo en unos segundos.');
         return;
       }
-      // Normalmente basta con shop; el backend del SaaS pedirá el token vía API
+      // Normalmente basta con shop; el backend del SaaS pedirá el token vía APi
       window.open(
         `https://adnova-app.onrender.com/onboarding?shop=${encodeURIComponent(shop)}`,
         '_blank'
