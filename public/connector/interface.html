@@ -3,29 +3,33 @@
 <head>
   <meta charset="UTF-8" />
   <title>Adnova AI Connector</title>
-  <!-- Shopify App Bridge - SOLO el script oficial CDN -->
-  <meta name="shopify-api-key" content="168d118e58d5e1bd2bd787957e136f2b">
-  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+
+  <!-- API-key que Shopify muestra en el Partner Dashboard -->
+  <meta name="shopify-api-key" content="168d118e58d5e1bd2bd787957e136f2b" />
+
+  <!-- Estilos propios de la vista embebida -->
   <style>
     @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap");
-    :root { --bg: #12002e; --bg2: #220045; --accent: #9a5bff; --accentH: #8249e3; --txt: #fff; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      min-height: 100vh; display: grid; place-content: center;
-      font: 400 16px/1.55 Inter, system-ui, sans-serif;
-      background: radial-gradient(circle at 30% 30%, var(--bg2), var(--bg));
-      color: var(--txt); text-align: center; padding: 0 1rem;
+    :root { --bg:#12002e; --bg2:#220045; --accent:#9a5bff; --accentH:#8249e3; --txt:#fff; }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{
+      min-height:100vh;display:grid;place-content:center;
+      font:400 16px/1.55 Inter,system-ui,sans-serif;
+      background:radial-gradient(circle at 30% 30%,var(--bg2),var(--bg));
+      color:var(--txt);text-align:center;padding:0 1rem;
     }
-    h1 { font-size: clamp(2.4rem, 5vw, 3.3rem); font-weight: 600; margin: .5em 0; }
-    p { max-width: 560px; margin: 0 auto 2rem; }
-    code { background: #1e1e29; border-radius: 4px; padding: 2px 6px; }
-    .btn { display: inline-block; padding: 15px 42px; border-radius: 8px;
-      background: var(--accent); color: #fff; font-weight: 600;
-      text-decoration: none; transition: .2s background; }
-    .btn:hover { background: var(--accentH); }
-    .btn:disabled { background: #555; cursor: not-allowed; }
+    h1{font-size:clamp(2.4rem,5vw,3.3rem);font-weight:600;margin:.5em 0}
+    p{max-width:560px;margin:0 auto 2rem}
+    code{background:#1e1e29;border-radius:4px;padding:2px 6px}
+    .btn{
+      display:inline-block;padding:15px 42px;border-radius:8px;
+      background:var(--accent);color:#fff;font-weight:600;
+      text-decoration:none;transition:.2s background
+    }
+    .btn:hover{background:var(--accentH)}
   </style>
 </head>
+
 <body>
   <main>
     <h1>✅ ¡Tienda conectada!</h1>
@@ -35,45 +39,39 @@
     </p>
     <button id="goToAdnova" class="btn">Ir a Adnova AI</button>
   </main>
+
   <script>
-    // Helper robusto para esperar a que App Bridge esté disponible
-    function waitForAppBridge(cb, tries = 20) {
-      if (window['app-bridge']) {
-        cb(window['app-bridge']);
-      } else if (tries > 0) {
-        setTimeout(() => waitForAppBridge(cb, tries - 1), 300);
-      } else {
-        console.warn("❌ App Bridge nunca cargó.");
-        // (Opcional) Puedes mostrar un error al usuario aquí si quieres
-      }
+  (async () => {
+    /* ───── 1. Parámetros esenciales que Shopify inyecta ───── */
+    const params = new URLSearchParams(location.search);
+    const host   = params.get('host');
+    const shop   = params.get('shop');
+    const apiKey = document.querySelector('meta[name="shopify-api-key"]').content;
+
+    if (shop) document.getElementById('shopDom').textContent = shop;
+    if (!apiKey || !host) {
+      document.body.innerHTML =
+        '<h2>Error: falta <code>apiKey</code> u <code>host</code>.<br>Abre la app desde Shopify Admin.</h2>';
+      return;
     }
 
-    document.addEventListener("DOMContentLoaded", () => {
-      const apiKey = document.querySelector('meta[name="shopify-api-key"]').content;
-      const params = new URLSearchParams(window.location.search);
-      const host = params.get('host');
-      const shop = params.get('shop');
+    /* ───── 2. Carga dinámica del SDK de App Bridge ───── */
+    await import('https://cdn.shopify.com/shopifycloud/app-bridge.js');
+    const AppBridge = window['app-bridge'];
+    if (!AppBridge) {
+      console.error('🛑 No se pudo cargar App Bridge');
+      return;
+    }
 
-      if (shop) document.getElementById("shopDom").textContent = shop;
-
-      if (!apiKey || !host) {
-        document.body.innerHTML = "<h2>Error: Falta apiKey o host en la URL.<br>Debes abrir esta app desde el panel de Shopify.</h2>";
-        throw new Error("Falta apiKey o host en la URL");
-      }
-
-      waitForAppBridge(async (AppBridge) => {
-        try {
-          const createApp = AppBridge.default;
-          const app = createApp({ apiKey, host });
-          const token = await AppBridge.getSessionToken(app);
-          if (!token) throw new Error("Token vacío");
-          sessionStorage.setItem("sessionToken", token);
-          // (Opcional) console.log("Token de sesión obtenido:", token);
-        } catch (err) {
-          // (Opcional) console.error("Error al pedir token:", err);
-        }
-      });
-    });
+    /* ───── 3. Inicializa y obtiene el session-token ───── */
+    try {
+      const app = AppBridge.default({ apiKey, host });
+      const token = await AppBridge.getSessionToken(app);        // ← JWT firmado por Shopify
+      sessionStorage.setItem('sessionToken', token);
+    } catch (err) {
+      console.error('🛑 Error obteniendo el session-token:', err);
+    }
+  })();
   </script>
 </body>
 </html>
