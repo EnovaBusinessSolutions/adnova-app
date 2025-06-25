@@ -36,57 +36,46 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const SHOPIFY_HANDLE = process.env.SHOPIFY_APP_HANDLE;
 
-
-// ──────────────────────────────────────────────────────────────
-// 1️⃣  RUTA ESPECIAL PARA EL IFRAME EMBEBIDO   (¡antes de Helmet!)
-// ──────────────────────────────────────────────────────────────
-app.get('/connector/interface', (req, res) => {
-  const { shop, host } = req.query;
-  if (!shop || !host) {
-    return res.status(400).send("Faltan parámetros 'shop' o 'host'");
-  }
-
-  res.setHeader(
-    'Content-Security-Policy',
-    [
-      // quién puede embeber tu iframe (requisito de Shopify)
-      "frame-ancestors 'self' https://admin.shopify.com https://*.myshopify.com",
-      // de dónde permites ejecutar scripts
-      "script-src 'self' https://cdn.shopify.com https://cdn.shopifycdn.net 'unsafe-inline' 'unsafe-eval' blob:"
-    ].join('; ')
-  );
-
-  // Por si algún middleware había puesto esto
-  res.removeHeader && res.removeHeader('X-Frame-Options');
-
-  res.sendFile(path.join(__dirname, '../public/connector/interface.html'));
-});
-
-// ──────────────────────────────────────────────────────────────
-// 2️⃣  Helmet para el RESTO de la app
-// ──────────────────────────────────────────────────────────────
+// 1️⃣  Helmet global
 app.use(
   helmet({
-    frameguard: false,
+    frameguard: false,          // no manda X-Frame-Options
     contentSecurityPolicy: {
       useDefaults: true,
       directives: {
-        'frame-ancestors': [
+        /* Embed permitido dentro del Admin y de la tienda */
+        "frame-ancestors": [
           "'self'",
-          'https://admin.shopify.com',
-          'https://*.myshopify.com'
+          "https://admin.shopify.com",
+          "https://*.myshopify.com"
         ],
-        'script-src': [
+        /* Para que cargue App Bridge */
+        "script-src": [
           "'self'",
           "'unsafe-inline'",
           "'unsafe-eval'",
-          'https://cdn.shopify.com'
+          "https://cdn.shopify.com",
+          "https://cdn.shopifycdn.net"
         ],
-        'img-src': ["'self'", 'data:', 'https://img.icons8.com']
+        /* Llamadas fetch/XHR que hará tu frontend */
+        "connect-src": [
+          "'self'",
+          "https://*.myshopify.com",
+          "https://admin.shopify.com"
+        ],
+        "img-src": ["'self'", "data:", "https://img.icons8.com"]
       }
     }
   })
 );
+
+// 2️⃣  Ruta del iframe (sin cabeceras manuales)
+app.get("/connector/interface", (req, res) => {
+  const { shop, host } = req.query;
+  if (!shop || !host) return res.status(400).send("Faltan parámetros 'shop' o 'host'");
+
+  res.sendFile(path.join(__dirname, "../public/connector/interface.html"));
+});
 
 mongoose
   .connect(process.env.MONGO_URI, {
