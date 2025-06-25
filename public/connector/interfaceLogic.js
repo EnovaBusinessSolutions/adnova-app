@@ -1,51 +1,85 @@
-// --- Parámetros de la URL ---
-const apiKey = document.querySelector('meta[name="shopify-api-key"]').content;
+// public/connector/interfaceLogic.js
+// --------------------------------------------------------
+// 1) Parámetros de la URL
+// --------------------------------------------------------
+const apiKey = document
+  .querySelector('meta[name="shopify-api-key"]')
+  .content;
 const params = new URLSearchParams(window.location.search);
-const host = params.get('host');
-const shop = params.get('shop');
+const host   = params.get('host');
+const shop   = params.get('shop');
 
-// Mostrar dominio en la UI
-if (shop) document.getElementById("shopDom").textContent = shop;
+// Muestra la tienda en pantalla
+if (shop) document.getElementById('shopDom').textContent = shop;
 
-// Verificación rápida
+// Verificación rápida (por si alguien abre el HTML suelto)
 if (!apiKey || !host) {
-  document.body.innerHTML = "<h2>Error: Falta apiKey o host en la URL.<br>Debes abrir esta app desde el panel de Shopify.</h2>";
-  throw new Error("Falta apiKey o host en la URL");
+  document.body.innerHTML =
+    `<h2>Error: faltan parámetros <code>apiKey</code> u <code>host</code>.<br>
+      Abre la app desde el panel de Shopify.</h2>`;
+  throw new Error('Faltan apiKey/host en la URL');
 }
 
-// --- Inicializa App Bridge y obtiene session token ---
+// --------------------------------------------------------
+// 2) Esperar a que App Bridge cargue y pedir sessionToken
+// --------------------------------------------------------
 let sessionToken = null;
-document.addEventListener("DOMContentLoaded", async () => {
-  try {
-    const AppBridge = window['app-bridge'];
-    if (!AppBridge) {
-      throw new Error("App Bridge NO está disponible en window['app-bridge']");
+waitForAppBridge();          // ⬅️ arranque
+
+async function waitForAppBridge(tries = 20) {
+  // Shopify inyectará window['app-bridge'] cuando el script termine
+  if (window['app-bridge'] && window['app-bridge'].default) {
+    try {
+      const { default: createApp, getSessionToken } = window['app-bridge'];
+
+      const app = createApp({ apiKey, host });
+      sessionToken = await getSessionToken(app);
+      if (!sessionToken) throw new Error('Token vacío');
+
+      // Guarda temporalmente para otros JS que corran en la misma pestaña
+      sessionStorage.setItem('sessionToken', sessionToken);
+
+      // Ejemplo: golpea tu endpoint protegido para forzar que quede registrado
+      fetch('/api/ping', {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+      });
+
+      // Habilita el botón cuando todo está ok
+      document.getElementById('goToAdnova').disabled = false;
+      console.log('✅ App Bridge cargado y token obtenido');
+    } catch (err) {
+      showError('Error al pedir token', err);
     }
-    const createApp = AppBridge.default;
-    const app = createApp({ apiKey, host });
-    sessionToken = await AppBridge.getSessionToken(app);
-    if (!sessionToken) throw new Error("No se pudo obtener sessionToken");
-    sessionStorage.setItem("sessionToken", sessionToken);
- 
- await fetch('/api/ping', {
-  headers: { Authorization: `Bearer ${sessionToken}` }
-});
-
-    // Puedes habilitar el botón cuando ya tienes el token
-    document.getElementById("goToAdnova").disabled = false;
-  } catch (err) {
-    document.getElementById("goToAdnova").disabled = true;
-    document.body.innerHTML += "<p style='color:#ff6666'><b>Error App Bridge:</b> " + err.message + "</p>";
+  } else if (tries > 0) {
+    // Vuelve a intentarlo en 300 ms (aprox. 6 s en total)
+    setTimeout(() => waitForAppBridge(tries - 1), 300);
+  } else {
+    showError('App Bridge nunca se cargó');
   }
-});
+}
 
-// --- Redirigir al SAAS con el token y dominio ---
-document.getElementById("goToAdnova").addEventListener("click", function() {
-  // Asegúrate de que el sessionToken fue obtenido
-  if (!sessionToken) {
-    alert("El token de sesión no está listo. Espera unos segundos e intenta de nuevo.");
-    return;
-  }
-  // Cambia la URL a la de tu app SAAS, pasando shop y (si quieres) el token
-  window.open(`https://adnova-app.onrender.com/onboarding?shop=${encodeURIComponent(shop)}`, "_blank");
-});
+function showError(msg, err) {
+  console.error(msg, err);
+  document.body.insertAdjacentHTML(
+    'beforeend',
+    `<p style="color:#ff6666"><b>${msg}:</b> ${err?.message || ''}</p>`
+  );
+  document.getElementById('goToAdnova').disabled = true;
+}
+
+// --------------------------------------------------------
+// 3) Redirigir al SaaS una vez que hay token
+// --------------------------------------------------------
+document
+  .getElementById('goToAdnova')
+  .addEventListener('click', () => {
+    if (!sessionToken) {
+      alert('El token de sesión aún no está listo. Intenta de nuevo en unos segundos.');
+      return;
+    }
+    // Normalmente basta con shop; el backend del SaaS pedirá el token vía API
+    window.open(
+      `https://adnova-app.onrender.com/onboarding?shop=${encodeURIComponent(shop)}`,
+      '_blank'
+    );
+  });
