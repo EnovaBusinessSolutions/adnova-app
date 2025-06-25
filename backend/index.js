@@ -52,7 +52,7 @@ app.get('/connector/interface', (req, res) => {
       // quién puede embeber tu iframe (requisito de Shopify)
       "frame-ancestors 'self' https://admin.shopify.com https://*.myshopify.com",
       // de dónde permites ejecutar scripts
-      "script-src 'self' https://cdn.shopify.com 'unsafe-inline'"
+      "script-src 'self' https://cdn.shopify.com 'unsafe-inline''unsafe-eval' blob:"
     ].join('; ')
   );
 
