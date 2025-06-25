@@ -11,7 +11,7 @@ router.get('/ping', (req, res) => {
   return res.json({
     ok: true,
     shop: req.shopFromToken,  // Extraído del JWT de sesión de Shopify
-    user: req.userId          // Extraído del JWT de sesión de Shopify
+    user: req.userId        // Extraído del JWT de sesión de Shopify
   });
 });
 

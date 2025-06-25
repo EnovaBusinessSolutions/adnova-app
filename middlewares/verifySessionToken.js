@@ -7,8 +7,8 @@ module.exports = (req, res, next) => {
 
   try {
     const payload = Shopify.Utils.decodeSessionToken(jwt);   // ← valida firma
-    req.shop  = payload.dest;   // tienda
-    req.user  = payload.sub;    // opcional
+    req.shopFromToken = payload.dest;   // tienda
+    req.userId        = payload.sub;   // opcional
     return next();
   } catch (e) {
     res.set('X-Shopify-Retry-Invalid-Session-Request', '1');

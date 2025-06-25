@@ -270,7 +270,7 @@ app.use('/auth/meta', metaAuthRoutes);
 app.use('/api', userRoutes);
 app.use('/api', mockShopify);
 app.use('/api', shopifyMatch);
-app.use('/api', verifySessionToken, secureRoutes);
+app.use('/api/secure', verifySessionToken, secureRoutes);
 
 
 app.get('/dashboard', ensureAuthenticated, (r, s) => {
@@ -410,16 +410,6 @@ app.get('/api/test-shopify-token', verifyShopifyToken, (req, res) => {
     message: '✅ Token válido y verificado',
   });
 });
-
-// ✅ Muestra la interfaz embebida dentro de Shopify
-app.get('/connector/interface', (req, res) => {
-  const { shop, host } = req.query;
-  if (!shop || !host) {
-    return res.status(400).send("Faltan parámetros 'shop' o 'host'");
-  }
-  res.sendFile(path.join(__dirname, '../public/connector/interface.html'));
-});
-
 
 // ✅ Intercepta rutas /apps/... y redirige al HTML embebido real
 app.get(/^\/apps\/[^\/]+\/?.*$/, (req, res) => {

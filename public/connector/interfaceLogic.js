@@ -26,6 +26,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     sessionToken = await AppBridge.getSessionToken(app);
     if (!sessionToken) throw new Error("No se pudo obtener sessionToken");
     sessionStorage.setItem("sessionToken", sessionToken);
+ 
+ await fetch('/api/ping', {
+  headers: { Authorization: `Bearer ${sessionToken}` }
+});
 
     // Puedes habilitar el botón cuando ya tienes el token
     document.getElementById("goToAdnova").disabled = false;
