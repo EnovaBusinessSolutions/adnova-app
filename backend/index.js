@@ -36,49 +36,57 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const SHOPIFY_HANDLE = process.env.SHOPIFY_APP_HANDLE;
 
-// 2️⃣ AHORA sí, aplica Helmet al RESTO del app
+
+// ──────────────────────────────────────────────────────────────
+// 1️⃣  RUTA ESPECIAL PARA EL IFRAME EMBEBIDO   (¡antes de Helmet!)
+// ──────────────────────────────────────────────────────────────
+app.get('/connector/interface', (req, res) => {
+  const { shop, host } = req.query;
+  if (!shop || !host) {
+    return res.status(400).send("Faltan parámetros 'shop' o 'host'");
+  }
+
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      // quién puede embeber tu iframe (requisito de Shopify)
+      "frame-ancestors 'self' https://admin.shopify.com https://*.myshopify.com",
+      // de dónde permites ejecutar scripts
+      "script-src 'self' https://cdn.shopify.com 'unsafe-inline'"
+    ].join('; ')
+  );
+
+  // Por si algún middleware había puesto esto
+  res.removeHeader && res.removeHeader('X-Frame-Options');
+
+  res.sendFile(path.join(__dirname, '../public/connector/interface.html'));
+});
+
+// ──────────────────────────────────────────────────────────────
+// 2️⃣  Helmet para el RESTO de la app
+// ──────────────────────────────────────────────────────────────
 app.use(
   helmet({
     frameguard: false,
     contentSecurityPolicy: {
       useDefaults: true,
       directives: {
-        "frame-ancestors": [
+        'frame-ancestors': [
           "'self'",
-          "https://admin.shopify.com",
-          "https://*.myshopify.com"
+          'https://admin.shopify.com',
+          'https://*.myshopify.com'
         ],
-        "script-src": [
+        'script-src': [
           "'self'",
           "'unsafe-inline'",
           "'unsafe-eval'",
-          "https://cdn.shopify.com"
+          'https://cdn.shopify.com'
         ],
-        "img-src": [
-          "'self'",
-          "data:",
-          "https://img.icons8.com"
-        ]
+        'img-src': ["'self'", 'data:', 'https://img.icons8.com']
       }
     }
   })
 );
-
-// 1️⃣ Ruta especial: SIN Helmet, SIN CSP restrictivo, SÓLO para el iframe embebido
-app.get('/connector/interface', (req, res) => {
-  const { shop, host } = req.query;
-  if (!shop || !host) {
-    return res.status(400).send("Faltan parámetros 'shop' o 'host'");
-  }
-  // Header CSP adecuado para Shopify Admin
-  res.setHeader(
-    'Content-Security-Policy',
-    "frame-ancestors 'self' https://admin.shopify.com https://*.myshopify.com"
-  );
-  // Elimina cualquier header X-Frame-Options (por si alguna config previa lo pone)
-  res.removeHeader && res.removeHeader('X-Frame-Options');
-  res.sendFile(path.join(__dirname, '../public/connector/interface.html'));
-});
 
 mongoose
   .connect(process.env.MONGO_URI, {
