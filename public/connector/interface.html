@@ -40,38 +40,24 @@
     <button id="goToAdnova" class="btn">Ir a Adnova AI</button>
   </main>
 
-  <script>
-  (async () => {
-    /* ───── 1. Parámetros esenciales que Shopify inyecta ───── */
-    const params = new URLSearchParams(location.search);
-    const host   = params.get('host');
-    const shop   = params.get('shop');
-    const apiKey = document.querySelector('meta[name="shopify-api-key"]').content;
+  <script type="module">
+  // 1-a  ▸ crear el AppBridge
+  import {getSessionToken} from "https://cdn.shopify.com/shopifycloud/app-bridge.js";
 
-    if (shop) document.getElementById('shopDom').textContent = shop;
-    if (!apiKey || !host) {
-      document.body.innerHTML =
-        '<h2>Error: falta <code>apiKey</code> u <code>host</code>.<br>Abre la app desde Shopify Admin.</h2>';
-      return;
-    }
+  const apiKey = document.querySelector('meta[name="shopify-api-key"]').content;
+  const host   = new URLSearchParams(location.search).get('host');
 
-    /* ───── 2. Carga dinámica del SDK de App Bridge ───── */
-    await import('https://cdn.shopify.com/shopifycloud/app-bridge.js');
-    const AppBridge = window['app-bridge'];
-    if (!AppBridge) {
-      console.error('🛑 No se pudo cargar App Bridge');
-      return;
-    }
+  const app = window.app = window['app-bridge'].default({apiKey, host});
 
-    /* ───── 3. Inicializa y obtiene el session-token ───── */
-    try {
-      const app = AppBridge.default({ apiKey, host });
-      const token = await AppBridge.getSessionToken(app);        // ← JWT firmado por Shopify
-      sessionStorage.setItem('sessionToken', token);
-    } catch (err) {
-      console.error('🛑 Error obteniendo el session-token:', err);
-    }
-  })();
-  </script>
+  /** 1-b  ▸ pedir el JWT y hacer ping al backend  */
+  async function ping() {
+    const token = await getSessionToken(app);        // ← JWT de ~60 s
+    await fetch("/api/session-ping", {
+      headers: {Authorization: `Bearer ${token}`}
+    });
+  }
+
+  ping().catch(console.error);   //  ‼️ no bloquea la carga de tu página
+</script>
 </body>
 </html>

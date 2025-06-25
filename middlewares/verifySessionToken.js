@@ -1,25 +1,18 @@
 // middlewares/verifySessionToken.js
+const {Shopify} = require('@shopify/shopify-api');
 
-const { Shopify } = require('@shopify/shopify-api');
-
-module.exports = function verifySessionToken(req, res, next) {
-  const authHeader = req.headers.authorization || '';
-  const token = authHeader.replace(/^Bearer\s/, '');
+module.exports = (req, res, next) => {
+  const auth = req.get('Authorization') || '';
+  const jwt  = auth.replace(/^Bearer /, '');
 
   try {
-    // ⚠️ Usamos el API_SECRET para verificar la firma del JWT
-    const payload = Shopify.Utils.decodeSessionToken(token);
-
-
-    // payload.dest contiene la tienda, payload.sub es el userId
-    req.shopFromToken = payload.dest;      // e.g. 'mystore.myshopify.com'
-    req.userId       = payload.sub;       // opcional: ID único del usuario
-
+    const payload = Shopify.Utils.decodeSessionToken(jwt);   // ← valida firma
+    req.shop  = payload.dest;   // tienda
+    req.user  = payload.sub;    // opcional
     return next();
-  } catch (err) {
-    console.error('🛑 Invalid session token:', err.message);
-    return res
-      .status(401)
-      .json({ error: 'Invalid or expired session token' });
+  } catch (e) {
+    res.set('X-Shopify-Retry-Invalid-Session-Request', '1');
+    return res.status(401).json({error: 'invalid session token'});
   }
 };
+
