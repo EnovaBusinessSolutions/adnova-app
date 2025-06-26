@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!sessionToken) throw new Error('Token vacío');
 
       sessionStorage.setItem('sessionToken', sessionToken);
+      localStorage.setItem('sessionToken', sessionToken); 
 
       // Puedes hacer un fetch para forzar el registro
       fetch('https://adnova-app.onrender.com/api/secure/ping', {
