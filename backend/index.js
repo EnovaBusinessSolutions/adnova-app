@@ -28,10 +28,8 @@ const shopifyRoutes = require('./routes/shopify');
 const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
 const connector = require('./routes/shopifyConnector');
 const webhookRoutes   = require('./routes/shopifyConnector/webhooks');
-const shopifyMatch = require('./routes/shopifyMatch');
 const verifySessionToken = require('../middlewares/verifySessionToken');
 const secureRoutes     = require('./routes/secure'); 
-const shopifyMatch = require('./routes/shopifyMatch');
 
 
 const app = express();
@@ -286,7 +284,7 @@ app.get('/api/saas/ping', sessionGuard, (req, res) => {
   res.json({ ok: true, user: req.user?.email });
 });
 
-app.post('/api/saas/shopify/match', sessionGuard, require('./routes/shopifyMatch'));
+app.use('/api/saas/shopify', sessionGuard, require('./routes/shopifyMatch'));
 
 // Rutas externas y de API
 app.use('/api/shopify', shopifyRoutes);
@@ -296,9 +294,7 @@ app.use('/', googleAnalytics);
 app.use('/auth/meta', metaAuthRoutes);
 app.use('/api', userRoutes);
 app.use('/api', mockShopify);
-app.use('/api', shopifyMatch);
 app.use('/api/secure', verifySessionToken, secureRoutes);
-app.use('/api/saas/shopify', sessionGuard, shopifyMatch);
 
 
 app.get('/dashboard', ensureAuthenticated, (r, s) => {
