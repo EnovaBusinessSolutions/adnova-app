@@ -93,10 +93,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!shop.endsWith('.myshopify.com')) return alert('Dominio inválido');
 
     try {
-      const data = await apiFetch('/api/secure/shopify/match', {
-        method: 'POST',
-        body: JSON.stringify({ shop }),
-      });
+      const data = await apiFetch('/api/saas/shopify/match', {
+      method: 'POST',
+      body: JSON.stringify({ shop }),
+  });
       if (data.ok) {
         pintarShopifyConectado();
         domainStep.classList.add('step--hidden');

@@ -275,6 +275,17 @@ app.get('/api/session', (req, res) => {
   });
 });
 
+// --- SOLO PARA ONBOARDING SAAS: cookie sesión tradicional ---
+function sessionGuard(req, res, next) {
+  if (req.isAuthenticated && req.isAuthenticated()) return next();
+  return res.status(401).json({ error: 'No hay sesión' });
+}
+
+app.get('/api/saas/ping', sessionGuard, (req, res) => {
+  res.json({ ok: true, user: req.user?.email });
+});
+
+app.post('/api/saas/shopify/match', sessionGuard, require('./routes/shopifyMatch'));
 
 // Rutas externas y de API
 app.use('/api/shopify', shopifyRoutes);
