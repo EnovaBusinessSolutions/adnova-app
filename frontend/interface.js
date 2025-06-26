@@ -63,14 +63,31 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Botón
   if (btn) {
-    btn.addEventListener('click', () => {
-  if (!sessionToken) {
-    alert('El token de sesión aún no está listo. Intenta de nuevo en unos segundos.');
-    return;
-  }
-  window.location.href = `https://adnova-app.onrender.com/onboarding?shop=${encodeURIComponent(shop)}`;
-});
-  }
+  btn.addEventListener('click', async () => {
+    if (!sessionToken) {
+      alert('El token de sesión aún no está listo. Intenta de nuevo en unos segundos.');
+      return;
+    }
+    try {
+      // Pide el magic link al backend
+      const resp = await fetch('https://adnova-app.onrender.com/api/auth/magic-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop }),
+        credentials: 'include'
+      });
+      const data = await resp.json();
+      if (data.url) {
+        window.location.href = data.url; // Redirige a la url con ?token=...
+      } else {
+        alert('No se pudo generar el magic link.');
+      }
+    } catch (err) {
+      alert('Error generando magic link: ' + err.message);
+    }
+  });
+}
+
 
   getTokenWithRetry(); // ¡Arranca!
 });
