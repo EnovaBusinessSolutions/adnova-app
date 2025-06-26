@@ -36,9 +36,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       sessionStorage.setItem('sessionToken', sessionToken);
 
       // Puedes hacer un fetch para forzar el registro
-      fetch('/api/secure/ping', {
-      headers: { Authorization: `Bearer ${sessionToken}` },
-    });
+     fetch('https://adnova-app.onrender.com/api/secure/ping', {
+  headers: { Authorization: `Bearer ${sessionToken}` },
+  credentials: 'include'
+});
 
       if (btn) btn.disabled = false;
       console.log('✅ App Bridge cargado y token obtenido');

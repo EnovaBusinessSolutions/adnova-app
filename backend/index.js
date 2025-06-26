@@ -110,7 +110,15 @@ app.use(passport.session());
 app.use('/connector', connector);
 
 // +++ MIDDLEWARES +++
-app.use(cors());
+app.use(cors({
+  origin: [
+    'https://adnova-app.onrender.com',
+    /\.myshopify\.com$/, // Regex para cualquier tienda
+    'https://admin.shopify.com'
+  ],
+  credentials: true
+}));
+
 app.use(bodyParser.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
