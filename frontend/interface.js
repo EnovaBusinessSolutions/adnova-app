@@ -64,15 +64,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Botón
   if (btn) {
     btn.addEventListener('click', () => {
-      if (!sessionToken) {
-        alert('El token de sesión aún no está listo. Intenta de nuevo en unos segundos.');
-        return;
-      }
-      window.open(
-        `https://adnova-app.onrender.com/onboarding?shop=${encodeURIComponent(shop)}`,
-        '_blank'
-      );
-    });
+  if (!sessionToken) {
+    alert('El token de sesión aún no está listo. Intenta de nuevo en unos segundos.');
+    return;
+  }
+  window.location.href = `https://adnova-app.onrender.com/onboarding?shop=${encodeURIComponent(shop)}`;
+});
   }
 
   getTokenWithRetry(); // ¡Arranca!
