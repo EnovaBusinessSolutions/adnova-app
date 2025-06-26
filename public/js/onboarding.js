@@ -1,6 +1,5 @@
 import { apiFetch } from './apiFetch.saas.js';
 
-
 document.addEventListener('DOMContentLoaded', async () => {
 
   const qs = new URLSearchParams(location.search);
@@ -11,34 +10,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const shopFromQuery = qs.get('shop');
   const hostFromQuery = qs.get('host');
-  const magicToken = qs.get('token'); // <--- AGREGADO AQUÍ
-
-   // ------ NUEVO BLOQUE: Validación Magic Link ------
-   if (magicToken) {
-    // Mostrar mensaje temporal...
-    document.body.insertAdjacentHTML('beforeend', '<div id="ml-loader" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(20,0,40,0.7);display:flex;align-items:center;justify-content:center;z-index:10000;color:white;font-size:1.5rem;">Validando acceso seguro...</div>');
-    try {
-      const resp = await fetch('/api/auth/validate-magic-link', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: magicToken }),
-        credentials: 'include'
-      });
-      const data = await resp.json();
-      document.getElementById('ml-loader').remove(); // Siempre borra el loader
-      if (data.ok) {
-        console.log('Magic link OK, usuario autenticado automáticamente');
-        // Limpia el token de la URL
-        qs.delete('token');
-        window.history.replaceState({}, '', `${location.pathname}?${qs.toString()}`);
-      } else {
-        alert('El magic link expiró o no es válido. Inicia sesión manualmente.');
-      }
-    } catch (e) {
-      document.getElementById('ml-loader').remove();
-      alert('Error validando magic link.');
-    }
-  }
 
   /* ------ Elementos del DOM ------ */
   const connectBtn        = document.getElementById('connect-shopify-btn');
@@ -59,15 +30,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   /* ------ Si venimos de /connector/interface ------- */
- const savedShop = sessionStorage.getItem('shopDomain');
+  const savedShop = sessionStorage.getItem('shopDomain');
   if (shopFromQuery || savedShop) {
-  domainStep.classList.remove('step--hidden');
-  domainInput.value = shopFromQuery || savedShop;
-  domainInput.focus();
+    domainStep.classList.remove('step--hidden');
+    domainInput.value = shopFromQuery || savedShop;
+    domainInput.focus();
 
-  // si vino de sessionStorage, lo limpiamos para no reutilizarlo
-  if (savedShop) sessionStorage.removeItem('shopDomain');
-}
+    // si vino de sessionStorage, lo limpiamos para no reutilizarlo
+    if (savedShop) sessionStorage.removeItem('shopDomain');
+  }
+
   function habilitarContinue() {
     if (!continueBtn) return;
     const listo =
@@ -88,15 +60,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectBtn.classList.add('connected');
     connectBtn.disabled = true;
     habilitarContinue();
-     sessionStorage.removeItem('shopifyConnected'); // opcional
-
+    sessionStorage.removeItem('shopifyConnected'); // opcional
   };
 
   const pintarGoogleConectado = () => {
     connectGoogleBtn.textContent = 'Connected';
     connectGoogleBtn.classList.add('connected');
     connectGoogleBtn.disabled = true;
-
   };
 
   /* ------ Estado inicial ------ */

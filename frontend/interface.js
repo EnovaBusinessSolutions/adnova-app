@@ -36,10 +36,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       sessionStorage.setItem('sessionToken', sessionToken);
 
       // Puedes hacer un fetch para forzar el registro
-     fetch('https://adnova-app.onrender.com/api/secure/ping', {
-  headers: { Authorization: `Bearer ${sessionToken}` },
-  credentials: 'include'
-});
+      fetch('https://adnova-app.onrender.com/api/secure/ping', {
+        headers: { Authorization: `Bearer ${sessionToken}` },
+        credentials: 'include'
+      });
 
       if (btn) btn.disabled = false;
       console.log('✅ App Bridge cargado y token obtenido');
@@ -61,33 +61,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (btn) btn.disabled = true;
   }
 
-  // Botón
+  // Botón: solo redirige, ya no pide magic link
   if (btn) {
-  btn.addEventListener('click', async () => {
-    if (!sessionToken) {
-      alert('El token de sesión aún no está listo. Intenta de nuevo en unos segundos.');
-      return;
-    }
-    try {
-      // Pide el magic link al backend
-      const resp = await fetch('https://adnova-app.onrender.com/api/auth/magic-link', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shop }),
-        credentials: 'include'
-      });
-      const data = await resp.json();
-      if (data.url) {
-        window.location.href = data.url; // Redirige a la url con ?token=...
-      } else {
-        alert('No se pudo generar el magic link.');
+    btn.addEventListener('click', () => {
+      if (!sessionToken) {
+        alert('El token de sesión aún no está listo. Intenta de nuevo en unos segundos.');
+        return;
       }
-    } catch (err) {
-      alert('Error generando magic link: ' + err.message);
-    }
-  });
-}
-
+      // Redirige a Adnova AI pasando el dominio de la tienda (puedes agregar host si lo necesitas)
+      window.location.href = `https://adnova-app.onrender.com/onboarding?shop=${encodeURIComponent(shop)}`;
+    });
+  }
 
   getTokenWithRetry(); // ¡Arranca!
 });
