@@ -36,9 +36,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       sessionStorage.setItem('sessionToken', sessionToken);
 
       // Puedes hacer un fetch para forzar el registro
-      fetch('/api/ping', {
-        headers: { Authorization: `Bearer ${sessionToken}` },
-      });
+      fetch('/api/secure/ping', {
+      headers: { Authorization: `Bearer ${sessionToken}` },
+    });
 
       if (btn) btn.disabled = false;
       console.log('✅ App Bridge cargado y token obtenido');
