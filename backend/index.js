@@ -137,14 +137,23 @@ function ensureNotOnboarded(req, res, next) {
 
 app.get('/', (req, res) => {
   const { shop } = req.query;
-
-  // Cualquier instalación (incluye las pruebas automáticas de Shopify)
   if (shop) {
-    // Redirige al router del conector, que se encarga de iniciar OAuth
     return res.redirect(`/connector?shop=${shop}`);
   }
 
-  // Sitio público normal
+  // 👇🏻 Aquí agregamos la validación:
+  if (req.isAuthenticated && req.isAuthenticated()) {
+    // Si ya hay sesión:
+    if (req.user.onboardingComplete) {
+      // Si ya terminó el onboarding: dashboard
+      return res.redirect('/dashboard');
+    } else {
+      // Si NO ha terminado onboarding: onboarding
+      return res.redirect('/onboarding');
+    }
+  }
+
+  // Si NO hay sesión, siempre muestra login:
   return res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
