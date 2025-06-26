@@ -3,8 +3,15 @@
 // Ejecuta la lógica sólo después de que todo el DOM esté listo
 // --------------------------------------------------------
 
-// Al envolver el código en DOMContentLoaded evitamos carreras: nos aseguramos
-// de que los nodos (#shopDom, #goToAdnova, <meta>) existen antes de usarlos.
+// Helper universal para detectar App Bridge, sin importar alias
+function getAppBridgeGlobal() {
+  return (
+    window['app-bridge'] ||
+    window['appBridge'] ||
+    window['ShopifyAppBridge'] ||
+    window['AppBridge'] // por si acaso
+  );
+}
 
 document.addEventListener('DOMContentLoaded', () => {
   // --------------------------------------------------------
@@ -36,10 +43,11 @@ document.addEventListener('DOMContentLoaded', () => {
   waitForAppBridge();          // ⬅️ arranque
 
   async function waitForAppBridge(tries = 20) {
-    // Shopify inyectará window['app-bridge'] cuando el script termine
-    if (window['app-bridge'] && window['app-bridge'].default) {
+    const AB = getAppBridgeGlobal(); // <--- Aquí se usa el helper
+
+    if (AB && AB.default) {
       try {
-        const { default: createApp, getSessionToken } = window['app-bridge'];
+        const { default: createApp, getSessionToken } = AB;
 
         const app = createApp({ apiKey, host });
         sessionToken = await getSessionToken(app);
