@@ -405,14 +405,31 @@ app.get('/auth/google/connect/callback', async (req, res) => {
 });
 
 app.get('/logout', (req, res) => {
-  req.logout((err) => {
+  // 1) Passport: cierra la sesión
+  req.logout(err => {
     if (err) {
       console.error('Error al cerrar sesión:', err);
-      return res.redirect('/');
+      return res.send(`
+        <script>
+          localStorage.removeItem('sessionToken');
+          sessionStorage.removeItem('sessionToken');
+          window.location.href = '/';
+        </script>
+      `);
     }
+
+    // 2) Destruye la sesión de Express
     req.session.destroy(() => {
-      res.clearCookie('connect.sid');
-      res.redirect('/');
+      res.clearCookie('connect.sid', { path: '/' });
+
+      // 3) Limpia storages en el navegador y regresa al login
+      return res.send(`
+        <script>
+          localStorage.removeItem('sessionToken');
+          sessionStorage.removeItem('sessionToken');
+          window.location.href = '/';
+        </script>
+      `);
     });
   });
 });
