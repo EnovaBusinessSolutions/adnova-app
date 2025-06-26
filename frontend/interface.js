@@ -61,15 +61,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (btn) btn.disabled = true;
   }
 
-  // Botón: solo redirige, ya no pide magic link
+  // Botón
   if (btn) {
     btn.addEventListener('click', () => {
-      if (!sessionToken) {
-        alert('El token de sesión aún no está listo. Intenta de nuevo en unos segundos.');
-        return;
-      }
-      // Redirige a Adnova AI pasando el dominio de la tienda (puedes agregar host si lo necesitas)
-      window.location.href = `https://adnova-app.onrender.com/`;
+      window.open('https://adnova-app.onrender.com/', '_blank');
     });
   }
 
