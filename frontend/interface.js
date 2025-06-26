@@ -69,7 +69,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
       // Redirige a Adnova AI pasando el dominio de la tienda (puedes agregar host si lo necesitas)
-      window.location.href = `https://adnova-app.onrender.com/onboarding?shop=${encodeURIComponent(shop)}`;
+      window.location.href = `https://adnova-app.onrender.com/`;
     });
   }
 
