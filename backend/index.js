@@ -9,7 +9,6 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
-const bodyParser = require('body-parser');
 const axios = require('axios');
 const qs    = require('querystring');
 const helmet = require('helmet');
@@ -119,7 +118,7 @@ app.use(cors({
   credentials: true
 }));
 
-app.use(bodyParser.json());
+app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
 // Funciones de control (si las usas globalmente)
