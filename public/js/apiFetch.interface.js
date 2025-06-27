@@ -1,19 +1,23 @@
-// ✅ Versión corregida de apiFetch.interface.js
-import { initAppBridge } from "./appBridgeInit.js";
-
+// public/js/apiFetch.interface.js
 export async function apiFetch(path, options = {}) {
-  const { app, getSessionToken } = await initAppBridge(); // <- asegura que App Bridge esté listo
+  // 1️⃣  lee el JWT que interface.js dejó en sessionStorage
+  const token = sessionStorage.getItem('sessionToken');
 
-  const token = await getSessionToken(app);  // obtiene JWT
+  // 2️⃣  cabeceras por defecto
+  options.headers = {
+    ...(options.headers || {}),
+    'Content-Type': 'application/json',
+  };
+  if (token) options.headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(path, {
+  // 3️⃣  llamada con la cookie de 1ª parte
+  const res  = await fetch(path, {
+    credentials: 'include',   // ⬅ importa para que mande la connect.sid
     ...options,
-    headers: {
-      ...(options.headers || {}),
-      Authorization: `Bearer ${token}`,      // adjunta JWT
-      "Content-Type": "application/json",
-    },
   });
 
-  return res.json();
+  // 4️⃣  intenta parsear JSON; si no, devuelve texto plano
+  const text = await res.text();
+  try { return JSON.parse(text); }
+  catch { return { ok:false, status:res.status, raw:text }; }
 }
