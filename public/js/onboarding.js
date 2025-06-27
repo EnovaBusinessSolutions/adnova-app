@@ -23,7 +23,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   /* ------ Llamada de prueba ------ */
   try {
-    const ping = await apiFetch('/api/secure/ping');
+    const ping = await apiFetch('/api/saas/ping');
     console.log('✅ PING OK', ping);
   } catch (err) {
     console.error('❌ PING FAIL', err);

@@ -4,7 +4,7 @@ const ShopConnections = require('../models/ShopConnections');
 const router         = express.Router();
 
 // el usuario DEBE estar autenticado en Adnova AI
-router.post('/shopify/match', async (req, res) => {
+router.post('/match', async (req, res) => {
   if (!req.isAuthenticated()) {
     return res.status(401).json({ error: 'Unauthenticated' });
   }
