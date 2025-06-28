@@ -5,7 +5,6 @@ const router         = express.Router();
 
 router.use(express.json());
 
-// el usuario DEBE estar autenticado en Adnova AI
 router.post('/match', async (req, res) => {
   if (!req.isAuthenticated()) {
     return res.status(401).json({ error: 'Unauthenticated' });

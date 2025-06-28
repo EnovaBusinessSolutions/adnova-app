@@ -3,7 +3,6 @@ const express = require('express');
 const router  = express.Router();
 const User    = require('../models/User');
 
-// Se llama justo antes de redirigir al enlace de instalación
 router.post('/mock-shopify-connected', async (req, res) => {
   if (!req.isAuthenticated()) return res.sendStatus(401);
 

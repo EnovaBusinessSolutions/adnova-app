@@ -6,7 +6,6 @@ const bodyParser = require('body-parser');
 
 const router = express.Router();
 
-// ---------- Webhooks de privacidad obligatorios ----------
  const rawBodyParser = bodyParser.raw({
    type: 'application/json',
    verify: (req, _res, buf) => {
@@ -45,7 +44,6 @@ router.post('/webhooks/shop/redact', rawBodyParser, (req, res) => {
   res.status(200).send('OK');
 });
 
-// ---------- Rutas públicas de privacidad ----------
 router.get('/privacy-policy', (req, res) =>
   res.sendFile(path.join(__dirname, '../../public/privacy-policy.html'))
 );

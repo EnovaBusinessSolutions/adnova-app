@@ -10,12 +10,10 @@ const verifyShopifyToken = require('../../middlewares/verifyShopifyToken');
 
 const router = express.Router();
 
-// Scopes que pide tu aplicación de Shopify
-const SCOPES = 'read_products,read_customers,read_orders'; // ajusta según lo que necesites
+const SCOPES = 'read_products,read_customers,read_orders'; 
 const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY;
 const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
 
-// GET /api/shopify/connect?userId=...&shop=mi-tienda.myshopify.com
 router.get(
   '/connect',
   ensureAuthenticated,
@@ -27,30 +25,21 @@ router.get(
         .send('Faltan parámetros: userId y shop son requeridos.');
     }
 
-    // 1.1) Generamos un nonce que combine userId y un valor aleatorio
     const nonce = crypto.randomBytes(16).toString('hex');
     const state = `${nonce}_${userId}`;
 
-    // 1.2) Guardamos el state en la sesión para verificarlo luego
     req.session.shopifyState = state;
 
-    // 1.3) Construimos la URL de autorización de Shopify
     const redirectUri = process.env.SHOPIFY_REDIRECT_URI;
     const installUrl = `https://${shop}/admin/oauth/authorize?client_id=${SHOPIFY_API_KEY}` +
       `&scope=${encodeURIComponent(SCOPES)}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
       `&state=${state}`;
 
-    // 1.4) Redirigimos al merchant a la página de autorización de Shopify
     return res.redirect(installUrl);
   }
 );
 
-// ─────────────────────────────────────────────────────────────────
-// 2) Callback que Shopify invoca tras instalar la app
-// ─────────────────────────────────────────────────────────────────
-
-// GET /api/shopify/callback?shop=…&code=…&hmac=…&state=…
 router.get(
   '/callback',
   async (req, res) => {
@@ -60,7 +49,6 @@ router.get(
       return res.redirect('/onboarding?error=missing_params');
     }
 
-    // 2.1) Verificar que el state coincida con el guardado en sesión
     if (state !== req.session.shopifyState) {
       console.warn('⚠️ State inválido en Shopify callback:', {
         recibido: state,
@@ -69,7 +57,6 @@ router.get(
       return res.redirect('/onboarding?error=invalid_state');
     }
 
-    // 2.2) Validación HMAC
     const map = { ...req.query };
     delete map['signature'];
     delete map['hmac'];
@@ -89,7 +76,6 @@ router.get(
     }
 
     try {
-      // 2.3) Intercambiar 'code' por access_token
       const tokenRequestUrl = `https://${shop}/admin/oauth/access_token`;
       const tokenPayload = {
         client_id: SHOPIFY_API_KEY,
@@ -102,18 +88,16 @@ router.get(
 
       const accessToken = tokenResponse.data.access_token;
 
-      // 2.4) Extraer userId del state (state guardado como `${nonce}_${userId}`)
       const parts = state.split('_');
       const userId = parts.pop();
 
-      // 2.5) Calcular hash de scopes y timestamp (opcional, pero recomendado para verificar futuros cambios de permisos)
+  
       const scopeHash = crypto
         .createHash('sha256')
         .update(SCOPES)
         .digest('hex');
       const scopeHashUpdatedAt = Date.now();
 
-      // 2.6) Actualizar en MongoDB: marcar shopifyConnected = true
       await User.findByIdAndUpdate(userId, {
         shop,
         shopifyAccessToken: accessToken,
@@ -124,12 +108,10 @@ router.get(
 
       console.log(`✅ Shopify conectado para usuario ${userId}`);
 
-      // 2.7) Generar JWT para el front-end (opcional, solo para verificar en JS)
+
       const payload = { shop };
       const tokenJwt = jwt.sign(payload, SHOPIFY_API_SECRET);
 
-      // 2.8) Redirigir al onboarding con el JWT en query
-      // ✅ Esta es la forma correcta de redirigir a una vista embebida
       return res.redirect(`/apps/${SHOPIFY_API_KEY}/connector/interface?shop=${shop}`);
     } catch (err) {
       console.error(
@@ -141,14 +123,12 @@ router.get(
   }
 );
 
-// Ruta que Shopify invoca automáticamente tras instalación desde App Store
 router.get('/auth/shopify', (req, res) => {
   const { shop } = req.query;
   if (!shop) {
     return res.status(400).send('Falta el parámetro ?shop');
   }
 
-  // Redirige a tu flujo de conexión ya existente
   return res.redirect(`/api/shopify/connect?shop=${shop}&userId=auto`);
 });
 

@@ -11,7 +11,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const shopFromQuery = qs.get('shop');
   const hostFromQuery = qs.get('host');
 
-  /* ------ Elementos del DOM ------ */
   const connectBtn        = document.getElementById('connect-shopify-btn');
   const connectGoogleBtn  = document.getElementById('connect-google-btn');
   const continueBtn       = document.getElementById('continue-btn');
@@ -21,7 +20,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const domainInput       = document.getElementById('shop-domain-input');
   const domainSend        = document.getElementById('shop-domain-send');
 
-  /* ------ Llamada de prueba ------ */
   try {
     const ping = await apiFetch('/api/saas/ping');
     console.log('✅ PING OK', ping);
@@ -29,14 +27,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.error('❌ PING FAIL', err);
   }
 
-  /* ------ Si venimos de /connector/interface ------- */
   const savedShop = sessionStorage.getItem('shopDomain');
   if (shopFromQuery || savedShop) {
     domainStep.classList.remove('step--hidden');
     domainInput.value = shopFromQuery || savedShop;
     domainInput.focus();
 
-    // si vino de sessionStorage, lo limpiamos para no reutilizarlo
     if (savedShop) sessionStorage.removeItem('shopDomain');
   }
 
@@ -60,7 +56,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectBtn.classList.add('connected');
     connectBtn.disabled = true;
     habilitarContinue();
-    sessionStorage.removeItem('shopifyConnected'); // opcional
+    sessionStorage.removeItem('shopifyConnected'); 
   };
 
   const pintarGoogleConectado = () => {
@@ -69,12 +65,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectGoogleBtn.disabled = true;
   };
 
-  /* ------ Estado inicial ------ */
   if (flagShopify.textContent.trim() === 'true') pintarShopifyConectado();
   if (flagGoogle.textContent.trim() === 'true') pintarGoogleConectado();
   habilitarContinue();
 
-  /* ------ Botón Connect Shopify ------ */
   connectBtn?.addEventListener('click', () => {
     let shop = shopFromQuery;
     let host = hostFromQuery;
@@ -87,7 +81,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     location.href = `/connector?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
   });
 
-  /* ------ Botón Enviar Dominio ------ */
   domainSend?.addEventListener('click', async () => {
     const shop = domainInput.value.trim().toLowerCase();
     if (!shop.endsWith('.myshopify.com')) return alert('Dominio inválido');
@@ -109,7 +102,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  /* ------ Botones Google y Continuar ------ */
   connectGoogleBtn?.addEventListener('click', () =>
     (location.href = '/auth/google/connect')
   );
