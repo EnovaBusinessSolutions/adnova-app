@@ -1,7 +1,6 @@
 // public/js/pixelVerifier.js
 
 document.addEventListener('DOMContentLoaded', function () {
-  // Guardar JWT de Shopify si viene en la URL (por si acceden directamente)
   const params = new URLSearchParams(window.location.search);
   const jwtShopify = params.get('shopifyToken');
   if (jwtShopify) {

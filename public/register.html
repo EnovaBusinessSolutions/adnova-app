@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Registro - ADNOVA AI</title>
 
-    <!-- Google Fonts - Inter (igual que en index.html) -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -13,7 +12,6 @@
       rel="stylesheet"
     />
 
-    <!-- CSS comunes (adnova-login.css) y CSS propio de registro -->
     <link rel="stylesheet" href="adnova-login.css" />
     <link rel="stylesheet" href="register.css" />
   </head>
@@ -24,7 +22,6 @@
         <h1>Crear cuenta</h1>
       </div>
 
-      <!-- Aquí va tu formulario de registro -->
       <form id="register-form" class="form">
         <div class="form-group">
           <label for="email" class="form-label">Correo:</label>
@@ -60,10 +57,6 @@
       </form>
     </div>
 
-    <!-- Si prefieres separar tu lógica en public/js/register.js, inclúyelo aquí: -->
-    <!-- <script src="js/register.js" defer></script> -->
-
-    <!-- En este ejemplo hemos dejado el script inline -->
     <script>
       const form = document.getElementById('register-form');
       const msg = document.getElementById('register-msg');
@@ -94,7 +87,6 @@
               '✅ Cuenta creada con éxito. Redirigiendo a Iniciar Sesión...';
             msg.style.color = '#4ade80';
             setTimeout(() => {
-              // Redirigimos al login (ruta “/” que en tu servidor envía index.html)
               window.location.href = '/';
             }, 1500);
           } else {

@@ -35,20 +35,17 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const SHOPIFY_HANDLE = process.env.SHOPIFY_APP_HANDLE;
 
-// 1️⃣  Helmet global
 app.use(
   helmet({
-    frameguard: false,          // no manda X-Frame-Options
+    frameguard: false,          
     contentSecurityPolicy: {
       useDefaults: true,
       directives: {
-        /* Embed permitido dentro del Admin y de la tienda */
         "frame-ancestors": [
           "'self'",
           "https://admin.shopify.com",
           "https://*.myshopify.com"
         ],
-        /* Para que cargue App Bridge */
         "script-src": [
           "'self'",
           "'unsafe-inline'",
@@ -56,7 +53,6 @@ app.use(
           "https://cdn.shopify.com",
           "https://cdn.shopifycdn.net"
         ],
-        /* Llamadas fetch/XHR que hará tu frontend */
         "connect-src": [
           "'self'",
           "https://*.myshopify.com",
@@ -68,7 +64,6 @@ app.use(
   })
 );
 
-// 2️⃣  Ruta del iframe (sin cabeceras manuales)
 app.get("/connector/interface", (req, res) => {
   const { shop, host } = req.query;
   if (!shop || !host) return res.status(400).send("Faltan parámetros 'shop' o 'host'");
@@ -86,7 +81,7 @@ mongoose
 
 app.use(
   '/connector/webhooks',
-  express.raw({ type: 'application/json' }), // cuerpo crudo para HMAC
+  express.raw({ type: 'application/json' }), 
   webhookRoutes
 );
 
@@ -108,11 +103,10 @@ app.use(passport.session());
 
 app.use('/connector', connector);
 
-// +++ MIDDLEWARES +++
 app.use(cors({
   origin: [
     'https://adnova-app.onrender.com',
-    /\.myshopify\.com$/, // Regex para cualquier tienda
+    /\.myshopify\.com$/, 
     'https://admin.shopify.com'
   ],
   credentials: true
@@ -121,7 +115,6 @@ app.use(cors({
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Funciones de control (si las usas globalmente)
 function ensureAuthenticated(req, res, next) {
   if (req.isAuthenticated()) return next();
   res.redirect('/');
@@ -139,19 +132,14 @@ app.get('/', (req, res) => {
     return res.redirect(`/connector?shop=${shop}`);
   }
 
-  // 👇🏻 Aquí agregamos la validación:
   if (req.isAuthenticated && req.isAuthenticated()) {
-    // Si ya hay sesión:
     if (req.user.onboardingComplete) {
-      // Si ya terminó el onboarding: dashboard
       return res.redirect('/dashboard');
     } else {
-      // Si NO ha terminado onboarding: onboarding
       return res.redirect('/onboarding');
     }
   }
 
-  // Si NO hay sesión, siempre muestra login:
   return res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
@@ -273,7 +261,6 @@ app.get('/api/session', (req, res) => {
   });
 });
 
-// --- SOLO PARA ONBOARDING SAAS: cookie sesión tradicional ---
 function sessionGuard(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ error: 'No hay sesión' });
@@ -285,7 +272,6 @@ app.get('/api/saas/ping', sessionGuard, (req, res) => {
 
 app.use('/api/saas/shopify', sessionGuard, require('./routes/shopifyMatch'));
 
-// Rutas externas y de API
 app.use('/api/shopify', shopifyRoutes);
 app.use('/', privacyRoutes);
 app.use('/auth/google', googleConnect);
@@ -325,14 +311,11 @@ app.get(
   }
 );
 
-// 1) Dispara el OAuth únicamente para Analytics & Ads
 app.get('/auth/google/connect', (req, res) => {
-  // 1A) Si no está logueado en tu app, no puede conectar Analytics → redirigir al login
   if (!req.isAuthenticated()) {
     return res.redirect('/');
   }
 
-  // 1B) Armar la URL de autorización de Google SOLO para los scopes de Analytics/Ads
   const params = new URLSearchParams({
     client_id:     process.env.GOOGLE_CLIENT_ID,
     redirect_uri:  process.env.GOOGLE_CONNECT_CALLBACK_URL, 
@@ -342,29 +325,24 @@ app.get('/auth/google/connect', (req, res) => {
       'https://www.googleapis.com/auth/analytics.readonly',
       'https://www.googleapis.com/auth/adwords'
     ].join(' '),
-    state:         req.sessionID // opcional, ayuda a checar CSRF
+    state:         req.sessionID 
   });
 
-  // Redirigimos al diálogo de Google
   return res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
 });
 
 
-// 2) Callback de Google tras aceptar Analytics/Ads
 app.get('/auth/google/connect/callback', async (req, res) => {
-  // 2A) Validar que el usuario siga logueado
   if (!req.isAuthenticated()) {
     return res.redirect('/');
   }
 
   const { code } = req.query;
   if (!code) {
-    // Si Google devolvió error o usuario canceló, volvemos a onboarding con query “?google=fail”
     return res.redirect('/onboarding?google=fail');
   }
 
   try {
-    // 2B) Intercambiar el “code” por tokens en Google
     const tokenRes = await axios.post(
       'https://oauth2.googleapis.com/token',
       qs.stringify({
@@ -379,7 +357,6 @@ app.get('/auth/google/connect/callback', async (req, res) => {
 
     const { access_token, refresh_token, id_token } = tokenRes.data;
 
-    // 2C) (Opcional) Decodificamos el id_token para obtener el email de Google
     let decodedEmail = '';
     if (id_token) {
       const payload = JSON.parse(
@@ -388,7 +365,6 @@ app.get('/auth/google/connect/callback', async (req, res) => {
       decodedEmail = payload.email || '';
     }
 
-    // 2D) Actualizamos SOLO el documento existente en Mongo
     const updateData = {
       googleConnected:    true,
       googleAccessToken:  access_token,
@@ -401,7 +377,6 @@ app.get('/auth/google/connect/callback', async (req, res) => {
     await User.findByIdAndUpdate(req.user._id, updateData);
     console.log('✅ Google Analytics/Ads conectado para usuario:', req.user._id);
 
-    // 2E) Volvemos a /onboarding para que la UI se pinte como “Connected”
     return res.redirect('/onboarding');
   } catch (err) {
     console.error(
@@ -413,7 +388,6 @@ app.get('/auth/google/connect/callback', async (req, res) => {
 });
 
 app.get('/logout', (req, res) => {
-  // 1) Passport: cierra la sesión
   req.logout(err => {
     if (err) {
       console.error('Error al cerrar sesión:', err);
@@ -426,11 +400,9 @@ app.get('/logout', (req, res) => {
       `);
     }
 
-    // 2) Destruye la sesión de Express
     req.session.destroy(() => {
       res.clearCookie('connect.sid', { path: '/' });
 
-      // 3) Limpia storages en el navegador y regresa al login
       return res.send(`
         <script>
           localStorage.removeItem('sessionToken');
@@ -442,7 +414,6 @@ app.get('/logout', (req, res) => {
   });
 });
 
-// Aquí sí usamos el middleware importado arriba
 app.get('/api/test-shopify-token', verifyShopifyToken, (req, res) => {
   res.json({
     success: true,
@@ -451,7 +422,6 @@ app.get('/api/test-shopify-token', verifyShopifyToken, (req, res) => {
   });
 });
 
-// ✅ Intercepta rutas /apps/... y redirige al HTML embebido real
 app.get(/^\/apps\/[^\/]+\/?.*$/, (req, res) => {
   const { shop, host } = req.query;
   const redirectUrl = new URL('/connector/interface', `https://${req.headers.host}`);

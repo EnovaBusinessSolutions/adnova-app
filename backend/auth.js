@@ -15,7 +15,7 @@ passport.use(new GoogleStrategy({
       user = await User.create({
         googleId: profile.id,
         email,
-        password: '', // no tiene password
+        password: '', 
         onboardingComplete: false
       });
       console.log('🆕 Usuario de Google creado en MongoDB:', email);

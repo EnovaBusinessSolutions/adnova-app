@@ -9,7 +9,6 @@
 </head>
 <body>
   <div class="dashboard-layout">
-    <!-- Sidebar -->
     <div class="sidebar">
       <div class="sidebar-header">
         <div class="logo">
@@ -446,7 +445,6 @@
   
   <script>
     document.addEventListener('DOMContentLoaded', function() {
-      // Tab functionality
       const tabTriggers = document.querySelectorAll('.tab-trigger');
       const tabContents = document.querySelectorAll('.tab-content');
       
@@ -454,11 +452,9 @@
         trigger.addEventListener('click', () => {
           const tabId = trigger.getAttribute('data-tab');
           
-          // Update active tab trigger
           tabTriggers.forEach(t => t.classList.remove('active'));
           trigger.classList.add('active');
           
-          // Show corresponding content
           tabContents.forEach(content => {
             content.classList.remove('active');
             if (content.getAttribute('data-tab') === tabId) {
@@ -468,7 +464,6 @@
         });
       });
       
-      // Expand/collapse audit items
       const expandButtons = document.querySelectorAll('.expand-button');
       
       expandButtons.forEach(button => {
@@ -478,7 +473,6 @@
           
           details.classList.toggle('hidden');
           
-          // Update icon
           if (details.classList.contains('hidden')) {
             button.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="6 9 12 15 18 9"></polyline>
@@ -491,7 +485,6 @@
         });
       });
       
-      // First item is expanded by default (matches the screenshot)
       const firstExpandButton = document.querySelector('.expand-button');
       if (firstExpandButton) {
         firstExpandButton.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
