@@ -116,5 +116,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.querySelector('.step[data-step="1"]').classList.remove('active');
   document.querySelector('.step[data-step="2"]').classList.add('active');
 });
+const backBtn2 = document.getElementById('back-btn-2');
+
+backBtn2?.addEventListener('click', () => {
+  // Oculta Step 2 y muestra Step 1
+  document.getElementById('step2-content').classList.add('hidden');
+  document.getElementById('step1-content').classList.remove('hidden');
+
+  // Actualiza el sidebar visual
+  document.querySelector('.step[data-step="2"]').classList.remove('active');
+  document.querySelector('.step[data-step="1"]').classList.add('active');
+});
+
 
 });
