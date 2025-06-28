@@ -105,5 +105,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   connectGoogleBtn?.addEventListener('click', () =>
     (location.href = '/auth/google/connect')
   );
-  continueBtn?.addEventListener('click', () => (location.href = '/'));
+  continueBtn?.addEventListener('click', () => {
+  // Oculta Step 1
+  const step1Panel = document.getElementById('step1-content');
+  const step2Panel = document.getElementById('step2-content');
+  step1Panel.classList.add('hidden');
+  step2Panel.classList.remove('hidden');
+
+  // Actualiza el sidebar visual
+  document.querySelector('.step[data-step="1"]').classList.remove('active');
+  document.querySelector('.step[data-step="2"]').classList.add('active');
+});
+
 });
