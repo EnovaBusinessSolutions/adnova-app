@@ -1,9 +1,12 @@
 import { apiFetch } from './apiFetch.saas.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
+
   const qs = new URLSearchParams(location.search);
   const sessionToken = qs.get('sessionToken');
-  if (sessionToken) sessionStorage.setItem('sessionToken', sessionToken);
+  if (sessionToken) {
+    sessionStorage.setItem('sessionToken', sessionToken);
+  }
 
   const shopFromQuery = qs.get('shop');
   const hostFromQuery = qs.get('host');
@@ -48,40 +51,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  // SOLO busca y guarda credenciales cuando hay tienda conectada
   const pintarShopifyConectado = async () => {
-  connectBtn.textContent = 'Connected';
-  connectBtn.classList.add('connected');
-  connectBtn.disabled = true;
-  habilitarContinue();
-  sessionStorage.removeItem('shopifyConnected');
+    connectBtn.textContent = 'Connected';
+    connectBtn.classList.add('connected');
+    connectBtn.disabled = true;
+    habilitarContinue();
+    sessionStorage.removeItem('shopifyConnected'); 
 
-  // ¡Busca en todos lados posibles!
-  const savedShop = sessionStorage.getItem('shopDomain');
-  const shop =
-    shopFromQuery ||
-    domainInput.value.trim().toLowerCase() ||
-    savedShop ||
-    sessionStorage.getItem('shop');
-
-  if (!shop) {
-    console.warn('No se encontró el dominio de la tienda para obtener credenciales.');
-    return;
-  }
-
-  try {
-    const resp = await apiFetch(`/api/shopConnection/me?shop=${encodeURIComponent(shop)}`);
-    if (resp && resp.shop && resp.accessToken) {
-      sessionStorage.setItem('shop', resp.shop);
-      sessionStorage.setItem('accessToken', resp.accessToken);
-      console.log('✅ Guardado en sessionStorage:', resp.shop, resp.accessToken);
-    } else {
-      console.warn('No se encontraron credenciales para la tienda.');
+    // Busca shop en los posibles lugares
+    const shop = shopFromQuery || domainInput.value.trim().toLowerCase() || sessionStorage.getItem('shop');
+    if (!shop) {
+      console.warn('No se encontró el dominio de la tienda para obtener credenciales.');
+      return;
     }
-  } catch (err) {
-    console.error('Error obteniendo shop/accessToken:', err);
-  }
-};
 
+    try {
+      const resp = await apiFetch(`/api/shopConnection/me?shop=${encodeURIComponent(shop)}`);
+      if (resp && resp.shop && resp.accessToken) {
+        sessionStorage.setItem('shop', resp.shop);
+        sessionStorage.setItem('accessToken', resp.accessToken);
+        console.log('✅ Guardado en sessionStorage:', resp.shop, resp.accessToken);
+      } else {
+        console.warn('No se encontraron credenciales para la tienda.');
+      }
+    } catch (err) {
+      console.error('Error obteniendo shop/accessToken:', err);
+    }
+  };
 
   const pintarGoogleConectado = () => {
     connectGoogleBtn.textContent = 'Connected';
@@ -89,15 +86,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectGoogleBtn.disabled = true;
   };
 
-  // ----- CORRECCIÓN: Encapsula el init en una función para await -----
-  async function init() {
-    if (flagShopify.textContent.trim() === 'true') await pintarShopifyConectado();
-    if (flagGoogle.textContent.trim() === 'true') pintarGoogleConectado();
-    habilitarContinue();
-  }
-  await init();
-  // -------------------------------------------------------
+  // 1. Si YA estaba conectado, busca y guarda credenciales
+  if (flagShopify.textContent.trim() === 'true') await pintarShopifyConectado();
+  if (flagGoogle.textContent.trim() === 'true') pintarGoogleConectado();
+  habilitarContinue();
 
+  // Botón para conectar Shopify
+  connectBtn?.addEventListener('click', () => {
+    let shop = shopFromQuery;
+    let host = hostFromQuery;
+
+    if (!shop || !host) {
+      shop = prompt('Ingresa tu dominio (ej: mitienda.myshopify.com):');
+      if (!shop?.endsWith('.myshopify.com')) return alert('Dominio inválido');
+      host = btoa(`${shop}/admin`);
+    }
+    location.href = `/connector?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
+  });
+
+  // Cuando el usuario pone el dominio y da click en "Enviar"
   domainSend?.addEventListener('click', async () => {
     const shop = domainInput.value.trim().toLowerCase();
     if (!shop.endsWith('.myshopify.com')) return alert('Dominio inválido');
@@ -150,4 +157,5 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     window.location.href = '/onboarding3.html';
   });
+
 });
