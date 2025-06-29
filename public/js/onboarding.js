@@ -49,28 +49,39 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   const pintarShopifyConectado = async () => {
-    connectBtn.textContent = 'Connected';
-    connectBtn.classList.add('connected');
-    connectBtn.disabled = true;
-    habilitarContinue();
-    sessionStorage.removeItem('shopifyConnected'); 
+  connectBtn.textContent = 'Connected';
+  connectBtn.classList.add('connected');
+  connectBtn.disabled = true;
+  habilitarContinue();
+  sessionStorage.removeItem('shopifyConnected');
 
-    const shop = shopFromQuery || domainInput.value.trim().toLowerCase();
-    if (!shop) return; // No hacer nada si shop está vacío
+  // ¡Busca en todos lados posibles!
+  const savedShop = sessionStorage.getItem('shopDomain');
+  const shop =
+    shopFromQuery ||
+    domainInput.value.trim().toLowerCase() ||
+    savedShop ||
+    sessionStorage.getItem('shop');
 
-    try {
-      const resp = await apiFetch(`/api/shopConnection/me?shop=${encodeURIComponent(shop)}`);
-      if (resp && resp.shop && resp.accessToken) {
-        sessionStorage.setItem('shop', resp.shop);
-        sessionStorage.setItem('accessToken', resp.accessToken);
-        console.log('✅ Guardado en sessionStorage:', resp.shop, resp.accessToken);
-      } else {
-        console.warn('No se encontraron credenciales para la tienda.');
-      }
-    } catch (err) {
-      console.error('Error obteniendo shop/accessToken:', err);
+  if (!shop) {
+    console.warn('No se encontró el dominio de la tienda para obtener credenciales.');
+    return;
+  }
+
+  try {
+    const resp = await apiFetch(`/api/shopConnection/me?shop=${encodeURIComponent(shop)}`);
+    if (resp && resp.shop && resp.accessToken) {
+      sessionStorage.setItem('shop', resp.shop);
+      sessionStorage.setItem('accessToken', resp.accessToken);
+      console.log('✅ Guardado en sessionStorage:', resp.shop, resp.accessToken);
+    } else {
+      console.warn('No se encontraron credenciales para la tienda.');
     }
-  };
+  } catch (err) {
+    console.error('Error obteniendo shop/accessToken:', err);
+  }
+};
+
 
   const pintarGoogleConectado = () => {
     connectGoogleBtn.textContent = 'Connected';
