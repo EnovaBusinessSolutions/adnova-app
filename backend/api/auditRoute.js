@@ -1,31 +1,21 @@
 const express = require('express');
 const router = express.Router();
-const { enqueueAudit, getJob } = require('../queue');
+const { generarAuditoriaIA } = require('../jobs/auditJob');
 
-// Inicia auditoría
+// 1. Dispara auditoría directamente (sin queue)
 router.post('/start', async (req, res) => {
   const { shop, accessToken } = req.body;
-  if (!shop || !accessToken) 
-    return res.status(400).json({ error: 'Falta shop o accessToken' });
+  if (!shop || !accessToken)
+    return res.status(400).json({ error: 'shop y token requeridos' });
 
   try {
-    const job = await enqueueAudit(shop, accessToken);
-    res.json({ jobId: job.id });
+    // Llama directo a la función de IA
+    const resultado = await generarAuditoriaIA(shop, accessToken);
+    res.json({ ok: true, resultado });
   } catch (err) {
-    res.status(500).json({ error: 'Error al iniciar auditoría', details: err.message });
+    console.error('Error en auditoría:', err);
+    res.status(500).json({ error: 'Fallo la auditoría' });
   }
-});
-
-// Consulta progreso
-router.get('/progress/:id', async (req, res) => {
-  const job = await getJob(req.params.id);
-  if (!job) return res.status(404).json({ error: 'job not found' });
-
-  res.json({ 
-    progress: job.progress, 
-    finished: !!job.finishedOn,
-    result: job.returnvalue || null 
-  });
 });
 
 module.exports = router;
