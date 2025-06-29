@@ -128,5 +128,9 @@ backBtn2?.addEventListener('click', () => {
   document.querySelector('.step[data-step="1"]').classList.add('active');
 });
 
+const continueBtn2 = document.getElementById('continue-btn-2');
+continueBtn2?.addEventListener('click', () => {
+  window.location.href = '/onboarding3.html';
+});
 
 });
