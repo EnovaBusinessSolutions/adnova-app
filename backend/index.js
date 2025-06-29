@@ -29,8 +29,8 @@ const connector = require('./routes/shopifyConnector');
 const webhookRoutes   = require('./routes/shopifyConnector/webhooks');
 const verifySessionToken = require('../middlewares/verifySessionToken');
 const secureRoutes     = require('./routes/secure'); 
-const dashboardRoute = require('./backend/api/dashboardRoute'); 
-const auditRoute     = require('./backend/api/auditRoute'); 
+const dashboardRoute = require('./api/dashboardRoute'); 
+const auditRoute     = require('./api/auditRoute'); 
 
 
 const app = express();
