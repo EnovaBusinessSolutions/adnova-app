@@ -29,6 +29,8 @@ const connector = require('./routes/shopifyConnector');
 const webhookRoutes   = require('./routes/shopifyConnector/webhooks');
 const verifySessionToken = require('../middlewares/verifySessionToken');
 const secureRoutes     = require('./routes/secure'); 
+const dashboardRoute = require('./backend/api/dashboardRoute'); 
+const auditRoute     = require('./backend/api/auditRoute'); 
 
 
 const app = express();
@@ -280,6 +282,8 @@ app.use('/auth/meta', metaAuthRoutes);
 app.use('/api', userRoutes);
 app.use('/api', mockShopify);
 app.use('/api/secure', verifySessionToken, secureRoutes);
+app.use('/api/dashboard', dashboardRoute);
+app.use('/api/audit',      auditRoute);
 
 
 app.get('/dashboard', ensureAuthenticated, (r, s) => {
