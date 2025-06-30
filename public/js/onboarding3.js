@@ -91,3 +91,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     alert('Ocurrió un error al analizar tu tienda.');
   }
 });
+// Listener para avanzar al step 4 (Onboarding final)
+document.getElementById('continue-btn-3')?.addEventListener('click', () => {
+  window.location.href = '/onboarding4.html';
+});
+
