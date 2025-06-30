@@ -37,19 +37,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function habilitarContinue() {
-    if (!continueBtn) return;
-    const listo =
-      flagShopify.textContent.trim() === 'true' ||
-      sessionStorage.getItem('shopifyConnected') === 'true';
-    if (listo) {
-      continueBtn.disabled = false;
-      continueBtn.classList.replace(
-        'btn-continue--disabled',
-        'btn-continue--enabled'
-      );
-      sessionStorage.removeItem('shopifyConnected');
-    }
+  if (!continueBtn) return;
+  const shop = sessionStorage.getItem('shop');
+  const accessToken = sessionStorage.getItem('accessToken');
+  const listo =
+    (shop && accessToken) ||
+    flagShopify.textContent.trim() === 'true' ||
+    sessionStorage.getItem('shopifyConnected') === 'true';
+  if (listo) {
+    continueBtn.disabled = false;
+    continueBtn.classList.replace(
+      'btn-continue--disabled',
+      'btn-continue--enabled'
+    );
+    sessionStorage.removeItem('shopifyConnected');
   }
+}
 
   // SOLO busca y guarda credenciales cuando hay tienda conectada
   const pintarShopifyConectado = async () => {
