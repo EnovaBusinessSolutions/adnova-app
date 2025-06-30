@@ -5,11 +5,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const shop = sessionStorage.getItem('shop');
     if (shop) {
       try {
-        await fetch('/api/user/onboarding-complete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ shop })
-        });
+        await fetch('/api/onboarding-complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop })
+      });
         // Solo redirige si fue exitoso
         window.location.href = '/dashboard.html';
       } catch (err) {
