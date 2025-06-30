@@ -1,12 +1,9 @@
 import { apiFetch } from './apiFetch.saas.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
-
   const qs = new URLSearchParams(location.search);
   const sessionToken = qs.get('sessionToken');
-  if (sessionToken) {
-    sessionStorage.setItem('sessionToken', sessionToken);
-  }
+  if (sessionToken) sessionStorage.setItem('sessionToken', sessionToken);
 
   const shopFromQuery = qs.get('shop');
   const hostFromQuery = qs.get('host');
@@ -37,30 +34,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function habilitarContinue() {
-  if (!continueBtn) return;
-  const shop = sessionStorage.getItem('shop');
-  const accessToken = sessionStorage.getItem('accessToken');
-  const listo =
-    (shop && accessToken) ||
-    flagShopify.textContent.trim() === 'true' ||
-    sessionStorage.getItem('shopifyConnected') === 'true';
-  if (listo) {
-    continueBtn.disabled = false;
-    continueBtn.classList.replace(
-      'btn-continue--disabled',
-      'btn-continue--enabled'
-    );
-    sessionStorage.removeItem('shopifyConnected');
+    if (!continueBtn) return;
+    const shop = sessionStorage.getItem('shop');
+    const accessToken = sessionStorage.getItem('accessToken');
+    const listo =
+      (shop && accessToken) ||
+      flagShopify.textContent.trim() === 'true' ||
+      sessionStorage.getItem('shopifyConnected') === 'true';
+    if (listo) {
+      continueBtn.disabled = false;
+      continueBtn.classList.remove('btn-continue--disabled');
+      continueBtn.classList.add('btn-continue--enabled');
+      continueBtn.style.pointerEvents = 'auto';
+      continueBtn.style.opacity = 1;
+      sessionStorage.removeItem('shopifyConnected');
+    }
   }
-}
 
   // SOLO busca y guarda credenciales cuando hay tienda conectada
   const pintarShopifyConectado = async () => {
     connectBtn.textContent = 'Connected';
     connectBtn.classList.add('connected');
     connectBtn.disabled = true;
-    habilitarContinue();
-    sessionStorage.removeItem('shopifyConnected'); 
 
     // Busca shop en los posibles lugares
     const shop = shopFromQuery || domainInput.value.trim().toLowerCase() || sessionStorage.getItem('shop');
@@ -75,6 +70,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         sessionStorage.setItem('shop', resp.shop);
         sessionStorage.setItem('accessToken', resp.accessToken);
         console.log('✅ Guardado en sessionStorage:', resp.shop, resp.accessToken);
+        habilitarContinue(); // <-- Aquí SIEMPRE
       } else {
         console.warn('No se encontraron credenciales para la tienda.');
       }
