@@ -1,6 +1,7 @@
 const express = require('express');
 const verifyShopifyToken = require('../../middlewares/verifyShopifyToken');
 const User = require('../models/User');
+const crypto = require('crypto');
 
 const router = express.Router();
 
@@ -30,6 +31,26 @@ router.get('/user', verifyShopifyToken, async (req, res) => {
   } catch (err) {
     console.error("Error al consultar usuario:", err);
     return res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+// Marcar onboarding como completo
+router.post('/onboarding-complete', async (req, res) => {
+  const { shop } = req.body;
+  if (!shop) return res.status(400).json({ error: 'Shop is required' });
+
+  try {
+    const user = await User.findOneAndUpdate(
+      { shop },
+      { $set: { onboardingComplete: true } },
+      { new: true }
+    );
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
