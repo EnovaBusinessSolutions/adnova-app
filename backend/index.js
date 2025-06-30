@@ -33,6 +33,7 @@ const dashboardRoute = require('./api/dashboardRoute');
 const auditRoute     = require('./api/auditRoute'); 
 
 
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 const SHOPIFY_HANDLE = process.env.SHOPIFY_APP_HANDLE;
@@ -284,6 +285,8 @@ app.use('/api', mockShopify);
 app.use('/api/secure', verifySessionToken, secureRoutes);
 app.use('/api/dashboard', dashboardRoute);
 app.use('/api/audit',      auditRoute);
+app.use('/api/shopConnection', require('./routes/shopConnection'));
+
 
 
 app.get('/dashboard', ensureAuthenticated, (r, s) => {
