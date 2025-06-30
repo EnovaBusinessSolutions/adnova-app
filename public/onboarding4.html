@@ -1,22 +1,50 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Onboarding - Step 4</title>
-  <link rel="stylesheet" href="onboarding.css"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Onboarding - ADNOVA AI</title>
+  <link rel="stylesheet" href="onboarding.css" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
 </head>
-<body>
+<body data-page="onboarding3">
   <div class="onboarding-container">
-    <aside class="sidebar">
-      <div class="logo">ADNOVA AI <span>🤖</span></div>
-      <ol class="steps">
-        <li class="step completed">1<br/>Connect your accounts</li>
-        <li class="step completed">2<br/>Review permissions</li>
-        <li class="step completed">3<br/>Analysis</li>
-        <li class="step active">4<br/>Dashboard</li>
-      </ol>
-    </aside>
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+      <div class="logo">
+        <h1>ADNOVA AI<span class="emoji">🤖</span></h1>
+      </div>
+      <div class="steps">
+        <div class="step" data-step="1">
+          <div class="step-indicator"><span class="step-number">1</span></div>
+          <div class="step-text">
+            <h3>Connect your accounts</h3>
+            <p>Add your store and marketing accounts</p>
+          </div>
+        </div>
+        <div class="step" data-step="2">
+          <div class="step-indicator"><span class="step-number">2</span></div>
+          <div class="step-text">
+            <h3>Review permissions</h3>
+            <p>Check and accept required permissions</p>
+          </div>
+        </div>
+        <div class="step" data-step="3">
+          <div class="step-indicator"><span class="step-number">3</span></div>
+          <div class="step-text">
+            <h3>Analysis</h3>
+            <p>We'll analyze your store data</p>
+          </div>
+        </div>
+        <div class="step active" data-step="4">
+          <div class="step-indicator"><span class="step-number">4</span></div>
+          <div class="step-text">
+            <h3>Dashboard</h3>
+            <p>View your optimization results</p>
+          </div>
+        </div>
+      </div>
+    </div>
     <main class="content-panel">
       <h2>Ready to start!</h2>
       <p class="panel-description">
@@ -54,6 +82,6 @@
       </div>
     </main>
   </div>
-  <script src="onboarding4.js"></script>
+  <script src="js/onboarding4.js"></script>
 </body>
 </html>
