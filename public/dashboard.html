@@ -1,285 +1,146 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dashboard - ADNOVA</title>
-  <link rel="stylesheet" href="dashboard.css">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- CSS propio -->
+  <link rel="stylesheet" href="dashboard.css" />
+
+  <!-- Tipografía -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <!-- (Si más tarde usas Recharts u otro lib) -->
   <script src="https://cdn.jsdelivr.net/npm/recharts/umd/Recharts.min.js"></script>
 </head>
 <body>
   <div class="dashboard-layout">
+    <!-- ▸▸▸ Barra lateral (sin cambios estructurales) -->
     <div class="sidebar">
       <div class="sidebar-header">
-        <div class="logo">
-          <span class="text-shopify">AD</span>NOVA AI 🤖
-        </div>
+        <div class="logo"><span class="text-shopify">AD</span>NOVA AI 🤖</div>
         <button class="sidebar-toggle">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M15 18l-6-6 6-6" />
-          </svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
         </button>
       </div>
-      
+
+      <!-- Navegación -->
       <nav class="sidebar-nav">
         <ul>
-          <li class="nav-item active">
-            <a href="dashboard.html">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="3" width="7" height="7" />
-                <rect x="14" y="3" width="7" height="7" />
-                <rect x="14" y="14" width="7" height="7" />
-                <rect x="3" y="14" width="7" height="7" />
-              </svg>
-              <span>Panel</span>
-            </a>
-          </li>
-          <li class="nav-item">
-            <a href="audit.html">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6" />
-                <path d="M16 13H8" />
-                <path d="M16 17H8" />
-                <path d="M10 9H8" />
-              </svg>
-              <span>Auditoría</span>
-            </a>
-          </li>
-          <li class="nav-item">
-            <a href="pixel-verifier.html">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-              </svg>
-              <span>Verificador de Píxeles</span>
-            </a>
-          </li>
-          <li class="nav-item disabled">
-            <a href="#">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
-              </svg>
-              <span>Próximamente</span>
-            </a>
-          </li>
-          <li class="nav-item">
-            <a href="configuracion.html">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-              <span>Configuración</span>
-            </a>
-          </li>
+          <li class="nav-item active"><a href="dashboard.html"> <span>Panel</span></a></li>
+          <li class="nav-item"><a href="audit.html"> <span>Auditoría</span></a></li>
+          <li class="nav-item"><a href="pixel-verifier.html"> <span>Verificador de Píxeles</span></a></li>
+          <li class="nav-item disabled"><a href="#"> <span>Próximamente</span></a></li>
+          <li class="nav-item"><a href="configuracion.html"> <span>Configuración</span></a></li>
         </ul>
       </nav>
-      
+
+      <!-- Perfil -->
       <div class="sidebar-footer">
         <div class="user-profile">
           <div class="avatar">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <polygon points="6 3 18 3 22 9 12 21 2 9 6 3" />
-    <line x1="12" y1="21" x2="12" y2="9" />
-    <line x1="22" y1="9" x2="2" y2="9" />
-    <line x1="6" y1="3" x2="12" y2="9" />
-    <line x1="18" y1="3" x2="12" y2="9" />
-  </svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" stroke="white" stroke-width="2" fill="none"><polygon points="6 3 18 3 22 9 12 21 2 9"/><line x1="12" y1="21" x2="12" y2="9"/><line x1="22" y1="9" x2="2" y2="9"/></svg>
           </div>
-          <div class="user-info">
-           <p id="user-email" class="user-email">Cargando correo...</p>
-          </div>
+          <div class="user-info"><p id="user-email" class="user-email">Cargando correo…</p></div>
         </div>
       </div>
     </div>
-    
+
+    <!-- ▸▸▸ Contenido principal -->
     <main class="main-content">
       <div class="dashboard">
         <div class="dashboard-header">
           <h1 class="page-title">Panel de Control</h1>
-          <div class="sync-badge">
-            <span class="sync-indicator"></span>
-            Última sincronización: hace 2 minutos
-          </div>
+          <div class="sync-badge"><span class="sync-indicator"></span>Última sincronización: hace 2 minutos</div>
         </div>
-        
+
+        <!-- KPI Cards -->
         <div class="kpi-cards">
+          <!-- Tráfico (placeholder por ahora) -->
           <div class="kpi-card">
-            <div class="kpi-card-header">
-              <h3>Tráfico de la Tienda</h3>
-              <div class="kpi-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
-                  <polyline points="17 6 23 6 23 12" />
-                </svg>
-              </div>
-            </div>
-            <div class="kpi-data">
-              <p class="kpi-value">4,826</p>
-              <p class="kpi-change positive">
-                <span>↑</span> 12% vs período anterior
-              </p>
-            </div>
+            <div class="kpi-card-header"><h3>Tráfico de la Tienda</h3></div>
+            <div class="kpi-data"><p class="kpi-value" id="trafficPlaceholder">—</p></div>
           </div>
-          
+
+          <!-- Pedidos -->
           <div class="kpi-card">
-            <div class="kpi-card-header">
-              <h3>Tasa de Conversión</h3>
-            </div>
-            <div class="kpi-data">
-              <p class="kpi-value">2.3%</p>
-              <p class="kpi-change negative">
-                <span>↓</span> 0.5% vs período anterior
-              </p>
-            </div>
+            <div class="kpi-card-header"><h3>Pedidos últimos 30 días</h3></div>
+            <div class="kpi-data"><p class="kpi-value"><span id="totalOrders">—</span></p></div>
           </div>
-          
+
+          <!-- Ventas -->
           <div class="kpi-card">
-            <div class="kpi-card-header">
-              <h3>Eventos de Seguimiento</h3>
-              <div class="kpi-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-                </svg>
-              </div>
-            </div>
-            <div class="kpi-data">
-              <p class="kpi-value">7/12</p>
-              <p class="kpi-change negative">
-                <span>↓</span> 5 faltantes
-              </p>
-            </div>
+            <div class="kpi-card-header"><h3>Ventas últimos 30 días</h3></div>
+            <div class="kpi-data"><p class="kpi-value"><span id="totalSales">—</span></p></div>
+          </div>
+
+          <!-- Valor Promedio de Pedido (AOV) -->
+          <div class="kpi-card">
+            <div class="kpi-card-header"><h3>Valor Promedio de Pedido</h3></div>
+            <div class="kpi-data"><p class="kpi-value"><span id="avgOrderValue">—</span></p></div>
           </div>
         </div>
-        
+
+        <!-- Embudo + Estado de Píxeles -->
         <div class="charts-section">
+          <!-- Embudo -->
           <div class="chart-container">
             <h2 class="section-title">Embudo de Conversión</h2>
-            <div class="chart">
-              <div class="bar-chart">
-                <div class="chart-row">
-                  <div class="chart-label">Añadir al Carrito</div>
-                  <div class="chart-bar-container">
-                    <div class="chart-bar" style="width: 68%;" data-value="68">
-                      <span class="chart-value">68</span>
-                    </div>
-                  </div>
+            <div class="bar-chart">
+              <div class="chart-row">
+                <div class="chart-label">Añadir al Carrito</div>
+                <div class="chart-bar-container">
+                  <div class="chart-bar" style="width:0;"><span class="chart-value" id="funnelAddToCart">—</span></div>
                 </div>
-                <div class="chart-row">
-                  <div class="chart-label">Iniciar Pago</div>
-                  <div class="chart-bar-container">
-                    <div class="chart-bar" style="width: 42%;" data-value="42">
-                      <span class="chart-value">42</span>
-                    </div>
-                  </div>
+              </div>
+              <div class="chart-row">
+                <div class="chart-label">Iniciar Pago</div>
+                <div class="chart-bar-container">
+                  <div class="chart-bar" style="width:0;"><span class="chart-value" id="funnelCheckout">—</span></div>
                 </div>
-                <div class="chart-row">
-                  <div class="chart-label">Compra</div>
-                  <div class="chart-bar-container">
-                    <div class="chart-bar" style="width: 23%;" data-value="23">
-                      <span class="chart-value">23</span>
-                    </div>
-                  </div>
+              </div>
+              <div class="chart-row">
+                <div class="chart-label">Compra</div>
+                <div class="chart-bar-container">
+                  <div class="chart-bar" style="width:0;"><span class="chart-value" id="funnelPurchase">—</span></div>
                 </div>
               </div>
             </div>
           </div>
-          
+
+          <!-- Estado de Píxeles (placeholder) -->
           <div class="chart-container">
             <h2 class="section-title">Estado de Píxeles</h2>
-            <div class="pixel-status">
-              <div class="pixel-item">
-                <div class="pixel-icon">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" />
-                  </svg>
-                </div>
-                <div class="pixel-info">
-                  <h3>Píxel de Facebook</h3>
-                  <p>ID: 123456789</p>
-                </div>
-                <span class="status-badge warning">Incompleto</span>
-              </div>
-              
-              <div class="pixel-item">
-                <div class="pixel-icon">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                    <polyline points="22,6 12,13 2,6" />
-                  </svg>
-                </div>
-                <div class="pixel-info">
-                  <h3>Google Analytics</h3>
-                  <p>ID: GA-12345</p>
-                </div>
-                <span class="status-badge warning">Incompleto</span>
-              </div>
-              
-              <div class="pixel-item">
-                <div class="pixel-icon">
-                  <span>TT</span>
-                </div>
-                <div class="pixel-info">
-                  <h3>Píxel de TikTok</h3>
-                  <p>No conectado</p>
-                </div>
-                <button class="btn-connect">Conectar</button>
-              </div>
+            <div class="pixel-status" id="pixelStatus">
+              <!-- Se llenará cuando tengamos el scope `read_themes` -->
+              <p class="helper-text">Próximamente</p>
             </div>
           </div>
         </div>
-        
+
+        <!-- Top Productos -->
+        <div class="top-products">
+          <h2 class="section-title">Top 5 productos más vendidos</h2>
+          <ul id="topProducts"></ul>
+        </div>
+
+        <!-- Centro de Acciones -->
         <div class="action-center">
           <h2 class="section-title">Centro de Acciones</h2>
-          <div class="action-items">
-            <div class="action-item high">
-              <div class="action-severity"></div>
-              <div class="action-content">
-                <h4>Evento de Compra Faltante</h4>
-                <p>El píxel de Facebook no está rastreando eventos de compra al finalizar el pago</p>
-              </div>
-              <button class="btn-action">Arreglo automático</button>
-            </div>
-            
-            <div class="action-item medium">
-              <div class="action-severity"></div>
-              <div class="action-content">
-                <h4>Imágenes de Producto Lentas</h4>
-                <p>12 imágenes de productos exceden el tamaño de archivo recomendado</p>
-              </div>
-              <button class="btn-action">Optimizar</button>
-            </div>
-            
-            <div class="action-item medium">
-              <div class="action-severity"></div>
-              <div class="action-content">
-                <h4>Metadescripción Faltante</h4>
-                <p>8 páginas de productos no tienen metadescripciones</p>
-              </div>
-              <button class="btn-action">Generar</button>
-            </div>
-            
-            <div class="action-item low">
-              <div class="action-severity"></div>
-              <div class="action-content">
-                <h4>Recuperación de Carrito Abandonado</h4>
-                <p>Habilitar correos automáticos para carritos abandonados</p>
-              </div>
-              <button class="btn-action">Habilitar</button>
-            </div>
-          </div>
+          <div class="action-items" id="actionCenter"></div>
         </div>
       </div>
     </main>
   </div>
-  
-<div style="margin-top: 10px; margin-left: 20px;">
-  <button onclick="window.location.href='/logout'" class="btn btn-secondary logout-btn">
-    Cerrar sesión
-  </button>
-</div>
-<script src="js/sessionCheck.js" defer></script>
-  <script src="script.js" defer></script>
 
+  <!-- Botón Cerrar Sesión -->
+  <div style="margin-top:10px;margin-left:20px;">
+    <button onclick="window.location.href='/logout'" class="btn btn-secondary logout-btn">Cerrar sesión</button>
+  </div>
+
+  <!-- Scripts -->
+  <script src="js/sessionCheck.js" defer></script>
+  <script src="js/dashboard.js"  defer></script>
 </body>
 </html>
