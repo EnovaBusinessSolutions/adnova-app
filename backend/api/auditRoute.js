@@ -1,22 +1,27 @@
-// backend/api/auditRoutes.js
+// backend/api/auditRoute.js
 const express = require('express');
 const router = express.Router();
-const { procesarAuditoria } = require('../jobs/auditJob');
+const { generarAuditoriaIA, procesarAuditoria } = require('../jobs/auditJob');
 
-// Llama y guarda la auditoría (flujo recomendado)
+// Ruta para iniciar la auditoría
 router.post('/start', async (req, res) => {
   const { shop, accessToken, userId } = req.body;
-  if (!shop || !accessToken || !userId) {
-    return res.status(400).json({ error: 'shop, token y userId requeridos' });
-  }
+  if (!shop || !accessToken)
+    return res.status(400).json({ error: 'shop y token requeridos' });
 
   try {
-    // Genera la auditoría, la guarda en Mongo y devuelve resultado simple
-    const resultado = await procesarAuditoria(userId, shop, accessToken);
-    res.json({ ok: true, resultado });
+    if (userId) {
+      // OPCIÓN IDEAL: Guarda auditoría en Mongo y responde "saved"
+      await procesarAuditoria(userId, shop, accessToken);
+      res.json({ ok: true, saved: true });
+    } else {
+      // Solo genera auditoría y la responde (no guarda en Mongo)
+      const resultado = await generarAuditoriaIA(shop, accessToken);
+      res.json({ ok: true, resultado });
+    }
   } catch (err) {
     console.error('Error en auditoría:', err);
-    res.status(500).json({ error: 'Falló la auditoría' });
+    res.status(500).json({ error: 'Fallo la auditoría' });
   }
 });
 
