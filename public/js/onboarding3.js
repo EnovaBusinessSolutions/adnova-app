@@ -2,6 +2,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   // Obtén los datos guardados del usuario/shop
   const shop = sessionStorage.getItem('shop');
   const accessToken = sessionStorage.getItem('accessToken');
+  const userId = sessionStorage.getItem('userId');
+
   const btn = document.getElementById('continue-btn-3');
   const progressBar = document.querySelector('.progress-indicator');
   const progressText = document.querySelector('.progress-text');
@@ -76,7 +78,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const res = await fetch('/api/audit/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shop, accessToken })
+      body: JSON.stringify({ shop, accessToken, userId })
     });
 
     // Verifica si responde bien el backend
