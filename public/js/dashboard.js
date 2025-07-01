@@ -1,45 +1,56 @@
 // public/js/dashboard.js
 
 async function initDashboard() {
-  // 1. Trae la auditoría más reciente
-  const r = await apiFetch('/audits/latest');
-  const d = await r.json();
+  // 1. Trae los datos necesarios del usuario
+  const userId = sessionStorage.getItem('userId');
+  const shop = sessionStorage.getItem('shop');
+  if (!userId || !shop) {
+    alert("No se encontró la sesión de usuario. Vuelve a iniciar sesión.");
+    return;
+  }
 
-  // Si no hay auditoría, sal
-  if (!d || !d._id) return;
+  // 2. Llama al backend correctamente
+  const r = await fetch(`/api/audit/latest?userId=${encodeURIComponent(userId)}&shop=${encodeURIComponent(shop)}`);
+  const data = await r.json();
 
-  // KPIs principales
+  // 3. Maneja errores o falta de datos
+  if (!data.ok || !data.audit) {
+    // Muestra un error si lo deseas
+    alert(data.error || 'No se encontró auditoría');
+    return;
+  }
+  const d = data.audit;
+
+  // 4. KPIs principales
   $('#totalSales').textContent      = d.salesLast30 !== undefined ? `${d.salesLast30.toFixed(0)}` : '—';
   $('#totalOrders').textContent     = d.ordersLast30 !== undefined ? `${d.ordersLast30}` : '—';
   $('#avgOrderValue').textContent   = d.avgOrderValue !== undefined ? `$${d.avgOrderValue.toFixed(2)}` : '—';
 
-  // Embudo de conversión (aquí debes adaptar los nombres según los datos de tu auditoría)
+  // 5. Embudo de conversión (adapta si tu modelo lo guarda)
+  // ¡OJO! Aquí, por defecto, en la auditoría no tienes funnelData, solo muéstralo si algún día lo tienes.
   if (d.funnelData) {
     $('#funnelAddToCart').textContent = d.funnelData.addToCart || '0';
     $('#funnelCheckout').textContent  = d.funnelData.checkout || '0';
     $('#funnelPurchase').textContent  = d.funnelData.purchase || '0';
-    // Si quieres modificar el ancho de la barra:
-    $('#funnelAddToCartBar').style.width = `${d.funnelData.addToCart || 0}%`;
-    $('#funnelCheckoutBar').style.width  = `${d.funnelData.checkout || 0}%`;
-    $('#funnelPurchaseBar').style.width  = `${d.funnelData.purchase || 0}%`;
+    // Si en el futuro tienes barras de porcentaje, puedes ajustar el width aquí.
   }
 
-  // Top productos
+  // 6. Top productos
   renderTopProducts(d.topProducts);
 
-  // Centro de acciones
+  // 7. Centro de acciones
   renderActionCenter(d.actionCenter);
 }
 
 // Renderiza la tabla/lista de productos más vendidos
 function renderTopProducts(topProducts = []) {
-  const list = document.getElementById('topProductsList');
+  const list = document.getElementById('topProducts');
   if (!list) return;
-  list.innerHTML = topProducts.length
+  list.innerHTML = topProducts && topProducts.length
     ? topProducts.map(p => `
         <li>
-          <span>${p.name}</span>
-          <span class="product-sales">${p.sales} ventas</span>
+          <span>${p.name || p.title}</span>
+          <span class="product-sales">${p.sales || p.qtySold || 0} ventas</span>
         </li>
       `).join('')
     : '<li>No hay datos suficientes aún</li>';
@@ -47,9 +58,9 @@ function renderTopProducts(topProducts = []) {
 
 // Renderiza las acciones críticas detectadas
 function renderActionCenter(items = []) {
-  const actionDiv = document.getElementById('actionCenterItems');
+  const actionDiv = document.getElementById('actionCenter');
   if (!actionDiv) return;
-  actionDiv.innerHTML = items.length
+  actionDiv.innerHTML = items && items.length
     ? items.map(act => `
         <div class="action-item ${act.severity}">
           <div class="action-content">
