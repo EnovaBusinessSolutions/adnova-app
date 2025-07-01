@@ -7,6 +7,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const shopFromQuery = qs.get('shop');
   const hostFromQuery = qs.get('host');
+  const userId = sessionStorage.getItem('userId');
+
 
   const connectBtn        = document.getElementById('connect-shopify-btn');
   const connectGoogleBtn  = document.getElementById('connect-google-btn');
@@ -16,6 +18,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const domainStep        = document.getElementById('shopify-domain-step');
   const domainInput       = document.getElementById('shop-domain-input');
   const domainSend        = document.getElementById('shop-domain-send');
+
 
   try {
     const ping = await apiFetch('/api/saas/ping');

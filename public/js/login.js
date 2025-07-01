@@ -54,6 +54,10 @@ document.addEventListener('DOMContentLoaded', function () {
       attempts++;
     }
     if (user) {
+      // ⬇️ Guarda el userId en sessionStorage para usarlo en todo el flujo
+      if (user._id) {
+        sessionStorage.setItem('userId', user._id);
+      }
       const redirectUrl = user.onboardingComplete ? '/dashboard' : '/onboarding';
       window.location.href = redirectUrl;
     } else {
@@ -61,6 +65,8 @@ document.addEventListener('DOMContentLoaded', function () {
     }
   }
 });
+
+// Registrar botón de registro (sin cambios)
 const registerBtn = document.getElementById('register-btn');
 if (registerBtn) {
   registerBtn.addEventListener('click', () => {
@@ -68,6 +74,7 @@ if (registerBtn) {
   });
 }
 
+// Registrar botón de Google (sin cambios)
 const googleBtn = document.getElementById('google-btn');
 if (googleBtn) {
   googleBtn.addEventListener('click', () => {

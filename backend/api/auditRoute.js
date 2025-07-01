@@ -1,20 +1,22 @@
+// backend/api/auditRoutes.js
 const express = require('express');
 const router = express.Router();
-const { generarAuditoriaIA } = require('../jobs/auditJob');
+const { procesarAuditoria } = require('../jobs/auditJob');
 
-// 1. Dispara auditoría directamente (sin queue)
+// Llama y guarda la auditoría (flujo recomendado)
 router.post('/start', async (req, res) => {
-  const { shop, accessToken } = req.body;
-  if (!shop || !accessToken)
-    return res.status(400).json({ error: 'shop y token requeridos' });
+  const { shop, accessToken, userId } = req.body;
+  if (!shop || !accessToken || !userId) {
+    return res.status(400).json({ error: 'shop, token y userId requeridos' });
+  }
 
   try {
-    // Llama directo a la función de IA
-    const resultado = await generarAuditoriaIA(shop, accessToken);
+    // Genera la auditoría, la guarda en Mongo y devuelve resultado simple
+    const resultado = await procesarAuditoria(userId, shop, accessToken);
     res.json({ ok: true, resultado });
   } catch (err) {
     console.error('Error en auditoría:', err);
-    res.status(500).json({ error: 'Fallo la auditoría' });
+    res.status(500).json({ error: 'Falló la auditoría' });
   }
 });
 
