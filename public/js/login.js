@@ -54,16 +54,14 @@ document.addEventListener('DOMContentLoaded', function () {
       attempts++;
     }
     if (user) {
-      // Guarda el userId y el dominio de la tienda en sessionStorage
       if (user._id) {
         sessionStorage.setItem('userId', user._id);
       }
       if (user.shop) {
         sessionStorage.setItem('shop', user.shop);
       }
-
-      // Si quieres debuggear:
-      // console.log('userId:', sessionStorage.getItem('userId'), 'shop:', sessionStorage.getItem('shop'));
+      // DEBUG
+      console.log('[LOGIN] Guardando en sessionStorage:', user._id, user.shop);
 
       const redirectUrl = user.onboardingComplete ? '/dashboard' : '/onboarding';
       window.location.href = redirectUrl;

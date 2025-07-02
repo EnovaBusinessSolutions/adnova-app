@@ -256,6 +256,7 @@ app.get('/api/session', (req, res) => {
     user: {
       _id: req.user._id,
       email: req.user.email,
+      shop: req.user.shop,   
       onboardingComplete: req.user.onboardingComplete,
       googleConnected: req.user.googleConnected,
       metaConnected: req.user.metaConnected,
