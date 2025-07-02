@@ -53,11 +53,24 @@ document.addEventListener('DOMContentLoaded', function () {
       await new Promise(resolve => setTimeout(resolve, 300));
       attempts++;
     }
+
     if (user) {
-      // ⬇️ Guarda el userId en sessionStorage para usarlo en todo el flujo
+      // Guarda el userId en sessionStorage
       if (user._id) {
         sessionStorage.setItem('userId', user._id);
       }
+
+      // === GUARDA EL SHOP/TIENDA TAMBIÉN ===
+      // Cambia el nombre de este campo si tu modelo de usuario lo guarda diferente
+      // Ejemplos: user.shopDomain, user.shop, user.storeDomain...
+      const shopValue = user.shopDomain || user.shop || user.storeDomain || null;
+      if (shopValue) {
+        sessionStorage.setItem('shop', shopValue);
+      } else {
+        // Si no tienes este campo, muestra advertencia (opcional)
+        console.warn("No se encontró el dominio de la tienda en el usuario. ¿Está guardado como otro nombre?");
+      }
+
       const redirectUrl = user.onboardingComplete ? '/dashboard' : '/onboarding';
       window.location.href = redirectUrl;
     } else {
