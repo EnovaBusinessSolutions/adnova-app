@@ -18,11 +18,12 @@ async function initAudit() {
   let audit = null;
   try {
     const params = new URLSearchParams({ userId, shop });
-    const r = await apiFetch(`/audits/latest?${params.toString()}`);
+    // USAR LA RUTA CORRECTA:
+    const r = await fetch(`/api/audit/latest?${params.toString()}`);  // ← Aquí el fix
     const data = await r.json();
+    console.log('[AUDIT DEBUG]', data); // <-- Puedes quitarlo luego si todo va bien
     if (data.ok && data.audit) audit = data.audit;
   } catch (e) {
-    // Error de red o respuesta
     ['ux', 'seo', 'performance', 'media'].forEach(cat => {
       $(`audit-${cat}`).innerHTML = `<div class="empty-state">No se pudo cargar la auditoría.</div>`;
     });
