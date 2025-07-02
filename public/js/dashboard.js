@@ -1,5 +1,8 @@
 // public/js/dashboard.js
 
+// Utilidad para seleccionar por id fácil (tipo jQuery)
+function $(id) { return document.getElementById(id.replace(/^#/, '')); }
+
 async function initDashboard() {
   // 1. Trae los datos necesarios del usuario
   const userId = sessionStorage.getItem('userId');
@@ -10,12 +13,18 @@ async function initDashboard() {
   }
 
   // 2. Llama al backend correctamente
-  const r = await fetch(`/api/audit/latest?userId=${encodeURIComponent(userId)}&shop=${encodeURIComponent(shop)}`);
-  const data = await r.json();
+  let data;
+  try {
+    const r = await fetch(`/api/audit/latest?userId=${encodeURIComponent(userId)}&shop=${encodeURIComponent(shop)}`);
+    data = await r.json();
+    console.log('[DASHBOARD DEBUG]', data); // <-- Útil para depuración, puedes quitarlo si todo va bien
+  } catch (err) {
+    alert('Error de red al consultar la auditoría');
+    return;
+  }
 
   // 3. Maneja errores o falta de datos
   if (!data.ok || !data.audit) {
-    // Muestra un error si lo deseas
     alert(data.error || 'No se encontró auditoría');
     return;
   }
@@ -27,12 +36,11 @@ async function initDashboard() {
   $('#avgOrderValue').textContent   = d.avgOrderValue !== undefined ? `$${d.avgOrderValue.toFixed(2)}` : '—';
 
   // 5. Embudo de conversión (adapta si tu modelo lo guarda)
-  // ¡OJO! Aquí, por defecto, en la auditoría no tienes funnelData, solo muéstralo si algún día lo tienes.
   if (d.funnelData) {
     $('#funnelAddToCart').textContent = d.funnelData.addToCart || '0';
     $('#funnelCheckout').textContent  = d.funnelData.checkout || '0';
     $('#funnelPurchase').textContent  = d.funnelData.purchase || '0';
-    // Si en el futuro tienes barras de porcentaje, puedes ajustar el width aquí.
+    // Aquí puedes ajustar el width de la barra si tienes visualizaciones
   }
 
   // 6. Top productos
@@ -49,7 +57,7 @@ function renderTopProducts(topProducts = []) {
   list.innerHTML = topProducts && topProducts.length
     ? topProducts.map(p => `
         <li>
-          <span>${p.name || p.title}</span>
+          <span>${p.name || p.title || 'Producto'}</span>
           <span class="product-sales">${p.sales || p.qtySold || 0} ventas</span>
         </li>
       `).join('')
@@ -62,18 +70,15 @@ function renderActionCenter(items = []) {
   if (!actionDiv) return;
   actionDiv.innerHTML = items && items.length
     ? items.map(act => `
-        <div class="action-item ${act.severity}">
+        <div class="action-item ${act.severity || ''}">
           <div class="action-content">
-            <h4>${act.title}</h4>
-            <p>${act.description}</p>
+            <h4>${act.title || ''}</h4>
+            <p>${act.description || ''}</p>
           </div>
           <button class="btn-action">${act.button || 'Revisar'}</button>
         </div>
       `).join('')
     : '<p>No hay acciones pendientes 🎉</p>';
 }
-
-// Utilidad para seleccionar por id fácil (tipo jQuery)
-function $(id) { return document.getElementById(id.replace(/^#/, '')); }
 
 document.addEventListener('DOMContentLoaded', initDashboard);
