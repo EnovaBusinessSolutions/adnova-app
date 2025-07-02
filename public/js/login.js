@@ -53,23 +53,19 @@ document.addEventListener('DOMContentLoaded', function () {
       await new Promise(resolve => setTimeout(resolve, 300));
       attempts++;
     }
-
     if (user) {
-      // Guarda el userId en sessionStorage
-      if (user._id) {
-        sessionStorage.setItem('userId', user._id);
-      }
+      // Guarda el userId y el dominio de la tienda en sessionStorage
+      if (user._id) sessionStorage.setItem('userId', user._id);
 
-      // === GUARDA EL SHOP/TIENDA TAMBIÉN ===
-      // Cambia el nombre de este campo si tu modelo de usuario lo guarda diferente
-      // Ejemplos: user.shopDomain, user.shop, user.storeDomain...
-      const shopValue = user.shopDomain || user.shop || user.storeDomain || null;
-      if (shopValue) {
-        sessionStorage.setItem('shop', shopValue);
-      } else {
-        // Si no tienes este campo, muestra advertencia (opcional)
-        console.warn("No se encontró el dominio de la tienda en el usuario. ¿Está guardado como otro nombre?");
+      // ¡OJO! Cambia 'shopDomain' por el nombre real del campo que viene del backend si es necesario
+      // Ejemplo: user.shop, user.shopDomain, user.shopifyDomain, etc.
+      if (user.shopDomain) {
+        sessionStorage.setItem('shop', user.shopDomain);
+      } else if (user.shop) {
+        sessionStorage.setItem('shop', user.shop);
       }
+      // Puedes loguear para debug:
+      // console.log('userId', sessionStorage.getItem('userId'), 'shop', sessionStorage.getItem('shop'));
 
       const redirectUrl = user.onboardingComplete ? '/dashboard' : '/onboarding';
       window.location.href = redirectUrl;
@@ -79,7 +75,7 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 });
 
-// Registrar botón de registro (sin cambios)
+// Registrar botón de registro
 const registerBtn = document.getElementById('register-btn');
 if (registerBtn) {
   registerBtn.addEventListener('click', () => {
@@ -87,7 +83,7 @@ if (registerBtn) {
   });
 }
 
-// Registrar botón de Google (sin cambios)
+// Registrar botón de Google
 const googleBtn = document.getElementById('google-btn');
 if (googleBtn) {
   googleBtn.addEventListener('click', () => {
