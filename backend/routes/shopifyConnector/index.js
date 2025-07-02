@@ -10,9 +10,20 @@ const { SHOPIFY_API_KEY, SHOPIFY_API_SECRET } = process.env;
 const SCOPES       = 'read_products,read_customers,read_orders';
 const REDIRECT_URI = 'https://adnova-app.onrender.com/connector/auth/callback';
 function startOAuth(req, res) {
-  const { shop, host } = req.query;
-  if (!shop || !host) return res.status(400).send('Faltan shop u host');
+  // Primero intenta obtener shop de la query (como antes)
+  let shop = req.query.shop;
+  let host = req.query.host;
 
+    // Log para ver de dónde viene el parámetro shop
+  console.log('>>> startOAuth | QUERY shop:', req.query.shop, '| HEADER x-shopify-shop-domain:', req.headers['x-shopify-shop-domain']);
+
+  // Si no hay shop en query, intenta obtenerlo del header (caso Shopify embebido)
+  if (!shop && req.headers['x-shopify-shop-domain']) {
+    shop = req.headers['x-shopify-shop-domain'];
+  }
+
+  // Si no hay shop, muestra un error claro
+  if (!shop) return res.status(400).send('Falta parámetro shop');
   const url =
     `https://${shop}/admin/oauth/authorize` +
     `?client_id=${SHOPIFY_API_KEY}` +
@@ -60,22 +71,34 @@ router.get('/auth/callback', async (req, res) => {
 
 router.use('/webhooks', require('./webhooks'));
 router.get('/interface', async (req, res) => {
-  const { shop, host } = req.query;
-  if (!shop || !host) {
-    return res.status(400).send('Faltan parámetros "shop" y/o "host"');
+  // 1. Intentar obtener shop y host de la query (caso SAAS)
+  let shop = req.query.shop;
+  let host = req.query.host;
+
+    // Log para ver de dónde viene el parámetro shop
+  console.log('>>> /interface | QUERY shop:', req.query.shop, '| HEADER x-shopify-shop-domain:', req.headers['x-shopify-shop-domain']);
+
+  // 2. Si shop no viene en query, obténlo del header embebido (caso Shopify Admin)
+  if (!shop && req.headers['x-shopify-shop-domain']) {
+    shop = req.headers['x-shopify-shop-domain'];
   }
 
-  // Busca en tu base si ya tienes accessToken de ese shop
+  // 3. Si no hay shop, manda error claro
+  if (!shop) {
+    return res.status(400).send('No se recibió el parámetro "shop" ni en query ni en headers.');
+  }
+
+  // 4. Verifica si tienes accessToken para ese shop
   const shopConn = await ShopConnections.findOne({ shop });
   if (!shopConn || !shopConn.accessToken) {
-    // No hay sesión, fuerza OAuth
-    return res.redirect(`/connector?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`);
-    // Nota: /connector ya inicia OAuth (ver tu código arriba)
+    // No hay sesión/token, inicia el OAuth
+    return res.redirect(`/connector?shop=${encodeURIComponent(shop)}${host ? `&host=${encodeURIComponent(host)}` : ''}`);
   }
 
-  // Si sí tienes token, muestra la UI embebida
+  // 5. Si tienes token, muestra la interfaz embebida
   res.sendFile(path.join(__dirname, '../../../public/connector/interface.html'));
 });
+
 
 
 module.exports = router;
