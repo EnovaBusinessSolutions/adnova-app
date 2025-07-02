@@ -55,17 +55,15 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     if (user) {
       // Guarda el userId y el dominio de la tienda en sessionStorage
-      if (user._id) sessionStorage.setItem('userId', user._id);
-
-      // ¡OJO! Cambia 'shopDomain' por el nombre real del campo que viene del backend si es necesario
-      // Ejemplo: user.shop, user.shopDomain, user.shopifyDomain, etc.
-      if (user.shopDomain) {
-        sessionStorage.setItem('shop', user.shopDomain);
-      } else if (user.shop) {
+      if (user._id) {
+        sessionStorage.setItem('userId', user._id);
+      }
+      if (user.shop) {
         sessionStorage.setItem('shop', user.shop);
       }
-      // Puedes loguear para debug:
-      // console.log('userId', sessionStorage.getItem('userId'), 'shop', sessionStorage.getItem('shop'));
+
+      // Si quieres debuggear:
+      // console.log('userId:', sessionStorage.getItem('userId'), 'shop:', sessionStorage.getItem('shop'));
 
       const redirectUrl = user.onboardingComplete ? '/dashboard' : '/onboarding';
       window.location.href = redirectUrl;
