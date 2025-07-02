@@ -59,8 +59,23 @@ router.get('/auth/callback', async (req, res) => {
 });
 
 router.use('/webhooks', require('./webhooks'));
-router.get('/interface', (req, res) => {
+router.get('/interface', async (req, res) => {
+  const { shop, host } = req.query;
+  if (!shop || !host) {
+    return res.status(400).send('Faltan parámetros "shop" y/o "host"');
+  }
+
+  // Busca en tu base si ya tienes accessToken de ese shop
+  const shopConn = await ShopConnections.findOne({ shop });
+  if (!shopConn || !shopConn.accessToken) {
+    // No hay sesión, fuerza OAuth
+    return res.redirect(`/connector?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`);
+    // Nota: /connector ya inicia OAuth (ver tu código arriba)
+  }
+
+  // Si sí tienes token, muestra la UI embebida
   res.sendFile(path.join(__dirname, '../../../public/connector/interface.html'));
 });
+
 
 module.exports = router;
