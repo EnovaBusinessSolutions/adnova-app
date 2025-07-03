@@ -3,7 +3,7 @@ const OpenAI = require('openai');
 const axios  = require('axios');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || '2024-04';
+const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || '2024-07';
 const Audit = require('../models/Audit');
 const {
   getSalesMetrics,
