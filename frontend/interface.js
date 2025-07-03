@@ -31,7 +31,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       sessionStorage.setItem('sessionToken', sessionToken);
       localStorage.setItem('sessionToken', sessionToken); 
 
-      fetch('https://adnova-app.onrender.com/api/secure/ping', {
+      fetch('https://ai.adnova.digital/api/secure/ping', {
         headers: { Authorization: `Bearer ${sessionToken}` },
         credentials: 'include'
       });
@@ -58,7 +58,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (btn) {
     btn.addEventListener('click', () => {
-      window.open('https://adnova-app.onrender.com/', '_blank');
+      window.open('https://ai.adnova.digital/', '_blank');
     });
   }
 

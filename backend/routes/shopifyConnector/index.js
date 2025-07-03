@@ -8,7 +8,7 @@ const { SHOPIFY_API_KEY, SHOPIFY_API_SECRET } = process.env;
 
 
 const SCOPES       = 'read_products,read_customers,read_orders';
-const REDIRECT_URI = 'https://adnova-app.onrender.com/connector/auth/callback';
+const REDIRECT_URI = 'https://ai.adnova.digital/connector/auth/callback';
 function startOAuth(req, res) {
   // Primero intenta obtener shop de la query (como antes)
   let shop = req.query.shop;

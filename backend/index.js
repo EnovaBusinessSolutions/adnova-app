@@ -108,7 +108,7 @@ app.use('/connector', connector);
 
 app.use(cors({
   origin: [
-    'https://adnova-app.onrender.com',
+    'https://ai.adnova.digital',
     /\.myshopify\.com$/, 
     'https://admin.shopify.com'
   ],

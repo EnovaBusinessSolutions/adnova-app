@@ -6,7 +6,7 @@ const User = require('../models/User');
 
 const clientId = process.env.META_APP_ID;
 const clientSecret = process.env.META_APP_SECRET;
-const redirectUri = 'https://adnova-app.onrender.com/auth/meta/callback';
+const redirectUri = 'https://ai.adnova.digital/auth/meta/callback';
 
 router.get('/login', (req, res) => {
   const state = req.sessionID;
