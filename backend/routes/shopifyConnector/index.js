@@ -71,31 +71,33 @@ router.get('/auth/callback', async (req, res) => {
 
 router.use('/webhooks', require('./webhooks'));
 router.get('/interface', async (req, res) => {
-  // 1. Intentar obtener shop y host de la query (caso SAAS)
   let shop = req.query.shop;
   let host = req.query.host;
 
-    // Log para ver de dónde viene el parámetro shop
-  console.log('>>> /interface | QUERY shop:', req.query.shop, '| HEADER x-shopify-shop-domain:', req.headers['x-shopify-shop-domain']);
-
-  // 2. Si shop no viene en query, obténlo del header embebido (caso Shopify Admin)
+  // INTENTA detectar el shop SIEMPRE
   if (!shop && req.headers['x-shopify-shop-domain']) {
     shop = req.headers['x-shopify-shop-domain'];
   }
 
-  // 3. Si no hay shop, manda error claro
-  if (!shop) {
-    return res.status(400).send('No se recibió el parámetro "shop" ni en query ni en headers.');
+  // INTENTO FINAL: si no hay shop, intenta sacarlo del referer (no siempre disponible)
+  if (!shop && req.headers.referer) {
+    const matches = req.headers.referer.match(/shop=([a-zA-Z0-9\-\.]+)\.myshopify\.com/);
+    if (matches) shop = matches[1] + '.myshopify.com';
   }
 
-  // 4. Verifica si tienes accessToken para ese shop
+  // SI TODAVÍA NO HAY shop, muestra mensaje de error explícito para debuggear
+  if (!shop) {
+    return res.status(400).send('No se detectó la tienda (shop) en query, header ni referer.<br>Prueba instalar desde el link de instalación directa o revisa la configuración Embedded.');
+  }
+
+  // Busca en la BD
   const shopConn = await ShopConnections.findOne({ shop });
   if (!shopConn || !shopConn.accessToken) {
-    // No hay sesión/token, inicia el OAuth
-    return res.redirect(`/connector?shop=${encodeURIComponent(shop)}${host ? `&host=${encodeURIComponent(host)}` : ''}`);
+    // Redirige a /connector para iniciar OAuth
+    return res.redirect(`/connector?shop=${encodeURIComponent(shop)}`);
   }
 
-  // 5. Si tienes token, muestra la interfaz embebida
+  // Si hay token, muestra la UI embebida
   res.sendFile(path.join(__dirname, '../../../public/connector/interface.html'));
 });
 
