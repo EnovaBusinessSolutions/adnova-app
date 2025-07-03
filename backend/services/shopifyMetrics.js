@@ -2,7 +2,7 @@
 const axios = require('axios');
 
 const api = (shop, token) => axios.create({
-  baseURL: `https://${shop}/admin/api/2024-04`,
+  baseURL: `https://${shop}/admin/api/2024-07`,
   headers: { 'X-Shopify-Access-Token': token }
 });
 

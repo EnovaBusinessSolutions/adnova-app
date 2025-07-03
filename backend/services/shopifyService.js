@@ -1,7 +1,7 @@
 // backend/services/shopifyService.js
 const axios = require('axios');
 
-const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || '2024-04';
+const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || '2024-07';
 
 function shopifyApiUrl(shop, endpoint) {
   return `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/${endpoint}`;
