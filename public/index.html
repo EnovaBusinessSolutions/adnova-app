@@ -10,6 +10,38 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="adnova-login.css" />
+  <style>
+    .adnova-footer {
+      width: 100vw;
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      text-align: center;
+      padding: 1rem 0 0.7rem 0;
+      background: transparent;
+      font-size: 1rem;
+      color: #b5b5c5;
+      z-index: 20;
+      letter-spacing: 0.01em;
+      backdrop-filter: blur(0.5px);
+      user-select: none;
+    }
+    .adnova-footer a {
+      color: #7e4fff;
+      text-decoration: underline;
+      font-weight: 500;
+      margin: 0 8px;
+      transition: color 0.2s;
+    }
+    .adnova-footer a:hover {
+      color: #fff;
+    }
+    @media (max-width: 600px) {
+      .adnova-footer { font-size: 0.98rem; padding: 0.8rem 0 0.6rem 0; }
+      .login-container { margin-bottom: 3rem; }
+    }
+    body { padding-bottom: 3rem; } /* para que no tape el footer el contenido */
+  </style>
 </head>
 
 <body data-page="login">
@@ -54,11 +86,12 @@
       ¿Olvidaste tu contraseña? <a href="#" class="recovery-link">Recupérala aquí</a>
     </p>
   </div>
-    
-  <footer style="text-align: center; margin-top: 2rem; color: #aaa; font-size: 0.95rem;">
-    <a href="politica.html" target="_blank" style="color: #4c8bf5; text-decoration: underline;">Política de Privacidad</a>
+  
+  <!-- Footer moderno y fijo -->
+  <footer class="adnova-footer">
+    <a href="politica.html" target="_blank">Política de Privacidad</a>
     &nbsp;|&nbsp;
-    <a href="terms-of-service.html" target="_blank" style="color: #4c8bf5; text-decoration: underline;">Términos de Servicio</a>
+    <a href="terms-of-service.html" target="_blank">Términos de Servicio</a>
   </footer>
 
   <script src="js/login.js" defer></script>
