@@ -46,57 +46,42 @@ async function generarAuditoriaIA(shop, accessToken) {
 
     // 2. Prompt forzando estructura JSON correcta
     const prompt = `
-Eres un consultor experto en Shopify con enfoque en ecommerce de alto nivel.
+Eres un consultor experto en Shopify.
+Analiza los siguientes productos y responde SOLO en formato JSON en español, siguiendo EXACTAMENTE esta estructura (no agregues nada fuera del JSON):
 
-Vas a auditar los siguientes productos de una tienda real y debes identificar TODOS los problemas, advertencias u oportunidades en las siguientes áreas para CADA producto:
-- Nombre del producto
-- Descripción
-- Categorías y etiquetas (tags)
-- Imágenes y medios (calidad, cantidad, variedad, optimización)
-- Precios (competitividad, errores, best practices)
-- SEO (meta, URL, campos faltantes, densidad de keywords, etc.)
-- Inventario (stock bajo o excesivo, productos sin stock)
-- Atributos adicionales relevantes (ej. variantes, opciones, políticas, etc.)
-
-**INSTRUCCIONES:**
-- Responde SOLO en JSON en español, con la estructura exacta abajo (no agregues ningún texto extra, solo el JSON).
-- Para cada área analiza CADA producto por separado.
-- Explica claramente cada hallazgo: por qué es un problema, su impacto y cómo resolverlo.
-- Prioriza problemas críticos y marca con "high" la severidad si afecta ventas, SEO o la experiencia de usuario.
-- Las recomendaciones deben ser concretas y fáciles de implementar.
-
-ESTRUCTURA DE RESPUESTA:
 {
-  "resumen": "Breve resumen ejecutivo con los principales problemas detectados y el impacto para la tienda.",
   "actionCenter": [
     {
-      "title": "Problema prioritario",
-      "description": "Descripción clara del problema detectado.",
-      "severity": "high | medium | low",
-      "button": "Acción sugerida"
+      "title": "Meta descripción faltante",
+      "description": "El producto X no tiene meta descripción.",
+      "severity": "high",
+      "button": "Optimizar"
     }
-    // Máximo 5 problemas críticos para toda la tienda
+    // Máximo 4 problemas prioritarios
   ],
   "issues": {
-    "productos": [
+    "ux": [
       {
-        "nombre": "Nombre del producto",
-        "hallazgos": [
-          {
-            "area": "Nombre/Descripción/Imagenes/SEO/Precio/Inventario/etc",
-            "title": "Resumen del problema",
-            "description": "Explicación detallada del problema u oportunidad de mejora.",
-            "severity": "high | medium | low",
-            "recommendation": "Recomendación precisa para solucionar o mejorar."
-          }
-        ]
+        "title": "Nombre poco descriptivo",
+        "description": "El producto Y tiene un nombre poco claro.",
+        "severity": "medium",
+        "recommendation": "Mejorar el nombre para describir mejor el producto."
       }
-      // ... Repite para cada producto auditado
-    ]
+    ],
+    "seo": [
+      {
+        "title": "Sin tags",
+        "description": "El producto Z no tiene tags.",
+        "severity": "medium",
+        "recommendation": "Agregar etiquetas relevantes para SEO."
+      }
+    ],
+    "performance": [],
+    "media": []
   }
 }
 
-Ahora, analiza estos productos reales de Shopify:
+Analiza estos productos de Shopify:
 ${JSON.stringify(products.slice(0, 5))}
 `.trim();
 
