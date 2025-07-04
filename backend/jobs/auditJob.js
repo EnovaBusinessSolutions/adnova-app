@@ -1,6 +1,6 @@
 // backend/jobs/auditJob.js
 const OpenAI = require('openai');
-const axios  = require('axios');
+const axios = require('axios');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || '2024-07';
@@ -13,100 +13,158 @@ const {
 
 // Helper para mapear issues al formato correcto
 function mapIssues(issuesObj) {
+  // Este helper es solo para el formato legacy, puedes ajustarlo si cambias el frontend
+  if (!issuesObj) return {};
+  if (Array.isArray(issuesObj.productos)) {
+    // Nuevo formato
+    return issuesObj;
+  }
   const categories = ['ux', 'seo', 'performance', 'media'];
   const result = {};
   for (const cat of categories) {
-    result[cat] = (issuesObj && issuesObj[cat] ? issuesObj[cat] : []).map(issue => ({
+    result[cat] = (issuesObj[cat] ? issuesObj[cat] : []).map(issue => ({
       title: issue.title || issue.label || 'Hallazgo',
       description: issue.description || issue.body || '',
       severity: issue.severity || 'medium',
       recommendation: issue.recommendation || issue.solution || ''
-      // Puedes agregar screenshot si la IA algún día lo trae
     }));
   }
   return result;
 }
 
+async function fetchShopifyProductsGraphQL(shop, accessToken) {
+  const query = `
+    {
+      products(first: 5) {
+        edges {
+          node {
+            id
+            title
+            description
+            tags
+            productType
+            status
+            images(first: 10) {
+              edges { node { originalSrc altText } }
+            }
+            variants(first: 10) {
+              edges { node { id title price sku inventoryQuantity } }
+            }
+            vendor
+            handle
+            totalInventory
+            publishedAt
+            createdAt
+            updatedAt
+          }
+        }
+      }
+    }
+  `;
+  const { data } = await axios.post(
+    `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
+    { query },
+    { headers: { 'X-Shopify-Access-Token': accessToken } }
+  );
+  // Puede lanzar error si hay issues con permisos, etc
+  return (data.data.products.edges || []).map(edge => edge.node);
+}
+
 async function generarAuditoriaIA(shop, accessToken) {
   try {
-    // 1. Obtener productos de Shopify
-    const { data } = await axios.get(
-      `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/products.json`,
-      { headers: { 'X-Shopify-Access-Token': accessToken } }
-    );
-    const products = data.products;
+    // 1. Obtener productos de Shopify vía GraphQL
+    const products = await fetchShopifyProductsGraphQL(shop, accessToken);
 
     if (!products?.length) {
       return {
         productsAnalizados: 0,
+        resumen: "No se encontraron productos para auditar.",
         actionCenter: [],
-        issues: { ux: [], seo: [], performance: [], media: [] }
+        issues: { productos: [] }
       };
     }
 
-    // 2. Prompt forzando estructura JSON correcta
+    // 2. Prompt para la IA
     const prompt = `
-Eres un consultor experto en Shopify.
-Analiza los siguientes productos y responde SOLO en formato JSON en español, siguiendo EXACTAMENTE esta estructura (no agregues nada fuera del JSON):
+Eres un consultor experto en Shopify con enfoque en ecommerce de alto nivel.
 
+Vas a auditar los siguientes productos de una tienda real y debes identificar TODOS los problemas, advertencias u oportunidades en las siguientes áreas para CADA producto:
+- Nombre del producto
+- Descripción
+- Categorías y etiquetas (tags)
+- Imágenes y medios (calidad, cantidad, variedad, optimización)
+- Precios (competitividad, errores, best practices)
+- SEO (meta, URL, campos faltantes, densidad de keywords, etc.)
+- Inventario (stock bajo o excesivo, productos sin stock)
+- Atributos adicionales relevantes (ej. variantes, opciones, políticas, etc.)
+
+**INSTRUCCIONES:**
+- Responde SOLO en JSON en español, con la estructura exacta abajo (no agregues ningún texto extra, solo el JSON).
+- Para cada área analiza CADA producto por separado.
+- Explica claramente cada hallazgo: por qué es un problema, su impacto y cómo resolverlo.
+- Prioriza problemas críticos y marca con "high" la severidad si afecta ventas, SEO o la experiencia de usuario.
+- Las recomendaciones deben ser concretas y fáciles de implementar.
+
+ESTRUCTURA DE RESPUESTA:
 {
+  "resumen": "Breve resumen ejecutivo con los principales problemas detectados y el impacto para la tienda.",
   "actionCenter": [
     {
-      "title": "Meta descripción faltante",
-      "description": "El producto X no tiene meta descripción.",
-      "severity": "high",
-      "button": "Optimizar"
+      "title": "Problema prioritario",
+      "description": "Descripción clara del problema detectado.",
+      "severity": "high | medium | low",
+      "button": "Acción sugerida"
     }
-    // Máximo 4 problemas prioritarios
+    // Máximo 5 problemas críticos para toda la tienda
   ],
   "issues": {
-    "ux": [
+    "productos": [
       {
-        "title": "Nombre poco descriptivo",
-        "description": "El producto Y tiene un nombre poco claro.",
-        "severity": "medium",
-        "recommendation": "Mejorar el nombre para describir mejor el producto."
+        "nombre": "Nombre del producto",
+        "hallazgos": [
+          {
+            "area": "Nombre/Descripción/Imagenes/SEO/Precio/Inventario/etc",
+            "title": "Resumen del problema",
+            "description": "Explicación detallada del problema u oportunidad de mejora.",
+            "severity": "high | medium | low",
+            "recommendation": "Recomendación precisa para solucionar o mejorar."
+          }
+        ]
       }
-    ],
-    "seo": [
-      {
-        "title": "Sin tags",
-        "description": "El producto Z no tiene tags.",
-        "severity": "medium",
-        "recommendation": "Agregar etiquetas relevantes para SEO."
-      }
-    ],
-    "performance": [],
-    "media": []
+      // ... Repite para cada producto auditado
+    ]
   }
 }
 
-Analiza estos productos de Shopify:
-${JSON.stringify(products.slice(0, 5))}
+Ahora, analiza estos productos reales de Shopify:
+${JSON.stringify(products)}
 `.trim();
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4.1',
+      model: 'gpt-4-1106-preview',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 900,
+      max_tokens: 1200,
     });
 
     let aiResult;
     try {
       aiResult = JSON.parse(completion.choices[0].message.content);
-      // Mapeo para garantizar formato correcto aunque la IA falle en los campos
-      aiResult.issues = mapIssues(aiResult.issues);
-      // También mapea actionCenter por si viene mal
+
+      // Mapea el actionCenter y issues si la IA los trae en formato inesperado
       aiResult.actionCenter = (aiResult.actionCenter || []).map(item => ({
         title: item.title || item.label || 'Acción',
         description: item.description || item.body || '',
         severity: item.severity || 'medium',
         button: item.button || item.cta || 'Revisar'
       }));
+
+      aiResult.issues = mapIssues(aiResult.issues);
+
     } catch (e) {
       aiResult = {
+        resumen: "Ocurrió un error en la generación de la auditoría IA.",
         actionCenter: [],
-        issues: { ux: [], seo: [], performance: [], media: [] }
+        issues: { productos: [] }
       };
     }
 
@@ -119,8 +177,9 @@ ${JSON.stringify(products.slice(0, 5))}
     console.error('❌ Error generando auditoría:', error);
     return {
       productsAnalizados: 0,
+      resumen: "Error generando la auditoría IA.",
       actionCenter: [],
-      issues: { ux: [], seo: [], performance: [], media: [] }
+      issues: { productos: [] }
     };
   }
 }
@@ -130,8 +189,8 @@ async function procesarAuditoria(userId, shopDomain, accessToken) {
   const ia = await generarAuditoriaIA(shopDomain, accessToken);
 
   // 2. Métricas Shopify
-  const sales   = await getSalesMetrics(shopDomain, accessToken);
-  const prod    = await getProductMetrics(shopDomain, accessToken);
+  const sales = await getSalesMetrics(shopDomain, accessToken);
+  const prod = await getProductMetrics(shopDomain, accessToken);
   const clients = await getCustomerMetrics(shopDomain, accessToken);
 
   // 3. Estructura el objeto perfectamente alineado con el modelo y frontend
@@ -151,6 +210,7 @@ async function procesarAuditoria(userId, shopDomain, accessToken) {
       repeatPct: clients.repeatPct
     },
     productsAnalizados: ia.productsAnalizados,
+    resumen: ia.resumen,
     actionCenter: ia.actionCenter,
     issues: ia.issues
   });
