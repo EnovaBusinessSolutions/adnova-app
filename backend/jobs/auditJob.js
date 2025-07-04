@@ -1,9 +1,11 @@
 // backend/jobs/auditJob.js
+
 const OpenAI = require('openai');
 const axios  = require('axios');
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || '2024-07';
+
 const Audit  = require('../models/Audit');
 const {
   getSalesMetrics,
@@ -11,28 +13,33 @@ const {
   getCustomerMetrics,
 } = require('../services/shopifyMetrics');
 
-/* -------------------------------------------------------------------------- */
-/*  Helpers                                                                   */
-/* -------------------------------------------------------------------------- */
-// Devuelve issues sin tocar si ya vienen en formato nuevo (productos)
-function mapIssues(issuesObj = {}) {
-  if (issuesObj.productos) return issuesObj;   // nuevo formato OK
+function areaToCat(raw = '') {
+  const a = raw.toLowerCase()
+               .normalize('NFD')
+               .replace(/[\u0300-\u036f]/g, ''); 
 
-  // ↳ Legacy: convertir ux/seo/… si fuese necesario (mantengo compatibilidad)
+  if (a.includes('seo'))                                  return 'seo';
+  if (a.includes('performance') || a.includes('rendimiento') || a.includes('velocidad'))
+                                                          return 'performance';
+  if (a.includes('media') || a.includes('imagen') || a.includes('video'))
+                                                          return 'media';
+  return 'ux'; 
+}
+
+function mapIssuesLegacy(issuesObj = {}) {
   const cats = ['ux', 'seo', 'performance', 'media'];
   const out  = {};
-  cats.forEach(c => {
-    out[c] = (issuesObj[c] || []).map(i => ({
-      title: i.title || i.label || 'Hallazgo',
-      description: i.description || i.body || '',
-      severity: i.severity || 'medium',
-      recommendation: i.recommendation || i.solution || ''
+  cats.forEach(cat => {
+    out[cat] = (issuesObj[cat] || []).map(i => ({
+      title:         i.title        || i.label || 'Hallazgo',
+      description:   i.description  || i.body  || '',
+      severity:      i.severity     || 'medium',
+      recommendation:i.recommendation || i.solution || ''
     }));
   });
   return out;
 }
 
-/* Trae hasta 250 productos con GraphQL (sin paginación adicional) */
 async function fetchShopifyProductsGraphQL(shop, accessToken) {
   const query = `
     {
@@ -47,87 +54,95 @@ async function fetchShopifyProductsGraphQL(shop, accessToken) {
         }
       }
     }`;
+
   const { data } = await axios.post(
     `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
     { query },
     { headers: { 'X-Shopify-Access-Token': accessToken } }
   );
+
   return (data.data.products.edges || []).map(e => e.node);
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Generar auditoría con IA                                                  */
-/* -------------------------------------------------------------------------- */
 async function generarAuditoriaIA(shop, accessToken) {
   try {
+    
     const products = await fetchShopifyProductsGraphQL(shop, accessToken);
 
     if (!products.length) {
       return {
         productsAnalizados: 0,
-        resumen: 'No se encontraron productos para auditar.',
-        actionCenter: [],
-        issues: { productos: [] }
+        resumen:     'No se encontraron productos para auditar.',
+        actionCenter:[],
+        issues:      { productos: [] }
       };
     }
 
-    /* Prompt */
+ 
     const prompt = `
 Eres un consultor experto en Shopify con enfoque en ecommerce de alto nivel.
 
-Vas a auditar los siguientes productos y debes identificar TODOS los problemas, advertencias u oportunidades en:
-- Nombre
-- Descripción
-- Tags
-- Imágenes y medios
-- Precios
-- SEO
-- Inventario
-- Otros atributos (variantes, políticas, etc.)
-
-Responde SOLO en JSON con la estructura:
+Audita los productos y responde SOLO en JSON siguiendo exactamente:
 {
   "resumen": "...",
-  "actionCenter": [ { "title": "...", "description": "...", "severity": "high|medium|low", "button": "..." } ],
+  "actionCenter": [
+    { "title":"...", "description":"...", "severity":"high|medium|low", "button":"..." }
+  ],
   "issues": {
-    "productos": [
+    "productos":[
       {
-        "nombre": "Producto X",
-        "hallazgos": [
-          { "area": "SEO", "title": "...", "description": "...", "severity": "high|medium|low", "recommendation": "..." }
+        "nombre":"...",
+        "hallazgos":[
+          { "area":"SEO|UX|Performance|Media|...", "title":"...", "description":"...", "severity":"high|medium|low", "recommendation":"..." }
         ]
       }
     ]
   }
 }
 
-Analiza estos productos:
+Analiza:
 ${JSON.stringify(products)}
 `.trim();
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4-1106-preview',
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 4096
+      model:       'gpt-4-1106-preview',
+      messages:    [{ role: 'user', content: prompt }],
+      max_tokens:  4096
     });
 
-    /* ---------- Limpieza y parseo robusto ---------- */
-    const raw = completion.choices[0].message.content.trim();
-    const cleaned = raw
-      .replace(/```(json)?/gi, '')        // fences
-      .replace(/,\s*([\}\]])/g, '$1');    // comas finales
-    let aiResult = JSON.parse(cleaned);
+   
+    const raw      = completion.choices[0].message.content.trim();
+    const cleaned  = raw
+       .replace(/```(json)?/gi, '')       
+       .replace(/,\s*([\}\]])/g, '$1');    
 
-    /* Normaliza actionCenter */
-    aiResult.actionCenter = (aiResult.actionCenter || []).map(it => ({
-      title: it.title || it.label || 'Acción',
-      description: it.description || it.body || '',
-      severity: it.severity || 'medium',
-      button: it.button || it.cta || 'Revisar'
+    let aiResult   = JSON.parse(cleaned);
+
+
+    aiResult.actionCenter = (aiResult.actionCenter || []).map(a => ({
+      title:       a.title       || a.label || 'Acción',
+      description: a.description || a.body  || '',
+      severity:    a.severity    || 'medium',
+      button:      a.button      || a.cta   || 'Revisar'
     }));
 
-    /* Mantén issues tal cual o legacy-map */
-    aiResult.issues = mapIssues(aiResult.issues);
+
+    let buckets = { ux: [], seo: [], performance: [], media: [] };
+
+    if (aiResult.issues?.productos) {
+   
+      aiResult.issues.productos.forEach(prod => {
+        (prod.hallazgos || []).forEach(h => {
+          const cat = areaToCat(h.area);
+          buckets[cat].push({ ...h, productName: prod.nombre });
+        });
+      });
+    } else {
+
+      buckets = mapIssuesLegacy(aiResult.issues);
+    }
+
+    aiResult.issues = buckets;
 
     return { productsAnalizados: products.length, ...aiResult };
 
@@ -135,16 +150,13 @@ ${JSON.stringify(products)}
     console.error('❌ Error generando auditoría:', err);
     return {
       productsAnalizados: 0,
-      resumen: 'Error generando la auditoría IA.',
-      actionCenter: [],
-      issues: { productos: [] }
+      resumen:     'Error generando la auditoría IA.',
+      actionCenter:[],
+      issues:      { ux: [], seo: [], performance: [], media: [] }
     };
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Guardar auditoría completa                                               */
-/* -------------------------------------------------------------------------- */
 async function procesarAuditoria(userId, shopDomain, accessToken) {
   const ia      = await generarAuditoriaIA(shopDomain, accessToken);
   const sales   = await getSalesMetrics(shopDomain, accessToken);
@@ -158,15 +170,15 @@ async function procesarAuditoria(userId, shopDomain, accessToken) {
     ordersLast30:  sales.totalOrders,
     avgOrderValue: sales.avgOrderValue,
     topProducts:   (prod.topProducts || []).map(p => ({
-      name: p.name || p.title || '',
-      sales: p.sales || p.qtySold || 0,
+      name:    p.name    || p.title || '',
+      sales:   p.sales   || p.qtySold || 0,
       revenue: p.revenue || 0
     })),
     customerStats: { newPct: clients.newPct, repeatPct: clients.repeatPct },
     productsAnalizados: ia.productsAnalizados,
-    resumen: ia.resumen,
-    actionCenter: ia.actionCenter,
-    issues: ia.issues
+    resumen:            ia.resumen,
+    actionCenter:       ia.actionCenter,
+    issues:             ia.issues
   });
 
   return { saved: true };

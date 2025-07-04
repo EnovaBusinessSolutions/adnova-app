@@ -13,8 +13,6 @@ function shopifyGraphQL(shop, accessToken) {
   });
 }
 
-// --- Funciones usando GraphQL ---
-
 async function getShopInfo(shop, accessToken) {
   const query = `
     {
