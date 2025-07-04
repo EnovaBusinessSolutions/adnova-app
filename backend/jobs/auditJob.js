@@ -79,30 +79,61 @@ async function generarAuditoriaIA(shop, accessToken) {
     }
 
  
-    const prompt = `
+       const prompt = `
 Eres un consultor experto en Shopify con enfoque en ecommerce de alto nivel.
 
-Audita los productos y responde SOLO en JSON siguiendo exactamente:
+Vas a auditar los siguientes productos de una tienda real y debes identificar TODOS los problemas, advertencias u oportunidades en las siguientes áreas para CADA producto:
+- Nombre del producto
+- Descripción
+- Categorías y etiquetas (tags)
+- Imágenes y medios (calidad, cantidad, variedad, optimización)
+- Precios (competitividad, errores, best practices)
+- SEO (meta, URL, campos faltantes, densidad de keywords, etc.)
+- Inventario (stock bajo o excesivo, productos sin stock)
+- Atributos adicionales relevantes (ej. variantes, opciones, políticas, etc.)
+
+**INSTRUCCIONES:**
+- Responde SOLO en JSON en español, con la estructura exacta abajo (no agregues ningún texto extra, solo el JSON).
+- Para cada área analiza CADA producto por separado.
+- Explica claramente cada hallazgo: por qué es un problema, su impacto y cómo resolverlo.
+- Prioriza problemas críticos y marca con "high" la severidad si afecta ventas, SEO o la experiencia de usuario.
+- Las recomendaciones deben ser concretas y fáciles de implementar.
+
+ESTRUCTURA DE RESPUESTA:
 {
-  "resumen": "...",
+  "resumen": "Breve resumen ejecutivo con los principales problemas detectados y el impacto para la tienda.",
   "actionCenter": [
-    { "title":"...", "description":"...", "severity":"high|medium|low", "button":"..." }
+    {
+      "title": "Problema prioritario",
+      "description": "Descripción clara del problema detectado.",
+      "severity": "high | medium | low",
+      "button": "Acción sugerida"
+    }
+    // Máximo 5 problemas críticos para toda la tienda
   ],
   "issues": {
-    "productos":[
+    "productos": [
       {
-        "nombre":"...",
-        "hallazgos":[
-          { "area":"SEO|UX|Performance|Media|...", "title":"...", "description":"...", "severity":"high|medium|low", "recommendation":"..." }
+        "nombre": "Nombre del producto",
+        "hallazgos": [
+          {
+            "area": "Nombre/Descripción/Imagenes/SEO/Precio/Inventario/etc",
+            "title": "Resumen del problema",
+            "description": "Explicación detallada del problema u oportunidad de mejora.",
+            "severity": "high | medium | low",
+            "recommendation": "Recomendación precisa para solucionar o mejorar."
+          }
         ]
       }
+      // ... Repite para cada producto auditado
     ]
   }
 }
 
-Analiza:
+Ahora, analiza estos productos reales de Shopify:
 ${JSON.stringify(products)}
 `.trim();
+
 
     const completion = await openai.chat.completions.create({
       model:       'gpt-4-1106-preview',
