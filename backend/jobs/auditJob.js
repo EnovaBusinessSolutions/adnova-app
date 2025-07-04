@@ -110,6 +110,36 @@ ${JSON.stringify(products)}
     const parsed  = JSON.parse(raw);
     const issues  = mapIssues(parsed.issues);
 
+    /* ──────────────────────────────────────────────
+   Generar arrays planos por categoría UX / SEO / Performance / Media
+   ────────────────────────────────────────────── */
+const flat = { ux: [], seo: [], performance: [], media: [] };
+
+/* Función auxiliar: decide a qué categoría pertenece el hallazgo */
+const detectCat = area => {
+  const a = (area || '').toLowerCase();
+  if (a.includes('seo'))                      return 'seo';
+  if (a.includes('performance') ||
+      a.includes('rendimiento'))             return 'performance';
+  if (a.includes('media') ||
+      a.includes('imagen')  ||
+      a.includes('video'))                   return 'media';
+  /* por defecto todo lo demás lo tratamos como UX */
+  return 'ux';
+};
+
+/* Recorre todos los hallazgos y rellena flat */
+(issues.productos || []).forEach(prod => {
+  (prod.hallazgos || []).forEach(h => {
+    const cat = detectCat(h.area);
+    flat[cat].push(h);
+  });
+});
+
+/* Combina: mantenemos “productos” + añadimos los 4 arrays planos */
+const issuesFinal = { ...issues, ...flat };
+
+
     /* Construye centro de acciones con todo lo HIGH (fallback a medium) */
     const extraAC = [];
     issues.productos.forEach(p =>
@@ -133,7 +163,7 @@ ${JSON.stringify(products)}
       productsAnalizados: products.length,
       resumen: parsed.resumen,
       actionCenter,
-      issues
+      issues: issuesFinal
     };
 
   } catch (err) {
