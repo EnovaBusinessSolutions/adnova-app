@@ -3,7 +3,7 @@ const axios = require('axios');
 
 const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || '2024-07';
 
-// Helper para GraphQL requests a Shopify
+
 const shopifyGraphQL = (shop, token) => axios.create({
   baseURL: `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
   headers: {
@@ -13,7 +13,7 @@ const shopifyGraphQL = (shop, token) => axios.create({
 });
 
 module.exports.getSalesMetrics = async (shop, token) => {
-  // Últimos 30 días
+  
   const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
   const query = `
@@ -44,5 +44,3 @@ module.exports.getSalesMetrics = async (shop, token) => {
     avgOrderValue: aov,
   };
 };
-
-// Puedes seguir implementando aquí getProductMetrics y getCustomerMetrics en GraphQL según necesites

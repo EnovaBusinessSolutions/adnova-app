@@ -1,19 +1,14 @@
-/* -------------------------------------------------------------------------- */
-/*  utils                                                                     */
-/* -------------------------------------------------------------------------- */
+
 function $(id) {
   return document.getElementById(id.replace(/^#/, ''));
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Init audit page                                                           */
-/* -------------------------------------------------------------------------- */
 async function initAudit() {
   const userId = sessionStorage.getItem('userId');
   const shop   = sessionStorage.getItem('shop');
   const cats   = ['ux', 'seo', 'performance', 'media'];
 
-  // Mensaje helper
+  
   const paintEmpty = msg =>
     cats.forEach(c => ($(`audit-${c}`).innerHTML = `<div class="empty-state">${msg}</div>`));
 
@@ -22,7 +17,7 @@ async function initAudit() {
     return;
   }
 
-  /* --- Llamada API ------------------------------------------------------- */
+
   let audit;
   try {
     const qs   = new URLSearchParams({ userId, shop });
@@ -40,12 +35,10 @@ async function initAudit() {
     return;
   }
 
-  /* ---------------------------------------------------------------------- */
-  /*  Normalización de hallazgos                                            */
-  /* ---------------------------------------------------------------------- */
+
   const issuesByCat = { ux: [], seo: [], performance: [], media: [] };
 
-  // Helper para mapear área → categoría
+  
   const areaToCat = area => {
     const a = (area || '').toLowerCase();
     if (a.includes('seo'))            return 'seo';
@@ -54,10 +47,10 @@ async function initAudit() {
     if (a.includes('media') ||
         a.includes('imagen') ||
         a.includes('video'))          return 'media';
-    return 'ux'; // por defecto (incluye UX, nombre, descripción…)
+    return 'ux'; 
   };
 
-  /* ----- Caso nuevo formato (issues.productos) -------------------------- */
+ 
   if (audit.issues?.productos?.length) {
     audit.issues.productos.forEach(prod => {
       (prod.hallazgos || []).forEach(h => {
@@ -67,22 +60,18 @@ async function initAudit() {
     });
   }
 
-  /* ----- Caso legacy (ux/seo/performance/media directos) ---------------- */
+  
   ['ux', 'seo', 'performance', 'media'].forEach(cat => {
     if (audit.issues?.[cat]?.length) {
       issuesByCat[cat].push(...audit.issues[cat]);
     }
   });
 
-  /* ---------------------------------------------------------------------- */
-  /*  Render                                                                */
-  /* ---------------------------------------------------------------------- */
+
   cats.forEach(cat => renderAuditCategory(cat, issuesByCat[cat]));
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Render helpers                                                            */
-/* -------------------------------------------------------------------------- */
+
 function renderAuditCategory(cat, issues = []) {
   const container = $(`audit-${cat}`);
   if (!container) return;
@@ -140,5 +129,4 @@ function auditCard(issue) {
   </div>`;
 }
 
-/* -------------------------------------------------------------------------- */
 document.addEventListener('DOMContentLoaded', initAudit);
