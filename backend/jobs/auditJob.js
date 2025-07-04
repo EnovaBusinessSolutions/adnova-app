@@ -11,9 +11,8 @@ const {
   getCustomerMetrics,
 } = require('../services/shopifyMetrics');
 
-// Helper para mapear issues al formato correcto
+// Helper para mapear issues al formato correcto (legacy compatible)
 function mapIssues(issuesObj) {
-  // Este helper es solo para el formato legacy, puedes ajustarlo si cambias el frontend
   if (!issuesObj) return {};
   if (Array.isArray(issuesObj.productos)) {
     // Nuevo formato
@@ -32,10 +31,11 @@ function mapIssues(issuesObj) {
   return result;
 }
 
+// --- NUEVA función: Traer hasta 250 productos de una sola vez ---
 async function fetchShopifyProductsGraphQL(shop, accessToken) {
   const query = `
     {
-      products(first: 5) {
+      products(first: 250) {
         edges {
           node {
             id
@@ -66,13 +66,12 @@ async function fetchShopifyProductsGraphQL(shop, accessToken) {
     { query },
     { headers: { 'X-Shopify-Access-Token': accessToken } }
   );
-  // Puede lanzar error si hay issues con permisos, etc
   return (data.data.products.edges || []).map(edge => edge.node);
 }
 
 async function generarAuditoriaIA(shop, accessToken) {
   try {
-    // 1. Obtener productos de Shopify vía GraphQL
+    // 1. Obtener productos de Shopify vía GraphQL (máx. 250)
     const products = await fetchShopifyProductsGraphQL(shop, accessToken);
 
     if (!products?.length) {
@@ -84,7 +83,7 @@ async function generarAuditoriaIA(shop, accessToken) {
       };
     }
 
-    // 2. Prompt para la IA
+    // 2. Prompt para la IA (¡OJO: si hay muchos productos puedes pasar el límite de tokens!)
     const prompt = `
 Eres un consultor experto en Shopify con enfoque en ecommerce de alto nivel.
 
@@ -143,14 +142,12 @@ ${JSON.stringify(products)}
     const completion = await openai.chat.completions.create({
       model: 'gpt-4-1106-preview',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 1200,
+      max_tokens: 4096, // Puedes subir esto, pero OpenAI igual pone un límite (según tu plan/modelo)
     });
 
     let aiResult;
     try {
       aiResult = JSON.parse(completion.choices[0].message.content);
-
-      // Mapea el actionCenter y issues si la IA los trae en formato inesperado
       aiResult.actionCenter = (aiResult.actionCenter || []).map(item => ({
         title: item.title || item.label || 'Acción',
         description: item.description || item.body || '',
