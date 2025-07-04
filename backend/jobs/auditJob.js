@@ -95,7 +95,7 @@ Vas a auditar los siguientes productos de una tienda real y debes identificar TO
 **INSTRUCCIONES:**
 - Responde SOLO en JSON en español, con la estructura exacta abajo (no agregues ningún texto extra, solo el JSON).
 - Para cada área analiza CADA producto por separado.
-- Explica claramente cada hallazgo: por qué es un problema, su impacto y cómo resolverlo.
+- Explica claramente cada hallazgo y especifica en el titulo el nombre del producto: por qué es un problema, su impacto y cómo resolverlo.
 - Prioriza problemas críticos y marca con "high" la severidad si afecta ventas, SEO o la experiencia de usuario.
 - Las recomendaciones deben ser concretas y fáciles de implementar.
 
@@ -109,12 +109,12 @@ ESTRUCTURA DE RESPUESTA:
       "severity": "high | medium | low",
       "button": "Acción sugerida"
     }
-    // Máximo 5 problemas críticos para toda la tienda
+    // Máximo todos los problemas críticos que detectes de la tienda
   ],
   "issues": {
     "productos": [
       {
-        "nombre": "Nombre del producto",
+        "nombre": "producto x",
         "hallazgos": [
           {
             "area": "Nombre/Descripción/Imagenes/SEO/Precio/Inventario/etc",
