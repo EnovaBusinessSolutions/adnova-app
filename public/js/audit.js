@@ -1,10 +1,8 @@
 // js/audit.js
 
-// Utilidad para seleccionar por ID rápido
 function $(id) { return document.getElementById(id.replace(/^#/, '')); }
 
 async function initAudit() {
-  // Recupera los parámetros del usuario y tienda (asumiendo que están en sessionStorage)
   const userId = sessionStorage.getItem('userId');
   const shop = sessionStorage.getItem('shop');
   if (!userId || !shop) {
@@ -14,13 +12,12 @@ async function initAudit() {
     return;
   }
 
-  // Trae la última auditoría desde el backend
   let audit = null;
   try {
     const params = new URLSearchParams({ userId, shop });
     const r = await fetch(`/api/audit/latest?${params.toString()}`);
     const data = await r.json();
-    console.log('[AUDIT DEBUG]', data); // <-- Puedes quitarlo luego si todo va bien
+    console.log('[AUDIT DEBUG]', data);
     if (data.ok && data.audit) audit = data.audit;
   } catch (e) {
     ['ux', 'seo', 'performance', 'media'].forEach(cat => {
@@ -29,7 +26,6 @@ async function initAudit() {
     return;
   }
 
-  // Si no hay auditoría, muestra mensaje vacío
   if (!audit || !audit.issues || !audit.issues.productos) {
     ['ux', 'seo', 'performance', 'media'].forEach(cat => {
       $(`audit-${cat}`).innerHTML = `<div class="empty-state">No hay hallazgos en esta categoría aún.</div>`;
@@ -37,33 +33,31 @@ async function initAudit() {
     return;
   }
 
-  // Inicializa arrays por categoría
+  // Categorización robusta
   const issuesByCat = { ux: [], seo: [], performance: [], media: [] };
+  const areaToCat = area => {
+    const a = (area || '').toLowerCase();
+    if (a.includes('seo')) return 'seo';
+    if (a.includes('rendimiento') || a.includes('performance')) return 'performance';
+    if (a.includes('media') || a.includes('imagen') || a.includes('video')) return 'media';
+    if (a.includes('ux') || a.includes('nombre') || a.includes('descripción')) return 'ux';
+    return 'ux';
+  };
 
-  // Recorre todos los productos y distribuye sus hallazgos por categoría
   for (const prod of audit.issues.productos) {
-    if (prod.hallazgos && Array.isArray(prod.hallazgos)) {
+    if (Array.isArray(prod.hallazgos)) {
       for (const issue of prod.hallazgos) {
-        // Mapear las áreas a las categorías, puedes mejorar esto según tu prompt
-        let cat = 'ux'; // Default
-        if (issue.area) {
-          const area = issue.area.toLowerCase();
-          if (area.includes('seo'))        cat = 'seo';
-          else if (area.includes('rendimiento') || area.includes('performance')) cat = 'performance';
-          else if (area.includes('media') || area.includes('imagen') || area.includes('video')) cat = 'media';
-          else if (area.includes('ux') || area.includes('nombre') || area.includes('descripción')) cat = 'ux';
-        }
-        // Añade el nombre del producto para contexto
+        const cat = areaToCat(issue.area);
+        if (!issuesByCat[cat]) issuesByCat[cat] = [];
         issuesByCat[cat].push({ ...issue, productName: prod.nombre });
       }
     }
   }
 
   // Renderiza cada sección
-  renderAuditCategory('ux', issuesByCat.ux);
-  renderAuditCategory('seo', issuesByCat.seo);
-  renderAuditCategory('performance', issuesByCat.performance);
-  renderAuditCategory('media', issuesByCat.media);
+  ['ux', 'seo', 'performance', 'media'].forEach(cat => {
+    renderAuditCategory(cat, issuesByCat[cat]);
+  });
 }
 
 function renderAuditCategory(category, issues = []) {
@@ -76,7 +70,6 @@ function renderAuditCategory(category, issues = []) {
   container.innerHTML = issues.map(issue => auditCard(issue)).join('');
 }
 
-// Template de cada tarjeta de hallazgo
 function auditCard(issue) {
   return `
     <div class="audit-item">
