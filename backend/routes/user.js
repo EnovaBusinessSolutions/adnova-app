@@ -34,7 +34,7 @@ router.get('/user', verifyShopifyToken, async (req, res) => {
   }
 });
 
-// Marcar onboarding como completo
+
 router.post('/onboarding-complete', async (req, res) => {
   const { shop } = req.body;
   if (!shop) return res.status(400).json({ error: 'Shop is required' });

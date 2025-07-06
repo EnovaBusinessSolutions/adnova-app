@@ -3,7 +3,7 @@ const express = require('express');
 const router = express.Router();
 const auditJob = require('../jobs/auditJob');
 
-// Ejemplo: /api/dashboard/audit?shop=dominio.myshopify.com
+
 router.get('/audit', async (req, res) => {
   const { shop, accessToken } = req.query;
   if (!shop || !accessToken) return res.status(400).json({ error: 'shop y accessToken requeridos' });

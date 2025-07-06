@@ -19,7 +19,7 @@ router.get('/audits/latest', async (req, res) => {
     const latest = await Audit.findOne({ userId: req.userId })
                               .sort({ generatedAt: -1 })
                               .lean();
-    res.json(latest || {});   // si aún no hay auditoría devolvemos objeto vacío
+    res.json(latest || {});   
   } catch (err) {
     console.error('Error fetching latest audit:', err);
     res.status(500).json({ error: 'Error interno al obtener auditoría' });
