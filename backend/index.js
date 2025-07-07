@@ -154,6 +154,9 @@ app.get('/login', (_req, res) => {
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
+// justo ANTES de app.use(express.static(...))
+app.use('/assets', express.static(path.join(__dirname, '../public/landing/assets')));
+
 app.use(express.static(path.join(__dirname, '../public')));
 
 
