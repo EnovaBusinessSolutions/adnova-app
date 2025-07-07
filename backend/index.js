@@ -117,11 +117,11 @@ app.use(cors({
 
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '../public')));
 
 function ensureAuthenticated(req, res, next) {
   if (req.isAuthenticated()) return next();
-  res.redirect('/');
+  // sin sesión -> ve al formulario de login
+  res.redirect('/login');
 }
 function ensureNotOnboarded(req, res, next) {
   if (req.isAuthenticated() && !req.user.onboardingComplete) return next();
@@ -132,20 +132,29 @@ function ensureNotOnboarded(req, res, next) {
 
 app.get('/', (req, res) => {
   const { shop } = req.query;
+
+  // si viene de Shopify embed, redirige al conector
   if (shop) {
     return res.redirect(`/connector?shop=${shop}`);
   }
 
+  // si el usuario YA está autenticado
   if (req.isAuthenticated && req.isAuthenticated()) {
-    if (req.user.onboardingComplete) {
-      return res.redirect('/dashboard');
-    } else {
-      return res.redirect('/onboarding');
-    }
+    return req.user.onboardingComplete ? res.redirect('/dashboard')
+                                        : res.redirect('/onboarding');
   }
 
-  return res.sendFile(path.join(__dirname, '../public/index.html'));
+  // visitante anónimo -> muestra la nueva landing
+  return res.sendFile(path.join(__dirname, '../public/landing/index.html'));
 });
+
+// ---------- LOGIN TRADICIONAL ----------
+app.get('/login', (_req, res) => {
+  // tu página de login original (public/index.html)
+  res.sendFile(path.join(__dirname, '../public/index.html'));
+});
+
+app.use(express.static(path.join(__dirname, '../public')));
 
 
 app.post('/api/register', async (req, res) => {

@@ -1,0 +1,3 @@
+[submodule "saas-landing"]
+	path = saas-landing
+	url = https://github.com/EnovaBusinessSolutions/landingpagesaas-html.git
