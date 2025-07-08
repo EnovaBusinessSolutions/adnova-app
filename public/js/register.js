@@ -22,7 +22,7 @@ document.addEventListener('DOMContentLoaded', function () {
       const data = await res.json();
       if (data.success) {
         alert('✅ Usuario registrado. Por favor, inicia sesión.');
-        window.location.href = 'index.html';
+        window.location.href = 'login.html';
       } else {
         alert(data.message || 'Error al registrar');
       }
