@@ -151,7 +151,7 @@ app.get('/', (req, res) => {
 // ---------- LOGIN TRADICIONAL ----------
 app.get('/login', (_req, res) => {
   // tu página de login original (public/index.html)
-  res.sendFile(path.join(__dirname, '../public/index.html'));
+  res.sendFile(path.join(__dirname, '../public/login.html'));
 });
 
 // justo ANTES de app.use(express.static(...))
