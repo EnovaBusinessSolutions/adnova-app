@@ -11,7 +11,6 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const axios = require('axios');
 const qs    = require('querystring');
-const helmet = require('helmet');
 require('dotenv').config();
 
 require('./auth')
@@ -31,43 +30,19 @@ const verifySessionToken = require('../middlewares/verifySessionToken');
 const secureRoutes     = require('./routes/secure'); 
 const dashboardRoute = require('./api/dashboardRoute'); 
 const auditRoute     = require('./api/auditRoute'); 
+const { publicCSP, shopifyCSP } = require('../middlewares/csp');  // ruta relativa correcta
+
 
 
 
 const app = express();
+app.use(publicCSP);  
 const PORT = process.env.PORT || 3000;
 const SHOPIFY_HANDLE = process.env.SHOPIFY_APP_HANDLE;
 
-app.use(
-  helmet({
-    frameguard: false,          
-    contentSecurityPolicy: {
-      useDefaults: true,
-      directives: {
-        "frame-ancestors": [
-          "'self'",
-          "https://admin.shopify.com",
-          "https://*.myshopify.com"
-        ],
-        "script-src": [
-          "'self'",
-          "'unsafe-inline'",
-          "'unsafe-eval'",
-          "https://cdn.shopify.com",
-          "https://cdn.shopifycdn.net"
-        ],
-        "connect-src": [
-          "'self'",
-          "https://*.myshopify.com",
-          "https://admin.shopify.com"
-        ],
-        "img-src": ["'self'", "data:", "https://img.icons8.com"]
-      }
-    }
-  })
-);
 
-app.get("/connector/interface", (req, res) => {
+
+app.get("/connector/interface", shopifyCSP, (req, res) => {
   const { shop, host } = req.query;
   if (!shop || !host) return res.status(400).send("Faltan parámetros 'shop' o 'host'");
 
@@ -104,7 +79,7 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
-app.use('/connector', connector);
+app.use('/connector', shopifyCSP, connector);
 
 app.use(cors({
   origin: [
@@ -443,7 +418,7 @@ app.get('/api/test-shopify-token', verifyShopifyToken, (req, res) => {
   });
 });
 
-app.get(/^\/apps\/[^\/]+\/?.*$/, (req, res) => {
+app.get(/^\/apps\/[^\/]+\/?.*$/, shopifyCSP, (req, res) => {
   const { shop, host } = req.query;
   const redirectUrl = new URL('/connector/interface', `https://${req.headers.host}`);
   if (shop) redirectUrl.searchParams.set('shop', shop);
