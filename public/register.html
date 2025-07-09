@@ -32,11 +32,10 @@
           <label for="password" class="form-label">Contraseña:</label>
           <div class="form-input-wrapper">
             <input type="password" id="password" class="form-input" required />
-            <button
-              type="button"
+            <button type="button"
               class="toggle-password eye-hidden"
-              onclick="togglePassword('password', this)"
-            ></button>
+              data-target="password">
+            </button> 
           </div>
         </div>
 
@@ -44,11 +43,10 @@
           <label for="confirm" class="form-label">Confirmar contraseña:</label>
           <div class="form-input-wrapper">
             <input type="password" id="confirm" class="form-input" required />
-            <button
-              type="button"
-              class="toggle-password eye-hidden"
-              onclick="togglePassword('confirm', this)"
-            ></button>
+            <button type="button"
+             class="toggle-password eye-hidden"
+             data-target="confirm">
+            </button>
           </div>
         </div>
 
@@ -57,55 +55,6 @@
       </form>
     </div>
 
-    <script>
-      const form = document.getElementById('register-form');
-      const msg = document.getElementById('register-msg');
-
-      form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-
-        const email = document.getElementById('email').value;
-        const password = document.getElementById('password').value;
-        const confirm = document.getElementById('confirm').value;
-
-        if (password !== confirm) {
-          msg.textContent = 'Las contraseñas no coinciden';
-          msg.style.color = '#f87171';
-          return;
-        }
-
-        try {
-          const res = await fetch('/api/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password })
-          });
-
-          const data = await res.json();
-          if (data.success) {
-            msg.textContent =
-              'Cuenta creada con éxito. Redirigiendo a Iniciar Sesión...';
-            msg.style.color = '#4ade80';
-            setTimeout(() => {
-              window.location.href = '/login.html';
-            }, 1500);
-          } else {
-            msg.textContent = '❌ ' + (data.message || 'Hubo un problema');
-            msg.style.color = '#f87171';
-          }
-        } catch (error) {
-          msg.textContent = '❌ Error al conectar con el servidor';
-          msg.style.color = '#f87171';
-        }
-      });
-
-      function togglePassword(id, el) {
-        const input = document.getElementById(id);
-        const isVisible = input.type === 'text';
-        input.type = isVisible ? 'password' : 'text';
-        el.classList.toggle('eye-visible', !isVisible);
-        el.classList.toggle('eye-hidden', isVisible);
-      }
-    </script>
+    <script src="/js/register.js" defer></script> 
   </body>
 </html>
