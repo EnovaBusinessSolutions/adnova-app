@@ -293,6 +293,10 @@ app.get('/google-analytics', ensureAuthenticated, (req, res) => {
   res.sendFile(path.join(__dirname, '../public/google-analytics.html'));
 });
 
+app.get('/google-ads', ensureAuthenticated, (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/google-ads.html'));
+});
+
 app.get(
   '/auth/google/login',
   passport.authenticate('google', {
