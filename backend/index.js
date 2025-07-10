@@ -288,6 +288,11 @@ app.get('/pixel-verifier', (r, s) =>
   s.sendFile(path.join(__dirname, '../public/pixel-verifier.html'))
 );
 
+// ---- RUTA PARA GOOGLE ANALYTICS DASHBOARD ----
+app.get('/google-analytics', ensureAuthenticated, (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/google-analytics.html'));
+});
+
 app.get(
   '/auth/google/login',
   passport.authenticate('google', {

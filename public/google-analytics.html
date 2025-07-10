@@ -5,16 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Google Analytics – ADNOVA AI</title>
 
-  <!-- estilos generales del dashboard -->
+  <!-- estilo general del dashboard -->
   <link rel="stylesheet" href="/dashboard.css" />
-  <!-- estilos específicos de este módulo -->
+  <!-- estilo específico de Analytics -->
   <link rel="stylesheet" href="/google-analytics.css" />
+
+  <!-- iconos Phosphor -->
+  <link rel="stylesheet" href="https://unpkg.com/phosphor-icons@2.0.4/src/css/ph.css" />
 </head>
 
 <body data-page="google-analytics">
   <div class="dashboard-layout">
 
-    <!-- ============ SIDEBAR ============ -->
+    <!-- ============ BARRA LATERAL ============ -->
     <div class="sidebar">
       <div class="sidebar-header">
         <div class="logo"><span class="text-shopify">AD</span>NOVA AI 🤖</div>
@@ -33,42 +36,66 @@
       </nav>
     </div><!-- /sidebar -->
 
-    <!-- ============ MAIN CONTENT ============ -->
-    <main class="main-content space-y-6">
-      <h1 class="page-title">Google Analytics Insights</h1>
-      <p class="text-muted-foreground">Diagnóstico de tu Analytics con recomendaciones accionables.</p>
+    <!-- ============ CONTENIDO PRINCIPAL ============ -->
+    <main class="main-content space-y-8">
 
-      <!-- KPI CARDS -->
-      <section id="ga-kpis" class="grid kpi-grid">
-        <div class="card kpi-card">
-          <p class="kpi-label">Sesiones 30 d</p>
-          <p class="kpi-value" id="kpi-sessions">—</p>
+      <!-- encabezado -->
+      <header class="ga-header">
+        <div>
+          <h1 class="page-title">
+            Google Analytics
+            <span class="badge-live">EN&nbsp;VIVO</span>
+          </h1>
+          <p class="text-muted-foreground">
+            Diagnóstico de tus datos y recomendaciones accionables.
+          </p>
         </div>
-        <div class="card kpi-card">
-          <p class="kpi-label">Ingresos 30 d</p>
-          <p class="kpi-value" id="kpi-revenue">—</p>
+        <button id="refresh-ga" class="btn-refresh">Actualizar ⇄</button>
+      </header>
+
+      <!-- tarjetas KPI -->
+      <section id="ga-kpis" class="kpi-grid ga-glass">
+        <div class="kpi-card">
+          <i class="kpi-icon ph-trend-up"></i>
+          <div class="kpi-text">
+            <p class="kpi-label">Sesiones (30 d)</p>
+            <p class="kpi-value" id="kpi-sessions">—</p>
+          </div>
         </div>
-        <div class="card kpi-card">
-          <p class="kpi-label">Conversión e-commerce</p>
-          <p class="kpi-value" id="kpi-cr">—</p>
+        <div class="kpi-card">
+          <i class="kpi-icon ph-wallet"></i>
+          <div class="kpi-text">
+            <p class="kpi-label">Ingresos (30 d)</p>
+            <p class="kpi-value" id="kpi-revenue">—</p>
+          </div>
         </div>
-        <div class="card kpi-card">
-          <p class="kpi-label">Bounce Rate móvil</p>
-          <p class="kpi-value" id="kpi-bounce">—</p>
+        <div class="kpi-card">
+          <i class="kpi-icon ph-shopping-cart"></i>
+          <div class="kpi-text">
+            <p class="kpi-label">Tasa de Conversión</p>
+            <p class="kpi-value" id="kpi-cr">—</p>
+          </div>
+        </div>
+        <div class="kpi-card">
+          <i class="kpi-icon ph-phone"></i>
+          <div class="kpi-text">
+            <p class="kpi-label">Bounce móvil</p>
+            <p class="kpi-value" id="kpi-bounce">—</p>
+          </div>
         </div>
       </section>
 
-      <!-- TABS -->
+      <!-- pestañas -->
       <div class="tabs">
-        <button class="tab-btn active" data-tab="health">Data Health</button>
-        <button class="tab-btn" data-tab="acquisition">Acquisition</button>
-        <button class="tab-btn" data-tab="behaviour">Behaviour & UX</button>
-        <button class="tab-btn" data-tab="funnel">Conversion Funnel</button>
-        <button class="tab-btn" data-tab="retention">Retention & LTV</button>
-        <button class="tab-btn" data-tab="coverage">Tracking Coverage</button>
+        <button class="tab-btn active" data-tab="health">Salud&nbsp;de&nbsp;Datos</button>
+        <button class="tab-btn" data-tab="acquisition">Adquisición</button>
+        <button class="tab-btn" data-tab="behaviour">Comportamiento & UX</button>
+        <button class="tab-btn" data-tab="funnel">Embudo&nbsp;de&nbsp;Conversión</button>
+        <button class="tab-btn" data-tab="retention">Retención & LTV</button>
+        <button class="tab-btn" data-tab="coverage">Cobertura&nbsp;de&nbsp;Tracking</button>
       </div>
 
-      <!-- TAB PANES -->
+      <!-- contenedores por pestaña -->
       <section id="tab-health"      class="tab-pane active"></section>
       <section id="tab-acquisition" class="tab-pane"></section>
       <section id="tab-behaviour"   class="tab-pane"></section>
