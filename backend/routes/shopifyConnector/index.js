@@ -35,8 +35,8 @@ function startOAuth(req, res) {
 
 
 ['/grant', '/app/grant', '/'].forEach(p => router.get(p, (req, res) => {
-  const { shop, host } = req.query;
-  if (shop && host) return startOAuth(req, res);
+  const { shop } = req.query;
+  if (shop) return startOAuth(req, res); // Si hay shop, redirige SIEMPRE a OAuth
   res.send('👍 Adnova Connector online');
 }));
 
