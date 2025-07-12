@@ -1,3 +1,6 @@
 [submodule "saas-landing"]
 	path = saas-landing
 	url = https://github.com/EnovaBusinessSolutions/landingpagesaas-html.git
+[submodule "dashboard-src"]
+	path = dashboard-src
+	url = https://github.com/EnovaBusinessSolutions/adnova-ai-dashboard-full.git
