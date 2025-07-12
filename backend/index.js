@@ -283,12 +283,12 @@ app.use('/api/shopConnection', require('./routes/shopConnection'));
 // === Nuevo dashboard SPA (React + Vite) ===
 app.get(
   [
-    '/dashboard',          // panel principal
-    '/audit',              // pestaña de auditoría
-    '/google-ads',         // pestaña de Google Ads
-    '/google-analytics',   // pestaña de GA4
-    '/configuracion',      // ajustes
-    '/pixel-verifier'      // verificador de píxel, etc.
+    '/dashboard', '/dashboard/',
+    '/audit', '/audit/',
+    '/google-ads', '/google-ads/',
+    '/google-analytics', '/google-analytics/',
+    '/configuracion', '/configuracion/',
+    '/pixel-verifier', '/pixel-verifier/'
   ],
   ensureAuthenticated,
   (_req, res) => {
