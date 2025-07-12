@@ -11,14 +11,14 @@ document.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify({ shop })
       });
         // Solo redirige si fue exitoso
-        window.location.href = '/dashboard.html';
+        window.location.href = '/dashboard';
       } catch (err) {
         console.error('Error marcando onboarding como completo:', err);
         btn.disabled = false;
         alert('No se pudo completar el onboarding, intenta de nuevo.');
       }
     } else {
-      window.location.href = '/dashboard.html';
+      window.location.href = '/dashboard';
     }
   });
 });
