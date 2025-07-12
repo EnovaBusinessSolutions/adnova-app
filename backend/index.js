@@ -8,7 +8,6 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcrypt');
-const crypto = require('crypto');
 const axios = require('axios');
 const qs    = require('querystring');
 require('dotenv').config();
@@ -93,6 +92,16 @@ app.use(cors({
 
 app.use(express.json());
 
+/* ---------- STATIC FILES ---------- */
+app.use('/assets',
+  express.static(path.join(__dirname, '../public/dashboard/assets')));
+
+//  👇 Agrega esta línea
+app.use('/assets',
+  express.static(path.join(__dirname, '../public/landing/assets')));
+
+app.use(express.static(path.join(__dirname, '../public')));
+
 function ensureAuthenticated(req, res, next) {
   if (req.isAuthenticated()) return next();
   // sin sesión -> ve al formulario de login
@@ -128,11 +137,6 @@ app.get('/login', (_req, res) => {
   // tu página de login original (public/index.html)
   res.sendFile(path.join(__dirname, '../public/login.html'));
 });
-
-// justo ANTES de app.use(express.static(...))
-app.use('/assets', express.static(path.join(__dirname, '../public/landing/assets')));
-
-app.use(express.static(path.join(__dirname, '../public')));
 
 
 app.post('/api/register', async (req, res) => {
@@ -276,26 +280,24 @@ app.use('/api/dashboard', dashboardRoute);
 app.use('/api/audit',      auditRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
 
-
-
-app.get('/dashboard', ensureAuthenticated, (r, s) => {
-  s.sendFile(path.join(__dirname, '../public/dashboard.html'));
-});
-app.get('/configuracion', (r, s) =>
-  s.sendFile(path.join(__dirname, '../public/configuracion.html'))
+// === Nuevo dashboard SPA (React + Vite) ===
+app.get(
+  [
+    '/dashboard',          // panel principal
+    '/audit',              // pestaña de auditoría
+    '/google-ads',         // pestaña de Google Ads
+    '/google-analytics',   // pestaña de GA4
+    '/configuracion',      // ajustes
+    '/pixel-verifier'      // verificador de píxel, etc.
+  ],
+  ensureAuthenticated,
+  (_req, res) => {
+    res.sendFile(
+      path.join(__dirname, '../public/dashboard/dashboard.html')
+    );
+  }
 );
-app.get('/pixel-verifier', (r, s) =>
-  s.sendFile(path.join(__dirname, '../public/pixel-verifier.html'))
-);
 
-// ---- RUTA PARA GOOGLE ANALYTICS DASHBOARD ----
-app.get('/google-analytics', ensureAuthenticated, (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/google-analytics.html'));
-});
-
-app.get('/google-ads', ensureAuthenticated, (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/google-ads.html'));
-});
 
 app.get(
   '/auth/google/login',
