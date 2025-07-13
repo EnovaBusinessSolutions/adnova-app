@@ -8,55 +8,89 @@
   <style>
     html, body {
       min-height: 100vh;
-      background: linear-gradient(to bottom right, #5B1899, black, #0F172A);
-      color: hsla(240, 20%, 98%, 1);
+      background: #0a0a12;
+      color: #E6E5F6;
       font-family: 'Inter', Arial, sans-serif;
       margin: 0;
       padding: 0;
+      font-size: 15px;
+      line-height: 1.68;
+      letter-spacing: 0.01em;
     }
+
     .adnova-privacy-container {
-  max-width: 730px;
-  margin: 3.5rem auto 2rem auto;
-  background: #000; /* <-- negro sólido */
-  border-radius: 22px;
-  box-shadow: 0 10px 48px #9333ea22;
-  padding: 3rem 2.5rem 2.2rem 2.5rem;
-  backdrop-filter: none; /* quita blur para mayor contraste */
-}
+      max-width: 730px;
+      margin: 3.2rem auto 2rem auto;
+      background: rgba(16,14,26,0.97);
+      border-radius: 20px;
+      box-shadow: 0 8px 32px #A96BFF33, 0 0px 1.5px #23143A;
+      padding: 2.6rem 2.1rem 2rem 2.1rem;
+      border: 1px solid #23143A;
+    }
+
     h1, h2, h3 {
-      color: #fff;
-      font-weight: 700;
-      margin-top: 2.2rem;
+      color: #A96BFF;
+      font-weight: 800;
       letter-spacing: -1px;
+      margin-top: 2rem;
+      margin-bottom: 0.7rem;
+      line-height: 1.13;
     }
     h1 {
-      font-size: 2.4rem;
+      font-size: 2.2rem;
       margin-top: 0.3rem;
+      margin-bottom: 1.6rem;
       letter-spacing: -2px;
+      color: #A96BFF;
     }
+    h2 {
+      font-size: 1.22rem;
+      margin-top: 2.1rem;
+      color: #D1A5FF;
+    }
+    h3 {
+      font-size: 1.08rem;
+      color: #C5B8E6;
+    }
+
     p, li {
       color: #e8e8fb;
-      font-size: 1.11rem;
+      font-size: 0.98rem;
       font-weight: 400;
+      margin-bottom: 0.7em;
     }
     ul {
-      margin: 1em 0 1.3em 2em;
+      margin: 1em 0 1.1em 2.1em;
+      padding-left: 1.2em;
     }
+
     .adnova-privacy-container strong {
-      color: #9333ea;
+      color: #A96BFF;
       font-weight: 600;
     }
+
     a {
-      color: #9333ea;
+      color: #A96BFF;
       text-decoration: underline;
-      font-weight: 500;
+      font-weight: 600;
+      transition: color 0.17s;
     }
+    a:hover {
+      color: #fff;
+      text-decoration: underline wavy;
+    }
+
     @media (max-width: 700px) {
       .adnova-privacy-container {
-        padding: 1.7rem 0.8rem 1.4rem 0.8rem;
+        padding: 1.3rem 0.6rem 1rem 0.6rem;
+        border-radius: 14px;
       }
-      h1 { font-size: 2rem; }
+      h1 { font-size: 1.27rem; }
+      h2 { font-size: 1.08rem; }
+      p, li { font-size: 0.95rem; }
     }
+
+    /* Footer */
     .adnova-footer {
       width: 100vw;
       position: fixed;
@@ -64,20 +98,21 @@
       bottom: 0;
       text-align: center;
       padding: 1rem 0 0.7rem 0;
-      background: transparent;
-      font-size: 1rem;
+      background: none;
+      font-size: 0.99rem;
       color: #b5b5c5;
       z-index: 20;
       letter-spacing: 0.01em;
-      backdrop-filter: blur(0.5px);
       user-select: none;
+      backdrop-filter: blur(0.5px);
+      border-top: 1.5px solid #23143A;
     }
     .adnova-footer a {
-      color: #9333ea;
+      color: #A96BFF;
       text-decoration: underline;
-      font-weight: 500;
-      margin: 0 8px;
-      transition: color 0.2s;
+      font-weight: 600;
+      margin: 0 9px;
+      transition: color 0.17s;
     }
     .adnova-footer a:hover {
       color: #fff;
