@@ -9,6 +9,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   const hostFromQuery = qs.get('host');
   const userId = sessionStorage.getItem('userId');
 
+// ────────────────────────────────
+ // 1. Obtiene la sesión del backend
+ // ────────────────────────────────
+ try {
+   const sess = await apiFetch('/api/session');
+   if (sess.authenticated && sess.user) {
+     sessionStorage.setItem('userId',  sess.user._id);
+     sessionStorage.setItem('email',   sess.user.email);
+     console.log('✅ Sesión cargada:', sess.user.email);
+   }
+ } catch (err) {
+   console.warn('No se pudo obtener /api/session:', err);
+ }
 
   const connectBtn        = document.getElementById('connect-shopify-btn');
   const connectGoogleBtn  = document.getElementById('connect-google-btn');

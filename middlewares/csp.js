@@ -14,6 +14,11 @@ const publicCSP = helmet({
   }
 });
 
+const imgSrc = ["'self'", "data:", "https://img.icons8.com"];
+res.setHeader("Content-Security-Policy",
+  `default-src 'self'; img-src ${imgSrc.join(" ")}; …`);
+
+
 /** 2) Política especial SOLO para el iframe embebido */
 const shopifyCSP = helmet({
   frameguard: false,
