@@ -54,20 +54,23 @@ document.addEventListener('DOMContentLoaded', function () {
       attempts++;
     }
     if (user) {
-      if (user._id) {
-        sessionStorage.setItem('userId', user._id);
-      }
-      if (user.shop) {
-        sessionStorage.setItem('shop', user.shop);
-      }
-      // DEBUG
-      console.log('[LOGIN] Guardando en sessionStorage:', user._id, user.shop);
+  if (user._id) {
+    sessionStorage.setItem('userId', user._id);
+  }
+  if (user.shop) {
+    sessionStorage.setItem('shop', user.shop);
+  }
+  if (user.email) {
+    sessionStorage.setItem('email', user.email);  // <---- AGREGA ESTO
+  }
+  // DEBUG
+  console.log('[LOGIN] Guardando en sessionStorage:', user._id, user.shop, user.email);
 
-      const redirectUrl = user.onboardingComplete ? '/dashboard' : '/onboarding';
-      window.location.href = redirectUrl;
-    } else {
-      alert("⚠️ No se pudo establecer sesión. Intenta iniciar sesión de nuevo.");
-    }
+  const redirectUrl = user.onboardingComplete ? '/dashboard' : '/onboarding';
+  window.location.href = redirectUrl;
+} else {
+  alert("⚠️ No se pudo establecer sesión. Intenta iniciar sesión de nuevo.");
+}
   }
 });
 
