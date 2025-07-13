@@ -8,16 +8,15 @@ const publicCSP = helmet({
       defaultSrc: ["'self'"],
       scriptSrc:  ["'self'"],
       connectSrc: ["'self'"],
-      imgSrc:     ["'self'", "data:"],
+      imgSrc: [
+        "'self'",
+        "data:",
+        "https://img.icons8.com" // <-- AGREGA ESTA LÍNEA
+      ],
       frameAncestors: ["'self'"]   // <-- ¡no deja iframes externos!
     }
   }
 });
-
-const imgSrc = ["'self'", "data:", "https://img.icons8.com"];
-res.setHeader("Content-Security-Policy",
-  `default-src 'self'; img-src ${imgSrc.join(" ")}; …`);
-
 
 /** 2) Política especial SOLO para el iframe embebido */
 const shopifyCSP = helmet({
@@ -40,7 +39,11 @@ const shopifyCSP = helmet({
         "https://*.myshopify.com",
         "https://admin.shopify.com"
       ],
-      imgSrc: ["'self'", "data:", "https://img.icons8.com"]
+      imgSrc: [
+        "'self'",
+        "data:",
+        "https://img.icons8.com"
+      ]
     }
   }
 });
