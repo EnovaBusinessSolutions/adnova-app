@@ -100,6 +100,9 @@ app.use('/assets',
 app.use('/assets',
   express.static(path.join(__dirname, '../public/landing/assets')));
 
+  app.use('/assets',
+  express.static(path.join(__dirname, '../public/support/assets')));
+
 app.use(express.static(path.join(__dirname, '../public')));
 
 function ensureAuthenticated(req, res, next) {
@@ -111,12 +114,6 @@ function ensureNotOnboarded(req, res, next) {
   if (req.isAuthenticated() && !req.user.onboardingComplete) return next();
   res.redirect('/dashboard');
 }
-
-app.use('/support', express.static(path.join(__dirname, 'public/support')));
-// Para SPA:
-app.get('/support/*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public/support/index.html'));
-});
 
 // RUTAS
 
@@ -285,7 +282,6 @@ app.use('/api/secure', verifySessionToken, secureRoutes);
 app.use('/api/dashboard', dashboardRoute);
 app.use('/api/audit',      auditRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
-app.use('/support', express.static(path.join(__dirname, 'public/support')));
 
 // === Nuevo dashboard SPA (React + Vite) ===
 app.get(
