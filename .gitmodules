@@ -4,6 +4,3 @@
 [submodule "dashboard-src"]
 	path = dashboard-src
 	url = https://github.com/EnovaBusinessSolutions/adnova-ai-dashboard-full.git
-[submodule "support-src"]
-	path = support-src
-	url = https://github.com/EnovaBusinessSolutions/adnova-ai-ssupport.git
