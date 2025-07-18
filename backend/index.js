@@ -279,6 +279,7 @@ app.use('/api/secure', verifySessionToken, secureRoutes);
 app.use('/api/dashboard', dashboardRoute);
 app.use('/api/audit',      auditRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
+app.use('/support', express.static(path.join(__dirname, 'public/support')));
 
 // === Nuevo dashboard SPA (React + Vite) ===
 app.get(
