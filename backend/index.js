@@ -112,6 +112,12 @@ function ensureNotOnboarded(req, res, next) {
   res.redirect('/dashboard');
 }
 
+app.use('/support', express.static(path.join(__dirname, 'public/support')));
+// Para SPA:
+app.get('/support/*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public/support/index.html'));
+});
+
 // RUTAS
 
 app.get('/', (req, res) => {
