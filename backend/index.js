@@ -112,12 +112,6 @@ function ensureNotOnboarded(req, res, next) {
   res.redirect('/dashboard');
 }
 
-// SOPORTE / HELP DESK ---
-app.use('/support', express.static(path.join(__dirname, '../public/support')));
-app.get('/support/:path(*)', (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/support/index.html'));
-});
-
 // RUTAS
 
 app.get('/', (req, res) => {
