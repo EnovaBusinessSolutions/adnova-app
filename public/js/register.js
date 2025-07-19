@@ -42,14 +42,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   /* ---------- Toggle contraseña ---------- */
   document.querySelectorAll('.toggle-password').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const targetId = btn.dataset.target;          // ← toma el id del input
-      const input    = document.getElementById(targetId);
-      const visible  = input.type === 'text';
+  btn.addEventListener('click', () => {
+    const targetId = btn.dataset.target;
+    const input = document.getElementById(targetId);
+    const visible = input.type === 'text';
 
-      input.type = visible ? 'password' : 'text';
-      btn.classList.toggle('eye-visible', !visible);
-      btn.classList.toggle('eye-hidden',  visible);
-    });
+    // Cambia el tipo de input
+    input.type = visible ? 'password' : 'text';
+
+    // Alterna clases SOLO en el botón
+    btn.classList.toggle('eye-visible', !visible);
+    btn.classList.toggle('eye-hidden', visible);
+
+    // Siempre asegura el estilo .form-input
+    input.classList.add('form-input');
   });
+});
 });

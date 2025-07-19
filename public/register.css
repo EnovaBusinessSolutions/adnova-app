@@ -50,7 +50,9 @@ body, html {
   letter-spacing: 0.01em;
 }
 
-.form-input {
+/* Input contraseña y texto visibles siempre igual */
+input[type="password"].form-input,
+input[type="text"].form-input {
   width: 100%;
   border-radius: 0.5rem;
   background: rgba(40, 17, 60, 0.95);
@@ -60,11 +62,53 @@ body, html {
   outline: none;
   font-size: 1rem;
   transition: border 0.2s, box-shadow 0.2s;
+  padding-right: 2.5rem; /* Espacio para el icono de ojo */
 }
 
-.form-input:focus {
+/* Focus para ambos tipos */
+input[type="password"].form-input:focus,
+input[type="text"].form-input:focus {
   border: 1.5px solid #A96BFF;
   box-shadow: 0 0 0 2px #A96BFF44;
+}
+
+/* Wrapper del campo para posición del botón */
+.form-input-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+/* Toggle password universal */
+.toggle-password {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: none;
+  cursor: pointer;
+  width: 2.2rem;
+  height: 2.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  z-index: 2;
+}
+
+/* Icono de ojo SVG embebido */
+.eye-icon {
+  width: 22px;
+  height: 22px;
+  display: block;
+  background: url('data:image/svg+xml;utf8,<svg fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><ellipse cx="12" cy="12" rx="7" ry="5"/><circle cx="12" cy="12" r="2.5"/></svg>') center/contain no-repeat;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+
+.toggle-password.eye-visible .eye-icon {
+  background: url('data:image/svg+xml;utf8,<svg fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><ellipse cx="12" cy="12" rx="7" ry="5"/><circle cx="12" cy="12" r="2.5"/><line x1="4" y1="20" x2="20" y2="4" stroke="white" stroke-width="2"/></svg>') center/contain no-repeat;
+  opacity: 0.85;
 }
 
 /* Botones */
@@ -104,28 +148,6 @@ body, html {
   font-weight: 600;
   color: #A96BFF;
   transition: all 0.3s;
-}
-
-/* Toggle password */
-.toggle-password {
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 20px;
-  width: 32px;
-  height: 32px;
-  position: absolute;
-  top: 34px;
-  right: 12px;
-  border: none;
-  background-color: transparent;
-  cursor: pointer;
-}
-
-.eye-visible {
-  background-image: url("data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjYTk2YmZmIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCI+PHBhdGggZD0iTTIuMDQgMTIuMDAyYTExLjkyIDEzLjgxIDAgMCAxIDIwLjM4IDBjLTEuNTE0IDMuNTY1LTUuMzAzIDYuMDAyLTEwLjE5IDYuMDAycy04LjY3Ni0yLjQzNy0xMC4xOS02LjAwMnoiLz48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIzIi8+PC9zdmc+");
-}
-.eye-hidden {
-  background-image: url("data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjYjk2YmZmIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCI+PHBhdGggZD0iTTEyIDFDMTAuMzQzIDEuMDAyIDguNzEgMS41NTYgNy4zODUgMi40MTdsMS40MDkgMS40MDlDOS4zMTEgMy4zMDMgMTAuNjI3IDMgMTIgM2M1LjIzIDAgOS40ODQgMy4wMzcgMTEgNyAtMS4yMTUgMi44MTctMy41NzMgNS4xMTUtNi41IDYuMDM3VjE3LjQzM2w0LjgzMyA0LjgzM0wxOS43NzggMjAuNzhsLTIuNDE1LTIuNDE0QyEwLjI4OCAyMy45OTcgMy42NzYgMTguNzYgMi4wNCAxMi4wMDJ6TTYuNjg3IDYuNjg3TDE3LjMxMyAxNy4zMTNDMTUuNjY2IDE4LjQ0NCAxMy45NDkgMTkgMTIgMTljLTUuMjMgMC05LjQ4NC0zLjAzNy0xMS03IDAuODQzLTEuOTU3IDIuMjI3LTMuNjc3IDMuOTEyLTQuODA3eiIvPjwvc3ZnPg==");
 }
 
 @media (max-width: 640px) {
