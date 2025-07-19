@@ -125,3 +125,12 @@ input[type="email"]:focus {
     font-size: 1.45rem;
   }
 }
+
+.recovery-instructions {
+  color: #C7B7F9;
+  text-align: center;
+  margin: 0 0 1.3rem 0;
+  font-size: 1.09rem;
+  line-height: 1.5;
+  font-weight: 400;
+}
