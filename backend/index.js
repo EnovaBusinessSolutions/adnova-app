@@ -30,6 +30,7 @@ const secureRoutes     = require('./routes/secure');
 const dashboardRoute = require('./api/dashboardRoute'); 
 const auditRoute     = require('./api/auditRoute'); 
 const { publicCSP, shopifyCSP } = require('../middlewares/csp');  // ruta relativa correcta
+const subscribeRouter = require('./routes/subscribe'); // <--- AGREGAR ESTA LÍNEA
 
 
 
@@ -282,6 +283,8 @@ app.use('/api/secure', verifySessionToken, secureRoutes);
 app.use('/api/dashboard', dashboardRoute);
 app.use('/api/audit',      auditRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
+app.use('/api', subscribeRouter); // <--- AGREGAR ESTA LÍNEA
+
 
 // === Nuevo dashboard SPA (React + Vite) ===
 app.get(
