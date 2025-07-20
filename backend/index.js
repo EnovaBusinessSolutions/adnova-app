@@ -163,33 +163,83 @@ app.post('/api/register', async (req, res) => {
   if (!email || !password) {
     return res.status(400).json({ success: false, message: 'Correo y contraseña son requeridos' });
   }
+
   try {
+    // 1. Guardas el usuario
     const hashed = await bcrypt.hash(password, 10);
     await User.create({ email, password: hashed });
 
-    // ENVÍA EL CORREO AQUÍ SOLO UNA VEZ
-    console.log('SMTP conf =>', process.env.SMTP_HOST, process.env.SMTP_PORT);
+    // 2. Construyes el HTML UNA sola vez
+    const html = `
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Bienvenido a Adnova AI</title>
+</head>
+<body style="margin:0;padding:0;background:#592D9E;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+    <tr>
+      <td align="center" style="padding:40px 10px;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0"
+               style="max-width:600px;background:#ffffff;border-radius:8px;
+                      font-family:Arial,Helvetica,sans-serif;">
+          <tr>
+            <td align="center" style="padding:40px 0 20px">
+              <img src="https://ai.adnova.digital/assets/logo-mail.png"
+                   alt="Adnova AI" width="120" style="display:block;">
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:0 40px 30px;color:#333;font-size:16px;line-height:24px">
+              <h1 style="margin:0 0 20px;font-size:24px;color:#592D9E">
+                ¡Bienvenido a Adnova AI!
+              </h1>
+              <p>Tu cuenta se creó con éxito.</p>
+              <p>Haz clic en el botón para iniciar sesión:</p>
+              <p style="text-align:center;margin:30px 0">
+                <a href="https://ai.adnova.digital/login"
+                   style="background:#592D9E;color:#fff;text-decoration:none;
+                          padding:12px 24px;border-radius:4px;display:inline-block;font-weight:bold">
+                  Iniciar sesión
+                </a>
+              </p>
+              <p style="margin:0">Si no solicitaste esta cuenta, ignora este correo.</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background:#f4f4f4;padding:20px 40px;border-radius:0 0 8px 8px;
+                       color:#777;font-size:12px;line-height:18px">
+              © ${new Date().getFullYear()} Adnova AI ·
+              <a href="https://ai.adnova.digital/politica" style="color:#777;text-decoration:underline">
+                Política de privacidad
+              </a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+    // 3. Envías el correo una sola vez
     await transporter.sendMail({
-      from: process.env.SMTP_FROM, 
-      to: email,
+      from:    process.env.SMTP_FROM,                // “Adnova AI <no-reply@…>”
+      to:      email,
       subject: 'Confirma tu cuenta en Adnova AI',
-      html: `
-        <h2>¡Bienvenido a Adnova AI!</h2>
-        <p>Tu cuenta fue creada con éxito.</p>
-        <p>Para iniciar sesión, simplemente accede a <a href="https://ai.adnova.digital/login">este enlace</a>.</p>
-        <br>
-        <p>Si no solicitaste esta cuenta, puedes ignorar este correo.</p>
-      `
+      text:    'Tu cuenta se creó con éxito. Ingresa en https://ai.adnova.digital/login',
+      html
     });
 
+    // 4. Respondes al frontend
     res.status(201).json({ success: true, message: 'Usuario registrado y correo enviado' });
 
   } catch (err) {
-    console.error('❌ Error al registrar usuario:', err.stack || err);
+    console.error('❌ Error al registrar usuario:', err);
     res.status(400).json({ success: false, message: 'No se pudo registrar el usuario' });
   }
 });
-
 
 app.post('/api/login', async (req, res, next) => {
   const { email, password } = req.body;
