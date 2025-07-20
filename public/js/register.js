@@ -28,16 +28,16 @@ document.addEventListener('DOMContentLoaded', () => {
         showMessage('Cuenta creada con éxito. Redirigiendo…', true);
         setTimeout(() => (window.location.href = '/login.html'), 1500);
       } else {
-        showMessage('❌ ' + (data.message || 'Hubo un problema'), false);
+        showMessage(' ' + (data.message || 'Hubo un problema'), false);
       }
     } catch (err) {
-      showMessage('❌ Error al conectar con el servidor', false);
+      showMessage(' Error al conectar con el servidor', false);
     }
   });
 
   function showMessage(text, ok) {
     msg.textContent = text;
-    msg.style.color = ok ? '#4ade80' : '#f87171';
+    msg.style.color = ok ? '#b286e0ff' : '#f87171';
   }
 
   /* ---------- Toggle contraseña ---------- */
