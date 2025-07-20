@@ -14,14 +14,19 @@ const qs    = require('querystring');
 const nodemailer = require('nodemailer');
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
-  port: process.env.SMTP_PORT,
-  secure: true,
+  port: Number(process.env.SMTP_PORT),  // 587
+  secure: false,        // STARTTLS
+  requireTLS: true,
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS
   }
 });
 
+transporter.verify((err) => {
+  if (err) console.error('❌ SMTP error:', err);
+  else     console.log('✅ SMTP listo para enviar correo');
+});
 
 require('./auth')
 
@@ -164,8 +169,9 @@ app.post('/api/register', async (req, res) => {
     await User.create({ email, password: hashed });
 
     // ENVÍA EL CORREO AQUÍ SOLO UNA VEZ
+    console.log('SMTP conf =>', process.env.SMTP_HOST, process.env.SMTP_PORT);
     await transporter.sendMail({
-      from: '"Adnova AI" <jose.mejia@e-novabusiness.com>',
+      from: process.env.SMTP_FROM, 
       to: email,
       subject: 'Confirma tu cuenta en Adnova AI',
       html: `
