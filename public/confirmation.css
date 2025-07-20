@@ -1,0 +1,74 @@
+body {
+  min-height: 100vh;
+  margin: 0;
+  background: #0a0a12; /* Fondo negro sólido como login */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Inter', sans-serif;
+  color: #F4F2FF;
+}
+
+.confirmation-card {
+  background: rgba(16, 14, 26, 0.98);
+  border-radius: 22px;
+  box-shadow: 0 0 32px 0 #a96bff33;
+  padding: 2.8rem 2.2rem 2.3rem 2.2rem;
+  border: 1.2px solid #23143A;
+  max-width: 410px;
+  width: 100%;
+  text-align: center;
+  color: #F4F2FF;
+}
+
+.confirmation-icon {
+  margin-bottom: 1.3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.confirmation-icon svg {
+  display: inline-block;
+  width: 56px;
+  height: 56px;
+  /* Puedes agregar animación si quieres */
+}
+
+h1 {
+  font-size: 2rem;
+  font-weight: 800;
+  margin-bottom: 1.2rem;
+  color: #A96BFF;
+  letter-spacing: -1px;
+}
+
+p {
+  font-size: 1.05rem;
+  font-weight: 500;
+  margin-bottom: 0;
+  color: #fff;
+  line-height: 1.56;
+}
+
+.secondary-text {
+  font-size: 0.98rem;
+  color: #B6A7E8;
+  display: block;
+  margin-top: 1.15em;
+  font-weight: 500;
+}
+
+@media (max-width: 600px) {
+  .confirmation-card {
+    padding: 2.1rem 0.7rem 1.6rem 0.7rem;
+    max-width: 98vw;
+  }
+  h1 {
+    font-size: 1.45rem;
+  }
+  .confirmation-icon svg {
+    width: 38px;
+    height: 38px;
+  }
+}

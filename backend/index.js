@@ -1,4 +1,5 @@
 // backend/index.js
+require('dotenv').config();
 
 const express = require('express');
 const session = require('express-session');
@@ -10,7 +11,17 @@ const fs = require('fs');
 const bcrypt = require('bcrypt');
 const axios = require('axios');
 const qs    = require('querystring');
-require('dotenv').config();
+const nodemailer = require('nodemailer');
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: process.env.SMTP_PORT,
+  secure: true,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS
+  }
+});
+
 
 require('./auth')
 
@@ -146,19 +157,34 @@ app.get('/login', (_req, res) => {
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
-    return res
-      .status(400)
-      .json({ success: false, message: 'Correo y contraseña son requeridos' });
+    return res.status(400).json({ success: false, message: 'Correo y contraseña son requeridos' });
   }
   try {
     const hashed = await bcrypt.hash(password, 10);
     await User.create({ email, password: hashed });
-    res.status(201).json({ success: true, message: 'Usuario registrado con éxito' });
+
+    // ENVÍA EL CORREO AQUÍ SOLO UNA VEZ
+    await transporter.sendMail({
+      from: '"Adnova AI" <jose.mejia@e-novabusiness.com>',
+      to: email,
+      subject: 'Confirma tu cuenta en Adnova AI',
+      html: `
+        <h2>¡Bienvenido a Adnova AI!</h2>
+        <p>Tu cuenta fue creada con éxito.</p>
+        <p>Para iniciar sesión, simplemente accede a <a href="https://ai.adnova.digital/login">este enlace</a>.</p>
+        <br>
+        <p>Si no solicitaste esta cuenta, puedes ignorar este correo.</p>
+      `
+    });
+
+    res.status(201).json({ success: true, message: 'Usuario registrado y correo enviado' });
+
   } catch (err) {
     console.error('❌ Error al registrar usuario:', err.stack || err);
     res.status(400).json({ success: false, message: 'No se pudo registrar el usuario' });
   }
 });
+
 
 app.post('/api/login', async (req, res, next) => {
   const { email, password } = req.body;

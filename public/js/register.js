@@ -26,7 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (data.success) {
         showMessage('Cuenta creada con éxito. Redirigiendo…', true);
-        setTimeout(() => (window.location.href = '/login.html'), 1500);
+        setTimeout(() => (window.location.href = '/confirmation.html'), 1500);
       } else {
         showMessage(' ' + (data.message || 'Hubo un problema'), false);
       }
