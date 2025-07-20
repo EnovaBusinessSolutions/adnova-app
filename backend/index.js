@@ -179,63 +179,126 @@ app.post('/api/register', async (req, res) => {
 <!doctype html>
 <html lang="es">
 <head>
-<meta charset="utf-8">
-<title>Bienvenido a Adnova AI</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-  /* Ajustes responsive mínimos */
-  @media screen and (max-width:600px){
-    .card{width:100%!important}
-    .btn{display:block!important;width:100%!important}
-  }
-</style>
+  <meta charset="utf-8">
+  <title>Bienvenido a Adnova AI</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <!-- Inter font for modern look -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600;700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #0a0a12;
+      color: #F4F2FF;
+      font-family: 'Inter', Arial, Helvetica, sans-serif;
+      font-size: 16px;
+      line-height: 1.6;
+      -webkit-text-size-adjust: none;
+    }
+    .card {
+      max-width: 410px;
+      background: rgba(16, 14, 26, 0.98);
+      border-radius: 22px;
+      box-shadow: 0 0 32px 0 #a96bff2d;
+      margin: 0 auto;
+      padding: 0;
+    }
+    .card-content {
+      padding: 0 38px 38px 38px;
+    }
+    h1 {
+      margin: 0 0 24px 0;
+      font-size: 2rem;
+      font-weight: 800;
+      color: #A96BFF;
+      letter-spacing: -1px;
+      text-align: center;
+    }
+    p {
+      margin: 0 0 18px 0;
+      color: #F4F2FF;
+      font-size: 1.04rem;
+      line-height: 1.6;
+      text-align: center;
+    }
+    .btn {
+      background: linear-gradient(90deg, #A96BFF 0%, #9333ea 100%);
+      border-radius: 10px;
+      padding: 0.9rem 2.6rem;
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: #fff !important;
+      text-decoration: none;
+      display: inline-block;
+      margin: 0 auto;
+      box-shadow: 0 2px 8px #A96BFF20;
+      border: none;
+      transition: opacity 0.16s;
+    }
+    .btn:hover {
+      opacity: 0.93;
+    }
+    .footer {
+      background: #18132a;
+      padding: 18px 36px 15px 36px;
+      border-radius: 0 0 22px 22px;
+      text-align: center;
+      font-size: 0.97rem;
+      color: #B6A7E8;
+    }
+    .footer a {
+      color: #A96BFF;
+      text-decoration: underline;
+      font-weight: 600;
+      transition: color 0.17s;
+    }
+    .footer a:hover {
+      color: #fff;
+    }
+    @media screen and (max-width:600px){
+      .card{width:97vw!important;max-width:98vw!important;}
+      .card-content{padding:0 1.1rem 1.7rem 1.1rem;}
+      h1{font-size:1.25rem;}
+      .footer{font-size:0.89rem;padding:1.1rem 0.3rem 1rem 0.3rem;}
+      .btn{width:100%;padding:0.85rem 0;}
+    }
+  </style>
 </head>
 
-<body style="margin:0;padding:0;background:#0d081c;color:#fff;font-family:Arial,Helvetica,sans-serif">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-    <tr><td align="center" style="padding:48px 10px">
-      <table role="presentation" cellpadding="0" cellspacing="0" width="560" class="card"
-             style="max-width:560px;background:#151026;border-radius:16px;
-                    box-shadow:0 0 20px #6d3dfc;">
-        <tr>
-          <td style="padding:0 50px 40px">
-            <h1 style="margin:0 0 24px;font-size:28px;color:#6d3dfc;font-weight:700">
-              ¡Bienvenido a Adnova AI!
-            </h1>
-
-            <p style="margin:0 0 20px;font-size:16px;line-height:24px">Tu cuenta se creó con éxito.</p>
-            <p style="margin:0 0 28px;font-size:16px;line-height:24px">
-              Haz clic en el botón para iniciar sesión:
-            </p>
-
-            <table role="presentation" align="center" cellpadding="0" cellspacing="0">
-              <tr><td>
-                <a href="https://ai.adnova.digital/login"
-                   class="btn"
-                   style="background:#6d3dfc;border-radius:8px;padding:14px 36px;
-                          font-size:16px;font-weight:600;color:#fff;text-decoration:none;
-                          display:inline-block;">
-                  Iniciar sesión
-                </a>
-              </td></tr>
-            </table>
-
-            <p style="margin:32px 0 0;font-size:14px;line-height:20px;color:#c4c4c4">
-              Si no solicitaste esta cuenta, ignora este correo.
-            </p>
-          </td>
-        </tr>
-
-        <tr>
-          <td style="background:#100c1e;padding:18px 40px;border-radius:0 0 16px 16px;
-                     text-align:center;font-size:12px;line-height:18px;color:#777">
-            © {{YEAR}} Adnova AI ·
-            <a href="https://ai.adnova.digital/politica.html"
-               style="color:#777;text-decoration:underline">Política de privacidad</a>
-          </td>
-        </tr>
-      </table>
-    </td></tr>
+<body>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a12;margin:0;padding:0;">
+    <tr>
+      <td align="center" style="padding:54px 8px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" class="card" width="410">
+          <tr>
+            <td class="card-content">
+              <h1>¡Bienvenido a Adnova AI!</h1>
+              <p>Tu cuenta se creó con éxito.</p>
+              <p>Haz clic en el botón para iniciar sesión:</p>
+              <table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+                <tr>
+                  <td align="center">
+                    <a href="https://ai.adnova.digital/login"
+                       class="btn" target="_blank">
+                      Iniciar sesión
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:32px 0 0 0; font-size:0.98rem; color:#B6A7E8;">
+                Si no solicitaste esta cuenta, ignora este correo.
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td class="footer">
+              © {{YEAR}} Adnova AI ·
+              <a href="https://ai.adnova.digital/politica.html" target="_blank">Política de privacidad</a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
   </table>
 </body>
 </html>
