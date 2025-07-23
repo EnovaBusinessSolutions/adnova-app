@@ -15,7 +15,9 @@ const userSchema = new mongoose.Schema({
   googleRefreshToken: { type: String },
   googleConnected: { type: Boolean, default: false },
   metaConnected: { type: Boolean, default: false },
-  metaAccessToken: { type: String }
+  metaAccessToken: { type: String },
+  resetPasswordToken  : { type: String },
+  resetPasswordExpires: { type: Date }
 });
 
 module.exports = mongoose.model('User', userSchema);
