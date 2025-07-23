@@ -9,8 +9,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   const form = document.querySelector('#resetForm');
-  const pwd1 = document.querySelector('#pwd');
-  const pwd2 = document.querySelector('#pwd2');
+  const pwd1 = document.querySelector('#new-password');
+  const pwd2 = document.querySelector('#confirm-password');
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -40,3 +40,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 });
+
+ // Toggle show/hide password
+    function togglePassword(inputId, btn) {
+  const input = document.getElementById(inputId);
+  if (input.type === "password") {
+    input.type = "text";
+    input.classList.add("password-visor");
+    btn.classList.add("show");
+  } else {
+    input.type = "password";
+    input.classList.remove("password-visor");
+    btn.classList.remove("show");
+  }
+}
