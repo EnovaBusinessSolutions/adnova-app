@@ -7,3 +7,6 @@
 [submodule "support-src"]
 	path = support-src
 	url = https://github.com/EnovaBusinessSolutions/adnova-ai-support
+[submodule "plan-src"]
+	path = plan-src
+	url = https://github.com/EnovaBusinessSolutions/adnova-plan-zen-1.git
