@@ -717,6 +717,11 @@ app.get('/auth/google/connect/callback', async (req, res) => {
   }
 });
 
+
+app.get('/plans/*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/plans/index.html'));
+});
+
 app.get('/logout', (req, res) => {
   req.logout(err => {
     if (err) {
