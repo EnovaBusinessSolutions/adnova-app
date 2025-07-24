@@ -1,9 +1,9 @@
 // public/js/resetPassword.js
 document.addEventListener('DOMContentLoaded', () => {
   const url    = new URL(location.href);
-  const token  = url.searchParams.get('token');          // ?token=abc…
+  const token  = url.searchParams.get('token');
   if (!token) {
-    alert('Enlace inválido o incompleto');                // sin token → redirige
+    alert('Enlace inválido o incompleto');
     location.href = '/login';
     return;
   }
@@ -41,9 +41,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
- // Toggle show/hide password
-    function togglePassword(inputId, btn) {
+// ⚡️ Esto hace la función global para que el HTML la pueda ver:
+window.togglePassword = function(inputId, btn) {
   const input = document.getElementById(inputId);
+  if (!input) return;
   if (input.type === "password") {
     input.type = "text";
     input.classList.add("password-visor");
