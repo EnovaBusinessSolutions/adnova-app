@@ -598,6 +598,7 @@ app.use('/api/dashboard', dashboardRoute);
 app.use('/api/audit',      auditRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter); // <--- AGREGAR ESTA LÍNEA
+app.use('/plans', express.static(path.join(__dirname, '../public/plans')));
 
 
 // === Nuevo dashboard SPA (React + Vite) ===
@@ -618,6 +619,9 @@ app.get(
   }
 );
 
+app.get('/plans/*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public/plans/index.html'));
+});
 
 app.get(
   '/auth/google/login',
