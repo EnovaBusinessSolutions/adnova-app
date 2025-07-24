@@ -12,6 +12,25 @@ document.addEventListener('DOMContentLoaded', () => {
   const pwd1 = document.querySelector('#new-password');
   const pwd2 = document.querySelector('#confirm-password');
 
+  // --- OJITO: EVENTO DINÁMICO (no inline) ---
+  document.querySelectorAll('.toggle-password').forEach(btn => {
+    btn.addEventListener('click', function() {
+      const inputId = btn.getAttribute('data-input');
+      const input = document.getElementById(inputId);
+      if (!input) return;
+      if (input.type === "password") {
+        input.type = "text";
+        input.classList.add("password-visor");
+        btn.classList.add("show");
+      } else {
+        input.type = "password";
+        input.classList.remove("password-visor");
+        btn.classList.remove("show");
+      }
+    });
+  });
+
+  // --- TU LÓGICA ORIGINAL ---
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
 
@@ -40,18 +59,3 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 });
-
-// ⚡️ Esto hace la función global para que el HTML la pueda ver:
-window.togglePassword = function(inputId, btn) {
-  const input = document.getElementById(inputId);
-  if (!input) return;
-  if (input.type === "password") {
-    input.type = "text";
-    input.classList.add("password-visor");
-    btn.classList.add("show");
-  } else {
-    input.type = "password";
-    input.classList.remove("password-visor");
-    btn.classList.remove("show");
-  }
-}
