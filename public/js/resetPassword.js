@@ -58,4 +58,20 @@ document.addEventListener('DOMContentLoaded', () => {
       alert('Error de red. Intenta más tarde.');
     }
   });
+  
+ document.querySelectorAll('.toggle-password').forEach(btn => {
+    btn.addEventListener('click', function() {
+      const inputId = btn.getAttribute('data-input');
+      const input = document.getElementById(inputId);
+      if (!input) return;
+
+      if (input.type === "password") {
+        input.type = "text";
+        btn.classList.add("show");
+      } else {
+        input.type = "password";
+        btn.classList.remove("show");
+      }
+    });
+  });
 });
