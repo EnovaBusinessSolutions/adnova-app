@@ -117,8 +117,11 @@ app.use('/assets',
 app.use('/assets',
   express.static(path.join(__dirname, '../public/landing/assets')));
 
-  app.use('/assets',
+app.use('/assets',
   express.static(path.join(__dirname, '../public/support/assets')));
+  
+app.use('/assets',
+  express.static(path.join(__dirname, '../public/plans/assets')));
 
 app.use(express.static(path.join(__dirname, '../public')));
 
