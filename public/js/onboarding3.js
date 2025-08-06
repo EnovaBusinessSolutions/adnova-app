@@ -97,7 +97,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     running = false;
     progress = 100;
     progressBar.style.width = "100%";
-    currentStep = steps.length - 1;
+    currentStep = steps.length;   // 4
     updateStepsUI();
     progressText.textContent = "¡Análisis completado!";
     btn.disabled = false;
