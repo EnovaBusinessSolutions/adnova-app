@@ -69,7 +69,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // SOLO busca y guarda credenciales cuando hay tienda conectada
   const pintarShopifyConectado = async () => {
-    connectBtn.textContent = 'Connected';
+    connectBtn.textContent = 'Conectado';
     connectBtn.classList.add('connected');
     connectBtn.disabled = true;
 
@@ -96,7 +96,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   };
 
   const pintarGoogleConectado = () => {
-    connectGoogleBtn.textContent = 'Connected';
+    connectGoogleBtn.textContent = 'Conectado';
     connectGoogleBtn.classList.add('connected');
     connectGoogleBtn.disabled = true;
   };
