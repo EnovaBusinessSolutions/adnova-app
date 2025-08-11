@@ -1,21 +1,50 @@
 // backend/api/auditRoute.js
-
 const express = require('express');
 const router = express.Router();
-const { generarAuditoriaIA, procesarAuditoria } = require('../jobs/auditJob');
+const { generarAuditoriaIA } = require('../jobs/auditJob');
 const Audit = require('../models/Audit');
 
-// 1. Dispara auditoría directamente (sin queue)
+/** Resuelve datos desde sesión (dashboard) o body/query (onboarding) */
+function resolveContext(req) {
+  const tokenFromHeader = req.headers['x-shopify-access-token'];
+
+  if (req.isAuthenticated && req.isAuthenticated()) {
+    return {
+      mode: 'session',
+      userId: req.user?._id,
+      shop: req.user?.shop,
+      accessToken: req.body?.accessToken || tokenFromHeader || null,
+    };
+  }
+
+  return {
+    mode: 'api',
+    userId: req.body?.userId || req.query?.userId || null,
+    shop: req.body?.shop || req.query?.shop || null,
+    accessToken:
+      req.body?.accessToken ||
+      req.query?.accessToken ||
+      tokenFromHeader ||
+      null,
+  };
+}
+
+/**
+ * POST /api/audit/start
+ * - Modo sesión (dashboard): usa req.user (shop/userId). accessToken es opcional.
+ * - Modo API (onboarding): requiere shop + accessToken.
+ */
 router.post('/start', async (req, res) => {
-  const { shop, accessToken, userId } = req.body;
-  if (!shop || !accessToken)
-    return res.status(400).json({ error: 'shop y token requeridos' });
-
   try {
-    // Llama directo a la función de IA
-    const resultado = await generarAuditoriaIA(shop, accessToken);
+    const { mode, shop, userId, accessToken } = resolveContext(req);
 
-    // Si hay userId, guarda la auditoría en Mongo
+    if (!shop) return res.status(400).json({ error: 'shop ausente' });
+    if (mode === 'api' && !accessToken) {
+      return res.status(400).json({ error: 'accessToken requerido en modo API' });
+    }
+
+    const resultado = await generarAuditoriaIA(shop, accessToken || undefined);
+
     if (userId) {
       await Audit.create({
         userId,
@@ -23,38 +52,42 @@ router.post('/start', async (req, res) => {
         productsAnalizados: resultado.productsAnalizados,
         actionCenter: resultado.actionCenter,
         issues: resultado.issues,
-        createdAt: new Date()
-        // Puedes agregar otros campos como métricas si tienes
+        createdAt: new Date(),
       });
     }
 
-    res.json({ ok: true, resultado });
+    res.json({ ok: true, mode, resultado });
   } catch (err) {
     console.error('Error en auditoría:', err);
-    res.status(500).json({ error: 'Fallo la auditoría' });
+    res.status(500).json({ error: 'Falló la auditoría' });
   }
 });
 
-// 2. Obtener la auditoría más reciente de un usuario/shop
+/**
+ * GET /api/audit/latest
+ * - Modo sesión: toma userId/shop de req.user.
+ * - Modo API: acepta ?userId=&shop=
+ */
 router.get('/latest', async (req, res) => {
-  const userId = req.query.userId;
-  const shop = req.query.shop;
-
-  if (!userId || !shop)
-    return res.status(400).json({ error: 'userId y shop requeridos' });
-
   try {
+    const ctx = resolveContext(req);
+    const userId = ctx.userId || req.query?.userId;
+    const shop = ctx.shop || req.query?.shop;
+
+    if (!userId || !shop) {
+      return res.status(400).json({ error: 'userId y shop requeridos (sesión o query)' });
+    }
+
     const audit = await Audit.findOne({ userId, shopDomain: shop })
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
-    if (!audit) return res.status(404).json({ error: 'No se encontró auditoría' });
-
-    res.json({ ok: true, audit });
+    // Devuelve 200 con audit=null para evitar que el front “se caiga” si no hay registros
+    res.json({ ok: true, audit: audit || null });
   } catch (err) {
+    console.error('latest audit error:', err);
     res.status(500).json({ error: 'Error al recuperar auditoría' });
   }
 });
-
-// --- Aquí puedes agregar más endpoints como "listar todas las auditorías" si lo necesitas
 
 module.exports = router;

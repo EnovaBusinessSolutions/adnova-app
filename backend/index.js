@@ -617,13 +617,12 @@ app.get(
     '/google-ads', '/google-ads/',
     '/google-analytics', '/google-analytics/',
     '/configuracion', '/configuracion/',
-    '/pixel-verifier', '/pixel-verifier/'
+    '/pixel-verifier', '/pixel-verifier/',
+    '/dashboard/generate-audit', '/dashboard/generate-audit/'    // 👈 agrega esto
   ],
   ensureAuthenticated,
   (_req, res) => {
-    res.sendFile(
-      path.join(__dirname, '../public/dashboard/dashboard.html')
-    );
+    res.sendFile(path.join(__dirname, '../public/dashboard/dashboard.html'));
   }
 );
 
