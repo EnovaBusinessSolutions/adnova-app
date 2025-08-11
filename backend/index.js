@@ -46,19 +46,8 @@ const dashboardRoute = require('./api/dashboardRoute');
 const auditRoute     = require('./api/auditRoute'); 
 const { publicCSP, shopifyCSP } = require('../middlewares/csp');  // ruta relativa correcta
 const subscribeRouter = require('./routes/subscribe'); // <--- AGREGAR ESTA LÍNEA
-
-// Resolución explícita de rutas (evita "Cannot find module './routes'")
-const coreRoutesPath   = path.resolve(__dirname, 'routes', 'index.js');
-const auditsRoutesPath = path.resolve(__dirname, 'routes', 'audits.js');
-
-console.log('Mounting core routes from:', coreRoutesPath);
-console.log('Mounting audits routes from:', auditsRoutesPath);
-
-const coreRoutes   = require(coreRoutesPath);
-const auditsRoutes = require(auditsRoutesPath);
-
-
-
+const userRoutes   = require('./routes/user');
+const auditsRoutes = require('./routes/audits');
 
 
 const app = express();
@@ -610,13 +599,13 @@ app.use('/auth/google', googleConnect);
 app.use('/', googleAnalytics);
 app.use('/auth/meta', metaAuthRoutes);
 app.use('/api', mockShopify);
+app.use('/api', userRoutes);            // endpoints de usuario
+app.use('/api/audits', auditsRoutes);   // uso/limitaciones por plan
 app.use('/api/secure', verifySessionToken, secureRoutes);
 app.use('/api/dashboard', dashboardRoute);
 app.use('/api/audit',      auditRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter); // <--- AGREGAR ESTA LÍNEA
-app.use('/api', coreRoutes);  
-app.use('/api/audits', auditsRoutes);
 
 
 
