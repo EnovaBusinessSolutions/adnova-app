@@ -64,7 +64,7 @@ app.use(cors({
   ],
   credentials: true
 }));
-app.options('*', cors()); // responde 200 en preflights
+app.options(/.*/, cors());
 
 
 
