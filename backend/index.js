@@ -601,6 +601,8 @@ app.use('/api/dashboard', dashboardRoute);
 app.use('/api/audit',      auditRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter); // <--- AGREGAR ESTA LÍNEA
+app.use('/api', require('./routes'));  
+app.use('/api/audits', require('./routes/audits'));
 
 
 

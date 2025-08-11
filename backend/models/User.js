@@ -18,6 +18,17 @@ const userSchema = new mongoose.Schema({
   metaAccessToken: { type: String },
   resetPasswordToken  : { type: String },
   resetPasswordExpires: { type: Date }
+
+  // ====== PLANES ======
+  ,plan: {
+    type: String,
+    enum: ['gratis','emprendedor','pro','enterprise'],
+    default: 'gratis',
+    index: true
+  },
+  planStartedAt: { type: Date, default: Date.now }
 });
+
+userSchema.index({ plan: 1 });
 
 module.exports = mongoose.model('User', userSchema);

@@ -75,4 +75,6 @@ const AuditSchema = new Schema(
   }
 );
 
+AuditSchema.index({ userId: 1, generatedAt: -1 });
+
 module.exports = model('Audit', AuditSchema);
