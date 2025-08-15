@@ -2,53 +2,67 @@
 const express = require('express');
 const axios   = require('axios');
 const path    = require('path');
+const crypto  = require('crypto');
+
 const router  = express.Router();
 const ShopConnections = require('../../models/ShopConnections');
 
 const { SHOPIFY_API_KEY, SHOPIFY_API_SECRET } = process.env;
-
 const SCOPES       = 'read_products,read_customers,read_orders';
 const REDIRECT_URI = 'https://ai.adnova.digital/connector/auth/callback';
 
-/* ---------------------------------------------------- */
-/* Util: genera y hace redirect al endpoint de OAuth    */
-/* ---------------------------------------------------- */
-function startOAuth (req, res) {
-  let shop = req.query.shop || req.headers['x-shopify-shop-domain'];
-
-  if (!shop) return res.status(400).send('Falta parámetro shop');
-
-  const url =
-    `https://${shop}/admin/oauth/authorize` +
-    `?client_id=${SHOPIFY_API_KEY}` +
-    `&scope=${encodeURIComponent(SCOPES)}` +
-    `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}`;
-
-  return res.redirect(url);               // <-- termina aquí
+// --- util: extraer shop de query/header/referer ---
+function extractShop(req) {
+  let { shop } = req.query || {};
+  if (!shop && req.headers['x-shopify-shop-domain']) {
+    shop = req.headers['x-shopify-shop-domain'];
+  }
+  if (!shop && req.headers.referer) {
+    const m = req.headers.referer.match(/shop=([a-z0-9\-\.]+\.myshopify\.com)/i);
+    if (m) shop = m[1];
+  }
+  return shop;
 }
 
-/* ---------------------------------------------------- */
-/* 1) Entrada genérica (health + disparador OAuth)      */
-/* ---------------------------------------------------- */
-['/grant', '/app/grant', '/'].forEach(p =>
-  router.get(p, (req, res) => {
-    const { shop } = req.query;
+// --- middleware: fuerza OAuth en TODO /connector* (excepto excluidas) ---
+router.use((req, res, next) => {
+  if (!['GET', 'HEAD'].includes(req.method)) return next();
 
-    console.log('[connector] incoming', { path: p, shop });
+  const url = req.originalUrl || '';
+  // exclusiones donde NO forzamos OAuth
+  if (url.startsWith('/connector/auth/callback') ||
+      url.startsWith('/connector/webhooks') ||
+      url.startsWith('/connector/interface')) {
+    return next();
+  }
 
-    /* Si trae ?shop => siempre inicia OAuth, no importa hmac/host */
-    if (shop) return startOAuth(req, res);
+  const shop = extractShop(req);
+  if (!shop) return next(); // sin shop, que siga (acabará en 400 con mensaje claro)
 
-    /* Solo health-check */
-    res.send('👍 Adnova Connector online');
-  })
-);
+  const state = crypto.randomBytes(16).toString('hex');
+  const authorize =
+    `https://${shop}/admin/oauth/authorize` +
+    `?client_id=${encodeURIComponent(SHOPIFY_API_KEY)}` +
+    `&scope=${encodeURIComponent(SCOPES)}` +
+    `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+    `&state=${encodeURIComponent(state)}`;
 
-/* ---------------------------------------------------- */
-/* 2) Callback de OAuth                                 */
-/* ---------------------------------------------------- */
+  console.log('[OAUTH_START]', {
+    path: req.originalUrl,
+    ip: req.ip,
+    ua: req.headers['user-agent'],
+    shop
+  });
+
+  return res.redirect(302, authorize);
+});
+
+// --- webhooks (si los usas) ---
+router.use('/webhooks', require('./webhooks'));
+
+// --- callback OAuth ---
 router.get('/auth/callback', async (req, res) => {
-  const { shop, host, code } = req.query;
+  const { shop, code } = req.query;
   if (!shop || !code) return res.status(400).send('Missing params');
 
   try {
@@ -64,9 +78,9 @@ router.get('/auth/callback', async (req, res) => {
       { upsert: true }
     );
 
-    /* Dentro del admin embebido */
+    const host = req.query.host || '';
     return res.redirect(
-      `/apps/${SHOPIFY_API_KEY}/connector/interface?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host || '')}`
+      `/apps/${SHOPIFY_API_KEY}/connector/interface?shop=${encodeURIComponent(shop)}${host ? `&host=${encodeURIComponent(host)}` : ''}`
     );
   } catch (err) {
     console.error('❌ access_token error:', err.response?.data || err);
@@ -74,42 +88,26 @@ router.get('/auth/callback', async (req, res) => {
   }
 });
 
-/* ---------------------------------------------------- */
-/* 3) Webhooks sub-router                               */
-/* ---------------------------------------------------- */
-router.use('/webhooks', require('./webhooks'));
-
-/* ---------------------------------------------------- */
-/* 4) Interfaz embebida                                 */
-/* ---------------------------------------------------- */
+// --- interfaz embebida ---
 router.get('/interface', async (req, res) => {
-  let shop = req.query.shop;
-
-  /* Intenta detectar shop por header o referer si no viene en query */
-  if (!shop && req.headers['x-shopify-shop-domain']) {
-    shop = req.headers['x-shopify-shop-domain'];
-  }
-  if (!shop && req.headers.referer) {
-    const m = req.headers.referer.match(/shop=([a-zA-Z0-9\-\.]+\.myshopify\.com)/);
-    if (m) shop = m[1];
-  }
-
+  const shop = extractShop(req);
   if (!shop) {
-    return res.status(400).send(
-      'No se detectó la tienda (shop). Instala la app usando el link directo.'
-    );
+    return res
+      .status(400)
+      .send('No se detectó la tienda (shop). Abre desde Shopify Admin.');
   }
 
   const shopConn = await ShopConnections.findOne({ shop });
-
-  /* Sin token => redirige a flujo OAuth */
   if (!shopConn || !shopConn.accessToken) {
-    console.log('[interface] No token aún, redirigiendo a OAuth');
     return res.redirect(`/connector?shop=${encodeURIComponent(shop)}`);
   }
 
-  /* Sirve la SPA embebida */
-  return res.sendFile(path.join(__dirname, '../../../public/connector/interface.html'));
+  res.sendFile(path.join(__dirname, '../../../public/connector/interface.html'));
+});
+
+// --- landing/health ---
+router.get('/', (_req, res) => {
+  res.send('👍 Adnova Connector online');
 });
 
 module.exports = router;
