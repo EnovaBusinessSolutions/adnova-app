@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const connectBtn        = document.getElementById('connect-shopify-btn');
   const connectGoogleBtn  = document.getElementById('connect-google-btn');
+  const connectMetaBtn = document.getElementById('connect-meta-btn');
   const continueBtn       = document.getElementById('continue-btn');
   const flagShopify       = document.getElementById('shopifyConnectedFlag');
   const flagGoogle        = document.getElementById('googleConnectedFlag');
@@ -172,5 +173,61 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     window.location.href = '/onboarding3.html';
   });
+// ===== META (Facebook) =====
+const pintarMetaConectado = () => {
+  if (!connectMetaBtn) return;
+  connectMetaBtn.textContent = 'Conectado';
+  connectMetaBtn.classList.add('connected');
+  connectMetaBtn.style.pointerEvents = 'none';
+  if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = true;
+};
+
+async function pollMetaUntilConnected(maxTries = 30, delayMs = 2000) {
+  for (let i = 0; i < maxTries; i++) {
+    try {
+      const s = await apiFetch('/api/session');
+      if (s?.authenticated && s?.user?.metaConnected) {
+        pintarMetaConectado();
+        localStorage.removeItem('meta_connecting');
+        return;
+      }
+    } catch (_) {}
+    await new Promise(r => setTimeout(r, delayMs));
+  }
+  // Si no conectó, permitir reintentar
+  localStorage.removeItem('meta_connecting');
+  if (connectMetaBtn) {
+    connectMetaBtn.style.pointerEvents = 'auto';
+    if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = false;
+  }
+}
+
+// 1) Si ya viene conectado desde la PRIMER llamada a /api/session, píntalo
+let initialMetaConnected = false;
+try {
+  const sess = await apiFetch('/api/session'); // <-- ya la hiciste arriba; si quieres, pasa 'sess' hasta aquí
+  if (sess?.authenticated && sess?.user?.metaConnected) {
+    initialMetaConnected = true;
+    pintarMetaConectado();
+  }
+} catch {}
+
+// 2) Limpiar marca si venimos de error/cancelación del OAuth
+const metaStatus = qs.get('meta'); // <-- reusa 'qs'
+if (metaStatus === 'fail' || metaStatus === 'error') {
+  localStorage.removeItem('meta_connecting');
+}
+
+// 3) Click: marca que estamos en flujo (el <a> navega solo a /auth/meta/login)
+connectMetaBtn?.addEventListener('click', () => {
+  localStorage.setItem('meta_connecting', '1');
+  connectMetaBtn.style.pointerEvents = 'none';
+  if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = true;
+});
+
+// 4) Al volver del OAuth, haz polling si aún no está conectado
+if (localStorage.getItem('meta_connecting') && !initialMetaConnected) {
+  pollMetaUntilConnected();
+}
 
 });
