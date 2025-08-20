@@ -1,29 +1,30 @@
-// googleConnect.js 
+// backend/routes/googleConnect.js
 const express = require('express');
 const router = express.Router();
-const axios = require('axios');
-const qs    = require('querystring');
-const User  = require('../models/User');
+const axios  = require('axios');
+const qs     = require('querystring');
+const User   = require('../models/User');
 
 const CLIENT_ID     = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-const REDIRECT_URI = process.env.GOOGLE_CONNECT_CALLBACK_URL;
-
+const REDIRECT_URI  = process.env.GOOGLE_CONNECT_CALLBACK_URL;
 
 router.get('/connect', (req, res) => {
-  if (!req.isAuthenticated()) {
-    return res.redirect('/');
-  }
+  if (!req.isAuthenticated()) return res.redirect('/');
 
-  const state  = req.sessionID;
+  const state = req.sessionID;
+
   const params = new URLSearchParams({
     client_id:     CLIENT_ID,
     redirect_uri:  REDIRECT_URI,
     response_type: 'code',
-    access_type:   'offline',
+    access_type:   'offline',            // refresh_token
+    include_granted_scopes: 'true',      // incremental auth
+    prompt:        'consent',            // fuerza el diálogo (importante al añadir scopes)
     scope: [
       'https://www.googleapis.com/auth/analytics.readonly',
-      'https://www.googleapis.com/auth/adwords'
+      'https://www.googleapis.com/auth/adwords',
+      'https://www.googleapis.com/auth/analytics.edit'  // <— aquí estaba faltando la coma
     ].join(' '),
     state
   });
@@ -31,16 +32,11 @@ router.get('/connect', (req, res) => {
   return res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
 });
 
-
 router.get('/connect/callback', async (req, res) => {
-  if (!req.isAuthenticated()) {
-    return res.redirect('/');
-  }
+  if (!req.isAuthenticated()) return res.redirect('/');
 
   const { code } = req.query;
-  if (!code) {
-    return res.redirect('/onboarding?google=fail');
-  }
+  if (!code) return res.redirect('/onboarding?google=fail');
 
   try {
     const tokenRes = await axios.post(
@@ -59,29 +55,23 @@ router.get('/connect/callback', async (req, res) => {
 
     let decodedEmail = '';
     if (id_token) {
-      const payload = JSON.parse(
-        Buffer.from(id_token.split('.')[1], 'base64').toString()
-      );
+      const payload = JSON.parse(Buffer.from(id_token.split('.')[1], 'base64').toString());
       decodedEmail = payload.email || '';
     }
 
     const updateData = {
       googleConnected:    true,
       googleAccessToken:  access_token,
-      googleRefreshToken: refresh_token
+      googleRefreshToken: refresh_token // ojo: puede venir vacío si el usuario ya concedió antes sin prompt=consent
     };
-    if (decodedEmail) {
-      updateData.googleEmail = decodedEmail;
-    }
+    if (decodedEmail) updateData.googleEmail = decodedEmail;
 
     await User.findByIdAndUpdate(req.user._id, updateData);
     console.log('✅ Google Analytics/Ads conectado para usuario:', req.user._id);
+
     return res.redirect('/onboarding');
   } catch (err) {
-    console.error(
-      '❌ Error intercambiando tokens de Analytics/Ads:',
-      err.response?.data || err.message
-    );
+    console.error('❌ Error intercambiando tokens de Analytics/Ads:', err.response?.data || err.message);
     return res.redirect('/onboarding?google=error');
   }
 });
