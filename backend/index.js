@@ -81,7 +81,7 @@ mongoose
 // Webhooks (raw)
 app.use('/connector/webhooks', express.raw({ type: 'application/json' }), webhookRoutes);
 
-// Sessions
+
 app.set('trust proxy', 1);
 app.use(
   session({
