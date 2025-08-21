@@ -1,103 +1,96 @@
-// backend/routes/meta.js
+// routes/meta.js
 const express = require('express');
 const axios = require('axios');
 const crypto = require('crypto');
-const MetaAccount = require('../models/MetaAccount'); // lo creamos en el punto 4
-
 const router = express.Router();
 
-const FB_VERSION = 'v20.0'; // usa la versión que tengas disponible
-const FB_DIALOG = `https://www.facebook.com/${FB_VERSION}/dialog/oauth`;
-const FB_GRAPH  = `https://graph.facebook.com/${FB_VERSION}`;
+const FB_VERSION = 'v20.0';
+const FB_DIALOG  = `https://www.facebook.com/${FB_VERSION}/dialog/oauth`;
+const FB_GRAPH   = `https://graph.facebook.com/${FB_VERSION}`;
 
-const APP_ID = process.env.FACEBOOK_APP_ID;
-const APP_SECRET = process.env.FACEBOOK_APP_SECRET;
-const REDIRECT_URI = process.env.FACEBOOK_REDIRECT_URI;
+const APP_ID       = process.env.FACEBOOK_APP_ID;
+const APP_SECRET   = process.env.FACEBOOK_APP_SECRET;
+const REDIRECT_URI = process.env.FACEBOOK_REDIRECT_URI; // https://ai.adnova.digital/auth/meta/callback
 
-// Cambia los scopes cuando pidas más (por ahora sólo login básico)
 const SCOPES = ['public_profile','email'].join(',');
 
-// GET /auth/meta/login  -> redirige al diálogo OAuth
+// 1) Login: guarda userId y state
 router.get('/login', (req, res) => {
+  if (!req.isAuthenticated || !req.isAuthenticated()) {
+    return res.redirect('/login'); // asegúrate que solo usuarios logueados hagan el vínculo
+  }
+
   const state = crypto.randomBytes(16).toString('hex');
-  req.session.fb_state = state; // anti-CSRF
+  req.session.fb_state  = state;
+  req.session.fb_userId = req.user._id.toString();  // <--- guarda userId aquí
 
   const params = new URLSearchParams({
-    client_id: APP_ID,
-    redirect_uri: REDIRECT_URI,
-    state,
-    scope: SCOPES,
+    client_id:     APP_ID,
+    redirect_uri:  REDIRECT_URI,
+    scope:         SCOPES,
     response_type: 'code',
+    state
   });
 
   res.redirect(`${FB_DIALOG}?${params.toString()}`);
 });
 
-// GET /auth/meta/callback  -> intercambia "code" por token y guarda
+// 2) Callback: usa req.user o el id guardado en sesión
 router.get('/callback', async (req, res) => {
   try {
     const { code, state } = req.query;
+    if (!code) return res.status(400).send('Falta code');
 
-    if (!code) return res.status(400).send('Falta el parámetro code');
     if (!state || state !== req.session.fb_state) {
-      return res.status(400).send('Estado inválido');
+      return res.redirect('/onboarding?meta=error'); // CSRF/state mismatch
     }
     delete req.session.fb_state;
 
-    // 1) Intercambio del code por un token de usuario (corto)
+    // Intercambia code por token
     const tokenRes = await axios.get(`${FB_GRAPH}/oauth/access_token`, {
       params: {
-        client_id: APP_ID,
+        client_id:     APP_ID,
         client_secret: APP_SECRET,
-        redirect_uri: REDIRECT_URI,
-        code,
-      },
+        redirect_uri:  REDIRECT_URI,
+        code
+      }
     });
+    const { access_token } = tokenRes.data;
 
-    const shortLivedToken = tokenRes.data.access_token;
-    const shortExp = tokenRes.data.expires_in;
-
-    // 2) (opcional pero recomendado) convertir a token de larga duración
-    let accessToken = shortLivedToken;
-    let expiresIn = shortExp;
-
+    // (opcional) Trae info básica
+    let me = {};
     try {
-      const longRes = await axios.get(`${FB_GRAPH}/oauth/access_token`, {
-        params: {
-          grant_type: 'fb_exchange_token',
-          client_id: APP_ID,
-          client_secret: APP_SECRET,
-          fb_exchange_token: shortLivedToken,
-        },
+      const meRes = await axios.get(`${FB_GRAPH}/me`, {
+        params: { access_token, fields: 'id,name,email' }
       });
-      accessToken = longRes.data.access_token || accessToken;
-      expiresIn   = longRes.data.expires_in   || expiresIn;
-    } catch (e) {
-      // si falla, seguimos con el de corta duración
-      console.warn('No se pudo obtener token de larga duración:', e?.response?.data || e.message);
+      me = meRes.data || {};
+    } catch {}
+
+    // Determina el userId
+    const userId =
+      (req.user && req.user._id) ||
+      req.session.fb_userId;                  // <--- usa el que guardaste
+    if (!userId) {
+      console.error('⚠️ No hay userId en sesión para ligar Meta');
+      return res.redirect('/onboarding?meta=error');
     }
+    delete req.session.fb_userId;
 
-    // 3) Perfil básico del usuario
-    const meRes = await axios.get(`${FB_GRAPH}/me`, {
-      params: { fields: 'id,name,email', access_token: accessToken },
-    });
-    const { id: fbUserId, name, email } = meRes.data;
-
-    // 4) Guardar/actualizar en DB (ver modelo en el punto 4)
-    const userId = req.user?._id || null; // si usas sesión con tu usuario del SaaS
-    const expiresAt = new Date(Date.now() + (expiresIn || 0) * 1000);
-
-    await MetaAccount.findOneAndUpdate(
-      { fb_user_id: fbUserId, user: userId },
-      { name, email, access_token: accessToken, expires_at: expiresAt },
-      { upsert: true, new: true }
+    // Marca conectado en BD
+    await require('../models/User').findByIdAndUpdate(
+      userId,
+      {
+        metaConnected: true,
+        metaAccessToken: access_token,
+        metaUserId: me.id,
+        metaEmail: me.email
+      }
     );
 
-    // 5) Redirige de vuelta a tu UI
-    res.redirect('/?connected=facebook'); // ajústalo a tu UI del onboarding
+    return res.redirect('/onboarding?meta=ok');
   } catch (err) {
-    console.error('FB callback error:', err?.response?.data || err);
-    res.status(500).send('Error al conectar con Meta');
+    console.error('❌ META CALLBACK', err.response?.data || err.message);
+    return res.redirect('/onboarding?meta=error');
   }
 });
 

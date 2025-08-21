@@ -62,7 +62,7 @@ router.get('/connect/callback', async (req, res) => {
     const updateData = {
       googleConnected:    true,
       googleAccessToken:  access_token,
-      googleRefreshToken: refresh_token // ojo: puede venir vacío si el usuario ya concedió antes sin prompt=consent
+      googleRefreshToken: refresh_token 
     };
     if (decodedEmail) updateData.googleEmail = decodedEmail;
 
