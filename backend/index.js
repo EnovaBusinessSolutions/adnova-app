@@ -607,24 +607,25 @@ app.use('/api/audit',      auditRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter); // <--- AGREGAR ESTA LÍNEA
 
+// ---------- SPA DASHBOARD (Vite build) ----------
 
+// Carpeta del build de Vite
+const dashboardDist = path.join(__dirname, '..', 'dashboard-src', 'dist');
 
-// === Nuevo dashboard SPA (React + Vite) ===
-app.get(
-  [
-    '/dashboard', '/dashboard/',
-    '/audit', '/audit/',
-    '/google-ads', '/google-ads/',
-    '/google-analytics', '/google-analytics/',
-    '/configuracion', '/configuracion/',
-    '/pixel-verifier', '/pixel-verifier/',
-    '/dashboard/generate-audit', '/dashboard/generate-audit/'    // 👈 agrega esto
-  ],
-  ensureAuthenticated,
-  (_req, res) => {
-    res.sendFile(path.join(__dirname, '../public/dashboard/dashboard.html'));
-  }
-);
+// (opcional) log de seguridad
+if (!fs.existsSync(path.join(dashboardDist, 'index.html'))) {
+  console.warn('⚠️ No existe dashboard dist en:', dashboardDist);
+}
+
+// Servir solo los assets del SPA bajo /dashboard/assets
+app.use('/dashboard/assets', express.static(path.join(dashboardDist, 'assets')));
+
+// Fallback: cualquier ruta de /dashboard/* devuelve index.html del SPA
+app.get(['/dashboard', '/dashboard/*'], ensureAuthenticated, (req, res) => {
+  res.sendFile(path.join(dashboardDist, 'index.html'));
+});
+// ---------- fin SPA DASHBOARD ----------
+
 
 app.get(
   '/auth/google/login',
