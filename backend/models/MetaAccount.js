@@ -3,16 +3,17 @@ const mongoose = require('mongoose');
 
 const MetaAccountSchema = new mongoose.Schema(
   {
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true, default: null },
-    fb_user_id: { type: String, required: true, index: true },
-    name: String,
-    email: String,
-    access_token: { type: String, required: true },
-    expires_at: Date,
+    user:       { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true, required: true },
+    fb_user_id: { type: String, index: true },             // <-- ya no required
+    name:       { type: String },
+    email:      { type: String },
+    access_token: { type: String, required: true, select: false }, // <-- protegido
+    expires_at: { type: Date },
   },
   { timestamps: true }
 );
 
-MetaAccountSchema.index({ user: 1, fb_user_id: 1 }, { unique: true });
+// Si SOLO quieres 1 Meta por usuario:
+MetaAccountSchema.index({ user: 1 }, { unique: true });
 
 module.exports = mongoose.model('MetaAccount', MetaAccountSchema);
