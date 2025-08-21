@@ -108,28 +108,6 @@ app.use('/assets', express.static(path.join(__dirname, '../public/support/assets
 app.use('/assets', express.static(path.join(__dirname, '../public/plans/assets')));
 app.use(express.static(path.join(__dirname, '../public')));
 
-/* ---------- GUARDS ---------- */
-function ensureAuthenticated(req, res, next) {
-  if (req.isAuthenticated()) return next();
-  res.redirect('/login');
-}
-function ensureNotOnboarded(req, res, next) {
-  if (req.isAuthenticated() && !req.user.onboardingComplete) return next();
-  res.redirect('/dashboard');
-}
-
-/* ---------- SPA DASHBOARD (Vite build) ---------- */
-const dashboardDist = path.join(__dirname, '..', 'dashboard-src', 'dist');
-
-// 1) Assets estáticos bajo /dashboard
-app.use('/dashboard', express.static(dashboardDist, { index: 'index.html' }));
-
-// 2) Fallback: /dashboard/* -> index.html
-app.get(['/dashboard', '/dashboard/*'], (req, res) => {
-  res.sendFile(path.join(dashboardDist, 'index.html'));
-});
-/* ---------- fin SPA DASHBOARD ---------- */
-
 /* ---------- RUTAS ---------- */
 app.get('/', (req, res) => {
   const { shop } = req.query;
