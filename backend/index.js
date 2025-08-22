@@ -121,6 +121,8 @@ app.use('/assets', express.static(path.join(__dirname, '../public/landing/assets
 app.use('/assets', express.static(path.join(__dirname, '../public/support/assets')));
 app.use('/assets', express.static(path.join(__dirname, '../public/plans/assets')));
 app.use(express.static(path.join(__dirname, '../public')));
+app.use('/dashboard/assets',express.static(path.join(__dirname, '../public/dashboard/assets')));
+
 
 /* ---------- RUTAS ---------- */
 app.get('/', (req, res) => {
@@ -458,8 +460,8 @@ app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter);
 
 // === Dashboard SPA (React + Vite) ===
-// Sirve el HTML del dashboard para cualquier subruta bajo /dashboard
-app.get(['/dashboard', '/dashboard/*'], ensureAuthenticated, (_req, res) => {
+// Fallback del SPA para cualquier subruta bajo /dashboard
+app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
   res.sendFile(path.join(__dirname, '../public/dashboard/dashboard.html'));
 });
 
