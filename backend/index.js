@@ -95,6 +95,20 @@ app.use(
   })
 );
 
+// --- Middlewares de sesión ---
+function ensureAuthenticated(req, res, next) {
+  if (req.isAuthenticated && req.isAuthenticated()) return next();
+  return res.redirect('/login');
+}
+
+function ensureNotOnboarded(req, res, next) {
+  if (!(req.isAuthenticated && req.isAuthenticated())) {
+    return res.redirect('/login');
+  }
+  if (!req.user?.onboardingComplete) return next();
+  return res.redirect('/dashboard');
+}
+
 app.use(passport.initialize());
 app.use(passport.session());
 
@@ -443,29 +457,11 @@ app.use('/api/audit', auditRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter);
 
-// === Nuevo dashboard SPA (React + Vite) (HTML estático público)
-app.get(
-  [
-    '/dashboard',
-    '/dashboard/',
-    '/audit',
-    '/audit/',
-    '/google-ads',
-    '/google-ads/',
-    '/google-analytics',
-    '/google-analytics/',
-    '/configuracion',
-    '/configuracion/',
-    '/pixel-verifier',
-    '/pixel-verifier/',
-    '/dashboard/generate-audit',
-    '/dashboard/generate-audit/',
-  ],
-  ensureAuthenticated,
-  (_req, res) => {
-    res.sendFile(path.join(__dirname, '../public/dashboard/dashboard.html'));
-  }
-);
+// === Dashboard SPA (React + Vite) ===
+// Sirve el HTML del dashboard para cualquier subruta bajo /dashboard
+app.get(['/dashboard', '/dashboard/*'], ensureAuthenticated, (_req, res) => {
+  res.sendFile(path.join(__dirname, '../public/dashboard/dashboard.html'));
+});
 
 // Google OAuth (login)
 app.get(
