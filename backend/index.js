@@ -56,7 +56,7 @@ app.use(publicCSP);
 const PORT = process.env.PORT || 3000;
 const SHOPIFY_HANDLE = process.env.SHOPIFY_APP_HANDLE;
 
-// CORS
+
 app.use(
   cors({
     origin: ['https://ai.adnova.digital', /\.myshopify\.com$/, 'https://admin.shopify.com'],
@@ -65,20 +65,20 @@ app.use(
 );
 app.options(/.*/, cors());
 
-// Connector iframe
+
 app.get('/connector/interface', shopifyCSP, (req, res) => {
   const { shop, host } = req.query;
   if (!shop || !host) return res.status(400).send("Faltan parámetros 'shop' o 'host'");
   res.sendFile(path.join(__dirname, '../public/connector/interface.html'));
 });
 
-// Mongo
+
 mongoose
   .connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log('✅ Conectado a MongoDB Atlas'))
   .catch((err) => console.error('❌ Error al conectar con MongoDB:', err));
 
-// Webhooks (raw)
+
 app.use('/connector/webhooks', express.raw({ type: 'application/json' }), webhookRoutes);
 
 
@@ -95,7 +95,7 @@ app.use(
   })
 );
 
-// --- Middlewares de sesión ---
+
 function ensureAuthenticated(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.redirect('/login');
@@ -115,7 +115,7 @@ app.use(passport.session());
 app.use('/connector', shopifyCSP, connector);
 app.use(express.json());
 
-/* ---------- STATIC FILES ---------- */
+
 app.use('/assets', express.static(path.join(__dirname, '../public/dashboard/assets')));
 app.use('/assets', express.static(path.join(__dirname, '../public/landing/assets')));
 app.use('/assets', express.static(path.join(__dirname, '../public/support/assets')));
@@ -124,25 +124,25 @@ app.use(express.static(path.join(__dirname, '../public')));
 app.use('/dashboard/assets',express.static(path.join(__dirname, '../public/dashboard/assets')));
 
 
-/* ---------- RUTAS ---------- */
+
 app.get('/', (req, res) => {
   const { shop } = req.query;
 
-  // Si viene de Shopify embed, redirige al conector
+  
   if (shop) {
     return res.redirect(`/connector?shop=${shop}`);
   }
 
-  // Si el usuario YA está autenticado
+  
   if (req.isAuthenticated && req.isAuthenticated()) {
     return req.user.onboardingComplete ? res.redirect('/dashboard') : res.redirect('/onboarding');
   }
 
-  // Visitante anónimo -> landing
+  
   return res.sendFile(path.join(__dirname, '../public/landing/index.html'));
 });
 
-// Login tradicional
+
 app.get('/login', (_req, res) => {
   res.sendFile(path.join(__dirname, '../public/login.html'));
 });
@@ -151,7 +151,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, uptime: process.uptime() });
 });
 
-/* ---------- REGISTRO ---------- */
+
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
@@ -226,16 +226,16 @@ app.post('/api/register', async (req, res) => {
     res.status(400).json({ success: false, message: 'No se pudo registrar el usuario' });
   }
 });
-/* ---------- FIN REGISTRO ---------- */
 
-// Forgot password
+
+
 app.post('/api/forgot-password', async (req, res) => {
   const { email } = req.body;
   if (!email) return res.status(400).json({ success: false, message: 'Correo requerido' });
 
   try {
     const user = await User.findOne({ email });
-    if (!user) return res.json({ success: true }); // no revelar
+    if (!user) return res.json({ success: true }); 
 
     const token = crypto.randomBytes(32).toString('hex');
     const expira = new Date(Date.now() + 60 * 60 * 1000);
@@ -322,7 +322,7 @@ app.post('/api/forgot-password', async (req, res) => {
   }
 });
 
-// Reset password
+
 app.post('/api/reset-password', async (req, res) => {
   const { token, password } = req.body;
   if (!token || !password) {
@@ -351,7 +351,7 @@ app.post('/api/reset-password', async (req, res) => {
   }
 });
 
-// Login API
+
 app.post('/api/login', async (req, res, next) => {
   const { email, password } = req.body;
   if (!email || !password) {
@@ -379,7 +379,7 @@ app.post('/api/login', async (req, res, next) => {
   }
 });
 
-// Onboarding page
+
 app.get('/onboarding', ensureNotOnboarded, async (req, res) => {
   const filePath = path.join(__dirname, '../public/onboarding.html');
   const user = await User.findById(req.user._id).lean();
@@ -459,13 +459,11 @@ app.use('/api/audit', auditRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter);
 
-// === Dashboard SPA (React + Vite) ===
-// Fallback del SPA para cualquier subruta bajo /dashboard
 app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
   res.sendFile(path.join(__dirname, '../public/dashboard/dashboard.html'));
 });
 
-// Google OAuth (login)
+
 app.get(
   '/auth/google/login',
   passport.authenticate('google', { scope: ['profile', 'email'] })
@@ -480,7 +478,7 @@ app.get(
   }
 );
 
-// Google connect (Analytics/Ads)
+
 app.get('/auth/google/connect', (req, res) => {
   if (!req.isAuthenticated()) return res.redirect('/');
 

@@ -9,9 +9,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const hostFromQuery = qs.get('host');
   const userId = sessionStorage.getItem('userId');
 
-// ────────────────────────────────
- // 1. Obtiene la sesión del backend
- // ────────────────────────────────
  try {
    const sess = await apiFetch('/api/session');
    if (sess.authenticated && sess.user) {
@@ -68,13 +65,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // SOLO busca y guarda credenciales cuando hay tienda conectada
+  
   const pintarShopifyConectado = async () => {
     connectBtn.textContent = 'Conectado';
     connectBtn.classList.add('connected');
     connectBtn.disabled = true;
 
-    // Busca shop en los posibles lugares
+    
     const shop = shopFromQuery || domainInput.value.trim().toLowerCase() || sessionStorage.getItem('shop');
     if (!shop) {
       console.warn('No se encontró el dominio de la tienda para obtener credenciales.');
@@ -87,7 +84,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         sessionStorage.setItem('shop', resp.shop);
         sessionStorage.setItem('accessToken', resp.accessToken);
         console.log('✅ Guardado en sessionStorage:', resp.shop, resp.accessToken);
-        habilitarContinue(); // <-- Aquí SIEMPRE
+        habilitarContinue(); 
       } else {
         console.warn('No se encontraron credenciales para la tienda.');
       }
@@ -102,12 +99,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectGoogleBtn.disabled = true;
   };
 
-  // 1. Si YA estaba conectado, busca y guarda credenciales
+  
   if (flagShopify.textContent.trim() === 'true') await pintarShopifyConectado();
   if (flagGoogle.textContent.trim() === 'true') pintarGoogleConectado();
   habilitarContinue();
 
-  // Botón para conectar Shopify
+  
   connectBtn?.addEventListener('click', () => {
     let shop = shopFromQuery;
     let host = hostFromQuery;
@@ -120,7 +117,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     location.href = `/connector?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
   });
 
-  // Cuando el usuario pone el dominio y da click en "Enviar"
+  
   domainSend?.addEventListener('click', async () => {
     const shop = domainInput.value.trim().toLowerCase();
     if (!shop.endsWith('.myshopify.com')) return alert('Dominio inválido');
@@ -173,7 +170,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     window.location.href = '/onboarding3.html';
   });
-// ===== META (Facebook) =====
+
 const pintarMetaConectado = () => {
   if (!connectMetaBtn) return;
   connectMetaBtn.textContent = 'Conectado';
@@ -194,7 +191,7 @@ async function pollMetaUntilConnected(maxTries = 30, delayMs = 2000) {
     } catch (_) {}
     await new Promise(r => setTimeout(r, delayMs));
   }
-  // Si no conectó, permitir reintentar
+  
   localStorage.removeItem('meta_connecting');
   if (connectMetaBtn) {
     connectMetaBtn.style.pointerEvents = 'auto';
@@ -202,30 +199,30 @@ async function pollMetaUntilConnected(maxTries = 30, delayMs = 2000) {
   }
 }
 
-// 1) Si ya viene conectado desde la PRIMER llamada a /api/session, píntalo
+
 let initialMetaConnected = false;
 try {
-  const sess = await apiFetch('/api/session'); // <-- ya la hiciste arriba; si quieres, pasa 'sess' hasta aquí
+  const sess = await apiFetch('/api/session'); 
   if (sess?.authenticated && sess?.user?.metaConnected) {
     initialMetaConnected = true;
     pintarMetaConectado();
   }
 } catch {}
 
-// 2) Limpiar marca si venimos de error/cancelación del OAuth
-const metaStatus = qs.get('meta'); // <-- reusa 'qs'
+
+const metaStatus = qs.get('meta'); 
 if (metaStatus === 'fail' || metaStatus === 'error') {
   localStorage.removeItem('meta_connecting');
 }
 
-// 3) Click: marca que estamos en flujo (el <a> navega solo a /auth/meta/login)
+
 connectMetaBtn?.addEventListener('click', () => {
   localStorage.setItem('meta_connecting', '1');
   connectMetaBtn.style.pointerEvents = 'none';
   if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = true;
 });
 
-// 4) Al volver del OAuth, haz polling si aún no está conectado
+
 if (localStorage.getItem('meta_connecting') && !initialMetaConnected) {
   pollMetaUntilConnected();
 }

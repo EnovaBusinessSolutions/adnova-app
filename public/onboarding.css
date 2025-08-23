@@ -1,16 +1,14 @@
-/* ADNOVA Onboarding - Fondo sólido y acentos lilas/violetas */
 
-/* Reset básico */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
-/* Estilos globales */
+
 body {
   font-family: 'Inter', sans-serif;
-  background: #0a0a12; /* Fondo sólido, igual que la landing */
+  background: #0a0a12; 
   color: #F4F2FF;
   min-height: 100vh;
   display: flex;
@@ -18,7 +16,7 @@ body {
   justify-content: center;
 }
 
-/* Contenedor principal */
+
 .onboarding-container {
   display: flex;
   width: 100%;
@@ -33,7 +31,7 @@ body {
   position: relative;
 }
 
-/* Sidebar */
+
 .sidebar {
   width: 320px;
   background: rgba(15, 15, 25, 1);
@@ -60,7 +58,6 @@ body {
   margin-left: 0.5rem;
 }
 
-/* Pasos */
 .steps {
   display: flex;
   flex-direction: column;
@@ -118,7 +115,6 @@ body {
   color: #B6A7E8;
 }
 
-/* Estado de los pasos */
 .step.active {
   background: rgba(169, 107, 255, 0.10);
 }
@@ -135,7 +131,7 @@ body {
   font-size: 1.2rem;
 }
 
-/* Contenido principal */
+
 .main-content {
   flex: 1;
   padding: 2.5rem;
@@ -166,7 +162,7 @@ body {
   display: none;
 }
 
-/* Tarjetas de conexión */
+
 .connection-cards {
   display: flex;
   flex-direction: column;
@@ -238,7 +234,7 @@ body {
   font-weight: 600;
 }
 
-/* Botones */
+
 .btn-connect {
   background: rgba(169, 107, 255, 0.09);
   border: 1.5px solid #382058;
@@ -309,7 +305,7 @@ body {
   color: #A96BFF;
 }
 
-/* Permisos */
+
 .permissions-list {
   display: flex;
   flex-direction: column;
@@ -349,7 +345,7 @@ body {
   color: #C5B8E6;
 }
 
-/* Análisis */
+
 .analysis-progress {
   margin-top: 2rem;
 }
@@ -421,7 +417,6 @@ body {
   color: #fff;
 }
 
-/* Mensaje de éxito */
 .success-message {
   text-align: center;
   margin: 3rem 0;
@@ -454,7 +449,7 @@ body {
   margin: 0 auto;
 }
 
-/* Features */
+
 .features-summary {
   display: flex;
   justify-content: center;
@@ -488,7 +483,7 @@ body {
   color: #C5B8E6;
 }
 
-/* Responsive */
+
 @media (max-width: 900px) {
   .onboarding-container {
     flex-direction: column;

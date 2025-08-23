@@ -19,7 +19,6 @@ const userSchema = new mongoose.Schema({
   resetPasswordToken  : { type: String },
   resetPasswordExpires: { type: Date }
 
-  // ====== PLANES ======
   ,plan: {
     type: String,
     enum: ['gratis','emprendedor','pro','enterprise'],

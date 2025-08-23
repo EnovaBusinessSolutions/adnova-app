@@ -12,12 +12,8 @@ const {
   getCustomerMetrics,
 } = require('../services/shopifyMetrics');
 
-/* -------------------------------------------------------------------------- */
-/*  Utils                                                                     */
-/* -------------------------------------------------------------------------- */
 function mapIssues(raw = {}) {
-  if (raw.productos) return raw;               // formato nuevo OK
-  // legacy → agrupa
+  if (raw.productos) return raw;              
   return {
     productos: [
       {
@@ -29,7 +25,7 @@ function mapIssues(raw = {}) {
   };
 }
 
-/* Trae hasta 250 productos (sin paginar) */
+
 async function fetchProducts(shop, token) {
   const query = `
   {
@@ -52,9 +48,6 @@ async function fetchProducts(shop, token) {
   return (data.data.products.edges || []).map(e => e.node);
 }
 
-/* -------------------------------------------------------------------------- */
-/*  IA                                                                        */
-/* -------------------------------------------------------------------------- */
 async function generarAuditoriaIA(shop, token) {
   try {
     const products = await fetchProducts(shop, token);
@@ -105,17 +98,12 @@ ${JSON.stringify(products)}
       max_tokens: 4096
     });
 
-    /* -------------- Parse robusto --------------- */
     const raw     = completion.choices[0].message.content.replace(/```json?|```/g, '');
     const parsed  = JSON.parse(raw);
     const issues  = mapIssues(parsed.issues);
 
-    /* ──────────────────────────────────────────────
-   Generar arrays planos por categoría UX / SEO / Performance / Media
-   ────────────────────────────────────────────── */
 const flat = { ux: [], seo: [], performance: [], media: [] };
 
-/* Función auxiliar: decide a qué categoría pertenece el hallazgo */
 const detectCat = area => {
   const a = (area || '').toLowerCase();
   if (a.includes('seo'))                      return 'seo';
@@ -124,11 +112,10 @@ const detectCat = area => {
   if (a.includes('media') ||
       a.includes('imagen')  ||
       a.includes('video'))                   return 'media';
-  /* por defecto todo lo demás lo tratamos como UX */
   return 'ux';
 };
 
-/* Recorre todos los hallazgos y rellena flat */
+
 (issues.productos || []).forEach(prod => {
   (prod.hallazgos || []).forEach(h => {
     const cat = detectCat(h.area);
@@ -136,11 +123,11 @@ const detectCat = area => {
   });
 });
 
-/* Combina: mantenemos “productos” + añadimos los 4 arrays planos */
+
 const issuesFinal = { ...issues, ...flat };
 
 
-    /* Construye centro de acciones con todo lo HIGH (fallback a medium) */
+    
     const extraAC = [];
     issues.productos.forEach(p =>
       p.hallazgos.forEach(h => {
@@ -177,9 +164,6 @@ const issuesFinal = { ...issues, ...flat };
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*  Guardar auditoría completa                                                */
-/* -------------------------------------------------------------------------- */
 async function procesarAuditoria(userId, shopDomain, token) {
   const ia      = await generarAuditoriaIA(shopDomain, token);
   const sales   = await getSalesMetrics(shopDomain, token);

@@ -1,5 +1,5 @@
 body {
-  background: #0a0a12; /* Fondo negro sólido como login */
+  background: #0a0a12; 
   color: #F4F2FF;
   font-family: 'Inter', Arial, sans-serif;
   margin: 0;
@@ -10,7 +10,7 @@ body {
 }
 
 .card {
-  background: rgba(16, 14, 26, 0.98); /* Tarjeta oscura opaca */
+  background: rgba(16, 14, 26, 0.98); 
   border-radius: 22px;
   box-shadow: 0 0 32px 0 #a96bff2d;
   padding: 2.7rem 2.2rem 2.2rem 2.2rem;

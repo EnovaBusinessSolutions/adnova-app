@@ -1,7 +1,7 @@
 body {
   min-height: 100vh;
   margin: 0;
-  background: #0a0a12; /* Fondo negro sólido como login */
+  background: #0a0a12; 
   display: flex;
   align-items: center;
   justify-content: center;
@@ -32,7 +32,7 @@ body {
   display: inline-block;
   width: 56px;
   height: 56px;
-  /* Puedes agregar animación si quieres */
+  
 }
 
 h1 {

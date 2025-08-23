@@ -61,9 +61,9 @@ document.addEventListener('DOMContentLoaded', function () {
     sessionStorage.setItem('shop', user.shop);
   }
   if (user.email) {
-    sessionStorage.setItem('email', user.email);  // <---- AGREGA ESTO
+    sessionStorage.setItem('email', user.email);  
   }
-  // DEBUG
+  
   console.log('[LOGIN] Guardando en sessionStorage:', user._id, user.shop, user.email);
 
   const redirectUrl = user.onboardingComplete ? '/dashboard' : '/onboarding';
@@ -74,7 +74,7 @@ document.addEventListener('DOMContentLoaded', function () {
   }
 });
 
-// Registrar botón de registro
+
 const registerBtn = document.getElementById('register-btn');
 if (registerBtn) {
   registerBtn.addEventListener('click', () => {
@@ -82,7 +82,7 @@ if (registerBtn) {
   });
 }
 
-// Registrar botón de Google
+
 const googleBtn = document.getElementById('google-btn');
 if (googleBtn) {
   googleBtn.addEventListener('click', () => {

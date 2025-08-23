@@ -6,10 +6,6 @@ const crypto = require('crypto');
 
 const router = express.Router();
 
-/**
- * GET /user
- * Crea (upsert) si no existe. Plan 'gratis' por defecto.
- */
 router.get('/user', verifyShopifyToken, async (req, res) => {
   const shop = req.shop;
 
@@ -53,10 +49,6 @@ router.get('/user', verifyShopifyToken, async (req, res) => {
   }
 });
 
-/**
- * POST /onboarding-complete
- * Marca onboarding como completo (no toca plan si ya existe).
- */
 router.post('/onboarding-complete', verifyShopifyToken, async (req, res) => {
   const shop = req.shop || req.body.shop;
   if (!shop) return res.status(400).json({ error: 'Shop is required' });

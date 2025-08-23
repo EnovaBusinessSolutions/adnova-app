@@ -4,7 +4,7 @@ const router = express.Router();
 const { generarAuditoriaIA } = require('../jobs/auditJob');
 const Audit = require('../models/Audit');
 
-// Resolver contexto desde sesión o query/body/headers
+
 function resolveContext(req) {
   const tokenFromHeader = req.headers['x-shopify-access-token'];
 
@@ -38,10 +38,10 @@ async function handler(req, res) {
       return res.status(400).json({ error: 'accessToken requerido en modo API' });
     }
 
-    // Ejecuta la auditoría (si hay token lo usa; en sesión puede ir undefined)
+    
     const resultado = await generarAuditoriaIA(shop, accessToken || undefined);
 
-    // Si hay userId guardamos la auditoría (útil cuando es desde el dashboard)
+   
     if (userId) {
       await Audit.create({
         userId,
@@ -60,7 +60,7 @@ async function handler(req, res) {
   }
 }
 
-// Mantén compatibilidad: admite GET y POST
+
 router.get('/audit', handler);
 router.post('/audit', handler);
 

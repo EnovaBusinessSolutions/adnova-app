@@ -1,6 +1,5 @@
 /* public/js/register.js */
 document.addEventListener('DOMContentLoaded', () => {
-  /* ---------- Registro ---------- */
   const form = document.getElementById('register-form');
   const msg  = document.getElementById('register-msg');
 
@@ -40,21 +39,17 @@ document.addEventListener('DOMContentLoaded', () => {
     msg.style.color = ok ? '#b286e0ff' : '#f87171';
   }
 
-  /* ---------- Toggle contraseña ---------- */
   document.querySelectorAll('.toggle-password').forEach((btn) => {
   btn.addEventListener('click', () => {
     const targetId = btn.dataset.target;
     const input = document.getElementById(targetId);
     const visible = input.type === 'text';
 
-    // Cambia el tipo de input
     input.type = visible ? 'password' : 'text';
 
-    // Alterna clases SOLO en el botón
     btn.classList.toggle('eye-visible', !visible);
     btn.classList.toggle('eye-hidden', visible);
 
-    // Siempre asegura el estilo .form-input
     input.classList.add('form-input');
   });
 });

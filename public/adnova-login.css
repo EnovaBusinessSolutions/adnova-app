@@ -1,6 +1,4 @@
-/* ADNOVA Login - Fondo sólido y acentos lilas/violetas */
 
-/* Base */
 * {
   margin: 0;
   padding: 0;
@@ -12,7 +10,7 @@ body, html {
   font-family: 'Inter', sans-serif;
   min-height: 100vh;
   min-width: 100vw;
-  background: #0a0a12;   /* Fondo negro sólido, igual que tu landing */
+  background: #0a0a12;   
   color: #F4F2FF;
   display: flex;
   align-items: center;
@@ -23,7 +21,6 @@ body {
   overflow: hidden;
 }
 
-/* Tarjeta principal */
 .login-container {
   width: 100%;
   max-width: 28rem;
@@ -34,7 +31,6 @@ body {
   border: 1px solid #23143A;
 }
 
-/* Encabezado */
 .header {
   text-align: center;
   margin-bottom: 1.5rem;
@@ -60,7 +56,6 @@ body {
   margin-bottom: 1.5rem;
 }
 
-/* Formulario */
 .form {
   margin-bottom: 1.5rem;
 }
@@ -95,7 +90,6 @@ body {
   box-shadow: 0 0 0 2px #A96BFF44;
 }
 
-/* Botones */
 .btn {
   display: flex;
   align-items: center;
@@ -154,7 +148,6 @@ body {
   color: #A96BFF;
 }
 
-/* Separadores */
 .divider {
   position: relative;
   text-align: center;
@@ -173,7 +166,6 @@ body {
   letter-spacing: 0.09em;
 }
 
-/* Social buttons grid */
 .social-buttons {
   display: flex;
   flex-direction: column;
@@ -182,7 +174,6 @@ body {
   width: 100%;
 }
 
-/* Enlaces */
 .text-center {
   text-align: center;
 }
@@ -209,7 +200,6 @@ body {
   text-decoration: underline;
 }
 
-/* Olvidé mi contraseña */
 .forgot-password {
   margin-top: 1.5rem;
   color: #A0A0B6;
@@ -222,7 +212,6 @@ body {
   white-space: nowrap;
 }
 
-/* Registro */
 .register-wrapper {
   text-align: center;
   margin-top: 14px;
@@ -235,7 +224,7 @@ body {
   }
 }
 
-/* Iconos */
+
 .bi {
   display: inline-block;
   vertical-align: -0.125em;

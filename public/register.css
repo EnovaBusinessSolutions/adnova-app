@@ -3,7 +3,7 @@ body, html {
   height: 100%;
   width: 100%;
   margin: 0;
-  background: #0a0a12; /* Fondo sólido igual que la landing */
+  background: #0a0a12; 
   display: flex;
   align-items: center;
   justify-content: center;
@@ -13,7 +13,7 @@ body, html {
 .login-container {
   width: 100%;
   max-width: 28rem;
-  background: rgba(16, 14, 26, 0.98); /* Más opaco, alineado a onboarding/login */
+  background: rgba(16, 14, 26, 0.98); 
   border-radius: 1rem;
   box-shadow: 0 8px 40px 0 rgba(85, 34, 145, 0.20);
   padding: 2.5rem 2rem 2rem 2rem;
@@ -50,7 +50,7 @@ body, html {
   letter-spacing: 0.01em;
 }
 
-/* Input contraseña y texto visibles siempre igual */
+
 input[type="password"].form-input,
 input[type="text"].form-input {
   width: 100%;
@@ -62,23 +62,23 @@ input[type="text"].form-input {
   outline: none;
   font-size: 1rem;
   transition: border 0.2s, box-shadow 0.2s;
-  padding-right: 2.5rem; /* Espacio para el icono de ojo */
+  padding-right: 2.5rem; 
 }
 
-/* Focus para ambos tipos */
+
 input[type="password"].form-input:focus,
 input[type="text"].form-input:focus {
   border: 1.5px solid #A96BFF;
   box-shadow: 0 0 0 2px #A96BFF44;
 }
 
-/* Wrapper del campo para posición del botón */
+
 .form-input-wrapper {
   position: relative;
   width: 100%;
 }
 
-/* Toggle password universal */
+
 .toggle-password {
   position: absolute;
   right: 10px;
@@ -96,7 +96,7 @@ input[type="text"].form-input:focus {
   z-index: 2;
 }
 
-/* Icono de ojo SVG embebido */
+
 .eye-icon {
   width: 22px;
   height: 22px;
@@ -111,7 +111,6 @@ input[type="text"].form-input:focus {
   opacity: 0.85;
 }
 
-/* Botones */
 .btn {
   display: flex;
   align-items: center;
@@ -140,7 +139,7 @@ input[type="text"].form-input:focus {
   box-shadow: 0 6px 22px 0 #9333ea44;
 }
 
-/* Mensaje de éxito */
+
 .success-message {
   text-align: center;
   margin-top: 1rem;

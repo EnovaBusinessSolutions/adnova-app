@@ -1,7 +1,7 @@
 // backend/routes/audits.js
 const express = require('express');
 const router = express.Router();
-const User = require('../models/User');     // ajusta la ruta si tu archivo está a otro nivel
+const User = require('../models/User');    
 const Audit = require('../models/Audit');
 
 const PLAN = {
@@ -14,7 +14,7 @@ const PLAN = {
 function periodBounds(conf) {
   const now = new Date();
   if (conf.strategy === 'weekly') {
-    const d = now.getUTCDay() || 7; // 1..7 (Mon..Sun)
+    const d = now.getUTCDay() || 7; 
     const start = new Date(Date.UTC(
       now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (d - 1)
     ));
@@ -36,7 +36,7 @@ function periodBounds(conf) {
 
 router.get('/usage', async (req, res) => {
   try {
-    // 1) Autenticación por sesión
+    
     if (!(req.isAuthenticated && req.isAuthenticated())) {
       return res.status(401).json({ error: 'No autenticado' });
     }
@@ -44,19 +44,19 @@ router.get('/usage', async (req, res) => {
     const { shop, _id } = req.user;
     if (!shop) return res.status(400).json({ error: 'Usuario sin shop' });
 
-    // 2) lee plan del usuario (o default 'gratis')
+    
     const user = await User.findById(_id).select('plan');
     const plan = user?.plan || 'gratis';
     const conf = PLAN[plan] || PLAN.gratis;
 
-    // 3) enterprise = ilimitado
+    
     if (conf.strategy === 'unlimited') {
       return res.json({
         plan, used: 0, limit: null, window: 'unlimited', nextResetAt: null
       });
     }
 
-    // 4) cuenta auditorías en ventana
+    
     const { since, nextResetAt, window } = periodBounds(conf);
     const used = await Audit.countDocuments({
       shopDomain: shop,

@@ -1,6 +1,5 @@
 const helmet = require('helmet');
 
-/** 1) Política genérica para TODO el SAAS  */
 const publicCSP = helmet({
   contentSecurityPolicy: {
     useDefaults: true,
@@ -11,14 +10,13 @@ const publicCSP = helmet({
       imgSrc: [
         "'self'",
         "data:",
-        "https://img.icons8.com" // <-- AGREGA ESTA LÍNEA
+        "https://img.icons8.com" 
       ],
-      frameAncestors: ["'self'"]   // <-- ¡no deja iframes externos!
+      frameAncestors: ["'self'"]   
     }
   }
 });
 
-/** 2) Política especial SOLO para el iframe embebido */
 const shopifyCSP = helmet({
   frameguard: false,
   contentSecurityPolicy: {

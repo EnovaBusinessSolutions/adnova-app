@@ -4,7 +4,7 @@ const router = express.Router();
 const { generarAuditoriaIA } = require('../jobs/auditJob');
 const Audit = require('../models/Audit');
 
-/** Resuelve datos desde sesión (dashboard) o body/query (onboarding) */
+
 function resolveContext(req) {
   const tokenFromHeader = req.headers['x-shopify-access-token'];
 
@@ -29,11 +29,6 @@ function resolveContext(req) {
   };
 }
 
-/**
- * POST /api/audit/start
- * - Modo sesión (dashboard): usa req.user (shop/userId). accessToken es opcional.
- * - Modo API (onboarding): requiere shop + accessToken.
- */
 router.post('/start', async (req, res) => {
   try {
     const { mode, shop, userId, accessToken } = resolveContext(req);
@@ -63,11 +58,6 @@ router.post('/start', async (req, res) => {
   }
 });
 
-/**
- * GET /api/audit/latest
- * - Modo sesión: toma userId/shop de req.user.
- * - Modo API: acepta ?userId=&shop=
- */
 router.get('/latest', async (req, res) => {
   try {
     const ctx = resolveContext(req);
@@ -82,7 +72,7 @@ router.get('/latest', async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    // Devuelve 200 con audit=null para evitar que el front “se caiga” si no hay registros
+    
     res.json({ ok: true, audit: audit || null });
   } catch (err) {
     console.error('latest audit error:', err);

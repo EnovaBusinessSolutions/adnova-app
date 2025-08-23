@@ -10,13 +10,13 @@ const ShopConnections = require('../../models/ShopConnections');
 const {
   SHOPIFY_API_KEY,
   SHOPIFY_API_SECRET,
-  SHOPIFY_SCOPES,          // opcional: si está vacío, no se envía &scope
-  SHOPIFY_REDIRECT_URI     // opcional: override si lo necesitas
+  SHOPIFY_SCOPES,         
+  SHOPIFY_REDIRECT_URI    
 } = process.env;
 
 const REDIRECT_URI = SHOPIFY_REDIRECT_URI || 'https://ai.adnova.digital/connector/auth/callback';
 
-/* -------------------------- helpers -------------------------- */
+
 function extractShop(req) {
   let { shop } = req.query || {};
   if (!shop && req.headers['x-shopify-shop-domain']) {
@@ -36,13 +36,13 @@ function buildAuthorizeUrl(shop, state) {
     `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
     `&state=${encodeURIComponent(state)}`;
 
-  // Si defines SHOPIFY_SCOPES en .env, se añade; si no, Shopify usa los del Dashboard
+  
   return SHOPIFY_SCOPES
     ? `${base}&scope=${encodeURIComponent(SHOPIFY_SCOPES)}`
     : base;
 }
 
-// Verificación HMAC recomendada por Shopify
+
 function isValidHmac(query) {
   const { hmac, ...rest } = query;
   if (!hmac) return false;
@@ -64,7 +64,7 @@ function isValidHmac(query) {
   }
 }
 
-/* --------- OAuth inmediato para TODO /connector* (whitelist) --------- */
+
 router.use((req, res, next) => {
   if (!['GET', 'HEAD'].includes(req.method)) return next();
 
@@ -79,7 +79,7 @@ router.use((req, res, next) => {
 
   const shop = extractShop(req);
   if (!shop) {
-    // Nada de UI antes de OAuth: error plano y claro
+    
     return res
       .status(400)
       .type('text/plain')
@@ -93,10 +93,10 @@ router.use((req, res, next) => {
   return res.redirect(302, authorizeUrl);
 });
 
-/* -------------------------- webhooks -------------------------- */
+
 router.use('/webhooks', require('./webhooks'));
 
-/* ----------------------- OAuth callback ----------------------- */
+
 router.get('/auth/callback', async (req, res) => {
   const { shop, code } = req.query;
   if (!shop || !code) {
@@ -130,7 +130,7 @@ router.get('/auth/callback', async (req, res) => {
   }
 });
 
-/* ------------------- Interfaz embebida (requiere token) ------------------- */
+
 router.get('/interface', async (req, res) => {
   const shop = extractShop(req);
   if (!shop) {
@@ -139,7 +139,7 @@ router.get('/interface', async (req, res) => {
 
   const conn = await ShopConnections.findOne({ shop });
   if (!conn?.accessToken) {
-    // Si no hay sesión/token, vuelve a OAuth
+   
     const state = crypto.randomBytes(16).toString('hex');
     return res.redirect(302, buildAuthorizeUrl(shop, state));
   }
@@ -147,7 +147,6 @@ router.get('/interface', async (req, res) => {
   res.sendFile(path.join(__dirname, '../../../public/connector/interface.html'));
 });
 
-/* -------------------------- Health check -------------------------- */
 router.get('/healthz', (_req, res) => {
   res.status(200).json({ ok: true, service: 'connector', ts: Date.now() });
 });

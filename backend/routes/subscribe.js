@@ -10,8 +10,8 @@ const auth = new google.auth.GoogleAuth({
   scopes: SCOPES,
 });
 
-const spreadsheetId = '1MLX7gCPxMrtcpt4wk70by3-EnSc_iefG8gmPmnh48Tg'; // tu ID real
-const sheetRange = 'Sheet1!A:B'; // nombre de tu hoja
+const spreadsheetId = '1MLX7gCPxMrtcpt4wk70by3-EnSc_iefG8gmPmnh48Tg'; 
+const sheetRange = 'Sheet1!A:B'; 
 
 router.post('/subscribe', async (req, res) => {
   const { email } = req.body;

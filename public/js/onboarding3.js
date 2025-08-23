@@ -1,5 +1,4 @@
 document.addEventListener("DOMContentLoaded", async () => {
-  // Obtén los datos guardados del usuario/shop
   const shop = sessionStorage.getItem('shop');
   const accessToken = sessionStorage.getItem('accessToken');
   const userId = sessionStorage.getItem('userId');
@@ -10,7 +9,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const stepNodes = document.querySelectorAll('.analysis-step');
   btn.disabled = true;
 
-  // Definición de los pasos visuales
+
   const steps = [
     "Conectando con Shopify",
     "Analizando catálogo de productos",
@@ -23,7 +22,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   let running = true;
   let currentStep = 0;
 
-  // Actualiza la UI de los pasos
+
   function updateStepsUI() {
     stepNodes.forEach((node, idx) => {
       if (idx < currentStep) {
@@ -42,7 +41,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     progressText.textContent = steps[currentStep] || "Finalizando…";
   }
 
-  // Barra animada y pasos animados
+
   function animateProgress() {
     if (!running) return;
     if (progress < 90) {
@@ -50,7 +49,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (progress > 90) progress = 90;
       progressBar.style.width = `${progress}%`;
 
-      // Determina el step actual
+    
       for (let i = stepPercents.length - 1; i >= 0; i--) {
         if (progress >= stepPercents[i]) {
           currentStep = i;
@@ -62,26 +61,26 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  // Inicia animaciones visuales
+
   progressBar.style.width = "0%";
   updateStepsUI();
   animateProgress();
 
-  // ----------- LLAMADA AL BACKEND (Genera la auditoría IA) -----------
+  
   try {
-    // Validación mínima
+    
     if (!shop || !accessToken) {
       throw new Error("Faltan datos de sesión. Por favor, reinicia el proceso.");
     }
 
-    // Solicita la generación de auditoría
+  
     const res = await fetch('/api/audit/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shop, accessToken, userId })
     });
 
-    // Verifica si responde bien el backend
+  
     if (!res.ok) {
       let msg = "Error al generar la auditoría.";
       try {
@@ -93,16 +92,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const data = await res.json();
 
-    // Finaliza: barra llena, todos los steps completos
+    
     running = false;
     progress = 100;
     progressBar.style.width = "100%";
-    currentStep = steps.length;   // 4
+    currentStep = steps.length;   
     updateStepsUI();
     progressText.textContent = "¡Análisis completado!";
     btn.disabled = false;
 
-    // Guarda el resultado (opcional: úsalo para mostrar resumen en el siguiente paso)
+    
     sessionStorage.setItem('auditResult', JSON.stringify(data.resultado || data.result || data));
 
   } catch (err) {
@@ -114,7 +113,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 });
 
-// Listener para avanzar al step 4 (Onboarding final)
+
 document.getElementById('continue-btn-3')?.addEventListener('click', () => {
   window.location.href = '/onboarding4.html';
 });

@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
         body   : JSON.stringify({ email })
       });
 
-      // siempre 200 OK → no exponemos si el mail existe o no
+    
       alert('Si el correo existe en nuestra base, recibirás un enlace de recuperación.');
       form.reset();
     } catch (err) {

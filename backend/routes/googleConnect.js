@@ -18,13 +18,13 @@ router.get('/connect', (req, res) => {
     client_id:     CLIENT_ID,
     redirect_uri:  REDIRECT_URI,
     response_type: 'code',
-    access_type:   'offline',            // refresh_token
-    include_granted_scopes: 'true',      // incremental auth
-    prompt:        'consent',            // fuerza el diálogo (importante al añadir scopes)
+    access_type:   'offline',           
+    include_granted_scopes: 'true',     
+    prompt:        'consent',           
     scope: [
       'https://www.googleapis.com/auth/analytics.readonly',
       'https://www.googleapis.com/auth/adwords',
-      'https://www.googleapis.com/auth/analytics.edit'  // <— aquí estaba faltando la coma
+      'https://www.googleapis.com/auth/analytics.edit' 
     ].join(' '),
     state
   });
