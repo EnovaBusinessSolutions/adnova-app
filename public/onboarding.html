@@ -111,21 +111,96 @@
              <button type="button" class="btn-connect" id="connect-google-btn">Conectar</button>
           </div>
 
-          <!-- Meta -->
-          <div class="connection-card">
-            <div class="connection-details">
-              <div class="connection-icon">
-                <img src="https://img.icons8.com/ios-filled/50/FFFFFF/facebook-new.png" alt="Meta" width="36" height="36" />
-              </div>
-              <div class="connection-info">
-                <h3>Meta Business Manager</h3>
-                <p>Conecta tus anuncios de Facebook e Instagram</p>
-                <span class="optional-badge">Opcional</span>
-              </div>
-            </div>
-            <a href="/auth/meta/login" class="btn-connect" id="connect-meta-btn">Conectar</a>
-          </div>
-        </div>
+         <!-- ─────────────── META ─────────────── -->
+<div class="connection-card">
+  <div class="connection-details">
+    <div class="connection-icon">
+      <img src="https://img.icons8.com/ios-filled/50/FFFFFF/facebook-new.png" alt="Meta" width="36" height="36" />
+    </div>
+    <div class="connection-info">
+      <h3>Meta Business Manager</h3>
+      <p>Conecta tus anuncios de Facebook e Instagram</p>
+      <span class="optional-badge">Opcional</span>
+    </div>
+  </div>
+
+  <!-- Botón existente -->
+  <a href="/auth/meta/login" class="btn-connect" id="connect-meta-btn">Conectar</a>
+
+  <!-- Bloque de Objetivo (se muestra tras conectar Meta si aún no eligió objetivo) -->
+  <div id="meta-obj">
+    <style>
+      /* Estilos aislados a este bloque */
+      #meta-obj #meta-objective-step {
+        display: none;              /* el JS lo cambia a block cuando corresponda */
+        margin-top: 12px;
+      }
+      #meta-obj .objective-title {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+      }
+      #meta-obj .objective-options {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      }
+      #meta-obj .option-chip {
+        border: 1px solid #444;
+        border-radius: 10px;
+        padding: 8px 12px;
+        background: #161616;
+        color: #fff;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        user-select: none;
+        transition: background .15s, border-color .15s;
+      }
+      #meta-obj .option-chip:hover {
+        background: #1b1b1b;
+        border-color: #555;
+      }
+      #meta-obj .option-chip input {
+        accent-color: #8a5cff;     /* tono morado de tu UI */
+      }
+      #meta-obj .btn-connect.connected {
+        background: #1c8a4b !important;  /* verde de conectado */
+      }
+      #meta-obj .help {
+        opacity: .75;
+        margin-top: 6px;
+        font-size: .92rem;
+      }
+    </style>
+
+    <div id="meta-objective-step">
+      <label class="objective-title">¿Qué objetivo te interesa optimizar?</label>
+
+      <div class="objective-options">
+        <label class="option-chip">
+          <input type="radio" name="metaObjective" value="ventas" />
+          Ventas
+        </label>
+        <label class="option-chip">
+          <input type="radio" name="metaObjective" value="alcance" />
+          Campañas de alcance
+        </label>
+        <label class="option-chip">
+          <input type="radio" name="metaObjective" value="leads" />
+          Mensajes / Leads
+        </label>
+      </div>
+
+      <button id="save-meta-objective-btn" class="btn-connect">Guardar objetivo</button>
+      <p class="help">Usaremos tu objetivo para personalizar el dashboard de Meta Ads.</p>
+    </div>
+  </div>
+</div>
+<!-- ─────────── FIN META ─────────── -->
+
 
         <div class="bottom-actions">
           <button id="continue-btn" class="btn-continue btn-continue--disabled" disabled>Continuar</button>
