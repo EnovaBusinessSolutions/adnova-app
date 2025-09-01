@@ -124,90 +124,90 @@
     </div>
   </div>
 
- <!-- Botón existente -->
-<a href="/auth/meta/login" class="btn-connect" id="connect-meta-btn">Conectar</a>
+  <!-- Botón existente -->
+  <a href="/auth/meta/login" class="btn-connect" id="connect-meta-btn">Conectar</a>
 
-<!-- Bloque de Objetivo (con estilos que mantienen el botón en su sitio) -->
-<div id="meta-obj">
-  <style>
-    /* Aísla reglas al card de Meta para no tocar otros */
-    #meta-card {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      flex-wrap: wrap; /* permite que algo baje a segunda fila */
-    }
-    #meta-card .connection-details { flex: 1 1 auto; }
-    #meta-card #connect-meta-btn { flex: 0 0 auto; margin-left: auto; }
+  <!-- Bloque de Objetivo (con estilos que mantienen el botón en su sitio) -->
+  <div id="meta-obj">
+    <style>
+      /* Aísla reglas al card de Meta para no tocar otros */
+      #meta-card {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap; /* permite que algo baje a segunda fila */
+      }
+      #meta-card .connection-details { flex: 1 1 auto; }
+      #meta-card #connect-meta-btn { flex: 0 0 auto; margin-left: auto; }
 
-    /* El bloque del objetivo debe ir SIEMPRE en la fila de abajo */
-    #meta-card #meta-obj { flex-basis: 100%; order: 99; }
+      /* El bloque del objetivo debe ir SIEMPRE en la fila de abajo */
+      #meta-card #meta-obj { flex-basis: 100%; order: 99; }
 
-    /* Estilos del paso (se muestra con JS al volver de Meta si falta objetivo) */
-    #meta-obj #meta-objective-step {
-      display: none;     /* el JS lo cambia a block cuando corresponda */
-      margin-top: 12px;
-    }
-    #meta-obj .objective-title {
-      display: block;
-      margin-bottom: 8px;
-      font-weight: 600;
-    }
-    #meta-obj .objective-options {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      margin-bottom: 10px;
-    }
-    #meta-obj .option-chip {
-      border: 1px solid #444;
-      border-radius: 10px;
-      padding: 8px 12px;
-      background: #161616;
-      color: #fff;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      cursor: pointer;
-      user-select: none;
-      transition: background .15s, border-color .15s;
-    }
-    #meta-obj .option-chip:hover { background: #1b1b1b; border-color: #555; }
-    #meta-obj .option-chip input { accent-color: #8a5cff; }
-    #meta-obj .btn-connect.connected { background: #1c8a4b !important; }
-    #meta-obj .help { opacity: .75; margin-top: 6px; font-size: .92rem; }
-  </style>
+      /* Estilos del paso (se muestra con JS al volver de Meta si falta objetivo) */
+      #meta-obj #meta-objective-step {
+        display: none;     /* el JS lo cambia a block cuando corresponda */
+        margin-top: 12px;
+      }
+      #meta-obj .objective-title {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+      }
+      #meta-obj .objective-options {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 10px;
+      }
+      #meta-obj .option-chip {
+        border: 1px solid #444;
+        border-radius: 10px;
+        padding: 8px 12px;
+        background: #161616;
+        color: #fff;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        user-select: none;
+        transition: background .15s, border-color .15s;
+      }
+      #meta-obj .option-chip:hover { background: #1b1b1b; border-color: #555; }
+      #meta-obj .option-chip input { accent-color: #8a5cff; }
+      #meta-obj .btn-connect.connected { background: #1c8a4b !important; }
+      #meta-obj .help { opacity: .75; margin-top: 6px; font-size: .92rem; }
+    </style>
 
-  <div id="meta-objective-step">
-    <label class="objective-title">¿Qué objetivo te interesa optimizar?</label>
+    <div id="meta-objective-step">
+      <label class="objective-title">¿Qué objetivo te interesa optimizar?</label>
 
-    <div class="objective-options">
-      <label class="option-chip">
-        <input type="radio" name="metaObjective" value="ventas" />
-        Ventas
-      </label>
-      <label class="option-chip">
-        <input type="radio" name="metaObjective" value="alcance" />
-        Campañas de alcance
-      </label>
-      <label class="option-chip">
-        <input type="radio" name="metaObjective" value="leads" />
-        Mensajes / Leads
-      </label>
-    </div>
-
-    <button id="save-meta-objective-btn" class="btn-connect">Guardar objetivo</button>
-    <p class="help">Usaremos tu objetivo para personalizar el dashboard de Meta Ads.</p>
-  </div>
-</div>
-
-
-
-        <div class="bottom-actions">
-          <button id="continue-btn" class="btn-continue btn-continue--disabled" disabled>Continuar</button>
-        </div>
+      <div class="objective-options">
+        <label class="option-chip">
+          <input type="radio" name="metaObjective" value="ventas" />
+          Ventas
+        </label>
+        <label class="option-chip">
+          <input type="radio" name="metaObjective" value="alcance" />
+          Campañas de alcance
+        </label>
+        <label class="option-chip">
+          <input type="radio" name="metaObjective" value="leads" />
+          Mensajes / Leads
+        </label>
       </div>
+
+      <button id="save-meta-objective-btn" class="btn-connect">Guardar objetivo</button>
+      <p class="help">Usaremos tu objetivo para personalizar el dashboard de Meta Ads.</p>
+    </div>
+  </div>
+</div> <!-- ← CIERRE del card de Meta (faltaba) -->
+
+</div> <!-- ← CIERRE de .connection-cards (faltaba) -->
+
+<div class="bottom-actions">
+  <button id="continue-btn" class="btn-continue btn-continue--disabled" disabled>Continuar</button>
+</div>
 
       <!-- Step 2 -->
       <div class="content-panel hidden" id="step2-content">
