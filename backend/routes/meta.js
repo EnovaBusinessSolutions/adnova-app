@@ -17,7 +17,19 @@ const APP_ID       = process.env.FACEBOOK_APP_ID;
 const APP_SECRET   = process.env.FACEBOOK_APP_SECRET;
 const REDIRECT_URI = process.env.FACEBOOK_REDIRECT_URI;
 
-const SCOPES = ['public_profile', 'email'].join(',');
+const SCOPES = [
+  'public_profile',
+  'email',
+  'ads_read',
+  'ads_management',
+  'business_management',
+  'pages_read_engagement',
+  'pages_show_list',
+  'pages_manage_ads',
+  'leads_retrieval',
+  'read_insights'
+].join(',');
+
 
 
 function makeAppSecretProof(accessToken) {

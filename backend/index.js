@@ -478,69 +478,6 @@ app.get(
   }
 );
 
-
-app.get('/auth/google/connect', (req, res) => {
-  if (!req.isAuthenticated()) return res.redirect('/');
-
-  const params = new URLSearchParams({
-    client_id: process.env.GOOGLE_CLIENT_ID,
-    redirect_uri: process.env.GOOGLE_CONNECT_CALLBACK_URL,
-    response_type: 'code',
-    access_type: 'offline',
-    scope: [
-      'https://www.googleapis.com/auth/analytics.readonly',
-      'https://www.googleapis.com/auth/adwords',
-    ].join(' '),
-    state: req.sessionID,
-  });
-
-  return res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
-});
-
-app.get('/auth/google/connect/callback', async (req, res) => {
-  if (!req.isAuthenticated()) return res.redirect('/');
-
-  const { code } = req.query;
-  if (!code) return res.redirect('/onboarding?google=fail');
-
-  try {
-    const tokenRes = await axios.post(
-      'https://oauth2.googleapis.com/token',
-      qs.stringify({
-        code,
-        client_id: process.env.GOOGLE_CLIENT_ID,
-        client_secret: process.env.GOOGLE_CLIENT_SECRET,
-        redirect_uri: process.env.GOOGLE_CONNECT_CALLBACK_URL,
-        grant_type: 'authorization_code',
-      }),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-    );
-
-    const { access_token, refresh_token, id_token } = tokenRes.data;
-
-    let decodedEmail = '';
-    if (id_token) {
-      const payload = JSON.parse(Buffer.from(id_token.split('.')[1], 'base64').toString());
-      decodedEmail = payload.email || '';
-    }
-
-    const updateData = {
-      googleConnected: true,
-      googleAccessToken: access_token,
-      googleRefreshToken: refresh_token,
-    };
-    if (decodedEmail) updateData.googleEmail = decodedEmail;
-
-    await User.findByIdAndUpdate(req.user._id, updateData);
-    console.log('✅ Google Analytics/Ads conectado para usuario:', req.user._id);
-
-    return res.redirect('/onboarding');
-  } catch (err) {
-    console.error('❌ Error intercambiando tokens de Analytics/Ads:', err.response?.data || err.message);
-    return res.redirect('/onboarding?google=error');
-  }
-});
-
 app.get('/logout', (req, res) => {
   req.logout((err) => {
     if (err) {
