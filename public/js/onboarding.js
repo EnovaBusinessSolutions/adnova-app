@@ -9,35 +9,36 @@ document.addEventListener('DOMContentLoaded', async () => {
   const shopFromQuery = qs.get('shop');
   const hostFromQuery = qs.get('host');
 
-  // ─────────────────────────────────────────────────────────
-  // Selectores existentes
-  // ─────────────────────────────────────────────────────────
-  const connectBtn        = document.getElementById('connect-shopify-btn');
+  // Selectores
+  const connectShopifyBtn = document.getElementById('connect-shopify-btn');
   const connectGoogleBtn  = document.getElementById('connect-google-btn');
   const connectMetaBtn    = document.getElementById('connect-meta-btn');
   const continueBtn       = document.getElementById('continue-btn');
-  const flagShopify       = document.getElementById('shopifyConnectedFlag');
-  const flagGoogle        = document.getElementById('googleConnectedFlag');
-  const domainStep        = document.getElementById('shopify-domain-step');
-  const domainInput       = document.getElementById('shop-domain-input');
-  const domainSend        = document.getElementById('shop-domain-send');
 
+  const flagShopify = document.getElementById('shopifyConnectedFlag');
+  const flagGoogle  = document.getElementById('googleConnectedFlag');
+
+  const domainStep  = document.getElementById('shopify-domain-step');
+  const domainInput = document.getElementById('shop-domain-input');
+  const domainSend  = document.getElementById('shop-domain-send');
+
+  // Panel demo GA opcional (tu lógica existente)
   const gaPanel = document.getElementById('ga-edit-test');
   const gaBtn   = document.getElementById('ga-create-demo-btn');
   const gaIn    = document.getElementById('ga-property-id');
   const gaOut   = document.getElementById('ga-demo-output');
 
-  // ─────────────────────────────────────────────────────────
-  // NUEVO: elementos del paso de objetivo Meta
-  // ─────────────────────────────────────────────────────────
-  const metaObjectiveStep = document.getElementById('meta-objective-step');   // contenedor del paso
-  const saveMetaObjective = document.getElementById('save-meta-objective-btn'); // botón guardar
+  // Paso de OBJETIVO Meta
+  const metaObjectiveStep = document.getElementById('meta-objective-step');
+  const saveMetaObjective = document.getElementById('save-meta-objective-btn');
 
-  // ─────────────────────────────────────────────────────────
-  // Helpers Meta
-  // ─────────────────────────────────────────────────────────
+  // Endpoints Meta
   const META_STATUS_URL    = '/auth/meta/status';
   const META_OBJECTIVE_URL = '/auth/meta/objective';
+
+  // Utils: Meta
+  const showMetaObjectiveStep = () => { if (metaObjectiveStep) metaObjectiveStep.style.display = 'block'; };
+  const hideMetaObjectiveStep = () => { if (metaObjectiveStep) metaObjectiveStep.style.display = 'none'; };
 
   const markMetaConnected = (objective = null) => {
     if (!connectMetaBtn) return;
@@ -46,30 +47,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectMetaBtn.style.pointerEvents = 'none';
     if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = true;
     if (objective) sessionStorage.setItem('metaObjective', objective);
-  };
-
-  const showMetaObjectiveStep = () => {
-    if (metaObjectiveStep) metaObjectiveStep.style.display = 'block';
-  };
-
-  const hideMetaObjectiveStep = () => {
-    if (metaObjectiveStep) metaObjectiveStep.style.display = 'none';
+    localStorage.removeItem('meta_connecting');
   };
 
   async function fetchMetaStatus() {
     try {
       const st = await apiFetch(META_STATUS_URL);
-      // st: { connected: boolean, objective: 'ventas'|'alcance'|'leads'|null }
       return st || { connected: false, objective: null };
-    } catch (e) {
-      // fallback a /api/session si algo falla (compatibilidad previa)
+    } catch {
+      // Fallback a /api/session (compatibilidad)
       try {
         const s = await apiFetch('/api/session');
         return {
           connected: !!(s?.authenticated && s?.user?.metaConnected),
           objective: s?.user?.metaObjective || null
         };
-      } catch (_) {
+      } catch {
         return { connected: false, objective: null };
       }
     }
@@ -78,47 +71,32 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function refreshMetaUI() {
     const st = await fetchMetaStatus();
     if (st.connected && !st.objective) {
-      // Recién conectó y aún no eligió objetivo → mostrar paso
       showMetaObjectiveStep();
-    }
-    if (st.connected && st.objective) {
-      // Ya conectado y con objetivo → pintar en verde y guardar en sesión para el dashboard
+    } else if (st.connected && st.objective) {
       hideMetaObjectiveStep();
       markMetaConnected(st.objective);
     }
     return st;
   }
 
-  // ─────────────────────────────────────────────────────────
-  // Carga de sesión SaaS
-  // ─────────────────────────────────────────────────────────
-  let sess;
+  // Carga sesión SaaS
   try {
-    sess = await apiFetch('/api/session');
+    const sess = await apiFetch('/api/session');
     if (sess?.authenticated && sess?.user) {
       sessionStorage.setItem('userId',  sess.user._id);
       sessionStorage.setItem('email',   sess.user.email);
-      console.log('✅ Sesión cargada:', sess.user.email);
-
-      if (sess.user.googleConnected) {
-        gaPanel?.classList.remove('hidden');
-      } else {
-        gaPanel?.classList.add('hidden');
-      }
+      // GA demo visibilidad
+      if (sess.user.googleConnected) gaPanel?.classList.remove('hidden');
+      else gaPanel?.classList.add('hidden');
     }
   } catch (err) {
     console.warn('No se pudo obtener /api/session:', err);
   }
 
-  // PING test
-  try {
-    const ping = await apiFetch('/api/saas/ping');
-    console.log('✅ PING OK', ping);
-  } catch (err) {
-    console.error('❌ PING FAIL', err);
-  }
+  // Ping
+  try { await apiFetch('/api/saas/ping'); } catch {}
 
-  // Shopify: mostrar paso de dominio si aplica
+  // Shopify: mostrar paso dominio si viene en query o guardado
   const savedShop = sessionStorage.getItem('shopDomain');
   if (shopFromQuery || savedShop) {
     domainStep?.classList.remove('step--hidden');
@@ -129,6 +107,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (savedShop) sessionStorage.removeItem('shopDomain');
   }
 
+  // Habilitar botón "Continuar" (depende de Shopify)
   function habilitarContinue() {
     if (!continueBtn) return;
     const shop = sessionStorage.getItem('shop');
@@ -148,11 +127,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
+  // Shopify conectado (pinta y guarda credenciales)
   const pintarShopifyConectado = async () => {
-    if (connectBtn) {
-      connectBtn.textContent = 'Conectado';
-      connectBtn.classList.add('connected');
-      connectBtn.disabled = true;
+    if (connectShopifyBtn) {
+      connectShopifyBtn.textContent = 'Conectado';
+      connectShopifyBtn.classList.add('connected');
+      connectShopifyBtn.disabled = true;
     }
 
     const shop =
@@ -160,26 +140,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       domainInput?.value.trim().toLowerCase() ||
       sessionStorage.getItem('shop');
 
-    if (!shop) {
-      console.warn('No se encontró el dominio de la tienda para obtener credenciales.');
-      return;
-    }
+    if (!shop) return;
 
     try {
       const resp = await apiFetch(`/api/shopConnection/me?shop=${encodeURIComponent(shop)}`);
-      if (resp && resp.shop && resp.accessToken) {
+      if (resp?.shop && resp?.accessToken) {
         sessionStorage.setItem('shop', resp.shop);
         sessionStorage.setItem('accessToken', resp.accessToken);
-        console.log('✅ Guardado en sessionStorage:', resp.shop, resp.accessToken);
         habilitarContinue();
-      } else {
-        console.warn('No se encontraron credenciales para la tienda.');
       }
     } catch (err) {
       console.error('Error obteniendo shop/accessToken:', err);
     }
   };
 
+  // Google conectado (pinta)
   const pintarGoogleConectado = () => {
     if (!connectGoogleBtn) return;
     connectGoogleBtn.textContent = 'Conectado';
@@ -187,13 +162,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectGoogleBtn.disabled = true;
   };
 
-  // Pinta estados iniciales Shopify/Google
+  // Estados iniciales Shopify/Google
   if (flagShopify?.textContent.trim() === 'true') await pintarShopifyConectado();
   if (flagGoogle?.textContent.trim() === 'true') pintarGoogleConectado();
   habilitarContinue();
 
-  // Conectar Shopify (manual o por prompt)
-  connectBtn?.addEventListener('click', () => {
+  // Conectar Shopify
+  connectShopifyBtn?.addEventListener('click', () => {
     let shop = shopFromQuery;
     let host = hostFromQuery;
 
@@ -205,10 +180,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     location.href = `/connector?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
   });
 
+  // Vincular Shopify por dominio
   domainSend?.addEventListener('click', async () => {
     const shop = domainInput?.value.trim().toLowerCase();
     if (!shop || !shop.endsWith('.myshopify.com')) return alert('Dominio inválido');
-
     try {
       const data = await apiFetch('/api/saas/shopify/match', {
         method: 'POST',
@@ -233,24 +208,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Paso 1 → Paso 2
   continueBtn?.addEventListener('click', () => {
-    const step1Panel = document.getElementById('step1-content');
-    const step2Panel = document.getElementById('step2-content');
-    step1Panel?.classList.add('hidden');
-    step2Panel?.classList.remove('hidden');
+    document.getElementById('step1-content')?.classList.add('hidden');
+    document.getElementById('step2-content')?.classList.remove('hidden');
     document.querySelector('.step[data-step="1"]')?.classList.remove('active');
     document.querySelector('.step[data-step="2"]')?.classList.add('active');
   });
 
-  const backBtn2 = document.getElementById('back-btn-2');
-  backBtn2?.addEventListener('click', () => {
+  // Volver a paso 1
+  document.getElementById('back-btn-2')?.addEventListener('click', () => {
     document.getElementById('step2-content')?.classList.add('hidden');
     document.getElementById('step1-content')?.classList.remove('hidden');
     document.querySelector('.step[data-step="2"]')?.classList.remove('active');
     document.querySelector('.step[data-step="1"]')?.classList.add('active');
   });
 
-  const continueBtn2 = document.getElementById('continue-btn-2');
-  continueBtn2?.addEventListener('click', () => {
+  // Continuar paso 2 (tu lógica)
+  document.getElementById('continue-btn-2')?.addEventListener('click', () => {
     const shop = sessionStorage.getItem('shop');
     const accessToken = sessionStorage.getItem('accessToken');
     if (!shop || !accessToken) {
@@ -260,9 +233,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.location.href = '/onboarding3.html';
   });
 
-  // ─────────────────────────────────────────────────────────
-  // META: estado inicial y callback (?meta=ok)
-  // ─────────────────────────────────────────────────────────
+  // META: estado inicial y callback (?meta=ok|fail|error)
   let initialMetaConnected = false;
   try {
     const st0 = await refreshMetaUI();
@@ -272,30 +243,29 @@ document.addEventListener('DOMContentLoaded', async () => {
   const metaStatus = qs.get('meta');
   if (metaStatus === 'fail' || metaStatus === 'error') {
     localStorage.removeItem('meta_connecting');
-    // re-habilita el botón por si quedó bloqueado
     if (connectMetaBtn) {
       connectMetaBtn.style.pointerEvents = 'auto';
       if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = false;
     }
   }
   if (metaStatus === 'ok') {
-    await refreshMetaUI(); // puede mostrar el paso si falta objetivo
+    await refreshMetaUI();
   }
 
-  // Al hacer clic en conectar Meta, bloquear mientras regresa
+  // ÚNICO listener para conectar Meta (con bloqueo + redirect)
   connectMetaBtn?.addEventListener('click', () => {
     localStorage.setItem('meta_connecting', '1');
     connectMetaBtn.style.pointerEvents = 'none';
     if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = true;
+    window.location.href = '/auth/meta/login';
   });
 
-  // Poll de compatibilidad: si veníamos conectando y aún no se refleja, preguntar a /auth/meta/status
+  // Poll hasta reflejar conexión de Meta
   async function pollMetaUntilConnected(maxTries = 30, delayMs = 2000) {
     for (let i = 0; i < maxTries; i++) {
       const st = await fetchMetaStatus();
       if (st.connected) {
         localStorage.removeItem('meta_connecting');
-        // Si falta objetivo, mostrar paso; si ya hay, marcar conectado
         if (!st.objective) showMetaObjectiveStep();
         else markMetaConnected(st.objective);
         return;
@@ -333,9 +303,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // ─────────────────────────────────────────────────────────
-  // Google demo (igual que lo tenías)
-  // ─────────────────────────────────────────────────────────
+  // Demo GA (igual que lo tenías)
   gaBtn?.addEventListener('click', async () => {
     const raw = gaIn?.value.trim();
     if (!raw) {
@@ -355,12 +323,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       const data = await r.json();
       if (gaOut) gaOut.textContent = JSON.stringify(data, null, 2);
-
-      if (data.ok) {
-        alert('✅ Conversión creada: ' + (data.created?.name || ''));
-      } else {
-        alert('❌ ' + (data.error?.message || data.error || 'Error'));
-      }
+      if (data.ok) alert('✅ Conversión creada: ' + (data.created?.name || ''));
+      else alert('❌ ' + (data.error?.message || data.error || 'Error'));
     } catch (e) {
       if (gaOut) gaOut.textContent = e.message;
       alert('❌ Error: ' + e.message);
