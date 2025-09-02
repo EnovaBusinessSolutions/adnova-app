@@ -41,20 +41,23 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ---------- helpers de visibilidad (a prueba de CSS) ----------
   function showEl(el) {
-    if (!el) return;
-    el.classList.remove('hidden');
-    el.style.removeProperty('display');
-    el.style.display = 'block';
-    el.style.visibility = 'visible';
-    el.removeAttribute('aria-hidden');
-  }
-  function hideEl(el) {
-    if (!el) return;
-    el.classList.add('hidden');
-    el.style.display = 'none';
-    el.style.visibility = 'hidden';
-    el.setAttribute('aria-hidden', 'true');
-  }
+  if (!el) return;
+  el.classList.remove('hidden');
+  el.removeAttribute('aria-hidden');
+  // Si es un panel, mantenemos flex; si no, block
+  el.style.display = el.classList.contains('content-panel') ? 'flex' : 'block';
+  el.style.visibility = 'visible';
+  el.style.opacity = 1;
+}
+
+function hideEl(el) {
+  if (!el) return;
+  el.classList.add('hidden');
+  el.setAttribute('aria-hidden', 'true');
+  el.style.display = 'none';
+  el.style.visibility = 'hidden';
+  el.style.opacity = 0;
+}
 
   // ---------- utils meta ----------
   const showMetaObjectiveStep = () => { if (metaObjectiveStep) showEl(metaObjectiveStep); };

@@ -139,6 +139,9 @@ body {
   background: none;
 }
 
+
+.content-panel.hidden { display: none !important; }
+
 .content-panel {
   height: 100%;
   display: flex;
