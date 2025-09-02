@@ -22,14 +22,14 @@ const SCOPES = [
   'public_profile',
   'email',
   'ads_read',
-  // 'ads_management',            // editas campañas
-  // 'business_management',       // si gestionas assets
+  'ads_management',           
+  'business_management',     
   'pages_read_engagement',
   'pages_show_list',
-  // 'pages_manage_ads',          // hace boosts desde páginas
+  'pages_manage_ads',         
   'leads_retrieval',
-  // 'pages_manage_metadata',     // usar webhooks de leads
-  // 'read_insights'              // orgánico de página 
+  'pages_manage_metadata',    
+  'read_insights'            
 ].join(',');
 
 function makeAppSecretProof(accessToken) {
