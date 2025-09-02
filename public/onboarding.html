@@ -124,29 +124,28 @@
     </div>
   </div>
 
-  <!-- Botón existente -->
   <button type="button" class="btn-connect" id="connect-meta-btn">Conectar</button>
 
-  <!-- Bloque de Objetivo (con estilos que mantienen l botón en su sitio) -->
+  
   <div id="meta-obj">
     <style>
-      /* Aísla reglas al card de Meta para no tocar otros */
+      
       #meta-card {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 16px;
-        flex-wrap: wrap; /* permite que algo baje a segunda fila */
+        flex-wrap: wrap; 
       }
       #meta-card .connection-details { flex: 1 1 auto; }
       #meta-card #connect-meta-btn { flex: 0 0 auto; margin-left: auto; }
 
-      /* El bloque del objetivo debe ir SIEMPRE en la fila de abajo */
+      
       #meta-card #meta-obj { flex-basis: 100%; order: 99; }
 
-      /* Estilos del paso (se muestra con JS al volver de Meta si falta objetivo) */
+      
       #meta-obj #meta-objective-step {
-        display: none;     /* el JS lo cambia a block cuando corresponda */
+        display: none;     
         margin-top: 12px;
       }
       #meta-obj .objective-title {
@@ -201,9 +200,9 @@
       <p class="help">Usaremos tu objetivo para personalizar el dashboard de Meta Ads.</p>
     </div>
   </div>
-</div> <!-- ← CIERRE del card de Meta (faltaba) -->
+</div> 
 
-</div> <!-- ← CIERRE de .connection-cards (faltaba) -->
+</div> 
 
 <div class="bottom-actions">
   <button id="continue-btn" class="btn-continue btn-continue--disabled" disabled>Continuar</button>
