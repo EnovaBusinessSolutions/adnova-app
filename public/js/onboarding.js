@@ -22,9 +22,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const domainInput = document.getElementById('shop-domain-input');
   const domainSend  = document.getElementById('shop-domain-send');
 
-  // Badge "Requerido" de Shopify (dale este id en el HTML al chip si aún no lo tiene)
-  const shopifyRequiredBadge = document.getElementById('shopify-required-badge');
-
   // Panel demo GA opcional (tu lógica existente)
   const gaPanel = document.getElementById('ga-edit-test');
   const gaBtn   = document.getElementById('ga-create-demo-btn');
@@ -36,13 +33,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   const saveMetaObjective = document.getElementById('save-meta-objective-btn');
 
   // Endpoints Meta
-  const META_STATUS_URL    = '/auth/meta/status';
+  const META_STATUS_URL   = '/auth/meta/status';
   const META_OBJECTIVE_URL = '/auth/meta/objective';
 
   // Utils: Meta
-  const showMetaObjectiveStep = () => { if (metaObjectiveStep) metaObjectiveStep.style.display = 'block'; };
-  const hideMetaObjectiveStep = () => { if (metaObjectiveStep) metaObjectiveStep.style.display = 'none'; };
-
+  const showMetaObjectiveStep = () => {
+    if (metaObjectiveStep) metaObjectiveStep.style.display = 'block';
+  };
+  const hideMetaObjectiveStep = () => {
+    if (metaObjectiveStep) metaObjectiveStep.style.display = 'none';
+  };
   const markMetaConnected = (objective = null) => {
     if (!connectMetaBtn) return;
     connectMetaBtn.textContent = 'Conectado';
@@ -50,9 +50,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectMetaBtn.style.pointerEvents = 'none';
     if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = true;
     if (objective) sessionStorage.setItem('metaObjective', objective);
-    sessionStorage.setItem('metaConnected', 'true');        // ⟵ NUEVO
     localStorage.removeItem('meta_connecting');
-    habilitarContinue();                                    // ⟵ NUEVO
   };
 
   async function fetchMetaStatus() {
@@ -75,14 +73,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function refreshMetaUI() {
     const st = await fetchMetaStatus();
-    if (st.connected) {
-      sessionStorage.setItem('metaConnected', 'true');      // ⟵ NUEVO
-      if (!st.objective) {
-        showMetaObjectiveStep();
-      } else {
-        hideMetaObjectiveStep();
-        markMetaConnected(st.objective);
-      }
+    if (st.connected && !st.objective) {
+      showMetaObjectiveStep();
+    } else if (st.connected && st.objective) {
+      hideMetaObjectiveStep();
+      markMetaConnected(st.objective);
     }
     return st;
   }
@@ -91,16 +86,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     const sess = await apiFetch('/api/session');
     if (sess?.authenticated && sess?.user) {
-      sessionStorage.setItem('userId',  sess.user._id);
-      sessionStorage.setItem('email',   sess.user.email);
-
-      // Mostrar/ocultar panel GA demo
-      if (sess.user.googleConnected) {
-        gaPanel?.classList.remove('hidden');
-        sessionStorage.setItem('googleConnected', 'true');  // ⟵ NUEVO
-      } else {
-        gaPanel?.classList.add('hidden');
-      }
+      sessionStorage.setItem('userId', sess.user._id);
+      sessionStorage.setItem('email', sess.user.email);
+      // GA demo visibilidad
+      if (sess.user.googleConnected) gaPanel?.classList.remove('hidden');
+      else gaPanel?.classList.add('hidden');
     }
   } catch (err) {
     console.warn('No se pudo obtener /api/session:', err);
@@ -120,41 +110,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (savedShop) sessionStorage.removeItem('shopDomain');
   }
 
-  // ⟵ NUEVO: Estado de conectividad unificado (mínimo 1 conexión)
-  function getConnectivityState() {
-    const shopConnected =
-      flagShopify?.textContent.trim() === 'true' ||
-      sessionStorage.getItem('shopifyConnected') === 'true' ||
-      (!!sessionStorage.getItem('shop') && !!sessionStorage.getItem('accessToken'));
-
-    const googleConnected =
-      flagGoogle?.textContent.trim() === 'true' ||
-      sessionStorage.getItem('googleConnected') === 'true';
-
-    const metaConnected =
-      sessionStorage.getItem('metaConnected') === 'true';
-
-    const anyConnected = !!(shopConnected || googleConnected || metaConnected);
-    return { shopConnected, googleConnected, metaConnected, anyConnected };
-  }
-
-  // ⟵ MOD: Habilitar Continuar si hay al menos 1 conexión
+  // Habilitar botón "Continuar" (depende de Shopify)
   function habilitarContinue() {
     if (!continueBtn) return;
-    const { anyConnected } = getConnectivityState();
-
-    if (anyConnected) {
+    const shop        = sessionStorage.getItem('shop');
+    const accessToken = sessionStorage.getItem('accessToken');
+    const listo =
+      (shop && accessToken) ||
+      flagShopify?.textContent.trim() === 'true' ||
+      sessionStorage.getItem('shopifyConnected') === 'true';
+    if (listo) {
       continueBtn.disabled = false;
       continueBtn.classList.remove('btn-continue--disabled');
       continueBtn.classList.add('btn-continue--enabled');
       continueBtn.style.pointerEvents = 'auto';
       continueBtn.style.opacity = 1;
-    } else {
-      continueBtn.disabled = true;
-      continueBtn.classList.add('btn-continue--disabled');
-      continueBtn.classList.remove('btn-continue--enabled');
-      continueBtn.style.pointerEvents = 'none';
-      continueBtn.style.opacity = 0.6;
+      sessionStorage.removeItem('shopifyConnected');
     }
   }
 
@@ -165,29 +136,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       connectShopifyBtn.classList.add('connected');
       connectShopifyBtn.disabled = true;
     }
-
     const shop =
       shopFromQuery ||
       domainInput?.value.trim().toLowerCase() ||
       sessionStorage.getItem('shop');
-
-    if (!shop) {
-      // aunque no tengamos token, marcamos conectado si flag ya lo decía
-      sessionStorage.setItem('shopifyConnected', 'true');
-      habilitarContinue();
-      return;
-    }
-
+    if (!shop) return;
     try {
-      const resp = await apiFetch(`/api/shopConnection/me?shop=${encodeURIComponent(shop)}`);
+      const resp = await apiFetch(
+        `/api/shopConnection/me?shop=${encodeURIComponent(shop)}`
+      );
       if (resp?.shop && resp?.accessToken) {
         sessionStorage.setItem('shop', resp.shop);
         sessionStorage.setItem('accessToken', resp.accessToken);
-        sessionStorage.setItem('shopifyConnected', 'true'); // ⟵ NUEVO
-        habilitarContinue();
-      } else {
-        // igual marcamos la conexión si el backend no devuelve token pero ya está instalada
-        sessionStorage.setItem('shopifyConnected', 'true');
         habilitarContinue();
       }
     } catch (err) {
@@ -201,8 +161,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     connectGoogleBtn.textContent = 'Conectado';
     connectGoogleBtn.classList.add('connected');
     connectGoogleBtn.disabled = true;
-    sessionStorage.setItem('googleConnected', 'true');      // ⟵ NUEVO
-    habilitarContinue();                                    // ⟵ NUEVO
   };
 
   // Estados iniciales Shopify/Google
@@ -214,7 +172,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   connectShopifyBtn?.addEventListener('click', () => {
     let shop = shopFromQuery;
     let host = hostFromQuery;
-
     if (!shop || !host) {
       shop = prompt('Ingresa tu dominio (ej: mitienda.myshopify.com):');
       if (!shop?.endsWith('.myshopify.com')) return alert('Dominio inválido');
@@ -265,11 +222,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.querySelector('.step[data-step="1"]')?.classList.add('active');
   });
 
-  // ⟵ MOD: Continuar paso 2 (ya NO exige Shopify; exige 1 conexión mínima)
+  // Continuar paso 2 (tu lógica)
   document.getElementById('continue-btn-2')?.addEventListener('click', () => {
-    const { anyConnected } = getConnectivityState();
-    if (!anyConnected) {
-      alert('⚠️ Conecta al menos una plataforma (Shopify, Google o Meta) para continuar.');
+    const shop        = sessionStorage.getItem('shop');
+    const accessToken = sessionStorage.getItem('accessToken');
+    if (!shop || !accessToken) {
+      alert('⚠️ Debes conectar tu tienda Shopify antes de continuar.');
       return;
     }
     window.location.href = '/onboarding3.html';
@@ -281,7 +239,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const st0 = await refreshMetaUI();
     initialMetaConnected = !!st0.connected;
   } catch {}
-
   const metaStatus = qs.get('meta');
   if (metaStatus === 'fail' || metaStatus === 'error') {
     localStorage.removeItem('meta_connecting');
@@ -292,7 +249,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   if (metaStatus === 'ok') {
     await refreshMetaUI();
-    habilitarContinue();                                    // ⟵ NUEVO
   }
 
   // ÚNICO listener para conectar Meta (con bloqueo + redirect)
@@ -308,10 +264,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     for (let i = 0; i < maxTries; i++) {
       const st = await fetchMetaStatus();
       if (st.connected) {
-        sessionStorage.setItem('metaConnected', 'true');    // ⟵ NUEVO
+        localStorage.removeItem('meta_connecting');
         if (!st.objective) showMetaObjectiveStep();
         else markMetaConnected(st.objective);
-        habilitarContinue();                                // ⟵ NUEVO
         return;
       }
       await new Promise(r => setTimeout(r, delayMs));
@@ -322,7 +277,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = false;
     }
   }
-
   if (localStorage.getItem('meta_connecting') && !initialMetaConnected) {
     pollMetaUntilConnected();
   }
@@ -340,7 +294,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         body: JSON.stringify({ objective: selected })
       });
       hideMetaObjectiveStep();
-      markMetaConnected(selected);                          // ⟵ asegura flag y continuar
+      markMetaConnected(selected);
     } catch (e) {
       console.error(e);
       alert('No se pudo guardar el objetivo. Inténtalo nuevamente.');
@@ -356,7 +310,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     const propertyId = raw.startsWith('properties/') ? raw : `properties/${raw}`;
     if (gaOut) gaOut.textContent = 'Ejecutando…';
-
     gaBtn.disabled = true;
     try {
       const r = await fetch('/auth/google/ga/demo-create-conversion', {
@@ -376,9 +329,4 @@ document.addEventListener('DOMContentLoaded', async () => {
       gaBtn.disabled = false;
     }
   });
-
-  // ⟵ NUEVO: ocultar el chip "Requerido" en la tarjeta de Shopify (si existe)
-  if (shopifyRequiredBadge) {
-    shopifyRequiredBadge.style.display = 'none';
-  }
 });
