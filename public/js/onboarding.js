@@ -22,7 +22,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const domainInput = document.getElementById('shop-domain-input');
   const domainSend  = document.getElementById('shop-domain-send');
 
-  // (Opcional) chip "Requerido" de Shopify (dale este id en el HTML para ocultarlo desde aquí)
+  // (Opcional) chip "Requerido" de Shopify (si le pones este id en el HTML)
   const shopifyRequiredBadge = document.getElementById('shopify-required-badge');
 
   // Panel demo GA opcional
@@ -41,23 +41,46 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ---------- helpers de visibilidad (a prueba de CSS) ----------
   function showEl(el) {
-  if (!el) return;
-  el.classList.remove('hidden');
-  el.removeAttribute('aria-hidden');
-  // Si es un panel, mantenemos flex; si no, block
-  el.style.display = el.classList.contains('content-panel') ? 'flex' : 'block';
-  el.style.visibility = 'visible';
-  el.style.opacity = 1;
-}
+    if (!el) return;
+    el.classList.remove('hidden');
+    el.removeAttribute('aria-hidden');
+    // Si es un panel, mantenemos flex; si no, block
+    el.style.display = el.classList.contains('content-panel') ? 'flex' : 'block';
+    el.style.visibility = 'visible';
+    el.style.opacity = 1;
+  }
+  function hideEl(el) {
+    if (!el) return;
+    el.classList.add('hidden');
+    el.setAttribute('aria-hidden', 'true');
+    el.style.display = 'none';
+    el.style.visibility = 'hidden';
+    el.style.opacity = 0;
+  }
 
-function hideEl(el) {
-  if (!el) return;
-  el.classList.add('hidden');
-  el.setAttribute('aria-hidden', 'true');
-  el.style.display = 'none';
-  el.style.visibility = 'hidden';
-  el.style.opacity = 0;
-}
+  // ---------- router de pasos (determinista por hash) ----------
+  function setActiveStep(stepNum) {
+    const s1 = document.getElementById('step1-content');
+    const s2 = document.getElementById('step2-content');
+
+    if (stepNum === 2) {
+      hideEl(s1);
+      showEl(s2);
+      document.querySelector('.step[data-step="1"]')?.classList.remove('active');
+      document.querySelector('.step[data-step="2"]')?.classList.add('active');
+    } else {
+      showEl(s1);
+      hideEl(s2);
+      document.querySelector('.step[data-step="2"]')?.classList.remove('active');
+      document.querySelector('.step[data-step="1"]')?.classList.add('active');
+    }
+  }
+  function goToStep(stepNum, updateHash = true) {
+    setActiveStep(stepNum);
+    if (!updateHash) return;
+    const nextHash = stepNum === 2 ? '#step=2' : '#step=1';
+    if (location.hash !== nextHash) history.replaceState(null, '', nextHash);
+  }
 
   // ---------- utils meta ----------
   const showMetaObjectiveStep = () => { if (metaObjectiveStep) showEl(metaObjectiveStep); };
@@ -266,24 +289,16 @@ function hideEl(el) {
     location.href = '/auth/google/connect';
   });
 
-  // Paso 1 → Paso 2 (mostrar robusto)
+  // Paso 1 → Paso 2 (usar router + hash)
   continueBtn?.addEventListener('click', () => {
-    const s1 = document.getElementById('step1-content');
-    const s2 = document.getElementById('step2-content');
-    hideEl(s1);
-    showEl(s2);
-    document.querySelector('.step[data-step="1"]')?.classList.remove('active');
-    document.querySelector('.step[data-step="2"]')?.classList.add('active');
+    const { anyConnected } = getConnectivityState();
+    if (!anyConnected) return;
+    goToStep(2, true);
   });
 
   // Volver a paso 1
   document.getElementById('back-btn-2')?.addEventListener('click', () => {
-    const s1 = document.getElementById('step1-content');
-    const s2 = document.getElementById('step2-content');
-    showEl(s1);
-    hideEl(s2);
-    document.querySelector('.step[data-step="2"]')?.classList.remove('active');
-    document.querySelector('.step[data-step="1"]')?.classList.add('active');
+    goToStep(1, true);
   });
 
   // Continuar paso 2 (mínimo 1 conexión)
@@ -314,6 +329,8 @@ function hideEl(el) {
   if (metaStatus === 'ok') {
     await refreshMetaUI();
     habilitarContinue();
+    // Si viene de conectar Meta con éxito, muéstrale directamente el Paso 2
+    goToStep(2, true);
   }
 
   // Conectar Meta
@@ -401,12 +418,13 @@ function hideEl(el) {
   // Ocultar el chip "Requerido" (si existe el id en el HTML)
   if (shopifyRequiredBadge) shopifyRequiredBadge.style.display = 'none';
 
-  // Si por cualquier razón el step 2 quedó activo, forzamos visibilidad correcta
-  const isStep2Active = document
-    .querySelector('.step[data-step="2"]')
-    ?.classList.contains('active');
-  if (isStep2Active) {
-    hideEl(document.getElementById('step1-content'));
-    showEl(document.getElementById('step2-content'));
-  }
+  // ---------- aplicar paso inicial y escuchar cambios de hash ----------
+  const stepFromHash = (location.hash || '').replace('#', '').split('=')[1];
+  if (stepFromHash === '2') setActiveStep(2);
+  else setActiveStep(1);
+
+  window.addEventListener('hashchange', () => {
+    const step = (location.hash || '').replace('#', '').split('=')[1];
+    setActiveStep(step === '2' ? 2 : 1);
+  });
 });
