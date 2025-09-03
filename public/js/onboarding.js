@@ -22,29 +22,23 @@ document.addEventListener('DOMContentLoaded', async () => {
   const domainInput = document.getElementById('shop-domain-input');
   const domainSend  = document.getElementById('shop-domain-send');
 
-  // (Opcional) chip "Requerido" de Shopify (si le pones este id en el HTML)
-  const shopifyRequiredBadge = document.getElementById('shopify-required-badge');
-
-  // Panel demo GA opcional
+  // Demo GA (si existe)
   const gaPanel = document.getElementById('ga-edit-test');
   const gaBtn   = document.getElementById('ga-create-demo-btn');
   const gaIn    = document.getElementById('ga-property-id');
   const gaOut   = document.getElementById('ga-demo-output');
 
-  // Paso de OBJETIVO Meta
+  // Meta objective
   const metaObjectiveStep = document.getElementById('meta-objective-step');
   const saveMetaObjective = document.getElementById('save-meta-objective-btn');
-
-  // Endpoints Meta
   const META_STATUS_URL    = '/auth/meta/status';
   const META_OBJECTIVE_URL = '/auth/meta/objective';
 
-  // ---------- helpers de visibilidad (a prueba de CSS) ----------
+  // ---------- helpers de visibilidad ----------
   function showEl(el) {
     if (!el) return;
     el.classList.remove('hidden');
     el.removeAttribute('aria-hidden');
-    // Si es un panel, mantenemos flex; si no, block
     el.style.display = el.classList.contains('content-panel') ? 'flex' : 'block';
     el.style.visibility = 'visible';
     el.style.opacity = 1;
@@ -58,112 +52,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     el.style.opacity = 0;
   }
 
-  // ---------- router de pasos (determinista por hash) ----------
-  function setActiveStep(stepNum) {
-    const s1 = document.getElementById('step1-content');
-    const s2 = document.getElementById('step2-content');
-
-    if (stepNum === 2) {
-      hideEl(s1);
-      showEl(s2);
-      document.querySelector('.step[data-step="1"]')?.classList.remove('active');
-      document.querySelector('.step[data-step="2"]')?.classList.add('active');
-    } else {
-      showEl(s1);
-      hideEl(s2);
-      document.querySelector('.step[data-step="2"]')?.classList.remove('active');
-      document.querySelector('.step[data-step="1"]')?.classList.add('active');
-    }
-  }
-  function goToStep(stepNum, updateHash = true) {
-    setActiveStep(stepNum);
-    if (!updateHash) return;
-    const nextHash = stepNum === 2 ? '#step=2' : '#step=1';
-    if (location.hash !== nextHash) history.replaceState(null, '', nextHash);
-  }
-
-  // ---------- utils meta ----------
-  const showMetaObjectiveStep = () => { if (metaObjectiveStep) showEl(metaObjectiveStep); };
-  const hideMetaObjectiveStep = () => { if (metaObjectiveStep) hideEl(metaObjectiveStep); };
-
-  const markMetaConnected = (objective = null) => {
-    if (!connectMetaBtn) return;
-    connectMetaBtn.textContent = 'Conectado';
-    connectMetaBtn.classList.add('connected');
-    connectMetaBtn.style.pointerEvents = 'none';
-    if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = true;
-    if (objective) sessionStorage.setItem('metaObjective', objective);
-    sessionStorage.setItem('metaConnected', 'true');
-    localStorage.removeItem('meta_connecting');
-    habilitarContinue();
-  };
-
-  async function fetchMetaStatus() {
-    try {
-      const st = await apiFetch(META_STATUS_URL);
-      return st || { connected: false, objective: null };
-    } catch {
-      // Fallback a /api/session
-      try {
-        const s = await apiFetch('/api/session');
-        return {
-          connected: !!(s?.authenticated && s?.user?.metaConnected),
-          objective: s?.user?.metaObjective || null
-        };
-      } catch {
-        return { connected: false, objective: null };
-      }
-    }
-  }
-
-  async function refreshMetaUI() {
-    const st = await fetchMetaStatus();
-    if (st.connected) {
-      sessionStorage.setItem('metaConnected', 'true');
-      if (!st.objective) {
-        showMetaObjectiveStep();
-      } else {
-        hideMetaObjectiveStep();
-        markMetaConnected(st.objective);
-      }
-      habilitarContinue();
-    }
-    return st;
-  }
-
-  // ---------- sesión saas ----------
-  try {
-    const sess = await apiFetch('/api/session');
-    if (sess?.authenticated && sess?.user) {
-      sessionStorage.setItem('userId',  sess.user._id);
-      sessionStorage.setItem('email',   sess.user.email);
-      if (sess.user.googleConnected) {
-        gaPanel?.classList.remove('hidden');
-        sessionStorage.setItem('googleConnected', 'true');
-        habilitarContinue();
-      } else {
-        gaPanel?.classList.add('hidden');
-      }
-    }
-  } catch (err) {
-    console.warn('No se pudo obtener /api/session:', err);
-  }
-
-  // Ping
-  try { await apiFetch('/api/saas/ping'); } catch {}
-
-  // Shopify: mostrar paso dominio si viene en query o guardado
-  const savedShop = sessionStorage.getItem('shopDomain');
-  if (shopFromQuery || savedShop) {
-    domainStep?.classList.remove('step--hidden');
-    if (domainInput) {
-      domainInput.value = shopFromQuery || savedShop;
-      domainInput.focus();
-    }
-    if (savedShop) sessionStorage.removeItem('shopDomain');
-  }
-
-  // ---------- estado de conectividad (mínimo 1 conexión) ----------
+  // ---------- conectividad ----------
   function getConnectivityState() {
     const shopConnected =
       flagShopify?.textContent.trim() === 'true' ||
@@ -184,7 +73,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   function habilitarContinue() {
     if (!continueBtn) return;
     const { anyConnected } = getConnectivityState();
-
     if (anyConnected) {
       continueBtn.disabled = false;
       continueBtn.classList.remove('btn-continue--disabled');
@@ -198,6 +86,111 @@ document.addEventListener('DOMContentLoaded', async () => {
       continueBtn.style.pointerEvents = 'none';
       continueBtn.style.opacity = 0.6;
     }
+  }
+
+  // ---------- navegación centralizada ----------
+  const s1 = document.getElementById('step1-content');
+  const s2 = document.getElementById('step2-content');
+
+  function setSidebar(step) {
+    document.querySelectorAll('.step').forEach(el => el.classList.remove('active'));
+    document.querySelector(`.step[data-step="${step}"]`)?.classList.add('active');
+  }
+
+  function goTo(step) {
+    const n = Number(step) || 1;
+    if (n === 1) {
+      showEl(s1);
+      hideEl(s2);
+      setSidebar(1);
+    } else if (n === 2) {
+      hideEl(s1);
+      showEl(s2);
+      setSidebar(2);
+    }
+  }
+
+  function getStepFromHash() {
+    const h = new URLSearchParams(location.hash.slice(1));
+    return h.get('step') || '1';
+  }
+
+  // Enlazar hashchange para soportar reloads / navegación directa
+  window.addEventListener('hashchange', () => goTo(getStepFromHash()));
+
+  // ---------- Meta ----------
+  const showMetaObjectiveStep = () => { if (metaObjectiveStep) showEl(metaObjectiveStep); };
+  const hideMetaObjectiveStep = () => { if (metaObjectiveStep) hideEl(metaObjectiveStep); };
+
+  const markMetaConnected = (objective = null) => {
+    if (connectMetaBtn) {
+      connectMetaBtn.textContent = 'Conectado';
+      connectMetaBtn.classList.add('connected');
+      connectMetaBtn.style.pointerEvents = 'none';
+      if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = true;
+    }
+    if (objective) sessionStorage.setItem('metaObjective', objective);
+    sessionStorage.setItem('metaConnected', 'true');
+    localStorage.removeItem('meta_connecting');
+    habilitarContinue();
+  };
+
+  async function fetchMetaStatus() {
+    try {
+      const st = await apiFetch(META_STATUS_URL);
+      return st || { connected: false, objective: null };
+    } catch {
+      try {
+        const s = await apiFetch('/api/session');
+        return {
+          connected: !!(s?.authenticated && s?.user?.metaConnected),
+          objective: s?.user?.metaObjective || null
+        };
+      } catch {
+        return { connected: false, objective: null };
+      }
+    }
+  }
+
+  async function refreshMetaUI() {
+    const st = await fetchMetaStatus();
+    if (st.connected) {
+      sessionStorage.setItem('metaConnected', 'true');
+      if (!st.objective) showMetaObjectiveStep();
+      else { hideMetaObjectiveStep(); markMetaConnected(st.objective); }
+      habilitarContinue();
+    }
+    return st;
+  }
+
+  // ---------- sesión ----------
+  try {
+    const sess = await apiFetch('/api/session');
+    if (sess?.authenticated && sess?.user) {
+      sessionStorage.setItem('userId',  sess.user._id);
+      sessionStorage.setItem('email',   sess.user.email);
+      if (sess.user.googleConnected) {
+        gaPanel?.classList.remove('hidden');
+        sessionStorage.setItem('googleConnected', 'true');
+      } else {
+        gaPanel?.classList.add('hidden');
+      }
+    }
+  } catch (err) {
+    console.warn('No se pudo obtener /api/session:', err);
+  }
+
+  try { await apiFetch('/api/saas/ping'); } catch {}
+
+  // Shopify: mostrar paso dominio si viene en query o guardado
+  const savedShop = sessionStorage.getItem('shopDomain');
+  if (shopFromQuery || savedShop) {
+    domainStep?.classList.remove('step--hidden');
+    if (domainInput) {
+      domainInput.value = shopFromQuery || savedShop;
+      domainInput.focus();
+    }
+    if (savedShop) sessionStorage.removeItem('shopDomain');
   }
 
   // ---------- pintar estados ----------
@@ -224,12 +217,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (resp?.shop && resp?.accessToken) {
         sessionStorage.setItem('shop', resp.shop);
         sessionStorage.setItem('accessToken', resp.accessToken);
-        sessionStorage.setItem('shopifyConnected', 'true');
-        habilitarContinue();
-      } else {
-        sessionStorage.setItem('shopifyConnected', 'true');
-        habilitarContinue();
       }
+      sessionStorage.setItem('shopifyConnected', 'true');
+      habilitarContinue();
     } catch (err) {
       console.error('Error obteniendo shop/accessToken:', err);
     }
@@ -244,17 +234,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     habilitarContinue();
   };
 
-  // Estados iniciales Shopify/Google
   if (flagShopify?.textContent.trim() === 'true') await pintarShopifyConectado();
   if (flagGoogle?.textContent.trim() === 'true') pintarGoogleConectado();
   habilitarContinue();
 
   // ---------- acciones ----------
-  // Conectar Shopify
   connectShopifyBtn?.addEventListener('click', () => {
     let shop = shopFromQuery;
     let host = hostFromQuery;
-
     if (!shop || !host) {
       shop = prompt('Ingresa tu dominio (ej: mitienda.myshopify.com):');
       if (!shop?.endsWith('.myshopify.com')) return alert('Dominio inválido');
@@ -263,7 +250,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     location.href = `/connector?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
   });
 
-  // Vincular Shopify por dominio
   domainSend?.addEventListener('click', async () => {
     const shop = domainInput?.value?.trim().toLowerCase();
     if (!shop || !shop.endsWith('.myshopify.com')) return alert('Dominio inválido');
@@ -284,24 +270,22 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Conectar Google
   connectGoogleBtn?.addEventListener('click', () => {
     location.href = '/auth/google/connect';
   });
 
-  // Paso 1 → Paso 2 (usar router + hash)
+  // En vez de manipular DOM directo, cambiamos el hash y dejamos que goTo() actúe
   continueBtn?.addEventListener('click', () => {
+    // Sólo permitimos pasar si hay mínimo 1 conexión
     const { anyConnected } = getConnectivityState();
     if (!anyConnected) return;
-    goToStep(2, true);
+    location.hash = 'step=2';
   });
 
-  // Volver a paso 1
   document.getElementById('back-btn-2')?.addEventListener('click', () => {
-    goToStep(1, true);
+    location.hash = 'step=1';
   });
 
-  // Continuar paso 2 (mínimo 1 conexión)
   document.getElementById('continue-btn-2')?.addEventListener('click', () => {
     const { anyConnected } = getConnectivityState();
     if (!anyConnected) {
@@ -311,7 +295,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.location.href = '/onboarding3.html';
   });
 
-  // ---------- meta: estado inicial + callback ----------
+  // ---------- Meta: estado inicial + callback ----------
   let initialMetaConnected = false;
   try {
     const st0 = await refreshMetaUI();
@@ -329,11 +313,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (metaStatus === 'ok') {
     await refreshMetaUI();
     habilitarContinue();
-    // Si viene de conectar Meta con éxito, muéstrale directamente el Paso 2
-    goToStep(2, true);
   }
 
-  // Conectar Meta
   connectMetaBtn?.addEventListener('click', () => {
     localStorage.setItem('meta_connecting', '1');
     connectMetaBtn.style.pointerEvents = 'none';
@@ -341,7 +322,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.location.href = '/auth/meta/login';
   });
 
-  // Poll hasta reflejar conexión de Meta
   async function pollMetaUntilConnected(maxTries = 30, delayMs = 2000) {
     for (let i = 0; i < maxTries; i++) {
       const st = await fetchMetaStatus();
@@ -365,13 +345,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     pollMetaUntilConnected();
   }
 
-  // Guardar objetivo Meta
   saveMetaObjective?.addEventListener('click', async () => {
     const selected = (document.querySelector('input[name="metaObjective"]:checked') || {}).value;
-    if (!selected) {
-      alert('Selecciona un objetivo');
-      return;
-    }
+    if (!selected) return alert('Selecciona un objetivo');
     try {
       await apiFetch(META_OBJECTIVE_URL, {
         method: 'POST',
@@ -385,46 +361,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Demo GA (igual que lo tenías)
-  gaBtn?.addEventListener('click', async () => {
-    const raw = gaIn?.value?.trim();
-    if (!raw) {
-      alert('Ingresa el GA4 Property ID.');
-      return;
-    }
-    const propertyId = raw.startsWith('properties/') ? raw : `properties/${raw}`;
-    if (gaOut) gaOut.textContent = 'Ejecutando…';
-
-    gaBtn.disabled = true;
-    try {
-      const r = await fetch('/auth/google/ga/demo-create-conversion', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ propertyId })
-      });
-      const data = await r.json();
-      if (gaOut) gaOut.textContent = JSON.stringify(data, null, 2);
-      if (data.ok) alert('✅ Conversión creada: ' + (data.created?.name || ''));
-      else alert('❌ ' + (data.error?.message || data.error || 'Error'));
-    } catch (e) {
-      if (gaOut) gaOut.textContent = e.message;
-      alert('❌ Error: ' + e.message);
-    } finally {
-      gaBtn.disabled = false;
-    }
-  });
-
-  // Ocultar el chip "Requerido" (si existe el id en el HTML)
-  if (shopifyRequiredBadge) shopifyRequiredBadge.style.display = 'none';
-
-  // ---------- aplicar paso inicial y escuchar cambios de hash ----------
-  const stepFromHash = (location.hash || '').replace('#', '').split('=')[1];
-  if (stepFromHash === '2') setActiveStep(2);
-  else setActiveStep(1);
-
-  window.addEventListener('hashchange', () => {
-    const step = (location.hash || '').replace('#', '').split('=')[1];
-    setActiveStep(step === '2' ? 2 : 1);
-  });
+  // ---------- Inicialización de navegación ----------
+  // Si llega con #step=2, muéstralo; si no, step 1.
+  goTo(getStepFromHash());
 });
