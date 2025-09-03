@@ -39,9 +39,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   const META_STATUS_URL    = '/auth/meta/status';
   const META_OBJECTIVE_URL = '/auth/meta/objective';
 
-  // ====== Helpers visibles (sin forzar display: deja que tu CSS decida)
-  const showEl = (el) => { if (!el) return; el.classList.remove('hidden'); el.removeAttribute('aria-hidden'); };
-  const hideEl = (el) => { if (!el) return; el.classList.add('hidden');   el.setAttribute('aria-hidden', 'true'); };
+  // ====== Helpers visibles (robustos: fuerzan layout + capa superior)
+  function showEl(el) {
+    if (!el) return;
+    el.classList.remove('hidden');
+    el.removeAttribute('aria-hidden');
+    el.style.display = el.classList.contains('content-panel') ? 'flex' : 'block';
+    el.style.visibility = 'visible';
+    el.style.opacity = '1';
+    if (!el.style.position) el.style.position = 'relative';
+    el.style.zIndex = '3';
+  }
+  function hideEl(el) {
+    if (!el) return;
+    el.classList.add('hidden');
+    el.setAttribute('aria-hidden', 'true');
+    el.style.display = 'none';
+    el.style.visibility = 'hidden';
+    el.style.opacity = '0';
+    el.style.zIndex = '';
+  }
 
   // ====== Detección de panels (soporta data-step-content o IDs antiguos)
   function collectPanels() {

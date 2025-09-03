@@ -1,10 +1,8 @@
-
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
-
 
 body {
   font-family: 'Inter', sans-serif;
@@ -15,7 +13,6 @@ body {
   align-items: center;
   justify-content: center;
 }
-
 
 .onboarding-container {
   display: flex;
@@ -30,7 +27,6 @@ body {
   overflow: hidden;
   position: relative;
 }
-
 
 .sidebar {
   width: 320px;
@@ -131,21 +127,36 @@ body {
   font-size: 1.2rem;
 }
 
-
 .main-content {
   flex: 1;
   padding: 2.5rem;
   overflow-y: auto;
   background: none;
+  /* ↑ para evitar que quede debajo de decoraciones/overlays */
+  position: relative;
+  z-index: 2;
 }
 
+/* ---------- PANELES ---------- */
+/* Estado oculto genérico y específico de panel */
+.hidden { display: none !important; }
 
 .content-panel.hidden { display: none !important; }
 
+/* Estado visible y robusto del panel activo */
 .content-panel {
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+
+/* Fuerza visibilidad correcta cuando NO está oculto */
+.content-panel:not(.hidden) {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  position: relative;
+  z-index: 3; /* por encima de fondos/pseudo-elementos */
 }
 
 .content-panel h2 {
@@ -161,10 +172,7 @@ body {
   margin-bottom: 2rem;
 }
 
-.hidden {
-  display: none;
-}
-
+/* ---------- CONEXIONES ---------- */
 
 .connection-cards {
   display: flex;
@@ -237,7 +245,6 @@ body {
   font-weight: 600;
 }
 
-
 .btn-connect {
   background: rgba(169, 107, 255, 0.09);
   border: 1.5px solid #382058;
@@ -308,6 +315,7 @@ body {
   color: #A96BFF;
 }
 
+/* ---------- PERMISOS ---------- */
 
 .permissions-list {
   display: flex;
@@ -348,6 +356,7 @@ body {
   color: #C5B8E6;
 }
 
+/* ---------- ANÁLISIS ---------- */
 
 .analysis-progress {
   margin-top: 2rem;
@@ -452,6 +461,7 @@ body {
   margin: 0 auto;
 }
 
+/* ---------- EXTRAS ---------- */
 
 .features-summary {
   display: flex;
@@ -485,7 +495,6 @@ body {
   font-size: 0.91rem;
   color: #C5B8E6;
 }
-
 
 @media (max-width: 900px) {
   .onboarding-container {
@@ -550,6 +559,7 @@ body {
   }
 }
 
+/* Página onboarding4 */
 body[data-page="onboarding4"] .content-panel {
   max-width: 700px;
   min-width: 360px;
