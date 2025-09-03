@@ -9,10 +9,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   const shopFromQuery = qs.get('shop');
   const hostFromQuery = qs.get('host');
 
-  // ====== Selectores base
-  const s1 = document.getElementById('step1-content');
-  const s2 = document.getElementById('step2-content');
+  // ====== Raíz del onboarding (opcional en tu HTML)
+  const $root = document.getElementById('onboarding') || document;
 
+  // ====== Selectores base (compatibilidad con HTML actual)
   const connectShopifyBtn = document.getElementById('connect-shopify-btn');
   const connectGoogleBtn  = document.getElementById('connect-google-btn');
   const connectMetaBtn    = document.getElementById('connect-meta-btn');
@@ -39,50 +39,57 @@ document.addEventListener('DOMContentLoaded', async () => {
   const META_STATUS_URL    = '/auth/meta/status';
   const META_OBJECTIVE_URL = '/auth/meta/objective';
 
-  // ====== Helpers de visibilidad (a prueba de CSS)
-  function showEl(el) {
-    if (!el) return;
-    el.classList.remove('hidden');
-    el.removeAttribute('aria-hidden');
-    // Si es panel, ‘flex’; en otro caso, ‘block’
-    el.style.display = el.classList.contains('content-panel') ? 'flex' : 'block';
-    el.style.visibility = 'visible';
-    el.style.opacity = '1';
+  // ====== Helpers visibles (sin forzar display: deja que tu CSS decida)
+  const showEl = (el) => { if (!el) return; el.classList.remove('hidden'); el.removeAttribute('aria-hidden'); };
+  const hideEl = (el) => { if (!el) return; el.classList.add('hidden');   el.setAttribute('aria-hidden', 'true'); };
+
+  // ====== Detección de panels (soporta data-step-content o IDs antiguos)
+  function collectPanels() {
+    const byData = Array.from($root.querySelectorAll('[data-step-content]'));
+    if (byData.length) {
+      return byData.reduce((acc, el) => {
+        const n = String(el.getAttribute('data-step-content'));
+        acc[n] = el; return acc;
+      }, {});
+    }
+    // Fallback a tus IDs actuales:
+    return {
+      '1': document.getElementById('step1-content'),
+      '2': document.getElementById('step2-content'),
+      '3': document.getElementById('step3-content'),
+    };
   }
-  function hideEl(el) {
-    if (!el) return;
-    el.classList.add('hidden');
-    el.setAttribute('aria-hidden', 'true');
-    el.style.display = 'none';
-    el.style.visibility = 'hidden';
-    el.style.opacity = '0';
+  let PANELS = collectPanels();
+
+  function markSidebar(step) {
+    $root.querySelectorAll('.step').forEach(st => st.classList.remove('active'));
+    $root.querySelector(`.step[data-step="${step}"]`)?.classList.add('active');
   }
 
-  // ====== Mini-router por hash (#step=1 | #step=2)
-  function currentStepFromHash() {
+  // ====== Mini-router por hash (#step=1 | #step=2 | #step=3)
+  const getStepFromHash = () => {
     const m = (location.hash || '').match(/step=(\d+)/);
-    return m ? m[1] : '1';
-  }
-  function markSidebar(step) {
-    document.querySelectorAll('.step').forEach(st => st.classList.remove('active'));
-    document.querySelector(`.step[data-step="${step}"]`)?.classList.add('active');
-  }
-  function goTo(step) {
-    if (step === '2') {
-      hideEl(s1);
-      showEl(s2);
-    } else {
-      showEl(s1);
-      hideEl(s2);
-    }
+    return m ? m[1] : (sessionStorage.getItem('onboarding_step') || '1');
+  };
+
+  function goTo(step, { updateHash = true } = {}) {
+    // refresca referencia por si el DOM cambió
+    PANELS = collectPanels();
+
+    Object.entries(PANELS).forEach(([k, el]) => {
+      if (!el) return;
+      if (String(k) === String(step)) showEl(el);
+      else hideEl(el);
+    });
+
     markSidebar(step);
-    sessionStorage.setItem('onboarding_step', step);
+    sessionStorage.setItem('onboarding_step', String(step));
+    if (updateHash && location.hash !== `#step=${step}`) {
+      location.hash = `#step=${step}`;
+    }
   }
-  // Sincroniza hash → UI
-  function syncFromHash() {
-    const step = currentStepFromHash();
-    goTo(step);
-  }
+
+  window.addEventListener('hashchange', () => goTo(getStepFromHash(), { updateHash: false }));
 
   // ====== Meta helpers
   const showMetaObjectiveStep = () => { if (metaObjectiveStep) showEl(metaObjectiveStep); };
@@ -285,19 +292,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Paso 1 → Paso 2
   continueBtn?.addEventListener('click', () => {
-    // mínimo 1 conectado (ya no obligatorio Shopify)
     const { anyConnected } = getConnectivityState();
     if (!anyConnected) {
       alert('⚠️ Conecta al menos una plataforma (Shopify, Google o Meta) para continuar.');
       return;
     }
-    location.hash = 'step=2';
     goTo('2');
   });
 
   // Volver a paso 1
   document.getElementById('back-btn-2')?.addEventListener('click', () => {
-    location.hash = 'step=1';
     goTo('1');
   });
 
@@ -407,22 +411,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // ====== Router inicial + hashchange
-  // Si hay hash válido, respétalo. Si no, usa lo último guardado o cae en 1.
-  const initial =
-    currentStepFromHash() ||
-    sessionStorage.getItem('onboarding_step') ||
-    '1';
-  goTo(initial);
+  // ====== Router inicial (respeta hash o último paso guardado)
+  goTo(getStepFromHash(), { updateHash: false });
 
-  window.addEventListener('hashchange', syncFromHash);
-
-  // Failsafe: si el paso 2 está activo pero no visible, forzamos display
+  // Failsafe (si el paso 2 está activo, asegúrate de que su panel no quede oculto)
   requestAnimationFrame(() => {
-    const activeStep = document.querySelector('.step.active')?.dataset.step;
-    if (activeStep === '2') {
-      showEl(s2);
-      hideEl(s1);
+    const active = $root.querySelector('.step.active')?.getAttribute('data-step');
+    if (active && PANELS[active]) {
+      showEl(PANELS[active]);
+      Object.entries(PANELS).forEach(([k, el]) => { if (k !== active) hideEl(el); });
     }
   });
 });
