@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html> 
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
@@ -6,11 +6,12 @@
   <title>Onboarding - ADNOVA AI</title>
   <link rel="stylesheet" href="onboarding.css" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
-
 </head>
+
 <body data-page="onboarding" data-user-id="USER_ID_REAL">
-   <span id="shopifyConnectedFlag"  style="display:none">SHOPIFY_CONNECTED_FLAG</span>
+  <span id="shopifyConnectedFlag"  style="display:none">SHOPIFY_CONNECTED_FLAG</span>
   <span id="googleConnectedFlag"   style="display:none">GOOGLE_CONNECTED_FLAG</span>
+
   <div class="onboarding-container">
     <div class="sidebar">
       <div class="logo">
@@ -49,11 +50,13 @@
       </div>
     </div>
 
-    <!-- Main content -->
+    <!-- Main content (sólo Step 1) -->
     <div class="main-content">
       <div class="content-panel" id="step1-content">
         <h2>Conecta tus cuentas</h2>
-        <p class="panel-description">Conecta tu tienda online y plataformas de marketing para comenzar con ADNOVA AI..</p>
+        <p class="panel-description">
+          Conecta tu tienda online y plataformas de marketing para comenzar con ADNOVA AI.
+        </p>
 
         <div class="connection-cards">
           <!-- Shopify -->
@@ -68,33 +71,32 @@
                 <span class="required-badge">Requerido</span>
               </div>
             </div>
-              <button type="button" class="btn-connect" id="connect-shopify-btn">Conectar</button>
+            <button type="button" class="btn-connect" id="connect-shopify-btn">Conectar</button>
           </div>
+
           <!-- Paso: dominio Shopify -->
           <div id="shopify-domain-step" class="shop-step step--hidden">
-  <label for="shop-domain-input">Escribe el dominio de tu tienda:</label>
-  <div class="shop-input-row">
-    <input id="shop-domain-input"
-           placeholder="mitienda.myshopify.com" type="text" />
-    <button id="shop-domain-send">Enviar</button>
-  </div>
-</div>
+            <label for="shop-domain-input">Escribe el dominio de tu tienda:</label>
+            <div class="shop-input-row">
+              <input id="shop-domain-input" placeholder="mitienda.myshopify.com" type="text" />
+              <button id="shop-domain-send">Enviar</button>
+            </div>
+          </div>
 
-<style>
-  .step--hidden{display:none}
-  .shop-step{margin-top:18px}
-  .shop-input-row{display:flex;gap:8px;margin-top:6px}
-  #shop-domain-input{
-    flex:1;padding:10px 14px;border-radius:6px;border:1px solid #444;
-    background:#1e1e26;color:#fff;
-  }
-  #shop-domain-send{
-    padding:10px 20px;border:0;border-radius:6px;cursor:pointer;
-    background:#9a5bff;color:#fff;font-weight:600;
-  }
-  #shop-domain-send:hover{background:#8249e3}
-              </style>
-
+          <style>
+            .step--hidden{display:none}
+            .shop-step{margin-top:18px}
+            .shop-input-row{display:flex;gap:8px;margin-top:6px}
+            #shop-domain-input{
+              flex:1;padding:10px 14px;border-radius:6px;border:1px solid #444;
+              background:#1e1e26;color:#fff;
+            }
+            #shop-domain-send{
+              padding:10px 20px;border:0;border-radius:6px;cursor:pointer;
+              background:#9a5bff;color:#fff;font-weight:600;
+            }
+            #shop-domain-send:hover{background:#8249e3}
+          </style>
 
           <!-- Google -->
           <div class="connection-card">
@@ -108,140 +110,77 @@
                 <span class="optional-badge">Opcional</span>
               </div>
             </div>
-             <button type="button" class="btn-connect" id="connect-google-btn">Conectar</button>
+            <button type="button" class="btn-connect" id="connect-google-btn">Conectar</button>
           </div>
 
-         <!-- ─────────────── META ─────────────── -->
-<div class="connection-card" id="meta-card">
-  <div class="connection-details">
-    <div class="connection-icon">
-      <img src="https://img.icons8.com/ios-filled/50/FFFFFF/facebook-new.png" alt="Meta" width="36" height="36" />
-    </div>
-    <div class="connection-info">
-      <h3>Meta Business Manager</h3>
-      <p>Conecta tus anuncios de Facebook e Instagram</p>
-      <span class="optional-badge">Opcional</span>
-    </div>
-  </div>
-
-  <button type="button" class="btn-connect" id="connect-meta-btn">Conectar</button>
-
-  
-  <div id="meta-obj">
-    <style>
-      
-      #meta-card {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 16px;
-        flex-wrap: wrap; 
-      }
-      #meta-card .connection-details { flex: 1 1 auto; }
-      #meta-card #connect-meta-btn { flex: 0 0 auto; margin-left: auto; }
-
-      
-      #meta-card #meta-obj { flex-basis: 100%; order: 99; }
-
-      
-      #meta-obj #meta-objective-step {
-        display: none;     
-        margin-top: 12px;
-      }
-      #meta-obj .objective-title {
-        display: block;
-        margin-bottom: 8px;
-        font-weight: 600;
-      }
-      #meta-obj .objective-options {
-        display: flex;
-        gap: 10px;
-        flex-wrap: wrap;
-        margin-bottom: 10px;
-      }
-      #meta-obj .option-chip {
-        border: 1px solid #444;
-        border-radius: 10px;
-        padding: 8px 12px;
-        background: #161616;
-        color: #fff;
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        cursor: pointer;
-        user-select: none;
-        transition: background .15s, border-color .15s;
-      }
-      #meta-obj .option-chip:hover { background: #1b1b1b; border-color: #555; }
-      #meta-obj .option-chip input { accent-color: #8a5cff; }
-      #meta-obj .btn-connect.connected { background: #1c8a4b !important; }
-      #meta-obj .help { opacity: .75; margin-top: 6px; font-size: .92rem; }
-    </style>
-
-    <div id="meta-objective-step">
-      <label class="objective-title">¿Qué objetivo te interesa optimizar?</label>
-
-      <div class="objective-options">
-        <label class="option-chip">
-          <input type="radio" name="metaObjective" value="ventas" />
-          Ventas
-        </label>
-        <label class="option-chip">
-          <input type="radio" name="metaObjective" value="alcance" />
-          Campañas de alcance
-        </label>
-        <label class="option-chip">
-          <input type="radio" name="metaObjective" value="leads" />
-          Mensajes / Leads
-        </label>
-      </div>
-
-      <button id="save-meta-objective-btn" class="btn-connect">Guardar objetivo</button>
-      <p class="help">Usaremos tu objetivo para personalizar el dashboard de Meta Ads.</p>
-    </div>
-  </div>
-</div> 
-<div class="bottom-actions">
-  <button id="continue-btn" class="btn-continue btn-continue--disabled" disabled>Continuar</button>
-</div>
-</div>
-
-      <!-- Step 2 -->
-      <div class="content-panel hidden" id="step2-content">
-        <h2>Revisar permisos</h2>
-        <p class="panel-description">ADNOVA necesita acceso a los datos de tu tienda para optimizar tus campañas de marketing.</p>
-
-        <div class="permissions-list">
-          <div class="permission-item">
-            <div class="permission-icon">✓</div>
-            <div class="permission-text">
-              <h3>Leer datos de productos</h3>
-              <p>Acceso a tu catálogo de productos, variantes y precios</p>
+          <!-- Meta -->
+          <div class="connection-card" id="meta-card">
+            <div class="connection-details">
+              <div class="connection-icon">
+                <img src="https://img.icons8.com/ios-filled/50/FFFFFF/facebook-new.png" alt="Meta" width="36" height="36" />
+              </div>
+              <div class="connection-info">
+                <h3>Meta Business Manager</h3>
+                <p>Conecta tus anuncios de Facebook e Instagram</p>
+                <span class="optional-badge">Opcional</span>
+              </div>
             </div>
-          </div>
-          <div class="permission-item">
-            <div class="permission-icon">✓</div>
-            <div class="permission-text">
-              <h3>Leer datos de clientes</h3>
-              <p>Acceso a datos demográficos de clientes e historial de compras</p>
-            </div>
-          </div>
-          <div class="permission-item">
-            <div class="permission-icon">✓</div>
-            <div class="permission-text">
-              <h3> Leer analíticas</h3>
-              <p>Acceso a las métricas y analíticas de tu tienda</p>
+
+            <button type="button" class="btn-connect" id="connect-meta-btn">Conectar</button>
+
+            <div id="meta-obj">
+              <style>
+                #meta-card { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+                #meta-card .connection-details { flex:1 1 auto; }
+                #meta-card #connect-meta-btn { flex:0 0 auto; margin-left:auto; }
+                #meta-card #meta-obj { flex-basis:100%; order:99; }
+                #meta-obj #meta-objective-step { display:none; margin-top:12px; }
+                #meta-obj .objective-title { display:block; margin-bottom:8px; font-weight:600; }
+                #meta-obj .objective-options { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+                #meta-obj .option-chip {
+                  border:1px solid #444; border-radius:10px; padding:8px 12px;
+                  background:#161616; color:#fff; display:inline-flex; align-items:center; gap:8px;
+                  cursor:pointer; user-select:none; transition:background .15s, border-color .15s;
+                }
+                #meta-obj .option-chip:hover { background:#1b1b1b; border-color:#555; }
+                #meta-obj .option-chip input { accent-color:#8a5cff; }
+                #meta-obj .btn-connect.connected { background:#1c8a4b !important; }
+                #meta-obj .help { opacity:.75; margin-top:6px; font-size:.92rem; }
+              </style>
+
+              <div id="meta-objective-step">
+                <label class="objective-title">¿Qué objetivo te interesa optimizar?</label>
+
+                <div class="objective-options">
+                  <label class="option-chip">
+                    <input type="radio" name="metaObjective" value="ventas" />
+                    Ventas
+                  </label>
+                  <label class="option-chip">
+                    <input type="radio" name="metaObjective" value="alcance" />
+                    Campañas de alcance
+                  </label>
+                  <label class="option-chip">
+                    <input type="radio" name="metaObjective" value="leads" />
+                    Mensajes / Leads
+                  </label>
+                </div>
+
+                <button id="save-meta-objective-btn" class="btn-connect">Guardar objetivo</button>
+                <p class="help">Usaremos tu objetivo para personalizar el dashboard de Meta Ads.</p>
+              </div>
             </div>
           </div>
         </div>
 
         <div class="bottom-actions">
-          <button class="btn-secondary" id="back-btn-2">Atras</button>
-          <button class="btn-continue" id="continue-btn-2">Autorizar accesos</button>
+          <button id="continue-btn" class="btn-continue btn-continue--disabled" disabled>Continuar</button>
         </div>
       </div>
+      <!-- 🔹 Eliminado: bloque completo de #step2-content -->
     </div>
   </div>
-<script type="module" src="/js/onboarding.js"></script>
+
+  <script type="module" src="/js/onboarding.js"></script>
 </body>
 </html>

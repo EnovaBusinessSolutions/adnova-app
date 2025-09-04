@@ -1,4 +1,4 @@
-// public/js/onboarding.js
+// public/js/onboarding1.js
 import { apiFetch } from './apiFetch.saas.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -9,10 +9,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const shopFromQuery = qs.get('shop');
   const hostFromQuery = qs.get('host');
 
-  // ====== Raíz del onboarding (opcional en tu HTML)
-  const $root = document.getElementById('onboarding') || document;
-
-  // ====== Selectores base (compatibilidad con HTML actual)
+  // Selectores
   const connectShopifyBtn = document.getElementById('connect-shopify-btn');
   const connectGoogleBtn  = document.getElementById('connect-google-btn');
   const connectMetaBtn    = document.getElementById('connect-meta-btn');
@@ -25,143 +22,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   const domainInput = document.getElementById('shop-domain-input');
   const domainSend  = document.getElementById('shop-domain-send');
 
-  // Panel demo GA opcional
   const gaPanel = document.getElementById('ga-edit-test');
   const gaBtn   = document.getElementById('ga-create-demo-btn');
   const gaIn    = document.getElementById('ga-property-id');
   const gaOut   = document.getElementById('ga-demo-output');
 
-  // Paso de OBJETIVO Meta
-  const metaObjectiveStep = document.getElementById('meta-objective-step');
-  const saveMetaObjective = document.getElementById('save-meta-objective-btn');
-
-  // Endpoints Meta
-  const META_STATUS_URL    = '/auth/meta/status';
-  const META_OBJECTIVE_URL = '/auth/meta/objective';
-
-  // ====== Helpers visibles (robustos: fuerzan layout + capa superior)
-  function showEl(el) {
-    if (!el) return;
-    el.classList.remove('hidden');
-    el.removeAttribute('aria-hidden');
-    el.style.display = el.classList.contains('content-panel') ? 'flex' : 'block';
-    el.style.visibility = 'visible';
-    el.style.opacity = '1';
-    if (!el.style.position) el.style.position = 'relative';
-    el.style.zIndex = '3';
-  }
-  function hideEl(el) {
-    if (!el) return;
-    el.classList.add('hidden');
-    el.setAttribute('aria-hidden', 'true');
-    el.style.display = 'none';
-    el.style.visibility = 'hidden';
-    el.style.opacity = '0';
-    el.style.zIndex = '';
-  }
-
-  // ====== Detección de panels (soporta data-step-content o IDs antiguos)
-  function collectPanels() {
-    const byData = Array.from($root.querySelectorAll('[data-step-content]'));
-    if (byData.length) {
-      return byData.reduce((acc, el) => {
-        const n = String(el.getAttribute('data-step-content'));
-        acc[n] = el; return acc;
-      }, {});
-    }
-    // Fallback a tus IDs actuales:
-    return {
-      '1': document.getElementById('step1-content'),
-      '2': document.getElementById('step2-content'),
-      '3': document.getElementById('step3-content'),
-    };
-  }
-  let PANELS = collectPanels();
-
-  function markSidebar(step) {
-    $root.querySelectorAll('.step').forEach(st => st.classList.remove('active'));
-    $root.querySelector(`.step[data-step="${step}"]`)?.classList.add('active');
-  }
-
-  // ====== Mini-router por hash (#step=1 | #step=2 | #step=3)
-  const getStepFromHash = () => {
-    const m = (location.hash || '').match(/step=(\d+)/);
-    return m ? m[1] : (sessionStorage.getItem('onboarding_step') || '1');
-  };
-
-  function goTo(step, { updateHash = true } = {}) {
-    // refresca referencia por si el DOM cambió
-    PANELS = collectPanels();
-
-    Object.entries(PANELS).forEach(([k, el]) => {
-      if (!el) return;
-      if (String(k) === String(step)) showEl(el);
-      else hideEl(el);
-    });
-
-    markSidebar(step);
-    sessionStorage.setItem('onboarding_step', String(step));
-    if (updateHash && location.hash !== `#step=${step}`) {
-      location.hash = `#step=${step}`;
-    }
-  }
-
-  window.addEventListener('hashchange', () => goTo(getStepFromHash(), { updateHash: false }));
-
-  // ====== Meta helpers
-  const showMetaObjectiveStep = () => { if (metaObjectiveStep) showEl(metaObjectiveStep); };
-  const hideMetaObjectiveStep = () => { if (metaObjectiveStep) hideEl(metaObjectiveStep); };
-
-  const markMetaConnected = (objective = null) => {
-    if (!connectMetaBtn) return;
-    connectMetaBtn.textContent = 'Conectado';
-    connectMetaBtn.classList.add('connected');
-    connectMetaBtn.style.pointerEvents = 'none';
-    if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = true;
-    if (objective) sessionStorage.setItem('metaObjective', objective);
-    sessionStorage.setItem('metaConnected', 'true');
-    localStorage.removeItem('meta_connecting');
-    habilitarContinue();
-  };
-
-  async function fetchMetaStatus() {
-    try {
-      const st = await apiFetch(META_STATUS_URL);
-      return st || { connected: false, objective: null };
-    } catch {
-      try {
-        const s = await apiFetch('/api/session');
-        return {
-          connected: !!(s?.authenticated && s?.user?.metaConnected),
-          objective: s?.user?.metaObjective || null
-        };
-      } catch {
-        return { connected: false, objective: null };
-      }
-    }
-  }
-
-  async function refreshMetaUI() {
-    const st = await fetchMetaStatus();
-    if (st.connected) {
-      sessionStorage.setItem('metaConnected', 'true');
-      if (!st.objective) showMetaObjectiveStep();
-      else { hideMetaObjectiveStep(); markMetaConnected(st.objective); }
-      habilitarContinue();
-    }
-    return st;
-  }
-
-  // ====== Carga sesión SaaS (Google panel + flags)
+  // --- Sesión: muestra panel GA si aplica
   try {
     const sess = await apiFetch('/api/session');
     if (sess?.authenticated && sess?.user) {
       sessionStorage.setItem('userId',  sess.user._id);
       sessionStorage.setItem('email',   sess.user.email);
+
       if (sess.user.googleConnected) {
         gaPanel?.classList.remove('hidden');
         sessionStorage.setItem('googleConnected', 'true');
-        habilitarContinue();
       } else {
         gaPanel?.classList.add('hidden');
       }
@@ -170,10 +45,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.warn('No se pudo obtener /api/session:', err);
   }
 
-  // Ping
+  // Ping (opcional)
   try { await apiFetch('/api/saas/ping'); } catch {}
 
-  // Shopify: panel de dominio si llega en query o guardado
+  // Mostrar panel por dominio si viene en query o guardado
   const savedShop = sessionStorage.getItem('shopDomain');
   if (shopFromQuery || savedShop) {
     domainStep?.classList.remove('step--hidden');
@@ -184,7 +59,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (savedShop) sessionStorage.removeItem('shopDomain');
   }
 
-  // ====== Estado de conectividad (mínimo 1 conexión)
+  // --- Estado de conectividad
   function getConnectivityState() {
     const shopConnected =
       flagShopify?.textContent.trim() === 'true' ||
@@ -206,22 +81,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!continueBtn) return;
     const { anyConnected } = getConnectivityState();
 
-    if (anyConnected) {
-      continueBtn.disabled = false;
-      continueBtn.classList.remove('btn-continue--disabled');
-      continueBtn.classList.add('btn-continue--enabled');
-      continueBtn.style.pointerEvents = 'auto';
-      continueBtn.style.opacity = '1';
-    } else {
-      continueBtn.disabled = true;
-      continueBtn.classList.add('btn-continue--disabled');
-      continueBtn.classList.remove('btn-continue--enabled');
-      continueBtn.style.pointerEvents = 'none';
-      continueBtn.style.opacity = '0.6';
-    }
+    continueBtn.disabled = !anyConnected;
+    continueBtn.classList.toggle('btn-continue--disabled', !anyConnected);
+    continueBtn.classList.toggle('btn-continue--enabled',  anyConnected);
+    continueBtn.style.pointerEvents = anyConnected ? 'auto' : 'none';
+    continueBtn.style.opacity       = anyConnected ? '1'    : '0.6';
   }
 
-  // ====== Pintar estados “Conectado”
+  // --- Pintar conectados
   const pintarShopifyConectado = async () => {
     if (connectShopifyBtn) {
       connectShopifyBtn.textContent = 'Conectado';
@@ -262,13 +129,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     habilitarContinue();
   };
 
-  // ====== Estados iniciales
+  // --- Estados iniciales
   if (flagShopify?.textContent.trim() === 'true') await pintarShopifyConectado();
   if (flagGoogle?.textContent.trim() === 'true') pintarGoogleConectado();
   habilitarContinue();
 
-  // ====== Acciones
-  // Conectar Shopify
+  // --- Acciones
   connectShopifyBtn?.addEventListener('click', () => {
     let shop = shopFromQuery;
     let host = hostFromQuery;
@@ -281,7 +147,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     location.href = `/connector?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
   });
 
-  // Vincular Shopify por dominio
   domainSend?.addEventListener('click', async () => {
     const shop = domainInput?.value?.trim().toLowerCase();
     if (!shop || !shop.endsWith('.myshopify.com')) return alert('Dominio inválido');
@@ -302,106 +167,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Conectar Google
   connectGoogleBtn?.addEventListener('click', () => {
     location.href = '/auth/google/connect';
   });
 
-  // Paso 1 → Paso 2
+  connectMetaBtn?.addEventListener('click', () => {
+    // Aquí solo marcamos mock hasta que vuelva del login
+    sessionStorage.setItem('metaConnected', 'true');
+    habilitarContinue();
+    location.href = '/auth/meta/login';
+  });
+
+  // Continuar → ir a onboarding2
   continueBtn?.addEventListener('click', () => {
     const { anyConnected } = getConnectivityState();
     if (!anyConnected) {
       alert('⚠️ Conecta al menos una plataforma (Shopify, Google o Meta) para continuar.');
       return;
     }
-    goTo('2');
+    window.location.href = '/onboarding2.html#step=2';
   });
 
-  // Volver a paso 1
-  document.getElementById('back-btn-2')?.addEventListener('click', () => {
-    goTo('1');
-  });
-
-  // Continuar paso 2 → siguiente pantalla
-  document.getElementById('continue-btn-2')?.addEventListener('click', () => {
-    const { anyConnected } = getConnectivityState();
-    if (!anyConnected) {
-      alert('⚠️ Conecta al menos una plataforma (Shopify, Google o Meta) para continuar.');
-      return;
-    }
-    window.location.href = '/onboarding3.html';
-  });
-
-  // ====== META: estado inicial + callback por query (?meta=ok|fail|error)
-  let initialMetaConnected = false;
-  try {
-    const st0 = await refreshMetaUI();
-    initialMetaConnected = !!st0.connected;
-  } catch {}
-
-  const metaStatus = qs.get('meta');
-  if (metaStatus === 'fail' || metaStatus === 'error') {
-    localStorage.removeItem('meta_connecting');
-    if (connectMetaBtn) {
-      connectMetaBtn.style.pointerEvents = 'auto';
-      if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = false;
-    }
-  }
-  if (metaStatus === 'ok') {
-    await refreshMetaUI();
-    habilitarContinue();
-  }
-
-  // Conectar Meta
-  connectMetaBtn?.addEventListener('click', () => {
-    localStorage.setItem('meta_connecting', '1');
-    connectMetaBtn.style.pointerEvents = 'none';
-    if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = true;
-    window.location.href = '/auth/meta/login';
-  });
-
-  // Poll Meta
-  async function pollMetaUntilConnected(maxTries = 30, delayMs = 2000) {
-    for (let i = 0; i < maxTries; i++) {
-      const st = await fetchMetaStatus();
-      if (st.connected) {
-        sessionStorage.setItem('metaConnected', 'true');
-        localStorage.removeItem('meta_connecting');
-        if (!st.objective) showMetaObjectiveStep();
-        else markMetaConnected(st.objective);
-        habilitarContinue();
-        return;
-      }
-      await new Promise(r => setTimeout(r, delayMs));
-    }
-    localStorage.removeItem('meta_connecting');
-    if (connectMetaBtn) {
-      connectMetaBtn.style.pointerEvents = 'auto';
-      if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = false;
-    }
-  }
-  if (localStorage.getItem('meta_connecting') && !initialMetaConnected) {
-    pollMetaUntilConnected();
-  }
-
-  // Guardar objetivo Meta
-  saveMetaObjective?.addEventListener('click', async () => {
-    const selected = (document.querySelector('input[name="metaObjective"]:checked') || {}).value;
-    if (!selected) return alert('Selecciona un objetivo');
-    try {
-      await apiFetch(META_OBJECTIVE_URL, {
-        method: 'POST',
-        body: JSON.stringify({ objective: selected })
-      });
-      hideMetaObjectiveStep();
-      markMetaConnected(selected);
-    } catch (e) {
-      console.error(e);
-      alert('No se pudo guardar el objetivo. Inténtalo nuevamente.');
-    }
-  });
-
-  // Demo GA
+  // Demo GA (opcional)
   gaBtn?.addEventListener('click', async () => {
     const raw = gaIn?.value?.trim();
     if (!raw) return alert('Ingresa el GA4 Property ID.');
@@ -425,18 +212,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       alert('❌ Error: ' + e.message);
     } finally {
       gaBtn.disabled = false;
-    }
-  });
-
-  // ====== Router inicial (respeta hash o último paso guardado)
-  goTo(getStepFromHash(), { updateHash: false });
-
-  // Failsafe (si el paso 2 está activo, asegúrate de que su panel no quede oculto)
-  requestAnimationFrame(() => {
-    const active = $root.querySelector('.step.active')?.getAttribute('data-step');
-    if (active && PANELS[active]) {
-      showEl(PANELS[active]);
-      Object.entries(PANELS).forEach(([k, el]) => { if (k !== active) hideEl(el); });
     }
   });
 });
