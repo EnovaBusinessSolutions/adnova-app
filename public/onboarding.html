@@ -99,19 +99,80 @@
           </style>
 
           <!-- Google -->
-          <div class="connection-card">
-            <div class="connection-details">
-              <div class="connection-icon">
-                <img src="https://img.icons8.com/ios-filled/50/FFFFFF/google-logo.png" alt="Google Analytics" width="36" height="36" />
-              </div>
-              <div class="connection-info">
-                <h3>Google Analytics & Ads</h3>
-                <p>Importa datos de conversión y campañas</p>
-                <span class="optional-badge">Opcional</span>
-              </div>
-            </div>
-            <button type="button" class="btn-connect" id="connect-google-btn">Conectar</button>
-          </div>
+<div class="connection-card" id="google-card">
+  <div class="connection-details">
+    <div class="connection-icon">
+      <img
+        src="https://img.icons8.com/ios-filled/50/FFFFFF/google-logo.png"
+        alt="Google Analytics"
+        width="36"
+        height="36"
+      />
+    </div>
+    <div class="connection-info">
+      <h3>Google Analytics & Ads</h3>
+      <p>Importa datos de conversión y campañas</p>
+      <span class="optional-badge">Opcional</span>
+    </div>
+  </div>
+
+  <!-- Botón existente (no tocar el id) -->
+  <button type="button" class="btn-connect" id="connect-google-btn">Conectar</button>
+
+  <!-- Paso de Objetivo (se muestra al volver del login si falta objetivo) -->
+  <div id="google-obj">
+    <style>
+      /* Aísla estilos al card de Google: no afecta a Shopify ni Meta */
+      #google-card { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+      #google-card .connection-details { flex:1 1 auto; }
+      #google-card #connect-google-btn { flex:0 0 auto; margin-left:auto; }
+
+      /* Que el paso baje debajo del botón y ocupe toda la fila */
+      #google-card #google-obj { flex-basis:100%; order:99; }
+
+      /* Paso oculto por defecto: el JS lo muestra cuando aplique */
+      #google-obj #google-objective-step { display:none; margin-top:12px; }
+      #google-obj .objective-title { display:block; margin-bottom:8px; font-weight:600; }
+      #google-obj .objective-options { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+
+      #google-obj .option-chip{
+        border:1px solid #444; border-radius:10px; padding:8px 12px;
+        background:#161616; color:#fff;
+        display:inline-flex; align-items:center; gap:8px;
+        cursor:pointer; user-select:none;
+        transition:background .15s, border-color .15s;
+      }
+      #google-obj .option-chip:hover { background:#1b1b1b; border-color:#555; }
+      #google-obj .option-chip input { accent-color:#8a5cff; }
+
+      #google-obj .btn-connect.connected { background:#1c8a4b !important; }
+      #google-obj .help { opacity:.75; margin-top:6px; font-size:.92rem; }
+    </style>
+
+    <div id="google-objective-step">
+      <label class="objective-title">¿Qué objetivo te interesa optimizar en Google?</label>
+
+      <div class="objective-options">
+        <label class="option-chip">
+          <input type="radio" name="googleObjective" value="ventas" />
+          Ventas
+        </label>
+        <label class="option-chip">
+          <input type="radio" name="googleObjective" value="alcance" />
+          Campañas de alcance
+        </label>
+        <label class="option-chip">
+          <input type="radio" name="googleObjective" value="leads" />
+          Mensajes / Formulario
+        </label>
+      </div>
+
+      <button id="save-google-objective-btn" class="btn-connect">Guardar objetivo</button>
+      <p class="help">Usaremos tu objetivo para personalizar el dashboard de Google.</p>
+    </div>
+  </div>
+</div>
+
 
           <!-- Meta -->
           <div class="connection-card" id="meta-card">
@@ -177,7 +238,6 @@
           <button id="continue-btn" class="btn-continue btn-continue--disabled" disabled>Continuar</button>
         </div>
       </div>
-      <!-- 🔹 Eliminado: bloque completo de #step2-content -->
     </div>
   </div>
 
