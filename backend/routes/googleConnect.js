@@ -23,8 +23,7 @@ router.get('/connect', (req, res) => {
     prompt:        'consent',           
     scope: [
       'https://www.googleapis.com/auth/analytics.readonly',
-      'https://www.googleapis.com/auth/adwords',
-      'https://www.googleapis.com/auth/analytics.edit' 
+      'https://www.googleapis.com/auth/adwords'
     ].join(' '),
     state
   });
@@ -73,33 +72,6 @@ router.get('/connect/callback', async (req, res) => {
   } catch (err) {
     console.error('❌ Error intercambiando tokens de Analytics/Ads:', err.response?.data || err.message);
     return res.redirect('/onboarding?google=error');
-  }
-});
-
-const ADMIN_BASE = 'https://analyticsadmin.googleapis.com/v1beta';
-
-router.post('/ga/demo-create-conversion', async (req, res) => {
-  try {
-    if (!req.isAuthenticated()) return res.status(401).json({ ok: false, error: 'No auth' });
-    const { propertyId } = req.body;            
-    if (!propertyId) return res.status(400).json({ ok: false, error: 'Falta propertyId' });
-
-    const token = req.user.googleAccessToken;
-    if (!token) return res.status(400).json({ ok: false, error: 'Falta token de Google' });
-
-    const eventName = `adnova_demo_conv_${Date.now()}`;
-
-    const r = await axios.post(
-      `${ADMIN_BASE}/${propertyId}/conversionEvents`,
-      { eventName },
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-
-    return res.json({ ok: true, created: r.data });
-  } catch (err) {
-    console.error('GA Admin create conversion error:', err.response?.data || err.message);
-    const status = err.response?.status || 500;
-    return res.status(status).json({ ok: false, error: err.response?.data || err.message });
   }
 });
 
