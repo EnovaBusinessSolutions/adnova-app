@@ -1,4 +1,4 @@
-// public/js/onboarding1.js
+// public/js/onboarding.js
 import { apiFetch } from './apiFetch.saas.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -9,7 +9,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const shopFromQuery = qs.get('shop');
   const hostFromQuery = qs.get('host');
 
-  // Selectores
+  /* -----------------------------
+   * Selectores existentes
+   * ----------------------------- */
   const connectShopifyBtn = document.getElementById('connect-shopify-btn');
   const connectGoogleBtn  = document.getElementById('connect-google-btn');
   const connectMetaBtn    = document.getElementById('connect-meta-btn');
@@ -27,7 +29,72 @@ document.addEventListener('DOMContentLoaded', async () => {
   const gaIn    = document.getElementById('ga-property-id');
   const gaOut   = document.getElementById('ga-demo-output');
 
-  // --- Sesión: muestra panel GA si aplica
+  /* -----------------------------
+   * NUEVO: Meta objective (UI)
+   * ----------------------------- */
+  const metaObjectiveStep = document.getElementById('meta-objective-step');   // contenedor del paso
+  const saveMetaObjective = document.getElementById('save-meta-objective-btn'); // botón guardar
+
+  const META_STATUS_URL    = '/auth/meta/status';
+  const META_OBJECTIVE_URL = '/auth/meta/objective';
+
+  /* -----------------------------
+   * Helpers generales
+   * ----------------------------- */
+  const show = el => el && (el.style.display = 'block');
+  const hide = el => el && (el.style.display = 'none');
+
+  const markMetaConnected = (objective = null) => {
+    if (!connectMetaBtn) return;
+    connectMetaBtn.textContent = 'Conectado';
+    connectMetaBtn.classList.add('connected');
+    connectMetaBtn.style.pointerEvents = 'none';
+    if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = true;
+
+    // guardamos estado para habilitar "Continuar" y para el dashboard
+    sessionStorage.setItem('metaConnected', 'true');
+    if (objective) sessionStorage.setItem('metaObjective', objective);
+    habilitarContinue();
+  };
+
+  const showMetaObjectiveStep = () => show(metaObjectiveStep);
+  const hideMetaObjectiveStep = () => hide(metaObjectiveStep);
+
+  async function fetchMetaStatus() {
+    // Devuelve { connected:boolean, objective: string|null }
+    try {
+      const st = await apiFetch(META_STATUS_URL);
+      return st || { connected: false, objective: null };
+    } catch (_) {
+      // fallback a /api/session por si algo falla
+      try {
+        const s = await apiFetch('/api/session');
+        return {
+          connected: !!(s?.authenticated && s?.user?.metaConnected),
+          objective: s?.user?.metaObjective || null
+        };
+      } catch (e) {
+        return { connected: false, objective: null };
+      }
+    }
+  }
+
+  async function refreshMetaUI() {
+    const st = await fetchMetaStatus(); // {connected, objective}
+    if (st.connected && !st.objective) {
+      // conectado pero no tiene objetivo → mostrar paso
+      showMetaObjectiveStep();
+      // No marcamos conectado aún (esperamos a guardar objetivo)
+    } else if (st.connected && st.objective) {
+      hideMetaObjectiveStep();
+      markMetaConnected(st.objective);
+    }
+    return st;
+  }
+
+  /* -----------------------------
+   * Carga de sesión / GA panel
+   * ----------------------------- */
   try {
     const sess = await apiFetch('/api/session');
     if (sess?.authenticated && sess?.user) {
@@ -45,10 +112,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.warn('No se pudo obtener /api/session:', err);
   }
 
-  // Ping (opcional)
   try { await apiFetch('/api/saas/ping'); } catch {}
 
-  // Mostrar panel por dominio si viene en query o guardado
+  /* -----------------------------
+   * Shopify: paso dominio si aplica
+   * ----------------------------- */
   const savedShop = sessionStorage.getItem('shopDomain');
   if (shopFromQuery || savedShop) {
     domainStep?.classList.remove('step--hidden');
@@ -59,7 +127,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (savedShop) sessionStorage.removeItem('shopDomain');
   }
 
-  // --- Estado de conectividad
+  /* -----------------------------
+   * Habilitar "Continuar"
+   * (cualquier plataforma conectada)
+   * ----------------------------- */
   function getConnectivityState() {
     const shopConnected =
       flagShopify?.textContent.trim() === 'true' ||
@@ -70,6 +141,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       flagGoogle?.textContent.trim() === 'true' ||
       sessionStorage.getItem('googleConnected') === 'true';
 
+    // Meta se marca SOLO cuando tiene objetivo guardado
     const metaConnected =
       sessionStorage.getItem('metaConnected') === 'true';
 
@@ -88,7 +160,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     continueBtn.style.opacity       = anyConnected ? '1'    : '0.6';
   }
 
-  // --- Pintar conectados
+  /* -----------------------------
+   * Pintar conectados Shopify/Google
+   * ----------------------------- */
   const pintarShopifyConectado = async () => {
     if (connectShopifyBtn) {
       connectShopifyBtn.textContent = 'Conectado';
@@ -103,8 +177,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (!shop) {
       sessionStorage.setItem('shopifyConnected', 'true');
-      habilitarContinue();
-      return;
+      return habilitarContinue();
     }
 
     try {
@@ -129,12 +202,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     habilitarContinue();
   };
 
-  // --- Estados iniciales
+  // Estados iniciales de Shopify/Google
   if (flagShopify?.textContent.trim() === 'true') await pintarShopifyConectado();
   if (flagGoogle?.textContent.trim() === 'true') pintarGoogleConectado();
   habilitarContinue();
 
-  // --- Acciones
+  /* -----------------------------
+   * Acciones Shopify/Google
+   * ----------------------------- */
   connectShopifyBtn?.addEventListener('click', () => {
     let shop = shopFromQuery;
     let host = hostFromQuery;
@@ -171,14 +246,91 @@ document.addEventListener('DOMContentLoaded', async () => {
     location.href = '/auth/google/connect';
   });
 
+  /* -----------------------------
+   * META: login, estado y objetivo
+   * ----------------------------- */
+
+  // Al hacer clic: NO marques conectado todavía;
+  // solo bloquea el botón y recuerda que estás conectando.
   connectMetaBtn?.addEventListener('click', () => {
-    // Aquí solo marcamos mock hasta que vuelva del login
-    sessionStorage.setItem('metaConnected', 'true');
-    habilitarContinue();
-    location.href = '/auth/meta/login';
+    localStorage.setItem('meta_connecting', '1');
+    connectMetaBtn.style.pointerEvents = 'none';
+    if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = true;
+    // Si el botón es <a href="/auth/meta/login">…</a>, dejar que navegue;
+    // si es <button>, forzamos la navegación:
+    if (connectMetaBtn.tagName !== 'A') {
+      window.location.href = '/auth/meta/login';
+    }
   });
 
-  // Continuar → ir a onboarding2
+  // Si volvemos con ?meta=ok|error, actuar
+  const metaParam = (qs.get('meta') || '').toLowerCase();
+  if (metaParam === 'error' || metaParam === 'fail') {
+    localStorage.removeItem('meta_connecting');
+    // re-habilita el botón
+    if (connectMetaBtn) {
+      connectMetaBtn.style.pointerEvents = 'auto';
+      if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = false;
+    }
+  }
+  if (metaParam === 'ok') {
+    // Consultar estado real: si conectado pero sin objetivo → mostrar paso
+    await refreshMetaUI();
+  }
+
+  // Si estábamos "conectando", hacer polling hasta reflejar estado
+  async function pollMetaUntilConnected(maxTries = 30, delayMs = 2000) {
+    for (let i = 0; i < maxTries; i++) {
+      const st = await fetchMetaStatus();
+      if (st.connected) {
+        localStorage.removeItem('meta_connecting');
+        if (!st.objective) {
+          showMetaObjectiveStep();
+        } else {
+          hideMetaObjectiveStep();
+          markMetaConnected(st.objective);
+        }
+        return;
+      }
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+    // timeout → re-habilitar
+    localStorage.removeItem('meta_connecting');
+    if (connectMetaBtn) {
+      connectMetaBtn.style.pointerEvents = 'auto';
+      if ('disabled' in connectMetaBtn) connectMetaBtn.disabled = false;
+    }
+  }
+
+  // Solo si veníamos con la bandera y aún no se pintó conectado
+  if (localStorage.getItem('meta_connecting') === '1' &&
+      sessionStorage.getItem('metaConnected') !== 'true') {
+    pollMetaUntilConnected();
+  }
+
+  // Guardar objetivo Meta
+  saveMetaObjective?.addEventListener('click', async () => {
+    const selected = (document.querySelector('input[name="metaObjective"]:checked') || {}).value;
+    if (!selected) {
+      alert('Selecciona un objetivo');
+      return;
+    }
+    try {
+      await apiFetch(META_OBJECTIVE_URL, {
+        method: 'POST',
+        body: JSON.stringify({ objective: selected })
+      });
+      hideMetaObjectiveStep();
+      markMetaConnected(selected);
+    } catch (e) {
+      console.error(e);
+      alert('No se pudo guardar el objetivo. Inténtalo nuevamente.');
+    }
+  });
+
+  /* -----------------------------
+   * Continuar paso 2
+   * ----------------------------- */
   continueBtn?.addEventListener('click', () => {
     const { anyConnected } = getConnectivityState();
     if (!anyConnected) {
@@ -188,7 +340,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.location.href = '/onboarding2.html#step=2';
   });
 
-  // Demo GA (opcional)
+  /* -----------------------------
+   * Demo GA (igual que lo tenías)
+   * ----------------------------- */
   gaBtn?.addEventListener('click', async () => {
     const raw = gaIn?.value?.trim();
     if (!raw) return alert('Ingresa el GA4 Property ID.');
