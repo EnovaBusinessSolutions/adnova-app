@@ -3,62 +3,51 @@ const express = require('express');
 const router  = express.Router();
 const axios   = require('axios');
 const qs      = require('querystring');
-const crypto  = require('crypto');
 const User    = require('../models/User');
 
-// ENV
+let GoogleAccount = null;
+try { GoogleAccount = require('../models/GoogleAccount'); } catch (_) {}
+
 const CLIENT_ID     = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const REDIRECT_URI  = process.env.GOOGLE_CONNECT_CALLBACK_URL;
 
-// helper auth
+// Guard simple
 function requireAuth(req, res, next) {
   if (!req.isAuthenticated?.() || !req.user?._id) {
     return res.status(401).json({ error: 'not_authenticated' });
   }
-  return next();
+  next();
 }
 
-// scopes (incluye openid/email para obtener id_token y email)
-const SCOPES = [
-  'openid',
-  'email',
-  'https://www.googleapis.com/auth/analytics.readonly',
-  'https://www.googleapis.com/auth/adwords',
-].join(' ');
+// STEP 1: redirigir a Google OAuth
+router.get('/connect', (req, res) => {
+  if (!req.isAuthenticated?.()) return res.redirect('/');
 
-/* ──────────────────────────────────────────────────────────
- * Iniciar OAuth
- * ────────────────────────────────────────────────────────── */
-router.get('/connect', requireAuth, (req, res) => {
-  // CSRF 'state'
-  const state = crypto.randomBytes(16).toString('hex');
-  req.session.g_state = state;
-
+  const state = req.sessionID;
   const params = new URLSearchParams({
     client_id:     CLIENT_ID,
     redirect_uri:  REDIRECT_URI,
     response_type: 'code',
-    access_type:   'offline',           // refresh_token
+    access_type:   'offline',            // refresh_token
     include_granted_scopes: 'true',
-    prompt:        'consent',           // fuerza pantalla para refresh_token
-    scope:         SCOPES,
-    state,
+    prompt:        'consent',            // forzar refresh_token en cada conexión
+    scope: [
+      'https://www.googleapis.com/auth/analytics.readonly',
+      'https://www.googleapis.com/auth/adwords'
+    ].join(' '),
+    state
   });
 
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
 });
 
-/* ──────────────────────────────────────────────────────────
- * Callback OAuth
- * ────────────────────────────────────────────────────────── */
-router.get('/connect/callback', requireAuth, async (req, res) => {
-  const { code, state } = req.query || {};
+// STEP 2: callback
+router.get('/connect/callback', async (req, res) => {
+  if (!req.isAuthenticated?.()) return res.redirect('/');
 
-  if (!code || !state || state !== req.session.g_state) {
-    return res.redirect('/onboarding?google=error');
-  }
-  delete req.session.g_state;
+  const { code } = req.query || {};
+  if (!code) return res.redirect('/onboarding?google=fail');
 
   try {
     const tokenRes = await axios.post(
@@ -68,80 +57,103 @@ router.get('/connect/callback', requireAuth, async (req, res) => {
         client_id:     CLIENT_ID,
         client_secret: CLIENT_SECRET,
         redirect_uri:  REDIRECT_URI,
-        grant_type:    'authorization_code',
+        grant_type:    'authorization_code'
       }),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }
     );
 
-    const { access_token, refresh_token, id_token, scope } = tokenRes.data;
+    const {
+      access_token,
+      refresh_token, // puede venir undefined si se había concedido antes
+      expires_in,
+      id_token,
+      scope = ''
+    } = tokenRes.data || {};
 
-    // decodificar email del id_token (si vino)
-    let decodedEmail = '';
+    // email desde el id_token (JWT)
+    let email = '';
     if (id_token) {
-      try {
-        const payload = JSON.parse(Buffer.from(id_token.split('.')[1], 'base64').toString('utf8'));
-        decodedEmail = payload?.email || '';
-      } catch {}
+      const payload = JSON.parse(Buffer.from(id_token.split('.')[1], 'base64').toString());
+      email = payload.email || '';
     }
 
-    const update = {
+    const expiresAt = expires_in ? new Date(Date.now() + expires_in * 1000) : null;
+
+    // Persistir en User (si ya lo venías usando)
+    const userUpdate = {
       googleConnected:    true,
-      googleAccessToken:  access_token || null,
-      googleRefreshToken: refresh_token || null,
-      googleScopes:       scope ? scope.split(' ') : [],
+      googleAccessToken:  access_token,
     };
-    if (decodedEmail) update.googleEmail = decodedEmail;
+    if (refresh_token) userUpdate.googleRefreshToken = refresh_token;
+    if (email)         userUpdate.googleEmail = email;
+    await User.findByIdAndUpdate(req.user._id, userUpdate);
 
-    await User.findByIdAndUpdate(req.user._id, update, { new: false });
-    console.log('✅ Google conectado para usuario', req.user._id);
+    // Persistir en GoogleAccount (colección separada)
+    if (GoogleAccount) {
+      await GoogleAccount.findOneAndUpdate(
+        { user: req.user._id },
+        {
+          $set: {
+            email,
+            access_token,
+            refresh_token: refresh_token || undefined,
+            expires_at:    expiresAt,
+            scopes:        String(scope).split(' ').filter(Boolean),
+          }
+        },
+        { upsert: true, new: true }
+      );
+    }
 
-    // avisa al frontend que el OAuth terminó bien
+    // Vuelve al onboarding con marca explícita
     return res.redirect('/onboarding?google=ok');
   } catch (err) {
-    console.error('❌ Error en Google callback:', err.response?.data || err.message);
+    console.error('❌ Google connect callback error:', err.response?.data || err.message);
     return res.redirect('/onboarding?google=error');
   }
 });
 
-/* ──────────────────────────────────────────────────────────
- * NUEVO: Estado para el paso de objetivo de Google
- * GET /auth/google/status  -> { connected, objective }
- * ────────────────────────────────────────────────────────── */
+// Estado para el frontend
 router.get('/status', requireAuth, async (req, res) => {
   try {
-    const u = await User.findById(req.user._id)
-      .select('googleConnected googleAccessToken googleObjective')
-      .lean();
-
-    const connected = !!(u?.googleConnected || u?.googleAccessToken);
-    const objective = u?.googleObjective || null;
-
-    return res.json({ connected, objective });
+    if (GoogleAccount) {
+      const doc = await GoogleAccount.findOne({ user: req.user._id }).select('access_token objective').lean();
+      return res.json({
+        connected: !!doc?.access_token,
+        objective: doc?.objective || null
+      });
+    } else {
+      const u = await User.findById(req.user._id).select('googleAccessToken googleObjective').lean();
+      return res.json({
+        connected: !!u?.googleAccessToken,
+        objective: u?.googleObjective || null
+      });
+    }
   } catch (e) {
-    return res.status(500).json({ error: 'status_failed' });
+    return res.json({ connected: false, objective: null });
   }
 });
 
-/* ──────────────────────────────────────────────────────────
- * NUEVO: Guardar objetivo de Google
- * POST /auth/google/objective  body: { objective: 'ventas'|'alcance'|'leads' }
- * ────────────────────────────────────────────────────────── */
+// Guardar objetivo
 router.post('/objective', requireAuth, express.json(), async (req, res) => {
-  const allowed = ['ventas', 'alcance', 'leads']; // "Mensajes/Formulario" = 'leads'
+  const allowed = ['ventas', 'alcance', 'leads'];
   const { objective } = req.body || {};
   if (!allowed.includes(objective)) {
     return res.status(400).json({ error: 'objetivo_invalido' });
   }
-
   try {
-    await User.findByIdAndUpdate(
-      req.user._id,
-      { $set: { googleObjective: objective } },
-      { new: false },
-    );
-    return res.json({ ok: true, objective });
+    if (GoogleAccount) {
+      await GoogleAccount.findOneAndUpdate(
+        { user: req.user._id },
+        { $set: { objective } },
+        { upsert: true }
+      );
+    } else {
+      await User.findByIdAndUpdate(req.user._id, { $set: { googleObjective: objective } });
+    }
+    res.json({ ok: true, objective });
   } catch (e) {
-    return res.status(500).json({ error: 'save_failed' });
+    res.status(500).json({ error: 'save_failed' });
   }
 });
 
