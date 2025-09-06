@@ -49,6 +49,7 @@ const { publicCSP, shopifyCSP } = require('../middlewares/csp');
 const subscribeRouter = require('./routes/subscribe');
 const userRoutes = require('./routes/user');
 const auditsRoutes = require('./routes/audits');
+const objectivesRoutes = require('./routes/objectives');
 
 const app = express();
 app.use(publicCSP);
@@ -458,6 +459,7 @@ app.use('/api/dashboard', dashboardRoute);
 app.use('/api/audit', auditRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter);
+app.use('/api', objectivesRoutes);
 
 app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
   res.sendFile(path.join(__dirname, '../public/dashboard/dashboard.html'));
