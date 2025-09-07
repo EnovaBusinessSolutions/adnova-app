@@ -29,7 +29,7 @@ transporter.verify((err) => {
   else console.log('✅ SMTP listo para enviar correo');
 });
 
-// Auth strategies (debe requerirse antes de inicializar passport)
+// Auth strategies
 require('./auth');
 
 // Models & routes
@@ -53,16 +53,13 @@ const userRoutes = require('./routes/user');
 const auditsRoutes = require('./routes/audits');
 const objectivesRoutes = require('./routes/objectives');
 
-// Build del dashboard (submódulo)
-const DASHBOARD_DIST = path.join(__dirname, '../dashboard-src/dist');
-
 const app = express();
 app.use(publicCSP);
 
 const PORT = process.env.PORT || 3000;
 const SHOPIFY_HANDLE = process.env.SHOPIFY_APP_HANDLE;
 
-// CORS
+// ---------- CORS ----------
 app.use(
   cors({
     origin: ['https://ai.adnova.digital', /\.myshopify\.com$/, 'https://admin.shopify.com'],
@@ -71,19 +68,17 @@ app.use(
 );
 app.options(/.*/, cors());
 
-// Webhooks de Shopify (raw antes de JSON parser)
+// ---------- Webhooks: RAW antes de json ----------
 app.use('/connector/webhooks', express.raw({ type: 'application/json' }), webhookRoutes);
 
-// Mongo
+// ---------- Mongo ----------
 mongoose
   .connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log('✅ Conectado a MongoDB Atlas'))
   .catch((err) => console.error('❌ Error al conectar con MongoDB:', err));
 
-// Trust proxy (cookies secure en prod detrás de proxy)
+// ---------- Sesión / Passport ----------
 app.set('trust proxy', 1);
-
-// Session
 app.use(
   session({
     secret: process.env.SESSION_SECRET,
@@ -96,14 +91,13 @@ app.use(
   })
 );
 
-// Passport (DEBE ir antes de usar ensureAuthenticated)
 app.use(passport.initialize());
 app.use(passport.session());
 
-// Body parser
+// Body parser (después de raw)
 app.use(express.json());
 
-// Guards
+// ---------- Guards ----------
 function ensureAuthenticated(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.redirect('/login');
@@ -116,29 +110,43 @@ function ensureNotOnboarded(req, res, next) {
   return res.redirect('/dashboard');
 }
 
-// ====== STATIC: Dashboard (submódulo) ======
-// Assets del build (Vite) con alta prioridad
-app.use(
-  '/assets',
-  express.static(path.join(DASHBOARD_DIST, 'assets'), { immutable: true, maxAge: '1y' })
-);
+// ---------- DASHBOARD (submódulo con fallback) ----------
+const DASHBOARD_DIST = path.join(__dirname, '../dashboard-src/dist');
+const LEGACY_DASH = path.join(__dirname, '../public/dashboard');
+const HAS_DASHBOARD_DIST = fs.existsSync(path.join(DASHBOARD_DIST, 'index.html'));
 
-// Montar el dashboard protegido
-app.use('/dashboard', ensureAuthenticated, express.static(DASHBOARD_DIST));
+if (HAS_DASHBOARD_DIST) {
+  // Assets del build de Vite (prioridad alta)
+  app.use('/assets', express.static(path.join(DASHBOARD_DIST, 'assets'), {
+    immutable: true,
+    maxAge: '1y',
+  }));
 
-// Fallback SPA para cualquier ruta /dashboard/*
-app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
-  res.sendFile(path.join(DASHBOARD_DIST, 'index.html'));
-});
+  // Montar dashboard protegido desde el submódulo
+  app.use('/dashboard', ensureAuthenticated, express.static(DASHBOARD_DIST));
+  app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
+    res.sendFile(path.join(DASHBOARD_DIST, 'index.html'));
+  });
 
-// ====== STATIC: resto del sitio público ======
-app.use('/assets', express.static(path.join(__dirname, '../public/dashboard/assets')));
+  console.log('✅ Dashboard servido desde submódulo: dashboard-src/dist');
+} else {
+  // Fallback: dashboard legacy de /public (evita 500 si falta dist)
+  app.use('/assets', express.static(path.join(LEGACY_DASH, 'assets')));
+  app.use('/dashboard', ensureAuthenticated, express.static(LEGACY_DASH));
+  app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
+    res.sendFile(path.join(LEGACY_DASH, 'dashboard.html'));
+  });
+
+  console.warn('⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard');
+}
+
+// ---------- STATIC público (resto del sitio) ----------
 app.use('/assets', express.static(path.join(__dirname, '../public/landing/assets')));
 app.use('/assets', express.static(path.join(__dirname, '../public/support/assets')));
 app.use('/assets', express.static(path.join(__dirname, '../public/plans/assets')));
 app.use(express.static(path.join(__dirname, '../public')));
 
-// ====== Rutas específicas previas ======
+// ---------- Rutas específicas ----------
 app.get('/connector/interface', shopifyCSP, (req, res) => {
   const { shop, host } = req.query;
   if (!shop || !host) return res.status(400).send("Faltan parámetros 'shop' o 'host'");
@@ -163,7 +171,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, uptime: process.uptime() });
 });
 
-// ====== Auth & User flows ======
+// ---------- Flujos Auth / Usuario ----------
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
@@ -423,7 +431,7 @@ app.post('/api/complete-onboarding', async (req, res) => {
   }
 });
 
-// ====== APIs ======
+// ---------- APIs ----------
 app.get('/api/session', (req, res) => {
   if (!req.isAuthenticated()) {
     return res.status(401).json({ authenticated: false });
@@ -468,14 +476,12 @@ app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter);
 app.use('/api', objectivesRoutes);
 
-// ====== OAuth callbacks ======
-app.get(
-  '/auth/google/login',
+// ---------- OAuth callbacks ----------
+app.get('/auth/google/login',
   passport.authenticate('google', { scope: ['profile', 'email'] })
 );
 
-app.get(
-  '/auth/google/login/callback',
+app.get('/auth/google/login/callback',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
     const destino = req.user.onboardingComplete ? '/dashboard' : '/onboarding';
@@ -483,7 +489,7 @@ app.get(
   }
 );
 
-// ====== Logout ======
+// ---------- Logout ----------
 app.get('/logout', (req, res) => {
   req.logout((err) => {
     if (err) {
@@ -519,14 +525,14 @@ app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
   return res.redirect(redirectUrl.toString());
 });
 
-// 404 y errores
+// ---------- 404 & errors ----------
 app.use((req, res) => res.status(404).send('Página no encontrada'));
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
-// Start
+// ---------- Start ----------
 app.listen(PORT, () => {
   console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
 });
