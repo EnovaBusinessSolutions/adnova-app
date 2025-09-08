@@ -1,4 +1,3 @@
-// backend/routes/metaInsights.js
 const express = require('express');
 const axios = require('axios');
 const crypto = require('crypto');
@@ -27,6 +26,7 @@ const INSIGHT_FIELDS = [
 ].join(',');
 
 const ALLOWED_OBJECTIVES = new Set(['ventas', 'alcance', 'leads']);
+const ALLOWED_LEVELS = new Set(['account', 'campaign', 'adset', 'ad']);
 
 /* =========
    MODELO MetaAccount (fallback si no existe el require)
@@ -83,6 +83,28 @@ function resolveObjective(requested, saved) {
   const sv = String(saved || '').toLowerCase();
   if (ALLOWED_OBJECTIVES.has(sv)) return sv;
   return 'ventas';
+}
+
+// date_preset OR range
+function resolveDateParams(q) {
+  const preset = String(q.date_preset || '').toLowerCase();
+  if (preset) {
+    // presets más comunes; si mandan otro, lo pasamos igualmente
+    const allowed = new Set([
+      'today', 'yesterday', 'last_3d', 'last_7d', 'last_14d',
+      'last_28d', 'last_30d', 'last_90d', 'this_month', 'last_month',
+    ]);
+    return { datePresetMode: true, date_preset: allowed.has(preset) ? preset : 'last_30d' };
+  }
+  const days = parseRangeDays(q.range);
+  const end = new Date();
+  const start = new Date();
+  start.setDate(end.getDate() - (days - 1));
+  return {
+    datePresetMode: false,
+    time_range: JSON.stringify({ since: ymd(start), until: ymd(end) }),
+    days,
+  };
 }
 
 // Acciones helpers
@@ -154,18 +176,9 @@ function kpisLeads({ spend, clicks, actions }) {
 /* =========
    ENDPOINT
    ========= */
-// GET /api/meta/insights?range=30&objective=ventas&account_id=123
-router.get('/insights', requireAuth, async (req, res) => {
+// ACEPTA '/api/meta/insights' y también '/api/meta/insights/insights'
+router.get(['/', '/insights'], requireAuth, async (req, res) => {
   try {
-    const rangeDays = parseRangeDays(req.query.range);
-
-    // Fechas (hoy inclusive)
-    const end = new Date();
-    const start = new Date();
-    start.setDate(end.getDate() - (rangeDays - 1));
-    const since = ymd(start);
-    const until = ymd(end);
-
     // Cuenta Meta del usuario
     const metaAcc = await MetaAccount.findOne({ user: req.user._id }).lean();
     if (!metaAcc || !metaAcc.access_token) {
@@ -173,7 +186,7 @@ router.get('/insights', requireAuth, async (req, res) => {
     }
     const accessToken = metaAcc.access_token;
 
-    // Normaliza objetivo (sin "global")
+    // Objetivo
     const objective = resolveObjective(req.query.objective, metaAcc.objective);
 
     // Ad account
@@ -182,20 +195,30 @@ router.get('/insights', requireAuth, async (req, res) => {
       (Array.isArray(metaAcc.ad_accounts) &&
         metaAcc.ad_accounts.length > 0 &&
         (metaAcc.ad_accounts[0].id || metaAcc.ad_accounts[0].account_id));
+
     if (!accountId) {
       return res.status(400).json({ ok: false, error: 'NO_AD_ACCOUNT' });
     }
     accountId = String(accountId);
     accountId = accountId.startsWith('act_') ? accountId.slice(4) : accountId;
 
+    // Fechas (date_preset o range)
+    const dateParams = resolveDateParams(req.query);
+
+    // Level (account por defecto)
+    const levelQ = String(req.query.level || '').toLowerCase();
+    const level = ALLOWED_LEVELS.has(levelQ) ? levelQ : 'account';
+
     const url = `${FB_GRAPH}/act_${accountId}/insights`;
     const params = {
       access_token: accessToken,
       appsecret_proof: appSecretProof(accessToken),
       fields: INSIGHT_FIELDS,
-      level: 'account',
+      level,
       time_increment: 1,
-      time_range: JSON.stringify({ since, until }),
+      ...(dateParams.datePresetMode
+        ? { date_preset: dateParams.date_preset }
+        : { time_range: dateParams.time_range }),
     };
 
     const { data } = await axios.get(url, { params });
@@ -263,8 +286,11 @@ router.get('/insights', requireAuth, async (req, res) => {
     return res.json({
       ok: true,
       objective,
-      range: { since, until, days: rangeDays },
       account_id: accountId,
+      range: dateParams.datePresetMode
+        ? { preset: dateParams.date_preset }
+        : { days: dateParams.days },
+      level,
       kpis,
       series,
     });
