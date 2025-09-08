@@ -475,6 +475,7 @@ app.use('/api/audit', auditRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter);
 app.use('/api', objectivesRoutes);
+app.use('/api/meta/insights', require('./routes/metaInsights'));
 
 // ---------- OAuth callbacks ----------
 app.get('/auth/google/login',
