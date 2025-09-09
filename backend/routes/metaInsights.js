@@ -1,3 +1,6 @@
+// backend/routes/metaInsights.js
+'use strict';
+
 const express = require('express');
 const axios = require('axios');
 const crypto = require('crypto');
@@ -29,17 +32,18 @@ const ALLOWED_OBJECTIVES = new Set(['ventas', 'alcance', 'leads']);
 const ALLOWED_LEVELS = new Set(['account', 'campaign', 'adset', 'ad']);
 
 /* =========
-   MODELO MetaAccount (fallback si no existe el require)
+   MODELO MetaAccount (fallback si no existe el require real)
    ========= */
 let MetaAccount;
 try {
-  MetaAccount = require('../models/MetaAccount');
+  MetaAccount = require('../models/MetaAccount'); // usa tu modelo real si existe
 } catch {
   const { Schema } = mongoose;
   const schema = new Schema(
     {
       user: { type: Schema.Types.ObjectId, ref: 'User' },
-      access_token: String,
+      access_token: { type: String, select: false }, // muchos modelos lo ocultan
+      token: { type: String, select: false },
       expires_at: Date,
       fb_user_id: String,
       name: String,
@@ -51,8 +55,7 @@ try {
     },
     { timestamps: true, collection: 'metaaccounts' }
   );
-  MetaAccount =
-    mongoose.models.MetaAccount || mongoose.model('MetaAccount', schema);
+  MetaAccount = mongoose.models.MetaAccount || mongoose.model('MetaAccount', schema);
 }
 
 /* =========
@@ -89,10 +92,17 @@ function resolveObjective(requested, saved) {
 function resolveDateParams(q) {
   const preset = String(q.date_preset || '').toLowerCase();
   if (preset) {
-    // presets más comunes; si mandan otro, lo pasamos igualmente
     const allowed = new Set([
-      'today', 'yesterday', 'last_3d', 'last_7d', 'last_14d',
-      'last_28d', 'last_30d', 'last_90d', 'this_month', 'last_month',
+      'today',
+      'yesterday',
+      'last_3d',
+      'last_7d',
+      'last_14d',
+      'last_28d',
+      'last_30d',
+      'last_90d',
+      'this_month',
+      'last_month',
     ]);
     return { datePresetMode: true, date_preset: allowed.has(preset) ? preset : 'last_30d' };
   }
@@ -104,6 +114,8 @@ function resolveDateParams(q) {
     datePresetMode: false,
     time_range: JSON.stringify({ since: ymd(start), until: ymd(end) }),
     days,
+    since: ymd(start),
+    until: ymd(end),
   };
 }
 
@@ -174,19 +186,62 @@ function kpisLeads({ spend, clicks, actions }) {
 }
 
 /* =========
-   ENDPOINT
+   FETCH con paginación
    ========= */
-// ACEPTA '/api/meta/insights' y también '/api/meta/insights/insights'
-router.get('/', requireAuth, async (req, res) => {
-  try {
-    // Cuenta Meta del usuario
-    const metaAcc = await MetaAccount.findOne({ user: req.user._id }).lean();
-const accessToken = metaAcc?.access_token || metaAcc?.token;
-if (!metaAcc || !accessToken) {
-  return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
+async function fetchInsights({ accountId, accessToken, fields, level, dateParams }) {
+  const baseUrl = `${FB_GRAPH}/act_${accountId}/insights`;
+  const baseParams = {
+    access_token: accessToken,
+    appsecret_proof: appSecretProof(accessToken),
+    fields,
+    level,
+    time_increment: 1,
+    limit: 5000, // grande para evitar demasiadas páginas
+    ...(dateParams.datePresetMode
+      ? { date_preset: dateParams.date_preset }
+      : { time_range: dateParams.time_range }),
+  };
+
+  const rows = [];
+  let url = baseUrl;
+  let params = { ...baseParams };
+  let guards = 0;
+
+  while (url && guards < 10) {
+    const { data } = await axios.get(url, { params });
+    if (Array.isArray(data?.data)) rows.push(...data.data);
+
+    // siguiente página
+    const next = data?.paging?.next;
+    if (!next) break;
+    url = next;
+    params = undefined; // al usar el next, ya viene con querystring completo
+    guards += 1;
+  }
+
+  return rows;
 }
 
+/* =========
+   ENDPOINT PRINCIPAL
+   ========= */
+// ACEPTA '/api/meta/insights' (porque en index.js montaste app.use('/api/meta/insights', router))
+router.get('/', requireAuth, async (req, res) => {
+  try {
+    // Cuenta Meta del usuario (asegurando seleccionar el token aunque el modelo lo oculte)
+    const metaAcc = await MetaAccount
+      .findOne({ user: req.user._id })
+      .select('+access_token +token')
+      .lean();
 
+    if (!metaAcc) {
+      return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
+    }
+
+    let accessToken = metaAcc.access_token || metaAcc.token || req.user?.metaAccessToken;
+    if (!accessToken) {
+      return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
+    }
 
     // Objetivo
     const objective = resolveObjective(req.query.objective, metaAcc.objective);
@@ -211,20 +266,14 @@ if (!metaAcc || !accessToken) {
     const levelQ = String(req.query.level || '').toLowerCase();
     const level = ALLOWED_LEVELS.has(levelQ) ? levelQ : 'account';
 
-    const url = `${FB_GRAPH}/act_${accountId}/insights`;
-    const params = {
-      access_token: accessToken,
-      appsecret_proof: appSecretProof(accessToken),
+    // Llamada a Graph con paginación
+    const rows = await fetchInsights({
+      accountId,
+      accessToken,
       fields: INSIGHT_FIELDS,
       level,
-      time_increment: 1,
-      ...(dateParams.datePresetMode
-        ? { date_preset: dateParams.date_preset }
-        : { time_range: dateParams.time_range }),
-    };
-
-    const { data } = await axios.get(url, { params });
-    const rows = Array.isArray(data?.data) ? data.data : [];
+      dateParams,
+    });
 
     // Agregados
     let spend = 0;
@@ -291,25 +340,35 @@ if (!metaAcc || !accessToken) {
       account_id: accountId,
       range: dateParams.datePresetMode
         ? { preset: dateParams.date_preset }
-        : { days: dateParams.days },
+        : { days: dateParams.days, since: dateParams.since, until: dateParams.until },
       level,
       kpis,
       series,
+      cachedAt: new Date().toISOString(),
     });
   } catch (err) {
-    console.error('meta/insights error:', err?.response?.data || err?.message || err);
+    // Log útil si expira token u otro error de Graph
+    const detail = err?.response?.data || err?.message || String(err);
+    console.error('meta/insights error:', detail);
     const status = err?.response?.status || 500;
     return res.status(status).json({
       ok: false,
       error: 'META_INSIGHTS_ERROR',
-      detail: err?.response?.data || err?.message || String(err),
+      detail,
     });
   }
 });
 
+/* =========
+   DEBUG
+   ========= */
 router.get('/debug', requireAuth, async (req, res) => {
   try {
-    const doc = await MetaAccount.findOne({ user: req.user._id }).lean();
+    const doc = await MetaAccount
+      .findOne({ user: req.user._id })
+      .select('+access_token +token')
+      .lean();
+
     return res.json({
       ok: true,
       user: String(req.user?._id || ''),
@@ -317,12 +376,11 @@ router.get('/debug', requireAuth, async (req, res) => {
       hasAccessToken: !!(doc && (doc.access_token || doc.token)),
       adAccounts: Array.isArray(doc?.ad_accounts) ? doc.ad_accounts.length : 0,
       objective: doc?.objective || null,
-      collection: MetaAccount.collection?.name || null
+      collection: MetaAccount.collection?.name || null,
     });
   } catch (e) {
-    return res.status(500).json({ ok:false, error:'DEBUG_FAIL', detail:String(e) });
+    return res.status(500).json({ ok: false, error: 'DEBUG_FAIL', detail: String(e) });
   }
 });
-
 
 module.exports = router;
