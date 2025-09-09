@@ -177,14 +177,16 @@ function kpisLeads({ spend, clicks, actions }) {
    ENDPOINT
    ========= */
 // ACEPTA '/api/meta/insights' y también '/api/meta/insights/insights'
-router.get(['/', '/insights'], requireAuth, async (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   try {
     // Cuenta Meta del usuario
     const metaAcc = await MetaAccount.findOne({ user: req.user._id }).lean();
-    if (!metaAcc || !metaAcc.access_token) {
-      return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
-    }
-    const accessToken = metaAcc.access_token;
+const accessToken = metaAcc?.access_token || metaAcc?.token;
+if (!metaAcc || !accessToken) {
+  return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
+}
+
+
 
     // Objetivo
     const objective = resolveObjective(req.query.objective, metaAcc.objective);
@@ -304,5 +306,23 @@ router.get(['/', '/insights'], requireAuth, async (req, res) => {
     });
   }
 });
+
+router.get('/debug', requireAuth, async (req, res) => {
+  try {
+    const doc = await MetaAccount.findOne({ user: req.user._id }).lean();
+    return res.json({
+      ok: true,
+      user: String(req.user?._id || ''),
+      found: !!doc,
+      hasAccessToken: !!(doc && (doc.access_token || doc.token)),
+      adAccounts: Array.isArray(doc?.ad_accounts) ? doc.ad_accounts.length : 0,
+      objective: doc?.objective || null,
+      collection: MetaAccount.collection?.name || null
+    });
+  } catch (e) {
+    return res.status(500).json({ ok:false, error:'DEBUG_FAIL', detail:String(e) });
+  }
+});
+
 
 module.exports = router;
