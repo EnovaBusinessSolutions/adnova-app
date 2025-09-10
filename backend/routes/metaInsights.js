@@ -383,4 +383,58 @@ router.get('/debug', requireAuth, async (req, res) => {
   }
 });
 
+// Lista de Ad Accounts del usuario conectado
+router.get('/accounts', requireAuth, async (req, res) => {
+  try {
+    const metaAcc = await MetaAccount.findOne({ user: req.user._id }).lean();
+    if (!metaAcc || !Array.isArray(metaAcc.ad_accounts)) {
+      return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
+    }
+
+    const accounts = metaAcc.ad_accounts.map((a) => {
+      const raw = String(a.id || a.account_id || '').replace(/^act_/, '');
+      return {
+        id: raw, // sin "act_"
+        label: a.name || a.account_name || `act_${raw}`,
+        currency: a.currency || a.account_currency || null,
+        status: a.account_status ?? null,
+      };
+    });
+
+    return res.json({
+      ok: true,
+      defaultAccountId:
+        accounts.length ? accounts[0].id : null,
+      accounts,
+    });
+  } catch (e) {
+    console.error('meta/insights/accounts error:', e);
+    return res.status(500).json({ ok: false, error: 'ACCOUNTS_ERROR' });
+  }
+});
+
+// GET /api/meta/insights/accounts
+router.get('/accounts', requireAuth, async (req, res) => {
+  try {
+    const doc = await MetaAccount.findOne({ user: req.user._id }).lean();
+    if (!doc) {
+      return res.status(400).json({ ok:false, error:'META_NOT_CONNECTED' });
+    }
+    const list = Array.isArray(doc.ad_accounts) ? doc.ad_accounts : [];
+    const parsed = list.map((a) => {
+      const rawId = String(a.id || a.account_id || '').replace(/^act_/, '');
+      return {
+        id: rawId,
+        account_id: rawId,
+        name: a.name || a.account_name || rawId,
+      };
+    });
+    // default: primera cuenta
+    const defaultAccountId = parsed[0]?.account_id;
+    return res.json({ ok:true, accounts: parsed, defaultAccountId });
+  } catch (e) {
+    return res.status(500).json({ ok:false, error:'ACCOUNTS_FAIL', detail:String(e) });
+  }
+});
+
 module.exports = router;
