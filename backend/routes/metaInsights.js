@@ -218,8 +218,8 @@ function computeCompareRangesTZ(q, timeZone) {
   })();
 
   const anchor = includeToday
-    ? startOfDayTZ(timeZone, new Date())               // hoy 00:00
-    : addDays(startOfDayTZ(timeZone, new Date()), -1); // ayer 00:00
+    ? startOfDayTZ(timeZone, new Date())            
+    : addDays(startOfDayTZ(timeZone, new Date()), -1); 
 
   const currUntil = anchor;
   const currSince = addDays(currUntil, -(days - 1));
