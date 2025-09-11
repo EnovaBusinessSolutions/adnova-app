@@ -88,86 +88,87 @@ function resolveObjective(requested, saved) {
   return 'ventas';
 }
 
-// date_preset OR range
-function resolveDateParams(q) {
-  const preset = String(q.date_preset || '').toLowerCase();
-  if (preset) {
-    const allowed = new Set([
-      'today',
-      'yesterday',
-      'last_3d',
-      'last_7d',
-      'last_14d',
-      'last_28d',
-      'last_30d',
-      'last_90d',
-      'this_month',
-      'last_month',
-    ]);
-    return { datePresetMode: true, date_preset: allowed.has(preset) ? preset : 'last_30d' };
-  }
-  const days = parseRangeDays(q.range);
-  const end = new Date();
-  const start = new Date();
-  start.setDate(end.getDate() - (days - 1));
-  return {
-    datePresetMode: false,
-    time_range: JSON.stringify({ since: ymd(start), until: ymd(end) }),
-    days,
-    since: ymd(start),
-    until: ymd(end),
+/* =========
+   Fechas consistentes (excluyendo HOY)
+   ========= */
+function startOfDayUTC(d) { const x = new Date(d); x.setUTCHours(0,0,0,0); return x; }
+function addDaysUTC(d, n) { const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); return x; }
+function toYMD(d) { return d.toISOString().slice(0,10); }
+
+function presetDays(preset) {
+  const map = {
+    last_3d: 3,
+    last_7d: 7,
+    last_14d: 14,
+    last_28d: 28,
+    last_30d: 30,
+    last_90d: 90,
   };
+  return map[preset] || 30;
 }
 
-function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+/** Últimos N días **excluyendo hoy** */
+function makeLastNDaysRange(n) {
+  const today = startOfDayUTC(new Date());
+  const until = addDaysUTC(today, -1);              // ayer
+  const since = addDaysUTC(until, -(n - 1));        // N días atrás
+  return { since: toYMD(since), until: toYMD(until) };
+}
 
-function computeCompareRanges(q) {
-  // Convertimos cualquier preset/range a dos time_range: actual y anterior
-  const now = new Date(); now.setHours(0,0,0,0);
-
-  // 1) Determinar días (si viene preset conocido)
+/** Convierte query (preset o range) en dos ventanas: actual y anterior (mismo tamaño). */
+function buildCompareWindows(q) {
   const preset = String(q.date_preset || '').toLowerCase();
-  const rangeDays = (() => {
-    if (q.range) return parseRangeDays(q.range);
-    if (preset === 'last_90d') return 90;
-    if (preset === 'last_28d') return 28;
-    if (preset === 'last_14d') return 14;
-    if (preset === 'last_7d')  return 7;
-    if (preset === 'last_3d')  return 3;
-    if (preset === 'this_month' || preset === 'last_month') {
-      // usamos meses completos
-      const end = new Date(now); end.setDate(1); end.setHours(0,0,0,0); // inicio de mes actual
-      if (preset === 'last_month') end.setMonth(end.getMonth()); // ya es inicio de mes actual
-      const start = new Date(end); start.setMonth(end.getMonth() - 1);
-      const prevEnd = new Date(start); prevEnd.setDate(0); // último día del mes previo
-      const prevStart = new Date(start); prevStart.setDate(1);
+
+  // Presets tipo "this_month" y "last_month"
+  if (preset === 'this_month' || preset === 'last_month') {
+    const today = startOfDayUTC(new Date());
+    const firstOfThis = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+    const firstOfPrev = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
+    const endOfPrev   = addDaysUTC(firstOfThis, -1);
+
+    if (preset === 'last_month') {
+      // Mes anterior completo
+      const prevStart = firstOfPrev;
+      const prevEnd   = endOfPrev;
+      // Para "actual", usamos el mes anterior al mes anterior (para la comparación)
+      const prevPrevStart = new Date(Date.UTC(prevStart.getUTCFullYear(), prevStart.getUTCMonth() - 1, 1));
+      const prevPrevEnd   = addDaysUTC(firstOfPrev, -1);
+
       return {
-        current: { since: ymd(start), until: ymd(addDays(end,-1)) },
-        previous:{ since: ymd(prevStart), until: ymd(prevEnd) },
+        current : { since: toYMD(prevStart), until: toYMD(prevEnd) },
+        previous: { since: toYMD(prevPrevStart), until: toYMD(prevPrevEnd) },
         days: null,
       };
     }
-    return 30; // default
-  })();
 
-  if (typeof rangeDays === 'object' && rangeDays.current) return rangeDays;
+    // this_month: del 1 al día de ayer (excluyendo hoy)
+    const thisMonthRange = { since: toYMD(firstOfThis), until: toYMD(addDaysUTC(today, -1)) };
+    // ventana anterior de mismo número de días
+    const days = Math.max(1, Math.floor((Date.parse(thisMonthRange.until) - Date.parse(thisMonthRange.since)) / 86400000) + 1);
+    const prevEnd = addDaysUTC(new Date(thisMonthRange.since), -1);
+    const prevStart = addDaysUTC(prevEnd, -(days - 1));
+    return {
+      current : thisMonthRange,
+      previous: { since: toYMD(prevStart), until: toYMD(prevEnd) },
+      days,
+    };
+  }
 
-  // 2) Para presets tipo last_Xd o range días, usamos ventanas móviles de N días
-  const days = typeof rangeDays === 'number' ? rangeDays : 30;
-  const currUntil = now;                          // hoy
-  const currSince = addDays(currUntil, -(days-1));
-  const prevUntil = addDays(currSince, -1);
-  const prevSince = addDays(prevUntil, -(days-1));
-
+  // Presets tipo last_Xd o query param ?range=N
+  const n = q.range ? parseRangeDays(q.range) : presetDays(preset || 'last_30d');
+  const curr = makeLastNDaysRange(n);
+  const prevEnd = addDaysUTC(new Date(curr.since), -1);
+  const prevStart = addDaysUTC(prevEnd, -(n - 1));
   return {
-    current : { since: ymd(currSince), until: ymd(currUntil) },
-    previous: { since: ymd(prevSince), until: ymd(prevUntil) },
-    days
+    current : curr,
+    previous: { since: toYMD(prevStart), until: toYMD(prevEnd) },
+    days: n,
   };
 }
 
-
-// Acciones helpers
+/* =========
+   Acciones helpers
+   ========= */
 function sumActions(actions, keys) {
   if (!Array.isArray(actions) || !actions.length) return 0;
   const set = new Set(keys);
@@ -230,8 +231,8 @@ function kpisLeads({ spend, clicks, impressions, actions }) {
   const leads = sumActions(actions, LEAD_KEYS);
   const cpl = leads > 0 ? spend / leads : 0;
   const cvr = clicks > 0 ? leads / clicks : 0;
-   const ctr = impressions > 0 ? clicks / impressions : 0;
-   return { leads, cpl, cvr, ctr, gastoTotal: spend, clics: clicks };
+  const ctr = impressions > 0 ? clicks / impressions : 0;
+  return { leads, cpl, cvr, ctr, gastoTotal: spend, clics: clicks };
 }
 
 /* =========
@@ -274,7 +275,6 @@ async function fetchInsights({ accountId, accessToken, fields, level, dateParams
 /* =========
    ENDPOINT PRINCIPAL
    ========= */
-// ACEPTA '/api/meta/insights' (porque en index.js montaste app.use('/api/meta/insights', router))
 router.get('/', requireAuth, async (req, res) => {
   try {
     // Cuenta Meta del usuario (asegurando seleccionar el token aunque el modelo lo oculte)
@@ -308,44 +308,39 @@ router.get('/', requireAuth, async (req, res) => {
     accountId = String(accountId);
     accountId = accountId.startsWith('act_') ? accountId.slice(4) : accountId;
 
-     // Fechas actuales y periodo anterior para comparación
-     const cmp = computeCompareRanges(req.query);
+    // Ventanas de comparación (excluyendo HOY)
+    const win = buildCompareWindows(req.query);
 
     // Level (account por defecto)
     const levelQ = String(req.query.level || '').toLowerCase();
     const level = ALLOWED_LEVELS.has(levelQ) ? levelQ : 'account';
 
     // 1) Actual
-     const rows = await fetchInsights({
+    const rows = await fetchInsights({
       accountId,
       accessToken,
       fields: INSIGHT_FIELDS,
       level,
       dateParams: {
         datePresetMode: false,
-        time_range: JSON.stringify({ since: cmp.current.since, until: cmp.current.until })
+        time_range: JSON.stringify({ since: win.current.since, until: win.current.until }),
       },
     });
 
-     // 2) Periodo anterior
-      const rowsPrev = await fetchInsights({
-        accountId,
-        accessToken,
-        fields: INSIGHT_FIELDS,
-        level,
-        dateParams: {
+    // 2) Periodo anterior
+    const rowsPrev = await fetchInsights({
+      accountId,
+      accessToken,
+      fields: INSIGHT_FIELDS,
+      level,
+      dateParams: {
         datePresetMode: false,
-       time_range: JSON.stringify({ since: cmp.previous.since, until: cmp.previous.until })
+        time_range: JSON.stringify({ since: win.previous.since, until: win.previous.until }),
       },
     });
 
-    // Agregados
-    let spend = 0;
-    let impressions = 0;
-    let reach = 0;
-    let clicks = 0;
-    let purchases = 0;
-    let revenue = 0;
+    // Agregados actuales
+    let spend = 0, impressions = 0, reach = 0, clicks = 0, purchases = 0, revenue = 0;
 
     const PURCHASE_KEYS = [
       'purchase',
@@ -386,7 +381,18 @@ router.get('/', requireAuth, async (req, res) => {
       };
     });
 
-    // Agregados (previo)
+    // KPIs actuales
+    let kpis;
+    if (objective === 'alcance') {
+      kpis = kpisAlcance({ spend, impressions, reach, clicks });
+    } else if (objective === 'leads') {
+      const allActions = rows.flatMap((r) => (Array.isArray(r.actions) ? r.actions : []));
+      kpis = kpisLeads({ spend, clicks, impressions, actions: allActions });
+    } else {
+      kpis = kpisVentas({ spend, clicks, impressions, revenue, purchases });
+    }
+
+    // Agregados previos
     let p_spend = 0, p_impressions = 0, p_reach = 0, p_clicks = 0, p_purchases = 0, p_revenue = 0;
     rowsPrev.forEach((r) => {
       p_spend       += Number(r.spend || 0);
@@ -396,17 +402,6 @@ router.get('/', requireAuth, async (req, res) => {
       p_purchases   += sumActions(r.actions, PURCHASE_KEYS);
       p_revenue     += sumActionValues(r.action_values, PURCHASE_VALUE_KEYS);
     });
-    // KPIs por objetivo
-    let kpis;
-    if (objective === 'alcance') {
-      kpis = kpisAlcance({ spend, impressions, reach, clicks });
-    } else if (objective === 'leads') {
-      const allActions = rows.flatMap((r) => (Array.isArray(r.actions) ? r.actions : []));
-      kpis = kpisLeads({ spend, clicks, impressions, actions: allActions });
-    } else {
-      // ventas
-      kpis = kpisVentas({ spend, clicks, impressions, revenue, purchases });
-    }
 
     // KPIs previos (mismo builder) para calcular deltas
     let prevKpis;
@@ -420,20 +415,49 @@ router.get('/', requireAuth, async (req, res) => {
     }
 
     // Deltas (% vs periodo anterior)
-    const deltas = {};
-    for (const [k, v] of Object.entries(kpis)) {
-      const curr = Number(v);
-      const prev = Number(prevKpis?.[k]);
-      if (Number.isFinite(curr) && Number.isFinite(prev)) {
-        deltas[k] = prev !== 0 ? (curr - prev) / prev : (curr !== 0 ? 1 : 0);
-      }
+    const pct = (cur, prev) => (Number.isFinite(prev) && prev !== 0) ? (cur - prev) / prev : null;
+    let deltas = {};
+    if (objective === 'alcance') {
+      deltas = {
+        reach:      pct(kpis.reach,       prevKpis.reach),
+        impressions:pct(kpis.impressions, prevKpis.impressions),
+        frecuencia: pct(kpis.frecuencia,  prevKpis.frecuencia),
+        cpm:        pct(kpis.cpm,         prevKpis.cpm),
+        ctr:        pct(kpis.ctr,         prevKpis.ctr),
+        gastoTotal: pct(kpis.gastoTotal,  prevKpis.gastoTotal),
+        clics:      pct(kpis.clics,       prevKpis.clics),
+      };
+    } else if (objective === 'leads') {
+      deltas = {
+        leads:      pct(kpis.leads,       prevKpis.leads),
+        cpl:        pct(kpis.cpl,         prevKpis.cpl),
+        cvr:        pct(kpis.cvr,         prevKpis.cvr),
+        ctr:        pct(kpis.ctr,         prevKpis.ctr),
+        gastoTotal: pct(kpis.gastoTotal,  prevKpis.gastoTotal),
+        clics:      pct(kpis.clics,       prevKpis.clics),
+      };
+    } else {
+      deltas = {
+        revenue:    pct(kpis.revenue,     prevKpis.revenue),
+        compras:    pct(kpis.compras,     prevKpis.compras),
+        roas:       pct(kpis.roas,        prevKpis.roas),
+        cpa:        pct(kpis.cpa,         prevKpis.cpa),
+        cvr:        pct(kpis.cvr,         prevKpis.cvr),
+        gastoTotal: pct(kpis.gastoTotal,  prevKpis.gastoTotal),
+        cpc:        pct(kpis.cpc,         prevKpis.cpc),
+        clics:      pct(kpis.clics,       prevKpis.clics),
+        ctr:        pct(kpis.ctr,         prevKpis.ctr),
+      };
     }
+    // Limpia nulls
+    Object.keys(deltas).forEach(k => { if (deltas[k] === null) delete deltas[k]; });
+
     return res.json({
       ok: true,
       objective,
       account_id: accountId,
-      range: { since: cmp.current.since, until: cmp.current.until },
-      prev_range: { since: cmp.previous.since, until: cmp.previous.until },
+      range: { since: win.current.since, until: win.current.until },
+      prev_range: { since: win.previous.since, until: win.previous.until },
       level,
       kpis,
       deltas,
@@ -441,7 +465,6 @@ router.get('/', requireAuth, async (req, res) => {
       cachedAt: new Date().toISOString(),
     });
   } catch (err) {
-    // Log útil si expira token u otro error de Graph
     const detail = err?.response?.data || err?.message || String(err);
     console.error('meta/insights error:', detail);
     const status = err?.response?.status || 500;
@@ -477,57 +500,31 @@ router.get('/debug', requireAuth, async (req, res) => {
   }
 });
 
-// Lista de Ad Accounts del usuario conectado
-router.get('/accounts', requireAuth, async (req, res) => {
-  try {
-    const metaAcc = await MetaAccount.findOne({ user: req.user._id }).lean();
-    if (!metaAcc || !Array.isArray(metaAcc.ad_accounts)) {
-      return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
-    }
-
-    const accounts = metaAcc.ad_accounts.map((a) => {
-      const raw = String(a.id || a.account_id || '').replace(/^act_/, '');
-      return {
-        id: raw, // sin "act_"
-        label: a.name || a.account_name || `act_${raw}`,
-        currency: a.currency || a.account_currency || null,
-        status: a.account_status ?? null,
-      };
-    });
-
-    return res.json({
-      ok: true,
-      defaultAccountId:
-        accounts.length ? accounts[0].id : null,
-      accounts,
-    });
-  } catch (e) {
-    console.error('meta/insights/accounts error:', e);
-    return res.status(500).json({ ok: false, error: 'ACCOUNTS_ERROR' });
-  }
-});
-
+/* =========
+   Accounts (unificado)
+   ========= */
 // GET /api/meta/insights/accounts
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
     const doc = await MetaAccount.findOne({ user: req.user._id }).lean();
-    if (!doc) {
-      return res.status(400).json({ ok:false, error:'META_NOT_CONNECTED' });
+    if (!doc || !Array.isArray(doc.ad_accounts)) {
+      return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
     }
-    const list = Array.isArray(doc.ad_accounts) ? doc.ad_accounts : [];
-    const parsed = list.map((a) => {
-      const rawId = String(a.id || a.account_id || '').replace(/^act_/, '');
+    const accounts = doc.ad_accounts.map((a) => {
+      const raw = String(a.id || a.account_id || '').replace(/^act_/, '');
       return {
-        id: rawId,
-        account_id: rawId,
-        name: a.name || a.account_name || rawId,
+        id: raw,
+        name: a.name || a.account_name || raw,
       };
     });
-    // default: primera cuenta
-    const defaultAccountId = parsed[0]?.account_id;
-    return res.json({ ok:true, accounts: parsed, defaultAccountId });
+    return res.json({
+      ok: true,
+      accounts,
+      defaultAccountId: accounts[0]?.id ?? null,
+    });
   } catch (e) {
-    return res.status(500).json({ ok:false, error:'ACCOUNTS_FAIL', detail:String(e) });
+    console.error('meta/insights/accounts error:', e);
+    return res.status(500).json({ ok: false, error: 'ACCOUNTS_ERROR' });
   }
 });
 
