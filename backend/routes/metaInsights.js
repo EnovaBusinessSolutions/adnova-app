@@ -1,9 +1,9 @@
 // backend/routes/metaInsights.js
 'use strict';
 
-const express = require('express');
-const axios = require('axios');
-const crypto = require('crypto');
+const express  = require('express');
+const axios    = require('axios');
+const crypto   = require('crypto');
 const mongoose = require('mongoose');
 
 const router = express.Router();
@@ -12,9 +12,10 @@ const router = express.Router();
    CONFIG
    ========= */
 const FB_VERSION = process.env.FACEBOOK_API_VERSION || 'v23.0';
-const FB_GRAPH = `https://graph.facebook.com/${FB_VERSION}`;
+const FB_GRAPH   = `https://graph.facebook.com/${FB_VERSION}`;
 const APP_SECRET = process.env.FACEBOOK_APP_SECRET;
 
+// Campos diarios que pedimos a Insights
 const INSIGHT_FIELDS = [
   'date_start',
   'date_stop',
@@ -29,29 +30,29 @@ const INSIGHT_FIELDS = [
 ].join(',');
 
 const ALLOWED_OBJECTIVES = new Set(['ventas', 'alcance', 'leads']);
-const ALLOWED_LEVELS = new Set(['account', 'campaign', 'adset', 'ad']);
+const ALLOWED_LEVELS     = new Set(['account', 'campaign', 'adset', 'ad']);
 
 /* =========
    MODELO MetaAccount (fallback si no existe el require real)
    ========= */
 let MetaAccount;
 try {
-  MetaAccount = require('../models/MetaAccount'); // usa tu modelo real si existe
+  MetaAccount = require('../models/MetaAccount');
 } catch {
   const { Schema } = mongoose;
   const schema = new Schema(
     {
-      user: { type: Schema.Types.ObjectId, ref: 'User' },
-      access_token: { type: String, select: false }, // muchos modelos lo ocultan
-      token: { type: String, select: false },
-      expires_at: Date,
-      fb_user_id: String,
-      name: String,
-      email: String,
-      ad_accounts: Array,
-      pages: Array,
-      scopes: [String],
-      objective: String,
+      user:         { type: Schema.Types.ObjectId, ref: 'User' },
+      access_token: { type: String, select: false },
+      token:        { type: String, select: false },
+      expires_at:   Date,
+      fb_user_id:   String,
+      name:         String,
+      email:        String,
+      ad_accounts:  Array,   // idealmente cada item: { id, name, timezone_name, account_currency, account_status }
+      pages:        Array,
+      scopes:       [String],
+      objective:    String,
     },
     { timestamps: true, collection: 'metaaccounts' }
   );
@@ -77,6 +78,7 @@ function parseRangeDays(rangeParam) {
 }
 
 function ymd(d) {
+  // YYYY-MM-DD (UTC)
   return d.toISOString().slice(0, 10);
 }
 
@@ -88,87 +90,123 @@ function resolveObjective(requested, saved) {
   return 'ventas';
 }
 
-/* =========
-   Fechas consistentes (excluyendo HOY)
-   ========= */
-function startOfDayUTC(d) { const x = new Date(d); x.setUTCHours(0,0,0,0); return x; }
-function addDaysUTC(d, n) { const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); return x; }
-function toYMD(d) { return d.toISOString().slice(0,10); }
-
-function presetDays(preset) {
-  const map = {
-    last_3d: 3,
-    last_7d: 7,
-    last_14d: 14,
-    last_28d: 28,
-    last_30d: 30,
-    last_90d: 90,
-  };
-  return map[preset] || 30;
+function addDays(d, n) {
+  const x = new Date(d.getTime());
+  x.setUTCDate(x.getUTCDate() + n);
+  return x;
 }
 
-/** Últimos N días **excluyendo hoy** */
-function makeLastNDaysRange(n) {
-  const today = startOfDayUTC(new Date());
-  const until = addDaysUTC(today, -1);              // ayer
-  const since = addDaysUTC(until, -(n - 1));        // N días atrás
-  return { since: toYMD(since), until: toYMD(until) };
+/** Devuelve timezone_name de la Ad Account si está guardado; si no, fallback */
+function getAccountTimezone(metaAcc, rawAccountId) {
+  try {
+    const arr = Array.isArray(metaAcc?.ad_accounts) ? metaAcc.ad_accounts : [];
+    const found = arr.find(a => {
+      const id = String(a?.id || a?.account_id || '').replace(/^act_/, '');
+      return id === rawAccountId;
+    });
+    const tz = found?.timezone_name || found?.timezone || null;
+    return tz || 'America/Mexico_City'; // fallback seguro
+  } catch {
+    return 'America/Mexico_City';
+  }
 }
 
-/** Convierte query (preset o range) en dos ventanas: actual y anterior (mismo tamaño). */
-function buildCompareWindows(q) {
-  const preset = String(q.date_preset || '').toLowerCase();
+/**
+ * Calcula el inicio de día (00:00) en una zona horaria dada,
+ * devolviendo un Date en UTC que representa ese instante.
+ */
+function startOfDayTZ(timeZone, date = new Date()) {
+  // Obtenemos partes de fecha en la TZ destino
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  const parts = fmt.formatToParts(date);
+  const obj = Object.fromEntries(parts.map(p => [p.type, p.value]));
+  const y = Number(obj.year);
+  const m = Number(obj.month);
+  const d = Number(obj.day);
+  // Construimos 00:00 TZ como timestamp UTC
+  return new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
+}
 
-  // Presets tipo "this_month" y "last_month"
-  if (preset === 'this_month' || preset === 'last_month') {
-    const today = startOfDayUTC(new Date());
-    const firstOfThis = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
-    const firstOfPrev = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
-    const endOfPrev   = addDaysUTC(firstOfThis, -1);
+/**
+ * Convierte preset/range + include_today en dos time_range (actual y anterior),
+ * usando la zona horaria de la cuenta.
+ */
+function computeCompareRangesTZ(q, timeZone) {
+  const preset       = String(q.date_preset || '').toLowerCase();
+  const includeToday = String(q.include_today || '0') === '1';
 
-    if (preset === 'last_month') {
-      // Mes anterior completo
-      const prevStart = firstOfPrev;
-      const prevEnd   = endOfPrev;
-      // Para "actual", usamos el mes anterior al mes anterior (para la comparación)
-      const prevPrevStart = new Date(Date.UTC(prevStart.getUTCFullYear(), prevStart.getUTCMonth() - 1, 1));
-      const prevPrevEnd   = addDaysUTC(firstOfPrev, -1);
+  // Rango en días si aplica (last_Xd o range explícito)
+  const days = (() => {
+    if (q.range) return parseRangeDays(q.range);
+    if (preset === 'last_90d') return 90;
+    if (preset === 'last_28d') return 28;
+    if (preset === 'last_14d') return 14;
+    if (preset === 'last_7d')  return 7;
+    if (preset === 'last_3d')  return 3;
+    if (!preset || preset === 'last_30d') return 30;
+    return null;
+  })();
 
-      return {
-        current : { since: toYMD(prevStart), until: toYMD(prevEnd) },
-        previous: { since: toYMD(prevPrevStart), until: toYMD(prevPrevEnd) },
-        days: null,
-      };
-    }
-
-    // this_month: del 1 al día de ayer (excluyendo hoy)
-    const thisMonthRange = { since: toYMD(firstOfThis), until: toYMD(addDaysUTC(today, -1)) };
-    // ventana anterior de mismo número de días
-    const days = Math.max(1, Math.floor((Date.parse(thisMonthRange.until) - Date.parse(thisMonthRange.since)) / 86400000) + 1);
-    const prevEnd = addDaysUTC(new Date(thisMonthRange.since), -1);
-    const prevStart = addDaysUTC(prevEnd, -(days - 1));
-    return {
-      current : thisMonthRange,
-      previous: { since: toYMD(prevStart), until: toYMD(prevEnd) },
-      days,
-    };
+  // Caso especial: today / this_month / last_month (meses completos)
+  if (preset === 'today') {
+    const today00 = startOfDayTZ(timeZone, new Date());
+    const curr = { since: ymd(today00), until: ymd(today00) };
+    const prev = { since: ymd(addDays(today00, -1)), until: ymd(addDays(today00, -1)) };
+    return { current: curr, previous: prev, days: 1 };
   }
 
-  // Presets tipo last_Xd o query param ?range=N
-  const n = q.range ? parseRangeDays(q.range) : presetDays(preset || 'last_30d');
-  const curr = makeLastNDaysRange(n);
-  const prevEnd = addDaysUTC(new Date(curr.since), -1);
-  const prevStart = addDaysUTC(prevEnd, -(n - 1));
+  if (preset === 'this_month' || preset === 'last_month') {
+    const today00 = startOfDayTZ(timeZone, new Date());
+    // inicio de mes actual en TZ
+    const fmt = new Intl.DateTimeFormat('en-US', { timeZone, year:'numeric', month:'2-digit' });
+    const parts = fmt.formatToParts(today00);
+    const obj   = Object.fromEntries(parts.map(p => [p.type, p.value]));
+    const y     = Number(obj.year);
+    const m     = Number(obj.month);
+    const startThisMonth = new Date(Date.UTC(y, m - 1, 1, 0, 0, 0));
+    const startNextMonth = new Date(Date.UTC(y, m, 1, 0, 0, 0));
+    const endThisMonth   = addDays(startNextMonth, -1);
+
+    if (preset === 'this_month') {
+      const curr = { since: ymd(startThisMonth), until: ymd(includeToday ? today00 : addDays(today00, -1)) };
+      const prevStart = new Date(Date.UTC(y, m - 2, 1, 0, 0, 0));
+      const prevEnd   = addDays(startThisMonth, -1);
+      const prev = { since: ymd(prevStart), until: ymd(prevEnd) };
+      return { current: curr, previous: prev, days: null };
+    } else {
+      // last_month
+      const curr = { since: ymd(startThisMonth), until: ymd(endThisMonth) };
+      const prevStart = new Date(Date.UTC(y, m - 2, 1, 0, 0, 0));
+      const prevEnd   = addDays(startThisMonth, -1);
+      const prev = { since: ymd(prevStart), until: ymd(prevEnd) };
+      return { current: curr, previous: prev, days: null };
+    }
+  }
+
+  // last_Xd o range => ventanas móviles de N días
+  const anchor = includeToday
+    ? startOfDayTZ(timeZone, new Date())                 // hoy 00:00
+    : addDays(startOfDayTZ(timeZone, new Date()), -1);   // ayer 00:00
+
+  const N = days ?? 30;
+  const currUntil = anchor;
+  const currSince = addDays(currUntil, -(N - 1));
+  const prevUntil = addDays(currSince, -1);
+  const prevSince = addDays(prevUntil, -(N - 1));
+
   return {
-    current : curr,
-    previous: { since: toYMD(prevStart), until: toYMD(prevEnd) },
-    days: n,
+    current : { since: ymd(currSince), until: ymd(currUntil) },
+    previous: { since: ymd(prevSince), until: ymd(prevUntil) },
+    days: N
   };
 }
 
-/* =========
-   Acciones helpers
-   ========= */
+// Acciones helpers
 function sumActions(actions, keys) {
   if (!Array.isArray(actions) || !actions.length) return 0;
   const set = new Set(keys);
@@ -192,11 +230,11 @@ function sumActionValues(actionValues, keys) {
 /* === KPI builders === */
 function kpisVentas({ spend, clicks, impressions, revenue, purchases }) {
   const roas = spend > 0 ? revenue / spend : 0;
-  const cpa = purchases > 0 ? spend / purchases : 0;
-  const cvr = clicks > 0 ? purchases / clicks : 0;
-  const cpc = clicks > 0 ? spend / clicks : 0;
-  const ctr = impressions > 0 ? clicks / impressions : 0;
-  const aov = purchases > 0 ? revenue / purchases : 0;
+  const cpa  = purchases > 0 ? spend / purchases : 0;
+  const cvr  = clicks > 0 ? purchases / clicks : 0;
+  const cpc  = clicks > 0 ? spend / clicks : 0;
+  const ctr  = impressions > 0 ? clicks / impressions : 0;
+  const aov  = purchases > 0 ? revenue / purchases : 0;
 
   return {
     ingresos: revenue,
@@ -215,8 +253,8 @@ function kpisVentas({ spend, clicks, impressions, revenue, purchases }) {
 }
 
 function kpisAlcance({ spend, impressions, reach, clicks }) {
-  const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
-  const ctr = impressions > 0 ? clicks / impressions : 0;
+  const cpm        = impressions > 0 ? (spend / impressions) * 1000 : 0;
+  const ctr        = impressions > 0 ? clicks / impressions : 0;
   const frecuencia = reach > 0 ? impressions / reach : 0;
   return { reach, impressions, frecuencia, cpm, ctr, gastoTotal: spend, clics: clicks };
 }
@@ -229,9 +267,9 @@ function kpisLeads({ spend, clicks, impressions, actions }) {
     'onsite_conversion.lead_grouped',
   ];
   const leads = sumActions(actions, LEAD_KEYS);
-  const cpl = leads > 0 ? spend / leads : 0;
-  const cvr = clicks > 0 ? leads / clicks : 0;
-  const ctr = impressions > 0 ? clicks / impressions : 0;
+  const cpl   = leads > 0 ? spend / leads : 0;
+  const cvr   = clicks > 0 ? leads / clicks : 0;
+  const ctr   = impressions > 0 ? clicks / impressions : 0;
   return { leads, cpl, cvr, ctr, gastoTotal: spend, clics: clicks };
 }
 
@@ -246,7 +284,7 @@ async function fetchInsights({ accountId, accessToken, fields, level, dateParams
     fields,
     level,
     time_increment: 1,
-    limit: 5000, // grande para evitar demasiadas páginas
+    limit: 5000,
     ...(dateParams.datePresetMode
       ? { date_preset: dateParams.date_preset }
       : { time_range: dateParams.time_range }),
@@ -260,8 +298,6 @@ async function fetchInsights({ accountId, accessToken, fields, level, dateParams
   while (url && guards < 10) {
     const { data } = await axios.get(url, { params });
     if (Array.isArray(data?.data)) rows.push(...data.data);
-
-    // siguiente página
     const next = data?.paging?.next;
     if (!next) break;
     url = next;
@@ -277,7 +313,7 @@ async function fetchInsights({ accountId, accessToken, fields, level, dateParams
    ========= */
 router.get('/', requireAuth, async (req, res) => {
   try {
-    // Cuenta Meta del usuario (asegurando seleccionar el token aunque el modelo lo oculte)
+    // Cuenta Meta del usuario
     const metaAcc = await MetaAccount
       .findOne({ user: req.user._id })
       .select('+access_token +token')
@@ -287,7 +323,7 @@ router.get('/', requireAuth, async (req, res) => {
       return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
     }
 
-    let accessToken = metaAcc.access_token || metaAcc.token || req.user?.metaAccessToken;
+    const accessToken = metaAcc.access_token || metaAcc.token || req.user?.metaAccessToken;
     if (!accessToken) {
       return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
     }
@@ -305,11 +341,13 @@ router.get('/', requireAuth, async (req, res) => {
     if (!accountId) {
       return res.status(400).json({ ok: false, error: 'NO_AD_ACCOUNT' });
     }
-    accountId = String(accountId);
-    accountId = accountId.startsWith('act_') ? accountId.slice(4) : accountId;
+    accountId = String(accountId).replace(/^act_/, '');
 
-    // Ventanas de comparación (excluyendo HOY)
-    const win = buildCompareWindows(req.query);
+    // Zona horaria de la cuenta (o fallback)
+    const timeZone = getAccountTimezone(metaAcc, accountId);
+
+    // Rango actual y anterior (TZ-aware, con include_today opcional)
+    const cmp = computeCompareRangesTZ(req.query, timeZone);
 
     // Level (account por defecto)
     const levelQ = String(req.query.level || '').toLowerCase();
@@ -323,7 +361,7 @@ router.get('/', requireAuth, async (req, res) => {
       level,
       dateParams: {
         datePresetMode: false,
-        time_range: JSON.stringify({ since: win.current.since, until: win.current.until }),
+        time_range: JSON.stringify({ since: cmp.current.since, until: cmp.current.until })
       },
     });
 
@@ -335,13 +373,12 @@ router.get('/', requireAuth, async (req, res) => {
       level,
       dateParams: {
         datePresetMode: false,
-        time_range: JSON.stringify({ since: win.previous.since, until: win.previous.until }),
+        time_range: JSON.stringify({ since: cmp.previous.since, until: cmp.previous.until })
       },
     });
 
-    // Agregados actuales
+    // Agregados actual
     let spend = 0, impressions = 0, reach = 0, clicks = 0, purchases = 0, revenue = 0;
-
     const PURCHASE_KEYS = [
       'purchase',
       'omni_purchase',
@@ -355,20 +392,19 @@ router.get('/', requireAuth, async (req, res) => {
     ];
 
     const series = rows.map((r) => {
-      const daySpend = Number(r.spend || 0);
-      const dayImp = Number(r.impressions || 0);
-      const dayReach = Number(r.reach || 0);
-      const dayClicks = Number(r.clicks || 0);
+      const daySpend      = Number(r.spend || 0);
+      const dayImp        = Number(r.impressions || 0);
+      const dayReach      = Number(r.reach || 0);
+      const dayClicks     = Number(r.clicks || 0);
+      const dayPurchases  = sumActions(r.actions, PURCHASE_KEYS);
+      const dayRevenue    = sumActionValues(r.action_values, PURCHASE_VALUE_KEYS);
 
-      const dayPurchases = sumActions(r.actions, PURCHASE_KEYS);
-      const dayRevenue = sumActionValues(r.action_values, PURCHASE_VALUE_KEYS);
-
-      spend += daySpend;
+      spend       += daySpend;
       impressions += dayImp;
-      reach += dayReach;
-      clicks += dayClicks;
-      purchases += dayPurchases;
-      revenue += dayRevenue;
+      reach       += dayReach;
+      clicks      += dayClicks;
+      purchases   += dayPurchases;
+      revenue     += dayRevenue;
 
       return {
         date: r.date_start,
@@ -381,18 +417,7 @@ router.get('/', requireAuth, async (req, res) => {
       };
     });
 
-    // KPIs actuales
-    let kpis;
-    if (objective === 'alcance') {
-      kpis = kpisAlcance({ spend, impressions, reach, clicks });
-    } else if (objective === 'leads') {
-      const allActions = rows.flatMap((r) => (Array.isArray(r.actions) ? r.actions : []));
-      kpis = kpisLeads({ spend, clicks, impressions, actions: allActions });
-    } else {
-      kpis = kpisVentas({ spend, clicks, impressions, revenue, purchases });
-    }
-
-    // Agregados previos
+    // Agregados previo
     let p_spend = 0, p_impressions = 0, p_reach = 0, p_clicks = 0, p_purchases = 0, p_revenue = 0;
     rowsPrev.forEach((r) => {
       p_spend       += Number(r.spend || 0);
@@ -403,61 +428,45 @@ router.get('/', requireAuth, async (req, res) => {
       p_revenue     += sumActionValues(r.action_values, PURCHASE_VALUE_KEYS);
     });
 
-    // KPIs previos (mismo builder) para calcular deltas
+    // KPIs actual
+    let kpis;
+    if (objective === 'alcance') {
+      kpis = kpisAlcance({ spend, impressions, reach, clicks });
+    } else if (objective === 'leads') {
+      const allActions = rows.flatMap((r) => Array.isArray(r.actions) ? r.actions : []);
+      kpis = kpisLeads({ spend, clicks, impressions, actions: allActions });
+    } else {
+      kpis = kpisVentas({ spend, clicks, impressions, revenue, purchases });
+    }
+
+    // KPIs previos
     let prevKpis;
     if (objective === 'alcance') {
       prevKpis = kpisAlcance({ spend: p_spend, impressions: p_impressions, reach: p_reach, clicks: p_clicks });
     } else if (objective === 'leads') {
-      const prevActions = rowsPrev.flatMap((r) => (Array.isArray(r.actions) ? r.actions : []));
+      const prevActions = rowsPrev.flatMap((r) => Array.isArray(r.actions) ? r.actions : []);
       prevKpis = kpisLeads({ spend: p_spend, clicks: p_clicks, impressions: p_impressions, actions: prevActions });
     } else {
       prevKpis = kpisVentas({ spend: p_spend, clicks: p_clicks, impressions: p_impressions, revenue: p_revenue, purchases: p_purchases });
     }
 
     // Deltas (% vs periodo anterior)
-    const pct = (cur, prev) => (Number.isFinite(prev) && prev !== 0) ? (cur - prev) / prev : null;
-    let deltas = {};
-    if (objective === 'alcance') {
-      deltas = {
-        reach:      pct(kpis.reach,       prevKpis.reach),
-        impressions:pct(kpis.impressions, prevKpis.impressions),
-        frecuencia: pct(kpis.frecuencia,  prevKpis.frecuencia),
-        cpm:        pct(kpis.cpm,         prevKpis.cpm),
-        ctr:        pct(kpis.ctr,         prevKpis.ctr),
-        gastoTotal: pct(kpis.gastoTotal,  prevKpis.gastoTotal),
-        clics:      pct(kpis.clics,       prevKpis.clics),
-      };
-    } else if (objective === 'leads') {
-      deltas = {
-        leads:      pct(kpis.leads,       prevKpis.leads),
-        cpl:        pct(kpis.cpl,         prevKpis.cpl),
-        cvr:        pct(kpis.cvr,         prevKpis.cvr),
-        ctr:        pct(kpis.ctr,         prevKpis.ctr),
-        gastoTotal: pct(kpis.gastoTotal,  prevKpis.gastoTotal),
-        clics:      pct(kpis.clics,       prevKpis.clics),
-      };
-    } else {
-      deltas = {
-        revenue:    pct(kpis.revenue,     prevKpis.revenue),
-        compras:    pct(kpis.compras,     prevKpis.compras),
-        roas:       pct(kpis.roas,        prevKpis.roas),
-        cpa:        pct(kpis.cpa,         prevKpis.cpa),
-        cvr:        pct(kpis.cvr,         prevKpis.cvr),
-        gastoTotal: pct(kpis.gastoTotal,  prevKpis.gastoTotal),
-        cpc:        pct(kpis.cpc,         prevKpis.cpc),
-        clics:      pct(kpis.clics,       prevKpis.clics),
-        ctr:        pct(kpis.ctr,         prevKpis.ctr),
-      };
+    const deltas = {};
+    for (const [k, v] of Object.entries(kpis)) {
+      const curr = Number(v);
+      const prev = Number(prevKpis?.[k]);
+      if (Number.isFinite(curr) && Number.isFinite(prev)) {
+        deltas[k] = prev !== 0 ? (curr - prev) / prev : (curr !== 0 ? 1 : 0);
+      }
     }
-    // Limpia nulls
-    Object.keys(deltas).forEach(k => { if (deltas[k] === null) delete deltas[k]; });
 
     return res.json({
       ok: true,
       objective,
       account_id: accountId,
-      range: { since: win.current.since, until: win.current.until },
-      prev_range: { since: win.previous.since, until: win.previous.until },
+      time_zone: timeZone,
+      range:      { since: cmp.current.since,  until: cmp.current.until },
+      prev_range: { since: cmp.previous.since, until: cmp.previous.until },
       level,
       kpis,
       deltas,
@@ -468,59 +477,34 @@ router.get('/', requireAuth, async (req, res) => {
     const detail = err?.response?.data || err?.message || String(err);
     console.error('meta/insights error:', detail);
     const status = err?.response?.status || 500;
-    return res.status(status).json({
-      ok: false,
-      error: 'META_INSIGHTS_ERROR',
-      detail,
-    });
+    return res.status(status).json({ ok: false, error: 'META_INSIGHTS_ERROR', detail });
   }
 });
 
 /* =========
-   DEBUG
+   ACCOUNTS (normalizado: id + name)
    ========= */
-router.get('/debug', requireAuth, async (req, res) => {
-  try {
-    const doc = await MetaAccount
-      .findOne({ user: req.user._id })
-      .select('+access_token +token')
-      .lean();
-
-    return res.json({
-      ok: true,
-      user: String(req.user?._id || ''),
-      found: !!doc,
-      hasAccessToken: !!(doc && (doc.access_token || doc.token)),
-      adAccounts: Array.isArray(doc?.ad_accounts) ? doc.ad_accounts.length : 0,
-      objective: doc?.objective || null,
-      collection: MetaAccount.collection?.name || null,
-    });
-  } catch (e) {
-    return res.status(500).json({ ok: false, error: 'DEBUG_FAIL', detail: String(e) });
-  }
-});
-
-/* =========
-   Accounts (unificado)
-   ========= */
-// GET /api/meta/insights/accounts
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
     const doc = await MetaAccount.findOne({ user: req.user._id }).lean();
-    if (!doc || !Array.isArray(doc.ad_accounts)) {
-      return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
-    }
-    const accounts = doc.ad_accounts.map((a) => {
+    if (!doc) return res.status(400).json({ ok:false, error:'META_NOT_CONNECTED' });
+
+    const list = Array.isArray(doc.ad_accounts) ? doc.ad_accounts : [];
+    const accounts = list.map((a) => {
       const raw = String(a.id || a.account_id || '').replace(/^act_/, '');
       return {
         id: raw,
         name: a.name || a.account_name || raw,
+        currency: a.currency || a.account_currency || null,
+        status: a.account_status ?? null,
+        timezone_name: a.timezone_name || null,
       };
     });
+
     return res.json({
       ok: true,
       accounts,
-      defaultAccountId: accounts[0]?.id ?? null,
+      defaultAccountId: accounts[0]?.id || null,
     });
   } catch (e) {
     console.error('meta/insights/accounts error:', e);
