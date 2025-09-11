@@ -119,6 +119,54 @@ function resolveDateParams(q) {
   };
 }
 
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+
+function computeCompareRanges(q) {
+  // Convertimos cualquier preset/range a dos time_range: actual y anterior
+  const now = new Date(); now.setHours(0,0,0,0);
+
+  // 1) Determinar días (si viene preset conocido)
+  const preset = String(q.date_preset || '').toLowerCase();
+  const rangeDays = (() => {
+    if (q.range) return parseRangeDays(q.range);
+    if (preset === 'last_90d') return 90;
+    if (preset === 'last_28d') return 28;
+    if (preset === 'last_14d') return 14;
+    if (preset === 'last_7d')  return 7;
+    if (preset === 'last_3d')  return 3;
+    if (preset === 'this_month' || preset === 'last_month') {
+      // usamos meses completos
+      const end = new Date(now); end.setDate(1); end.setHours(0,0,0,0); // inicio de mes actual
+      if (preset === 'last_month') end.setMonth(end.getMonth()); // ya es inicio de mes actual
+      const start = new Date(end); start.setMonth(end.getMonth() - 1);
+      const prevEnd = new Date(start); prevEnd.setDate(0); // último día del mes previo
+      const prevStart = new Date(start); prevStart.setDate(1);
+      return {
+        current: { since: ymd(start), until: ymd(addDays(end,-1)) },
+        previous:{ since: ymd(prevStart), until: ymd(prevEnd) },
+        days: null,
+      };
+    }
+    return 30; // default
+  })();
+
+  if (typeof rangeDays === 'object' && rangeDays.current) return rangeDays;
+
+  // 2) Para presets tipo last_Xd o range días, usamos ventanas móviles de N días
+  const days = typeof rangeDays === 'number' ? rangeDays : 30;
+  const currUntil = now;                          // hoy
+  const currSince = addDays(currUntil, -(days-1));
+  const prevUntil = addDays(currSince, -1);
+  const prevSince = addDays(prevUntil, -(days-1));
+
+  return {
+    current : { since: ymd(currSince), until: ymd(currUntil) },
+    previous: { since: ymd(prevSince), until: ymd(prevUntil) },
+    days
+  };
+}
+
+
 // Acciones helpers
 function sumActions(actions, keys) {
   if (!Array.isArray(actions) || !actions.length) return 0;
@@ -172,7 +220,7 @@ function kpisAlcance({ spend, impressions, reach, clicks }) {
   return { reach, impressions, frecuencia, cpm, ctr, gastoTotal: spend, clics: clicks };
 }
 
-function kpisLeads({ spend, clicks, actions }) {
+function kpisLeads({ spend, clicks, impressions, actions }) {
   const LEAD_KEYS = [
     'lead',
     'omni_lead',
@@ -182,7 +230,8 @@ function kpisLeads({ spend, clicks, actions }) {
   const leads = sumActions(actions, LEAD_KEYS);
   const cpl = leads > 0 ? spend / leads : 0;
   const cvr = clicks > 0 ? leads / clicks : 0;
-  return { leads, cpl, cvr, gastoTotal: spend, clics: clicks };
+   const ctr = impressions > 0 ? clicks / impressions : 0;
+   return { leads, cpl, cvr, ctr, gastoTotal: spend, clics: clicks };
 }
 
 /* =========
@@ -259,20 +308,35 @@ router.get('/', requireAuth, async (req, res) => {
     accountId = String(accountId);
     accountId = accountId.startsWith('act_') ? accountId.slice(4) : accountId;
 
-    // Fechas (date_preset o range)
-    const dateParams = resolveDateParams(req.query);
+     // Fechas actuales y periodo anterior para comparación
+     const cmp = computeCompareRanges(req.query);
 
     // Level (account por defecto)
     const levelQ = String(req.query.level || '').toLowerCase();
     const level = ALLOWED_LEVELS.has(levelQ) ? levelQ : 'account';
 
-    // Llamada a Graph con paginación
-    const rows = await fetchInsights({
+    // 1) Actual
+     const rows = await fetchInsights({
       accountId,
       accessToken,
       fields: INSIGHT_FIELDS,
       level,
-      dateParams,
+      dateParams: {
+        datePresetMode: false,
+        time_range: JSON.stringify({ since: cmp.current.since, until: cmp.current.until })
+      },
+    });
+
+     // 2) Periodo anterior
+      const rowsPrev = await fetchInsights({
+        accountId,
+        accessToken,
+        fields: INSIGHT_FIELDS,
+        level,
+        dateParams: {
+        datePresetMode: false,
+       time_range: JSON.stringify({ since: cmp.previous.since, until: cmp.previous.until })
+      },
     });
 
     // Agregados
@@ -322,27 +386,57 @@ router.get('/', requireAuth, async (req, res) => {
       };
     });
 
+    // Agregados (previo)
+    let p_spend = 0, p_impressions = 0, p_reach = 0, p_clicks = 0, p_purchases = 0, p_revenue = 0;
+    rowsPrev.forEach((r) => {
+      p_spend       += Number(r.spend || 0);
+      p_impressions += Number(r.impressions || 0);
+      p_reach       += Number(r.reach || 0);
+      p_clicks      += Number(r.clicks || 0);
+      p_purchases   += sumActions(r.actions, PURCHASE_KEYS);
+      p_revenue     += sumActionValues(r.action_values, PURCHASE_VALUE_KEYS);
+    });
     // KPIs por objetivo
     let kpis;
     if (objective === 'alcance') {
       kpis = kpisAlcance({ spend, impressions, reach, clicks });
     } else if (objective === 'leads') {
       const allActions = rows.flatMap((r) => (Array.isArray(r.actions) ? r.actions : []));
-      kpis = kpisLeads({ spend, clicks, actions: allActions });
+      kpis = kpisLeads({ spend, clicks, impressions, actions: allActions });
     } else {
       // ventas
       kpis = kpisVentas({ spend, clicks, impressions, revenue, purchases });
     }
 
+    // KPIs previos (mismo builder) para calcular deltas
+    let prevKpis;
+    if (objective === 'alcance') {
+      prevKpis = kpisAlcance({ spend: p_spend, impressions: p_impressions, reach: p_reach, clicks: p_clicks });
+    } else if (objective === 'leads') {
+      const prevActions = rowsPrev.flatMap((r) => (Array.isArray(r.actions) ? r.actions : []));
+      prevKpis = kpisLeads({ spend: p_spend, clicks: p_clicks, impressions: p_impressions, actions: prevActions });
+    } else {
+      prevKpis = kpisVentas({ spend: p_spend, clicks: p_clicks, impressions: p_impressions, revenue: p_revenue, purchases: p_purchases });
+    }
+
+    // Deltas (% vs periodo anterior)
+    const deltas = {};
+    for (const [k, v] of Object.entries(kpis)) {
+      const curr = Number(v);
+      const prev = Number(prevKpis?.[k]);
+      if (Number.isFinite(curr) && Number.isFinite(prev)) {
+        deltas[k] = prev !== 0 ? (curr - prev) / prev : (curr !== 0 ? 1 : 0);
+      }
+    }
     return res.json({
       ok: true,
       objective,
       account_id: accountId,
-      range: dateParams.datePresetMode
-        ? { preset: dateParams.date_preset }
-        : { days: dateParams.days, since: dateParams.since, until: dateParams.until },
+      range: { since: cmp.current.since, until: cmp.current.until },
+      prev_range: { since: cmp.previous.since, until: cmp.previous.until },
       level,
       kpis,
+      deltas,
       series,
       cachedAt: new Date().toISOString(),
     });
