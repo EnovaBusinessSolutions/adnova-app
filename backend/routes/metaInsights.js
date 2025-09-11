@@ -49,7 +49,7 @@ try {
       fb_user_id:   String,
       name:         String,
       email:        String,
-      ad_accounts:  Array,   // idealmente cada item: { id, name, timezone_name, account_currency, account_status }
+      ad_accounts:  Array,   // idealmente: { id, name, timezone_name, account_currency, account_status }
       pages:        Array,
       scopes:       [String],
       objective:    String,
@@ -93,6 +93,7 @@ function resolveObjective(requested, saved) {
 function addDays(d, n) {
   const x = new Date(d.getTime());
   x.setUTCDate(x.getUTCDate() + n);
+  x.setUTCHours(0,0,0,0);
   return x;
 }
 
@@ -112,11 +113,10 @@ function getAccountTimezone(metaAcc, rawAccountId) {
 }
 
 /**
- * Calcula el inicio de día (00:00) en una zona horaria dada,
- * devolviendo un Date en UTC que representa ese instante.
+ * Inicio de día (00:00) en una zona horaria dada,
+ * devuelto como Date en UTC que representa ese instante.
  */
 function startOfDayTZ(timeZone, date = new Date()) {
-  // Obtenemos partes de fecha en la TZ destino
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone,
     year: 'numeric',
@@ -128,41 +128,55 @@ function startOfDayTZ(timeZone, date = new Date()) {
   const y = Number(obj.year);
   const m = Number(obj.month);
   const d = Number(obj.day);
-  // Construimos 00:00 TZ como timestamp UTC
   return new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
 }
 
+/** YYYY-MM-DD -> Date(00:00 TZ) en UTC; null si inválido */
+function parseISODateInTZ(s, timeZone) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || '').trim());
+  if (!m) return null;
+  const d = new Date(Date.UTC(+m[1], +m[2]-1, +m[3], 0, 0, 0));
+  // normalizamos a 00:00 de esa fecha en la TZ objetivo
+  return startOfDayTZ(timeZone, d);
+}
+
 /**
- * Convierte preset/range + include_today en dos time_range (actual y anterior),
+ * Convierte preset/range/day + include_today en dos time_range (actual y anterior),
  * usando la zona horaria de la cuenta.
+ *
+ * is_partial = true cuando el periodo incluye "hoy" (aún en curso):
+ *   - date_preset=today
+ *   - ventanas deslizantes (last_Xd / range) con include_today=1
  */
 function computeCompareRangesTZ(q, timeZone) {
   const preset       = String(q.date_preset || '').toLowerCase();
   const includeToday = String(q.include_today || '0') === '1';
+  const dayParam     = q.day ? parseISODateInTZ(q.day, timeZone) : null;
 
-  // Rango en días si aplica (last_Xd o range explícito)
-  const days = (() => {
-    if (q.range) return parseRangeDays(q.range);
-    if (preset === 'last_90d') return 90;
-    if (preset === 'last_28d') return 28;
-    if (preset === 'last_14d') return 14;
-    if (preset === 'last_7d')  return 7;
-    if (preset === 'last_3d')  return 3;
-    if (!preset || preset === 'last_30d') return 30;
-    return null;
-  })();
+  // Día exacto por parámetro explícito (day=YYYY-MM-DD)
+  if (dayParam) {
+    const curr = { since: ymd(dayParam), until: ymd(dayParam) };
+    const prev = { since: ymd(addDays(dayParam, -1)), until: ymd(addDays(dayParam, -1)) };
+    return { current: curr, previous: prev, days: 1, is_partial: false };
+  }
 
-  // Caso especial: today / this_month / last_month (meses completos)
+  // Presets de día
   if (preset === 'today') {
     const today00 = startOfDayTZ(timeZone, new Date());
     const curr = { since: ymd(today00), until: ymd(today00) };
     const prev = { since: ymd(addDays(today00, -1)), until: ymd(addDays(today00, -1)) };
-    return { current: curr, previous: prev, days: 1 };
+    return { current: curr, previous: prev, days: 1, is_partial: true };
+  }
+  if (preset === 'yesterday') {
+    const y00 = addDays(startOfDayTZ(timeZone, new Date()), -1);
+    const curr = { since: ymd(y00), until: ymd(y00) };
+    const prev = { since: ymd(addDays(y00, -1)), until: ymd(addDays(y00, -1)) };
+    return { current: curr, previous: prev, days: 1, is_partial: false };
   }
 
+  // Meses completos
   if (preset === 'this_month' || preset === 'last_month') {
     const today00 = startOfDayTZ(timeZone, new Date());
-    // inicio de mes actual en TZ
     const fmt = new Intl.DateTimeFormat('en-US', { timeZone, year:'numeric', month:'2-digit' });
     const parts = fmt.formatToParts(today00);
     const obj   = Object.fromEntries(parts.map(p => [p.type, p.value]));
@@ -173,36 +187,50 @@ function computeCompareRangesTZ(q, timeZone) {
     const endThisMonth   = addDays(startNextMonth, -1);
 
     if (preset === 'this_month') {
-      const curr = { since: ymd(startThisMonth), until: ymd(includeToday ? today00 : addDays(today00, -1)) };
+      const curr = {
+        since: ymd(startThisMonth),
+        until: ymd(includeToday ? today00 : addDays(today00, -1))
+      };
       const prevStart = new Date(Date.UTC(y, m - 2, 1, 0, 0, 0));
       const prevEnd   = addDays(startThisMonth, -1);
       const prev = { since: ymd(prevStart), until: ymd(prevEnd) };
-      return { current: curr, previous: prev, days: null };
+      return { current: curr, previous: prev, days: null, is_partial: includeToday };
     } else {
-      // last_month
       const curr = { since: ymd(startThisMonth), until: ymd(endThisMonth) };
       const prevStart = new Date(Date.UTC(y, m - 2, 1, 0, 0, 0));
       const prevEnd   = addDays(startThisMonth, -1);
       const prev = { since: ymd(prevStart), until: ymd(prevEnd) };
-      return { current: curr, previous: prev, days: null };
+      return { current: curr, previous: prev, days: null, is_partial: false };
     }
   }
 
-  // last_Xd o range => ventanas móviles de N días
-  const anchor = includeToday
-    ? startOfDayTZ(timeZone, new Date())                 // hoy 00:00
-    : addDays(startOfDayTZ(timeZone, new Date()), -1);   // ayer 00:00
+  // Ventanas deslizantes: last_Xd o range
+  const days = (() => {
+    if (q.range) return parseRangeDays(q.range);
+    if (preset === 'last_90d') return 90;
+    if (preset === 'last_60d') return 60;
+    if (preset === 'last_28d') return 28;
+    if (preset === 'last_14d') return 14;
+    if (preset === 'last_7d')  return 7;
+    if (preset === 'last_3d')  return 3;
+    if (!preset || preset === 'last_30d') return 30;
+    return 30;
+  })();
 
-  const N = days ?? 30;
+  const anchor = includeToday
+    ? startOfDayTZ(timeZone, new Date())               // hoy 00:00
+    : addDays(startOfDayTZ(timeZone, new Date()), -1); // ayer 00:00
+
   const currUntil = anchor;
-  const currSince = addDays(currUntil, -(N - 1));
+  const currSince = addDays(currUntil, -(days - 1));
   const prevUntil = addDays(currSince, -1);
-  const prevSince = addDays(prevUntil, -(N - 1));
+  const prevSince = addDays(prevUntil, -(days - 1));
 
   return {
     current : { since: ymd(currSince), until: ymd(currUntil) },
     previous: { since: ymd(prevSince), until: ymd(prevUntil) },
-    days: N
+    days,
+    is_partial: includeToday
   };
 }
 
@@ -346,7 +374,7 @@ router.get('/', requireAuth, async (req, res) => {
     // Zona horaria de la cuenta (o fallback)
     const timeZone = getAccountTimezone(metaAcc, accountId);
 
-    // Rango actual y anterior (TZ-aware, con include_today opcional)
+    // Rango actual y anterior (TZ-aware, con include_today opcional + day/yesterday)
     const cmp = computeCompareRangesTZ(req.query, timeZone);
 
     // Level (account por defecto)
@@ -467,6 +495,7 @@ router.get('/', requireAuth, async (req, res) => {
       time_zone: timeZone,
       range:      { since: cmp.current.since,  until: cmp.current.until },
       prev_range: { since: cmp.previous.since, until: cmp.previous.until },
+      is_partial: !!cmp.is_partial,
       level,
       kpis,
       deltas,
