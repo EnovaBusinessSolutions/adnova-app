@@ -218,8 +218,8 @@ function computeCompareRangesTZ(q, timeZone) {
   })();
 
   const anchor = includeToday
-    ? startOfDayTZ(timeZone, new Date())            
-    : addDays(startOfDayTZ(timeZone, new Date()), -1); 
+    ? startOfDayTZ(timeZone, new Date())            // hoy 00:00 TZ
+    : addDays(startOfDayTZ(timeZone, new Date()), -1); // ayer 00:00 TZ
 
   const currUntil = anchor;
   const currSince = addDays(currUntil, -(days - 1));
@@ -234,7 +234,46 @@ function computeCompareRangesTZ(q, timeZone) {
   };
 }
 
-// Acciones helpers
+/* =========
+   Acciones helpers / prioridad para evitar doble conteo
+   ========= */
+
+// Prioridades para NO duplicar compras/ingresos (tomar solo una variante)
+const PURCHASE_COUNT_PRIORITIES = [
+  'omni_purchase',
+  'offsite_conversion.fb_pixel_purchase',
+  'onsite_conversion.purchase',
+  'purchase',
+];
+
+const PURCHASE_VALUE_PRIORITIES = [
+  'omni_purchase',
+  'offsite_conversion.fb_pixel_purchase',
+  'onsite_conversion.purchase',
+  'purchase',
+];
+
+// Prioridades para leads
+const LEAD_PRIORITIES = [
+  'omni_lead',
+  'offsite_conversion.fb_pixel_lead',
+  'offsite_conversion.fb.pixel_lead', // por si llega con punto
+  'onsite_conversion.lead_grouped',
+  'lead',
+];
+
+// Devuelve el primer valor != 0 según prioridad
+function pickFirstByPriority(items, priorities) {
+  if (!Array.isArray(items)) return 0;
+  for (const key of priorities) {
+    const it = items.find(a => String(a?.action_type) === key);
+    const v = Number(it?.value);
+    if (Number.isFinite(v) && v !== 0) return v;
+  }
+  return 0;
+}
+
+// (Se mantienen por si los necesitas en otro lado)
 function sumActions(actions, keys) {
   if (!Array.isArray(actions) || !actions.length) return 0;
   const set = new Set(keys);
@@ -288,13 +327,7 @@ function kpisAlcance({ spend, impressions, reach, clicks }) {
 }
 
 function kpisLeads({ spend, clicks, impressions, actions }) {
-  const LEAD_KEYS = [
-    'lead',
-    'omni_lead',
-    'offsite_conversion.fb_pixel_lead',
-    'onsite_conversion.lead_grouped',
-  ];
-  const leads = sumActions(actions, LEAD_KEYS);
+  const leads = pickFirstByPriority(actions, LEAD_PRIORITIES);
   const cpl   = leads > 0 ? spend / leads : 0;
   const cvr   = clicks > 0 ? leads / clicks : 0;
   const ctr   = impressions > 0 ? clicks / impressions : 0;
@@ -313,6 +346,9 @@ async function fetchInsights({ accountId, accessToken, fields, level, dateParams
     level,
     time_increment: 1,
     limit: 5000,
+    // Alineado con Ads Manager
+    use_unified_attribution_setting: true,
+    action_report_time: 'conversion',
     ...(dateParams.datePresetMode
       ? { date_preset: dateParams.date_preset }
       : { time_range: dateParams.time_range }),
@@ -407,25 +443,16 @@ router.get('/', requireAuth, async (req, res) => {
 
     // Agregados actual
     let spend = 0, impressions = 0, reach = 0, clicks = 0, purchases = 0, revenue = 0;
-    const PURCHASE_KEYS = [
-      'purchase',
-      'omni_purchase',
-      'offsite_conversion.fb_pixel_purchase',
-      'onsite_conversion.purchase',
-    ];
-    const PURCHASE_VALUE_KEYS = [
-      'omni_purchase',
-      'offsite_conversion.fb_pixel_purchase',
-      'onsite_conversion.purchase',
-    ];
 
     const series = rows.map((r) => {
       const daySpend      = Number(r.spend || 0);
       const dayImp        = Number(r.impressions || 0);
       const dayReach      = Number(r.reach || 0);
       const dayClicks     = Number(r.clicks || 0);
-      const dayPurchases  = sumActions(r.actions, PURCHASE_KEYS);
-      const dayRevenue    = sumActionValues(r.action_values, PURCHASE_VALUE_KEYS);
+
+      // ¡Sin doble conteo!
+      const dayPurchases  = pickFirstByPriority(r.actions,       PURCHASE_COUNT_PRIORITIES);
+      const dayRevenue    = pickFirstByPriority(r.action_values, PURCHASE_VALUE_PRIORITIES);
 
       spend       += daySpend;
       impressions += dayImp;
@@ -452,8 +479,10 @@ router.get('/', requireAuth, async (req, res) => {
       p_impressions += Number(r.impressions || 0);
       p_reach       += Number(r.reach || 0);
       p_clicks      += Number(r.clicks || 0);
-      p_purchases   += sumActions(r.actions, PURCHASE_KEYS);
-      p_revenue     += sumActionValues(r.action_values, PURCHASE_VALUE_KEYS);
+
+      // ¡Sin doble conteo!
+      p_purchases   += pickFirstByPriority(r.actions,       PURCHASE_COUNT_PRIORITIES);
+      p_revenue     += pickFirstByPriority(r.action_values, PURCHASE_VALUE_PRIORITIES);
     });
 
     // KPIs actual
