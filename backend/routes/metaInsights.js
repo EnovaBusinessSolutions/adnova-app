@@ -273,7 +273,7 @@ function pickFirstByPriority(items, priorities) {
   return 0;
 }
 
-// (Se mantienen por si los necesitas en otro lado)
+// (utilidades de suma — por si se necesitan)
 function sumActions(actions, keys) {
   if (!Array.isArray(actions) || !actions.length) return 0;
   const set = new Set(keys);
@@ -315,7 +315,7 @@ function kpisVentas({ spend, clicks, impressions, revenue, purchases }) {
     cpc,
     clics: clicks,
     ctr,
-    views: impressions,
+    views: impressions, // alias para el front
   };
 }
 
@@ -323,7 +323,15 @@ function kpisAlcance({ spend, impressions, reach, clicks }) {
   const cpm        = impressions > 0 ? (spend / impressions) * 1000 : 0;
   const ctr        = impressions > 0 ? clicks / impressions : 0;
   const frecuencia = reach > 0 ? impressions / reach : 0;
-  return { reach, impressions, frecuencia, cpm, ctr, gastoTotal: spend, clics: clicks };
+  return {
+    reach,
+    views: impressions,     // alias usado por el front
+    frecuencia,
+    cpm,
+    ctr,
+    gastoTotal: spend,
+    clics: clicks,
+  };
 }
 
 function kpisLeads({ spend, clicks, impressions, actions }) {
@@ -331,7 +339,17 @@ function kpisLeads({ spend, clicks, impressions, actions }) {
   const cpl   = leads > 0 ? spend / leads : 0;
   const cvr   = clicks > 0 ? leads / clicks : 0;
   const ctr   = impressions > 0 ? clicks / impressions : 0;
-  return { leads, cpl, cvr, ctr, gastoTotal: spend, clics: clicks };
+  const cpc   = clicks > 0 ? spend / clicks : 0;
+  return {
+    leads,
+    cpl,
+    cvr,
+    ctr,
+    cpc,
+    gastoTotal: spend,
+    clics: clicks,
+    views: impressions,
+  };
 }
 
 /* =========
@@ -392,7 +410,7 @@ router.get('/', requireAuth, async (req, res) => {
       return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
     }
 
-    // Objetivo
+    // Objetivo (query > guardado > ventas)
     const objective = resolveObjective(req.query.objective, metaAcc.objective);
 
     // Ad account
@@ -536,6 +554,21 @@ router.get('/', requireAuth, async (req, res) => {
     console.error('meta/insights error:', detail);
     const status = err?.response?.status || 500;
     return res.status(status).json({ ok: false, error: 'META_INSIGHTS_ERROR', detail });
+  }
+});
+
+/* =========
+   OBJETIVO GUARDADO (para auto-selección en el front)
+   ========= */
+router.get('/objective', requireAuth, async (req, res) => {
+  try {
+    const doc = await MetaAccount.findOne({ user: req.user._id }).lean();
+    if (!doc) return res.status(400).json({ ok:false, error:'META_NOT_CONNECTED' });
+    const raw = String(doc.objective || 'ventas').toLowerCase();
+    const objective = ALLOWED_OBJECTIVES.has(raw) ? raw : 'ventas';
+    return res.json({ ok:true, objective });
+  } catch (e) {
+    return res.status(500).json({ ok:false, error:'OBJECTIVE_ERROR' });
   }
 });
 
