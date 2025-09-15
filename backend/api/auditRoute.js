@@ -5,9 +5,13 @@ const router = express.Router();
 const Audit = require('../models/Audit');
 const User  = require('../models/User');
 
+// Jobs
 const { generarAuditoriaIA }       = require('../jobs/auditJob');          // Shopify
 const { generarAuditoriaMetaIA }   = require('../jobs/metaAuditJob');      // Meta
 const { generarAuditoriaGoogleIA } = require('../jobs/googleAuditJob');    // Google
+
+// Models auxiliares
+const MetaAccount = require('../models/MetaAccount'); // <-- asegúrate de que exista este modelo
 
 // ------------------------ Helpers ------------------------
 function resolveContext(req) {
@@ -37,6 +41,9 @@ function resolveContext(req) {
 function isAuthed(req) {
   return !!(req.isAuthenticated && req.isAuthenticated());
 }
+
+const normalizeActId = (val = '') =>
+  val.toString().replace(/^act_/, '').trim();
 
 // ------------------------ Shopify Audit ------------------------
 router.post('/start', async (req, res) => {
@@ -80,12 +87,41 @@ router.post('/meta/start', async (req, res) => {
     const shop   = req.user?.shop || null;
 
     const { accountId, datePreset } = req.body || {};
-    const resultado = await generarAuditoriaMetaIA(userId, { accountId, datePreset });
 
+    // 1) Lee token y cuentas de Meta
+    const acct = await MetaAccount.findOne({ userId }).lean();
+    const token =
+      acct?.longLivedToken ||
+      acct?.accessToken ||
+      null;
+
+    if (!token) {
+      return res.status(400).json({ error: 'Meta no conectado: token ausente' });
+    }
+
+    // 2) Resuelve ad account
+    let adAccountId =
+      normalizeActId(accountId) ||
+      normalizeActId(acct?.defaultAccountId) ||
+      normalizeActId(acct?.adAccounts?.[0]?.id) ||
+      normalizeActId(acct?.adAccounts?.[0]?.account_id);
+
+    if (!adAccountId) {
+      return res.status(400).json({ error: 'No se encontró una cuenta publicitaria de Meta' });
+    }
+
+    // 3) Ejecuta auditoría (pasamos token explícito para evitar "No hay token...")
+    const resultado = await generarAuditoriaMetaIA(userId, {
+      accountId: adAccountId,
+      datePreset: datePreset || 'last_30d',
+      token
+    });
+
+    // 4) Persistir
     await Audit.create({
       type: 'meta',
       userId,
-      shopDomain: shop, // mantenemos compatibilidad con /api/audits/usage si decides contar por shop
+      shopDomain: shop, // compat con /api/audits/usage
       productsAnalizados: resultado.productsAnalizados,
       actionCenter: resultado.actionCenter,
       issues: resultado.issues,
@@ -150,6 +186,7 @@ router.get('/latest', async (req, res) => {
     }
 
     const filter = { userId, type };
+
     if (type === 'shopify') {
       const shop = ctx.shop || req.query?.shop || (isAuthed(req) ? req.user?.shop : null);
       if (!shop) return res.status(400).json({ error: 'shop requerido para type=shopify' });
