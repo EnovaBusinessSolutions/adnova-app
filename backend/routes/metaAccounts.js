@@ -1,207 +1,127 @@
 // backend/routes/metaAccounts.js
 'use strict';
 
-const express  = require('express');
-const axios    = require('axios');
-const crypto   = require('crypto');
+const express = require('express');
 const mongoose = require('mongoose');
 
 const router = express.Router();
 
-const FB_VERSION = process.env.FACEBOOK_API_VERSION || 'v23.0';
-const FB_GRAPH   = `https://graph.facebook.com/${FB_VERSION}`;
-const APP_SECRET = process.env.FACEBOOK_APP_SECRET;
-
-/* ========== Modelo MetaAccount tolerante ========== */
-let MetaAccount;
-try {
-  MetaAccount = require('../models/MetaAccount');
-} catch {
-  const { Schema } = mongoose;
-  const schema = new Schema(
-    {
-      user:      { type: Schema.Types.ObjectId, ref: 'User' },
-      userId:    { type: Schema.Types.ObjectId, ref: 'User' },
-
-      access_token:   { type: String, select: false },
-      token:          { type: String, select: false },
-      longlivedToken: { type: String, select: false },
-      accessToken:    { type: String, select: false },
-      longLivedToken: { type: String, select: false },
-
-      ad_accounts:      Array,
-      adAccounts:       Array,
-      defaultAccountId: String,
-
-      expiresAt: Date,
-      objective: String,
-    },
-    { timestamps: true, collection: 'metaaccounts' }
-  );
-  MetaAccount = mongoose.models.MetaAccount || mongoose.model('MetaAccount', schema);
-}
-
-/* ========== Utils ========== */
+// --- auth helper ---
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-function appSecretProof(accessToken) {
-  if (!APP_SECRET) return undefined;
-  return crypto.createHmac('sha256', APP_SECRET).update(accessToken).digest('hex');
-}
+// --- util ids ---
+const normActId = (s = '') => s.toString().replace(/^act_/, '').trim();
+const toActId   = (s = '') => {
+  const id = normActId(s);
+  return id ? `act_${id}` : '';
+};
 
-async function loadMetaAccount(userId){
-  return await MetaAccount
-    .findOne({ $or: [{ user: userId }, { userId }] })
-    .select('+access_token +token +longlivedToken +accessToken +longLivedToken')
-    .lean();
-}
+// --- MetaAccount (tolerante) ---
+let MetaAccount;
+try {
+  MetaAccount = require('../models/MetaAccount');
+} catch {
+  const { Schema, model } = mongoose;
+  const schema = new Schema(
+    {
+      user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+      userId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
 
-function resolveAccessToken(metaAcc, reqUser){
-  return (
-    metaAcc?.access_token ||
-    metaAcc?.token ||
-    metaAcc?.longlivedToken ||
-    metaAcc?.accessToken ||
-    metaAcc?.longLivedToken ||
-    reqUser?.metaAccessToken ||
-    null
+      access_token:   { type: String, select: false },
+      token:          { type: String, select: false },
+      longlivedToken: { type: String, select: false },
+
+      // distintos nombres que podrías tener en Atlas
+      ad_accounts:      Array,
+      adAccounts:       Array,
+      defaultAccountId: String,
+
+      // Objetivo seleccionado en onboarding (sin default aquí)
+      objective: { type: String, enum: ['ventas', 'alcance', 'leads'], default: null },
+    },
+    { timestamps: true, collection: 'metaaccounts' }
   );
+  MetaAccount = mongoose.models.MetaAccount || model('MetaAccount', schema);
 }
 
-function normalizeAccountsList(metaAcc) {
-  if (Array.isArray(metaAcc?.ad_accounts)) return metaAcc.ad_accounts;
-  if (Array.isArray(metaAcc?.adAccounts))  return metaAcc.adAccounts;
-  return [];
-}
-
-function normalizeAdAccount(a) {
-  // Lo dejamos con llaves estables para el front
-  const raw = String(a?.id || a?.account_id || '').replace(/^act_/, '');
-  return {
-    id: raw,
-    name: a?.name || a?.account_name || raw,
-    currency: a?.currency || a?.account_currency || null,
-    status: a?.account_status ?? null,
-    timezone_name: a?.timezone_name || a?.timezone || null,
-  };
-}
-
-/* ========== GET /api/meta/accounts ==========
-   Devuelve lo que hay en BD (sin ir a Graph) */
+/**
+ * GET /api/meta/accounts
+ * Devuelve la lista de cuentas normalizada para el dropdown del dashboard.
+ * Formato: { ad_accounts: [{ id, account_id, name, currency, configured_status }], defaultAccountId, objective }
+ */
 router.get('/', requireAuth, async (req, res) => {
   try {
-    const doc = await loadMetaAccount(req.user._id);
-    if (!doc) return res.json({ ok: true, connected: false, accounts: [], defaultAccountId: null });
+    const doc = await MetaAccount
+      .findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
+      .lean();
 
-    const list = normalizeAccountsList(doc).map(normalizeAdAccount);
-    const defaultAccountId = doc.defaultAccountId || list[0]?.id || null;
+    const raw = (doc?.adAccounts || doc?.ad_accounts || []);
+    const ad_accounts = raw.map(a => {
+      const account_id = normActId(a.account_id || a.accountId || a.id || '');
+      return {
+        id: a.id || toActId(account_id),
+        account_id,
+        name: a.name || a.account_name || a.business_name || 'Untitled',
+        currency: a.currency || a.account_currency || null,
+        configured_status: a.configured_status || a.account_status || null,
+      };
+    });
 
     return res.json({
-      ok: true,
-      connected: !!resolveAccessToken(doc, req.user),
-      accounts: list,
-      defaultAccountId,
-      objective: doc.objective || 'ventas'
+      ad_accounts,
+      defaultAccountId: doc?.defaultAccountId || ad_accounts[0]?.account_id || null,
+      objective: doc?.objective ?? null,
     });
   } catch (e) {
     console.error('meta/accounts list error:', e);
-    return res.status(500).json({ ok: false, error: 'ACCOUNTS_ERROR' });
+    return res.status(500).json({ ok: false, error: 'LIST_ERROR' });
   }
 });
 
-/* ========== POST /api/meta/accounts/refresh ==========
-   Consulta /me/adaccounts en Graph y guarda en BD */
-router.post('/refresh', requireAuth, async (req, res) => {
-  try {
-    let doc = await MetaAccount
-      .findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
-      .select('+access_token +token +longlivedToken +accessToken +longLivedToken');
-
-    if (!doc) return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
-
-    const accessToken = resolveAccessToken(doc.toObject ? doc.toObject() : doc, req.user);
-    if (!accessToken) return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
-
-    const params = {
-      access_token: accessToken,
-      appsecret_proof: appSecretProof(accessToken),
-      fields: [
-        'id',
-        'name',
-        'account_status',
-        'currency',
-        'account_currency',
-        'timezone_name',
-      ].join(','),
-      limit: 200
-    };
-
-    const res1 = await axios.get(`${FB_GRAPH}/me/adaccounts`, { params });
-    const data = Array.isArray(res1?.data?.data) ? res1.data.data : [];
-    const clean = data.map(normalizeAdAccount);
-
-    // Guarda en cualquiera de los dos campos que uses
-    if (Array.isArray(doc.ad_accounts)) doc.ad_accounts = clean;
-    else doc.ad_accounts = clean; // preferimos ad_accounts
-    doc.adAccounts = clean;
-
-    if (!doc.defaultAccountId && clean[0]?.id) {
-      doc.defaultAccountId = clean[0].id;
-    }
-
-    await doc.save();
-
-    return res.json({
-      ok: true,
-      accounts: clean,
-      defaultAccountId: doc.defaultAccountId || clean[0]?.id || null
-    });
-  } catch (e) {
-    const detail = e?.response?.data || e?.message || String(e);
-    console.error('meta/accounts refresh error:', detail);
-    const status = e?.response?.status || 500;
-    return res.status(status).json({ ok: false, error: 'REFRESH_ERROR', detail });
-  }
-});
-
-/* ========== POST /api/meta/accounts/default ==========
-   body: { accountId } para fijar default */
-router.post('/default', requireAuth, async (req, res) => {
-  try {
-    const { accountId } = req.body || {};
-    if (!accountId) return res.status(400).json({ ok: false, error: 'MISSING_ACCOUNT_ID' });
-
-    const doc = await MetaAccount.findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] });
-    if (!doc) return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
-
-    doc.defaultAccountId = String(accountId).replace(/^act_/, '');
-    await doc.save();
-
-    return res.json({ ok: true, defaultAccountId: doc.defaultAccountId });
-  } catch (e) {
-    console.error('meta/accounts default error:', e);
-    return res.status(500).json({ ok: false, error: 'DEFAULT_SET_ERROR' });
-  }
-});
-
-/* ========== GET /api/meta/accounts/status ==========
-   Estado mínimo para UI */
+// --- STATUS: ¿está conectada la cuenta y ya hay objetivo? ---
 router.get('/status', requireAuth, async (req, res) => {
   try {
-    const doc = await loadMetaAccount(req.user._id);
-    if (!doc) return res.json({ ok: true, connected: false });
+    const doc = await MetaAccount
+      .findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
+      .select('+access_token +token +longlivedToken objective')
+      .lean();
 
-    return res.json({
-      ok: true,
-      connected: !!resolveAccessToken(doc, req.user),
-      defaultAccountId: doc.defaultAccountId || null,
-      expiresAt: doc.expiresAt || null
-    });
+    const connected = !!(doc?.access_token || doc?.token || doc?.longlivedToken);
+    const objective = doc?.objective || null;
+
+    return res.json({ ok: true, connected, objective });
   } catch (e) {
+    console.error('meta/accounts/status error:', e);
     return res.status(500).json({ ok: false, error: 'STATUS_ERROR' });
+  }
+});
+
+// --- GUARDAR OBJETIVO explícito desde Onboarding (alternativo) ---
+// Nota: tu onboarding usa /auth/meta/objective (en routes/meta.js). Mantener este endpoint es opcional.
+router.post('/objective', requireAuth, express.json(), async (req, res) => {
+  try {
+    const allowed = new Set(['ventas', 'alcance', 'leads']);
+    const objective = String(req.body?.objective || '').toLowerCase();
+
+    if (!allowed.has(objective)) {
+      return res.status(400).json({ ok: false, error: 'INVALID_OBJECTIVE' });
+    }
+
+    const doc = await MetaAccount.findOneAndUpdate(
+      { $or: [{ user: req.user._id }, { userId: req.user._id }] },
+      { $set: { objective } },
+      { new: true, upsert: false }
+    ).lean();
+
+    if (!doc) return res.status(404).json({ ok: false, error: 'META_NOT_CONNECTED' });
+
+    return res.json({ ok: true, objective });
+  } catch (e) {
+    console.error('meta/accounts/objective error:', e);
+    return res.status(500).json({ ok: false, error: 'OBJECTIVE_SAVE_ERROR' });
   }
 });
 

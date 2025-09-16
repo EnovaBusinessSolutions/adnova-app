@@ -42,18 +42,15 @@ try {
   const { Schema } = mongoose;
   const schema = new Schema(
     {
-      // Proyectos pueden guardar "user" o "userId"
       user:      { type: Schema.Types.ObjectId, ref: 'User' },
       userId:    { type: Schema.Types.ObjectId, ref: 'User' },
 
-      // Token en snake o camel
       access_token:   { type: String, select: false },
       token:          { type: String, select: false },
       longlivedToken: { type: String, select: false },
       accessToken:    { type: String, select: false },
       longLivedToken: { type: String, select: false },
 
-      // Cuentas en snake o camel
       ad_accounts:      Array,
       adAccounts:       Array,
       defaultAccountId: String,
@@ -89,7 +86,6 @@ function parseRangeDays(rangeParam) {
 }
 
 function ymd(d) {
-  // YYYY-MM-DD (UTC)
   return d.toISOString().slice(0, 10);
 }
 
@@ -100,7 +96,6 @@ function addDays(d, n) {
   return x;
 }
 
-/** Devuelve timezone_name de la Ad Account si está guardado; si no, fallback */
 function getAccountTimezone(metaAcc, rawAccountId) {
   try {
     const arr = normalizeAccountsList(metaAcc);
@@ -109,16 +104,12 @@ function getAccountTimezone(metaAcc, rawAccountId) {
       return id === rawAccountId;
     });
     const tz = found?.timezone_name || found?.timezone || null;
-    return tz || 'America/Mexico_City'; // fallback seguro
+    return tz || 'America/Mexico_City';
   } catch {
     return 'America/Mexico_City';
   }
 }
 
-/**
- * Inicio de día (00:00) en una zona horaria dada,
- * devuelto como Date en UTC que representa ese instante.
- */
 function startOfDayTZ(timeZone, date = new Date()) {
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone,
@@ -134,32 +125,24 @@ function startOfDayTZ(timeZone, date = new Date()) {
   return new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
 }
 
-/** YYYY-MM-DD -> Date(00:00 TZ) en UTC; null si inválido */
 function parseISODateInTZ(s, timeZone) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || '').trim());
   if (!m) return null;
   const d = new Date(Date.UTC(+m[1], +m[2]-1, +m[3], 0, 0, 0));
-  // normalizamos a 00:00 de esa fecha en la TZ objetivo
   return startOfDayTZ(timeZone, d);
 }
 
-/**
- * Convierte preset/range/day + include_today en dos time_range (actual y anterior),
- * usando la zona horaria de la cuenta.
- */
 function computeCompareRangesTZ(q, timeZone) {
   const preset       = String(q.date_preset || '').toLowerCase();
   const includeToday = String(q.include_today || '0') === '1';
   const dayParam     = q.day ? parseISODateInTZ(q.day, timeZone) : null;
 
-  // Día exacto por parámetro explícito (day=YYYY-MM-DD)
   if (dayParam) {
     const curr = { since: ymd(dayParam), until: ymd(dayParam) };
     const prev = { since: ymd(addDays(dayParam, -1)), until: ymd(addDays(dayParam, -1)) };
     return { current: curr, previous: prev, days: 1, is_partial: false };
   }
 
-  // Presets de día
   if (preset === 'today') {
     const today00 = startOfDayTZ(timeZone, new Date());
     const curr = { since: ymd(today00), until: ymd(today00) };
@@ -173,7 +156,6 @@ function computeCompareRangesTZ(q, timeZone) {
     return { current: curr, previous: prev, days: 1, is_partial: false };
   }
 
-  // Meses completos
   if (preset === 'this_month' || preset === 'last_month') {
     const today00 = startOfDayTZ(timeZone, new Date());
     const fmt = new Intl.DateTimeFormat('en-US', { timeZone, year:'numeric', month:'2-digit' });
@@ -203,7 +185,6 @@ function computeCompareRangesTZ(q, timeZone) {
     }
   }
 
-  // Ventanas deslizantes: last_Xd o range
   const days = (() => {
     if (q.range) return parseRangeDays(q.range);
     if (preset === 'last_90d') return 90;
@@ -217,8 +198,8 @@ function computeCompareRangesTZ(q, timeZone) {
   })();
 
   const anchor = includeToday
-    ? startOfDayTZ(timeZone, new Date())               // hoy 00:00 TZ
-    : addDays(startOfDayTZ(timeZone, new Date()), -1); // ayer 00:00 TZ
+    ? startOfDayTZ(timeZone, new Date())
+    : addDays(startOfDayTZ(timeZone, new Date()), -1);
 
   const currUntil = anchor;
   const currSince = addDays(currUntil, -(days - 1));
@@ -233,10 +214,6 @@ function computeCompareRangesTZ(q, timeZone) {
   };
 }
 
-/* =========
-   Acciones helpers / prioridad para evitar doble conteo
-   ========= */
-
 // Prioridades para NO duplicar compras/ingresos
 const PURCHASE_COUNT_PRIORITIES = [
   'omni_purchase',
@@ -244,15 +221,12 @@ const PURCHASE_COUNT_PRIORITIES = [
   'onsite_conversion.purchase',
   'purchase',
 ];
-
 const PURCHASE_VALUE_PRIORITIES = [
   'omni_purchase',
   'offsite_conversion.fb_pixel_purchase',
   'onsite_conversion.purchase',
   'purchase',
 ];
-
-// Prioridades para leads
 const LEAD_PRIORITIES = [
   'omni_lead',
   'offsite_conversion.fb_pixel_lead',
@@ -261,7 +235,6 @@ const LEAD_PRIORITIES = [
   'lead',
 ];
 
-// Devuelve el primer valor != 0 según prioridad
 function pickFirstByPriority(items, priorities) {
   if (!Array.isArray(items)) return 0;
   for (const key of priorities) {
@@ -280,44 +253,25 @@ function kpisVentas({ spend, clicks, impressions, revenue, purchases }) {
   const cpc  = clicks > 0 ? spend / clicks : 0;
   const ctr  = impressions > 0 ? clicks / impressions : 0;
   const aov  = purchases > 0 ? revenue / purchases : 0;
-
-  return {
-    ingresos: revenue,
-    compras: purchases,
-    valorPorCompra: aov,
-    roas,
-    cpa,
-    cvr,
-    ctr,
-    gastoTotal: spend,
-    cpc,
-    clics: clicks,
-    views: impressions,
-    revenue, // compat. con gráfica
-  };
+  return { ingresos: revenue, compras: purchases, valorPorCompra: aov, roas, cpa, cvr, ctr, gastoTotal: spend, cpc, clics: clicks, views: impressions, revenue };
 }
-
 function kpisAlcance({ spend, impressions, reach, clicks }) {
   const cpm        = impressions > 0 ? (spend / impressions) * 1000 : 0;
   const ctr        = impressions > 0 ? clicks / impressions : 0;
   const frecuencia = reach > 0 ? impressions / reach : 0;
-  return {
-    reach,
-    impressions,
-    frecuencia,
-    cpm,
-    ctr,
-    gastoTotal: spend,
-    clics: clicks,
-  };
+  return { reach, impressions, frecuencia, cpm, ctr, gastoTotal: spend, clics: clicks };
 }
-
 function kpisLeads({ spend, clicks, impressions, leadsCount }) {
   const leads = Number(leadsCount || 0);
   const cpl   = leads > 0 ? spend / leads : 0;
   const cvr   = clicks > 0 ? leads / clicks : 0;
   const ctr   = impressions > 0 ? clicks / impressions : 0;
   return { leads, cpl, cvr, ctr, gastoTotal: spend, clics: clicks };
+}
+function zeroKpis(objective) {
+  if (objective === 'alcance') return kpisAlcance({ spend:0, impressions:0, reach:0, clicks:0 });
+  if (objective === 'leads')   return kpisLeads({ spend:0, clicks:0, impressions:0, leadsCount:0 });
+  return kpisVentas({ spend:0, clicks:0, impressions:0, revenue:0, purchases:0 });
 }
 
 /* =========
@@ -350,7 +304,7 @@ async function fetchInsights({ accountId, accessToken, fields, level, dateParams
     const next = data?.paging?.next;
     if (!next) break;
     url = next;
-    params = undefined; // el "next" ya trae el querystring completo
+    params = undefined;
     guards += 1;
   }
 
@@ -384,16 +338,37 @@ function resolveAccessToken(metaAcc, reqUser){
     null
   );
 }
-
+const normActId = (s = '') => String(s).replace(/^act_/, '');
 function resolveAccountId(req, metaAcc){
   const q = req.query?.account_id && String(req.query.account_id);
   const fromDefault = metaAcc?.defaultAccountId;
   const list = normalizeAccountsList(metaAcc);
   const fromList = list.length
-    ? String(list[0].id || list[0].account_id || '').replace(/^act_/, '')
+    ? normActId(list[0].id || list[0].account_id || '')
     : null;
 
-  return (q || fromDefault || fromList || '').replace(/^act_/, '');
+  return normActId(q || fromDefault || fromList || '');
+}
+
+/* =========
+   RESPUESTA VACÍA (tolerante)
+   ========= */
+function emptyResponse({ objective, timeZone, cmp, level, message }) {
+  return {
+    ok: true,
+    objective,
+    account_id: null,
+    time_zone: timeZone,
+    range:      { since: cmp.current.since,  until: cmp.current.until },
+    prev_range: { since: cmp.previous.since, until: cmp.previous.until },
+    is_partial: !!cmp.is_partial,
+    level,
+    kpis:   zeroKpis(objective),
+    deltas: {},
+    series: [],
+    message: message || null,
+    cachedAt: new Date().toISOString(),
+  };
 }
 
 /* =========
@@ -401,44 +376,59 @@ function resolveAccountId(req, metaAcc){
    ========= */
 router.get('/', requireAuth, async (req, res) => {
   try {
-    // Cuenta Meta del usuario (tolerante a user/userId y a distintos nombres de token)
+    const fallbackTZ = 'America/Mexico_City';
+
+    // Cargamos MetaAccount y objetivo (con defaults)
     const metaAcc = await loadMetaAccount(req.user._id);
-    if (!metaAcc) {
-      return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
+    const rqObj   = String(req.query.objective || '').toLowerCase();
+    const svObj   = String(metaAcc?.objective || '').toLowerCase();
+    const objective = ALLOWED_OBJECTIVES.has(rqObj)
+      ? rqObj
+      : (ALLOWED_OBJECTIVES.has(svObj) ? svObj : 'ventas');
+
+    // Si no hay conexión, devolvemos 200 con vacío (no 400)
+    const accessToken = resolveAccessToken(metaAcc || {}, req.user);
+    const levelQ = String(req.query.level || '').toLowerCase();
+    const level = ALLOWED_LEVELS.has(levelQ) ? levelQ : 'account';
+
+    if (!metaAcc || !accessToken) {
+      const cmp = computeCompareRangesTZ(req.query, fallbackTZ);
+      return res.json(emptyResponse({
+        objective,
+        timeZone: fallbackTZ,
+        cmp,
+        level,
+        message: 'META_NOT_CONNECTED'
+      }));
     }
 
-    const accessToken = resolveAccessToken(metaAcc, req.user);
-    if (!accessToken) {
-      return res.status(400).json({ ok: false, error: 'META_NOT_CONNECTED' });
-    }
-
-    // Objetivo
-    const rq = String(req.query.objective || '').toLowerCase();
-    const sv = String(metaAcc.objective || '').toLowerCase();
-    const objective = ALLOWED_OBJECTIVES.has(rq) ? rq : (ALLOWED_OBJECTIVES.has(sv) ? sv : 'ventas');
-
-    // Ad account (query -> defaultAccountId -> primer elemento del arreglo)
+    // Ad account (query -> defaultAccountId -> primer elemento)
     const accountId = resolveAccountId(req, metaAcc);
     if (!accountId) {
-      return res.status(400).json({ ok: false, error: 'NO_AD_ACCOUNT' });
+      const tz = fallbackTZ; // no tenemos cuenta para leer TZ
+      const cmp = computeCompareRangesTZ(req.query, tz);
+      return res.json(emptyResponse({
+        objective,
+        timeZone: tz,
+        cmp,
+        level,
+        message: 'NO_AD_ACCOUNT'
+      }));
     }
 
-    // Zona horaria de la cuenta (o fallback)
+    // Zona horaria de la cuenta
     const timeZone = getAccountTimezone(metaAcc, accountId);
-
-    // Rango actual y anterior (TZ-aware, con include_today opcional + day/yesterday)
     const cmp = computeCompareRangesTZ(req.query, timeZone);
 
     // Level (account por defecto)
-    const levelQ = String(req.query.level || '').toLowerCase();
-    const level = ALLOWED_LEVELS.has(levelQ) ? levelQ : 'account';
+    const levelFinal = level;
 
     // 1) Actual
     const rows = await fetchInsights({
       accountId,
       accessToken,
       fields: INSIGHT_FIELDS,
-      level,
+      level: levelFinal,
       dateParams: {
         datePresetMode: false,
         time_range: JSON.stringify({ since: cmp.current.since, until: cmp.current.until })
@@ -450,7 +440,7 @@ router.get('/', requireAuth, async (req, res) => {
       accountId,
       accessToken,
       fields: INSIGHT_FIELDS,
-      level,
+      level: levelFinal,
       dateParams: {
         datePresetMode: false,
         time_range: JSON.stringify({ since: cmp.previous.since, until: cmp.previous.until })
@@ -459,14 +449,11 @@ router.get('/', requireAuth, async (req, res) => {
 
     // Agregados actual
     let spend = 0, impressions = 0, reach = 0, clicks = 0, purchases = 0, revenue = 0, leadsCount = 0;
-
     const series = rows.map((r) => {
       const daySpend      = Number(r.spend || 0);
       const dayImp        = Number(r.impressions || 0);
       const dayReach      = Number(r.reach || 0);
       const dayClicks     = Number(r.clicks || 0);
-
-      // ¡Sin doble conteo!
       const dayPurchases  = pickFirstByPriority(r.actions,       PURCHASE_COUNT_PRIORITIES);
       const dayRevenue    = pickFirstByPriority(r.action_values, PURCHASE_VALUE_PRIORITIES);
       const dayLeads      = pickFirstByPriority(r.actions,       LEAD_PRIORITIES);
@@ -491,41 +478,32 @@ router.get('/', requireAuth, async (req, res) => {
       };
     });
 
-    // Agregados previo
+    // Agregados previos
     let p_spend = 0, p_impressions = 0, p_reach = 0, p_clicks = 0, p_purchases = 0, p_revenue = 0, p_leads = 0;
     rowsPrev.forEach((r) => {
       p_spend       += Number(r.spend || 0);
       p_impressions += Number(r.impressions || 0);
       p_reach       += Number(r.reach || 0);
       p_clicks      += Number(r.clicks || 0);
-
-      // ¡Sin doble conteo!
       p_purchases   += pickFirstByPriority(r.actions,       PURCHASE_COUNT_PRIORITIES);
       p_revenue     += pickFirstByPriority(r.action_values, PURCHASE_VALUE_PRIORITIES);
       p_leads       += pickFirstByPriority(r.actions,       LEAD_PRIORITIES);
     });
 
-    // KPIs actual
-    let kpis;
+    // KPIs actual vs previos
+    let kpis, prevKpis;
     if (objective === 'alcance') {
-      kpis = kpisAlcance({ spend, impressions, reach, clicks });
-    } else if (objective === 'leads') {
-      kpis = kpisLeads({ spend, clicks, impressions, leadsCount });
-    } else {
-      kpis = kpisVentas({ spend, clicks, impressions, revenue, purchases });
-    }
-
-    // KPIs previos
-    let prevKpis;
-    if (objective === 'alcance') {
+      kpis     = kpisAlcance({ spend, impressions, reach, clicks });
       prevKpis = kpisAlcance({ spend: p_spend, impressions: p_impressions, reach: p_reach, clicks: p_clicks });
     } else if (objective === 'leads') {
+      kpis     = kpisLeads({ spend, clicks, impressions, leadsCount });
       prevKpis = kpisLeads({ spend: p_spend, clicks: p_clicks, impressions: p_impressions, leadsCount: p_leads });
     } else {
+      kpis     = kpisVentas({ spend, clicks, impressions, revenue, purchases });
       prevKpis = kpisVentas({ spend: p_spend, clicks: p_clicks, impressions: p_impressions, revenue: p_revenue, purchases: p_purchases });
     }
 
-    // Deltas (% vs periodo anterior)
+    // Deltas
     const deltas = {};
     for (const [k, v] of Object.entries(kpis)) {
       const curr = Number(v);
@@ -543,7 +521,7 @@ router.get('/', requireAuth, async (req, res) => {
       range:      { since: cmp.current.since,  until: cmp.current.until },
       prev_range: { since: cmp.previous.since, until: cmp.previous.until },
       is_partial: !!cmp.is_partial,
-      level,
+      level: levelFinal,
       kpis,
       deltas,
       series,
@@ -552,8 +530,18 @@ router.get('/', requireAuth, async (req, res) => {
   } catch (err) {
     const detail = err?.response?.data || err?.message || String(err);
     console.error('meta/insights error:', detail);
-    const status = err?.response?.status || 500;
-    return res.status(status).json({ ok: false, error: 'META_INSIGHTS_ERROR', detail });
+    // No le tiramos 4xx/5xx al front: devolvemos 200 con payload vacío
+    const fallbackTZ = 'America/Mexico_City';
+    const cmp = computeCompareRangesTZ(req.query || {}, fallbackTZ);
+    const rqObj = String(req.query?.objective || '').toLowerCase();
+    const objective = ALLOWED_OBJECTIVES.has(rqObj) ? rqObj : 'ventas';
+    return res.json(emptyResponse({
+      objective,
+      timeZone: fallbackTZ,
+      cmp,
+      level: 'account',
+      message: 'META_INSIGHTS_ERROR'
+    }));
   }
 });
 
@@ -563,16 +551,14 @@ router.get('/', requireAuth, async (req, res) => {
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
     const doc = await loadMetaAccount(req.user._id);
-    if (!doc) return res.status(400).json({ ok:false, error:'META_NOT_CONNECTED' });
-
-    const list = normalizeAccountsList(doc);
+    const list = normalizeAccountsList(doc || {});
     const accounts = list.map((a) => {
       const raw = String(a.id || a.account_id || '').replace(/^act_/, '');
       return {
         id: raw,
         name: a.name || a.account_name || raw,
         currency: a.currency || a.account_currency || null,
-        status: a.account_status ?? null,
+        status: a.account_status ?? a.configured_status ?? null,
         timezone_name: a.timezone_name || a.timezone || null,
       };
     });
@@ -580,11 +566,11 @@ router.get('/accounts', requireAuth, async (req, res) => {
     return res.json({
       ok: true,
       accounts,
-      defaultAccountId: doc.defaultAccountId || accounts[0]?.id || null,
+      defaultAccountId: (doc && doc.defaultAccountId) || accounts[0]?.id || null,
     });
   } catch (e) {
     console.error('meta/insights/accounts error:', e);
-    return res.status(500).json({ ok: false, error: 'ACCOUNTS_ERROR' });
+    return res.json({ ok: true, accounts: [], defaultAccountId: null });
   }
 });
 

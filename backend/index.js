@@ -9,25 +9,8 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcrypt');
-const axios = require('axios');
-const qs = require('querystring');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
-
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT),
-  secure: true,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
-
-transporter.verify((err) => {
-  if (err) console.error('❌ SMTP error:', err);
-  else console.log('✅ SMTP listo para enviar correo');
-});
 
 // Auth strategies
 require('./auth');
@@ -53,11 +36,12 @@ const userRoutes = require('./routes/user');
 const auditsRoutes = require('./routes/audits');
 const objectivesRoutes = require('./routes/objectives');
 
-const app = express();
-app.use(publicCSP);
+// Meta endpoints que consume el dashboard
+const metaInsightsRoutes = require('./routes/metaInsights');
+const metaAccountsRoutes = require('./routes/metaAccounts');
 
+const app = express();
 const PORT = process.env.PORT || 3000;
-const SHOPIFY_HANDLE = process.env.SHOPIFY_APP_HANDLE;
 
 // ---------- CORS ----------
 app.use(
@@ -70,6 +54,12 @@ app.options(/.*/, cors());
 
 // ---------- Webhooks: RAW antes de json ----------
 app.use('/connector/webhooks', express.raw({ type: 'application/json' }), webhookRoutes);
+
+// Body parser (después de raw)
+app.use(express.json());
+
+// ---------- CSP pública ----------
+app.use(publicCSP);
 
 // ---------- Mongo ----------
 mongoose
@@ -90,12 +80,8 @@ app.use(
     },
   })
 );
-
 app.use(passport.initialize());
 app.use(passport.session());
-
-// Body parser (después de raw)
-app.use(express.json());
 
 // ---------- Guards ----------
 function ensureAuthenticated(req, res, next) {
@@ -109,6 +95,10 @@ function ensureNotOnboarded(req, res, next) {
   if (!req.user?.onboardingComplete) return next();
   return res.redirect('/dashboard');
 }
+function sessionGuard(req, res, next) {
+  if (req.isAuthenticated && req.isAuthenticated()) return next();
+  return res.status(401).json({ error: 'No hay sesión' });
+}
 
 // ---------- DASHBOARD (submódulo con fallback) ----------
 const DASHBOARD_DIST = path.join(__dirname, '../dashboard-src/dist');
@@ -117,26 +107,23 @@ const HAS_DASHBOARD_DIST = fs.existsSync(path.join(DASHBOARD_DIST, 'index.html')
 
 if (HAS_DASHBOARD_DIST) {
   // Assets del build de Vite (prioridad alta)
-  app.use('/assets', express.static(path.join(DASHBOARD_DIST, 'assets'), {
-    immutable: true,
-    maxAge: '1y',
-  }));
-
+  app.use(
+    '/assets',
+    express.static(path.join(DASHBOARD_DIST, 'assets'), { immutable: true, maxAge: '1y' })
+  );
   // Montar dashboard protegido desde el submódulo
   app.use('/dashboard', ensureAuthenticated, express.static(DASHBOARD_DIST));
   app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
     res.sendFile(path.join(DASHBOARD_DIST, 'index.html'));
   });
-
   console.log('✅ Dashboard servido desde submódulo: dashboard-src/dist');
 } else {
-  // Fallback: dashboard legacy de /public (evita 500 si falta dist)
+  // Fallback: dashboard legacy de /public (usa index.html)
   app.use('/assets', express.static(path.join(LEGACY_DASH, 'assets')));
   app.use('/dashboard', ensureAuthenticated, express.static(LEGACY_DASH));
   app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
-    res.sendFile(path.join(LEGACY_DASH, 'dashboard.html'));
+    res.sendFile(path.join(LEGACY_DASH, 'index.html'));
   });
-
   console.warn('⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard');
 }
 
@@ -172,63 +159,47 @@ app.get('/api/health', (_req, res) => {
 });
 
 // ---------- Flujos Auth / Usuario ----------
+const transporter = nodemailer.createTransport({
+  host: process.env.SMTP_HOST,
+  port: Number(process.env.SMTP_PORT),
+  secure: true,
+  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+});
+transporter.verify((err) => {
+  if (err) console.error('❌ SMTP error:', err);
+  else console.log('✅ SMTP listo para enviar correo');
+});
+
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ success: false, message: 'Correo y contraseña son requeridos' });
   }
-
   try {
     const hashed = await bcrypt.hash(password, 10);
     await User.create({ email, password: hashed });
 
-    let html = `<!doctype html> 
-<html lang="es">
-<head>
-<meta charset="utf-8">
+    let html = `<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
 <title>Bienvenido a Adnova AI</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-  @media screen and (max-width:600px){
-    .card{width:100%!important}
-    .btn{display:block!important;width:100%!important}
-  }
-</style>
+<style>@media screen and (max-width:600px){.card{width:100%!important}.btn{display:block!important;width:100%!important}}</style>
 </head>
 <body style="margin:0;padding:0;background:#0d081c;color:#fff;font-family:Arial,Helvetica,sans-serif">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-    <tr><td align="center" style="padding:48px 10px">
-      <table role="presentation" cellpadding="0" cellspacing="0" width="560" class="card"
-             style="max-width:560px;background:#151026;border-radius:16px;box-shadow:0 0 20px #6d3dfc;">
-        <tr>
-          <td style="padding:0 50px 40px">
-            <h1 style="margin:0 0 24px;font-size:28px;color:#6d3dfc;font-weight:700">¡Bienvenido a Adnova AI!</h1>
-            <p style="margin:0 0 20px;font-size:16px;line-height:24px">Tu cuenta se creó con éxito.</p>
-            <p style="margin:0 0 28px;font-size:16px;line-height:24px">Haz clic en el botón para iniciar sesión:</p>
-            <table role="presentation" align="center" cellpadding="0" cellspacing="0">
-              <tr><td>
-                <a href="https://ai.adnova.digital/login" class="btn"
-                   style="background:#6d3dfc;border-radius:8px;padding:14px 36px;font-size:16px;font-weight:600;color:#fff;text-decoration:none;display:inline-block;">
-                  Iniciar sesión
-                </a>
-              </td></tr>
-            </table>
-            <p style="margin:32px 0 0;font-size:14px;line-height:20px;color:#c4c4c4">
-              Si no solicitaste esta cuenta, ignora este correo.
-            </p>
-          </td>
-        </tr>
-        <tr>
-          <td style="background:#100c1e;padding:18px 40px;border-radius:0 0 16px 16px;text-align:center;font-size:12px;line-height:18px;color:#777">
-            © {{YEAR}} Adnova AI ·
-            <a href="https://ai.adnova.digital/politica.html" style="color:#777;text-decoration:underline">Política de privacidad</a>
-          </td>
-        </tr>
-      </table>
-    </td></tr>
-  </table>
-</body>
-</html>`;
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td align="center" style="padding:48px 10px">
+<table role="presentation" cellpadding="0" cellspacing="0" width="560" class="card" style="max-width:560px;background:#151026;border-radius:16px;box-shadow:0 0 20px #6d3dfc;">
+<tr><td style="padding:0 50px 40px">
+<h1 style="margin:0 0 24px;font-size:28px;color:#6d3dfc;font-weight:700">¡Bienvenido a Adnova AI!</h1>
+<p style="margin:0 0 20px;font-size:16px;line-height:24px">Tu cuenta se creó con éxito.</p>
+<p style="margin:0 0 28px;font-size:16px;line-height:24px">Haz clic en el botón para iniciar sesión:</p>
+<table role="presentation" align="center" cellpadding="0" cellspacing="0"><tr><td>
+<a href="https://ai.adnova.digital/login" class="btn" style="background:#6d3dfc;border-radius:8px;padding:14px 36px;font-size:16px;font-weight:600;color:#fff;text-decoration:none;display:inline-block;">Iniciar sesión</a>
+</td></tr></table>
+<p style="margin:32px 0 0;font-size:14px;line-height:20px;color:#c4c4c4">Si no solicitaste esta cuenta, ignora este correo.</p>
+</td></tr>
+<tr><td style="background:#100c1e;padding:18px 40px;border-radius:0 0 16px 16px;text-align:center;font-size:12px;line-height:18px;color:#777">© {{YEAR}} Adnova AI · <a href="https://ai.adnova.digital/politica.html" style="color:#777;text-decoration:underline">Política de privacidad</a></td></tr>
+</table></td></tr></table></body></html>`;
     html = html.replace('{{YEAR}}', new Date().getFullYear());
 
     await transporter.sendMail({
@@ -264,65 +235,25 @@ app.post('/api/forgot-password', async (req, res) => {
     const resetUrl = `https://ai.adnova.digital/reset-password.html?token=${token}`;
 
     const html = `<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <title>Recupera tu contraseña - Adnova AI</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <style>
-    body { margin: 0; padding: 0; background: #0a0a12; color: #F4F2FF; font-family: 'Inter', Arial, Helvetica, sans-serif; font-size: 16px; line-height: 1.6; -webkit-text-size-adjust: none; }
-    .card { max-width: 410px; background: rgba(16, 14, 26, 0.98); border-radius: 22px; box-shadow: 0 0 32px 0 #a96bff2d; margin: 0 auto; padding: 0; }
-    .card-content { padding: 0 38px 38px 38px; }
-    h1 { margin: 0 0 24px 0; font-size: 2rem; font-weight: 800; color: #A96BFF; letter-spacing: -1px; text-align: center; }
-    p { margin: 0 0 18px 0; color: #F4F2FF; font-size: 1.04rem; line-height: 1.6; text-align: center; }
-    .btn { background: linear-gradient(90deg, #A96BFF 0%, #9333ea 100%); border-radius: 10px; padding: 0.9rem 2.6rem; font-size: 1.1rem; font-weight: 700; color: #fff !important; text-decoration: none; display: inline-block; margin: 0 auto; box-shadow: 0 2px 8px #A96BFF20; border: none; transition: opacity 0.16s; }
-    .btn:hover { opacity: 0.93; }
-    .footer { background: #18132a; padding: 18px 36px 15px 36px; border-radius: 0 0 22px 22px; text-align: center; font-size: 0.97rem; color: #B6A7E8; }
-    .footer a { color: #A96BFF; text-decoration: underline; font-weight: 600; transition: color 0.17s; }
-    .footer a:hover { color: #fff; }
-    @media screen and (max-width:600px){
-      .card{width:97vw!important;max-width:98vw!important;}
-      .card-content{padding:0 1.1rem 1.7rem 1.1rem;}
-      h1{font-size:1.25rem;}
-      .footer{font-size:0.89rem;padding:1.1rem 0.3rem 1rem 0.3rem;}
-      .btn{width:100%;padding:0.85rem 0;}
-    }
-  </style>
+<html lang="es"><head><meta charset="utf-8"><title>Recupera tu contraseña - Adnova AI</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{margin:0;padding:0;background:#0a0a12;color:#F4F2FF;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6}
+.card{max-width:410px;background:rgba(16,14,26,.98);border-radius:22px;box-shadow:0 0 32px 0 #a96bff2d;margin:0 auto;padding:0}
+.card-content{padding:0 38px 38px 38px}h1{margin:0 0 24px 0;font-size:2rem;font-weight:800;color:#A96BFF;letter-spacing:-1px;text-align:center}
+p{margin:0 0 18px 0;color:#F4F2FF;font-size:1.04rem;line-height:1.6;text-align:center}
+.btn{background:linear-gradient(90deg,#A96BFF 0%,#9333ea 100%);border-radius:10px;padding:.9rem 2.6rem;font-size:1.1rem;font-weight:700;color:#fff!important;text-decoration:none;display:inline-block;margin:0 auto;box-shadow:0 2px 8px #A96BFF20;border:none;transition:opacity .16s}
+.btn:hover{opacity:.93}.footer{background:#18132a;padding:18px 36px 15px 36px;border-radius:0 0 22px 22px;text-align:center;font-size:.97rem;color:#B6A7E8}
+.footer a{color:#A96BFF;text-decoration:underline;font-weight:600;transition:color .17s}.footer a:hover{color:#fff}
+@media screen and (max-width:600px){.card{width:97vw!important;max-width:98vw!important}.card-content{padding:0 1.1rem 1.7rem 1.1rem}h1{font-size:1.25rem}.footer{font-size:.89rem;padding:1.1rem .3rem 1rem .3rem}.btn{width:100%;padding:.85rem 0}}</style>
 </head>
-<body>
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a12;margin:0;padding:0;">
-    <tr>
-      <td align="center" style="padding:54px 8px;">
-        <table role="presentation" cellpadding="0" cellspacing="0" class="card" width="410">
-          <tr>
-            <td class="card-content">
-              <h1>¿Olvidaste tu contraseña?</h1>
-              <p>Haz clic en el botón para establecer una nueva contraseña para tu cuenta de Adnova AI.</p>
-              <table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
-                <tr>
-                  <td align="center">
-                    <a href="${resetUrl}" class="btn" target="_blank">Cambiar contraseña</a>
-                  </td>
-                </tr>
-              </table>
-              <p style="margin:32px 0 0 0; font-size:0.98rem; color:#B6A7E8;">
-                Si tú no solicitaste el cambio de contraseña, ignora este correo.<br>
-                El enlace expira en 1 hora.
-              </p>
-            </td>
-          </tr>
-          <tr>
-            <td class="footer">
-              © ${new Date().getFullYear()} Adnova AI ·
-              <a href="https://ai.adnova.digital/politica.html" target="_blank">Política de privacidad</a>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>`;
+<body><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a12;margin:0;padding:0;"><tr><td align="center" style="padding:54px 8px;">
+<table role="presentation" cellpadding="0" cellspacing="0" class="card" width="410"><tr><td class="card-content">
+<h1>¿Olvidaste tu contraseña?</h1><p>Haz clic en el botón para establecer una nueva contraseña para tu cuenta de Adnova AI.</p>
+<table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin: 0 auto;"><tr><td align="center">
+<a href="${resetUrl}" class="btn" target="_blank">Cambiar contraseña</a></td></tr></table>
+<p style="margin:32px 0 0 0; font-size:.98rem; color:#B6A7E8;">Si tú no solicitaste el cambio de contraseña, ignora este correo.<br>El enlace expira en 1 hora.</p>
+</td></tr><tr><td class="footer">© ${new Date().getFullYear()} Adnova AI · <a href="https://ai.adnova.digital/politica.html" target="_blank">Política de privacidad</a></td></tr></table>
+</td></tr></table></body></html>`;
 
     await transporter.sendMail({
       from: process.env.SMTP_FROM,
@@ -344,22 +275,18 @@ app.post('/api/reset-password', async (req, res) => {
   if (!token || !password) {
     return res.status(400).json({ success: false, message: 'Datos incompletos' });
   }
-
   try {
     const user = await User.findOne({
       resetPasswordToken: token,
       resetPasswordExpires: { $gt: new Date() },
     });
-
     if (!user) {
       return res.status(400).json({ success: false, message: 'Token inválido o expirado' });
     }
-
     user.password = await bcrypt.hash(password, 10);
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
     await user.save();
-
     res.json({ success: true });
   } catch (err) {
     console.error('❌ reset-password:', err);
@@ -382,7 +309,6 @@ app.post('/api/login', async (req, res, next) => {
     req.login(user, (err) => {
       if (err) return next(err);
       req.session.userId = user._id;
-
       if (user.onboardingComplete && user.shopifyConnected) {
         return res.status(200).json({ success: true, redirect: '/dashboard' });
       }
@@ -405,11 +331,9 @@ app.get('/onboarding', ensureNotOnboarded, async (req, res) => {
       console.error('❌ Error al leer onboarding.html:', err.stack || err);
       return res.status(500).send('Error al cargar la página de onboarding.');
     }
-
     let updatedHtml = html.replace('USER_ID_REAL', req.user._id.toString());
     updatedHtml = updatedHtml.replace('SHOPIFY_CONNECTED_FLAG', alreadyConnectedShopify ? 'true' : 'false');
     updatedHtml = updatedHtml.replace('GOOGLE_CONNECTED_FLAG', user.googleConnected ? 'true' : 'false');
-
     res.send(updatedHtml);
   });
 });
@@ -446,26 +370,28 @@ app.get('/api/session', (req, res) => {
       googleConnected: req.user.googleConnected,
       metaConnected: req.user.metaConnected,
       shopifyConnected: req.user.shopifyConnected,
+      // Fallbacks que usa el onboarding si /auth/.../status no está disponible
+      googleObjective: req.user.googleObjective || null,
+      metaObjective: req.user.metaObjective || null,
     },
   });
 });
 
-function sessionGuard(req, res, next) {
-  if (req.isAuthenticated && req.isAuthenticated()) return next();
-  return res.status(401).json({ error: 'No hay sesión' });
-}
-
 app.get('/api/saas/ping', sessionGuard, (req, res) => {
   res.json({ ok: true, user: req.user?.email });
 });
-
 app.use('/api/saas/shopify', sessionGuard, require('./routes/shopifyMatch'));
 
+// Rutas públicas / auth
 app.use('/api/shopify', shopifyRoutes);
 app.use('/', privacyRoutes);
 app.use('/auth/google', googleConnect);
 app.use('/', googleAnalytics);
+
+// Auth Meta (login/callback/status/objective/etc.)
 app.use('/auth/meta', metaAuthRoutes);
+
+// APIs varias
 app.use('/api', mockShopify);
 app.use('/api', userRoutes);
 app.use('/api/audits', auditsRoutes);
@@ -475,13 +401,15 @@ app.use('/api/audit', auditRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter);
 app.use('/api', objectivesRoutes);
-app.use('/api/meta/insights', require('./routes/metaInsights'));
 
-// ---------- OAuth callbacks ----------
+// Meta endpoints que consume el dashboard (protegidos por sesión)
+app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);
+app.use('/api/meta/accounts', sessionGuard, metaAccountsRoutes);
+
+// ---------- OAuth callbacks Google ----------
 app.get('/auth/google/login',
   passport.authenticate('google', { scope: ['profile', 'email'] })
 );
-
 app.get('/auth/google/login/callback',
   passport.authenticate('google', { failureRedirect: '/' }),
   (req, res) => {
@@ -503,7 +431,6 @@ app.get('/logout', (req, res) => {
         </script>
       `);
     }
-
     req.session.destroy(() => {
       res.clearCookie('connect.sid', { path: '/' });
       return res.send(`
