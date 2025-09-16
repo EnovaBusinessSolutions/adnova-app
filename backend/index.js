@@ -182,7 +182,7 @@ app.post('/api/register', async (req, res) => {
     const hashed = await bcrypt.hash(password, 10);
     await User.create({ email, password: hashed });
 
-    let html = `<!doctype html>
+    let html = `<!doctype html> 
 <html lang="es">
 <head>
 <meta charset="utf-8">
