@@ -42,24 +42,28 @@ try {
   const { Schema } = mongoose;
   const schema = new Schema(
     {
-      // Algunos proyectos lo guardan como "user", otros como "userId"
+      // Proyectos pueden guardar "user" o "userId"
       user:      { type: Schema.Types.ObjectId, ref: 'User' },
       userId:    { type: Schema.Types.ObjectId, ref: 'User' },
 
-      // Token puede venir como access_token, token o longlivedToken
+      // Token en snake o camel
       access_token:   { type: String, select: false },
       token:          { type: String, select: false },
       longlivedToken: { type: String, select: false },
+      accessToken:    { type: String, select: false },
+      longLivedToken: { type: String, select: false },
 
-      ad_accounts:      Array,      // { id, name, timezone_name, account_currency, account_status }
+      // Cuentas en snake o camel
+      ad_accounts:      Array,
+      adAccounts:       Array,
       defaultAccountId: String,
+
       pages:            Array,
       scopes:           [String],
-
-      objective:  String, // 'ventas' | 'alcance' | 'leads'
-      email:      String,
-      name:       String,
-      expiresAt:  Date,
+      objective:        String, // 'ventas' | 'alcance' | 'leads'
+      email:            String,
+      name:             String,
+      expiresAt:        Date,
     },
     { timestamps: true, collection: 'metaaccounts' }
   );
@@ -99,7 +103,7 @@ function addDays(d, n) {
 /** Devuelve timezone_name de la Ad Account si está guardado; si no, fallback */
 function getAccountTimezone(metaAcc, rawAccountId) {
   try {
-    const arr = Array.isArray(metaAcc?.ad_accounts) ? metaAcc.ad_accounts : [];
+    const arr = normalizeAccountsList(metaAcc);
     const found = arr.find(a => {
       const id = String(a?.id || a?.account_id || '').replace(/^act_/, '');
       return id === rawAccountId;
@@ -142,10 +146,6 @@ function parseISODateInTZ(s, timeZone) {
 /**
  * Convierte preset/range/day + include_today en dos time_range (actual y anterior),
  * usando la zona horaria de la cuenta.
- *
- * is_partial = true cuando el periodo incluye "hoy" (aún en curso):
- *   - date_preset=today
- *   - ventanas deslizantes (last_Xd / range) con include_today=1
  */
 function computeCompareRangesTZ(q, timeZone) {
   const preset       = String(q.date_preset || '').toLowerCase();
@@ -237,7 +237,7 @@ function computeCompareRangesTZ(q, timeZone) {
    Acciones helpers / prioridad para evitar doble conteo
    ========= */
 
-// Prioridades para NO duplicar compras/ingresos (tomar solo una variante)
+// Prioridades para NO duplicar compras/ingresos
 const PURCHASE_COUNT_PRIORITIES = [
   'omni_purchase',
   'offsite_conversion.fb_pixel_purchase',
@@ -256,7 +256,7 @@ const PURCHASE_VALUE_PRIORITIES = [
 const LEAD_PRIORITIES = [
   'omni_lead',
   'offsite_conversion.fb_pixel_lead',
-  'offsite_conversion.fb.pixel_lead', // por si llega con punto
+  'offsite_conversion.fb.pixel_lead',
   'onsite_conversion.lead_grouped',
   'lead',
 ];
@@ -293,7 +293,7 @@ function kpisVentas({ spend, clicks, impressions, revenue, purchases }) {
     cpc,
     clics: clicks,
     views: impressions,
-    revenue, // por compatibilidad con la gráfica
+    revenue, // compat. con gráfica
   };
 }
 
@@ -332,7 +332,6 @@ async function fetchInsights({ accountId, accessToken, fields, level, dateParams
     level,
     time_increment: 1,
     limit: 5000,
-    // Alineado con Ads Manager
     use_unified_attribution_setting: true,
     action_report_time: 'conversion',
     ...(dateParams.datePresetMode
@@ -351,7 +350,7 @@ async function fetchInsights({ accountId, accessToken, fields, level, dateParams
     const next = data?.paging?.next;
     if (!next) break;
     url = next;
-    params = undefined; // al usar el next, ya viene con querystring completo
+    params = undefined; // el "next" ya trae el querystring completo
     guards += 1;
   }
 
@@ -364,8 +363,14 @@ async function fetchInsights({ accountId, accessToken, fields, level, dateParams
 async function loadMetaAccount(userId){
   return await MetaAccount
     .findOne({ $or: [{ user: userId }, { userId }] })
-    .select('+access_token +token +longlivedToken')
+    .select('+access_token +token +longlivedToken +accessToken +longLivedToken')
     .lean();
+}
+
+function normalizeAccountsList(metaAcc) {
+  if (Array.isArray(metaAcc?.ad_accounts)) return metaAcc.ad_accounts;
+  if (Array.isArray(metaAcc?.adAccounts))  return metaAcc.adAccounts;
+  return [];
 }
 
 function resolveAccessToken(metaAcc, reqUser){
@@ -373,6 +378,8 @@ function resolveAccessToken(metaAcc, reqUser){
     metaAcc?.access_token ||
     metaAcc?.token ||
     metaAcc?.longlivedToken ||
+    metaAcc?.accessToken ||
+    metaAcc?.longLivedToken ||
     reqUser?.metaAccessToken ||
     null
   );
@@ -381,8 +388,9 @@ function resolveAccessToken(metaAcc, reqUser){
 function resolveAccountId(req, metaAcc){
   const q = req.query?.account_id && String(req.query.account_id);
   const fromDefault = metaAcc?.defaultAccountId;
-  const fromList = Array.isArray(metaAcc?.ad_accounts) && metaAcc.ad_accounts.length
-    ? String(metaAcc.ad_accounts[0].id || metaAcc.ad_accounts[0].account_id || '').replace(/^act_/, '')
+  const list = normalizeAccountsList(metaAcc);
+  const fromList = list.length
+    ? String(list[0].id || list[0].account_id || '').replace(/^act_/, '')
     : null;
 
   return (q || fromDefault || fromList || '').replace(/^act_/, '');
@@ -557,7 +565,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
     const doc = await loadMetaAccount(req.user._id);
     if (!doc) return res.status(400).json({ ok:false, error:'META_NOT_CONNECTED' });
 
-    const list = Array.isArray(doc.ad_accounts) ? doc.ad_accounts : [];
+    const list = normalizeAccountsList(doc);
     const accounts = list.map((a) => {
       const raw = String(a.id || a.account_id || '').replace(/^act_/, '');
       return {
