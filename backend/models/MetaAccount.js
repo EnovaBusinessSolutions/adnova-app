@@ -1,29 +1,97 @@
-const { Schema, model, Types } = require('mongoose');
+// backend/models/MetaAccount.js
+'use strict';
 
-const AdAccountSchema = new Schema({
-  id: String,               // p.ej. "act_123..."
-  account_id: String,       // "123..."
-  name: String,
-  currency: String,
-  configured_status: String
-}, { _id: false });
+const mongoose = require('mongoose');
+const { Schema, model, Types } = mongoose;
 
-const MetaAccountSchema = new Schema({
-  userId:           { type: Types.ObjectId, ref: 'User', index: true, required: true },
-  accessToken:      { type: String },        // token corto (opcional si guardas el largo)
-  longLivedToken:   { type: String },        // token largo (recomendado)
-  expiresAt:        { type: Date },          // opcional si gestionas expiración
-  adAccounts:       [AdAccountSchema],       // lista obtenida de /me/adaccounts
-  defaultAccountId: { type: String },        // "123..." (sin "act_")
-  createdAt:        { type: Date, default: Date.now },
-  updatedAt:        { type: Date, default: Date.now }
-});
+/**
+ * Subdocumento para Ad Accounts
+ * Acepta tanto campos normalizados como los que devuelve Graph (por compatibilidad).
+ */
+const AdAccountSchema = new Schema(
+  {
+    // IDs: a veces llega "act_123..." y/o "123..."
+    id:            { type: String },
+    account_id:    { type: String },
 
-MetaAccountSchema.index({ userId: 1 }, { unique: true });
+    // Nombres / estado / moneda
+    name:             { type: String },
+    account_name:     { type: String },
+    account_status:   { type: Schema.Types.Mixed },
 
-MetaAccountSchema.pre('save', function(next) {
+    currency:         { type: String },
+    account_currency: { type: String },
+
+    // Zona horaria
+    timezone_name: { type: String },
+    timezone:      { type: String },
+  },
+  { _id: false }
+);
+
+/**
+ * MetaAccount
+ * Diseñado para trabajar con diferentes estructuras que ya tienes en Atlas.
+ * - user o userId (soporta ambos)
+ * - access_token | token | longlivedToken
+ * - ad_accounts normalizado
+ */
+const MetaAccountSchema = new Schema(
+  {
+    // Referencia a usuario (cualquiera de los dos; índices sparse + unique)
+    user:   { type: Types.ObjectId, ref: 'User', index: true, sparse: true },
+    userId: { type: Types.ObjectId, ref: 'User', index: true, sparse: true },
+
+    // Tokens (ocultos por defecto)
+    access_token:   { type: String, select: false },
+    token:          { type: String, select: false },
+    longlivedToken: { type: String, select: false },
+
+    // Expiraciones posibles (cubriendo tus nombres)
+    expires_at: { type: Date },
+    expiresAt:  { type: Date },
+
+    // Datos del owner de Meta (opcionales)
+    fb_user_id: { type: String },
+    email:      { type: String },
+    name:       { type: String },
+
+    // Objetivo elegido en el onboarding
+    objective: {
+      type: String,
+      enum: ['ventas', 'alcance', 'leads'],
+      default: 'ventas',
+    },
+
+    // Cuentas publicitarias y páginas
+    ad_accounts:      { type: [AdAccountSchema], default: [] },
+    pages:            { type: Array, default: [] },
+    scopes:           { type: [String], default: [] },
+
+    // Cuenta por defecto (guardar sin "act_")
+    defaultAccountId: { type: String },
+
+    // Timestamps manuales por compatibilidad
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now },
+  },
+  {
+    collection: 'metaaccounts',
+  }
+);
+
+/* Índices:
+ *  - únicos y esparsos para user / userId (permiten tener uno u otro, no ambos duplicados)
+ */
+MetaAccountSchema.index({ user: 1   }, { unique: true, sparse: true });
+MetaAccountSchema.index({ userId: 1 }, { unique: true, sparse: true });
+
+/* Mantener updatedAt en cada save */
+MetaAccountSchema.pre('save', function (next) {
   this.updatedAt = new Date();
   next();
 });
 
-module.exports = model('MetaAccount', MetaAccountSchema);
+/* Exportar de forma segura si el modelo ya existe (evita OverwriteModelError en hot-reload) */
+module.exports =
+  mongoose.models.MetaAccount || model('MetaAccount', MetaAccountSchema);
