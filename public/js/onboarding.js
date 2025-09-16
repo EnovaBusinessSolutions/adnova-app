@@ -18,7 +18,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const continueBtn       = document.getElementById('continue-btn');
 
   const flagShopify = document.getElementById('shopifyConnectedFlag'); // "true" si ya estabas conectado
-  const flagGoogle  = document.getElementById('googleConnectedFlag');  // sólo para UI antigua (no cuenta para 'Continuar')
+  const flagGoogle  = document.getElementById('googleConnectedFlag');  // sólo para UI antigua
 
   const domainStep  = document.getElementById('shopify-domain-step');
   const domainInput = document.getElementById('shop-domain-input');
@@ -33,20 +33,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   /* -----------------------------
    * Bloques de objetivo Meta/Google
    * ----------------------------- */
-  // META
+  // META — ¡rutas nuevas del backend!
   const metaObjectiveStep  = document.getElementById('meta-objective-step');
   const saveMetaObjective  = document.getElementById('save-meta-objective-btn');
-  const META_STATUS_URL    = '/auth/meta/status';
-  const META_OBJECTIVE_URL = '/auth/meta/objective';
+  const META_STATUS_URL    = '/api/meta/accounts/status';
+  const META_OBJECTIVE_URL = '/api/meta/accounts/objective';
 
-  // GOOGLE
+  // GOOGLE (sin cambios)
   const googleObjectiveStep  = document.getElementById('google-objective-step');
   const saveGoogleObjective  = document.getElementById('save-google-objective-btn');
   const GOOGLE_STATUS_URL    = '/auth/google/status';
   const GOOGLE_OBJECTIVE_URL = '/auth/google/objective';
 
   /* -----------------------------
-   * Helpers
+   * Helpers UI
    * ----------------------------- */
   const show = el => el && (el.style.display = 'block');
   const hide = el => el && (el.style.display = 'none');
@@ -104,9 +104,7 @@ document.addEventListener('DOMContentLoaded', async () => {
    * Shopify
    * ----------------------------- */
   const pintarShopifyConectado = async () => {
-    if (connectShopifyBtn) {
-      setBtnConnected(connectShopifyBtn);
-    }
+    if (connectShopifyBtn) setBtnConnected(connectShopifyBtn);
 
     const shop =
       shopFromQuery ||
@@ -177,8 +175,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function fetchMetaStatus() {
     try {
-      const st = await apiFetch(META_STATUS_URL);
-      return st || { connected: false, objective: null };
+      const r = await apiFetch(META_STATUS_URL);
+      if (r && r.ok) {
+        return { connected: !!r.connected, objective: r.objective ?? null };
+      }
+      return { connected: false, objective: null };
     } catch {
       // fallback suave a /api/session si hiciera falta
       try {
@@ -208,7 +209,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   connectMetaBtn?.addEventListener('click', () => {
     localStorage.setItem('meta_connecting', '1');
     disableBtnWhileConnecting(connectMetaBtn);
-    // si tu botón no es <a>, navegamos manualmente:
     if (connectMetaBtn.tagName !== 'A') window.location.href = '/auth/meta/login';
   });
 
@@ -217,10 +217,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const selected = (document.querySelector('input[name="metaObjective"]:checked') || {}).value;
     if (!selected) return alert('Selecciona un objetivo');
     try {
-      await apiFetch(META_OBJECTIVE_URL, {
+      const r = await apiFetch(META_OBJECTIVE_URL, {
         method: 'POST',
         body: JSON.stringify({ objective: selected })
       });
+      if (!r?.ok) throw new Error(r?.error || 'No se pudo guardar el objetivo');
       hide(metaObjectiveStep);
       markMetaConnected(selected);
     } catch (e) {
@@ -250,7 +251,6 @@ document.addEventListener('DOMContentLoaded', async () => {
    * ----------------------------- */
   const markGoogleConnected = (objective = null) => {
     setBtnConnected(connectGoogleBtn);
-    // Sólo marcamos "conectado" para continuar cuando ya hay objetivo
     sessionStorage.setItem('googleConnected', 'true');
     if (objective) sessionStorage.setItem('googleObjective', objective);
     habilitarContinue();
@@ -261,7 +261,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       const st = await apiFetch(GOOGLE_STATUS_URL);
       return st || { connected: false, objective: null };
     } catch {
-      // fallback suave (para UI antigua)
       try {
         const s = await apiFetch('/api/session');
         return {
@@ -275,7 +274,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   async function refreshGoogleUI() {
-    const st = await fetchGoogleStatus(); // {connected, objective}
+    const st = await fetchGoogleStatus();
     if (st.connected && !st.objective) {
       openGoogleCloseMeta();
     } else if (st.connected && st.objective) {
@@ -285,14 +284,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     return st;
   }
 
-  // Click conectar Google
   connectGoogleBtn?.addEventListener('click', () => {
     localStorage.setItem('google_connecting', '1');
     disableBtnWhileConnecting(connectGoogleBtn);
     window.location.href = '/auth/google/connect';
   });
 
-  // Guardar objetivo Google
   saveGoogleObjective?.addEventListener('click', async () => {
     const selected = (document.querySelector('input[name="googleObjective"]:checked') || {}).value;
     if (!selected) return alert('Selecciona un objetivo');
@@ -309,7 +306,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Poll Google si veníamos conectando
   async function pollGoogleUntilConnected(maxTries = 30, delayMs = 2000) {
     for (let i = 0; i < maxTries; i++) {
       const st = await fetchGoogleStatus();
@@ -362,7 +358,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   /* -----------------------------
    * Sincronización inicial GLOBAL
    * ----------------------------- */
-  // Siempre refresca ambos estados al cargar (aunque no haya query params)
   await Promise.allSettled([ refreshGoogleUI(), refreshMetaUI() ]);
   habilitarContinue();
 

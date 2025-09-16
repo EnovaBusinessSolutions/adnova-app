@@ -1,4 +1,6 @@
 // backend/routes/meta.js
+'use strict';
+
 const express = require('express');
 const axios   = require('axios');
 const crypto  = require('crypto');
@@ -38,7 +40,12 @@ function makeAppSecretProof(accessToken) {
 
 async function exchangeCodeForToken(code) {
   const { data } = await axios.get(`${FB_GRAPH}/oauth/access_token`, {
-    params: { client_id: APP_ID, client_secret: APP_SECRET, redirect_uri: REDIRECT_URI, code },
+    params: {
+      client_id: APP_ID,
+      client_secret: APP_SECRET,
+      redirect_uri: REDIRECT_URI,
+      code
+    },
     timeout: 15000
   });
   return data; // { access_token, token_type, expires_in }
@@ -46,7 +53,12 @@ async function exchangeCodeForToken(code) {
 
 async function toLongLivedToken(shortToken) {
   const { data } = await axios.get(`${FB_GRAPH}/oauth/access_token`, {
-    params: { grant_type: 'fb_exchange_token', client_id: APP_ID, client_secret: APP_SECRET, fb_exchange_token: shortToken },
+    params: {
+      grant_type: 'fb_exchange_token',
+      client_id: APP_ID,
+      client_secret: APP_SECRET,
+      fb_exchange_token: shortToken
+    },
     timeout: 15000
   });
   return data; // { access_token, token_type, expires_in }
@@ -71,7 +83,6 @@ const toActId   = (s = '') => {
   const id = normActId(s);
   return id ? `act_${id}` : '';
 };
-const OBJECTIVE_ALLOWED = new Set(['ventas','alcance','leads']);
 
 /* =========================
    OAuth
@@ -134,13 +145,19 @@ router.get('/callback', async (req, res) => {
     let fbUserId = null, email = null, name = null;
     try {
       const me = await axios.get(`${FB_GRAPH}/me`, {
-        params: { fields: 'id,name,email', access_token: accessToken, appsecret_proof: makeAppSecretProof(accessToken) },
+        params: {
+          fields: 'id,name,email',
+          access_token: accessToken,
+          appsecret_proof: makeAppSecretProof(accessToken)
+        },
         timeout: 15000
       });
       fbUserId = me.data?.id || null;
       email    = me.data?.email || null;
       name     = me.data?.name  || null;
-    } catch {}
+    } catch {
+      // no bloquea
+    }
 
     // 5) Cuentas publicitarias
     let adAccounts = [];
@@ -148,7 +165,7 @@ router.get('/callback', async (req, res) => {
       const proof = makeAppSecretProof(accessToken);
       const ads = await axios.get(`${FB_GRAPH}/me/adaccounts`, {
         params: {
-          fields: 'account_id,name,currency,configured_status',
+          fields: 'account_id,name,currency,configured_status,timezone_name',
           access_token: accessToken,
           appsecret_proof: proof,
           limit: 100
@@ -156,11 +173,12 @@ router.get('/callback', async (req, res) => {
         timeout: 15000
       });
       adAccounts = (ads.data?.data || []).map((a) => ({
-        id: toActId(a.account_id),            // "act_123"
-        account_id: normActId(a.account_id),  // "123"
+        id: toActId(a.account_id),             // "act_123"
+        account_id: normActId(a.account_id),   // "123"
         name: a.name,
         currency: a.currency,
-        configured_status: a.configured_status
+        configured_status: a.configured_status,
+        timezone_name: a.timezone_name || null
       }));
     } catch (e) {
       console.warn('No se pudieron leer adaccounts:', e?.response?.data || e.message);
@@ -168,11 +186,15 @@ router.get('/callback', async (req, res) => {
 
     // 6) Persistir (User + MetaAccount)
     const userId = req.user._id;
+
     await User.findByIdAndUpdate(userId, {
-      $set: { metaConnected: true, metaFbUserId: fbUserId || undefined }
+      $set: {
+        metaConnected: true,
+        metaFbUserId: fbUserId || undefined
+      }
     });
 
-    // Guardamos con los nombres que ya usa tu job (adAccounts) y compat con el modelo (user/userId)
+    // Guardamos con ambos nombres de token y ambos arrays (ad_accounts/adAccounts)
     const defaultAccountId = adAccounts?.[0]?.account_id || null; // "123"
 
     if (MetaAccount) {
@@ -182,9 +204,13 @@ router.get('/callback', async (req, res) => {
           $set: {
             userId, user: userId,
             fbUserId: fbUserId || undefined,
+            // compatibilidad de nombres:
             longLivedToken: accessToken,
-            expiresAt: expiresAt || null,
-            adAccounts,                  // <-- importante: este campo existe ya en tus docs
+            longlivedToken: accessToken,
+            access_token:   accessToken,
+            expiresAt:      expiresAt || null,
+            ad_accounts:    adAccounts,
+            adAccounts:     adAccounts,
             defaultAccountId,
             updatedAt: new Date()
           }
@@ -192,8 +218,13 @@ router.get('/callback', async (req, res) => {
         { upsert: true, new: true }
       );
     } else {
+      // Fallback: si no existe el modelo, guarda al menos flag en User
       await User.findByIdAndUpdate(userId, {
-        $set: { metaAccessToken: accessToken, metaTokenExpiresAt: expiresAt || null, metaDefaultAccountId: defaultAccountId }
+        $set: {
+          metaAccessToken: accessToken,
+          metaTokenExpiresAt: expiresAt || null,
+          metaDefaultAccountId: defaultAccountId
+        }
       });
     }
 
@@ -210,21 +241,20 @@ router.get('/callback', async (req, res) => {
 });
 
 /* =========================
-   API de estado y selección
+   API de estado y selección (compatibilidad)
    ========================= */
 
-// GET /auth/meta/status  → ahora incluye "objective"
+// GET /auth/meta/status  -> usado por código antiguo; ahora también devuelve `objective`
 router.get('/status', requireAuth, async (req, res) => {
   try {
-    // Fallback si no existe el modelo
     if (!MetaAccount) {
       const u = await User.findById(req.user._id).lean();
       return res.json({
         connected: !!u?.metaAccessToken,
         hasAccounts: !!u?.metaDefaultAccountId,
         defaultAccountId: u?.metaDefaultAccountId || null,
-        objective: u?.metaObjective || null,           // <-- añadido
-        accounts: []
+        accounts: [],
+        objective: null
       });
     }
 
@@ -232,12 +262,18 @@ router.get('/status', requireAuth, async (req, res) => {
       .findOne({ $or: [{ userId: req.user._id }, { user: req.user._id }] })
       .lean();
 
-    const connected = !!doc?.longLivedToken;
-    const accounts  = (doc?.adAccounts || doc?.ad_accounts || []); // admite ambas keys
+    const connected = !!(doc?.longLivedToken || doc?.longlivedToken || doc?.access_token || doc?.token);
+    const accounts  = doc?.ad_accounts || doc?.adAccounts || [];
     const defaultAccountId = doc?.defaultAccountId || accounts?.[0]?.account_id || null;
-    const objective = doc?.objective || (await User.findById(req.user._id).lean())?.metaObjective || null;
+    const objective = doc?.objective ?? null;
 
-    res.json({ connected, hasAccounts: accounts.length > 0, defaultAccountId, objective, accounts });
+    res.json({
+      connected,
+      hasAccounts: accounts.length > 0,
+      defaultAccountId,
+      accounts,
+      objective
+    });
   } catch (e) {
     console.error('status meta error:', e);
     res.status(500).json({ error: 'status_error' });
@@ -264,32 +300,6 @@ router.post('/default-account', requireAuth, express.json(), async (req, res) =>
     res.json({ ok: true, defaultAccountId: accountId });
   } catch (e) {
     console.error('default-account meta error:', e);
-    res.status(500).json({ error: 'save_failed' });
-  }
-});
-
-// NEW: POST /auth/meta/objective  body: { objective: "ventas"|"alcance"|"leads" }
-router.post('/objective', requireAuth, express.json(), async (req, res) => {
-  try {
-    const objective = (req.body?.objective || '').toString().toLowerCase().trim();
-    if (!OBJECTIVE_ALLOWED.has(objective)) {
-      return res.status(400).json({ error: 'invalid_objective' });
-    }
-
-    // Guarda en MetaAccount si existe, en User como fallback
-    if (MetaAccount) {
-      await MetaAccount.findOneAndUpdate(
-        { $or: [{ userId: req.user._id }, { user: req.user._id }] },
-        { $set: { objective, updatedAt: new Date() } },
-        { upsert: true }
-      );
-    }
-    await User.findByIdAndUpdate(req.user._id, { $set: { metaObjective: objective, metaConnected: true } });
-
-    // Tip: refrescar datos mínimos de sesión no es crítico; la UI usa /auth/meta/status
-    return res.json({ ok: true, objective });
-  } catch (e) {
-    console.error('objective meta error:', e);
     res.status(500).json({ error: 'save_failed' });
   }
 });

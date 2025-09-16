@@ -15,12 +15,13 @@ const AdAccountSchema = new Schema(
     account_id:    { type: String },
 
     // Nombres / estado / moneda
-    name:             { type: String },
-    account_name:     { type: String },
-    account_status:   { type: Schema.Types.Mixed },
+    name:               { type: String },
+    account_name:       { type: String },
+    account_status:     { type: Schema.Types.Mixed },
+    configured_status:  { type: Schema.Types.Mixed },
 
-    currency:         { type: String },
-    account_currency: { type: String },
+    currency:           { type: String },
+    account_currency:   { type: String },
 
     // Zona horaria
     timezone_name: { type: String },
@@ -31,10 +32,10 @@ const AdAccountSchema = new Schema(
 
 /**
  * MetaAccount
- * Diseñado para trabajar con diferentes estructuras que ya tienes en Atlas.
- * - user o userId (soporta ambos)
- * - access_token | token | longlivedToken
- * - ad_accounts normalizado
+ * Tolerante a diferentes nombres que ya puedas tener en Atlas.
+ * - user o userId (acepta ambos)
+ * - access_token | token | longlivedToken | accessToken | longLivedToken
+ * - ad_accounts o adAccounts
  */
 const MetaAccountSchema = new Schema(
   {
@@ -45,7 +46,9 @@ const MetaAccountSchema = new Schema(
     // Tokens (ocultos por defecto)
     access_token:   { type: String, select: false },
     token:          { type: String, select: false },
-    longlivedToken: { type: String, select: false },
+    longlivedToken: { type: String, select: false }, // snake-style
+    accessToken:    { type: String, select: false }, // camel
+    longLivedToken: { type: String, select: false }, // camel
 
     // Expiraciones posibles (cubriendo tus nombres)
     expires_at: { type: Date },
@@ -56,19 +59,20 @@ const MetaAccountSchema = new Schema(
     email:      { type: String },
     name:       { type: String },
 
-    // Objetivo elegido en el onboarding
+    // Objetivo elegido en el onboarding (sin default para que el UI pida elegirlo)
     objective: {
       type: String,
       enum: ['ventas', 'alcance', 'leads'],
-      default: 'ventas',
+      default: null,
     },
 
     // Cuentas publicitarias y páginas
-    ad_accounts:      { type: [AdAccountSchema], default: [] },
-    pages:            { type: Array, default: [] },
-    scopes:           { type: [String], default: [] },
+    ad_accounts: { type: [AdAccountSchema], default: [] }, // snake
+    adAccounts:  { type: [AdAccountSchema], default: [] }, // camel
+    pages:       { type: Array, default: [] },
+    scopes:      { type: [String], default: [] },
 
-    // Cuenta por defecto (guardar sin "act_")
+    // Cuenta por defecto (guardar SIN "act_")
     defaultAccountId: { type: String },
 
     // Timestamps manuales por compatibilidad
@@ -80,9 +84,7 @@ const MetaAccountSchema = new Schema(
   }
 );
 
-/* Índices:
- *  - únicos y esparsos para user / userId (permiten tener uno u otro, no ambos duplicados)
- */
+/* Índices únicos y esparsos para user / userId */
 MetaAccountSchema.index({ user: 1   }, { unique: true, sparse: true });
 MetaAccountSchema.index({ userId: 1 }, { unique: true, sparse: true });
 
@@ -92,6 +94,6 @@ MetaAccountSchema.pre('save', function (next) {
   next();
 });
 
-/* Exportar de forma segura si el modelo ya existe (evita OverwriteModelError en hot-reload) */
+/* Exportar de forma segura si el modelo ya existe (evita OverwriteModelError) */
 module.exports =
   mongoose.models.MetaAccount || model('MetaAccount', MetaAccountSchema);
