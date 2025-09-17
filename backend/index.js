@@ -36,38 +36,47 @@ const userRoutes = require('./routes/user');
 const auditsRoutes = require('./routes/audits');
 const objectivesRoutes = require('./routes/objectives');
 
-// Meta endpoints que consume el dashboard
+// Meta endpoints (dashboard)
 const metaInsightsRoutes = require('./routes/metaInsights');
 const metaAccountsRoutes = require('./routes/metaAccounts');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ---------- CORS ----------
+/* ----------------------------- C O R S ----------------------------- */
 app.use(
   cors({
-    origin: ['https://ai.adnova.digital', /\.myshopify\.com$/, 'https://admin.shopify.com'],
+    origin: [
+      'https://ai.adnova.digital',
+      /\.myshopify\.com$/,
+      'https://admin.shopify.com',
+      // Dev / Vite / local preview
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+    ],
     credentials: true,
   })
 );
 app.options(/.*/, cors());
 
-// ---------- Webhooks: RAW antes de json ----------
+/* ------------- Webhooks (raw) ANTES de cualquier body parser -------- */
 app.use('/connector/webhooks', express.raw({ type: 'application/json' }), webhookRoutes);
 
-// Body parser (después de raw)
+/* ------------------------- Body parsers ---------------------------- */
+app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// ---------- CSP pública ----------
+/* ------------------------------ CSP ------------------------------- */
 app.use(publicCSP);
 
-// ---------- Mongo ----------
+/* ----------------------------- Mongo ------------------------------ */
 mongoose
   .connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log('✅ Conectado a MongoDB Atlas'))
   .catch((err) => console.error('❌ Error al conectar con MongoDB:', err));
 
-// ---------- Sesión / Passport ----------
+/* ------------------------ Sesión / Passport ------------------------ */
 app.set('trust proxy', 1);
 app.use(
   session({
@@ -77,13 +86,14 @@ app.use(
     cookie: {
       sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
       secure: process.env.NODE_ENV === 'production',
+      // domain: '.adnova.digital', // <-- solo si lo necesitas entre subdominios
     },
   })
 );
 app.use(passport.initialize());
 app.use(passport.session());
 
-// ---------- Guards ----------
+/* ------------------------------ Guards ----------------------------- */
 function ensureAuthenticated(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.redirect('/login');
@@ -100,25 +110,25 @@ function sessionGuard(req, res, next) {
   return res.status(401).json({ error: 'No hay sesión' });
 }
 
-// ---------- DASHBOARD (submódulo con fallback) ----------
+/* --------- Dashboard (submódulo build Vite con fallback legacy) ---- */
 const DASHBOARD_DIST = path.join(__dirname, '../dashboard-src/dist');
 const LEGACY_DASH = path.join(__dirname, '../public/dashboard');
 const HAS_DASHBOARD_DIST = fs.existsSync(path.join(DASHBOARD_DIST, 'index.html'));
 
 if (HAS_DASHBOARD_DIST) {
-  // Assets del build de Vite (prioridad alta)
+  // assets de Vite (immutable)
   app.use(
     '/assets',
     express.static(path.join(DASHBOARD_DIST, 'assets'), { immutable: true, maxAge: '1y' })
   );
-  // Montar dashboard protegido desde el submódulo
+  // Dashboard protegido
   app.use('/dashboard', ensureAuthenticated, express.static(DASHBOARD_DIST));
   app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
     res.sendFile(path.join(DASHBOARD_DIST, 'index.html'));
   });
   console.log('✅ Dashboard servido desde submódulo: dashboard-src/dist');
 } else {
-  // Fallback: dashboard legacy de /public (usa index.html)
+  // Fallback legacy
   app.use('/assets', express.static(path.join(LEGACY_DASH, 'assets')));
   app.use('/dashboard', ensureAuthenticated, express.static(LEGACY_DASH));
   app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
@@ -127,20 +137,20 @@ if (HAS_DASHBOARD_DIST) {
   console.warn('⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard');
 }
 
-// ---------- STATIC público (resto del sitio) ----------
+/* -------------------- Static público (sitio) ----------------------- */
 app.use('/assets', express.static(path.join(__dirname, '../public/landing/assets')));
 app.use('/assets', express.static(path.join(__dirname, '../public/support/assets')));
 app.use('/assets', express.static(path.join(__dirname, '../public/plans/assets')));
 app.use(express.static(path.join(__dirname, '../public')));
 
-// ---------- Rutas específicas ----------
+/* --------------------- Rutas específicas --------------------------- */
 app.get('/connector/interface', shopifyCSP, (req, res) => {
   const { shop, host } = req.query;
   if (!shop || !host) return res.status(400).send("Faltan parámetros 'shop' o 'host'");
   res.sendFile(path.join(__dirname, '../public/connector/interface.html'));
 });
 
-// Home / Login
+/* ------------------------ Home / Login ----------------------------- */
 app.get('/', (req, res) => {
   const { shop } = req.query;
   if (shop) return res.redirect(`/connector?shop=${shop}`);
@@ -158,7 +168,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, uptime: process.uptime() });
 });
 
-// ---------- Flujos Auth / Usuario ----------
+/* -------------------------- SMTP/Nodemailer ------------------------ */
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: Number(process.env.SMTP_PORT),
@@ -170,6 +180,7 @@ transporter.verify((err) => {
   else console.log('✅ SMTP listo para enviar correo');
 });
 
+/* --------------------------- Auth/Usuario -------------------------- */
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
@@ -320,7 +331,7 @@ app.post('/api/login', async (req, res, next) => {
   }
 });
 
-// Onboarding (HTML server-side inject)
+/* --------------------------- Onboarding ---------------------------- */
 app.get('/onboarding', ensureNotOnboarded, async (req, res) => {
   const filePath = path.join(__dirname, '../public/onboarding.html');
   const user = await User.findById(req.user._id).lean();
@@ -355,7 +366,7 @@ app.post('/api/complete-onboarding', async (req, res) => {
   }
 });
 
-// ---------- APIs ----------
+/* ------------------------------ APIs ------------------------------- */
 app.get('/api/session', (req, res) => {
   if (!req.isAuthenticated()) {
     return res.status(401).json({ authenticated: false });
@@ -370,7 +381,7 @@ app.get('/api/session', (req, res) => {
       googleConnected: req.user.googleConnected,
       metaConnected: req.user.metaConnected,
       shopifyConnected: req.user.shopifyConnected,
-      // Fallbacks que usa el onboarding si /auth/.../status no está disponible
+      // Fallbacks usados por onboarding si /auth/.../status no está
       googleObjective: req.user.googleObjective || null,
       metaObjective: req.user.metaObjective || null,
     },
@@ -385,13 +396,13 @@ app.use('/api/saas/shopify', sessionGuard, require('./routes/shopifyMatch'));
 // Rutas públicas / auth
 app.use('/api/shopify', shopifyRoutes);
 app.use('/', privacyRoutes);
-app.use('/auth/google', googleConnect);
+app.use('/auth/google', googleConnect); // rutas de conexión Google (OAuth + scopes Ads/Analytics)
 app.use('/', googleAnalytics);
 
-// Auth Meta (login/callback/status/objective/etc.)
+// Auth Meta
 app.use('/auth/meta', metaAuthRoutes);
 
-// APIs varias
+// Varias
 app.use('/api', mockShopify);
 app.use('/api', userRoutes);
 app.use('/api/audits', auditsRoutes);
@@ -402,11 +413,17 @@ app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter);
 app.use('/api', objectivesRoutes);
 
-// Meta endpoints que consume el dashboard (protegidos por sesión)
+// Google Ads insights — PROTEGIDO POR SESIÓN
+app.use('/api/google/ads', sessionGuard, require('./routes/googleAdsInsights'));
+
+// Meta endpoints consumidos por dashboard (ya protegidos)
 app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);
 app.use('/api/meta/accounts', sessionGuard, metaAccountsRoutes);
 
-// ---------- OAuth callbacks Google ----------
+/* ------------------------- OAuth Google (opcional) ------------------
+   Si estas rutas ya están dentro de ./routes/googleConnect, puedes
+   comentar/borrar este bloque para evitar duplicación.
+--------------------------------------------------------------------- */
 app.get('/auth/google/login',
   passport.authenticate('google', { scope: ['profile', 'email'] })
 );
@@ -418,7 +435,7 @@ app.get('/auth/google/login/callback',
   }
 );
 
-// ---------- Logout ----------
+/* ----------------------------- Logout ------------------------------ */
 app.get('/logout', (req, res) => {
   req.logout((err) => {
     if (err) {
@@ -444,7 +461,7 @@ app.get('/logout', (req, res) => {
   });
 });
 
-// Shopify app proxy (embebido)
+/* ------------------------- Shopify app proxy ----------------------- */
 app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
   const { shop, host } = req.query;
   const redirectUrl = new URL('/connector/interface', `https://${req.headers.host}`);
@@ -453,14 +470,14 @@ app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
   return res.redirect(redirectUrl.toString());
 });
 
-// ---------- 404 & errors ----------
+/* ------------------------ 404 & errores ---------------------------- */
 app.use((req, res) => res.status(404).send('Página no encontrada'));
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
-// ---------- Start ----------
+/* ----------------------------- Start ------------------------------- */
 app.listen(PORT, () => {
   console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
 });
