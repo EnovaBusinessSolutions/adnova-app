@@ -1,36 +1,41 @@
 'use strict';
 
 const express = require('express');
-const axios = require('axios');
 const { OAuth2Client } = require('google-auth-library');
-
+const mongoose = require('mongoose');
 const router = express.Router();
 
 const User = require('../models/User');
-let GoogleAccount = null;
-try { GoogleAccount = require('../models/GoogleAccount'); } catch (_) {}
+
+// Modelo GoogleAccount “resiliente” si no existe require(...)
+let GoogleAccount;
+try { GoogleAccount = require('../models/GoogleAccount'); } catch (_) {
+  const { Schema, model } = mongoose;
+  const schema = new Schema({
+    user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'User' },
+    accessToken: { type: String, select: false },
+    refreshToken: { type: String, select: false },
+    managerCustomerId: String,
+    defaultCustomerId: String,
+    customers: Array,
+    objective: String,
+  }, { collection: 'googleaccounts', timestamps: true });
+  GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
+}
 
 const {
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
   GOOGLE_CONNECT_CALLBACK_URL,
-  GOOGLE_DEVELOPER_TOKEN,
-  GOOGLE_ADS_LOGIN_CUSTOMER_ID, // opcional (tu MCC)
 } = process.env;
 
-const SCOPES = [
-  'https://www.googleapis.com/auth/adwords',
-  'openid',
-  'email',
-  'profile',
-];
-
-function requireAuth(req, res, next) {
+function requireSession(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
-  return res.redirect('/login');
+  return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-function oAuthClient() {
+function oauth() {
   return new OAuth2Client({
     clientId: GOOGLE_CLIENT_ID,
     clientSecret: GOOGLE_CLIENT_SECRET,
@@ -39,175 +44,131 @@ function oAuthClient() {
 }
 
 /* =========================
-   Conectar (OAuth consent)
+   1) Iniciar conexión
+   GET /auth/google/connect
    ========================= */
-router.get('/connect', requireAuth, (req, res) => {
-  const client = oAuthClient();
-  const url = client.generateAuthUrl({
-    access_type: 'offline',                // para refresh_token
-    prompt: 'consent',                     // garantiza refresh_token la 1ª vez
-    scope: SCOPES,
-    include_granted_scopes: true,
-  });
-  res.redirect(url);
-});
-
-/* =========================
-   Callback
-   ========================= */
-router.get('/connect/callback', requireAuth, async (req, res) => {
+router.get('/connect', requireSession, async (req, res) => {
   try {
-    const code = req.query.code;
-    if (!code) return res.redirect('/onboarding?google=error');
-
-    const client = oAuthClient();
-    const { tokens } = await client.getToken(code);
-    // tokens: { access_token, refresh_token?, expiry_date, scope, ... }
-    client.setCredentials(tokens);
-
-    // Guardamos/actualizamos doc
-    const userId = req.user._id;
-
-    // 1) Obtener lista de cuentas accesibles
-    const { data: listData } = await axios.get(
-      'https://googleads.googleapis.com/v16/customers:listAccessibleCustomers',
-      {
-        headers: {
-          Authorization: `Bearer ${tokens.access_token}`,
-          'developer-token': GOOGLE_DEVELOPER_TOKEN,
-        },
-      }
-    );
-    const resourceNames = listData.resourceNames || []; // ["customers/123...", ...]
-
-    // 2) Elegimos la primera y leemos detalles básicos del customer con GAQL
-    let customers = [];
-    let defaultCustomerId = null;
-
-    if (resourceNames.length > 0) {
-      const firstId = String(resourceNames[0]).replace('customers/', '');
-      defaultCustomerId = firstId;
-
-      const gaql = `
-        SELECT
-          customer.id,
-          customer.descriptive_name,
-          customer.currency_code,
-          customer.time_zone
-        FROM customer
-        LIMIT 50
-      `;
-
-      const { data: searchRes } = await axios.post(
-        `https://googleads.googleapis.com/v16/customers/${firstId}/googleAds:search`,
-        { query: gaql },
-        {
-          headers: {
-            Authorization: `Bearer ${tokens.access_token}`,
-            'developer-token': GOOGLE_DEVELOPER_TOKEN,
-            ...(GOOGLE_ADS_LOGIN_CUSTOMER_ID ? { 'login-customer-id': GOOGLE_ADS_LOGIN_CUSTOMER_ID } : {}),
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      const rows = searchRes.results || [];
-      customers = rows.map(r => ({
-        id: r?.customer?.id || firstId,
-        resourceName: `customers/${r?.customer?.id || firstId}`,
-        descriptiveName: r?.customer?.descriptiveName || null,
-        currencyCode: r?.customer?.currencyCode || null,
-        timeZone: r?.customer?.timeZone || null,
-      }));
-      if (!customers.length) {
-        customers.push({
-          id: firstId,
-          resourceName: `customers/${firstId}`,
-          descriptiveName: null,
-          currencyCode: null,
-          timeZone: null,
-        });
-      }
-    }
-
-    // 3) Persistimos
-    if (GoogleAccount) {
-      await GoogleAccount.findOneAndUpdate(
-        { $or: [{ userId }, { user: userId }] },
-        {
-          $set: {
-            userId, user: userId,
-            accessToken: tokens.access_token || undefined,
-            refreshToken: tokens.refresh_token || undefined,
-            scope: (tokens.scope || '').split(' ').filter(Boolean),
-            expiresAt: tokens.expiry_date ? new Date(tokens.expiry_date) : null,
-            managerCustomerId: GOOGLE_ADS_LOGIN_CUSTOMER_ID || undefined,
-            customers,
-            defaultCustomerId,
-            updatedAt: new Date(),
-          },
-        },
-        { upsert: true, new: true }
-      );
-    }
-
-    await User.findByIdAndUpdate(userId, { $set: { googleConnected: true } });
-
-    // refrescamos sesión y volvemos al onboarding con ?google=ok
-    const destino = req.user.onboardingComplete ? '/dashboard' : '/onboarding?google=ok';
-    req.login(req.user, () => res.redirect(destino));
+    const client = oauth();
+    const url = client.generateAuthUrl({
+      access_type: 'offline',
+      prompt: 'consent', // asegura refresh_token la primera vez
+      scope: [
+        'https://www.googleapis.com/auth/userinfo.email',
+        'https://www.googleapis.com/auth/userinfo.profile',
+        // Ads:
+        'https://www.googleapis.com/auth/adwords',
+        // (agrega analytics si lo necesitas)
+        // 'https://www.googleapis.com/auth/analytics.readonly',
+      ],
+      state: JSON.stringify({
+        uid: String(req.user._id),
+        returnTo: '/onboarding?google=connected',
+      }),
+    });
+    return res.redirect(url);
   } catch (err) {
-    console.error('❌ Google connect callback error:', err?.response?.data || err.message);
-    res.redirect('/onboarding?google=error');
+    console.error('google connect error:', err);
+    return res.redirect('/onboarding?google=error&reason=connect_build');
   }
 });
 
 /* =========================
-   STATUS para onboarding
+   2) Callback OAuth
+   GET /auth/google/callback
    ========================= */
-// GET /auth/google/status -> { connected, objective }
-router.get('/status', requireAuth, async (req, res) => {
+router.get('/callback', requireSession, async (req, res) => {
   try {
-    if (!GoogleAccount) return res.json({ connected: !!req.user.googleConnected, objective: null });
+    if (req.query.error) {
+      // Usuario canceló o Google devolvió error
+      return res.redirect(`/onboarding?google=error&reason=${encodeURIComponent(req.query.error)}`);
+    }
 
-    const doc = await GoogleAccount
-      .findOne({ $or: [{ userId: req.user._id }, { user: req.user._id }] })
+    const code = req.query.code;
+    if (!code) {
+      return res.redirect('/onboarding?google=error&reason=no_code');
+    }
+
+    const client = oauth();
+    const { tokens } = await client.getToken(code);
+    // tokens: access_token, refresh_token (si prompt=consent), expiry_date, etc.
+
+    if (!tokens?.access_token) {
+      return res.redirect('/onboarding?google=error&reason=no_access_token');
+    }
+
+    // Guarda/actualiza la cuenta Google de este usuario
+    const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
+    const update = {
+      user: req.user._id,
+      userId: req.user._id,
+      accessToken: tokens.access_token,
+    };
+    if (tokens.refresh_token) update.refreshToken = tokens.refresh_token;
+
+    const opts = { upsert: true, new: true, setDefaultsOnInsert: true };
+    await GoogleAccount.findOneAndUpdate(q, update, opts);
+
+    // Marca al usuario como conectado
+    await User.findByIdAndUpdate(req.user._id, { $set: { googleConnected: true } });
+
+    // Redirige al onboarding; el JS consultará /auth/google/status
+    return res.redirect('/onboarding?google=connected');
+  } catch (err) {
+    console.error('google callback error:', err?.response?.data || err);
+    return res.redirect('/onboarding?google=error&reason=callback_exception');
+  }
+});
+
+/* =========================
+   3) Status para onboarding
+   GET /auth/google/status
+   ========================= */
+router.get('/status', requireSession, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).lean();
+    const connected = !!user?.googleConnected;
+
+    // opcional: validación “suave” si hay registro en GoogleAccount
+    const ga = await GoogleAccount.findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
       .select('+refreshToken +accessToken objective defaultCustomerId')
       .lean();
 
-    const connected = !!(doc?.refreshToken || doc?.accessToken);
-    return res.json({ connected, objective: doc?.objective || null });
-  } catch (e) {
-    console.error('google/status error:', e);
-    res.status(500).json({ error: 'STATUS_ERROR' });
+    const hasTokens = !!ga?.refreshToken || !!ga?.accessToken;
+
+    return res.json({
+      ok: true,
+      connected: connected && hasTokens,
+      objective: user?.googleObjective || ga?.objective || null,
+      defaultCustomerId: ga?.defaultCustomerId || null,
+    });
+  } catch (err) {
+    console.error('google status error:', err);
+    return res.status(500).json({ ok: false, error: 'STATUS_ERROR' });
   }
 });
 
 /* =========================
-   Guardar objetivo onboarding
+   4) Guardar objetivo
+   POST /auth/google/objective
+   body: { objective: "ventas" | "alcance" | "leads" }
    ========================= */
-router.post('/objective', requireAuth, express.json(), async (req, res) => {
+router.post('/objective', requireSession, express.json(), async (req, res) => {
   try {
-    const allowed = new Set(['ventas', 'alcance', 'leads']);
-    const objective = String(req.body?.objective || '').toLowerCase();
-    if (!allowed.has(objective)) {
-      return res.status(400).json({ ok: false, error: 'INVALID_OBJECTIVE' });
+    const { objective } = req.body || {};
+    if (!['ventas', 'alcance', 'leads'].includes(String(objective))) {
+      return res.status(400).json({ ok: false, error: 'BAD_OBJECTIVE' });
     }
-
-    if (!GoogleAccount) return res.status(500).json({ ok: false, error: 'MODEL_NOT_FOUND' });
-
-    const doc = await GoogleAccount.findOneAndUpdate(
-      { $or: [{ userId: req.user._id }, { user: req.user._id }] },
+    await User.findByIdAndUpdate(req.user._id, { $set: { googleObjective: objective } });
+    await GoogleAccount.findOneAndUpdate(
+      { $or: [{ user: req.user._id }, { userId: req.user._id }] },
       { $set: { objective } },
-      { new: true, upsert: false }
-    ).lean();
-
-    if (!doc) return res.status(404).json({ ok: false, error: 'GOOGLE_NOT_CONNECTED' });
-
-    res.json({ ok: true, objective });
-  } catch (e) {
-    console.error('google/objective error:', e);
-    res.status(500).json({ ok: false, error: 'OBJECTIVE_SAVE_ERROR' });
+      { upsert: true }
+    );
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('save objective error:', err);
+    return res.status(500).json({ ok: false, error: 'SAVE_OBJECTIVE_ERROR' });
   }
 });
 
