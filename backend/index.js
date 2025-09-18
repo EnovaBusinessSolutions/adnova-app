@@ -1,46 +1,46 @@
 // backend/index.js
 require('dotenv').config();
 
-const express  = require('express');
-const session  = require('express-session');
+const express = require('express');
+const session = require('express-session');
 const passport = require('passport');
 const mongoose = require('mongoose');
-const cors     = require('cors');
-const path     = require('path');
-const fs       = require('fs');
-const bcrypt   = require('bcrypt');
-const crypto   = require('crypto');
+const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
+const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
 // Auth strategies
 require('./auth');
 
 // Models & routes
-const User               = require('./models/User');
-const googleConnect      = require('./routes/googleConnect');
-const googleAnalytics    = require('./routes/googleAnalytics');
-const metaAuthRoutes     = require('./routes/meta');
-const privacyRoutes      = require('./routes/privacyRoutes');
-const mockShopify        = require('./routes/mockShopify');
-const shopifyRoutes      = require('./routes/shopify');
+const User = require('./models/User');
+const googleConnect = require('./routes/googleConnect');
+const googleAnalytics = require('./routes/googleAnalytics');
+const metaAuthRoutes = require('./routes/meta');
+const privacyRoutes = require('./routes/privacyRoutes');
+const mockShopify = require('./routes/mockShopify');
+const shopifyRoutes = require('./routes/shopify');
 const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
-const connector          = require('./routes/shopifyConnector');
-const webhookRoutes      = require('./routes/shopifyConnector/webhooks');
+const connector = require('./routes/shopifyConnector');
+const webhookRoutes = require('./routes/shopifyConnector/webhooks');
 const verifySessionToken = require('../middlewares/verifySessionToken');
-const secureRoutes       = require('./routes/secure');
-const dashboardRoute     = require('./api/dashboardRoute');
-const auditRoute         = require('./api/auditRoute');
+const secureRoutes = require('./routes/secure');
+const dashboardRoute = require('./api/dashboardRoute');
+const auditRoute = require('./api/auditRoute');
 const { publicCSP, shopifyCSP } = require('../middlewares/csp');
-const subscribeRouter    = require('./routes/subscribe');
-const userRoutes         = require('./routes/user');
-const auditsRoutes       = require('./routes/audits');
-const objectivesRoutes   = require('./routes/objectives');
+const subscribeRouter = require('./routes/subscribe');
+const userRoutes = require('./routes/user');
+const auditsRoutes = require('./routes/audits');
+const objectivesRoutes = require('./routes/objectives');
 
 // Meta endpoints (dashboard)
 const metaInsightsRoutes = require('./routes/metaInsights');
 const metaAccountsRoutes = require('./routes/metaAccounts');
 
-const app  = express();
+const app = express();
 const PORT = process.env.PORT || 3000;
 
 /* ----------------------------- C O R S ----------------------------- */
@@ -85,8 +85,8 @@ app.use(
     saveUninitialized: false,
     cookie: {
       sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-      secure:   process.env.NODE_ENV === 'production',
-      // domain: '.adnova.digital', // <-- sólo si lo necesitas entre subdominios
+      secure: process.env.NODE_ENV === 'production',
+      // domain: '.adnova.digital', // <-- solo si lo necesitas entre subdominios
     },
   })
 );
@@ -111,9 +111,9 @@ function sessionGuard(req, res, next) {
 }
 
 /* --------- Dashboard (submódulo build Vite con fallback legacy) ---- */
-const DASHBOARD_DIST      = path.join(__dirname, '../dashboard-src/dist');
-const LEGACY_DASH         = path.join(__dirname, '../public/dashboard');
-const HAS_DASHBOARD_DIST  = fs.existsSync(path.join(DASHBOARD_DIST, 'index.html'));
+const DASHBOARD_DIST = path.join(__dirname, '../dashboard-src/dist');
+const LEGACY_DASH = path.join(__dirname, '../public/dashboard');
+const HAS_DASHBOARD_DIST = fs.existsSync(path.join(DASHBOARD_DIST, 'index.html'));
 
 if (HAS_DASHBOARD_DIST) {
   // assets de Vite (immutable)
@@ -137,36 +137,14 @@ if (HAS_DASHBOARD_DIST) {
   console.warn('⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard');
 }
 
-/* ================== R U T A S   D E   A U T H / A P I ==================
-   (Montadas ANTES de los estáticos públicos para evitar 404 por catch-all)
-======================================================================= */
-
-// Rutas públicas / auth base
-app.use('/auth/google', googleConnect);   // OAuth Google (conect / status / objective / callbacks)
-app.use('/auth/meta',   metaAuthRoutes);  // OAuth Meta
-app.use('/',            googleAnalytics);
-app.use('/',            privacyRoutes);
-
-// APIs y servicios protegidos/públicos
-app.get('/api/saas/ping', sessionGuard, (req, res) => res.json({ ok: true, user: req.user?.email }));
-app.use('/api/saas/shopify', sessionGuard, require('./routes/shopifyMatch'));
-app.use('/api/shopify', shopifyRoutes);
-app.use('/api', mockShopify);
-app.use('/api', userRoutes);
-app.use('/api/audits', auditsRoutes);
-app.use('/api/secure', verifySessionToken, secureRoutes);
-app.use('/api/dashboard', dashboardRoute);
-app.use('/api/audit',     auditRoute);
-app.use('/api/shopConnection', require('./routes/shopConnection'));
-app.use('/api', subscribeRouter);
-app.use('/api', objectivesRoutes);
-
-// Google Ads insights — PROTEGIDO POR SESIÓN
-app.use('/api/google/ads', sessionGuard, require('./routes/googleAdsInsights'));
-
-// Meta endpoints consumidos por dashboard (ya protegidos)
-app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);
-app.use('/api/meta/accounts', sessionGuard, metaAccountsRoutes);
+/* ================== RUTAS DE AUTH / PÚBLICAS (ADELANTADAS) =========
+   (Se montan ANTES de los estáticos para evitar 404 accidentales)
+===================================================================== */
+// Rutas públicas / auth
+app.use('/auth/google', googleConnect); // OAuth Google (conect / status / objective / callbacks)
+app.use('/auth/meta', metaAuthRoutes);  // OAuth Meta
+app.use('/', privacyRoutes);
+app.use('/', googleAnalytics);
 
 /* ------------------------ Home / Login ----------------------------- */
 app.get('/', (req, res) => {
@@ -198,7 +176,7 @@ transporter.verify((err) => {
   else console.log('✅ SMTP listo para enviar correo');
 });
 
-/* --------------------------- Registro/Login ------------------------ */
+/* --------------------------- Auth/Usuario -------------------------- */
 app.post('/api/register', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
@@ -254,10 +232,10 @@ app.post('/api/forgot-password', async (req, res) => {
     const user = await User.findOne({ email });
     if (!user) return res.json({ success: true });
 
-    const token  = crypto.randomBytes(32).toString('hex');
+    const token = crypto.randomBytes(32).toString('hex');
     const expira = new Date(Date.now() + 60 * 60 * 1000);
 
-    user.resetPasswordToken  = token;
+    user.resetPasswordToken = token;
     user.resetPasswordExpires = expira;
     await user.save();
 
@@ -313,7 +291,7 @@ app.post('/api/reset-password', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Token inválido o expirado' });
     }
     user.password = await bcrypt.hash(password, 10);
-    user.resetPasswordToken  = undefined;
+    user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
     await user.save();
     res.json({ success: true });
@@ -344,7 +322,7 @@ app.post('/api/login', async (req, res, next) => {
       return res.status(200).json({ success: true, redirect: '/onboarding' });
     });
   } catch (err) {
-    console.error('❌ Error al hacer login:', err);
+    console.error('❌ Error al hacer login:', err.stack || err);
     res.status(500).json({ success: false, message: 'Error del servidor' });
   }
 });
@@ -357,7 +335,7 @@ app.get('/onboarding', ensureNotOnboarded, async (req, res) => {
 
   fs.readFile(filePath, 'utf8', (err, html) => {
     if (err) {
-      console.error('❌ Error al leer onboarding.html:', err);
+      console.error('❌ Error al leer onboarding.html:', err.stack || err);
       return res.status(500).send('Error al cargar la página de onboarding.');
     }
     let updatedHtml = html.replace('USER_ID_REAL', req.user._id.toString());
@@ -379,14 +357,61 @@ app.post('/api/complete-onboarding', async (req, res) => {
     }
     res.json({ success: true });
   } catch (err) {
-    console.error('❌ Error al completar onboarding:', err);
+    console.error('❌ Error al completar onboarding:', err.stack || err);
     res.status(500).json({ success: false, message: 'Error del servidor' });
   }
 });
 
+/* ------------------------------ APIs ------------------------------- */
+// (Se mantiene TODO tal cual lo tenías)
+app.get('/api/session', (req, res) => {
+  if (!req.isAuthenticated()) {
+    return res.status(401).json({ authenticated: false });
+  }
+  return res.json({
+    authenticated: true,
+    user: {
+      _id: req.user._id,
+      email: req.user.email,
+      shop: req.user.shop,
+      onboardingComplete: req.user.onboardingComplete,
+      googleConnected: req.user.googleConnected,
+      metaConnected: req.user.metaConnected,
+      shopifyConnected: req.user.shopifyConnected,
+      // Fallbacks usados por onboarding si /auth/.../status no está
+      googleObjective: req.user.googleObjective || null,
+      metaObjective: req.user.metaObjective || null,
+    },
+  });
+});
+
+app.get('/api/saas/ping', sessionGuard, (req, res) => {
+  res.json({ ok: true, user: req.user?.email });
+});
+app.use('/api/saas/shopify', sessionGuard, require('./routes/shopifyMatch'));
+
+// Rutas públicas / auth adicionales (ya montadas arriba: privacyRoutes / googleAnalytics / auth/google / auth/meta)
+app.use('/api/shopify', shopifyRoutes);
+app.use('/api', mockShopify);
+app.use('/api', userRoutes);
+app.use('/api/audits', auditsRoutes);
+app.use('/api/secure', verifySessionToken, secureRoutes);
+app.use('/api/dashboard', dashboardRoute);
+app.use('/api/audit', auditRoute);
+app.use('/api/shopConnection', require('./routes/shopConnection'));
+app.use('/api', subscribeRouter);
+app.use('/api', objectivesRoutes);
+
+// Google Ads insights — PROTEGIDO POR SESIÓN
+app.use('/api/google/ads', sessionGuard, require('./routes/googleAdsInsights'));
+
+// Meta endpoints consumidos por dashboard (ya protegidos)
+app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);
+app.use('/api/meta/accounts', sessionGuard, metaAccountsRoutes);
+
 /* ------------------------- OAuth Google (opcional) ------------------
-   Si estas rutas ya están dentro de ./routes/googleConnect (lo están),
-   puedes mantenerlas o eliminarlas. Las dejo por compatibilidad.
+// Si estas rutas ya están dentro de ./routes/googleConnect, puedes
+// comentarlas o dejarlas; no afectan el flujo de "connect".
 --------------------------------------------------------------------- */
 app.get('/auth/google/login',
   passport.authenticate('google', { scope: ['profile', 'email'] })
@@ -405,7 +430,7 @@ app.use('/assets', express.static(path.join(__dirname, '../public/support/assets
 app.use('/assets', express.static(path.join(__dirname, '../public/plans/assets')));
 app.use(express.static(path.join(__dirname, '../public')));
 
-/* --------------------- Conector embebido Shopify ------------------- */
+/* --------------------- Rutas específicas --------------------------- */
 app.get('/connector/interface', shopifyCSP, (req, res) => {
   const { shop, host } = req.query;
   if (!shop || !host) return res.status(400).send("Faltan parámetros 'shop' o 'host'");
