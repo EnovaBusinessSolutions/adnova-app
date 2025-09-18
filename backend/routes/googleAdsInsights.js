@@ -9,18 +9,23 @@ const router = express.Router();
 
 /* --------------------- Model (fallback) --------------------- */
 let GoogleAccount;
-try { GoogleAccount = require('../models/GoogleAccount'); } catch (_) {
+try {
+  GoogleAccount = require('../models/GoogleAccount');
+} catch (_) {
   const { Schema, model } = mongoose;
-  const schema = new Schema({
-    user: { type: Schema.Types.ObjectId, ref: 'User' },
-    userId: { type: Schema.Types.ObjectId, ref: 'User' },
-    accessToken: { type: String, select: false },
-    refreshToken: { type: String, select: false },
-    managerCustomerId: String,
-    objective: String,
-    customers: Array,         // [{ id, timeZone, currencyCode, ... }]
-    defaultCustomerId: String,
-  }, { collection: 'googleaccounts' });
+  const schema = new Schema(
+    {
+      user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+      userId: { type: Schema.Types.ObjectId, ref: 'User' },
+      accessToken: { type: String, select: false },
+      refreshToken: { type: String, select: false },
+      managerCustomerId: String,
+      objective: String,
+      customers: Array, // [{ id, timeZone, currencyCode, ... }]
+      defaultCustomerId: String,
+    },
+    { collection: 'googleaccounts', timestamps: true }
+  );
   GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
 }
 
@@ -29,7 +34,7 @@ const {
   GOOGLE_CLIENT_SECRET,
   GOOGLE_CONNECT_CALLBACK_URL,
   GOOGLE_DEVELOPER_TOKEN,
-  GOOGLE_ADS_LOGIN_CUSTOMER_ID,
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID, // opcional
 } = process.env;
 
 /* --------------------- Auth guard --------------------- */
@@ -48,24 +53,51 @@ function oauth() {
 }
 
 /* --------------------- Fechas (UTC) ------------------- */
-const ymd = d => d.toISOString().slice(0,10);
+const ymd = (d) => d.toISOString().slice(0, 10);
 const addDays = (d, n) =>
   new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + n));
 
-/** Acepta:
- *  - range=30|60|90 (y include_today=0|1)
- *  - ó date_preset (last_7d, last_14d, last_28d, today, yesterday)
+/**
+ * Rango actual y previo.
+ * Soporta:
+ * - range=30|60|90 (+ include_today=0|1)
+ * - date_preset=last_7d|last_14d|last_28d|today|yesterday
+ * - compare_mode=prev_month  -> compara contra MES ANTERIOR real
+ *   (default: prev_period -> periodo anterior de igual longitud)
  */
 function computeRanges(q) {
   const includeToday = String(q.include_today || '0') === '1';
+  const compareMode = String(q.compare_mode || 'prev_period'); // 'prev_month' | 'prev_period'
+
   const today = new Date();
-  const base = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const base = new Date(
+    Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())
+  );
   const anchor = includeToday ? base : addDays(base, -1);
 
+  // --- modo "mes anterior" (prev_month) ---
+  if (compareMode === 'prev_month') {
+    const firstOfThisMonth = new Date(
+      Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1)
+    );
+    const current = { since: ymd(firstOfThisMonth), until: ymd(anchor) };
+
+    const firstOfPrevMonth = new Date(
+      Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - 1, 1)
+    );
+    const lastOfPrevMonth = new Date(
+      Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 0)
+    );
+    const previous = { since: ymd(firstOfPrevMonth), until: ymd(lastOfPrevMonth) };
+
+    return { current, previous, is_partial: includeToday };
+  }
+
+  // --- modo por defecto: periodo anterior de igual longitud ---
   const preset = String(q.date_preset || '').toLowerCase();
   if (preset === 'today') {
     return {
-      current:  { since: ymd(anchor), until: ymd(anchor) },
+      current: { since: ymd(anchor), until: ymd(anchor) },
       previous: { since: ymd(addDays(anchor, -1)), until: ymd(addDays(anchor, -1)) },
       is_partial: includeToday,
     };
@@ -74,19 +106,22 @@ function computeRanges(q) {
     const y = addDays(anchor, -1);
     const yy = addDays(anchor, -2);
     return {
-      current:  { since: ymd(y),  until: ymd(y)  },
+      current: { since: ymd(y), until: ymd(y) },
       previous: { since: ymd(yy), until: ymd(yy) },
       is_partial: false,
     };
   }
 
-  // range numérico (30/60/90) tiene prioridad
   let days = Number(q.range || 0);
   if (!Number.isFinite(days) || days <= 0) {
     days =
-      preset === 'last_7d'  ? 7  :
-      preset === 'last_14d' ? 14 :
-      preset === 'last_28d' ? 28 : 30;
+      preset === 'last_7d'
+        ? 7
+        : preset === 'last_14d'
+        ? 14
+        : preset === 'last_28d'
+        ? 28
+        : 30;
   }
 
   const currUntil = anchor;
@@ -95,32 +130,35 @@ function computeRanges(q) {
   const prevSince = addDays(prevUntil, -(days - 1));
 
   return {
-    current:  { since: ymd(currSince), until: ymd(currUntil) },
+    current: { since: ymd(currSince), until: ymd(currUntil) },
     previous: { since: ymd(prevSince), until: ymd(prevUntil) },
     is_partial: includeToday,
   };
 }
 
-const microsToCurrency = m => {
+const microsToCurrency = (m) => {
   const n = Number(m);
   return Number.isFinite(n) ? n / 1e6 : 0;
 };
 
 async function getFreshAccessToken(gaDoc) {
   const client = oauth();
-  client.setCredentials({ refresh_token: gaDoc.refreshToken, access_token: gaDoc.accessToken });
+  client.setCredentials({
+    refresh_token: gaDoc.refreshToken,
+    access_token: gaDoc.accessToken,
+  });
   const { credentials } = await client.refreshAccessToken();
   return credentials.access_token || gaDoc.accessToken;
 }
 
-const customerList = doc => Array.isArray(doc?.customers) ? doc.customers : [];
+const customerList = (doc) => (Array.isArray(doc?.customers) ? doc.customers : []);
 
 function resolveCustomerId(req, doc) {
-  const q = String(req.query.customer_id || '').replace(/-/g,'');
+  const q = String(req.query.customer_id || '').replace(/-/g, '');
   if (q) return q;
-  if (doc?.defaultCustomerId) return String(doc.defaultCustomerId).replace(/-/g,'');
+  if (doc?.defaultCustomerId) return String(doc.defaultCustomerId).replace(/-/g, '');
   const list = customerList(doc);
-  return list.length ? String(list[0].id || '').replace(/-/g,'') : '';
+  return list.length ? String(list[0].id || '').replace(/-/g, '') : '';
 }
 
 async function runGAQL({ accessToken, customerId, gaql, managerId }) {
@@ -129,7 +167,9 @@ async function runGAQL({ accessToken, customerId, gaql, managerId }) {
     'developer-token': GOOGLE_DEVELOPER_TOKEN,
     'Content-Type': 'application/json',
   };
-  const loginId = String(managerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '').replace(/-/g,'').trim();
+  const loginId = String(managerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '')
+    .replace(/-/g, '')
+    .trim();
   if (loginId) headers['login-customer-id'] = loginId;
 
   const { data } = await axios.post(
@@ -145,9 +185,12 @@ async function runGAQL({ accessToken, customerId, gaql, managerId }) {
    =========================================================== */
 router.get('/', requireAuth, async (req, res) => {
   try {
-    const gaDoc = await GoogleAccount
-      .findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
-      .select('+refreshToken +accessToken objective defaultCustomerId managerCustomerId customers')
+    const gaDoc = await GoogleAccount.findOne({
+      $or: [{ user: req.user._id }, { userId: req.user._id }],
+    })
+      .select(
+        '+refreshToken +accessToken objective defaultCustomerId managerCustomerId customers'
+      )
       .lean();
 
     if (!gaDoc?.refreshToken && !gaDoc?.accessToken) {
@@ -155,7 +198,10 @@ router.get('/', requireAuth, async (req, res) => {
     }
 
     const rawObjective = String(req.query.objective || gaDoc.objective || 'ventas').toLowerCase();
-    const objective = ['ventas','alcance','leads'].includes(rawObjective) ? rawObjective : 'ventas';
+    const objective = ['ventas', 'alcance', 'leads'].includes(rawObjective)
+      ? rawObjective
+      : 'ventas';
+
     const ranges = computeRanges(req.query);
 
     const customerId = resolveCustomerId(req, gaDoc);
@@ -166,7 +212,6 @@ router.get('/', requireAuth, async (req, res) => {
 
     // --- GAQL por OBJETIVO ---
     function buildGaqlByObjective(obj, since, until) {
-      // ENUMs GAQL: sin comillas
       const FIELDS_COMMON = `
         segments.date,
         metrics.impressions,
@@ -235,64 +280,75 @@ router.get('/', requireAuth, async (req, res) => {
     ]);
 
     const meta0 = metaRows?.[0]?.customer || {};
-    const currency = meta0?.currencyCode
-      || customerList(gaDoc).find(c => String(c.id).replace(/-/g,'') === String(customerId))?.currencyCode
-      || 'USD';
-    const timeZone = meta0?.timeZone
-      || customerList(gaDoc).find(c => String(c.id).replace(/-/g,'') === String(customerId))?.timeZone
-      || 'America/Mexico_City';
+    const currency =
+      meta0?.currencyCode ||
+      customerList(gaDoc).find((c) => String(c.id).replace(/-/g, '') === String(customerId))
+        ?.currencyCode ||
+      'USD';
+    const timeZone =
+      meta0?.timeZone ||
+      customerList(gaDoc).find((c) => String(c.id).replace(/-/g, '') === String(customerId))
+        ?.timeZone ||
+      'America/Mexico_City';
 
     /* --------------------- Aggregates actuales --------------------- */
-    let cost = 0, impressions = 0, clicks = 0, conversions = 0, conv_value = 0;
+    let cost = 0,
+      impressions = 0,
+      clicks = 0,
+      conversions = 0,
+      conv_value = 0;
 
-    const series = rows.map(r => {
+    const series = rows.map((r) => {
       const _cost = microsToCurrency(r?.metrics?.costMicros);
-      const _imp  = Number(r?.metrics?.impressions || 0);
-      const _clk  = Number(r?.metrics?.clicks || 0);
-      const _ac   = Number(r?.metrics?.conversions || 0);
-      const _av   = Number(r?.metrics?.conversionsValue || 0);
+      const _imp = Number(r?.metrics?.impressions || 0);
+      const _clk = Number(r?.metrics?.clicks || 0);
+      const _ac = Number(r?.metrics?.conversions || 0);
+      const _av = Number(r?.metrics?.conversionsValue || 0);
 
-      cost        += _cost;
+      cost += _cost;
       impressions += _imp;
-      clicks      += _clk;
+      clicks += _clk;
       conversions += _ac;
-      conv_value  += _av;
+      conv_value += _av;
 
       return {
         date: r?.segments?.date,
         impressions: _imp,
         clicks: _clk,
-        cost: _cost,            // ← canónico
+        cost: _cost, // canónico
         conversions: _ac,
-        conv_value: _av,        // ← canónico
+        conv_value: _av, // canónico
       };
     });
 
     /* --------------------- Aggregates previos ---------------------- */
-    let p_cost = 0, p_impr = 0, p_clicks = 0, p_convs = 0, p_convValue = 0;
-    rowsPrev.forEach(r => {
-      p_cost      += microsToCurrency(r?.metrics?.costMicros);
-      p_impr      += Number(r?.metrics?.impressions || 0);
-      p_clicks    += Number(r?.metrics?.clicks || 0);
-      p_convs     += Number(r?.metrics?.conversions || 0);
+    let p_cost = 0,
+      p_impr = 0,
+      p_clicks = 0,
+      p_convs = 0,
+      p_convValue = 0;
+
+    rowsPrev.forEach((r) => {
+      p_cost += microsToCurrency(r?.metrics?.costMicros);
+      p_impr += Number(r?.metrics?.impressions || 0);
+      p_clicks += Number(r?.metrics?.clicks || 0);
+      p_convs += Number(r?.metrics?.conversions || 0);
       p_convValue += Number(r?.metrics?.conversionsValue || 0);
     });
 
     /* --------------------- KPIs por objetivo ----------------------- */
-    // comunes
     const ctr = impressions > 0 ? clicks / impressions : 0;
     const cpc = clicks > 0 ? cost / clicks : 0;
 
     // ventas
-    const roas = cost > 0 ? (conv_value / cost) : 0;
-    const cpa  = conversions > 0 ? (cost / conversions) : 0;
+    const roas = cost > 0 ? conv_value / cost : 0;
+    const cpa = conversions > 0 ? cost / conversions : 0;
 
     // alcance
-    const cpm  = impressions > 0 ? (cost / (impressions / 1000)) : 0;
+    const cpm = impressions > 0 ? cost / (impressions / 1000) : 0;
 
     // leads
-    const cpl = conversions > 0 ? (cost / conversions) : 0;  // alias útil
-    const cvr = clicks > 0 ? (conversions / clicks) : 0;
+    const cvr = clicks > 0 ? conversions / clicks : 0;
 
     let kpis;
     if (objective === 'alcance') {
@@ -302,17 +358,17 @@ router.get('/', requireAuth, async (req, res) => {
         ctr,
         cpc,
         cost,
-        cpm, // disponible si luego lo muestras
+        cpm, // opcional para UI
       };
     } else if (objective === 'leads') {
       kpis = {
         conversions,
-        cpa,     // (equivale a CPL en este contexto)
+        cpa, // (CPL práctico)
         ctr,
         cpc,
         clicks,
         cost,
-        cvr,     // disponible si luego lo muestras
+        cvr, // opcional
       };
     } else {
       // ventas
@@ -337,7 +393,7 @@ router.get('/', requireAuth, async (req, res) => {
         cost: p_cost,
         ctr: p_impr > 0 ? p_clicks / p_impr : 0,
         cpc: p_clicks > 0 ? p_cost / p_clicks : 0,
-        cpm: p_impr > 0 ? (p_cost / (p_impr / 1000)) : 0,
+        cpm: p_impr > 0 ? p_cost / (p_impr / 1000) : 0,
       };
     } else if (objective === 'leads') {
       prev = {
@@ -367,9 +423,9 @@ router.get('/', requireAuth, async (req, res) => {
     const deltas = {};
     for (const [k, v] of Object.entries(kpis)) {
       const curr = Number(v);
-      const old  = Number(prev?.[k]);
+      const old = Number(prev?.[k]);
       if (Number.isFinite(curr) && Number.isFinite(old)) {
-        deltas[k] = old !== 0 ? (curr - old) / old : (curr !== 0 ? 1 : 0);
+        deltas[k] = old !== 0 ? (curr - old) / old : curr !== 0 ? 1 : 0;
       }
     }
 
@@ -378,9 +434,9 @@ router.get('/', requireAuth, async (req, res) => {
       objective,
       customer_id: customerId,
       time_zone: timeZone,
-      currency,                 // para formateo en el front
+      currency, // para formateo en el front
       locale: 'es-MX',
-      range:      ranges.current,
+      range: ranges.current,
       prev_range: ranges.previous,
       is_partial: ranges.is_partial,
       level: 'customer',
