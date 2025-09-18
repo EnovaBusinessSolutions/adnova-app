@@ -29,6 +29,7 @@ const {
   GOOGLE_CLIENT_SECRET,
   GOOGLE_CONNECT_CALLBACK_URL,
   GOOGLE_DEVELOPER_TOKEN,
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID,
 } = process.env;
 
 /* --------------------- Auth guard --------------------- */
@@ -123,18 +124,18 @@ function resolveCustomerId(req, doc) {
 }
 
 async function runGAQL({ accessToken, customerId, gaql, managerId }) {
+  const headers = {
+    Authorization: `Bearer ${accessToken}`,
+    'developer-token': GOOGLE_DEVELOPER_TOKEN,
+    'Content-Type': 'application/json',
+  };
+  const loginId = String(managerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '').replace(/-/g,'').trim();
+  if (loginId) headers['login-customer-id'] = loginId;
+
   const { data } = await axios.post(
     `https://googleads.googleapis.com/v16/customers/${customerId}/googleAds:search`,
     { query: gaql },
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'developer-token': GOOGLE_DEVELOPER_TOKEN,
-        ...(managerId ? { 'login-customer-id': managerId } : {}),
-        'Content-Type': 'application/json',
-      },
-      timeout: 30000,
-    }
+    { headers, timeout: 30000 }
   );
   return data?.results || [];
 }
@@ -153,36 +154,70 @@ router.get('/', requireAuth, async (req, res) => {
       return res.status(400).json({ ok: false, error: 'GOOGLE_NOT_CONNECTED' });
     }
 
-    const objective = String(req.query.objective || gaDoc.objective || 'ventas').toLowerCase();
+    const rawObjective = String(req.query.objective || gaDoc.objective || 'ventas').toLowerCase();
+    const objective = ['ventas','alcance','leads'].includes(rawObjective) ? rawObjective : 'ventas';
     const ranges = computeRanges(req.query);
 
     const customerId = resolveCustomerId(req, gaDoc);
     if (!customerId) return res.status(400).json({ ok: false, error: 'NO_CUSTOMER_ID' });
 
     const accessToken = await getFreshAccessToken(gaDoc);
+    const managerId = gaDoc?.managerCustomerId;
 
-    // Campos por día
-    const baseFields = `
-      segments.date,
-      metrics.impressions,
-      metrics.clicks,
-      metrics.cost_micros,
-      metrics.all_conversions,
-      metrics.all_conversions_value
-    `;
+    // --- GAQL por OBJETIVO ---
+    function buildGaqlByObjective(obj, since, until) {
+      // ENUMs GAQL: sin comillas
+      const FIELDS_COMMON = `
+        segments.date,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.cost_micros
+      `;
 
-    const qCurr = `
-      SELECT ${baseFields}
-      FROM customer
-      WHERE segments.date BETWEEN '${ranges.current.since}' AND '${ranges.current.until}'
-      ORDER BY segments.date
-    `;
-    const qPrev = `
-      SELECT ${baseFields}
-      FROM customer
-      WHERE segments.date BETWEEN '${ranges.previous.since}' AND '${ranges.previous.until}'
-      ORDER BY segments.date
-    `;
+      if (obj === 'leads') {
+        const LEAD_CATS = `
+          segments.conversion_action_category IN (
+            LEAD, SUBMIT_LEAD_FORM, SIGN_UP, REQUEST_QUOTE, BOOK_APPOINTMENT, CONTACT
+          )
+        `;
+        return `
+          SELECT
+            ${FIELDS_COMMON},
+            metrics.conversions,
+            metrics.conversions_value
+          FROM customer
+          WHERE ${LEAD_CATS}
+            AND segments.date BETWEEN '${since}' AND '${until}'
+          ORDER BY segments.date
+        `;
+      }
+
+      if (obj === 'alcance') {
+        return `
+          SELECT
+            ${FIELDS_COMMON}
+          FROM customer
+          WHERE segments.date BETWEEN '${since}' AND '${until}'
+          ORDER BY segments.date
+        `;
+      }
+
+      // ventas (default)
+      const SALES_CAT = `segments.conversion_action_category = PURCHASE`;
+      return `
+        SELECT
+          ${FIELDS_COMMON},
+          metrics.conversions,
+          metrics.conversions_value
+        FROM customer
+        WHERE ${SALES_CAT}
+          AND segments.date BETWEEN '${since}' AND '${until}'
+        ORDER BY segments.date
+      `;
+    }
+
+    const qCurr = buildGaqlByObjective(objective, ranges.current.since, ranges.current.until);
+    const qPrev = buildGaqlByObjective(objective, ranges.previous.since, ranges.previous.until);
 
     // (opcional) currency/zone
     const qMeta = `
@@ -194,14 +229,18 @@ router.get('/', requireAuth, async (req, res) => {
     `;
 
     const [rows, rowsPrev, metaRows] = await Promise.all([
-      runGAQL({ accessToken, customerId, gaql: qCurr, managerId: gaDoc.managerCustomerId }),
-      runGAQL({ accessToken, customerId, gaql: qPrev, managerId: gaDoc.managerCustomerId }),
-      runGAQL({ accessToken, customerId, gaql: qMeta, managerId: gaDoc.managerCustomerId }).catch(() => []),
+      runGAQL({ accessToken, customerId, gaql: qCurr, managerId }),
+      runGAQL({ accessToken, customerId, gaql: qPrev, managerId }),
+      runGAQL({ accessToken, customerId, gaql: qMeta, managerId }).catch(() => []),
     ]);
 
     const meta0 = metaRows?.[0]?.customer || {};
-    const currency = meta0?.currencyCode || customerList(gaDoc).find(c => String(c.id).replace(/-/g,'') === String(customerId))?.currencyCode || 'USD';
-    const timeZone = meta0?.timeZone || customerList(gaDoc).find(c => String(c.id).replace(/-/g,'') === String(customerId))?.timeZone || 'America/Mexico_City';
+    const currency = meta0?.currencyCode
+      || customerList(gaDoc).find(c => String(c.id).replace(/-/g,'') === String(customerId))?.currencyCode
+      || 'USD';
+    const timeZone = meta0?.timeZone
+      || customerList(gaDoc).find(c => String(c.id).replace(/-/g,'') === String(customerId))?.timeZone
+      || 'America/Mexico_City';
 
     /* --------------------- Aggregates actuales --------------------- */
     let cost = 0, impressions = 0, clicks = 0, conversions = 0, conv_value = 0;
@@ -210,8 +249,8 @@ router.get('/', requireAuth, async (req, res) => {
       const _cost = microsToCurrency(r?.metrics?.costMicros);
       const _imp  = Number(r?.metrics?.impressions || 0);
       const _clk  = Number(r?.metrics?.clicks || 0);
-      const _ac   = Number(r?.metrics?.allConversions || 0);
-      const _av   = Number(r?.metrics?.allConversionsValue || 0);
+      const _ac   = Number(r?.metrics?.conversions || 0);
+      const _av   = Number(r?.metrics?.conversionsValue || 0);
 
       cost        += _cost;
       impressions += _imp;
@@ -223,9 +262,9 @@ router.get('/', requireAuth, async (req, res) => {
         date: r?.segments?.date,
         impressions: _imp,
         clicks: _clk,
-        cost: _cost,            // <- CANÓNICO
+        cost: _cost,            // ← canónico
         conversions: _ac,
-        conv_value: _av,        // <- CANÓNICO
+        conv_value: _av,        // ← canónico
       };
     });
 
@@ -235,39 +274,94 @@ router.get('/', requireAuth, async (req, res) => {
       p_cost      += microsToCurrency(r?.metrics?.costMicros);
       p_impr      += Number(r?.metrics?.impressions || 0);
       p_clicks    += Number(r?.metrics?.clicks || 0);
-      p_convs     += Number(r?.metrics?.allConversions || 0);
-      p_convValue += Number(r?.metrics?.allConversionsValue || 0);
+      p_convs     += Number(r?.metrics?.conversions || 0);
+      p_convValue += Number(r?.metrics?.conversionsValue || 0);
     });
 
-    /* --------------------- KPIs canónicos -------------------------- */
+    /* --------------------- KPIs por objetivo ----------------------- */
+    // comunes
     const ctr = impressions > 0 ? clicks / impressions : 0;
     const cpc = clicks > 0 ? cost / clicks : 0;
-    const cpa = conversions > 0 ? cost / conversions : 0;
+
+    // ventas
     const roas = cost > 0 ? (conv_value / cost) : 0;
+    const cpa  = conversions > 0 ? (cost / conversions) : 0;
 
-    const kpis = {
-      impressions,
-      clicks,
-      cost,
-      conversions,
-      conv_value,
-      ctr,
-      cpc,
-      cpa,
-      roas,
-    };
+    // alcance
+    const cpm  = impressions > 0 ? (cost / (impressions / 1000)) : 0;
 
-    const prev = {
-      impressions: p_impr,
-      clicks: p_clicks,
-      cost: p_cost,
-      conversions: p_convs,
-      conv_value: p_convValue,
-      ctr: p_impr > 0 ? p_clicks / p_impr : 0,
-      cpc: p_clicks > 0 ? p_cost / p_clicks : 0,
-      cpa: p_convs > 0 ? p_cost / p_convs : 0,
-      roas: p_cost > 0 ? p_convValue / p_cost : 0,
-    };
+    // leads
+    const cpl = conversions > 0 ? (cost / conversions) : 0;  // alias útil
+    const cvr = clicks > 0 ? (conversions / clicks) : 0;
+
+    let kpis;
+    if (objective === 'alcance') {
+      kpis = {
+        impressions,
+        clicks,
+        ctr,
+        cpc,
+        cost,
+        cpm, // disponible si luego lo muestras
+      };
+    } else if (objective === 'leads') {
+      kpis = {
+        conversions,
+        cpa,     // (equivale a CPL en este contexto)
+        ctr,
+        cpc,
+        clicks,
+        cost,
+        cvr,     // disponible si luego lo muestras
+      };
+    } else {
+      // ventas
+      kpis = {
+        conv_value,
+        conversions,
+        roas,
+        cpa,
+        ctr,
+        cpc,
+        clicks,
+        cost,
+      };
+    }
+
+    // prev para deltas (mismas llaves según objetivo)
+    let prev;
+    if (objective === 'alcance') {
+      prev = {
+        impressions: p_impr,
+        clicks: p_clicks,
+        cost: p_cost,
+        ctr: p_impr > 0 ? p_clicks / p_impr : 0,
+        cpc: p_clicks > 0 ? p_cost / p_clicks : 0,
+        cpm: p_impr > 0 ? (p_cost / (p_impr / 1000)) : 0,
+      };
+    } else if (objective === 'leads') {
+      prev = {
+        conversions: p_convs,
+        cpa: p_convs > 0 ? p_cost / p_convs : 0,
+        ctr: p_impr > 0 ? p_clicks / p_impr : 0,
+        cpc: p_clicks > 0 ? p_cost / p_clicks : 0,
+        clicks: p_clicks,
+        cost: p_cost,
+        cvr: p_clicks > 0 ? p_convs / p_clicks : 0,
+      };
+    } else {
+      // ventas
+      prev = {
+        conv_value: p_convValue,
+        conversions: p_convs,
+        roas: p_cost > 0 ? p_convValue / p_cost : 0,
+        cpa: p_convs > 0 ? p_cost / p_convs : 0,
+        ctr: p_impr > 0 ? p_clicks / p_impr : 0,
+        cpc: p_clicks > 0 ? p_cost / p_clicks : 0,
+        clicks: p_clicks,
+        cost: p_cost,
+      };
+    }
 
     /* --------------------- Deltas (proporciones) ------------------- */
     const deltas = {};
@@ -284,8 +378,8 @@ router.get('/', requireAuth, async (req, res) => {
       objective,
       customer_id: customerId,
       time_zone: timeZone,
-      currency,                 // <- extra útil para el front
-      locale: 'es-MX',          // <- si lo prefieres, puedes inferirlo del user
+      currency,                 // para formateo en el front
+      locale: 'es-MX',
       range:      ranges.current,
       prev_range: ranges.previous,
       is_partial: ranges.is_partial,
