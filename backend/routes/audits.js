@@ -66,7 +66,7 @@ router.post('/run', requireAuth, async (req, res) => {
       );
     }
 
-    if (metaAcc?.access_token || metaAcc?.longlivedToken || metaAcc?.longLivedToken || metaAcc?.accessToken) {
+    if (metaAcc) {
       tasks.push(
         (async () => {
           const payload = await generarAuditoriaMetaIA(userId, {});
@@ -76,7 +76,7 @@ router.post('/run', requireAuth, async (req, res) => {
       );
     }
 
-    if (googleAcc?.refreshToken || googleAcc?.accessToken) {
+    if (googleAcc) {
       tasks.push(
         (async () => {
           const payload = await generarAuditoriaGoogleIA(userId, {});
