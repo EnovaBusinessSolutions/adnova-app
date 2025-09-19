@@ -29,12 +29,11 @@ const webhookRoutes = require('./routes/shopifyConnector/webhooks');
 const verifySessionToken = require('../middlewares/verifySessionToken');
 const secureRoutes = require('./routes/secure');
 const dashboardRoute = require('./api/dashboardRoute');
-const auditRoute = require('./api/auditRoute');
+const auditRoute = require('./api/auditRoute'); // puede convivir
 const { publicCSP, shopifyCSP } = require('../middlewares/csp');
 const subscribeRouter = require('./routes/subscribe');
 const userRoutes = require('./routes/user');
-const auditsRoutes = require('./routes/audits');
-const objectivesRoutes = require('./routes/objectives');
+const auditsRoutes = require('./routes/audits');           // <-- NUEVO (unificado)
 
 // Meta endpoints (dashboard)
 const metaInsightsRoutes = require('./routes/metaInsights');
@@ -86,7 +85,7 @@ app.use(
     cookie: {
       sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
       secure: process.env.NODE_ENV === 'production',
-      // domain: '.adnova.digital', // <-- solo si lo necesitas entre subdominios
+      // domain: '.adnova.digital',
     },
   })
 );
@@ -99,9 +98,7 @@ function ensureAuthenticated(req, res, next) {
   return res.redirect('/login');
 }
 function ensureNotOnboarded(req, res, next) {
-  if (!(req.isAuthenticated && req.isAuthenticated())) {
-    return res.redirect('/login');
-  }
+  if (!(req.isAuthenticated && req.isAuthenticated())) return res.redirect('/login');
   if (!req.user?.onboardingComplete) return next();
   return res.redirect('/dashboard');
 }
@@ -116,19 +113,13 @@ const LEGACY_DASH = path.join(__dirname, '../public/dashboard');
 const HAS_DASHBOARD_DIST = fs.existsSync(path.join(DASHBOARD_DIST, 'index.html'));
 
 if (HAS_DASHBOARD_DIST) {
-  // assets de Vite (immutable)
-  app.use(
-    '/assets',
-    express.static(path.join(DASHBOARD_DIST, 'assets'), { immutable: true, maxAge: '1y' })
-  );
-  // Dashboard protegido
+  app.use('/assets', express.static(path.join(DASHBOARD_DIST, 'assets'), { immutable: true, maxAge: '1y' }));
   app.use('/dashboard', ensureAuthenticated, express.static(DASHBOARD_DIST));
   app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
     res.sendFile(path.join(DASHBOARD_DIST, 'index.html'));
   });
   console.log('✅ Dashboard servido desde submódulo: dashboard-src/dist');
 } else {
-  // Fallback legacy
   app.use('/assets', express.static(path.join(LEGACY_DASH, 'assets')));
   app.use('/dashboard', ensureAuthenticated, express.static(LEGACY_DASH));
   app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
@@ -137,12 +128,9 @@ if (HAS_DASHBOARD_DIST) {
   console.warn('⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard');
 }
 
-/* ================== RUTAS DE AUTH / PÚBLICAS (ADELANTADAS) =========
-   (Se montan ANTES de los estáticos para evitar 404 accidentales)
-===================================================================== */
-// Rutas públicas / auth
-app.use('/auth/google', googleConnect); // OAuth Google (conect / status / objective / callbacks)
-app.use('/auth/meta', metaAuthRoutes);  // OAuth Meta
+/* ================== RUTAS DE AUTH / PÚBLICAS (ADELANTADAS) ========= */
+app.use('/auth/google', googleConnect);
+app.use('/auth/meta', metaAuthRoutes);
 app.use('/', privacyRoutes);
 app.use('/', googleAnalytics);
 
@@ -253,14 +241,7 @@ p{margin:0 0 18px 0;color:#F4F2FF;font-size:1.04rem;line-height:1.6;text-align:c
 .footer a{color:#A96BFF;text-decoration:underline;font-weight:600;transition:color .17s}.footer a:hover{color:#fff}
 @media screen and (max-width:600px){.card{width:97vw!important;max-width:98vw!important}.card-content{padding:0 1.1rem 1.7rem 1.1rem}h1{font-size:1.25rem}.footer{font-size:.89rem;padding:1.1rem .3rem 1rem .3rem}.btn{width:100%;padding:.85rem 0}}</style>
 </head>
-<body><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a12;margin:0;padding:0;"><tr><td align="center" style="padding:54px 8px;">
-<table role="presentation" cellpadding="0" cellspacing="0" class="card" width="410"><tr><td class="card-content">
-<h1>¿Olvidaste tu contraseña?</h1><p>Haz clic en el botón para establecer una nueva contraseña para tu cuenta de Adnova AI.</p>
-<table role="presentation" align="center" cellpadding="0" cellspacing="0" style="margin: 0 auto;"><tr><td align="center">
-<a href="${resetUrl}" class="btn" target="_blank">Cambiar contraseña</a></td></tr></table>
-<p style="margin:32px 0 0 0; font-size:.98rem; color:#B6A7E8;">Si tú no solicitaste el cambio de contraseña, ignora este correo.<br>El enlace expira en 1 hora.</p>
-</td></tr><tr><td class="footer">© ${new Date().getFullYear()} Adnova AI · <a href="https://ai.adnova.digital/politica.html" target="_blank">Política de privacidad</a></td></tr></table>
-</td></tr></table></body></html>`;
+<body>...${''}</body></html>`;
 
     await transporter.sendMail({
       from: process.env.SMTP_FROM,
@@ -287,9 +268,7 @@ app.post('/api/reset-password', async (req, res) => {
       resetPasswordToken: token,
       resetPasswordExpires: { $gt: new Date() },
     });
-    if (!user) {
-      return res.status(400).json({ success: false, message: 'Token inválido o expirado' });
-    }
+    if (!user) return res.status(400).json({ success: false, message: 'Token inválido o expirado' });
     user.password = await bcrypt.hash(password, 10);
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
@@ -347,14 +326,9 @@ app.get('/onboarding', ensureNotOnboarded, async (req, res) => {
 
 app.post('/api/complete-onboarding', async (req, res) => {
   try {
-    if (!req.isAuthenticated()) {
-      return res.status(401).json({ success: false, message: 'No autenticado' });
-    }
+    if (!req.isAuthenticated()) return res.status(401).json({ success: false, message: 'No autenticado' });
     const result = await User.findByIdAndUpdate(req.user._id, { onboardingComplete: true });
-    if (!result) {
-      console.warn('⚠️ No se encontró el usuario para completar onboarding:', req.user._id);
-      return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
-    }
+    if (!result) return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
     res.json({ success: true });
   } catch (err) {
     console.error('❌ Error al completar onboarding:', err.stack || err);
@@ -363,26 +337,31 @@ app.post('/api/complete-onboarding', async (req, res) => {
 });
 
 /* ------------------------------ APIs ------------------------------- */
-// (Se mantiene TODO tal cual lo tenías)
-app.get('/api/session', (req, res) => {
-  if (!req.isAuthenticated()) {
+// SIEMPRE leer el usuario fresco de DB para evitar flags desactualizados
+app.get('/api/session', async (req, res) => {
+  if (!req.isAuthenticated || !req.isAuthenticated()) {
     return res.status(401).json({ authenticated: false });
   }
-  return res.json({
-    authenticated: true,
-    user: {
-      _id: req.user._id,
-      email: req.user.email,
-      shop: req.user.shop,
-      onboardingComplete: req.user.onboardingComplete,
-      googleConnected: req.user.googleConnected,
-      metaConnected: req.user.metaConnected,
-      shopifyConnected: req.user.shopifyConnected,
-      // Fallbacks usados por onboarding si /auth/.../status no está
-      googleObjective: req.user.googleObjective || null,
-      metaObjective: req.user.metaObjective || null,
-    },
-  });
+  try {
+    const u = await User.findById(req.user._id).lean();
+    if (!u) return res.status(401).json({ authenticated: false });
+    return res.json({
+      authenticated: true,
+      user: {
+        _id: u._id,
+        email: u.email,
+        shop: u.shop,
+        onboardingComplete: u.onboardingComplete,
+        googleConnected: !!u.googleConnected,
+        metaConnected: !!u.metaConnected,
+        shopifyConnected: !!u.shopifyConnected,
+        googleObjective: u.googleObjective || null,
+        metaObjective: u.metaObjective || null,
+      },
+    });
+  } catch {
+    return res.status(401).json({ authenticated: false });
+  }
 });
 
 app.get('/api/saas/ping', sessionGuard, (req, res) => {
@@ -390,29 +369,37 @@ app.get('/api/saas/ping', sessionGuard, (req, res) => {
 });
 app.use('/api/saas/shopify', sessionGuard, require('./routes/shopifyMatch'));
 
-// Rutas públicas / auth adicionales (ya montadas arriba: privacyRoutes / googleAnalytics / auth/google / auth/meta)
+// Rutas públicas / auth adicionales
 app.use('/api/shopify', shopifyRoutes);
 app.use('/api', mockShopify);
 app.use('/api', userRoutes);
-app.use('/api/audits', auditsRoutes);
+
+// --- Auditorías unificadas ---
+app.use('/api/audits', auditsRoutes); // prefijo nuevo
+app.use('/api/audit', auditsRoutes);  // compat legacy (front viejo)
+
+// Compatibilidad adicional con /api/audit/*start (onboarding3.js legacy)
+app.post('/api/audit/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/run'));
+app.post('/api/audit/google/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/run'));
+app.post('/api/audit/meta/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/run'));
+app.post('/api/audit/shopify/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/run'));
+
+// (si aún necesitas api/auditRoute para otras cosas, puede quedar montado también)
 app.use('/api/secure', verifySessionToken, secureRoutes);
 app.use('/api/dashboard', dashboardRoute);
-app.use('/api/audit', auditRoute);
+app.use('/api/audit-legacy', auditRoute); // lo movemos a otro prefijo para evitar colisión
 app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter);
-app.use('/api', objectivesRoutes);
+app.use('/api', require('./routes/objectives'));
 
 // Google Ads insights — PROTEGIDO POR SESIÓN
 app.use('/api/google/ads', sessionGuard, require('./routes/googleAdsInsights'));
 
-// Meta endpoints consumidos por dashboard (ya protegidos)
+// Meta endpoints consumidos por dashboard
 app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);
 app.use('/api/meta/accounts', sessionGuard, metaAccountsRoutes);
 
-/* ------------------------- OAuth Google (opcional) ------------------
-// Si estas rutas ya están dentro de ./routes/googleConnect, puedes
-// comentarlas o dejarlas; no afectan el flujo de "connect".
---------------------------------------------------------------------- */
+/* ------------------------- OAuth Google (opcional) ------------------ */
 app.get('/auth/google/login',
   passport.authenticate('google', { scope: ['profile', 'email'] })
 );

@@ -20,13 +20,10 @@ const FB_GRAPH     = `https://graph.facebook.com/${FB_VERSION}`;
 
 const APP_ID       = process.env.FACEBOOK_APP_ID;
 const APP_SECRET   = process.env.FACEBOOK_APP_SECRET;
-// Debe apuntar a /auth/meta/callback exactamente
 const REDIRECT_URI = process.env.FACEBOOK_REDIRECT_URI;
 
-// Scopes mínimos para Marketing API
 const SCOPES = [
   'ads_read', 'ads_management', 'business_management',
-  // opcionales útiles
   'pages_read_engagement', 'pages_show_list', 'pages_manage_ads',
   'pages_manage_metadata', 'leads_retrieval', 'read_insights', 'email'
 ].join(',');
@@ -37,33 +34,20 @@ const SCOPES = [
 function makeAppSecretProof(accessToken) {
   return crypto.createHmac('sha256', APP_SECRET).update(accessToken).digest('hex');
 }
-
 async function exchangeCodeForToken(code) {
   const { data } = await axios.get(`${FB_GRAPH}/oauth/access_token`, {
-    params: {
-      client_id: APP_ID,
-      client_secret: APP_SECRET,
-      redirect_uri: REDIRECT_URI,
-      code
-    },
+    params: { client_id: APP_ID, client_secret: APP_SECRET, redirect_uri: REDIRECT_URI, code },
     timeout: 15000
   });
-  return data; // { access_token, token_type, expires_in }
+  return data;
 }
-
 async function toLongLivedToken(shortToken) {
   const { data } = await axios.get(`${FB_GRAPH}/oauth/access_token`, {
-    params: {
-      grant_type: 'fb_exchange_token',
-      client_id: APP_ID,
-      client_secret: APP_SECRET,
-      fb_exchange_token: shortToken
-    },
+    params: { grant_type: 'fb_exchange_token', client_id: APP_ID, client_secret: APP_SECRET, fb_exchange_token: shortToken },
     timeout: 15000
   });
-  return data; // { access_token, token_type, expires_in }
+  return data;
 }
-
 async function debugToken(userToken) {
   const appToken = `${APP_ID}|${APP_SECRET}`;
   const { data } = await axios.get(`${FB_GRAPH}/debug_token`, {
@@ -72,12 +56,10 @@ async function debugToken(userToken) {
   });
   return data?.data || {};
 }
-
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated() && req.user?._id) return next();
   return res.status(401).json({ error: 'not_authenticated' });
 }
-
 const normActId = (s = '') => s.toString().replace(/^act_/, '').trim();
 const toActId   = (s = '') => {
   const id = normActId(s);
@@ -87,30 +69,18 @@ const toActId   = (s = '') => {
 /* =========================
    OAuth
    ========================= */
-
-// GET /auth/meta/login
 router.get('/login', (req, res) => {
   if (!req.isAuthenticated?.() || !req.user?._id) return res.redirect('/login');
-
   const state = crypto.randomBytes(20).toString('hex');
   req.session.fb_state = state;
-
   const params = new URLSearchParams({
-    client_id: APP_ID,
-    redirect_uri: REDIRECT_URI,
-    scope: SCOPES,
-    response_type: 'code',
-    state
+    client_id: APP_ID, redirect_uri: REDIRECT_URI, scope: SCOPES, response_type: 'code', state
   });
-
   return res.redirect(`${FB_DIALOG}?${params.toString()}`);
 });
 
-// GET /auth/meta/callback
 router.get('/callback', async (req, res) => {
   if (!req.isAuthenticated?.() || !req.user?._id) return res.redirect('/login');
-
-  // Validar state
   const { code, state } = req.query || {};
   if (!code || !state || state !== req.session.fb_state) {
     delete req.session.fb_state;
@@ -119,12 +89,10 @@ router.get('/callback', async (req, res) => {
   delete req.session.fb_state;
 
   try {
-    // 1) code -> short token
     const t1 = await exchangeCodeForToken(code);
     let accessToken = t1.access_token;
     let expiresAt   = t1.expires_in ? new Date(Date.now() + t1.expires_in * 1000) : null;
 
-    // 2) short -> long lived
     try {
       const t2 = await toLongLivedToken(accessToken);
       if (t2?.access_token) {
@@ -135,46 +103,35 @@ router.get('/callback', async (req, res) => {
       console.warn('Meta long-lived exchange falló:', e?.response?.data || e.message);
     }
 
-    // 3) Validar token
     const dbg = await debugToken(accessToken);
     if (dbg?.app_id !== APP_ID || dbg?.is_valid !== true) {
       return res.redirect('/onboarding?meta=error');
     }
 
-    // 4) Datos de usuario (opcional)
     let fbUserId = null, email = null, name = null;
     try {
       const me = await axios.get(`${FB_GRAPH}/me`, {
-        params: {
-          fields: 'id,name,email',
-          access_token: accessToken,
-          appsecret_proof: makeAppSecretProof(accessToken)
-        },
+        params: { fields: 'id,name,email', access_token: accessToken, appsecret_proof: makeAppSecretProof(accessToken) },
         timeout: 15000
       });
       fbUserId = me.data?.id || null;
       email    = me.data?.email || null;
       name     = me.data?.name  || null;
-    } catch {
-      // no bloquea
-    }
+    } catch {}
 
-    // 5) Cuentas publicitarias
     let adAccounts = [];
     try {
       const proof = makeAppSecretProof(accessToken);
       const ads = await axios.get(`${FB_GRAPH}/me/adaccounts`, {
         params: {
           fields: 'account_id,name,currency,configured_status,timezone_name',
-          access_token: accessToken,
-          appsecret_proof: proof,
-          limit: 100
+          access_token: accessToken, appsecret_proof: proof, limit: 100
         },
         timeout: 15000
       });
       adAccounts = (ads.data?.data || []).map((a) => ({
-        id: toActId(a.account_id),             // "act_123"
-        account_id: normActId(a.account_id),   // "123"
+        id: toActId(a.account_id),
+        account_id: normActId(a.account_id),
         name: a.name,
         currency: a.currency,
         configured_status: a.configured_status,
@@ -184,27 +141,20 @@ router.get('/callback', async (req, res) => {
       console.warn('No se pudieron leer adaccounts:', e?.response?.data || e.message);
     }
 
-    // 6) Persistir (User + MetaAccount)
     const userId = req.user._id;
 
     await User.findByIdAndUpdate(userId, {
-      $set: {
-        metaConnected: true,
-        metaFbUserId: fbUserId || undefined
-      }
+      $set: { metaConnected: true, metaFbUserId: fbUserId || undefined }
     });
 
-    // Guardamos con ambos nombres de token y ambos arrays (ad_accounts/adAccounts)
-    const defaultAccountId = adAccounts?.[0]?.account_id || null; // "123"
-
     if (MetaAccount) {
+      const defaultAccountId = adAccounts?.[0]?.account_id || null;
       await MetaAccount.findOneAndUpdate(
         { $or: [{ userId }, { user: userId }] },
         {
           $set: {
             userId, user: userId,
             fbUserId: fbUserId || undefined,
-            // compatibilidad de nombres:
             longLivedToken: accessToken,
             longlivedToken: accessToken,
             access_token:   accessToken,
@@ -218,17 +168,15 @@ router.get('/callback', async (req, res) => {
         { upsert: true, new: true }
       );
     } else {
-      // Fallback: si no existe el modelo, guarda al menos flag en User
       await User.findByIdAndUpdate(userId, {
         $set: {
           metaAccessToken: accessToken,
           metaTokenExpiresAt: expiresAt || null,
-          metaDefaultAccountId: defaultAccountId
+          metaDefaultAccountId: adAccounts?.[0]?.account_id || null
         }
       });
     }
 
-    // 7) refrescar sesión y redirigir
     const destino = req.user.onboardingComplete ? '/dashboard' : '/onboarding?meta=ok';
     req.login(req.user, (err) => {
       if (err) return res.redirect('/onboarding?meta=error');
@@ -241,10 +189,8 @@ router.get('/callback', async (req, res) => {
 });
 
 /* =========================
-   API de estado y selección (compatibilidad)
+   API de estado y selección
    ========================= */
-
-// GET /auth/meta/status  -> usado por código antiguo; ahora también devuelve `objective`
 router.get('/status', requireAuth, async (req, res) => {
   try {
     if (!MetaAccount) {
@@ -280,11 +226,11 @@ router.get('/status', requireAuth, async (req, res) => {
   }
 });
 
-// POST /auth/meta/default-account  body: { accountId: "act_123" | "123" }
+// POST /auth/meta/default-account
 router.post('/default-account', requireAuth, express.json(), async (req, res) => {
   try {
     const bodyId = req.body?.accountId || '';
-    const accountId = normActId(bodyId); // guardamos "123"
+    const accountId = normActId(bodyId);
     if (!accountId) return res.status(400).json({ error: 'account_required' });
 
     if (MetaAccount) {
