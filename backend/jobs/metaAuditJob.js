@@ -1,17 +1,22 @@
 // backend/jobs/metaAuditJob.js
+'use strict';
+
 const axios = require('axios');
-const MetaAccount = require('../models/MetaAccount'); // debe existir en tu proyecto
+const MetaAccount = require('../models/MetaAccount');
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v19.0';
 
 /**
- * Devuelve un objeto con la misma forma que generarAuditoriaIA (Shopify):
- * { productsAnalizados, resumen, actionCenter, issues }
+ * Auditoría de Meta Ads
  */
 async function generarAuditoriaMetaIA(userId, { accountId, datePreset = 'last_30d' } = {}) {
   try {
-    // 1) Token y cuenta
-    const meta = await MetaAccount.findOne({ user: userId }).lean();
-    if (!meta || !meta.access_token) {
+    const meta = await MetaAccount
+      .findOne({ $or: [{ user: userId }, { userId }] })
+      .select('+access_token +longlivedToken +longLivedToken +accessToken')
+      .lean();
+
+    const token = meta?.access_token || meta?.longlivedToken || meta?.longLivedToken || meta?.accessToken;
+    if (!token) {
       return {
         productsAnalizados: 0,
         resumen: 'No hay token de Meta conectado.',
@@ -19,8 +24,7 @@ async function generarAuditoriaMetaIA(userId, { accountId, datePreset = 'last_30
         issues: { productos: [], ux: [], seo: [], performance: [], media: [] }
       };
     }
-    const token = meta.access_token;
-    const useAccountId = accountId || (meta.ad_accounts?.[0]?.id);
+    const useAccountId = (accountId || meta?.defaultAccountId || meta?.ad_accounts?.[0]?.id || meta?.adAccounts?.[0]?.id || '').toString().replace(/^act_/, '');
     if (!useAccountId) {
       return {
         productsAnalizados: 0,
@@ -30,7 +34,6 @@ async function generarAuditoriaMetaIA(userId, { accountId, datePreset = 'last_30
       };
     }
 
-    // 2) Insights campañas
     const fields = [
       'campaign_id','campaign_name',
       'spend','impressions','clicks','ctr','cpc','cpm','frequency',
@@ -45,8 +48,9 @@ async function generarAuditoriaMetaIA(userId, { accountId, datePreset = 'last_30
         level: 'campaign',
         fields,
         time_increment: 1,
-        limit: 500
-      }
+        limit: 500,
+      },
+      timeout: 30000,
     });
 
     const rows = data?.data || [];
@@ -54,19 +58,19 @@ async function generarAuditoriaMetaIA(userId, { accountId, datePreset = 'last_30
     const flat = { ux: [], seo: [], performance: [], media: [] };
     const actionCenter = [];
 
-    let totalSpend = 0, totalImpr = 0, totalClicks = 0, totalConv = 0;
+    let totalSpend = 0, totalImpr = 0, totalClicks = 0;
 
-    const pushHallazgo = (area, h) => {
-      const item = { area, ...h };
-      productos[0].hallazgos.push(item);
+    const push = (area, issue) => {
+      const it = { area, ...issue };
+      productos[0].hallazgos.push(it);
       const key = area.toLowerCase();
-      if (flat[key]) flat[key].push(item);
-      if (h.severity === 'high') {
+      if (flat[key]) flat[key].push(it);
+      if (issue.severity === 'high') {
         actionCenter.push({
-          title: `[${h.title}]`,
-          description: h.description,
+          title: `[${issue.title}]`,
+          description: issue.description,
           severity: 'high',
-          button: 'Ver detalle'
+          button: 'Ver detalle',
         });
       }
     };
@@ -75,54 +79,36 @@ async function generarAuditoriaMetaIA(userId, { accountId, datePreset = 'last_30
       const spend = Number(r.spend || 0);
       const impr  = Number(r.impressions || 0);
       const clicks= Number(r.clicks || 0);
-      const ctr   = Number(r.ctr || 0);    // Meta retorna % ya calculado
-      const cpc   = Number(r.cpc || 0);
+      const ctr   = Number(r.ctr || 0); // %
       const cpm   = Number(r.cpm || 0);
       const freq  = Number(r.frequency || 0);
+      totalSpend += spend; totalImpr += impr; totalClicks += clicks;
 
-      let conv = 0;
-      if (Array.isArray(r.actions)) {
-        const purchase = r.actions.find(a => a.action_type === 'purchase');
-        conv = purchase ? Number(purchase.value || 0) : 0;
-      }
-
-      totalSpend += spend; totalImpr += impr; totalClicks += clicks; totalConv += conv;
-
-      // Heurísticas:
       if (impr > 0) {
         if (ctr < 0.8) {
-          pushHallazgo('Performance', {
+          push('Performance', {
             title: `CTR bajo - ${r.campaign_name}`,
             description: `CTR ${ctr.toFixed(2)}% (< 0.8% recomendado).`,
             severity: 'medium',
-            recommendation: 'Probar creatividades nuevas, hooks más claros en 2–3s, revisar públicos.'
+            recommendation: 'Itera creatividades/hook y prueba ubicaciones.'
           });
         }
         if (cpm > 20) {
-          pushHallazgo('Performance', {
+          push('Performance', {
             title: `CPM elevado - ${r.campaign_name}`,
             description: `CPM ${cpm.toFixed(2)} alto para el periodo.`,
             severity: 'medium',
-            recommendation: 'Revisar segmentación, ubicaciones, y saturación de audiencia.'
+            recommendation: 'Revisa segmentación y saturación de audiencia.'
           });
         }
       }
 
-      if (clicks >= 150 && conv === 0 && spend > 0) {
-        pushHallazgo('UX', {
-          title: `Gasto sin compras - ${r.campaign_name}`,
-          description: `Clicks ${clicks}, gasto ${spend.toFixed(2)} y 0 compras.`,
-          severity: 'high',
-          recommendation: 'Revisar evento Purchase, calidad de landing, velocidad y tracking.'
-        });
-      }
-
       if (freq >= 4 && ctr < 1.0) {
-        pushHallazgo('Media', {
-          title: `Fatiga creativa - ${r.campaign_name}`,
-          description: `Frecuencia ${freq.toFixed(1)} y CTR ${ctr.toFixed(2)}%.`,
+        push('Media', {
+          title: `Posible fatiga creativa - ${r.campaign_name}`,
+          description: `Frecuencia ${freq.toFixed(1)} con CTR ${ctr.toFixed(2)}%.`,
           severity: 'medium',
-          recommendation: 'Rotar creatividades y ajustar límites de frecuencia.'
+          recommendation: 'Rota creatividades y ajusta límites de frecuencia.'
         });
       }
     }
@@ -131,13 +117,11 @@ async function generarAuditoriaMetaIA(userId, { accountId, datePreset = 'last_30
     const cpcAvg = totalClicks ? (totalSpend / totalClicks) : null;
     const resumen = `Analizadas ${rows.length} campañas. CTR medio ${avgCTR.toFixed(2)}%. CPC promedio ${cpcAvg?.toFixed(2) ?? 'N/A'}.`;
 
-    const issues = { productos, ...flat };
-
     return {
       productsAnalizados: rows.length,
       resumen,
       actionCenter,
-      issues
+      issues: { productos, ...flat },
     };
   } catch (err) {
     console.error('❌ Meta audit error:', err?.response?.data || err);

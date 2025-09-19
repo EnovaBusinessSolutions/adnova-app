@@ -1,194 +1,155 @@
 // backend/jobs/auditJob.js
-const OpenAI = require('openai');
-const axios  = require('axios');
+'use strict';
 
-const openai  = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const VERSION = process.env.SHOPIFY_API_VERSION || '2024-07';
+const axios = require('axios');
+const ShopConnections = require('../models/ShopConnections');
 
-const Audit  = require('../models/Audit');
-const {
-  getSalesMetrics,
-  getProductMetrics,
-  getCustomerMetrics,
-} = require('../services/shopifyMetrics');
-
-function mapIssues(raw = {}) {
-  if (raw.productos) return raw;              
-  return {
-    productos: [
-      {
-        nombre: 'GLOBAL',
-        hallazgos: ['ux','seo','performance','media']
-          .flatMap(cat => (raw[cat] || []).map(h => ({ ...h, area: cat })))
-      }
-    ]
-  };
-}
-
-
-async function fetchProducts(shop, token) {
-  const query = `
-  {
-    products(first: 250) {
-      edges {
-        node {
-          id title description tags productType status
-          images(first:10){edges{node{originalSrc altText}}}
-          variants(first:10){edges{node{id title price sku inventoryQuantity}}}
-          vendor handle totalInventory publishedAt createdAt updatedAt
-        }
-      }
-    }
-  }`;
-  const { data } = await axios.post(
-    `https://${shop}/admin/api/${VERSION}/graphql.json`,
-    { query },
-    { headers: { 'X-Shopify-Access-Token': token } }
-  );
-  return (data.data.products.edges || []).map(e => e.node);
-}
-
-async function generarAuditoriaIA(shop, token) {
-  try {
-    const products = await fetchProducts(shop, token);
-
-    if (!products.length) {
-      return {
-        productsAnalizados: 0,
-        resumen: 'No se encontraron productos para auditar.',
-        actionCenter: [],
-        issues: { productos: [] }
-      };
-    }
-
-    const prompt = `
-Eres un consultor de Shopify. Audita cada producto y clasifica **cada hallazgo** SOLO en una de las siguientes áreas exactas:
-- UX
-- SEO
-- Performance
-- Media
-
-Responde SOLO en JSON con esta estructura exacta y sin texto adicional:
-
-{
-  "resumen": "",
-  "actionCenter": [
-    { "title":"", "description":"", "severity":"high|medium|low", "button":"Acción" }
-  ],
-  "issues": {
-    "productos":[
-      {
-        "nombre":"",
-        "hallazgos":[
-          { "area":"UX|SEO|Performance|Media", "title":"", "description":"", "severity":"high|medium|low", "recommendation":"" }
-        ]
-      }
-    ]
-  }
-}
-
-Asegúrate de incluir **todos** los hallazgos relevantes.
-Productos a analizar:
-${JSON.stringify(products)}
-`.trim();
-
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4-1106-preview',
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 4096
-    });
-
-    const raw     = completion.choices[0].message.content.replace(/```json?|```/g, '');
-    const parsed  = JSON.parse(raw);
-    const issues  = mapIssues(parsed.issues);
-
-const flat = { ux: [], seo: [], performance: [], media: [] };
-
-const detectCat = area => {
-  const a = (area || '').toLowerCase();
-  if (a.includes('seo'))                      return 'seo';
-  if (a.includes('performance') ||
-      a.includes('rendimiento'))             return 'performance';
-  if (a.includes('media') ||
-      a.includes('imagen')  ||
-      a.includes('video'))                   return 'media';
-  return 'ux';
-};
-
-
-(issues.productos || []).forEach(prod => {
-  (prod.hallazgos || []).forEach(h => {
-    const cat = detectCat(h.area);
-    flat[cat].push(h);
+/**
+ * Utilidad para llamar REST Admin Shopify
+ */
+async function shopifyGET(shop, token, path, params = {}) {
+  const url = `https://${shop}/admin/api/2024-10/${path}.json`;
+  const { data } = await axios.get(url, {
+    headers: {
+      'X-Shopify-Access-Token': token,
+      'Content-Type': 'application/json',
+    },
+    params,
+    timeout: 30000,
   });
-});
+  return data;
+}
 
+/**
+ * Auditoría de Shopify
+ * Intenta: (1) por userId hallando ShopConnections, (2) si se le pasa shop/token directo
+ * Soporta ambos modos para compatibilidad.
+ */
+async function generarAuditoriaIA(shopOrUserId, tokenMaybe) {
+  try {
+    let shop = null;
+    let token = null;
 
-const issuesFinal = { ...issues, ...flat };
+    if (typeof shopOrUserId === 'string' && shopOrUserId.includes('.myshopify.com')) {
+      shop = shopOrUserId;
+      token = tokenMaybe;
+    } else {
+      // asume userId
+      const conn = await ShopConnections.findOne({ matchedToUserId: shopOrUserId }).lean();
+      if (!conn) {
+        return {
+          productsAnalizados: 0,
+          resumen: 'No hay tienda Shopify conectada.',
+          actionCenter: [],
+          issues: { productos: [], ux: [], seo: [], performance: [], media: [] },
+        };
+      }
+      shop = conn.shop;
+      token = conn.accessToken;
+    }
 
+    // Fechas (últimos 30 días)
+    const now = new Date();
+    const since = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 29));
+    const isoSince = since.toISOString();
 
-    
-    const extraAC = [];
-    issues.productos.forEach(p =>
-      p.hallazgos.forEach(h => {
-        if (h.severity === 'high') {
-          extraAC.push({
-            title: `[${p.nombre}] ${h.title}`,
-            description: h.description,
-            severity: 'high',
-            button: 'Ver detalle'
-          });
-        }
-      })
-    );
-    const actionCenter = [
-      ...parsed.actionCenter,
-      ...extraAC
-    ];
+    // 1) Últimos pedidos (limitamos por performance)
+    const ordersRes = await shopifyGET(shop, token, 'orders', {
+      status: 'any',
+      limit: 50,
+      order: 'created_at desc',
+      created_at_min: isoSince,
+      fields: 'id,created_at,total_price,customer,line_items,financial_status,fulfillment_status,contact_email,currency',
+    }).catch(() => ({ orders: [] }));
+
+    const orders = ordersRes.orders || [];
+
+    // KPIs simples
+    let ordersLast30 = orders.length;
+    let salesLast30 = 0;
+    const productAgg = new Map(); // name -> {qty, revenue}
+
+    for (const o of orders) {
+      const total = Number(o.total_price || 0);
+      salesLast30 += total;
+
+      for (const li of (o.line_items || [])) {
+        const name = li.title || 'Producto';
+        const qty = Number(li.quantity || 0);
+        const price = Number(li.price || 0);
+        if (!productAgg.has(name)) productAgg.set(name, { qty: 0, revenue: 0 });
+        const p = productAgg.get(name);
+        p.qty += qty;
+        p.revenue += qty * price;
+      }
+    }
+
+    const avgOrderValue = ordersLast30 ? (salesLast30 / ordersLast30) : 0;
+
+    // Top productos (máx 5)
+    const topProducts = [...productAgg.entries()]
+      .sort((a, b) => b[1].revenue - a[1].revenue)
+      .slice(0, 5)
+      .map(([name, v]) => ({ name, sales: v.qty, revenue: v.revenue }));
+
+    // Heurísticas / hallazgos
+    const productos = [{ nombre: 'Catálogo/Órdenes (muestra 50)', hallazgos: [] }];
+    const ux = [], seo = [], performance = [], media = [];
+    const actionCenter = [];
+
+    if (ordersLast30 > 0 && avgOrderValue < 10) {
+      ux.push({
+        title: 'Ticket promedio bajo',
+        description: `AOV ${avgOrderValue.toFixed(2)} muy bajo.`,
+        severity: 'medium',
+        recommendation: 'Revisa bundles, upsells/cross-sells y gastos de envío.'
+      });
+      actionCenter.push({
+        title: 'Mejora de AOV',
+        description: 'Implementa bundles/upsell en PDP y checkout para elevar el ticket.',
+        severity: 'medium',
+        button: 'Ver ideas'
+      });
+    }
+
+    if (topProducts.length === 0) {
+      performance.push({
+        title: 'Sin ventas en últimos 30 días',
+        description: 'No se detectaron pedidos recientes.',
+        severity: 'high',
+        recommendation: 'Activa campañas de remarketing, revisa inventario y promociones.'
+      });
+      actionCenter.push({
+        title: 'Activar campañas de remarketing',
+        description: 'Recupera tráfico y clientes con campañas en Meta/Google.',
+        severity: 'high',
+        button: 'Ver guía'
+      });
+    }
+
+    // Resultado
+    const resumen = `Pedidos: ${ordersLast30}. Ventas: ${salesLast30.toFixed(2)}. AOV: ${avgOrderValue.toFixed(2)}.`;
 
     return {
-      productsAnalizados: products.length,
-      resumen: parsed.resumen,
+      productsAnalizados: topProducts.length,
+      resumen,
       actionCenter,
-      issues: issuesFinal
+      issues: { productos, ux, seo, performance, media },
+      salesLast30,
+      ordersLast30,
+      avgOrderValue,
+      topProducts,
+      customerStats: { newPct: undefined, repeatPct: undefined },
     };
-
   } catch (err) {
-    console.error('❌ Error IA auditoría:', err);
+    console.error('❌ Shopify audit error:', err?.response?.data || err);
     return {
       productsAnalizados: 0,
-      resumen: 'Error generando auditoría IA.',
+      resumen: 'Error al consultar Shopify.',
       actionCenter: [],
-      issues: { productos: [] }
+      issues: { productos: [], ux: [], seo: [], performance: [], media: [] },
     };
   }
 }
 
-async function procesarAuditoria(userId, shopDomain, token) {
-  const ia      = await generarAuditoriaIA(shopDomain, token);
-  const sales   = await getSalesMetrics(shopDomain, token);
-  const prod    = await getProductMetrics(shopDomain, token);
-  const clients = await getCustomerMetrics(shopDomain, token);
-
-  await Audit.create({
-    userId,
-    shopDomain,
-    salesLast30:   sales.totalSales,
-    ordersLast30:  sales.totalOrders,
-    avgOrderValue: sales.avgOrderValue,
-    topProducts:   (prod.topProducts || []).map(p => ({
-      name: p.name || p.title || '',
-      sales: p.sales || p.qtySold || 0,
-      revenue: p.revenue || 0
-    })),
-    customerStats: { newPct: clients.newPct, repeatPct: clients.repeatPct },
-    productsAnalizados: ia.productsAnalizados,
-    resumen: ia.resumen,
-    actionCenter: ia.actionCenter,
-    issues: ia.issues
-  });
-
-  return { saved: true };
-}
-
-module.exports = { generarAuditoriaIA, procesarAuditoria };
+module.exports = { generarAuditoriaIA };

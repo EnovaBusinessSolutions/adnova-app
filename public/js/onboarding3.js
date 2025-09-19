@@ -6,7 +6,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const progressText = document.querySelector(".progress-text");
   if (btn) btn.disabled = true;
 
-  // Slots de pasos existentes en tu HTML (4 ítems)
+  // 4 slots ya presentes en tu HTML
   const stepEls = Array.from(document.querySelectorAll(".analysis-step")).map((el) => ({
     root: el,
     icon: el.querySelector(".analysis-step-icon"),
@@ -70,137 +70,107 @@ document.addEventListener("DOMContentLoaded", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
     }).then(async (r) => {
-      if (!r.ok) {
-        let msg = "";
-        try { msg = (await r.json())?.error || ""; } catch {}
-        throw new Error(msg || `${url} failed`);
+      let json = null;
+      try { json = await r.json(); } catch {}
+      if (!r.ok || json?.ok === false) {
+        const msg = json?.detail || json?.error || `${url} failed`;
+        throw new Error(msg);
       }
-      return r.json();
+      return json || {};
     });
 
-  // Resultados (opcional para onboarding4)
-  let resShopify = null, resMeta = null, resGoogle = null;
+  // Mapeo de tipos → índice visual (usa los 3 primeros slots)
+  // Orden fijo para consistencia con tu UI: Google, Meta, Shopify
+  const TYPE_TO_INDEX = { google: 0, meta: 1, shopify: 2 };
+  const INDEX_TO_LABEL = {
+    0: "Analizando Google Ads",
+    1: "Analizando Meta Ads",
+    2: "Analizando Shopify",
+    3: "Generando recomendaciones",
+  };
+
+  // Pre-pinta labels (si faltan pasos, el 3er/4to slot sigue sirviendo para el texto final)
+  for (let i = 0; i < stepEls.length; i++) {
+    setStepLabel(i, INDEX_TO_LABEL[i] || "Procesando…");
+  }
+
+  // Resultados que podrías querer reusar más adelante
+  let resultsPayload = null;
 
   try {
-    // 1) Lee sesión real
+    // Verifica sesión para UX (opcional)
     const sess = await getJSON("/api/session");
     if (!sess?.authenticated) throw new Error("Sesión no encontrada. Inicia sesión nuevamente.");
 
-    const user = sess.user || {};
-    const hasShopify = !!user.shopifyConnected && !!user.shop;
-    const hasGoogle  = !!user.googleConnected;
-
-    // **Meta**: validar realmente que hay token y cuenta por defecto
-    let metaStatus = { connected: false, hasAccounts: false, defaultAccountId: null };
-    if (user.metaConnected) {
-      metaStatus = await getJSON("/auth/meta/status");
-    }
-    const hasMeta = !!metaStatus.connected && !!metaStatus.hasAccounts;
-
-    // Persistir por compatibilidad
-    try {
-      sessionStorage.setItem("userId", user._id || "");
-      sessionStorage.setItem("shop", user.shop || "");
-    } catch {}
-
-    // 2) Construye tareas según conexiones
-    const tasks = [];
-    if (hasShopify) {
-      tasks.push({
-        id: "shopify",
-        label: "Analizando Shopify",
-        run: async () => {
-          // En modo sesión no necesitas enviar shop/accessToken
-          resShopify = await postJSON("/api/audit/start", {});
-        }
-      });
-    }
-    if (hasMeta) {
-      tasks.push({
-        id: "meta",
-        label: "Analizando Meta Ads",
-        run: async () => {
-          // El backend leerá token + defaultAccountId desde DB
-          resMeta = await postJSON("/api/audit/meta/start", { datePreset: "last_30d" });
-        }
-      });
-    }
-    if (hasGoogle) {
-      tasks.push({
-        id: "google",
-        label: "Analizando Google Ads",
-        run: async () => {
-          // El backend toma credenciales desde DB. Puedes pasar date_range.
-          resGoogle = await postJSON("/api/audit/google/start", { date_range: "LAST_30_DAYS" });
-        }
-      });
+    // Marca “running” los 3 primeros pasos (si alguno no está conectado, lo omitimos luego)
+    for (const t of ["google", "meta", "shopify"]) {
+      const idx = TYPE_TO_INDEX[t];
+      if (idx !== undefined) markRunning(idx);
     }
 
-    // 3) Mapea labels a los 4 slots
-    const labels = tasks.map((t) => t.label);
-    while (labels.length < stepEls.length) labels.push("Generando recomendaciones");
-    stepEls.forEach((_, i) => setStepLabel(i, labels[i]));
+    setText("Recopilando datos…");
 
-    // 4) Si no hay conexiones, permite continuar
-    if (!tasks.length) {
-      running = false;
-      setBar(100);
-      setText("No hay conexiones activas. Puedes continuar.");
-      if (btn) btn.disabled = false;
-      stepEls.forEach((_, i) => markOmit(i));
-      return;
-    }
+    // 🔥 ÚNICA llamada: lanza todas las auditorías disponibles
+    const json = await postJSON("/api/audits/run", {});
 
-    // 5) Ejecuta tareas en serie
-    for (let i = 0; i < tasks.length; i++) {
-      const t = tasks[i];
-      markRunning(i);
-      setText(`${t.label}…`);
-      try {
-        await t.run();
-        markDone(i);
-      } catch (e) {
-        console.warn(`[${t.id}]`, e?.message || e);
-        markOmit(i, e?.message || "error");
-      }
-      // Progreso intermedio manual
-      progress = Math.min(95, progress + Math.ceil(70 / tasks.length));
+    // Avanza progreso intermedio
+    progress = Math.max(progress, 45);
+    setBar(progress);
+
+    const results = Array.isArray(json.results) ? json.results : [];
+    resultsPayload = json;
+
+    // Marca estado por tipo en UI
+    const seen = new Set();
+    for (const r of results) {
+      if (!r?.type) continue;
+      seen.add(r.type);
+      const idx = TYPE_TO_INDEX[r.type];
+      if (idx === undefined) continue;
+      if (r.ok) markDone(idx);
+      else markOmit(idx, r.error || "error");
+      // Sube progresivamente
+      progress = Math.min(95, progress + 15);
       setBar(progress);
     }
 
-    // 6) Completa visualmente pasos restantes (si quedaron)
-    for (let j = tasks.length; j < stepEls.length - 1; j++) markDone(j);
+    // Cualquier tipo no ejecutado = no conectado → omitir
+    for (const t of ["google", "meta", "shopify"]) {
+      if (!seen.has(t)) {
+        const idx = TYPE_TO_INDEX[t];
+        if (idx !== undefined) markOmit(idx, "no conectado");
+      }
+    }
 
-    // 7) Finaliza
+    // Paso final (slot 4) visual
+    const finalIdx = Math.min(3, stepEls.length - 1);
+    markDone(finalIdx);
+
     running = false;
     setBar(100);
-    markDone(stepEls.length - 1);
     setText("¡Análisis completado!");
     if (btn) btn.disabled = false;
 
-    // Guarda payload combinado (opcional)
+    // Guarda resumen para posible uso en el siguiente paso o dashboard
     try {
-      const payload = {
-        shopify: resShopify?.resultado || resShopify || null,
-        meta:    resMeta?.resultado    || resMeta    || null,
-        google:  resGoogle?.resultado  || resGoogle  || null,
-      };
-      sessionStorage.setItem("auditResult", JSON.stringify(payload));
+      sessionStorage.setItem("auditResult", JSON.stringify(resultsPayload));
     } catch {}
   } catch (err) {
-    // Error de sesión u otro fatal → permite continuar
     console.error(err);
     running = false;
     setBar(100);
     if (progressBar) progressBar.style.background = "#f55";
     setText(err?.message || "Ocurrió un error. Puedes continuar.");
     alert(err?.message || "Ocurrió un problema. Puedes continuar y revisar luego en el dashboard.");
-    if (btn) btn.disabled = false;
+
+    // Marca omitidos todos los pasos visibles y permite continuar
     stepEls.forEach((_, i) => markOmit(i));
+    if (btn) btn.disabled = false;
   }
 });
 
 // Botón continuar
 document.getElementById("continue-btn-3")?.addEventListener("click", () => {
+  // Mantengo tu navegación existente
   window.location.href = "/onboarding4.html";
 });
