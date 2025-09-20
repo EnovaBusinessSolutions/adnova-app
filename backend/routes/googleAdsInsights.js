@@ -21,7 +21,7 @@ try {
       refreshToken: { type: String, select: false },
       managerCustomerId: String,
       objective: String,
-      customers: Array, // [{ id, timeZone, currencyCode, ... }]
+      customers: Array, // [{ id, descriptiveName, currencyCode, timeZone }]
       defaultCustomerId: String,
     },
     { collection: 'googleaccounts', timestamps: true }
@@ -57,43 +57,25 @@ const ymd = (d) => d.toISOString().slice(0, 10);
 const addDays = (d, n) =>
   new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + n));
 
-/**
- * Rango actual y previo.
- * Soporta:
- * - range=30|60|90 (+ include_today=0|1)
- * - date_preset=last_7d|last_14d|last_28d|today|yesterday
- * - compare_mode=prev_month  -> compara contra MES ANTERIOR real
- *   (default: prev_period -> periodo anterior de igual longitud)
- */
 function computeRanges(q) {
   const includeToday = String(q.include_today || '0') === '1';
-  const compareMode = String(q.compare_mode || 'prev_period'); // 'prev_month' | 'prev_period'
+  const compareMode = String(q.compare_mode || 'prev_period');
 
   const today = new Date();
-  const base = new Date(
-    Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())
-  );
+  const base = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
   const anchor = includeToday ? base : addDays(base, -1);
 
-  // --- modo "mes anterior" (prev_month) ---
   if (compareMode === 'prev_month') {
-    const firstOfThisMonth = new Date(
-      Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1)
-    );
+    const firstOfThisMonth = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1));
     const current = { since: ymd(firstOfThisMonth), until: ymd(anchor) };
 
-    const firstOfPrevMonth = new Date(
-      Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - 1, 1)
-    );
-    const lastOfPrevMonth = new Date(
-      Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 0)
-    );
+    const firstOfPrevMonth = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - 1, 1));
+    const lastOfPrevMonth = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 0));
     const previous = { since: ymd(firstOfPrevMonth), until: ymd(lastOfPrevMonth) };
 
     return { current, previous, is_partial: includeToday };
   }
 
-  // --- modo por defecto: periodo anterior de igual longitud ---
   const preset = String(q.date_preset || '').toLowerCase();
   if (preset === 'today') {
     return {
@@ -114,14 +96,7 @@ function computeRanges(q) {
 
   let days = Number(q.range || 0);
   if (!Number.isFinite(days) || days <= 0) {
-    days =
-      preset === 'last_7d'
-        ? 7
-        : preset === 'last_14d'
-        ? 14
-        : preset === 'last_28d'
-        ? 28
-        : 30;
+    days = preset === 'last_7d' ? 7 : preset === 'last_14d' ? 14 : preset === 'last_28d' ? 28 : 30;
   }
 
   const currUntil = anchor;
@@ -161,36 +136,44 @@ function resolveCustomerId(req, doc) {
   return list.length ? String(list[0].id || '').replace(/-/g, '') : '';
 }
 
-async function runGAQL({ accessToken, customerId, gaql, managerId }) {
+function buildHeaders(accessToken, managerId) {
   const headers = {
     Authorization: `Bearer ${accessToken}`,
     'developer-token': GOOGLE_DEVELOPER_TOKEN,
     'Content-Type': 'application/json',
   };
-  const loginId = String(managerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '')
-    .replace(/-/g, '')
-    .trim();
+  const loginId = String(managerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '').replace(/-/g, '').trim();
   if (loginId) headers['login-customer-id'] = loginId;
+  return headers;
+}
 
+async function runGAQL({ accessToken, customerId, gaql, managerId }) {
   const { data } = await axios.post(
     `https://googleads.googleapis.com/v16/customers/${customerId}/googleAds:search`,
     { query: gaql },
-    { headers, timeout: 30000 }
+    { headers: buildHeaders(accessToken, managerId), timeout: 30000 }
   );
   return data?.results || [];
 }
 
+/* ------------ listAccessibleCustomers (ids) ------------- */
+async function listAccessibleCustomers(accessToken) {
+  const { data } = await axios.get(
+    `https://googleads.googleapis.com/v16/customers:listAccessibleCustomers`,
+    { headers: { Authorization: `Bearer ${accessToken}`, 'developer-token': GOOGLE_DEVELOPER_TOKEN }, timeout: 20000 }
+  );
+  return (data?.resourceNames || []).map((rn) => rn.split('/')[1]).filter(Boolean);
+}
+
 /* ===========================================================
-   GET /api/google/ads   -> shape canónico para tu frontend
+   GET /api/google/ads   -> KPIs por objetivo (tu endpoint)
    =========================================================== */
 router.get('/', requireAuth, async (req, res) => {
   try {
     const gaDoc = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
-      .select(
-        '+refreshToken +accessToken objective defaultCustomerId managerCustomerId customers'
-      )
+      .select('+refreshToken +accessToken objective defaultCustomerId managerCustomerId customers')
       .lean();
 
     if (!gaDoc?.refreshToken && !gaDoc?.accessToken) {
@@ -198,9 +181,7 @@ router.get('/', requireAuth, async (req, res) => {
     }
 
     const rawObjective = String(req.query.objective || gaDoc.objective || 'ventas').toLowerCase();
-    const objective = ['ventas', 'alcance', 'leads'].includes(rawObjective)
-      ? rawObjective
-      : 'ventas';
+    const objective = ['ventas', 'alcance', 'leads'].includes(rawObjective) ? rawObjective : 'ventas';
 
     const ranges = computeRanges(req.query);
 
@@ -210,7 +191,6 @@ router.get('/', requireAuth, async (req, res) => {
     const accessToken = await getFreshAccessToken(gaDoc);
     const managerId = gaDoc?.managerCustomerId;
 
-    // --- GAQL por OBJETIVO ---
     function buildGaqlByObjective(obj, since, until) {
       const FIELDS_COMMON = `
         segments.date,
@@ -247,7 +227,6 @@ router.get('/', requireAuth, async (req, res) => {
         `;
       }
 
-      // ventas (default)
       const SALES_CAT = `segments.conversion_action_category = PURCHASE`;
       return `
         SELECT
@@ -264,7 +243,6 @@ router.get('/', requireAuth, async (req, res) => {
     const qCurr = buildGaqlByObjective(objective, ranges.current.since, ranges.current.until);
     const qPrev = buildGaqlByObjective(objective, ranges.previous.since, ranges.previous.until);
 
-    // (opcional) currency/zone
     const qMeta = `
       SELECT
         customer.currency_code,
@@ -282,148 +260,81 @@ router.get('/', requireAuth, async (req, res) => {
     const meta0 = metaRows?.[0]?.customer || {};
     const currency =
       meta0?.currencyCode ||
-      customerList(gaDoc).find((c) => String(c.id).replace(/-/g, '') === String(customerId))
-        ?.currencyCode ||
+      customerList(gaDoc).find((c) => String(c.id).replace(/-/g, '') === String(customerId))?.currencyCode ||
       'USD';
     const timeZone =
       meta0?.timeZone ||
-      customerList(gaDoc).find((c) => String(c.id).replace(/-/g, '') === String(customerId))
-        ?.timeZone ||
+      customerList(gaDoc).find((c) => String(c.id).replace(/-/g, '') === String(customerId))?.timeZone ||
       'America/Mexico_City';
 
-    /* --------------------- Aggregates actuales --------------------- */
-    let cost = 0,
-      impressions = 0,
-      clicks = 0,
-      conversions = 0,
-      conv_value = 0;
+    let cost = 0, impressions = 0, clicks = 0, conversions = 0, conv_value = 0;
 
     const series = rows.map((r) => {
       const _cost = microsToCurrency(r?.metrics?.costMicros);
-      const _imp = Number(r?.metrics?.impressions || 0);
-      const _clk = Number(r?.metrics?.clicks || 0);
-      const _ac = Number(r?.metrics?.conversions || 0);
-      const _av = Number(r?.metrics?.conversionsValue || 0);
+      const _imp  = Number(r?.metrics?.impressions || 0);
+      const _clk  = Number(r?.metrics?.clicks || 0);
+      const _ac   = Number(r?.metrics?.conversions || 0);
+      const _av   = Number(r?.metrics?.conversionsValue || 0);
 
-      cost += _cost;
-      impressions += _imp;
-      clicks += _clk;
-      conversions += _ac;
-      conv_value += _av;
+      cost += _cost; impressions += _imp; clicks += _clk; conversions += _ac; conv_value += _av;
 
-      return {
-        date: r?.segments?.date,
-        impressions: _imp,
-        clicks: _clk,
-        cost: _cost, // canónico
-        conversions: _ac,
-        conv_value: _av, // canónico
-      };
+      return { date: r?.segments?.date, impressions: _imp, clicks: _clk, cost: _cost, conversions: _ac, conv_value: _av };
     });
 
-    /* --------------------- Aggregates previos ---------------------- */
-    let p_cost = 0,
-      p_impr = 0,
-      p_clicks = 0,
-      p_convs = 0,
-      p_convValue = 0;
-
+    let p_cost = 0, p_impr = 0, p_clicks = 0, p_convs = 0, p_convValue = 0;
     rowsPrev.forEach((r) => {
-      p_cost += microsToCurrency(r?.metrics?.costMicros);
-      p_impr += Number(r?.metrics?.impressions || 0);
-      p_clicks += Number(r?.metrics?.clicks || 0);
-      p_convs += Number(r?.metrics?.conversions || 0);
+      p_cost      += microsToCurrency(r?.metrics?.costMicros);
+      p_impr      += Number(r?.metrics?.impressions || 0);
+      p_clicks    += Number(r?.metrics?.clicks || 0);
+      p_convs     += Number(r?.metrics?.conversions || 0);
       p_convValue += Number(r?.metrics?.conversionsValue || 0);
     });
 
-    /* --------------------- KPIs por objetivo ----------------------- */
     const ctr = impressions > 0 ? clicks / impressions : 0;
     const cpc = clicks > 0 ? cost / clicks : 0;
-
-    // ventas
     const roas = cost > 0 ? conv_value / cost : 0;
-    const cpa = conversions > 0 ? cost / conversions : 0;
-
-    // alcance
-    const cpm = impressions > 0 ? cost / (impressions / 1000) : 0;
-
-    // leads
-    const cvr = clicks > 0 ? conversions / clicks : 0;
+    const cpa  = conversions > 0 ? cost / conversions : 0;
+    const cpm  = impressions > 0 ? cost / (impressions / 1000) : 0;
+    const cvr  = clicks > 0 ? conversions / clicks : 0;
 
     let kpis;
     if (objective === 'alcance') {
-      kpis = {
-        impressions,
-        clicks,
-        ctr,
-        cpc,
-        cost,
-        cpm, // opcional para UI
-      };
+      kpis = { impressions, clicks, ctr, cpc, cost, cpm };
     } else if (objective === 'leads') {
-      kpis = {
-        conversions,
-        cpa, // (CPL práctico)
-        ctr,
-        cpc,
-        clicks,
-        cost,
-        cvr, // opcional
-      };
+      kpis = { conversions, cpa, ctr, cpc, clicks, cost, cvr };
     } else {
-      // ventas
-      kpis = {
-        conv_value,
-        conversions,
-        roas,
-        cpa,
-        ctr,
-        cpc,
-        clicks,
-        cost,
-      };
+      kpis = { conv_value, conversions, roas, cpa, ctr, cpc, clicks, cost };
     }
 
-    // prev para deltas (mismas llaves según objetivo)
     let prev;
     if (objective === 'alcance') {
       prev = {
-        impressions: p_impr,
-        clicks: p_clicks,
-        cost: p_cost,
+        impressions: p_impr, clicks: p_clicks, cost: p_cost,
         ctr: p_impr > 0 ? p_clicks / p_impr : 0,
         cpc: p_clicks > 0 ? p_cost / p_clicks : 0,
         cpm: p_impr > 0 ? p_cost / (p_impr / 1000) : 0,
       };
     } else if (objective === 'leads') {
       prev = {
-        conversions: p_convs,
-        cpa: p_convs > 0 ? p_cost / p_convs : 0,
+        conversions: p_convs, cpa: p_convs > 0 ? p_cost / p_convs : 0,
         ctr: p_impr > 0 ? p_clicks / p_impr : 0,
         cpc: p_clicks > 0 ? p_cost / p_clicks : 0,
-        clicks: p_clicks,
-        cost: p_cost,
-        cvr: p_clicks > 0 ? p_convs / p_clicks : 0,
+        clicks: p_clicks, cost: p_cost, cvr: p_clicks > 0 ? p_convs / p_clicks : 0,
       };
     } else {
-      // ventas
       prev = {
-        conv_value: p_convValue,
-        conversions: p_convs,
-        roas: p_cost > 0 ? p_convValue / p_cost : 0,
+        conv_value: p_convValue, conversions: p_convs, roas: p_cost > 0 ? p_convValue / p_cost : 0,
         cpa: p_convs > 0 ? p_cost / p_convs : 0,
         ctr: p_impr > 0 ? p_clicks / p_impr : 0,
         cpc: p_clicks > 0 ? p_cost / p_clicks : 0,
-        clicks: p_clicks,
-        cost: p_cost,
+        clicks: p_clicks, cost: p_cost,
       };
     }
 
-    /* --------------------- Deltas (proporciones) ------------------- */
     const deltas = {};
     for (const [k, v] of Object.entries(kpis)) {
       const curr = Number(v);
-      const old = Number(prev?.[k]);
+      const old  = Number(prev?.[k]);
       if (Number.isFinite(curr) && Number.isFinite(old)) {
         deltas[k] = old !== 0 ? (curr - old) / old : curr !== 0 ? 1 : 0;
       }
@@ -434,22 +345,105 @@ router.get('/', requireAuth, async (req, res) => {
       objective,
       customer_id: customerId,
       time_zone: timeZone,
-      currency, // para formateo en el front
+      currency,
       locale: 'es-MX',
       range: ranges.current,
       prev_range: ranges.previous,
       is_partial: ranges.is_partial,
       level: 'customer',
-      kpis,
-      deltas,
-      series,
+      kpis, deltas, series,
       cachedAt: new Date().toISOString(),
     });
   } catch (err) {
+    const status = err?.response?.status || 500;
     const detail = err?.response?.data || err.message || String(err);
     console.error('google/ads insights error:', detail);
-    const status = err?.response?.status || 500;
     res.status(status).json({ ok: false, error: 'GOOGLE_ADS_ERROR', detail });
+  }
+});
+
+/* ===========================================================
+   GET /api/google/ads/customers  -> listar cuentas accesibles
+   =========================================================== */
+router.get('/customers', requireAuth, async (req, res) => {
+  try {
+    const ga = await GoogleAccount
+      .findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
+      .select('+refreshToken +accessToken managerCustomerId defaultCustomerId customers')
+      .lean();
+
+    if (!ga || (!ga.refreshToken && !ga.accessToken)) {
+      return res.json({ ok: true, connected: false, customers: [] });
+    }
+
+    const accessToken = await getFreshAccessToken(ga);
+
+    // 1) ids accesibles
+    let ids = [];
+    try { ids = await listAccessibleCustomers(accessToken); }
+    catch { ids = (ga.customers || []).map((c) => String(c.id)); }
+
+    // 2) metadatos por id
+    const metas = [];
+    for (const id of ids) {
+      try {
+        const rows = await runGAQL({
+          accessToken,
+          customerId: id,
+          managerId: ga.managerCustomerId,
+          gaql: `
+            SELECT
+              customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone
+            FROM customer
+          `
+        });
+        const r = rows?.[0];
+        metas.push({
+          id,
+          descriptiveName: r?.customer?.descriptiveName || `Customer ${id}`,
+          currencyCode: r?.customer?.currencyCode || null,
+          timeZone: r?.customer?.timeZone || null,
+        });
+      } catch {
+        metas.push({ id, descriptiveName: `Customer ${id}` });
+      }
+    }
+
+    await GoogleAccount.updateOne(
+      { $or: [{ user: req.user._id }, { userId: req.user._id }] },
+      { $set: { customers: metas } }
+    );
+
+    res.json({
+      ok: true,
+      connected: true,
+      defaultCustomerId: ga.defaultCustomerId || null,
+      customers: metas
+    });
+  } catch (err) {
+    console.error('google/ads/customers error:', err?.response?.data || err);
+    res.status(500).json({ ok: false, error: 'CUSTOMERS_ERROR' });
+  }
+});
+
+/* ===========================================================
+   POST /api/google/ads/default  -> fijar defaultCustomerId
+   body: { customerId: "1234567890" }
+   =========================================================== */
+router.post('/default', requireAuth, express.json(), async (req, res) => {
+  try {
+    const customerId = String(req.body?.customerId || '').replace(/-/g, '');
+    if (!customerId) return res.status(400).json({ ok: false, error: 'CUSTOMER_REQUIRED' });
+
+    await GoogleAccount.findOneAndUpdate(
+      { $or: [{ user: req.user._id }, { userId: req.user._id }] },
+      { $set: { defaultCustomerId: customerId } },
+      { upsert: true }
+    );
+    res.json({ ok: true, defaultCustomerId: customerId });
+  } catch (err) {
+    console.error('google/ads/default error:', err);
+    res.status(500).json({ ok: false, error: 'SAVE_DEFAULT_ERROR' });
   }
 });
 
