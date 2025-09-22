@@ -1,147 +1,173 @@
 // backend/routes/audits.js
-'use strict';
-
 const express = require('express');
 const router = express.Router();
 
 const Audit = require('../models/Audit');
-const User  = require('../models/User');
+const User = require('../models/User');
 
-// Jobs (si quieres “disparar” auditorías desde aquí)
-let generateShopifyAudit, generateMetaAudit, generateGoogleAudit;
-try { generateShopifyAudit = require('../jobs/auditJob'); } catch {}
-try { generateMetaAudit    = require('../jobs/metaAuditJob'); } catch {}
-try { generateGoogleAudit  = require('../jobs/googleAuditJob'); } catch {}
+// IA (opcional): genera un resumen / actionCenter a partir de datos básicos
+let generateAudit;
+try {
+  generateAudit = require('../jobs/llm/generateAudit'); // si no existe, seguimos sin IA
+} catch { generateAudit = null; }
 
-/* Helpers */
-function ensureAuth(req, res, next) {
+// --- helpers ---
+function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
-  return res.status(401).json({ ok:false, error:'UNAUTHORIZED' });
+  return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
 }
 
-function asSafeAction(a) {
-  if (!a) return [];
-  // normaliza un Action Center Item
-  return (Array.isArray(a) ? a : []).map(x => ({
-    title:        x.title || x.titulo || 'Recomendación',
-    description:  x.description || x.descripcion || '',
-    severity:     x.severity || x.prioridad || 'medium',
-    button:       x.button || x.cta || undefined,
-    estimated:    x.estimated || x.tiempo || undefined,
-  }));
+function safeStr(v, fallback = '') {
+  return (typeof v === 'string' && v.trim()) ? v.trim() : fallback;
 }
 
-function byTypeOrNull(doc, type) {
-  return doc && (doc.type === type ? doc : null);
+function buildEmptyAudit({ userId, type, reason }) {
+  return {
+    userId,
+    type,                                           // "google" | "meta" | "shopify"
+    generatedAt: new Date(),
+    resumen: reason ? `Omitido: ${reason}` : 'Sin datos.',
+    productsAnalizados: 0,
+    actionCenter: [],
+    issues: {},
+  };
 }
 
-async function getLatestByType(userId, type) {
-  return Audit.findOne({ userId, type }).sort({ generatedAt: -1 }).lean();
-}
+// --- POST /api/audits/run ---
+// Lanza todas las auditorías posibles con base en lo conectado.
+// body puede incluir: { googleConnected?, metaConnected?, shopifyConnected? }
+router.post('/run', requireAuth, async (req, res) => {
+  const userId = req.user._id;
+  let user = await User.findById(userId).lean();
 
-/* ============================================================
-   POST /api/audits/run
-   (opcional) Dispara los jobs de auditoría que tengas disponibles
-   ============================================================ */
-router.post('/run', ensureAuth, async (req, res) => {
+  // flags reales por si el front no los mandó
+  const flags = {
+    google:  !!(req.body?.googleConnected ?? user?.googleConnected),
+    meta:    !!(req.body?.metaConnected ?? user?.metaConnected),
+    shopify: !!(req.body?.shopifyConnected ?? user?.shopifyConnected),
+  };
+
+  const results = [];
+  const types = /** orden fijo para UI */ ['google', 'meta', 'shopify'];
+
   try {
-    const userId = req.user._id;
+    for (const type of types) {
+      if (!flags[type]) {
+        // no conectado → no romper; solo marcar omitido
+        results.push({ type, ok: false, error: 'NOT_CONNECTED' });
+        continue;
+      }
 
-    // Dispara en paralelo lo que exista instalado
-    const tasks = [];
-    if (generateShopifyAudit) tasks.push(generateShopifyAudit(null, null, userId).catch(()=>null));
-    if (generateMetaAudit)    tasks.push(generateMetaAudit(null, null, userId).catch(()=>null));
-    if (generateGoogleAudit)  tasks.push(generateGoogleAudit(null, null, userId).catch(()=>null));
+      // base audit (sin datos reales aún)
+      let auditDoc = buildEmptyAudit({ userId, type });
 
-    // Si no hay jobs instalados, simplemente responde OK
-    if (!tasks.length) {
-      return res.json({ ok: true, message: 'No audit jobs found (noop)' });
+      // si tienes colectores de datos, colócalos aquí (try/catch individual por tipo)
+      // por ejemplo:
+      // if (type === 'google') { const raw = await collectGoogle(userId); ... }
+
+      // IA opcional (si hay clave y módulo)
+      if (generateAudit) {
+        try {
+          const enriched = await generateAudit({
+            type,
+            // pasa aquí datos agregados/estadísticos si los tuvieras
+            kpis: {}, products: [],
+            user: { id: String(userId), email: user?.email },
+          });
+          // merge seguro
+          if (enriched && typeof enriched === 'object') {
+            auditDoc = {
+              ...auditDoc,
+              resumen: safeStr(enriched.resumen, auditDoc.resumen),
+              actionCenter: Array.isArray(enriched.actionCenter) ? enriched.actionCenter : auditDoc.actionCenter,
+              issues: (enriched.issues && typeof enriched.issues === 'object') ? enriched.issues : auditDoc.issues,
+              salesLast30: enriched.salesLast30,
+              ordersLast30: enriched.ordersLast30,
+              avgOrderValue: enriched.avgOrderValue,
+              topProducts: Array.isArray(enriched.topProducts) ? enriched.topProducts : auditDoc.topProducts,
+              customerStats: enriched.customerStats || auditDoc.customerStats,
+            };
+          }
+        } catch (e) {
+          // IA falló → seguimos con audit básico
+          results.push({ type, ok: false, error: 'LLM_FAILED', detail: e?.message });
+        }
+      }
+
+      // guarda cada audit
+      const saved = await Audit.create(auditDoc);
+      results.push({ type, ok: true, auditId: saved._id });
     }
 
-    await Promise.allSettled(tasks);
-    return res.json({ ok: true });
-  } catch (err) {
-    console.error('audits/run error:', err);
-    return res.status(500).json({ ok:false, error:'RUN_ERROR' });
+    return res.json({ ok: true, results });
+  } catch (e) {
+    console.error('AUDIT_RUN_ERROR:', e);
+    return res.status(500).json({
+      ok: false,
+      error: 'RUN_ERROR',
+      detail: e?.message || 'Unexpected error',
+    });
   }
 });
 
-/* ============================================================
-   GET /api/audits/latest
-   -> Devuelve { shopify, meta, google } (o null si no hay)
-   NO requiere query params.
-   ============================================================ */
-router.get('/latest', ensureAuth, async (req, res) => {
+// --- GET /api/audits/latest ---
+// Devuelve el último documento por tipo para el usuario logueado.
+router.get('/latest', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
 
-    const [gDoc, mDoc, sDoc] = await Promise.all([
-      getLatestByType(userId, 'google'),
-      getLatestByType(userId, 'meta'),
-      getLatestByType(userId, 'shopify'),
-    ]);
+    // obtenemos el más reciente por tipo (google, meta, shopify)
+    const [google, meta, shopify] = await Promise.all(
+      ['google', 'meta', 'shopify'].map((t) =>
+        Audit.findOne({ userId, type: t }).sort({ generatedAt: -1 }).lean()
+      )
+    );
 
     return res.json({
       ok: true,
-      data: {
-        google:  gDoc || null,
-        meta:    mDoc || null,
-        shopify: sDoc || null,
-      }
+      data: { google: google || null, meta: meta || null, shopify: shopify || null },
     });
-  } catch (err) {
-    console.error('audits/latest error:', err);
-    return res.status(500).json({ ok:false, error:'LATEST_ERROR' });
+  } catch (e) {
+    console.error('LATEST_ERROR:', e);
+    return res.status(400).json({ ok: false, error: 'INVALID_TYPE', detail: e?.message });
   }
 });
 
-/* ============================================================
-   GET /api/audits/action-center
-   -> Fusiona Action Center de las últimas auditorías (si hay)
-   Formato: { items: ActionCenterItem[] }
-   ============================================================ */
-router.get('/action-center', ensureAuth, async (req, res) => {
+// --- GET /api/audits/action-center ---
+// Une recomendaciones de los últimos audits y las ordena por severidad/recencia.
+router.get('/action-center', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
+    const audits = await Audit.find({ userId }).sort({ generatedAt: -1 }).limit(6).lean();
 
-    const [gDoc, mDoc, sDoc] = await Promise.all([
-      getLatestByType(userId, 'google'),
-      getLatestByType(userId, 'meta'),
-      getLatestByType(userId, 'shopify'),
-    ]);
-
-    const items = [
-      ...asSafeAction(gDoc?.actionCenter),
-      ...asSafeAction(mDoc?.actionCenter),
-      ...asSafeAction(sDoc?.actionCenter),
-    ];
-
-    return res.json({ ok: true, items });
-  } catch (err) {
-    console.error('audits/action-center error:', err);
-    return res.status(500).json({ ok:false, error:'ACTION_CENTER_ERROR' });
-  }
-});
-
-/* ============================================================
-   GET /api/audits/by-type?type=google|meta|shopify
-   -> Útil si alguna pantalla quiere pedir solo uno
-   ============================================================ */
-router.get('/by-type', ensureAuth, async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const type   = String(req.query.type || '').toLowerCase();
-
-    if (!['google','meta','shopify'].includes(type)) {
-      // En lugar de 400, responde vacío para no romper el front
-      return res.json({ ok:true, data:null });
+    const items = [];
+    for (const a of audits) {
+      const ac = Array.isArray(a.actionCenter) ? a.actionCenter : [];
+      for (const it of ac) {
+        items.push({
+          title: it.title || '(Sin título)',
+          description: it.description || '',
+          severity: it.severity || 'medium',
+          source: a.type,
+          at: a.generatedAt,
+          button: it.button || null,
+          estimated: it.estimated || null,
+        });
+      }
     }
 
-    const doc = await getLatestByType(userId, type);
-    return res.json({ ok:true, data: doc || null });
-  } catch (err) {
-    console.error('audits/by-type error:', err);
-    return res.status(500).json({ ok:false, error:'BY_TYPE_ERROR' });
+    // orden: high > medium > low, luego más reciente primero
+    const sevRank = { high: 3, medium: 2, low: 1 };
+    items.sort((a, b) => {
+      const s = (sevRank[b.severity] || 0) - (sevRank[a.severity] || 0);
+      if (s !== 0) return s;
+      return new Date(b.at) - new Date(a.at);
+    });
+
+    return res.json({ ok: true, items });
+  } catch (e) {
+    console.error('ACTION_CENTER_ERROR:', e);
+    return res.status(500).json({ ok: false, error: 'ACTION_CENTER_ERROR', detail: e?.message });
   }
 });
 

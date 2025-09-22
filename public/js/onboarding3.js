@@ -25,7 +25,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const s = stepEls[idx]; if (!s) return;
     s.root.classList.add("active");
     s.root.classList.remove("completed", "opacity-50");
-    if (s.icon) s.icon.textContent = "⟳";
+    if (s.icon) s.icon.textContent = "●";
   };
   const markDone = (idx) => {
     const s = stepEls[idx]; if (!s) return;
@@ -60,27 +60,32 @@ document.addEventListener("DOMContentLoaded", async () => {
   tick();
 
   // HTTP helpers
-  const getJSON = (url) =>
-    fetch(url, { credentials: "include" }).then((r) => r.json()).catch(() => ({}));
+  const getJSON = async (url) => {
+    const r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
+    try { return await r.json(); } catch { return {}; }
+  };
 
-  const postJSON = (url, body) =>
-    fetch(url, {
+  const postJSON = async (url, body) => {
+    const r = await fetch(url, {
       method: "POST",
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(body || {}),
-    }).then(async (r) => {
-      let json = null;
-      try { json = await r.json(); } catch {}
-      if (!r.ok || json?.ok === false) {
-        const msg = json?.detail || json?.error || `${url} failed`;
-        throw new Error(msg);
-      }
-      return json || {};
     });
+    let json = null;
+    try { json = await r.json(); } catch {}
+    if (!r.ok || json?.ok === false) {
+      const msg = (json?.error || `HTTP_${r.status}`) +
+                  (json?.detail ? ` — ${json.detail}` : "") +
+                  (json?.hint ? ` — ${json.hint}` : "");
+      const err = new Error(msg);
+      err._raw = { status: r.status, json };
+      throw err;
+    }
+    return json || {};
+  };
 
   // Mapeo de tipos → índice visual (usa los 3 primeros slots)
-  // Orden fijo para consistencia con tu UI: Google, Meta, Shopify
   const TYPE_TO_INDEX = { google: 0, meta: 1, shopify: 2 };
   const INDEX_TO_LABEL = {
     0: "Analizando Google Ads",
@@ -89,29 +94,41 @@ document.addEventListener("DOMContentLoaded", async () => {
     3: "Generando recomendaciones",
   };
 
-  // Pre-pinta labels (si faltan pasos, el 3er/4to slot sigue sirviendo para el texto final)
+  // Pre-pinta labels
   for (let i = 0; i < stepEls.length; i++) {
     setStepLabel(i, INDEX_TO_LABEL[i] || "Procesando…");
   }
 
-  // Resultados que podrías querer reusar más adelante
   let resultsPayload = null;
 
   try {
-    // Verifica sesión para UX (opcional)
+    // 1) Verificar sesión y conexiones reales
     const sess = await getJSON("/api/session");
     if (!sess?.authenticated) throw new Error("Sesión no encontrada. Inicia sesión nuevamente.");
 
-    // Marca “running” los 3 primeros pasos (si alguno no está conectado, lo omitimos luego)
+    const googleConnected = !!sess.user?.googleConnected;
+    const metaConnected   = !!sess.user?.metaConnected;
+    const shopConnected   = !!sess.user?.shopifyConnected;
+
+    // Marca como “en curso” los tres slots; luego omitimos los no conectados
     for (const t of ["google", "meta", "shopify"]) {
       const idx = TYPE_TO_INDEX[t];
       if (idx !== undefined) markRunning(idx);
     }
 
+    // UI omitidos por no-conectados (informativo)
+    if (!googleConnected) markOmit(TYPE_TO_INDEX.google, "no conectado");
+    if (!metaConnected)   markOmit(TYPE_TO_INDEX.meta, "no conectado");
+    if (!shopConnected)   markOmit(TYPE_TO_INDEX.shopify, "no conectado");
+
     setText("Recopilando datos…");
 
-    // 🔥 ÚNICA llamada: lanza todas las auditorías disponibles
-    const json = await postJSON("/api/audits/run", {});
+    // 2) Llamada única al backend con flags correctos
+    const json = await postJSON("/api/audits/run", {
+      googleConnected,
+      metaConnected,
+      shopifyConnected: shopConnected,
+    });
 
     // Avanza progreso intermedio
     progress = Math.max(progress, 45);
@@ -120,7 +137,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const results = Array.isArray(json.results) ? json.results : [];
     resultsPayload = json;
 
-    // Marca estado por tipo en UI
+    // 3) Marcar resultado por tipo
     const seen = new Set();
     for (const r of results) {
       if (!r?.type) continue;
@@ -129,12 +146,11 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (idx === undefined) continue;
       if (r.ok) markDone(idx);
       else markOmit(idx, r.error || "error");
-      // Sube progresivamente
       progress = Math.min(95, progress + 15);
       setBar(progress);
     }
 
-    // Cualquier tipo no ejecutado = no conectado → omitir
+    // 4) Los tipos que el backend no ejecutó se mantienen como omitidos
     for (const t of ["google", "meta", "shopify"]) {
       if (!seen.has(t)) {
         const idx = TYPE_TO_INDEX[t];
@@ -142,7 +158,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     }
 
-    // Paso final (slot 4) visual
+    // 5) Paso final
     const finalIdx = Math.min(3, stepEls.length - 1);
     markDone(finalIdx);
 
@@ -151,26 +167,23 @@ document.addEventListener("DOMContentLoaded", async () => {
     setText("¡Análisis completado!");
     if (btn) btn.disabled = false;
 
-    // Guarda resumen para posible uso en el siguiente paso o dashboard
-    try {
-      sessionStorage.setItem("auditResult", JSON.stringify(resultsPayload));
-    } catch {}
+    // Guardar por si lo quieres leer luego
+    try { sessionStorage.setItem("auditResult", JSON.stringify(resultsPayload)); } catch {}
   } catch (err) {
-    console.error(err);
+    console.error("RUN_ERROR:", err?._raw || err);
     running = false;
     setBar(100);
     if (progressBar) progressBar.style.background = "#f55";
-    setText(err?.message || "Ocurrió un error. Puedes continuar.");
-    alert(err?.message || "Ocurrió un problema. Puedes continuar y revisar luego en el dashboard.");
+    setText("RUN_ERROR");
+    alert("RUN_ERROR\n\n" + (err?.message || "Ocurrió un problema."));
 
-    // Marca omitidos todos los pasos visibles y permite continuar
-    stepEls.forEach((_, i) => markOmit(i));
+    // Marca omitidos los pasos visibles y permite continuar
+    stepEls.forEach((_, i) => markOmit(i, "error"));
     if (btn) btn.disabled = false;
   }
 });
 
 // Botón continuar
 document.getElementById("continue-btn-3")?.addEventListener("click", () => {
-  // Mantengo tu navegación existente
   window.location.href = "/onboarding4.html";
 });
