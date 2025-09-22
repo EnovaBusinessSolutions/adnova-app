@@ -393,7 +393,12 @@ app.use('/api', subscribeRouter);
 app.use('/api', require('./routes/objectives'));
 
 // Google Ads insights — PROTEGIDO POR SESIÓN
-app.use('/api/google/ads', sessionGuard, require('./routes/googleAdsInsights'));
+const googleAdsInsightsRouter = require('./routes/googleAdsInsights');
+app.use('/api/google/ads/insights', sessionGuard, googleAdsInsightsRouter);
+app.use('/api/google/ads', sessionGuard, (req, _res, next) => {
+  req.url = `/insights${req.url === '/' ? '' : req.url}`;
+  next();
+}, googleAdsInsightsRouter);
 
 // Meta endpoints consumidos por dashboard
 app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);

@@ -21,7 +21,7 @@ try {
       refreshToken: { type: String, select: false },
       managerCustomerId: String,
       objective: String,
-      customers: Array, // [{ id, descriptiveName, currencyCode, timeZone }]
+      customers: Array, // [{ id, descriptiveName, currencyCode, timeZone, status }]
       defaultCustomerId: String,
     },
     { collection: 'googleaccounts', timestamps: true }
@@ -34,7 +34,7 @@ const {
   GOOGLE_CLIENT_SECRET,
   GOOGLE_CONNECT_CALLBACK_URL,
   GOOGLE_DEVELOPER_TOKEN,
-  GOOGLE_ADS_LOGIN_CUSTOMER_ID, // opcional
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID, // opcional (manager)
 } = process.env;
 
 /* --------------------- Auth guard --------------------- */
@@ -129,8 +129,13 @@ async function getFreshAccessToken(gaDoc) {
 const customerList = (doc) => (Array.isArray(doc?.customers) ? doc.customers : []);
 
 function resolveCustomerId(req, doc) {
-  const q = String(req.query.customer_id || '').replace(/-/g, '');
+  const q = String(
+    req.query.account_id || req.query.customer_id || ''
+  )
+    .replace(/^customers\//, '')
+    .replace(/-/g, '');
   if (q) return q;
+
   if (doc?.defaultCustomerId) return String(doc.defaultCustomerId).replace(/-/g, '');
   const list = customerList(doc);
   return list.length ? String(list[0].id || '').replace(/-/g, '') : '';
@@ -166,7 +171,7 @@ async function listAccessibleCustomers(accessToken) {
 }
 
 /* ===========================================================
-   GET /api/google/ads   -> KPIs por objetivo (tu endpoint)
+   GET /api/google/ads/insights  -> KPIs por objetivo
    =========================================================== */
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -363,7 +368,82 @@ router.get('/', requireAuth, async (req, res) => {
 });
 
 /* ===========================================================
-   GET /api/google/ads/customers  -> listar cuentas accesibles
+   GET /api/google/ads/insights/accounts  -> listar cuentas (shape frontend)
+   =========================================================== */
+router.get('/accounts', requireAuth, async (req, res) => {
+  try {
+    const ga = await GoogleAccount
+      .findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
+      .select('+refreshToken +accessToken managerCustomerId defaultCustomerId customers')
+      .lean();
+
+    if (!ga || (!ga.refreshToken && !ga.accessToken)) {
+      return res.json({ ok: true, accounts: [], defaultCustomerId: null });
+    }
+
+    let metas = Array.isArray(ga.customers) ? ga.customers : [];
+
+    if (!metas.length) {
+      try {
+        const accessToken = await getFreshAccessToken(ga);
+        let ids = [];
+        try { ids = await listAccessibleCustomers(accessToken); }
+        catch { ids = (ga.customers || []).map((c) => String(c.id)); }
+
+        metas = [];
+        for (const id of ids) {
+          try {
+            const rows = await runGAQL({
+              accessToken,
+              customerId: id,
+              managerId: ga.managerCustomerId,
+              gaql: `
+                SELECT
+                  customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone, customer.status
+                FROM customer
+              `
+            });
+            const r = rows?.[0];
+            metas.push({
+              id,
+              descriptiveName: r?.customer?.descriptiveName || `Customer ${id}`,
+              currencyCode: r?.customer?.currencyCode || null,
+              timeZone: r?.customer?.timeZone || null,
+              status: r?.customer?.status || null,
+            });
+          } catch {
+            metas.push({ id, descriptiveName: `Customer ${id}` });
+          }
+        }
+
+        await GoogleAccount.updateOne(
+          { $or: [{ user: req.user._id }, { userId: req.user._id }] },
+          { $set: { customers: metas } }
+        );
+      } catch (_) {}
+    }
+
+    const accounts = (metas || [])
+      .map((a) => ({
+        id: String(a.id || '').replace(/^customers\//, '').replace(/-/g, ''),
+        name: a.name || a.descriptiveName || null,
+        currency: a.currency || a.currencyCode || null,
+        timezone: a.timezone || a.timeZone || null,
+        status: a.status || null,
+      }))
+      .filter((a) => a.id);
+
+    const defaultCustomerId = (ga.defaultCustomerId || accounts[0]?.id || null);
+
+    return res.json({ ok: true, accounts, defaultCustomerId });
+  } catch (err) {
+    console.error('google/ads/accounts error:', err?.response?.data || err);
+    res.status(500).json({ ok: false, error: 'ACCOUNTS_ERROR' });
+  }
+});
+
+/* ===========================================================
+   GET /api/google/ads/insights/customers  -> (descubrimiento)
    =========================================================== */
 router.get('/customers', requireAuth, async (req, res) => {
   try {
@@ -427,7 +507,7 @@ router.get('/customers', requireAuth, async (req, res) => {
 });
 
 /* ===========================================================
-   POST /api/google/ads/default  -> fijar defaultCustomerId
+   POST /api/google/ads/insights/default  -> fijar defaultCustomerId
    body: { customerId: "1234567890" }
    =========================================================== */
 router.post('/default', requireAuth, express.json(), async (req, res) => {
