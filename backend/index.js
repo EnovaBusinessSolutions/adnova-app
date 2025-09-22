@@ -29,11 +29,10 @@ const webhookRoutes = require('./routes/shopifyConnector/webhooks');
 const verifySessionToken = require('../middlewares/verifySessionToken');
 const secureRoutes = require('./routes/secure');
 const dashboardRoute = require('./api/dashboardRoute');
-const auditRoute = require('./api/auditRoute'); // puede convivir
 const { publicCSP, shopifyCSP } = require('../middlewares/csp');
 const subscribeRouter = require('./routes/subscribe');
 const userRoutes = require('./routes/user');
-const auditsRoutes = require('./routes/audits');           // <-- NUEVO (unificado)
+const auditsRoutes = require('./routes/audits'); // <-- NUEVO (unificado)
 
 // Meta endpoints (dashboard)
 const metaInsightsRoutes = require('./routes/metaInsights');
@@ -375,8 +374,8 @@ app.use('/api', mockShopify);
 app.use('/api', userRoutes);
 
 // --- Auditorías unificadas ---
-app.use('/api/audits', auditsRoutes); // prefijo nuevo
-app.use('/api/audit', auditsRoutes);  // compat legacy (front viejo)
+app.use('/api/audits', sessionGuard, auditsRoutes); // ✅ protegido
+app.use('/api/audit', sessionGuard, auditsRoutes);  // ✅ compat legacy (front viejo)
 
 // Compatibilidad adicional con /api/audit/*start (onboarding3.js legacy)
 app.post('/api/audit/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/run'));
@@ -387,7 +386,6 @@ app.post('/api/audit/shopify/start', sessionGuard, (req, res) => res.redirect(30
 // (si aún necesitas api/auditRoute para otras cosas, puede quedar montado también)
 app.use('/api/secure', verifySessionToken, secureRoutes);
 app.use('/api/dashboard', dashboardRoute);
-app.use('/api/audit-legacy', auditRoute); // lo movemos a otro prefijo para evitar colisión
 app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter);
 app.use('/api', require('./routes/objectives'));
