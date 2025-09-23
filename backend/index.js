@@ -374,8 +374,9 @@ app.use('/api', mockShopify);
 app.use('/api', userRoutes);
 
 // --- Auditorías unificadas ---
-app.use('/api/audits', sessionGuard, auditsRoutes); // ✅ protegido
-app.use('/api/audit', sessionGuard, auditsRoutes);  // ✅ compat legacy (front viejo)
+app.use('/api/audits', sessionGuard, auditsRoutes); 
+app.use('/api/audit', sessionGuard, auditsRoutes);
+app.use('/api/audits', auditsRoutes);  
 
 // Compatibilidad adicional con /api/audit/*start (onboarding3.js legacy)
 app.post('/api/audit/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/run'));
