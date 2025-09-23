@@ -1,42 +1,35 @@
 'use strict';
 
 const MetaAccount = require('../../models/MetaAccount');
-const dayjs = require('dayjs');
 
+function fmt(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+function addDays(base, days) {
+  const d = new Date(base);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+/**
+ * Snapshot Meta Ads últimos 30 días (MOCK si no hay datos reales).
+ */
 async function collectMeta(userId) {
-  // 0) Verifica conexión
   const acc = await MetaAccount.findOne({ user: userId }).lean();
   if (!acc) throw new Error('META_NOT_CONNECTED');
 
-  // 🔁 REEMPLAZA el bloque MOCK por tu llamada real a Marketing API / servicio interno
-  const today = dayjs().startOf('day');
-  const from = today.subtract(30, 'day').format('YYYY-MM-DD');
-  const to = today.format('YYYY-MM-DD');
+  const today = new Date();
+  const fromDate = addDays(today, -30);
+  const from = fmt(fromDate);
+  const to = fmt(today);
 
-  // --- MOCK coherente — elimina cuando conectes datos reales ---
+  // --- MOCK coherente ---
   const byCampaign = [
-    {
-      id: 'mcmp_1',
-      name: 'Sales — Broad Advantage+',
-      objective: 'SALES',
-      status: 'ACTIVE',
-      impressions: 180000,
-      clicks: 6000,
-      spend: 2200,
-      purchases: 130,
-      purchase_value: 9100,
-    },
-    {
-      id: 'mcmp_2',
-      name: 'Retargeting — 30d',
-      objective: 'SALES',
-      status: 'ACTIVE',
-      impressions: 90000,
-      clicks: 4200,
-      spend: 950,
-      purchases: 170,
-      purchase_value: 11900,
-    }
+    { id: 'mcmp_1', name: 'Sales — Broad Advantage+', objective: 'SALES', status: 'ACTIVE', impressions: 180000, clicks: 6000, spend: 2200, purchases: 130, purchase_value: 9100 },
+    { id: 'mcmp_2', name: 'Retargeting — 30d',        objective: 'SALES', status: 'ACTIVE', impressions:  90000, clicks: 4200, spend:  950, purchases: 170, purchase_value: 11900 }
   ].map(c => ({
     ...c,
     ctr: c.impressions ? (c.clicks / c.impressions) : 0,
@@ -46,14 +39,13 @@ async function collectMeta(userId) {
     cvr: c.clicks ? (c.purchases / c.clicks) : 0,
   }));
 
-  const totals = byCampaign.reduce((a, c) => {
-    a.impressions += c.impressions;
-    a.clicks += c.clicks;
-    a.spend += c.spend;
-    a.purchases += c.purchases;
-    a.purchase_value += c.purchase_value;
-    return a;
-  }, { impressions: 0, clicks: 0, spend: 0, purchases: 0, purchase_value: 0 });
+  const totals = byCampaign.reduce((a, c) => ({
+    impressions: a.impressions + c.impressions,
+    clicks: a.clicks + c.clicks,
+    spend: a.spend + c.spend,
+    purchases: a.purchases + c.purchases,
+    purchase_value: a.purchase_value + c.purchase_value
+  }), { impressions: 0, clicks: 0, spend: 0, purchases: 0, purchase_value: 0 });
 
   const kpis = {
     impressions: totals.impressions,

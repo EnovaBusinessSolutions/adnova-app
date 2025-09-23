@@ -1,42 +1,35 @@
 'use strict';
 
 const GoogleAccount = require('../../models/GoogleAccount');
-const dayjs = require('dayjs');
 
+function fmt(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+function addDays(base, days) {
+  const d = new Date(base);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+/**
+ * Snapshot Google Ads últimos 30 días (MOCK si no hay datos reales).
+ */
 async function collectGoogle(userId) {
-  // 0) Verifica conexión (ajusta si tu modelo difiere)
   const acc = await GoogleAccount.findOne({ user: userId }).lean();
   if (!acc) throw new Error('GOOGLE_NOT_CONNECTED');
 
-  // 🔁 REEMPLAZA el bloque MOCK por tu integración real (GAQL / servicio interno)
-  const today = dayjs().startOf('day');
-  const from = today.subtract(30, 'day').format('YYYY-MM-DD');
-  const to = today.format('YYYY-MM-DD');
+  const today = new Date();
+  const fromDate = addDays(today, -30);
+  const from = fmt(fromDate);
+  const to = fmt(today);
 
-  // --- MOCK coherente — elimina cuando conectes datos reales ---
+  // --- MOCK coherente ---
   const byCampaign = [
-    {
-      id: 'cmp_1',
-      name: 'Search — Brand',
-      status: 'ENABLED',
-      budget: 25,
-      impressions: 120000,
-      clicks: 7800,
-      cost: 1850.0,
-      conversions: 210,
-      conv_value: 15600,
-    },
-    {
-      id: 'cmp_2',
-      name: 'PMax — Prospecting',
-      status: 'ENABLED',
-      budget: 40,
-      impressions: 220000,
-      clicks: 9200,
-      cost: 3100.0,
-      conversions: 150,
-      conv_value: 9750,
-    }
+    { id: 'cmp_1', name: 'Search — Brand', status: 'ENABLED', budget: 25, impressions: 120000, clicks: 7800, cost: 1850, conversions: 210, conv_value: 15600 },
+    { id: 'cmp_2', name: 'PMax — Prospecting', status: 'ENABLED', budget: 40, impressions: 220000, clicks: 9200, cost: 3100, conversions: 150, conv_value: 9750 }
   ].map(c => ({
     ...c,
     ctr: c.impressions ? (c.clicks / c.impressions) : 0,
@@ -46,14 +39,13 @@ async function collectGoogle(userId) {
     cvr: c.clicks ? (c.conversions / c.clicks) : 0,
   }));
 
-  const totals = byCampaign.reduce((a, c) => {
-    a.impressions += c.impressions;
-    a.clicks += c.clicks;
-    a.cost += c.cost;
-    a.conversions += c.conversions;
-    a.conv_value += c.conv_value;
-    return a;
-  }, { impressions: 0, clicks: 0, cost: 0, conversions: 0, conv_value: 0 });
+  const totals = byCampaign.reduce((a, c) => ({
+    impressions: a.impressions + c.impressions,
+    clicks: a.clicks + c.clicks,
+    cost: a.cost + c.cost,
+    conversions: a.conversions + c.conversions,
+    conv_value: a.conv_value + c.conv_value
+  }), { impressions: 0, clicks: 0, cost: 0, conversions: 0, conv_value: 0 });
 
   const kpis = {
     ...totals,
@@ -65,8 +57,7 @@ async function collectGoogle(userId) {
   };
 
   const series = Array.from({ length: 30 }).map((_, i) => {
-    const d = dayjs(from).add(i, 'day').format('YYYY-MM-DD');
-    // números dummy — sustituye por métricas diarias reales
+    const d = fmt(addDays(fromDate, i));
     const impressions = Math.floor(1000 + Math.random() * 5000);
     const clicks = Math.floor(impressions * (0.04 + Math.random() * 0.02));
     const cost = clicks * (0.25 + Math.random() * 0.3);

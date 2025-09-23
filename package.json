@@ -17,6 +17,7 @@
     "body-parser": "^2.2.0",
     "bullmq": "^5.56.0",
     "cors": "^2.8.5",
+    "dayjs": "^1.11.18",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
     "express-session": "^1.18.1",
