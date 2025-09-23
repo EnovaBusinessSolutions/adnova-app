@@ -1,16 +1,20 @@
-// backend/routes/audits.js
-'use strict';
-
 const express = require('express');
 const router = express.Router();
 
 const Audit = require('../models/Audit');
 const User  = require('../models/User');
 
-// IA opcional (exporta una función: module.exports = generateAudit)
-let generateAudit = null;
+// Collectors (Google / Meta)
+const { collectGoogle } = require('../jobs/collect/googleCollector');
+const { collectMeta }   = require('../jobs/collect/metaCollector');
+
+// IA opcional (acepta export default o { generateAudit })
+let generateAudit;
 try {
   generateAudit = require('../jobs/llm/generateAudit');
+  if (generateAudit && generateAudit.generateAudit) {
+    generateAudit = generateAudit.generateAudit;
+  }
 } catch {
   generateAudit = null;
 }
@@ -26,17 +30,14 @@ function safeStr(v, fallback = '') {
 }
 
 function normalizeIssues(anyIssues, defaultArea = 'otros') {
-  // si viene null/undefined → array vacío
   if (!anyIssues) return [];
 
-  // v2 (array): rellena faltantes y mapea severidad a high/medium/low
   if (Array.isArray(anyIssues)) {
     return anyIssues.map((it, idx) => {
-      const id    = (it && it.id && String(it.id).trim()) || `iss-${Date.now()}-${idx}`;
-      const title = (it && it.title) || 'Hallazgo';
-      const area  = (it && it.area) ? String(it.area) : defaultArea;
-
-      const rawSev = String(it?.severity ?? 'medium').toLowerCase();
+      const id    = it?.id || `iss-${Date.now()}-${idx}`;
+      const title = it?.title || 'Hallazgo';
+      const area  = (it?.area || defaultArea).toString();
+      const rawSev = (it?.severity || 'medium').toString().toLowerCase();
       const severity =
         rawSev === 'alta' || rawSev === 'high' ? 'high' :
         rawSev === 'baja' || rawSev === 'low'  ? 'low'  : 'medium';
@@ -56,17 +57,16 @@ function normalizeIssues(anyIssues, defaultArea = 'otros') {
     });
   }
 
-  // v1 (buckets objeto): aplanar a lista
+  // buckets legacy
   const out = [];
   const pushFromBucket = (arr, bucketArea) => {
     (arr || []).forEach((it, i) => {
-      const id    = `iss-${bucketArea}-${Date.now()}-${i}`;
-      const title = it?.title || 'Hallazgo';
-      const rawSev = String(it?.severity ?? 'medium').toLowerCase();
+      const id = `iss-${bucketArea}-${Date.now()}-${i}`;
+      const title  = it?.title || 'Hallazgo';
+      const rawSev = (it?.severity || 'medium').toString().toLowerCase();
       const severity =
         rawSev === 'alta' || rawSev === 'high' ? 'high' :
         rawSev === 'baja' || rawSev === 'low'  ? 'low'  : 'medium';
-
       out.push({
         id,
         title,
@@ -79,20 +79,18 @@ function normalizeIssues(anyIssues, defaultArea = 'otros') {
   };
 
   const b = anyIssues || {};
-  pushFromBucket(b.ux,          'ux');
-  pushFromBucket(b.seo,         'seo');
+  pushFromBucket(b.ux, 'ux');
+  pushFromBucket(b.seo, 'seo');
   pushFromBucket(b.performance, 'performance');
-  pushFromBucket(b.media,       'media');
+  pushFromBucket(b.media, 'media');
 
-  // productos: [{ nombre, hallazgos: LegacyIssue[] }]
   (b.productos || []).forEach((p, pi) => {
     (p?.hallazgos || []).forEach((it, i) => {
-      const id    = `iss-prod-${Date.now()}-${pi}-${i}`;
-      const rawSev = String(it?.severity ?? 'medium').toLowerCase();
+      const id = `iss-prod-${Date.now()}-${pi}-${i}`;
+      const rawSev = (it?.severity || 'medium').toString().toLowerCase();
       const severity =
         rawSev === 'alta' || rawSev === 'high' ? 'high' :
         rawSev === 'baja' || rawSev === 'low'  ? 'low'  : 'medium';
-
       out.push({
         id,
         title: it?.title || `Producto: ${p?.nombre || 'N/D'}`,
@@ -113,11 +111,8 @@ function normalizeActionCenter(anyAC) {
     title: safeStr(it?.title, 'Acción recomendada'),
     description: safeStr(it?.description || it?.evidence, ''),
     severity:
-      (String(it?.severity).toLowerCase() === 'alta' || String(it?.severity).toLowerCase() === 'high')
-        ? 'high'
-        : (String(it?.severity).toLowerCase() === 'baja' || String(it?.severity).toLowerCase() === 'low')
-        ? 'low'
-        : 'medium',
+      (it?.severity === 'high' || it?.severity === 'alta') ? 'high' :
+      (it?.severity === 'low'  || it?.severity === 'baja') ? 'low'  : 'medium',
     button: it?.button || null,
     estimated: it?.estimated || it?.estimatedImpact || null,
   }));
@@ -126,19 +121,21 @@ function normalizeActionCenter(anyAC) {
 function buildEmptyAudit({ userId, type, reason }) {
   return {
     userId,
-    type,                               // "google" | "meta" | "shopify"
+    type,                              // "google" | "meta" | "shopify"
     generatedAt: new Date(),
     resumen: reason ? `Omitido: ${reason}` : 'Sin datos.',
     productsAnalizados: 0,
     actionCenter: [],
-    issues: [],                          // SIEMPRE lista (evitamos validaciones fallidas)
+    issues: [],                        // ARRAY (conforme a tu schema)
+    inputSnapshot: {},                 // útil para depurar
+    version: 'audits@1.0.0',
   };
 }
 
 /* ------------------------ POST /api/audits/run ------------------------ */
 router.post('/run', requireAuth, async (req, res) => {
   const userId = req.user._id;
-  const user   = await User.findById(userId).lean();
+  const user = await User.findById(userId).lean();
 
   const flags = {
     google:  !!(req.body?.googleConnected  ?? user?.googleConnected),
@@ -156,43 +153,44 @@ router.post('/run', requireAuth, async (req, res) => {
         continue;
       }
 
-      // Documento base
       let auditDoc = buildEmptyAudit({ userId, type });
+      let inputSnapshot = {};
 
-      // Snapshot de entrada (pon aquí datos reales si ya tienes colectores)
-      const inputSnapshot = {
-        kpis: {},               // clicks, cost, cpc, roas, etc. si los tienes
-        products: [],           // topProducts si existen
-        user: { id: String(userId), email: user?.email },
-        // pixelHealth, series, currency, timeZone, etc.
-      };
+      // 1) Snapshot por tipo
+      try {
+        if (type === 'google') {
+          inputSnapshot = await collectGoogle(userId);
+        } else if (type === 'meta') {
+          inputSnapshot = await collectMeta(userId);
+        } else if (type === 'shopify') {
+          inputSnapshot = { topProducts: [], kpis: {} };
+        }
+      } catch (e) {
+        // Si el collector falla, registramos pero no rompemos el flujo
+        results.push({ type, ok: false, error: String(e.message || e) });
+      }
 
+      // 2) IA con datos reales (si está disponible)
       let enriched = null;
       if (generateAudit) {
         try {
-          enriched = await generateAudit({
-            type,
-            inputSnapshot,       // *** clave: el LLM espera inputSnapshot ***
-          });
+          enriched = await generateAudit({ type, inputSnapshot });
         } catch (e) {
-          // no rompas el flujo: reporta y sigue guardando el audit base
           results.push({ type, ok: false, error: 'LLM_FAILED', detail: e?.message });
         }
       }
 
-      // Merge seguro (normalizaciones para cumplir el schema)
+      // 3) Merge + normalización → compatible con tu schema
       if (enriched && typeof enriched === 'object') {
-        auditDoc.resumen       = safeStr(enriched.summary || enriched.resumen, auditDoc.resumen);
+        auditDoc.resumen       = safeStr(enriched.resumen || enriched.summary, auditDoc.resumen);
         auditDoc.actionCenter  = normalizeActionCenter(enriched.actionCenter);
-        auditDoc.issues        = normalizeIssues(enriched.issues, type); // ← siempre array válido
-        auditDoc.salesLast30   = enriched.salesLast30;
-        auditDoc.ordersLast30  = enriched.ordersLast30;
-        auditDoc.avgOrderValue = enriched.avgOrderValue;
-        auditDoc.topProducts   = Array.isArray(enriched.topProducts) ? enriched.topProducts : auditDoc.topProducts;
-        auditDoc.customerStats = enriched.customerStats || auditDoc.customerStats;
+        auditDoc.issues        = normalizeIssues(enriched.issues, type);
+        auditDoc.topProducts   = Array.isArray(enriched.topProducts) ? enriched.topProducts : [];
       } else {
-        auditDoc.issues = []; // fallback seguro
+        auditDoc.issues = normalizeIssues([], type);
       }
+
+      auditDoc.inputSnapshot = inputSnapshot;
 
       const saved = await Audit.create(auditDoc);
       results.push({ type, ok: true, auditId: saved._id });
@@ -206,9 +204,9 @@ router.post('/run', requireAuth, async (req, res) => {
 });
 
 /* ------------------------ GET /api/audits/latest ------------------------ */
-router.get('/latest', requireAuth, async (_req, res) => {
+router.get('/latest', requireAuth, async (req, res) => {
   try {
-    const userId = _req.user._id;
+    const userId = req.user._id;
 
     const [google, meta, shopify] = await Promise.all(
       ['google', 'meta', 'shopify'].map((t) =>
