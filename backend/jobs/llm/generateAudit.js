@@ -34,7 +34,7 @@ function validateAuditShape(obj) {
   }
   if ('topProducts' in obj && !Array.isArray(obj.topProducts)) return 'topProducts_not_array';
 
-  return null; // ok
+  return null; 
 }
 
 const BASE_INSTRUCTIONS = `
@@ -235,4 +235,4 @@ Corrige y devuelve SOLO un JSON válido con las llaves exactas.
   return parsed;
 }
 
-module.exports = { generateAudit };
+ module.exports = generateAudit;
