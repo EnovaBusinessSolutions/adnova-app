@@ -22,7 +22,7 @@ const APP_ID       = process.env.FACEBOOK_APP_ID;
 const APP_SECRET   = process.env.FACEBOOK_APP_SECRET;
 const REDIRECT_URI = process.env.FACEBOOK_REDIRECT_URI;
 
-// Scopes que le pedimos a Meta
+// Scopes solicitados a Meta
 const SCOPES = [
   'ads_read',
   'ads_management',
@@ -130,7 +130,7 @@ router.get('/callback', async (req, res) => {
       name     = me.data?.name  || null;
     } catch {}
 
-    // 4) adaccounts
+    // 4) Ad Accounts
     let adAccounts = [];
     try {
       const proof = makeAppSecretProof(accessToken);
@@ -153,27 +153,27 @@ router.get('/callback', async (req, res) => {
       console.warn('No se pudieron leer adaccounts:', e?.response?.data || e.message);
     }
 
-    // 5) permissions → scopes (solo granted)
-    let scopes = [];
+    // 5) Permisos concedidos (scopes)
+    let grantedScopes = [];
     try {
+      const proof = makeAppSecretProof(accessToken);
       const perms = await axios.get(`${FB_GRAPH}/me/permissions`, {
-        params: { access_token: accessToken, appsecret_proof: makeAppSecretProof(accessToken) },
+        params: { access_token: accessToken, appsecret_proof: proof, limit: 200 },
         timeout: 15000
       });
-      scopes = (perms.data?.data || [])
-        .filter(p => p?.status === 'granted' && p?.permission)
+      grantedScopes = (perms.data?.data || [])
+        .filter(p => p.status === 'granted' && p.permission)
         .map(p => String(p.permission));
-      // dedupe
-      scopes = Array.from(new Set(scopes));
+      grantedScopes = Array.from(new Set(grantedScopes));
     } catch (e) {
-      console.warn('No se pudieron leer permisos (scopes):', e?.response?.data || e.message);
+      console.warn('No se pudieron leer /me/permissions:', e?.response?.data || e.message);
     }
 
     const userId = req.user._id;
 
     // 6) Marcar conexión en usuario
     await User.findByIdAndUpdate(userId, {
-      $set: { metaConnected: true, metaFbUserId: fbUserId || undefined, metaScopes: scopes }
+      $set: { metaConnected: true, metaFbUserId: fbUserId || undefined, metaScopes: grantedScopes }
     });
 
     // 7) Persistir en MetaAccount (si existe el modelo)
@@ -186,7 +186,7 @@ router.get('/callback', async (req, res) => {
             userId, user: userId,
             fbUserId: fbUserId || undefined,
             email: email || undefined,
-            name: name || undefined,
+            name:  name  || undefined,
 
             // tokens
             longLivedToken: accessToken,
@@ -198,23 +198,21 @@ router.get('/callback', async (req, res) => {
             ad_accounts:    adAccounts,
             adAccounts:     adAccounts,
             defaultAccountId,
-
-            // scopes
-            scopes,
-
-            updatedAt: new Date()
-          }
+            updatedAt:      new Date()
+          },
+          // fusiona scopes sin duplicados
+          $addToSet: { scopes: { $each: grantedScopes } }
         },
         { upsert: true, new: true }
       );
     } else {
-      // fallback: guardar lo mínimo en User
+      // Fallback: guardar mínimo en User
       await User.findByIdAndUpdate(userId, {
         $set: {
           metaAccessToken: accessToken,
           metaTokenExpiresAt: expiresAt || null,
           metaDefaultAccountId: adAccounts?.[0]?.account_id || null,
-          metaScopes: scopes
+          metaScopes: grantedScopes
         }
       });
     }
