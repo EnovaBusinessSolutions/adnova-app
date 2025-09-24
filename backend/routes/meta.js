@@ -36,6 +36,9 @@ const SCOPES = [
   'email'
 ].join(',');
 
+/* Objetivo por defecto para auto-conexión (evita la pregunta de onboarding) */
+const DEFAULT_META_OBJECTIVE = 'ventas';
+
 /* =========================
    Utils
    ========================= */
@@ -177,9 +180,9 @@ router.get('/callback', async (req, res) => {
     });
 
     // 7) Persistir en MetaAccount (si existe el modelo)
+    let defaultAccountId = adAccounts?.[0]?.account_id || null;
     if (MetaAccount) {
-      const defaultAccountId = adAccounts?.[0]?.account_id || null;
-      await MetaAccount.findOneAndUpdate(
+      const up = await MetaAccount.findOneAndUpdate(
         { $or: [{ userId }, { user: userId }] },
         {
           $set: {
@@ -205,14 +208,27 @@ router.get('/callback', async (req, res) => {
         },
         { upsert: true, new: true }
       );
+
+      // 7.1) Si no hay objetivo aún, fija uno por defecto
+      if (!up.objective) {
+        await MetaAccount.updateOne(
+          { _id: up._id },
+          { $set: { objective: DEFAULT_META_OBJECTIVE, updatedAt: new Date() } }
+        );
+        // Guardar también en User si tu esquema lo permite (no falla si no existe el campo)
+        try {
+          await User.findByIdAndUpdate(userId, { $set: { metaObjective: DEFAULT_META_OBJECTIVE } });
+        } catch {}
+      }
     } else {
-      // Fallback: guardar mínimo en User
+      // Fallback: guardar mínimo en User (incluyendo objetivo por defecto)
       await User.findByIdAndUpdate(userId, {
         $set: {
           metaAccessToken: accessToken,
           metaTokenExpiresAt: expiresAt || null,
-          metaDefaultAccountId: adAccounts?.[0]?.account_id || null,
-          metaScopes: grantedScopes
+          metaDefaultAccountId: defaultAccountId,
+          metaScopes: grantedScopes,
+          metaObjective: DEFAULT_META_OBJECTIVE
         }
       });
     }
@@ -242,7 +258,7 @@ router.get('/status', requireAuth, async (req, res) => {
         hasAccounts: !!u?.metaDefaultAccountId,
         defaultAccountId: u?.metaDefaultAccountId || null,
         accounts: [],
-        objective: null,
+        objective: u?.metaObjective ?? null,
         scopes,
         hasAdsRead: scopes.includes('ads_read'),
         hasAdsMgmt: scopes.includes('ads_management'),

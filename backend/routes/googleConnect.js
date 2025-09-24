@@ -50,6 +50,9 @@ const {
 
 const ADS_API = 'https://googleads.googleapis.com/v16';
 
+/* Objetivo por defecto para auto-conexión (evita pregunta en onboarding) */
+const DEFAULT_GOOGLE_OBJECTIVE = 'ventas';
+
 /* ========================
  * Helpers / middlewares
  * ====================== */
@@ -204,7 +207,7 @@ async function googleCallbackHandler(req, res) {
       accessToken,
       expiresAt,
       customers,
-      scope: grantedScopes,                    // <<< guarda scopes normalizados
+      scope: grantedScopes,
       ...(defaultCustomerId ? { defaultCustomerId } : {}),
       updatedAt: new Date(),
     };
@@ -212,8 +215,21 @@ async function googleCallbackHandler(req, res) {
 
     await GoogleAccount.findOneAndUpdate(q, update, { upsert: true, new: true, setDefaultsOnInsert: true });
 
-    // Flag en el usuario
+    // 1) Marca conectado en el usuario
     await User.findByIdAndUpdate(req.user._id, { $set: { googleConnected: true } });
+
+    // 2) Si NO hay objetivo aún, fija uno por defecto (evita la pregunta en onboarding)
+    const [uObj, gaObj] = await Promise.all([
+      User.findById(req.user._id).select('googleObjective').lean(),
+      GoogleAccount.findOne(q).select('objective').lean()
+    ]);
+
+    if (!(uObj?.googleObjective) && !(gaObj?.objective)) {
+      await Promise.all([
+        User.findByIdAndUpdate(req.user._id, { $set: { googleObjective: DEFAULT_GOOGLE_OBJECTIVE } }),
+        GoogleAccount.findOneAndUpdate(q, { $set: { objective: DEFAULT_GOOGLE_OBJECTIVE, updatedAt: new Date() } })
+      ]);
+    }
 
     // Resuelve returnTo desde state (si viene)
     let returnTo = '/onboarding?google=connected';
