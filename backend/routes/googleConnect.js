@@ -22,7 +22,7 @@ try {
       userId:            { type: Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
       accessToken:       { type: String, select: false },
       refreshToken:      { type: String, select: false },
-      scope:             { type: [String], default: [] }, // fallback simple (tu modelo real ya normaliza)
+      scope:             { type: [String], default: [] }, // scopes concedidos
       expiresAt:         { type: Date },
       managerCustomerId: { type: String },
       defaultCustomerId: { type: String }, // “1234567890” (sin guiones)
@@ -67,6 +67,14 @@ function oauth() {
 }
 
 const normId = (s='') => String(s).replace(/-/g, '').trim();
+
+const normalizeScopes = (raw) => Array.from(
+  new Set(
+    (Array.isArray(raw) ? raw : String(raw || '').split(' '))
+      .map(s => String(s || '').trim())
+      .filter(Boolean)
+  )
+);
 
 /* ================ Google Ads small helpers ================= */
 async function listAccessibleCustomers(accessToken) {
@@ -127,12 +135,14 @@ router.get('/connect', requireSession, async (req, res) => {
 
     const url = client.generateAuthUrl({
       access_type: 'offline',
-      prompt: 'consent', // asegura refresh_token la primera vez
+      prompt: 'consent',                 // fuerza pantalla de consentimiento
+      include_granted_scopes: true,      // agrega nuevos permisos sin perder los concedidos
       scope: [
         'https://www.googleapis.com/auth/userinfo.email',
         'https://www.googleapis.com/auth/userinfo.profile',
-        // Google Ads (imprescindible para insights/auditoría)
-        'https://www.googleapis.com/auth/adwords',
+        'https://www.googleapis.com/auth/adwords',           // Google Ads
+        'https://www.googleapis.com/auth/analytics.readonly',// GA4/UA read-only
+        'openid'
       ],
       state: JSON.stringify({
         uid: String(req.user._id),
@@ -172,9 +182,8 @@ async function googleCallbackHandler(req, res) {
     const refreshToken = tokens.refresh_token || null;
     const expiresAt    = tokens.expiry_date ? new Date(tokens.expiry_date) : null;
 
-    // ⬇ NEW: normalizamos y guardamos scopes (string o array)
-    // El modelo ya tiene setter que los normaliza si lo estás usando; aquí pasamos tal cual.
-    const scopes = tokens.scope || []; // puede ser "a b c" o array
+    // Normaliza y guarda scopes
+    const grantedScopes = normalizeScopes(tokens.scope);
 
     // Descubrir customers accesibles
     let customers = [];
@@ -195,7 +204,7 @@ async function googleCallbackHandler(req, res) {
       accessToken,
       expiresAt,
       customers,
-      scope: scopes,                   // ⬅ guarda scopes (el setter del modelo los normaliza)
+      scope: grantedScopes,                    // <<< guarda scopes normalizados
       ...(defaultCustomerId ? { defaultCustomerId } : {}),
       updatedAt: new Date(),
     };
@@ -249,7 +258,7 @@ router.get('/status', requireSession, async (req, res) => {
       hasCustomers: customers.length > 0,
       defaultCustomerId,
       customers,
-      scopes: Array.isArray(ga?.scope) ? ga.scope : [],   // ⬅ EXPOSE SCOPES
+      scopes: Array.isArray(ga?.scope) ? ga.scope : [],
       objective: u?.googleObjective || ga?.objective || null,
       managerCustomerId: ga?.managerCustomerId || null,
     });
