@@ -1,196 +1,145 @@
+// backend/routes/audits.js
+'use strict';
+
 const express = require('express');
 const router = express.Router();
 
 const Audit = require('../models/Audit');
 const User  = require('../models/User');
 
-// Collectors (Google / Meta)
+// Collectors (devuelven "inputSnapshot" consistente por fuente)
 const { collectGoogle } = require('../jobs/collect/googleCollector');
-const { collectMeta }   = require('../jobs/collect/metaCollector');
+const { collectMeta   } = require('../jobs/collect/metaCollector');
 
-// IA opcional (acepta export default o { generateAudit })
-let generateAudit;
+// IA opcional (pulido de texto sin inventar datos)
+let generateAudit = null;
 try {
   generateAudit = require('../jobs/llm/generateAudit');
-  if (generateAudit && generateAudit.generateAudit) {
-    generateAudit = generateAudit.generateAudit;
-  }
 } catch {
   generateAudit = null;
 }
 
-/* ------------------------ helpers ------------------------ */
+/* ========================================================
+   Helpers
+   ======================================================== */
+
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
 }
 
-function safeStr(v, fallback = '') {
-  return (typeof v === 'string' && v.trim()) ? v.trim() : fallback;
+const OK_AREAS = new Set([
+  'setup', 'performance', 'creative', 'tracking', 'budget', 'bidding'
+]);
+const OK_SEV = new Set(['alta', 'media', 'baja']);
+
+function safeStr(v, fb = '') {
+  return typeof v === 'string' ? v : fb;
+}
+function cap10(arr) {
+  return Array.isArray(arr) ? arr.slice(0, 10) : [];
 }
 
-function normalizeIssues(anyIssues, defaultArea = 'otros') {
-  if (!anyIssues) return [];
 
-  if (Array.isArray(anyIssues)) {
-    return anyIssues.map((it, idx) => {
-      const id    = it?.id || `iss-${Date.now()}-${idx}`;
-      const title = it?.title || 'Hallazgo';
-      const area  = (it?.area || defaultArea).toString();
-      const rawSev = (it?.severity || 'medium').toString().toLowerCase();
-      const severity =
-        rawSev === 'alta' || rawSev === 'high' ? 'high' :
-        rawSev === 'baja' || rawSev === 'low'  ? 'low'  : 'medium';
+function normalizeIssue(raw, i = 0, type = 'google') {
+  const id  = safeStr(raw?.id, `iss-${type}-${Date.now()}-${i}`).trim();
+  const area = OK_AREAS.has(raw?.area) ? raw.area : 'performance';
+  const title = safeStr(raw?.title, 'Hallazgo').trim();
+  const sevIn = safeStr(raw?.severity, 'media').toLowerCase();
+  const severity = OK_SEV.has(sevIn) ? sevIn : 'media';
 
-      return {
-        id,
-        title,
-        area,
-        severity,
-        description: it?.description || it?.evidence || '',
-        recommendation: it?.recommendation,
-        metrics: it?.metrics,
-        estimatedImpact: it?.estimatedImpact,
-        blockers: it?.blockers,
-        links: it?.links,
-      };
-    });
-  }
-
-  // buckets legacy
-  const out = [];
-  const pushFromBucket = (arr, bucketArea) => {
-    (arr || []).forEach((it, i) => {
-      const id = `iss-${bucketArea}-${Date.now()}-${i}`;
-      const title  = it?.title || 'Hallazgo';
-      const rawSev = (it?.severity || 'medium').toString().toLowerCase();
-      const severity =
-        rawSev === 'alta' || rawSev === 'high' ? 'high' :
-        rawSev === 'baja' || rawSev === 'low'  ? 'low'  : 'medium';
-      out.push({
-        id,
-        title,
-        area: bucketArea,
-        severity,
-        description: it?.description || '',
-        recommendation: it?.recommendation,
-      });
-    });
-  };
-
-  const b = anyIssues || {};
-  pushFromBucket(b.ux, 'ux');
-  pushFromBucket(b.seo, 'seo');
-  pushFromBucket(b.performance, 'performance');
-  pushFromBucket(b.media, 'media');
-
-  (b.productos || []).forEach((p, pi) => {
-    (p?.hallazgos || []).forEach((it, i) => {
-      const id = `iss-prod-${Date.now()}-${pi}-${i}`;
-      const rawSev = (it?.severity || 'medium').toString().toLowerCase();
-      const severity =
-        rawSev === 'alta' || rawSev === 'high' ? 'high' :
-        rawSev === 'baja' || rawSev === 'low'  ? 'low'  : 'medium';
-      out.push({
-        id,
-        title: it?.title || `Producto: ${p?.nombre || 'N/D'}`,
-        area: 'performance',
-        severity,
-        description: it?.description || '',
-        recommendation: it?.recommendation,
-      });
-    });
-  });
-
-  return out;
-}
-
-function normalizeActionCenter(anyAC) {
-  if (!Array.isArray(anyAC)) return [];
-  return anyAC.map((it) => ({
-    title: safeStr(it?.title, 'Acción recomendada'),
-    description: safeStr(it?.description || it?.evidence, ''),
-    severity:
-      (it?.severity === 'high' || it?.severity === 'alta') ? 'high' :
-      (it?.severity === 'low'  || it?.severity === 'baja') ? 'low'  : 'medium',
-    button: it?.button || null,
-    estimated: it?.estimated || it?.estimatedImpact || null,
-  }));
-}
-
-function buildEmptyAudit({ userId, type, reason }) {
   return {
-    userId,
-    type,                              // "google" | "meta" | "shopify"
-    generatedAt: new Date(),
-    resumen: reason ? `Omitido: ${reason}` : 'Sin datos.',
-    productsAnalizados: 0,
-    actionCenter: [],
-    issues: [],                        // ARRAY (conforme a tu schema)
-    inputSnapshot: {},                 // útil para depurar
-    version: 'audits@1.0.0',
+    id,
+    area,
+    title,
+    severity,                                // 'alta'|'media'|'baja'
+    evidence: safeStr(raw?.evidence, ''),
+    metrics: raw?.metrics && typeof raw.metrics === 'object' ? raw.metrics : {},
+    recommendation: safeStr(raw?.recommendation, ''),
+    estimatedImpact: (['alto', 'medio', 'bajo'].includes(raw?.estimatedImpact) ? raw.estimatedImpact : 'medio'),
+    blockers: Array.isArray(raw?.blockers) ? raw.blockers.map(String) : [],
+    links: Array.isArray(raw?.links)
+      ? raw.links.map(l => ({ label: safeStr(l?.label, ''), url: safeStr(l?.url, '') }))
+      : [],
+    // NO está en el schema pero lo guardamos dentro de metrics si llega:
+    // campaignRef: { id, name }
+    ...(raw?.campaignRef ? { metrics: { ...raw.metrics, campaignRef: raw.campaignRef } } : {})
   };
 }
 
-/* ------------------------ POST /api/audits/run ------------------------ */
+function normalizeIssues(list, type = 'google') {
+  if (!Array.isArray(list)) return [];
+  return cap10(list).map((it, i) => normalizeIssue(it, i, type));
+}
+
+/* ========================================================
+   POST /api/audits/run
+   Lanza auditorías por cada fuente conectada.
+   ======================================================== */
+
 router.post('/run', requireAuth, async (req, res) => {
   const userId = req.user._id;
-  const user = await User.findById(userId).lean();
-
-  const flags = {
-    google:  !!(req.body?.googleConnected  ?? user?.googleConnected),
-    meta:    !!(req.body?.metaConnected    ?? user?.metaConnected),
-    shopify: !!(req.body?.shopifyConnected ?? user?.shopifyConnected),
-  };
-
-  const results = [];
-  const types = ['google', 'meta', 'shopify'];
 
   try {
-    for (const type of types) {
+    const user = await User.findById(userId).lean();
+
+    // Flags reales (si el front no los manda, tomamos User.*Connected)
+    const flags = {
+      google:  !!(req.body?.googleConnected  ?? user?.googleConnected),
+      meta:    !!(req.body?.metaConnected    ?? user?.metaConnected),
+      shopify: !!(req.body?.shopifyConnected ?? user?.shopifyConnected),
+    };
+
+    const results = [];
+    for (const type of ['google', 'meta', 'shopify']) {
       if (!flags[type]) {
         results.push({ type, ok: false, error: 'NOT_CONNECTED' });
         continue;
       }
 
-      let auditDoc = buildEmptyAudit({ userId, type });
+      // 1) Snapshot por fuente
       let inputSnapshot = {};
-
-      // 1) Snapshot por tipo
       try {
-        if (type === 'google') {
-          inputSnapshot = await collectGoogle(userId);
-        } else if (type === 'meta') {
-          inputSnapshot = await collectMeta(userId);
-        } else if (type === 'shopify') {
-          inputSnapshot = { topProducts: [], kpis: {} };
+        if (type === 'google')  inputSnapshot = await collectGoogle(userId);
+        if (type === 'meta')    inputSnapshot = await collectMeta(userId);
+        if (type === 'shopify') inputSnapshot = {}; // Integrar tu colector real si lo tienes
+      } catch (e) {
+        // Si el colector falla no rompemos el flujo
+        inputSnapshot = {};
+      }
+
+      // 2) Generar auditoría (determinística + pulido IA si OPENAI_API_KEY)
+      let enriched = null;
+      try {
+        if (generateAudit) {
+          enriched = await generateAudit({ type, inputSnapshot });
+        } else {
+          // Seguridad: si por alguna razón no se cargó el módulo
+          enriched = { summary: '', issues: [], actionCenter: [], topProducts: [] };
         }
       } catch (e) {
-        // Si el collector falla, registramos pero no rompemos el flujo
-        results.push({ type, ok: false, error: String(e.message || e) });
+        // Sin bloquear el resto
+        enriched = { summary: '', issues: [], actionCenter: [], topProducts: [] };
+        results.push({ type, ok: false, error: 'LLM_FAILED', detail: e?.message });
       }
 
-      // 2) IA con datos reales (si está disponible)
-      let enriched = null;
-      if (generateAudit) {
-        try {
-          enriched = await generateAudit({ type, inputSnapshot });
-        } catch (e) {
-          results.push({ type, ok: false, error: 'LLM_FAILED', detail: e?.message });
-        }
-      }
+      // 3) Normalización dura (cumplir Mongoose IssueSchema) + caps
+      const issues = normalizeIssues(enriched?.issues, type);
+      const actionCenter = issues.slice(0, 3);
+      const topProducts = Array.isArray(enriched?.topProducts) ? enriched.topProducts : [];
 
-      // 3) Merge + normalización → compatible con tu schema
-      if (enriched && typeof enriched === 'object') {
-        auditDoc.resumen       = safeStr(enriched.resumen || enriched.summary, auditDoc.resumen);
-        auditDoc.actionCenter  = normalizeActionCenter(enriched.actionCenter);
-        auditDoc.issues        = normalizeIssues(enriched.issues, type);
-        auditDoc.topProducts   = Array.isArray(enriched.topProducts) ? enriched.topProducts : [];
-      } else {
-        auditDoc.issues = normalizeIssues([], type);
-      }
-
-      auditDoc.inputSnapshot = inputSnapshot;
+      // 4) Guardar
+      const auditDoc = {
+        userId,
+        type,
+        generatedAt: new Date(),
+        summary: safeStr(enriched?.summary, ''),
+        issues,
+        actionCenter,
+        topProducts,
+        inputSnapshot,                      // para trazabilidad en DB
+        version: 'audits@1.0.0',
+      };
 
       const saved = await Audit.create(auditDoc);
       results.push({ type, ok: true, auditId: saved._id });
@@ -203,7 +152,11 @@ router.post('/run', requireAuth, async (req, res) => {
   }
 });
 
-/* ------------------------ GET /api/audits/latest ------------------------ */
+/* ========================================================
+   GET /api/audits/latest
+   Devuelve el último documento por tipo del usuario.
+   ======================================================== */
+
 router.get('/latest', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
@@ -216,44 +169,59 @@ router.get('/latest', requireAuth, async (req, res) => {
 
     return res.json({
       ok: true,
-      data: { google: google || null, meta: meta || null, shopify: shopify || null },
+      data: {
+        google:  google  || null,
+        meta:    meta    || null,
+        shopify: shopify || null,
+      },
     });
   } catch (e) {
     console.error('LATEST_ERROR:', e);
-    return res.status(400).json({ ok: false, error: 'INVALID_TYPE', detail: e?.message });
+    return res.status(400).json({ ok: false, error: 'LATEST_ERROR', detail: e?.message });
   }
 });
 
-/* --------------------- GET /api/audits/action-center -------------------- */
+/* ========================================================
+   GET /api/audits/action-center
+   Combina las 6 últimas auditorías y devuelve top acciones.
+   ======================================================== */
+
 router.get('/action-center', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
-    const audits = await Audit.find({ userId }).sort({ generatedAt: -1 }).limit(6).lean();
+
+    const audits = await Audit
+      .find({ userId })
+      .sort({ generatedAt: -1 })
+      .limit(6)
+      .lean();
 
     const items = [];
     for (const a of audits) {
-      const ac = Array.isArray(a.actionCenter) ? a.actionCenter : [];
-      for (const it of ac) {
+      const list = Array.isArray(a.actionCenter) ? a.actionCenter : [];
+      for (const it of list) {
         items.push({
           title: it.title || '(Sin título)',
-          description: it.description || '',
-          severity: it.severity || 'medium',
+          description: it.evidence || it.recommendation || '',
+          severity: it.severity || 'media', // 'alta'|'media'|'baja'
           type: a.type,
           at: a.generatedAt,
-          button: it.button || null,
-          estimated: it.estimated || null,
+          button: null,
+          estimated: it.estimatedImpact || null,
         });
       }
     }
 
-    const sevRank = { high: 3, medium: 2, low: 1 };
+    // Ordenar: alta > media > baja, y luego por fecha desc
+    const sevRank = { alta: 3, media: 2, baja: 1 };
     items.sort((a, b) => {
       const s = (sevRank[b.severity] || 0) - (sevRank[a.severity] || 0);
       if (s !== 0) return s;
       return new Date(b.at) - new Date(a.at);
     });
 
-    return res.json({ ok: true, items });
+    // Cap por si se dispara
+    return res.json({ ok: true, items: items.slice(0, 30) });
   } catch (e) {
     console.error('ACTION_CENTER_ERROR:', e);
     return res.status(500).json({ ok: false, error: 'ACTION_CENTER_ERROR', detail: e?.message });

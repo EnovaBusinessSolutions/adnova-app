@@ -1,238 +1,342 @@
 'use strict';
+
 const OpenAI = require('openai');
 
-// Soporta ambas vars por si en algún ambiente cambia el nombre
 const OPENAI_KEY = process.env.OPENAI_API_KEY || process.env.OPENAI_APIKEY;
-
-const client = new OpenAI({
-  apiKey: OPENAI_KEY,
-});
-
-// === Modelo recomendado ===
-// - "gpt-4o-mini" es rápido y barato, con muy buen JSON.
-// - Si quieres más músculo, cambia a "gpt-4o".
 const MODEL = process.env.AUDIT_LLM_MODEL || 'gpt-4o-mini';
 
-// === Esquema de salida esperado (validación ligera)
-function validateAuditShape(obj) {
-  if (!obj || typeof obj !== 'object') return 'root_not_object';
-  if (!('issues' in obj) || !Array.isArray(obj.issues)) return 'issues_missing';
-  if (!('summary' in obj) || typeof obj.summary !== 'string') return 'summary_missing';
+const client = OPENAI_KEY ? new OpenAI({ apiKey: OPENAI_KEY }) : null;
 
-  const okSeverity = new Set(['alta','media','baja']);
-  const okArea = new Set(['setup','performance','creative','tracking','budget','bidding']);
+/* ------------------------- util ------------------------- */
+const sevToLLM = (n) => (n === 'alta' || n === 'media' || n === 'baja' ? n : 'media');
+const cap10 = (arr) => (Array.isArray(arr) ? arr.slice(0, 10) : []);
 
-  for (const it of obj.issues) {
-    if (!it || typeof it !== 'object') return 'issue_not_object';
-    if (typeof it.id !== 'string' || !it.id.trim()) return 'issue.id';
-    if (!okArea.has(it.area)) return 'issue.area';
-    if (!okSeverity.has(it.severity)) return 'issue.severity';
-    if (typeof it.title !== 'string' || !it.title.trim()) return 'issue.title';
+/* ========================================================
+   1) AUDITOR REGLAS (determinístico, sin IA)
+   ======================================================== */
+
+function auditGoogle(snapshot = {}) {
+  const out = [];
+  const by = Array.isArray(snapshot.byCampaign) ? snapshot.byCampaign : [];
+  const totalImpr = Number(snapshot?.kpis?.impressions || 0);
+  const active = by.filter(c => (c?.status || '').toUpperCase() === 'ENABLED');
+
+  if (!by.length) {
+    out.push({
+      id: 'google-sin-campanas',
+      area: 'setup',
+      title: 'No hay campañas en Google Ads',
+      severity: 'alta',
+      evidence: 'byCampaign está vacío.',
+      metrics: { totalImpressions: totalImpr },
+      recommendation: 'Crea una o más campañas y define objetivos claros antes de optimizar.',
+      campaignRef: null,
+    });
+    return out;
   }
-  if ('actionCenter' in obj) {
-    if (!Array.isArray(obj.actionCenter)) return 'actionCenter_not_array';
+
+  if (active.length === 0 || totalImpr === 0) {
+    out.push({
+      id: 'google-sin-impresiones',
+      area: 'setup',
+      title: 'Sin campañas activas o sin impresiones',
+      severity: 'alta',
+      evidence: `Activas: ${active.length}. Impresiones totales últimos 30d: ${totalImpr}.`,
+      metrics: { totalImpressions: totalImpr, activeCampaigns: active.length },
+      recommendation: 'Revisa estado, presupuesto y segmentación de las campañas. Asegura elegibilidad.',
+      campaignRef: null,
+    });
+    return out;
   }
-  if ('topProducts' in obj && !Array.isArray(obj.topProducts)) return 'topProducts_not_array';
 
-  return null; 
-}
+  // Umbrales básicos
+  const MIN_IMPR = 500;
+  const CTR_LOW = 0.01;   // 1%
+  const CPA_HIGH = snapshot?.targets?.cpaHigh ?? 15;  // fallback
+  const ROAS_LOW = 1.2;
 
-const BASE_INSTRUCTIONS = `
-Eres un analista de performance senior. Devuelve SOLO JSON válido con esta forma exacta:
+  for (const c of active) {
+    const id = String(c.id || c.campaignId || '');
+    const name = String(c.name || c.campaignName || 'Sin nombre');
+    const k = c.kpis || {};
+    const imp = Number(k.impressions || 0);
+    const clk = Number(k.clicks || 0);
+    const cost = Number(k.cost || 0);
+    const conv = Number(k.conversions || 0);
+    const value = Number(k.value || k.convValue || 0);
+    const ctr = imp > 0 ? clk / imp : 0;
+    const cpa = conv > 0 ? cost / conv : 0;
+    const roas = cost > 0 ? value / cost : 0;
 
-{
-  "summary": "string",
-  "issues": [
-    {
-      "id": "kebab-case-unico",
-      "area": "setup|performance|creative|tracking|budget|bidding",
-      "title": "string",
-      "severity": "alta|media|baja",
-      "evidence": "string",
-      "metrics": { },
-      "recommendation": "string",
-      "estimatedImpact": "alto|medio|bajo",
-      "blockers": ["string"],
-      "links": [{"label":"string","url":"string"}]
+    if (imp < MIN_IMPR) continue; // no evaluamos volúmenes ínfimos
+
+    // CTR bajo
+    if (ctr > 0 && ctr < CTR_LOW) {
+      out.push({
+        id: `google-ctr-bajo-${id}`,
+        area: 'performance',
+        title: 'CTR bajo',
+        severity: 'media',
+        evidence: `Campaña "${name}" CTR=${(ctr*100).toFixed(2)}% con ${imp} impresiones y ${clk} clics.`,
+        metrics: { impressions: imp, clicks: clk, ctr },
+        recommendation: 'Revisa términos de búsqueda, mejora copy/creatives y amplia concordancias con negativos.',
+        campaignRef: { id, name },
+      });
     }
-  ],
-  "actionCenter": [ ...top 3 issues... ],
-  "topProducts": []
+
+    // CPA alto
+    if (conv > 0 && cpa > CPA_HIGH) {
+      out.push({
+        id: `google-cpa-alto-${id}`,
+        area: 'bidding',
+        title: 'CPA alto',
+        severity: 'media',
+        evidence: `Campaña "${name}" CPA=${cpa.toFixed(2)} ${snapshot.currency || 'USD'} con ${conv} conversiones.`,
+        metrics: { cost, conversions: conv, cpa },
+        recommendation: 'Optimiza pujas/segmentación y pausa ubicaciones de bajo rendimiento. Considera tCPA.',
+        campaignRef: { id, name },
+      });
+    }
+
+    // ROAS bajo
+    if (value > 0 && roas > 0 && roas < ROAS_LOW) {
+      out.push({
+        id: `google-roas-bajo-${id}`,
+        area: 'bidding',
+        title: 'ROAS bajo',
+        severity: 'media',
+        evidence: `Campaña "${name}" ROAS=${roas.toFixed(2)} con valor conv=${value.toFixed(2)}.`,
+        metrics: { value, cost, roas },
+        recommendation: 'Refina audiencias/keywords y ajusta pujas por dispositivos. Evalúa tROAS si hay volumen.',
+        campaignRef: { id, name },
+      });
+    }
+  }
+
+  if (!out.length) {
+    out.push({
+      id: 'google-sin-hallazgos-criticos',
+      area: 'performance',
+      title: 'Sin hallazgos críticos con volumen suficiente',
+      severity: 'baja',
+      evidence: 'No se detectaron KPIs por debajo de umbrales en campañas con volumen.',
+      metrics: {},
+      recommendation: 'Mantén monitoreo semanal. Crea alertas de CTR/CPA/ROAS.',
+      campaignRef: null,
+    });
+  }
+
+  return cap10(out);
 }
 
-Reglas:
-- NO inventes datos. Usa estrictamente lo que venga en "inputSnapshot".
-- Si faltan datos o permisos (p. ej. no hay customerId, no hay campañas), genera issues de "setup" con severidad "alta" y explicación.
-- Las recomendaciones deben ser accionables y concretas (no genéricas).
-- Usa "estimatedImpact" para priorizar (alto|medio|bajo).
-- Responde SIEMPRE sólo un objeto JSON, sin texto extra.
-`;
+function auditMeta(snapshot = {}) {
+  const out = [];
+  const by = Array.isArray(snapshot.byCampaign) ? snapshot.byCampaign : [];
+  const pixel = snapshot.pixelHealth || {};
+  const totalImpr = Number(snapshot?.kpis?.impressions || 0);
+  const active = by.filter(c => (c?.status || '').toUpperCase() === 'ACTIVE' || (c?.status || '').toUpperCase() === 'ENABLED');
 
-function buildTypeHints(type) {
-  if (type === 'google') {
-    return `
-Contexto de Google Ads:
-- inputSnapshot.kpis: { impressions, clicks, cost, cpc, cpa, cvr, roas, ... }
-- inputSnapshot.series: [{ date, impressions, clicks, cost, conversions, conv_value }]
-- inputSnapshot.currency, timeZone
-Mejores prácticas: estructura de campañas, concordancias, negativos, presupuestos, conversiones válidas, ROAS/CPA.
-`;
+  if (!by.length) {
+    out.push({
+      id: 'meta-sin-campanas',
+      area: 'setup',
+      title: 'No hay campañas en Meta Ads',
+      severity: 'alta',
+      evidence: 'byCampaign está vacío.',
+      metrics: {},
+      recommendation: 'Crea campañas por objetivo (Ventas/Leads/Tráfico) y configura públicos.',
+      campaignRef: null,
+    });
+    return out;
   }
-  if (type === 'meta') {
-    return `
-Contexto de Meta Ads:
-- inputSnapshot.kpis / por campaña
-- inputSnapshot.pixelHealth, eventos, atribución
-Mejores prácticas: estructura por objetivo, creatividades, públicos, frecuencia, eventos correctos.
-`;
+
+  if (active.length === 0 || totalImpr === 0) {
+    out.push({
+      id: 'meta-sin-impresiones',
+      area: 'setup',
+      title: 'Sin campañas activas o sin impresiones',
+      severity: 'alta',
+      evidence: `Activas: ${active.length}. Impresiones totales últimos 30d: ${totalImpr}.`,
+      metrics: { totalImpressions: totalImpr, activeCampaigns: active.length },
+      recommendation: 'Revisa estado, presupuesto, límites y elegibilidad de anuncios.',
+      campaignRef: null,
+    });
+    return out;
   }
-  if (type === 'shopify') {
-    return `
-Contexto de Shopify:
-- inputSnapshot.topProducts: [{ title, revenue, units }]
-- inputSnapshot.kpis: AOV, repeatRate, refundRate, etc.
-Mejores prácticas: mix de productos, pricing, bundles, campañas cruzadas.
-`;
+
+  // Pixel health
+  if (pixel && (pixel.errors?.length || pixel.warnings?.length)) {
+    out.push({
+      id: 'meta-pixel-issues',
+      area: 'tracking',
+      title: 'Problemas en el pixel/eventos',
+      severity: 'alta',
+      evidence: `Errores: ${pixel.errors?.length || 0}, Warnings: ${pixel.warnings?.length || 0}.`,
+      metrics: {},
+      recommendation: 'Corrige los eventos faltantes/duplicados en el Administrador de Eventos.',
+      campaignRef: null,
+    });
   }
-  if (type === 'ga') {
-    return `
-Contexto de Google Analytics:
-- inputSnapshot.kpis: sesiones, conversion rate, fuente/medio
-- inputSnapshot.issues de tracking
-`;
+
+  // Umbrales básicos
+  const MIN_IMPR = 500;
+  const FREQ_HIGH = 4.0;
+  const CPR_HIGH = snapshot?.targets?.cprHigh ?? 5;
+
+  for (const c of active) {
+    const id = String(c.id || c.campaignId || '');
+    const name = String(c.name || c.campaignName || 'Sin nombre');
+    const k = c.kpis || {};
+    const imp = Number(k.impressions || 0);
+    const clk = Number(k.clicks || 0);
+    const freq = Number(k.frequency || 0);
+    const conv = Number(k.conversions || 0);
+    const spend = Number(k.spend || k.cost || 0);
+    const cpr = conv > 0 ? spend / conv : 0;
+
+    if (imp < MIN_IMPR) continue;
+
+    if (freq > FREQ_HIGH) {
+      out.push({
+        id: `meta-frecuencia-alta-${id}`,
+        area: 'creative',
+        title: 'Frecuencia alta',
+        severity: 'media',
+        evidence: `Campaña "${name}" frecuencia ${freq.toFixed(1)} con ${imp} impresiones.`,
+        metrics: { frequency: freq, impressions: imp },
+        recommendation: 'Renueva creatividades/audiencias o ajusta límites de frecuencia.',
+        campaignRef: { id, name },
+      });
+    }
+
+    if (conv > 0 && cpr > CPR_HIGH) {
+      out.push({
+        id: `meta-cpr-alto-${id}`,
+        area: 'bidding',
+        title: 'CPR alto',
+        severity: 'media',
+        evidence: `Campaña "${name}" CPR=${cpr.toFixed(2)} con ${conv} resultados.`,
+        metrics: { cpr, conversions: conv, spend },
+        recommendation: 'Optimiza segmentación, prueba creatividades y considera estrategias de puja por costo objetivo.',
+        campaignRef: { id, name },
+      });
+    }
   }
-  return '';
+
+  if (!out.length) {
+    out.push({
+      id: 'meta-sin-hallazgos-criticos',
+      area: 'performance',
+      title: 'Sin hallazgos críticos con volumen suficiente',
+      severity: 'baja',
+      evidence: 'No se detectaron métricas fuera de umbral en campañas con volumen.',
+      metrics: {},
+      recommendation: 'Mantén rotación creativa y testea públicos lookalike.',
+      campaignRef: null,
+    });
+  }
+
+  return cap10(out);
 }
 
-async function callLLM({ type, inputSnapshot }) {
+/* ========================================================
+   2) SI HAY OPENAI: PULIDO DEL TEXTO (SIN ALUCINAR)
+   ======================================================== */
+
+async function polishWithLLM(type, issues, snapshot) {
+  if (!client) return { summary: '', issues, actionCenter: issues.slice(0, 3) };
+
   const messages = [
-    { role: 'system', content: BASE_INSTRUCTIONS },
+    {
+      role: 'system',
+      content:
+        `Eres un analista de performance. Pulirás TITULO/EVIDENCIA/RECOMENDACIÓN en español, ` +
+        `SIN inventar datos, SIN añadir nuevas campañas, y SIN cambiar severidad/área/campaignRef. ` +
+        `Responde SOLO JSON con {summary, issues, actionCenter}. Máximo 10 issues.`,
+    },
     {
       role: 'user',
       content:
-        `Tipo de auditoría: ${type}\n` +
-        buildTypeHints(type) +
-        `\ninputSnapshot (JSON):\n` +
-        JSON.stringify(inputSnapshot ?? {}, null, 2),
+        `Fuente: ${type}\n` +
+        `timeRange: ${JSON.stringify(snapshot?.timeRange || {}, null, 2)}\n` +
+        `currency: ${snapshot?.currency || 'USD'}\n` +
+        `issues (entrada):\n${JSON.stringify(issues, null, 2)}`,
     },
   ];
 
   const resp = await client.chat.completions.create({
     model: MODEL,
-    messages,
     temperature: 0.2,
-    response_format: { type: 'json_object' }, // fuerce JSON
+    response_format: { type: 'json_object' },
+    messages,
   });
 
   const raw = resp.choices?.[0]?.message?.content || '{}';
-  let parsed = null;
-  try { parsed = JSON.parse(raw); } catch { /* luego reintentamos */ }
-  return { raw, parsed };
-}
-
-function minimalHeuristic({ type, inputSnapshot }) {
-  const issues = [];
-
-  if (type === 'google') {
-    const clicks = Number(inputSnapshot?.kpis?.clicks || 0);
-    if (!clicks) {
-      issues.push({
-        id: 'sin_clicks_30d',
-        area: 'performance',
-        title: 'Sin clics en los últimos 30 días',
-        severity: 'alta',
-        evidence: 'clicks = 0',
-        metrics: { clicks },
-        recommendation: 'Revisa segmentación, pujas y keywords. Aumenta presupuesto +20% y prueba concordancias exactas + negativas.',
-        estimatedImpact: 'alto',
-        blockers: [],
-        links: [{ label: 'Guía de estructura', url: 'https://support.google.com/google-ads/' }]
-      });
-    }
-  } else if (type === 'meta') {
-    issues.push({
-      id: 'verificar_pixel_meta',
-      area: 'tracking',
-      title: 'Verifica el pixel y eventos de Meta',
-      severity: 'media',
-      evidence: 'No se encontró snapshot de pixelHealth',
-      metrics: {},
-      recommendation: 'Abre el Diagnóstico de Eventos y corrige warnings/errores. Asegura Purchase/InitiateCheckout/Lead.',
-      estimatedImpact: 'medio',
-      blockers: [],
-      links: [{ label: 'Event Diagnostics', url: 'https://business.facebook.com/events_manager2/' }]
-    });
-  } else if (type === 'shopify') {
-    const top = inputSnapshot?.topProducts || [];
-    if (!top.length) {
-      issues.push({
-        id: 'sin_top_products',
-        area: 'performance',
-        title: 'No hay productos con ventas recientes',
-        severity: 'media',
-        evidence: 'topProducts[] vacío',
-        metrics: {},
-        recommendation: 'Revisa catálogo, precios y campañas de promoción. Considera bundles y descuento volumen.',
-        estimatedImpact: 'medio',
-        blockers: [],
-        links: [{ label: 'Shopify Docs', url: 'https://help.shopify.com/' }]
-      });
-    }
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { parsed = null; }
+  if (!parsed || !Array.isArray(parsed.issues)) {
+    return { summary: '', issues, actionCenter: issues.slice(0, 3) };
   }
 
+  // Garantías
+  const clean = cap10(parsed.issues).map((i, idx) => ({
+    id: i.id || issues[idx]?.id || `iss-${type}-${idx}`,
+    area: i.area || issues[idx]?.area || 'performance',
+    title: i.title || issues[idx]?.title || 'Hallazgo',
+    severity: sevToLLM(i.severity),
+    evidence: i.evidence || issues[idx]?.evidence || '',
+    recommendation: i.recommendation || issues[idx]?.recommendation || '',
+    metrics: i.metrics || issues[idx]?.metrics || {},
+    campaignRef: i.campaignRef || issues[idx]?.campaignRef || null,
+  }));
+
   return {
-    summary: issues.length ? `Se detectaron ${issues.length} hallazgos prioritarios.` : 'Sin hallazgos críticos.',
-    issues,
-    actionCenter: issues.slice(0, 3),
-    topProducts: inputSnapshot?.topProducts || []
+    summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+    issues: clean,
+    actionCenter: clean.slice(0, 3),
   };
 }
 
+/* ========================================================
+   3) ENTRADA PÚBLICA
+   ======================================================== */
+
 async function generateAudit({ type, inputSnapshot }) {
-  // Seguridad básica
-  if (!OPENAI_KEY) {
-    // Sin clave: devolvemos heurística para no romper flujo
-    return minimalHeuristic({ type, inputSnapshot });
+  const snapshot = inputSnapshot || {};
+
+  // Reglas determinísticas primero (evitan alucinaciones)
+  let issues;
+  if (type === 'google') issues = auditGoogle(snapshot);
+  else if (type === 'meta') issues = auditMeta(snapshot);
+  else {
+    issues = [{
+      id: `${type}-sin-implementacion`,
+      area: 'setup',
+      title: `Fuente "${type}" aún no implementada`,
+      severity: 'baja',
+      evidence: 'Sin reglas específicas.',
+      metrics: {},
+      recommendation: 'Agregar reglas para esta fuente.',
+      campaignRef: null,
+    }];
   }
 
-  // Intento 1
-  let { raw, parsed } = await callLLM({ type, inputSnapshot });
-  let err = validateAuditShape(parsed);
+  // Cap duro 10
+  issues = cap10(issues);
 
-  // Reintento 2 (si vino mal)
-  if (err) {
-    const hint = `
-El JSON recibido no cumple el esquema (${err}).
-Corrige y devuelve SOLO un JSON válido con las llaves exactas.
-`;
-    const messages = [
-      { role: 'system', content: BASE_INSTRUCTIONS },
-      { role: 'user', content: `Tipo: ${type}\ninputSnapshot:\n${JSON.stringify(inputSnapshot ?? {}, null, 2)}` },
-      { role: 'assistant', content: raw || '{}' },
-      { role: 'user', content: hint }
-    ];
-    const resp = await client.chat.completions.create({
-      model: MODEL,
-      messages,
-      temperature: 0.2,
-      response_format: { type: 'json_object' },
-    });
-    const raw2 = resp.choices?.[0]?.message?.content || '{}';
-    try { parsed = JSON.parse(raw2); } catch { parsed = null; }
-    err = validateAuditShape(parsed);
-  }
+  // Pulido con LLM (opcional, cero invención)
+  const polished = await polishWithLLM(type, issues, snapshot).catch(() => null);
+  const finalIssues = polished?.issues || issues;
+  const summary = polished?.summary || (finalIssues.length
+    ? `Se detectaron ${finalIssues.length} hallazgos relevantes en ${type}.`
+    : `Sin hallazgos relevantes en ${type}.`);
 
-  // Si sigue mal, degradamos a heurística
-  if (err) {
-    return minimalHeuristic({ type, inputSnapshot });
-  }
-
-  // Asegurar campos opcionales
-  parsed.actionCenter = Array.isArray(parsed.actionCenter)
-    ? parsed.actionCenter.slice(0, 3)
-    : (parsed.issues || []).slice(0, 3);
-  parsed.topProducts = Array.isArray(parsed.topProducts) ? parsed.topProducts : [];
-  return parsed;
+  return {
+    summary,
+    issues: finalIssues,
+    actionCenter: finalIssues.slice(0, 3),
+    topProducts: snapshot?.topProducts || [],
+  };
 }
 
- module.exports = generateAudit;
+module.exports = generateAudit;
