@@ -22,10 +22,18 @@ const APP_ID       = process.env.FACEBOOK_APP_ID;
 const APP_SECRET   = process.env.FACEBOOK_APP_SECRET;
 const REDIRECT_URI = process.env.FACEBOOK_REDIRECT_URI;
 
+// Scopes que le pedimos a Meta
 const SCOPES = [
-  'ads_read', 'ads_management', 'business_management',
-  'pages_read_engagement', 'pages_show_list', 'pages_manage_ads',
-  'pages_manage_metadata', 'leads_retrieval', 'read_insights', 'email'
+  'ads_read',
+  'ads_management',
+  'business_management',
+  'pages_read_engagement',
+  'pages_show_list',
+  'pages_manage_ads',
+  'pages_manage_metadata',
+  'leads_retrieval',
+  'read_insights',
+  'email'
 ].join(',');
 
 /* =========================
@@ -89,6 +97,7 @@ router.get('/callback', async (req, res) => {
   delete req.session.fb_state;
 
   try {
+    // 1) Token corto → token largo
     const t1 = await exchangeCodeForToken(code);
     let accessToken = t1.access_token;
     let expiresAt   = t1.expires_in ? new Date(Date.now() + t1.expires_in * 1000) : null;
@@ -103,11 +112,13 @@ router.get('/callback', async (req, res) => {
       console.warn('Meta long-lived exchange falló:', e?.response?.data || e.message);
     }
 
+    // 2) Validar token
     const dbg = await debugToken(accessToken);
     if (dbg?.app_id !== APP_ID || dbg?.is_valid !== true) {
       return res.redirect('/onboarding?meta=error');
     }
 
+    // 3) Info básica del usuario
     let fbUserId = null, email = null, name = null;
     try {
       const me = await axios.get(`${FB_GRAPH}/me`, {
@@ -119,6 +130,7 @@ router.get('/callback', async (req, res) => {
       name     = me.data?.name  || null;
     } catch {}
 
+    // 4) adaccounts
     let adAccounts = [];
     try {
       const proof = makeAppSecretProof(accessToken);
@@ -141,12 +153,30 @@ router.get('/callback', async (req, res) => {
       console.warn('No se pudieron leer adaccounts:', e?.response?.data || e.message);
     }
 
+    // 5) permissions → scopes (solo granted)
+    let scopes = [];
+    try {
+      const perms = await axios.get(`${FB_GRAPH}/me/permissions`, {
+        params: { access_token: accessToken, appsecret_proof: makeAppSecretProof(accessToken) },
+        timeout: 15000
+      });
+      scopes = (perms.data?.data || [])
+        .filter(p => p?.status === 'granted' && p?.permission)
+        .map(p => String(p.permission));
+      // dedupe
+      scopes = Array.from(new Set(scopes));
+    } catch (e) {
+      console.warn('No se pudieron leer permisos (scopes):', e?.response?.data || e.message);
+    }
+
     const userId = req.user._id;
 
+    // 6) Marcar conexión en usuario
     await User.findByIdAndUpdate(userId, {
-      $set: { metaConnected: true, metaFbUserId: fbUserId || undefined }
+      $set: { metaConnected: true, metaFbUserId: fbUserId || undefined, metaScopes: scopes }
     });
 
+    // 7) Persistir en MetaAccount (si existe el modelo)
     if (MetaAccount) {
       const defaultAccountId = adAccounts?.[0]?.account_id || null;
       await MetaAccount.findOneAndUpdate(
@@ -155,28 +185,41 @@ router.get('/callback', async (req, res) => {
           $set: {
             userId, user: userId,
             fbUserId: fbUserId || undefined,
+            email: email || undefined,
+            name: name || undefined,
+
+            // tokens
             longLivedToken: accessToken,
             longlivedToken: accessToken,
             access_token:   accessToken,
             expiresAt:      expiresAt || null,
+
+            // data
             ad_accounts:    adAccounts,
             adAccounts:     adAccounts,
             defaultAccountId,
+
+            // scopes
+            scopes,
+
             updatedAt: new Date()
           }
         },
         { upsert: true, new: true }
       );
     } else {
+      // fallback: guardar lo mínimo en User
       await User.findByIdAndUpdate(userId, {
         $set: {
           metaAccessToken: accessToken,
           metaTokenExpiresAt: expiresAt || null,
-          metaDefaultAccountId: adAccounts?.[0]?.account_id || null
+          metaDefaultAccountId: adAccounts?.[0]?.account_id || null,
+          metaScopes: scopes
         }
       });
     }
 
+    // 8) Redirigir
     const destino = req.user.onboardingComplete ? '/dashboard' : '/onboarding?meta=ok';
     req.login(req.user, (err) => {
       if (err) return res.redirect('/onboarding?meta=error');
@@ -195,30 +238,41 @@ router.get('/status', requireAuth, async (req, res) => {
   try {
     if (!MetaAccount) {
       const u = await User.findById(req.user._id).lean();
+      const scopes = Array.isArray(u?.metaScopes) ? u.metaScopes : [];
       return res.json({
         connected: !!u?.metaAccessToken,
         hasAccounts: !!u?.metaDefaultAccountId,
         defaultAccountId: u?.metaDefaultAccountId || null,
         accounts: [],
-        objective: null
+        objective: null,
+        scopes,
+        hasAdsRead: scopes.includes('ads_read'),
+        hasAdsMgmt: scopes.includes('ads_management'),
       });
     }
 
     const doc = await MetaAccount
       .findOne({ $or: [{ userId: req.user._id }, { user: req.user._id }] })
+      .select('+longLivedToken +longlivedToken +access_token +token objective ad_accounts adAccounts defaultAccountId scopes')
       .lean();
 
     const connected = !!(doc?.longLivedToken || doc?.longlivedToken || doc?.access_token || doc?.token);
     const accounts  = doc?.ad_accounts || doc?.adAccounts || [];
     const defaultAccountId = doc?.defaultAccountId || accounts?.[0]?.account_id || null;
     const objective = doc?.objective ?? null;
+    const scopes = Array.isArray(doc?.scopes) ? doc.scopes : [];
+    const hasAdsRead = scopes.includes('ads_read');
+    const hasAdsMgmt = scopes.includes('ads_management');
 
     res.json({
       connected,
       hasAccounts: accounts.length > 0,
       defaultAccountId,
       accounts,
-      objective
+      objective,
+      scopes,
+      hasAdsRead,
+      hasAdsMgmt,
     });
   } catch (e) {
     console.error('status meta error:', e);

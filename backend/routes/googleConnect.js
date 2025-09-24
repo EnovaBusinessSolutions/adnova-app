@@ -22,6 +22,7 @@ try {
       userId:            { type: Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
       accessToken:       { type: String, select: false },
       refreshToken:      { type: String, select: false },
+      scope:             { type: [String], default: [] }, // fallback simple (tu modelo real ya normaliza)
       expiresAt:         { type: Date },
       managerCustomerId: { type: String },
       defaultCustomerId: { type: String }, // “1234567890” (sin guiones)
@@ -162,14 +163,18 @@ async function googleCallbackHandler(req, res) {
     }
 
     const client = oauth();
-    const { tokens } = await client.getToken(code); // { access_token, refresh_token?, expiry_date, ... }
+    const { tokens } = await client.getToken(code); // { access_token, refresh_token?, expiry_date, scope, ... }
     if (!tokens?.access_token) {
       return res.redirect('/onboarding?google=error&reason=no_access_token');
     }
 
-    const accessToken = tokens.access_token;
+    const accessToken  = tokens.access_token;
     const refreshToken = tokens.refresh_token || null;
-    const expiresAt = tokens.expiry_date ? new Date(tokens.expiry_date) : null;
+    const expiresAt    = tokens.expiry_date ? new Date(tokens.expiry_date) : null;
+
+    // ⬇ NEW: normalizamos y guardamos scopes (string o array)
+    // El modelo ya tiene setter que los normaliza si lo estás usando; aquí pasamos tal cual.
+    const scopes = tokens.scope || []; // puede ser "a b c" o array
 
     // Descubrir customers accesibles
     let customers = [];
@@ -190,6 +195,7 @@ async function googleCallbackHandler(req, res) {
       accessToken,
       expiresAt,
       customers,
+      scope: scopes,                   // ⬅ guarda scopes (el setter del modelo los normaliza)
       ...(defaultCustomerId ? { defaultCustomerId } : {}),
       updatedAt: new Date(),
     };
@@ -230,7 +236,7 @@ router.get('/status', requireSession, async (req, res) => {
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
-      .select('+refreshToken +accessToken objective defaultCustomerId customers managerCustomerId')
+      .select('+refreshToken +accessToken objective defaultCustomerId customers managerCustomerId scope')
       .lean();
 
     const hasTokens = !!(ga?.refreshToken || ga?.accessToken);
@@ -243,6 +249,7 @@ router.get('/status', requireSession, async (req, res) => {
       hasCustomers: customers.length > 0,
       defaultCustomerId,
       customers,
+      scopes: Array.isArray(ga?.scope) ? ga.scope : [],   // ⬅ EXPOSE SCOPES
       objective: u?.googleObjective || ga?.objective || null,
       managerCustomerId: ga?.managerCustomerId || null,
     });
@@ -286,11 +293,11 @@ router.get('/accounts', requireSession, async (req, res) => {
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
-      .select('+accessToken +refreshToken customers')
+      .select('+accessToken +refreshToken customers scope')
       .lean();
 
     if (!ga || (!ga.accessToken && !ga.refreshToken)) {
-      return res.json({ ok: true, customers: [], defaultCustomerId: null });
+      return res.json({ ok: true, customers: [], defaultCustomerId: null, scopes: [] });
     }
 
     // Usamos el accessToken actual (sin refresh aquí por simplicidad)
@@ -307,7 +314,7 @@ router.get('/accounts', requireSession, async (req, res) => {
     }
 
     const defaultCustomerId = ga.defaultCustomerId || customers?.[0]?.id || null;
-    res.json({ ok: true, customers, defaultCustomerId });
+    res.json({ ok: true, customers, defaultCustomerId, scopes: Array.isArray(ga?.scope) ? ga.scope : [] });
   } catch (err) {
     console.error('google accounts error:', err);
     res.status(500).json({ ok: false, error: 'ACCOUNTS_ERROR' });

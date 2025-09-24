@@ -7,83 +7,113 @@ const router = express.Router();
 const Audit = require('../models/Audit');
 const User  = require('../models/User');
 
-// Collectors (devuelven "inputSnapshot" consistente por fuente)
+// Collectors (real / mock controlado)
 const { collectGoogle } = require('../jobs/collect/googleCollector');
 const { collectMeta   } = require('../jobs/collect/metaCollector');
 
-// IA opcional (pulido de texto sin inventar datos)
+// IA opcional (pulido sobre snapshot real)
 let generateAudit = null;
-try {
-  generateAudit = require('../jobs/llm/generateAudit');
-} catch {
-  generateAudit = null;
-}
+try { generateAudit = require('../jobs/llm/generateAudit'); } catch { generateAudit = null; }
 
-/* ========================================================
+/* =========================================================
    Helpers
-   ======================================================== */
-
+   ========================================================= */
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
 }
 
-const OK_AREAS = new Set([
-  'setup', 'performance', 'creative', 'tracking', 'budget', 'bidding'
-]);
-const OK_SEV = new Set(['alta', 'media', 'baja']);
+const OK_AREAS = new Set(['setup', 'performance', 'creative', 'tracking', 'budget', 'bidding']);
+const OK_SEV   = new Set(['alta', 'media', 'baja']);
 
-function safeStr(v, fb = '') {
-  return typeof v === 'string' ? v : fb;
-}
-function cap10(arr) {
-  return Array.isArray(arr) ? arr.slice(0, 10) : [];
-}
+const sevRank  = { alta: 3, media: 2, baja: 1 };
 
+const safeStr  = (v, fb = '') => (typeof v === 'string' ? v : fb);
+const cap      = (arr, n) => (Array.isArray(arr) ? arr.slice(0, n) : []);
+const toSev    = (s) => {
+  const v = String(s || '').toLowerCase().trim();
+  if (v === 'alta' || v === 'high')  return 'alta';
+  if (v === 'baja' || v === 'low')   return 'baja';
+  return 'media';
+};
+const toArea   = (a) => (OK_AREAS.has(a) ? a : 'performance');
 
 function normalizeIssue(raw, i = 0, type = 'google') {
-  const id  = safeStr(raw?.id, `iss-${type}-${Date.now()}-${i}`).trim();
-  const area = OK_AREAS.has(raw?.area) ? raw.area : 'performance';
+  const id    = safeStr(raw?.id, `iss-${type}-${Date.now()}-${i}`).trim();
+  const area  = toArea(raw?.area);
   const title = safeStr(raw?.title, 'Hallazgo').trim();
-  const sevIn = safeStr(raw?.severity, 'media').toLowerCase();
-  const severity = OK_SEV.has(sevIn) ? sevIn : 'media';
+  const sev   = toSev(raw?.severity);
 
-  return {
+  const base = {
     id,
     area,
     title,
-    severity,                                // 'alta'|'media'|'baja'
+    severity: sev,                                     // 'alta'|'media'|'baja'
     evidence: safeStr(raw?.evidence, ''),
     metrics: raw?.metrics && typeof raw.metrics === 'object' ? raw.metrics : {},
     recommendation: safeStr(raw?.recommendation, ''),
-    estimatedImpact: (['alto', 'medio', 'bajo'].includes(raw?.estimatedImpact) ? raw.estimatedImpact : 'medio'),
+    estimatedImpact: ['alto', 'medio', 'bajo'].includes(raw?.estimatedImpact) ? raw.estimatedImpact : null,
     blockers: Array.isArray(raw?.blockers) ? raw.blockers.map(String) : [],
     links: Array.isArray(raw?.links)
       ? raw.links.map(l => ({ label: safeStr(l?.label, ''), url: safeStr(l?.url, '') }))
       : [],
-    // NO está en el schema pero lo guardamos dentro de metrics si llega:
-    // campaignRef: { id, name }
-    ...(raw?.campaignRef ? { metrics: { ...raw.metrics, campaignRef: raw.campaignRef } } : {})
   };
+
+  // Si viene referencia de campaña, guárdala dentro de metrics.campaignRef (no rompe el esquema)
+  if (raw?.campaignRef && typeof raw.campaignRef === 'object') {
+    base.metrics = { ...base.metrics, campaignRef: {
+      id:   safeStr(raw.campaignRef.id, ''),
+      name: safeStr(raw.campaignRef.name, ''),
+    }};
+  }
+
+  return base;
 }
 
-function normalizeIssues(list, type = 'google') {
+function normalizeIssues(list, type = 'google', limit = 10) {
   if (!Array.isArray(list)) return [];
-  return cap10(list).map((it, i) => normalizeIssue(it, i, type));
+  return cap(list, limit).map((it, i) => normalizeIssue(it, i, type));
 }
 
-/* ========================================================
-   POST /api/audits/run
-   Lanza auditorías por cada fuente conectada.
-   ======================================================== */
+/**
+ * Issue de “setup” cuando no hay permisos o no hay datos reales
+ */
+function buildSetupIssue({ title, evidence, type }) {
+  return normalizeIssue({
+    id: `setup-${type}-${Date.now()}`,
+    area: 'setup',
+    title,
+    severity: 'alta',
+    evidence,
+    recommendation:
+      type === 'google'
+        ? 'Revisa los permisos (scope "adwords") y asegúrate de tener campañas activas o historial. Si trabajas vía MCC, revisa el login-customer-id y la vinculación de la cuenta al MCC.'
+        : type === 'meta'
+        ? 'Revisa los permisos (ads_read/ads_management) y confirma que hay cuentas con campañas activas. Valida también el píxel/eventos en Events Manager.'
+        : 'Conecta la fuente y confirma que hay datos disponibles en el rango de fechas.',
+  }, 0, type);
+}
 
+function sortIssuesBySeverityThenImpact(issues) {
+  return [...issues].sort((a, b) => {
+    const s = (sevRank[b.severity] || 0) - (sevRank[a.severity] || 0);
+    if (s !== 0) return s;
+    const ib = b.estimatedImpact === 'alto' ? 3 : b.estimatedImpact === 'medio' ? 2 : b.estimatedImpact === 'bajo' ? 1 : 0;
+    const ia = a.estimatedImpact === 'alto' ? 3 : a.estimatedImpact === 'medio' ? 2 : a.estimatedImpact === 'bajo' ? 1 : 0;
+    return ib - ia;
+  });
+}
+
+/* =========================================================
+   POST /api/audits/run
+   Genera auditorías de google/meta/shopify con datos reales.
+   ========================================================= */
 router.post('/run', requireAuth, async (req, res) => {
   const userId = req.user._id;
 
   try {
+    // flags reales si el front no los manda
     const user = await User.findById(userId).lean();
-
-    // Flags reales (si el front no los manda, tomamos User.*Connected)
     const flags = {
       google:  !!(req.body?.googleConnected  ?? user?.googleConnected),
       meta:    !!(req.body?.metaConnected    ?? user?.metaConnected),
@@ -91,6 +121,7 @@ router.post('/run', requireAuth, async (req, res) => {
     };
 
     const results = [];
+
     for (const type of ['google', 'meta', 'shopify']) {
       if (!flags[type]) {
         results.push({ type, ok: false, error: 'NOT_CONNECTED' });
@@ -102,47 +133,66 @@ router.post('/run', requireAuth, async (req, res) => {
       try {
         if (type === 'google')  inputSnapshot = await collectGoogle(userId);
         if (type === 'meta')    inputSnapshot = await collectMeta(userId);
-        if (type === 'shopify') inputSnapshot = {}; // Integrar tu colector real si lo tienes
+        if (type === 'shopify') inputSnapshot = {}; // integra tu colector real cuando lo tengas
       } catch (e) {
-        // Si el colector falla no rompemos el flujo
         inputSnapshot = {};
       }
 
-      // 2) Generar auditoría (determinística + pulido IA si OPENAI_API_KEY)
-      let enriched = null;
-      try {
+      // 2) Reglas duras si no hay permisos o no hay campañas/datos
+      let issues = [];
+      let summary = '';
+      const hasCampaigns = Array.isArray(inputSnapshot?.byCampaign) && inputSnapshot.byCampaign.length > 0;
+      const authorized   = !inputSnapshot?.notAuthorized;
+
+      if (!authorized) {
+        issues.push(buildSetupIssue({
+          type,
+          title: 'Permisos insuficientes o acceso denegado',
+          evidence: `Motivo: ${inputSnapshot?.reason || 'no autorizado'}. Afecta a cuentas: ${(inputSnapshot?.accountIds || []).join(', ') || 'N/D'}`,
+        }));
+        summary = 'No fue posible auditar por permisos insuficientes.';
+      } else if (!hasCampaigns) {
+        issues.push(buildSetupIssue({
+          type,
+          title: 'No se detectaron campañas ni datos recientes',
+          evidence: 'El snapshot no contiene campañas activas ni histórico en el rango consultado.',
+        }));
+        summary = 'No hay campañas activas ni datos para auditar.';
+      } else {
+        // 3) IA opcional con snapshot real (NO inventar)
         if (generateAudit) {
-          enriched = await generateAudit({ type, inputSnapshot });
-        } else {
-          // Seguridad: si por alguna razón no se cargó el módulo
-          enriched = { summary: '', issues: [], actionCenter: [], topProducts: [] };
+          try {
+            const ai = await generateAudit({ type, inputSnapshot });
+            summary = safeStr(ai?.summary, '');
+            issues  = normalizeIssues(ai?.issues, type, 10);
+          } catch (e) {
+            // si cae la IA, no bloqueamos — dejamos issues vacío (o sólo setup si aplica)
+            summary = summary || '';
+            issues  = normalizeIssues(issues, type, 10);
+          }
         }
-      } catch (e) {
-        // Sin bloquear el resto
-        enriched = { summary: '', issues: [], actionCenter: [], topProducts: [] };
-        results.push({ type, ok: false, error: 'LLM_FAILED', detail: e?.message });
       }
 
-      // 3) Normalización dura (cumplir Mongoose IssueSchema) + caps
-      const issues = normalizeIssues(enriched?.issues, type);
-      const actionCenter = issues.slice(0, 3);
-      const topProducts = Array.isArray(enriched?.topProducts) ? enriched.topProducts : [];
+      // Garantías finales
+      issues = normalizeIssues(issues, type, 10);
+      const top3 = sortIssuesBySeverityThenImpact(issues).slice(0, 3);
 
       // 4) Guardar
-      const auditDoc = {
+      const doc = await Audit.create({
         userId,
         type,
         generatedAt: new Date(),
-        summary: safeStr(enriched?.summary, ''),
-        issues,
-        actionCenter,
-        topProducts,
-        inputSnapshot,                      // para trazabilidad en DB
-        version: 'audits@1.0.0',
-      };
+        // Compatibilidad con front viejo y nuevo
+        resumen: summary,            // legacy
+        summary,                     // nuevo
+        issues,                      // array normalizado (máx 10)
+        actionCenter: top3,          // top-3 para Centro de Acciones
+        topProducts: Array.isArray(inputSnapshot?.topProducts) ? inputSnapshot.topProducts : [],
+        inputSnapshot,               // trazabilidad
+        version: 'audits@1.1.0',
+      });
 
-      const saved = await Audit.create(auditDoc);
-      results.push({ type, ok: true, auditId: saved._id });
+      results.push({ type, ok: true, auditId: doc._id });
     }
 
     return res.json({ ok: true, results });
@@ -152,15 +202,13 @@ router.post('/run', requireAuth, async (req, res) => {
   }
 });
 
-/* ========================================================
+/* =========================================================
    GET /api/audits/latest
    Devuelve el último documento por tipo del usuario.
-   ======================================================== */
-
+   ========================================================= */
 router.get('/latest', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
-
     const [google, meta, shopify] = await Promise.all(
       ['google', 'meta', 'shopify'].map((t) =>
         Audit.findOne({ userId, type: t }).sort({ generatedAt: -1 }).lean()
@@ -169,11 +217,7 @@ router.get('/latest', requireAuth, async (req, res) => {
 
     return res.json({
       ok: true,
-      data: {
-        google:  google  || null,
-        meta:    meta    || null,
-        shopify: shopify || null,
-      },
+      data: { google: google || null, meta: meta || null, shopify: shopify || null },
     });
   } catch (e) {
     console.error('LATEST_ERROR:', e);
@@ -181,20 +225,14 @@ router.get('/latest', requireAuth, async (req, res) => {
   }
 });
 
-/* ========================================================
+/* =========================================================
    GET /api/audits/action-center
-   Combina las 6 últimas auditorías y devuelve top acciones.
-   ======================================================== */
-
+   Top acciones (fusiona últimas auditorías).
+   ========================================================= */
 router.get('/action-center', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
-
-    const audits = await Audit
-      .find({ userId })
-      .sort({ generatedAt: -1 })
-      .limit(6)
-      .lean();
+    const audits = await Audit.find({ userId }).sort({ generatedAt: -1 }).limit(6).lean();
 
     const items = [];
     for (const a of audits) {
@@ -203,7 +241,7 @@ router.get('/action-center', requireAuth, async (req, res) => {
         items.push({
           title: it.title || '(Sin título)',
           description: it.evidence || it.recommendation || '',
-          severity: it.severity || 'media', // 'alta'|'media'|'baja'
+          severity: toSev(it.severity),
           type: a.type,
           at: a.generatedAt,
           button: null,
@@ -212,15 +250,12 @@ router.get('/action-center', requireAuth, async (req, res) => {
       }
     }
 
-    // Ordenar: alta > media > baja, y luego por fecha desc
-    const sevRank = { alta: 3, media: 2, baja: 1 };
-    items.sort((a, b) => {
-      const s = (sevRank[b.severity] || 0) - (sevRank[a.severity] || 0);
+    items.sort((x, y) => {
+      const s = (sevRank[y.severity] || 0) - (sevRank[x.severity] || 0);
       if (s !== 0) return s;
-      return new Date(b.at) - new Date(a.at);
+      return new Date(y.at) - new Date(x.at);
     });
 
-    // Cap por si se dispara
     return res.json({ ok: true, items: items.slice(0, 30) });
   } catch (e) {
     console.error('ACTION_CENTER_ERROR:', e);
