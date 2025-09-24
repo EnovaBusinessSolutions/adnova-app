@@ -165,15 +165,37 @@ transporter.verify((err) => {
 
 /* --------------------------- Auth/Usuario -------------------------- */
 app.post('/api/register', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ success: false, message: 'Correo y contraseña son requeridos' });
-  }
   try {
-    const hashed = await bcrypt.hash(password, 10);
-    await User.create({ email, password: hashed });
+    let { email, password } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Correo y contraseña son requeridos' });
+    }
 
-    let html = `<!doctype html>
+    email = String(email).trim().toLowerCase();
+
+    // Validaciones básicas
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRe.test(email)) {
+      return res.status(400).json({ success: false, message: 'Correo inválido' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ success: false, message: 'La contraseña debe tener al menos 8 caracteres' });
+    }
+
+    // ¿Existe ya?
+    const exists = await User.findOne({ email });
+    if (exists) {
+      return res.status(409).json({ success: false, message: 'El email ya está registrado' });
+    }
+
+    // Crear usuario
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await User.create({ email, password: hashed });
+
+    // Intentar enviar correo SIN romper el registro si falla
+    (async () => {
+      try {
+        let html = `<!doctype html>
 <html lang="es"><head><meta charset="utf-8">
 <title>Bienvenido a Adnova AI</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -194,20 +216,32 @@ app.post('/api/register', async (req, res) => {
 </td></tr>
 <tr><td style="background:#100c1e;padding:18px 40px;border-radius:0 0 16px 16px;text-align:center;font-size:12px;line-height:18px;color:#777">© {{YEAR}} Adnova AI · <a href="https://ai.adnova.digital/politica.html" style="color:#777;text-decoration:underline">Política de privacidad</a></td></tr>
 </table></td></tr></table></body></html>`;
-    html = html.replace('{{YEAR}}', new Date().getFullYear());
+        html = html.replace('{{YEAR}}', new Date().getFullYear());
 
-    await transporter.sendMail({
-      from: process.env.SMTP_FROM,
-      to: email,
-      subject: 'Activa tu cuenta de Adnova AI',
-      text: 'Tu cuenta se creó con éxito. Ingresa en https://ai.adnova.digital/login',
-      html,
+        await transporter.sendMail({
+          from: process.env.SMTP_FROM,
+          to: email,
+          subject: 'Activa tu cuenta de Adnova AI',
+          text: 'Tu cuenta se creó con éxito. Ingresa en https://ai.adnova.digital/login',
+          html,
+        });
+      } catch (mailErr) {
+        console.error('✉️  SMTP fallo (registro OK):', mailErr?.message || mailErr);
+      }
+    })();
+
+    // Éxito inmediato para el frontend
+    return res.status(201).json({
+      success: true,
+      message: 'Usuario registrado',
+      confirmUrl: `/confirmation.html?email=${encodeURIComponent(user.email)}`
     });
-
-    res.status(201).json({ success: true, message: 'Usuario registrado y correo enviado' });
   } catch (err) {
+    if (err && err.code === 11000) {
+      return res.status(409).json({ success: false, message: 'El email ya está registrado' });
+    }
     console.error('❌ Error al registrar usuario:', err);
-    res.status(400).json({ success: false, message: 'No se pudo registrar el usuario' });
+    return res.status(500).json({ success: false, message: 'Error interno al registrar' });
   }
 });
 

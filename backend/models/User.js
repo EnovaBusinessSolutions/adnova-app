@@ -1,12 +1,11 @@
-// models/User.js
-
+// backend/models/User.js
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: false },
+  email: { type: String, required: true, unique: true, index: true, lowercase: true, trim: true },
+  password: { type: String }, // opcional por OAuth
   onboardingComplete: { type: Boolean, default: false },
-  shop: { type: String, required: false },
+  shop: { type: String },
   shopifyConnected: { type: Boolean, default: false },
   shopifyAccessToken: { type: String },
   shopifyScopeHash: { type: String },
@@ -17,16 +16,16 @@ const userSchema = new mongoose.Schema({
   metaConnected: { type: Boolean, default: false },
   metaAccessToken: { type: String },
   resetPasswordToken  : { type: String },
-  resetPasswordExpires: { type: Date }
+  resetPasswordExpires: { type: Date },
 
-  ,plan: {
+  plan: {
     type: String,
     enum: ['gratis','emprendedor','pro','enterprise'],
     default: 'gratis',
     index: true
   },
   planStartedAt: { type: Date, default: Date.now }
-});
+}, { timestamps: true }); // <- útil
 
 userSchema.index({ plan: 1 });
 
