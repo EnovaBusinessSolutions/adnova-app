@@ -152,16 +152,24 @@ app.get('/api/health', (_req, res) => {
 });
 
 
+
+const FROM = process.env.SMTP_FROM || process.env.SMTP_USER;
+
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT),
-  secure: true,
-  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  host: process.env.SMTP_HOST || 'smtp.gmail.com',
+  port: Number(process.env.SMTP_PORT) || 465, 
+  secure: (Number(process.env.SMTP_PORT) || 465) === 465, 
+  auth: {
+    user: process.env.SMTP_USER, 
+    pass: process.env.SMTP_PASS, 
+  },
 });
+
 transporter.verify((err) => {
   if (err) console.error('❌ SMTP error:', err);
   else console.log('✅ SMTP listo para enviar correo');
 });
+
 
 
 app.post('/api/register', async (req, res) => {
@@ -219,7 +227,7 @@ app.post('/api/register', async (req, res) => {
         html = html.replace('{{YEAR}}', new Date().getFullYear());
 
         await transporter.sendMail({
-          from: process.env.SMTP_FROM,
+          from: FROM,
           to: email,
           subject: 'Activa tu cuenta de Adnova AI',
           text: 'Tu cuenta se creó con éxito. Ingresa en https://ai.adnova.digital/login',
@@ -277,7 +285,7 @@ p{margin:0 0 18px 0;color:#F4F2FF;font-size:1.04rem;line-height:1.6;text-align:c
 <body>...${''}</body></html>`;
 
     await transporter.sendMail({
-      from: process.env.SMTP_FROM,
+      from: FROM,
       to: user.email,
       subject: 'Restablece tu contraseña · Adnova AI',
       text: `Haz clic aquí para cambiar tu contraseña: ${resetUrl}`,
