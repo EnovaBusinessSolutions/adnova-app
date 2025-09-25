@@ -32,23 +32,23 @@ const dashboardRoute = require('./api/dashboardRoute');
 const { publicCSP, shopifyCSP } = require('../middlewares/csp');
 const subscribeRouter = require('./routes/subscribe');
 const userRoutes = require('./routes/user');
-const auditsRoutes = require('./routes/audits'); // <-- NUEVO (unificado)
+const auditsRoutes = require('./routes/audits'); 
 
-// Meta endpoints (dashboard)
+
 const metaInsightsRoutes = require('./routes/metaInsights');
 const metaAccountsRoutes = require('./routes/metaAccounts');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-/* ----------------------------- C O R S ----------------------------- */
+
 app.use(
   cors({
     origin: [
       'https://ai.adnova.digital',
       /\.myshopify\.com$/,
       'https://admin.shopify.com',
-      // Dev / Vite / local preview
+      
       'http://localhost:3000',
       'http://localhost:5173',
       'http://127.0.0.1:5173',
@@ -58,23 +58,23 @@ app.use(
 );
 app.options(/.*/, cors());
 
-/* ------------- Webhooks (raw) ANTES de cualquier body parser -------- */
+
 app.use('/connector/webhooks', express.raw({ type: 'application/json' }), webhookRoutes);
 
-/* ------------------------- Body parsers ---------------------------- */
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-/* ------------------------------ CSP ------------------------------- */
+
 app.use(publicCSP);
 
-/* ----------------------------- Mongo ------------------------------ */
+
 mongoose
   .connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
   .then(() => console.log('✅ Conectado a MongoDB Atlas'))
   .catch((err) => console.error('❌ Error al conectar con MongoDB:', err));
 
-/* ------------------------ Sesión / Passport ------------------------ */
+
 app.set('trust proxy', 1);
 app.use(
   session({
@@ -84,14 +84,14 @@ app.use(
     cookie: {
       sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
       secure: process.env.NODE_ENV === 'production',
-      // domain: '.adnova.digital',
+     
     },
   })
 );
 app.use(passport.initialize());
 app.use(passport.session());
 
-/* ------------------------------ Guards ----------------------------- */
+s
 function ensureAuthenticated(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.redirect('/login');
@@ -106,7 +106,7 @@ function sessionGuard(req, res, next) {
   return res.status(401).json({ error: 'No hay sesión' });
 }
 
-/* --------- Dashboard (submódulo build Vite con fallback legacy) ---- */
+
 const DASHBOARD_DIST = path.join(__dirname, '../dashboard-src/dist');
 const LEGACY_DASH = path.join(__dirname, '../public/dashboard');
 const HAS_DASHBOARD_DIST = fs.existsSync(path.join(DASHBOARD_DIST, 'index.html'));
@@ -127,13 +127,13 @@ if (HAS_DASHBOARD_DIST) {
   console.warn('⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard');
 }
 
-/* ================== RUTAS DE AUTH / PÚBLICAS (ADELANTADAS) ========= */
+
 app.use('/auth/google', googleConnect);
 app.use('/auth/meta', metaAuthRoutes);
 app.use('/', privacyRoutes);
 app.use('/', googleAnalytics);
 
-/* ------------------------ Home / Login ----------------------------- */
+
 app.get('/', (req, res) => {
   const { shop } = req.query;
   if (shop) return res.redirect(`/connector?shop=${shop}`);
@@ -151,7 +151,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, uptime: process.uptime() });
 });
 
-/* -------------------------- SMTP/Nodemailer ------------------------ */
+
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: Number(process.env.SMTP_PORT),
@@ -163,7 +163,7 @@ transporter.verify((err) => {
   else console.log('✅ SMTP listo para enviar correo');
 });
 
-/* --------------------------- Auth/Usuario -------------------------- */
+
 app.post('/api/register', async (req, res) => {
   try {
     let { email, password } = req.body || {};
@@ -173,7 +173,7 @@ app.post('/api/register', async (req, res) => {
 
     email = String(email).trim().toLowerCase();
 
-    // Validaciones básicas
+    
     const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRe.test(email)) {
       return res.status(400).json({ success: false, message: 'Correo inválido' });
@@ -182,17 +182,17 @@ app.post('/api/register', async (req, res) => {
       return res.status(400).json({ success: false, message: 'La contraseña debe tener al menos 8 caracteres' });
     }
 
-    // ¿Existe ya?
+    
     const exists = await User.findOne({ email });
     if (exists) {
       return res.status(409).json({ success: false, message: 'El email ya está registrado' });
     }
 
-    // Crear usuario
+    
     const hashed = await bcrypt.hash(password, 10);
     const user = await User.create({ email, password: hashed });
 
-    // Intentar enviar correo SIN romper el registro si falla
+    
     (async () => {
       try {
         let html = `<!doctype html>
@@ -230,7 +230,7 @@ app.post('/api/register', async (req, res) => {
       }
     })();
 
-    // Éxito inmediato para el frontend
+    
     return res.status(201).json({
       success: true,
       message: 'Usuario registrado',
@@ -339,7 +339,7 @@ app.post('/api/login', async (req, res, next) => {
   }
 });
 
-/* --------------------------- Onboarding ---------------------------- */
+
 app.get('/onboarding', ensureNotOnboarded, async (req, res) => {
   const filePath = path.join(__dirname, '../public/onboarding.html');
   const user = await User.findById(req.user._id).lean();
@@ -369,8 +369,7 @@ app.post('/api/complete-onboarding', async (req, res) => {
   }
 });
 
-/* ------------------------------ APIs ------------------------------- */
-// SIEMPRE leer el usuario fresco de DB para evitar flags desactualizados
+
 app.get('/api/session', async (req, res) => {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
     return res.status(401).json({ authenticated: false });
@@ -402,30 +401,30 @@ app.get('/api/saas/ping', sessionGuard, (req, res) => {
 });
 app.use('/api/saas/shopify', sessionGuard, require('./routes/shopifyMatch'));
 
-// Rutas públicas / auth adicionales
+
 app.use('/api/shopify', shopifyRoutes);
 app.use('/api', mockShopify);
 app.use('/api', userRoutes);
 
-// --- Auditorías unificadas ---
+
 app.use('/api/audits', sessionGuard, auditsRoutes); 
 app.use('/api/audit', sessionGuard, auditsRoutes);
 app.use('/api/audits', auditsRoutes);  
 
-// Compatibilidad adicional con /api/audit/*start (onboarding3.js legacy)
+
 app.post('/api/audit/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/run'));
 app.post('/api/audit/google/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/run'));
 app.post('/api/audit/meta/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/run'));
 app.post('/api/audit/shopify/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/run'));
 
-// (si aún necesitas api/auditRoute para otras cosas, puede quedar montado también)
+
 app.use('/api/secure', verifySessionToken, secureRoutes);
 app.use('/api/dashboard', dashboardRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter);
 app.use('/api', require('./routes/objectives'));
 
-// Google Ads insights — PROTEGIDO POR SESIÓN
+
 const googleAdsInsightsRouter = require('./routes/googleAdsInsights');
 app.use('/api/google/ads/insights', sessionGuard, googleAdsInsightsRouter);
 app.use('/api/google/ads', sessionGuard, (req, _res, next) => {
@@ -433,11 +432,11 @@ app.use('/api/google/ads', sessionGuard, (req, _res, next) => {
   next();
 }, googleAdsInsightsRouter);
 
-// Meta endpoints consumidos por dashboard
+
 app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);
 app.use('/api/meta/accounts', sessionGuard, metaAccountsRoutes);
 
-/* ------------------------- OAuth Google (opcional) ------------------ */
+
 app.get('/auth/google/login',
   passport.authenticate('google', { scope: ['profile', 'email'] })
 );
@@ -449,20 +448,20 @@ app.get('/auth/google/login/callback',
   }
 );
 
-/* -------------------- Static público (sitio) ----------------------- */
+
 app.use('/assets', express.static(path.join(__dirname, '../public/landing/assets')));
 app.use('/assets', express.static(path.join(__dirname, '../public/support/assets')));
 app.use('/assets', express.static(path.join(__dirname, '../public/plans/assets')));
 app.use(express.static(path.join(__dirname, '../public')));
 
-/* --------------------- Rutas específicas --------------------------- */
+
 app.get('/connector/interface', shopifyCSP, (req, res) => {
   const { shop, host } = req.query;
   if (!shop || !host) return res.status(400).send("Faltan parámetros 'shop' o 'host'");
   res.sendFile(path.join(__dirname, '../public/connector/interface.html'));
 });
 
-/* ------------------------- Shopify app proxy ----------------------- */
+
 app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
   const { shop, host } = req.query;
   const redirectUrl = new URL('/connector/interface', `https://${req.headers.host}`);
@@ -471,7 +470,7 @@ app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
   return res.redirect(redirectUrl.toString());
 });
 
-/* ----------------------------- Logout ------------------------------ */
+
 app.get('/logout', (req, res) => {
   req.logout((err) => {
     if (err) {
@@ -497,14 +496,14 @@ app.get('/logout', (req, res) => {
   });
 });
 
-/* ------------------------ 404 & errores ---------------------------- */
+
 app.use((req, res) => res.status(404).send('Página no encontrada'));
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
-/* ----------------------------- Start ------------------------------- */
+
 app.listen(PORT, () => {
   console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
 });
