@@ -1,19 +1,19 @@
 // public/js/onboarding3.js
 document.addEventListener("DOMContentLoaded", async () => {
-  // ----- UI refs -----
+  
   const btn = document.getElementById("continue-btn-3");
   const progressBar = document.querySelector(".progress-indicator");
   const progressText = document.querySelector(".progress-text");
   if (btn) btn.disabled = true;
 
-  // 4 slots ya presentes en tu HTML
+  
   const stepEls = Array.from(document.querySelectorAll(".analysis-step")).map((el) => ({
     root: el,
     icon: el.querySelector(".analysis-step-icon"),
     text: el.querySelector(".analysis-step-text"),
   }));
 
-  // Helpers UI
+  
   const setText = (t) => { if (progressText) progressText.textContent = t; };
   const setBar  = (pct) => { if (progressBar) progressBar.style.width = `${pct}%`; };
 
@@ -43,13 +43,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   };
 
-  // Animación base
+  
   let progress = 0;
   let running = true;
   const tick = () => {
     if (!running) return;
     if (progress < 90) {
-      progress += Math.random() * 2 + 1; // 1–3%
+      progress += Math.random() * 2 + 1; 
       if (progress > 90) progress = 90;
       setBar(progress);
       setTimeout(tick, 250);
@@ -59,7 +59,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setText("Preparando análisis…");
   tick();
 
-  // HTTP helpers
+  
   const getJSON = async (url) => {
     const r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
     try { return await r.json(); } catch { return {}; }
@@ -85,7 +85,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     return json || {};
   };
 
-  // Mapeo de tipos → índice visual (usa los 3 primeros slots)
+  
   const TYPE_TO_INDEX = { google: 0, meta: 1, shopify: 2 };
   const INDEX_TO_LABEL = {
     0: "Analizando Google Ads",
@@ -94,7 +94,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     3: "Generando recomendaciones",
   };
 
-  // Pre-pinta labels
+  
   for (let i = 0; i < stepEls.length; i++) {
     setStepLabel(i, INDEX_TO_LABEL[i] || "Procesando…");
   }
@@ -102,7 +102,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   let resultsPayload = null;
 
   try {
-    // 1) Verificar sesión y conexiones reales
+   
     const sess = await getJSON("/api/session");
     if (!sess?.authenticated) throw new Error("Sesión no encontrada. Inicia sesión nuevamente.");
 
@@ -110,34 +110,34 @@ document.addEventListener("DOMContentLoaded", async () => {
     const metaConnected   = !!sess.user?.metaConnected;
     const shopConnected   = !!sess.user?.shopifyConnected;
 
-    // Marca como “en curso” los tres slots; luego omitimos los no conectados
+    
     for (const t of ["google", "meta", "shopify"]) {
       const idx = TYPE_TO_INDEX[t];
       if (idx !== undefined) markRunning(idx);
     }
 
-    // UI omitidos por no-conectados (informativo)
+    
     if (!googleConnected) markOmit(TYPE_TO_INDEX.google, "no conectado");
     if (!metaConnected)   markOmit(TYPE_TO_INDEX.meta, "no conectado");
     if (!shopConnected)   markOmit(TYPE_TO_INDEX.shopify, "no conectado");
 
     setText("Recopilando datos…");
 
-    // 2) Llamada única al backend con flags correctos
+    
     const json = await postJSON("/api/audits/run", {
       googleConnected,
       metaConnected,
       shopifyConnected: shopConnected,
     });
 
-    // Avanza progreso intermedio
+    
     progress = Math.max(progress, 45);
     setBar(progress);
 
     const results = Array.isArray(json.results) ? json.results : [];
     resultsPayload = json;
 
-    // 3) Marcar resultado por tipo
+   
     const seen = new Set();
     for (const r of results) {
       if (!r?.type) continue;
@@ -150,7 +150,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       setBar(progress);
     }
 
-    // 4) Los tipos que el backend no ejecutó se mantienen como omitidos
+    
     for (const t of ["google", "meta", "shopify"]) {
       if (!seen.has(t)) {
         const idx = TYPE_TO_INDEX[t];
@@ -158,7 +158,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     }
 
-    // 5) Paso final
+    
     const finalIdx = Math.min(3, stepEls.length - 1);
     markDone(finalIdx);
 
@@ -167,7 +167,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     setText("¡Análisis completado!");
     if (btn) btn.disabled = false;
 
-    // Guardar por si lo quieres leer luego
+    
     try { sessionStorage.setItem("auditResult", JSON.stringify(resultsPayload)); } catch {}
   } catch (err) {
     console.error("RUN_ERROR:", err?._raw || err);
@@ -177,13 +177,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     setText("RUN_ERROR");
     alert("RUN_ERROR\n\n" + (err?.message || "Ocurrió un problema."));
 
-    // Marca omitidos los pasos visibles y permite continuar
+   
     stepEls.forEach((_, i) => markOmit(i, "error"));
     if (btn) btn.disabled = false;
   }
 });
 
-// Botón continuar
+
 document.getElementById("continue-btn-3")?.addEventListener("click", () => {
   window.location.href = "/onboarding4.html";
 });

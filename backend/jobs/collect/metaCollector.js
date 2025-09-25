@@ -4,17 +4,17 @@ const axios = require('axios');
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 
-// ========= ENV =========
+
 const FB_VERSION = process.env.FACEBOOK_API_VERSION || 'v23.0';
 const FB_GRAPH   = `https://graph.facebook.com/${FB_VERSION}`;
 const APP_SECRET = process.env.FACEBOOK_APP_SECRET;
 
-// ========= Modelo =========
+
 let MetaAccount;
 try {
   MetaAccount = require('../../models/MetaAccount');
 } catch (_) {
-  // Fallback mínimo si no está el modelo real
+  
   const { Schema, model } = mongoose;
   const AdAccountSchema = new Schema({
     id: String, account_id: String, name: String,
@@ -36,7 +36,7 @@ try {
   MetaAccount = mongoose.models.MetaAccount || model('MetaAccount', schema);
 }
 
-// ========= Utils =========
+
 const sinceDays = (n) => {
   const d = new Date(); d.setUTCDate(d.getUTCDate() - n);
   return d.toISOString().slice(0,10);
@@ -64,10 +64,10 @@ function appSecretProof(token) {
   return crypto.createHmac('sha256', APP_SECRET).update(token).digest('hex');
 }
 
-// ========= Graph helpers =========
+
 
 async function fetchAdAccountsFromGraph(accessToken) {
-  // Por si el doc no tiene ad_accounts, hacemos fallback
+  
   const params = {
     access_token: accessToken,
     fields: 'account_id,name,currency,configured_status,timezone_name',
@@ -97,8 +97,7 @@ async function fetchAdAccountsFromGraph(accessToken) {
 }
 
 async function fetchCampaignInsights({ accessToken, accountId, since, until }) {
-  // Insights: nivel campaña, últimos 30 días
-  // docs: https://developers.facebook.com/docs/marketing-api/reference/ad-account/insights/
+  
   const params = {
     access_token: accessToken,
     level: 'campaign',
@@ -110,8 +109,7 @@ async function fetchCampaignInsights({ accessToken, accountId, since, until }) {
       'actions', 'action_values'
     ].join(','),
     limit: 200,
-    // Filtramos solo campañas con delivery relevante (opcional):
-    // 'filtering': JSON.stringify([{field:'campaign.delivery_status',operator:'IN',value:['active','limited']}])
+    
   };
   const proof = appSecretProof(accessToken);
   if (proof) params.appsecret_proof = proof;
@@ -127,7 +125,7 @@ async function fetchCampaignInsights({ accessToken, accountId, since, until }) {
 }
 
 function pickAction(actions, key) {
-  // Busca 'purchase' o 'offsite_conversion.fb_pixel_purchase' u otras variantes
+  
   const arr = Array.isArray(actions) ? actions : [];
   const match = arr.find(a =>
     (a?.action_type || '').toLowerCase() === key
@@ -146,7 +144,7 @@ function sumAction(actions, keys) {
 }
 
 function purchaseValue(actionValues) {
-  // busca action_values purchase (puede venir como total_value en algunas variantes)
+  
   const arr = Array.isArray(actionValues) ? actionValues : [];
   const match = arr.find(a =>
     (a?.action_type || '').toLowerCase().includes('purchase')
@@ -154,9 +152,9 @@ function purchaseValue(actionValues) {
   return num(match?.value);
 }
 
-// ========= Snapshot principal =========
+
 async function fetchMetaSnapshot(userId) {
-  // 1) Cargar credenciales del usuario
+ 
   const doc = await MetaAccount.findOne({
     $or: [{ userId: userId }, { user: userId }]
   })
@@ -183,13 +181,13 @@ async function fetchMetaSnapshot(userId) {
     };
   }
 
-  // 2) Determinar cuentas a consultar
+ 
   let accounts = Array.isArray(doc?.ad_accounts) && doc.ad_accounts.length
     ? doc.ad_accounts
     : (Array.isArray(doc?.adAccounts) ? doc.adAccounts : []);
 
   if (!accounts.length) {
-    // Fallback: pedimos a Graph
+   
     try {
       accounts = await fetchAdAccountsFromGraph(token);
     } catch (e) {
@@ -213,7 +211,7 @@ async function fetchMetaSnapshot(userId) {
     accounts?.[0]?.id?.replace(/^act_/, '') ||
     null;
 
-  // Selección: priorizamos default + 1-2 extras para no pasarnos
+  
   const ids = uniq([
     defaultAccountId,
     ...accounts.map(a => a.account_id || actId(a.id))
@@ -222,7 +220,7 @@ async function fetchMetaSnapshot(userId) {
   const since = sinceDays(30);
   const until = todayISO();
 
-  // 3) Agregación
+  
   let G_impr = 0, G_clicks = 0, G_spend = 0, G_conv = 0, G_value = 0;
   const byCampaign = [];
   let currency = null;
@@ -232,13 +230,12 @@ async function fetchMetaSnapshot(userId) {
     try {
       rows = await fetchCampaignInsights({ accessToken: token, accountId, since, until });
     } catch (e) {
-      // Si una cuenta falla, continúa con las otras
+      
       continue;
     }
 
     for (const r of rows) {
-      // Algunas cuentas devuelven currency por adaccount, pero insights no siempre lo incluye.
-      // Nos quedamos con la primera currency válida de la lista original:
+      
       if (!currency) {
         const acc = accounts.find(a => (a.account_id || actId(a.id)) === accountId);
         currency = acc?.currency || currency || 'USD';
@@ -247,7 +244,7 @@ async function fetchMetaSnapshot(userId) {
       const impressions = num(r.impressions);
       const clicks      = num(r.clicks);
       const spend       = num(r.spend);
-      // conversiones: sumamos varias variantes de 'purchase'
+      
       const conversions = sumAction(r.actions, [
         'purchase', 'offsite_conversion.fb_pixel_purchase', 'onsite_conversion.purchase'
       ]);
@@ -279,7 +276,7 @@ async function fetchMetaSnapshot(userId) {
     }
   }
 
-  // 4) Resultado
+  
   return {
     notAuthorized: false,
     currency: currency || 'USD',
@@ -295,8 +292,8 @@ async function fetchMetaSnapshot(userId) {
       roas: safeDiv(G_value, G_spend),
     },
     byCampaign,
-    series: [], // (si después quieres por día/serie, se puede añadir con breakdown=...),
-    targets: { cpaHigh: 15 }, // ejemplo
+    series: [], 
+    targets: { cpaHigh: 15 }, 
   };
 }
 

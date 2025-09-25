@@ -5,7 +5,7 @@ const OpenAI = require('openai');
 const hasOpenAI = !!process.env.OPENAI_API_KEY;
 const client = hasOpenAI ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 
-// Utilidades
+
 const safeNum = (v, d = 0) => (Number.isFinite(+v) ? +v : d);
 const safeDiv = (n, d) => {
   const N = safeNum(n);
@@ -152,7 +152,7 @@ Reglas duras:
 }
 
 function fallbackNoData(type, payload) {
-  // Si no hay campañas o no hay gasto/convs, devolvemos un issue de setup
+  
   const hasAnySpend = (payload?.totals?.cost || 0) > 0 || (payload?.byCampaign || []).some(c => c?.kpis?.cost > 0);
   if (hasAnySpend) return null;
 
@@ -177,7 +177,7 @@ function fallbackNoData(type, payload) {
 module.exports = async function generateAudit({ type, inputSnapshot }) {
   try {
     const payload = buildPayload(type, inputSnapshot || {});
-    // Fallback temprano si no hay datos
+    
     const fb = fallbackNoData(type, payload);
     if (fb) {
       return {
@@ -189,7 +189,7 @@ module.exports = async function generateAudit({ type, inputSnapshot }) {
     }
 
     if (!hasOpenAI) {
-      // Sin API Key → devolvemos algo mínimo (sin alucinar)
+      
       const msg = 'OPENAI_API_KEY no configurada; no se ejecutó IA plena.';
       return {
         summary: msg,
@@ -211,7 +211,7 @@ module.exports = async function generateAudit({ type, inputSnapshot }) {
       };
     }
 
-    // IA plena
+    
     const { summary, issues } = await analyzeWithLLM({ type, payload });
     const hardened = hardenIssues(issues, type);
 

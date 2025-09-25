@@ -8,14 +8,12 @@ const mongoose = require('mongoose');
 
 const router = express.Router();
 
-/* =========
-   CONFIG
-   ========= */
+
 const FB_VERSION = process.env.FACEBOOK_API_VERSION || 'v23.0';
 const FB_GRAPH   = `https://graph.facebook.com/${FB_VERSION}`;
 const APP_SECRET = process.env.FACEBOOK_APP_SECRET;
 
-// Campos diarios que pedimos a Insights
+
 const INSIGHT_FIELDS = [
   'date_start',
   'date_stop',
@@ -32,9 +30,7 @@ const INSIGHT_FIELDS = [
 const ALLOWED_OBJECTIVES = new Set(['ventas', 'alcance', 'leads']);
 const ALLOWED_LEVELS     = new Set(['account', 'campaign', 'adset', 'ad']);
 
-/* =========
-   MODELO MetaAccount (tolerante a tus campos reales)
-   ========= */
+
 let MetaAccount;
 try {
   MetaAccount = require('../models/MetaAccount');
@@ -57,7 +53,7 @@ try {
 
       pages:            Array,
       scopes:           [String],
-      objective:        String, // 'ventas' | 'alcance' | 'leads'
+      objective:        String, 
       email:            String,
       name:             String,
       expiresAt:        Date,
@@ -67,9 +63,7 @@ try {
   MetaAccount = mongoose.models.MetaAccount || mongoose.model('MetaAccount', schema);
 }
 
-/* =========
-   UTILS
-   ========= */
+
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
@@ -214,7 +208,7 @@ function computeCompareRangesTZ(q, timeZone) {
   };
 }
 
-// Prioridades para NO duplicar compras/ingresos
+
 const PURCHASE_COUNT_PRIORITIES = [
   'omni_purchase',
   'offsite_conversion.fb_pixel_purchase',
@@ -245,7 +239,7 @@ function pickFirstByPriority(items, priorities) {
   return 0;
 }
 
-/* === KPI builders === */
+
 function kpisVentas({ spend, clicks, impressions, revenue, purchases }) {
   const roas = spend > 0 ? revenue / spend : 0;
   const cpa  = purchases > 0 ? spend / purchases : 0;
@@ -274,9 +268,7 @@ function zeroKpis(objective) {
   return kpisVentas({ spend:0, clicks:0, impressions:0, revenue:0, purchases:0 });
 }
 
-/* =========
-   FETCH con paginación
-   ========= */
+
 async function fetchInsights({ accountId, accessToken, fields, level, dateParams }) {
   const baseUrl = `${FB_GRAPH}/act_${accountId}/insights`;
   const baseParams = {
@@ -311,9 +303,7 @@ async function fetchInsights({ accountId, accessToken, fields, level, dateParams
   return rows;
 }
 
-/* =========
-   Helpers de MetaAccount
-   ========= */
+
 async function loadMetaAccount(userId){
   return await MetaAccount
     .findOne({ $or: [{ user: userId }, { userId }] })
@@ -350,9 +340,7 @@ function resolveAccountId(req, metaAcc){
   return normActId(q || fromDefault || fromList || '');
 }
 
-/* =========
-   RESPUESTA VACÍA (tolerante)
-   ========= */
+
 function emptyResponse({ objective, timeZone, cmp, level, message }) {
   return {
     ok: true,
@@ -371,14 +359,12 @@ function emptyResponse({ objective, timeZone, cmp, level, message }) {
   };
 }
 
-/* =========
-   ENDPOINT PRINCIPAL
-   ========= */
+
 router.get('/', requireAuth, async (req, res) => {
   try {
     const fallbackTZ = 'America/Mexico_City';
 
-    // Cargamos MetaAccount y objetivo (con defaults)
+    
     const metaAcc = await loadMetaAccount(req.user._id);
     const rqObj   = String(req.query.objective || '').toLowerCase();
     const svObj   = String(metaAcc?.objective || '').toLowerCase();
@@ -386,7 +372,7 @@ router.get('/', requireAuth, async (req, res) => {
       ? rqObj
       : (ALLOWED_OBJECTIVES.has(svObj) ? svObj : 'ventas');
 
-    // Si no hay conexión, devolvemos 200 con vacío (no 400)
+    
     const accessToken = resolveAccessToken(metaAcc || {}, req.user);
     const levelQ = String(req.query.level || '').toLowerCase();
     const level = ALLOWED_LEVELS.has(levelQ) ? levelQ : 'account';
@@ -402,10 +388,10 @@ router.get('/', requireAuth, async (req, res) => {
       }));
     }
 
-    // Ad account (query -> defaultAccountId -> primer elemento)
+    
     const accountId = resolveAccountId(req, metaAcc);
     if (!accountId) {
-      const tz = fallbackTZ; // no tenemos cuenta para leer TZ
+      const tz = fallbackTZ; 
       const cmp = computeCompareRangesTZ(req.query, tz);
       return res.json(emptyResponse({
         objective,
@@ -416,14 +402,14 @@ router.get('/', requireAuth, async (req, res) => {
       }));
     }
 
-    // Zona horaria de la cuenta
+    
     const timeZone = getAccountTimezone(metaAcc, accountId);
     const cmp = computeCompareRangesTZ(req.query, timeZone);
 
-    // Level (account por defecto)
+    
     const levelFinal = level;
 
-    // 1) Actual
+    
     const rows = await fetchInsights({
       accountId,
       accessToken,
@@ -435,7 +421,7 @@ router.get('/', requireAuth, async (req, res) => {
       },
     });
 
-    // 2) Periodo anterior
+   
     const rowsPrev = await fetchInsights({
       accountId,
       accessToken,
@@ -447,7 +433,7 @@ router.get('/', requireAuth, async (req, res) => {
       },
     });
 
-    // Agregados actual
+    
     let spend = 0, impressions = 0, reach = 0, clicks = 0, purchases = 0, revenue = 0, leadsCount = 0;
     const series = rows.map((r) => {
       const daySpend      = Number(r.spend || 0);
@@ -478,7 +464,7 @@ router.get('/', requireAuth, async (req, res) => {
       };
     });
 
-    // Agregados previos
+    
     let p_spend = 0, p_impressions = 0, p_reach = 0, p_clicks = 0, p_purchases = 0, p_revenue = 0, p_leads = 0;
     rowsPrev.forEach((r) => {
       p_spend       += Number(r.spend || 0);
@@ -490,7 +476,7 @@ router.get('/', requireAuth, async (req, res) => {
       p_leads       += pickFirstByPriority(r.actions,       LEAD_PRIORITIES);
     });
 
-    // KPIs actual vs previos
+    
     let kpis, prevKpis;
     if (objective === 'alcance') {
       kpis     = kpisAlcance({ spend, impressions, reach, clicks });
@@ -503,7 +489,7 @@ router.get('/', requireAuth, async (req, res) => {
       prevKpis = kpisVentas({ spend: p_spend, clicks: p_clicks, impressions: p_impressions, revenue: p_revenue, purchases: p_purchases });
     }
 
-    // Deltas
+    
     const deltas = {};
     for (const [k, v] of Object.entries(kpis)) {
       const curr = Number(v);
@@ -530,7 +516,7 @@ router.get('/', requireAuth, async (req, res) => {
   } catch (err) {
     const detail = err?.response?.data || err?.message || String(err);
     console.error('meta/insights error:', detail);
-    // No le tiramos 4xx/5xx al front: devolvemos 200 con payload vacío
+    
     const fallbackTZ = 'America/Mexico_City';
     const cmp = computeCompareRangesTZ(req.query || {}, fallbackTZ);
     const rqObj = String(req.query?.objective || '').toLowerCase();
@@ -545,9 +531,7 @@ router.get('/', requireAuth, async (req, res) => {
   }
 });
 
-/* =========
-   ACCOUNTS (normalizado: id + name)
-   ========= */
+
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
     const doc = await loadMetaAccount(req.user._id);

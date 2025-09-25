@@ -3,7 +3,7 @@
 const mongoose = require('mongoose');
 const { Schema, model, Types } = mongoose;
 
-/* ----------------- helpers ----------------- */
+
 const stripDashes = (s = '') => s.toString().replace(/-/g, '').trim();
 const normScopes = (v) => {
   if (!v) return [];
@@ -12,7 +12,7 @@ const normScopes = (v) => {
       new Set(v.map(x => String(x || '').trim().toLowerCase()).filter(Boolean))
     );
   }
-  // Google OAuth suele devolver un string con scopes separados por espacio
+  
   return Array.from(
     new Set(
       String(v)
@@ -23,52 +23,52 @@ const normScopes = (v) => {
   );
 };
 
-/* ----------------- subdoc: customer ----------------- */
+
 const CustomerSchema = new Schema(
   {
     id: {
       type: String,
-      set: (v) => stripDashes(v),             // 1234567890 (sin guiones)
+      set: (v) => stripDashes(v),            
     },
-    resourceName: String,                      // customers/1234567890
-    descriptiveName: String,                   // Nombre visible
-    currencyCode: String,                      // e.g. MXN
-    timeZone: String,                          // e.g. America/Mexico_City
+    resourceName: String,                      
+    descriptiveName: String,                   
+    currencyCode: String,                     
+    timeZone: String,                          
   },
   { _id: false }
 );
 
-/* ----------------- main schema ----------------- */
+
 const GoogleAccountSchema = new Schema(
   {
-    // referencia al usuario (acepta user o userId)
+    
     user:   { type: Types.ObjectId, ref: 'User', index: true, sparse: true },
     userId: { type: Types.ObjectId, ref: 'User', index: true, sparse: true },
 
-    // OAuth tokens
+    
     accessToken:  { type: String, select: false },
     refreshToken: { type: String, select: false },
     scope:        {
       type: [String],
       default: [],
-      set: normScopes,                        // normaliza/define scopes
+      set: normScopes,                        
     },
     expiresAt:    { type: Date },
 
-    // MCC opcional para cabecera login-customer-id
+    
     managerCustomerId: {
       type: String,
       set: (v) => stripDashes(v),
     },
 
-    // cuentas accesibles y selección por defecto
+    
     customers:         { type: [CustomerSchema], default: [] },
     defaultCustomerId: {
-      type: String,                           // “1234567890” (sin guiones)
+      type: String,                           
       set: (v) => stripDashes(v),
     },
 
-    // objetivo del onboarding
+    
     objective: {
       type: String,
       enum: ['ventas', 'alcance', 'leads'],
@@ -97,17 +97,16 @@ const GoogleAccountSchema = new Schema(
   }
 );
 
-/* ----------------- índices ----------------- */
+
 GoogleAccountSchema.index({ user: 1   }, { unique: true, sparse: true });
 GoogleAccountSchema.index({ userId: 1 }, { unique: true, sparse: true });
 
-/* ----------------- virtuales & métodos ----------------- */
-// ¿Hay refresh token disponible?
+
 GoogleAccountSchema.virtual('hasRefresh').get(function () {
   return !!this.refreshToken;
 });
 
-// Helper para setear tokens y expiración + scopes de una vez
+
 GoogleAccountSchema.methods.setTokens = function ({
   access_token,
   refresh_token,
@@ -121,10 +120,10 @@ GoogleAccountSchema.methods.setTokens = function ({
   return this;
 };
 
-/* ----------------- hooks ----------------- */
+
 GoogleAccountSchema.pre('save', function(next) {
   this.updatedAt = new Date();
-  // normaliza ids de customers si vinieron con guiones
+  
   if (Array.isArray(this.customers)) {
     this.customers = this.customers.map(c => ({
       ...c,
@@ -138,6 +137,6 @@ GoogleAccountSchema.pre('save', function(next) {
   next();
 });
 
-/* ----------------- export ----------------- */
+
 module.exports =
   mongoose.models.GoogleAccount || model('GoogleAccount', GoogleAccountSchema);

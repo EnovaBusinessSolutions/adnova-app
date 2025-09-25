@@ -132,31 +132,29 @@ body {
   padding: 2.5rem;
   overflow-y: auto;
   background: none;
-  /* ↑ para evitar que quede debajo de decoraciones/overlays */
   position: relative;
   z-index: 2;
 }
 
-/* ---------- PANELES ---------- */
-/* Estado oculto genérico y específico de panel */
+
 .hidden { display: none !important; }
 
 .content-panel.hidden { display: none !important; }
 
-/* Estado visible y robusto del panel activo */
+
 .content-panel {
   height: 100%;
   display: flex;
   flex-direction: column;
 }
 
-/* Fuerza visibilidad correcta cuando NO está oculto */
+
 .content-panel:not(.hidden) {
   display: flex !important;
   visibility: visible !important;
   opacity: 1 !important;
   position: relative;
-  z-index: 3; /* por encima de fondos/pseudo-elementos */
+  z-index: 3; 
 }
 
 .content-panel h2 {
@@ -172,7 +170,7 @@ body {
   margin-bottom: 2rem;
 }
 
-/* ---------- CONEXIONES ---------- */
+
 
 .connection-cards {
   display: flex;
@@ -315,7 +313,7 @@ body {
   color: #A96BFF;
 }
 
-/* ---------- PERMISOS ---------- */
+
 
 .permissions-list {
   display: flex;
@@ -356,7 +354,7 @@ body {
   color: #C5B8E6;
 }
 
-/* ---------- ANÁLISIS ---------- */
+
 
 .analysis-progress {
   margin-top: 2rem;
@@ -461,7 +459,7 @@ body {
   margin: 0 auto;
 }
 
-/* ---------- EXTRAS ---------- */
+
 
 .features-summary {
   display: flex;
@@ -559,7 +557,7 @@ body {
   }
 }
 
-/* Página onboarding4 */
+
 body[data-page="onboarding4"] .content-panel {
   max-width: 700px;
   min-width: 360px;

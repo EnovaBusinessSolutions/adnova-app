@@ -12,10 +12,10 @@ const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 
-// Auth strategies
+
 require('./auth');
 
-// Models & routes
+
 const User = require('./models/User');
 const googleConnect = require('./routes/googleConnect');
 const googleAnalytics = require('./routes/googleAnalytics');

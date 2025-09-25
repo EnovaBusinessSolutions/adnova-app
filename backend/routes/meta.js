@@ -11,9 +11,7 @@ const User = require('../models/User');
 let MetaAccount = null;
 try { MetaAccount = require('../models/MetaAccount'); } catch (_) {}
 
-/* =========================
-   Config & constantes
-   ========================= */
+
 const FB_VERSION   = process.env.FACEBOOK_API_VERSION || 'v23.0';
 const FB_DIALOG    = `https://www.facebook.com/${FB_VERSION}/dialog/oauth`;
 const FB_GRAPH     = `https://graph.facebook.com/${FB_VERSION}`;
@@ -22,7 +20,7 @@ const APP_ID       = process.env.FACEBOOK_APP_ID;
 const APP_SECRET   = process.env.FACEBOOK_APP_SECRET;
 const REDIRECT_URI = process.env.FACEBOOK_REDIRECT_URI;
 
-// Scopes solicitados a Meta
+
 const SCOPES = [
   'ads_read',
   'ads_management',
@@ -36,12 +34,10 @@ const SCOPES = [
   'email'
 ].join(',');
 
-/* Objetivo por defecto para auto-conexión (evita la pregunta de onboarding) */
+
 const DEFAULT_META_OBJECTIVE = 'ventas';
 
-/* =========================
-   Utils
-   ========================= */
+
 function makeAppSecretProof(accessToken) {
   return crypto.createHmac('sha256', APP_SECRET).update(accessToken).digest('hex');
 }
@@ -77,9 +73,7 @@ const toActId   = (s = '') => {
   return id ? `act_${id}` : '';
 };
 
-/* =========================
-   OAuth
-   ========================= */
+
 router.get('/login', (req, res) => {
   if (!req.isAuthenticated?.() || !req.user?._id) return res.redirect('/login');
   const state = crypto.randomBytes(20).toString('hex');
@@ -100,7 +94,7 @@ router.get('/callback', async (req, res) => {
   delete req.session.fb_state;
 
   try {
-    // 1) Token corto → token largo
+    
     const t1 = await exchangeCodeForToken(code);
     let accessToken = t1.access_token;
     let expiresAt   = t1.expires_in ? new Date(Date.now() + t1.expires_in * 1000) : null;
@@ -115,13 +109,13 @@ router.get('/callback', async (req, res) => {
       console.warn('Meta long-lived exchange falló:', e?.response?.data || e.message);
     }
 
-    // 2) Validar token
+    
     const dbg = await debugToken(accessToken);
     if (dbg?.app_id !== APP_ID || dbg?.is_valid !== true) {
       return res.redirect('/onboarding?meta=error');
     }
 
-    // 3) Info básica del usuario
+    
     let fbUserId = null, email = null, name = null;
     try {
       const me = await axios.get(`${FB_GRAPH}/me`, {
@@ -133,7 +127,7 @@ router.get('/callback', async (req, res) => {
       name     = me.data?.name  || null;
     } catch {}
 
-    // 4) Ad Accounts
+    
     let adAccounts = [];
     try {
       const proof = makeAppSecretProof(accessToken);
@@ -156,7 +150,7 @@ router.get('/callback', async (req, res) => {
       console.warn('No se pudieron leer adaccounts:', e?.response?.data || e.message);
     }
 
-    // 5) Permisos concedidos (scopes)
+    
     let grantedScopes = [];
     try {
       const proof = makeAppSecretProof(accessToken);
@@ -174,12 +168,12 @@ router.get('/callback', async (req, res) => {
 
     const userId = req.user._id;
 
-    // 6) Marcar conexión en usuario
+    
     await User.findByIdAndUpdate(userId, {
       $set: { metaConnected: true, metaFbUserId: fbUserId || undefined, metaScopes: grantedScopes }
     });
 
-    // 7) Persistir en MetaAccount (si existe el modelo)
+    
     let defaultAccountId = adAccounts?.[0]?.account_id || null;
     if (MetaAccount) {
       const up = await MetaAccount.findOneAndUpdate(
@@ -191,37 +185,37 @@ router.get('/callback', async (req, res) => {
             email: email || undefined,
             name:  name  || undefined,
 
-            // tokens
+            
             longLivedToken: accessToken,
             longlivedToken: accessToken,
             access_token:   accessToken,
             expiresAt:      expiresAt || null,
 
-            // data
+           
             ad_accounts:    adAccounts,
             adAccounts:     adAccounts,
             defaultAccountId,
             updatedAt:      new Date()
           },
-          // fusiona scopes sin duplicados
+          
           $addToSet: { scopes: { $each: grantedScopes } }
         },
         { upsert: true, new: true }
       );
 
-      // 7.1) Si no hay objetivo aún, fija uno por defecto
+      
       if (!up.objective) {
         await MetaAccount.updateOne(
           { _id: up._id },
           { $set: { objective: DEFAULT_META_OBJECTIVE, updatedAt: new Date() } }
         );
-        // Guardar también en User si tu esquema lo permite (no falla si no existe el campo)
+        
         try {
           await User.findByIdAndUpdate(userId, { $set: { metaObjective: DEFAULT_META_OBJECTIVE } });
         } catch {}
       }
     } else {
-      // Fallback: guardar mínimo en User (incluyendo objetivo por defecto)
+      
       await User.findByIdAndUpdate(userId, {
         $set: {
           metaAccessToken: accessToken,
@@ -233,7 +227,7 @@ router.get('/callback', async (req, res) => {
       });
     }
 
-    // 8) Redirigir
+    
     const destino = req.user.onboardingComplete ? '/dashboard' : '/onboarding?meta=ok';
     req.login(req.user, (err) => {
       if (err) return res.redirect('/onboarding?meta=error');
@@ -245,9 +239,7 @@ router.get('/callback', async (req, res) => {
   }
 });
 
-/* =========================
-   API de estado y selección
-   ========================= */
+
 router.get('/status', requireAuth, async (req, res) => {
   try {
     if (!MetaAccount) {
@@ -294,7 +286,7 @@ router.get('/status', requireAuth, async (req, res) => {
   }
 });
 
-// POST /auth/meta/default-account
+
 router.post('/default-account', requireAuth, express.json(), async (req, res) => {
   try {
     const bodyId = req.body?.accountId || '';

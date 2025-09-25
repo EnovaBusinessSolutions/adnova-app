@@ -10,10 +10,10 @@ const {
   GOOGLE_CLIENT_SECRET,
   GOOGLE_CONNECT_CALLBACK_URL,
   GOOGLE_DEVELOPER_TOKEN,
-  GOOGLE_ADS_LOGIN_CUSTOMER_ID, // opcional (tu MCC)
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID, 
 } = process.env;
 
-/* --------- Modelo resiliente --------- */
+
 let GoogleAccount;
 try {
   GoogleAccount = require('../../models/GoogleAccount');
@@ -36,7 +36,7 @@ try {
   GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
 }
 
-/* --------- Helpers --------- */
+
 const normId = (s='') => String(s).replace(/-/g,'').trim();
 const microsTo = v => Number(v||0)/1_000_000;
 const safeDiv  = (n,d) => (Number(d||0) ? Number(n||0)/Number(d||0) : 0);
@@ -120,9 +120,9 @@ async function gaqlSearchStream({ accessToken, customerId, loginCustomerId, quer
   return out;
 }
 
-/* --------- Colector principal --------- */
+
 async function collectGoogle(userId) {
-  // 1) cargar cuenta y scopes
+  
   const ga = await GoogleAccount.findOne({
     $or: [{ user: userId }, { userId }],
   })
@@ -138,13 +138,13 @@ async function collectGoogle(userId) {
     return { notAuthorized: true, reason: 'MISSING_ADWORDS_SCOPE', currency: null, timeRange:{from:null,to:null}, kpis:{}, byCampaign:[], series:[], accountIds:[] };
   }
 
-  // 2) token válido
+  
   let accessToken = await ensureAccessToken(ga);
   if (!accessToken) {
     return { notAuthorized: true, reason: 'NO_ACCESS_TOKEN', currency: null, timeRange:{from:null,to:null}, kpis:{}, byCampaign:[], series:[], accountIds:[] };
   }
 
-  // 3) elegir customers
+  
   let ids = [];
   if (ga.defaultCustomerId) ids.push(normId(ga.defaultCustomerId));
   for (const c of (ga.customers || [])) {
@@ -156,7 +156,7 @@ async function collectGoogle(userId) {
       const discover = await listAccessibleCustomers(accessToken);
       ids = discover.slice(0, 3).map(normId);
       if (ids.length && (!ga.customers || ga.customers.length === 0)) {
-        // guarda algunos customers de referencia
+        
         const fetched = await Promise.all(ids.map(cid => getCustomer(accessToken, cid).catch(()=>null)));
         await GoogleAccount.updateOne({ _id: ga._id }, { $set: { customers: fetched.filter(Boolean), updatedAt: new Date() } });
       }
@@ -170,14 +170,14 @@ async function collectGoogle(userId) {
   const until = todayISO();
   const since = daysAgoISO(30);
 
-  // 4) acumular métricas multi-cuenta
+  
   let G = { impr:0, clk:0, cost:0, conv:0, val:0 };
-  const seriesMap = new Map(); // date -> {..}
+  const seriesMap = new Map(); 
   const byCampaign = [];
   let currency = 'USD';
 
   for (const customerId of ids) {
-    // currency (no es crítico si falla)
+    
     try {
       const cInfo = await getCustomer(accessToken, customerId);
       currency = cInfo.currencyCode || currency;
@@ -202,12 +202,12 @@ async function collectGoogle(userId) {
     try {
       rows = await gaqlSearchStream({ accessToken, customerId, loginCustomerId: loginCustomerId || undefined, query });
     } catch (e) {
-      // reintenta refrescando token si fue 401/403
+      
       if (e?.response?.status === 401 || e?.response?.status === 403) {
         accessToken = await ensureAccessToken({ ...ga, accessToken: null });
         rows = await gaqlSearchStream({ accessToken, customerId, loginCustomerId: loginCustomerId || undefined, query });
       } else {
-        // sigue con siguiente customer
+        
         continue;
       }
     }

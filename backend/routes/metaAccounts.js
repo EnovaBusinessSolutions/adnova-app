@@ -6,20 +6,20 @@ const mongoose = require('mongoose');
 
 const router = express.Router();
 
-/* ------------------------------ auth helper ------------------------------ */
+
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-/* ------------------------------ id helpers ------------------------------- */
+
 const normActId = (s = '') => s.toString().replace(/^act_/, '').trim();
 const toActId   = (s = '') => {
   const id = normActId(s);
   return id ? `act_${id}` : '';
 };
 
-/* ----------------------- MetaAccount (tolerante) ------------------------- */
+
 let MetaAccount;
 try {
   MetaAccount = require('../models/MetaAccount');
@@ -71,8 +71,7 @@ try {
   MetaAccount = mongoose.models.MetaAccount || model('MetaAccount', schema);
 }
 
-/* ------------------------- GET /api/meta (list) -------------------------- */
-/** Devuelve la lista de ad accounts normalizada + dato de scopes. */
+
 router.get('/', requireAuth, async (req, res) => {
   try {
     const doc = await MetaAccount
@@ -107,8 +106,7 @@ router.get('/', requireAuth, async (req, res) => {
   }
 });
 
-/* ----------------------- GET /api/meta/scopes (debug) -------------------- */
-/** Devuelve únicamente los scopes guardados (sin exponer tokens). */
+
 router.get('/scopes', requireAuth, async (req, res) => {
   try {
     const doc = await MetaAccount
@@ -130,8 +128,7 @@ router.get('/scopes', requireAuth, async (req, res) => {
   }
 });
 
-/* ----------------------- GET /api/meta/status ---------------------------- */
-/** Conectado, objetivo, scopes y bandera de ads_read (para collectors). */
+
 router.get('/status', requireAuth, async (req, res) => {
   try {
     const doc = await MetaAccount
@@ -156,7 +153,7 @@ router.get('/status', requireAuth, async (req, res) => {
   }
 });
 
-/* --------------- POST /api/meta/objective (guardar objetivo) ------------- */
+
 router.post('/objective', requireAuth, express.json(), async (req, res) => {
   try {
     const allowed = new Set(['ventas', 'alcance', 'leads']);
@@ -181,7 +178,7 @@ router.post('/objective', requireAuth, express.json(), async (req, res) => {
   }
 });
 
-/* ---------- POST /api/meta/default-account (guardar cuenta por defecto) --- */
+
 router.post('/default-account', requireAuth, express.json(), async (req, res) => {
   try {
     const accountId = normActId(req.body?.accountId || req.body?.account_id || '');

@@ -7,17 +7,15 @@ const router = express.Router();
 const Audit = require('../models/Audit');
 const User  = require('../models/User');
 
-// Collectors (real / mock controlado)
+
 const { collectGoogle } = require('../jobs/collect/googleCollector');
 const { collectMeta   } = require('../jobs/collect/metaCollector');
 
-// IA opcional (pulido sobre snapshot real)
+
 let generateAudit = null;
 try { generateAudit = require('../jobs/llm/generateAudit'); } catch { generateAudit = null; }
 
-/* =========================================================
-   Helpers
-   ========================================================= */
+
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
@@ -48,7 +46,7 @@ function normalizeIssue(raw, i = 0, type = 'google') {
     id,
     area,
     title,
-    severity: sev,                                     // 'alta'|'media'|'baja'
+    severity: sev,                                     
     evidence: safeStr(raw?.evidence, ''),
     metrics: raw?.metrics && typeof raw.metrics === 'object' ? raw.metrics : {},
     recommendation: safeStr(raw?.recommendation, ''),
@@ -59,7 +57,7 @@ function normalizeIssue(raw, i = 0, type = 'google') {
       : [],
   };
 
-  // Si viene referencia de campaña, guárdala dentro de metrics.campaignRef (no rompe el esquema)
+  
   if (raw?.campaignRef && typeof raw.campaignRef === 'object') {
     base.metrics = { ...base.metrics, campaignRef: {
       id:   safeStr(raw.campaignRef.id, ''),
@@ -75,9 +73,7 @@ function normalizeIssues(list, type = 'google', limit = 10) {
   return cap(list, limit).map((it, i) => normalizeIssue(it, i, type));
 }
 
-/**
- * Issue de “setup” cuando no hay permisos o no hay datos reales
- */
+
 function buildSetupIssue({ title, evidence, type }) {
   return normalizeIssue({
     id: `setup-${type}-${Date.now()}`,
@@ -104,15 +100,12 @@ function sortIssuesBySeverityThenImpact(issues) {
   });
 }
 
-/* =========================================================
-   POST /api/audits/run
-   Genera auditorías de google/meta/shopify con datos reales.
-   ========================================================= */
+
 router.post('/run', requireAuth, async (req, res) => {
   const userId = req.user._id;
 
   try {
-    // flags reales si el front no los manda
+    
     const user = await User.findById(userId).lean();
     const flags = {
       google:  !!(req.body?.googleConnected  ?? user?.googleConnected),
@@ -128,17 +121,17 @@ router.post('/run', requireAuth, async (req, res) => {
         continue;
       }
 
-      // 1) Snapshot por fuente
+      
       let inputSnapshot = {};
       try {
         if (type === 'google')  inputSnapshot = await collectGoogle(userId);
         if (type === 'meta')    inputSnapshot = await collectMeta(userId);
-        if (type === 'shopify') inputSnapshot = {}; // integra tu colector real cuando lo tengas
+        if (type === 'shopify') inputSnapshot = {}; 
       } catch (e) {
         inputSnapshot = {};
       }
 
-      // 2) Reglas duras si no hay permisos o no hay campañas/datos
+      
       let issues = [];
       let summary = '';
       const hasCampaigns = Array.isArray(inputSnapshot?.byCampaign) && inputSnapshot.byCampaign.length > 0;
@@ -159,36 +152,36 @@ router.post('/run', requireAuth, async (req, res) => {
         }));
         summary = 'No hay campañas activas ni datos para auditar.';
       } else {
-        // 3) IA opcional con snapshot real (NO inventar)
+        
         if (generateAudit) {
           try {
             const ai = await generateAudit({ type, inputSnapshot });
             summary = safeStr(ai?.summary, '');
             issues  = normalizeIssues(ai?.issues, type, 10);
           } catch (e) {
-            // si cae la IA, no bloqueamos — dejamos issues vacío (o sólo setup si aplica)
+            
             summary = summary || '';
             issues  = normalizeIssues(issues, type, 10);
           }
         }
       }
 
-      // Garantías finales
+      
       issues = normalizeIssues(issues, type, 10);
       const top3 = sortIssuesBySeverityThenImpact(issues).slice(0, 3);
 
-      // 4) Guardar
+      
       const doc = await Audit.create({
         userId,
         type,
         generatedAt: new Date(),
-        // Compatibilidad con front viejo y nuevo
-        resumen: summary,            // legacy
-        summary,                     // nuevo
-        issues,                      // array normalizado (máx 10)
-        actionCenter: top3,          // top-3 para Centro de Acciones
+        
+        resumen: summary,          
+        summary,                   
+        issues,                    
+        actionCenter: top3,         
         topProducts: Array.isArray(inputSnapshot?.topProducts) ? inputSnapshot.topProducts : [],
-        inputSnapshot,               // trazabilidad
+        inputSnapshot,              
         version: 'audits@1.1.0',
       });
 
@@ -202,10 +195,7 @@ router.post('/run', requireAuth, async (req, res) => {
   }
 });
 
-/* =========================================================
-   GET /api/audits/latest
-   Devuelve el último documento por tipo del usuario.
-   ========================================================= */
+
 router.get('/latest', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
@@ -225,10 +215,7 @@ router.get('/latest', requireAuth, async (req, res) => {
   }
 });
 
-/* =========================================================
-   GET /api/audits/action-center
-   Top acciones (fusiona últimas auditorías).
-   ========================================================= */
+
 router.get('/action-center', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;

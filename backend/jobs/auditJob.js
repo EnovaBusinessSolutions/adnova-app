@@ -16,7 +16,7 @@ async function runAuditFor({ userId, type }) {
     if (!inputSnapshot) throw new Error('SNAPSHOT_EMPTY');
 
     const auditJson = await generateAudit({ type, inputSnapshot });
-    // Fallback si IA falló
+    
     const auditDoc = {
       userId,
       type,
@@ -32,7 +32,7 @@ async function runAuditFor({ userId, type }) {
     await Audit.create(auditDoc);
     return true;
   } catch (e) {
-    // Guarda issue de setup si aplica
+    
     await Audit.create({
       userId, type, generatedAt: new Date(),
       summary: 'No se pudo generar la auditoría',

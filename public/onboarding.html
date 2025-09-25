@@ -50,7 +50,7 @@
       </div>
     </div>
 
-    <!-- Main content (sólo Step 1) -->
+    
     <div class="main-content">
       <div class="content-panel" id="step1-content">
         <h2>Conecta tus cuentas</h2>
@@ -59,7 +59,7 @@
         </p>
 
         <div class="connection-cards">
-          <!-- Shopify -->
+          
           <div class="connection-card">
             <div class="connection-details">
               <div class="connection-icon">
@@ -74,7 +74,7 @@
             <button type="button" class="btn-connect" id="connect-shopify-btn">Conectar</button>
           </div>
 
-          <!-- Paso: dominio Shopify -->
+          
           <div id="shopify-domain-step" class="shop-step step--hidden">
             <label for="shop-domain-input">Escribe el dominio de tu tienda:</label>
             <div class="shop-input-row">
@@ -98,7 +98,7 @@
             #shop-domain-send:hover{background:#8249e3}
           </style>
 
-          <!-- Google -->
+          
 <div class="connection-card" id="google-card">
   <div class="connection-details">
     <div class="connection-icon">
@@ -116,21 +116,21 @@
     </div>
   </div>
 
-  <!-- Botón existente (no tocar el id) -->
+  
   <button type="button" class="btn-connect" id="connect-google-btn">Conectar</button>
 
-  <!-- Paso de Objetivo (se muestra al volver del login si falta objetivo) -->
+  
   <div id="google-obj">
     <style>
-      /* Aísla estilos al card de Google: no afecta a Shopify ni Meta */
+      
       #google-card { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
       #google-card .connection-details { flex:1 1 auto; }
       #google-card #connect-google-btn { flex:0 0 auto; margin-left:auto; }
 
-      /* Que el paso baje debajo del botón y ocupe toda la fila */
+      
       #google-card #google-obj { flex-basis:100%; order:99; }
 
-      /* Paso oculto por defecto: el JS lo muestra cuando aplique */
+      
       #google-obj #google-objective-step { display:none; margin-top:12px; }
       #google-obj .objective-title { display:block; margin-bottom:8px; font-weight:600; }
       #google-obj .objective-options { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
@@ -174,7 +174,7 @@
 </div>
 
 
-          <!-- Meta -->
+          
           <div class="connection-card" id="meta-card">
             <div class="connection-details">
               <div class="connection-icon">

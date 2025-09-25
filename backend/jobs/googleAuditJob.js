@@ -11,10 +11,10 @@ const {
   GOOGLE_CONNECT_CALLBACK_URL,
   GOOGLE_DEVELOPER_TOKEN,
   GOOGLE_ADS_LOGIN_CUSTOMER_ID,
-  GOOGLE_ADS_API_VERSION = 'v17', // puedes subirlo si tu proyecto ya está en v18/19
+  GOOGLE_ADS_API_VERSION = 'v17', 
 } = process.env;
 
-/* -------------------- OAuth helper -------------------- */
+
 function oauth() {
   return new OAuth2Client({
     clientId: GOOGLE_CLIENT_ID,
@@ -30,12 +30,12 @@ async function refreshAccessToken(doc) {
     const { credentials } = await client.refreshAccessToken();
     return credentials.access_token || doc.accessToken;
   } catch {
-    // fallback: intenta usar el accessToken que ya teníamos
+    
     return doc.accessToken;
   }
 }
 
-/* -------------------- Fechas (últimos 30 días) -------------------- */
+
 function ymd(d) { return d.toISOString().slice(0, 10); }
 function addDays(d, n) { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + n)); }
 function last30dRange() {
@@ -46,7 +46,7 @@ function last30dRange() {
   return { since: ymd(since), until: ymd(until) };
 }
 
-/* -------------------- Google Ads REST (GAQL) -------------------- */
+
 async function runGAQL({ accessToken, customerId, gaql, managerId }) {
   if (!GOOGLE_DEVELOPER_TOKEN) throw new Error('GOOGLE_DEVELOPER_TOKEN missing');
 
@@ -63,12 +63,10 @@ async function runGAQL({ accessToken, customerId, gaql, managerId }) {
   return data?.results || [];
 }
 
-/* =================================================================
-   Auditoría de Google Ads
-   ================================================================= */
+
 async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}) {
   try {
-    // 1) Cuenta y token (IMPORTANTE: seleccionar campos ocultos por select:false)
+    
     const ga = await GoogleAccount
       .findOne({ $or: [{ user: userId }, { userId }] })
       .select('+refreshToken +accessToken customers defaultCustomerId managerCustomerId objective')
@@ -83,7 +81,7 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
       };
     }
 
-    // customerId (sin guiones), preferimos defaultCustomerId
+    
     const customerId =
       (ga.defaultCustomerId && String(ga.defaultCustomerId).replace(/-/g, '')) ||
       (ga.customers?.[0]?.id && String(ga.customers[0].id).replace(/-/g, '')) ||
@@ -118,7 +116,7 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
     const accessToken = await refreshAccessToken(ga);
     const ranges = last30dRange();
 
-    // 2) Traer campañas (últimos 30 días, nivel diario, orden por fecha)
+    
     const gaql = `
       SELECT
         segments.date,
@@ -146,24 +144,24 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
         managerId: ga.managerCustomerId,
       });
     } catch (e) {
-      // Si falla el request, devolvemos una auditoría válida (no vacía) para que el flujo continúe
+      
       console.warn('GAQL error:', e?.response?.data || e.message);
       rows = [];
     }
 
-    // 3) Heurísticas + shape de salida
+    
     const productos = [{ nombre: 'Campañas (últimos 30 días)', hallazgos: [] }];
     const flat = { ux: [], seo: [], performance: [], media: [], googleads: [] };
     const actionCenter = [];
 
-    // Agregamos por campaña
-    const agg = new Map(); // campaignId -> { name, spend, impr, clicks, conv, convValue }
+    
+    const agg = new Map(); 
     for (const r of rows) {
       const id    = r?.campaign?.id;
       const name  = r?.campaign?.name || `Campaign ${id}`;
       const imp   = Number(r?.metrics?.impressions ?? 0);
       const clk   = Number(r?.metrics?.clicks ?? 0);
-      // La API devuelve cost_micros -> JSON "costMicros"
+      
       const cost  = Number(r?.metrics?.costMicros ?? 0) / 1e6;
       const conv  = Number(r?.metrics?.conversions ?? 0);
       const cval  = Number(r?.metrics?.conversionsValue ?? 0);
@@ -180,7 +178,7 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
       const ctr = a.impr > 0 ? (a.clicks / a.impr) * 100 : 0;
       const roas = a.spend > 0 ? (a.convValue / a.spend) : 0;
 
-      // CTR bajo
+      
       if (a.impr > 1000 && ctr < 1.0) {
         const issue = {
           title: `CTR bajo · ${a.name}`,
@@ -193,7 +191,6 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
         flat.googleads.push(issue);
       }
 
-      // Gasto sin conversiones
       if (a.clicks >= 150 && a.conv === 0 && a.spend > 0) {
         const issue = {
           title: `Gasto sin conversiones · ${a.name}`,
@@ -212,7 +209,7 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
         });
       }
 
-      // ROAS bajo
+      
       if (roas > 0 && roas < 1.0 && a.spend > 100) {
         const issue = {
           title: `ROAS bajo · ${a.name}`,

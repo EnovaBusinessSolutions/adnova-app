@@ -6,7 +6,7 @@ const MetaAccount = require('../models/MetaAccount');
 
 const GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v19.0';
 
-/* ---------------------------- helpers ---------------------------- */
+
 const pickToken = (doc = {}) =>
   doc.access_token || doc.longlivedToken || doc.longLivedToken || doc.accessToken || null;
 
@@ -27,7 +27,7 @@ async function generarAuditoriaMetaIA(
   { accountId, datePreset = 'last_30d' } = {}
 ) {
   try {
-    // 1) Cuenta & token (seleccionamos campos que suelen venir con select:false)
+    
     const meta = await MetaAccount
       .findOne({ $or: [{ user: userId }, { userId }] })
       .select('+access_token +longlivedToken +longLivedToken +accessToken ad_accounts adAccounts defaultAccountId')
@@ -80,7 +80,7 @@ async function generarAuditoriaMetaIA(
       };
     }
 
-    // 2) Insights de campañas
+   
     const fields = [
       'campaign_id', 'campaign_name',
       'spend', 'impressions', 'clicks', 'ctr', 'cpc', 'cpm', 'frequency',
@@ -104,7 +104,7 @@ async function generarAuditoriaMetaIA(
       });
       rows = data?.data || [];
     } catch (e) {
-      // Si el token expiró o no hay permisos, devolvemos auditoría "suave"
+      
       const code = e?.response?.data?.error?.code;
       const sub  = e?.response?.data?.error?.error_subcode;
       const msg  = e?.response?.data?.error?.message || e.message;
@@ -135,7 +135,7 @@ async function generarAuditoriaMetaIA(
       };
     }
 
-    // 3) Heurísticas
+    
     const productos = [{ nombre: 'Campañas (últimos 30 días)', hallazgos: [] }];
     const flat = { ux: [], seo: [], performance: [], media: [], metaads: [] };
     const actionCenter = [];
@@ -147,7 +147,7 @@ async function generarAuditoriaMetaIA(
       productos[0].hallazgos.push(item);
       const key = area.toLowerCase();
       if (flat[key]) flat[key].push(issue);
-      // Pestaña específica metaads
+      
       flat.metaads.push(issue);
       if (issue.severity === 'high') {
         actionCenter.push({
@@ -164,12 +164,12 @@ async function generarAuditoriaMetaIA(
       const spend = Number(r.spend || 0);
       const impr  = Number(r.impressions || 0);
       const clicks= Number(r.clicks || 0);
-      const ctr   = pct(r.ctr);      // Meta ya devuelve porcentaje
+      const ctr   = pct(r.ctr);      
       const cpc   = Number(r.cpc || 0);
       const cpm   = Number(r.cpm || 0);
       const freq  = Number(r.frequency || 0);
 
-      // Conversión (purchase) si está disponible
+      
       let purchases = 0;
       let purchaseValue = 0;
       if (Array.isArray(r.actions)) {
@@ -183,7 +183,7 @@ async function generarAuditoriaMetaIA(
 
       totalSpend += spend; totalImpr += impr; totalClicks += clicks;
 
-      // --- Reglas ---
+      
       if (impr > 0) {
         if (ctr < 0.8) {
           push('Performance', {

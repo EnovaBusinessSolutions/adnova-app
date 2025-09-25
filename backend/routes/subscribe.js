@@ -4,7 +4,7 @@ const { google } = require('googleapis');
 
 const router = express.Router();
 
-/** Lee credenciales de env sin romper el proceso */
+
 let credentials = null;
 try {
   const raw = process.env.GOOGLE_CREDENTIALS;
@@ -13,7 +13,7 @@ try {
   console.warn('⚠️ GOOGLE_CREDENTIALS no es JSON válido. Desactivando /subscribe.', e.message);
 }
 
-/** Si no hay credenciales válidas, la ruta queda "apagada" pero sin tirar el server */
+
 if (!credentials) {
   router.post('/subscribe', (_req, res) => {
     return res

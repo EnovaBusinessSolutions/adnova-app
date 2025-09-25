@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true, index: true, lowercase: true, trim: true },
-  password: { type: String }, // opcional por OAuth
+  password: { type: String }, 
   onboardingComplete: { type: Boolean, default: false },
   shop: { type: String },
   shopifyConnected: { type: Boolean, default: false },

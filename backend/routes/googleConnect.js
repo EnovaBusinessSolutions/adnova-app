@@ -8,9 +8,7 @@ const router = express.Router();
 
 const User = require('../models/User');
 
-/* ============================================================
- * Modelo GoogleAccount “resiliente” (si no existe el require)
- * ============================================================ */
+
 let GoogleAccount;
 try {
   GoogleAccount = require('../models/GoogleAccount');
@@ -22,11 +20,11 @@ try {
       userId:            { type: Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
       accessToken:       { type: String, select: false },
       refreshToken:      { type: String, select: false },
-      scope:             { type: [String], default: [] }, // scopes concedidos
+      scope:             { type: [String], default: [] }, 
       expiresAt:         { type: Date },
       managerCustomerId: { type: String },
-      defaultCustomerId: { type: String }, // “1234567890” (sin guiones)
-      customers:         { type: Array, default: [] }, // [{id, resourceName, descriptiveName, currencyCode, timeZone}]
+      defaultCustomerId: { type: String }, 
+      customers:         { type: Array, default: [] }, 
       objective:         { type: String, enum: ['ventas','alcance','leads'], default: null },
       createdAt:         { type: Date, default: Date.now },
       updatedAt:         { type: Date, default: Date.now },
@@ -37,25 +35,21 @@ try {
   GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
 }
 
-/* ========================
- * ENV
- * ====================== */
+
 const {
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
-  GOOGLE_CONNECT_CALLBACK_URL,   // ej: https://ai.adnova.digital/auth/google/connect/callback
+  GOOGLE_CONNECT_CALLBACK_URL,   
   GOOGLE_DEVELOPER_TOKEN,
-  GOOGLE_ADS_LOGIN_CUSTOMER_ID,  // opcional (MCC)
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID,  
 } = process.env;
 
 const ADS_API = 'https://googleads.googleapis.com/v16';
 
-/* Objetivo por defecto para auto-conexión (evita pregunta en onboarding) */
+
 const DEFAULT_GOOGLE_OBJECTIVE = 'ventas';
 
-/* ========================
- * Helpers / middlewares
- * ====================== */
+
 function requireSession(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
@@ -79,9 +73,9 @@ const normalizeScopes = (raw) => Array.from(
   )
 );
 
-/* ================ Google Ads small helpers ================= */
+
 async function listAccessibleCustomers(accessToken) {
-  // https://developers.google.com/google-ads/api/reference/rpc/v16/CustomerService#listaccessiblecustomers
+  
   const { data } = await axios.get(`${ADS_API}/customers:listAccessibleCustomers`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -90,12 +84,12 @@ async function listAccessibleCustomers(accessToken) {
     },
     timeout: 20000,
   });
-  // resourceNames: ["customers/1234567890", ...]
+  
   return Array.isArray(data?.resourceNames) ? data.resourceNames : [];
 }
 
 async function fetchCustomer(accessToken, cid) {
-  // GET customers/{id}
+  
   const { data } = await axios.get(`${ADS_API}/customers/${cid}`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -104,7 +98,7 @@ async function fetchCustomer(accessToken, cid) {
     },
     timeout: 15000,
   });
-  // Campos más comunes para el front
+  
   return {
     id: normId(cid),
     resourceName: data?.resourceName || `customers/${cid}`,
@@ -120,15 +114,12 @@ async function discoverCustomers(accessToken) {
   const out = [];
   for (const cid of ids.slice(0, 50)) {
     try { out.push(await fetchCustomer(accessToken, cid)); }
-    catch { /* omitimos errores individuales */ }
+    catch { /* errores individuales */ }
   }
   return out;
 }
 
-/* ============================================================
- * 1) Iniciar conexión
- *    GET /auth/google/connect[?returnTo=/onboarding%3Fgoogle%3Dconnected]
- * ============================================================ */
+
 router.get('/connect', requireSession, async (req, res) => {
   try {
     const client   = oauth();
@@ -138,13 +129,13 @@ router.get('/connect', requireSession, async (req, res) => {
 
     const url = client.generateAuthUrl({
       access_type: 'offline',
-      prompt: 'consent',                 // fuerza pantalla de consentimiento
-      include_granted_scopes: true,      // agrega nuevos permisos sin perder los concedidos
+      prompt: 'consent',                
+      include_granted_scopes: true,      
       scope: [
         'https://www.googleapis.com/auth/userinfo.email',
         'https://www.googleapis.com/auth/userinfo.profile',
-        'https://www.googleapis.com/auth/adwords',           // Google Ads
-        'https://www.googleapis.com/auth/analytics.readonly',// GA4/UA read-only
+        'https://www.googleapis.com/auth/adwords',           
+        'https://www.googleapis.com/auth/analytics.readonly',
         'openid'
       ],
       state: JSON.stringify({
@@ -160,10 +151,7 @@ router.get('/connect', requireSession, async (req, res) => {
   }
 });
 
-/* ============================================================
- * 2) Callback OAuth
- *    Acepta /auth/google/callback y /auth/google/connect/callback
- * ============================================================ */
+
 async function googleCallbackHandler(req, res) {
   try {
     if (req.query.error) {
@@ -176,7 +164,7 @@ async function googleCallbackHandler(req, res) {
     }
 
     const client = oauth();
-    const { tokens } = await client.getToken(code); // { access_token, refresh_token?, expiry_date, scope, ... }
+    const { tokens } = await client.getToken(code); 
     if (!tokens?.access_token) {
       return res.redirect('/onboarding?google=error&reason=no_access_token');
     }
@@ -185,10 +173,10 @@ async function googleCallbackHandler(req, res) {
     const refreshToken = tokens.refresh_token || null;
     const expiresAt    = tokens.expiry_date ? new Date(tokens.expiry_date) : null;
 
-    // Normaliza y guarda scopes
+    
     const grantedScopes = normalizeScopes(tokens.scope);
 
-    // Descubrir customers accesibles
+    
     let customers = [];
     try {
       customers = await discoverCustomers(accessToken);
@@ -196,10 +184,10 @@ async function googleCallbackHandler(req, res) {
       console.warn('⚠️ no se pudieron listar customers:', e?.response?.data || e.message);
     }
 
-    // Elegimos defaultCustomerId si se puede
+    
     const defaultCustomerId = customers?.[0]?.id || null;
 
-    // Persistimos GoogleAccount
+    
     const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
     const update = {
       user: req.user._id,
@@ -215,10 +203,10 @@ async function googleCallbackHandler(req, res) {
 
     await GoogleAccount.findOneAndUpdate(q, update, { upsert: true, new: true, setDefaultsOnInsert: true });
 
-    // 1) Marca conectado en el usuario
+    
     await User.findByIdAndUpdate(req.user._id, { $set: { googleConnected: true } });
 
-    // 2) Si NO hay objetivo aún, fija uno por defecto (evita la pregunta en onboarding)
+    
     const [uObj, gaObj] = await Promise.all([
       User.findById(req.user._id).select('googleObjective').lean(),
       GoogleAccount.findOne(q).select('objective').lean()
@@ -231,7 +219,7 @@ async function googleCallbackHandler(req, res) {
       ]);
     }
 
-    // Resuelve returnTo desde state (si viene)
+    
     let returnTo = '/onboarding?google=connected';
     if (req.query.state) {
       try {
@@ -250,10 +238,7 @@ async function googleCallbackHandler(req, res) {
 router.get('/callback',         requireSession, googleCallbackHandler);
 router.get('/connect/callback', requireSession, googleCallbackHandler);
 
-/* ============================================================
- * 3) Status para onboarding
- *    GET /auth/google/status
- * ============================================================ */
+
 router.get('/status', requireSession, async (req, res) => {
   try {
     const u = await User.findById(req.user._id).lean();
@@ -284,10 +269,7 @@ router.get('/status', requireSession, async (req, res) => {
   }
 });
 
-/* ============================================================
- * 4) Guardar objetivo
- *    POST /auth/google/objective  body: { objective: "ventas"|"alcance"|"leads" }
- * ============================================================ */
+
 router.post('/objective', requireSession, express.json(), async (req, res) => {
   try {
     const val = String(req.body?.objective || '').trim().toLowerCase();
@@ -309,10 +291,7 @@ router.post('/objective', requireSession, express.json(), async (req, res) => {
   }
 });
 
-/* ============================================================
- * 5) Listar cuentas (si necesitas re-listar tras conectar)
- *    GET /auth/google/accounts
- * ============================================================ */
+
 router.get('/accounts', requireSession, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
@@ -325,11 +304,11 @@ router.get('/accounts', requireSession, async (req, res) => {
       return res.json({ ok: true, customers: [], defaultCustomerId: null, scopes: [] });
     }
 
-    // Usamos el accessToken actual (sin refresh aquí por simplicidad)
+    
     const accessToken = ga.accessToken;
     let customers = ga.customers || [];
 
-    // Si no tenemos guardados, intentamos descubrir
+    
     if (!customers || customers.length === 0) {
       try { customers = await discoverCustomers(accessToken); } catch {}
       await GoogleAccount.updateOne(
@@ -346,10 +325,7 @@ router.get('/accounts', requireSession, async (req, res) => {
   }
 });
 
-/* ============================================================
- * 6) Fijar cuenta por defecto
- *    POST /auth/google/default-customer  body: { customerId: "123..." }
- * ============================================================ */
+
 router.post('/default-customer', requireSession, express.json(), async (req, res) => {
   try {
     const cid = normId(req.body?.customerId || '');

@@ -7,7 +7,7 @@ const mongoose = require('mongoose');
 
 const router = express.Router();
 
-/* --------------------- Model (fallback) --------------------- */
+
 let GoogleAccount;
 try {
   GoogleAccount = require('../models/GoogleAccount');
@@ -21,7 +21,7 @@ try {
       refreshToken: { type: String, select: false },
       managerCustomerId: String,
       objective: String,
-      customers: Array, // [{ id, descriptiveName, currencyCode, timeZone, status }]
+      customers: Array, 
       defaultCustomerId: String,
     },
     { collection: 'googleaccounts', timestamps: true }
@@ -34,16 +34,16 @@ const {
   GOOGLE_CLIENT_SECRET,
   GOOGLE_CONNECT_CALLBACK_URL,
   GOOGLE_DEVELOPER_TOKEN,
-  GOOGLE_ADS_LOGIN_CUSTOMER_ID, // opcional (manager)
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID, 
 } = process.env;
 
-/* --------------------- Auth guard --------------------- */
+
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-/* --------------------- OAuth client ------------------- */
+
 function oauth() {
   return new OAuth2Client({
     clientId: GOOGLE_CLIENT_ID,
@@ -52,7 +52,7 @@ function oauth() {
   });
 }
 
-/* --------------------- Fechas (UTC) ------------------- */
+s
 const ymd = (d) => d.toISOString().slice(0, 10);
 const addDays = (d, n) =>
   new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + n));
@@ -161,7 +161,7 @@ async function runGAQL({ accessToken, customerId, gaql, managerId }) {
   return data?.results || [];
 }
 
-/* ------------ listAccessibleCustomers (ids) ------------- */
+
 async function listAccessibleCustomers(accessToken) {
   const { data } = await axios.get(
     `https://googleads.googleapis.com/v16/customers:listAccessibleCustomers`,
@@ -170,9 +170,7 @@ async function listAccessibleCustomers(accessToken) {
   return (data?.resourceNames || []).map((rn) => rn.split('/')[1]).filter(Boolean);
 }
 
-/* ===========================================================
-   GET /api/google/ads/insights  -> KPIs por objetivo
-   =========================================================== */
+
 router.get('/', requireAuth, async (req, res) => {
   try {
     const gaDoc = await GoogleAccount.findOne({
@@ -367,9 +365,7 @@ router.get('/', requireAuth, async (req, res) => {
   }
 });
 
-/* ===========================================================
-   GET /api/google/ads/insights/accounts  -> listar cuentas (shape frontend)
-   =========================================================== */
+
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount
@@ -442,9 +438,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
   }
 });
 
-/* ===========================================================
-   GET /api/google/ads/insights/customers  -> (descubrimiento)
-   =========================================================== */
+
 router.get('/customers', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount
@@ -458,12 +452,12 @@ router.get('/customers', requireAuth, async (req, res) => {
 
     const accessToken = await getFreshAccessToken(ga);
 
-    // 1) ids accesibles
+    
     let ids = [];
     try { ids = await listAccessibleCustomers(accessToken); }
     catch { ids = (ga.customers || []).map((c) => String(c.id)); }
 
-    // 2) metadatos por id
+    
     const metas = [];
     for (const id of ids) {
       try {
@@ -506,10 +500,7 @@ router.get('/customers', requireAuth, async (req, res) => {
   }
 });
 
-/* ===========================================================
-   POST /api/google/ads/insights/default  -> fijar defaultCustomerId
-   body: { customerId: "1234567890" }
-   =========================================================== */
+
 router.post('/default', requireAuth, express.json(), async (req, res) => {
   try {
     const customerId = String(req.body?.customerId || '').replace(/-/g, '');
