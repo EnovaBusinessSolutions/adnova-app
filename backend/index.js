@@ -91,7 +91,7 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
-s
+
 function ensureAuthenticated(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.redirect('/login');
