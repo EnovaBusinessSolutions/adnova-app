@@ -39,8 +39,13 @@ const {
   GOOGLE_CLIENT_SECRET,
   GOOGLE_CONNECT_CALLBACK_URL,
   GOOGLE_DEVELOPER_TOKEN,
-  GOOGLE_ADS_LOGIN_CUSTOMER_ID,
 } = process.env;
+
+/* =========================
+ * Constantes Ads
+ * ========================= */
+const ADS_VER  = 'v17';
+const ADS_BASE = `https://googleads.googleapis.com/${ADS_VER}`;
 
 /* =========================
  * Auth middleware
@@ -140,18 +145,15 @@ async function getFreshAccessToken(gaDoc) {
     access_token: gaDoc.accessToken || undefined,
   });
 
-  // Intenta primero getAccessToken (refresca si es necesario)
   try {
     const t = await client.getAccessToken();
     if (t?.token) return t.token;
   } catch {}
 
-  // Fallback explícito (algunas versiones): refreshAccessToken
   try {
     const { credentials } = await client.refreshAccessToken();
     return credentials.access_token || gaDoc.accessToken;
   } catch (_) {
-    // Si no hay refresh token, intenta devolver el accessToken actual si existe
     if (gaDoc.accessToken) return gaDoc.accessToken;
     throw new Error('NO_ACCESS_OR_REFRESH_TOKEN');
   }
@@ -171,32 +173,43 @@ function resolveCustomerId(req, doc) {
   return list.length ? String(list[0].id || '').replace(/-/g, '').trim() : '';
 }
 
-function buildHeaders(accessToken, managerId) {
-  const headers = {
+/* --------- Headers --------- */
+// Para GAQL (sí puede llevar login-customer-id)
+function headersGAQL(accessToken, managerId) {
+  const h = {
     Authorization: `Bearer ${accessToken}`,
     'developer-token': GOOGLE_DEVELOPER_TOKEN,
+    Accept: 'application/json',
     'Content-Type': 'application/json',
   };
-  const loginId = String(managerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '')
-    .replace(/-/g, '')
-    .trim();
-  if (loginId) headers['login-customer-id'] = loginId;
-  return headers;
+  const loginId = String(managerId || '').replace(/-/g, '').trim();
+  if (loginId) h['login-customer-id'] = loginId;
+  return h;
 }
 
+// Para listAccessibleCustomers (nunca enviar login-customer-id ni Content-Type)
+function headersListCustomers(accessToken) {
+  return {
+    Authorization: `Bearer ${accessToken}`,
+    'developer-token': GOOGLE_DEVELOPER_TOKEN,
+    Accept: 'application/json',
+  };
+}
+
+/* --------- Llamadas Ads --------- */
 async function runGAQL({ accessToken, customerId, gaql, managerId }) {
   const { data } = await axios.post(
-    `https://googleads.googleapis.com/v16/customers/${customerId}/googleAds:search`,
+    `${ADS_BASE}/customers/${customerId}/googleAds:search`,
     { query: gaql },
-    { headers: buildHeaders(accessToken, managerId), timeout: 30000 }
+    { headers: headersGAQL(accessToken, managerId), timeout: 30000 }
   );
   return data?.results || [];
 }
 
-async function listAccessibleCustomers(accessToken, managerId) {
+async function listAccessibleCustomers(accessToken) {
   const { data } = await axios.get(
-    `https://googleads.googleapis.com/v16/customers:listAccessibleCustomers`,
-    { headers: buildHeaders(accessToken, managerId), timeout: 20000 }
+    `${ADS_BASE}/customers:listAccessibleCustomers`,
+    { headers: headersListCustomers(accessToken), timeout: 20000 }
   );
   return (data?.resourceNames || []).map((rn) => rn.split('/')[1]).filter(Boolean);
 }
@@ -419,7 +432,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
         const accessToken = await getFreshAccessToken(ga);
         let ids = [];
         try {
-          ids = await listAccessibleCustomers(accessToken, ga.managerCustomerId);
+          ids = await listAccessibleCustomers(accessToken); // importante: sin login-customer-id
         } catch {
           ids = (ga.customers || []).map((c) => String(c.id));
         }
@@ -495,7 +508,7 @@ router.get('/customers', requireAuth, async (req, res) => {
 
     let ids = [];
     try {
-      ids = await listAccessibleCustomers(accessToken, ga.managerCustomerId);
+      ids = await listAccessibleCustomers(accessToken); // importante: sin login-customer-id
     } catch {
       ids = (ga.customers || []).map((c) => String(c.id));
     }
