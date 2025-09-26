@@ -5,34 +5,35 @@ const axios = require('axios');
 const { OAuth2Client } = require('google-auth-library');
 const { google } = require('googleapis');
 const mongoose = require('mongoose');
-
 const router = express.Router();
 
-// Models
 const User = require('../models/User');
 
+/* =========================
+ * Modelo GoogleAccount (fallback si no existe)
+ * ========================= */
 let GoogleAccount;
 try {
   GoogleAccount = require('../models/GoogleAccount');
 } catch (_) {
-  // Fallback simple por si el modelo no está registrado aún
   const { Schema, model } = mongoose;
   const schema = new Schema(
     {
       user:              { type: Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
       userId:            { type: Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
+
       accessToken:       { type: String, select: false },
       refreshToken:      { type: String, select: false },
       scope:             { type: [String], default: [] },
       expiresAt:         { type: Date },
-      // Google Ads
-      managerCustomerId: { type: String },
-      customers:         { type: Array, default: [] },
+
+      managerCustomerId: { type: String },                 // opcional si algún día soportas MCC-agencia
       defaultCustomerId: { type: String },
-      // Google Analytics 4
-      gaProperties:      { type: Array, default: [] }, // [{ propertyId, displayName, ... }]
-      defaultPropertyId: { type: String },             // "properties/123456789"
-      // Preferencias
+
+      customers:         { type: Array, default: [] },     // [{id, descriptiveName, currencyCode, timeZone, ...}]
+      gaProperties:      { type: Array, default: [] },     // [{propertyId, displayName, timeZone, currencyCode}]
+      defaultPropertyId: { type: String },                 // "properties/123456789"
+
       objective:         { type: String, enum: ['ventas','alcance','leads'], default: null },
       createdAt:         { type: Date, default: Date.now },
       updatedAt:         { type: Date, default: Date.now },
@@ -43,19 +44,25 @@ try {
   GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
 }
 
-// Env
+/* =========================
+ * ENV
+ * ========================= */
 const {
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
-  GOOGLE_CONNECT_CALLBACK_URL,
+  GOOGLE_CONNECT_CALLBACK_URL,   // redirect para conectar (Analytics/Ads)
   GOOGLE_DEVELOPER_TOKEN,
-  GOOGLE_ADS_LOGIN_CUSTOMER_ID, // opcional para MCC
 } = process.env;
 
-const ADS_API = 'https://googleads.googleapis.com/v16';
+/* =========================
+ * Constantes
+ * ========================= */
+const ADS_API = 'https://googleads.googleapis.com/v17';
 const DEFAULT_GOOGLE_OBJECTIVE = 'ventas';
 
-// Middlewares / helpers
+/* =========================
+ * Helpers comunes
+ * ========================= */
 function requireSession(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
@@ -69,7 +76,7 @@ function oauth() {
   });
 }
 
-const normId = (s = '') => String(s).replace(/-/g, '').trim();
+const normId = (s='') => String(s).replace(/-/g, '').trim();
 
 const normalizeScopes = (raw) => Array.from(
   new Set(
@@ -79,29 +86,33 @@ const normalizeScopes = (raw) => Array.from(
   )
 );
 
-// -------------------- Google Ads: descubrimiento de cuentas --------------------
+/* =========================
+ * Google Ads: discovery de cuentas
+ * ========================= */
 async function listAccessibleCustomers(accessToken) {
+  // NO requiere login-customer-id
   const { data } = await axios.get(`${ADS_API}/customers:listAccessibleCustomers`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       'developer-token': GOOGLE_DEVELOPER_TOKEN,
-      Accept: 'application/json',
+      'Content-Type': 'application/json',
     },
     timeout: 20000,
-    // NOTA: aquí NO uses login-customer-id
   });
   return Array.isArray(data?.resourceNames) ? data.resourceNames : [];
 }
 
 async function fetchCustomer(accessToken, cid) {
+  // Petición directa al customer (sin login-customer-id: el usuario autenticado ya tiene acceso)
   const { data } = await axios.get(`${ADS_API}/customers/${cid}`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       'developer-token': GOOGLE_DEVELOPER_TOKEN,
-      Accept: 'application/json',
+      'Content-Type': 'application/json',
     },
     timeout: 15000,
   });
+
   return {
     id: normId(cid),
     resourceName: data?.resourceName || `customers/${cid}`,
@@ -115,47 +126,45 @@ async function discoverCustomers(accessToken) {
   const rn = await listAccessibleCustomers(accessToken);
   const ids = rn.map((r) => (r || '').split('/')[1]).filter(Boolean);
   const out = [];
-  for (const cid of ids.slice(0, 100)) {
+  for (const cid of ids.slice(0, 50)) {
     try { out.push(await fetchCustomer(accessToken, cid)); }
-    catch (e) {
-      console.warn('discoverCustomers: fallo fetchCustomer', cid, e?.response?.data || e.message);
-    }
+    catch { /* errores individuales */ }
   }
   return out;
 }
 
-// -------------------- GA4: obtener propiedades vía Admin API (estable) --------------------
+/* =========================
+ * Google Analytics Admin: listar GA4 properties
+ * ========================= */
 async function fetchGA4Properties(oauthClient) {
   const admin = google.analyticsadmin({ version: 'v1beta', auth: oauthClient });
   const out = [];
   let pageToken;
-
   do {
-    // accountSummaries.list es estable y retorna las propertySummaries por cuenta
-    const resp = await admin.accountSummaries.list({ pageSize: 200, pageToken });
-    const items = resp.data.accountSummaries || [];
-    for (const acc of items) {
-      const ps = acc.propertySummaries || [];
-      for (const p of ps) {
-        // p.property => "properties/123456789"
-        out.push({
-          propertyId: p.property,
-          displayName: p.displayName || p.property,
-          // Admin summaries no incluyen TZ/moneda; se pueden resolver después si fuera necesario
-          timeZone: undefined,
-          currencyCode: undefined,
-        });
-      }
-    }
+    // properties.search devuelve todas las GA4 accesibles por el usuario
+    const resp = await admin.properties.search({
+      requestBody: { query: '' },
+      pageToken,
+      pageSize: 200,
+    });
+    (resp.data.properties || []).forEach((p) => {
+      out.push({
+        propertyId: p.name,            // "properties/123"
+        displayName: p.displayName || p.name,
+        timeZone: p.timeZone,
+        currencyCode: p.currencyCode,
+      });
+    });
     pageToken = resp.data.nextPageToken || undefined;
   } while (pageToken);
-
   return out;
 }
 
-// -------------------- Rutas --------------------
+/* =========================
+ * Rutas
+ * ========================= */
 
-// 1) Redirige a Google para consentir scopes (Ads + Analytics)
+// Lanzar OAuth para conectar Google (Ads + GA4)
 router.get('/connect', requireSession, async (req, res) => {
   try {
     const client   = oauth();
@@ -165,14 +174,14 @@ router.get('/connect', requireSession, async (req, res) => {
 
     const url = client.generateAuthUrl({
       access_type: 'offline',
-      prompt: 'consent',                 // fuerza refresh_token la primera vez
+      prompt: 'consent',
       include_granted_scopes: true,
       scope: [
         'https://www.googleapis.com/auth/userinfo.email',
         'https://www.googleapis.com/auth/userinfo.profile',
-        'https://www.googleapis.com/auth/adwords',
-        'https://www.googleapis.com/auth/analytics.readonly',
-        'openid',
+        'https://www.googleapis.com/auth/adwords',            // Google Ads
+        'https://www.googleapis.com/auth/analytics.readonly', // GA4 Data
+        'openid'
       ],
       state: JSON.stringify({
         uid: String(req.user._id),
@@ -187,12 +196,13 @@ router.get('/connect', requireSession, async (req, res) => {
   }
 });
 
-// 2) Callback: guarda tokens, clientes de Ads y propiedades GA4
+// Callback (guarda tokens + cuentas Ads + properties GA4)
 async function googleCallbackHandler(req, res) {
   try {
     if (req.query.error) {
       return res.redirect(`/onboarding?google=error&reason=${encodeURIComponent(req.query.error)}`);
     }
+
     const code = req.query.code;
     if (!code) {
       return res.redirect('/onboarding?google=error&reason=no_code');
@@ -208,9 +218,10 @@ async function googleCallbackHandler(req, res) {
     const refreshToken = tokens.refresh_token || null;
     const expiresAt    = tokens.expiry_date ? new Date(tokens.expiry_date) : null;
 
+    // Scopes concedidos
     const grantedScopes = normalizeScopes(tokens.scope);
 
-    // Descubrir cuentas de Google Ads
+    // Google Ads: descubrir customers
     let customers = [];
     try {
       customers = await discoverCustomers(accessToken);
@@ -219,7 +230,7 @@ async function googleCallbackHandler(req, res) {
     }
     const defaultCustomerId = customers?.[0]?.id || null;
 
-    // Descubrir propiedades GA4 (Analytics Admin API)
+    // GA4: listar properties
     client.setCredentials({ access_token: accessToken, refresh_token: refreshToken || undefined });
     let gaProps = [];
     try {
@@ -229,7 +240,7 @@ async function googleCallbackHandler(req, res) {
     }
     const defaultPropertyId = gaProps?.[0]?.propertyId || null;
 
-    // Guardar/actualizar documento de conexión
+    // Upsert en googleaccounts
     const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
     const update = {
       user: req.user._id,
@@ -237,32 +248,31 @@ async function googleCallbackHandler(req, res) {
       accessToken,
       expiresAt,
       scope: grantedScopes,
+
       customers,
-      gaProperties: gaProps,
       ...(defaultCustomerId ? { defaultCustomerId } : {}),
+
+      gaProperties: gaProps,
       ...(defaultPropertyId ? { defaultPropertyId } : {}),
+
       updatedAt: new Date(),
     };
     if (refreshToken) update.refreshToken = refreshToken;
 
-    await GoogleAccount.findOneAndUpdate(q, update, {
-      upsert: true,
-      new: true,
-      setDefaultsOnInsert: true,
-    });
+    await GoogleAccount.findOneAndUpdate(q, update, { upsert: true, new: true, setDefaultsOnInsert: true });
 
-    // Flag de usuario conectado
+    // Flag en usuario
     await User.findByIdAndUpdate(req.user._id, { $set: { googleConnected: true } });
 
-    // Setear objetivo por defecto si no existe
+    // Objetivo por defecto si no existe
     const [uObj, gaObj] = await Promise.all([
       User.findById(req.user._id).select('googleObjective').lean(),
-      GoogleAccount.findOne(q).select('objective').lean(),
+      GoogleAccount.findOne(q).select('objective').lean()
     ]);
     if (!(uObj?.googleObjective) && !(gaObj?.objective)) {
       await Promise.all([
         User.findByIdAndUpdate(req.user._id, { $set: { googleObjective: DEFAULT_GOOGLE_OBJECTIVE } }),
-        GoogleAccount.findOneAndUpdate(q, { $set: { objective: DEFAULT_GOOGLE_OBJECTIVE, updatedAt: new Date() } }),
+        GoogleAccount.findOneAndUpdate(q, { $set: { objective: DEFAULT_GOOGLE_OBJECTIVE, updatedAt: new Date() } })
       ]);
     }
 
@@ -284,10 +294,13 @@ async function googleCallbackHandler(req, res) {
 router.get('/callback',         requireSession, googleCallbackHandler);
 router.get('/connect/callback', requireSession, googleCallbackHandler);
 
-// 3) Estado de la conexión
+/* =========================
+ * Estado de conexión
+ * ========================= */
 router.get('/status', requireSession, async (req, res) => {
   try {
     const u = await User.findById(req.user._id).lean();
+
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
@@ -297,8 +310,6 @@ router.get('/status', requireSession, async (req, res) => {
     const hasTokens = !!(ga?.refreshToken || ga?.accessToken);
     const customers = Array.isArray(ga?.customers) ? ga.customers : [];
     const defaultCustomerId = ga?.defaultCustomerId || customers?.[0]?.id || null;
-    const props = Array.isArray(ga?.gaProperties) ? ga.gaProperties : [];
-    const defaultPropertyId = ga?.defaultPropertyId || props?.[0]?.propertyId || null;
 
     res.json({
       ok: true,
@@ -308,9 +319,9 @@ router.get('/status', requireSession, async (req, res) => {
       customers,
       scopes: Array.isArray(ga?.scope) ? ga.scope : [],
       objective: u?.googleObjective || ga?.objective || null,
-      managerCustomerId: ga?.managerCustomerId || null,
-      gaProperties: props,
-      defaultPropertyId,
+      managerCustomerId: ga?.managerCustomerId || null, // sólo si alguna vez lo usas
+      gaProperties: ga?.gaProperties || [],
+      defaultPropertyId: ga?.defaultPropertyId || null,
     });
   } catch (err) {
     console.error('google status error:', err);
@@ -318,7 +329,9 @@ router.get('/status', requireSession, async (req, res) => {
   }
 });
 
-// 4) Guardar objetivo
+/* =========================
+ * Guardar objetivo
+ * ========================= */
 router.post('/objective', requireSession, express.json(), async (req, res) => {
   try {
     const val = String(req.body?.objective || '').trim().toLowerCase();
@@ -340,13 +353,15 @@ router.post('/objective', requireSession, express.json(), async (req, res) => {
   }
 });
 
-// 5) Listar cuentas guardadas / refrescar si faltan
+/* =========================
+ * Listar cuentas Ads (fallback y cacheo)
+ * ========================= */
 router.get('/accounts', requireSession, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
-      .select('+accessToken +refreshToken customers scope')
+      .select('+accessToken +refreshToken customers scope defaultCustomerId')
       .lean();
 
     if (!ga || (!ga.accessToken && !ga.refreshToken)) {
@@ -354,14 +369,11 @@ router.get('/accounts', requireSession, async (req, res) => {
     }
 
     const accessToken = ga.accessToken;
-    let customers = Array.isArray(ga.customers) ? ga.customers : [];
+    let customers = ga.customers || [];
 
-    if (!customers.length) {
-      try {
-        customers = await discoverCustomers(accessToken);
-      } catch (e) {
-        console.warn('accounts: discoverCustomers falló', e?.response?.data || e.message);
-      }
+    // Si no hay customers cacheados, descubrimos y guardamos
+    if (!customers || customers.length === 0) {
+      try { customers = await discoverCustomers(accessToken); } catch {}
       await GoogleAccount.updateOne(
         { _id: ga._id },
         { $set: { customers, updatedAt: new Date() } }
@@ -376,7 +388,9 @@ router.get('/accounts', requireSession, async (req, res) => {
   }
 });
 
-// 6) Guardar customer por defecto
+/* =========================
+ * Guardar defaultCustomerId
+ * ========================= */
 router.post('/default-customer', requireSession, express.json(), async (req, res) => {
   try {
     const cid = normId(req.body?.customerId || '');
