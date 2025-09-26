@@ -27,7 +27,7 @@ try {
       scope:             { type: [String], default: [] },
       expiresAt:         { type: Date },
 
-      managerCustomerId: { type: String },         // opcional (no requerido)
+      managerCustomerId: { type: String },
       defaultCustomerId: { type: String },
 
       customers:         { type: Array, default: [] },     // [{id, descriptiveName, currencyCode, timeZone, ...}]
@@ -52,13 +52,12 @@ const {
   GOOGLE_CLIENT_SECRET,
   GOOGLE_CONNECT_CALLBACK_URL,   // redirect para conectar (Analytics/Ads)
   GOOGLE_DEVELOPER_TOKEN,
-  // GOOGLE_ADS_LOGIN_CUSTOMER_ID  // ya NO lo usamos (multi-tenant puro)
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID,  // opcional: MCC para headers (si no lo usas, déjalo vacío)
 } = process.env;
 
 /* =========================
  * Constantes
  * ========================= */
-const ADS_API_VERSIONS = ['v17', 'v16']; // probamos en cascada
 const DEFAULT_GOOGLE_OBJECTIVE = 'ventas';
 
 /* =========================
@@ -87,126 +86,138 @@ const normalizeScopes = (raw) => Array.from(
   )
 );
 
-/* =========================================================
- * Google Ads helpers con retry de versión (v17 → v16)
- * ========================================================= */
+/* =======================================================================
+ * Google Ads: helpers con fallback de versión (v18 → v17 → v16) y GET/POST
+ * ======================================================================= */
+const ADS_VERSIONS = ['v18', 'v17', 'v16'];
+
 function adsHeaders(accessToken) {
-  return {
+  const h = {
     Authorization: `Bearer ${accessToken}`,
     'developer-token': GOOGLE_DEVELOPER_TOKEN,
     'Content-Type': 'application/json',
-    'Accept': 'application/json'
+    Accept: 'application/json',
   };
+  const loginId = (GOOGLE_ADS_LOGIN_CUSTOMER_ID || '').replace(/-/g, '').trim();
+  if (loginId) h['login-customer-id'] = loginId; // opcional
+  return h;
 }
 
-async function adsGet({ accessToken, path }) {
-  let lastErr;
-  for (const ver of ADS_API_VERSIONS) {
-    try {
-      const url = `https://googleads.googleapis.com/${ver}${path}`;
-      const { data } = await axios.get(url, { headers: adsHeaders(accessToken), timeout: 20000 });
-      return { data, version: ver };
-    } catch (e) {
-      const status = e?.response?.status;
-      // 404 → intentamos siguiente versión; 403/401/400 rompemos
-      if (status === 404) {
-        lastErr = e;
-        continue;
-      }
-      throw e;
-    }
+async function tryAxios(fn, label) {
+  try {
+    return await fn();
+  } catch (e) {
+    const s = e?.response?.status;
+    const d = e?.response?.data;
+    console.warn(`⚠️ [ADS] ${label} error`, s, typeof d === 'string' ? d.slice(0, 240) : d);
+    throw e;
   }
-  throw lastErr || new Error('ADS_GET_FAILED');
 }
 
 async function listAccessibleCustomers(accessToken) {
-  const { data } = await adsGet({ accessToken, path: `/customers:listAccessibleCustomers` });
-  return Array.isArray(data?.resourceNames) ? data.resourceNames : [];
+  for (const ver of ADS_VERSIONS) {
+    const base = `https://googleads.googleapis.com/${ver}`;
+    const url  = `${base}/customers:listAccessibleCustomers`;
+
+    // A) GET
+    try {
+      const { data } = await tryAxios(
+        () => axios.get(url, {
+          headers: adsHeaders(accessToken),
+          timeout: 20000,
+          maxRedirects: 0,
+          validateStatus: s => s === 200,
+        }),
+        `GET ${ver} listAccessibleCustomers`
+      );
+      return Array.isArray(data?.resourceNames) ? data.resourceNames : [];
+    } catch (_) {}
+
+    // B) POST
+    try {
+      const { data } = await tryAxios(
+        () => axios.post(url, {}, {
+          headers: adsHeaders(accessToken),
+          timeout: 20000,
+          maxRedirects: 0,
+          validateStatus: s => s === 200,
+        }),
+        `POST ${ver} listAccessibleCustomers`
+      );
+      return Array.isArray(data?.resourceNames) ? data.resourceNames : [];
+    } catch (_) {}
+  }
+  return [];
 }
 
 async function fetchCustomer(accessToken, cid) {
-  const { data } = await adsGet({ accessToken, path: `/customers/${cid}` });
-  return {
-    id: normId(cid),
-    resourceName: data?.resourceName || `customers/${cid}`,
-    descriptiveName: data?.descriptiveName || null,
-    currencyCode: data?.currencyCode || null,
-    timeZone: data?.timeZone || null,
-  };
+  for (const ver of ADS_VERSIONS) {
+    const base = `https://googleads.googleapis.com/${ver}`;
+    const url  = `${base}/customers/${cid}`;
+
+    try {
+      const { data } = await tryAxios(
+        () => axios.get(url, {
+          headers: adsHeaders(accessToken),
+          timeout: 15000,
+          maxRedirects: 0,
+          validateStatus: s => s === 200,
+        }),
+        `GET ${ver} customers/${cid}`
+      );
+
+      return {
+        id: normId(cid),
+        resourceName: data?.resourceName || `customers/${cid}`,
+        descriptiveName: data?.descriptiveName || null,
+        currencyCode: data?.currencyCode || null,
+        timeZone: data?.timeZone || null,
+      };
+    } catch (_) {}
+  }
+  throw new Error(`No se pudo leer customers/${cid} en ninguna versión de la API de Google Ads`);
 }
 
 async function discoverCustomers(accessToken) {
-  const rn = await listAccessibleCustomers(accessToken);
-  const ids = rn.map((r) => (r || '').split('/')[1]).filter(Boolean);
+  const rn  = await listAccessibleCustomers(accessToken);      // ["customers/123", ...]
+  const ids = rn.map(r => (r || '').split('/')[1]).filter(Boolean);
+
   const out = [];
-  for (const cid of ids.slice(0, 50)) {
-    try { out.push(await fetchCustomer(accessToken, cid)); }
-    catch (e) {
-      console.warn('⚠️ error fetchCustomer:', cid, e?.response?.status, e?.response?.data || e.message);
+  for (const cid of ids.slice(0, 100)) {
+    try {
+      out.push(await fetchCustomer(accessToken, cid));
+    } catch (e) {
+      console.warn('⚠️ [ADS] fetchCustomer falló para', cid, e.message);
     }
   }
   return out;
 }
 
-/* =========================================================
- * Google Analytics Admin: fallback robusto para GA4
- * ========================================================= */
+/* =========================
+ * Google Analytics Admin: listar GA4 properties
+ * ========================= */
 async function fetchGA4Properties(oauthClient) {
   const admin = google.analyticsadmin({ version: 'v1beta', auth: oauthClient });
-
-  // 1) Intento rápido: accountSummaries.list (trae propiedades resumidas)
-  try {
-    const out = [];
-    let pageToken;
-    do {
-      const resp = await admin.accountSummaries.list({ pageSize: 200, pageToken });
-      for (const acc of (resp.data.accountSummaries || [])) {
-        for (const ps of (acc.propertySummaries || [])) {
-          out.push({
-            propertyId: ps.property,             // "properties/123"
-            displayName: ps.displayName || ps.property,
-            timeZone: null,                      // se puede completar con properties.get si lo necesitas
-            currencyCode: null,
-          });
-        }
-      }
-      pageToken = resp.data.nextPageToken || undefined;
-    } while (pageToken);
-
-    if (out.length) return out;
-  } catch (e) {
-    console.warn('⚠️ GA4 accountSummaries.list falló:', e?.response?.data || e.message);
-  }
-
-  // 2) Fallback: accounts.list → properties.list por cada account
-  try {
-    const properties = [];
-    const accResp = await admin.accounts.list({ pageSize: 200 });
-    const accounts = accResp.data.accounts || [];
-
-    for (const acc of accounts) {
-      try {
-        const props = await admin.properties.list({
-          filter: `parent:${acc.name}`, // "accounts/XXXX"
-          pageSize: 200,
-        });
-        (props.data.properties || []).forEach((p) => {
-          properties.push({
-            propertyId: p.name, // "properties/123"
-            displayName: p.displayName,
-            timeZone: p.timeZone,
-            currencyCode: p.currencyCode,
-          });
-        });
-      } catch (e) {
-        console.warn('⚠️ GA4 properties.list falló para', acc.name, e?.response?.data || e.message);
-      }
-    }
-    return properties;
-  } catch (e) {
-    console.warn('⚠️ GA4 accounts.list falló:', e?.response?.data || e.message);
-    return [];
-  }
+  const out = [];
+  let pageToken;
+  do {
+    // properties.search devuelve todas las propiedades GA4 accesibles por el usuario
+    const resp = await admin.properties.search({
+      requestBody: { query: '' },
+      pageToken,
+      pageSize: 200,
+    });
+    (resp.data.properties || []).forEach((p) => {
+      out.push({
+        propertyId: p.name,            // "properties/123"
+        displayName: p.displayName || p.name,
+        timeZone: p.timeZone,
+        currencyCode: p.currencyCode,
+      });
+    });
+    pageToken = resp.data.nextPageToken || undefined;
+  } while (pageToken);
+  return out;
 }
 
 /* =========================
@@ -270,16 +281,16 @@ async function googleCallbackHandler(req, res) {
     // Scopes concedidos
     const grantedScopes = normalizeScopes(tokens.scope);
 
-    // Google Ads: descubrir customers (con retry de versión)
+    // Google Ads: descubrir customers
     let customers = [];
     try {
       customers = await discoverCustomers(accessToken);
     } catch (e) {
-      console.warn('⚠️ no se pudieron listar customers:', e?.response?.status, e?.response?.data || e.message);
+      console.warn('⚠️ no se pudieron listar customers:', e?.response?.data || e.message);
     }
     const defaultCustomerId = customers?.[0]?.id || null;
 
-    // GA4: listar properties (fallback robusto)
+    // GA4: listar properties
     client.setCredentials({ access_token: accessToken, refresh_token: refreshToken || undefined });
     let gaProps = [];
     try {
@@ -420,6 +431,7 @@ router.get('/accounts', requireSession, async (req, res) => {
     const accessToken = ga.accessToken;
     let customers = ga.customers || [];
 
+    // Si no hay customers cacheados, descubrimos y guardamos
     if (!customers || customers.length === 0) {
       try { customers = await discoverCustomers(accessToken); } catch {}
       await GoogleAccount.updateOne(
