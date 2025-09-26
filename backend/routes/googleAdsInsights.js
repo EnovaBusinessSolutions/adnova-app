@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
 const router = express.Router();
 
 /* =========================
- * Modelo GoogleAccount (fallback si no existe)
+ * Modelo GoogleAccount (fallback)
  * ========================= */
 let GoogleAccount;
 try {
@@ -19,12 +19,15 @@ try {
     {
       user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
       userId: { type: Schema.Types.ObjectId, ref: 'User' },
-      accessToken: { type: String, select: false },
-      refreshToken: { type: String, select: false },
-      managerCustomerId: String,           // opcional
-      objective: String,
-      customers: Array,
-      defaultCustomerId: String,
+      accessToken:   { type: String, select: false },
+      refreshToken:  { type: String, select: false },
+      scope:         { type: [String], default: [] },
+
+      managerCustomerId: { type: String },   // opcional
+      defaultCustomerId: { type: String },   // última seleccionada
+
+      customers: { type: Array, default: [] }, // [{ id, descriptiveName, currencyCode, timeZone, status }]
+      objective: { type: String, enum: ['ventas','alcance','leads'], default: 'ventas' },
     },
     { collection: 'googleaccounts', timestamps: true }
   );
@@ -32,32 +35,26 @@ try {
 }
 
 /* =========================
- * ENV
+ * ENV & Constantes
  * ========================= */
 const {
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
   GOOGLE_CONNECT_CALLBACK_URL,
   GOOGLE_DEVELOPER_TOKEN,
-  GOOGLE_ADS_LOGIN_CUSTOMER_ID, // opcional; dejar vacío si no usas MCC padre
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID, // opcional; no se requiere
 } = process.env;
 
-/* =========================
- * Constantes
- * ========================= */
-const ADS_API = 'https://googleads.googleapis.com/v17';
+const ADS_API = 'https://googleads.googleapis.com/v17'; // probamos v17 y si falla, v16
 
 /* =========================
- * Auth middleware
+ * Utils / helpers
  * ========================= */
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-/* =========================
- * OAuth helper
- * ========================= */
 function oauth() {
   return new OAuth2Client({
     clientId: GOOGLE_CLIENT_ID,
@@ -66,28 +63,27 @@ function oauth() {
   });
 }
 
-/* =========================
- * Date utils
- * ========================= */
+const normId = (s = '') => String(s).replace(/^customers\//, '').replace(/-/g, '').trim();
+
 const ymd = (d) => d.toISOString().slice(0, 10);
 const addDays = (d, n) =>
   new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + n));
 
 function computeRanges(q) {
   const includeToday = String(q.include_today || '0') === '1';
-  const compareMode = String(q.compare_mode || 'prev_period');
+  const compareMode  = String(q.compare_mode || 'prev_period');
 
-  const today = new Date();
-  const base = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  const today  = new Date();
+  const base   = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
   const anchor = includeToday ? base : addDays(base, -1);
 
   if (compareMode === 'prev_month') {
-    const firstOfThisMonth = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1));
-    const current = { since: ymd(firstOfThisMonth), until: ymd(anchor) };
+    const firstThis = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1));
+    const current = { since: ymd(firstThis), until: ymd(anchor) };
 
-    const firstOfPrevMonth = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - 1, 1));
-    const lastOfPrevMonth = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 0));
-    const previous = { since: ymd(firstOfPrevMonth), until: ymd(lastOfPrevMonth) };
+    const firstPrev = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - 1, 1));
+    const lastPrev  = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 0));
+    const previous = { since: ymd(firstPrev), until: ymd(lastPrev) };
 
     return { current, previous, is_partial: includeToday };
   }
@@ -95,16 +91,16 @@ function computeRanges(q) {
   const preset = String(q.date_preset || '').toLowerCase();
   if (preset === 'today') {
     return {
-      current: { since: ymd(anchor), until: ymd(anchor) },
+      current:  { since: ymd(anchor), until: ymd(anchor) },
       previous: { since: ymd(addDays(anchor, -1)), until: ymd(addDays(anchor, -1)) },
       is_partial: includeToday,
     };
   }
   if (preset === 'yesterday') {
-    const y = addDays(anchor, -1);
+    const y  = addDays(anchor, -1);
     const yy = addDays(anchor, -2);
     return {
-      current: { since: ymd(y), until: ymd(y) },
+      current:  { since: ymd(y),  until: ymd(y)  },
       previous: { since: ymd(yy), until: ymd(yy) },
       is_partial: false,
     };
@@ -112,7 +108,10 @@ function computeRanges(q) {
 
   let days = Number(q.range || 0);
   if (!Number.isFinite(days) || days <= 0) {
-    days = preset === 'last_7d' ? 7 : preset === 'last_14d' ? 14 : preset === 'last_28d' ? 28 : 30;
+    days = preset === 'last_7d'  ? 7
+         : preset === 'last_14d' ? 14
+         : preset === 'last_28d' ? 28
+         : 30;
   }
 
   const currUntil = anchor;
@@ -121,15 +120,12 @@ function computeRanges(q) {
   const prevSince = addDays(prevUntil, -(days - 1));
 
   return {
-    current: { since: ymd(currSince), until: ymd(currUntil) },
+    current:  { since: ymd(currSince), until: ymd(currUntil) },
     previous: { since: ymd(prevSince), until: ymd(prevUntil) },
     is_partial: includeToday,
   };
 }
 
-/* =========================
- * Google Ads helpers
- * ========================= */
 const microsToCurrency = (m) => {
   const n = Number(m);
   return Number.isFinite(n) ? n / 1e6 : 0;
@@ -141,7 +137,7 @@ async function getFreshAccessToken(gaDoc) {
   const client = oauth();
   client.setCredentials({
     refresh_token: gaDoc.refreshToken || undefined,
-    access_token: gaDoc.accessToken || undefined,
+    access_token:  gaDoc.accessToken  || undefined,
   });
 
   try {
@@ -150,6 +146,7 @@ async function getFreshAccessToken(gaDoc) {
   } catch {}
 
   try {
+    // algunas versiones
     const { credentials } = await client.refreshAccessToken();
     return credentials.access_token || gaDoc.accessToken;
   } catch (_) {
@@ -158,13 +155,15 @@ async function getFreshAccessToken(gaDoc) {
   }
 }
 
-const normId = (s = '') => String(s).replace(/^customers\//, '').replace(/-/g, '').trim();
-
 const customerList = (doc) => (Array.isArray(doc?.customers) ? doc.customers : []);
 
 function resolveCustomerId(req, doc) {
-  const q = normId(String(req.query.account_id || req.query.customer_id || ''));
+  const q = String(req.query.account_id || req.query.customer_id || '')
+    .replace(/^customers\//, '')
+    .replace(/-/g, '')
+    .trim();
   if (q) return q;
+
   if (doc?.defaultCustomerId) return normId(doc.defaultCustomerId);
   const list = customerList(doc);
   return list.length ? normId(list[0].id) : '';
@@ -176,33 +175,75 @@ function buildHeaders(accessToken, managerId) {
     'developer-token': GOOGLE_DEVELOPER_TOKEN,
     'Content-Type': 'application/json',
   };
-  const loginId = normId(managerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '');
+  const loginId = String(managerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '')
+    .replace(/-/g, '')
+    .trim();
   if (loginId) headers['login-customer-id'] = loginId;
   return headers;
 }
 
-async function runGAQL({ accessToken, customerId, gaql, managerId }) {
-  const url = `${ADS_API}/customers/${normId(customerId)}/googleAds:search`;
-  const { data } = await axios.post(
-    url,
-    { query: gaql },
-    { headers: buildHeaders(accessToken, managerId), timeout: 30000 }
-  );
-  return data?.results || [];
-}
-
-async function listAccessibleCustomers(accessToken, managerId) {
-  // IMPORTANTE: ES GET y v17
-  const url = `${ADS_API}/customers:listAccessibleCustomers`;
-  const { data } = await axios.get(url, {
-    headers: buildHeaders(accessToken, managerId),
-    timeout: 20000,
-  });
-  return (data?.resourceNames || []).map((rn) => rn.split('/')[1]).filter(Boolean);
+function axiosErrorInfo(err) {
+  return {
+    msg: err?.message,
+    code: err?.code,
+    status: err?.response?.status,
+    data: err?.response?.data,
+  };
 }
 
 /* =========================
- * Insights endpoint
+ * Llamadas a Google Ads API con reintento v17→v16
+ * ========================= */
+async function runGAQL({ accessToken, customerId, gaql, managerId }) {
+  const id = normId(customerId);
+  const headers = buildHeaders(accessToken, managerId);
+
+  const urls = [
+    `${ADS_API}/customers/${id}/googleAds:search`,
+    `https://googleads.googleapis.com/v16/customers/${id}/googleAds:search`,
+  ];
+
+  let lastErr;
+  for (let i = 0; i < urls.length; i++) {
+    try {
+      const { data } = await axios.post(urls[i], { query: gaql }, { headers, timeout: 30000 });
+      return data?.results || [];
+    } catch (err) {
+      lastErr = err;
+      const info = axiosErrorInfo(err);
+      console.error(`[ADS] GAQL try-${i + 1} url=${urls[i]} ->`, info);
+      // si no es 404 (p.ej. 401/403) ya no tiene sentido probar v16
+      if (info.status && info.status !== 404) break;
+    }
+  }
+  throw lastErr;
+}
+
+async function listAccessibleCustomers(accessToken, managerId) {
+  const headers = buildHeaders(accessToken, managerId);
+
+  const urls = [
+    `${ADS_API}/customers:listAccessibleCustomers`,
+    `https://googleads.googleapis.com/v16/customers:listAccessibleCustomers`,
+  ];
+
+  let lastErr;
+  for (let i = 0; i < urls.length; i++) {
+    try {
+      const { data } = await axios.get(urls[i], { headers, timeout: 20000 });
+      return (data?.resourceNames || []).map((rn) => rn.split('/')[1]).filter(Boolean);
+    } catch (err) {
+      lastErr = err;
+      const info = axiosErrorInfo(err);
+      console.error(`[ADS] listAccessibleCustomers try-${i + 1} ->`, info);
+      if (info.status && info.status !== 404) break;
+    }
+  }
+  throw lastErr;
+}
+
+/* =========================
+ * Endpoint de Insights (KPIs + serie)
  * ========================= */
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -218,7 +259,6 @@ router.get('/', requireAuth, async (req, res) => {
 
     const rawObjective = String(req.query.objective || gaDoc.objective || 'ventas').toLowerCase();
     const objective = ['ventas', 'alcance', 'leads'].includes(rawObjective) ? rawObjective : 'ventas';
-
     const ranges = computeRanges(req.query);
 
     const customerId = resolveCustomerId(req, gaDoc);
@@ -278,7 +318,6 @@ router.get('/', requireAuth, async (req, res) => {
 
     const qCurr = buildGaqlByObjective(objective, ranges.current.since, ranges.current.until);
     const qPrev = buildGaqlByObjective(objective, ranges.previous.since, ranges.previous.until);
-
     const qMeta = `
       SELECT
         customer.currency_code,
@@ -294,14 +333,13 @@ router.get('/', requireAuth, async (req, res) => {
     ]);
 
     const meta0 = metaRows?.[0]?.customer || {};
-    const list = customerList(gaDoc);
     const currency =
       meta0?.currencyCode ||
-      list.find((c) => normId(c.id) === normId(customerId))?.currencyCode ||
+      customerList(gaDoc).find((c) => normId(c.id) === String(customerId))?.currencyCode ||
       'USD';
     const timeZone =
       meta0?.timeZone ||
-      list.find((c) => normId(c.id) === normId(customerId))?.timeZone ||
+      customerList(gaDoc).find((c) => normId(c.id) === String(customerId))?.timeZone ||
       'America/Mexico_City';
 
     let cost = 0, impressions = 0, clicks = 0, conversions = 0, conv_value = 0;
@@ -380,7 +418,7 @@ router.get('/', requireAuth, async (req, res) => {
     res.json({
       ok: true,
       objective,
-      customer_id: normId(customerId),
+      customer_id: customerId,
       time_zone: timeZone,
       currency,
       locale: 'es-MX',
@@ -394,20 +432,19 @@ router.get('/', requireAuth, async (req, res) => {
   } catch (err) {
     const status = err?.response?.status || 500;
     const detail = err?.response?.data || err.message || String(err);
-
-    // pistas útiles
     if (status === 401 || status === 403) {
-      console.error('google/ads insights auth error (¿falta vincular OAuth Client ID con el Developer Token del MCC?):', detail);
-    } else {
-      console.error('google/ads insights error:', detail);
+      console.error(
+        'google/ads auth error: suele ser porque el Developer Token no está vinculado al OAuth Client ID, ' +
+        'o por permisos insuficientes del usuario sobre la cuenta.'
+      );
     }
-
+    console.error('google/ads insights error:', detail);
     res.status(status).json({ ok: false, error: 'GOOGLE_ADS_ERROR', detail });
   }
 });
 
 /* =========================
- * Accounts endpoint (dropdown)
+ * Accounts endpoint (para dropdown)
  * ========================= */
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
@@ -420,60 +457,62 @@ router.get('/accounts', requireAuth, async (req, res) => {
       return res.json({ ok: true, accounts: [], defaultCustomerId: null });
     }
 
-    const accessToken = await getFreshAccessToken(ga);
-
     let metas = Array.isArray(ga.customers) ? ga.customers : [];
 
     if (!metas.length) {
-      let ids = [];
       try {
-        ids = await listAccessibleCustomers(accessToken, ga.managerCustomerId);
-      } catch (e) {
-        // si falla, usa lo que haya en DB
-        ids = (ga.customers || []).map((c) => String(c.id));
-      }
+        const accessToken = await getFreshAccessToken(ga);
 
-      metas = [];
-      for (const rawId of ids) {
-        const id = normId(rawId);
+        let ids = [];
         try {
-          const rows = await runGAQL({
-            accessToken,
-            customerId: id,
-            managerId: ga.managerCustomerId,
-            gaql: `
-              SELECT
-                customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone, customer.status
-              FROM customer
-              LIMIT 1
-            `
-          });
-          const r = rows?.[0];
-          metas.push({
-            id,
-            descriptiveName: r?.customer?.descriptiveName || `Customer ${id}`,
-            currencyCode: r?.customer?.currencyCode || null,
-            timeZone: r?.customer?.timeZone || null,
-            status: r?.customer?.status || null,
-          });
-        } catch {
-          metas.push({ id, descriptiveName: `Customer ${id}` });
+          ids = await listAccessibleCustomers(accessToken, ga.managerCustomerId);
+        } catch (e) {
+          console.error('listAccessibleCustomers fallback to cached:', axiosErrorInfo(e));
+          ids = (ga.customers || []).map((c) => String(c.id));
         }
-      }
 
-      await GoogleAccount.updateOne(
-        { $or: [{ user: req.user._id }, { userId: req.user._id }] },
-        { $set: { customers: metas } }
-      );
+        metas = [];
+        for (const idRaw of ids) {
+          const id = normId(idRaw);
+          try {
+            const rows = await runGAQL({
+              accessToken,
+              customerId: id,
+              managerId: ga.managerCustomerId,
+              gaql: `
+                SELECT
+                  customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone, customer.status
+                FROM customer
+                LIMIT 1
+              `
+            });
+            const r = rows?.[0];
+            metas.push({
+              id,
+              descriptiveName: r?.customer?.descriptiveName || `Customer ${id}`,
+              currencyCode:    r?.customer?.currencyCode || null,
+              timeZone:        r?.customer?.timeZone || null,
+              status:          r?.customer?.status || null,
+            });
+          } catch {
+            metas.push({ id, descriptiveName: `Customer ${id}` });
+          }
+        }
+
+        await GoogleAccount.updateOne(
+          { $or: [{ user: req.user._id }, { userId: req.user._id }] },
+          { $set: { customers: metas } }
+        );
+      } catch (_) {}
     }
 
     const accounts = (metas || [])
       .map((a) => ({
-        id: normId(a.id),
-        name: a.name || a.descriptiveName || null,
+        id:       normId(a.id),
+        name:     a.name || a.descriptiveName || null,
         currency: a.currency || a.currencyCode || null,
         timezone: a.timezone || a.timeZone || null,
-        status: a.status || null,
+        status:   a.status || null,
       }))
       .filter((a) => a.id);
 
@@ -487,7 +526,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
 });
 
 /* =========================
- * Customers (solo listar + refrescar cache)
+ * Customers (sin agregado de meta en DB)
  * ========================= */
 router.get('/customers', requireAuth, async (req, res) => {
   try {
@@ -505,13 +544,14 @@ router.get('/customers', requireAuth, async (req, res) => {
     let ids = [];
     try {
       ids = await listAccessibleCustomers(accessToken, ga.managerCustomerId);
-    } catch {
+    } catch (e) {
+      console.error('listAccessibleCustomers fallback to cached:', axiosErrorInfo(e));
       ids = (ga.customers || []).map((c) => String(c.id));
     }
 
     const metas = [];
-    for (const rawId of ids) {
-      const id = normId(rawId);
+    for (const idRaw of ids) {
+      const id = normId(idRaw);
       try {
         const rows = await runGAQL({
           accessToken,
@@ -528,8 +568,8 @@ router.get('/customers', requireAuth, async (req, res) => {
         metas.push({
           id,
           descriptiveName: r?.customer?.descriptiveName || `Customer ${id}`,
-          currencyCode: r?.customer?.currencyCode || null,
-          timeZone: r?.customer?.timeZone || null,
+          currencyCode:    r?.customer?.currencyCode || null,
+          timeZone:        r?.customer?.timeZone || null,
         });
       } catch {
         metas.push({ id, descriptiveName: `Customer ${id}` });
@@ -548,7 +588,14 @@ router.get('/customers', requireAuth, async (req, res) => {
       customers: metas
     });
   } catch (err) {
-    console.error('google/ads/customers error:', err?.response?.data || err);
+    const status = err?.response?.status || 500;
+    const detail = err?.response?.data || err.message || String(err);
+    if (status === 401 || status === 403) {
+      console.error(
+        'google/ads auth error: Developer Token no vinculado al OAuth Client ID o permisos insuficientes.'
+      );
+    }
+    console.error('google/ads/customers error:', detail);
     res.status(500).json({ ok: false, error: 'CUSTOMERS_ERROR' });
   }
 });
