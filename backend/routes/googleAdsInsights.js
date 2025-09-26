@@ -8,7 +8,7 @@ const mongoose = require('mongoose');
 const router = express.Router();
 
 /* =========================
- * Modelo GoogleAccount (fallback)
+ * Modelo GoogleAccount (fallback si no existe)
  * ========================= */
 let GoogleAccount;
 try {
@@ -21,7 +21,7 @@ try {
       userId: { type: Schema.Types.ObjectId, ref: 'User' },
       accessToken: { type: String, select: false },
       refreshToken: { type: String, select: false },
-      managerCustomerId: String,
+      managerCustomerId: String,           // opcional
       objective: String,
       customers: Array,
       defaultCustomerId: String,
@@ -39,13 +39,13 @@ const {
   GOOGLE_CLIENT_SECRET,
   GOOGLE_CONNECT_CALLBACK_URL,
   GOOGLE_DEVELOPER_TOKEN,
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID, // opcional; dejar vacío si no usas MCC padre
 } = process.env;
 
 /* =========================
- * Constantes Ads
+ * Constantes
  * ========================= */
-const ADS_VER  = 'v17';
-const ADS_BASE = `https://googleads.googleapis.com/${ADS_VER}`;
+const ADS_API = 'https://googleads.googleapis.com/v17';
 
 /* =========================
  * Auth middleware
@@ -136,7 +136,6 @@ const microsToCurrency = (m) => {
 };
 
 async function getFreshAccessToken(gaDoc) {
-  // Si ya tenemos accessToken reciente, úsalo
   if (gaDoc.accessToken && gaDoc.accessToken.length > 10) return gaDoc.accessToken;
 
   const client = oauth();
@@ -159,58 +158,46 @@ async function getFreshAccessToken(gaDoc) {
   }
 }
 
+const normId = (s = '') => String(s).replace(/^customers\//, '').replace(/-/g, '').trim();
+
 const customerList = (doc) => (Array.isArray(doc?.customers) ? doc.customers : []);
 
 function resolveCustomerId(req, doc) {
-  const q = String(req.query.account_id || req.query.customer_id || '')
-    .replace(/^customers\//, '')
-    .replace(/-/g, '')
-    .trim();
+  const q = normId(String(req.query.account_id || req.query.customer_id || ''));
   if (q) return q;
-
-  if (doc?.defaultCustomerId) return String(doc.defaultCustomerId).replace(/-/g, '').trim();
+  if (doc?.defaultCustomerId) return normId(doc.defaultCustomerId);
   const list = customerList(doc);
-  return list.length ? String(list[0].id || '').replace(/-/g, '').trim() : '';
+  return list.length ? normId(list[0].id) : '';
 }
 
-/* --------- Headers --------- */
-// Para GAQL (sí puede llevar login-customer-id)
-function headersGAQL(accessToken, managerId) {
-  const h = {
+function buildHeaders(accessToken, managerId) {
+  const headers = {
     Authorization: `Bearer ${accessToken}`,
     'developer-token': GOOGLE_DEVELOPER_TOKEN,
-    Accept: 'application/json',
     'Content-Type': 'application/json',
   };
-  const loginId = String(managerId || '').replace(/-/g, '').trim();
-  if (loginId) h['login-customer-id'] = loginId;
-  return h;
+  const loginId = normId(managerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '');
+  if (loginId) headers['login-customer-id'] = loginId;
+  return headers;
 }
 
-// Para listAccessibleCustomers (nunca enviar login-customer-id ni Content-Type)
-function headersListCustomers(accessToken) {
-  return {
-    Authorization: `Bearer ${accessToken}`,
-    'developer-token': GOOGLE_DEVELOPER_TOKEN,
-    Accept: 'application/json',
-  };
-}
-
-/* --------- Llamadas Ads --------- */
 async function runGAQL({ accessToken, customerId, gaql, managerId }) {
+  const url = `${ADS_API}/customers/${normId(customerId)}/googleAds:search`;
   const { data } = await axios.post(
-    `${ADS_BASE}/customers/${customerId}/googleAds:search`,
+    url,
     { query: gaql },
-    { headers: headersGAQL(accessToken, managerId), timeout: 30000 }
+    { headers: buildHeaders(accessToken, managerId), timeout: 30000 }
   );
   return data?.results || [];
 }
 
-async function listAccessibleCustomers(accessToken) {
-  const { data } = await axios.get(
-    `${ADS_BASE}/customers:listAccessibleCustomers`,
-    { headers: headersListCustomers(accessToken), timeout: 20000 }
-  );
+async function listAccessibleCustomers(accessToken, managerId) {
+  // IMPORTANTE: ES GET y v17
+  const url = `${ADS_API}/customers:listAccessibleCustomers`;
+  const { data } = await axios.get(url, {
+    headers: buildHeaders(accessToken, managerId),
+    timeout: 20000,
+  });
   return (data?.resourceNames || []).map((rn) => rn.split('/')[1]).filter(Boolean);
 }
 
@@ -307,13 +294,14 @@ router.get('/', requireAuth, async (req, res) => {
     ]);
 
     const meta0 = metaRows?.[0]?.customer || {};
+    const list = customerList(gaDoc);
     const currency =
       meta0?.currencyCode ||
-      customerList(gaDoc).find((c) => String(c.id).replace(/-/g, '') === String(customerId))?.currencyCode ||
+      list.find((c) => normId(c.id) === normId(customerId))?.currencyCode ||
       'USD';
     const timeZone =
       meta0?.timeZone ||
-      customerList(gaDoc).find((c) => String(c.id).replace(/-/g, '') === String(customerId))?.timeZone ||
+      list.find((c) => normId(c.id) === normId(customerId))?.timeZone ||
       'America/Mexico_City';
 
     let cost = 0, impressions = 0, clicks = 0, conversions = 0, conv_value = 0;
@@ -392,7 +380,7 @@ router.get('/', requireAuth, async (req, res) => {
     res.json({
       ok: true,
       objective,
-      customer_id: customerId,
+      customer_id: normId(customerId),
       time_zone: timeZone,
       currency,
       locale: 'es-MX',
@@ -406,13 +394,20 @@ router.get('/', requireAuth, async (req, res) => {
   } catch (err) {
     const status = err?.response?.status || 500;
     const detail = err?.response?.data || err.message || String(err);
-    console.error('google/ads insights error:', detail);
+
+    // pistas útiles
+    if (status === 401 || status === 403) {
+      console.error('google/ads insights auth error (¿falta vincular OAuth Client ID con el Developer Token del MCC?):', detail);
+    } else {
+      console.error('google/ads insights error:', detail);
+    }
+
     res.status(status).json({ ok: false, error: 'GOOGLE_ADS_ERROR', detail });
   }
 });
 
 /* =========================
- * Accounts endpoint (para dropdown)
+ * Accounts endpoint (dropdown)
  * ========================= */
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
@@ -425,55 +420,56 @@ router.get('/accounts', requireAuth, async (req, res) => {
       return res.json({ ok: true, accounts: [], defaultCustomerId: null });
     }
 
+    const accessToken = await getFreshAccessToken(ga);
+
     let metas = Array.isArray(ga.customers) ? ga.customers : [];
 
     if (!metas.length) {
+      let ids = [];
       try {
-        const accessToken = await getFreshAccessToken(ga);
-        let ids = [];
+        ids = await listAccessibleCustomers(accessToken, ga.managerCustomerId);
+      } catch (e) {
+        // si falla, usa lo que haya en DB
+        ids = (ga.customers || []).map((c) => String(c.id));
+      }
+
+      metas = [];
+      for (const rawId of ids) {
+        const id = normId(rawId);
         try {
-          ids = await listAccessibleCustomers(accessToken); // importante: sin login-customer-id
+          const rows = await runGAQL({
+            accessToken,
+            customerId: id,
+            managerId: ga.managerCustomerId,
+            gaql: `
+              SELECT
+                customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone, customer.status
+              FROM customer
+              LIMIT 1
+            `
+          });
+          const r = rows?.[0];
+          metas.push({
+            id,
+            descriptiveName: r?.customer?.descriptiveName || `Customer ${id}`,
+            currencyCode: r?.customer?.currencyCode || null,
+            timeZone: r?.customer?.timeZone || null,
+            status: r?.customer?.status || null,
+          });
         } catch {
-          ids = (ga.customers || []).map((c) => String(c.id));
+          metas.push({ id, descriptiveName: `Customer ${id}` });
         }
+      }
 
-        metas = [];
-        for (const id of ids) {
-          try {
-            const rows = await runGAQL({
-              accessToken,
-              customerId: id.replace(/^customers\//, '').replace(/-/g, ''),
-              managerId: ga.managerCustomerId,
-              gaql: `
-                SELECT
-                  customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone, customer.status
-                FROM customer
-                LIMIT 1
-              `
-            });
-            const r = rows?.[0];
-            metas.push({
-              id: id.replace(/^customers\//, '').replace(/-/g, ''),
-              descriptiveName: r?.customer?.descriptiveName || `Customer ${id}`,
-              currencyCode: r?.customer?.currencyCode || null,
-              timeZone: r?.customer?.timeZone || null,
-              status: r?.customer?.status || null,
-            });
-          } catch {
-            metas.push({ id: id.replace(/^customers\//, '').replace(/-/g, ''), descriptiveName: `Customer ${id}` });
-          }
-        }
-
-        await GoogleAccount.updateOne(
-          { $or: [{ user: req.user._id }, { userId: req.user._id }] },
-          { $set: { customers: metas } }
-        );
-      } catch (_) {}
+      await GoogleAccount.updateOne(
+        { $or: [{ user: req.user._id }, { userId: req.user._id }] },
+        { $set: { customers: metas } }
+      );
     }
 
     const accounts = (metas || [])
       .map((a) => ({
-        id: String(a.id || '').replace(/^customers\//, '').replace(/-/g, '').trim(),
+        id: normId(a.id),
         name: a.name || a.descriptiveName || null,
         currency: a.currency || a.currencyCode || null,
         timezone: a.timezone || a.timeZone || null,
@@ -491,7 +487,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
 });
 
 /* =========================
- * Customers (sin agregado de meta en DB)
+ * Customers (solo listar + refrescar cache)
  * ========================= */
 router.get('/customers', requireAuth, async (req, res) => {
   try {
@@ -508,17 +504,18 @@ router.get('/customers', requireAuth, async (req, res) => {
 
     let ids = [];
     try {
-      ids = await listAccessibleCustomers(accessToken); // importante: sin login-customer-id
+      ids = await listAccessibleCustomers(accessToken, ga.managerCustomerId);
     } catch {
       ids = (ga.customers || []).map((c) => String(c.id));
     }
 
     const metas = [];
-    for (const id of ids) {
+    for (const rawId of ids) {
+      const id = normId(rawId);
       try {
         const rows = await runGAQL({
           accessToken,
-          customerId: id.replace(/^customers\//, '').replace(/-/g, ''),
+          customerId: id,
           managerId: ga.managerCustomerId,
           gaql: `
             SELECT
@@ -529,13 +526,13 @@ router.get('/customers', requireAuth, async (req, res) => {
         });
         const r = rows?.[0];
         metas.push({
-          id: id.replace(/^customers\//, '').replace(/-/g, ''),
+          id,
           descriptiveName: r?.customer?.descriptiveName || `Customer ${id}`,
           currencyCode: r?.customer?.currencyCode || null,
           timeZone: r?.customer?.timeZone || null,
         });
       } catch {
-        metas.push({ id: id.replace(/^customers\//, '').replace(/-/g, ''), descriptiveName: `Customer ${id}` });
+        metas.push({ id, descriptiveName: `Customer ${id}` });
       }
     }
 
@@ -561,7 +558,7 @@ router.get('/customers', requireAuth, async (req, res) => {
  * ========================= */
 router.post('/default', requireAuth, express.json(), async (req, res) => {
   try {
-    const customerId = String(req.body?.customerId || '').replace(/^customers\//, '').replace(/-/g, '').trim();
+    const customerId = normId(req.body?.customerId || '');
     if (!customerId) return res.status(400).json({ ok: false, error: 'CUSTOMER_REQUIRED' });
 
     await GoogleAccount.findOneAndUpdate(
