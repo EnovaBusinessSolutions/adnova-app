@@ -3,16 +3,13 @@
 const mongoose = require('mongoose');
 const { Schema, model, Types } = mongoose;
 
-
+/* ----------------- helpers ----------------- */
 const stripDashes = (s = '') => s.toString().replace(/-/g, '').trim();
 const normScopes = (v) => {
   if (!v) return [];
   if (Array.isArray(v)) {
-    return Array.from(
-      new Set(v.map(x => String(x || '').trim().toLowerCase()).filter(Boolean))
-    );
+    return Array.from(new Set(v.map(x => String(x || '').trim().toLowerCase()).filter(Boolean)));
   }
-  
   return Array.from(
     new Set(
       String(v)
@@ -22,53 +19,60 @@ const normScopes = (v) => {
     )
   );
 };
+// Forzar "properties/123..." y quitar espacios
+const normPropertyId = (val) => {
+  if (!val) return '';
+  const v = String(val).trim();
+  if (/^properties\/\d+$/.test(v)) return v;
+  const onlyDigits = v.replace(/[^\d]/g, '');
+  return onlyDigits ? `properties/${onlyDigits}` : '';
+};
 
-
+/* ----------- subdocs ----------- */
 const CustomerSchema = new Schema(
   {
-    id: {
-      type: String,
-      set: (v) => stripDashes(v),            
-    },
-    resourceName: String,                      
-    descriptiveName: String,                   
-    currencyCode: String,                     
-    timeZone: String,                          
+    id: { type: String, set: (v) => stripDashes(v) },
+    resourceName: String,
+    descriptiveName: String,
+    currencyCode: String,
+    timeZone: String,
   },
   { _id: false }
 );
 
+const GaPropertySchema = new Schema(
+  {
+    propertyId: { type: String, index: true, set: normPropertyId }, // "properties/123456789"
+    displayName: String,
+    timeZone: String,
+    currencyCode: String,
+  },
+  { _id: false }
+);
 
+/* ----------- main schema ----------- */
 const GoogleAccountSchema = new Schema(
   {
-    
+    // referencia al usuario
     user:   { type: Types.ObjectId, ref: 'User', index: true, sparse: true },
     userId: { type: Types.ObjectId, ref: 'User', index: true, sparse: true },
 
-    
+    // tokens
     accessToken:  { type: String, select: false },
     refreshToken: { type: String, select: false },
-    scope:        {
-      type: [String],
-      default: [],
-      set: normScopes,                        
-    },
+    scope:        { type: [String], default: [], set: normScopes },
     expiresAt:    { type: Date },
 
-    
-    managerCustomerId: {
-      type: String,
-      set: (v) => stripDashes(v),
-    },
-
-    
+    // Google Ads
+    managerCustomerId: { type: String, set: (v) => stripDashes(v) },
     customers:         { type: [CustomerSchema], default: [] },
-    defaultCustomerId: {
-      type: String,                           
-      set: (v) => stripDashes(v),
-    },
+    defaultCustomerId: { type: String, set: (v) => stripDashes(v) },
 
-    
+    // GA4
+    gaProperties:     { type: [GaPropertySchema], default: [] },
+    defaultPropertyId:{ type: String, set: normPropertyId }, // "properties/123456789"
+
+    // preferencia de objetivo en onboarding (Ads)
     objective: {
       type: String,
       enum: ['ventas', 'alcance', 'leads'],
@@ -97,15 +101,17 @@ const GoogleAccountSchema = new Schema(
   }
 );
 
-
+/* ----------- índices ----------- */
+// NOTA: tienes una sola fila por usuario, pero mantenemos ambos por compatibilidad
 GoogleAccountSchema.index({ user: 1   }, { unique: true, sparse: true });
 GoogleAccountSchema.index({ userId: 1 }, { unique: true, sparse: true });
+// Buscar por propertyId será común
+GoogleAccountSchema.index({ 'gaProperties.propertyId': 1 });
 
-
+/* ----------- virtuals / methods ----------- */
 GoogleAccountSchema.virtual('hasRefresh').get(function () {
   return !!this.refreshToken;
 });
-
 
 GoogleAccountSchema.methods.setTokens = function ({
   access_token,
@@ -120,10 +126,31 @@ GoogleAccountSchema.methods.setTokens = function ({
   return this;
 };
 
+// helper para setear gaProperties deduplicando por propertyId
+GoogleAccountSchema.methods.setGaProperties = function (list = []) {
+  const normalized = (Array.isArray(list) ? list : [])
+    .map(p => ({
+      propertyId: normPropertyId(p?.propertyId || p?.name || ''),
+      displayName: p?.displayName || p?.name || '',
+      timeZone: p?.timeZone || null,
+      currencyCode: p?.currencyCode || null,
+    }))
+    .filter(p => p.propertyId);
 
+  // dedupe por propertyId
+  const map = new Map();
+  for (const p of normalized) map.set(p.propertyId, p);
+  this.gaProperties = Array.from(map.values()).sort((a, b) =>
+    a.propertyId.localeCompare(b.propertyId)
+  );
+  return this;
+};
+
+/* ----------- hooks ----------- */
 GoogleAccountSchema.pre('save', function(next) {
   this.updatedAt = new Date();
-  
+
+  // normaliza customers
   if (Array.isArray(this.customers)) {
     this.customers = this.customers.map(c => ({
       ...c,
@@ -134,9 +161,31 @@ GoogleAccountSchema.pre('save', function(next) {
       timeZone: c?.timeZone,
     }));
   }
+
+  // normaliza y dedupe gaProperties
+  if (Array.isArray(this.gaProperties)) {
+    const map = new Map();
+    for (const p of this.gaProperties) {
+      const pid = normPropertyId(p?.propertyId);
+      if (!pid) continue;
+      map.set(pid, {
+        propertyId: pid,
+        displayName: p?.displayName || '',
+        timeZone: p?.timeZone || null,
+        currencyCode: p?.currencyCode || null,
+      });
+    }
+    this.gaProperties = Array.from(map.values()).sort((a, b) =>
+      a.propertyId.localeCompare(b.propertyId)
+    );
+  }
+
+  // normaliza defaultPropertyId
+  if (this.defaultPropertyId) {
+    this.defaultPropertyId = normPropertyId(this.defaultPropertyId);
+  }
+
   next();
 });
 
-
-module.exports =
-  mongoose.models.GoogleAccount || model('GoogleAccount', GoogleAccountSchema);
+module.exports = mongoose.models.GoogleAccount || model('GoogleAccount', GoogleAccountSchema);

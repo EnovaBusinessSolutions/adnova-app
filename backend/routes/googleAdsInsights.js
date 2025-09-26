@@ -7,7 +7,9 @@ const mongoose = require('mongoose');
 
 const router = express.Router();
 
-
+/* =========================
+ * Modelo GoogleAccount (fallback)
+ * ========================= */
 let GoogleAccount;
 try {
   GoogleAccount = require('../models/GoogleAccount');
@@ -21,7 +23,7 @@ try {
       refreshToken: { type: String, select: false },
       managerCustomerId: String,
       objective: String,
-      customers: Array, 
+      customers: Array,
       defaultCustomerId: String,
     },
     { collection: 'googleaccounts', timestamps: true }
@@ -29,21 +31,28 @@ try {
   GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
 }
 
+/* =========================
+ * ENV
+ * ========================= */
 const {
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
   GOOGLE_CONNECT_CALLBACK_URL,
   GOOGLE_DEVELOPER_TOKEN,
-  GOOGLE_ADS_LOGIN_CUSTOMER_ID, 
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID,
 } = process.env;
 
-
+/* =========================
+ * Auth middleware
+ * ========================= */
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-
+/* =========================
+ * OAuth helper
+ * ========================= */
 function oauth() {
   return new OAuth2Client({
     clientId: GOOGLE_CLIENT_ID,
@@ -52,7 +61,9 @@ function oauth() {
   });
 }
 
-
+/* =========================
+ * Date utils
+ * ========================= */
 const ymd = (d) => d.toISOString().slice(0, 10);
 const addDays = (d, n) =>
   new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + n));
@@ -111,34 +122,53 @@ function computeRanges(q) {
   };
 }
 
+/* =========================
+ * Google Ads helpers
+ * ========================= */
 const microsToCurrency = (m) => {
   const n = Number(m);
   return Number.isFinite(n) ? n / 1e6 : 0;
 };
 
 async function getFreshAccessToken(gaDoc) {
+  // Si ya tenemos accessToken reciente, úsalo
+  if (gaDoc.accessToken && gaDoc.accessToken.length > 10) return gaDoc.accessToken;
+
   const client = oauth();
   client.setCredentials({
-    refresh_token: gaDoc.refreshToken,
-    access_token: gaDoc.accessToken,
+    refresh_token: gaDoc.refreshToken || undefined,
+    access_token: gaDoc.accessToken || undefined,
   });
-  const { credentials } = await client.refreshAccessToken();
-  return credentials.access_token || gaDoc.accessToken;
+
+  // Intenta primero getAccessToken (refresca si es necesario)
+  try {
+    const t = await client.getAccessToken();
+    if (t?.token) return t.token;
+  } catch {}
+
+  // Fallback explícito (algunas versiones): refreshAccessToken
+  try {
+    const { credentials } = await client.refreshAccessToken();
+    return credentials.access_token || gaDoc.accessToken;
+  } catch (_) {
+    // Si no hay refresh token, intenta devolver el accessToken actual si existe
+    if (gaDoc.accessToken) return gaDoc.accessToken;
+    throw new Error('NO_ACCESS_OR_REFRESH_TOKEN');
+  }
 }
 
 const customerList = (doc) => (Array.isArray(doc?.customers) ? doc.customers : []);
 
 function resolveCustomerId(req, doc) {
-  const q = String(
-    req.query.account_id || req.query.customer_id || ''
-  )
+  const q = String(req.query.account_id || req.query.customer_id || '')
     .replace(/^customers\//, '')
-    .replace(/-/g, '');
+    .replace(/-/g, '')
+    .trim();
   if (q) return q;
 
-  if (doc?.defaultCustomerId) return String(doc.defaultCustomerId).replace(/-/g, '');
+  if (doc?.defaultCustomerId) return String(doc.defaultCustomerId).replace(/-/g, '').trim();
   const list = customerList(doc);
-  return list.length ? String(list[0].id || '').replace(/-/g, '') : '';
+  return list.length ? String(list[0].id || '').replace(/-/g, '').trim() : '';
 }
 
 function buildHeaders(accessToken, managerId) {
@@ -147,7 +177,9 @@ function buildHeaders(accessToken, managerId) {
     'developer-token': GOOGLE_DEVELOPER_TOKEN,
     'Content-Type': 'application/json',
   };
-  const loginId = String(managerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '').replace(/-/g, '').trim();
+  const loginId = String(managerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '')
+    .replace(/-/g, '')
+    .trim();
   if (loginId) headers['login-customer-id'] = loginId;
   return headers;
 }
@@ -161,16 +193,17 @@ async function runGAQL({ accessToken, customerId, gaql, managerId }) {
   return data?.results || [];
 }
 
-
-async function listAccessibleCustomers(accessToken) {
+async function listAccessibleCustomers(accessToken, managerId) {
   const { data } = await axios.get(
     `https://googleads.googleapis.com/v16/customers:listAccessibleCustomers`,
-    { headers: { Authorization: `Bearer ${accessToken}`, 'developer-token': GOOGLE_DEVELOPER_TOKEN }, timeout: 20000 }
+    { headers: buildHeaders(accessToken, managerId), timeout: 20000 }
   );
   return (data?.resourceNames || []).map((rn) => rn.split('/')[1]).filter(Boolean);
 }
 
-
+/* =========================
+ * Insights endpoint
+ * ========================= */
 router.get('/', requireAuth, async (req, res) => {
   try {
     const gaDoc = await GoogleAccount.findOne({
@@ -365,7 +398,9 @@ router.get('/', requireAuth, async (req, res) => {
   }
 });
 
-
+/* =========================
+ * Accounts endpoint (para dropdown)
+ * ========================= */
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount
@@ -383,32 +418,36 @@ router.get('/accounts', requireAuth, async (req, res) => {
       try {
         const accessToken = await getFreshAccessToken(ga);
         let ids = [];
-        try { ids = await listAccessibleCustomers(accessToken); }
-        catch { ids = (ga.customers || []).map((c) => String(c.id)); }
+        try {
+          ids = await listAccessibleCustomers(accessToken, ga.managerCustomerId);
+        } catch {
+          ids = (ga.customers || []).map((c) => String(c.id));
+        }
 
         metas = [];
         for (const id of ids) {
           try {
             const rows = await runGAQL({
               accessToken,
-              customerId: id,
+              customerId: id.replace(/^customers\//, '').replace(/-/g, ''),
               managerId: ga.managerCustomerId,
               gaql: `
                 SELECT
                   customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone, customer.status
                 FROM customer
+                LIMIT 1
               `
             });
             const r = rows?.[0];
             metas.push({
-              id,
+              id: id.replace(/^customers\//, '').replace(/-/g, ''),
               descriptiveName: r?.customer?.descriptiveName || `Customer ${id}`,
               currencyCode: r?.customer?.currencyCode || null,
               timeZone: r?.customer?.timeZone || null,
               status: r?.customer?.status || null,
             });
           } catch {
-            metas.push({ id, descriptiveName: `Customer ${id}` });
+            metas.push({ id: id.replace(/^customers\//, '').replace(/-/g, ''), descriptiveName: `Customer ${id}` });
           }
         }
 
@@ -421,7 +460,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
 
     const accounts = (metas || [])
       .map((a) => ({
-        id: String(a.id || '').replace(/^customers\//, '').replace(/-/g, ''),
+        id: String(a.id || '').replace(/^customers\//, '').replace(/-/g, '').trim(),
         name: a.name || a.descriptiveName || null,
         currency: a.currency || a.currencyCode || null,
         timezone: a.timezone || a.timeZone || null,
@@ -438,7 +477,9 @@ router.get('/accounts', requireAuth, async (req, res) => {
   }
 });
 
-
+/* =========================
+ * Customers (sin agregado de meta en DB)
+ * ========================= */
 router.get('/customers', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount
@@ -452,34 +493,36 @@ router.get('/customers', requireAuth, async (req, res) => {
 
     const accessToken = await getFreshAccessToken(ga);
 
-    
     let ids = [];
-    try { ids = await listAccessibleCustomers(accessToken); }
-    catch { ids = (ga.customers || []).map((c) => String(c.id)); }
+    try {
+      ids = await listAccessibleCustomers(accessToken, ga.managerCustomerId);
+    } catch {
+      ids = (ga.customers || []).map((c) => String(c.id));
+    }
 
-    
     const metas = [];
     for (const id of ids) {
       try {
         const rows = await runGAQL({
           accessToken,
-          customerId: id,
+          customerId: id.replace(/^customers\//, '').replace(/-/g, ''),
           managerId: ga.managerCustomerId,
           gaql: `
             SELECT
               customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone
             FROM customer
+            LIMIT 1
           `
         });
         const r = rows?.[0];
         metas.push({
-          id,
+          id: id.replace(/^customers\//, '').replace(/-/g, ''),
           descriptiveName: r?.customer?.descriptiveName || `Customer ${id}`,
           currencyCode: r?.customer?.currencyCode || null,
           timeZone: r?.customer?.timeZone || null,
         });
       } catch {
-        metas.push({ id, descriptiveName: `Customer ${id}` });
+        metas.push({ id: id.replace(/^customers\//, '').replace(/-/g, ''), descriptiveName: `Customer ${id}` });
       }
     }
 
@@ -500,10 +543,12 @@ router.get('/customers', requireAuth, async (req, res) => {
   }
 });
 
-
+/* =========================
+ * Set default
+ * ========================= */
 router.post('/default', requireAuth, express.json(), async (req, res) => {
   try {
-    const customerId = String(req.body?.customerId || '').replace(/-/g, '');
+    const customerId = String(req.body?.customerId || '').replace(/^customers\//, '').replace(/-/g, '').trim();
     if (!customerId) return res.status(400).json({ ok: false, error: 'CUSTOMER_REQUIRED' });
 
     await GoogleAccount.findOneAndUpdate(

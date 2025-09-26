@@ -10,14 +10,17 @@ const router = express.Router();
 // Modelos
 const User = require('../models/User');
 let GoogleAccount;
-try { GoogleAccount = require('../models/GoogleAccount'); }
-catch (_) {
+try {
+  GoogleAccount = require('../models/GoogleAccount');
+} catch (_) {
   const schema = new mongoose.Schema({
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
-    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
-    accessToken: { type: String, select: false },
+    userId:{ type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
+    accessToken:  { type: String, select: false },
     refreshToken: { type: String, select: false },
-    scope: [String]
+    scope:        [String],
+    gaProperties: { type: Array, default: [] },
+    defaultPropertyId: { type: String, default: null },
   }, { collection: 'googleaccounts' });
   GoogleAccount = mongoose.models.GoogleAccount || mongoose.model('GoogleAccount', schema);
 }
@@ -30,6 +33,7 @@ function requireSession(req, res, next) {
   return res.status(401).json({ ok:false, error: 'UNAUTHORIZED' });
 }
 
+// Crea un OAuth client con refresh token del usuario
 async function getOAuthClientForUser(userId) {
   const ga = await GoogleAccount.findOne({
     $or: [{ user: userId }, { userId }]
@@ -44,7 +48,7 @@ async function getOAuthClientForUser(userId) {
   const oAuth2Client = new google.auth.OAuth2({
     clientId: GOOGLE_CLIENT_ID,
     clientSecret: GOOGLE_CLIENT_SECRET,
-    redirectUri: 'postmessage',
+    redirectUri: 'postmessage', // server-side refresh
   });
 
   oAuth2Client.setCredentials({
@@ -56,16 +60,60 @@ async function getOAuthClientForUser(userId) {
   return oAuth2Client;
 }
 
-function buildDateRange(preset = 'last_30_days') {
+// Mapeo flexible de date presets
+function mapPresetToLegacy(preset) {
+  switch (preset) {
+    case 'last_7d': return 'last_7_days';
+    case 'last_14d': return 'last_14_days';
+    case 'last_28d': return 'last_28_days';
+    case 'last_30d': return 'last_30_days';
+    case 'last_90d': return 'last_90_days';
+    case 'today': return 'today';
+    case 'yesterday': return 'yesterday';
+    case 'this_month': return 'this_month';
+    case 'last_month': return 'last_month';
+    default: return preset;
+  }
+}
+
+// Construye rango usando legacy presets y include_today
+function buildDateRange(inputPreset = 'last_30_days', includeToday = true) {
+  const preset = mapPresetToLegacy(inputPreset) || 'last_30_days';
   const now = new Date();
+
+  // end = hoy o ayer
   const end = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (!includeToday) end.setDate(end.getDate() - 1);
+
   const start = new Date(end);
-  const map = { last_7_days: 7, last_14_days: 14, last_30_days: 30, last_90_days: 90 };
-  const days = map[preset] || 30;
-  start.setDate(end.getDate() - (days - 1));
+  let days = 30;
+
+  const daysMap = { last_7_days: 7, last_14_days: 14, last_28_days: 28, last_30_days: 30, last_90_days: 90 };
+
+  if (preset in daysMap) {
+    days = daysMap[preset];
+    start.setDate(end.getDate() - (days - 1));
+  } else if (preset === 'yesterday') {
+    start.setTime(end.getTime()); // ya movimos end si includeToday=false; para "yesterday" siempre ayer
+    start.setDate(end.getDate()); // end ya es ayer si include_today=0, pero forzamos:
+    end.setTime(start.getTime());
+  } else if (preset === 'today') {
+    // hoy (o ayer si include_today=0)
+    start.setTime(end.getTime());
+  } else if (preset === 'this_month') {
+    start.setFullYear(end.getFullYear(), end.getMonth(), 1);
+  } else if (preset === 'last_month') {
+    start.setMonth(end.getMonth() - 1, 1);
+    end.setMonth(start.getMonth() + 1, 0); // último día del mes anterior
+  } else {
+    // fallback
+    start.setDate(end.getDate() - (days - 1));
+  }
+
   const fmt = (d) => d.toISOString().slice(0, 10);
   return { startDate: fmt(start), endDate: fmt(end), days };
 }
+
 const pctDelta = (c, p) => {
   const C = Number(c) || 0, P = Number(p) || 0;
   if (!P && !C) return 0;
@@ -73,40 +121,101 @@ const pctDelta = (c, p) => {
   return (C - P) / P;
 };
 
+// Re-sync GA properties y persiste en Mongo
+async function resyncAndPersistProperties(userId) {
+  const auth = await getOAuthClientForUser(userId);
+  const admin = google.analyticsadmin({ version: 'v1beta', auth });
+
+  const out = [];
+  let pageToken;
+  do {
+    const resp = await admin.properties.search({
+      requestBody: { query: "" },
+      pageToken,
+      pageSize: 200,
+    });
+    (resp.data.properties || []).forEach((p) => {
+      out.push({
+        propertyId: p.name, // "properties/123"
+        displayName: p.displayName || p.name,
+        timeZone: p.timeZone || null,
+        currencyCode: p.currencyCode || null,
+      });
+    });
+    pageToken = resp.data.nextPageToken || undefined;
+  } while (pageToken);
+
+  // dedupe por propertyId
+  const map = new Map();
+  for (const p of out) map.set(p.propertyId, p);
+  const properties = Array.from(map.values());
+
+  // Persistir
+  const doc = await GoogleAccount.findOne({
+    $or: [{ user: userId }, { userId }]
+  });
+  if (doc) {
+    doc.gaProperties = properties;
+    if (!doc.defaultPropertyId && properties[0]?.propertyId) {
+      doc.defaultPropertyId = properties[0].propertyId;
+    }
+    await doc.save();
+  } else {
+    await GoogleAccount.findOneAndUpdate(
+      { $or: [{ user: userId }, { userId }] },
+      {
+        $set: {
+          gaProperties: properties,
+          defaultPropertyId: properties[0]?.propertyId || null,
+          updatedAt: new Date()
+        }
+      },
+      { upsert: true }
+    );
+  }
+  return properties;
+}
+
 /* =======================
- * Listar propiedades GA4
+ * Listar propiedades GA4 (DB-first con auto re-sync)
  * ======================= */
 router.get('/api/google/analytics/properties', requireSession, async (req, res) => {
   try {
-    const auth = await getOAuthClientForUser(req.user._id);
-    const admin = google.analyticsadmin({ version: 'v1beta', auth });
+    // 1) Leer desde Mongo
+    const doc = await GoogleAccount.findOne({
+      $or: [{ user: req.user._id }, { userId: req.user._id }],
+    }).lean();
 
-    const accResp = await admin.accounts.list({ pageSize: 200 });
-    const accounts = accResp.data.accounts || [];
+    let properties = doc?.gaProperties || [];
+    let defaultPropertyId = doc?.defaultPropertyId || null;
 
-    const properties = [];
-    for (const acc of accounts) {
+    // 2) Si está vacío, re-sync con GA Admin y persistir
+    if (!properties.length) {
       try {
-        const props = await admin.properties.list({
-          filter: `parent:accounts/${acc.name.split('/')[1]}`,
-          pageSize: 200,
-        });
-        (props.data.properties || []).forEach((p) => {
-          properties.push({
-            name: p.name, // "properties/123"
-            propertyId: p.name.split('/')[1],
-            displayName: p.displayName,
-            timeZone: p.timeZone,
-            currencyCode: p.currencyCode,
-          });
-        });
-      } catch {}
+        properties = await resyncAndPersistProperties(req.user._id);
+        defaultPropertyId = properties?.[0]?.propertyId || null;
+      } catch (e) {
+        // si el refresh falla, devolvemos vacío con error controlado
+        return res.status(401).json({ ok:false, error: 'NO_REFRESH_TOKEN_OR_SYNC_FAILED' });
+      }
     }
 
-    res.json({ ok: true, accounts: accounts.map(a => ({ name:a.name, displayName:a.displayName })), properties });
+    res.json({ ok: true, properties, defaultPropertyId });
   } catch (e) {
     const code = e?.code || e?.response?.status || 500;
     res.status(code === 'NO_REFRESH_TOKEN' ? 401 : 500).json({ ok:false, error: e.message || String(e) });
+  }
+});
+
+// También de DB puro (opcional, rápido)
+router.get('/api/google/analytics/properties/db', requireSession, async (req, res) => {
+  try {
+    const doc = await GoogleAccount.findOne({
+      $or: [{ user: req.user._id }, { userId: req.user._id }],
+    }).lean();
+    res.json({ ok: true, properties: doc?.gaProperties || [], defaultPropertyId: doc?.defaultPropertyId || null });
+  } catch (e) {
+    res.status(500).json({ ok:false, error: String(e) });
   }
 });
 
@@ -116,7 +225,9 @@ router.get('/api/google/analytics/properties', requireSession, async (req, res) 
 router.get('/api/google/analytics/overview', requireSession, async (req, res) => {
   try {
     const property = req.query.property; // "properties/123456789"
-    const dateRange = req.query.dateRange || 'last_30_days';
+    const datePreset = req.query.date_preset || req.query.dateRange || 'last_30_days';
+    const includeToday = req.query.include_today === '1';
+
     if (!property || !/^properties\/\d+$/.test(property)) {
       return res.status(400).json({ ok:false, error:'PROPERTY_REQUIRED' });
     }
@@ -124,7 +235,7 @@ router.get('/api/google/analytics/overview', requireSession, async (req, res) =>
     const auth = await getOAuthClientForUser(req.user._id);
     const dataApi = google.analyticsdata({ version: 'v1beta', auth });
 
-    const { startDate, endDate, days } = buildDateRange(dateRange);
+    const { startDate, endDate, days } = buildDateRange(datePreset, includeToday);
     const prevStart = new Date(startDate);
     prevStart.setDate(prevStart.getDate() - days);
     const prevEnd = new Date(endDate);
@@ -171,31 +282,31 @@ router.get('/api/google/analytics/overview', requireSession, async (req, res) =>
     const aovNow  = purNow ? revNow / purNow : 0;
     const aovPrev = purPrev ? revPrev / purPrev : 0;
 
-    // Tendencia (ahora incluye engagementRate)
-const trendResp = await dataApi.properties.runReport({
-  property,
-  requestBody: {
-    dateRanges: [{ startDate, endDate }],
-    dimensions: [{ name: 'date' }],
-    metrics: [
-      { name: 'totalUsers' },
-      { name: 'sessions' },
-      { name: 'conversions' },
-      { name: 'purchaseRevenue' },
-      { name: 'engagementRate' } // NUEVO
-    ],
-    orderBys: [{ dimension: { dimensionName: 'date' } }]
-  }
-});
-const trend = (trendResp.data.rows || []).map((row) => ({
-  date: row.dimensionValues?.[0]?.value,
-  users: Number(row.metricValues?.[0]?.value || 0),
-  sessions: Number(row.metricValues?.[1]?.value || 0),
-  conversions: Number(row.metricValues?.[2]?.value || 0),
-  revenue: Number(row.metricValues?.[3]?.value || 0),
-  engagementRate: Number(row.metricValues?.[4]?.value || 0), // NUEVO
-}));
+    // Tendencia
+    const trendResp = await dataApi.properties.runReport({
+      property,
+      requestBody: {
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [{ name: 'date' }],
+        metrics: [
+          { name: 'totalUsers' },
+          { name: 'sessions' },
+          { name: 'conversions' },
+          { name: 'purchaseRevenue' },
+          { name: 'engagementRate' }
+        ],
+        orderBys: [{ dimension: { dimensionName: 'date' } }]
+      }
+    });
 
+    const trend = (trendResp.data.rows || []).map((row) => ({
+      date: row.dimensionValues?.[0]?.value,
+      users: Number(row.metricValues?.[0]?.value || 0),
+      sessions: Number(row.metricValues?.[1]?.value || 0),
+      conversions: Number(row.metricValues?.[2]?.value || 0),
+      revenue: Number(row.metricValues?.[3]?.value || 0),
+      engagementRate: Number(row.metricValues?.[4]?.value || 0),
+    }));
 
     res.json({
       ok: true,
@@ -236,11 +347,12 @@ const trend = (trendResp.data.rows || []).map((row) => ({
 router.get('/api/google/analytics/acquisition', requireSession, async (req, res) => {
   try {
     const property = req.query.property;
-    const dateRange = req.query.dateRange || 'last_30_days';
+    const datePreset = req.query.date_preset || req.query.dateRange || 'last_30_days';
+    const includeToday = req.query.include_today === '1';
     if (!property || !/^properties\/\d+$/.test(property)) {
       return res.status(400).json({ ok:false, error:'PROPERTY_REQUIRED' });
     }
-    const { startDate, endDate } = buildDateRange(dateRange);
+    const { startDate, endDate } = buildDateRange(datePreset, includeToday);
 
     const auth = await getOAuthClientForUser(req.user._id);
     const dataApi = google.analyticsdata({ version: 'v1beta', auth });
@@ -276,11 +388,12 @@ router.get('/api/google/analytics/acquisition', requireSession, async (req, res)
 router.get('/api/google/analytics/landing-pages', requireSession, async (req, res) => {
   try {
     const property = req.query.property;
-    const dateRange = req.query.dateRange || 'last_30_days';
+    const datePreset = req.query.date_preset || req.query.dateRange || 'last_30_days';
+    const includeToday = req.query.include_today === '1';
     if (!property || !/^properties\/\d+$/.test(property)) {
       return res.status(400).json({ ok:false, error:'PROPERTY_REQUIRED' });
     }
-    const { startDate, endDate } = buildDateRange(dateRange);
+    const { startDate, endDate } = buildDateRange(datePreset, includeToday);
 
     const auth = await getOAuthClientForUser(req.user._id);
     const dataApi = google.analyticsdata({ version: 'v1beta', auth });
@@ -316,11 +429,12 @@ router.get('/api/google/analytics/landing-pages', requireSession, async (req, re
 router.get('/api/google/analytics/funnel', requireSession, async (req, res) => {
   try {
     const property = req.query.property;
-    const dateRange = req.query.dateRange || 'last_30_days';
+    const datePreset = req.query.date_preset || req.query.dateRange || 'last_30_days';
+    const includeToday = req.query.include_today === '1';
     if (!property || !/^properties\/\d+$/.test(property)) {
       return res.status(400).json({ ok:false, error:'PROPERTY_REQUIRED' });
     }
-    const { startDate, endDate } = buildDateRange(dateRange);
+    const { startDate, endDate } = buildDateRange(datePreset, includeToday);
 
     const auth = await getOAuthClientForUser(req.user._id);
     const dataApi = google.analyticsdata({ version: 'v1beta', auth });
@@ -365,11 +479,12 @@ router.get('/api/google/analytics/funnel', requireSession, async (req, res) => {
 router.get('/api/google/analytics/leads', requireSession, async (req, res) => {
   try {
     const property = req.query.property;
-    const dateRange = req.query.dateRange || 'last_30_days';
+    const datePreset = req.query.date_preset || req.query.dateRange || 'last_30_days';
+    const includeToday = req.query.include_today === '1';
     if (!property || !/^properties\/\d+$/.test(property)) {
       return res.status(400).json({ ok:false, error:'PROPERTY_REQUIRED' });
     }
-    const { startDate, endDate } = buildDateRange(dateRange);
+    const { startDate, endDate } = buildDateRange(datePreset, includeToday);
 
     const auth = await getOAuthClientForUser(req.user._id);
     const dataApi = google.analyticsdata({ version: 'v1beta', auth });
