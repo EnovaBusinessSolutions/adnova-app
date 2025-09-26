@@ -1,4 +1,3 @@
-// backend/routes/googleConnect.js
 'use strict';
 
 const express = require('express');
@@ -6,14 +5,17 @@ const axios = require('axios');
 const { OAuth2Client } = require('google-auth-library');
 const { google } = require('googleapis');
 const mongoose = require('mongoose');
+
 const router = express.Router();
 
+// Models
 const User = require('../models/User');
 
 let GoogleAccount;
 try {
   GoogleAccount = require('../models/GoogleAccount');
 } catch (_) {
+  // Fallback simple por si el modelo no está registrado aún
   const { Schema, model } = mongoose;
   const schema = new Schema(
     {
@@ -23,12 +25,14 @@ try {
       refreshToken:      { type: String, select: false },
       scope:             { type: [String], default: [] },
       expiresAt:         { type: Date },
+      // Google Ads
       managerCustomerId: { type: String },
-      defaultCustomerId: { type: String },
       customers:         { type: Array, default: [] },
-      // GA4
-      gaProperties:      { type: Array, default: [] },
-      defaultPropertyId: { type: String },
+      defaultCustomerId: { type: String },
+      // Google Analytics 4
+      gaProperties:      { type: Array, default: [] }, // [{ propertyId, displayName, ... }]
+      defaultPropertyId: { type: String },             // "properties/123456789"
+      // Preferencias
       objective:         { type: String, enum: ['ventas','alcance','leads'], default: null },
       createdAt:         { type: Date, default: Date.now },
       updatedAt:         { type: Date, default: Date.now },
@@ -39,21 +43,19 @@ try {
   GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
 }
 
+// Env
 const {
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
   GOOGLE_CONNECT_CALLBACK_URL,
   GOOGLE_DEVELOPER_TOKEN,
-  GOOGLE_ADS_LOGIN_CUSTOMER_ID,
-  GOOGLE_ADS_API_VERSION, // <-- nuevo (opcional)
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID, // opcional para MCC
 } = process.env;
 
-// Usa v17 por defecto (v16 te está dando 404)
-const ADS_VERSION = (GOOGLE_ADS_API_VERSION || 'v17').trim();
-const ADS_API = `https://googleads.googleapis.com/${ADS_VERSION}`;
-
+const ADS_API = 'https://googleads.googleapis.com/v16';
 const DEFAULT_GOOGLE_OBJECTIVE = 'ventas';
 
+// Middlewares / helpers
 function requireSession(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
@@ -67,7 +69,8 @@ function oauth() {
   });
 }
 
-const normId = (s='') => String(s).replace(/-/g, '').trim();
+const normId = (s = '') => String(s).replace(/-/g, '').trim();
+
 const normalizeScopes = (raw) => Array.from(
   new Set(
     (Array.isArray(raw) ? raw : String(raw || '').split(' '))
@@ -76,43 +79,29 @@ const normalizeScopes = (raw) => Array.from(
   )
 );
 
-// ---------- Helpers Google Ads ----------
-function buildAdsHeaders(accessToken, managerId) {
-  const h = {
-    Authorization: `Bearer ${accessToken}`,
-    'developer-token': GOOGLE_DEVELOPER_TOKEN,
-    'Content-Type': 'application/json',
-    Accept: 'application/json',
-  };
-  const login = String(managerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '')
-    .replace(/-/g,'').trim();
-  if (login) h['login-customer-id'] = login;
-  return h;
-}
-
-async function listAccessibleCustomers(accessToken, managerId) {
-  const url = `${ADS_API}/customers:listAccessibleCustomers`;
-  const { data } = await axios.get(url, {
-    headers: buildAdsHeaders(accessToken, managerId),
+// -------------------- Google Ads: descubrimiento de cuentas --------------------
+async function listAccessibleCustomers(accessToken) {
+  const { data } = await axios.get(`${ADS_API}/customers:listAccessibleCustomers`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'developer-token': GOOGLE_DEVELOPER_TOKEN,
+      Accept: 'application/json',
+    },
     timeout: 20000,
-    validateStatus: () => true, // para loguear mejor
+    // NOTA: aquí NO uses login-customer-id
   });
-  if (!data || data.error) {
-    throw new Error(`Ads listAccessibleCustomers error: ${JSON.stringify(data?.error || data)}`);
-  }
   return Array.isArray(data?.resourceNames) ? data.resourceNames : [];
 }
 
-async function fetchCustomer(accessToken, cid, managerId) {
-  const url = `${ADS_API}/customers/${cid}`;
-  const { data } = await axios.get(url, {
-    headers: buildAdsHeaders(accessToken, managerId),
+async function fetchCustomer(accessToken, cid) {
+  const { data } = await axios.get(`${ADS_API}/customers/${cid}`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'developer-token': GOOGLE_DEVELOPER_TOKEN,
+      Accept: 'application/json',
+    },
     timeout: 15000,
-    validateStatus: () => true,
   });
-  if (!data || data.error) {
-    throw new Error(`Ads fetchCustomer error: ${JSON.stringify(data?.error || data)}`);
-  }
   return {
     id: normId(cid),
     resourceName: data?.resourceName || `customers/${cid}`,
@@ -122,46 +111,51 @@ async function fetchCustomer(accessToken, cid, managerId) {
   };
 }
 
-async function discoverCustomers(accessToken, managerId) {
-  const rn = await listAccessibleCustomers(accessToken, managerId);
+async function discoverCustomers(accessToken) {
+  const rn = await listAccessibleCustomers(accessToken);
   const ids = rn.map((r) => (r || '').split('/')[1]).filter(Boolean);
   const out = [];
-  for (const cid of ids.slice(0, 50)) {
-    try { out.push(await fetchCustomer(accessToken, cid, managerId)); }
-    catch (e) { console.warn('✖ fetchCustomer', cid, e?.message); }
+  for (const cid of ids.slice(0, 100)) {
+    try { out.push(await fetchCustomer(accessToken, cid)); }
+    catch (e) {
+      console.warn('discoverCustomers: fallo fetchCustomer', cid, e?.response?.data || e.message);
+    }
   }
   return out;
 }
 
-// ---------- Helpers GA4 (compatibles con googleapis viejas) ----------
+// -------------------- GA4: obtener propiedades vía Admin API (estable) --------------------
 async function fetchGA4Properties(oauthClient) {
   const admin = google.analyticsadmin({ version: 'v1beta', auth: oauthClient });
-
-  // Camino compatible: listar account summaries (trae properties embebidas)
   const out = [];
   let pageToken;
+
   do {
-    const resp = await admin.accountSummaries.list({
-      pageToken,
-      pageSize: 200,
-    });
-    (resp.data.accountSummaries || []).forEach((acc) => {
-      (acc.propertySummaries || []).forEach((p) => {
+    // accountSummaries.list es estable y retorna las propertySummaries por cuenta
+    const resp = await admin.accountSummaries.list({ pageSize: 200, pageToken });
+    const items = resp.data.accountSummaries || [];
+    for (const acc of items) {
+      const ps = acc.propertySummaries || [];
+      for (const p of ps) {
+        // p.property => "properties/123456789"
         out.push({
-          propertyId: `properties/${p.property}`,
+          propertyId: p.property,
           displayName: p.displayName || p.property,
-          timeZone: p.propertyDisplayName ? undefined : undefined, // no lo trae aquí
+          // Admin summaries no incluyen TZ/moneda; se pueden resolver después si fuera necesario
+          timeZone: undefined,
           currencyCode: undefined,
         });
-      });
-    });
+      }
+    }
     pageToken = resp.data.nextPageToken || undefined;
   } while (pageToken);
 
   return out;
 }
 
-// ---------- Rutas ----------
+// -------------------- Rutas --------------------
+
+// 1) Redirige a Google para consentir scopes (Ads + Analytics)
 router.get('/connect', requireSession, async (req, res) => {
   try {
     const client   = oauth();
@@ -171,14 +165,14 @@ router.get('/connect', requireSession, async (req, res) => {
 
     const url = client.generateAuthUrl({
       access_type: 'offline',
-      prompt: 'consent',
+      prompt: 'consent',                 // fuerza refresh_token la primera vez
       include_granted_scopes: true,
       scope: [
         'https://www.googleapis.com/auth/userinfo.email',
         'https://www.googleapis.com/auth/userinfo.profile',
         'https://www.googleapis.com/auth/adwords',
         'https://www.googleapis.com/auth/analytics.readonly',
-        'openid'
+        'openid',
       ],
       state: JSON.stringify({
         uid: String(req.user._id),
@@ -193,13 +187,16 @@ router.get('/connect', requireSession, async (req, res) => {
   }
 });
 
+// 2) Callback: guarda tokens, clientes de Ads y propiedades GA4
 async function googleCallbackHandler(req, res) {
   try {
     if (req.query.error) {
       return res.redirect(`/onboarding?google=error&reason=${encodeURIComponent(req.query.error)}`);
     }
     const code = req.query.code;
-    if (!code) return res.redirect('/onboarding?google=error&reason=no_code');
+    if (!code) {
+      return res.redirect('/onboarding?google=error&reason=no_code');
+    }
 
     const client = oauth();
     const { tokens } = await client.getToken(code);
@@ -213,66 +210,69 @@ async function googleCallbackHandler(req, res) {
 
     const grantedScopes = normalizeScopes(tokens.scope);
 
-    // set credentials para siguientes llamadas
-    client.setCredentials({ access_token: accessToken, refresh_token: refreshToken || undefined });
-
-    // ADS customers
+    // Descubrir cuentas de Google Ads
     let customers = [];
     try {
-      customers = await discoverCustomers(accessToken, GOOGLE_ADS_LOGIN_CUSTOMER_ID);
-      console.log('✓ ADS customers:', customers.length);
+      customers = await discoverCustomers(accessToken);
     } catch (e) {
-      console.warn('⚠️ no se pudieron listar customers:', e?.message);
+      console.warn('⚠️ no se pudieron listar customers:', e?.response?.data || e.message);
     }
     const defaultCustomerId = customers?.[0]?.id || null;
 
-    // GA4 properties
+    // Descubrir propiedades GA4 (Analytics Admin API)
+    client.setCredentials({ access_token: accessToken, refresh_token: refreshToken || undefined });
     let gaProps = [];
     try {
       gaProps = await fetchGA4Properties(client);
-      console.log('✓ GA4 properties:', gaProps.length);
     } catch (e) {
-      console.warn('⚠️ no se pudieron listar GA4 properties:', e?.message);
+      console.warn('⚠️ no se pudieron listar GA4 properties:', e?.response?.data || e.message);
     }
     const defaultPropertyId = gaProps?.[0]?.propertyId || null;
 
-    // Upsert en Mongo
+    // Guardar/actualizar documento de conexión
     const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
     const update = {
       user: req.user._id,
       userId: req.user._id,
       accessToken,
       expiresAt,
+      scope: grantedScopes,
       customers,
       gaProperties: gaProps,
       ...(defaultCustomerId ? { defaultCustomerId } : {}),
       ...(defaultPropertyId ? { defaultPropertyId } : {}),
-      scope: grantedScopes,
       updatedAt: new Date(),
     };
     if (refreshToken) update.refreshToken = refreshToken;
 
-    await GoogleAccount.findOneAndUpdate(q, update, { upsert: true, new: true, setDefaultsOnInsert: true });
+    await GoogleAccount.findOneAndUpdate(q, update, {
+      upsert: true,
+      new: true,
+      setDefaultsOnInsert: true,
+    });
 
+    // Flag de usuario conectado
     await User.findByIdAndUpdate(req.user._id, { $set: { googleConnected: true } });
 
+    // Setear objetivo por defecto si no existe
     const [uObj, gaObj] = await Promise.all([
       User.findById(req.user._id).select('googleObjective').lean(),
-      GoogleAccount.findOne(q).select('objective').lean()
+      GoogleAccount.findOne(q).select('objective').lean(),
     ]);
     if (!(uObj?.googleObjective) && !(gaObj?.objective)) {
       await Promise.all([
         User.findByIdAndUpdate(req.user._id, { $set: { googleObjective: DEFAULT_GOOGLE_OBJECTIVE } }),
-        GoogleAccount.findOneAndUpdate(q, { $set: { objective: DEFAULT_GOOGLE_OBJECTIVE, updatedAt: new Date() } })
+        GoogleAccount.findOneAndUpdate(q, { $set: { objective: DEFAULT_GOOGLE_OBJECTIVE, updatedAt: new Date() } }),
       ]);
     }
 
+    // Redirección final
     let returnTo = '/onboarding?google=connected';
     if (req.query.state) {
       try {
         const s = JSON.parse(req.query.state);
         if (s && typeof s.returnTo === 'string' && s.returnTo.trim()) returnTo = s.returnTo;
-      } catch {}
+      } catch { /* ignore */ }
     }
     return res.redirect(returnTo);
   } catch (err) {
@@ -284,7 +284,7 @@ async function googleCallbackHandler(req, res) {
 router.get('/callback',         requireSession, googleCallbackHandler);
 router.get('/connect/callback', requireSession, googleCallbackHandler);
 
-// Estado
+// 3) Estado de la conexión
 router.get('/status', requireSession, async (req, res) => {
   try {
     const u = await User.findById(req.user._id).lean();
@@ -297,6 +297,8 @@ router.get('/status', requireSession, async (req, res) => {
     const hasTokens = !!(ga?.refreshToken || ga?.accessToken);
     const customers = Array.isArray(ga?.customers) ? ga.customers : [];
     const defaultCustomerId = ga?.defaultCustomerId || customers?.[0]?.id || null;
+    const props = Array.isArray(ga?.gaProperties) ? ga.gaProperties : [];
+    const defaultPropertyId = ga?.defaultPropertyId || props?.[0]?.propertyId || null;
 
     res.json({
       ok: true,
@@ -304,11 +306,11 @@ router.get('/status', requireSession, async (req, res) => {
       hasCustomers: customers.length > 0,
       defaultCustomerId,
       customers,
-      gaProperties: ga?.gaProperties || [],
-      defaultPropertyId: ga?.defaultPropertyId || null,
       scopes: Array.isArray(ga?.scope) ? ga.scope : [],
       objective: u?.googleObjective || ga?.objective || null,
       managerCustomerId: ga?.managerCustomerId || null,
+      gaProperties: props,
+      defaultPropertyId,
     });
   } catch (err) {
     console.error('google status error:', err);
@@ -316,7 +318,7 @@ router.get('/status', requireSession, async (req, res) => {
   }
 });
 
-// Cambiar objetivo
+// 4) Guardar objetivo
 router.post('/objective', requireSession, express.json(), async (req, res) => {
   try {
     const val = String(req.body?.objective || '').trim().toLowerCase();
@@ -338,13 +340,13 @@ router.post('/objective', requireSession, express.json(), async (req, res) => {
   }
 });
 
-// Cuentas Ads (con backfill)
+// 5) Listar cuentas guardadas / refrescar si faltan
 router.get('/accounts', requireSession, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
-      .select('+accessToken +refreshToken customers scope managerCustomerId defaultCustomerId')
+      .select('+accessToken +refreshToken customers scope')
       .lean();
 
     if (!ga || (!ga.accessToken && !ga.refreshToken)) {
@@ -352,10 +354,14 @@ router.get('/accounts', requireSession, async (req, res) => {
     }
 
     const accessToken = ga.accessToken;
-    let customers = ga.customers || [];
+    let customers = Array.isArray(ga.customers) ? ga.customers : [];
 
-    if (!customers || customers.length === 0) {
-      try { customers = await discoverCustomers(accessToken, ga.managerCustomerId); } catch {}
+    if (!customers.length) {
+      try {
+        customers = await discoverCustomers(accessToken);
+      } catch (e) {
+        console.warn('accounts: discoverCustomers falló', e?.response?.data || e.message);
+      }
       await GoogleAccount.updateOne(
         { _id: ga._id },
         { $set: { customers, updatedAt: new Date() } }
@@ -370,7 +376,7 @@ router.get('/accounts', requireSession, async (req, res) => {
   }
 });
 
-// Guardar customer por defecto
+// 6) Guardar customer por defecto
 router.post('/default-customer', requireSession, express.json(), async (req, res) => {
   try {
     const cid = normId(req.body?.customerId || '');
@@ -386,47 +392,6 @@ router.post('/default-customer', requireSession, express.json(), async (req, res
   } catch (err) {
     console.error('google default-customer error:', err);
     res.status(500).json({ ok: false, error: 'SAVE_DEFAULT_CUSTOMER_ERROR' });
-  }
-});
-
-// (Opcional) Resync manual desde UI
-router.post('/resync', requireSession, async (req, res) => {
-  try {
-    const doc = await GoogleAccount.findOne({
-      $or: [{ user: req.user._id }, { userId: req.user._id }],
-    }).select('+refreshToken +accessToken managerCustomerId').lean();
-
-    if (!doc) return res.status(404).json({ ok:false, error:'NO_GOOGLE_DOC' });
-
-    const o = oauth();
-    o.setCredentials({ refresh_token: doc.refreshToken, access_token: doc.accessToken });
-    const t = await o.getAccessToken();
-    const accessToken = t?.token || doc.accessToken;
-
-    let customers = [];
-    try { customers = await discoverCustomers(accessToken, doc.managerCustomerId); }
-    catch (e) { console.warn('✖ resync Ads:', e?.message); }
-
-    let gaProps = [];
-    try { gaProps = await fetchGA4Properties(o); }
-    catch (e) { console.warn('✖ resync GA4:', e?.message); }
-
-    const update = {
-      customers,
-      gaProperties: gaProps,
-      ...(customers?.[0]?.id ? { defaultCustomerId: customers[0].id } : {}),
-      ...(gaProps?.[0]?.propertyId ? { defaultPropertyId: gaProps[0].propertyId } : {}),
-      updatedAt: new Date(),
-    };
-    await GoogleAccount.updateOne(
-      { $or: [{ user: req.user._id }, { userId: req.user._id }] },
-      { $set: update }
-    );
-
-    res.json({ ok:true, customersCount: customers.length, propertiesCount: gaProps.length });
-  } catch (e) {
-    console.error('resync error:', e);
-    res.status(500).json({ ok:false, error:'RESYNC_ERROR', detail: String(e.message || e) });
   }
 });
 
