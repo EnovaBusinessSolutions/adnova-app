@@ -18,7 +18,7 @@ require('./auth');
 
 const User = require('./models/User');
 const googleConnect = require('./routes/googleConnect');
-const googleAnalytics = require('./routes/googleAnalytics');
+const gaRouter = require('./routes/googleAnalytics');
 const metaAuthRoutes = require('./routes/meta');
 const privacyRoutes = require('./routes/privacyRoutes');
 const mockShopify = require('./routes/mockShopify');
@@ -439,6 +439,7 @@ app.use('/api/google/ads', sessionGuard, (req, _res, next) => {
   req.url = `/insights${req.url === '/' ? '' : req.url}`;
   next();
 }, googleAdsInsightsRouter);
+app.use('/api/google/analytics', gaRouter);
 
 
 app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);
