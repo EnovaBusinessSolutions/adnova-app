@@ -131,7 +131,7 @@ if (HAS_DASHBOARD_DIST) {
 app.use('/auth/google', googleConnect);
 app.use('/auth/meta', metaAuthRoutes);
 app.use('/', privacyRoutes);
-app.use('/', googleAnalytics);
+app.use('/api/google/analytics', gaRouter);
 
 
 app.get('/', (req, res) => {
@@ -439,7 +439,7 @@ app.use('/api/google/ads', sessionGuard, (req, _res, next) => {
   req.url = `/insights${req.url === '/' ? '' : req.url}`;
   next();
 }, googleAdsInsightsRouter);
-app.use('/api/google/analytics', gaRouter);
+
 
 
 app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);
