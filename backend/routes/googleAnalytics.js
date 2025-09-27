@@ -262,98 +262,108 @@ router.get('/api/google/analytics/overview', requireSession, async (req, res) =>
     prevEnd.setDate(prevEnd.getDate() - days);
     const fmt = (d) => (typeof d === 'string' ? d : d.toISOString().slice(0, 10));
 
-    // KPIs
-    const kpiResp = await dataApi.properties.runReport({
-      property,
-      requestBody: {
-        dateRanges: [
-          { startDate, endDate },
-          { startDate: fmt(prevStart), endDate: fmt(prevEnd) },
-        ],
-        metrics: [
-          { name: 'totalUsers' },
-          { name: 'sessions' },
-          { name: 'newUsers' },
-          { name: 'conversions' },
-          { name: 'purchaseRevenue' },
-          { name: 'purchases' },
-          { name: 'averageSessionDuration' },
-          { name: 'engagementRate' },
-        ],
-      },
-    });
+    // --- KPIs (sin 'purchases' directo) ---
+const kpiResp = await dataApi.properties.runReport({
+  property,
+  requestBody: {
+    dateRanges: [
+      { startDate, endDate },
+      { startDate: fmt(prevStart), endDate: fmt(prevEnd) }
+    ],
+    metrics: [
+      { name: 'totalUsers' },
+      { name: 'sessions' },
+      { name: 'newUsers' },
+      { name: 'conversions' },
+      { name: 'purchaseRevenue' },
+      { name: 'averageSessionDuration' },
+      { name: 'engagementRate' }
+    ]
+  }
+});
 
-    const r = kpiResp.data;
-    const rowNow = r?.rows?.[0]?.metricValues || [];
-    const rowPrev = r?.rows?.[1]?.metricValues || [];
-    const V = (arr, i) => Number(arr?.[i]?.value || 0);
+// --- Compras por evento (NOW) ---
+const purNowResp = await dataApi.properties.runReport({
+  property,
+  requestBody: {
+    dateRanges: [{ startDate, endDate }],
+    dimensions: [{ name: 'eventName' }],
+    metrics: [{ name: 'eventCount' }],
+    dimensionFilter: {
+      filter: {
+        fieldName: 'eventName',
+        stringFilter: { matchType: 'EXACT', value: 'purchase' }
+      }
+    }
+  }
+});
 
-    const usersNow = V(rowNow, 0), usersPrev = V(rowPrev, 0);
-    const sessionsNow = V(rowNow, 1), sessionsPrev = V(rowPrev, 1);
-    const newNow = V(rowNow, 2), newPrev = V(rowPrev, 2);
-    const convNow = V(rowNow, 3), convPrev = V(rowPrev, 3);
-    const revNow = V(rowNow, 4), revPrev = V(rowPrev, 4);
-    const purNow = V(rowNow, 5), purPrev = V(rowPrev, 5);
-    const durNow = V(rowNow, 6), durPrev = V(rowPrev, 6);
-    const engNow = V(rowNow, 7), engPrev = V(rowPrev, 7);
+// --- Compras por evento (PREV) ---
+const purPrevResp = await dataApi.properties.runReport({
+  property,
+  requestBody: {
+    dateRanges: [{ startDate: fmt(prevStart), endDate: fmt(prevEnd) }],
+    dimensions: [{ name: 'eventName' }],
+    metrics: [{ name: 'eventCount' }],
+    dimensionFilter: {
+      filter: {
+        fieldName: 'eventName',
+        stringFilter: { matchType: 'EXACT', value: 'purchase' }
+      }
+    }
+  }
+});
 
-    const pcrNow = sessionsNow ? purNow / sessionsNow : 0;
-    const pcrPrev = sessionsPrev ? purPrev / sessionsPrev : 0;
-    const aovNow = purNow ? revNow / purNow : 0;
-    const aovPrev = purPrev ? revPrev / purPrev : 0;
+const purchasesNow = Number(purNowResp.data?.rows?.[0]?.metricValues?.[0]?.value || 0);
+const purchasesPrev = Number(purPrevResp.data?.rows?.[0]?.metricValues?.[0]?.value || 0);
 
-    // Tendencia
-    const trendResp = await dataApi.properties.runReport({
-      property,
-      requestBody: {
-        dateRanges: [{ startDate, endDate }],
-        dimensions: [{ name: 'date' }],
-        metrics: [
-          { name: 'totalUsers' },
-          { name: 'sessions' },
-          { name: 'conversions' },
-          { name: 'purchaseRevenue' },
-          { name: 'engagementRate' },
-        ],
-        orderBys: [{ dimension: { dimensionName: 'date' } }],
-      },
-    });
+// ... del kpiResp lee como ya lo hacías:
+const r = kpiResp.data;
+const rowNow  = r?.rows?.[0]?.metricValues || [];
+const rowPrev = r?.rows?.[1]?.metricValues || [];
+const V = (arr, i) => Number(arr?.[i]?.value || 0);
 
-    const trend = (trendResp.data.rows || []).map((row) => ({
-      date: row.dimensionValues?.[0]?.value,
-      users: Number(row.metricValues?.[0]?.value || 0),
-      sessions: Number(row.metricValues?.[1]?.value || 0),
-      conversions: Number(row.metricValues?.[2]?.value || 0),
-      revenue: Number(row.metricValues?.[3]?.value || 0),
-      engagementRate: Number(row.metricValues?.[4]?.value || 0),
-    }));
+const usersNow   = V(rowNow,0), usersPrev   = V(rowPrev,0);
+const sessionsNow= V(rowNow,1), sessionsPrev= V(rowPrev,1);
+const newNow     = V(rowNow,2), newPrev     = V(rowPrev,2);
+const convNow    = V(rowNow,3), convPrev    = V(rowPrev,3);
+const revNow     = V(rowNow,4), revPrev     = V(rowPrev,4);
+const durNow     = V(rowNow,5), durPrev     = V(rowPrev,5);
+const engNow     = V(rowNow,6), engPrev     = V(rowPrev,6);
 
-    res.json({
-      ok: true,
-      kpis: {
-        revenue: revNow,
-        purchases: purNow,
-        purchaseConversionRate: pcrNow,
-        aov: aovNow,
-        users: usersNow,
-        sessions: sessionsNow,
-        newUsers: newNow,
-        engagementRate: engNow,
-        averageSessionDuration: durNow,
-      },
-      deltas: {
-        revenue: pctDelta(revNow, revPrev),
-        purchases: pctDelta(purNow, purPrev),
-        purchaseConversionRate: pctDelta(pcrNow, pcrPrev),
-        aov: pctDelta(aovNow, aovPrev),
-        users: pctDelta(usersNow, usersPrev),
-        sessions: pctDelta(sessionsNow, sessionsPrev),
-        newUsers: pctDelta(newNow, newPrev),
-        engagementRate: pctDelta(engNow, engPrev),
-        averageSessionDuration: pctDelta(durNow, durPrev),
-      },
-      trend,
-    });
+// KPIs derivados con 'purchasesNow'
+const pcrNow  = sessionsNow ? purchasesNow / sessionsNow : 0;
+const pcrPrev = sessionsPrev ? purchasesPrev / sessionsPrev : 0;
+const aovNow  = purchasesNow ? revNow / purchasesNow : 0;
+const aovPrev = purchasesPrev ? revPrev / purchasesPrev : 0;
+
+res.json({
+  ok: true,
+  kpis: {
+    revenue: revNow,
+    purchases: purchasesNow,
+    purchaseConversionRate: pcrNow,
+    aov: aovNow,
+    users: usersNow,
+    sessions: sessionsNow,
+    newUsers: newNow,
+    engagementRate: engNow,
+    averageSessionDuration: durNow
+  },
+  deltas: {
+    revenue: pctDelta(revNow, revPrev),
+    purchases: pctDelta(purchasesNow, purchasesPrev),
+    purchaseConversionRate: pctDelta(pcrNow, pcrPrev),
+    aov: pctDelta(aovNow, aovPrev),
+    users: pctDelta(usersNow, usersPrev),
+    sessions: pctDelta(sessionsNow, sessionsPrev),
+    newUsers: pctDelta(newNow, newPrev),
+    engagementRate: pctDelta(engNow, engPrev),
+    averageSessionDuration: pctDelta(durNow, durPrev),
+  },
+  trend
+});
+
   } catch (e) {
     console.error('GA overview error:', e?.response?.data || e.message || e);
     const code = e?.code || e?.response?.status || 500;
