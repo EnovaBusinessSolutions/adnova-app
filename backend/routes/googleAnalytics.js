@@ -4,10 +4,20 @@
 const express = require('express');
 const { google } = require('googleapis');
 const mongoose = require('mongoose');
+const { OAuth2Client } = require('google-auth-library');
+
+// fetch (Node 18+ lo trae global; si no, usamos node-fetch)
+let fetchFn = global.fetch;
+if (!fetchFn) {
+  try { fetchFn = require('node-fetch'); } catch (_) { /* noop */ }
+}
+const fetch = (...args) => fetchFn(...args);
 
 const router = express.Router();
 
-// Modelos
+/* ===========================
+ * Modelos / Esquemas
+ * =========================== */
 const User = require('../models/User');
 let GoogleAccount;
 try {
@@ -22,8 +32,7 @@ try {
       refreshToken: { type: String, select: false },
       scope:        { type: [String], default: [] },
 
-      // cache de GA4
-      gaProperties:      { type: Array, default: [] },
+      gaProperties:      { type: Array, default: [] },  // cache de propiedades GA4
       defaultPropertyId: { type: String, default: null },
     },
     { collection: 'googleaccounts' }
@@ -31,15 +40,15 @@ try {
   GoogleAccount = mongoose.models.GoogleAccount || mongoose.model('GoogleAccount', schema);
 }
 
-const { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET/*, GOOGLE_CONNECT_CALLBACK_URL*/ } = process.env;
-
-/* ----------------------------- helpers ----------------------------- */
+/* ===========================
+ * Helpers
+ * =========================== */
 function requireSession(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-// Crea un OAuth client con refresh token del usuario
+// OAuth2 (googleapis) para Admin API (listar propiedades)
 async function getOAuthClientForUser(userId) {
   const ga = await GoogleAccount.findOne({
     $or: [{ user: userId }, { userId }],
@@ -53,84 +62,73 @@ async function getOAuthClientForUser(userId) {
     throw err;
   }
 
-  // ⚠️ No fijamos redirectUri para evitar invalid_grant si el refresh fue emitido con otra URI.
-  // Si quisieras fijarla, usa EXACTAMENTE la que emitió el token (p.ej. GOOGLE_CONNECT_CALLBACK_URL).
-  const oAuth2Client = new google.auth.OAuth2(GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET);
+  // No fijes redirectUri si el refresh token se emitió con otra URI
+  const oAuth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET
+  );
 
   oAuth2Client.setCredentials({
     refresh_token: ga.refreshToken,
     access_token: ga.accessToken || undefined,
   });
 
-  // Forzamos a refrescar si expira
   try { await oAuth2Client.getAccessToken(); } catch {}
   return oAuth2Client;
 }
 
-// Mapeo flexible de date presets
-function mapPresetToLegacy(preset) {
-  switch (preset) {
-    case 'last_7d': return 'last_7_days';
-    case 'last_14d': return 'last_14_days';
-    case 'last_28d': return 'last_28_days';
-    case 'last_30d': return 'last_30_days';
-    case 'last_90d': return 'last_90_days';
-    case 'today': return 'today';
-    case 'yesterday': return 'yesterday';
-    case 'this_month': return 'this_month';
-    case 'last_month': return 'last_month';
-    default: return preset;
+// Acceso con token “puro” (para GA4 Data API vía HTTP)
+async function getFreshAccessToken(googleAccountDoc) {
+  const oAuth2 = new OAuth2Client(process.env.GOOGLE_CLIENT_ID, process.env.GOOGLE_CLIENT_SECRET);
+  oAuth2.setCredentials({
+    access_token: googleAccountDoc.accessToken,
+    refresh_token: googleAccountDoc.refreshToken,
+  });
+  const { credentials } = await oAuth2.getAccessToken(); // refresca si expira
+  if (credentials?.access_token && credentials.access_token !== googleAccountDoc.accessToken) {
+    // Opcional: persistir access token actualizado
+    googleAccountDoc.accessToken = credentials.access_token;
+    await GoogleAccount.updateOne(
+      { _id: googleAccountDoc._id },
+      { $set: { accessToken: credentials.access_token } }
+    ).catch(() => {});
   }
+  return credentials.access_token || googleAccountDoc.accessToken;
 }
 
-// Construye rango usando legacy presets y include_today
-function buildDateRange(inputPreset = 'last_30_days', includeToday = true) {
-  const preset = mapPresetToLegacy(inputPreset) || 'last_30_days';
-  const now = new Date();
-
-  // end = hoy
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (!includeToday && preset !== 'yesterday') {
-    // Para yesterday lo manejamos abajo; para los demás, si no incluye hoy, terminamos en ayer.
-    end.setDate(end.getDate() - 1);
+// Llamada a GA4 Data API (HTTP)
+async function ga4RunReport({ accessToken, propertyId, body }) {
+  const cleanId = String(propertyId || '').replace(/^properties\//, '');
+  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${cleanId}:runReport`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const errText = await r.text().catch(() => '');
+    throw new Error(`GA4 ${r.status}: ${errText}`);
   }
-
-  const start = new Date(end);
-  let days = 30;
-  const daysMap = { last_7_days: 7, last_14_days: 14, last_28_days: 28, last_30_days: 30, last_90_days: 90 };
-
-  if (preset in daysMap) {
-    days = daysMap[preset];
-    start.setDate(end.getDate() - (days - 1));
-  } else if (preset === 'yesterday') {
-    // Ayer SIEMPRE, independiente de include_today
-    end.setDate(end.getDate() - 1);
-    start.setTime(end.getTime());
-  } else if (preset === 'today') {
-    // Hoy (o ayer si include_today=0 ya se trató arriba)
-    start.setTime(end.getTime());
-  } else if (preset === 'this_month') {
-    start.setFullYear(end.getFullYear(), end.getMonth(), 1);
-  } else if (preset === 'last_month') {
-    start.setMonth(end.getMonth() - 1, 1);
-    end.setMonth(start.getMonth() + 1, 0); // último día del mes anterior
-  } else {
-    // fallback
-    start.setDate(end.getDate() - (days - 1));
-  }
-
-  const fmt = (d) => d.toISOString().slice(0, 10);
-  return { startDate: fmt(start), endDate: fmt(end), days };
+  return r.json();
 }
 
-const pctDelta = (c, p) => {
-  const C = Number(c) || 0, P = Number(p) || 0;
-  if (!P && !C) return 0;
-  if (!P) return 1;
-  return (C - P) / P;
-};
+// Presets -> dateRanges GA4 (hoy / ayer)
+function presetToDateRanges(preset = 'last_30d', includeToday = false) {
+  const map = {
+    last_7d:   { startDate: '7daysAgo',  endDate: includeToday ? 'today' : 'yesterday' },
+    last_14d:  { startDate: '14daysAgo', endDate: includeToday ? 'today' : 'yesterday' },
+    last_28d:  { startDate: '28daysAgo', endDate: includeToday ? 'today' : 'yesterday' },
+    last_30d:  { startDate: '30daysAgo', endDate: includeToday ? 'today' : 'yesterday' },
+    this_month:{ startDate: '30daysAgo', endDate: 'today' },    // simple y suficiente
+    last_month:{ startDate: '60daysAgo', endDate: '30daysAgo' } // simple
+  };
+  return [map[preset] || map.last_30d];
+}
 
-// Re-sync GA properties y persiste en Mongo (manejo de errores claros)
+// Re-sync de propiedades y persistencia en Mongo
 async function resyncAndPersistProperties(userId) {
   const auth = await getOAuthClientForUser(userId);
   const admin = google.analyticsadmin({ version: 'v1beta', auth });
@@ -139,7 +137,6 @@ async function resyncAndPersistProperties(userId) {
   let pageToken;
   try {
     do {
-      // properties.search devuelve todas las propiedades GA4 accesibles por el usuario
       const resp = await admin.properties.search({
         requestBody: { query: '' },
         pageToken,
@@ -147,7 +144,7 @@ async function resyncAndPersistProperties(userId) {
       });
       (resp.data.properties || []).forEach((p) => {
         out.push({
-          propertyId: p.name, // "properties/123"
+          propertyId: p.name, // ej: "properties/420387145"
           displayName: p.displayName || p.name,
           timeZone: p.timeZone || null,
           currencyCode: p.currencyCode || null,
@@ -157,12 +154,12 @@ async function resyncAndPersistProperties(userId) {
     } while (pageToken);
   } catch (err) {
     const code = err?.response?.status || err?.code;
-    if (code === 403) throw new Error('GA_ADMIN_FORBIDDEN');      // Falta scope
-    if (code === 400 || code === 404) throw new Error('GA_ADMIN_NOT_ENABLED'); // API no habilitada
+    if (code === 403) throw new Error('GA_ADMIN_FORBIDDEN');
+    if (code === 400 || code === 404) throw new Error('GA_ADMIN_NOT_ENABLED');
     throw err;
   }
 
-  // dedupe por propertyId
+  // dedupe
   const map = new Map();
   for (const p of out) map.set(p.propertyId, p);
   const properties = Array.from(map.values());
@@ -191,12 +188,13 @@ async function resyncAndPersistProperties(userId) {
   return properties;
 }
 
-/* =======================
- * Listar propiedades GA4 (DB-first con auto re-sync)
- * ======================= */
-router.get('/api/google/analytics/properties', requireSession, async (req, res) => {
+/* =======================================================
+ * Rutas (monta con: app.use('/api/google/analytics', router))
+ * ======================================================= */
+
+/** Listado de propiedades GA4 (DB-first con auto resync) */
+router.get('/properties', requireSession, async (req, res) => {
   try {
-    // 1) Leer desde Mongo
     const doc = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     }).lean();
@@ -204,7 +202,6 @@ router.get('/api/google/analytics/properties', requireSession, async (req, res) 
     let properties = doc?.gaProperties || [];
     let defaultPropertyId = doc?.defaultPropertyId || null;
 
-    // 2) Si está vacío, re-sync con GA Admin y persistir
     if (!properties.length) {
       try {
         properties = await resyncAndPersistProperties(req.user._id);
@@ -227,8 +224,8 @@ router.get('/api/google/analytics/properties', requireSession, async (req, res) 
   }
 });
 
-// También de DB puro (opcional, rápido)
-router.get('/api/google/analytics/properties/db', requireSession, async (req, res) => {
+/** Versión “sólo DB” (rápida) */
+router.get('/properties/db', requireSession, async (req, res) => {
   try {
     const doc = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
@@ -239,240 +236,247 @@ router.get('/api/google/analytics/properties/db', requireSession, async (req, re
   }
 });
 
-/* =========================
- * Overview KPIs + tendencia
- * ========================= */
-router.get('/api/google/analytics/overview', requireSession, async (req, res) => {
+/** Overview dinámico según objetivo */
+router.get('/overview', requireSession, async (req, res) => {
   try {
-    const property = req.query.property; // "properties/123456789"
-    const datePreset = req.query.date_preset || req.query.dateRange || 'last_30_days';
+    const propertyId = String(req.query.property || '').replace(/^properties\//, '');
+    const datePreset   = req.query.dateRange || req.query.date_preset || 'last_30d';
     const includeToday = req.query.include_today === '1';
+    const objective    = String(req.query.objective || 'ventas');
 
-    if (!property || !/^properties\/\d+$/.test(property)) {
-      return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
-    }
+    if (!propertyId) return res.status(400).json({ ok: false, error: 'Missing ?property=' });
 
-    const auth = await getOAuthClientForUser(req.user._id);
-    const dataApi = google.analyticsdata({ version: 'v1beta', auth });
+    const googleAccount = await GoogleAccount.findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] });
+    if (!googleAccount) return res.status(400).json({ ok: false, error: 'No Google account linked' });
 
-    const { startDate, endDate, days } = buildDateRange(datePreset, includeToday);
-    const prevStart = new Date(startDate);
-    prevStart.setDate(prevStart.getDate() - days);
-    const prevEnd = new Date(endDate);
-    prevEnd.setDate(prevEnd.getDate() - days);
-    const fmt = (d) => (typeof d === 'string' ? d : d.toISOString().slice(0, 10));
+    const accessToken = await getFreshAccessToken(googleAccount);
+    const dateRanges  = presetToDateRanges(datePreset, includeToday);
 
-    // --- KPIs (sin 'purchases' directo) ---
-const kpiResp = await dataApi.properties.runReport({
-  property,
-  requestBody: {
-    dateRanges: [
-      { startDate, endDate },
-      { startDate: fmt(prevStart), endDate: fmt(prevEnd) }
-    ],
-    metrics: [
-      { name: 'totalUsers' },
-      { name: 'sessions' },
-      { name: 'newUsers' },
-      { name: 'conversions' },
-      { name: 'purchaseRevenue' },
-      { name: 'averageSessionDuration' },
-      { name: 'engagementRate' }
-    ]
-  }
-});
+    // Métricas base comunes
+    const common = await ga4RunReport({
+      accessToken,
+      propertyId,
+      body: {
+        dateRanges,
+        metrics: [
+          { name: 'totalUsers' },
+          { name: 'newUsers' },
+          { name: 'sessions' },
+          { name: 'engagementRate' },
+          { name: 'averageSessionDuration' },
+        ],
+      },
+    });
+    const cm = (i) => Number(common?.rows?.[0]?.metricValues?.[i]?.value ?? '0');
+    const base = {
+      totalUsers: cm(0),
+      newUsers: cm(1),
+      sessions: cm(2),
+      engagementRate: cm(3),        // 0..1
+      avgEngagementTime: cm(4),     // seconds
+    };
 
-// --- Compras por evento (NOW) ---
-const purNowResp = await dataApi.properties.runReport({
-  property,
-  requestBody: {
-    dateRanges: [{ startDate, endDate }],
-    dimensions: [{ name: 'eventName' }],
-    metrics: [{ name: 'eventCount' }],
-    dimensionFilter: {
-      filter: {
-        fieldName: 'eventName',
-        stringFilter: { matchType: 'EXACT', value: 'purchase' }
+    const out = { ok: true, data: {} };
+
+    if (objective === 'ventas') {
+      // KPIs de Ventas + Embudo de eventos
+      const sales = await ga4RunReport({
+        accessToken,
+        propertyId,
+        body: {
+          dateRanges,
+          metrics: [
+            { name: 'purchaseRevenue' },
+            { name: 'ecommercePurchases' },
+            { name: 'purchaseConversionRate' },
+          ],
+        },
+      });
+      const sm = (i) => Number(sales?.rows?.[0]?.metricValues?.[i]?.value ?? '0');
+      const revenue = sm(0);
+      const purchases = sm(1);
+      const purchaseConversionRate = sm(2);
+      const aov = purchases > 0 ? revenue / purchases : 0;
+
+      const funnel = await ga4RunReport({
+        accessToken,
+        propertyId,
+        body: {
+          dateRanges,
+          dimensions: [{ name: 'eventName' }],
+          metrics: [{ name: 'eventCount' }],
+          dimensionFilter: {
+            filter: {
+              fieldName: 'eventName',
+              inListFilter: { values: ['view_item', 'add_to_cart', 'begin_checkout', 'purchase'] },
+            },
+          },
+          limit: 50,
+        },
+      });
+      const steps = {};
+      for (const r of (funnel.rows || [])) {
+        const ev = r.dimensionValues?.[0]?.value;
+        const val = Number(r.metricValues?.[0]?.value ?? '0');
+        if (ev) steps[ev] = val;
       }
-    }
-  }
-});
 
-// --- Compras por evento (PREV) ---
-const purPrevResp = await dataApi.properties.runReport({
-  property,
-  requestBody: {
-    dateRanges: [{ startDate: fmt(prevStart), endDate: fmt(prevEnd) }],
-    dimensions: [{ name: 'eventName' }],
-    metrics: [{ name: 'eventCount' }],
-    dimensionFilter: {
-      filter: {
-        fieldName: 'eventName',
-        stringFilter: { matchType: 'EXACT', value: 'purchase' }
+      out.data = {
+        ...base,
+        revenue,
+        purchases,
+        aov,
+        purchaseConversionRate,
+        funnel: {
+          view_item: steps.view_item || 0,
+          add_to_cart: steps.add_to_cart || 0,
+          begin_checkout: steps.begin_checkout || 0,
+          purchase: steps.purchase || 0,
+        },
+      };
+    } else if (objective === 'leads') {
+      // Evento generate_lead (ajústalo si usas otro)
+      const leadsRep = await ga4RunReport({
+        accessToken,
+        propertyId,
+        body: {
+          dateRanges,
+          dimensions: [{ name: 'eventName' }],
+          metrics: [{ name: 'eventCount' }],
+          dimensionFilter: {
+            filter: { fieldName: 'eventName', stringFilter: { value: 'generate_lead' } },
+          },
+          limit: 1,
+        },
+      });
+      const leads = Number(leadsRep?.rows?.[0]?.metricValues?.[0]?.value ?? '0');
+      const leadConversionRate = base.sessions > 0 ? leads / base.sessions : 0;
+      out.data = { ...base, leads, leadConversionRate };
+    } else if (objective === 'adquisicion') {
+      // Canales (defaultChannelGroup)
+      const ch = await ga4RunReport({
+        accessToken,
+        propertyId,
+        body: {
+          dateRanges,
+          dimensions: [{ name: 'defaultChannelGroup' }],
+          metrics: [{ name: 'sessions' }],
+          orderBys: [{ desc: true, metric: { metricName: 'sessions' } }],
+          limit: 10,
+        },
+      });
+      const channels = {};
+      for (const r of (ch.rows || [])) {
+        const name = r.dimensionValues?.[0]?.value || 'Other';
+        const val  = Number(r.metricValues?.[0]?.value ?? '0');
+        channels[name] = val;
       }
+      out.data = { ...base, channels };
+    } else {
+      // Engagement: base ya trae engagementRate y avgEngagementTime
+      out.data = { ...base };
     }
-  }
-});
 
-const purchasesNow = Number(purNowResp.data?.rows?.[0]?.metricValues?.[0]?.value || 0);
-const purchasesPrev = Number(purPrevResp.data?.rows?.[0]?.metricValues?.[0]?.value || 0);
-
-// ... del kpiResp lee como ya lo hacías:
-const r = kpiResp.data;
-const rowNow  = r?.rows?.[0]?.metricValues || [];
-const rowPrev = r?.rows?.[1]?.metricValues || [];
-const V = (arr, i) => Number(arr?.[i]?.value || 0);
-
-const usersNow   = V(rowNow,0), usersPrev   = V(rowPrev,0);
-const sessionsNow= V(rowNow,1), sessionsPrev= V(rowPrev,1);
-const newNow     = V(rowNow,2), newPrev     = V(rowPrev,2);
-const convNow    = V(rowNow,3), convPrev    = V(rowPrev,3);
-const revNow     = V(rowNow,4), revPrev     = V(rowPrev,4);
-const durNow     = V(rowNow,5), durPrev     = V(rowPrev,5);
-const engNow     = V(rowNow,6), engPrev     = V(rowPrev,6);
-
-// KPIs derivados con 'purchasesNow'
-const pcrNow  = sessionsNow ? purchasesNow / sessionsNow : 0;
-const pcrPrev = sessionsPrev ? purchasesPrev / sessionsPrev : 0;
-const aovNow  = purchasesNow ? revNow / purchasesNow : 0;
-const aovPrev = purchasesPrev ? revPrev / purchasesPrev : 0;
-
-res.json({
-  ok: true,
-  kpis: {
-    revenue: revNow,
-    purchases: purchasesNow,
-    purchaseConversionRate: pcrNow,
-    aov: aovNow,
-    users: usersNow,
-    sessions: sessionsNow,
-    newUsers: newNow,
-    engagementRate: engNow,
-    averageSessionDuration: durNow
-  },
-  deltas: {
-    revenue: pctDelta(revNow, revPrev),
-    purchases: pctDelta(purchasesNow, purchasesPrev),
-    purchaseConversionRate: pctDelta(pcrNow, pcrPrev),
-    aov: pctDelta(aovNow, aovPrev),
-    users: pctDelta(usersNow, usersPrev),
-    sessions: pctDelta(sessionsNow, sessionsPrev),
-    newUsers: pctDelta(newNow, newPrev),
-    engagementRate: pctDelta(engNow, engPrev),
-    averageSessionDuration: pctDelta(durNow, durPrev),
-  },
-  trend
-});
-
+    return res.json(out);
   } catch (e) {
-    console.error('GA overview error:', e?.response?.data || e.message || e);
-    const code = e?.code || e?.response?.status || 500;
-    res.status(code === 'NO_REFRESH_TOKEN' ? 401 : 500).json({ ok: false, error: e.message || String(e) });
+    console.error('GA /overview error:', e);
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
-/* ======================
- * Adquisición: canales
- * ====================== */
-router.get('/api/google/analytics/acquisition', requireSession, async (req, res) => {
+/** Adquisición (tabla/donut por canales) */
+router.get('/acquisition', requireSession, async (req, res) => {
   try {
-    const property = req.query.property;
-    const datePreset = req.query.date_preset || req.query.dateRange || 'last_30_days';
+    const propertyId   = String(req.query.property || '').replace(/^properties\//, '');
+    const datePreset   = req.query.dateRange || req.query.date_preset || 'last_30d';
     const includeToday = req.query.include_today === '1';
-    if (!property || !/^properties\/\d+$/.test(property)) {
-      return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
-    }
-    const { startDate, endDate } = buildDateRange(datePreset, includeToday);
+    if (!propertyId) return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
 
-    const auth = await getOAuthClientForUser(req.user._id);
-    const dataApi = google.analyticsdata({ version: 'v1beta', auth });
+    const googleAccount = await GoogleAccount.findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] });
+    const accessToken   = await getFreshAccessToken(googleAccount);
+    const dateRanges    = presetToDateRanges(datePreset, includeToday);
 
-    const resp = await dataApi.properties.runReport({
-      property,
-      requestBody: {
-        dateRanges: [{ startDate, endDate }],
-        dimensions: [{ name: 'sessionDefaultChannelGroup' }],
+    const resp = await ga4RunReport({
+      accessToken,
+      propertyId,
+      body: {
+        dateRanges,
+        dimensions: [{ name: 'defaultChannelGroup' }],
         metrics: [{ name: 'totalUsers' }, { name: 'sessions' }, { name: 'newUsers' }],
-        orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+        orderBys: [{ desc: true, metric: { metricName: 'sessions' } }],
         limit: 25,
       },
     });
 
-    const rows = (resp.data.rows || []).map((r) => ({
-      channel: r.dimensionValues?.[0]?.value || '(other)',
-      users: Number(r.metricValues?.[0]?.value || 0),
-      sessions: Number(r.metricValues?.[1]?.value || 0),
-      newUsers: Number(r.metricValues?.[2]?.value || 0),
+    const rows = (resp.rows || []).map((r) => ({
+      channel:   r.dimensionValues?.[0]?.value || '(other)',
+      users:     Number(r.metricValues?.[0]?.value || 0),
+      sessions:  Number(r.metricValues?.[1]?.value || 0),
+      newUsers:  Number(r.metricValues?.[2]?.value || 0),
     }));
 
     res.json({ ok: true, rows });
   } catch (e) {
-    console.error('GA acquisition error:', e?.response?.data || e.message || e);
+    console.error('GA /acquisition error:', e);
     res.status(500).json({ ok: false, error: e.message || String(e) });
   }
 });
 
-/* =========================
- * Landing pages (top 10)
- * ========================= */
-router.get('/api/google/analytics/landing-pages', requireSession, async (req, res) => {
+/** Landing pages (top 10) */
+router.get('/landing-pages', requireSession, async (req, res) => {
   try {
-    const property = req.query.property;
-    const datePreset = req.query.date_preset || req.query.dateRange || 'last_30_days';
+    const propertyId   = String(req.query.property || '').replace(/^properties\//, '');
+    const datePreset   = req.query.dateRange || req.query.date_preset || 'last_30d';
     const includeToday = req.query.include_today === '1';
-    if (!property || !/^properties\/\d+$/.test(property)) {
-      return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
-    }
-    const { startDate, endDate } = buildDateRange(datePreset, includeToday);
+    if (!propertyId) return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
 
-    const auth = await getOAuthClientForUser(req.user._id);
-    const dataApi = google.analyticsdata({ version: 'v1beta', auth });
+    const googleAccount = await GoogleAccount.findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] });
+    const accessToken   = await getFreshAccessToken(googleAccount);
+    const dateRanges    = presetToDateRanges(datePreset, includeToday);
 
-    const resp = await dataApi.properties.runReport({
-      property,
-      requestBody: {
-        dateRanges: [{ startDate, endDate }],
+    const resp = await ga4RunReport({
+      accessToken,
+      propertyId,
+      body: {
+        dateRanges,
         dimensions: [{ name: 'landingPage' }],
         metrics: [{ name: 'sessions' }, { name: 'totalUsers' }, { name: 'engagementRate' }],
-        orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+        orderBys: [{ desc: true, metric: { metricName: 'sessions' } }],
         limit: 10,
       },
     });
 
-    const rows = (resp.data.rows || []).map((r) => ({
-      landingPage: r.dimensionValues?.[0]?.value || '/',
-      sessions: Number(r.metricValues?.[0]?.value || 0),
-      users: Number(r.metricValues?.[1]?.value || 0),
+    const rows = (resp.rows || []).map((r) => ({
+      landingPage:    r.dimensionValues?.[0]?.value || '/',
+      sessions:       Number(r.metricValues?.[0]?.value || 0),
+      users:          Number(r.metricValues?.[1]?.value || 0),
       engagementRate: Number(r.metricValues?.[2]?.value || 0),
     }));
 
     res.json({ ok: true, rows });
   } catch (e) {
-    console.error('GA landing pages error:', e?.response?.data || e.message || e);
+    console.error('GA /landing-pages error:', e);
     res.status(500).json({ ok: false, error: e.message || String(e) });
   }
 });
 
-/* ======================
- * Embudo ecommerce (4)
- * ====================== */
-router.get('/api/google/analytics/funnel', requireSession, async (req, res) => {
+/** Embudo ecommerce (view_item → add_to_cart → begin_checkout → purchase) */
+router.get('/funnel', requireSession, async (req, res) => {
   try {
-    const property = req.query.property;
-    const datePreset = req.query.date_preset || req.query.dateRange || 'last_30_days';
+    const propertyId   = String(req.query.property || '').replace(/^properties\//, '');
+    const datePreset   = req.query.dateRange || req.query.date_preset || 'last_30d';
     const includeToday = req.query.include_today === '1';
-    if (!property || !/^properties\/\d+$/.test(property)) {
-      return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
-    }
-    const { startDate, endDate } = buildDateRange(datePreset, includeToday);
+    if (!propertyId) return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
 
-    const auth = await getOAuthClientForUser(req.user._id);
-    const dataApi = google.analyticsdata({ version: 'v1beta', auth });
+    const googleAccount = await GoogleAccount.findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] });
+    const accessToken   = await getFreshAccessToken(googleAccount);
+    const dateRanges    = presetToDateRanges(datePreset, includeToday);
 
-    const resp = await dataApi.properties.runReport({
-      property,
-      requestBody: {
-        dateRanges: [{ startDate, endDate }],
+    const resp = await ga4RunReport({
+      accessToken,
+      propertyId,
+      body: {
+        dateRanges,
         dimensions: [{ name: 'eventName' }],
         metrics: [{ name: 'eventCount' }],
         dimensionFilter: {
@@ -481,75 +485,72 @@ router.get('/api/google/analytics/funnel', requireSession, async (req, res) => {
             inListFilter: { values: ['view_item', 'add_to_cart', 'begin_checkout', 'purchase'] },
           },
         },
+        limit: 50,
       },
     });
 
     const map = Object.fromEntries(
-      (resp.data.rows || []).map((r) => [r.dimensionValues?.[0]?.value, Number(r.metricValues?.[0]?.value || 0)])
+      (resp.rows || []).map((r) => [r.dimensionValues?.[0]?.value, Number(r.metricValues?.[0]?.value || 0)])
     );
 
     res.json({
       ok: true,
       steps: {
-        view_item: map['view_item'] || 0,
-        add_to_cart: map['add_to_cart'] || 0,
+        view_item:      map['view_item'] || 0,
+        add_to_cart:    map['add_to_cart'] || 0,
         begin_checkout: map['begin_checkout'] || 0,
-        purchase: map['purchase'] || 0,
+        purchase:       map['purchase'] || 0,
       },
     });
   } catch (e) {
-    console.error('GA funnel error:', e?.response?.data || e.message || e);
+    console.error('GA /funnel error:', e);
     res.status(500).json({ ok: false, error: e.message || String(e) });
   }
 });
 
-/* ======================
- * Leads (generate_lead)
- * ====================== */
-router.get('/api/google/analytics/leads', requireSession, async (req, res) => {
+/** Leads (evento generate_lead + tasa sobre sesiones) */
+router.get('/leads', requireSession, async (req, res) => {
   try {
-    const property = req.query.property;
-    const datePreset = req.query.date_preset || req.query.dateRange || 'last_30_days';
+    const propertyId   = String(req.query.property || '').replace(/^properties\//, '');
+    const datePreset   = req.query.dateRange || req.query.date_preset || 'last_30d';
     const includeToday = req.query.include_today === '1';
-    if (!property || !/^properties\/\d+$/.test(property)) {
-      return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
-    }
-    const { startDate, endDate } = buildDateRange(datePreset, includeToday);
+    if (!propertyId) return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
 
-    const auth = await getOAuthClientForUser(req.user._id);
-    const dataApi = google.analyticsdata({ version: 'v1beta', auth });
+    const googleAccount = await GoogleAccount.findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] });
+    const accessToken   = await getFreshAccessToken(googleAccount);
+    const dateRanges    = presetToDateRanges(datePreset, includeToday);
 
     const [evt, ses] = await Promise.all([
-      dataApi.properties.runReport({
-        property,
-        requestBody: {
-          dateRanges: [{ startDate, endDate }],
+      ga4RunReport({
+        accessToken,
+        propertyId,
+        body: {
+          dateRanges,
           dimensions: [{ name: 'eventName' }],
           metrics: [{ name: 'eventCount' }],
           dimensionFilter: {
-            filter: {
-              fieldName: 'eventName',
-              stringFilter: { matchType: 'EXACT', value: 'generate_lead' },
-            },
+            filter: { fieldName: 'eventName', stringFilter: { value: 'generate_lead' } },
           },
+          limit: 1,
         },
       }),
-      dataApi.properties.runReport({
-        property,
-        requestBody: {
-          dateRanges: [{ startDate, endDate }],
+      ga4RunReport({
+        accessToken,
+        propertyId,
+        body: {
+          dateRanges,
           metrics: [{ name: 'sessions' }],
         },
       }),
     ]);
 
-    const leads = Number(evt.data?.rows?.[0]?.metricValues?.[0]?.value || 0);
-    const sessions = Number(ses.data?.rows?.[0]?.metricValues?.[0]?.value || 0);
+    const leads = Number(evt?.rows?.[0]?.metricValues?.[0]?.value || 0);
+    const sessions = Number(ses?.rows?.[0]?.metricValues?.[0]?.value || 0);
     const rate = sessions ? leads / sessions : 0;
 
     res.json({ ok: true, leads, conversionRate: rate });
   } catch (e) {
-    console.error('GA leads error:', e?.response?.data || e.message || e);
+    console.error('GA /leads error:', e);
     res.status(500).json({ ok: false, error: e.message || String(e) });
   }
 });
