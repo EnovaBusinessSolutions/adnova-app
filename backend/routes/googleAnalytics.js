@@ -35,6 +35,12 @@ function requireSession(req, res, next) {
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
+function normalizePropertyId(p) {
+  // admite "properties/123" o "123"
+  const id = String(p || '').replace(/^properties\//, '');
+  return /^\d+$/.test(id) ? id : '';
+}
+
 async function getOAuthClientForUser(userId) {
   const ga = await GoogleAccount
     .findOne({ $or: [{ user: userId }, { userId }] })
@@ -50,7 +56,7 @@ async function getOAuthClientForUser(userId) {
   const oAuth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET
-    // No fijamos redirectUri para evitar invalid_grant si el refresh fue emitido con otra URI
+    // no fijamos redirectUri para evitar invalid_grant si el refresh se emitió con otra URI
   );
   oAuth2Client.setCredentials({
     refresh_token: ga.refreshToken,
@@ -61,10 +67,14 @@ async function getOAuthClientForUser(userId) {
   return oAuth2Client;
 }
 
+// admite last_30d y last_30_days, etc.
 function buildDateRange(preset = 'last_30_days', includeToday = true) {
   const map = {
-    last_7_days:  7, last_14_days: 14, last_28_days: 28,
-    last_30_days: 30, last_90_days: 90,
+    last_7d: 7, last_7_days: 7,
+    last_14d: 14, last_14_days: 14,
+    last_28d: 28, last_28_days: 28,
+    last_30d: 30, last_30_days: 30,
+    last_90d: 90, last_90_days: 90,
   };
   const now = new Date();
   const end = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -143,7 +153,7 @@ async function resyncAndPersistProperties(userId) {
   return properties;
 }
 
-/* =============== GA DATA helper (googleapis) =============== */
+/* =============== GA DATA helper =============== */
 async function gaDataRunReport({ auth, property, body }) {
   const dataApi = google.analyticsdata({ version: 'v1beta', auth });
   const resp = await dataApi.properties.runReport({ property, requestBody: body });
@@ -308,17 +318,15 @@ router.get('/overview', requireSession, async (req, res) => {
         },
       };
     } else if (objective === 'leads') {
-      const [leadEvt] = await Promise.all([
-        gaDataRunReport({
-          auth, property,
-          body: {
-            dateRanges: [{ startDate, endDate }],
-            dimensions: [{ name: 'eventName' }],
-            metrics: [{ name: 'eventCount' }],
-            dimensionFilter: { filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'generate_lead' } } },
-          }
-        }),
-      ]);
+      const leadEvt = await gaDataRunReport({
+        auth, property,
+        body: {
+          dateRanges: [{ startDate, endDate }],
+          dimensions: [{ name: 'eventName' }],
+          metrics: [{ name: 'eventCount' }],
+          dimensionFilter: { filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'generate_lead' } } },
+        }
+      });
       const leads = Number(leadEvt.rows?.[0]?.metricValues?.[0]?.value || 0);
       const leadConversionRate = base.sessions ? leads / base.sessions : 0;
       out.data = { leads, leadConversionRate };
@@ -360,6 +368,116 @@ router.get('/overview', requireSession, async (req, res) => {
     console.error('GA /overview error:', e?.response?.data || e);
     const code = e?.code || e?.response?.status || 500;
     return res.status(code === 'NO_REFRESH_TOKEN' ? 401 : 500).json({ ok: false, error: e.message || String(e) });
+  }
+});
+
+/** GET /api/google/analytics/sales  (RELATIVO: /sales) */
+router.get('/sales', requireSession, async (req, res) => {
+  try {
+    const propertyId = normalizePropertyId(req.query.property);
+    const datePreset = req.query.date_preset || req.query.dateRange || 'last_30d';
+    const includeToday = req.query.include_today === '1';
+    if (!propertyId) return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
+
+    const auth = await getOAuthClientForUser(req.user._id);
+    const dataApi = google.analyticsdata({ version: 'v1beta', auth });
+
+    const { startDate, endDate } = buildDateRange(datePreset, includeToday);
+    const property = `properties/${propertyId}`;
+
+    // --- KPIs actuales (ventana completa)
+    const kpis = await dataApi.properties.runReport({
+      property,
+      requestBody: {
+        dateRanges: [{ startDate, endDate }],
+        metrics: [
+          { name: 'purchaseRevenue' },     // ingresos
+          { name: 'ecommercePurchases' },  // órdenes
+          { name: 'sessions' }             // para tasa
+        ]
+      }
+    });
+    const km = (i) => Number(kpis?.data?.rows?.[0]?.metricValues?.[i]?.value ?? 0);
+    const revenue = km(0);
+    const purchases = km(1);
+    const sessions = km(2);
+    const purchaseConversionRate = sessions ? purchases / sessions : 0;
+    const aov = purchases ? revenue / purchases : 0;
+
+    // --- Tendencia diaria (date)
+    const trendResp = await dataApi.properties.runReport({
+      property,
+      requestBody: {
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [{ name: 'date' }], // yyyymmdd
+        metrics: [
+          { name: 'purchaseRevenue' },
+          { name: 'ecommercePurchases' },
+          { name: 'sessions' }
+        ],
+        orderBys: [{ dimension: { dimensionName: 'date' } }]
+      }
+    });
+
+    const trend = (trendResp.data.rows || []).map((r) => {
+      const d = r.dimensionValues?.[0]?.value || '';
+      const rev = Number(r.metricValues?.[0]?.value || 0);
+      const pur = Number(r.metricValues?.[1]?.value || 0);
+      const ses = Number(r.metricValues?.[2]?.value || 0);
+      const dateISO = d && d.length === 8
+        ? `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}`
+        : d;
+      return {
+        date: dateISO,
+        revenue: rev,
+        purchases: pur,
+        sessions: ses,
+        conversionRate: ses ? pur / ses : 0,
+        aov: pur ? rev / pur : 0
+      };
+    });
+
+    // --- Embudo (eventos clave)
+    const funnelResp = await dataApi.properties.runReport({
+      property,
+      requestBody: {
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [{ name: 'eventName' }],
+        metrics: [{ name: 'eventCount' }],
+        dimensionFilter: {
+          filter: {
+            fieldName: 'eventName',
+            inListFilter: {
+              values: ['view_item', 'add_to_cart', 'begin_checkout', 'purchase']
+            }
+          }
+        }
+      }
+    });
+
+    const fmap = Object.fromEntries(
+      (funnelResp.data.rows || []).map(r => [
+        r.dimensionValues?.[0]?.value,
+        Number(r.metricValues?.[0]?.value || 0)
+      ])
+    );
+
+    res.json({
+      ok: true,
+      data: {
+        revenue, purchases, purchaseConversionRate, aov,
+        trend,
+        funnel: {
+          view_item: fmap.view_item || 0,
+          add_to_cart: fmap.add_to_cart || 0,
+          begin_checkout: fmap.begin_checkout || 0,
+          purchase: fmap.purchase || 0
+        }
+      }
+    });
+  } catch (e) {
+    console.error('GA /sales error:', e?.response?.data || e);
+    res.status(500).json({ ok: false, error: e.message || String(e) });
   }
 });
 
