@@ -791,5 +791,120 @@ router.get('/leads', requireSession, async (req, res) => {
   }
 });
 
+/** GET /api/google/analytics/acquisition */
+router.get('/acquisition', requireSession, async (req, res) => {
+  try {
+    const propertyId = normalizePropertyId(req.query.property);
+    const datePreset = req.query.date_preset || req.query.dateRange || 'last_30d';
+    const includeToday = req.query.include_today === '1';
+    if (!propertyId) return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
+
+    const auth = await getOAuthClientForUser(req.user._id);
+    const property = `properties/${propertyId}`;
+
+    const { startDate, endDate, days } = buildDateRange(datePreset, includeToday);
+    const prevStart = new Date(startDate); prevStart.setDate(prevStart.getDate() - days);
+    const prevEnd   = new Date(endDate);   prevEnd.setDate(prevEnd.getDate() - days);
+    const fmt = d => (typeof d === 'string' ? d : d.toISOString().slice(0,10));
+
+    // ===== KPIs actuales =====
+    const now = await gaDataRunReport({
+      auth, property,
+      body: {
+        dateRanges: [{ startDate, endDate }],
+        metrics: [
+          { name: 'totalUsers' },
+          { name: 'sessions' },
+          { name: 'newUsers' },
+        ],
+      }
+    });
+    const N = i => Number(now.rows?.[0]?.metricValues?.[i]?.value || 0);
+    const kpisNow = { totalUsers: N(0), sessions: N(1), newUsers: N(2) };
+
+    // ===== KPIs anteriores =====
+    const prev = await gaDataRunReport({
+      auth, property,
+      body: {
+        dateRanges: [{ startDate: fmt(prevStart), endDate: fmt(prevEnd) }],
+        metrics: [
+          { name: 'totalUsers' },
+          { name: 'sessions' },
+          { name: 'newUsers' },
+        ],
+      }
+    });
+    const P = i => Number(prev.rows?.[0]?.metricValues?.[i]?.value || 0);
+    const kpisPrev = { totalUsers: P(0), sessions: P(1), newUsers: P(2) };
+
+    const delta = (now, prev) => (prev ? (now - prev) / prev : null);
+
+    // ===== Canales (distribución por sesiones) =====
+    const channelsNow = await gaDataRunReport({
+      auth, property,
+      body: {
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [{ name: 'sessionDefaultChannelGroup' }],
+        metrics: [{ name: 'sessions' }],
+        orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+        limit: 20,
+      }
+    });
+
+    const ch = {};
+    for (const r of channelsNow.rows || []) {
+      const name = r.dimensionValues?.[0]?.value || 'Other';
+      const val  = Number(r.metricValues?.[0]?.value || 0);
+      const key =
+        /Organic/i.test(name) ? 'organic' :
+        /Paid|CPC|PPC|Display|Paid Search/i.test(name) ? 'paid' :
+        /Social/i.test(name) ? 'social' :
+        /Referral/i.test(name) ? 'referral' :
+        /Direct/i.test(name) ? 'direct' :
+        name;
+      ch[key] = (ch[key] || 0) + val;
+    }
+    const totalCh = Object.values(ch).reduce((a,b) => a + b, 0) || 1;
+    const channelsPct = Object.fromEntries(
+      Object.entries(ch).map(([k,v]) => [k, v / totalCh])
+    );
+
+    // ===== Tendencia diaria (opcional para futuras gráficas) =====
+    const trendResp = await gaDataRunReport({
+      auth, property,
+      body: {
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [{ name: 'date' }],
+        metrics: [{ name: 'sessions' }, { name: 'newUsers' }],
+        orderBys: [{ dimension: { dimensionName: 'date' } }]
+      }
+    });
+    const trend = (trendResp.rows || []).map(r => {
+      const d = r.dimensionValues?.[0]?.value || '';
+      const iso = d && d.length === 8 ? `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}` : d;
+      return {
+        date: iso,
+        sessions: Number(r.metricValues?.[0]?.value || 0),
+        newUsers: Number(r.metricValues?.[1]?.value || 0),
+      };
+    });
+
+    res.json({
+      ok: true,
+      kpis: kpisNow,
+      deltas: {
+        totalUsers: delta(kpisNow.totalUsers, kpisPrev.totalUsers),
+        sessions:   delta(kpisNow.sessions,   kpisPrev.sessions),
+        newUsers:   delta(kpisNow.newUsers,   kpisPrev.newUsers),
+      },
+      channels: channelsPct,  // proporciones 0–1
+      trend,
+    });
+  } catch (e) {
+    console.error('GA /acquisition error:', e?.response?.data || e);
+    res.status(500).json({ ok: false, error: e.message || String(e) });
+  }
+});
+
 
 module.exports = router;
