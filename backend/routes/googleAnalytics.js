@@ -645,10 +645,16 @@ router.get('/leads', requireSession, async (req, res) => {
     if (!/^properties\/\d+$/.test(property)) {
       return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
     }
-    const { startDate, endDate } = buildDateRange(datePreset, includeToday);
+
+    const { startDate, endDate, days } = buildDateRange(datePreset, includeToday);
+    const prevStart = new Date(startDate); prevStart.setDate(prevStart.getDate() - days);
+    const prevEnd   = new Date(endDate);   prevEnd.setDate(prevEnd.getDate() - days);
+    const fmt = (d) => (typeof d === 'string' ? d : d.toISOString().slice(0,10));
+
     const auth = await getOAuthClientForUser(req.user._id);
 
-    const [evt, ses] = await Promise.all([
+    // Totales actuales
+    const [evtNow, sesNow] = await Promise.all([
       gaDataRunReport({
         auth, property,
         body: {
@@ -664,11 +670,78 @@ router.get('/leads', requireSession, async (req, res) => {
       })
     ]);
 
-    const leads = Number(evt.rows?.[0]?.metricValues?.[0]?.value || 0);
-    const sessions = Number(ses.rows?.[0]?.metricValues?.[0]?.value || 0);
-    const rate = sessions ? leads / sessions : 0;
+    const leads = Number(evtNow.rows?.[0]?.metricValues?.[0]?.value || 0);
+    const sessions = Number(sesNow.rows?.[0]?.metricValues?.[0]?.value || 0);
+    const conversionRate = sessions ? leads / sessions : 0;
 
-    res.json({ ok: true, leads, conversionRate: rate });
+    // Totales periodo anterior
+    const [evtPrev, sesPrev] = await Promise.all([
+      gaDataRunReport({
+        auth, property,
+        body: {
+          dateRanges: [{ startDate: fmt(prevStart), endDate: fmt(prevEnd) }],
+          dimensions: [{ name: 'eventName' }],
+          metrics: [{ name: 'eventCount' }],
+          dimensionFilter: { filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'generate_lead' } } },
+        }
+      }),
+      gaDataRunReport({
+        auth, property,
+        body: { dateRanges: [{ startDate: fmt(prevStart), endDate: fmt(prevEnd) }], metrics: [{ name: 'sessions' }] }
+      })
+    ]);
+    const leadsPrev = Number(evtPrev.rows?.[0]?.metricValues?.[0]?.value || 0);
+    const sessionsPrev = Number(sesPrev.rows?.[0]?.metricValues?.[0]?.value || 0);
+    const convPrev = sessionsPrev ? leadsPrev / sessionsPrev : 0;
+
+    const deltas = {
+      leads: (leadsPrev ? (leads - leadsPrev) / leadsPrev : (leads ? 1 : 0)),
+      conversionRate: (convPrev ? (conversionRate - convPrev) / convPrev : (conversionRate ? 1 : 0)),
+    };
+
+    // Tendencia diaria: leads y CV a lead
+    const [trendLeads, trendSessions] = await Promise.all([
+      gaDataRunReport({
+        auth, property,
+        body: {
+          dateRanges: [{ startDate, endDate }],
+          dimensions: [{ name: 'date' }],
+          metrics: [{ name: 'eventCount' }],
+          dimensionFilter: { filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'generate_lead' } } },
+          orderBys: [{ dimension: { dimensionName: 'date' } }]
+        }
+      }),
+      gaDataRunReport({
+        auth, property,
+        body: {
+          dateRanges: [{ startDate, endDate }],
+          dimensions: [{ name: 'date' }],
+          metrics: [{ name: 'sessions' }],
+          orderBys: [{ dimension: { dimensionName: 'date' } }]
+        }
+      }),
+    ]);
+
+    const mapByDate = new Map();
+    (trendLeads.rows || []).forEach(r => {
+      const d = r.dimensionValues?.[0]?.value || '';
+      const iso = `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}`;
+      mapByDate.set(iso, { date: iso, leads: Number(r.metricValues?.[0]?.value || 0), sessions: 0 });
+    });
+    (trendSessions.rows || []).forEach(r => {
+      const d = r.dimensionValues?.[0]?.value || '';
+      const iso = `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}`;
+      const row = mapByDate.get(iso) || { date: iso, leads: 0, sessions: 0 };
+      row.sessions = Number(r.metricValues?.[0]?.value || 0);
+      mapByDate.set(iso, row);
+    });
+    const trend = Array.from(mapByDate.values()).map(p => ({
+      date: p.date,
+      leads: p.leads,
+      conversionRate: p.sessions ? p.leads / p.sessions : 0
+    }));
+
+    return res.json({ ok: true, leads, conversionRate, deltas, trend });
   } catch (e) {
     console.error('GA leads error:', e?.response?.data || e);
     res.status(500).json({ ok: false, error: e.message || String(e) });
