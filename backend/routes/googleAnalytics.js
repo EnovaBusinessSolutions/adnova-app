@@ -371,6 +371,7 @@ router.get('/overview', requireSession, async (req, res) => {
   }
 });
 
+
 /** GET /api/google/analytics/sales  (RELATIVO: /sales) */
 router.get('/sales', requireSession, async (req, res) => {
   try {
@@ -385,7 +386,17 @@ router.get('/sales', requireSession, async (req, res) => {
     const { startDate, endDate } = buildDateRange(datePreset, includeToday);
     const property = `properties/${propertyId}`;
 
-    // --- KPIs actuales (ventana completa)
+    // >>> NUEVO: periodo anterior + deltas
+    const startObj = new Date(startDate);
+    const endObj   = new Date(endDate);
+    const days = Math.ceil((endObj - startObj) / 86400000) + 1;
+    const prevStart = new Date(startObj); prevStart.setDate(prevStart.getDate() - days);
+    const prevEnd   = new Date(endObj);   prevEnd.setDate(prevEnd.getDate() - days);
+    const fmt = (d) => d.toISOString().slice(0, 10);
+    const prevStartDate = fmt(prevStart);
+    const prevEndDate   = fmt(prevEnd);
+
+    // --- KPIs actuales
     const kpis = await dataApi.properties.runReport({
       property,
       requestBody: {
@@ -398,18 +409,51 @@ router.get('/sales', requireSession, async (req, res) => {
       }
     });
     const km = (i) => Number(kpis?.data?.rows?.[0]?.metricValues?.[i]?.value ?? 0);
-    const revenue = km(0);
+    const revenue   = km(0);
     const purchases = km(1);
-    const sessions = km(2);
+    const sessions  = km(2);
     const purchaseConversionRate = sessions ? purchases / sessions : 0;
     const aov = purchases ? revenue / purchases : 0;
 
-    // --- Tendencia diaria (date)
+    // --- KPIs periodo anterior (para deltas)
+    const kpisPrev = await dataApi.properties.runReport({
+      property,
+      requestBody: {
+        dateRanges: [{ startDate: prevStartDate, endDate: prevEndDate }],
+        metrics: [
+          { name: 'purchaseRevenue' },
+          { name: 'ecommercePurchases' },
+          { name: 'sessions' }
+        ]
+      }
+    });
+    const kmPrev = (i) => Number(kpisPrev?.data?.rows?.[0]?.metricValues?.[i]?.value ?? 0);
+    const revenuePrev   = kmPrev(0);
+    const purchasesPrev = kmPrev(1);
+    const sessionsPrev  = kmPrev(2);
+    const pcrPrev = sessionsPrev ? purchasesPrev / sessionsPrev : 0;
+    const aovPrev = purchasesPrev ? revenuePrev / purchasesPrev : 0;
+
+    const delta = (now, prev) => {
+      const N = Number(now) || 0, P = Number(prev) || 0;
+      if (!P && !N) return 0;
+      if (!P) return 1; // 100% up cuando no había base
+      return (N - P) / P;
+    };
+
+    const deltas = {
+      revenue: delta(revenue, revenuePrev),
+      purchases: delta(purchases, purchasesPrev),
+      aov: delta(aov, aovPrev),
+      purchaseConversionRate: delta(purchaseConversionRate, pcrPrev),
+    };
+
+    // --- Tendencia diaria
     const trendResp = await dataApi.properties.runReport({
       property,
       requestBody: {
         dateRanges: [{ startDate, endDate }],
-        dimensions: [{ name: 'date' }], // yyyymmdd
+        dimensions: [{ name: 'date' }],
         metrics: [
           { name: 'purchaseRevenue' },
           { name: 'ecommercePurchases' },
@@ -437,7 +481,7 @@ router.get('/sales', requireSession, async (req, res) => {
       };
     });
 
-    // --- Embudo (eventos clave)
+    // --- Embudo
     const funnelResp = await dataApi.properties.runReport({
       property,
       requestBody: {
@@ -466,6 +510,7 @@ router.get('/sales', requireSession, async (req, res) => {
       ok: true,
       data: {
         revenue, purchases, purchaseConversionRate, aov,
+        deltas,                    // <<< NUEVO
         trend,
         funnel: {
           view_item: fmap.view_item || 0,
@@ -480,6 +525,7 @@ router.get('/sales', requireSession, async (req, res) => {
     res.status(500).json({ ok: false, error: e.message || String(e) });
   }
 });
+
 
 /** GET /api/google/analytics/landing-pages */
 router.get('/landing-pages', requireSession, async (req, res) => {
