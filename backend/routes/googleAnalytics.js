@@ -383,21 +383,15 @@ router.get('/sales', requireSession, async (req, res) => {
     const auth = await getOAuthClientForUser(req.user._id);
     const dataApi = google.analyticsdata({ version: 'v1beta', auth });
 
-    const { startDate, endDate } = buildDateRange(datePreset, includeToday);
+    const { startDate, endDate, days } = buildDateRange(datePreset, includeToday);
+    const prevStart = new Date(startDate); prevStart.setDate(prevStart.getDate() - days);
+    const prevEnd   = new Date(endDate);   prevEnd.setDate(prevEnd.getDate() - days);
+    const fmt = d => (typeof d === 'string' ? d : d.toISOString().slice(0,10));
+
     const property = `properties/${propertyId}`;
 
-    // >>> NUEVO: periodo anterior + deltas
-    const startObj = new Date(startDate);
-    const endObj   = new Date(endDate);
-    const days = Math.ceil((endObj - startObj) / 86400000) + 1;
-    const prevStart = new Date(startObj); prevStart.setDate(prevStart.getDate() - days);
-    const prevEnd   = new Date(endObj);   prevEnd.setDate(prevEnd.getDate() - days);
-    const fmt = (d) => d.toISOString().slice(0, 10);
-    const prevStartDate = fmt(prevStart);
-    const prevEndDate   = fmt(prevEnd);
-
-    // --- KPIs actuales
-    const kpis = await dataApi.properties.runReport({
+    // ---------- KPIs actuales ----------
+    const kpisNow = await dataApi.properties.runReport({
       property,
       requestBody: {
         dateRanges: [{ startDate, endDate }],
@@ -408,18 +402,18 @@ router.get('/sales', requireSession, async (req, res) => {
         ]
       }
     });
-    const km = (i) => Number(kpis?.data?.rows?.[0]?.metricValues?.[i]?.value ?? 0);
-    const revenue   = km(0);
-    const purchases = km(1);
-    const sessions  = km(2);
+    const kmNow = (i) => Number(kpisNow?.data?.rows?.[0]?.metricValues?.[i]?.value ?? 0);
+    const revenue = kmNow(0);
+    const purchases = kmNow(1);
+    const sessions = kmNow(2);
     const purchaseConversionRate = sessions ? purchases / sessions : 0;
     const aov = purchases ? revenue / purchases : 0;
 
-    // --- KPIs periodo anterior (para deltas)
+    // ---------- KPIs periodo anterior ----------
     const kpisPrev = await dataApi.properties.runReport({
       property,
       requestBody: {
-        dateRanges: [{ startDate: prevStartDate, endDate: prevEndDate }],
+        dateRanges: [{ startDate: fmt(prevStart), endDate: fmt(prevEnd) }],
         metrics: [
           { name: 'purchaseRevenue' },
           { name: 'ecommercePurchases' },
@@ -428,27 +422,16 @@ router.get('/sales', requireSession, async (req, res) => {
       }
     });
     const kmPrev = (i) => Number(kpisPrev?.data?.rows?.[0]?.metricValues?.[i]?.value ?? 0);
-    const revenuePrev   = kmPrev(0);
-    const purchasesPrev = kmPrev(1);
-    const sessionsPrev  = kmPrev(2);
-    const pcrPrev = sessionsPrev ? purchasesPrev / sessionsPrev : 0;
-    const aovPrev = purchasesPrev ? revenuePrev / purchasesPrev : 0;
+    const prevRevenue = kmPrev(0);
+    const prevPurchases = kmPrev(1);
+    const prevSessions = kmPrev(2);
+    const prevPurchaseConversionRate = prevSessions ? prevPurchases / prevSessions : 0;
+    const prevAov = prevPurchases ? prevRevenue / prevPurchases : 0;
 
-    const delta = (now, prev) => {
-      const N = Number(now) || 0, P = Number(prev) || 0;
-      if (!P && !N) return 0;
-      if (!P) return 1; // 100% up cuando no había base
-      return (N - P) / P;
-    };
+    // helper delta
+    const delta = (now, prev) => (prev ? (now - prev) / prev : null);
 
-    const deltas = {
-      revenue: delta(revenue, revenuePrev),
-      purchases: delta(purchases, purchasesPrev),
-      aov: delta(aov, aovPrev),
-      purchaseConversionRate: delta(purchaseConversionRate, pcrPrev),
-    };
-
-    // --- Tendencia diaria
+    // ---------- Tendencia diaria ----------
     const trendResp = await dataApi.properties.runReport({
       property,
       requestBody: {
@@ -462,15 +445,12 @@ router.get('/sales', requireSession, async (req, res) => {
         orderBys: [{ dimension: { dimensionName: 'date' } }]
       }
     });
-
     const trend = (trendResp.data.rows || []).map((r) => {
       const d = r.dimensionValues?.[0]?.value || '';
       const rev = Number(r.metricValues?.[0]?.value || 0);
       const pur = Number(r.metricValues?.[1]?.value || 0);
       const ses = Number(r.metricValues?.[2]?.value || 0);
-      const dateISO = d && d.length === 8
-        ? `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}`
-        : d;
+      const dateISO = d && d.length === 8 ? `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}` : d;
       return {
         date: dateISO,
         revenue: rev,
@@ -481,8 +461,8 @@ router.get('/sales', requireSession, async (req, res) => {
       };
     });
 
-    // --- Embudo
-    const funnelResp = await dataApi.properties.runReport({
+    // ---------- Embudo actual ----------
+    const funnelNowResp = await dataApi.properties.runReport({
       property,
       requestBody: {
         dateRanges: [{ startDate, endDate }],
@@ -491,32 +471,79 @@ router.get('/sales', requireSession, async (req, res) => {
         dimensionFilter: {
           filter: {
             fieldName: 'eventName',
-            inListFilter: {
-              values: ['view_item', 'add_to_cart', 'begin_checkout', 'purchase']
-            }
+            inListFilter: { values: ['view_item', 'add_to_cart', 'begin_checkout', 'purchase'] }
           }
         }
       }
     });
-
-    const fmap = Object.fromEntries(
-      (funnelResp.data.rows || []).map(r => [
+    const fNow = Object.fromEntries(
+      (funnelNowResp.data.rows || []).map(r => [
         r.dimensionValues?.[0]?.value,
         Number(r.metricValues?.[0]?.value || 0)
       ])
     );
 
+    // ---------- Embudo periodo anterior ----------
+    const funnelPrevResp = await dataApi.properties.runReport({
+      property,
+      requestBody: {
+        dateRanges: [{ startDate: fmt(prevStart), endDate: fmt(prevEnd) }],
+        dimensions: [{ name: 'eventName' }],
+        metrics: [{ name: 'eventCount' }],
+        dimensionFilter: {
+          filter: {
+            fieldName: 'eventName',
+            inListFilter: { values: ['view_item', 'add_to_cart', 'begin_checkout', 'purchase'] }
+          }
+        }
+      }
+    });
+    const fPrev = Object.fromEntries(
+      (funnelPrevResp.data.rows || []).map(r => [
+        r.dimensionValues?.[0]?.value,
+        Number(r.metricValues?.[0]?.value || 0)
+      ])
+    );
+
+    // conversión total (purchase / view_item) para resumen del embudo
+    const convNow = (fNow.purchase || 0) && (fNow.view_item || 0) ? (fNow.purchase / fNow.view_item) : 0;
+    const convPrev = (fPrev.purchase || 0) && (fPrev.view_item || 0) ? (fPrev.purchase / fPrev.view_item) : 0;
+
     res.json({
       ok: true,
       data: {
+        // actuales
         revenue, purchases, purchaseConversionRate, aov,
-        deltas,                    // <<< NUEVO
         trend,
         funnel: {
-          view_item: fmap.view_item || 0,
-          add_to_cart: fmap.add_to_cart || 0,
-          begin_checkout: fmap.begin_checkout || 0,
-          purchase: fmap.purchase || 0
+          view_item: fNow.view_item || 0,
+          add_to_cart: fNow.add_to_cart || 0,
+          begin_checkout: fNow.begin_checkout || 0,
+          purchase: fNow.purchase || 0,
+        },
+
+        // periodo anterior (para comparativas)
+        prev: {
+          revenue: prevRevenue,
+          purchases: prevPurchases,
+          purchaseConversionRate: prevPurchaseConversionRate,
+          aov: prevAov,
+          funnel: {
+            view_item: fPrev.view_item || 0,
+            add_to_cart: fPrev.add_to_cart || 0,
+            begin_checkout: fPrev.begin_checkout || 0,
+            purchase: fPrev.purchase || 0,
+          },
+          convTotal: convPrev, // purchase/view_item
+        },
+
+        // deltas (ahora vs. anterior)
+        deltas: {
+          revenue: delta(revenue, prevRevenue),
+          purchases: delta(purchases, prevPurchases),
+          purchaseConversionRate: delta(purchaseConversionRate, prevPurchaseConversionRate),
+          aov: delta(aov, prevAov),
+          funnelConversion: delta(convNow, convPrev) // útil para chip en resumen de embudo
         }
       }
     });
@@ -525,6 +552,7 @@ router.get('/sales', requireSession, async (req, res) => {
     res.status(500).json({ ok: false, error: e.message || String(e) });
   }
 });
+
 
 
 /** GET /api/google/analytics/landing-pages */
