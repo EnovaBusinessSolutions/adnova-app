@@ -642,13 +642,33 @@ router.get('/leads', requireSession, async (req, res) => {
     const property = String(req.query.property || '');
     const datePreset = req.query.date_preset || req.query.dateRange || 'last_30_days';
     const includeToday = req.query.include_today === '1';
+
+    // permite uno o varios eventos: ?lead_event=generate_lead  o  ?lead_events=generate_lead,form_submit
+    const rawLeadEv =
+      (req.query.lead_events || req.query.lead_event || 'generate_lead') + '';
+    const leadEvents = rawLeadEv
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+
     if (!/^properties\/\d+$/.test(property)) {
       return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
     }
-    const { startDate, endDate } = buildDateRange(datePreset, includeToday);
+
+    const { startDate, endDate, days } = buildDateRange(datePreset, includeToday);
+    const prevStart = new Date(startDate); prevStart.setDate(prevStart.getDate() - days);
+    const prevEnd   = new Date(endDate);   prevEnd.setDate(prevEnd.getDate() - days);
+    const fmt = d => (typeof d === 'string' ? d : d.toISOString().slice(0,10));
+
     const auth = await getOAuthClientForUser(req.user._id);
 
-    // Totales
+    // -------- Helper filtro por evento(s) --------
+    const eventFilter =
+      leadEvents.length === 1
+        ? { filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: leadEvents[0] } } }
+        : { filter: { fieldName: 'eventName', inListFilter: { values: leadEvents } } };
+
+    // -------- Totales (ahora) --------
     const [evt, ses] = await Promise.all([
       gaDataRunReport({
         auth, property,
@@ -656,7 +676,7 @@ router.get('/leads', requireSession, async (req, res) => {
           dateRanges: [{ startDate, endDate }],
           dimensions: [{ name: 'eventName' }],
           metrics: [{ name: 'eventCount' }],
-          dimensionFilter: { filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'generate_lead' } } },
+          dimensionFilter: eventFilter,
         }
       }),
       gaDataRunReport({
@@ -665,19 +685,42 @@ router.get('/leads', requireSession, async (req, res) => {
       })
     ]);
 
-    const leads = Number(evt.rows?.[0]?.metricValues?.[0]?.value || 0);
-    const sessionsTotal = Number(ses.rows?.[0]?.metricValues?.[0]?.value || 0);
-    const rate = sessionsTotal ? leads / sessionsTotal : 0;
+    // suma por si llegan varias filas (varios eventos)
+    const leadsNow = (evt.rows || []).reduce((acc, r) => acc + Number(r.metricValues?.[0]?.value || 0), 0);
+    const sessionsNow = Number(ses.rows?.[0]?.metricValues?.[0]?.value || 0);
+    const rateNow = sessionsNow ? leadsNow / sessionsNow : 0;
 
-    // === Tendencia diaria ===
+    // -------- Totales (prev) para deltas --------
+    const [evtPrev, sesPrev] = await Promise.all([
+      gaDataRunReport({
+        auth, property,
+        body: {
+          dateRanges: [{ startDate: fmt(prevStart), endDate: fmt(prevEnd) }],
+          dimensions: [{ name: 'eventName' }],
+          metrics: [{ name: 'eventCount' }],
+          dimensionFilter: eventFilter,
+        }
+      }),
+      gaDataRunReport({
+        auth, property,
+        body: { dateRanges: [{ startDate: fmt(prevStart), endDate: fmt(prevEnd) }], metrics: [{ name: 'sessions' }] }
+      })
+    ]);
+    const leadsPrev = (evtPrev.rows || []).reduce((acc, r) => acc + Number(r.metricValues?.[0]?.value || 0), 0);
+    const sessionsPrev = Number(sesPrev.rows?.[0]?.metricValues?.[0]?.value || 0);
+    const ratePrev = sessionsPrev ? leadsPrev / sessionsPrev : 0;
+
+    const delta = (now, prev) => (prev ? (now - prev) / prev : (now ? 1 : 0)); // evita NaN
+
+    // -------- Tendencia diaria (rellenando días vacíos) --------
     const [evtDaily, sesDaily] = await Promise.all([
       gaDataRunReport({
         auth, property,
         body: {
           dateRanges: [{ startDate, endDate }],
-          dimensions: [{ name: 'date' }],
+          dimensions: [{ name: 'date' }, { name: 'eventName' }],
           metrics: [{ name: 'eventCount' }],
-          dimensionFilter: { filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'generate_lead' } } },
+          dimensionFilter: eventFilter,
           orderBys: [{ dimension: { dimensionName: 'date' } }]
         }
       }),
@@ -692,30 +735,61 @@ router.get('/leads', requireSession, async (req, res) => {
       })
     ]);
 
-    const toISO = (yyyymmdd = '') =>
-      yyyymmdd && yyyymmdd.length === 8
-        ? `${yyyymmdd.slice(0,4)}-${yyyymmdd.slice(4,6)}-${yyyymmdd.slice(6,8)}`
-        : yyyymmdd;
-
+    // Mapa sesiones por día (YYYYMMDD)
     const sesMap = new Map();
     (sesDaily.rows || []).forEach(r => {
       const d = r.dimensionValues?.[0]?.value || '';
       sesMap.set(d, Number(r.metricValues?.[0]?.value || 0));
     });
 
-    const trend = (evtDaily.rows || []).map(r => {
+    // Suma leads por día (si hay varios eventos)
+    const leadsByDay = new Map();
+    (evtDaily.rows || []).forEach(r => {
       const d = r.dimensionValues?.[0]?.value || '';
-      const leadsDay = Number(r.metricValues?.[0]?.value || 0);
-      const sessionsDay = Number(sesMap.get(d) || 0);
-      const cr = sessionsDay ? leadsDay / sessionsDay : 0;
-      return { date: toISO(d), leads: leadsDay, conversionRate: cr };
+      const cnt = Number(r.metricValues?.[0]?.value || 0);
+      leadsByDay.set(d, (leadsByDay.get(d) || 0) + cnt);
     });
 
-    res.json({ ok: true, leads, conversionRate: rate, trend });
+    // Genera todos los días del rango y llena 0s
+    const toISO = (yyyymmdd = '') =>
+      yyyymmdd && yyyymmdd.length === 8
+        ? `${yyyymmdd.slice(0,4)}-${yyyymmdd.slice(4,6)}-${yyyymmdd.slice(6,8)}`
+        : yyyymmdd;
+
+    const daysArr = [];
+    {
+      const start = new Date(startDate);
+      const end   = new Date(endDate);
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const dd= String(d.getDate()).padStart(2, '0');
+        daysArr.push(`${y}${m}${dd}`);
+      }
+    }
+
+    const trend = daysArr.map(yyyymmdd => {
+      const leadsDay = Number(leadsByDay.get(yyyymmdd) || 0);
+      const sessionsDay = Number(sesMap.get(yyyymmdd) || 0);
+      const cr = sessionsDay ? leadsDay / sessionsDay : 0;
+      return { date: toISO(yyyymmdd), leads: leadsDay, conversionRate: cr };
+    });
+
+    res.json({
+      ok: true,
+      leads: leadsNow,
+      conversionRate: rateNow,
+      trend,
+      deltas: {
+        leads: delta(leadsNow, leadsPrev),
+        conversionRate: delta(rateNow, ratePrev),
+      }
+    });
   } catch (e) {
     console.error('GA leads error:', e?.response?.data || e);
     res.status(500).json({ ok: false, error: e.message || String(e) });
   }
 });
+
 
 module.exports = router;
