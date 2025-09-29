@@ -906,5 +906,92 @@ router.get('/acquisition', requireSession, async (req, res) => {
   }
 });
 
+/** GET /api/google/analytics/engagement */
+router.get('/engagement', requireSession, async (req, res) => {
+  try {
+    const propertyId = String(req.query.property || '').replace(/^properties\//, '');
+    const datePreset = req.query.date_preset || req.query.dateRange || 'last_30d';
+    const includeToday = req.query.include_today === '1';
+    if (!/^\d+$/.test(propertyId)) {
+      return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
+    }
+
+    const auth = await getOAuthClientForUser(req.user._id);
+    const dataApi = google.analyticsdata({ version: 'v1beta', auth });
+    const property = `properties/${propertyId}`;
+
+    const { startDate, endDate, days } = buildDateRange(datePreset, includeToday);
+    const prevStart = new Date(startDate); prevStart.setDate(prevStart.getDate() - days);
+    const prevEnd   = new Date(endDate);   prevEnd.setDate(prevEnd.getDate() - days);
+    const fmt = d => (typeof d === 'string' ? d : d.toISOString().slice(0,10));
+
+    const run = (range) => dataApi.properties.runReport({
+      property,
+      requestBody: {
+        dateRanges: [range],
+        metrics: [
+          { name: 'engagementRate' },          // 0–1
+          { name: 'averageSessionDuration' },  // segundos
+        ]
+      }
+    });
+
+    // KPIs actuales y previos
+    const [now, prev] = await Promise.all([
+      run({ startDate, endDate }),
+      run({ startDate: fmt(prevStart), endDate: fmt(prevEnd) })
+    ]);
+
+    const V = (row, i) => Number(row?.metricValues?.[i]?.value || 0);
+    const rowNow  = now.data.rows?.[0];
+    const rowPrev = prev.data.rows?.[0];
+
+    const engagementRate = V(rowNow, 0);
+    const avgEngagementTime = V(rowNow, 1);
+    const prevEngagementRate = V(rowPrev, 0);
+    const prevAvgEngagementTime = V(rowPrev, 1);
+
+    const delta = (a, b) => (b ? (a - b) / b : null);
+
+    // Tendencia diaria
+    const trendResp = await dataApi.properties.runReport({
+      property,
+      requestBody: {
+        dateRanges: [{ startDate, endDate }],
+        dimensions: [{ name: 'date' }],
+        metrics: [
+          { name: 'engagementRate' },
+          { name: 'averageSessionDuration' }
+        ],
+        orderBys: [{ dimension: { dimensionName: 'date' } }]
+      }
+    });
+
+    const trend = (trendResp.data.rows || []).map(r => {
+      const d = r.dimensionValues?.[0]?.value || '';
+      const dateISO = d && d.length === 8 ? `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}` : d;
+      return {
+        date: dateISO,
+        engagementRate: Number(r.metricValues?.[0]?.value || 0),
+        avgTime: Number(r.metricValues?.[1]?.value || 0),
+      };
+    });
+
+    res.json({
+      ok: true,
+      engagementRate,
+      avgEngagementTime,
+      trend,
+      deltas: {
+        engagementRate: delta(engagementRate, prevEngagementRate),
+        avgEngagementTime: delta(avgEngagementTime, prevAvgEngagementTime),
+      }
+    });
+  } catch (e) {
+    console.error('GA /engagement error:', e?.response?.data || e);
+    res.status(500).json({ ok: false, error: e.message || String(e) });
+  }
+});
+
 
 module.exports = router;
