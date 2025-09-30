@@ -589,3 +589,99 @@ body[data-page="onboarding4"] .ready-content {
   min-width: 0;      
   min-height: 100%;
 }
+
+/* ================= Coming Soon — Shopify (solo CSS) ================= */
+
+/* El wrapper mantiene el botón alineado a la derecha dentro del .connection-card */
+.connection-card .btn-tooltip-wrapper {
+  position: relative;
+  display: inline-block;
+  margin-left: auto;           /* empuja el wrapper/botón a la derecha */
+  flex: 0 0 auto;
+}
+
+/* Estado visual de "bloqueado" y bloqueo real del click sin JS */
+.btn-tooltip-wrapper.coming-soon .btn-connect {
+  pointer-events: none;        /* <- desactiva el click */
+  cursor: not-allowed;
+  opacity: 0.9;
+  background: #1A1622 !important;
+  border: 1px solid #2C2530 !important;
+  color: #9A8CA8 !important;
+  box-shadow: none !important;
+}
+
+/* Evita que el hover "normal" del botón cambie estilos cuando está bloqueado */
+.btn-tooltip-wrapper.coming-soon .btn-connect:hover {
+  background: #1A1622 !important;
+  color: #9A8CA8 !important;
+  border-color: #2C2530 !important;
+}
+
+/* Burbuja con look Adnova */
+.btn-tooltip {
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  transform: translate(-12px, -50%);
+  min-width: 220px;
+  max-width: 280px;
+  padding: 10px 12px;
+  background: #0B0B0D;
+  border: 1px solid #2C2530;
+  border-radius: 12px;
+  box-shadow: 0 0 20px rgba(181, 92, 255, 0.15);
+  color: #E5D3FF;
+  z-index: 30;
+  pointer-events: none;        /* no interfiere con el mouse */
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .15s ease, visibility .15s ease, transform .15s ease;
+  text-align: left;
+}
+
+.btn-tooltip-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #E5D3FF;
+  margin-bottom: 2px;
+}
+.btn-tooltip-desc {
+  font-size: 11px;
+  color: #9A8CA8;
+}
+
+/* Flechita lateral hacia el botón */
+.btn-tooltip::after{
+  content: "";
+  position: absolute;
+  top: 50%; right: -6px; transform: translateY(-50%);
+  border: 6px solid transparent;
+  border-left-color: #2C2530;   /* borde */
+}
+.btn-tooltip::before{
+  content: "";
+  position: absolute;
+  top: 50%; right: -5px; transform: translateY(-50%);
+  border: 5px solid transparent;
+  border-left-color: #0B0B0D;   /* fondo */
+}
+
+/* Mostrar tooltip al pasar el cursor o al enfocar con teclado */
+.btn-tooltip-wrapper:hover .btn-tooltip,
+.btn-tooltip-wrapper:focus-within .btn-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-8px, -50%);
+}
+
+/* Responsive: si la tarjeta queda pegada al borde, sube la burbuja y céntrala */
+@media (max-width: 640px) {
+  .btn-tooltip {
+    top: auto;
+    bottom: 110%;
+    right: 50%;
+    transform: translate(50%, 0);
+  }
+  .btn-tooltip::after, .btn-tooltip::before { display: none; }
+}

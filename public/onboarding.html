@@ -68,10 +68,27 @@
               <div class="connection-info">
                 <h3>Tienda de Shopify</h3>
                 <p>Conecta tu tienda para optimizar el marketing</p>
-                <span class="required-badge">Proximamente</span>
+                <span class="required-badge">Próximamente</span>
               </div>
             </div>
-            <button type="button" class="btn-connect" id="connect-shopify-btn">Conectar</button>
+            <!-- Botón Shopify bloqueado con tooltip (solo HTML) -->
+<div class="btn-tooltip-wrapper coming-soon">
+  <button
+    type="button"
+    class="btn-connect"
+    id="connect-shopify-btn"
+    aria-disabled="true"
+    aria-describedby="shopify-tooltip"
+    tabindex="-1"
+  >
+    Conectar
+  </button>
+
+          <div class="btn-tooltip" id="shopify-tooltip" role="tooltip">
+            <div class="btn-tooltip-title">Próximamente</div>
+             <div class="btn-tooltip-desc">Estamos habilitando la conexión nativa con Shopify.</div>
+            </div>
+           </div>
           </div>
 
           
