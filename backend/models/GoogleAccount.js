@@ -3,7 +3,7 @@
 const mongoose = require('mongoose');
 const { Schema, model, Types } = mongoose;
 
-/* ----------------- helpers ----------------- */
+/* ----------------- helpers internos ----------------- */
 const stripDashes = (s = '') => s.toString().replace(/-/g, '').trim();
 const normScopes = (v) => {
   if (!v) return [];
@@ -28,11 +28,11 @@ const normPropertyId = (val) => {
   return onlyDigits ? `properties/${onlyDigits}` : '';
 };
 
-/* ----------- subdocs ----------- */
+/* ----------------- subdocs ----------------- */
 const CustomerSchema = new Schema(
   {
-    id: { type: String, set: (v) => stripDashes(v) },
-    resourceName: String,
+    id: { type: String, set: (v) => stripDashes(v) }, // "1234567890"
+    resourceName: String,                              // "customers/1234567890"
     descriptiveName: String,
     currencyCode: String,
     timeZone: String,
@@ -50,7 +50,7 @@ const GaPropertySchema = new Schema(
   { _id: false }
 );
 
-/* ----------- main schema ----------- */
+/* ----------------- main schema ----------------- */
 const GoogleAccountSchema = new Schema(
   {
     // referencia al usuario
@@ -69,8 +69,8 @@ const GoogleAccountSchema = new Schema(
     defaultCustomerId: { type: String, set: (v) => stripDashes(v) },
 
     // GA4
-    gaProperties:     { type: [GaPropertySchema], default: [] },
-    defaultPropertyId:{ type: String, set: normPropertyId }, // "properties/123456789"
+    gaProperties:      { type: [GaPropertySchema], default: [] },
+    defaultPropertyId: { type: String, set: normPropertyId }, // "properties/123456789"
 
     // preferencia de objetivo en onboarding (Ads)
     objective: {
@@ -101,14 +101,13 @@ const GoogleAccountSchema = new Schema(
   }
 );
 
-/* ----------- índices ----------- */
-// NOTA: tienes una sola fila por usuario, pero mantenemos ambos por compatibilidad
+/* ----------------- índices ----------------- */
+// NOTA: idealmente 1 documento por usuario (usa uno de los dos campos user/userId)
 GoogleAccountSchema.index({ user: 1   }, { unique: true, sparse: true });
 GoogleAccountSchema.index({ userId: 1 }, { unique: true, sparse: true });
-// Buscar por propertyId será común
 GoogleAccountSchema.index({ 'gaProperties.propertyId': 1 });
 
-/* ----------- virtuals / methods ----------- */
+/* ----------------- virtuals / instance methods ----------------- */
 GoogleAccountSchema.virtual('hasRefresh').get(function () {
   return !!this.refreshToken;
 });
@@ -119,25 +118,24 @@ GoogleAccountSchema.methods.setTokens = function ({
   expires_at,
   scope
 } = {}) {
-  if (access_token !== undefined) this.accessToken = access_token;
+  if (access_token  !== undefined) this.accessToken  = access_token;
   if (refresh_token !== undefined) this.refreshToken = refresh_token;
-  if (expires_at !== undefined)    this.expiresAt   = expires_at instanceof Date ? expires_at : new Date(expires_at);
-  if (scope !== undefined)         this.scope       = normScopes(scope);
+  if (expires_at    !== undefined) this.expiresAt    = expires_at instanceof Date ? expires_at : new Date(expires_at);
+  if (scope         !== undefined) this.scope        = normScopes(scope);
   return this;
 };
 
-// helper para setear gaProperties deduplicando por propertyId
+// Setear gaProperties deduplicando por propertyId
 GoogleAccountSchema.methods.setGaProperties = function (list = []) {
   const normalized = (Array.isArray(list) ? list : [])
     .map(p => ({
-      propertyId: normPropertyId(p?.propertyId || p?.name || ''),
+      propertyId:  normPropertyId(p?.propertyId || p?.name || ''),
       displayName: p?.displayName || p?.name || '',
-      timeZone: p?.timeZone || null,
-      currencyCode: p?.currencyCode || null,
+      timeZone:    p?.timeZone || null,
+      currencyCode:p?.currencyCode || null,
     }))
     .filter(p => p.propertyId);
 
-  // dedupe por propertyId
   const map = new Map();
   for (const p of normalized) map.set(p.propertyId, p);
   this.gaProperties = Array.from(map.values()).sort((a, b) =>
@@ -146,7 +144,37 @@ GoogleAccountSchema.methods.setGaProperties = function (list = []) {
   return this;
 };
 
-/* ----------- hooks ----------- */
+// CustomerId por defecto (fallback al primer customer)
+GoogleAccountSchema.methods.getDefaultCustomerId = function () {
+  const cid = this.defaultCustomerId || this.customers?.[0]?.id || '';
+  return cid ? stripDashes(cid) : '';
+};
+
+// PropertyId por defecto (formato "properties/123")
+GoogleAccountSchema.methods.getDefaultPropertyId = function () {
+  return this.defaultPropertyId || this.gaProperties?.[0]?.propertyId || '';
+};
+
+// Poblar customers desde listAccessibleCustomers (array de "customers/123...")
+GoogleAccountSchema.methods.setCustomersFromResourceNames = function (resourceNames = []) {
+  const list = Array.isArray(resourceNames) ? resourceNames : [];
+  this.customers = list.map(rn => {
+    const id = String(rn || '').split('/')[1] || '';
+    return { id: stripDashes(id), resourceName: rn };
+  });
+  if (!this.defaultCustomerId && this.customers[0]?.id) {
+    this.defaultCustomerId = this.customers[0].id;
+  }
+  return this;
+};
+
+/* ----------------- statics ----------------- */
+// Recuperar el documento incluyendo tokens (ignora select:false)
+GoogleAccountSchema.statics.findWithTokens = function (query = {}) {
+  return this.findOne(query).select('+accessToken +refreshToken');
+};
+
+/* ----------------- hooks ----------------- */
 GoogleAccountSchema.pre('save', function(next) {
   this.updatedAt = new Date();
 
@@ -169,10 +197,10 @@ GoogleAccountSchema.pre('save', function(next) {
       const pid = normPropertyId(p?.propertyId);
       if (!pid) continue;
       map.set(pid, {
-        propertyId: pid,
+        propertyId:  pid,
         displayName: p?.displayName || '',
-        timeZone: p?.timeZone || null,
-        currencyCode: p?.currencyCode || null,
+        timeZone:    p?.timeZone || null,
+        currencyCode:p?.currencyCode || null,
       });
     }
     this.gaProperties = Array.from(map.values()).sort((a, b) =>

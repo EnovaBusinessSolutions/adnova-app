@@ -4,37 +4,55 @@
 const express = require('express');
 const router = express.Router();
 
+// --- Models (mantengo tus paths actuales)
 const Audit = require('../models/Audit');
 const User  = require('../models/User');
 
-
+// --- Collectors
 const { collectGoogle } = require('../jobs/collect/googleCollector');
 const { collectMeta   } = require('../jobs/collect/metaCollector');
 
+// GA4 es opcional: si aún no tienes collector, el endpoint responderá "SOURCE_NOT_READY"
+let collectGA4 = null;
+try {
+  // Ajusta el path si tu collector GA4 vive en otro lugar.
+  // Sugerencias válidas:
+  //  - '../jobs/collect/ga4Collector'
+  //  - '../jobs/collect/googleAnalyticsCollector'
+  //  - '../jobs/collect/googleAnalytics'
+  ({ collectGA4 } = require('../jobs/collect/ga4Collector'));
+} catch (_) {
+  try { ({ collectGA4 } = require('../jobs/collect/googleAnalyticsCollector')); } catch (_) {
+    try { ({ collectGA4 } = require('../jobs/collect/googleAnalytics')); } catch (_) {
+      collectGA4 = null;
+    }
+  }
+}
 
+// --- LLM (opcional; si no existe, persistimos sólo setup/placeholder issues)
 let generateAudit = null;
 try { generateAudit = require('../jobs/llm/generateAudit'); } catch { generateAudit = null; }
 
-
-function requireAuth(req, res, next) {
+// --- Auth middleware (compat.)
+function requireAuth(req, _res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
-  return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+  return next({ status: 401, message: 'UNAUTHENTICATED' });
 }
 
+// --- Utilidades y normalizadores (compatibles con tu UI/Modelo)
 const OK_AREAS = new Set(['setup', 'performance', 'creative', 'tracking', 'budget', 'bidding']);
-const OK_SEV   = new Set(['alta', 'media', 'baja']);
-
 const sevRank  = { alta: 3, media: 2, baja: 1 };
 
-const safeStr  = (v, fb = '') => (typeof v === 'string' ? v : fb);
-const cap      = (arr, n) => (Array.isArray(arr) ? arr.slice(0, n) : []);
-const toSev    = (s) => {
+const safeStr = (v, fb = '') => (typeof v === 'string' ? v : fb);
+const cap     = (arr, n) => (Array.isArray(arr) ? arr.slice(0, n) : []);
+
+const toSev = (s) => {
   const v = String(s || '').toLowerCase().trim();
   if (v === 'alta' || v === 'high')  return 'alta';
   if (v === 'baja' || v === 'low')   return 'baja';
   return 'media';
 };
-const toArea   = (a) => (OK_AREAS.has(a) ? a : 'performance');
+const toArea = (a) => (OK_AREAS.has(a) ? a : 'performance');
 
 function normalizeIssue(raw, i = 0, type = 'google') {
   const id    = safeStr(raw?.id, `iss-${type}-${Date.now()}-${i}`).trim();
@@ -46,23 +64,36 @@ function normalizeIssue(raw, i = 0, type = 'google') {
     id,
     area,
     title,
-    severity: sev,                                     
+    severity: sev,
     evidence: safeStr(raw?.evidence, ''),
     metrics: raw?.metrics && typeof raw.metrics === 'object' ? raw.metrics : {},
     recommendation: safeStr(raw?.recommendation, ''),
-    estimatedImpact: ['alto', 'medio', 'bajo'].includes(raw?.estimatedImpact) ? raw.estimatedImpact : null,
+    estimatedImpact: ['alto','medio','bajo'].includes(raw?.estimatedImpact) ? raw.estimatedImpact : null,
     blockers: Array.isArray(raw?.blockers) ? raw.blockers.map(String) : [],
     links: Array.isArray(raw?.links)
       ? raw.links.map(l => ({ label: safeStr(l?.label, ''), url: safeStr(l?.url, '') }))
       : [],
   };
 
-  
+  // Compat: si viene "campaignRef" del LLM, lo colgamos en metrics
   if (raw?.campaignRef && typeof raw.campaignRef === 'object') {
-    base.metrics = { ...base.metrics, campaignRef: {
-      id:   safeStr(raw.campaignRef.id, ''),
-      name: safeStr(raw.campaignRef.name, ''),
-    }};
+    base.metrics = {
+      ...base.metrics,
+      campaignRef: {
+        id:   safeStr(raw.campaignRef.id, ''),
+        name: safeStr(raw.campaignRef.name, ''),
+      }
+    };
+  }
+  // GA4 (si llegara "segmentRef")
+  if (raw?.segmentRef && typeof raw.segmentRef === 'object') {
+    base.metrics = {
+      ...base.metrics,
+      segmentRef: {
+        type: safeStr(raw.segmentRef.type, ''),
+        name: safeStr(raw.segmentRef.name, ''),
+      }
+    };
   }
 
   return base;
@@ -73,7 +104,6 @@ function normalizeIssues(list, type = 'google', limit = 10) {
   return cap(list, limit).map((it, i) => normalizeIssue(it, i, type));
 }
 
-
 function buildSetupIssue({ title, evidence, type }) {
   return normalizeIssue({
     id: `setup-${type}-${Date.now()}`,
@@ -83,10 +113,10 @@ function buildSetupIssue({ title, evidence, type }) {
     evidence,
     recommendation:
       type === 'google'
-        ? 'Revisa los permisos (scope "adwords") y asegúrate de tener campañas activas o historial. Si trabajas vía MCC, revisa el login-customer-id y la vinculación de la cuenta al MCC.'
+        ? 'Revisa los permisos (scope "adwords") y asegúrate de tener campañas activas o histórico. Si trabajas vía MCC, valida login-customer-id y vínculo MCC.'
         : type === 'meta'
-        ? 'Revisa los permisos (ads_read/ads_management) y confirma que hay cuentas con campañas activas. Valida también el píxel/eventos en Events Manager.'
-        : 'Conecta la fuente y confirma que hay datos disponibles en el rango de fechas.',
+        ? 'Revisa permisos (ads_read/ads_management) y confirma cuentas con campañas activas. Valida el píxel en Events Manager.'
+        : 'Conecta la fuente de GA4 y confirma que hay datos en el rango de fechas.',
   }, 0, type);
 }
 
@@ -100,92 +130,119 @@ function sortIssuesBySeverityThenImpact(issues) {
   });
 }
 
+// --- Helpers de ejecución por fuente
+const SOURCES = ['google', 'meta', 'ga4'];
 
+async function runSingleAudit({ userId, type, flags }) {
+  // 1) Si no está conectada, guardamos placeholder
+  if (!flags[type]) {
+    const doc = await Audit.create({
+      userId,
+      type,
+      generatedAt: new Date(),
+      resumen: 'Fuente no conectada',
+      summary: 'Fuente no conectada',
+      issues: [buildSetupIssue({ type, title: 'Fuente no conectada', evidence: 'Conecta la cuenta para auditar.' })],
+      actionCenter: [],
+      inputSnapshot: { notAuthorized: true, reason: 'NOT_CONNECTED' },
+      version: 'audits@1.1.0',
+    });
+    return { type, ok: true, auditId: doc._id };
+  }
+
+  // 2) Colecta por tipo
+  let snap = {};
+  try {
+    if (type === 'google') snap = await collectGoogle(userId);
+    else if (type === 'meta') snap = await collectMeta(userId);
+    else if (type === 'ga4') {
+      if (typeof collectGA4 === 'function') snap = await collectGA4(userId);
+      else return { type, ok: false, error: 'SOURCE_NOT_READY' };
+    }
+  } catch (e) {
+    snap = {};
+  }
+
+  // 3) Genera issues
+  let issues = [];
+  let summary = '';
+  const hasCampaigns =
+    type === 'google' || type === 'meta'
+      ? Array.isArray(snap?.byCampaign) && snap.byCampaign.length > 0
+      : type === 'ga4'
+        ? (Array.isArray(snap?.channels) && snap.channels.length > 0) || (Array.isArray(snap?.rows) && snap.rows.length > 0)
+        : false;
+
+  const authorized = !snap?.notAuthorized;
+
+  if (!authorized) {
+    issues.push(buildSetupIssue({
+      type,
+      title: 'Permisos insuficientes o acceso denegado',
+      evidence: `Motivo: ${snap?.reason || 'no autorizado'}. Afecta a: ${(snap?.accountIds || []).join(', ') || 'N/D'}`,
+    }));
+    summary = 'No fue posible auditar por permisos insuficientes.';
+  } else if (!hasCampaigns) {
+    issues.push(buildSetupIssue({
+      type,
+      title: 'No se detectaron campañas/datos recientes',
+      evidence: 'El snapshot no contiene campañas o datos en el rango consultado.',
+    }));
+    summary = 'No hay datos suficientes para auditar.';
+  } else if (generateAudit) {
+    try {
+      // Mantengo tu firma actual para compatibilidad
+      const ai = await generateAudit({ type, inputSnapshot: snap });
+      summary = safeStr(ai?.summary, '');
+      issues  = normalizeIssues(ai?.issues, type, 10);
+    } catch {
+      issues  = normalizeIssues(issues, type, 10);
+      summary = summary || '';
+    }
+  }
+
+  // 4) Normaliza, ordena y guarda
+  issues = normalizeIssues(issues, type, 10);
+  const top3 = sortIssuesBySeverityThenImpact(issues).slice(0, 3);
+
+  const doc = await Audit.create({
+    userId,
+    type,
+    generatedAt: new Date(),
+    resumen: summary,
+    summary,
+    issues,
+    actionCenter: top3,
+    topProducts: Array.isArray(snap?.topProducts) ? snap.topProducts : [],
+    inputSnapshot: snap,
+    version: 'audits@1.1.0',
+  });
+
+  return { type, ok: true, auditId: doc._id };
+}
+
+// =======================
+// RUTAS
+// =======================
+
+// (A) Ejecutar TODAS (compat. con tu UI actual)
 router.post('/run', requireAuth, async (req, res) => {
   const userId = req.user._id;
 
   try {
-    
     const user = await User.findById(userId).lean();
     const flags = {
       google:  !!(req.body?.googleConnected  ?? user?.googleConnected),
       meta:    !!(req.body?.metaConnected    ?? user?.metaConnected),
-      shopify: !!(req.body?.shopifyConnected ?? user?.shopifyConnected),
+      ga4:     !!(req.body?.googleConnected  ?? user?.googleConnected), // comparten login
+      shopify: !!(req.body?.shopifyConnected ?? user?.shopifyConnected), // ignorado aquí
     };
 
     const results = [];
-
-    for (const type of ['google', 'meta', 'shopify']) {
-      if (!flags[type]) {
-        results.push({ type, ok: false, error: 'NOT_CONNECTED' });
-        continue;
-      }
-
-      
-      let inputSnapshot = {};
-      try {
-        if (type === 'google')  inputSnapshot = await collectGoogle(userId);
-        if (type === 'meta')    inputSnapshot = await collectMeta(userId);
-        if (type === 'shopify') inputSnapshot = {}; 
-      } catch (e) {
-        inputSnapshot = {};
-      }
-
-      
-      let issues = [];
-      let summary = '';
-      const hasCampaigns = Array.isArray(inputSnapshot?.byCampaign) && inputSnapshot.byCampaign.length > 0;
-      const authorized   = !inputSnapshot?.notAuthorized;
-
-      if (!authorized) {
-        issues.push(buildSetupIssue({
-          type,
-          title: 'Permisos insuficientes o acceso denegado',
-          evidence: `Motivo: ${inputSnapshot?.reason || 'no autorizado'}. Afecta a cuentas: ${(inputSnapshot?.accountIds || []).join(', ') || 'N/D'}`,
-        }));
-        summary = 'No fue posible auditar por permisos insuficientes.';
-      } else if (!hasCampaigns) {
-        issues.push(buildSetupIssue({
-          type,
-          title: 'No se detectaron campañas ni datos recientes',
-          evidence: 'El snapshot no contiene campañas activas ni histórico en el rango consultado.',
-        }));
-        summary = 'No hay campañas activas ni datos para auditar.';
-      } else {
-        
-        if (generateAudit) {
-          try {
-            const ai = await generateAudit({ type, inputSnapshot });
-            summary = safeStr(ai?.summary, '');
-            issues  = normalizeIssues(ai?.issues, type, 10);
-          } catch (e) {
-            
-            summary = summary || '';
-            issues  = normalizeIssues(issues, type, 10);
-          }
-        }
-      }
-
-      
-      issues = normalizeIssues(issues, type, 10);
-      const top3 = sortIssuesBySeverityThenImpact(issues).slice(0, 3);
-
-      
-      const doc = await Audit.create({
-        userId,
-        type,
-        generatedAt: new Date(),
-        
-        resumen: summary,          
-        summary,                   
-        issues,                    
-        actionCenter: top3,         
-        topProducts: Array.isArray(inputSnapshot?.topProducts) ? inputSnapshot.topProducts : [],
-        inputSnapshot,              
-        version: 'audits@1.1.0',
-      });
-
-      results.push({ type, ok: true, auditId: doc._id });
+    // Solo auditamos google/meta/ga4 (shopify queda fuera como pediste)
+    for (const type of ['google', 'meta', 'ga4']) {
+      const r = await runSingleAudit({ userId, type, flags });
+      results.push(r);
     }
 
     return res.json({ ok: true, results });
@@ -195,27 +252,71 @@ router.post('/run', requireAuth, async (req, res) => {
   }
 });
 
+// (B) Ejecutar UNA por fuente nueva: /api/audits/:source/run
+router.post('/:source/run', requireAuth, async (req, res) => {
+  const userId = req.user._id;
+  const source = String(req.params.source || '').toLowerCase();
 
+  if (!SOURCES.includes(source)) {
+    return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
+  }
+
+  try {
+    const user = await User.findById(userId).lean();
+    const flags = {
+      google:  !!user?.googleConnected,
+      meta:    !!user?.metaConnected,
+      ga4:     !!user?.googleConnected,
+    };
+    const r = await runSingleAudit({ userId, type: source, flags });
+    if (!r.ok) return res.status(400).json(r);
+    return res.json({ ok: true, ...r });
+  } catch (e) {
+    console.error('AUDIT_SINGLE_RUN_ERROR:', e);
+    return res.status(500).json({ ok: false, error: 'RUN_ERROR', detail: e?.message || 'Unexpected error' });
+  }
+});
+
+// (C) Últimas por cada fuente (compat. existente que devuelve todas)
 router.get('/latest', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
-    const [google, meta, shopify] = await Promise.all(
-      ['google', 'meta', 'shopify'].map((t) =>
+    const [google, meta, ga4] = await Promise.all(
+      ['google', 'meta', 'ga4'].map((t) =>
         Audit.findOne({ userId, type: t }).sort({ generatedAt: -1 }).lean()
       )
     );
 
-    return res.json({
-      ok: true,
-      data: { google: google || null, meta: meta || null, shopify: shopify || null },
-    });
+    return res.json({ ok: true, data: { google: google || null, meta: meta || null, ga4: ga4 || null } });
   } catch (e) {
     console.error('LATEST_ERROR:', e);
     return res.status(400).json({ ok: false, error: 'LATEST_ERROR', detail: e?.message });
   }
 });
 
+// (D) Última por fuente nueva: /api/audits/:source/latest
+router.get('/:source/latest', requireAuth, async (req, res) => {
+  const source = String(req.params.source || '').toLowerCase();
+  if (!SOURCES.includes(source)) {
+    return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
+  }
+  try {
+    const userId = req.user._id;
+    const doc = await Audit.findOne({ userId, type: source }).sort({ generatedAt: -1 }).lean();
+    if (!doc) return res.json({ summary: null, findings: [], createdAt: null });
+    // Compat: tu UI usa "findings" a veces; mapeamos "issues" → "findings"
+    return res.json({
+      summary: doc.summary || doc.resumen || null,
+      findings: Array.isArray(doc.issues) ? doc.issues : [],
+      createdAt: doc.generatedAt || doc.createdAt || null,
+    });
+  } catch (e) {
+    console.error('LATEST_SINGLE_ERROR:', e);
+    return res.status(400).json({ ok: false, error: 'LATEST_SINGLE_ERROR', detail: e?.message });
+  }
+});
 
+// (E) Action Center (compat.)
 router.get('/action-center', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;

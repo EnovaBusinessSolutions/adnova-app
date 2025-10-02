@@ -1,48 +1,67 @@
 'use strict';
 
+/**
+ * Collector de Google Ads (GAQL) listo para producción.
+ * - Usa GoogleAccount.findWithTokens() para obtener access/refresh tokens (aunque tengan select:false)
+ * - Descubre customers si no hay defaultCustomerId
+ * - Respeta login-customer-id (MCC) si está configurado
+ * - Agrega KPIs y detalle por campaña para 30 días
+ */
+
 const axios = require('axios');
 const mongoose = require('mongoose');
 const { OAuth2Client } = require('google-auth-library');
 
-const ADS_API = 'https://googleads.googleapis.com/v16';
+const ADS_API_VERSION = process.env.GADS_API_VERSION || 'v17';
+const ADS_API = `https://googleads.googleapis.com/${ADS_API_VERSION}`;
+
 const {
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
   GOOGLE_CONNECT_CALLBACK_URL,
+
+  // Acepta ambos nombres para el developer token
+  GOOGLE_ADS_DEVELOPER_TOKEN,
   GOOGLE_DEVELOPER_TOKEN,
-  GOOGLE_ADS_LOGIN_CUSTOMER_ID, 
+
+  // Opcional: MCC (login-customer-id)
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID,
 } = process.env;
 
+const DEV_TOKEN = GOOGLE_ADS_DEVELOPER_TOKEN || GOOGLE_DEVELOPER_TOKEN;
 
 let GoogleAccount;
 try {
   GoogleAccount = require('../../models/GoogleAccount');
 } catch (_) {
+  // Fallback mínimo (por si el require falla en tests)
   const { Schema, model } = mongoose;
-  const schema = new Schema({
-    user: { type: Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
-    userId: { type: Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
-    accessToken: { type: String, select: false },
-    refreshToken: { type: String, select: false },
-    expiresAt: { type: Date },
-    scope: { type: [String], default: [] },
-    customers: { type: Array, default: [] },
-    defaultCustomerId: String,
-    managerCustomerId: String,
-    objective: { type: String, enum: ['ventas','alcance','leads'], default: null },
-    updatedAt: { type: Date, default: Date.now },
-  }, { collection: 'googleaccounts' });
-  schema.pre('save', function(n){ this.updatedAt = new Date(); n(); });
+  const schema = new Schema(
+    {
+      user: { type: Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
+      userId: { type: Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
+      accessToken: { type: String, select: false },
+      refreshToken: { type: String, select: false },
+      scope: { type: [String], default: [] },
+      customers: { type: Array, default: [] },
+      defaultCustomerId: String,
+      managerCustomerId: String,
+      updatedAt: { type: Date, default: Date.now },
+    },
+    { collection: 'googleaccounts' }
+  );
+  schema.pre('save', function (n) { this.updatedAt = new Date(); n(); });
   GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
 }
 
-
-const normId = (s='') => String(s).replace(/-/g,'').trim();
-const microsTo = v => Number(v||0)/1_000_000;
-const safeDiv  = (n,d) => (Number(d||0) ? Number(n||0)/Number(d||0) : 0);
-const todayISO = () => new Date().toISOString().slice(0,10);
+/* ---------------- utilidades ---------------- */
+const normId = (s = '') => String(s).replace(/-/g, '').trim();
+const microsTo = (v) => Number(v || 0) / 1_000_000;
+const safeDiv = (n, d) => (Number(d || 0) ? Number(n || 0) / Number(d || 0) : 0);
+const todayISO = () => new Date().toISOString().slice(0, 10);
 const daysAgoISO = (n) => {
-  const d = new Date(); d.setUTCDate(d.getUTCDate()-n); return d.toISOString().slice(0,10);
+  const d = new Date(); d.setUTCDate(d.getUTCDate() - n);
+  return d.toISOString().slice(0, 10);
 };
 
 function oauth() {
@@ -53,44 +72,52 @@ function oauth() {
   });
 }
 
+/** Refresca el access token si es necesario y lo persiste */
 async function ensureAccessToken(gaDoc) {
   if (gaDoc?.accessToken) return gaDoc.accessToken;
   if (!gaDoc?.refreshToken) return null;
+
   const client = oauth();
   client.setCredentials({ refresh_token: gaDoc.refreshToken });
+
+  // Nota: refreshAccessToken está deprecado en algunas versiones; este patrón funciona estable.
   const { credentials } = await client.refreshAccessToken();
   const token = credentials?.access_token || null;
+
   if (token) {
     await GoogleAccount.updateOne(
       { _id: gaDoc._id },
-      { $set: {
+      {
+        $set: {
           accessToken: token,
           expiresAt: credentials.expiry_date ? new Date(credentials.expiry_date) : null,
           updatedAt: new Date(),
-        }
+        },
       }
     );
   }
   return token;
 }
 
+/** Lista customers accesibles (IDs) para el usuario actual */
 async function listAccessibleCustomers(accessToken) {
   const { data } = await axios.get(`${ADS_API}/customers:listAccessibleCustomers`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      'developer-token': GOOGLE_DEVELOPER_TOKEN,
+      'developer-token': DEV_TOKEN,
     },
     timeout: 20000,
   });
   const rns = Array.isArray(data?.resourceNames) ? data.resourceNames : [];
-  return rns.map(r => r.split('/')[1]).filter(Boolean);
+  return rns.map((r) => r.split('/')[1]).filter(Boolean);
 }
 
+/** Lee metadata de un customer */
 async function getCustomer(accessToken, cid) {
   const { data } = await axios.get(`${ADS_API}/customers/${cid}`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      'developer-token': GOOGLE_DEVELOPER_TOKEN,
+      'developer-token': DEV_TOKEN,
     },
     timeout: 15000,
   });
@@ -103,11 +130,12 @@ async function getCustomer(accessToken, cid) {
   };
 }
 
+/** Ejecuta GAQL por streaming y concatena resultados */
 async function gaqlSearchStream({ accessToken, customerId, loginCustomerId, query }) {
   const url = `${ADS_API}/customers/${customerId}/googleAds:searchStream`;
   const headers = {
     Authorization: `Bearer ${accessToken}`,
-    'developer-token': GOOGLE_DEVELOPER_TOKEN,
+    'developer-token': DEV_TOKEN,
     'Content-Type': 'application/json',
   };
   if (loginCustomerId) headers['login-customer-id'] = String(loginCustomerId);
@@ -120,74 +148,127 @@ async function gaqlSearchStream({ accessToken, customerId, loginCustomerId, quer
   return out;
 }
 
+/* ---------------- collector principal ---------------- */
 
 async function collectGoogle(userId) {
-  
-  const ga = await GoogleAccount.findOne({
-    $or: [{ user: userId }, { userId }],
-  })
-    .select('+accessToken +refreshToken customers defaultCustomerId managerCustomerId scope')
-    .lean();
+  // 1) Trae el GoogleAccount con tokens (usa static del modelo real)
+  const gaDoc =
+    typeof GoogleAccount.findWithTokens === 'function'
+      ? await GoogleAccount.findWithTokens({ $or: [{ user: userId }, { userId }] })
+      : await GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] }).select(
+          '+accessToken +refreshToken customers defaultCustomerId managerCustomerId scope'
+        );
 
-  if (!ga) {
-    return { notAuthorized: true, reason: 'NO_GOOGLEACCOUNT', currency: null, timeRange:{from:null,to:null}, kpis:{}, byCampaign:[], series:[], accountIds:[] };
+  // No conectado
+  if (!gaDoc) {
+    return {
+      notAuthorized: true,
+      reason: 'NO_GOOGLEACCOUNT',
+      currency: null,
+      timeRange: { from: null, to: null },
+      kpis: {},
+      byCampaign: [],
+      series: [],
+      accountIds: [],
+    };
   }
 
-  const scopes = new Set((ga.scope || []).map(String));
+  const scopes = new Set((gaDoc.scope || []).map(String));
   if (!scopes.has('https://www.googleapis.com/auth/adwords')) {
-    return { notAuthorized: true, reason: 'MISSING_ADWORDS_SCOPE', currency: null, timeRange:{from:null,to:null}, kpis:{}, byCampaign:[], series:[], accountIds:[] };
+    return {
+      notAuthorized: true,
+      reason: 'MISSING_ADWORDS_SCOPE',
+      currency: null,
+      timeRange: { from: null, to: null },
+      kpis: {},
+      byCampaign: [],
+      series: [],
+      accountIds: [],
+    };
   }
 
-  
-  let accessToken = await ensureAccessToken(ga);
+  // 2) Asegura access token
+  let accessToken = await ensureAccessToken(gaDoc);
   if (!accessToken) {
-    return { notAuthorized: true, reason: 'NO_ACCESS_TOKEN', currency: null, timeRange:{from:null,to:null}, kpis:{}, byCampaign:[], series:[], accountIds:[] };
+    return {
+      notAuthorized: true,
+      reason: 'NO_ACCESS_TOKEN',
+      currency: null,
+      timeRange: { from: null, to: null },
+      kpis: {},
+      byCampaign: [],
+      series: [],
+      accountIds: [],
+    };
   }
 
-  
+  // 3) Determina lista de customers (IDs sin guiones)
   let ids = [];
-  if (ga.defaultCustomerId) ids.push(normId(ga.defaultCustomerId));
-  for (const c of (ga.customers || [])) {
-    const cid = normId(c.id || c.customerId);
+  if (gaDoc.defaultCustomerId) ids.push(normId(gaDoc.defaultCustomerId));
+  for (const c of gaDoc.customers || []) {
+    const cid = normId(c?.id || c?.customerId);
     if (cid && !ids.includes(cid)) ids.push(cid);
   }
+
+  // Descubre si no hay ninguno
   if (ids.length === 0) {
     try {
-      const discover = await listAccessibleCustomers(accessToken);
-      ids = discover.slice(0, 3).map(normId);
-      if (ids.length && (!ga.customers || ga.customers.length === 0)) {
-        
-        const fetched = await Promise.all(ids.map(cid => getCustomer(accessToken, cid).catch(()=>null)));
-        await GoogleAccount.updateOne({ _id: ga._id }, { $set: { customers: fetched.filter(Boolean), updatedAt: new Date() } });
+      const discovered = await listAccessibleCustomers(accessToken);
+      ids = discovered.slice(0, 3).map(normId); // limita a 3 por prudencia
+      if (ids.length && (!gaDoc.customers || gaDoc.customers.length === 0)) {
+        // Enriquecer y persistir customers
+        const fetched = await Promise.all(ids.map((cid) => getCustomer(accessToken, cid).catch(() => null)));
+        await GoogleAccount.updateOne(
+          { _id: gaDoc._id },
+          { $set: { customers: fetched.filter(Boolean), defaultCustomerId: ids[0] || null, updatedAt: new Date() } }
+        );
       }
-    } catch {}
-  }
-  if (ids.length === 0) {
-    return { notAuthorized: false, reason: 'NO_CUSTOMERS', currency: null, timeRange:{from:null,to:null}, kpis:{}, byCampaign:[], series:[], accountIds:[] };
+    } catch {
+      // ignoramos, se manejará abajo si ids sigue vacío
+    }
   }
 
-  const loginCustomerId = normId(ga.managerCustomerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '');
+  if (ids.length === 0) {
+    return {
+      notAuthorized: false,
+      reason: 'NO_CUSTOMERS',
+      currency: null,
+      timeRange: { from: null, to: null },
+      kpis: {},
+      byCampaign: [],
+      series: [],
+      accountIds: [],
+    };
+  }
+
+  // 4) Parámetros globales
+  const loginCustomerId = normId(gaDoc.managerCustomerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '');
   const until = todayISO();
   const since = daysAgoISO(30);
 
-  
-  let G = { impr:0, clk:0, cost:0, conv:0, val:0 };
-  const seriesMap = new Map(); 
+  // 5) Acumuladores
+  let G = { impr: 0, clk: 0, cost: 0, conv: 0, val: 0 };
+  const seriesMap = new Map(); // date -> agg
   const byCampaign = [];
   let currency = 'USD';
 
+  // 6) Recorre cada customer
   for (const customerId of ids) {
-    
+    // currency por customer
     try {
       const cInfo = await getCustomer(accessToken, customerId);
       currency = cInfo.currencyCode || currency;
-    } catch {}
+    } catch {
+      // seguimos
+    }
 
+    // GAQL (campañas por día)
     const query = `
       SELECT
         segments.date,
         campaign.id,
         campaign.name,
+        campaign.advertising_channel_type,
         metrics.impressions,
         metrics.clicks,
         metrics.cost_micros,
@@ -200,58 +281,88 @@ async function collectGoogle(userId) {
 
     let rows;
     try {
-      rows = await gaqlSearchStream({ accessToken, customerId, loginCustomerId: loginCustomerId || undefined, query });
+      rows = await gaqlSearchStream({
+        accessToken,
+        customerId,
+        loginCustomerId: loginCustomerId || undefined,
+        query,
+      });
     } catch (e) {
-      
+      // Reintenta con refresh si 401/403
       if (e?.response?.status === 401 || e?.response?.status === 403) {
-        accessToken = await ensureAccessToken({ ...ga, accessToken: null });
-        rows = await gaqlSearchStream({ accessToken, customerId, loginCustomerId: loginCustomerId || undefined, query });
+        accessToken = await ensureAccessToken({ ...gaDoc.toObject?.() || {}, _id: gaDoc._id, accessToken: null });
+        rows = await gaqlSearchStream({
+          accessToken,
+          customerId,
+          loginCustomerId: loginCustomerId || undefined,
+          query,
+        });
       } else {
-        
+        // Customer inaccesible o sin datos; continúa con el siguiente
         continue;
       }
     }
 
     const byCampAgg = new Map();
-    for (const r of rows.slice(0, 3000)) {
+
+    for (const r of (rows || []).slice(0, 5000)) {
       const d = r.segments?.date;
       const campId = r.campaign?.id;
       const name = r.campaign?.name || 'Untitled';
 
-      const impr  = Number(r.metrics?.impressions || 0);
-      const clk   = Number(r.metrics?.clicks || 0);
-      const cost  = microsTo(r.metrics?.cost_micros);
-      const conv  = Number(r.metrics?.conversions || 0);
+      const impr = Number(r.metrics?.impressions || 0);
+      const clk = Number(r.metrics?.clicks || 0);
+      const cost = microsTo(r.metrics?.cost_micros);
+      const conv = Number(r.metrics?.conversions || 0);
       const value = Number(r.metrics?.conversions_value || 0);
 
       G.impr += impr; G.clk += clk; G.cost += cost; G.conv += conv; G.val += value;
 
       if (d) {
-        const cur = seriesMap.get(d) || { impressions:0, clicks:0, cost:0, conversions:0, conv_value:0 };
-        cur.impressions += impr; cur.clicks += clk; cur.cost += cost; cur.conversions += conv; cur.conv_value += value;
+        const cur = seriesMap.get(d) || { impressions: 0, clicks: 0, cost: 0, conversions: 0, conv_value: 0 };
+        cur.impressions += impr;
+        cur.clicks += clk;
+        cur.cost += cost;
+        cur.conversions += conv;
+        cur.conv_value += value;
         seriesMap.set(d, cur);
       }
 
       if (campId) {
-        const agg = byCampAgg.get(campId) || { name, impressions:0, clicks:0, cost:0, conversions:0, convValue:0 };
-        agg.impressions += impr; agg.clicks += clk; agg.cost += cost; agg.conversions += conv; agg.convValue += value;
+        const agg =
+          byCampAgg.get(campId) || {
+            name,
+            channel: r.campaign?.advertisingChannelType || null,
+            impressions: 0,
+            clicks: 0,
+            cost: 0,
+            conversions: 0,
+            convValue: 0,
+          };
+        agg.impressions += impr;
+        agg.clicks += clk;
+        agg.cost += cost;
+        agg.conversions += conv;
+        agg.convValue += value;
         byCampAgg.set(campId, agg);
       }
     }
 
+    // Exporta campañas agregadas del customer
     for (const [cid, v] of byCampAgg.entries()) {
       byCampaign.push({
         account_id: customerId,
         id: cid,
         name: v.name,
+        channel: v.channel,
         kpis: {
           impressions: v.impressions,
           clicks: v.clicks,
           cost: v.cost,
           conversions: v.conversions,
           conv_value: v.convValue,
-          cpc:  safeDiv(v.cost, v.clicks),
-          cpa:  safeDiv(v.cost, v.conversions),
+          cpc: safeDiv(v.cost, v.clicks),
+          cpa: safeDiv(v.cost, v.conversions),
           roas: safeDiv(v.convValue, v.cost),
         },
         period: { since, until },
@@ -259,7 +370,9 @@ async function collectGoogle(userId) {
     }
   }
 
-  const series = Array.from(seriesMap.keys()).sort().map(d => ({ date:d, ...seriesMap.get(d) }));
+  const series = Array.from(seriesMap.keys())
+    .sort()
+    .map((d) => ({ date: d, ...seriesMap.get(d) }));
 
   return {
     notAuthorized: false,
@@ -271,9 +384,9 @@ async function collectGoogle(userId) {
       cost: G.cost,
       conversions: G.conv,
       convValue: G.val,
-      cpc:  safeDiv(G.cost, G.clk),
-      cpa:  safeDiv(G.cost, G.conv),
-      roas: safeDiv(G.val,  G.cost),
+      cpc: safeDiv(G.cost, G.clk),
+      cpa: safeDiv(G.cost, G.conv),
+      roas: safeDiv(G.val, G.cost),
     },
     byCampaign,
     series,
