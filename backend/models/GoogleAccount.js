@@ -28,11 +28,15 @@ const normPropertyId = (val) => {
   return onlyDigits ? `properties/${onlyDigits}` : '';
 };
 
+/* Scopes que nos interesan */
+const ADS_SCOPE = 'https://www.googleapis.com/auth/adwords';
+const GA_READ   = 'https://www.googleapis.com/auth/analytics.readonly';
+
 /* ----------------- subdocs ----------------- */
 const CustomerSchema = new Schema(
   {
-    id: { type: String, set: (v) => stripDashes(v) }, // "1234567890"
-    resourceName: String,                              // "customers/1234567890"
+    id: { type: String, set: (v) => stripDashes(v) },      // "1234567890"
+    resourceName: String,                                  // "customers/1234567890"
     descriptiveName: String,
     currencyCode: String,
     timeZone: String,
@@ -42,10 +46,10 @@ const CustomerSchema = new Schema(
 
 const GaPropertySchema = new Schema(
   {
-    propertyId: { type: String, index: true, set: normPropertyId }, // "properties/123456789"
+    propertyId:  { type: String, index: true, set: normPropertyId }, // "properties/123456789"
     displayName: String,
-    timeZone: String,
-    currencyCode: String,
+    timeZone:    String,
+    currencyCode:String,
   },
   { _id: false }
 );
@@ -102,7 +106,7 @@ const GoogleAccountSchema = new Schema(
 );
 
 /* ----------------- índices ----------------- */
-// NOTA: idealmente 1 documento por usuario (usa uno de los dos campos user/userId)
+// Ideal: 1 documento por usuario (usa uno de los dos campos user/userId)
 GoogleAccountSchema.index({ user: 1   }, { unique: true, sparse: true });
 GoogleAccountSchema.index({ userId: 1 }, { unique: true, sparse: true });
 GoogleAccountSchema.index({ 'gaProperties.propertyId': 1 });
@@ -111,6 +115,18 @@ GoogleAccountSchema.index({ 'gaProperties.propertyId': 1 });
 GoogleAccountSchema.virtual('hasRefresh').get(function () {
   return !!this.refreshToken;
 });
+
+GoogleAccountSchema.virtual('hasAdsScope').get(function () {
+  return (this.scope || []).includes(ADS_SCOPE);
+});
+GoogleAccountSchema.virtual('hasGaScope').get(function () {
+  return (this.scope || []).includes(GA_READ);
+});
+
+GoogleAccountSchema.methods.needsReauth = function () {
+  if (!this.expiresAt) return false; // si usamos refreshToken nos da igual
+  return Date.now() > new Date(this.expiresAt).getTime() - 60_000; // 1 minuto de colchón
+};
 
 GoogleAccountSchema.methods.setTokens = function ({
   access_token,
@@ -173,6 +189,10 @@ GoogleAccountSchema.methods.setCustomersFromResourceNames = function (resourceNa
 GoogleAccountSchema.statics.findWithTokens = function (query = {}) {
   return this.findOne(query).select('+accessToken +refreshToken');
 };
+// Cargar por userId (o user) con tokens
+GoogleAccountSchema.statics.loadForUserWithTokens = function (userId) {
+  return this.findOne({ $or: [{ user: userId }, { userId }] }).select('+accessToken +refreshToken');
+};
 
 /* ----------------- hooks ----------------- */
 GoogleAccountSchema.pre('save', function(next) {
@@ -208,10 +228,10 @@ GoogleAccountSchema.pre('save', function(next) {
     );
   }
 
-  // normaliza defaultPropertyId
-  if (this.defaultPropertyId) {
-    this.defaultPropertyId = normPropertyId(this.defaultPropertyId);
-  }
+  // normaliza IDs por si entran con guiones o formatos raros
+  if (this.defaultCustomerId)   this.defaultCustomerId   = stripDashes(this.defaultCustomerId);
+  if (this.managerCustomerId)   this.managerCustomerId   = stripDashes(this.managerCustomerId);
+  if (this.defaultPropertyId)   this.defaultPropertyId   = normPropertyId(this.defaultPropertyId);
 
   next();
 });

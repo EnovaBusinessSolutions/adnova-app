@@ -1,12 +1,30 @@
+// backend/api/jobs/collect/googleAnalyticsCollector.js
 'use strict';
 /**
  * Collector GA4 (Analytics Data API)
- * Requiere: GoogleAccount con accessToken y defaultPropertyId (formato "properties/123")
+ * Requiere: GoogleAccount con accessToken/refreshToken y defaultPropertyId ("properties/123")
+ *
+ * Salida:
+ * {
+ *   notAuthorized: boolean,
+ *   reason?: string,
+ *   property?: string,
+ *   dateRange?: { start, end },
+ *   channels?: Array<{ channel, users, sessions, conversions, revenue }>
+ * }
  */
 
 const fetch = require('node-fetch');
 const mongoose = require('mongoose');
+const { OAuth2Client } = require('google-auth-library');
 
+const {
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
+  GOOGLE_CONNECT_CALLBACK_URL: GOOGLE_REDIRECT_URI,
+} = process.env;
+
+/* ---------------- models ---------------- */
 let GoogleAccount;
 try { GoogleAccount = require('../../models/GoogleAccount'); }
 catch (_) {
@@ -18,57 +36,167 @@ catch (_) {
     gaProperties: { type: Array, default: [] },
     defaultPropertyId: String,
     scope: { type: [String], default: [] },
+    updatedAt: { type: Date, default: Date.now },
   }, { collection: 'googleaccounts' });
+  schema.pre('save', function(n){ this.updatedAt = new Date(); n(); });
   GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
 }
 
-async function collectGA4(userId, { property_id, start='30daysAgo', end='yesterday' } = {}) {
-  const acc = (typeof GoogleAccount.findWithTokens === 'function')
-    ? await GoogleAccount.findWithTokens({ user: userId }).lean()
-    : await GoogleAccount.findOne({ user: userId }).select('+accessToken +refreshToken').lean();
+/* ---------------- helpers ---------------- */
+const GA_SCOPE_READ = 'https://www.googleapis.com/auth/analytics.readonly';
+
+const normPropertyId = (val) => {
+  if (!val) return '';
+  const v = String(val).trim();
+  if (/^properties\/\d+$/.test(v)) return v;
+  const onlyDigits = v.replace(/[^\d]/g, '');
+  return onlyDigits ? `properties/${onlyDigits}` : '';
+};
+
+const toNum = (v) => Number(v || 0);
+
+/** Construye un cliente OAuth2 para refrescar tokens */
+function oauthClient() {
+  return new OAuth2Client({
+    clientId: GOOGLE_CLIENT_ID,
+    clientSecret: GOOGLE_CLIENT_SECRET,
+    redirectUri: GOOGLE_REDIRECT_URI,
+  });
+}
+
+/** Intenta refrescar el accessToken usando el refreshToken y persiste */
+async function ensureAccessToken(gaDoc) {
+  if (gaDoc?.accessToken) return gaDoc.accessToken;
+  if (!gaDoc?.refreshToken) return null;
+  const client = oauthClient();
+  client.setCredentials({ refresh_token: gaDoc.refreshToken });
+  const { credentials } = await client.refreshAccessToken();
+  const token = credentials?.access_token || null;
+  if (token) {
+    await GoogleAccount.updateOne(
+      { _id: gaDoc._id },
+      {
+        $set: {
+          accessToken: token,
+          updatedAt: new Date(),
+        }
+      }
+    );
+  }
+  return token;
+}
+
+/** Ejecuta runReport de GA4 */
+async function ga4RunReport({ token, property, body }) {
+  const url = `https://analyticsdata.googleapis.com/v1beta/${property}:runReport`;
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const msg = j?.error?.message || `GA4 runReport failed (HTTP_${r.status})`;
+    const code = j?.error?.status || '';
+    const err = new Error(msg);
+    err._ga = { code, http: r.status };
+    throw err;
+  }
+  return j;
+}
+
+/** Normaliza presets tipo '30daysAgo' / 'yesterday' a strings GA4 */
+function resolveDateRange({ start = '30daysAgo', end = 'yesterday' }) {
+  // GA4 acepta estas palabras clave directamente, así que las dejamos tal cual si no pasaron fechas absolutas.
+  const isAbs = /^\d{4}-\d{2}-\d{2}$/.test(String(start)) && /^\d{4}-\d{2}-\d{2}$/.test(String(end));
+  if (isAbs) return { start, end };
+  return { start, end };
+}
+
+/* ---------------- collector ---------------- */
+async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yesterday' } = {}) {
+  // Cargar cuenta con tokens visibles
+  const acc = (typeof GoogleAccount.loadForUserWithTokens === 'function')
+    ? await GoogleAccount.loadForUserWithTokens(userId).lean()
+    : await GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] }).select('+accessToken +refreshToken').lean();
 
   if (!acc) return { notAuthorized: true, reason: 'NO_GOOGLEACCOUNT' };
 
-  const token = acc.accessToken;
-  const property = property_id || acc.defaultPropertyId || acc.gaProperties?.[0]?.propertyId;
-  if (!token || !property) {
-    return { notAuthorized: true, reason: !token ? 'NO_ACCESS_TOKEN' : 'NO_DEFAULT_PROPERTY' };
+  // Verificar scope de GA4 (best-effort)
+  const scopes = (acc.scope || []).map(s => String(s || '').toLowerCase());
+  const hasGaScope = scopes.includes(GA_SCOPE_READ);
+  if (!hasGaScope) {
+    // Permitimos continuar (algunas integraciones añaden otros scopes que también permiten runReport),
+    // pero si falla, devolveremos MISSING_SCOPE.
   }
 
-  // Dimensiones/Métricas útiles por canal
-  const body = {
-    dateRanges: [{ startDate: start, endDate: end }],
+  // property a usar
+  const propertyRaw = property_id || acc.defaultPropertyId || acc.gaProperties?.[0]?.propertyId || '';
+  const property = normPropertyId(propertyRaw);
+  if (!property) {
+    return { notAuthorized: true, reason: 'NO_DEFAULT_PROPERTY' };
+  }
+
+  // token inicial
+  let token = acc.accessToken || null;
+  if (!token && acc.refreshToken) {
+    token = await ensureAccessToken(acc);
+  }
+  if (!token) {
+    return { notAuthorized: true, reason: 'NO_ACCESS_TOKEN' };
+  }
+
+  const dateRange = resolveDateRange({ start, end });
+
+  // Reporte por canales (Session default channel group)
+  const reportBody = {
+    dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
     dimensions: [{ name: 'sessionDefaultChannelGroup' }],
-    metrics: [{ name: 'totalUsers' }, { name: 'sessions' }, { name: 'conversions' }, { name: 'purchaseRevenue' }],
-    limit: '1000'
+    metrics: [
+      { name: 'totalUsers' },
+      { name: 'sessions' },
+      { name: 'conversions' },
+      { name: 'purchaseRevenue' },
+    ],
+    limit: '1000',
   };
 
-  const r = await fetch(`https://analyticsdata.googleapis.com/v1beta/${property}:runReport`, {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
-  });
-
-  const j = await r.json();
-  if (!r.ok) {
-    const msg = j?.error?.message || 'GA4 runReport failed';
-    return { notAuthorized: true, reason: msg, channels: [] };
+  let j;
+  try {
+    j = await ga4RunReport({ token, property, body: reportBody });
+  } catch (e) {
+    const http = e?._ga?.http;
+    // 401/403 → intentamos refrescar token una vez
+    if ((http === 401 || http === 403) && acc.refreshToken) {
+      token = await ensureAccessToken({ ...acc, accessToken: null });
+      try {
+        j = await ga4RunReport({ token, property, body: reportBody });
+      } catch (e2) {
+        const msg = e2?.message || 'GA4 runReport failed';
+        const reason = !hasGaScope ? 'MISSING_SCOPE(analytics.readonly)' : msg;
+        return { notAuthorized: true, reason, property, dateRange };
+      }
+    } else {
+      const msg = e?.message || 'GA4 runReport failed';
+      const reason = !hasGaScope ? 'MISSING_SCOPE(analytics.readonly)' : msg;
+      return { notAuthorized: true, reason, property, dateRange };
+    }
   }
 
-  const rows = Array.isArray(j.rows) ? j.rows : [];
+  const rows = Array.isArray(j?.rows) ? j.rows : [];
   const channels = rows.map(rw => ({
-    channel: rw.dimensionValues?.[0]?.value || '(other)',
-    users: Number(rw.metricValues?.[0]?.value || 0),
-    sessions: Number(rw.metricValues?.[1]?.value || 0),
-    conversions: Number(rw.metricValues?.[2]?.value || 0),
-    revenue: Number(rw.metricValues?.[3]?.value || 0),
+    channel:   rw.dimensionValues?.[0]?.value || '(other)',
+    users:     toNum(rw.metricValues?.[0]?.value),
+    sessions:  toNum(rw.metricValues?.[1]?.value),
+    conversions: toNum(rw.metricValues?.[2]?.value),
+    revenue:   toNum(rw.metricValues?.[3]?.value),
   }));
 
   return {
     notAuthorized: false,
     property,
-    dateRange: { start, end },
-    channels
+    dateRange,
+    channels,
   };
 }
 

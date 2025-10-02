@@ -1,61 +1,112 @@
 // backend/models/Audit.js
+'use strict';
+
 const mongoose = require('mongoose');
+const { Schema, model, models, Types } = mongoose;
 
-const IssueSchema = new mongoose.Schema({
-  id:    { type: String, required: true },               
-  area:  { type: String, default: 'otros' },              
-  title: { type: String, required: true },
-  
-  severity: { type: String, enum: ['alta','media','baja','high','medium','low'], required: true },
+/* ---------------- helpers ---------------- */
+const toSev = (s) => {
+  const v = String(s || '').toLowerCase().trim();
+  if (v === 'alta' || v === 'high') return 'alta';
+  if (v === 'baja' || v === 'low')  return 'baja';
+  return 'media';
+};
 
-  evidence:        { type: String, default: '' },
-  metrics:         { type: Object, default: {} },
-  recommendation:  { type: String, default: '' },
-  
-  estimatedImpact: { type: String, enum: ['alto','medio','bajo','high','medium','low'], default: 'medio' },
-  blockers:        [{ type: String }],
-  links:           [{ label: String, url: String }],
-}, { _id: false });
+const OK_TYPES = ['google', 'meta', 'shopify', 'ga4']; // ← añadimos ga4
+const OK_SEV   = ['alta', 'media', 'baja'];
 
+const LinkSchema = new Schema(
+  {
+    label: { type: String, default: '' },
+    url:   { type: String, default: '' },
+  },
+  { _id: false }
+);
 
-const ActionItemSchema = new mongoose.Schema({
-  title:       { type: String, default: 'Acción recomendada' },
-  description: { type: String, default: '' },
-  
-  severity:    { type: String, enum: ['alta','media','baja','high','medium','low'], default: 'media' },
-  button:      { type: String, default: null },
-  estimated:   { type: String, default: null }, 
-}, { _id: false });
+const IssueSchema = new Schema(
+  {
+    id:    { type: String, required: true },
+    area:  { type: String, default: 'otros' }, // dejamos abierto; el dashboard lo tolera
+    title: { type: String, required: true },
 
-const AuditSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true, required: true },
+    // aceptar legacy y normalizar en pre('save')
+    severity: { type: String, enum: [...OK_SEV, 'high', 'medium', 'low'], required: true },
 
-  
-  type:   { type: String, enum: ['google','meta','shopify','ga'], index: true, required: true },
+    evidence:       { type: String, default: '' },
+    metrics:        { type: Schema.Types.Mixed, default: {} },
+    recommendation: { type: String, default: '' },
 
-  generatedAt: { type: Date, default: Date.now, index: true },
+    // aceptar legacy y normalizar en pre('save')
+    estimatedImpact:{ type: String, enum: ['alto','medio','bajo','high','medium','low'], default: 'medio' },
 
-  
-  summary: { type: String, default: '' },
-  resumen: { type: String, default: '' },
+    blockers: { type: [String], default: [] },
+    links:    { type: [LinkSchema], default: [] },
+  },
+  { _id: false }
+);
 
-  
-  issues:       { type: [IssueSchema], default: [] },
+const AuditSchema = new Schema(
+  {
+    userId: { type: Types.ObjectId, ref: 'User', index: true, required: true },
 
-  
-  actionCenter: { type: [ActionItemSchema], default: [] },
+    // ← ahora permite ga4
+    type:   { type: String, enum: OK_TYPES, index: true, required: true },
 
-  
-  topProducts:    { type: Array, default: [] },
-  salesLast30:    { type: Number, default: 0 },
-  ordersLast30:   { type: Number, default: 0 },
-  avgOrderValue:  { type: Number, default: 0 },
-  customerStats:  { type: Object, default: {} },
+    generatedAt: { type: Date, default: Date.now, index: true },
 
-  
-  inputSnapshot:  { type: Object, default: {} },
+    // compat: algunos flujos usan 'resumen'
+    summary: { type: String, default: '' },
+    resumen: { type: String, default: '' },
 
-  version: { type: String, default: 'audits@1.0.0' },
-}, { collection: 'audits' });
+    // usamos la MISMA forma para issues y actionCenter
+    issues:       { type: [IssueSchema], default: [] },
+    actionCenter: { type: [IssueSchema], default: [] },
 
-module.exports = mongoose.models.Audit || mongoose.model('Audit', AuditSchema);
+    // extras/legacy
+    topProducts:   { type: Array,              default: [] },
+    salesLast30:   { type: Number,             default: 0 },
+    ordersLast30:  { type: Number,             default: 0 },
+    avgOrderValue: { type: Number,             default: 0 },
+    customerStats: { type: Schema.Types.Mixed, default: {} },
+
+    // snapshot de entrada (colecciones crudas)
+    inputSnapshot: { type: Schema.Types.Mixed, default: {} },
+
+    version: { type: String, default: 'audits@1.1.0' },
+
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now },
+  },
+  { collection: 'audits' }
+);
+
+/* -------------- hooks -------------- */
+AuditSchema.pre('save', function(next) {
+  this.updatedAt = new Date();
+
+  // sincroniza summary/resumen (preferimos 'summary')
+  if (!this.summary && typeof this.resumen === 'string') this.summary = this.resumen;
+  if (!this.resumen && typeof this.summary === 'string') this.resumen = this.summary;
+
+  // normaliza severidades a alta/media/baja en issues y actionCenter
+  const normalizeIssues = (arr = []) =>
+    arr.map((it) => ({
+      ...it,
+      severity: toSev(it?.severity),
+      estimatedImpact: toSev(it?.estimatedImpact) === 'alta'
+        ? 'alto'
+        : toSev(it?.estimatedImpact) === 'baja'
+        ? 'bajo'
+        : 'medio',
+    }));
+
+  if (Array.isArray(this.issues))       this.issues       = normalizeIssues(this.issues);
+  if (Array.isArray(this.actionCenter)) this.actionCenter = normalizeIssues(this.actionCenter);
+
+  next();
+});
+
+/* -------------- índices -------------- */
+AuditSchema.index({ userId: 1, type: 1, generatedAt: -1 });
+
+module.exports = models.Audit || model('Audit', AuditSchema);
