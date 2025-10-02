@@ -1,24 +1,11 @@
 // backend/api/jobs/collect/metaCollector.js
 'use strict';
+
 /**
- * Collector de Meta Ads: agrega campañas últimos 30 días (por defecto) a nivel campaign.
- * Requiere: MetaAccount con token y defaultAccountId.
- *
- * Devuelve:
- * {
- *   notAuthorized: boolean,
- *   reason?: string,
- *   timeRange: { from: string|null, to: string|null },
- *   kpis: { impressions, clicks, cost, cpc },
- *   byCampaign: [
- *     {
- *       account_id, id, name, objective,
- *       kpis: { spend, impressions, clicks, cpm, cpc, ctr, roas, purchases?, purchase_value? },
- *       period: { since, until }
- *     }
- *   ],
- *   accountIds: [ "<actId>" ]
- * }
+ * Collector de Meta Ads (Facebook/Instagram)
+ * - Trae insights a nivel campaign (por defecto) con fallback de fechas si no hay datos recientes.
+ * - Autoselecciona la primera ad account si falta defaultAccountId.
+ * - Soporta paginación y extrae compras/valor de actions/action_values.
  */
 
 const fetch = require('node-fetch');
@@ -32,28 +19,30 @@ try {
   const { Schema, model } = mongoose;
   const schema = new Schema({
     user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
     access_token: String,
-    longlivedToken: String,
+    token: String,
     accessToken: String,
     longLivedToken: String,
+    longlivedToken: String,
     defaultAccountId: String,
     ad_accounts: { type: Array, default: [] },
+    adAccounts: { type: Array, default: [] },
     scopes: { type: [String], default: [] },
     updatedAt: { type: Date, default: Date.now },
   }, { collection: 'metaaccounts' });
-  schema.pre('save', function(n){ this.updatedAt = new Date(); n(); });
+  schema.pre('save', function (n) { this.updatedAt = new Date(); n(); });
   MetaAccount = mongoose.models.MetaAccount || model('MetaAccount', schema);
 }
 
 const API_VER = process.env.FACEBOOK_API_VERSION || 'v19.0';
 
-const toNum  = (v) => Number(v || 0);
-const safeDiv = (n, d) => (Number(d||0) ? Number(n||0)/Number(d||0) : 0);
-const normAct = (s='') => String(s).replace(/^act_/, '').trim();
+const toNum   = (v) => Number(v || 0);
+const safeDiv = (n, d) => (Number(d || 0) ? Number(n || 0) / Number(d || 0) : 0);
+const normAct = (s = '') => String(s).replace(/^act_/, '').trim();
 
 function extractPurchaseMetrics(x) {
   // Meta puede devolver purchases y value en "actions" y "action_values"
-  // Buscamos action_type "purchase" o "offsite_conversion.fb_pixel_purchase"
   let purchases = null;
   let value = null;
 
@@ -86,7 +75,7 @@ async function fetchJSON(url, { retries = 1 } = {}) {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
         const code = j?.error?.code || r.status;
-        // Si es rate-limit (4, 17) o 5xx, podemos reintentar una vez
+        // 4/17 => rate limit; 5xx => server; reintenta 1–2 veces
         if ((code === 4 || code === 17 || String(code).startsWith('5')) && i < retries) {
           await new Promise(res => setTimeout(res, 800 + i * 500));
           continue;
@@ -105,30 +94,69 @@ async function fetchJSON(url, { retries = 1 } = {}) {
   throw lastErr || new Error('unknown_error');
 }
 
+function pickToken(acc) {
+  // Soporta múltiples campos posibles (por compatibilidad)
+  return (
+    acc?.longLivedToken ||
+    acc?.longlivedToken ||
+    acc?.access_token ||
+    acc?.accessToken ||
+    acc?.token ||
+    null
+  );
+}
+
+function pickDefaultAccountId(acc) {
+  // 1) defaultAccountId
+  let id = normAct(acc?.defaultAccountId || '');
+  if (id) return id;
+
+  // 2) primera cuenta en ad_accounts o adAccounts
+  const first =
+    (Array.isArray(acc?.ad_accounts) && acc.ad_accounts[0]?.id) ||
+    (Array.isArray(acc?.adAccounts) && acc.adAccounts[0]?.id) ||
+    null;
+
+  if (first) return normAct(first);
+
+  return '';
+}
+
+async function pageAllInsights(baseUrl) {
+  const out = [];
+  let next = baseUrl;
+  let guard = 0;
+  while (next && guard < 20) {
+    guard += 1;
+    const j = await fetchJSON(next, { retries: 1 });
+    const data = Array.isArray(j?.data) ? j.data : [];
+    out.push(...data);
+    next = j?.paging?.next || null;
+  }
+  return out;
+}
+
 async function collectMeta(userId, opts = {}) {
   const {
     account_id,
-    date_preset = 'last_30d', // valores comunes: today, yesterday, last_7d, last_30d, this_month, last_month, lifetime
+    date_preset = 'last_30d', // today, yesterday, last_7d, last_30d, this_month, last_month, lifetime
     level = 'campaign',       // campaign|adset|ad
     fields: userFields,       // opcional override
-    since, until              // opcional: si defines since/until, ignoramos date_preset
+    since, until              // si defines since/until, ignoramos date_preset
   } = opts;
 
-  // Cargamos con tokens visibles para usar virtuales si existen
-  const acc = (typeof MetaAccount.loadForUserWithTokens === 'function')
-    ? await MetaAccount.loadForUserWithTokens(userId)
-    : await MetaAccount.findOne({ $or: [{ user: userId }, { userId }] }).select('+access_token +token +accessToken +longLivedToken +longlivedToken').lean();
+  // Carga documento (con o sin helper del modelo)
+  const acc = await MetaAccount.findOne({ $or: [{ user: userId }, { userId }] })
+    .select('+access_token +token +accessToken +longLivedToken +longlivedToken')
+    .lean();
 
   if (!acc) {
     return { notAuthorized: true, reason: 'NO_METAACCOUNT', byCampaign: [], accountIds: [] };
   }
 
-  // Token efectivo y cuenta por defecto
-  const token = typeof acc.getEffectiveToken === 'function'
-    ? acc.getEffectiveToken()
-    : (acc.longLivedToken || acc.longlivedToken || acc.access_token || acc.accessToken || acc.token || null);
+  const token = pickToken(acc);
+  const actId = normAct(account_id || pickDefaultAccountId(acc));
 
-  const actId = normAct(account_id || acc.defaultAccountId || '');
   if (!token || !actId) {
     return {
       notAuthorized: true,
@@ -139,7 +167,7 @@ async function collectMeta(userId, opts = {}) {
   }
 
   // Validación (best-effort) de scopes
-  const scopes = Array.isArray(acc.scopes) ? acc.scopes.map(s => String(s||'').toLowerCase()) : [];
+  const scopes = Array.isArray(acc.scopes) ? acc.scopes.map(s => String(s || '').toLowerCase()) : [];
   const hasRead = scopes.includes('ads_read') || scopes.includes('ads_management'); // cualquiera permite insights
   if (!hasRead) {
     return {
@@ -152,30 +180,34 @@ async function collectMeta(userId, opts = {}) {
 
   // Campos de insights
   const baseFields = [
-    'date_start','date_stop',
-    'campaign_id','campaign_name','objective',
-    'spend','impressions','clicks','cpm','cpc','ctr',
-    'actions','action_values','purchase_roas'
+    'date_start', 'date_stop',
+    'campaign_id', 'campaign_name', 'objective',
+    'spend', 'impressions', 'clicks', 'cpm', 'cpc', 'ctr',
+    'actions', 'action_values', 'purchase_roas'
   ];
   const fields = Array.isArray(userFields) && userFields.length ? userFields : baseFields;
 
-  // Rango de fechas
-  const qp = new URLSearchParams();
-  if (since && until) {
-    qp.set('time_range', JSON.stringify({ since, until }));
-  } else {
-    qp.set('date_preset', date_preset);
-  }
-  qp.set('level', level);
-  qp.set('fields', fields.join(','));
-  qp.set('limit', '5000');
-  qp.set('access_token', token);
+  // Helper para construir URL con presets/rangos
+  const mkUrl = (preset) => {
+    const qp = new URLSearchParams();
+    if (since && until) {
+      qp.set('time_range', JSON.stringify({ since, until }));
+    } else {
+      qp.set('date_preset', preset);
+    }
+    qp.set('level', level);
+    qp.set('fields', fields.join(','));
+    qp.set('limit', '5000');
+    qp.set('access_token', token);
+    return `https://graph.facebook.com/${API_VER}/act_${actId}/insights?${qp.toString()}`;
+  };
 
-  const url = `https://graph.facebook.com/${API_VER}/act_${actId}/insights?${qp.toString()}`;
-
-  let j;
+  // 1er intento: preset solicitado (por defecto last_30d)
+  let presetTried = since && until ? undefined : date_preset;
+  let data = [];
   try {
-    j = await fetchJSON(url, { retries: 1 });
+    const url = mkUrl(presetTried || 'last_30d');
+    data = await pageAllInsights(url);
   } catch (e) {
     const code = e?._meta?.code;
     const subcode = e?._meta?.error_subcode;
@@ -184,9 +216,21 @@ async function collectMeta(userId, opts = {}) {
     return { notAuthorized: true, reason, byCampaign: [], accountIds: [actId] };
   }
 
-  const data = Array.isArray(j?.data) ? j.data : [];
-  const byCampaign = [];
+  // Fallbacks automáticos si no hay datos (sólo cuando usamos date_preset)
+  if (!since && !until && data.length === 0 && presetTried === 'last_30d') {
+    try {
+      presetTried = 'last_90d';
+      data = await pageAllInsights(mkUrl('last_90d'));
+    } catch {}
+  }
+  if (!since && !until && data.length === 0 && presetTried === 'last_90d') {
+    try {
+      presetTried = 'last_180d';
+      data = await pageAllInsights(mkUrl('last_180d'));
+    } catch {}
+  }
 
+  const byCampaign = [];
   for (const x of data) {
     const roas = Array.isArray(x.purchase_roas) && x.purchase_roas[0]?.value ? Number(x.purchase_roas[0].value) : null;
     const { purchases, purchase_value } = extractPurchaseMetrics(x);

@@ -1,13 +1,5 @@
 'use strict';
 
-/**
- * Collector de Google Ads (GAQL) listo para producción.
- * - Usa GoogleAccount.findWithTokens() para obtener access/refresh tokens (aunque tengan select:false)
- * - Descubre customers si no hay defaultCustomerId
- * - Respeta login-customer-id (MCC) si está configurado
- * - Agrega KPIs y detalle por campaña para 30 días
- */
-
 const axios = require('axios');
 const mongoose = require('mongoose');
 const { OAuth2Client } = require('google-auth-library');
@@ -244,7 +236,7 @@ async function collectGoogle(userId) {
   // 4) Parámetros globales
   const loginCustomerId = normId(gaDoc.managerCustomerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '');
   const until = todayISO();
-  const since = daysAgoISO(30);
+  let since = daysAgoISO(30);
 
   // 5) Acumuladores
   let G = { impr: 0, clk: 0, cost: 0, conv: 0, val: 0 };
@@ -301,6 +293,30 @@ async function collectGoogle(userId) {
         // Customer inaccesible o sin datos; continúa con el siguiente
         continue;
       }
+    }
+
+    let gotRows = Array.isArray(rows) && rows.length > 0;
+    // Fallback: si no hay nada en 30d, intenta 180d
+    if (!gotRows) {
+      try {
+        since = daysAgoISO(180);
+        const query180 = `
+          SELECT
+            segments.date,
+            campaign.id,
+            campaign.name,
+            metrics.impressions,
+            metrics.clicks,
+            metrics.cost_micros,
+            metrics.conversions,
+            metrics.conversions_value
+          FROM campaign
+          WHERE segments.date BETWEEN '${since}' AND '${until}'
+          ORDER BY segments.date ASC
+        `;
+        rows = await gaqlSearchStream({ accessToken, customerId, loginCustomerId: loginCustomerId || undefined, query: query180 });
+        gotRows = Array.isArray(rows) && rows.length > 0;
+      } catch {}
     }
 
     const byCampAgg = new Map();

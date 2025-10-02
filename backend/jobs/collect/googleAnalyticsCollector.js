@@ -31,11 +31,13 @@ catch (_) {
   const { Schema, model } = mongoose;
   const schema = new Schema({
     user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
     accessToken: { type: String, select: false },
     refreshToken:{ type: String, select: false },
     gaProperties: { type: Array, default: [] },
     defaultPropertyId: String,
     scope: { type: [String], default: [] },
+    expiresAt: { type: Date },
     updatedAt: { type: Date, default: Date.now },
   }, { collection: 'googleaccounts' });
   schema.pre('save', function(n){ this.updatedAt = new Date(); n(); });
@@ -55,7 +57,6 @@ const normPropertyId = (val) => {
 
 const toNum = (v) => Number(v || 0);
 
-/** Construye un cliente OAuth2 para refrescar tokens */
 function oauthClient() {
   return new OAuth2Client({
     clientId: GOOGLE_CLIENT_ID,
@@ -64,20 +65,24 @@ function oauthClient() {
   });
 }
 
-/** Intenta refrescar el accessToken usando el refreshToken y persiste */
+/** Refresca y persiste el accessToken usando refreshToken */
 async function ensureAccessToken(gaDoc) {
   if (gaDoc?.accessToken) return gaDoc.accessToken;
   if (!gaDoc?.refreshToken) return null;
+
   const client = oauthClient();
   client.setCredentials({ refresh_token: gaDoc.refreshToken });
+
   const { credentials } = await client.refreshAccessToken();
   const token = credentials?.access_token || null;
+
   if (token) {
     await GoogleAccount.updateOne(
       { _id: gaDoc._id },
       {
         $set: {
           accessToken: token,
+          expiresAt: credentials?.expiry_date ? new Date(credentials.expiry_date) : null,
           updatedAt: new Date(),
         }
       }
@@ -105,50 +110,35 @@ async function ga4RunReport({ token, property, body }) {
   return j;
 }
 
-/** Normaliza presets tipo '30daysAgo' / 'yesterday' a strings GA4 */
+/** '30daysAgo' / 'yesterday' → GA4 acepta estos literales tal cual */
 function resolveDateRange({ start = '30daysAgo', end = 'yesterday' }) {
-  // GA4 acepta estas palabras clave directamente, así que las dejamos tal cual si no pasaron fechas absolutas.
   const isAbs = /^\d{4}-\d{2}-\d{2}$/.test(String(start)) && /^\d{4}-\d{2}-\d{2}$/.test(String(end));
-  if (isAbs) return { start, end };
-  return { start, end };
+  return isAbs ? { start, end } : { start, end };
 }
 
 /* ---------------- collector ---------------- */
 async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yesterday' } = {}) {
-  // Cargar cuenta con tokens visibles
-  const acc = (typeof GoogleAccount.loadForUserWithTokens === 'function')
-    ? await GoogleAccount.loadForUserWithTokens(userId).lean()
-    : await GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] }).select('+accessToken +refreshToken').lean();
+  // Cargar cuenta con tokens
+  const acc = await GoogleAccount
+    .findOne({ $or: [{ user: userId }, { userId }] })
+    .select('+accessToken +refreshToken scope defaultPropertyId gaProperties')
+    .lean();
 
   if (!acc) return { notAuthorized: true, reason: 'NO_GOOGLEACCOUNT' };
-
-  // Verificar scope de GA4 (best-effort)
-  const scopes = (acc.scope || []).map(s => String(s || '').toLowerCase());
-  const hasGaScope = scopes.includes(GA_SCOPE_READ);
-  if (!hasGaScope) {
-    // Permitimos continuar (algunas integraciones añaden otros scopes que también permiten runReport),
-    // pero si falla, devolveremos MISSING_SCOPE.
-  }
 
   // property a usar
   const propertyRaw = property_id || acc.defaultPropertyId || acc.gaProperties?.[0]?.propertyId || '';
   const property = normPropertyId(propertyRaw);
-  if (!property) {
-    return { notAuthorized: true, reason: 'NO_DEFAULT_PROPERTY' };
-  }
+  if (!property) return { notAuthorized: true, reason: 'NO_DEFAULT_PROPERTY' };
 
-  // token inicial
+  // token (con refresco si es necesario)
   let token = acc.accessToken || null;
-  if (!token && acc.refreshToken) {
-    token = await ensureAccessToken(acc);
-  }
-  if (!token) {
-    return { notAuthorized: true, reason: 'NO_ACCESS_TOKEN' };
-  }
+  if (!token && acc.refreshToken) token = await ensureAccessToken(acc);
+  if (!token) return { notAuthorized: true, reason: 'NO_ACCESS_TOKEN', property };
 
   const dateRange = resolveDateRange({ start, end });
 
-  // Reporte por canales (Session default channel group)
+  // Reporte por canales
   const reportBody = {
     dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
     dimensions: [{ name: 'sessionDefaultChannelGroup' }],
@@ -169,27 +159,22 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
     // 401/403 → intentamos refrescar token una vez
     if ((http === 401 || http === 403) && acc.refreshToken) {
       token = await ensureAccessToken({ ...acc, accessToken: null });
-      try {
-        j = await ga4RunReport({ token, property, body: reportBody });
-      } catch (e2) {
-        const msg = e2?.message || 'GA4 runReport failed';
-        const reason = !hasGaScope ? 'MISSING_SCOPE(analytics.readonly)' : msg;
-        return { notAuthorized: true, reason, property, dateRange };
-      }
+      j = await ga4RunReport({ token, property, body: reportBody });
     } else {
       const msg = e?.message || 'GA4 runReport failed';
-      const reason = !hasGaScope ? 'MISSING_SCOPE(analytics.readonly)' : msg;
+      // Si faltara scope, Google devuelve PERMISSION_DENIED
+      const reason = (e?._ga?.code === 'PERMISSION_DENIED') ? 'MISSING_SCOPE(analytics.readonly)' : msg;
       return { notAuthorized: true, reason, property, dateRange };
     }
   }
 
   const rows = Array.isArray(j?.rows) ? j.rows : [];
   const channels = rows.map(rw => ({
-    channel:   rw.dimensionValues?.[0]?.value || '(other)',
-    users:     toNum(rw.metricValues?.[0]?.value),
-    sessions:  toNum(rw.metricValues?.[1]?.value),
-    conversions: toNum(rw.metricValues?.[2]?.value),
-    revenue:   toNum(rw.metricValues?.[3]?.value),
+    channel:    rw.dimensionValues?.[0]?.value || '(other)',
+    users:      toNum(rw.metricValues?.[0]?.value),
+    sessions:   toNum(rw.metricValues?.[1]?.value),
+    conversions:toNum(rw.metricValues?.[2]?.value),
+    revenue:    toNum(rw.metricValues?.[3]?.value),
   }));
 
   return {
