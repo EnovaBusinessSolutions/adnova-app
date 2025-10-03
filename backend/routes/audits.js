@@ -50,7 +50,7 @@ const toArea = (a) => (OK_AREAS.has(a) ? a : 'performance');
 
 function normalizeIssue(raw, i = 0, type = 'google') {
   const id    = safeStr(raw?.id, `iss-${type}-${Date.now()}-${i}`).trim();
-  const area  = toArea(raw?.area);
+  const area  = toArea(String(raw?.area || '').toLowerCase());
   const title = safeStr(raw?.title, 'Hallazgo').trim();
   const sev   = toSev(raw?.severity);
 
@@ -257,6 +257,7 @@ const SOURCE_ALIASES = {
   analytics: 'ga',
   'google-analytics': 'ga',
   googleanalytics: 'ga',
+  ga: 'ga',
 };
 
 const VALID_SOURCES = ['google','meta','ga'];
@@ -287,6 +288,11 @@ async function runSingleAudit({ userId, type, flags }) {
     else if (type === 'ga') {
       if (typeof collectGA === 'function') snap = await collectGA(userId); // GA4
       else return { type, ok: false, error: 'SOURCE_NOT_READY' };
+    }
+    if (process.env.AUDIT_DEBUG === '1') {
+      console.log(`[AUDIT ${type}] snapshot:`, JSON.stringify(
+        { notAuthorized: snap?.notAuthorized, reason: snap?.reason, byCampaign: snap?.byCampaign?.length, channels: snap?.channels?.length },
+        null, 2));
     }
   } catch (e) {
     console.warn('COLLECTOR_ERROR', type, e?.message || e);
@@ -412,7 +418,7 @@ router.post('/:source/run', requireAuth, async (req, res) => {
   }
 });
 
-// (C) Últimas (todas)
+// (C) Últimas (todas) — devolvemos también alias para compatibilidad del front
 router.get('/latest', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
@@ -422,7 +428,11 @@ router.get('/latest', requireAuth, async (req, res) => {
       )
     );
 
-    return res.json({ ok: true, data: { google: google || null, meta: meta || null, ga: ga || null } });
+    // espejo de GA para UIs antiguas
+    const ga4 = ga;
+    const analytics = ga;
+
+    return res.json({ ok: true, data: { google: google || null, meta: meta || null, ga: ga || null, ga4: ga4 || null, analytics: analytics || null } });
   } catch (e) {
     console.error('LATEST_ERROR:', e);
     return res.status(400).json({ ok: false, error: 'LATEST_ERROR', detail: e?.message });
