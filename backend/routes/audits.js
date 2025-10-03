@@ -4,37 +4,37 @@
 const express = require('express');
 const router = express.Router();
 
-// Models
+// ---------------- Models ----------------
 const Audit = require('../models/Audit');
 const User  = require('../models/User');
 
-// Collectors
-const { collectGoogle } = require('../jobs/collect/googleCollector');
-const { collectMeta   } = require('../jobs/collect/metaCollector');
+// ---------------- Collectors ----------------
+const { collectGoogle } = require('../jobs/collect/googleCollector'); // Google Ads
+const { collectMeta   } = require('../jobs/collect/metaCollector');   // Meta Ads
 
-// GA (GA4) collector – intentamos varios paths por compat
-let collectGA4 = null;
-try { ({ collectGA4 } = require('../jobs/collect/ga4Collector')); }
+// GA / GA4 (aceptamos varios paths por compatibilidad)
+let collectGA = null;
+try { ({ collectGA4: collectGA } = require('../jobs/collect/ga4Collector')); }
 catch (_) {
-  try { ({ collectGA4 } = require('../jobs/collect/googleAnalyticsCollector')); }
+  try { ({ collectGA4: collectGA } = require('../jobs/collect/googleAnalyticsCollector')); }
   catch (_) {
-    try { ({ collectGA4 } = require('../jobs/collect/googleAnalytics')); }
-    catch (_) { collectGA4 = null; }
+    try { ({ collectGA4: collectGA } = require('../jobs/collect/googleAnalytics')); }
+    catch (_) { collectGA = null; }
   }
 }
 
-// LLM (opcional)
+// ---------------- LLM (opcional; con fallback heurístico) ----------------
 let generateAudit = null;
 try { generateAudit = require('../jobs/llm/generateAudit'); } catch { generateAudit = null; }
 
-// Auth
+// ---------------- Auth ----------------
 function requireAuth(req, _res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return next({ status: 401, message: 'UNAUTHENTICATED' });
 }
 
-// Utils / normalizadores
-const OK_AREAS = new Set(['setup', 'performance', 'creative', 'tracking', 'budget', 'bidding', 'otros']);
+// ---------------- Normalizadores / Utils ----------------
+const OK_AREAS = new Set(['setup','performance','creative','tracking','budget','bidding','otros']);
 const sevRank  = { alta: 3, media: 2, baja: 1 };
 
 const safeStr = (v, fb = '') => (typeof v === 'string' ? v : fb);
@@ -50,7 +50,7 @@ const toArea = (a) => (OK_AREAS.has(a) ? a : 'performance');
 
 function normalizeIssue(raw, i = 0, type = 'google') {
   const id    = safeStr(raw?.id, `iss-${type}-${Date.now()}-${i}`).trim();
-  const area  = toArea((raw?.area || '').toLowerCase());
+  const area  = toArea(raw?.area);
   const title = safeStr(raw?.title, 'Hallazgo').trim();
   const sev   = toSev(raw?.severity);
 
@@ -62,7 +62,7 @@ function normalizeIssue(raw, i = 0, type = 'google') {
     evidence: safeStr(raw?.evidence, ''),
     metrics: raw?.metrics && typeof raw.metrics === 'object' ? raw.metrics : {},
     recommendation: safeStr(raw?.recommendation, ''),
-    estimatedImpact: ['alto','medio','bajo'].includes((raw?.estimatedImpact || '').toLowerCase())
+    estimatedImpact: ['alto','medio','bajo'].includes(String(raw?.estimatedImpact || '').toLowerCase())
       ? String(raw.estimatedImpact).toLowerCase()
       : null,
     blockers: Array.isArray(raw?.blockers) ? raw.blockers.map(String) : [],
@@ -71,7 +71,7 @@ function normalizeIssue(raw, i = 0, type = 'google') {
       : [],
   };
 
-  // compat campaignRef
+  // compat: campaignRef → guardado dentro de metrics
   if (raw?.campaignRef && typeof raw.campaignRef === 'object') {
     base.metrics = {
       ...base.metrics,
@@ -81,7 +81,7 @@ function normalizeIssue(raw, i = 0, type = 'google') {
       }
     };
   }
-  // compat segmentRef (GA)
+  // GA (segmentRef)
   if (raw?.segmentRef && typeof raw.segmentRef === 'object') {
     base.metrics = {
       ...base.metrics,
@@ -125,7 +125,7 @@ function sortIssuesBySeverityThenImpact(issues) {
   });
 }
 
-// ---------- Heurísticos (fallback cuando no hay LLM) ----------
+// ---------------- Heurísticos (garantiza hallazgos si LLM cae) ----------------
 function heuristicsFromGoogle(snap) {
   const issues = [];
   const byCamp = Array.isArray(snap?.byCampaign) ? snap.byCampaign : [];
@@ -146,7 +146,7 @@ function heuristicsFromGoogle(snap) {
         severity: 'media',
         evidence: `CTR ${ctr.toFixed(2)}% con ${impr} impresiones y ${clk} clics.`,
         recommendation: 'Optimiza RSA/anuncios, extensiones y relevancia de keywords. Testea creatividades.',
-        metrics: { ctr, impressions: impr, clicks: clk },
+        metrics: { ctr, impressions: impr, clicks: clk, campaign: c.name },
         campaignRef: { id: c.id, name: c.name }
       });
     }
@@ -157,7 +157,7 @@ function heuristicsFromGoogle(snap) {
         severity: 'alta',
         evidence: `Clicks ${clk}, coste ${cost.toFixed(2)} y 0 conversiones.`,
         recommendation: 'Revisa Search Terms, negativas y concordancias. Verifica la calidad de la landing.',
-        metrics: { clicks: clk, cost, conversions: conv },
+        metrics: { clicks: clk, cost, conversions: conv, campaign: c.name },
         campaignRef: { id: c.id, name: c.name }
       });
     }
@@ -167,8 +167,8 @@ function heuristicsFromGoogle(snap) {
         title: `ROAS bajo · ${c.name || c.id}`,
         severity: 'media',
         evidence: `ROAS ${roas.toFixed(2)} con gasto ${cost.toFixed(2)}.`,
-        recommendation: 'Ajusta pujas, audiencias y ubicaciones. Evalúa pausar segmentos de bajo rendimiento.',
-        metrics: { roas, cost, conv_value: value },
+        recommendation: 'Ajusta pujas, audiencias y ubicaciones; evalúa pausar segmentos de bajo rendimiento.',
+        metrics: { roas, cost, conv_value: value, campaign: c.name },
         campaignRef: { id: c.id, name: c.name }
       });
     }
@@ -194,7 +194,7 @@ function heuristicsFromMeta(snap) {
         severity: 'media',
         evidence: `CTR ${ctr.toFixed(2)}% con ${impr} impresiones.`,
         recommendation: 'Test A/B de creatividades y textos. Revisa el hook visual y la segmentación.',
-        metrics: { impressions: impr, ctr },
+        metrics: { impressions: impr, ctr, campaign: c.name },
         campaignRef: { id: c.id, name: c.name }
       });
     }
@@ -205,7 +205,7 @@ function heuristicsFromMeta(snap) {
         severity: 'media',
         evidence: `ROAS ${roas.toFixed(2)} con inversión ${spend.toFixed(2)}.`,
         recommendation: 'Optimiza creatividades, audiencias y ubicaciones; revisa atribución y ventanas.',
-        metrics: { roas, spend },
+        metrics: { roas, spend, campaign: c.name },
         campaignRef: { id: c.id, name: c.name }
       });
     }
@@ -217,10 +217,10 @@ function heuristicsFromGA(snap) {
   const issues = [];
   const channels = Array.isArray(snap?.channels) ? snap.channels : [];
   const totals = channels.reduce((a,c)=>({
-    users: a.users + (c.users||0),
-    sessions: a.sessions + (c.sessions||0),
-    conv: a.conv + (c.conversions||0),
-    rev: a.rev + (c.revenue||0),
+    users: a.users + Number(c.users||0),
+    sessions: a.sessions + Number(c.sessions||0),
+    conv: a.conv + Number(c.conversions||0),
+    rev: a.rev + Number(c.revenue||0),
   }), {users:0,sessions:0,conv:0,rev:0});
 
   if (totals.sessions > 500 && totals.conv === 0) {
@@ -229,21 +229,21 @@ function heuristicsFromGA(snap) {
       title: 'Tráfico sin conversiones',
       severity: 'alta',
       evidence: `Se registraron ${totals.sessions} sesiones y 0 conversiones en el rango.`,
-      recommendation: 'Verifica configuración de eventos/conversions en GA4 y la correcta importación desde la plataforma de ads.',
+      recommendation: 'Verifica configuración de eventos/conversions en GA4 y la correcta importación desde Ads.',
       metrics: totals
     });
   }
 
   const paid = channels.filter(c => /paid|cpc|display|paid social/i.test(c.channel || ''));
-  const paidConv = paid.reduce((a,c)=>a+(c.conversions||0),0);
-  const paidSess = paid.reduce((a,c)=>a+(c.sessions||0),0);
+  const paidConv = paid.reduce((a,c)=>a+Number(c.conversions||0),0);
+  const paidSess = paid.reduce((a,c)=>a+Number(c.sessions||0),0);
   if (paidSess > 200 && paidConv === 0) {
     issues.push({
       area: 'performance',
       title: 'Tráfico de pago sin conversiones',
       severity: 'media',
       evidence: `Se observaron ${paidSess} sesiones de canales de pago sin conversiones registradas.`,
-      recommendation: 'Cruza datos con Ads y revisa eventos de conversión (duplicados/filtros/consent).',
+      recommendation: 'Cruza datos con plataformas de Ads; revisa eventos de conversión (duplicados/filtros/consent).',
       metrics: { paidSessions: paidSess, paidConversions: paidConv }
     });
   }
@@ -251,13 +251,19 @@ function heuristicsFromGA(snap) {
   return issues;
 }
 
-// ------------------------------------------------------
+// ---------------- Alias de fuentes (compatibilidad) ----------------
+const SOURCE_ALIASES = {
+  ga4: 'ga',
+  analytics: 'ga',
+  'google-analytics': 'ga',
+  googleanalytics: 'ga',
+};
 
-// ¡UN SOLO origen de verdad!
-const SOURCES = ['google', 'meta', 'ga'];
+const VALID_SOURCES = ['google','meta','ga'];
 
+// ---------------- Núcleo: ejecutar una auditoría ----------------
 async function runSingleAudit({ userId, type, flags }) {
-  // no conectado → placeholder
+  // 1) Si la fuente no está conectada → placeholder
   if (!flags[type]) {
     const doc = await Audit.create({
       userId,
@@ -273,24 +279,28 @@ async function runSingleAudit({ userId, type, flags }) {
     return { type, ok: true, auditId: doc._id };
   }
 
-  // colecta
+  // 2) Colecta
   let snap = {};
   try {
-    if (type === 'google') snap = await collectGoogle(userId);
-    else if (type === 'meta') snap = await collectMeta(userId);
+    if (type === 'google') snap = await collectGoogle(userId);   // Google Ads
+    else if (type === 'meta') snap = await collectMeta(userId);  // Meta Ads
     else if (type === 'ga') {
-      if (typeof collectGA4 === 'function') snap = await collectGA4(userId);
+      if (typeof collectGA === 'function') snap = await collectGA(userId); // GA4
       else return { type, ok: false, error: 'SOURCE_NOT_READY' };
     }
-  } catch (_) { snap = {}; }
+  } catch (e) {
+    console.warn('COLLECTOR_ERROR', type, e?.message || e);
+    snap = {};
+  }
 
-  // autorización / datos
+  // 3) Autorización y si hay datos reales
   const authorized = !snap?.notAuthorized;
-  const hasData = (type === 'ga')
-    ? (Array.isArray(snap?.channels) && snap.channels.length > 0)
-    : (Array.isArray(snap?.byCampaign) && snap.byCampaign.length > 0);
+  const hasData =
+    type === 'ga'
+      ? (Array.isArray(snap?.channels) && snap.channels.length > 0)
+      : (Array.isArray(snap?.byCampaign) && snap.byCampaign.length > 0);
 
-  // generar issues
+  // 4) Generar issues
   let issues = [];
   let summary = '';
 
@@ -310,15 +320,16 @@ async function runSingleAudit({ userId, type, flags }) {
     summary = 'No hay datos suficientes para auditar.';
   } else if (generateAudit) {
     try {
-      const ai = await generateAudit({ type, inputSnapshot: snap });
+      const ai = await generateAudit({ type: (type === 'ga' ? 'ga' : type), inputSnapshot: snap });
       summary = safeStr(ai?.summary, '');
       issues  = normalizeIssues(ai?.issues, type, 10);
-    } catch {
+    } catch (e) {
+      console.warn('LLM_ERROR', e?.message || e);
       issues = [];
     }
   }
 
-  // Fallback heurístico si no hay IA o devolvió vacío
+  // 5) Fallback heurístico si LLM no devolvió nada
   if (issues.length === 0 && hasData && authorized) {
     if (type === 'google') issues = heuristicsFromGoogle(snap);
     if (type === 'meta')   issues = heuristicsFromMeta(snap);
@@ -326,7 +337,7 @@ async function runSingleAudit({ userId, type, flags }) {
     summary = summary || 'Hallazgos generados con reglas básicas (fallback).';
   }
 
-  // normaliza, ordena y persiste
+  // 6) Normaliza, ordena y persiste
   issues = normalizeIssues(issues, type, 10);
   const top3 = sortIssuesBySeverityThenImpact(issues).slice(0, 3);
 
@@ -346,10 +357,11 @@ async function runSingleAudit({ userId, type, flags }) {
   return { type, ok: true, auditId: doc._id };
 }
 
-// =======================
+// =====================================================
 // RUTAS
-// =======================
+// =====================================================
 
+// (A) Ejecutar TODAS
 router.post('/run', requireAuth, async (req, res) => {
   const userId = req.user._id;
 
@@ -358,12 +370,11 @@ router.post('/run', requireAuth, async (req, res) => {
     const flags = {
       google:  !!(req.body?.googleConnected  ?? user?.googleConnected),
       meta:    !!(req.body?.metaConnected    ?? user?.metaConnected),
-      ga:      !!(req.body?.googleConnected  ?? user?.googleConnected), // comparte login Google
-      shopify: !!(req.body?.shopifyConnected ?? user?.shopifyConnected), // ignorado aquí
+      ga:      !!(req.body?.googleConnected  ?? user?.googleConnected), // GA comparte login Google
     };
 
     const results = [];
-    for (const type of SOURCES) {
+    for (const type of VALID_SOURCES) {
       const r = await runSingleAudit({ userId, type, flags });
       results.push(r);
     }
@@ -375,20 +386,22 @@ router.post('/run', requireAuth, async (req, res) => {
   }
 });
 
+// (B) Ejecutar UNA (con alias: ga4 → ga)
 router.post('/:source/run', requireAuth, async (req, res) => {
   const userId = req.user._id;
-  const source = String(req.params.source || '').toLowerCase();
+  const raw = String(req.params.source || '').toLowerCase();
+  const source = SOURCE_ALIASES[raw] || raw;
 
-  if (!SOURCES.includes(source)) {
+  if (!VALID_SOURCES.includes(source)) {
     return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
   }
 
   try {
     const user = await User.findById(userId).lean();
     const flags = {
-      google:  !!user?.googleConnected,
-      meta:    !!user?.metaConnected,
-      ga:      !!user?.googleConnected,
+      google: !!user?.googleConnected,
+      meta:   !!user?.metaConnected,
+      ga:     !!user?.googleConnected,
     };
     const r = await runSingleAudit({ userId, type: source, flags });
     if (!r.ok) return res.status(400).json(r);
@@ -399,12 +412,12 @@ router.post('/:source/run', requireAuth, async (req, res) => {
   }
 });
 
-// Últimas (todas)
+// (C) Últimas (todas)
 router.get('/latest', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
     const [google, meta, ga] = await Promise.all(
-      SOURCES.map((t) =>
+      VALID_SOURCES.map((t) =>
         Audit.findOne({ userId, type: t }).sort({ generatedAt: -1 }).lean()
       )
     );
@@ -416,10 +429,12 @@ router.get('/latest', requireAuth, async (req, res) => {
   }
 });
 
-// Última por fuente (shape simple)
+// (D) Última por fuente (con alias)
 router.get('/:source/latest', requireAuth, async (req, res) => {
-  const source = String(req.params.source || '').toLowerCase();
-  if (!SOURCES.includes(source)) {
+  const raw = String(req.params.source || '').toLowerCase();
+  const source = SOURCE_ALIASES[raw] || raw;
+
+  if (!VALID_SOURCES.includes(source)) {
     return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
   }
   try {
@@ -437,7 +452,7 @@ router.get('/:source/latest', requireAuth, async (req, res) => {
   }
 });
 
-// Action Center
+// (E) Action Center
 router.get('/action-center', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
