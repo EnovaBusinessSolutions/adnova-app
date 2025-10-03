@@ -12,7 +12,8 @@ const toSev = (s) => {
   return 'media';
 };
 
-const OK_TYPES = ['google', 'meta', 'shopify', 'ga4']; // ← añadimos ga4
+// ⬅️  AÑADIMOS 'ga' PARA EVITAR EL 500 POR ENUM
+const OK_TYPES = ['google', 'meta', 'shopify', 'ga', 'ga4'];
 const OK_SEV   = ['alta', 'media', 'baja'];
 
 const LinkSchema = new Schema(
@@ -26,7 +27,7 @@ const LinkSchema = new Schema(
 const IssueSchema = new Schema(
   {
     id:    { type: String, required: true },
-    area:  { type: String, default: 'otros' }, // dejamos abierto; el dashboard lo tolera
+    area:  { type: String, default: 'otros' }, // el dashboard lo tolera
     title: { type: String, required: true },
 
     // aceptar legacy y normalizar en pre('save')
@@ -49,7 +50,7 @@ const AuditSchema = new Schema(
   {
     userId: { type: Types.ObjectId, ref: 'User', index: true, required: true },
 
-    // ← ahora permite ga4
+    // permite ga y ga4
     type:   { type: String, enum: OK_TYPES, index: true, required: true },
 
     generatedAt: { type: Date, default: Date.now, index: true },
@@ -58,7 +59,7 @@ const AuditSchema = new Schema(
     summary: { type: String, default: '' },
     resumen: { type: String, default: '' },
 
-    // usamos la MISMA forma para issues y actionCenter
+    // misma forma para issues y actionCenter
     issues:       { type: [IssueSchema], default: [] },
     actionCenter: { type: [IssueSchema], default: [] },
 
@@ -72,7 +73,7 @@ const AuditSchema = new Schema(
     // snapshot de entrada (colecciones crudas)
     inputSnapshot: { type: Schema.Types.Mixed, default: {} },
 
-    version: { type: String, default: 'audits@1.1.0' },
+    version: { type: String, default: 'audits@1.1.1' },
 
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
@@ -84,20 +85,18 @@ const AuditSchema = new Schema(
 AuditSchema.pre('save', function(next) {
   this.updatedAt = new Date();
 
-  // sincroniza summary/resumen (preferimos 'summary')
+  // sincroniza summary/resumen
   if (!this.summary && typeof this.resumen === 'string') this.summary = this.resumen;
   if (!this.resumen && typeof this.summary === 'string') this.resumen = this.summary;
 
-  // normaliza severidades a alta/media/baja en issues y actionCenter
+  // normaliza severidades/impacto a alta/media/baja y alto/medio/bajo
   const normalizeIssues = (arr = []) =>
     arr.map((it) => ({
       ...it,
       severity: toSev(it?.severity),
-      estimatedImpact: toSev(it?.estimatedImpact) === 'alta'
-        ? 'alto'
-        : toSev(it?.estimatedImpact) === 'baja'
-        ? 'bajo'
-        : 'medio',
+      estimatedImpact:
+        toSev(it?.estimatedImpact) === 'alta' ? 'alto' :
+        toSev(it?.estimatedImpact) === 'baja' ? 'bajo' : 'medio',
     }));
 
   if (Array.isArray(this.issues))       this.issues       = normalizeIssues(this.issues);

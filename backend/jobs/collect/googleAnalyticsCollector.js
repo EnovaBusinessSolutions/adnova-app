@@ -1,18 +1,5 @@
 // backend/api/jobs/collect/googleAnalyticsCollector.js
 'use strict';
-/**
- * Collector GA4 (Analytics Data API)
- * Requiere: GoogleAccount con accessToken/refreshToken y defaultPropertyId ("properties/123")
- *
- * Salida:
- * {
- *   notAuthorized: boolean,
- *   reason?: string,
- *   property?: string,
- *   dateRange?: { start, end },
- *   channels?: Array<{ channel, users, sessions, conversions, revenue }>
- * }
- */
 
 const fetch = require('node-fetch');
 const mongoose = require('mongoose');
@@ -34,7 +21,7 @@ catch (_) {
     userId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
     accessToken: { type: String, select: false },
     refreshToken:{ type: String, select: false },
-    gaProperties: { type: Array, default: [] },
+    gaProperties: { type: Array, default: [] }, // [{ propertyId, displayName, account, accountName? }, ...]
     defaultPropertyId: String,
     scope: { type: [String], default: [] },
     expiresAt: { type: Date },
@@ -101,9 +88,9 @@ async function ga4RunReport({ token, property, body }) {
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
-    const msg = j?.error?.message || `GA4 runReport failed (HTTP_${r.status})`;
+    const msg  = j?.error?.message || `GA4 runReport failed (HTTP_${r.status})`;
     const code = j?.error?.status || '';
-    const err = new Error(msg);
+    const err  = new Error(msg);
     err._ga = { code, http: r.status };
     throw err;
   }
@@ -112,33 +99,57 @@ async function ga4RunReport({ token, property, body }) {
 
 /** '30daysAgo' / 'yesterday' → GA4 acepta estos literales tal cual */
 function resolveDateRange({ start = '30daysAgo', end = 'yesterday' }) {
-  const isAbs = /^\d{4}-\d{2}-\d{2}$/.test(String(start)) && /^\d{4}-\d{2}-\d{2}$/.test(String(end));
+  const abs = /^\d{4}-\d{2}-\d{2}$/;
+  const isAbs = abs.test(String(start)) && abs.test(String(end));
   return isAbs ? { start, end } : { start, end };
 }
 
 /* ---------------- collector ---------------- */
 async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yesterday' } = {}) {
-  // Cargar cuenta con tokens
+  // 1) Cargar cuenta con tokens y scopes
   const acc = await GoogleAccount
     .findOne({ $or: [{ user: userId }, { userId }] })
     .select('+accessToken +refreshToken scope defaultPropertyId gaProperties')
     .lean();
 
-  if (!acc) return { notAuthorized: true, reason: 'NO_GOOGLEACCOUNT' };
+  if (!acc) {
+    return { notAuthorized: true, reason: 'NO_GOOGLEACCOUNT' };
+  }
 
-  // property a usar
-  const propertyRaw = property_id || acc.defaultPropertyId || acc.gaProperties?.[0]?.propertyId || '';
+  // 2) Validar scope explícitamente para mensajes claros
+  const hasScope = Array.isArray(acc.scope) && acc.scope.includes(GA_SCOPE_READ);
+  if (!hasScope) {
+    return { notAuthorized: true, reason: 'MISSING_SCOPE(analytics.readonly)' };
+  }
+
+  // 3) property a usar
+  const propertyRaw =
+    property_id ||
+    acc.defaultPropertyId ||
+    acc.gaProperties?.[0]?.propertyId ||
+    '';
   const property = normPropertyId(propertyRaw);
-  if (!property) return { notAuthorized: true, reason: 'NO_DEFAULT_PROPERTY' };
+  if (!property) {
+    return { notAuthorized: true, reason: 'NO_DEFAULT_PROPERTY' };
+  }
 
-  // token (con refresco si es necesario)
+  // metadata de cuenta / propiedad (si está en gaProperties)
+  const meta = (Array.isArray(acc.gaProperties) ? acc.gaProperties : []).find(p =>
+    normPropertyId(p.propertyId) === property
+  ) || {};
+  const accountName  = meta.accountName || meta.account || '';
+  const propertyName = meta.displayName || '';
+
+  // 4) token (con refresco si es necesario)
   let token = acc.accessToken || null;
   if (!token && acc.refreshToken) token = await ensureAccessToken(acc);
-  if (!token) return { notAuthorized: true, reason: 'NO_ACCESS_TOKEN', property };
+  if (!token) {
+    return { notAuthorized: true, reason: 'NO_ACCESS_TOKEN', property, accountName, propertyName };
+  }
 
   const dateRange = resolveDateRange({ start, end });
 
-  // Reporte por canales
+  // 5) Reporte por canales
   const reportBody = {
     dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
     dimensions: [{ name: 'sessionDefaultChannelGroup' }],
@@ -162,26 +173,27 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
       j = await ga4RunReport({ token, property, body: reportBody });
     } else {
       const msg = e?.message || 'GA4 runReport failed';
-      // Si faltara scope, Google devuelve PERMISSION_DENIED
-      const reason = (e?._ga?.code === 'PERMISSION_DENIED') ? 'MISSING_SCOPE(analytics.readonly)' : msg;
-      return { notAuthorized: true, reason, property, dateRange };
+      const reason = (e?._ga?.code === 'PERMISSION_DENIED') ? 'PERMISSION_DENIED(analytics.readonly?)' : msg;
+      return { notAuthorized: true, reason, property, accountName, propertyName, dateRange };
     }
   }
 
   const rows = Array.isArray(j?.rows) ? j.rows : [];
   const channels = rows.map(rw => ({
-    channel:    rw.dimensionValues?.[0]?.value || '(other)',
-    users:      toNum(rw.metricValues?.[0]?.value),
-    sessions:   toNum(rw.metricValues?.[1]?.value),
-    conversions:toNum(rw.metricValues?.[2]?.value),
-    revenue:    toNum(rw.metricValues?.[3]?.value),
+    channel:     rw.dimensionValues?.[0]?.value || '(other)',
+    users:       toNum(rw.metricValues?.[0]?.value),
+    sessions:    toNum(rw.metricValues?.[1]?.value),
+    conversions: toNum(rw.metricValues?.[2]?.value),
+    revenue:     toNum(rw.metricValues?.[3]?.value),
   }));
 
   return {
     notAuthorized: false,
     property,
+    accountName,
+    propertyName,
     dateRange,
-    channels,
+    channels, // siempre arreglo (posible [])
   };
 }
 
