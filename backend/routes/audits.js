@@ -12,7 +12,7 @@ const User  = require('../models/User');
 const { collectGoogle } = require('../jobs/collect/googleCollector');
 const { collectMeta   } = require('../jobs/collect/metaCollector');
 
-// GA4 (varios paths por compat)
+// GA (GA4) collector – intentamos varios paths por compat
 let collectGA4 = null;
 try { ({ collectGA4 } = require('../jobs/collect/ga4Collector')); }
 catch (_) {
@@ -50,7 +50,7 @@ const toArea = (a) => (OK_AREAS.has(a) ? a : 'performance');
 
 function normalizeIssue(raw, i = 0, type = 'google') {
   const id    = safeStr(raw?.id, `iss-${type}-${Date.now()}-${i}`).trim();
-  const area  = toArea(raw?.area);
+  const area  = toArea((raw?.area || '').toLowerCase());
   const title = safeStr(raw?.title, 'Hallazgo').trim();
   const sev   = toSev(raw?.severity);
 
@@ -62,7 +62,9 @@ function normalizeIssue(raw, i = 0, type = 'google') {
     evidence: safeStr(raw?.evidence, ''),
     metrics: raw?.metrics && typeof raw.metrics === 'object' ? raw.metrics : {},
     recommendation: safeStr(raw?.recommendation, ''),
-    estimatedImpact: ['alto','medio','bajo'].includes(raw?.estimatedImpact) ? raw.estimatedImpact : null,
+    estimatedImpact: ['alto','medio','bajo'].includes((raw?.estimatedImpact || '').toLowerCase())
+      ? String(raw.estimatedImpact).toLowerCase()
+      : null,
     blockers: Array.isArray(raw?.blockers) ? raw.blockers.map(String) : [],
     links: Array.isArray(raw?.links)
       ? raw.links.map(l => ({ label: safeStr(l?.label, ''), url: safeStr(l?.url, '') }))
@@ -79,7 +81,7 @@ function normalizeIssue(raw, i = 0, type = 'google') {
       }
     };
   }
-  // compat segmentRef (GA4)
+  // compat segmentRef (GA)
   if (raw?.segmentRef && typeof raw.segmentRef === 'object') {
     base.metrics = {
       ...base.metrics,
@@ -211,7 +213,7 @@ function heuristicsFromMeta(snap) {
   return issues;
 }
 
-function heuristicsFromGA4(snap) {
+function heuristicsFromGA(snap) {
   const issues = [];
   const channels = Array.isArray(snap?.channels) ? snap.channels : [];
   const totals = channels.reduce((a,c)=>({
@@ -251,7 +253,8 @@ function heuristicsFromGA4(snap) {
 
 // ------------------------------------------------------
 
-const SOURCES = ['google', 'meta', 'ga4'];
+// ¡UN SOLO origen de verdad!
+const SOURCES = ['google', 'meta', 'ga'];
 
 async function runSingleAudit({ userId, type, flags }) {
   // no conectado → placeholder
@@ -275,7 +278,7 @@ async function runSingleAudit({ userId, type, flags }) {
   try {
     if (type === 'google') snap = await collectGoogle(userId);
     else if (type === 'meta') snap = await collectMeta(userId);
-    else if (type === 'ga4') {
+    else if (type === 'ga') {
       if (typeof collectGA4 === 'function') snap = await collectGA4(userId);
       else return { type, ok: false, error: 'SOURCE_NOT_READY' };
     }
@@ -283,7 +286,7 @@ async function runSingleAudit({ userId, type, flags }) {
 
   // autorización / datos
   const authorized = !snap?.notAuthorized;
-  const hasData = (type === 'ga4')
+  const hasData = (type === 'ga')
     ? (Array.isArray(snap?.channels) && snap.channels.length > 0)
     : (Array.isArray(snap?.byCampaign) && snap.byCampaign.length > 0);
 
@@ -311,7 +314,6 @@ async function runSingleAudit({ userId, type, flags }) {
       summary = safeStr(ai?.summary, '');
       issues  = normalizeIssues(ai?.issues, type, 10);
     } catch {
-      // fallback si la IA falla
       issues = [];
     }
   }
@@ -320,7 +322,7 @@ async function runSingleAudit({ userId, type, flags }) {
   if (issues.length === 0 && hasData && authorized) {
     if (type === 'google') issues = heuristicsFromGoogle(snap);
     if (type === 'meta')   issues = heuristicsFromMeta(snap);
-    if (type === 'ga4')    issues = heuristicsFromGA4(snap);
+    if (type === 'ga')     issues = heuristicsFromGA(snap);
     summary = summary || 'Hallazgos generados con reglas básicas (fallback).';
   }
 
@@ -356,12 +358,12 @@ router.post('/run', requireAuth, async (req, res) => {
     const flags = {
       google:  !!(req.body?.googleConnected  ?? user?.googleConnected),
       meta:    !!(req.body?.metaConnected    ?? user?.metaConnected),
-      ga4:     !!(req.body?.googleConnected  ?? user?.googleConnected), // comparten login Google
+      ga:      !!(req.body?.googleConnected  ?? user?.googleConnected), // comparte login Google
       shopify: !!(req.body?.shopifyConnected ?? user?.shopifyConnected), // ignorado aquí
     };
 
     const results = [];
-    for (const type of ['google', 'meta', 'ga4']) {
+    for (const type of SOURCES) {
       const r = await runSingleAudit({ userId, type, flags });
       results.push(r);
     }
@@ -377,17 +379,16 @@ router.post('/:source/run', requireAuth, async (req, res) => {
   const userId = req.user._id;
   const source = String(req.params.source || '').toLowerCase();
 
-  const SOURCES = ['google','meta','ga4'];
   if (!SOURCES.includes(source)) {
     return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
-    }
+  }
 
   try {
     const user = await User.findById(userId).lean();
     const flags = {
       google:  !!user?.googleConnected,
       meta:    !!user?.metaConnected,
-      ga4:     !!user?.googleConnected,
+      ga:      !!user?.googleConnected,
     };
     const r = await runSingleAudit({ userId, type: source, flags });
     if (!r.ok) return res.status(400).json(r);
@@ -402,13 +403,13 @@ router.post('/:source/run', requireAuth, async (req, res) => {
 router.get('/latest', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
-    const [google, meta, ga4] = await Promise.all(
-      ['google', 'meta', 'ga4'].map((t) =>
+    const [google, meta, ga] = await Promise.all(
+      SOURCES.map((t) =>
         Audit.findOne({ userId, type: t }).sort({ generatedAt: -1 }).lean()
       )
     );
 
-    return res.json({ ok: true, data: { google: google || null, meta: meta || null, ga4: ga4 || null } });
+    return res.json({ ok: true, data: { google: google || null, meta: meta || null, ga: ga || null } });
   } catch (e) {
     console.error('LATEST_ERROR:', e);
     return res.status(400).json({ ok: false, error: 'LATEST_ERROR', detail: e?.message });
@@ -418,7 +419,6 @@ router.get('/latest', requireAuth, async (req, res) => {
 // Última por fuente (shape simple)
 router.get('/:source/latest', requireAuth, async (req, res) => {
   const source = String(req.params.source || '').toLowerCase();
-  const SOURCES = ['google','meta','ga4'];
   if (!SOURCES.includes(source)) {
     return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
   }
