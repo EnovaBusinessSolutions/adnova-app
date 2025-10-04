@@ -46,7 +46,10 @@ const toSev = (s) => {
   if (v === 'baja' || v === 'low')   return 'baja';
   return 'media';
 };
-const toArea = (a) => (OK_AREAS.has(a) ? a : 'performance');
+const toArea = (a) => {
+  const v = String(a || '').toLowerCase().trim();
+  return OK_AREAS.has(v) ? v : 'performance';
+};
 
 function normalizeIssue(raw, i = 0, type = 'google') {
   const id    = safeStr(raw?.id, `iss-${type}-${Date.now()}-${i}`).trim();
@@ -254,6 +257,7 @@ function heuristicsFromGA4(snap) {
 // ---------------- Alias de fuentes (entrada) ----------------
 const SOURCE_ALIASES = {
   ga: 'ga4',
+  ga4: 'ga4',
   analytics: 'ga4',
   'google-analytics': 'ga4',
   googleanalytics: 'ga4',
@@ -278,7 +282,7 @@ async function runSingleAudit({ userId, type, flags }) {
       issues: [buildSetupIssue({ type: persistType, title: 'Fuente no conectada', evidence: 'Conecta la cuenta para auditar.' })],
       actionCenter: [],
       inputSnapshot: { notAuthorized: true, reason: 'NOT_CONNECTED' },
-      version: 'audits@1.1.0',
+      version: 'audits@1.1.1',
     });
     return { type: persistType, ok: true, auditId: doc._id };
   }
@@ -390,11 +394,15 @@ router.post('/run', requireAuth, async (req, res) => {
   }
 });
 
+function normalizeSource(src = '') {
+  const v = String(src).toLowerCase().trim();
+  return SOURCE_ALIASES[v] || v;
+}
+
 // (B) Ejecutar UNA (con alias de entrada, siempre persiste como ga4)
 router.post('/:source/run', requireAuth, async (req, res) => {
   const userId = req.user._id;
-  const raw = String(req.params.source || '').toLowerCase();
-  const normalized = SOURCE_ALIASES[raw] || raw;
+  const normalized = normalizeSource(req.params.source);
 
   if (!VALID_SOURCES_DB.includes(normalized)) {
     return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
@@ -435,8 +443,7 @@ router.get('/latest', requireAuth, async (req, res) => {
 
 // (D) Última por fuente (con alias de entrada)
 router.get('/:source/latest', requireAuth, async (req, res) => {
-  const raw = String(req.params.source || '').toLowerCase();
-  const normalized = SOURCE_ALIASES[raw] || raw;
+  const normalized = normalizeSource(req.params.source);
 
   if (!VALID_SOURCES_DB.includes(normalized)) {
     return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });

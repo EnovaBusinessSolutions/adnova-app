@@ -3,16 +3,17 @@
 
 /**
  * Collector de Meta Ads (Facebook/Instagram)
- * - Trae insights a nivel campaign con fallback de fechas (30d → 90d → 180d → 365d).
- * - Autoselecciona la primera ad account si falta defaultAccountId.
+ * - Audita TODAS las ad accounts del usuario (portafolios) con límite configurable.
+ * - Trae insights a nivel campaign con fallback de fechas (30d → 90d → 180d → last_year).
  * - Soporta paginación y extrae compras/valor de actions/action_values.
- * - Añade metadatos de cuenta (currency, name, timezone) y accountIds.
+ * - Añade metadatos de cuenta (currency, name, timezone) y lista de accountIds.
  */
 
 const fetch = require('node-fetch');
 const mongoose = require('mongoose');
 
 const API_VER = process.env.FACEBOOK_API_VERSION || 'v19.0';
+const MAX_ACCOUNTS = Number(process.env.META_MAX_ACCOUNTS || 8);
 
 let MetaAccount;
 try {
@@ -141,11 +142,11 @@ function extractPurchaseMetrics(x) {
 
 async function collectMeta(userId, opts = {}) {
   const {
-    account_id,
-    date_preset = 'last_30d', // today, yesterday, last_7d, last_30d, this_month, last_month, lifetime
-    level = 'campaign',       // campaign|adset|ad
-    fields: userFields,       // opcional override
-    since, until              // si defines since/until, ignoramos date_preset
+    account_id,                 // opcional: forzar una sola cuenta
+    date_preset = 'last_30d',   // today, yesterday, last_7d, last_30d, this_month, last_month, lifetime
+    level = 'campaign',         // campaign|adset|ad
+    fields: userFields,         // opcional override
+    since, until                // si defines since/until, ignoramos date_preset
   } = opts;
 
   // Carga cuenta Meta
@@ -158,15 +159,8 @@ async function collectMeta(userId, opts = {}) {
   }
 
   const token = pickToken(acc);
-  const actId = normAct(account_id || pickDefaultAccountId(acc));
-
-  if (!token || !actId) {
-    return {
-      notAuthorized: true,
-      reason: !token ? 'NO_TOKEN' : 'NO_DEFAULT_ACCOUNT',
-      byCampaign: [],
-      accountIds: actId ? [actId] : []
-    };
+  if (!token) {
+    return { notAuthorized: true, reason: 'NO_TOKEN', byCampaign: [], accountIds: [] };
   }
 
   // Scopes (ads_read o ads_management habilitan insights)
@@ -177,22 +171,46 @@ async function collectMeta(userId, opts = {}) {
       notAuthorized: true,
       reason: 'MISSING_SCOPES(ads_read|ads_management)',
       byCampaign: [],
-      accountIds: [actId]
+      accountIds: []
     };
   }
 
-  // Metadatos de la cuenta (currency, name, timezone)
-  let currency = null;
-  let accountName = null;
-  let timezone_name = null;
-  try {
-    const meta = await fetchJSON(`https://graph.facebook.com/${API_VER}/act_${actId}?fields=currency,name,timezone_name&access_token=${encodeURIComponent(token)}`);
-    currency = meta?.currency || null;
-    accountName = meta?.name || null;
-    timezone_name = meta?.timezone_name || null;
-  } catch {
-    // no bloquea el flujo
+  /* ---------- recolecta TODAS las cuentas disponibles ---------- */
+  const allAccountsRaw = [
+    ...(Array.isArray(acc.ad_accounts) ? acc.ad_accounts : []),
+    ...(Array.isArray(acc.adAccounts) ? acc.adAccounts : []),
+  ];
+
+  // Normaliza a objetos { id, name? }
+  let allActIds = allAccountsRaw
+    .map(x => {
+      const id = normAct(x?.id || x || '');
+      const name = x?.name || null;
+      return id ? { id, name } : null;
+    })
+    .filter(Boolean);
+
+  // Si el caller fuerza una cuenta, respétala; si no hay ninguna, usa default
+  if (account_id) {
+    allActIds = [{ id: normAct(account_id), name: null }];
+  } else if (!allActIds.length) {
+    const d = pickDefaultAccountId(acc);
+    if (d) allActIds = [{ id: d, name: null }];
   }
+
+  if (!allActIds.length) {
+    return {
+      notAuthorized: true,
+      reason: 'NO_DEFAULT_ACCOUNT',
+      byCampaign: [],
+      accountIds: []
+    };
+  }
+
+  // Límite de seguridad
+  const accountsToAudit = allActIds.slice(0, MAX_ACCOUNTS);
+
+  /* ---------- helpers ---------- */
 
   // Campos de insights
   const baseFields = [
@@ -203,8 +221,8 @@ async function collectMeta(userId, opts = {}) {
   ];
   const fields = Array.isArray(userFields) && userFields.length ? userFields : baseFields;
 
-  // Helper para construir URL con presets/rangos
-  const mkUrl = (preset) => {
+  // Construye URL con presets/rangos
+  const mkUrl = (actId, preset) => {
     const qp = new URLSearchParams();
     if (since && until) {
       qp.set('time_range', JSON.stringify({ since, until }));
@@ -214,67 +232,103 @@ async function collectMeta(userId, opts = {}) {
     qp.set('level', level);
     qp.set('fields', fields.join(','));
     qp.set('limit', '5000');
-    // Mejora de consistencia de atribución
+    // mejor consistencia de atribución
     qp.set('use_unified_attribution_setting', 'true');
     qp.set('access_token', token);
     return `https://graph.facebook.com/${API_VER}/act_${actId}/insights?${qp.toString()}`;
   };
 
-  // 1er intento: preset solicitado (por defecto last_30d)
-  let presetTried = since && until ? undefined : date_preset;
-  let data = [];
-  try {
-    const url = mkUrl(presetTried || 'last_30d');
-    data = await pageAllInsights(url);
-  } catch (e) {
-    const code = e?._meta?.code;
-    const subcode = e?._meta?.error_subcode;
-    const isAuth = code === 190 || subcode === 463 || subcode === 467; // token inválido/expirado
-    const reason = isAuth ? 'TOKEN_INVALID_OR_EXPIRED' : (e?.message || 'Meta insights failed');
-    return { notAuthorized: true, reason, byCampaign: [], accountIds: [actId] };
-  }
-
-  // Fallbacks automáticos si no hay datos (cuando usamos date_preset)
-  const tryPresets = ['last_90d', 'last_180d', 'last_year'];
-  if (!since && !until && data.length === 0) {
-    for (const p of tryPresets) {
-      try {
-        presetTried = p;
-        data = await pageAllInsights(mkUrl(p));
-        if (data.length > 0) break;
-      } catch { /* sigue */ }
+  // Lee metadatos de una cuenta
+  async function getAccountMeta(actId) {
+    try {
+      const u = `https://graph.facebook.com/${API_VER}/act_${actId}?fields=currency,name,timezone_name&access_token=${encodeURIComponent(token)}`;
+      const j = await fetchJSON(u);
+      return {
+        currency: j?.currency || null,
+        accountName: j?.name || null,
+        timezone_name: j?.timezone_name || null,
+      };
+    } catch {
+      return { currency: null, accountName: null, timezone_name: null };
     }
   }
 
+  /* ---------- loop por cuentas ---------- */
+
   const byCampaign = [];
+  const accountIds = [];
+  const accountCurrency = new Map();
+  const accountNameMap = new Map();
+  const accountTzMap = new Map();
+
   let minStart = null;
   let maxStop  = null;
 
-  for (const x of data) {
-    const roas = Array.isArray(x.purchase_roas) && x.purchase_roas[0]?.value ? Number(x.purchase_roas[0].value) : null;
-    const { purchases, purchase_value } = extractPurchaseMetrics(x);
+  for (const acct of accountsToAudit) {
+    const actId = acct.id;
+    accountIds.push(actId);
 
-    if (x.date_start && (!minStart || x.date_start < minStart)) minStart = x.date_start;
-    if (x.date_stop  && (!maxStop  || x.date_stop  > maxStop )) maxStop  = x.date_stop;
+    // metadatos
+    const meta = await getAccountMeta(actId);
+    accountCurrency.set(actId, meta.currency);
+    accountNameMap.set(actId, acct.name || meta.accountName || null);
+    accountTzMap.set(actId, meta.timezone_name);
 
-    byCampaign.push({
-      account_id: actId,
-      id: x.campaign_id,
-      name: x.campaign_name || 'Sin nombre',
-      objective: x.objective || null,
-      kpis: {
-        spend: toNum(x.spend),
-        impressions: toNum(x.impressions),
-        clicks: toNum(x.clicks),
-        cpm: toNum(x.cpm),
-        cpc: toNum(x.cpc),
-        ctr: toNum(x.ctr),
-        roas: roas ?? (purchase_value ? safeDiv(purchase_value, toNum(x.spend)) : 0),
-        purchases: purchases ?? null,
-        purchase_value: purchase_value ?? null,
-      },
-      period: { since: x.date_start, until: x.date_stop },
-    });
+    // descarga insights con fallbacks
+    let data = [];
+    let presetTried = since && until ? undefined : (date_preset || 'last_30d');
+    try {
+      data = await pageAllInsights(mkUrl(actId, presetTried));
+    } catch (e) {
+      const code = e?._meta?.code;
+      const subcode = e?._meta?.error_subcode;
+      const isAuth = code === 190 || subcode === 463 || subcode === 467; // token inválido/expirado
+      const reason = isAuth ? 'TOKEN_INVALID_OR_EXPIRED' : (e?.message || 'Meta insights failed');
+      return { notAuthorized: true, reason, byCampaign: [], accountIds };
+    }
+
+    if (!since && !until && data.length === 0) {
+      for (const p of ['last_90d', 'last_180d', 'last_year']) {
+        try {
+          presetTried = p;
+          data = await pageAllInsights(mkUrl(actId, p));
+          if (data.length > 0) break;
+        } catch { /* sigue */ }
+      }
+    }
+
+    // agrega campañas de esta cuenta
+    for (const x of data) {
+      const roas = Array.isArray(x.purchase_roas) && x.purchase_roas[0]?.value ? Number(x.purchase_roas[0].value) : null;
+      const { purchases, purchase_value } = extractPurchaseMetrics(x);
+
+      if (x.date_start && (!minStart || x.date_start < minStart)) minStart = x.date_start;
+      if (x.date_stop  && (!maxStop  || x.date_stop  > maxStop )) maxStop  = x.date_stop;
+
+      byCampaign.push({
+        account_id: actId,
+        id: x.campaign_id,
+        name: x.campaign_name || 'Sin nombre',
+        objective: x.objective || null,
+        kpis: {
+          spend: toNum(x.spend),
+          impressions: toNum(x.impressions),
+          clicks: toNum(x.clicks),
+          cpm: toNum(x.cpm),
+          cpc: toNum(x.cpc),
+          ctr: toNum(x.ctr),
+          roas: roas ?? (purchase_value ? safeDiv(purchase_value, toNum(x.spend)) : 0),
+          purchases: purchases ?? null,
+          purchase_value: purchase_value ?? null,
+        },
+        period: { since: x.date_start, until: x.date_stop },
+        accountMeta: {
+          name: accountNameMap.get(actId) || null,
+          currency: accountCurrency.get(actId) || null,
+          timezone_name: accountTzMap.get(actId) || null,
+        }
+      });
+    }
   }
 
   // KPIs globales
@@ -288,19 +342,15 @@ async function collectMeta(userId, opts = {}) {
     { impr: 0, clk: 0, cost: 0 }
   );
 
-  // Lista de accountIds conocidos (para debug/telemetría)
-  const accountIds =
-    (Array.isArray(acc?.ad_accounts) ? acc.ad_accounts : [])
-      .map(x => normAct(x?.id || x))
-      .filter(Boolean);
-
-  if (accountIds.length === 0) accountIds.push(actId);
+  // Si todas las cuentas comparten currency, úsala; si no, null
+  const uniqueCurrencies = Array.from(new Set(
+    accountIds.map(id => accountCurrency.get(id)).filter(Boolean)
+  ));
+  const unifiedCurrency = uniqueCurrencies.length === 1 ? uniqueCurrencies[0] : null;
 
   return {
     notAuthorized: false,
-    currency,
-    accountName,
-    timezone_name,
+    currency: unifiedCurrency,     // puede ser null si hay mezcla
     timeRange: { from: minStart, to: maxStop },
     kpis: {
       impressions: G.impr,

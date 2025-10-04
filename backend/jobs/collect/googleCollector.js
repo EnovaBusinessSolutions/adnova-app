@@ -131,6 +131,41 @@ async function gaqlSearchStream({ accessToken, customerId, loginCustomerId, quer
   return out;
 }
 
+/** 🔎 Lista hijos directos (nivel 1) de un MCC usando GAQL sobre customer_client */
+async function listMccChildren({ accessToken, managerId }) {
+  const q = `
+    SELECT
+      customer_client.client_customer,
+      customer_client.descriptive_name,
+      customer_client.level,
+      customer_client.currency_code,
+      customer_client.time_zone
+    FROM customer_client
+    WHERE customer_client.level = 1
+  `;
+  const rows = await gaqlSearchStream({
+    accessToken,
+    customerId: managerId,
+    loginCustomerId: managerId,
+    query: q,
+  });
+
+  const out = [];
+  for (const r of rows || []) {
+    // client_customer viene como "customers/1234567890"
+    const res = r.customerClient?.clientCustomer;
+    const id = res ? String(res).split('/')[1] : null;
+    if (!id) continue;
+    out.push({
+      id: normId(id),
+      name: r.customerClient?.descriptiveName || null,
+      currencyCode: r.customerClient?.currencyCode || null,
+      timeZone: r.customerClient?.timeZone || null,
+    });
+  }
+  return out;
+}
+
 /* ---------------- collector principal ---------------- */
 
 async function collectGoogle(userId) {
@@ -195,15 +230,35 @@ async function collectGoogle(userId) {
     if (cid && !ids.includes(cid)) ids.push(cid);
   }
 
+  const loginCustomerIdHeader = normId(gaDoc.managerCustomerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '');
+
   // Descubre si no hay ninguno
   if (ids.length === 0) {
     try {
+      // 3.a accesibles por el usuario
       const discovered = await listAccessibleCustomers(accessToken);
-      ids = discovered.slice(0, 5).map(normId); // limita a 5 por prudencia
+      ids = discovered.slice(0, 5).map(normId);
+
+      // 3.b si tenemos MCC y seguimos sin IDs, listar hijos del MCC
+      if (ids.length === 0 && loginCustomerIdHeader) {
+        const children = await listMccChildren({ accessToken, managerId: loginCustomerIdHeader });
+        const childIds = children.map(c => c.id).filter(Boolean);
+        if (childIds.length) {
+          ids = childIds.slice(0, 10); // límite de prudencia
+          // Persistimos metadata básica si el doc no la tenía
+          if (!gaDoc.customers || gaDoc.customers.length === 0) {
+            await GoogleAccount.updateOne(
+              { _id: gaDoc._id },
+              { $set: { customers: children, defaultCustomerId: ids[0] || null, updatedAt: new Date() } }
+            );
+          }
+        }
+      }
+
+      // Completar metadata si aún no hay customers guardados
       if (ids.length && (!gaDoc.customers || gaDoc.customers.length === 0)) {
-        const loginHeader = normId(gaDoc.managerCustomerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '');
         const fetched = await Promise.all(
-          ids.map((cid) => getCustomer(accessToken, cid, loginHeader).catch(() => null))
+          ids.map((cid) => getCustomer(accessToken, cid, loginCustomerIdHeader).catch(() => null))
         );
         await GoogleAccount.updateOne(
           { _id: gaDoc._id },
@@ -226,7 +281,6 @@ async function collectGoogle(userId) {
   }
 
   // 4) Parámetros globales
-  const loginCustomerIdHeader = normId(gaDoc.managerCustomerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '');
   const untilGlobal = todayISO();
 
   // 5) Acumuladores
@@ -250,7 +304,7 @@ async function collectGoogle(userId) {
 
     // — intentos de rango: 30d → 180d → 365d (campañas habilitadas)
     const ranges = [
-      { since: daysAgoISO(30), until: untilGlobal, where: '' },
+      { since: daysAgoISO(30),  until: untilGlobal, where: '' },
       { since: daysAgoISO(180), until: untilGlobal, where: '' },
       { since: daysAgoISO(365), until: untilGlobal, where: "AND campaign.status = ENABLED" },
     ];
@@ -279,12 +333,11 @@ async function collectGoogle(userId) {
               loginCustomerId: loginCustomerIdHeader || undefined,
               query,
             });
-          } catch (e2) {
+          } catch {
             // Último intento: sin login-customer-id
             return await gaqlSearchStream({ accessToken, customerId, loginCustomerId: undefined, query });
           }
         }
-        // Si fue otro error (p.e. 403 por permisos de cuenta), dejamos que el caller decida
         throw e;
       }
     };
@@ -378,7 +431,7 @@ async function collectGoogle(userId) {
           clicks: v.clicks,
           cost: v.cost,
           conversions: v.conversions,
-          conv_value: v.convValue,                 // snake_case
+          conv_value: v.convValue,
           ctr: safeDiv(v.clicks, v.impressions) * 100,
           cpc: safeDiv(v.cost, v.clicks),
           cpa: safeDiv(v.cost, v.conversions),

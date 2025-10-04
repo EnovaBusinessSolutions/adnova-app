@@ -300,6 +300,16 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
     : SYSTEM_ADS(type === 'google' ? 'Google Ads' : 'Meta Ads');
 
   const dataStr = tinySnapshot(inputSnapshot);
+
+  // ---------- LOG: entrada al LLM ----------
+  if (process.env.DEBUG_AUDIT === 'true') {
+    console.log('[LLM:IN]', type, {
+      hasByCampaign: !!inputSnapshot?.byCampaign?.length,
+      hasChannels: !!inputSnapshot?.channels?.length
+    });
+    console.log('[LLM:SNAPSHOT]', tinySnapshot(inputSnapshot, { maxChars: 2000 }));
+  }
+
   const user = makeUserPrompt({ snapshotStr: dataStr, maxFindings, isAnalytics: analytics });
 
   // 1) intentar con LLM
@@ -331,6 +341,14 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
       metrics: (it.metrics && typeof it.metrics === 'object') ? it.metrics : {},
       links: Array.isArray(it.links) ? it.links : []
     }));
+  }
+
+  // ---------- LOG: salida del LLM ----------
+  if (process.env.DEBUG_AUDIT === 'true') {
+    console.log('[LLM:OUT]', {
+      summary: (summary || '').slice(0, 160),
+      issues: Array.isArray(issues) ? issues.length : 0
+    });
   }
 
   // 3) si el LLM falló o dio muy poco y hay datos, usar fallback para completar hasta MÍNIMO 3 issues
