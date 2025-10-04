@@ -13,15 +13,21 @@ const sevNorm  = (s) => (SEVS.has(String(s||'').toLowerCase()) ? String(s).toLow
 const areaNorm = (a) => (AREAS.has(String(a||'').toLowerCase()) ? String(a).toLowerCase() : 'performance');
 const impactNorm = (s) => (['alto','medio','bajo'].includes(String(s||'').toLowerCase()) ? String(s).toLowerCase() : 'medio');
 
+// Acepta tanto "ga" como "ga4" (compat con rutas)
+const isGA = (type) => type === 'ga' || type === 'ga4';
+
 function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
   try {
     const clone = JSON.parse(JSON.stringify(inputSnapshot || {}));
 
     if (Array.isArray(clone.byCampaign)) {
       clone.byCampaign = clone.byCampaign.slice(0, 60).map(c => ({
-        id: c.id, name: c.name, objective: c.objective || null,
+        id: String(c.id ?? ''),
+        name: c.name ?? '',
+        objective: c.objective ?? null,
         kpis: c.kpis,
         period: c.period,
+        account_id: c.account_id ?? null,
       }));
     }
 
@@ -35,13 +41,9 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
       }));
     }
 
-    // mantenemos referencia de GA4 si viene del collector
-    if (clone.property && typeof clone.property === 'string') {
-      clone.property = clone.property; // "properties/123"
-    }
-    if (clone.accountName && typeof clone.accountName === 'string') {
-      clone.accountName = clone.accountName; // nombre legible
-    }
+    // Contexto GA4/GA
+    if (typeof clone.property === 'string') clone.property = clone.property; // "properties/123"
+    if (typeof clone.accountName === 'string') clone.accountName = clone.accountName;
 
     let s = JSON.stringify(clone);
     if (s.length > maxChars) s = s.slice(0, maxChars);
@@ -74,9 +76,9 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
           area: 'performance',
           severity: 'media',
           evidence: `CTR ${ctr.toFixed(2)}% con ${impr} impresiones y ${clk} clics.`,
-          recommendation: 'Mejora creatividades y relevancia (RSA/creatives), prueba variantes y ajusta segmentación.',
+          recommendation: 'Mejora creatividades y relevancia; prueba variantes (RSA/creatives) y ajusta segmentación.',
           estimatedImpact: 'medio',
-          campaignRef: { id: c.id, name: c.name || String(c.id) },
+          campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
           metrics: { impressions: impr, clicks: clk, ctr: Number(ctr.toFixed(2)) }
         });
       }
@@ -87,9 +89,9 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
           area: 'performance',
           severity: 'alta',
           evidence: `${clk} clics, ${cost.toFixed(2)} de gasto y 0 conversiones.`,
-          recommendation: 'Revisa términos de búsqueda/segmentaciones, calidad de landing y agrega negativas.',
+          recommendation: 'Revisa términos/segmentos de baja calidad, negativas, coherencia anuncio→landing y tracking.',
           estimatedImpact: 'alto',
-          campaignRef: { id: c.id, name: c.name || String(c.id) },
+          campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
           metrics: { clicks: clk, cost: Number(cost.toFixed(2)), conversions: conv }
         });
       }
@@ -102,7 +104,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
           evidence: `ROAS ${roas.toFixed(2)} con gasto ${cost.toFixed(2)} y valor ${value.toFixed(2)}.`,
           recommendation: 'Ajusta pujas/audiencias, excluye ubicaciones pobres y prueba nuevas creatividades.',
           estimatedImpact: 'medio',
-          campaignRef: { id: c.id, name: c.name || String(c.id) },
+          campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
           metrics: { roas: Number(roas.toFixed(2)), cost: Number(cost.toFixed(2)), value: Number(value.toFixed(2)) }
         });
       }
@@ -111,7 +113,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
     }
   }
 
-  if (type === 'ga4') {
+  if (isGA(type)) {
     const channels = Array.isArray(inputSnapshot?.channels) ? inputSnapshot.channels : [];
     const totals = channels.reduce((a,c)=>({
       users: a.users + toNum(c.users),
@@ -129,7 +131,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
         area: 'tracking',
         severity: 'alta',
         evidence: `${totals.sessions} sesiones y 0 conversiones en el periodo.`,
-        recommendation: 'Verifica eventos de conversión (nombres/flags), etiquetado, consent y filtros de vista.',
+        recommendation: 'Verifica eventos de conversión (nombres/flags), etiquetado, consent y filtros; revisa importación a Ads.',
         estimatedImpact: 'alto',
         segmentRef: { type: 'channel', name: 'all' },
         accountRef: { name: accountName || (property || 'GA4'), property: property || '' },
@@ -146,7 +148,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
         area: 'performance',
         severity: 'media',
         evidence: `${paidSess} sesiones de pago con 0 conversiones.`,
-        recommendation: 'Cruza plataformas de Ads; revisa importación/definición de conversiones y ventana de atribución.',
+        recommendation: 'Cruza plataformas de Ads; revisa importación/definición de conversiones y ventanas de atribución.',
         estimatedImpact: 'medio',
         segmentRef: { type: 'channel', name: 'paid' },
         accountRef: { name: accountName || (property || 'GA4'), property: property || '' },
@@ -155,7 +157,6 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
     }
   }
 
-  // garantizamos límite
   return cap(out, limit);
 }
 
@@ -166,7 +167,7 @@ Objetivo: detectar puntos críticos y oportunidades accionables con alta clarida
 Responde SIEMPRE en JSON válido (sin texto extra). No inventes datos que no estén en el snapshot.
 `.trim();
 
-const SYSTEM_GA4 = `
+const SYSTEM_GA = `
 Eres un auditor senior de Google Analytics 4 especializado en analítica de negocio y atribución.
 Objetivo: detectar puntos críticos y oportunidades accionables con alta claridad y rigor.
 Responde SIEMPRE en JSON válido (sin texto extra). No inventes datos que no estén en el snapshot.
@@ -190,7 +191,7 @@ Estructura estricta:
 }
 `.trim();
 
-const SCHEMA_GA4 = `
+const SCHEMA_GA = `
 Estructura estricta:
 {
   "summary": string,
@@ -209,7 +210,7 @@ Estructura estricta:
 }
 `.trim();
 
-function makeUserPrompt({ snapshotStr, maxFindings, isGA4 }) {
+function makeUserPrompt({ snapshotStr, maxFindings, isAnalytics }) {
   return `
 CONSIGNA
 - Devuelve JSON válido EXACTAMENTE con: { "summary": string, "issues": Issue[] }.
@@ -217,8 +218,8 @@ CONSIGNA
 - Idioma: español neutro, directo y claro.
 - Prohibido inventar métricas o campañas/canales no presentes en el snapshot.
 - Cada "issue" DEBE incluir:
-  ${isGA4 ? '- accountRef con {name, property}\n- segmentRef con el canal\n' : '- campaignRef con {id, name}\n'}
-  - evidence con métricas textuales
+  ${isAnalytics ? '- accountRef con {name, property}\n- segmentRef con el canal\n' : '- campaignRef con {id, name}\n'}
+  - evidence con métricas textuales del snapshot
   - recommendation con pasos concretos (no genéricos)
   - estimatedImpact coherente con la evidencia
 
@@ -237,12 +238,19 @@ DATOS (snapshot reducido)
 ${snapshotStr}
 
 FORMATO JSON
-${isGA4 ? SCHEMA_GA4 : SCHEMA_ADS}
+${isAnalytics ? SCHEMA_GA : SCHEMA_ADS}
 `.trim();
 }
 
 /* ---------------------- OpenAI JSON con reintentos --------------------- */
 async function chatJSON({ system, user, model = 'gpt-4o-mini', retries = 2 }) {
+  // Si no hay API key, dejamos que el caller use el fallback heurístico
+  if (!process.env.OPENAI_API_KEY) {
+    const err = new Error('OPENAI_API_KEY missing');
+    err.status = 499; // pseudo-status para diferenciar
+    throw err;
+  }
+
   let lastErr;
   for (let i = 0; i <= retries; i++) {
     try {
@@ -260,6 +268,7 @@ async function chatJSON({ system, user, model = 'gpt-4o-mini', retries = 2 }) {
     } catch (e) {
       lastErr = e;
       const code = e?.status || e?.response?.status;
+      // 429/5xx → backoff y reintento
       if ((code === 429 || (code >= 500 && code < 600)) && i < retries) {
         await new Promise(r => setTimeout(r, 700 * (i + 1)));
         continue;
@@ -273,20 +282,25 @@ async function chatJSON({ system, user, model = 'gpt-4o-mini', retries = 2 }) {
 /* ----------------------------- entry point ---------------------------- */
 /**
  * generateAudit({ type, inputSnapshot, maxFindings })
- *  - type: 'google' | 'meta' | 'ga4'
- *  - inputSnapshot: salida de collectors (Ads: byCampaign; GA4: channels + property/accountName)
+ *  - type: 'google' | 'meta' | 'ga' | 'ga4'
+ *  - inputSnapshot: salida de collectors (Ads: byCampaign; GA: channels + property/accountName)
  * Retorna: { summary, issues[] }
  */
 module.exports = async function generateAudit({ type, inputSnapshot, maxFindings = 10 }) {
-  const isGA4 = type === 'ga4';
+  const analytics = isGA(type);
+
+  // ¿hay datos reales?
+  const haveAdsData = Array.isArray(inputSnapshot?.byCampaign) && inputSnapshot.byCampaign.length > 0;
+  const haveGAData  = Array.isArray(inputSnapshot?.channels)   && inputSnapshot.channels.length > 0;
+  const haveData    = analytics ? haveGAData : haveAdsData;
 
   // prompts
-  const system = isGA4
-    ? SYSTEM_GA4
+  const system = analytics
+    ? SYSTEM_GA
     : SYSTEM_ADS(type === 'google' ? 'Google Ads' : 'Meta Ads');
 
   const dataStr = tinySnapshot(inputSnapshot);
-  const user = makeUserPrompt({ snapshotStr: dataStr, maxFindings, isGA4 });
+  const user = makeUserPrompt({ snapshotStr: dataStr, maxFindings, isAnalytics: analytics });
 
   // 1) intentar con LLM
   let parsed;
@@ -296,7 +310,7 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
     parsed = null;
   }
 
-  // 2) normalizar resultados del LLM (si existen)
+  // 2) normalizar resultados del LLM
   let issues = [];
   let summary = '';
 
@@ -311,19 +325,15 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
       evidence: String(it.evidence || ''),
       recommendation: String(it.recommendation || ''),
       estimatedImpact: impactNorm(it.estimatedImpact),
-      campaignRef: it.campaignRef,
-      segmentRef: it.segmentRef,
-      accountRef: it.accountRef, // GA4
+      campaignRef: it.campaignRef,  // Ads
+      segmentRef: it.segmentRef,    // GA
+      accountRef: it.accountRef,    // GA
       metrics: (it.metrics && typeof it.metrics === 'object') ? it.metrics : {},
       links: Array.isArray(it.links) ? it.links : []
     }));
   }
 
-  // 3) si el LLM falló o dio muy poco y hay datos, usar fallback para completar hasta mínimo 3 issues
-  const haveAdsData = Array.isArray(inputSnapshot?.byCampaign) && inputSnapshot.byCampaign.length > 0;
-  const haveGA4Data = Array.isArray(inputSnapshot?.channels) && inputSnapshot.channels.length > 0;
-  const haveData = isGA4 ? haveGA4Data : haveAdsData;
-
+  // 3) si el LLM falló o dio muy poco y hay datos, usar fallback para completar hasta MÍNIMO 3 issues
   if ((!issues || issues.length < 3) && haveData) {
     const need = Math.min(3, maxFindings) - (issues?.length || 0);
     if (need > 0) {
@@ -343,14 +353,14 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
       }));
       issues = [...(issues || []), ...fb];
       if (!summary) {
-        summary = isGA4
+        summary = analytics
           ? 'Resumen basado en datos de GA4 priorizando tracking y eficiencia por canal.'
           : 'Resumen basado en rendimiento de campañas priorizando eficiencia y conversión.';
       }
     }
   }
 
-  // 4) si no hay datos reales, no inventamos: devolvemos vacío (el caller ya crea issue de setup)
+  // 4) si no hay datos reales, no inventamos (el caller crea issue de setup)
   if (!haveData && issues.length === 0) {
     return { summary: '', issues: [] };
   }
