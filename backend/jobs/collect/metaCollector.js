@@ -7,6 +7,7 @@
  * - Trae insights a nivel campaign con fallback de fechas (30d → 90d → 180d → last_year).
  * - Soporta paginación y extrae compras/valor de actions/action_values.
  * - Añade metadatos de cuenta (currency, name, timezone) y lista de accountIds.
+ * - Devuelve `accounts[]` con { id, name, currency, timezone_name } para UI y LLM.
  */
 
 const fetch = require('node-fetch');
@@ -322,6 +323,7 @@ async function collectMeta(userId, opts = {}) {
           purchase_value: purchase_value ?? null,
         },
         period: { since: x.date_start, until: x.date_stop },
+        // etiqueta de cuenta para UI/LLM
         accountMeta: {
           name: accountNameMap.get(actId) || null,
           currency: accountCurrency.get(actId) || null,
@@ -348,6 +350,14 @@ async function collectMeta(userId, opts = {}) {
   ));
   const unifiedCurrency = uniqueCurrencies.length === 1 ? uniqueCurrencies[0] : null;
 
+  // Arreglo de cuentas para UI y LLM
+  const accounts = accountIds.map(id => ({
+    id,
+    name: accountNameMap.get(id) || null,
+    currency: accountCurrency.get(id) || null,
+    timezone_name: accountTzMap.get(id) || null,
+  }));
+
   return {
     notAuthorized: false,
     currency: unifiedCurrency,     // puede ser null si hay mezcla
@@ -359,7 +369,8 @@ async function collectMeta(userId, opts = {}) {
       cpc: safeDiv(G.cost, G.clk),
     },
     byCampaign,
-    accountIds,
+    accountIds,     // compat
+    accounts,       // NUEVO: { id, name, currency, timezone_name }
   };
 }
 

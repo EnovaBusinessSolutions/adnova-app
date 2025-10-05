@@ -16,6 +16,15 @@ const impactNorm = (s) => (['alto','medio','bajo'].includes(String(s||'').toLowe
 // Acepta tanto "ga" como "ga4" (compat con rutas)
 const isGA = (type) => type === 'ga' || type === 'ga4';
 
+// intenta encontrar el nombre de cuenta para una campaña
+function inferAccountName(c, snap) {
+  if (c?.accountMeta?.name) return String(c.accountMeta.name);
+  const id = String(c?.account_id || '');
+  const list = Array.isArray(snap?.accounts) ? snap.accounts : [];
+  const found = list.find(a => String(a.id) === id);
+  return found?.name || null;
+}
+
 function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
   try {
     const clone = JSON.parse(JSON.stringify(inputSnapshot || {}));
@@ -28,6 +37,11 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
         kpis: c.kpis,
         period: c.period,
         account_id: c.account_id ?? null,
+        // dar contexto multi-cuenta al LLM sin inflar demasiado
+        accountMeta: c.accountMeta ? {
+          name: c.accountMeta.name ?? null,
+          currency: c.accountMeta.currency ?? null
+        } : undefined
       }));
     }
 
@@ -70,14 +84,20 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
       const ctr  = impr > 0 ? (clk / impr) * 100 : 0;
       const roas = cost > 0 ? (value / cost) : 0;
 
+      const accountRef = {
+        id: String(c.account_id ?? ''),
+        name: inferAccountName(c, inputSnapshot) || ''
+      };
+
       if (impr > 1000 && ctr < 1) {
         out.push({
-          title: `CTR bajo · ${c.name || c.id}`,
+          title: `[${accountRef.name || accountRef.id}] CTR bajo · ${c.name || c.id}`,
           area: 'performance',
           severity: 'media',
           evidence: `CTR ${ctr.toFixed(2)}% con ${impr} impresiones y ${clk} clics.`,
           recommendation: 'Mejora creatividades y relevancia; prueba variantes (RSA/creatives) y ajusta segmentación.',
           estimatedImpact: 'medio',
+          accountRef,
           campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
           metrics: { impressions: impr, clicks: clk, ctr: Number(ctr.toFixed(2)) }
         });
@@ -85,12 +105,13 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
 
       if (clk >= 150 && conv === 0 && cost > 0) {
         out.push({
-          title: `Gasto sin conversiones · ${c.name || c.id}`,
+          title: `[${accountRef.name || accountRef.id}] Gasto sin conversiones · ${c.name || c.id}`,
           area: 'performance',
           severity: 'alta',
           evidence: `${clk} clics, ${cost.toFixed(2)} de gasto y 0 conversiones.`,
           recommendation: 'Revisa términos/segmentos de baja calidad, negativas, coherencia anuncio→landing y tracking.',
           estimatedImpact: 'alto',
+          accountRef,
           campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
           metrics: { clicks: clk, cost: Number(cost.toFixed(2)), conversions: conv }
         });
@@ -98,12 +119,13 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
 
       if (value > 0 && roas > 0 && roas < 1 && cost > 100) {
         out.push({
-          title: `ROAS bajo · ${c.name || c.id}`,
+          title: `[${accountRef.name || accountRef.id}] ROAS bajo · ${c.name || c.id}`,
           area: 'performance',
           severity: 'media',
           evidence: `ROAS ${roas.toFixed(2)} con gasto ${cost.toFixed(2)} y valor ${value.toFixed(2)}.`,
           recommendation: 'Ajusta pujas/audiencias, excluye ubicaciones pobres y prueba nuevas creatividades.',
           estimatedImpact: 'medio',
+          accountRef,
           campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
           metrics: { roas: Number(roas.toFixed(2)), cost: Number(cost.toFixed(2)), value: Number(value.toFixed(2)) }
         });
@@ -184,6 +206,7 @@ Estructura estricta:
     "evidence": string,
     "recommendation": string,
     "estimatedImpact": "alto"|"medio"|"bajo",
+    "accountRef": { "id": string, "name": string },   // NUEVO
     "campaignRef": { "id": string, "name": string },
     "metrics": object,
     "links": [{ "label": string, "url": string }]
@@ -211,6 +234,11 @@ Estructura estricta:
 `.trim();
 
 function makeUserPrompt({ snapshotStr, maxFindings, isAnalytics }) {
+  const adsExtras = `
+- Cada issue DEBE incluir **accountRef** ({ id, name }) y **campaignRef** ({ id, name }).
+- En el título CITA la cuenta: formato sugerido **"[{accountRef.name||accountRef.id}] {campaignRef.name}: ..."**.
+  `.trim();
+
   return `
 CONSIGNA
 - Devuelve JSON válido EXACTAMENTE con: { "summary": string, "issues": Issue[] }.
@@ -218,7 +246,7 @@ CONSIGNA
 - Idioma: español neutro, directo y claro.
 - Prohibido inventar métricas o campañas/canales no presentes en el snapshot.
 - Cada "issue" DEBE incluir:
-  ${isAnalytics ? '- accountRef con {name, property}\n- segmentRef con el canal\n' : '- campaignRef con {id, name}\n'}
+  ${isAnalytics ? '- accountRef con {name, property}\n- segmentRef con el canal' : adsExtras}
   - evidence con métricas textuales del snapshot
   - recommendation con pasos concretos (no genéricos)
   - estimatedImpact coherente con la evidencia
@@ -230,7 +258,7 @@ PRIORIDAD (de mayor a menor)
 4) Problemas de setup/higiene solo si afectan resultados.
 
 ESTILO
-- Títulos concisos (“Gasto sin conversiones en {campaña}” / “Paid Social: tráfico alto sin conversiones”).
+- Títulos concisos (p. ej. “Gasto sin conversiones en {campaña}” o “[{cuenta}] {campaña}: ROAS bajo”).
 - Evidencia SIEMPRE con números del snapshot (ej. “10,172 sesiones, 23 conversiones, ROAS 0.42”).
 - Recomendaciones en imperativo y específicas (qué tocar, dónde y con umbrales sugeridos).
 
@@ -335,9 +363,11 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
       evidence: String(it.evidence || ''),
       recommendation: String(it.recommendation || ''),
       estimatedImpact: impactNorm(it.estimatedImpact),
-      campaignRef: it.campaignRef,  // Ads
-      segmentRef: it.segmentRef,    // GA
-      accountRef: it.accountRef,    // GA
+      accountRef: it.accountRef || null, // Ads y GA (GA usa {name, property})
+      campaignRef: it.campaignRef,       // Ads
+      segmentRef: it.segmentRef,         // GA
+      accountRefGA: it.accountRef,       // alias no usado, por compat (no se persiste)
+      accountRef: it.accountRef,         // aseguramos propagación
       metrics: (it.metrics && typeof it.metrics === 'object') ? it.metrics : {},
       links: Array.isArray(it.links) ? it.links : []
     }));
@@ -363,9 +393,10 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
         evidence: it.evidence || '',
         recommendation: it.recommendation || '',
         estimatedImpact: impactNorm(it.estimatedImpact),
+        accountRef: it.accountRef || null,
         campaignRef: it.campaignRef,
         segmentRef: it.segmentRef,
-        accountRef: it.accountRef,
+        accountRefGA: it.accountRef,
         metrics: it.metrics || {},
         links: []
       }));
