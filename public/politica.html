@@ -1,189 +1,159 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>Política de Privacidad - ADNOVA AI</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="index,follow" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
   <style>
     html, body {
       min-height: 100vh;
-      background: #0a0a12;
-      color: #E6E5F6;
-      font-family: 'Inter', Arial, sans-serif;
-      margin: 0;
-      padding: 0;
-      font-size: 15px;
-      line-height: 1.68;
-      letter-spacing: 0.01em;
+      background:#0a0a12;
+      color:#E6E5F6;
+      font-family:'Inter', Arial, sans-serif;
+      margin:0; padding:0;
+      font-size:15px; line-height:1.68; letter-spacing:.01em;
     }
-
-    .adnova-privacy-container {
-      max-width: 730px;
-      margin: 3.2rem auto 2rem auto;
-      background: rgba(16,14,26,0.97);
-      border-radius: 20px;
-      box-shadow: 0 8px 32px #A96BFF33, 0 0px 1.5px #23143A;
-      padding: 2.6rem 2.1rem 2rem 2.1rem;
-      border: 1px solid #23143A;
+    .wrap {
+      max-width: 760px;
+      margin: 3rem auto 4rem;
+      background: rgba(16,14,26,.97);
+      border:1px solid #23143A;
+      border-radius:20px;
+      box-shadow:0 8px 32px #A96BFF33, 0 0 1.5px #23143A;
+      padding: 2.2rem 2rem;
     }
-
-    h1, h2, h3 {
-      color: #A96BFF;
-      font-weight: 800;
-      letter-spacing: -1px;
-      margin-top: 2rem;
-      margin-bottom: 0.7rem;
-      line-height: 1.13;
+    h1,h2,h3 { color:#A96BFF; margin:.4rem 0 1rem; line-height:1.2 }
+    h1 { font-size:2rem; font-weight:800; letter-spacing:-.02em }
+    h2 { font-size:1.15rem; font-weight:800; color:#D1A5FF; margin-top:1.8rem }
+    h3 { font-size:1.05rem; color:#C5B8E6 }
+    p, li { color:#e8e8fb; font-size:.98rem; margin:.4rem 0 }
+    ul { margin:.6rem 0 1rem 1.2rem; padding-left:1rem }
+    a { color:#A96BFF; font-weight:600; text-decoration:underline }
+    a:hover { color:#fff }
+    .muted { color:#b9b5d2; font-size:.93rem }
+    .footer {
+      margin:1.2rem auto 0; text-align:center; color:#b5b5c5; font-size:.95rem
     }
-    h1 {
-      font-size: 2.2rem;
-      margin-top: 0.3rem;
-      margin-bottom: 1.6rem;
-      letter-spacing: -2px;
-      color: #A96BFF;
+    .footer a { margin:0 .5rem }
+    @media (max-width: 720px) {
+      .wrap { margin:1rem .6rem 4rem; padding:1.2rem .9rem }
+      h1 { font-size:1.35rem } h2 { font-size:1.05rem }
     }
-    h2 {
-      font-size: 1.22rem;
-      margin-top: 2.1rem;
-      color: #D1A5FF;
-    }
-    h3 {
-      font-size: 1.08rem;
-      color: #C5B8E6;
-    }
-
-    p, li {
-      color: #e8e8fb;
-      font-size: 0.98rem;
-      font-weight: 400;
-      margin-bottom: 0.7em;
-    }
-    ul {
-      margin: 1em 0 1.1em 2.1em;
-      padding-left: 1.2em;
-    }
-
-    .adnova-privacy-container strong {
-      color: #A96BFF;
-      font-weight: 600;
-    }
-
-    a {
-      color: #A96BFF;
-      text-decoration: underline;
-      font-weight: 600;
-      transition: color 0.17s;
-    }
-    a:hover {
-      color: #fff;
-      text-decoration: underline wavy;
-    }
-
-    @media (max-width: 700px) {
-      .adnova-privacy-container {
-        padding: 1.3rem 0.6rem 1rem 0.6rem;
-        border-radius: 14px;
-      }
-      h1 { font-size: 1.27rem; }
-      h2 { font-size: 1.08rem; }
-      p, li { font-size: 0.95rem; }
-    }
-
-    .adnova-footer {
-      width: 100vw;
-      position: fixed;
-      left: 0;
-      bottom: 0;
-      text-align: center;
-      padding: 1rem 0 0.7rem 0;
-      background: none;
-      font-size: 0.99rem;
-      color: #b5b5c5;
-      z-index: 20;
-      letter-spacing: 0.01em;
-      user-select: none;
-      backdrop-filter: blur(0.5px);
-      border-top: 1.5px solid #23143A;
-    }
-    .adnova-footer a {
-      color: #A96BFF;
-      text-decoration: underline;
-      font-weight: 600;
-      margin: 0 9px;
-      transition: color 0.17s;
-    }
-    .adnova-footer a:hover {
-      color: #fff;
-    }
-    body { padding-bottom: 3.4rem; }
   </style>
 </head>
 <body>
-  <div class="adnova-privacy-container">
+  <main class="wrap">
     <h1>Política de Privacidad</h1>
-    <p><strong>Última actualización:</strong> Mayo 2025</p>
+    <p class="muted"><strong>Última actualización:</strong> Mayo 2025</p>
+
     <p>
-      En <strong>ADNOVA AI</strong>, tu privacidad y la seguridad de tus datos son nuestra máxima prioridad. Esta política explica qué información recopilamos, cómo la utilizamos y las opciones que tienes respecto a tu información. Al utilizar ADNOVA AI aceptas estas prácticas.
+      En <strong>ADNOVA AI</strong> protegemos tu privacidad y la seguridad de tus datos.
+      Esta política explica qué información recopilamos, cómo la usamos y qué derechos tienes.
+      Al utilizar nuestro servicio aceptas estas prácticas.
     </p>
 
-    <h2>1. Información que Recopilamos</h2>
+    <h2>Responsable y contacto</h2>
+    <p>
+      <strong>Responsable:</strong> Winback SAPI de CV (ADNOVA AI)<br>
+      <strong>Domicilio:</strong> <!-- TODO: Sustituye por tu domicilio legal --> [Calle y número], [Colonia], [Ciudad], [Estado], México<br>
+      <strong>Correo de privacidad:</strong> <a href="mailto:contact@adnova.digital">contact@adnova.digital</a>
+    </p>
+
+    <h2>1. Información que recopilamos</h2>
     <ul>
-      <li><strong>Correo electrónico:</strong> Usado para identificarte y enviarte notificaciones esenciales.</li>
-      <li><strong>Datos autorizados de Google:</strong> Solo accedemos a la información que tú autorizas explícitamente desde Google Analytics y Google Ads, como métricas de campañas y tráfico, siempre en modo lectura.</li>
-      <li><strong>Información de tu tienda Shopify:</strong> Leemos datos básicos de configuración, productos y ventas para ofrecerte recomendaciones y auditorías.</li>
-      <li><strong>Datos de uso:</strong> Información técnica sobre cómo navegas y utilizas la plataforma (p.ej., tipo de dispositivo, logs de acceso) para mejorar la seguridad y la experiencia de usuario.</li>
+      <li><strong>Correo electrónico</strong> para identificarte y enviarte avisos esenciales.</li>
+      <li><strong>Datos autorizados de Google</strong> (Analytics/Ads): métricas y datos de campañas, solo tras tu consentimiento.</li>
+      <li><strong>Datos de Shopify</strong>: configuración básica, catálogos y métricas para auditorías y recomendaciones.</li>
+      <li><strong>Datos de uso</strong>: información técnica (p. ej., logs de acceso, dispositivo) para seguridad y mejora.</li>
     </ul>
 
-    <h2>2. Cómo Usamos Tu Información</h2>
+    <h2>2. Cómo usamos tu información</h2>
     <ul>
-      <li>Generar auditorías automáticas de tu rendimiento digital (Google, Shopify, Meta, etc).</li>
-      <li>Mostrarte recomendaciones personalizadas para optimizar tu marketing digital.</li>
-      <li>Personalizar la interfaz y el dashboard según tu actividad y preferencias.</li>
-      <li>Mejorar la seguridad de tu cuenta y detectar posibles usos indebidos.</li>
-      <li>Contactarte en caso de actualizaciones importantes o temas relacionados a tu cuenta.</li>
+      <li>Generar auditorías y recomendaciones de marketing (Google, Meta, Shopify).</li>
+      <li>Personalizar paneles y mejorar experiencia.</li>
+      <li>Seguridad de la cuenta y prevención de abuso.</li>
+      <li>Comunicaciones operativas y de soporte.</li>
     </ul>
 
-    <h2>3. Base Legal y Consentimiento</h2>
+    <h2>3. Base legal y consentimiento</h2>
     <p>
-      Solo recopilamos y procesamos tus datos con tu consentimiento expreso, requerido al momento de conectar cada cuenta (Google, Shopify, etc). Puedes revocar estos accesos en cualquier momento desde la configuración de tu cuenta o desde los paneles de Google/Shopify.
+      Procesamos datos solo con tu consentimiento al conectar cada cuenta (Google, Meta, Shopify).
+      Puedes revocar accesos en cualquier momento desde cada plataforma o en nuestra app.
     </p>
 
-    <h2>4. Compartición y Transferencia de Datos</h2>
-    <p>
-      <strong>ADNOVA AI nunca vende, alquila ni comparte tus datos personales con terceros para fines comerciales.</strong>
-      Tus datos solo podrán ser accedidos por personal autorizado de ADNOVA AI para dar soporte técnico o cumplir con obligaciones legales. No transferimos tus datos fuera de servicios autorizados y cifrados.
-    </p>
-
-    <h2>5. Seguridad y Almacenamiento</h2>
+    <h2>4. Encargados y proveedores</h2>
     <ul>
-      <li>Toda la información se almacena de forma cifrada y en servidores seguros.</li>
-      <li>Aplicamos buenas prácticas internacionales de seguridad y auditoría.</li>
-      <li>No guardamos tus credenciales de Google, Shopify ni contraseñas en texto plano.</li>
+      <li>Cloudflare (red/seguridad): <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener">Política</a></li>
+      <li>MongoDB Atlas (base de datos): <a href="https://www.mongodb.com/legal/privacy-policy" target="_blank" rel="noopener">Política</a></li>
+      <li>APIs conectadas por el usuario (Google / Meta / Shopify), sujetas a sus propias políticas al autorizar.</li>
     </ul>
 
-    <h2>6. Derechos del Usuario</h2>
+    <h2>5. Transferencias internacionales</h2>
     <p>
-      Puedes acceder, actualizar o eliminar tu información de ADNOVA AI en cualquier momento. Solo escríbenos y gestionaremos tu solicitud en menos de 5 días hábiles.
+      Podemos transferir datos fuera de tu país mediante nuestros proveedores,
+      aplicando salvaguardas adecuadas (p. ej., cláusulas contractuales tipo).
     </p>
 
-    <h2>7. Cambios a Esta Política</h2>
+    <h2>6. Seguridad y almacenamiento</h2>
+    <ul>
+      <li>Cifrado en tránsito y en reposo; acceso restringido.</li>
+      <li>Buenas prácticas de seguridad y auditoría.</li>
+      <li>No almacenamos credenciales de Google/Shopify ni contraseñas en texto plano.</li>
+    </ul>
+
+    <h2>7. Conservación</h2>
     <p>
-      Podemos actualizar esta política ocasionalmente. Publicaremos los cambios en esta página y notificaremos por correo si los cambios afectan el uso de tus datos.
+      Conservamos métricas y logs el tiempo necesario para operativa y soporte; por defecto <strong>90 días</strong>,
+      salvo obligación legal o solicitud de conservación/eliminación por parte del cliente.
     </p>
 
-    <h2>8. Contacto</h2>
+    <h2>8. Compartición</h2>
     <p>
-      ¿Dudas, comentarios o quieres ejercer tus derechos? Escríbenos a  
-      <a href="mailto:soporte@adnova.digital.com">soporte@adnova.digital.com</a>  
-      o usa nuestro <a href="contact.html">formulario de contacto</a>.
+      <strong>No vendemos ni alquilamos datos personales.</strong> Solo personal autorizado de ADNOVA AI accede a los
+      datos para soporte o cumplimiento legal.
     </p>
-  </div>
 
-  <footer class="adnova-footer">
-    <a href="politica.html" target="_blank">Política de Privacidad</a>
-    &nbsp;|&nbsp;
-    <a href="terms-of-service.html" target="_blank">Términos de Servicio</a>
-  </footer>
+    <h2>9. Menores</h2>
+    <p>
+      El servicio no está dirigido a menores de 13/16 años. No recopilamos conscientemente datos de menores.
+    </p>
+
+    <h2>10. Tus derechos</h2>
+    <p>
+      Puedes solicitar acceso, actualización o eliminación de tus datos.
+      Escríbenos a <a href="mailto:contact@adnova.digital">contact@adnova.digital</a>.
+      Tiempo de respuesta objetivo: &lt; 5 días hábiles.
+    </p>
+
+    <h2>11. Eliminación de datos y revocación de accesos</h2>
+    <p>
+      Instrucciones detalladas: <a href="/data-deletion.html">https://ai.adnova.digital/data-deletion.html</a>.<br>
+      También puedes revocar los permisos directamente en Google/Meta/Shopify.
+    </p>
+
+    <h2>12. Cambios a esta política</h2>
+    <p>
+      Publicaremos cambios en esta página y te notificaremos si impactan el uso de tus datos.
+    </p>
+
+    <h2>13. Contacto</h2>
+    <p>
+      ¿Dudas o solicitudes? <a href="mailto:contact@adnova.digital">contact@adnova.digital</a> ·
+      <a href="/contact.html">Formulario de contacto</a>
+    </p>
+
+    <p class="footer">
+      <a href="/politica.html">Política de Privacidad</a> |
+      <a href="/terms-of-service.html">Términos de Servicio</a> |
+      <a href="/data-deletion.html">Eliminación de datos</a>
+    </p>
+    <p class="muted">© <span id="y"></span> ADNOVA AI</p>
+  </main>
+
+  <script>
+    document.getElementById('y').textContent = new Date().getFullYear();
+  </script>
 </body>
 </html>
