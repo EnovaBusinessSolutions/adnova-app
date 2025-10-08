@@ -1,3 +1,4 @@
+// backend/routes/googleAdsInsights.js
 'use strict';
 
 const express = require('express');
@@ -15,18 +16,31 @@ try {
   GoogleAccount = require('../models/GoogleAccount');
 } catch (_) {
   const { Schema, model } = mongoose;
+
+  const AdAccountSchema = new Schema({
+    id: String,
+    name: String,
+    currencyCode: String,
+    timeZone: String,
+    status: String,
+  }, { _id: false });
+
   const schema = new Schema(
     {
       user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
       userId: { type: Schema.Types.ObjectId, ref: 'User' },
+
       accessToken:   { type: String, select: false },
       refreshToken:  { type: String, select: false },
       scope:         { type: [String], default: [] },
 
+      // Ads
       managerCustomerId: { type: String },   // opcional
+      loginCustomerId:   { type: String },   // opcional
       defaultCustomerId: { type: String },   // última seleccionada
+      customers:         { type: Array, default: [] }, // [{ id, descriptiveName, currencyCode, timeZone, status }]
+      ad_accounts:       { type: [AdAccountSchema], default: [] },
 
-      customers: { type: Array, default: [] }, // [{ id, descriptiveName, currencyCode, timeZone, status }]
       objective: { type: String, enum: ['ventas','alcance','leads'], default: 'ventas' },
     },
     { collection: 'googleaccounts', timestamps: true }
@@ -37,15 +51,11 @@ try {
 /* =========================
  * ENV & Constantes
  * ========================= */
-const {
-  GOOGLE_CLIENT_ID,
-  GOOGLE_CLIENT_SECRET,
-  GOOGLE_CONNECT_CALLBACK_URL,
-  GOOGLE_DEVELOPER_TOKEN,
-  GOOGLE_ADS_LOGIN_CUSTOMER_ID, // opcional; no se requiere
-} = process.env;
+const DEV_TOKEN =
+  process.env.GOOGLE_ADS_DEVELOPER_TOKEN || process.env.GOOGLE_DEVELOPER_TOKEN || '';
 
-const ADS_API = 'https://googleads.googleapis.com/v17'; // probamos v17 y si falla, v16
+const ADS_API_BASE = 'https://googleads.googleapis.com';
+const ADS_VER      = process.env.GADS_API_VERSION || 'v17';
 
 /* =========================
  * Utils / helpers
@@ -57,9 +67,9 @@ function requireAuth(req, res, next) {
 
 function oauth() {
   return new OAuth2Client({
-    clientId: GOOGLE_CLIENT_ID,
-    clientSecret: GOOGLE_CLIENT_SECRET,
-    redirectUri: GOOGLE_CONNECT_CALLBACK_URL,
+    clientId:     process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    redirectUri:  process.env.GOOGLE_CONNECT_CALLBACK_URL,
   });
 }
 
@@ -146,7 +156,6 @@ async function getFreshAccessToken(gaDoc) {
   } catch {}
 
   try {
-    // algunas versiones
     const { credentials } = await client.refreshAccessToken();
     return credentials.access_token || gaDoc.accessToken;
   } catch (_) {
@@ -169,17 +178,19 @@ function resolveCustomerId(req, doc) {
   return list.length ? normId(list[0].id) : '';
 }
 
-function buildHeaders(accessToken, managerId) {
-  const headers = {
+function headersFor(accessToken, managerIdFromDoc) {
+  const h = {
     Authorization: `Bearer ${accessToken}`,
-    'developer-token': GOOGLE_DEVELOPER_TOKEN,
+    'developer-token': DEV_TOKEN,
     'Content-Type': 'application/json',
+    Accept: 'application/json',
   };
-  const loginId = String(managerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '')
-    .replace(/-/g, '')
-    .trim();
-  if (loginId) headers['login-customer-id'] = loginId;
-  return headers;
+  // Solo enviamos login-customer-id si existe (MCC)
+  const envLogin = (process.env.GOOGLE_LOGIN_CUSTOMER_ID || '').replace(/-/g, '').trim();
+  const docLogin = (managerIdFromDoc || '').replace(/-/g, '').trim();
+  const login = docLogin || envLogin;
+  if (login) h['login-customer-id'] = login;
+  return h;
 }
 
 function axiosErrorInfo(err) {
@@ -192,54 +203,19 @@ function axiosErrorInfo(err) {
 }
 
 /* =========================
- * Llamadas a Google Ads API con reintento v17→v16
+ * Llamadas a Google Ads API
  * ========================= */
-async function runGAQL({ accessToken, customerId, gaql, managerId }) {
-  const id = normId(customerId);
-  const headers = buildHeaders(accessToken, managerId);
-
-  const urls = [
-    `${ADS_API}/customers/${id}/googleAds:search`,
-    `https://googleads.googleapis.com/v16/customers/${id}/googleAds:search`,
-  ];
-
-  let lastErr;
-  for (let i = 0; i < urls.length; i++) {
-    try {
-      const { data } = await axios.post(urls[i], { query: gaql }, { headers, timeout: 30000 });
-      return data?.results || [];
-    } catch (err) {
-      lastErr = err;
-      const info = axiosErrorInfo(err);
-      console.error(`[ADS] GAQL try-${i + 1} url=${urls[i]} ->`, info);
-      // si no es 404 (p.ej. 401/403) ya no tiene sentido probar v16
-      if (info.status && info.status !== 404) break;
-    }
-  }
-  throw lastErr;
+async function searchStream({ accessToken, customerId, query, managerId }) {
+  if (!DEV_TOKEN) throw new Error('DEVELOPER_TOKEN_MISSING');
+  const url = `${ADS_API_BASE}/${ADS_VER}/customers/${customerId}/googleAds:searchStream`;
+  const { data } = await axios.post(url, { query }, { headers: headersFor(accessToken, managerId), timeout: 30000 });
+  return data; // array de chunks
 }
 
 async function listAccessibleCustomers(accessToken, managerId) {
-  const headers = buildHeaders(accessToken, managerId);
-
-  const urls = [
-    `${ADS_API}/customers:listAccessibleCustomers`,
-    `https://googleads.googleapis.com/v16/customers:listAccessibleCustomers`,
-  ];
-
-  let lastErr;
-  for (let i = 0; i < urls.length; i++) {
-    try {
-      const { data } = await axios.get(urls[i], { headers, timeout: 20000 });
-      return (data?.resourceNames || []).map((rn) => rn.split('/')[1]).filter(Boolean);
-    } catch (err) {
-      lastErr = err;
-      const info = axiosErrorInfo(err);
-      console.error(`[ADS] listAccessibleCustomers try-${i + 1} ->`, info);
-      if (info.status && info.status !== 404) break;
-    }
-  }
-  throw lastErr;
+  const url = `${ADS_API_BASE}/${ADS_VER}/customers:listAccessibleCustomers`;
+  const { data } = await axios.get(url, { headers: headersFor(accessToken, managerId), timeout: 20000 });
+  return (data?.resourceNames || []).map((rn) => rn.split('/')[1]).filter(Boolean);
 }
 
 /* =========================
@@ -250,7 +226,7 @@ router.get('/', requireAuth, async (req, res) => {
     const gaDoc = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
-      .select('+refreshToken +accessToken objective defaultCustomerId managerCustomerId customers')
+      .select('+refreshToken +accessToken objective defaultCustomerId managerCustomerId loginCustomerId customers ad_accounts')
       .lean();
 
     if (!gaDoc?.refreshToken && !gaDoc?.accessToken) {
@@ -265,7 +241,7 @@ router.get('/', requireAuth, async (req, res) => {
     if (!customerId) return res.status(400).json({ ok: false, error: 'NO_CUSTOMER_ID' });
 
     const accessToken = await getFreshAccessToken(gaDoc);
-    const managerId = gaDoc?.managerCustomerId;
+    const managerId = gaDoc?.managerCustomerId || gaDoc?.loginCustomerId || null;
 
     function buildGaqlByObjective(obj, since, until) {
       const FIELDS_COMMON = `
@@ -303,6 +279,7 @@ router.get('/', requireAuth, async (req, res) => {
         `;
       }
 
+      // ventas
       const SALES_CAT = `segments.conversion_action_category = PURCHASE`;
       return `
         SELECT
@@ -326,13 +303,18 @@ router.get('/', requireAuth, async (req, res) => {
       LIMIT 1
     `;
 
-    const [rows, rowsPrev, metaRows] = await Promise.all([
-      runGAQL({ accessToken, customerId, gaql: qCurr, managerId }),
-      runGAQL({ accessToken, customerId, gaql: qPrev, managerId }),
-      runGAQL({ accessToken, customerId, gaql: qMeta, managerId }).catch(() => []),
+    const [chunks, prevChunks, metaChunks] = await Promise.all([
+      searchStream({ accessToken, customerId, query: qCurr, managerId }),
+      searchStream({ accessToken, customerId, query: qPrev, managerId }),
+      searchStream({ accessToken, customerId, query: qMeta, managerId }).catch(() => []),
     ]);
 
-    const meta0 = metaRows?.[0]?.customer || {};
+    // Parse stream (array de chunks)
+    const results = [].concat(...(chunks || []).map((c) => c.results || []));
+    const prevRes = [].concat(...(prevChunks || []).map((c) => c.results || []));
+    const metaRes = [].concat(...(metaChunks || []).map((c) => c.results || []));
+
+    const meta0 = metaRes?.[0]?.customer || {};
     const currency =
       meta0?.currencyCode ||
       customerList(gaDoc).find((c) => normId(c.id) === String(customerId))?.currencyCode ||
@@ -344,7 +326,7 @@ router.get('/', requireAuth, async (req, res) => {
 
     let cost = 0, impressions = 0, clicks = 0, conversions = 0, conv_value = 0;
 
-    const series = rows.map((r) => {
+    const series = results.map((r) => {
       const _cost = microsToCurrency(r?.metrics?.costMicros);
       const _imp  = Number(r?.metrics?.impressions || 0);
       const _clk  = Number(r?.metrics?.clicks || 0);
@@ -357,7 +339,7 @@ router.get('/', requireAuth, async (req, res) => {
     });
 
     let p_cost = 0, p_impr = 0, p_clicks = 0, p_convs = 0, p_convValue = 0;
-    rowsPrev.forEach((r) => {
+    prevRes.forEach((r) => {
       p_cost      += microsToCurrency(r?.metrics?.costMicros);
       p_impr      += Number(r?.metrics?.impressions || 0);
       p_clicks    += Number(r?.metrics?.clicks || 0);
@@ -434,8 +416,7 @@ router.get('/', requireAuth, async (req, res) => {
     const detail = err?.response?.data || err.message || String(err);
     if (status === 401 || status === 403) {
       console.error(
-        'google/ads auth error: suele ser porque el Developer Token no está vinculado al OAuth Client ID, ' +
-        'o por permisos insuficientes del usuario sobre la cuenta.'
+        'google/ads auth error: Developer Token no vinculado al OAuth Client ID o permisos insuficientes.'
       );
     }
     console.error('google/ads insights error:', detail);
@@ -450,153 +431,78 @@ router.get('/accounts', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount
       .findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
-      .select('+refreshToken +accessToken managerCustomerId defaultCustomerId customers')
+      .select('+refreshToken +accessToken managerCustomerId loginCustomerId defaultCustomerId customers ad_accounts')
       .lean();
 
     if (!ga || (!ga.refreshToken && !ga.accessToken)) {
       return res.json({ ok: true, accounts: [], defaultCustomerId: null });
     }
 
-    let metas = Array.isArray(ga.customers) ? ga.customers : [];
+    // Preferimos ad_accounts guardadas por el callback de /auth/google
+    let accounts = Array.isArray(ga.ad_accounts) && ga.ad_accounts.length > 0
+      ? ga.ad_accounts.map(a => ({
+          id: a.id, name: a.name || `Cuenta ${a.id}`,
+          currencyCode: a.currencyCode || null, timeZone: a.timeZone || null, status: a.status || null
+        }))
+      : (Array.isArray(ga.customers) ? ga.customers : []).map(c => ({
+          id: c.id, name: c.name || c.descriptiveName || `Cuenta ${c.id}`,
+          currencyCode: c.currency || c.currencyCode || null,
+          timeZone: c.timezone || c.timeZone || null,
+          status: c.status || null
+        }));
 
-    if (!metas.length) {
+    // Si aún no hay nada, intenta descubrir rápido por API
+    if (!accounts.length) {
       try {
         const accessToken = await getFreshAccessToken(ga);
+        const ids = await listAccessibleCustomers(accessToken, ga.managerCustomerId || ga.loginCustomerId || null);
 
-        let ids = [];
-        try {
-          ids = await listAccessibleCustomers(accessToken, ga.managerCustomerId);
-        } catch (e) {
-          console.error('listAccessibleCustomers fallback to cached:', axiosErrorInfo(e));
-          ids = (ga.customers || []).map((c) => String(c.id));
-        }
-
-        metas = [];
-        for (const idRaw of ids) {
-          const id = normId(idRaw);
+        // enriquecer cada uno vía una consulta corta
+        const quickInfo = async (id) => {
           try {
-            const rows = await runGAQL({
+            const q = `
+              SELECT customer.descriptive_name, customer.currency_code, customer.time_zone, customer.status
+              FROM customer LIMIT 1
+            `;
+            const chunks = await searchStream({
               accessToken,
               customerId: id,
-              managerId: ga.managerCustomerId,
-              gaql: `
-                SELECT
-                  customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone, customer.status
-                FROM customer
-                LIMIT 1
-              `
+              query: q,
+              managerId: ga.managerCustomerId || ga.loginCustomerId || null
             });
-            const r = rows?.[0];
-            metas.push({
+            const r = (chunks?.[0]?.results?.[0] || {}).customer || {};
+            return {
               id,
-              descriptiveName: r?.customer?.descriptiveName || `Customer ${id}`,
-              currencyCode:    r?.customer?.currencyCode || null,
-              timeZone:        r?.customer?.timeZone || null,
-              status:          r?.customer?.status || null,
-            });
+              name: r.descriptiveName || `Cuenta ${id}`,
+              currencyCode: r.currencyCode || null,
+              timeZone: r.timeZone || null,
+              status: r.status || null
+            };
           } catch {
-            metas.push({ id, descriptiveName: `Customer ${id}` });
+            return { id, name: `Cuenta ${id}` };
           }
-        }
+        };
+
+        const metas = [];
+        for (const id of ids) metas.push(await quickInfo(id));
+        accounts = metas;
 
         await GoogleAccount.updateOne(
-          { $or: [{ user: req.user._id }, { userId: req.user._id }] },
-          { $set: { customers: metas } }
+          { _id: ga._id },
+          { $set: { ad_accounts: accounts, customers: accounts.map(a => ({
+              id: a.id, descriptiveName: a.name, currencyCode: a.currencyCode, timeZone: a.timeZone, status: a.status
+            })) } }
         );
-      } catch (_) {}
+      } catch (e) {
+        console.error('discover accounts error:', axiosErrorInfo(e));
+      }
     }
 
-    const accounts = (metas || [])
-      .map((a) => ({
-        id:       normId(a.id),
-        name:     a.name || a.descriptiveName || null,
-        currency: a.currency || a.currencyCode || null,
-        timezone: a.timezone || a.timeZone || null,
-        status:   a.status || null,
-      }))
-      .filter((a) => a.id);
-
-    const defaultCustomerId = (ga.defaultCustomerId || accounts[0]?.id || null);
-
+    const defaultCustomerId = ga.defaultCustomerId || accounts?.[0]?.id || null;
     return res.json({ ok: true, accounts, defaultCustomerId });
   } catch (err) {
     console.error('google/ads/accounts error:', err?.response?.data || err);
     res.status(500).json({ ok: false, error: 'ACCOUNTS_ERROR' });
-  }
-});
-
-/* =========================
- * Customers (sin agregado de meta en DB)
- * ========================= */
-router.get('/customers', requireAuth, async (req, res) => {
-  try {
-    const ga = await GoogleAccount
-      .findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
-      .select('+refreshToken +accessToken managerCustomerId defaultCustomerId customers')
-      .lean();
-
-    if (!ga || (!ga.refreshToken && !ga.accessToken)) {
-      return res.json({ ok: true, connected: false, customers: [] });
-    }
-
-    const accessToken = await getFreshAccessToken(ga);
-
-    let ids = [];
-    try {
-      ids = await listAccessibleCustomers(accessToken, ga.managerCustomerId);
-    } catch (e) {
-      console.error('listAccessibleCustomers fallback to cached:', axiosErrorInfo(e));
-      ids = (ga.customers || []).map((c) => String(c.id));
-    }
-
-    const metas = [];
-    for (const idRaw of ids) {
-      const id = normId(idRaw);
-      try {
-        const rows = await runGAQL({
-          accessToken,
-          customerId: id,
-          managerId: ga.managerCustomerId,
-          gaql: `
-            SELECT
-              customer.id, customer.descriptive_name, customer.currency_code, customer.time_zone
-            FROM customer
-            LIMIT 1
-          `
-        });
-        const r = rows?.[0];
-        metas.push({
-          id,
-          descriptiveName: r?.customer?.descriptiveName || `Customer ${id}`,
-          currencyCode:    r?.customer?.currencyCode || null,
-          timeZone:        r?.customer?.timeZone || null,
-        });
-      } catch {
-        metas.push({ id, descriptiveName: `Customer ${id}` });
-      }
-    }
-
-    await GoogleAccount.updateOne(
-      { $or: [{ user: req.user._id }, { userId: req.user._id }] },
-      { $set: { customers: metas } }
-    );
-
-    res.json({
-      ok: true,
-      connected: true,
-      defaultCustomerId: ga.defaultCustomerId || null,
-      customers: metas
-    });
-  } catch (err) {
-    const status = err?.response?.status || 500;
-    const detail = err?.response?.data || err.message || String(err);
-    if (status === 401 || status === 403) {
-      console.error(
-        'google/ads auth error: Developer Token no vinculado al OAuth Client ID o permisos insuficientes.'
-      );
-    }
-    console.error('google/ads/customers error:', detail);
-    res.status(500).json({ ok: false, error: 'CUSTOMERS_ERROR' });
   }
 });
 
