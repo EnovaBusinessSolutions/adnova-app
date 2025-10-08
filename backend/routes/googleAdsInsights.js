@@ -208,6 +208,8 @@ function axiosErrorInfo(err) {
 async function searchStream({ accessToken, customerId, query, managerId }) {
   if (!DEV_TOKEN) throw new Error('DEVELOPER_TOKEN_MISSING');
   const url = `${ADS_API_BASE}/${ADS_VER}/customers/${customerId}/googleAds:searchStream`;
+   console.log('[ADS DEBUG] URL:', url);        // <-- añade esto
+   console.log('[ADS DEBUG] MGR:', managerId);  // <-- y esto
   const { data } = await axios.post(url, { query }, { headers: headersFor(accessToken, managerId), timeout: 30000 });
   return data; // array de chunks
 }
