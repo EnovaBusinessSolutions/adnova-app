@@ -55,9 +55,13 @@ const DEV_TOKEN =
   process.env.GOOGLE_ADS_DEVELOPER_TOKEN || process.env.GOOGLE_DEVELOPER_TOKEN || '';
 
 const ADS_API_BASE = 'https://googleads.googleapis.com';
-// sanea versión por si viene con "/index/v17" o con "/" al inicio
 const rawVer = process.env.GADS_API_VERSION || 'v17';
 const ADS_VER = String(rawVer).replace(/^\/+/, '').replace(/^index\//, '') || 'v17';
+
+// Aceptamos ambas keys para MCC (login-customer-id)
+const ENV_LOGIN_ID = (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || process.env.GOOGLE_LOGIN_CUSTOMER_ID || '')
+  .replace(/-/g, '')
+  .trim();
 
 /* =========================
  * Utils / helpers
@@ -187,10 +191,9 @@ function headersFor(accessToken, managerIdFromDoc) {
     'Content-Type': 'application/json',
     Accept: 'application/json',
   };
-  // login-customer-id solo si existe (MCC)
-  const envLogin = (process.env.GOOGLE_LOGIN_CUSTOMER_ID || '').replace(/-/g, '').trim();
+  // login-customer-id (MCC) opcional — nunca en la ruta
   const docLogin = (managerIdFromDoc || '').replace(/-/g, '').trim();
-  const login = docLogin || envLogin;
+  const login = docLogin || ENV_LOGIN_ID;
   if (login) h['login-customer-id'] = login;
   return h;
 }
@@ -211,13 +214,14 @@ function axiosErrorInfo(err) {
 // stream con log de URL real
 async function searchStream({ accessToken, customerId, query, managerId }) {
   if (!DEV_TOKEN) throw new Error('DEVELOPER_TOKEN_MISSING');
-  const url = `${ADS_API_BASE}/${ADS_VER}/customers/${customerId}/googleAds:searchStream`;
-  console.log('[ADS DEBUG] URL(stream):', url, 'VER:', ADS_VER, 'LOGIN:', managerId || process.env.GOOGLE_LOGIN_CUSTOMER_ID || '');
+  const id = normId(customerId);
+  const url = `${ADS_API_BASE}/${ADS_VER}/customers/${id}/googleAds:searchStream`;
+  console.log('[ADS DEBUG] URL(stream):', url, 'VER:', ADS_VER, 'LOGIN:', managerId || ENV_LOGIN_ID || '');
   const { data } = await axios.post(url, { query }, { headers: headersFor(accessToken, managerId), timeout: 30000 });
   return data; // array de chunks
 }
 
-// fallback automático: si stream devuelve 404 → usa search normal
+// fallback: si stream devuelve 404 → usa search normal y normaliza
 async function searchAny({ accessToken, customerId, query, managerId }) {
   try {
     return await searchStream({ accessToken, customerId, query, managerId });
@@ -226,10 +230,10 @@ async function searchAny({ accessToken, customerId, query, managerId }) {
     const info = e?.response?.data?.error || e?.message;
     console.warn('[ADS] searchStream failed:', s, info);
     if (s === 404) {
-      const url = `${ADS_API_BASE}/${ADS_VER}/customers/${customerId}/googleAds:search`;
+      const id = normId(customerId);
+      const url = `${ADS_API_BASE}/${ADS_VER}/customers/${id}/googleAds:search`;
       console.log('[ADS DEBUG] URL(search):', url);
       const { data } = await axios.post(url, { query }, { headers: headersFor(accessToken, managerId), timeout: 30000 });
-      // normalizamos a formato de stream (array de chunks con results)
       return [{ results: data.results || [] }];
     }
     throw e;
@@ -238,8 +242,13 @@ async function searchAny({ accessToken, customerId, query, managerId }) {
 
 async function listAccessibleCustomers(accessToken, managerId) {
   const url = `${ADS_API_BASE}/${ADS_VER}/customers:listAccessibleCustomers`;
-  const { data } = await axios.get(url, { headers: headersFor(accessToken, managerId), timeout: 20000 });
-  return (data?.resourceNames || []).map((rn) => rn.split('/')[1]).filter(Boolean);
+  try {
+    const { data } = await axios.get(url, { headers: headersFor(accessToken, managerId), timeout: 20000, validateStatus: () => true });
+    return (data?.resourceNames || []).map((rn) => rn.split('/')[1]).filter(Boolean);
+  } catch (e) {
+    console.warn('listAccessibleCustomers error:', axiosErrorInfo(e));
+    return [];
+  }
 }
 
 /* =========================

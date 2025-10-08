@@ -1,3 +1,4 @@
+// routes/googleConnect.js
 'use strict';
 
 const express = require('express');
@@ -18,6 +19,7 @@ try {
   GoogleAccount = require('../models/GoogleAccount');
 } catch (_) {
   const { Schema, model } = mongoose;
+
   const AdAccountSchema = new Schema({
     id:           { type: String, required: true }, // customerId
     name:         { type: String },
@@ -37,17 +39,17 @@ try {
       expiresAt:         { type: Date },
 
       // Ads
-      managerCustomerId: { type: String },        // MCC opcional
-      defaultCustomerId: { type: String },
-      customers:         { type: Array, default: [] },  // [{ id, descriptiveName, currencyCode, timeZone }]
+      managerCustomerId: { type: String },                 // MCC opcional (guardado si aplica)
+      loginCustomerId:   { type: String },                 // copia de MCC si aplica
+      defaultCustomerId: { type: String },                 // última seleccionada
+      customers:         { type: Array, default: [] },     // [{ id, descriptiveName, currencyCode, timeZone }]
       ad_accounts:       { type: [AdAccountSchema], default: [] }, // enriquecidas
 
       // GA4
-      gaProperties:      { type: Array, default: [] }, // [{propertyId, displayName, timeZone, currencyCode}]
+      gaProperties:      { type: Array, default: [] },     // [{propertyId, displayName, timeZone, currencyCode}]
       defaultPropertyId: { type: String },
 
       // Misc
-      loginCustomerId:   { type: String }, // copia de MCC si aplica
       objective:         { type: String, enum: ['ventas','alcance','leads'], default: null },
       createdAt:         { type: Date, default: Date.now },
       updatedAt:         { type: Date, default: Date.now },
@@ -67,17 +69,19 @@ const {
   GOOGLE_CONNECT_CALLBACK_URL,
 } = process.env;
 
-// Compatibilidad: preferimos GOOGLE_ADS_DEVELOPER_TOKEN; si no existe, usamos GOOGLE_DEVELOPER_TOKEN
+// Preferimos GOOGLE_ADS_DEVELOPER_TOKEN; si no existe, usamos GOOGLE_DEVELOPER_TOKEN (compat)
 const GOOGLE_ADS_DEVELOPER_TOKEN =
   process.env.GOOGLE_ADS_DEVELOPER_TOKEN || process.env.GOOGLE_DEVELOPER_TOKEN || '';
 
-const GOOGLE_LOGIN_CUSTOMER_ID = (process.env.GOOGLE_LOGIN_CUSTOMER_ID || '').replace(/-/g, '').trim();
+const GOOGLE_LOGIN_CUSTOMER_ID =
+  (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || process.env.GOOGLE_LOGIN_CUSTOMER_ID || '')
+    .replace(/-/g, '').trim();
 
 /* =========================
  * Constantes
  * ========================= */
 const ADS_HOST   = 'https://googleads.googleapis.com';
-const ADS_VER    = 'v17';
+const ADS_VER    = process.env.GADS_API_VERSION || 'v17';
 const DEFAULT_GOOGLE_OBJECTIVE = 'ventas';
 
 /* =========================
@@ -116,9 +120,8 @@ function adsHeaders(accessToken) {
     'Content-Type': 'application/json',
     Accept: 'application/json',
   };
-  if (GOOGLE_LOGIN_CUSTOMER_ID) {
-    h['login-customer-id'] = GOOGLE_LOGIN_CUSTOMER_ID; // si usas MCC
-  }
+  // Solo usar MCC si lo configuraste (no es obligatorio)
+  if (GOOGLE_LOGIN_CUSTOMER_ID) h['login-customer-id'] = GOOGLE_LOGIN_CUSTOMER_ID;
   return h;
 }
 
@@ -134,7 +137,7 @@ async function listAccessibleCustomers(accessToken) {
       timeout: 25000,
       validateStatus: () => true,
     });
-    if (data?.resourceNames && Array.isArray(data.resourceNames)) return data.resourceNames;
+    if (Array.isArray(data?.resourceNames)) return data.resourceNames; // ["customers/123", ...]
     if (data?.error) {
       console.warn('Ads listAccessibleCustomers error:', data.error);
       return [];
@@ -213,11 +216,13 @@ async function fetchGA4Properties(oauthClient) {
  *  Sincronización completa post-OAuth (Ads)
  * =======================================================*/
 async function syncGoogleAdsAccountsForUser(userId) {
-  const ga = await GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] }).select('+accessToken +refreshToken');
+  const ga = await GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] })
+    .select('+accessToken +refreshToken');
+
   if (!ga?.accessToken) throw new Error('No Google accessToken for user');
   if (!GOOGLE_ADS_DEVELOPER_TOKEN) throw new Error('GOOGLE_ADS_DEVELOPER_TOKEN missing');
 
-  const customersBrief = await discoverCustomers(ga.accessToken); // [{ id, name, currencyCode, timeZone }]
+  const customersBrief = await discoverCustomers(ga.accessToken); // [{ id, name, currencyCode, timeZone, status }]
   const adAccounts = customersBrief.map(c => ({
     id: c.id,
     name: c.name,
@@ -227,7 +232,12 @@ async function syncGoogleAdsAccountsForUser(userId) {
   }));
   const defaultCustomerId = ga.defaultCustomerId || adAccounts?.[0]?.id || null;
 
-  ga.customers = customersBrief.map(c => ({ id: c.id, descriptiveName: c.name, currencyCode: c.currencyCode, timeZone: c.timeZone }));
+  ga.customers = customersBrief.map(c => ({
+    id: c.id,
+    descriptiveName: c.name,
+    currencyCode: c.currencyCode,
+    timeZone: c.timeZone
+  }));
   ga.ad_accounts = adAccounts;
   ga.loginCustomerId = ga.loginCustomerId || GOOGLE_LOGIN_CUSTOMER_ID || undefined;
   if (!ga.defaultCustomerId && defaultCustomerId) ga.defaultCustomerId = defaultCustomerId;
@@ -290,27 +300,25 @@ async function googleCallbackHandler(req, res) {
     const expiresAt    = tokens.expiry_date ? new Date(tokens.expiry_date) : null;
     const grantedScopes = normalizeScopes(tokens.scope);
 
-    // === Google Ads (descubrir y guardar cuentas) ===
+    // === Guardamos tokens mínimos para poder sincronizar ===
+    const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
+    const baseUpdate = {
+      user: req.user._id,
+      userId: req.user._id,
+      accessToken,
+      expiresAt,
+      scope: grantedScopes,
+      updatedAt: new Date(),
+    };
+    if (refreshToken) baseUpdate.refreshToken = refreshToken;
+
+    await GoogleAccount.findOneAndUpdate(q, baseUpdate, { upsert: true, new: true, setDefaultsOnInsert: true });
+
+    // === Google Ads (descubrir y guardar cuentas enriquecidas) ===
     let customers = [];
     let ad_accounts = [];
     let defaultCustomerId = null;
-
     try {
-      // Persistimos primero el token para poder hacer sync con helper
-      const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
-      const baseUpdate = {
-        user: req.user._id,
-        userId: req.user._id,
-        accessToken,
-        expiresAt,
-        scope: grantedScopes,
-        updatedAt: new Date(),
-      };
-      if (refreshToken) baseUpdate.refreshToken = refreshToken;
-
-      await GoogleAccount.findOneAndUpdate(q, baseUpdate, { upsert: true, new: true, setDefaultsOnInsert: true });
-
-      // Sincronización completa de Ads (guarda customers/ad_accounts/defaultCustomerId)
       const result = await syncGoogleAdsAccountsForUser(req.user._id);
       customers = result.customers || [];
       ad_accounts = result.ad_accounts || [];
@@ -332,7 +340,6 @@ async function googleCallbackHandler(req, res) {
     }
 
     // Upsert final (por si cambió algo durante el sync)
-    const q2 = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
     const update = {
       user: req.user._id,
       userId: req.user._id,
@@ -352,18 +359,18 @@ async function googleCallbackHandler(req, res) {
     };
     if (refreshToken) update.refreshToken = refreshToken;
 
-    await GoogleAccount.findOneAndUpdate(q2, update, { upsert: true, new: true, setDefaultsOnInsert: true });
+    await GoogleAccount.findOneAndUpdate(q, update, { upsert: true, new: true, setDefaultsOnInsert: true });
     await User.findByIdAndUpdate(req.user._id, { $set: { googleConnected: true } });
 
     // Objetivo por defecto si no existe
     const [uObj, gaObj] = await Promise.all([
       User.findById(req.user._id).select('googleObjective').lean(),
-      GoogleAccount.findOne(q2).select('objective').lean()
+      GoogleAccount.findOne(q).select('objective').lean()
     ]);
     if (!(uObj?.googleObjective) && !(gaObj?.objective)) {
       await Promise.all([
         User.findByIdAndUpdate(req.user._id, { $set: { googleObjective: DEFAULT_GOOGLE_OBJECTIVE } }),
-        GoogleAccount.findOneAndUpdate(q2, { $set: { objective: DEFAULT_GOOGLE_OBJECTIVE, updatedAt: new Date() } })
+        GoogleAccount.findOneAndUpdate(q, { $set: { objective: DEFAULT_GOOGLE_OBJECTIVE, updatedAt: new Date() } })
       ]);
     }
 
@@ -463,9 +470,9 @@ router.get('/accounts', requireSession, async (req, res) => {
 
     let customers = ga.customers || [];
     let ad_accounts = ga.ad_accounts || [];
+
     if ((!customers || customers.length === 0) || (!ad_accounts || ad_accounts.length === 0)) {
-      // refresco perezoso
-      await syncGoogleAdsAccountsForUser(req.user._id);
+      await syncGoogleAdsAccountsForUser(req.user._id); // refresco perezoso
       const refreshed = await GoogleAccount.findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
         .select('customers ad_accounts defaultCustomerId')
         .lean();
@@ -503,7 +510,7 @@ router.post('/default-customer', requireSession, express.json(), async (req, res
 });
 
 /* =========================
- * Forzar refresco de cuentas Ads (opcional para debugging)
+ * Forzar refresco de cuentas Ads (debug)
  * ========================= */
 router.post('/ads/refresh', requireSession, async (req, res) => {
   try {
