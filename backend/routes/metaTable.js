@@ -15,6 +15,7 @@ const APP_SECRET = process.env.FACEBOOK_APP_SECRET || '';
 /* ------------------------- helpers ------------------------- */
 const normActId = (s = '') => s.toString().replace(/^act_/, '').trim();
 const toActId   = (s = '') => (s ? `act_${normActId(s)}` : '');
+
 const makeAppSecretProof = (accessToken) =>
   APP_SECRET ? crypto.createHmac('sha256', APP_SECRET).update(accessToken).digest('hex') : null;
 
@@ -47,11 +48,11 @@ function fieldsFor(objective, minimal = false) {
     'adset_id','adset_name',
     'ad_id','ad_name',
     'spend','impressions','clicks','reach','frequency','cpm','cpc','ctr',
-    // clics de enlace válidos para insights
+    // clics de enlace válidos en Insights
     'inline_link_clicks'
   ];
   if (!minimal) {
-    // Para LPV/CPL/CPA necesitamos actions + cost_per_action_type
+    // Para LPV, CPL/CPA, etc.
     base.push('actions','cost_per_action_type');
   }
   return base.join(',');
@@ -61,7 +62,7 @@ function fieldsFor(objective, minimal = false) {
 async function fetchAllPaged(url, baseParams, { timeout = 30000 } = {}) {
   let results = [];
   let params = { ...baseParams };
-  if (!('limit' in params)) params.limit = 500;
+  if (!('limit' in params)) params.limit = 500; // grande, pero seguro
 
   for (let i = 0; i < 50; i++) {
     const { data } = await axios.get(url, { params, timeout });
@@ -74,7 +75,7 @@ async function fetchAllPaged(url, baseParams, { timeout = 30000 } = {}) {
   return results;
 }
 
-/** Insights paginados (todo el rango de una sola vez) */
+/** Insights paginados (todo el rango en una sola serie) */
 async function fetchAllInsights({ accountId, token, level, objective, date_preset, since, until, minimal = false, appsecret_proof }) {
   const fields = fieldsFor(objective, minimal);
   const url = `${FB_GRAPH}/${toActId(accountId)}/insights`;
@@ -88,6 +89,7 @@ async function fetchAllInsights({ accountId, token, level, objective, date_prese
   };
   if (date_preset) params.date_preset = date_preset;
   else if (since && until) params.time_range = JSON.stringify({ since, until });
+
   return await fetchAllPaged(url, params);
 }
 
@@ -97,7 +99,6 @@ async function fetchEntitiesWithStatus({ accountId, token, level, appsecret_proo
     level === 'campaign' ? 'campaigns' :
     level === 'adset'    ? 'adsets'    : 'ads';
 
-  // ✅ para campañas también traemos daily_budget
   const fields =
     level === 'campaign'
       ? 'id,name,status,effective_status,configured_status,start_time,stop_time,daily_budget,lifetime_budget'
@@ -140,14 +141,15 @@ router.get('/table', async (req, res) => {
 
     const appsecret_proof = makeAppSecretProof(token);
 
-    // 1) Universo completo de entidades con su estado/presupuesto
+    // 1) Universo de entidades con estado/presupuesto
     const entities = await fetchEntitiesWithStatus({ accountId, token, level, appsecret_proof });
 
     const base = new Map();
     for (const e of entities) {
+      // Presupuestos vienen en unidades mínimas -> normalizar a divisa (÷100)
       const budget =
-        e.daily_budget != null ? Number(e.daily_budget || 0) :
-        e.lifetime_budget != null ? Number(e.lifetime_budget || 0) : 0;
+        e.daily_budget != null ? Number(e.daily_budget || 0) / 100 :
+        e.lifetime_budget != null ? Number(e.lifetime_budget || 0) / 100 : 0;
 
       base.set(e.id, {
         id: e.id,
@@ -157,13 +159,23 @@ router.get('/table', async (req, res) => {
         ad_id:       level === 'ad'       ? e.id : undefined,
         account_id: accountId,
         account_name: undefined,
-        impressions: 0, clicks: 0, reach: 0, frequency: 0,
-        spend: 0, cpm: 0, cpc: 0, ctr: 0,
-        link_clicks: 0,
+
+        impressions: 0,
+        clicks: 0,
+        reach: 0,
+        frequency: 0, // lo recalculamos al final
+        spend: 0,
+        cpm: 0,
+        cpc: 0,
+        ctr: 0,
+
+        inline_link_clicks: 0,
         landing_page_views: 0,
         cost_per_lpv: null,
+
         results: 0,
         cost_per_result: null,
+
         status: e.status || null,
         effective_status: e.effective_status || null,
         budget,
@@ -172,7 +184,7 @@ router.get('/table', async (req, res) => {
       });
     }
 
-    // 2) Insights (con retry minimal si un campo cae en 400)
+    // 2) Insights (retry minimal ante 400)
     let raw = [];
     try {
       raw = await fetchAllInsights({ accountId, token, level, objective, date_preset, since, until, minimal: false, appsecret_proof });
@@ -204,43 +216,41 @@ router.get('/table', async (req, res) => {
           name: (level === 'campaign') ? r.campaign_name : (level === 'adset') ? r.adset_name : r.ad_name,
           campaign_id: r.campaign_id, adset_id: r.adset_id, ad_id: r.ad_id,
           account_id: r.account_id, account_name: r.account_name,
+
           impressions: 0, clicks: 0, reach: 0, frequency: 0,
           spend: 0, cpm: 0, cpc: 0, ctr: 0,
-          link_clicks: 0, landing_page_views: 0, cost_per_lpv: null,
+
+          inline_link_clicks: 0, landing_page_views: 0, cost_per_lpv: null,
           results: 0, cost_per_result: null,
+
           status: null, effective_status: null,
           budget: 0, start_time: null, stop_time: null
         });
       }
 
       const cur = base.get(id);
+
+      // Identidad
       cur.name = cur.name || ((level === 'campaign') ? r.campaign_name : (level === 'adset') ? r.adset_name : r.ad_name);
 
+      // Acumulados
       cur.impressions += Number(r.impressions || 0);
       cur.clicks      += Number(r.clicks || 0);
       cur.reach        = Math.max(Number(cur.reach || 0), Number(r.reach || 0));
       cur.spend       += Number(r.spend || 0);
-
-      // usar inline_link_clicks
-      cur.link_clicks += Number(r.inline_link_clicks || 0);
+      cur.inline_link_clicks += Number(r.inline_link_clicks || 0);
 
       // LPV desde actions
       const lpv = getAction(r.actions || [], ['landing_page_view']);
       cur.landing_page_views += lpv;
 
-      // derivadas
+      // Derivadas
       cur.cpm = cur.impressions > 0 ? (cur.spend / (cur.impressions / 1000)) : 0;
       cur.cpc = cur.clicks > 0 ? (cur.spend / cur.clicks) : 0;
       cur.ctr = cur.impressions > 0 ? ((cur.clicks / cur.impressions) * 100) : 0;
-
-      // ✅ frecuencia = impresiones / alcance (cuando ambos > 0)
-      cur.frequency = (cur.impressions > 0 && cur.reach > 0)
-        ? (cur.impressions / cur.reach)
-        : 0;
-
       cur.cost_per_lpv = cur.landing_page_views > 0 ? (cur.spend / cur.landing_page_views) : null;
 
-      // resultados según objetivo
+      // Resultados por objetivo
       if (objective === 'leads') {
         const leads = getAction(r.actions || [], ['lead','onsite_conversion.lead_grouped']);
         cur.results += leads;
@@ -254,6 +264,13 @@ router.get('/table', async (req, res) => {
         cur.results += purchases;
         const cpa = getAction(r.cost_per_action_type || [], ['purchase']);
         cur.cost_per_result = cpa || (cur.results > 0 ? (cur.spend / cur.results) : null);
+      }
+    }
+
+    // 3.1) Recalcular frecuencia (impresiones / alcance)
+    for (const row of base.values()) {
+      if (!row.frequency || row.frequency === 0) {
+        row.frequency = (row.reach > 0 && row.impressions > 0) ? (row.impressions / row.reach) : 0;
       }
     }
 
