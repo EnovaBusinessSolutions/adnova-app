@@ -1,3 +1,4 @@
+// backend/routes/metaTable.js
 'use strict';
 const express = require('express');
 const axios = require('axios');
@@ -48,11 +49,11 @@ function fieldsFor(objective, minimal = false) {
     'adset_id','adset_name',
     'ad_id','ad_name',
     'spend','impressions','clicks','reach','frequency','cpm','cpc','ctr',
-    // clics de enlace válidos en Insights
+    // clics de enlace (directo); si falta, hacemos fallback a actions:link_click
     'inline_link_clicks'
   ];
   if (!minimal) {
-    // Para LPV, CPL/CPA y fallback de link clicks
+    // Para LPV y CPL/CPA necesitamos actions y cost_per_action_type
     base.push('actions','cost_per_action_type');
   }
   return base.join(',');
@@ -62,7 +63,7 @@ function fieldsFor(objective, minimal = false) {
 async function fetchAllPaged(url, baseParams, { timeout = 30000 } = {}) {
   let results = [];
   let params = { ...baseParams };
-  if (!('limit' in params)) params.limit = 500; // grande, pero seguro
+  if (!('limit' in params)) params.limit = 500;
 
   for (let i = 0; i < 50; i++) {
     const { data } = await axios.get(url, { params, timeout });
@@ -146,7 +147,7 @@ router.get('/table', async (req, res) => {
 
     const base = new Map();
     for (const e of entities) {
-      // Presupuestos vienen en unidades mínimas -> normalizar a divisa (÷100)
+      // Presupuestos vienen en unidades mínimas (centavos) -> normalizar (÷100)
       const budget =
         e.daily_budget != null ? Number(e.daily_budget || 0) / 100 :
         e.lifetime_budget != null ? Number(e.lifetime_budget || 0) / 100 : 0;
@@ -163,13 +164,14 @@ router.get('/table', async (req, res) => {
         impressions: 0,
         clicks: 0,
         reach: 0,
-        frequency: 0, // se recalcula al final
+        frequency: 0, // lo recalculamos
         spend: 0,
         cpm: 0,
         cpc: 0,
         ctr: 0,
 
         inline_link_clicks: 0,
+        link_clicks: 0,              // ← también lo exponemos por compatibilidad
         landing_page_views: 0,
         cost_per_lpv: null,
 
@@ -201,11 +203,12 @@ router.get('/table', async (req, res) => {
       }
     }
 
-    // 3) Merge insights -> base
+    // Helper para actions
     const keyFor  = (r) => (level === 'campaign') ? r.campaign_id : (level === 'adset') ? r.adset_id : r.ad_id;
     const getAction = (arr = [], types = []) =>
       Number((arr.find(a => types.includes(a?.action_type)) || {}).value || 0);
 
+    // 3) Merge insights -> base
     for (const r of raw) {
       const id = keyFor(r);
       if (!id) continue;
@@ -220,7 +223,8 @@ router.get('/table', async (req, res) => {
           impressions: 0, clicks: 0, reach: 0, frequency: 0,
           spend: 0, cpm: 0, cpc: 0, ctr: 0,
 
-          inline_link_clicks: 0, landing_page_views: 0, cost_per_lpv: null,
+          inline_link_clicks: 0, link_clicks: 0,
+          landing_page_views: 0, cost_per_lpv: null,
           results: 0, cost_per_result: null,
 
           status: null, effective_status: null,
@@ -233,16 +237,18 @@ router.get('/table', async (req, res) => {
       // Identidad
       cur.name = cur.name || ((level === 'campaign') ? r.campaign_name : (level === 'adset') ? r.adset_name : r.ad_name);
 
-      // Acumulados
+      // Acumulados básicos
       cur.impressions += Number(r.impressions || 0);
       cur.clicks      += Number(r.clicks || 0);
       cur.reach        = Math.max(Number(cur.reach || 0), Number(r.reach || 0));
       cur.spend       += Number(r.spend || 0);
 
-      // ✅ Clics de enlace: campo directo + fallback desde actions
-      const llcField  = Number(r.inline_link_clicks || 0);
-      const llcAction = getAction(r.actions || [], ['link_click','link_click_unique']);
-      cur.inline_link_clicks += (llcField > 0 ? llcField : llcAction);
+      // Clics en el enlace (directo o como action)
+      const lc = (r.inline_link_clicks != null)
+        ? Number(r.inline_link_clicks || 0)
+        : getAction(r.actions || [], ['link_click']);
+      cur.inline_link_clicks += lc;
+      cur.link_clicks        += lc; // exponemos ambas llaves
 
       // LPV desde actions
       const lpv = getAction(r.actions || [], ['landing_page_view']);
@@ -271,7 +277,7 @@ router.get('/table', async (req, res) => {
       }
     }
 
-    // 3.1) Recalcular frecuencia (impresiones / alcance)
+    // 3.1) Frecuencia si Meta no la trae
     for (const row of base.values()) {
       if (!row.frequency || row.frequency === 0) {
         row.frequency = (row.reach > 0 && row.impressions > 0) ? (row.impressions / row.reach) : 0;
