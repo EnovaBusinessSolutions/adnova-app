@@ -52,7 +52,7 @@ function fieldsFor(objective, minimal = false) {
     'inline_link_clicks'
   ];
   if (!minimal) {
-    // Para LPV, CPL/CPA, etc.
+    // Para LPV, CPL/CPA y fallback de link clicks
     base.push('actions','cost_per_action_type');
   }
   return base.join(',');
@@ -163,7 +163,7 @@ router.get('/table', async (req, res) => {
         impressions: 0,
         clicks: 0,
         reach: 0,
-        frequency: 0, // lo recalculamos al final
+        frequency: 0, // se recalcula al final
         spend: 0,
         cpm: 0,
         cpc: 0,
@@ -238,7 +238,11 @@ router.get('/table', async (req, res) => {
       cur.clicks      += Number(r.clicks || 0);
       cur.reach        = Math.max(Number(cur.reach || 0), Number(r.reach || 0));
       cur.spend       += Number(r.spend || 0);
-      cur.inline_link_clicks += Number(r.inline_link_clicks || 0);
+
+      // ✅ Clics de enlace: campo directo + fallback desde actions
+      const llcField  = Number(r.inline_link_clicks || 0);
+      const llcAction = getAction(r.actions || [], ['link_click','link_click_unique']);
+      cur.inline_link_clicks += (llcField > 0 ? llcField : llcAction);
 
       // LPV desde actions
       const lpv = getAction(r.actions || [], ['landing_page_view']);
