@@ -47,7 +47,7 @@ function fieldsFor(objective, minimal = false) {
     'adset_id','adset_name',
     'ad_id','ad_name',
     'spend','impressions','clicks','reach','frequency','cpm','cpc','ctr',
-    // ✅ clics de enlace válidos para insights
+    // clics de enlace válidos para insights
     'inline_link_clicks'
   ];
   if (!minimal) {
@@ -97,9 +97,10 @@ async function fetchEntitiesWithStatus({ accountId, token, level, appsecret_proo
     level === 'campaign' ? 'campaigns' :
     level === 'adset'    ? 'adsets'    : 'ads';
 
+  // ✅ para campañas también traemos daily_budget
   const fields =
     level === 'campaign'
-      ? 'id,name,status,effective_status,configured_status,start_time,stop_time,lifetime_budget'
+      ? 'id,name,status,effective_status,configured_status,start_time,stop_time,daily_budget,lifetime_budget'
       : level === 'adset'
         ? 'id,name,status,effective_status,configured_status,start_time,stop_time,daily_budget,lifetime_budget'
         : 'id,name,status,effective_status,configured_status';
@@ -220,7 +221,7 @@ router.get('/table', async (req, res) => {
       cur.reach        = Math.max(Number(cur.reach || 0), Number(r.reach || 0));
       cur.spend       += Number(r.spend || 0);
 
-      // ✅ usar inline_link_clicks
+      // usar inline_link_clicks
       cur.link_clicks += Number(r.inline_link_clicks || 0);
 
       // LPV desde actions
@@ -231,6 +232,12 @@ router.get('/table', async (req, res) => {
       cur.cpm = cur.impressions > 0 ? (cur.spend / (cur.impressions / 1000)) : 0;
       cur.cpc = cur.clicks > 0 ? (cur.spend / cur.clicks) : 0;
       cur.ctr = cur.impressions > 0 ? ((cur.clicks / cur.impressions) * 100) : 0;
+
+      // ✅ frecuencia = impresiones / alcance (cuando ambos > 0)
+      cur.frequency = (cur.impressions > 0 && cur.reach > 0)
+        ? (cur.impressions / cur.reach)
+        : 0;
+
       cur.cost_per_lpv = cur.landing_page_views > 0 ? (cur.spend / cur.landing_page_views) : null;
 
       // resultados según objetivo
