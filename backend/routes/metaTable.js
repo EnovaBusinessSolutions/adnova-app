@@ -47,15 +47,12 @@ function fieldsFor(objective, minimal = false) {
     'adset_id','adset_name',
     'ad_id','ad_name',
     'spend','impressions','clicks','reach','frequency','cpm','cpc','ctr',
-    'link_clicks'                         // ← clics en el enlace
+    // ✅ clics de enlace válidos para insights
+    'inline_link_clicks'
   ];
   if (!minimal) {
-    if (objective === 'leads') {
-      base.push('actions','cost_per_action_type');
-    } else {
-      // ventas/alcance: mantenemos actions para LPV y purchases; sin purchase_roas
-      base.push('actions','cost_per_action_type');
-    }
+    // Para LPV/CPL/CPA necesitamos actions + cost_per_action_type
+    base.push('actions','cost_per_action_type');
   }
   return base.join(',');
 }
@@ -70,19 +67,20 @@ async function fetchAllPaged(url, baseParams, { timeout = 30000 } = {}) {
     const { data } = await axios.get(url, { params, timeout });
     const chunk = Array.isArray(data?.data) ? data.data : [];
     results = results.concat(chunk);
-    const curs = data?.paging?.cursors?.after;
-    if (!curs) break;
-    params.after = curs;
+    const after = data?.paging?.cursors?.after;
+    if (!after) break;
+    params.after = after;
   }
   return results;
 }
 
-/** Insights paginados */
+/** Insights paginados (todo el rango de una sola vez) */
 async function fetchAllInsights({ accountId, token, level, objective, date_preset, since, until, minimal = false, appsecret_proof }) {
   const fields = fieldsFor(objective, minimal);
   const url = `${FB_GRAPH}/${toActId(accountId)}/insights`;
   const params = {
-    level, fields,
+    level,
+    fields,
     time_increment: 'all_days',
     action_report_time: 'conversion',
     access_token: token,
@@ -93,7 +91,7 @@ async function fetchAllInsights({ accountId, token, level, objective, date_prese
   return await fetchAllPaged(url, params);
 }
 
-/** Listado completo + estado + presupuesto + fechas */
+/** Listado completo + estado + presupuesto + fechas por nivel */
 async function fetchEntitiesWithStatus({ accountId, token, level, appsecret_proof }) {
   const edge =
     level === 'campaign' ? 'campaigns' :
@@ -141,7 +139,7 @@ router.get('/table', async (req, res) => {
 
     const appsecret_proof = makeAppSecretProof(token);
 
-    // Universe completo (aunque no haya delivery)
+    // 1) Universo completo de entidades con su estado/presupuesto
     const entities = await fetchEntitiesWithStatus({ accountId, token, level, appsecret_proof });
 
     const base = new Map();
@@ -173,7 +171,7 @@ router.get('/table', async (req, res) => {
       });
     }
 
-    // Insights (paginados)
+    // 2) Insights (con retry minimal si un campo cae en 400)
     let raw = [];
     try {
       raw = await fetchAllInsights({ accountId, token, level, objective, date_preset, since, until, minimal: false, appsecret_proof });
@@ -190,7 +188,7 @@ router.get('/table', async (req, res) => {
       }
     }
 
-    // Merge insights -> base
+    // 3) Merge insights -> base
     const keyFor  = (r) => (level === 'campaign') ? r.campaign_id : (level === 'adset') ? r.adset_id : r.ad_id;
     const getAction = (arr = [], types = []) =>
       Number((arr.find(a => types.includes(a?.action_type)) || {}).value || 0);
@@ -198,6 +196,7 @@ router.get('/table', async (req, res) => {
     for (const r of raw) {
       const id = keyFor(r);
       if (!id) continue;
+
       if (!base.has(id)) {
         base.set(id, {
           id,
@@ -220,7 +219,9 @@ router.get('/table', async (req, res) => {
       cur.clicks      += Number(r.clicks || 0);
       cur.reach        = Math.max(Number(cur.reach || 0), Number(r.reach || 0));
       cur.spend       += Number(r.spend || 0);
-      cur.link_clicks += Number(r.link_clicks || 0);
+
+      // ✅ usar inline_link_clicks
+      cur.link_clicks += Number(r.inline_link_clicks || 0);
 
       // LPV desde actions
       const lpv = getAction(r.actions || [], ['landing_page_view']);
@@ -249,20 +250,23 @@ router.get('/table', async (req, res) => {
       }
     }
 
-    // A arreglo + filtros
+    // 4) A arreglo + filtros
     let rowsAll = [...base.values()];
     if (only_active) rowsAll = rowsAll.filter(r => (r.effective_status || '').toUpperCase() === 'ACTIVE');
     if (search) rowsAll = rowsAll.filter(r => (r.name || '').toLowerCase().includes(search));
 
-    // orden
+    // 5) Orden
     const [sField, sDir='desc'] = String(sort).split(':');
     const mul = sDir === 'asc' ? 1 : -1;
     rowsAll.sort((a, b) => {
-      const na = Number(a[sField]); const nb = Number(b[sField]);
+      const va = (a[sField] ?? 0);
+      const vb = (b[sField] ?? 0);
+      const na = Number(va);
+      const nb = Number(vb);
       return ((isNaN(na) ? 0 : na) - (isNaN(nb) ? 0 : nb)) * mul;
     });
 
-    // paginado
+    // 6) Paginado
     const total = rowsAll.length;
     const start = (page - 1) * page_size;
     const paged = rowsAll.slice(start, start + page_size);
