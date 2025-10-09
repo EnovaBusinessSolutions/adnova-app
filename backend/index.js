@@ -34,6 +34,7 @@ const auditsRoutes = require('./routes/audits');
 
 const metaInsightsRoutes = require('./routes/metaInsights');
 const metaAccountsRoutes = require('./routes/metaAccounts');
+const metaTable = require('./routes/metaTable');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -416,6 +417,7 @@ app.use('/api/google/ads', sessionGuard, (req, _res, next) => {
 
 app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);
 app.use('/api/meta/accounts', sessionGuard, metaAccountsRoutes);
+app.use('/api/meta', metaTable);
 
 app.get('/auth/google/login',
   passport.authenticate('google', { scope: ['profile', 'email'] })
