@@ -15,6 +15,7 @@ const APP_SECRET = process.env.FACEBOOK_APP_SECRET || '';
 /* ------------------------- helpers ------------------------- */
 const normActId = (s = '') => s.toString().replace(/^act_/, '').trim();
 const toActId   = (s = '') => (s ? `act_${normActId(s)}` : '');
+
 const makeAppSecretProof = (accessToken) =>
   APP_SECRET ? crypto.createHmac('sha256', APP_SECRET).update(accessToken).digest('hex') : null;
 
@@ -52,15 +53,34 @@ function fieldsFor(objective, minimal = false) {
     if (objective === 'leads') {
       base.push('actions','cost_per_action_type');
     } else if (objective === 'ventas') {
-      // 'purchase_roas' suele causar 400; lo omitimos
-      base.push('actions','cost_per_action_type');
+      base.push('actions','cost_per_action_type'); // 'purchase_roas' provoca 400 a veces
     }
   }
   return base.join(',');
 }
 
-/** Llamada a /insights con parámetros correctos */
-async function fetchInsights({ accountId, token, level, objective, date_preset, since, until, minimal = false, appsecret_proof }) {
+/* ------------------ util genérica de paginación ------------------ */
+async function fetchAllPaged(url, baseParams, { timeout = 30000 } = {}) {
+  let results = [];
+  let params = { ...baseParams };
+  // límite alto pero seguro (Meta suele topear ~500)
+  if (!('limit' in params)) params.limit = 500;
+
+  for (let i = 0; i < 50; i++) { // corta por seguridad
+    const { data } = await axios.get(url, { params, timeout });
+    const chunk = Array.isArray(data?.data) ? data.data : [];
+    results = results.concat(chunk);
+
+    const next = data?.paging?.next;
+    const curs = data?.paging?.cursors?.after;
+    if (!next || !curs) break;
+    params.after = curs;
+  }
+  return results;
+}
+
+/** Llamada a /insights (paginada) */
+async function fetchAllInsights({ accountId, token, level, objective, date_preset, since, until, minimal = false, appsecret_proof }) {
   const fields = fieldsFor(objective, minimal);
   const url = `${FB_GRAPH}/${toActId(accountId)}/insights`;
   const params = {
@@ -74,47 +94,24 @@ async function fetchInsights({ accountId, token, level, objective, date_preset, 
   if (date_preset) params.date_preset = date_preset;
   else if (since && until) params.time_range = JSON.stringify({ since, until });
 
-  const { data } = await axios.get(url, { params, timeout: 25000 });
-  return Array.isArray(data?.data) ? data.data : [];
+  return await fetchAllPaged(url, params);
 }
 
-/** === 1a: mapa de estados por entidad (campaña/adset/ad) ===
- * Devuelve { [id]: { status, effective_status, configured_status } }
- */
-async function fetchStatusMap({ accountId, token, level, appsecret_proof }) {
-  const endpoint =
+/** Listado completo de entidades por nivel (con nombre y estado) */
+async function fetchEntitiesWithStatus({ accountId, token, level, appsecret_proof }) {
+  const edge =
     level === 'campaign' ? 'campaigns' :
     level === 'adset'    ? 'adsets'    : 'ads';
 
-  const fields =
-    level === 'campaign'
-      ? 'id,status,effective_status,configured_status,start_time,stop_time'
-      : level === 'adset'
-        ? 'id,status,effective_status,daily_budget,lifetime_budget'
-        : 'id,status,effective_status';
-
-  const url = `${FB_GRAPH}/${toActId(accountId)}/${endpoint}`;
+  const fields = 'id,name,status,effective_status,configured_status';
+  const url = `${FB_GRAPH}/${toActId(accountId)}/${edge}`;
   const params = {
     fields,
-    limit: 5000,
     access_token: token,
     ...(appsecret_proof ? { appsecret_proof } : {})
   };
 
-  const { data } = await axios.get(url, { params, timeout: 25000 });
-  const list = Array.isArray(data?.data) ? data.data : [];
-
-  const map = {};
-  for (const it of list) {
-    const id = it?.id;
-    if (!id) continue;
-    map[id] = {
-      status: it.status || null,
-      effective_status: it.effective_status || null,
-      configured_status: it.configured_status || null
-    };
-  }
-  return map;
+  return await fetchAllPaged(url, params);
 }
 
 /* --------------------------- endpoint --------------------------- */
@@ -143,119 +140,120 @@ router.get('/table', async (req, res) => {
 
     const appsecret_proof = makeAppSecretProof(token);
 
-    // 1er intento: set completo
+    // 1) Listado completo de entidades (incluye pausadas/sin delivery)
+    const entities = await fetchEntitiesWithStatus({ accountId, token, level, appsecret_proof });
+    // Mapa base: todos con métricas en cero
+    const base = new Map();
+    for (const e of entities) {
+      base.set(e.id, {
+        id: e.id,
+        name: e.name || '',
+        campaign_id: level === 'campaign' ? e.id : undefined,
+        adset_id:    level === 'adset'    ? e.id : undefined,
+        ad_id:       level === 'ad'       ? e.id : undefined,
+        account_id: accountId,
+        account_name: undefined,
+        impressions: 0, clicks: 0, reach: 0, frequency: 0,
+        spend: 0, cpm: 0, cpc: 0, ctr: 0,
+        results: 0, cost_per_result: null, roas: null,
+        status: e.status || null,
+        effective_status: e.effective_status || null
+      });
+    }
+
+    // 2) Insights paginados (solo entidades con delivery)
     let raw = [];
     try {
-      raw = await fetchInsights({ accountId, token, level, objective, date_preset, since, until, minimal: false, appsecret_proof });
+      raw = await fetchAllInsights({ accountId, token, level, objective, date_preset, since, until, minimal: false, appsecret_proof });
     } catch (e) {
       const g = e?.response?.data;
       const status = e?.response?.status;
       const code = g?.error?.code;
       const message = g?.error?.message || e.message;
-
-      // Si es 400 (#100) por campo inválido, reintenta con set mínimo
       if ((status === 400 && code === 100) || /Invalid parameter|Unknown field|Tried accessing/i.test(message || '')) {
-        try {
-          raw = await fetchInsights({ accountId, token, level, objective, date_preset, since, until, minimal: true, appsecret_proof });
-        } catch (e2) {
-          const g2 = e2?.response?.data;
-          const msg2 = g2?.error?.message || e2.message;
-          const st2 = e2?.response?.status || 400;
-          console.error('meta/table retry(minimal) error:', g2 || msg2);
-          return res.status(st2).json({
-            error: msg2, details: g2 || msg2,
-            total: 0, page: 1, page_size: page_size, rows: []
-          });
-        }
+        raw = await fetchAllInsights({ accountId, token, level, objective, date_preset, since, until, minimal: true, appsecret_proof });
       } else {
-        // Otros errores (190 token inválido, 10 permissions, etc.)
         const st = (code === 190) ? 401 : status || 400;
-        console.error('meta/table error:', g || message);
-        return res.status(st).json({
-          error: message, details: g || message,
-          total: 0, page: 1, page_size: page_size, rows: []
+        return res.status(st).json({ error: message, details: g || message, rows: [], total: 0, page: 1, page_size: page_size });
+      }
+    }
+
+    // 3) Merge insights -> base (left join), acumulando métricas
+    const keyFor  = (r) => (level === 'campaign') ? r.campaign_id : (level === 'adset') ? r.adset_id : r.ad_id;
+    for (const r of raw) {
+      const id = keyFor(r);
+      if (!id) continue;
+      if (!base.has(id)) {
+        // si no vino en entities (raro), lo creamos
+        base.set(id, {
+          id,
+          name: (level === 'campaign') ? r.campaign_name : (level === 'adset') ? r.adset_name : r.ad_name,
+          campaign_id: r.campaign_id, adset_id: r.adset_id, ad_id: r.ad_id,
+          account_id: r.account_id, account_name: r.account_name,
+          impressions: 0, clicks: 0, reach: 0, frequency: 0,
+          spend: 0, cpm: 0, cpc: 0, ctr: 0,
+          results: 0, cost_per_result: null, roas: null,
+          status: null, effective_status: null
         });
       }
-    }
+      const cur = base.get(id);
+      cur.name = cur.name || ( (level === 'campaign') ? r.campaign_name : (level === 'adset') ? r.adset_name : r.ad_name );
 
-    // === 1b: leer mapa de estados para el nivel actual ===
-    const statusMap = await fetchStatusMap({ accountId, token, level, appsecret_proof });
-
-    // ---- Agrupar por entidad y normalizar ----
-    const keyFor  = (r) => (level === 'campaign') ? r.campaign_id : (level === 'adset') ? r.adset_id : r.ad_id;
-    const nameFor = (r) => (level === 'campaign') ? r.campaign_name : (level === 'adset') ? r.adset_name : r.ad_name;
-
-    const map = new Map();
-    for (const r of raw) {
-      const k = keyFor(r); if (!k) continue;
-      const cur = map.get(k) || {
-        id: k, name: nameFor(r),
-        campaign_id: r.campaign_id, adset_id: r.adset_id, ad_id: r.ad_id,
-        account_id: r.account_id, account_name: r.account_name,
-        impressions: 0, clicks: 0, reach: 0, frequency: 0, spend: 0,
-        actions: [], cost_per_action_type: []
-      };
       cur.impressions += Number(r.impressions || 0);
       cur.clicks      += Number(r.clicks || 0);
-      cur.reach        = Math.max(Number(cur.reach || 0), Number(r.reach || 0)); // aprox reach único
+      cur.reach        = Math.max(Number(cur.reach || 0), Number(r.reach || 0)); // reach único aprox
       cur.spend       += Number(r.spend || 0);
-      if (Array.isArray(r.actions)) cur.actions = cur.actions.concat(r.actions);
-      if (Array.isArray(r.cost_per_action_type)) cur.cost_per_action_type = cur.cost_per_action_type.concat(r.cost_per_action_type);
-      map.set(k, cur);
-    }
 
-    let rowsAll = [...map.values()].map(r => {
-      const impressions = r.impressions;
-      const clicks = r.clicks;
-      const spend = r.spend;
-      const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
-      const cpm = impressions > 0 ? (spend / (impressions / 1000)) : 0;
-      const cpc = clicks > 0 ? (spend / clicks) : 0;
+      // derivadas
+      cur.cpm = cur.impressions > 0 ? (cur.spend / (cur.impressions / 1000)) : 0;
+      cur.cpc = cur.clicks > 0 ? (cur.spend / cur.clicks) : 0;
+      cur.ctr = cur.impressions > 0 ? ((cur.clicks / cur.impressions) * 100) : 0;
 
-      let results = 0, cost_per_result = null, roas = null;
+      // resultados según objetivo
       if (objective === 'leads') {
         const leads = (r.actions || []).find(a => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped');
-        results = leads ? Number(leads.value || 0) : 0;
+        const res = leads ? Number(leads.value || 0) : 0;
+        cur.results += res;
         const cpl = (r.cost_per_action_type || []).find(a => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped');
-        cost_per_result = cpl ? Number(cpl.value || 0) : (results > 0 ? spend / results : null);
+        cur.cost_per_result = cpl ? Number(cpl.value || 0) : (cur.results > 0 ? cur.spend / cur.results : null);
       } else if (objective === 'alcance' || objective === 'reach') {
-        results = Number(r.reach || 0);
-        cost_per_result = results > 0 ? spend / results : null;
+        cur.results = Number(cur.reach || 0);
+        cur.cost_per_result = cur.results > 0 ? cur.spend / cur.results : null;
       } else {
         const purchases = (r.actions || []).find(a => a.action_type === 'purchase');
-        results = purchases ? Number(purchases.value || 0) : 0;
+        const res = purchases ? Number(purchases.value || 0) : 0;
+        cur.results += res;
         const cpa = (r.cost_per_action_type || []).find(a => a.action_type === 'purchase');
-        cost_per_result = cpa ? Number(cpa.value || 0) : (results > 0 ? spend / results : null);
-        // roas: null (no pedimos purchase_roas para evitar 400)
+        cur.cost_per_result = cpa ? Number(cpa.value || 0) : (cur.results > 0 ? cur.spend / cur.results : null);
+        // roas lo dejamos null (evitamos purchase_roas por errores 400)
       }
+    }
 
-      const st = statusMap[r.id] || {};
-      return {
-        id: r.id, name: r.name,
-        campaign_id: r.campaign_id, adset_id: r.adset_id, ad_id: r.ad_id,
-        account_id: r.account_id, account_name: r.account_name,
-        impressions, clicks, reach: r.reach, frequency: r.frequency,
-        spend, cpm, cpc, ctr,
-        results, cost_per_result, roas,
-        status: st.status || null,
-        effective_status: st.effective_status || null
-      };
-    });
+    // 4) A arreglo y filtros
+    let rowsAll = [...base.values()];
 
-    // === 1c: filtro "solo activos" por effective_status === 'ACTIVE'
+    // filtro "solo activos" (estado efectivo)
     if (only_active) {
       rowsAll = rowsAll.filter(r => (r.effective_status || '').toUpperCase() === 'ACTIVE');
     }
 
-    // Filtro por búsqueda, orden y paginación
-    const rowsWork = search ? rowsAll.filter(r => (r.name || '').toLowerCase().includes(search)) : rowsAll;
+    // búsqueda
+    if (search) {
+      rowsAll = rowsAll.filter(r => (r.name || '').toLowerCase().includes(search));
+    }
+
+    // orden
     const [sField, sDir='desc'] = String(sort).split(':');
     const mul = sDir === 'asc' ? 1 : -1;
-    rowsWork.sort((a,b)=> (Number(a[sField]) - Number(b[sField])) * mul);
+    rowsAll.sort((a, b) => {
+      const na = Number(a[sField]); const nb = Number(b[sField]);
+      return ((isNaN(na) ? 0 : na) - (isNaN(nb) ? 0 : nb)) * mul;
+    });
 
-    const total = rowsWork.length;
+    // paginado
+    const total = rowsAll.length;
     const start = (page - 1) * page_size;
-    const paged = rowsWork.slice(start, start + page_size);
+    const paged = rowsAll.slice(start, start + page_size);
 
     return res.json({ account_id: accountId, level, objective, total, page, page_size, rows: paged });
   } catch (err) {
