@@ -28,11 +28,10 @@ const SCOPES = [
   'pages_read_engagement',
   'pages_show_list',
   'pages_manage_ads',
-  'pages_manage_metadata',
   'leads_retrieval',
-  'read_insights',
   'email'
 ].join(',');
+
 
 
 const DEFAULT_META_OBJECTIVE = 'ventas';
