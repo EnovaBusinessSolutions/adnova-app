@@ -15,6 +15,7 @@ const APP_SECRET = process.env.FACEBOOK_APP_SECRET || '';
 /* ------------------------- helpers ------------------------- */
 const normActId = (s = '') => s.toString().replace(/^act_/, '').trim();
 const toActId   = (s = '') => (s ? `act_${normActId(s)}` : '');
+
 const makeAppSecretProof = (accessToken) =>
   APP_SECRET ? crypto.createHmac('sha256', APP_SECRET).update(accessToken).digest('hex') : null;
 
@@ -39,7 +40,8 @@ async function getMetaAuth(req) {
   }
 }
 
-function fieldsFor(objective) {
+/** Campos por objetivo (con modo mínimo para fallback de errores 400) */
+function fieldsFor(objective, minimal = false) {
   const base = [
     'account_id','account_name',
     'campaign_id','campaign_name',
@@ -47,86 +49,48 @@ function fieldsFor(objective) {
     'ad_id','ad_name',
     'spend','impressions','clicks','reach','frequency','cpm','cpc','ctr'
   ];
-
-  if (objective === 'leads') {
-    base.push('actions','cost_per_action_type');
-  } else if (objective === 'ventas') {
-    base.push('actions','cost_per_action_type','purchase_roas');
+  if (!minimal) {
+    if (objective === 'leads') {
+      base.push('actions','cost_per_action_type');
+    } else if (objective === 'ventas') {
+      // OJO: 'purchase_roas' suele causar 400 en varias cuentas/niveles
+      base.push('actions','cost_per_action_type');
+    }
   }
   return base.join(',');
 }
 
-// agrega arrays de acciones por tipo
-function mergeActions(dstArr = [], srcArr = []) {
-  const map = new Map();
-  [...dstArr, ...srcArr].forEach(a => {
-    if (!a || !a.action_type) return;
-    const prev = map.get(a.action_type) || 0;
-    map.set(a.action_type, prev + Number(a.value || 0));
-  });
-  return [...map.entries()].map(([action_type, value]) => ({ action_type, value }));
-}
-function mergeCPAT(dstArr = [], srcArr = [], spend = 0) {
-  // promedia ponderado por resultados si es posible; fallback: último
-  const map = new Map();
-  [...dstArr, ...srcArr].forEach(a => {
-    if (!a || !a.action_type) return;
-    map.set(a.action_type, Number(a.value || 0));
-  });
-  return [...map.entries()].map(([action_type, value]) => ({ action_type, value }));
-}
+/** Llamada a /insights con parámetros correctos */
+async function fetchInsights({ accountId, token, level, objective, date_preset, since, until, minimal = false, appsecret_proof }) {
+  const fields = fieldsFor(objective, minimal);
+  const url = `${FB_GRAPH}/${toActId(accountId)}/insights`;
+  const params = {
+    level,
+    fields,
+    time_increment: 'all_days',
+    action_report_time: 'conversion',
+    access_token: token,
+    ...(appsecret_proof ? { appsecret_proof } : {})
+  };
+  if (date_preset) params.date_preset = date_preset;
+  else if (since && until) params.time_range = JSON.stringify({ since, until });
 
-function pickResultRow(row, objective) {
-  const out = { results: 0, cost_per_result: null, roas: null };
-
-  const actions = row.actions || [];
-  const cpat    = row.cost_per_action_type || [];
-
-  if (objective === 'leads') {
-    const lead = actions.find(a => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped');
-    out.results = lead ? Number(lead.value || 0) : 0;
-    const cpl = cpat.find(a => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped');
-    out.cost_per_result = cpl ? Number(cpl.value || 0) :
-      (out.results > 0 && row.spend ? Number(row.spend) / out.results : null);
-  } else if (objective === 'alcance' || objective === 'reach') {
-    out.results = Number(row.reach || 0);
-    out.cost_per_result = (out.results > 0 && row.spend) ? Number(row.spend) / out.results : null;
-  } else { // ventas
-    const purchases = actions.find(a => a.action_type === 'purchase');
-    out.results = purchases ? Number(purchases.value || 0) : 0;
-    if (Array.isArray(row.purchase_roas) && row.purchase_roas[0]?.value) {
-      out.roas = Number(row.purchase_roas[0].value);
-    }
-    const cpa = cpat.find(a => a.action_type === 'purchase');
-    out.cost_per_result = cpa ? Number(cpa.value || 0) :
-      (out.results > 0 && row.spend ? Number(row.spend) / out.results : null);
-  }
-  return out;
-}
-
-function sortRows(rows, sort) {
-  if (!sort) return rows;
-  const [field, dir='desc'] = String(sort).split(':');
-  const mul = dir.toLowerCase() === 'asc' ? 1 : -1;
-  return rows.sort((a,b) => {
-    const va = a[field]; const vb = b[field];
-    const na = Number(va); const nb = Number(vb);
-    return ((isNaN(na)?0:na) - (isNaN(nb)?0:nb)) * mul;
-  });
+  const { data } = await axios.get(url, { params, timeout: 25000 });
+  return Array.isArray(data?.data) ? data.data : [];
 }
 
 /* --------------------------- endpoint --------------------------- */
 router.get('/table', async (req, res) => {
   try {
     if (!req.isAuthenticated?.() || !req.user?._id) {
-      return res.status(401).json({ error: 'not_authenticated' });
+      return res.status(401).json({ error: 'not_authenticated', rows: [], total: 0, page: 1, page_size: 25 });
     }
 
     const { token, defaultAccountId, objective: storedObj } = await getMetaAuth(req);
-    if (!token) return res.status(400).json({ error: 'no_token' });
+    if (!token) return res.status(400).json({ error: 'no_token', rows: [], total: 0, page: 1, page_size: 25 });
 
     const accountId = normActId(req.query.account_id || defaultAccountId);
-    if (!accountId) return res.status(400).json({ error: 'no_account' });
+    if (!accountId) return res.status(400).json({ error: 'no_account', rows: [], total: 0, page: 1, page_size: 25 });
 
     const level = (req.query.level || 'campaign').toLowerCase(); // campaign|adset|ad
     const objective = (req.query.objective || storedObj || 'ventas').toLowerCase();
@@ -138,97 +102,119 @@ router.get('/table', async (req, res) => {
     const page = Math.max(parseInt(req.query.page || '1',10), 1);
     const page_size = Math.min(Math.max(parseInt(req.query.page_size || '25',10), 1), 200);
 
-    const fields = fieldsFor(objective);
-    const url = `${FB_GRAPH}/${toActId(accountId)}/insights`;
     const appsecret_proof = makeAppSecretProof(token);
 
-    const params = {
-      level,
-      fields,
-      // queremos totales del rango, no por día:
-      time_increment: 0,
-      access_token: token,
-      ...(appsecret_proof ? { appsecret_proof } : {})
-    };
-    if (date_preset) params.date_preset = date_preset;
-    else if (since && until) params.time_range = JSON.stringify({ since, until });
+    // 1er intento: set completo
+    let raw = [];
+    try {
+      raw = await fetchInsights({ accountId, token, level, objective, date_preset, since, until, minimal: false, appsecret_proof });
+    } catch (e) {
+      const g = e?.response?.data;
+      const status = e?.response?.status;
+      const code = g?.error?.code;
+      const message = g?.error?.message || e.message;
 
-    const { data } = await axios.get(url, { params, timeout: 25000 });
-    const raw = Array.isArray(data?.data) ? data.data : [];
+      // Si es 400 (#100) por campo inválido, reintenta con set mínimo
+      if ((status === 400 && code === 100) || /Invalid parameter|Unknown field|Tried accessing/i.test(message || '')) {
+        try {
+          raw = await fetchInsights({ accountId, token, level, objective, date_preset, since, until, minimal: true, appsecret_proof });
+        } catch (e2) {
+          const g2 = e2?.response?.data;
+          const msg2 = g2?.error?.message || e2.message;
+          const st2 = e2?.response?.status || 400;
+          console.error('meta/table retry(minimal) error:', g2 || msg2);
+          return res.status(st2).json({
+            error: msg2, details: g2 || msg2,
+            total: 0, page: 1, page_size: page_size, rows: []
+          });
+        }
+      } else {
+        // Otros errores (190 token inválido, 10 permissions, etc.)
+        const st = (code === 190) ? 401 : status || 400;
+        console.error('meta/table error:', g || message);
+        return res.status(st).json({
+          error: message, details: g || message,
+          total: 0, page: 1, page_size: page_size, rows: []
+        });
+      }
+    }
 
-    // Agrupar por entidad (en caso de que Meta devuelva múltiples filas)
-    const keyFor = (r) => (level === 'campaign') ? r.campaign_id : (level === 'adset') ? r.adset_id : r.ad_id;
+    // ---- Agrupar por entidad y normalizar ----
+    const keyFor  = (r) => (level === 'campaign') ? r.campaign_id : (level === 'adset') ? r.adset_id : r.ad_id;
     const nameFor = (r) => (level === 'campaign') ? r.campaign_name : (level === 'adset') ? r.adset_name : r.ad_name;
 
     const map = new Map();
     for (const r of raw) {
-      const k = keyFor(r);
-      if (!k) continue;
+      const k = keyFor(r); if (!k) continue;
       const cur = map.get(k) || {
-        id: k,
-        name: nameFor(r),
+        id: k, name: nameFor(r),
         campaign_id: r.campaign_id, adset_id: r.adset_id, ad_id: r.ad_id,
         account_id: r.account_id, account_name: r.account_name,
-        impressions: 0, clicks: 0, reach: 0, frequency: 0,
-        spend: 0, cpm: 0, cpc: 0, ctr: 0,
-        actions: [], cost_per_action_type: [], purchase_roas: []
+        impressions: 0, clicks: 0, reach: 0, frequency: 0, spend: 0,
+        actions: [], cost_per_action_type: []
       };
       cur.impressions += Number(r.impressions || 0);
       cur.clicks      += Number(r.clicks || 0);
-      cur.reach        = Math.max(Number(cur.reach || 0), Number(r.reach || 0)); // reach único aprox
+      cur.reach        = Math.max(Number(cur.reach || 0), Number(r.reach || 0)); // aprox de reach único
       cur.spend       += Number(r.spend || 0);
-
-      // recalcular métricas derivadas al final
-      cur.actions = mergeActions(cur.actions, r.actions || []);
-      cur.cost_per_action_type = mergeCPAT(cur.cost_per_action_type, r.cost_per_action_type || []);
-      if (Array.isArray(r.purchase_roas) && r.purchase_roas.length) {
-        cur.purchase_roas = [{ value: Number(r.purchase_roas[0].value || 0) }]; // aprox: última
-      }
+      if (Array.isArray(r.actions)) cur.actions = cur.actions.concat(r.actions);
+      if (Array.isArray(r.cost_per_action_type)) cur.cost_per_action_type = cur.cost_per_action_type.concat(r.cost_per_action_type);
       map.set(k, cur);
     }
 
-    const rows = [...map.values()].map(r => {
-      // derivadas
-      r.cpm = r.impressions > 0 ? (r.spend / (r.impressions / 1000)) : 0;
-      r.cpc = r.clicks > 0 ? (r.spend / r.clicks) : 0;
-      r.ctr = r.impressions > 0 ? ((r.clicks / r.impressions) * 100) : 0;
+    const rowsAll = [...map.values()].map(r => {
+      const impressions = r.impressions;
+      const clicks = r.clicks;
+      const spend = r.spend;
+      const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+      const cpm = impressions > 0 ? (spend / (impressions / 1000)) : 0;
+      const cpc = clicks > 0 ? (spend / clicks) : 0;
 
-      const resk = pickResultRow(r, objective);
-      return { 
+      let results = 0, cost_per_result = null, roas = null;
+      if (objective === 'leads') {
+        const leads = (r.actions || []).find(a => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped');
+        results = leads ? Number(leads.value || 0) : 0;
+        const cpl = (r.cost_per_action_type || []).find(a => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped');
+        cost_per_result = cpl ? Number(cpl.value || 0) : (results > 0 ? spend / results : null);
+      } else if (objective === 'alcance' || objective === 'reach') {
+        results = Number(r.reach || 0);
+        cost_per_result = results > 0 ? spend / results : null;
+      } else {
+        const purchases = (r.actions || []).find(a => a.action_type === 'purchase');
+        results = purchases ? Number(purchases.value || 0) : 0;
+        const cpa = (r.cost_per_action_type || []).find(a => a.action_type === 'purchase');
+        cost_per_result = cpa ? Number(cpa.value || 0) : (results > 0 ? spend / results : null);
+        // roas permanece null (no pedimos purchase_roas para evitar 400)
+      }
+
+      return {
         id: r.id, name: r.name,
         campaign_id: r.campaign_id, adset_id: r.adset_id, ad_id: r.ad_id,
         account_id: r.account_id, account_name: r.account_name,
-        impressions: r.impressions, clicks: r.clicks, reach: r.reach,
-        frequency: r.frequency, // mantener si lo necesitas más adelante
-        spend: r.spend, cpm: r.cpm, cpc: r.cpc, ctr: r.ctr,
-        results: resk.results, cost_per_result: resk.cost_per_result, roas: resk.roas
+        impressions, clicks, reach: r.reach, frequency: r.frequency,
+        spend, cpm, cpc, ctr,
+        results, cost_per_result, roas
       };
     });
 
-    const filtered = search
-      ? rows.filter(r => (r.name || '').toLowerCase().includes(search))
-      : rows;
+    // Filtro / orden / paginación
+    const filtered = search ? rowsAll.filter(r => (r.name || '').toLowerCase().includes(search)) : rowsAll;
+    const [sField, sDir='desc'] = String(sort).split(':');
+    const mul = sDir === 'asc' ? 1 : -1;
+    filtered.sort((a,b)=> (Number(a[sField]) - Number(b[sField])) * mul);
 
-    const sorted = sortRows(filtered, sort);
-    const total = sorted.length;
+    const total = filtered.length;
     const start = (page - 1) * page_size;
-    const paged = sorted.slice(start, start + page_size);
+    const paged = filtered.slice(start, start + page_size);
 
-    res.json({
-      account_id: accountId,
-      level,
-      objective,
-      total,
-      page,
-      page_size,
-      rows: paged
-    });
+    return res.json({ account_id: accountId, level, objective, total, page, page_size, rows: paged });
   } catch (err) {
-    console.error('meta/table error:', err?.response?.data || err.message);
+    const g = err?.response?.data;
     const status = err?.response?.status || 500;
+    console.error('meta/table fatal error:', g || err.message);
     return res.status(status).json({
-      error: 'meta_table_failed',
-      details: err?.response?.data || err.message,
+      error: g?.error?.message || err.message || 'meta_table_failed',
+      details: g || err.message,
       rows: [], total: 0, page: 1, page_size: 25
     });
   }
