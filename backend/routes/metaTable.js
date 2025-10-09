@@ -15,7 +15,6 @@ const APP_SECRET = process.env.FACEBOOK_APP_SECRET || '';
 /* ------------------------- helpers ------------------------- */
 const normActId = (s = '') => s.toString().replace(/^act_/, '').trim();
 const toActId   = (s = '') => (s ? `act_${normActId(s)}` : '');
-
 const makeAppSecretProof = (accessToken) =>
   APP_SECRET ? crypto.createHmac('sha256', APP_SECRET).update(accessToken).digest('hex') : null;
 
@@ -40,52 +39,50 @@ async function getMetaAuth(req) {
   }
 }
 
-/** Campos por objetivo (con modo mínimo para fallback de errores 400) */
+/** Campos por objetivo (con modo mínimo para retry 400) */
 function fieldsFor(objective, minimal = false) {
   const base = [
     'account_id','account_name',
     'campaign_id','campaign_name',
     'adset_id','adset_name',
     'ad_id','ad_name',
-    'spend','impressions','clicks','reach','frequency','cpm','cpc','ctr'
+    'spend','impressions','clicks','reach','frequency','cpm','cpc','ctr',
+    'link_clicks'                         // ← clics en el enlace
   ];
   if (!minimal) {
     if (objective === 'leads') {
       base.push('actions','cost_per_action_type');
-    } else if (objective === 'ventas') {
-      base.push('actions','cost_per_action_type'); // 'purchase_roas' provoca 400 a veces
+    } else {
+      // ventas/alcance: mantenemos actions para LPV y purchases; sin purchase_roas
+      base.push('actions','cost_per_action_type');
     }
   }
   return base.join(',');
 }
 
-/* ------------------ util genérica de paginación ------------------ */
+/* ------------------ util de paginación genérica ------------------ */
 async function fetchAllPaged(url, baseParams, { timeout = 30000 } = {}) {
   let results = [];
   let params = { ...baseParams };
-  // límite alto pero seguro (Meta suele topear ~500)
   if (!('limit' in params)) params.limit = 500;
 
-  for (let i = 0; i < 50; i++) { // corta por seguridad
+  for (let i = 0; i < 50; i++) {
     const { data } = await axios.get(url, { params, timeout });
     const chunk = Array.isArray(data?.data) ? data.data : [];
     results = results.concat(chunk);
-
-    const next = data?.paging?.next;
     const curs = data?.paging?.cursors?.after;
-    if (!next || !curs) break;
+    if (!curs) break;
     params.after = curs;
   }
   return results;
 }
 
-/** Llamada a /insights (paginada) */
+/** Insights paginados */
 async function fetchAllInsights({ accountId, token, level, objective, date_preset, since, until, minimal = false, appsecret_proof }) {
   const fields = fieldsFor(objective, minimal);
   const url = `${FB_GRAPH}/${toActId(accountId)}/insights`;
   const params = {
-    level,
-    fields,
+    level, fields,
     time_increment: 'all_days',
     action_report_time: 'conversion',
     access_token: token,
@@ -93,24 +90,28 @@ async function fetchAllInsights({ accountId, token, level, objective, date_prese
   };
   if (date_preset) params.date_preset = date_preset;
   else if (since && until) params.time_range = JSON.stringify({ since, until });
-
   return await fetchAllPaged(url, params);
 }
 
-/** Listado completo de entidades por nivel (con nombre y estado) */
+/** Listado completo + estado + presupuesto + fechas */
 async function fetchEntitiesWithStatus({ accountId, token, level, appsecret_proof }) {
   const edge =
     level === 'campaign' ? 'campaigns' :
     level === 'adset'    ? 'adsets'    : 'ads';
 
-  const fields = 'id,name,status,effective_status,configured_status';
+  const fields =
+    level === 'campaign'
+      ? 'id,name,status,effective_status,configured_status,start_time,stop_time,lifetime_budget'
+      : level === 'adset'
+        ? 'id,name,status,effective_status,configured_status,start_time,stop_time,daily_budget,lifetime_budget'
+        : 'id,name,status,effective_status,configured_status';
+
   const url = `${FB_GRAPH}/${toActId(accountId)}/${edge}`;
   const params = {
     fields,
     access_token: token,
     ...(appsecret_proof ? { appsecret_proof } : {})
   };
-
   return await fetchAllPaged(url, params);
 }
 
@@ -140,11 +141,15 @@ router.get('/table', async (req, res) => {
 
     const appsecret_proof = makeAppSecretProof(token);
 
-    // 1) Listado completo de entidades (incluye pausadas/sin delivery)
+    // Universe completo (aunque no haya delivery)
     const entities = await fetchEntitiesWithStatus({ accountId, token, level, appsecret_proof });
-    // Mapa base: todos con métricas en cero
+
     const base = new Map();
     for (const e of entities) {
+      const budget =
+        e.daily_budget != null ? Number(e.daily_budget || 0) :
+        e.lifetime_budget != null ? Number(e.lifetime_budget || 0) : 0;
+
       base.set(e.id, {
         id: e.id,
         name: e.name || '',
@@ -155,13 +160,20 @@ router.get('/table', async (req, res) => {
         account_name: undefined,
         impressions: 0, clicks: 0, reach: 0, frequency: 0,
         spend: 0, cpm: 0, cpc: 0, ctr: 0,
-        results: 0, cost_per_result: null, roas: null,
+        link_clicks: 0,
+        landing_page_views: 0,
+        cost_per_lpv: null,
+        results: 0,
+        cost_per_result: null,
         status: e.status || null,
-        effective_status: e.effective_status || null
+        effective_status: e.effective_status || null,
+        budget,
+        start_time: e.start_time || null,
+        stop_time: e.stop_time || null,
       });
     }
 
-    // 2) Insights paginados (solo entidades con delivery)
+    // Insights (paginados)
     let raw = [];
     try {
       raw = await fetchAllInsights({ accountId, token, level, objective, date_preset, since, until, minimal: false, appsecret_proof });
@@ -174,17 +186,19 @@ router.get('/table', async (req, res) => {
         raw = await fetchAllInsights({ accountId, token, level, objective, date_preset, since, until, minimal: true, appsecret_proof });
       } else {
         const st = (code === 190) ? 401 : status || 400;
-        return res.status(st).json({ error: message, details: g || message, rows: [], total: 0, page: 1, page_size: page_size });
+        return res.status(st).json({ error: message, details: g || message, rows: [], total: 0, page: 1, page_size });
       }
     }
 
-    // 3) Merge insights -> base (left join), acumulando métricas
+    // Merge insights -> base
     const keyFor  = (r) => (level === 'campaign') ? r.campaign_id : (level === 'adset') ? r.adset_id : r.ad_id;
+    const getAction = (arr = [], types = []) =>
+      Number((arr.find(a => types.includes(a?.action_type)) || {}).value || 0);
+
     for (const r of raw) {
       const id = keyFor(r);
       if (!id) continue;
       if (!base.has(id)) {
-        // si no vino en entities (raro), lo creamos
         base.set(id, {
           id,
           name: (level === 'campaign') ? r.campaign_name : (level === 'adset') ? r.adset_name : r.ad_name,
@@ -192,55 +206,53 @@ router.get('/table', async (req, res) => {
           account_id: r.account_id, account_name: r.account_name,
           impressions: 0, clicks: 0, reach: 0, frequency: 0,
           spend: 0, cpm: 0, cpc: 0, ctr: 0,
-          results: 0, cost_per_result: null, roas: null,
-          status: null, effective_status: null
+          link_clicks: 0, landing_page_views: 0, cost_per_lpv: null,
+          results: 0, cost_per_result: null,
+          status: null, effective_status: null,
+          budget: 0, start_time: null, stop_time: null
         });
       }
+
       const cur = base.get(id);
-      cur.name = cur.name || ( (level === 'campaign') ? r.campaign_name : (level === 'adset') ? r.adset_name : r.ad_name );
+      cur.name = cur.name || ((level === 'campaign') ? r.campaign_name : (level === 'adset') ? r.adset_name : r.ad_name);
 
       cur.impressions += Number(r.impressions || 0);
       cur.clicks      += Number(r.clicks || 0);
-      cur.reach        = Math.max(Number(cur.reach || 0), Number(r.reach || 0)); // reach único aprox
+      cur.reach        = Math.max(Number(cur.reach || 0), Number(r.reach || 0));
       cur.spend       += Number(r.spend || 0);
+      cur.link_clicks += Number(r.link_clicks || 0);
+
+      // LPV desde actions
+      const lpv = getAction(r.actions || [], ['landing_page_view']);
+      cur.landing_page_views += lpv;
 
       // derivadas
       cur.cpm = cur.impressions > 0 ? (cur.spend / (cur.impressions / 1000)) : 0;
       cur.cpc = cur.clicks > 0 ? (cur.spend / cur.clicks) : 0;
       cur.ctr = cur.impressions > 0 ? ((cur.clicks / cur.impressions) * 100) : 0;
+      cur.cost_per_lpv = cur.landing_page_views > 0 ? (cur.spend / cur.landing_page_views) : null;
 
       // resultados según objetivo
       if (objective === 'leads') {
-        const leads = (r.actions || []).find(a => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped');
-        const res = leads ? Number(leads.value || 0) : 0;
-        cur.results += res;
-        const cpl = (r.cost_per_action_type || []).find(a => a.action_type === 'lead' || a.action_type === 'onsite_conversion.lead_grouped');
-        cur.cost_per_result = cpl ? Number(cpl.value || 0) : (cur.results > 0 ? cur.spend / cur.results : null);
+        const leads = getAction(r.actions || [], ['lead','onsite_conversion.lead_grouped']);
+        cur.results += leads;
+        const cpl = getAction(r.cost_per_action_type || [], ['lead','onsite_conversion.lead_grouped']);
+        cur.cost_per_result = cpl || (cur.results > 0 ? (cur.spend / cur.results) : null);
       } else if (objective === 'alcance' || objective === 'reach') {
         cur.results = Number(cur.reach || 0);
-        cur.cost_per_result = cur.results > 0 ? cur.spend / cur.results : null;
+        cur.cost_per_result = cur.results > 0 ? (cur.spend / cur.results) : null;
       } else {
-        const purchases = (r.actions || []).find(a => a.action_type === 'purchase');
-        const res = purchases ? Number(purchases.value || 0) : 0;
-        cur.results += res;
-        const cpa = (r.cost_per_action_type || []).find(a => a.action_type === 'purchase');
-        cur.cost_per_result = cpa ? Number(cpa.value || 0) : (cur.results > 0 ? cur.spend / cur.results : null);
-        // roas lo dejamos null (evitamos purchase_roas por errores 400)
+        const purchases = getAction(r.actions || [], ['purchase']);
+        cur.results += purchases;
+        const cpa = getAction(r.cost_per_action_type || [], ['purchase']);
+        cur.cost_per_result = cpa || (cur.results > 0 ? (cur.spend / cur.results) : null);
       }
     }
 
-    // 4) A arreglo y filtros
+    // A arreglo + filtros
     let rowsAll = [...base.values()];
-
-    // filtro "solo activos" (estado efectivo)
-    if (only_active) {
-      rowsAll = rowsAll.filter(r => (r.effective_status || '').toUpperCase() === 'ACTIVE');
-    }
-
-    // búsqueda
-    if (search) {
-      rowsAll = rowsAll.filter(r => (r.name || '').toLowerCase().includes(search));
-    }
+    if (only_active) rowsAll = rowsAll.filter(r => (r.effective_status || '').toUpperCase() === 'ACTIVE');
+    if (search) rowsAll = rowsAll.filter(r => (r.name || '').toLowerCase().includes(search));
 
     // orden
     const [sField, sDir='desc'] = String(sort).split(':');
