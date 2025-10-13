@@ -31,6 +31,7 @@ const { publicCSP, shopifyCSP } = require('../middlewares/csp');
 const subscribeRouter = require('./routes/subscribe');
 const userRoutes = require('./routes/user');
 const auditsRoutes = require('./routes/audits');
+const stripeRouter = require('./routes/stripe');
 
 const metaInsightsRoutes = require('./routes/metaInsights');
 const metaAccountsRoutes = require('./routes/metaAccounts');
@@ -55,6 +56,8 @@ app.use(
 app.options(/.*/, cors());
 
 app.use('/connector/webhooks', express.raw({ type: 'application/json' }), webhookRoutes);
+
+app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -124,6 +127,7 @@ app.use('/auth/google', googleConnect);
 app.use('/auth/meta', metaAuthRoutes);
 app.use('/', privacyRoutes);
 app.use('/api/google/analytics', gaRouter);
+app.use('/api/stripe', stripeRouter);
 
 app.get('/', (req, res) => {
   const { shop } = req.query;
