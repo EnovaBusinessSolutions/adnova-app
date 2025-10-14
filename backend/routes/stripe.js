@@ -203,4 +203,34 @@ router.post('/webhook', (req, res) => {
   }
 });
 
+// --- DEBUG: estado de servidor/Stripe (temporal) ---
+router.get('/health', (req, res) => {
+  res.json({
+    mode: (process.env.STRIPE_SECRET_KEY || '').startsWith('sk_live_') ? 'live' :
+          (process.env.STRIPE_SECRET_KEY || '').startsWith('sk_test_') ? 'test' : 'unknown',
+    hasKey: !!process.env.STRIPE_SECRET_KEY,
+    prices: {
+      emprendedor: !!process.env.PRICE_ID_EMPRENDEDOR,
+      crecimiento: !!process.env.PRICE_ID_CRECIMIENTO,
+      pro: !!process.env.PRICE_ID_PRO,
+    },
+    urls: {
+      app: process.env.APP_URL || null,
+      success: process.env.STRIPE_SUCCESS_URL || (process.env.APP_URL && process.env.SUCCESS_PATH ? `${process.env.APP_URL}${process.env.SUCCESS_PATH}` : null),
+      cancel: process.env.STRIPE_CANCEL_URL || (process.env.APP_URL && process.env.CANCEL_PATH ? `${process.env.APP_URL}${process.env.CANCEL_PATH}` : null),
+    }
+  });
+});
+
+// Verifica que el price exista en Stripe (temporal)
+router.get('/check-price', async (req, res) => {
+  try {
+    const id = req.query.id || process.env.PRICE_ID_CRECIMIENTO;
+    const p = await (new (require('stripe'))(process.env.STRIPE_SECRET_KEY)).prices.retrieve(id);
+    res.json({ ok: true, id: p.id, active: p.active, currency: p.currency, unit_amount: p.unit_amount, product: p.product });
+  } catch (e) {
+    res.status(400).json({ ok: false, message: e.message, type: e.type, code: e.code });
+  }
+});
+
 module.exports = router;
