@@ -39,7 +39,6 @@ const PRICE_MAP = {
 
 // ---------- helpers ----------
 function successUrl() {
-  // Usa STRIPE_SUCCESS_URL si la tienes; si no, APP_URL + SUCCESS_PATH; si no, fallback
   return process.env.STRIPE_SUCCESS_URL
     ? process.env.STRIPE_SUCCESS_URL
     : (APP_URL && SUCCESS_PATH ? `${APP_URL}${SUCCESS_PATH}` : 'https://ai.adnova.digital/plans?status=success');
@@ -74,12 +73,11 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
     }
 
     // Reutilizar/crear Customer si tenemos modelo User
-    let customerId = undefined;
-    let userId = undefined;
+    let customerId;
+    let userId;
     if (User && req.user?._id) {
       const user = await User.findById(req.user._id);
       if (!user) return res.status(401).json({ error: 'Usuario no encontrado' });
-
       userId = String(user._id);
 
       if (user.stripeCustomerId) {
@@ -95,15 +93,18 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
       }
     }
 
-    const session = await stripe.checkout.sessions.create({
+    // Construimos opciones de Checkout
+    const base = {
       mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
-      // si tenemos customer, lo usamos; si no, que Stripe lo cree
-      ...(customerId ? { customer: customerId } : { customer_creation: 'always' }),
 
       allow_promotion_codes: true,
       billing_address_collection: 'required',
+
+      // ✅ mantenemos RFC/Tax ID
       tax_id_collection: { enabled: true },
+
+      // No sumaremos IVA adicional (ya lo controlas en precios inclusive)
       automatic_tax: { enabled: false },
 
       success_url: successUrl(),
@@ -113,11 +114,27 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
       metadata: { plan: plan || 'n/a', userId: userId || 'n/a', startedAt },
 
       customer_email: customer_email || undefined,
-    });
+    };
 
+    // 🔧 FIX: si ya existe customer, permitir que Checkout actualice nombre/dirección
+    // para habilitar correctamente tax_id_collection (evita el error visto en logs).
+    if (customerId) {
+      Object.assign(base, {
+        customer: customerId,
+        customer_update: {
+          name: 'auto',
+          address: 'auto',
+        },
+      });
+    } else {
+      // Si no hay customer aún, que Stripe lo cree durante Checkout
+      Object.assign(base, { customer_creation: 'always' });
+    }
+
+    const session = await stripe.checkout.sessions.create(base);
     return res.json({ url: session.url, sessionId: session.id });
+
   } catch (err) {
-    // LOG DETALLADO → revisa Render Logs para el motivo exacto
     console.error('❌ [stripe/checkout] error', {
       message: err?.message,
       type: err?.type,
@@ -134,15 +151,11 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
 });
 
 // =============== WEBHOOK ===============
-// IMPORTANTE: En tu index.js DEBES montar el raw ANTES del json:
-//   app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), webhookHandler)
-// Aquí solo validamos y despachamos.
 router.post('/webhook', (req, res) => {
   const sig = req.headers['stripe-signature'];
 
   let event;
   try {
-    // req.body DEBE ser Buffer (por express.raw montado en index)
     event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
   } catch (err) {
     console.error('⚠️ Firma de webhook inválida:', err.message);
