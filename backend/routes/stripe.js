@@ -131,6 +131,40 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
       Object.assign(base, { customer_creation: 'always' });
     }
 
+    // --- PREVALIDACIÓN DEL PRICE (da errores claros) ---
+let priceObj;
+try {
+  priceObj = await stripe.prices.retrieve(priceId);
+} catch (e) {
+  console.error('[checkout] price retrieve failed:', e.message);
+  return res.status(400).json({
+    error: 'PRICE_ID inválido para esta clave',
+    details: e.message
+  });
+}
+
+// Debe ser recurrente para modo "subscription"
+if (!priceObj.recurring) {
+  return res.status(400).json({
+    error: 'Este PRICE no es recurrente (one_time). Crea un price recurrente mensual para el plan Pro.'
+  });
+}
+
+// Opcional: asegurar que esté activo
+if (priceObj.active === false) {
+  return res.status(400).json({
+    error: 'El PRICE está inactivo en Stripe.'
+  });
+}
+
+// (Opcional) log corto para saber qué price se está usando
+console.log('[checkout] Using price', {
+  id: priceObj.id,
+  mode: (STRIPE_SECRET_KEY || '').startsWith('sk_live_') ? 'live' : 'test',
+  recurring: priceObj.recurring
+});
+
+
     const session = await stripe.checkout.sessions.create(base);
     return res.json({ url: session.url, sessionId: session.id });
 
