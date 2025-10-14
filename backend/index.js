@@ -55,12 +55,21 @@ app.use(
 );
 app.options(/.*/, cors());
 
+// 1) Webhooks Shopify (raw)
 app.use('/connector/webhooks', express.raw({ type: 'application/json' }), webhookRoutes);
 
-app.use('/api/stripe/webhook', express.raw({ type: 'application/json' }));
+// 2) Stripe: usar RAW **solo** en /api/stripe/webhook, y JSON normal para el resto
+app.use('/api/stripe', (req, res, next) => {
+  if (req.originalUrl === '/api/stripe/webhook') {
+    return express.raw({ type: 'application/json' })(req, res, next);
+  }
+  return express.json()(req, res, next);
+});
 
+// 3) Parsers globales (para todo lo demás)
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+
 
 app.use(publicCSP);
 
