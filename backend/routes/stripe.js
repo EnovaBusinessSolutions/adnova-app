@@ -37,6 +37,13 @@ const PRICE_MAP = {
   pro:         PRICE_ID_PRO,
 };
 
+// 🔁 price -> plan (para actualizar DB en el webhook)
+const PRICE_TO_PLAN = {
+  [PRICE_ID_EMPRENDEDOR]: 'emprendedor',
+  [PRICE_ID_CRECIMIENTO]: 'crecimiento',
+  [PRICE_ID_PRO]:         'pro',
+};
+
 // ---------- helpers ----------
 function successUrl() {
   return process.env.STRIPE_SUCCESS_URL
@@ -116,8 +123,7 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
       customer_email: customer_email || undefined,
     };
 
-    // 🔧 FIX: si ya existe customer, permitir que Checkout actualice nombre/dirección
-    // para habilitar correctamente tax_id_collection (evita el error visto en logs).
+    // 🔧 Si ya existe customer, permitir que Checkout actualice nombre/dirección
     if (customerId) {
       Object.assign(base, {
         customer: customerId,
@@ -131,39 +137,34 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
       Object.assign(base, { customer_creation: 'always' });
     }
 
-    // --- PREVALIDACIÓN DEL PRICE (da errores claros) ---
-let priceObj;
-try {
-  priceObj = await stripe.prices.retrieve(priceId);
-} catch (e) {
-  console.error('[checkout] price retrieve failed:', e.message);
-  return res.status(400).json({
-    error: 'PRICE_ID inválido para esta clave',
-    details: e.message
-  });
-}
+    // --- PREVALIDACIÓN DEL PRICE (errores claros) ---
+    let priceObj;
+    try {
+      priceObj = await stripe.prices.retrieve(priceId);
+    } catch (e) {
+      console.error('[checkout] price retrieve failed:', e.message);
+      return res.status(400).json({
+        error: 'PRICE_ID inválido para esta clave',
+        details: e.message
+      });
+    }
 
-// Debe ser recurrente para modo "subscription"
-if (!priceObj.recurring) {
-  return res.status(400).json({
-    error: 'Este PRICE no es recurrente (one_time). Crea un price recurrente mensual para el plan Pro.'
-  });
-}
+    // Debe ser recurrente para modo "subscription"
+    if (!priceObj.recurring) {
+      return res.status(400).json({
+        error: 'Este PRICE no es recurrente (one_time). Crea un price recurrente mensual.'
+      });
+    }
 
-// Opcional: asegurar que esté activo
-if (priceObj.active === false) {
-  return res.status(400).json({
-    error: 'El PRICE está inactivo en Stripe.'
-  });
-}
+    if (priceObj.active === false) {
+      return res.status(400).json({ error: 'El PRICE está inactivo en Stripe.' });
+    }
 
-// (Opcional) log corto para saber qué price se está usando
-console.log('[checkout] Using price', {
-  id: priceObj.id,
-  mode: (STRIPE_SECRET_KEY || '').startsWith('sk_live_') ? 'live' : 'test',
-  recurring: priceObj.recurring
-});
-
+    console.log('[checkout] Using price', {
+      id: priceObj.id,
+      mode: (STRIPE_SECRET_KEY || '').startsWith('sk_live_') ? 'live' : 'test',
+      recurring: priceObj.recurring
+    });
 
     const session = await stripe.checkout.sessions.create(base);
     return res.json({ url: session.url, sessionId: session.id });
@@ -185,7 +186,8 @@ console.log('[checkout] Using price', {
 });
 
 // =============== WEBHOOK ===============
-router.post('/webhook', (req, res) => {
+// IMPORTANTE: tu index.js ya aplica express.raw() SOLO en /api/stripe/webhook
+router.post('/webhook', async (req, res) => {
   const sig = req.headers['stripe-signature'];
 
   let event;
@@ -197,52 +199,74 @@ router.post('/webhook', (req, res) => {
   }
 
   try {
+    // Asegura el modelo (por si arriba no pudo requerirse)
+    if (!User) try { User = require('../models/User'); } catch {}
+
     switch (event.type) {
       case 'checkout.session.completed': {
-        const session = event.data.object;
-        console.log('✅ checkout.session.completed', {
-          session: session.id,
-          customer: session.customer,
-          email: session.customer_details?.email,
-          plan: session.metadata?.plan,
-        });
+        // Guardamos customerId si aún no existía
+        const s = event.data.object;
+        const customerId = typeof s.customer === 'string' ? s.customer : s.customer?.id;
+        const userId = s.metadata?.userId;
+        if (userId && customerId && User) {
+          await User.findByIdAndUpdate(userId, {
+            $set: { stripeCustomerId: customerId }
+          }).exec();
+        }
         break;
       }
-      case 'invoice.paid': {
-        const invoice = event.data.object;
-        console.log('💸 invoice.paid', {
-          invoice: invoice.id,
-          customer: invoice.customer,
-          subscription: invoice.subscription,
-          amount_paid: invoice.amount_paid,
-          currency: invoice.currency,
-        });
-        break;
-      }
-      case 'invoice.payment_failed': {
-        const invoice = event.data.object;
-        console.warn('⛔ invoice.payment_failed', {
-          invoice: invoice.id,
-          customer: invoice.customer,
-          subscription: invoice.subscription,
-        });
-        break;
-      }
+
       case 'customer.subscription.created':
       case 'customer.subscription.updated':
       case 'customer.subscription.deleted': {
         const sub = event.data.object;
-        console.log(`ℹ️ ${event.type}`, {
-          subscription: sub.id,
-          status: sub.status,
-          customer: sub.customer,
-          current_period_end: sub.current_period_end,
-        });
+        const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
+
+        // 1) obtener userId
+        let userId = sub.metadata?.userId;
+        if (!userId && customerId) {
+          try {
+            const cust = await stripe.customers.retrieve(customerId);
+            userId = cust?.metadata?.userId || null;
+          } catch {}
+        }
+        if (!userId || !User) break;
+
+        // 2) derivar plan a partir del price
+        const priceId = sub.items?.data?.[0]?.price?.id;
+        const plan = PRICE_TO_PLAN[priceId];
+
+        // 3) preparar update
+        const update = {
+          'subscription.status': sub.status,
+          'subscription.priceId': priceId || null,
+          'subscription.currentPeriodEnd': sub.current_period_end ? new Date(sub.current_period_end * 1000) : null,
+        };
+        if (plan) {
+          update['subscription.plan'] = plan; // opcional dentro del subdoc
+          update['plan'] = plan;              // ← tu bandera principal (gratis -> plan pagado)
+        }
+        if (customerId) update['stripeCustomerId'] = customerId;
+
+        await User.findByIdAndUpdate(userId, { $set: update }).exec();
         break;
       }
+
+      case 'invoice.paid': {
+        // Si quieres reforzar 'active' en cada renovación, puedes tocar aquí.
+        break;
+      }
+
+      case 'invoice.payment_failed': {
+        // Podrías notificar y tomar acciones si se acumulan fallos.
+        break;
+      }
+
       default:
-        console.log('📨 Evento no manejado:', event.type);
+        // no-op
+        break;
     }
+
     return res.sendStatus(200);
   } catch (err) {
     console.error('❌ Error manejando evento de webhook:', err);
@@ -274,7 +298,7 @@ router.get('/check-price', async (req, res) => {
   try {
     const id = req.query.id || process.env.PRICE_ID_CRECIMIENTO;
     const p = await (new (require('stripe'))(process.env.STRIPE_SECRET_KEY)).prices.retrieve(id);
-    res.json({ ok: true, id: p.id, active: p.active, currency: p.currency, unit_amount: p.unit_amount, product: p.product });
+    res.json({ ok: true, id: p.id, active: p.active, currency: p.currency, unit_amount: p.unit_amount, product: p.product, recurring: p.recurring || null });
   } catch (e) {
     res.status(400).json({ ok: false, message: e.message, type: e.type, code: e.code });
   }
