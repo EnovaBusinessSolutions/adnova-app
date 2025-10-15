@@ -11,6 +11,9 @@ const fs = require('fs');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
+const helmet = require('helmet');
+const compression = require('compression');
+
 
 require('./auth');
 
@@ -40,31 +43,47 @@ const metaTable = require('./routes/metaTable');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(
-  cors({
-    origin: [
-      'https://ai.adnova.digital',
-      /\.myshopify\.com$/,
-      'https://admin.shopify.com',
-      'http://localhost:3000',
-      'http://localhost:5173',
-      'http://127.0.0.1:5173',
-    ],
-    credentials: true,
-  })
-);
+app.disable('x-powered-by');
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
+app.use(compression());
+
+
+const ALLOWED_ORIGINS = [
+  'https://ai.adnova.digital',
+  'https://admin.shopify.com',
+  /^https?:\/\/[^/]+\.myshopify\.com$/i,
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+];
+
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // same-origin / curl
+    const ok = ALLOWED_ORIGINS.some(rule =>
+      rule instanceof RegExp ? rule.test(origin) : rule === origin
+    );
+    cb(ok ? null : new Error('CORS not allowed'), ok);
+  },
+  credentials: true,
+}));
 app.options(/.*/, cors());
+
 
 // 1) Webhooks Shopify (raw)
 app.use('/connector/webhooks', express.raw({ type: 'application/json' }), webhookRoutes);
 
 // 2) Stripe: usar RAW **solo** en /api/stripe/webhook, y JSON normal para el resto
 app.use('/api/stripe', (req, res, next) => {
-  if (req.originalUrl === '/api/stripe/webhook') {
+  if (req.path === '/webhook') {
     return express.raw({ type: 'application/json' })(req, res, next);
   }
   return express.json()(req, res, next);
 });
+
+
 
 // 3) Parsers globales (para todo lo demás)
 app.use(express.urlencoded({ extended: true }));
@@ -90,9 +109,10 @@ app.use(
     resave: false,
     saveUninitialized: false,
     cookie: {
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-      secure: process.env.NODE_ENV === 'production',
-    },
+  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+  secure: process.env.NODE_ENV === 'production',
+  httpOnly: true,
+},
   })
 );
 app.use(passport.initialize());
@@ -157,20 +177,28 @@ app.get('/api/health', (_req, res) => {
 
 const FROM = process.env.SMTP_FROM || process.env.SMTP_USER;
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: Number(process.env.SMTP_PORT) || 465,
-  secure: (Number(process.env.SMTP_PORT) || 465) === 465,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+let transporter = null;
+const HAS_SMTP = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
 
-transporter.verify((err) => {
-  if (err) console.error('❌ SMTP error:', err);
-  else console.log('✅ SMTP listo para enviar correo');
-});
+if (HAS_SMTP) {
+  transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: Number(process.env.SMTP_PORT) || 465,
+    secure: (Number(process.env.SMTP_PORT) || 465) === 465,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  });
+
+  transporter.verify((err) => {
+    if (err) console.error('❌ SMTP error:', err);
+    else console.log('✅ SMTP listo para enviar correo');
+  });
+} else {
+  console.warn('✉️  SMTP no configurado. Se omite verificación/envío de correo.');
+}
+
 
 app.post('/api/register', async (req, res) => {
   try {
@@ -222,13 +250,16 @@ app.post('/api/register', async (req, res) => {
 </table></td></tr></table></body></html>`;
         html = html.replace('{{YEAR}}', new Date().getFullYear());
 
-        await transporter.sendMail({
-          from: FROM,
-          to: email,
-          subject: 'Activa tu cuenta de Adnova AI',
-          text: 'Tu cuenta se creó con éxito. Ingresa en https://ai.adnova.digital/login',
-          html,
-        });
+        if (transporter) {
+  await transporter.sendMail({
+    from: FROM,
+    to: email,
+    subject: 'Activa tu cuenta de Adnova AI',
+    text: 'Tu cuenta se creó con éxito. Ingresa en https://ai.adnova.digital/login',
+    html,
+  });
+}
+
       } catch (mailErr) {
         console.error('✉️  SMTP fallo (registro OK):', mailErr?.message || mailErr);
       }
@@ -279,13 +310,16 @@ p{margin:0 0 18px 0;color:#F4F2FF;font-size:1.04rem;line-height:1.6;text-align:c
 </head>
 <body>...${''}</body></html>`;
 
-    await transporter.sendMail({
-      from: FROM,
-      to: user.email,
-      subject: 'Restablece tu contraseña · Adnova AI',
-      text: `Haz clic aquí para cambiar tu contraseña: ${resetUrl}`,
-      html,
-    });
+    if (transporter) {
+  await transporter.sendMail({
+    from: FROM,
+    to: user.email,
+    subject: 'Restablece tu contraseña · Adnova AI',
+    text: `Haz clic aquí para cambiar tu contraseña: ${resetUrl}`,
+    html,
+  });
+}
+
 
     res.json({ success: true });
   } catch (err) {
@@ -444,10 +478,11 @@ app.get('/auth/google/login/callback',
 );
 
 /* Estáticos (públicos) */
-app.use('/assets', express.static(path.join(__dirname, '../public/landing/assets')));
-app.use('/assets', express.static(path.join(__dirname, '../public/support/assets')));
-app.use('/assets', express.static(path.join(__dirname, '../public/plans/assets')));
+app.use('/landing-assets', express.static(path.join(__dirname, '../public/landing/assets')));
+app.use('/support-assets', express.static(path.join(__dirname, '../public/support/assets')));
+app.use('/plans-assets',   express.static(path.join(__dirname, '../public/plans/assets')));
 app.use(express.static(path.join(__dirname, '../public')));
+
 
 app.get('/connector/interface', shopifyCSP, (req, res) => {
   const { shop, host } = req.query;
@@ -465,28 +500,28 @@ app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
 
 app.get('/logout', (req, res) => {
   req.logout((err) => {
+    const clearAndReply = () => {
+      res.clearCookie('connect.sid', {
+        path: '/',
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        secure:   process.env.NODE_ENV === 'production',
+      });
+      return res.send(`
+        <script>
+          localStorage.removeItem('sessionToken');
+          sessionStorage.removeItem('sessionToken');
+          window.location.href = '/';
+        </script>
+      `);
+    };
     if (err) {
       console.error('Error al cerrar sesión:', err);
-      return res.send(`
-        <script>
-          localStorage.removeItem('sessionToken');
-          sessionStorage.removeItem('sessionToken');
-          window.location.href = '/';
-        </script>
-      `);
+      return clearAndReply();
     }
-    req.session.destroy(() => {
-      res.clearCookie('connect.sid', { path: '/' });
-      return res.send(`
-        <script>
-          localStorage.removeItem('sessionToken');
-          sessionStorage.removeItem('sessionToken');
-          window.location.href = '/';
-        </script>
-      `);
-    });
+    req.session.destroy(clearAndReply);
   });
 });
+  
 
 // DEBUG: devolver mi estado actual (plan, subscription)
 app.get('/api/me', async (req, res) => {
