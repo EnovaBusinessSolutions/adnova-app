@@ -488,6 +488,23 @@ app.get('/logout', (req, res) => {
   });
 });
 
+// DEBUG: devolver mi estado actual (plan, subscription)
+const User = require('./models/User');
+app.get('/api/me', async (req, res) => {
+  if (!req.isAuthenticated || !req.isAuthenticated()) {
+    return res.status(401).json({ authenticated:false });
+  }
+  try {
+    const u = await User.findById(req.user._id)
+      .select('email plan stripeCustomerId subscription')
+      .lean();
+    if (!u) return res.status(404).json({ authenticated:false });
+    res.json({ authenticated:true, ...u });
+  } catch (e) {
+    res.status(500).json({ authenticated:false, error: e.message });
+  }
+});
+
 app.use((req, res) => res.status(404).send('Página no encontrada'));
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);
