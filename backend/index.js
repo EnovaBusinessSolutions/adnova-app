@@ -489,7 +489,6 @@ app.get('/logout', (req, res) => {
 });
 
 // DEBUG: devolver mi estado actual (plan, subscription)
-const User = require('./models/User');
 app.get('/api/me', async (req, res) => {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
     return res.status(401).json({ authenticated:false });
