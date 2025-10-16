@@ -478,10 +478,11 @@ app.get('/auth/google/login/callback',
 );
 
 /* Estáticos (públicos) */
-app.use('/landing-assets', express.static(path.join(__dirname, '../public/landing/assets')));
-app.use('/support-assets', express.static(path.join(__dirname, '../public/support/assets')));
-app.use('/plans-assets',   express.static(path.join(__dirname, '../public/plans/assets')));
+app.use('/assets', express.static(path.join(__dirname, '../public/landing/assets')));
+app.use('/assets', express.static(path.join(__dirname, '../public/support/assets')));
+app.use('/assets', express.static(path.join(__dirname, '../public/plans/assets')));
 app.use(express.static(path.join(__dirname, '../public')));
+
 
 
 app.get('/connector/interface', shopifyCSP, (req, res) => {
