@@ -2,64 +2,102 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Pago cancelado · Adnova AI</title>
   <style>
     :root{
-      --background: 240 10% 3.9%;
-      --foreground: 0 0% 98%;
-      --card: 240 10% 7%;
-      --accent: 262 83% 58%;
-      --muted-foreground: 240 5% 64.9%;
-      --border: 240 3.7% 15.9%;
+      --bg:#0d081c;           /* fondo global */
+      --panel:#151026;        /* cards */
+      --ink:#F4F2FF;          /* texto principal */
+      --ink-2:#C9C3E7;        /* texto secundario */
+      --accent:#8b5cf6;       /* violeta */
+      --accent-2:#a78bfa;     /* violeta claro */
+      --muted:#221a3b;        /* bordes/surcos */
+      --warn:#f97316;
     }
     *{box-sizing:border-box}
-    html,body{height:100%}
+    html,body{height:100%;margin:0}
     body{
-      margin:0;
-      background:hsl(var(--background));
-      color:hsl(var(--foreground));
-      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif;
-    }
-    .scene{
-      position:fixed; inset:0;
       background:
-        radial-gradient(1000px 500px at 70% -10%, hsl(var(--accent)/.10) 0%, transparent 60%),
-        hsl(var(--background));
-      pointer-events:none;
+        radial-gradient(80vmax 60vmax at 20% 10%, rgba(139,92,246,.07), transparent 60%),
+        radial-gradient(60vmax 50vmax at 80% 0%, rgba(167,139,250,.06), transparent 70%),
+        var(--bg);
+      color:var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple Color Emoji","Segoe UI Emoji";
+      display:grid; place-items:center;
+      padding:24px;
     }
-    .wrap{ min-height:100%; display:grid; place-items:center; padding:28px 16px; }
     .card{
-      width:min(760px, 92vw);
-      background:hsl(var(--card));
-      border:1px solid hsl(var(--border));
-      border-radius:20px;
-      padding:28px;
-      box-shadow:0 10px 40px hsl(var(--accent)/.18);
+      width:min(820px, 92vw);
+      background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.02)), var(--panel);
+      border:1px solid rgba(255,255,255,.06);
+      border-radius:18px;
+      box-shadow:0 10px 40px rgba(139,92,246,.18);
+      padding:28px 28px 24px;
     }
-    h1{ margin:0 0 8px 0; font-size:clamp(22px, 2.6vw, 30px); font-weight:800; color:hsl(var(--accent)); }
-    p{ margin:0 0 18px 0; color:hsl(var(--muted-foreground)); }
-    .btns{ display:flex; gap:10px; flex-wrap:wrap; }
+    h1{margin:0 0 6px;font-weight:800;font-size:clamp(22px, 2.6vw, 30px);letter-spacing:-.02em}
+    .accent{color:#fecba1}
+    p.lead{margin:0 0 18px;color:var(--ink-2)}
+    .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px}
+    .kv{
+      flex:1 1 240px; min-height:54px; display:flex; align-items:center; justify-content:space-between;
+      background:rgba(255,255,255,.02); border:1px solid rgba(255,255,255,.08);
+      border-radius:12px; padding:14px 16px;
+    }
+    .k{color:var(--ink-2);font-weight:600}
+    .v{font-weight:700}
+    .badge{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:8px 12px; border-radius:999px; font-weight:700; font-size:14px;
+      background:rgba(249,115,22,.12); color:#fecba1; border:1px solid rgba(249,115,22,.35)
+    }
+    .actions{display:flex; gap:12px; margin-top:18px; flex-wrap:wrap}
     .btn{
-      appearance:none; border:none; cursor:pointer;
-      padding:12px 18px; border-radius:10px;
-      font-weight:800; letter-spacing:.2px; font-size:14px;
+      appearance:none; border:0; cursor:pointer; text-decoration:none;
+      background:linear-gradient(180deg, var(--accent), #6d28d9);
+      color:white; font-weight:800; padding:12px 18px; border-radius:12px;
+      box-shadow:0 8px 24px rgba(139,92,246,.35);
     }
-    .btn--primary{ color:white; background:hsl(var(--accent)) }
-    .btn--ghost{ color:hsl(var(--foreground)); background:transparent; border:1px solid hsl(var(--border)); }
+    .btn.secondary{
+      background:transparent; color:var(--ink);
+      border:1px solid rgba(255,255,255,.12)
+    }
+    .small{font-size:13px;color:var(--ink-2)}
+    .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace}
   </style>
 </head>
 <body>
-  <div class="scene" aria-hidden="true"></div>
-  <main class="wrap">
-    <section class="card">
-      <h1>Compra cancelada</h1>
-      <p>No se realizó ningún cargo. Puedes volver a intentar cuando quieras.</p>
-      <div class="btns">
-        <a href="/plans" class="btn btn--primary">Volver a planes</a>
-        <a href="/dashboard" class="btn btn--ghost">Ir al dashboard</a>
+  <main class="card">
+    <div class="badge" id="statusBadge">Pago cancelado</div>
+    <h1>Tu compra fue <span class="accent">cancelada</span></h1>
+    <p class="lead">No se realizó ningún cargo. Puedes intentarlo de nuevo cuando quieras.</p>
+
+    <div class="row">
+      <div class="kv">
+        <div class="k">Sesión</div>
+        <div class="v mono" id="sessInfo">–</div>
       </div>
-    </section>
+      <div class="kv">
+        <div class="k">Motivo</div>
+        <div class="v" id="reasonInfo">–</div>
+      </div>
+      <div class="kv">
+        <div class="k">Sesión de Stripe</div>
+        <div class="v mono" id="sessionIdInfo">–</div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <a class="btn" href="/plans">Volver a planes</a>
+      <a class="btn secondary" href="/dashboard">Ir al dashboard</a>
+      <span class="small" id="hint"></span>
+    </div>
   </main>
+
+  <!-- JS externo (CSP friendly) -->
+  <script src="/plans/cancel.js" defer></script>
+  <noscript>
+    <p class="small" style="color:#C9C3E7">Activa JavaScript para ver más detalles de la cancelación.</p>
+  </noscript>
 </body>
 </html>

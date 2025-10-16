@@ -1,73 +1,73 @@
 <!doctype html>
 <html lang="es">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Pago confirmado · Adnova AI</title>
-<style>
-  :root{
-    --bg: #0d081c;           /* fondo global */
-    --panel:#151026;         /* cards */
-    --ink:#F4F2FF;           /* texto principal */
-    --ink-2:#C9C3E7;         /* texto secundario */
-    --accent:#8b5cf6;        /* violeta */
-    --accent-2:#a78bfa;      /* violeta claro */
-    --muted:#221a3b;         /* bordes/surcos */
-    --ok:#22c55e;
-    --warn:#f97316;
-  }
-  *{box-sizing:border-box}
-  html,body{height:100%;margin:0}
-  body{
-    background:
-      radial-gradient(80vmax 60vmax at 20% 10%, rgba(139,92,246,.07), transparent 60%),
-      radial-gradient(60vmax 50vmax at 80% 0%, rgba(167,139,250,.06), transparent 70%),
-      var(--bg);
-    color:var(--ink);
-    font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple Color Emoji","Segoe UI Emoji";
-    display:grid; place-items:center;
-    padding:24px;
-  }
-  .card{
-    width: min(820px, 92vw);
-    background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.02)) , var(--panel);
-    border:1px solid rgba(255,255,255,.06);
-    border-radius:18px;
-    box-shadow: 0 10px 40px rgba(139,92,246,.18);
-    padding:28px 28px 24px;
-  }
-  h1{margin:0 0 6px;font-weight:800;font-size: clamp(22px, 2.6vw, 30px);letter-spacing:-.02em}
-  .accent{color:var(--accent-2)}
-  p.lead{margin:0 0 18px;color:var(--ink-2)}
-  .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px}
-  .kv{
-    flex:1 1 240px; min-height:54px; display:flex; align-items:center; justify-content:space-between;
-    background:rgba(255,255,255,.02); border:1px solid rgba(255,255,255,.08);
-    border-radius:12px; padding:14px 16px;
-  }
-  .k{color:var(--ink-2);font-weight:600}
-  .v{font-weight:700}
-  .badge{
-    display:inline-flex; align-items:center; gap:8px;
-    padding:8px 12px; border-radius:999px; font-weight:700; font-size:14px;
-    background:rgba(139,92,246,.15); color:var(--accent-2); border:1px solid rgba(139,92,246,.35)
-  }
-  .badge.warn{ background:rgba(249,115,22,.12); color:#fecba1; border-color:rgba(249,115,22,.35)}
-  .actions{display:flex; gap:12px; margin-top:18px; flex-wrap:wrap}
-  .btn{
-    appearance:none; border:0; cursor:pointer; text-decoration:none;
-    background:linear-gradient(180deg, var(--accent), #6d28d9);
-    color:white; font-weight:800; padding:12px 18px; border-radius:12px;
-    box-shadow: 0 8px 24px rgba(139,92,246,.35);
-  }
-  .btn.secondary{
-    background:transparent; color:var(--ink);
-    border:1px solid rgba(255,255,255,.12)
-  }
-  .small{font-size:13px;color:var(--ink-2)}
-  .ok{color:var(--ok);font-weight:800}
-  .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Pago confirmado · Adnova AI</title>
+  <style>
+    :root{
+      --bg:#0d081c;           /* fondo global */
+      --panel:#151026;        /* cards */
+      --ink:#F4F2FF;          /* texto principal */
+      --ink-2:#C9C3E7;        /* texto secundario */
+      --accent:#8b5cf6;       /* violeta */
+      --accent-2:#a78bfa;     /* violeta claro */
+      --muted:#221a3b;        /* bordes/surcos */
+      --ok:#22c55e;
+      --warn:#f97316;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0}
+    body{
+      background:
+        radial-gradient(80vmax 60vmax at 20% 10%, rgba(139,92,246,.07), transparent 60%),
+        radial-gradient(60vmax 50vmax at 80% 0%, rgba(167,139,250,.06), transparent 70%),
+        var(--bg);
+      color:var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple Color Emoji","Segoe UI Emoji";
+      display:grid; place-items:center;
+      padding:24px;
+    }
+    .card{
+      width:min(820px, 92vw);
+      background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.02)), var(--panel);
+      border:1px solid rgba(255,255,255,.06);
+      border-radius:18px;
+      box-shadow:0 10px 40px rgba(139,92,246,.18);
+      padding:28px 28px 24px;
+    }
+    h1{margin:0 0 6px;font-weight:800;font-size:clamp(22px, 2.6vw, 30px);letter-spacing:-.02em}
+    .accent{color:var(--accent-2)}
+    p.lead{margin:0 0 18px;color:var(--ink-2)}
+    .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px}
+    .kv{
+      flex:1 1 240px; min-height:54px; display:flex; align-items:center; justify-content:space-between;
+      background:rgba(255,255,255,.02); border:1px solid rgba(255,255,255,.08);
+      border-radius:12px; padding:14px 16px;
+    }
+    .k{color:var(--ink-2);font-weight:600}
+    .v{font-weight:700}
+    .badge{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:8px 12px; border-radius:999px; font-weight:700; font-size:14px;
+      background:rgba(139,92,246,.15); color:var(--accent-2); border:1px solid rgba(139,92,246,.35)
+    }
+    .badge.warn{ background:rgba(249,115,22,.12); color:#fecba1; border-color:rgba(249,115,22,.35)}
+    .actions{display:flex; gap:12px; margin-top:18px; flex-wrap:wrap}
+    .btn{
+      appearance:none; border:0; cursor:pointer; text-decoration:none;
+      background:linear-gradient(180deg, var(--accent), #6d28d9);
+      color:white; font-weight:800; padding:12px 18px; border-radius:12px;
+      box-shadow:0 8px 24px rgba(139,92,246,.35);
+    }
+    .btn.secondary{
+      background:transparent; color:var(--ink);
+      border:1px solid rgba(255,255,255,.12)
+    }
+    .small{font-size:13px;color:var(--ink-2)}
+    .ok{color:var(--ok);font-weight:800}
+    .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace}
+  </style>
 </head>
 <body>
   <main class="card">
@@ -76,101 +76,31 @@
     <p class="lead">No cierres esta pestaña. Suele tardar unos segundos mientras confirmamos con Stripe.</p>
 
     <div class="row">
-      <div class="kv"><div class="k">Sesión</div><div class="v mono" id="kSession">–</div></div>
-      <div class="kv"><div class="k">Mi plan detectado</div><div class="v" id="kPlan">–</div></div>
-      <div class="kv"><div class="k">Suscripción</div><div class="v mono" id="kSub">–</div></div>
+      <div class="kv">
+        <div class="k">Sesión</div>
+        <div class="v mono" id="sessInfo">–</div>
+      </div>
+      <div class="kv">
+        <div class="k">Mi plan detectado</div>
+        <div class="v" id="planInfo">–</div>
+      </div>
+      <div class="kv">
+        <div class="k">Suscripción</div>
+        <div class="v mono" id="subInfo">–</div>
+      </div>
     </div>
 
     <div class="actions">
-      <a class="btn" id="toDashboard" href="/dashboard">Ir al dashboard</a>
+      <a class="btn" href="/dashboard">Ir al dashboard</a>
       <a class="btn secondary" href="/plans">Volver a planes</a>
       <span class="small" id="hint"></span>
     </div>
   </main>
 
-<script>
-(() => {
-  // Detecta el backend. Si estás en Live Server/localhost, usa el dominio prod.
-  const here = location.origin;
-  const probablyLocal = /127\.0\.0\.1|localhost/i.test(here);
-  const API_BASE = probablyLocal ? 'https://ai.adnova.digital' : here;
-
-  const q = new URLSearchParams(location.search);
-  const sessionId = q.get('session_id');
-
-  const el = (id)=>document.getElementById(id);
-  const badge = el('statusBadge');
-  const kSession = el('kSession');
-  const kPlan = el('kPlan');
-  const kSub = el('kSub');
-  const hint = el('hint');
-
-  if (sessionId) kSession.textContent = sessionId;
-
-  async function getMe(){
-    try{
-      const r = await fetch(`${API_BASE}/api/me`, { credentials:'include' });
-      if (!r.ok) throw new Error(r.status+' '+r.statusText);
-      return await r.json();
-    }catch(e){
-      return { authenticated:false, error: e.message };
-    }
-  }
-
-  function showPending(msg){
-    badge.textContent = msg || 'Procesando pago…';
-    badge.classList.remove('warn');
-  }
-  function showWarn(msg){
-    badge.textContent = msg;
-    badge.classList.add('warn');
-  }
-  function showDone(){
-    badge.textContent = '¡Plan activado!';
-    badge.classList.remove('warn');
-  }
-
-  // Poll: esperamos a que el webhook actualice la BD (plan != 'gratis' & sub activa)
-  let tries = 0;
-  const MAX_TRIES = 20; // ~20 * 1.5s = 30s
-  async function poll(){
-    tries++;
-    const me = await getMe();
-
-    if (!me.authenticated){
-      showWarn('No hay sesión. Vuelve a iniciar sesión para ver tu plan.');
-      kPlan.textContent = '–';
-      hint.textContent = 'Si ya pagaste, inicia sesión y vuelve al dashboard.';
-      return;
-    }
-
-    // imprime datos
-    kPlan.textContent = me?.plan || me?.subscription?.plan || 'gratis';
-    const subId = me?.subscription?.id || me?.subscriptionId || '–';
-    kSub.textContent = subId;
-
-    const status = (me?.subscription?.status || '').toLowerCase();
-    const plan = (me?.plan || 'gratis').toLowerCase();
-
-    if (['active','trialing','past_due'].includes(status) || (plan !== 'gratis')) {
-      showDone();
-      hint.textContent = 'Actualizado. Puedes ir al dashboard.';
-      return;
-    }
-
-    if (tries < MAX_TRIES){
-      showPending('Confirmando con Stripe…');
-      setTimeout(poll, 1500);
-    }else{
-      showWarn('No pudimos confirmar todavía. Tu pago puede estar en proceso.');
-      hint.textContent = 'Puedes seguir a tu dashboard; se sincronizará en segundo plano.';
-    }
-  }
-
-  // empieza
-  showPending();
-  poll();
-})();
-</script>
+  <!-- JS externo (CSP friendly) -->
+  <script src="/plans/success.js" defer></script>
+  <noscript>
+    <p class="small" style="color:#C9C3E7">Activa JavaScript para ver el estado de tu suscripción.</p>
+  </noscript>
 </body>
 </html>
