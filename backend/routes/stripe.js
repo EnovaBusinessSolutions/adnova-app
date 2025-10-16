@@ -16,7 +16,7 @@ const {
   PRICE_ID_PRO,
 } = process.env;
 
-// Avisos (no detienen la app)
+// Avisos informativos
 if (!STRIPE_SECRET_KEY) console.warn('⚠️ Falta STRIPE_SECRET_KEY');
 if (!STRIPE_WEBHOOK_SECRET) console.warn('⚠️ Falta STRIPE_WEBHOOK_SECRET');
 ['PRICE_ID_EMPRENDEDOR','PRICE_ID_CRECIMIENTO','PRICE_ID_PRO'].forEach(k=>{
@@ -27,7 +27,7 @@ if (!SUCCESS_PATH || !CANCEL_PATH) console.warn('⚠️ Falta SUCCESS_PATH o CAN
 
 const stripe = new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' });
 
-// Intentamos usar tu modelo User (opcional)
+// Modelo User (opcional pero esperado)
 let User = null;
 try { User = require('../models/User'); } catch (_) {}
 
@@ -37,7 +37,7 @@ const PRICE_MAP = {
   pro:         PRICE_ID_PRO,
 };
 
-// price -> plan (para actualizar DB en el webhook)
+// price -> plan (para guardar en DB)
 const PRICE_TO_PLAN = {
   [PRICE_ID_EMPRENDEDOR]: 'emprendedor',
   [PRICE_ID_CRECIMIENTO]: 'crecimiento',
@@ -48,12 +48,12 @@ const PRICE_TO_PLAN = {
 function successUrl() {
   return process.env.STRIPE_SUCCESS_URL
     ? process.env.STRIPE_SUCCESS_URL
-    : (APP_URL && SUCCESS_PATH ? `${APP_URL}${SUCCESS_PATH}` : 'https://ai.adnova.digital/plans?status=success');
+    : (APP_URL && SUCCESS_PATH ? `${APP_URL}${SUCCESS_PATH}` : 'https://ai.adnova.digital/plans/success');
 }
 function cancelUrl() {
   return process.env.STRIPE_CANCEL_URL
     ? process.env.STRIPE_CANCEL_URL
-    : (APP_URL && CANCEL_PATH ? `${APP_URL}${CANCEL_PATH}` : 'https://ai.adnova.digital/plans');
+    : (APP_URL && CANCEL_PATH ? `${APP_URL}${CANCEL_PATH}` : 'https://ai.adnova.digital/plans/cancel.html');
 }
 function ensureAuth(req, res, next) {
   try {
@@ -89,6 +89,19 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
 
       if (user.stripeCustomerId) {
         customerId = user.stripeCustomerId;
+
+        // ✅ Backfill de metadata.userId (para que los webhooks puedan mapear usuario)
+        try {
+          const cust = await stripe.customers.retrieve(customerId);
+          const needUpdate = !cust?.metadata?.userId || cust.metadata.userId !== userId;
+          if (needUpdate) {
+            await stripe.customers.update(customerId, {
+              metadata: { ...(cust.metadata || {}), userId }
+            });
+          }
+        } catch (e) {
+          console.warn('No se pudo actualizar metadata del customer:', e.message);
+        }
       } else {
         const customer = await stripe.customers.create({
           email: user.email || customer_email,
@@ -141,12 +154,6 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
     if (priceObj.active === false) {
       return res.status(400).json({ error: 'El PRICE está inactivo en Stripe.' });
     }
-
-    console.log('[checkout] Using price', {
-      id: priceObj.id,
-      mode: (STRIPE_SECRET_KEY || '').startsWith('sk_live_') ? 'live' : 'test',
-      recurring: priceObj.recurring
-    });
 
     const session = await stripe.checkout.sessions.create(base);
     return res.json({ url: session.url, sessionId: session.id });
@@ -215,20 +222,17 @@ router.post('/webhook', async (req, res) => {
         const priceId = sub.items?.data?.[0]?.price?.id || null;
         const mappedPlan = priceId ? PRICE_TO_PLAN[priceId] : null;
 
-        // 3) update base (⬅️ aquí guardamos TODAS las fechas/flags útiles)
+        // 3) update base
         const update = {
-          'subscription.id': sub.id || null,
+          'subscription.id': sub.id,
           'subscription.status': status,
-          'subscription.priceId': priceId || null,
-          'subscription.currentPeriodStart': sub.current_period_start ? new Date(sub.current_period_start * 1000) : null,
-          'subscription.currentPeriodEnd':   sub.current_period_end   ? new Date(sub.current_period_end   * 1000) : null,
-          'subscription.cancelAtPeriodEnd':  !!sub.cancel_at_period_end,
-          'subscription.cancelAt':           sub.cancel_at   ? new Date(sub.cancel_at   * 1000) : null,
-          'subscription.canceledAt':         sub.canceled_at ? new Date(sub.canceled_at * 1000) : null,
+          'subscription.priceId': priceId,
+          'subscription.cancel_at_period_end': !!sub.cancel_at_period_end,
+          'subscription.currentPeriodEnd': sub.current_period_end ? new Date(sub.current_period_end * 1000) : null,
         };
         if (customerId) update['stripeCustomerId'] = customerId;
 
-        // 4) reglas de plan visibles en tu UI
+        // 4) reglas de plan
         if (['canceled', 'incomplete_expired', 'unpaid'].includes(status)) {
           update['plan'] = 'gratis';
           update['subscription.plan'] = 'gratis';
@@ -238,16 +242,6 @@ router.post('/webhook', async (req, res) => {
         }
 
         await User.findByIdAndUpdate(userId, { $set: update }).exec();
-        break;
-      }
-
-      case 'invoice.paid': {
-        // opcional
-        break;
-      }
-
-      case 'invoice.payment_failed': {
-        // opcional
         break;
       }
 
@@ -271,7 +265,6 @@ router.post('/portal', ensureAuth, async (req, res) => {
       return res.status(400).json({ error: 'Usuario sin stripeCustomerId' });
     }
 
-    // Puedes cambiar el return a /plans/cancel.html si prefieres esa página
     const returnUrl = `${process.env.PUBLIC_BASE_URL || 'https://ai.adnova.digital'}/plans/cancel.html`;
 
     const session = await stripe.billingPortal.sessions.create({
@@ -286,62 +279,84 @@ router.post('/portal', ensureAuth, async (req, res) => {
   }
 });
 
-// =============== SYNC (rellenar estado desde Stripe) ===============
+// =============== SYNC (pull desde Stripe) ===============
+// Sin expands profundos (evita error de "more than 4 levels").
 router.post('/sync', ensureAuth, async (req, res) => {
   try {
+    if (!User) return res.status(500).json({ ok:false, error: 'Modelo User no disponible' });
+
     const user = await User.findById(req.user._id);
-    if (!user?.stripeCustomerId) {
+    if (!user) return res.status(404).json({ ok:false, error: 'Usuario no encontrado' });
+    if (!user.stripeCustomerId) {
       return res.status(400).json({ ok:false, error:'Usuario sin stripeCustomerId' });
     }
 
-    const list = await stripe.subscriptions.list({
+    // Asegura metadata.userId en el customer (backfill silencioso)
+    try {
+      const cust = await stripe.customers.retrieve(user.stripeCustomerId);
+      if (!cust?.metadata?.userId || cust.metadata.userId !== String(user._id)) {
+        await stripe.customers.update(user.stripeCustomerId, {
+          metadata: { ...(cust.metadata || {}), userId: String(user._id) }
+        });
+      }
+    } catch (e) {
+      console.warn('sync: no pude backfillear metadata.userId:', e.message);
+    }
+
+    // Trae suscripciones (sin expand profundos)
+    const subs = await stripe.subscriptions.list({
       customer: user.stripeCustomerId,
       status: 'all',
-      expand: ['data.items.data.price.product'],
-      limit: 1
+      limit: 5,
     });
 
-    const sub = list.data?.[0] || null;
-    if (!sub) {
+    if (!subs?.data?.length) {
+      // Sin suscripciones: pásalo a gratis
       await User.findByIdAndUpdate(user._id, {
         $set: {
           plan: 'gratis',
-          'subscription.id': null,
           'subscription.status': 'canceled',
-          'subscription.priceId': null,
           'subscription.plan': 'gratis',
-          'subscription.currentPeriodStart': null,
+          'subscription.priceId': null,
           'subscription.currentPeriodEnd': null,
-          'subscription.cancelAtPeriodEnd': false,
-          'subscription.cancelAt': null,
-          'subscription.canceledAt': null,
+          'subscription.cancel_at_period_end': false,
         }
       }).exec();
-      return res.json({ ok:true, synced:false, reason:'no-subscription' });
+      return res.json({ ok:true, updated:true, reason:'no-subscriptions' });
     }
 
-    const priceId = sub.items?.data?.[0]?.price?.id || null;
-    const plan = PRICE_TO_PLAN[priceId] || user.plan;
+    // Escoge la más "reciente" / relevante (la 1a suele ser la activa)
+    const sub = subs.data[0];
+
     const status = (sub.status || '').toLowerCase();
+    const priceId = sub.items?.data?.[0]?.price?.id || null;
+    const mappedPlan = priceId ? PRICE_TO_PLAN[priceId] : null;
 
     const update = {
-      plan,
       'subscription.id': sub.id,
       'subscription.status': status,
-      'subscription.priceId': priceId || null,
-      'subscription.plan': plan || null,
-      'subscription.currentPeriodStart': sub.current_period_start ? new Date(sub.current_period_start * 1000) : null,
-      'subscription.currentPeriodEnd':   sub.current_period_end   ? new Date(sub.current_period_end   * 1000) : null,
-      'subscription.cancelAtPeriodEnd':  !!sub.cancel_at_period_end,
-      'subscription.cancelAt':           sub.cancel_at   ? new Date(sub.cancel_at   * 1000) : null,
-      'subscription.canceledAt':         sub.canceled_at ? new Date(sub.canceled_at * 1000) : null,
+      'subscription.priceId': priceId,
+      'subscription.cancel_at_period_end': !!sub.cancel_at_period_end,
+      'subscription.currentPeriodEnd': sub.current_period_end ? new Date(sub.current_period_end * 1000) : null,
     };
 
+    if (['canceled', 'incomplete_expired', 'unpaid'].includes(status)) {
+      update['plan'] = 'gratis';
+      update['subscription.plan'] = 'gratis';
+    } else if (['active', 'trialing', 'past_due'].includes(status) && mappedPlan) {
+      update['plan'] = mappedPlan;
+      update['subscription.plan'] = mappedPlan;
+    }
+
     await User.findByIdAndUpdate(user._id, { $set: update }).exec();
-    return res.json({ ok:true, synced:true, status, plan });
+
+    return res.json({ ok:true, updated:true, snapshot: {
+      status, priceId, cancel_at_period_end: !!sub.cancel_at_period_end,
+      currentPeriodEnd: sub.current_period_end || null, plan: update.plan || user.plan
+    }});
   } catch (e) {
     console.error('sync error:', e);
-    return res.status(500).json({ ok:false, error:e.message });
+    return res.status(500).json({ ok:false, error: e.message });
   }
 });
 
