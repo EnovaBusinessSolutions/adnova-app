@@ -16,7 +16,7 @@ const {
   PRICE_ID_PRO,
 } = process.env;
 
-// Avisos tempranos (no detienen la app)
+// Avisos (no detienen la app)
 if (!STRIPE_SECRET_KEY) console.warn('⚠️ Falta STRIPE_SECRET_KEY');
 if (!STRIPE_WEBHOOK_SECRET) console.warn('⚠️ Falta STRIPE_WEBHOOK_SECRET');
 ['PRICE_ID_EMPRENDEDOR','PRICE_ID_CRECIMIENTO','PRICE_ID_PRO'].forEach(k=>{
@@ -27,9 +27,9 @@ if (!SUCCESS_PATH || !CANCEL_PATH) console.warn('⚠️ Falta SUCCESS_PATH o CAN
 
 const stripe = new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' });
 
-// Intentamos usar tu modelo User si existe (no rompe si no está)
+// Intentamos usar tu modelo User (opcional)
 let User = null;
-try { User = require('../models/User'); } catch (_) { /* optional */ }
+try { User = require('../models/User'); } catch (_) {}
 
 const PRICE_MAP = {
   emprendedor: PRICE_ID_EMPRENDEDOR,
@@ -37,7 +37,7 @@ const PRICE_MAP = {
   pro:         PRICE_ID_PRO,
 };
 
-// 🔁 price -> plan (para actualizar DB en el webhook)
+// price -> plan (para actualizar DB en el webhook)
 const PRICE_TO_PLAN = {
   [PRICE_ID_EMPRENDEDOR]: 'emprendedor',
   [PRICE_ID_CRECIMIENTO]: 'crecimiento',
@@ -63,7 +63,7 @@ function ensureAuth(req, res, next) {
 }
 
 // =============== CHECKOUT ===============
-// Body válido: { plan: 'emprendedor'|'crecimiento'|'pro' } ó { priceId: 'price_...' }
+// Body: { plan: 'emprendedor'|'crecimiento'|'pro' } ó { priceId: 'price_...' }
 router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
   const startedAt = new Date().toISOString();
 
@@ -79,7 +79,7 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
       return res.status(400).json({ error: 'Plan o priceId inválido' });
     }
 
-    // Reutilizar/crear Customer si tenemos modelo User
+    // Reutilizar/crear Customer si tenemos User
     let customerId;
     let userId;
     if (User && req.user?._id) {
@@ -100,18 +100,13 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
       }
     }
 
-    // Construimos opciones de Checkout
     const base = {
       mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
 
       allow_promotion_codes: true,
       billing_address_collection: 'required',
-
-      // ✅ mantenemos RFC/Tax ID
       tax_id_collection: { enabled: true },
-
-      // No sumaremos IVA adicional (ya lo controlas en precios inclusive)
       automatic_tax: { enabled: false },
 
       success_url: successUrl(),
@@ -123,39 +118,26 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
       customer_email: customer_email || undefined,
     };
 
-    // 🔧 Si ya existe customer, permitir que Checkout actualice nombre/dirección
     if (customerId) {
       Object.assign(base, {
         customer: customerId,
-        customer_update: {
-          name: 'auto',
-          address: 'auto',
-        },
+        customer_update: { name: 'auto', address: 'auto' },
       });
     } else {
-      // Si no hay customer aún, que Stripe lo cree durante Checkout
       Object.assign(base, { customer_creation: 'always' });
     }
 
-    // --- PREVALIDACIÓN DEL PRICE (errores claros) ---
+    // Prevalidación del PRICE
     let priceObj;
     try {
       priceObj = await stripe.prices.retrieve(priceId);
     } catch (e) {
       console.error('[checkout] price retrieve failed:', e.message);
-      return res.status(400).json({
-        error: 'PRICE_ID inválido para esta clave',
-        details: e.message
-      });
+      return res.status(400).json({ error: 'PRICE_ID inválido para esta clave', details: e.message });
     }
-
-    // Debe ser recurrente para modo "subscription"
     if (!priceObj.recurring) {
-      return res.status(400).json({
-        error: 'Este PRICE no es recurrente (one_time). Crea un price recurrente mensual.'
-      });
+      return res.status(400).json({ error: 'Este PRICE no es recurrente (one_time). Crea un price recurrente mensual.' });
     }
-
     if (priceObj.active === false) {
       return res.status(400).json({ error: 'El PRICE está inactivo en Stripe.' });
     }
@@ -186,7 +168,7 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
 });
 
 // =============== WEBHOOK ===============
-// IMPORTANTE: tu index.js ya aplica express.raw() SOLO en /api/stripe/webhook
+// (index.js ya aplica express.raw() SOLO en /api/stripe/webhook)
 router.post('/webhook', async (req, res) => {
   const sig = req.headers['stripe-signature'];
 
@@ -199,19 +181,15 @@ router.post('/webhook', async (req, res) => {
   }
 
   try {
-    // Asegura el modelo (por si arriba no pudo requerirse)
     if (!User) try { User = require('../models/User'); } catch {}
 
     switch (event.type) {
       case 'checkout.session.completed': {
-        // Guardamos customerId si aún no existía
         const s = event.data.object;
         const customerId = typeof s.customer === 'string' ? s.customer : s.customer?.id;
         const userId = s.metadata?.userId;
         if (userId && customerId && User) {
-          await User.findByIdAndUpdate(userId, {
-            $set: { stripeCustomerId: customerId }
-          }).exec();
+          await User.findByIdAndUpdate(userId, { $set: { stripeCustomerId: customerId } }).exec();
         }
         break;
       }
@@ -222,7 +200,7 @@ router.post('/webhook', async (req, res) => {
         const sub = event.data.object;
         const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id;
 
-        // 1) obtener userId
+        // 1) userId
         let userId = sub.metadata?.userId;
         if (!userId && customerId) {
           try {
@@ -232,33 +210,41 @@ router.post('/webhook', async (req, res) => {
         }
         if (!userId || !User) break;
 
-        // 2) derivar plan a partir del price
-        const priceId = sub.items?.data?.[0]?.price?.id;
-        const plan = PRICE_TO_PLAN[priceId];
+        // 2) status y price/plan
+        const status = (sub.status || '').toLowerCase();
+        const priceId = sub.items?.data?.[0]?.price?.id || null;
+        const mappedPlan = priceId ? PRICE_TO_PLAN[priceId] : null;
 
-        // 3) preparar update
+        // 3) update base
         const update = {
-          'subscription.status': sub.status,
-          'subscription.priceId': priceId || null,
+          'subscription.id': sub.id,
+          'subscription.status': status,
+          'subscription.priceId': priceId,
+          'subscription.cancel_at_period_end': !!sub.cancel_at_period_end,
           'subscription.currentPeriodEnd': sub.current_period_end ? new Date(sub.current_period_end * 1000) : null,
         };
-        if (plan) {
-          update['subscription.plan'] = plan; // opcional dentro del subdoc
-          update['plan'] = plan;              // ← tu bandera principal (gratis -> plan pagado)
-        }
         if (customerId) update['stripeCustomerId'] = customerId;
+
+        // 4) reglas de plan
+        if (['canceled', 'incomplete_expired', 'unpaid'].includes(status)) {
+          update['plan'] = 'gratis';
+          update['subscription.plan'] = 'gratis';
+        } else if (['active', 'trialing', 'past_due'].includes(status) && mappedPlan) {
+          update['plan'] = mappedPlan;
+          update['subscription.plan'] = mappedPlan;
+        }
 
         await User.findByIdAndUpdate(userId, { $set: update }).exec();
         break;
       }
 
       case 'invoice.paid': {
-        // Si quieres reforzar 'active' en cada renovación, puedes tocar aquí.
+        // opcional
         break;
       }
 
       case 'invoice.payment_failed': {
-        // Podrías notificar y tomar acciones si se acumulan fallos.
+        // opcional
         break;
       }
 
@@ -274,7 +260,29 @@ router.post('/webhook', async (req, res) => {
   }
 });
 
-// --- DEBUG: estado de servidor/Stripe (temporal) ---
+// =============== BILLING PORTAL ===============
+router.post('/portal', ensureAuth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).lean();
+    if (!user?.stripeCustomerId) {
+      return res.status(400).json({ error: 'Usuario sin stripeCustomerId' });
+    }
+
+    const returnUrl = `${process.env.PUBLIC_BASE_URL || 'https://ai.adnova.digital'}/plans/cancel.html`;
+
+    const session = await stripe.billingPortal.sessions.create({
+      customer: user.stripeCustomerId,
+      return_url: returnUrl,
+    });
+
+    return res.json({ url: session.url });
+  } catch (e) {
+    console.error('portal error:', e);
+    return res.status(500).json({ error: 'No se pudo crear la sesión del portal' });
+  }
+});
+
+// --- DEBUG (opcionales) ---
 router.get('/health', (req, res) => {
   res.json({
     mode: (process.env.STRIPE_SECRET_KEY || '').startsWith('sk_live_') ? 'live' :
@@ -293,7 +301,6 @@ router.get('/health', (req, res) => {
   });
 });
 
-// Verifica que el price exista en Stripe (temporal)
 router.get('/check-price', async (req, res) => {
   try {
     const id = req.query.id || process.env.PRICE_ID_CRECIMIENTO;
