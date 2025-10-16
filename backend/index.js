@@ -540,6 +540,41 @@ app.get('/api/me', async (req, res) => {
   }
 });
 
+// --- DEBUG/DIAGNÓSTICO rápido (puedes dejarlas mientras cierras deploy) ---
+const PUBLIC_DIR = path.join(__dirname, '../public');
+
+app.get('/__ping', (_req, res) => {
+  const successExists = fs.existsSync(path.join(PUBLIC_DIR, 'plans', 'success.html'));
+  const cancelExists  = fs.existsSync(path.join(PUBLIC_DIR, 'plans', 'cancel.html'));
+  res.json({
+    ok: true,
+    cwd: __dirname,
+    successHtml: successExists,
+    cancelHtml:  cancelExists,
+    publicDir: PUBLIC_DIR,
+  });
+});
+
+app.get('/__ls-public', (_req, res) => {
+  const dir = path.join(PUBLIC_DIR, 'plans');
+  fs.readdir(dir, (err, files) => {
+    res.json({ dir, exists: !err, files: files || [], error: err?.message });
+  });
+});
+
+// --- Rutas explícitas de éxito/cancel ---
+app.get('/plans/success', (_req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'plans', 'success.html'));
+});
+
+app.get('/plans/cancel', (_req, res) => {
+  const candidate = path.join(PUBLIC_DIR, 'plans', 'cancel.html');
+  if (fs.existsSync(candidate)) return res.sendFile(candidate);
+  // fallback si aún no tienes cancel.html
+  res.redirect('/plans'); 
+});
+
+
 app.use((req, res) => res.status(404).send('Página no encontrada'));
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);
