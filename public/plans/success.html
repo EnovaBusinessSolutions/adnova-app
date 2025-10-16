@@ -4,103 +4,181 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Pago confirmado · Adnova AI</title>
+
+  <!-- Open Sans (si tu CSP bloquea Google Fonts, tomará el fallback sin romper estilos) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+
   <style>
     :root{
-      --bg:#0d081c;           /* fondo global */
-      --panel:#151026;        /* cards */
-      --ink:#F4F2FF;          /* texto principal */
-      --ink-2:#C9C3E7;        /* texto secundario */
-      --accent:#8b5cf6;       /* violeta */
-      --accent-2:#a78bfa;     /* violeta claro */
-      --muted:#221a3b;        /* bordes/surcos */
-      --ok:#22c55e;
-      --warn:#f97316;
+      --bg:#0e0b14;     /* background global */
+      --panel:#09090b;  /* tarjeta/contenedor */
+      --text:#ffffff;   /* texto primario */
+      --muted:#cfd0d4;  /* texto secundario sutil */
+      --accent:#6739bf; /* acento y CTA */
+      --line:#14141a;   /* bordes sutiles */
     }
-    *{box-sizing:border-box}
-    html,body{height:100%;margin:0}
+
+    /* Reset & base */
+    *{ box-sizing: border-box; }
+    html, body{ height:100%; margin:0; }
     body{
-      background:
-        radial-gradient(80vmax 60vmax at 20% 10%, rgba(139,92,246,.07), transparent 60%),
-        radial-gradient(60vmax 50vmax at 80% 0%, rgba(167,139,250,.06), transparent 70%),
-        var(--bg);
-      color:var(--ink);
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple Color Emoji","Segoe UI Emoji";
-      display:grid; place-items:center;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Open Sans", ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+      display:grid;
+      place-items:center;
       padding:24px;
     }
+
+    /* Card principal */
     .card{
-      width:min(820px, 92vw);
-      background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.02)), var(--panel);
-      border:1px solid rgba(255,255,255,.06);
-      border-radius:18px;
-      box-shadow:0 10px 40px rgba(139,92,246,.18);
-      padding:28px 28px 24px;
+      width:min(900px, 92vw);
+      background: var(--panel);
+      border:1px solid var(--line);
+      border-radius:16px;
+      padding:28px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
     }
-    h1{margin:0 0 6px;font-weight:800;font-size:clamp(22px, 2.6vw, 30px);letter-spacing:-.02em}
-    .accent{color:var(--accent-2)}
-    p.lead{margin:0 0 18px;color:var(--ink-2)}
-    .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px}
-    .kv{
-      flex:1 1 240px; min-height:54px; display:flex; align-items:center; justify-content:space-between;
-      background:rgba(255,255,255,.02); border:1px solid rgba(255,255,255,.08);
-      border-radius:12px; padding:14px 16px;
+
+    /* Encabezado */
+    .status{
+      display:flex;
+      align-items:center;
+      gap:12px;
+      margin-bottom:12px;
     }
-    .k{color:var(--ink-2);font-weight:600}
-    .v{font-weight:700}
     .badge{
-      display:inline-flex; align-items:center; gap:8px;
-      padding:8px 12px; border-radius:999px; font-weight:700; font-size:14px;
-      background:rgba(139,92,246,.15); color:var(--accent-2); border:1px solid rgba(139,92,246,.35)
+      display:inline-flex;
+      align-items:center;
+      padding:8px 12px;
+      font-size:13px;
+      font-weight:800;
+      letter-spacing:.2px;
+      border-radius:999px;
+      color:#fff;
+      background: var(--accent);
     }
-    .badge.warn{ background:rgba(249,115,22,.12); color:#fecba1; border-color:rgba(249,115,22,.35)}
-    .actions{display:flex; gap:12px; margin-top:18px; flex-wrap:wrap}
+    .badge.warn{
+      background:#8a3b19; /* tono cálido para advertencia */
+    }
+
+    h1{
+      margin:0 0 6px;
+      font-size: clamp(22px, 2.6vw, 30px);
+      font-weight:800;
+      letter-spacing:-.02em;
+      line-height:1.2;
+    }
+    .accent{ color: var(--accent); }
+    .lead{
+      margin:0 0 18px;
+      color: var(--muted);
+      font-size:15px;
+      line-height:1.6;
+    }
+
+    /* Grid de info */
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(3, minmax(0,1fr));
+      gap:12px;
+      margin-top:10px;
+    }
+    @media (max-width: 720px){
+      .grid{ grid-template-columns: 1fr; }
+    }
+
+    .kv{
+      border:1px solid var(--line);
+      border-radius:12px;
+      padding:14px 16px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      min-height:56px;
+      background: #0b0b0e; /* un poquito más claro que panel para distinguir */
+    }
+    .k{
+      color: var(--muted);
+      font-weight:600;
+      font-size:14px;
+    }
+    .v{
+      font-weight:800;
+      font-size:14px;
+      text-align:right;
+      word-break: break-word;
+    }
+    .mono{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size:13px;
+    }
+
+    /* Acciones */
+    .actions{
+      display:flex;
+      align-items:center;
+      gap:14px;
+      margin-top:22px;
+      flex-wrap:wrap;
+    }
     .btn{
-      appearance:none; border:0; cursor:pointer; text-decoration:none;
-      background:linear-gradient(180deg, var(--accent), #6d28d9);
-      color:white; font-weight:800; padding:12px 18px; border-radius:12px;
-      box-shadow:0 8px 24px rgba(139,92,246,.35);
+      appearance:none;
+      border:none;
+      cursor:pointer;
+      text-decoration:none;
+      background: var(--accent);
+      color:#fff;
+      font-weight:800;
+      letter-spacing:.2px;
+      padding:12px 18px;
+      border-radius:12px;
+      transition: transform .06s ease, box-shadow .2s ease, opacity .15s ease;
+      box-shadow: 0 10px 24px rgba(103,57,191,.35);
     }
-    .btn.secondary{
-      background:transparent; color:var(--ink);
-      border:1px solid rgba(255,255,255,.12)
+    .btn:hover{ transform: translateY(-1px); }
+    .btn:active{ transform: translateY(0); opacity:.92; }
+
+    .hint{
+      font-size:13px;
+      color: var(--muted);
     }
-    .small{font-size:13px;color:var(--ink-2)}
-    .ok{color:var(--ok);font-weight:800}
-    .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace}
   </style>
 </head>
 <body>
-  <main class="card">
-    <div class="badge" id="statusBadge">Procesando pago…</div>
-    <h1>¡Gracias! <span class="accent">Estamos activando tu plan…</span></h1>
-    <p class="lead">No cierres esta pestaña. Suele tardar unos segundos mientras confirmamos con Stripe.</p>
-
-    <div class="row">
-      <div class="kv">
-        <div class="k">Sesión</div>
-        <div class="v mono" id="sessInfo">–</div>
-      </div>
-      <div class="kv">
-        <div class="k">Mi plan detectado</div>
-        <div class="v" id="planInfo">–</div>
-      </div>
-      <div class="kv">
-        <div class="k">Suscripción</div>
-        <div class="v mono" id="subInfo">–</div>
-      </div>
+  <main class="card" aria-live="polite">
+    <div class="status">
+      <div class="badge" id="statusBadge">Procesando pago…</div>
     </div>
+
+    <h1>¡Gracias! <span class="accent">Estamos activando tu plan…</span></h1>
+    <p class="lead">No cierres esta pestaña. Esto toma unos segundos mientras confirmamos con Stripe.</p>
+
+    <section class="grid" aria-labelledby="info-heading">
+      <div class="kv" role="group" aria-label="Sesión">
+        <div class="k">Sesión</div>
+        <div class="v mono" id="kSession">–</div>
+      </div>
+      <div class="kv" role="group" aria-label="Plan detectado">
+        <div class="k">Mi plan detectado</div>
+        <div class="v" id="kPlan">–</div>
+      </div>
+      <div class="kv" role="group" aria-label="Estatus de suscripción">
+        <div class="k">Suscripción</div>
+        <div class="v mono" id="kSub">–</div>
+      </div>
+    </section>
 
     <div class="actions">
       <a class="btn" href="/dashboard">Ir al dashboard</a>
-      <a class="btn secondary" href="/plans">Volver a planes</a>
-      <span class="small" id="hint"></span>
+      <span class="hint" id="hint"></span>
     </div>
   </main>
 
-  <!-- JS externo (CSP friendly) -->
+  <!-- Tu JS externo (compatible con CSP) -->
   <script src="/plans/success.js" defer></script>
-  <noscript>
-    <p class="small" style="color:#C9C3E7">Activa JavaScript para ver el estado de tu suscripción.</p>
-  </noscript>
+  <noscript><p class="hint">Activa JavaScript para ver el estado de tu suscripción.</p></noscript>
 </body>
 </html>
