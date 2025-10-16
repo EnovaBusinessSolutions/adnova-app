@@ -215,17 +215,20 @@ router.post('/webhook', async (req, res) => {
         const priceId = sub.items?.data?.[0]?.price?.id || null;
         const mappedPlan = priceId ? PRICE_TO_PLAN[priceId] : null;
 
-        // 3) update base
+        // 3) update base (⬅️ aquí guardamos TODAS las fechas/flags útiles)
         const update = {
-          'subscription.id': sub.id,
+          'subscription.id': sub.id || null,
           'subscription.status': status,
-          'subscription.priceId': priceId,
-          'subscription.cancel_at_period_end': !!sub.cancel_at_period_end,
-          'subscription.currentPeriodEnd': sub.current_period_end ? new Date(sub.current_period_end * 1000) : null,
+          'subscription.priceId': priceId || null,
+          'subscription.currentPeriodStart': sub.current_period_start ? new Date(sub.current_period_start * 1000) : null,
+          'subscription.currentPeriodEnd':   sub.current_period_end   ? new Date(sub.current_period_end   * 1000) : null,
+          'subscription.cancelAtPeriodEnd':  !!sub.cancel_at_period_end,
+          'subscription.cancelAt':           sub.cancel_at   ? new Date(sub.cancel_at   * 1000) : null,
+          'subscription.canceledAt':         sub.canceled_at ? new Date(sub.canceled_at * 1000) : null,
         };
         if (customerId) update['stripeCustomerId'] = customerId;
 
-        // 4) reglas de plan
+        // 4) reglas de plan visibles en tu UI
         if (['canceled', 'incomplete_expired', 'unpaid'].includes(status)) {
           update['plan'] = 'gratis';
           update['subscription.plan'] = 'gratis';
@@ -268,6 +271,7 @@ router.post('/portal', ensureAuth, async (req, res) => {
       return res.status(400).json({ error: 'Usuario sin stripeCustomerId' });
     }
 
+    // Puedes cambiar el return a /plans/cancel.html si prefieres esa página
     const returnUrl = `${process.env.PUBLIC_BASE_URL || 'https://ai.adnova.digital'}/plans/cancel.html`;
 
     const session = await stripe.billingPortal.sessions.create({
@@ -279,6 +283,65 @@ router.post('/portal', ensureAuth, async (req, res) => {
   } catch (e) {
     console.error('portal error:', e);
     return res.status(500).json({ error: 'No se pudo crear la sesión del portal' });
+  }
+});
+
+// =============== SYNC (rellenar estado desde Stripe) ===============
+router.post('/sync', ensureAuth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user?.stripeCustomerId) {
+      return res.status(400).json({ ok:false, error:'Usuario sin stripeCustomerId' });
+    }
+
+    const list = await stripe.subscriptions.list({
+      customer: user.stripeCustomerId,
+      status: 'all',
+      expand: ['data.items.data.price.product'],
+      limit: 1
+    });
+
+    const sub = list.data?.[0] || null;
+    if (!sub) {
+      await User.findByIdAndUpdate(user._id, {
+        $set: {
+          plan: 'gratis',
+          'subscription.id': null,
+          'subscription.status': 'canceled',
+          'subscription.priceId': null,
+          'subscription.plan': 'gratis',
+          'subscription.currentPeriodStart': null,
+          'subscription.currentPeriodEnd': null,
+          'subscription.cancelAtPeriodEnd': false,
+          'subscription.cancelAt': null,
+          'subscription.canceledAt': null,
+        }
+      }).exec();
+      return res.json({ ok:true, synced:false, reason:'no-subscription' });
+    }
+
+    const priceId = sub.items?.data?.[0]?.price?.id || null;
+    const plan = PRICE_TO_PLAN[priceId] || user.plan;
+    const status = (sub.status || '').toLowerCase();
+
+    const update = {
+      plan,
+      'subscription.id': sub.id,
+      'subscription.status': status,
+      'subscription.priceId': priceId || null,
+      'subscription.plan': plan || null,
+      'subscription.currentPeriodStart': sub.current_period_start ? new Date(sub.current_period_start * 1000) : null,
+      'subscription.currentPeriodEnd':   sub.current_period_end   ? new Date(sub.current_period_end   * 1000) : null,
+      'subscription.cancelAtPeriodEnd':  !!sub.cancel_at_period_end,
+      'subscription.cancelAt':           sub.cancel_at   ? new Date(sub.cancel_at   * 1000) : null,
+      'subscription.canceledAt':         sub.canceled_at ? new Date(sub.canceled_at * 1000) : null,
+    };
+
+    await User.findByIdAndUpdate(user._id, { $set: update }).exec();
+    return res.json({ ok:true, synced:true, status, plan });
+  } catch (e) {
+    console.error('sync error:', e);
+    return res.status(500).json({ ok:false, error:e.message });
   }
 });
 
