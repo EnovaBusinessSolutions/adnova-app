@@ -3,22 +3,21 @@
 
 const express = require('express');
 const mongoose = require('mongoose');
-
 const router = express.Router();
 
+// === NUEVO: para guardar selección en el usuario
+const User = require('../models/User');
 
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-
 const normActId = (s = '') => s.toString().replace(/^act_/, '').trim();
 const toActId   = (s = '') => {
   const id = normActId(s);
   return id ? `act_${id}` : '';
 };
-
 
 let MetaAccount;
 try {
@@ -71,7 +70,7 @@ try {
   MetaAccount = mongoose.models.MetaAccount || model('MetaAccount', schema);
 }
 
-
+// LISTAR CUENTAS (ahora también devuelve `accounts` y `total`)
 router.get('/', requireAuth, async (req, res) => {
   try {
     const doc = await MetaAccount
@@ -92,9 +91,17 @@ router.get('/', requireAuth, async (req, res) => {
       };
     });
 
+    // === NUEVO: alias normalizado y total para el onboarding
+    const accounts = ad_accounts.map(a => ({
+      id: a.id || toActId(a.account_id),
+      name: a.name || a.id
+    }));
+
     return res.json({
       ok: true,
-      ad_accounts,
+      ad_accounts,                      // compatibilidad con código existente
+      accounts,                         // forma simple para selección
+      total: accounts.length,           // <--- NUEVO
       defaultAccountId: doc?.defaultAccountId || ad_accounts[0]?.account_id || null,
       objective: doc?.objective ?? null,
       scopes: Array.isArray(doc?.scopes) ? doc.scopes : [],
@@ -105,7 +112,6 @@ router.get('/', requireAuth, async (req, res) => {
     return res.status(500).json({ ok: false, error: 'LIST_ERROR' });
   }
 });
-
 
 router.get('/scopes', requireAuth, async (req, res) => {
   try {
@@ -127,7 +133,6 @@ router.get('/scopes', requireAuth, async (req, res) => {
     return res.status(500).json({ ok: false, error: 'SCOPES_ERROR' });
   }
 });
-
 
 router.get('/status', requireAuth, async (req, res) => {
   try {
@@ -153,7 +158,6 @@ router.get('/status', requireAuth, async (req, res) => {
   }
 });
 
-
 router.post('/objective', requireAuth, express.json(), async (req, res) => {
   try {
     const allowed = new Set(['ventas', 'alcance', 'leads']);
@@ -178,7 +182,6 @@ router.post('/objective', requireAuth, express.json(), async (req, res) => {
   }
 });
 
-
 router.post('/default-account', requireAuth, express.json(), async (req, res) => {
   try {
     const accountId = normActId(req.body?.accountId || req.body?.account_id || '');
@@ -196,6 +199,45 @@ router.post('/default-account', requireAuth, express.json(), async (req, res) =>
   } catch (e) {
     console.error('meta/default-account error:', e);
     return res.status(500).json({ ok: false, error: 'DEFAULT_ACCOUNT_SAVE_ERROR' });
+  }
+});
+
+// === NUEVO: Guardar selección de cuentas para el usuario autenticado
+router.post('/accounts/selection', requireAuth, express.json(), async (req, res) => {
+  try {
+    const { accountIds } = req.body;
+    if (!Array.isArray(accountIds)) {
+      return res.status(400).json({ ok: false, error: 'accountIds[] requerido' });
+    }
+
+    // Normaliza y deduplica con prefijo act_
+    const wanted = [...new Set(accountIds.map(toActId).filter(Boolean))];
+
+    // Valida que las cuentas existan para este usuario
+    const doc = await MetaAccount
+      .findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
+      .select('ad_accounts adAccounts')
+      .lean();
+
+    const raw = (doc?.adAccounts || doc?.ad_accounts || []);
+    const allowed = new Set(
+      raw.map(a => toActId(a.id || a.account_id || a.accountId))
+    );
+
+    const selected = wanted.filter(id => allowed.has(id));
+    if (selected.length === 0) {
+      return res.status(400).json({ ok: false, error: 'NO_VALID_ACCOUNTS' });
+    }
+
+    await User.updateOne(
+      { _id: req.user._id },
+      { $set: { selectedMetaAccounts: selected } }
+    );
+
+    return res.json({ ok: true, selected });
+  } catch (e) {
+    console.error('meta/accounts/selection error:', e);
+    return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
   }
 });
 

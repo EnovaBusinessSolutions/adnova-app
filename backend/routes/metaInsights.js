@@ -8,28 +8,16 @@ const mongoose = require('mongoose');
 
 const router = express.Router();
 
-
 const FB_VERSION = process.env.FACEBOOK_API_VERSION || 'v23.0';
 const FB_GRAPH   = `https://graph.facebook.com/${FB_VERSION}`;
 const APP_SECRET = process.env.FACEBOOK_APP_SECRET;
 
-
 const INSIGHT_FIELDS = [
-  'date_start',
-  'date_stop',
-  'spend',
-  'impressions',
-  'reach',
-  'clicks',
-  'ctr',
-  'cpc',
-  'actions',
-  'action_values',
+  'date_start','date_stop','spend','impressions','reach','clicks','ctr','cpc','actions','action_values',
 ].join(',');
 
 const ALLOWED_OBJECTIVES = new Set(['ventas', 'alcance', 'leads']);
 const ALLOWED_LEVELS     = new Set(['account', 'campaign', 'adset', 'ad']);
-
 
 let MetaAccount;
 try {
@@ -53,7 +41,7 @@ try {
 
       pages:            Array,
       scopes:           [String],
-      objective:        String, 
+      objective:        String,
       email:            String,
       name:             String,
       expiresAt:        Date,
@@ -62,7 +50,6 @@ try {
   );
   MetaAccount = mongoose.models.MetaAccount || mongoose.model('MetaAccount', schema);
 }
-
 
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
@@ -79,16 +66,8 @@ function parseRangeDays(rangeParam) {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 30;
 }
 
-function ymd(d) {
-  return d.toISOString().slice(0, 10);
-}
-
-function addDays(d, n) {
-  const x = new Date(d.getTime());
-  x.setUTCDate(x.getUTCDate() + n);
-  x.setUTCHours(0,0,0,0);
-  return x;
-}
+function ymd(d) { return d.toISOString().slice(0, 10); }
+function addDays(d, n) { const x = new Date(d.getTime()); x.setUTCDate(x.getUTCDate() + n); x.setUTCHours(0,0,0,0); return x; }
 
 function getAccountTimezone(metaAcc, rawAccountId) {
   try {
@@ -105,17 +84,10 @@ function getAccountTimezone(metaAcc, rawAccountId) {
 }
 
 function startOfDayTZ(timeZone, date = new Date()) {
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  });
+  const fmt = new Intl.DateTimeFormat('en-US', { timeZone, year:'numeric', month:'2-digit', day:'2-digit' });
   const parts = fmt.formatToParts(date);
   const obj = Object.fromEntries(parts.map(p => [p.type, p.value]));
-  const y = Number(obj.year);
-  const m = Number(obj.month);
-  const d = Number(obj.day);
+  const y = Number(obj.year), m = Number(obj.month), d = Number(obj.day);
   return new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
 }
 
@@ -162,10 +134,7 @@ function computeCompareRangesTZ(q, timeZone) {
     const endThisMonth   = addDays(startNextMonth, -1);
 
     if (preset === 'this_month') {
-      const curr = {
-        since: ymd(startThisMonth),
-        until: ymd(includeToday ? today00 : addDays(today00, -1))
-      };
+      const curr = { since: ymd(startThisMonth), until: ymd(includeToday ? today00 : addDays(today00, -1)) };
       const prevStart = new Date(Date.UTC(y, m - 2, 1, 0, 0, 0));
       const prevEnd   = addDays(startThisMonth, -1);
       const prev = { since: ymd(prevStart), until: ymd(prevEnd) };
@@ -191,9 +160,7 @@ function computeCompareRangesTZ(q, timeZone) {
     return 30;
   })();
 
-  const anchor = includeToday
-    ? startOfDayTZ(timeZone, new Date())
-    : addDays(startOfDayTZ(timeZone, new Date()), -1);
+  const anchor = includeToday ? startOfDayTZ(timeZone, new Date()) : addDays(startOfDayTZ(timeZone, new Date()), -1);
 
   const currUntil = anchor;
   const currSince = addDays(currUntil, -(days - 1));
@@ -208,25 +175,14 @@ function computeCompareRangesTZ(q, timeZone) {
   };
 }
 
-
 const PURCHASE_COUNT_PRIORITIES = [
-  'omni_purchase',
-  'offsite_conversion.fb_pixel_purchase',
-  'onsite_conversion.purchase',
-  'purchase',
+  'omni_purchase','offsite_conversion.fb_pixel_purchase','onsite_conversion.purchase','purchase',
 ];
 const PURCHASE_VALUE_PRIORITIES = [
-  'omni_purchase',
-  'offsite_conversion.fb_pixel_purchase',
-  'onsite_conversion.purchase',
-  'purchase',
+  'omni_purchase','offsite_conversion.fb_pixel_purchase','onsite_conversion.purchase','purchase',
 ];
 const LEAD_PRIORITIES = [
-  'omni_lead',
-  'offsite_conversion.fb_pixel_lead',
-  'offsite_conversion.fb.pixel_lead',
-  'onsite_conversion.lead_grouped',
-  'lead',
+  'omni_lead','offsite_conversion.fb_pixel_lead','offsite_conversion.fb.pixel_lead','onsite_conversion.lead_grouped','lead',
 ];
 
 function pickFirstByPriority(items, priorities) {
@@ -239,7 +195,6 @@ function pickFirstByPriority(items, priorities) {
   return 0;
 }
 
-
 function kpisVentas({ spend, clicks, impressions, revenue, purchases }) {
   const roas = spend > 0 ? revenue / spend : 0;
   const cpa  = purchases > 0 ? spend / purchases : 0;
@@ -250,8 +205,8 @@ function kpisVentas({ spend, clicks, impressions, revenue, purchases }) {
   return { ingresos: revenue, compras: purchases, valorPorCompra: aov, roas, cpa, cvr, ctr, gastoTotal: spend, cpc, clics: clicks, views: impressions, revenue };
 }
 function kpisAlcance({ spend, impressions, reach, clicks }) {
-  const cpm        = impressions > 0 ? (spend / impressions) * 1000 : 0;
-  const ctr        = impressions > 0 ? clicks / impressions : 0;
+  const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
+  const ctr = impressions > 0 ? clicks / impressions : 0;
   const frecuencia = reach > 0 ? impressions / reach : 0;
   return { reach, impressions, frecuencia, cpm, ctr, gastoTotal: spend, clics: clicks };
 }
@@ -268,46 +223,32 @@ function zeroKpis(objective) {
   return kpisVentas({ spend:0, clicks:0, impressions:0, revenue:0, purchases:0 });
 }
 
-
 async function fetchInsights({ accountId, accessToken, fields, level, dateParams }) {
   const baseUrl = `${FB_GRAPH}/act_${accountId}/insights`;
   const baseParams = {
     access_token: accessToken,
     appsecret_proof: appSecretProof(accessToken),
-    fields,
-    level,
-    time_increment: 1,
-    limit: 5000,
-    use_unified_attribution_setting: true,
-    action_report_time: 'conversion',
-    ...(dateParams.datePresetMode
-      ? { date_preset: dateParams.date_preset }
-      : { time_range: dateParams.time_range }),
+    fields, level, time_increment: 1, limit: 5000,
+    use_unified_attribution_setting: true, action_report_time: 'conversion',
+    ...(dateParams.datePresetMode ? { date_preset: dateParams.date_preset } : { time_range: dateParams.time_range }),
   };
 
   const rows = [];
-  let url = baseUrl;
-  let params = { ...baseParams };
-  let guards = 0;
-
+  let url = baseUrl, params = { ...baseParams }, guards = 0;
   while (url && guards < 10) {
     const { data } = await axios.get(url, { params });
     if (Array.isArray(data?.data)) rows.push(...data.data);
     const next = data?.paging?.next;
     if (!next) break;
-    url = next;
-    params = undefined;
-    guards += 1;
+    url = next; params = undefined; guards += 1;
   }
-
   return rows;
 }
-
 
 async function loadMetaAccount(userId){
   return await MetaAccount
     .findOne({ $or: [{ user: userId }, { userId }] })
-    .select('+access_token +token +longlivedToken +accessToken +longLivedToken')
+    .select('+access_token +token +longlivedToken +accessToken +longLivedToken defaultAccountId ad_accounts adAccounts')
     .lean();
 }
 
@@ -328,18 +269,16 @@ function resolveAccessToken(metaAcc, reqUser){
     null
   );
 }
-const normActId = (s = '') => String(s).replace(/^act_/, '');
+
+const normActId = (s = '') => String(s).replace(/^act_/, '').trim();
+
 function resolveAccountId(req, metaAcc){
   const q = req.query?.account_id && String(req.query.account_id);
   const fromDefault = metaAcc?.defaultAccountId;
   const list = normalizeAccountsList(metaAcc);
-  const fromList = list.length
-    ? normActId(list[0].id || list[0].account_id || '')
-    : null;
-
+  const fromList = list.length ? normActId(list[0].id || list[0].account_id || '') : null;
   return normActId(q || fromDefault || fromList || '');
 }
-
 
 function emptyResponse({ objective, timeZone, cmp, level, message }) {
   return {
@@ -359,81 +298,62 @@ function emptyResponse({ objective, timeZone, cmp, level, message }) {
   };
 }
 
-
+/* =========================
+ * INSIGHTS (con guardia por selección)
+ * ========================= */
 router.get('/', requireAuth, async (req, res) => {
   try {
     const fallbackTZ = 'America/Mexico_City';
 
-    
     const metaAcc = await loadMetaAccount(req.user._id);
     const rqObj   = String(req.query.objective || '').toLowerCase();
     const svObj   = String(metaAcc?.objective || '').toLowerCase();
-    const objective = ALLOWED_OBJECTIVES.has(rqObj)
-      ? rqObj
-      : (ALLOWED_OBJECTIVES.has(svObj) ? svObj : 'ventas');
+    const objective = ALLOWED_OBJECTIVES.has(rqObj) ? rqObj : (ALLOWED_OBJECTIVES.has(svObj) ? svObj : 'ventas');
 
-    
     const accessToken = resolveAccessToken(metaAcc || {}, req.user);
     const levelQ = String(req.query.level || '').toLowerCase();
     const level = ALLOWED_LEVELS.has(levelQ) ? levelQ : 'account';
 
     if (!metaAcc || !accessToken) {
       const cmp = computeCompareRangesTZ(req.query, fallbackTZ);
-      return res.json(emptyResponse({
-        objective,
-        timeZone: fallbackTZ,
-        cmp,
-        level,
-        message: 'META_NOT_CONNECTED'
-      }));
+      return res.json(emptyResponse({ objective, timeZone: fallbackTZ, cmp, level, message: 'META_NOT_CONNECTED' }));
     }
 
-    
     const accountId = resolveAccountId(req, metaAcc);
     if (!accountId) {
-      const tz = fallbackTZ; 
+      const tz = fallbackTZ;
       const cmp = computeCompareRangesTZ(req.query, tz);
-      return res.json(emptyResponse({
-        objective,
-        timeZone: tz,
-        cmp,
-        level,
-        message: 'NO_AD_ACCOUNT'
-      }));
+      return res.json(emptyResponse({ objective, timeZone: tz, cmp, level, message: 'NO_AD_ACCOUNT' }));
     }
 
-    
+    // === NUEVO: respetar selección guardada en User.selectedMetaAccounts
+    const selected = Array.isArray(req.user?.selectedMetaAccounts)
+      ? req.user.selectedMetaAccounts.map(normActId)
+      : [];
+    if (selected.length > 0 && !selected.includes(normActId(accountId))) {
+      return res.status(403).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
+    }
+
     const timeZone = getAccountTimezone(metaAcc, accountId);
     const cmp = computeCompareRangesTZ(req.query, timeZone);
-
-    
     const levelFinal = level;
 
-    
     const rows = await fetchInsights({
       accountId,
       accessToken,
       fields: INSIGHT_FIELDS,
       level: levelFinal,
-      dateParams: {
-        datePresetMode: false,
-        time_range: JSON.stringify({ since: cmp.current.since, until: cmp.current.until })
-      },
+      dateParams: { datePresetMode: false, time_range: JSON.stringify({ since: cmp.current.since, until: cmp.current.until }) },
     });
 
-   
     const rowsPrev = await fetchInsights({
       accountId,
       accessToken,
       fields: INSIGHT_FIELDS,
       level: levelFinal,
-      dateParams: {
-        datePresetMode: false,
-        time_range: JSON.stringify({ since: cmp.previous.since, until: cmp.previous.until })
-      },
+      dateParams: { datePresetMode: false, time_range: JSON.stringify({ since: cmp.previous.since, until: cmp.previous.until }) },
     });
 
-    
     let spend = 0, impressions = 0, reach = 0, clicks = 0, purchases = 0, revenue = 0, leadsCount = 0;
     const series = rows.map((r) => {
       const daySpend      = Number(r.spend || 0);
@@ -452,19 +372,9 @@ router.get('/', requireAuth, async (req, res) => {
       revenue     += dayRevenue;
       leadsCount  += dayLeads;
 
-      return {
-        date: r.date_start,
-        spend: daySpend,
-        impressions: dayImp,
-        reach: dayReach,
-        clicks: dayClicks,
-        purchases: dayPurchases,
-        revenue: dayRevenue,
-        leads: dayLeads,
-      };
+      return { date: r.date_start, spend: daySpend, impressions: dayImp, reach: dayReach, clicks: dayClicks, purchases: dayPurchases, revenue: dayRevenue, leads: dayLeads };
     });
 
-    
     let p_spend = 0, p_impressions = 0, p_reach = 0, p_clicks = 0, p_purchases = 0, p_revenue = 0, p_leads = 0;
     rowsPrev.forEach((r) => {
       p_spend       += Number(r.spend || 0);
@@ -476,7 +386,6 @@ router.get('/', requireAuth, async (req, res) => {
       p_leads       += pickFirstByPriority(r.actions,       LEAD_PRIORITIES);
     });
 
-    
     let kpis, prevKpis;
     if (objective === 'alcance') {
       kpis     = kpisAlcance({ spend, impressions, reach, clicks });
@@ -489,14 +398,10 @@ router.get('/', requireAuth, async (req, res) => {
       prevKpis = kpisVentas({ spend: p_spend, clicks: p_clicks, impressions: p_impressions, revenue: p_revenue, purchases: p_purchases });
     }
 
-    
     const deltas = {};
     for (const [k, v] of Object.entries(kpis)) {
-      const curr = Number(v);
-      const prev = Number(prevKpis?.[k]);
-      if (Number.isFinite(curr) && Number.isFinite(prev)) {
-        deltas[k] = prev !== 0 ? (curr - prev) / prev : (curr !== 0 ? 1 : 0);
-      }
+      const curr = Number(v), prev = Number(prevKpis?.[k]);
+      if (Number.isFinite(curr) && Number.isFinite(prev)) deltas[k] = prev !== 0 ? (curr - prev) / prev : (curr !== 0 ? 1 : 0);
     }
 
     return res.json({
@@ -508,35 +413,29 @@ router.get('/', requireAuth, async (req, res) => {
       prev_range: { since: cmp.previous.since, until: cmp.previous.until },
       is_partial: !!cmp.is_partial,
       level: levelFinal,
-      kpis,
-      deltas,
-      series,
+      kpis, deltas, series,
       cachedAt: new Date().toISOString(),
     });
   } catch (err) {
     const detail = err?.response?.data || err?.message || String(err);
     console.error('meta/insights error:', detail);
-    
+
     const fallbackTZ = 'America/Mexico_City';
     const cmp = computeCompareRangesTZ(req.query || {}, fallbackTZ);
     const rqObj = String(req.query?.objective || '').toLowerCase();
     const objective = ALLOWED_OBJECTIVES.has(rqObj) ? rqObj : 'ventas';
-    return res.json(emptyResponse({
-      objective,
-      timeZone: fallbackTZ,
-      cmp,
-      level: 'account',
-      message: 'META_INSIGHTS_ERROR'
-    }));
+    return res.json(emptyResponse({ objective, timeZone: fallbackTZ, cmp, level: 'account', message: 'META_INSIGHTS_ERROR' }));
   }
 });
 
-
+/* =========================
+ * ACCOUNTS — filtra por selección y ajusta default
+ * ========================= */
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
     const doc = await loadMetaAccount(req.user._id);
     const list = normalizeAccountsList(doc || {});
-    const accounts = list.map((a) => {
+    let accounts = list.map((a) => {
       const raw = String(a.id || a.account_id || '').replace(/^act_/, '');
       return {
         id: raw,
@@ -547,11 +446,28 @@ router.get('/accounts', requireAuth, async (req, res) => {
       };
     });
 
-    return res.json({
-      ok: true,
-      accounts,
-      defaultAccountId: (doc && doc.defaultAccountId) || accounts[0]?.id || null,
-    });
+    // === NUEVO: aplicar filtro por selección guardada (selectedMetaAccounts)
+    const selected = Array.isArray(req.user?.selectedMetaAccounts)
+      ? req.user.selectedMetaAccounts.map(s => normActId(s))
+      : [];
+    if (selected.length > 0) {
+      const allow = new Set(selected);
+      accounts = accounts.filter(a => allow.has(normActId(a.id)));
+    }
+
+    // Ajustar default si quedó fuera del filtro
+    let defaultAccountId = (doc && doc.defaultAccountId) || accounts[0]?.id || null;
+    if (selected.length > 0 && defaultAccountId && !selected.includes(normActId(defaultAccountId))) {
+      defaultAccountId = accounts[0]?.id || null;
+      if (defaultAccountId) {
+        await MetaAccount.updateOne(
+          { $or: [{ user: req.user._id }, { userId: req.user._id }] },
+          { $set: { defaultAccountId: normActId(defaultAccountId) } }
+        );
+      }
+    }
+
+    return res.json({ ok: true, accounts, defaultAccountId });
   } catch (e) {
     console.error('meta/insights/accounts error:', e);
     return res.json({ ok: true, accounts: [], defaultAccountId: null });

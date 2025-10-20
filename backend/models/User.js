@@ -7,37 +7,46 @@ const userSchema = new mongoose.Schema({
 
   onboardingComplete: { type: Boolean, default: false },
 
+  // Shopify
   shop:                 { type: String },
   shopifyConnected:     { type: Boolean, default: false },
   shopifyAccessToken:   { type: String },
   shopifyScopeHash:     { type: Number },
   shopifyScopeHashUpdatedAt: { type: Number },
 
+  // Google
   googleAccessToken:  { type: String },
   googleRefreshToken: { type: String },
   googleConnected:    { type: Boolean, default: false },
 
+  // Meta
   metaConnected:    { type: Boolean, default: false },
   metaAccessToken:  { type: String },
 
-  resetPasswordToken:  { type: String },
-  resetPasswordExpires:{ type: Date },
-  stripeCustomerId: { type: String }, 
+
+  selectedMetaAccounts:   { type: [String], default: [] },   
+  selectedGoogleAccounts: { type: [String], default: [] },   
+
+  // Recuperación y planes
+  resetPasswordToken:   { type: String },
+  resetPasswordExpires: { type: Date },
+
+  stripeCustomerId: { type: String },
   plan: {
     type: String,
-    enum: ['gratis', 'emprendedor', 'crecimiento', 'pro', 'enterprise'], 
+    enum: ['gratis', 'emprendedor', 'crecimiento', 'pro', 'enterprise'],
     default: 'gratis',
     index: true
   },
   planStartedAt: { type: Date, default: Date.now },
   subscription: {
-    status:            { type: String, default: 'inactive' }, 
+    status:            { type: String, default: 'inactive' },
     priceId:           { type: String },
     plan:              { type: String, enum: ['emprendedor','crecimiento','pro','enterprise'] },
     currentPeriodEnd:  { type: Date }
   }
 
-}, { timestamps: true }); 
+}, { timestamps: true });
 
 userSchema.index({ plan: 1 });
 
