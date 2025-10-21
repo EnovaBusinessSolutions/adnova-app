@@ -1,4 +1,4 @@
-<!DOCTYPE html> 
+<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
@@ -50,7 +50,6 @@
       </div>
     </div>
 
-    
     <div class="main-content">
       <div class="content-panel" id="step1-content">
         <h2>Conecta tus cuentas</h2>
@@ -59,7 +58,7 @@
         </p>
 
         <div class="connection-cards">
-          
+          <!-- Shopify -->
           <div class="connection-card">
             <div class="connection-details">
               <div class="connection-icon">
@@ -71,27 +70,27 @@
                 <span class="required-badge">Próximamente</span>
               </div>
             </div>
-            <!-- Botón Shopify bloqueado con tooltip (solo HTML) -->
-<div class="btn-tooltip-wrapper coming-soon">
-  <button
-    type="button"
-    class="btn-connect"
-    id="connect-shopify-btn"
-    aria-disabled="true"
-    aria-describedby="shopify-tooltip"
-    tabindex="-1"
-  >
-    Conectar
-  </button>
 
-          <div class="btn-tooltip" id="shopify-tooltip" role="tooltip">
-            <div class="btn-tooltip-title">Próximamente</div>
-             <div class="btn-tooltip-desc">Estamos habilitando la conexión nativa con Shopify.</div>
+            <!-- Botón Shopify bloqueado con tooltip -->
+            <div class="btn-tooltip-wrapper coming-soon">
+              <button
+                type="button"
+                class="btn-connect"
+                id="connect-shopify-btn"
+                aria-disabled="true"
+                aria-describedby="shopify-tooltip"
+                tabindex="-1"
+              >
+                Conectar
+              </button>
+
+              <div class="btn-tooltip" id="shopify-tooltip" role="tooltip">
+                <div class="btn-tooltip-title">Próximamente</div>
+                <div class="btn-tooltip-desc">Estamos habilitando la conexión nativa con Shopify.</div>
+              </div>
             </div>
-           </div>
           </div>
 
-          
           <div id="shopify-domain-step" class="shop-step step--hidden">
             <label for="shop-domain-input">Escribe el dominio de tu tienda:</label>
             <div class="shop-input-row">
@@ -104,94 +103,65 @@
             .step--hidden{display:none}
             .shop-step{margin-top:18px}
             .shop-input-row{display:flex;gap:8px;margin-top:6px}
-            #shop-domain-input{
-              flex:1;padding:10px 14px;border-radius:6px;border:1px solid #444;
-              background:#1e1e26;color:#fff;
-            }
-            #shop-domain-send{
-              padding:10px 20px;border:0;border-radius:6px;cursor:pointer;
-              background:#9a5bff;color:#fff;font-weight:600;
-            }
+            #shop-domain-input{flex:1;padding:10px 14px;border-radius:6px;border:1px solid #444;background:#1e1e26;color:#fff;}
+            #shop-domain-send{padding:10px 20px;border:0;border-radius:6px;cursor:pointer;background:#9a5bff;color:#fff;font-weight:600;}
             #shop-domain-send:hover{background:#8249e3}
           </style>
 
-          
-<div class="connection-card" id="google-card">
-  <div class="connection-details">
-    <div class="connection-icon">
-      <img
-        src="https://img.icons8.com/ios-filled/50/FFFFFF/google-logo.png"
-        alt="Google Analytics"
-        width="36"
-        height="36"
-      />
-    </div>
-    <div class="connection-info">
-      <h3>Google Analytics & Ads</h3>
-      <p>Importa datos de conversión y campañas</p>
-      <span class="optional-badge">Beta</span>
-    </div>
-  </div>
+          <!-- Google -->
+          <div class="connection-card" id="google-card">
+            <div class="connection-details">
+              <div class="connection-icon">
+                <img src="https://img.icons8.com/ios-filled/50/FFFFFF/google-logo.png" alt="Google Analytics" width="36" height="36"/>
+              </div>
+              <div class="connection-info">
+                <h3>Google Analytics & Ads</h3>
+                <p>Importa datos de conversión y campañas</p>
+                <span class="optional-badge">Beta</span>
+              </div>
+            </div>
 
-  
-  <button type="button" class="btn-connect" id="connect-google-btn">Conectar</button>
+            <button type="button" class="btn-connect" id="connect-google-btn">Conectar</button>
 
-  
-  <div id="google-obj">
-    <style>
-      
-      #google-card { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
-      #google-card .connection-details { flex:1 1 auto; }
-      #google-card #connect-google-btn { flex:0 0 auto; margin-left:auto; }
+            <div id="google-obj">
+              <style>
+                #google-card { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+                #google-card .connection-details { flex:1 1 auto; }
+                #google-card #connect-google-btn { flex:0 0 auto; margin-left:auto; }
+                #google-card #google-obj { flex-basis:100%; order:99; }
 
-      
-      #google-card #google-obj { flex-basis:100%; order:99; }
+                #google-obj #google-objective-step { display:none; margin-top:12px; }
+                #google-obj .objective-title { display:block; margin-bottom:8px; font-weight:600; }
+                #google-obj .objective-options { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+                #google-obj .option-chip{ border:1px solid #444; border-radius:10px; padding:8px 12px; background:#161616; color:#fff; display:inline-flex; align-items:center; gap:8px; cursor:pointer; user-select:none; transition:background .15s, border-color .15s;}
+                #google-obj .option-chip:hover { background:#1b1b1b; border-color:#555; }
+                #google-obj .option-chip input { accent-color:#8a5cff; }
+                #google-obj .btn-connect.connected { background:#1c8a4b !important; }
+                #google-obj .help { opacity:.75; margin-top:6px; font-size:.92rem; }
+              </style>
 
-      
-      #google-obj #google-objective-step { display:none; margin-top:12px; }
-      #google-obj .objective-title { display:block; margin-bottom:8px; font-weight:600; }
-      #google-obj .objective-options { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+              <div id="google-objective-step">
+                <label class="objective-title">¿Qué objetivo te interesa optimizar en Google?</label>
 
-      #google-obj .option-chip{
-        border:1px solid #444; border-radius:10px; padding:8px 12px;
-        background:#161616; color:#fff;
-        display:inline-flex; align-items:center; gap:8px;
-        cursor:pointer; user-select:none;
-        transition:background .15s, border-color .15s;
-      }
-      #google-obj .option-chip:hover { background:#1b1b1b; border-color:#555; }
-      #google-obj .option-chip input { accent-color:#8a5cff; }
+                <div class="objective-options">
+                  <label class="option-chip">
+                    <input type="radio" name="googleObjective" value="ventas" />Ventas
+                  </label>
+                  <label class="option-chip">
+                    <input type="radio" name="googleObjective" value="alcance" />Campañas de alcance
+                  </label>
+                  <label class="option-chip">
+                    <input type="radio" name="googleObjective" value="leads" />Mensajes / Formulario
+                  </label>
+                </div>
 
-      #google-obj .btn-connect.connected { background:#1c8a4b !important; }
-      #google-obj .help { opacity:.75; margin-top:6px; font-size:.92rem; }
-    </style>
+                <button id="save-google-objective-btn" class="btn-connect">Guardar objetivo</button>
+                <p class="help">Usaremos tu objetivo para personalizar el dashboard de Google.</p>
+              </div>
+            </div>
+          </div>
 
-    <div id="google-objective-step">
-      <label class="objective-title">¿Qué objetivo te interesa optimizar en Google?</label>
-
-      <div class="objective-options">
-        <label class="option-chip">
-          <input type="radio" name="googleObjective" value="ventas" />
-          Ventas
-        </label>
-        <label class="option-chip">
-          <input type="radio" name="googleObjective" value="alcance" />
-          Campañas de alcance
-        </label>
-        <label class="option-chip">
-          <input type="radio" name="googleObjective" value="leads" />
-          Mensajes / Formulario
-        </label>
-      </div>
-
-      <button id="save-google-objective-btn" class="btn-connect">Guardar objetivo</button>
-      <p class="help">Usaremos tu objetivo para personalizar el dashboard de Google.</p>
-    </div>
-  </div>
-</div>
-
-
-          
+          <!-- Meta -->
           <div class="connection-card" id="meta-card">
             <div class="connection-details">
               <div class="connection-icon">
@@ -215,11 +185,7 @@
                 #meta-obj #meta-objective-step { display:none; margin-top:12px; }
                 #meta-obj .objective-title { display:block; margin-bottom:8px; font-weight:600; }
                 #meta-obj .objective-options { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
-                #meta-obj .option-chip {
-                  border:1px solid #444; border-radius:10px; padding:8px 12px;
-                  background:#161616; color:#fff; display:inline-flex; align-items:center; gap:8px;
-                  cursor:pointer; user-select:none; transition:background .15s, border-color .15s;
-                }
+                #meta-obj .option-chip { border:1px solid #444; border-radius:10px; padding:8px 12px; background:#161616; color:#fff; display:inline-flex; align-items:center; gap:8px; cursor:pointer; user-select:none; transition:background .15s, border-color .15s; }
                 #meta-obj .option-chip:hover { background:#1b1b1b; border-color:#555; }
                 #meta-obj .option-chip input { accent-color:#8a5cff; }
                 #meta-obj .btn-connect.connected { background:#1c8a4b !important; }
@@ -231,16 +197,13 @@
 
                 <div class="objective-options">
                   <label class="option-chip">
-                    <input type="radio" name="metaObjective" value="ventas" />
-                    Ventas
+                    <input type="radio" name="metaObjective" value="ventas" />Ventas
                   </label>
                   <label class="option-chip">
-                    <input type="radio" name="metaObjective" value="alcance" />
-                    Campañas de alcance
+                    <input type="radio" name="metaObjective" value="alcance" />Campañas de alcance
                   </label>
                   <label class="option-chip">
-                    <input type="radio" name="metaObjective" value="leads" />
-                    Mensajes / Leads
+                    <input type="radio" name="metaObjective" value="leads" />Mensajes / Leads
                   </label>
                 </div>
 
@@ -258,6 +221,38 @@
     </div>
   </div>
 
+  <!-- ===================== -->
+  <!--  MODAL SELECCIÓN E2E  -->
+  <!-- ===================== -->
+  <style>
+    /* util mínima por si el CSS global no tiene .hidden */
+    .hidden{display:none!important}
+  </style>
+  <div id="account-select-modal" class="hidden fixed inset-0" style="position:fixed;left:0;top:0;right:0;bottom:0;z-index:9999;">
+    <!-- overlay -->
+    <div class="absolute inset-0" style="position:absolute;inset:0;background:rgba(0,0,0,.6);"></div>
+
+    <!-- panel -->
+    <div class="relative mx-auto my-10 w-full max-w-3xl rounded-2xl"
+         style="position:relative;margin:40px auto;background:#111217;border:1px solid #26273b;padding:24px;">
+      <h2 class="text-2xl" style="color:#e9e9f2;font-weight:800;margin-bottom:6px;">Selecciona tus cuentas</h2>
+      <p style="color:#a9aac7;margin-bottom:16px;">Elige con qué cuentas quieres trabajar en Adnova AI. Debes seleccionar al menos una por plataforma.</p>
+
+      <div id="asm-error" class="hidden" style="color:#ff7b7b;margin-bottom:10px;"></div>
+      <div id="asm-tabs" class="flex gap-2 mb-4"></div>
+      <div id="asm-body" class="space-y-8"></div>
+
+      <div class="flex justify-end gap-2 mt-6" style="display:flex;justify-content:flex-end;margin-top:16px;">
+        <button id="asm-save" class="rounded-xl px-4 py-2"
+                style="background:#7b5cff;color:white;font-weight:700;border-radius:12px;padding:10px 16px;opacity:.6;cursor:not-allowed;"
+                disabled>Guardar y continuar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- scripts -->
   <script type="module" src="/js/onboarding.js"></script>
+  <!-- NUEVO: lógica de modal inline para selección -->
+  <script src="/js/onboardingInlineSelect.js" defer></script>
 </body>
 </html>
