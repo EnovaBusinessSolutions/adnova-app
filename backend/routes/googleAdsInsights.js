@@ -249,9 +249,6 @@ async function listAccessibleCustomers(accessToken, managerId) {
   }
 }
 
-/* =========================
- * NUEVO: guardar selección del usuario
- * ========================= */
 router.post('/accounts/selection', requireAuth, express.json(), async (req, res) => {
   try {
     const { accountIds } = req.body;
@@ -262,42 +259,50 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
     // Normaliza y deduplica (sin guiones)
     const wanted = [...new Set(accountIds.map(normId).filter(Boolean))];
 
-    // Valida contra cuentas disponibles del usuario
+    // Busca las cuentas del usuario
     const ga = await GoogleAccount
       .findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
       .select('ad_accounts customers defaultCustomerId')
       .lean();
 
+    if (!ga) {
+      return res.status(404).json({ ok: false, error: 'GOOGLE_NOT_CONNECTED' });
+    }
+
+    // Construye set de cuentas disponibles
     const available = new Set(
-      (Array.isArray(ga?.ad_accounts) ? ga.ad_accounts : (ga?.customers || []))
+      (Array.isArray(ga?.ad_accounts) && ga.ad_accounts.length ? ga.ad_accounts : (ga?.customers || []))
         .map(a => normId(a.id))
     );
 
+    // Filtra las seleccionadas válidas
     const selected = wanted.filter(id => available.has(id));
     if (!selected.length) {
       return res.status(400).json({ ok: false, error: 'NO_VALID_ACCOUNTS' });
     }
 
+    // Guarda selección en el usuario
     await User.updateOne(
       { _id: req.user._id },
       { $set: { selectedGoogleAccounts: selected } }
     );
 
-    // Si el default actual no está entre los seleccionados, muévelo
-    if (!selected.includes(normId(ga?.defaultCustomerId || '')) && selected[0]) {
+    // Asegura default dentro de la selección
+    let nextDefault = ga?.defaultCustomerId ? normId(ga.defaultCustomerId) : null;
+    if (!nextDefault || !selected.includes(nextDefault)) {
+      nextDefault = selected[0];
       await GoogleAccount.updateOne(
         { $or: [{ user: req.user._id }, { userId: req.user._id }] },
-        { $set: { defaultCustomerId: selected[0] } }
+        { $set: { defaultCustomerId: nextDefault } }
       );
     }
 
-    return res.json({ ok: true, selected });
+    return res.json({ ok: true, selected, defaultCustomerId: nextDefault });
   } catch (e) {
-    console.error('google selection error', e);
-    return res.status(500).json({ ok: false, error: 'google selection failed' });
+    console.error('google/accounts/selection error:', e);
+    return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
   }
 });
-
 /* =========================
  * Insights (KPIs + serie) — con guardia por selección
  * ========================= */

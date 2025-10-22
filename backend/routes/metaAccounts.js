@@ -216,7 +216,7 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
     // Valida que las cuentas existan para este usuario
     const doc = await MetaAccount
       .findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
-      .select('ad_accounts adAccounts')
+      .select('ad_accounts adAccounts defaultAccountId')
       .lean();
 
     const raw = (doc?.adAccounts || doc?.ad_accounts || []);
@@ -229,16 +229,28 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
       return res.status(400).json({ ok: false, error: 'NO_VALID_ACCOUNTS' });
     }
 
+    // Guarda en el usuario
     await User.updateOne(
       { _id: req.user._id },
       { $set: { selectedMetaAccounts: selected } }
     );
 
-    return res.json({ ok: true, selected });
+    // Asegura default dentro de la selección
+    let nextDefault = doc?.defaultAccountId ? toActId(doc.defaultAccountId) : null;
+    if (!nextDefault || !selected.includes(nextDefault)) {
+      nextDefault = selected[0]; // primera seleccionada
+      await MetaAccount.updateOne(
+        { $or: [{ user: req.user._id }, { userId: req.user._id }] },
+        { $set: { defaultAccountId: normActId(nextDefault) } } // en DB guardas sin 'act_'
+      );
+    }
+
+    return res.json({ ok: true, selected, defaultAccountId: nextDefault });
   } catch (e) {
     console.error('meta/accounts/selection error:', e);
     return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
   }
 });
+
 
 module.exports = router;

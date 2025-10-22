@@ -221,38 +221,34 @@
     </div>
   </div>
 
-  <!-- ===================== -->
-  <!--  MODAL SELECCIÓN E2E  -->
-  <!-- ===================== -->
-  <style>
-    /* util mínima por si el CSS global no tiene .hidden */
-    .hidden{display:none!important}
-  </style>
-  <div id="account-select-modal" class="hidden fixed inset-0" style="position:fixed;left:0;top:0;right:0;bottom:0;z-index:9999;">
-    <!-- overlay -->
-    <div class="absolute inset-0" style="position:absolute;inset:0;background:rgba(0,0,0,.6);"></div>
 
-    <!-- panel -->
-    <div class="relative mx-auto my-10 w-full max-w-3xl rounded-2xl"
-         style="position:relative;margin:40px auto;background:#111217;border:1px solid #26273b;padding:24px;">
-      <h2 class="text-2xl" style="color:#e9e9f2;font-weight:800;margin-bottom:6px;">Selecciona tus cuentas</h2>
-      <p style="color:#a9aac7;margin-bottom:16px;">Elige con qué cuentas quieres trabajar en Adnova AI. Debes seleccionar al menos una por plataforma.</p>
+  <div id="account-select-modal" class="hidden">
+    <div class="asm-overlay"></div>
 
-      <div id="asm-error" class="hidden" style="color:#ff7b7b;margin-bottom:10px;"></div>
-      <div id="asm-tabs" class="flex gap-2 mb-4"></div>
-      <div id="asm-body" class="space-y-8"></div>
+    <div class="asm-panel">
+      <h2 class="asm-title">Selecciona tus cuentas</h2>
+      <p class="asm-sub">
+        Elige con qué cuentas quieres trabajar en Adnova AI. Debes seleccionar al menos una por plataforma.
+      </p>
 
-      <div class="flex justify-end gap-2 mt-6" style="display:flex;justify-content:flex-end;margin-top:16px;">
-        <button id="asm-save" class="rounded-xl px-4 py-2"
-                style="background:#7b5cff;color:white;font-weight:700;border-radius:12px;padding:10px 16px;opacity:.6;cursor:not-allowed;"
-                disabled>Guardar y continuar</button>
+      <div id="asm-error" class="asm-error"></div>
+
+      <!-- META -->
+      <h3 class="asm-section-title" id="asm-meta-title" style="display:none">Meta Business Manager</h3>
+      <div id="asm-meta-list" class="asm-list"></div>
+
+      <!-- GOOGLE -->
+      <h3 class="asm-section-title" id="asm-google-title" style="display:none">Google Analytics & Ads</h3>
+      <div id="asm-google-list" class="asm-list"></div>
+
+      <div class="asm-footer">
+        <button id="asm-save" class="asm-btn asm-btn-primary" disabled>Guardar y continuar</button>
       </div>
     </div>
   </div>
 
   <!-- scripts -->
   <script type="module" src="/js/onboarding.js"></script>
-  <!-- NUEVO: lógica de modal inline para selección -->
   <script src="/js/onboardingInlineSelect.js" defer></script>
 </body>
 </html>
