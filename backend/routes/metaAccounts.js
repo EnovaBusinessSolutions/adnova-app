@@ -70,7 +70,7 @@ try {
   MetaAccount = mongoose.models.MetaAccount || model('MetaAccount', schema);
 }
 
-// LISTAR CUENTAS (ahora también devuelve `accounts` y `total`)
+
 router.get('/', requireAuth, async (req, res) => {
   try {
     const doc = await MetaAccount
@@ -79,11 +79,13 @@ router.get('/', requireAuth, async (req, res) => {
       .lean();
 
     const raw = (doc?.adAccounts || doc?.ad_accounts || []);
-    const ad_accounts = raw.map(a => {
+
+    // Normaliza todas las cuentas (forma consistente)
+    const ad_accounts_all = raw.map(a => {
       const account_id = normActId(a.account_id || a.accountId || a.id || '');
       return {
-        id: a.id || toActId(account_id),
-        account_id,
+        id: a.id || toActId(account_id), // preferimos "act_XXXX"
+        account_id,                      // sin "act_"
         name: a.name || a.account_name || a.business_name || 'Untitled',
         currency: a.currency || a.account_currency || null,
         configured_status: a.configured_status || a.account_status || null,
@@ -91,18 +93,38 @@ router.get('/', requireAuth, async (req, res) => {
       };
     });
 
-    // === NUEVO: alias normalizado y total para el onboarding
+    // === NUEVO: filtro por selección (si existe)
+    const selected = Array.isArray(req.user?.selectedMetaAccounts)
+      ? req.user.selectedMetaAccounts.map(toActId) // nos quedamos con "act_XXXX"
+      : [];
+    const allow = new Set(selected);
+
+    const ad_accounts = selected.length
+      ? ad_accounts_all.filter(a => allow.has(a.id || toActId(a.account_id)))
+      : ad_accounts_all;
+
+    // Recalcular default si quedó fuera del filtro
+    // En DB guardas sin "act_", por eso usamos normActId/toActId según corresponda
+    let defaultAccountId = doc?.defaultAccountId || ad_accounts_all[0]?.account_id || null;
+    if (selected.length && defaultAccountId) {
+      const defAct = toActId(defaultAccountId); // "act_XXXX"
+      if (!allow.has(defAct)) {
+        defaultAccountId = ad_accounts[0]?.account_id || null;
+      }
+    }
+
+    // Alias simple para el onboarding
     const accounts = ad_accounts.map(a => ({
-      id: a.id || toActId(a.account_id),
+      id: a.id || toActId(a.account_id), // "act_XXXX"
       name: a.name || a.id
     }));
 
     return res.json({
       ok: true,
-      ad_accounts,                      // compatibilidad con código existente
-      accounts,                         // forma simple para selección
-      total: accounts.length,           // <--- NUEVO
-      defaultAccountId: doc?.defaultAccountId || ad_accounts[0]?.account_id || null,
+      ad_accounts,                 // compat con código existente
+      accounts,                    // forma simple
+      total: accounts.length,      // para onboarding
+      defaultAccountId,            // sin "act_"
       objective: doc?.objective ?? null,
       scopes: Array.isArray(doc?.scopes) ? doc.scopes : [],
       updatedAt: doc?.updatedAt || null,
@@ -251,6 +273,5 @@ router.post('/selection', requireAuth, express.json(), async (req, res) => {
     return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
   }
 });
-
 
 module.exports = router;

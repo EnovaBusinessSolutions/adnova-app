@@ -4,6 +4,7 @@
 const axios = require('axios');
 const { OAuth2Client } = require('google-auth-library');
 const GoogleAccount = require('../models/GoogleAccount');
+const User = require('../models/User');
 
 const {
   GOOGLE_CLIENT_ID,
@@ -11,9 +12,12 @@ const {
   GOOGLE_CONNECT_CALLBACK_URL,
   GOOGLE_DEVELOPER_TOKEN,
   GOOGLE_ADS_LOGIN_CUSTOMER_ID,
-  GOOGLE_ADS_API_VERSION = 'v17', 
+  GOOGLE_ADS_API_VERSION = 'v17',
 } = process.env;
 
+/* ================= helpers ================= */
+const normId = (s = '') =>
+  String(s).trim().replace(/^customers\//, '').replace(/-/g, '');
 
 function oauth() {
   return new OAuth2Client({
@@ -30,11 +34,10 @@ async function refreshAccessToken(doc) {
     const { credentials } = await client.refreshAccessToken();
     return credentials.access_token || doc.accessToken;
   } catch {
-    
+    // si falla, intenta con el que ya teníamos
     return doc.accessToken;
   }
 }
-
 
 function ymd(d) { return d.toISOString().slice(0, 10); }
 function addDays(d, n) { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + n)); }
@@ -46,31 +49,36 @@ function last30dRange() {
   return { since: ymd(since), until: ymd(until) };
 }
 
-
-async function runGAQL({ accessToken, customerId, gaql, managerId }) {
-  if (!GOOGLE_DEVELOPER_TOKEN) throw new Error('GOOGLE_DEVELOPER_TOKEN missing');
-
-  const headers = {
+function headersFor(accessToken, managerId) {
+  const h = {
     Authorization: `Bearer ${accessToken}`,
     'developer-token': GOOGLE_DEVELOPER_TOKEN,
     'Content-Type': 'application/json',
+    Accept: 'application/json',
   };
   const loginId = String(managerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '').replace(/-/g, '').trim();
-  if (loginId) headers['login-customer-id'] = loginId;
+  if (loginId) h['login-customer-id'] = loginId;
+  return h;
+}
 
+async function runGAQL({ accessToken, customerId, gaql, managerId }) {
+  if (!GOOGLE_DEVELOPER_TOKEN) throw new Error('GOOGLE_DEVELOPER_TOKEN missing');
   const url = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${customerId}/googleAds:search`;
-  const { data } = await axios.post(url, { query: gaql }, { headers, timeout: 30000 });
+  const { data } = await axios.post(url, { query: gaql }, { headers: headersFor(accessToken, managerId), timeout: 30000 });
   return data?.results || [];
 }
 
-
+/* =============== principal (respeta selección) =============== */
 async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}) {
   try {
-    
-    const ga = await GoogleAccount
-      .findOne({ $or: [{ user: userId }, { userId }] })
-      .select('+refreshToken +accessToken customers defaultCustomerId managerCustomerId objective')
-      .lean();
+    // 1) Cargar cuenta Google Ads y selección del usuario
+    const [ga, user] = await Promise.all([
+      GoogleAccount
+        .findOne({ $or: [{ user: userId }, { userId }] })
+        .select('+refreshToken +accessToken customers defaultCustomerId managerCustomerId objective')
+        .lean(),
+      User.findById(userId).select('selectedGoogleAccounts').lean(),
+    ]);
 
     if (!ga || (!ga.refreshToken && !ga.accessToken)) {
       return {
@@ -81,13 +89,38 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
       };
     }
 
-    
-    const customerId =
-      (ga.defaultCustomerId && String(ga.defaultCustomerId).replace(/-/g, '')) ||
-      (ga.customers?.[0]?.id && String(ga.customers[0].id).replace(/-/g, '')) ||
-      '';
+    // 2) Resolver lista de cuentas disponibles y selección efectiva
+    const available = Array.isArray(ga.customers) ? ga.customers.map(c => normId(c.id || c.customerId)) : [];
+    const selectedRaw = Array.isArray(user?.selectedGoogleAccounts) ? user.selectedGoogleAccounts : [];
+    const selected = [...new Set(selectedRaw.map(normId).filter(Boolean))];
 
-    if (!customerId) {
+    // Regla: si el usuario tiene >3 cuentas y no seleccionó ninguna → no auditar
+    if (available.length > 3 && selected.length === 0) {
+      return {
+        productsAnalizados: 0,
+        resumen: 'Tienes más de 3 cuentas de Google Ads vinculadas. Selecciona cuáles auditar.',
+        actionCenter: [{
+          title: 'Selecciona tus cuentas de Google Ads',
+          description: 'Para evitar analizar todas las cuentas por error, elige los customer IDs a auditar.',
+          severity: 'high',
+          button: 'Seleccionar cuentas',
+        }],
+        issues: { productos: [], ux: [], seo: [], performance: [], media: [], googleads: [] },
+      };
+    }
+
+    // Construir lista final a auditar
+    let toAudit = selected.length
+      ? selected.filter(id => available.includes(id))
+      : [];
+
+    if (toAudit.length === 0) {
+      const def = normId(ga.defaultCustomerId || '');
+      if (def) toAudit = [def];
+      else if (available[0]) toAudit = [available[0]];
+    }
+
+    if (toAudit.length === 0) {
       return {
         productsAnalizados: 0,
         resumen: 'No se encontró customerId de Google Ads.',
@@ -95,28 +128,16 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
           title: '[Google Ads] Selecciona una cuenta por defecto',
           description: 'Sin customerId seleccionado no podemos auditar campañas.',
           severity: 'high',
-          button: 'Seleccionar cuenta'
+          button: 'Seleccionar cuenta',
         }],
-        issues: {
-          productos: [],
-          ux: [],
-          seo: [],
-          performance: [],
-          media: [],
-          googleads: [{
-            title: 'Sin cuenta por defecto',
-            description: 'Configura un customerId por defecto para iniciar el análisis.',
-            severity: 'high',
-            recommendation: 'Ve a Conexiones → Google y selecciona una cuenta.'
-          }]
-        },
+        issues: { productos: [], ux: [], seo: [], performance: [], media: [], googleads: [] },
       };
     }
 
+    // 3) Token y rangos
     const accessToken = await refreshAccessToken(ga);
     const ranges = last30dRange();
 
-    
     const gaql = `
       SELECT
         segments.date,
@@ -135,56 +156,79 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
       ORDER BY segments.date
     `;
 
-    let rows = [];
-    try {
-      rows = await runGAQL({
-        accessToken,
-        customerId,
-        gaql,
-        managerId: ga.managerCustomerId,
-      });
-    } catch (e) {
-      
-      console.warn('GAQL error:', e?.response?.data || e.message);
-      rows = [];
+    // 4) Ejecutar para cada cuenta seleccionada y consolidar
+    const agg = new Map(); // key: accountId:campaignId
+    const perAccountMeta = new Map(); // accountId -> { name? }
+
+    for (const customerId of toAudit) {
+      let rows = [];
+      try {
+        rows = await runGAQL({
+          accessToken,
+          customerId,
+          gaql,
+          managerId: ga.managerCustomerId,
+        });
+      } catch (e) {
+        console.warn('GAQL error:', e?.response?.data || e.message);
+        rows = [];
+      }
+
+      // opcional: intenta leer el nombre de la cuenta
+      try {
+        const metaRows = await runGAQL({
+          accessToken,
+          customerId,
+          gaql: `SELECT customer.descriptive_name FROM customer LIMIT 1`,
+          managerId: ga.managerCustomerId,
+        });
+        const nm = metaRows?.[0]?.customer?.descriptiveName || null;
+        if (nm) perAccountMeta.set(customerId, { name: nm });
+      } catch { /* noop */ }
+
+      for (const r of rows) {
+        const campId = r?.campaign?.id;
+        const campName = r?.campaign?.name || `Campaign ${campId}`;
+        const key = `${customerId}:${campId}`;
+
+        const imp  = Number(r?.metrics?.impressions ?? 0);
+        const clk  = Number(r?.metrics?.clicks ?? 0);
+        const cost = Number(r?.metrics?.costMicros ?? 0) / 1e6;
+        const conv = Number(r?.metrics?.conversions ?? 0);
+        const cval = Number(r?.metrics?.conversionsValue ?? 0);
+
+        if (!agg.has(key)) {
+          // Prefija nombre con cuenta si hay múltiples cuentas
+          const label =
+            toAudit.length > 1
+              ? `${campName} · ${customerId}`
+              : campName;
+          agg.set(key, { accountId: customerId, name: label, spend: 0, impr: 0, clicks: 0, conv: 0, convValue: 0 });
+        }
+        const a = agg.get(key);
+        a.spend += cost; a.impr += imp; a.clicks += clk; a.conv += conv; a.convValue += cval;
+      }
     }
 
-    
+    // 5) Generar issues / action center
     const productos = [{ nombre: 'Campañas (últimos 30 días)', hallazgos: [] }];
     const flat = { ux: [], seo: [], performance: [], media: [], googleads: [] };
     const actionCenter = [];
 
-    
-    const agg = new Map(); 
-    for (const r of rows) {
-      const id    = r?.campaign?.id;
-      const name  = r?.campaign?.name || `Campaign ${id}`;
-      const imp   = Number(r?.metrics?.impressions ?? 0);
-      const clk   = Number(r?.metrics?.clicks ?? 0);
-      
-      const cost  = Number(r?.metrics?.costMicros ?? 0) / 1e6;
-      const conv  = Number(r?.metrics?.conversions ?? 0);
-      const cval  = Number(r?.metrics?.conversionsValue ?? 0);
-
-      if (!agg.has(id)) agg.set(id, { name, spend: 0, impr: 0, clicks: 0, conv: 0, convValue: 0 });
-      const a = agg.get(id);
-      a.spend += cost; a.impr += imp; a.clicks += clk; a.conv += conv; a.convValue += cval;
-    }
-
     let totalImpr = 0, totalClicks = 0, totalSpend = 0;
+
     for (const [, a] of agg) {
       totalImpr += a.impr; totalClicks += a.clicks; totalSpend += a.spend;
 
-      const ctr = a.impr > 0 ? (a.clicks / a.impr) * 100 : 0;
+      const ctr  = a.impr > 0 ? (a.clicks / a.impr) * 100 : 0;
       const roas = a.spend > 0 ? (a.convValue / a.spend) : 0;
 
-      
       if (a.impr > 1000 && ctr < 1.0) {
         const issue = {
           title: `CTR bajo · ${a.name}`,
           description: `CTR ${ctr.toFixed(2)}% con ${a.impr} impresiones y ${a.clicks} clics.`,
           severity: 'medium',
-          recommendation: 'Mejora RSA, extensiones y relevancia de keywords. Testea creatividades.'
+          recommendation: 'Mejora RSA, extensiones y relevancia de keywords. Testea creatividades.',
         };
         productos[0].hallazgos.push({ area: 'Performance', ...issue });
         flat.performance.push(issue);
@@ -196,7 +240,7 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
           title: `Gasto sin conversiones · ${a.name}`,
           description: `Clicks ${a.clicks}, coste ${a.spend.toFixed(2)} y 0 conversiones.`,
           severity: 'high',
-          recommendation: 'Revisa términos de búsqueda, negativas, concordancias y la landing.'
+          recommendation: 'Revisa términos de búsqueda, negativas, concordancias y la landing.',
         };
         productos[0].hallazgos.push({ area: 'UX', ...issue });
         flat.ux.push(issue);
@@ -205,17 +249,16 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
           title: '[Google Ads] Reducir gasto sin conversiones',
           description: `Detectado en ${a.name}. Revisar Search Terms y aplicar negativas.`,
           severity: 'high',
-          button: 'Ver pasos'
+          button: 'Ver pasos',
         });
       }
 
-      
       if (roas > 0 && roas < 1.0 && a.spend > 100) {
         const issue = {
           title: `ROAS bajo · ${a.name}`,
           description: `ROAS ${roas.toFixed(2)} con gasto ${a.spend.toFixed(2)}.`,
           severity: 'medium',
-          recommendation: 'Ajusta pujas, audiencias y creatividades. Evalúa excluir ubicaciones pobres.'
+          recommendation: 'Ajusta pujas, audiencias y creatividades. Evalúa excluir ubicaciones pobres.',
         };
         productos[0].hallazgos.push({ area: 'Performance', ...issue });
         flat.performance.push(issue);
@@ -225,7 +268,7 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
 
     const avgCTR = totalImpr ? (totalClicks / totalImpr) * 100 : 0;
     const cpcAvg = totalClicks ? (totalSpend / totalClicks) : null;
-    const resumen = `Analizadas ${agg.size} campañas. CTR medio ${avgCTR.toFixed(2)}%. CPC promedio ${cpcAvg?.toFixed(2) ?? 'N/A'}.`;
+    const resumen = `Analizadas ${agg.size} campañas en ${toAudit.length} cuenta(s). CTR medio ${avgCTR.toFixed(2)}%. CPC promedio ${cpcAvg?.toFixed(2) ?? 'N/A'}.`;
 
     return {
       productsAnalizados: agg.size,

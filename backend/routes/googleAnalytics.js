@@ -29,7 +29,9 @@ try {
   GoogleAccount = mongoose.models.GoogleAccount || mongoose.model('GoogleAccount', schema);
 }
 
-/* =============== HELPERS / AUTH =============== */
+/* =============== CONST & HELPERS NUEVOS =============== */
+const MAX_BY_RULE = 3; // máximo 3 propiedades si el usuario no ha seleccionado
+
 function requireSession(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
@@ -41,6 +43,71 @@ function normalizePropertyId(p) {
   return /^\d+$/.test(id) ? id : '';
 }
 
+// preferencia oficial -> fallback legacy (cambio mínimo)
+function getSelectedPropsFromReq(req) {
+  const pref = req.user?.preferences?.googleAnalytics?.auditPropertyIds;
+  if (Array.isArray(pref) && pref.length) {
+    return pref.map(v => `properties/${String(v).replace(/^properties\//,'')}`);
+  }
+  const legacy = req.user?.selectedGaProperties;
+  if (Array.isArray(legacy) && legacy.length) {
+    return legacy.map(v => `properties/${String(v).replace(/^properties\//,'')}`);
+  }
+  return [];
+}
+
+async function getGaAccountDoc(userId) {
+  return GoogleAccount.findOne({
+    $or: [{ user: userId }, { userId }]
+  }).lean();
+}
+
+function availablePropertyIdsFromDoc(doc) {
+  const list = Array.isArray(doc?.gaProperties) ? doc.gaProperties : [];
+  return list
+    .map(p => p?.propertyId || '')
+    .filter(Boolean);
+}
+
+/** Middleware: valida que la propiedad consultada esté permitida por la selección.
+ *  Si hay >3 disponibles y no hay selección → precondición de selección.
+ */
+async function ensureGaPropertyAllowed(req, res, next) {
+  try {
+    const doc = await getGaAccountDoc(req.user._id);
+    if (!doc) return res.status(401).json({ ok: false, error: 'NO_GOOGLEACCOUNT' });
+
+    let available = availablePropertyIdsFromDoc(doc);
+
+    // Si aún no hay cache de propiedades, dejamos que las rutas sigan su flujo (resync en /properties)
+    if (!available.length) return next();
+
+    const selected = getSelectedPropsFromReq(req);
+    // Precondición: >3 disponibles y sin selección explícita
+    if (available.length > MAX_BY_RULE && selected.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        reason: 'SELECTION_REQUIRED(>3_PROPERTIES)',
+        requiredSelection: true
+      });
+    }
+
+    // Si hay selección, valida parámetro "property" (o "propertyId")
+    if (selected.length > 0) {
+      const propRaw = String(req.query.property || req.query.propertyId || '');
+      const prop = propRaw.startsWith('properties/') ? propRaw : `properties/${normalizePropertyId(propRaw)}`;
+      if (!prop || !selected.includes(prop)) {
+        return res.status(403).json({ ok: false, error: 'PROPERTY_NOT_ALLOWED' });
+      }
+    }
+
+    return next();
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'SELECTION_GUARD_FAILED' });
+  }
+}
+
+/* =============== HELPERS / AUTH =============== */
 async function getOAuthClientForUser(userId) {
   const ga = await GoogleAccount
     .findOne({ $or: [{ user: userId }, { userId }] })
@@ -183,6 +250,35 @@ router.get('/properties', requireSession, async (req, res) => {
       }
     }
 
+    const availableIds = properties.map(p => p.propertyId);
+    const selected = getSelectedPropsFromReq(req);
+
+    // si hay >3 disponibles y no hay selección → UI debe forzar selección
+    if (availableIds.length > MAX_BY_RULE && selected.length === 0) {
+      return res.json({
+        ok: false,
+        reason: 'SELECTION_REQUIRED(>3_PROPERTIES)',
+        requiredSelection: true,
+        properties,
+        defaultPropertyId: null
+      });
+    }
+
+    // si hay selección, filtra y ajusta default si quedó fuera
+    if (selected.length > 0) {
+      const allow = new Set(selected);
+      properties = properties.filter(p => allow.has(p.propertyId));
+      if (defaultPropertyId && !allow.has(defaultPropertyId)) {
+        defaultPropertyId = properties[0]?.propertyId || null;
+        if (doc && defaultPropertyId) {
+          await GoogleAccount.updateOne(
+            { _id: doc._id },
+            { $set: { defaultPropertyId } }
+          );
+        }
+      }
+    }
+
     res.json({ ok: true, properties, defaultPropertyId });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e) });
@@ -190,7 +286,7 @@ router.get('/properties', requireSession, async (req, res) => {
 });
 
 /** GET /api/google/analytics/overview */
-router.get('/overview', requireSession, async (req, res) => {
+router.get('/overview', requireSession, ensureGaPropertyAllowed, async (req, res) => {
   try {
     const property = String(req.query.property || '');
     const datePreset = req.query.date_preset || req.query.dateRange || 'last_30_days';
@@ -373,7 +469,7 @@ router.get('/overview', requireSession, async (req, res) => {
 
 
 /** GET /api/google/analytics/sales  (RELATIVO: /sales) */
-router.get('/sales', requireSession, async (req, res) => {
+router.get('/sales', requireSession, ensureGaPropertyAllowed, async (req, res) => {
   try {
     const propertyId = normalizePropertyId(req.query.property);
     const datePreset = req.query.date_preset || req.query.dateRange || 'last_30d';
@@ -554,9 +650,8 @@ router.get('/sales', requireSession, async (req, res) => {
 });
 
 
-
 /** GET /api/google/analytics/landing-pages */
-router.get('/landing-pages', requireSession, async (req, res) => {
+router.get('/landing-pages', requireSession, ensureGaPropertyAllowed, async (req, res) => {
   try {
     const property = String(req.query.property || '');
     const datePreset = req.query.date_preset || req.query.dateRange || 'last_30_days';
@@ -593,7 +688,7 @@ router.get('/landing-pages', requireSession, async (req, res) => {
 });
 
 /** GET /api/google/analytics/funnel */
-router.get('/funnel', requireSession, async (req, res) => {
+router.get('/funnel', requireSession, ensureGaPropertyAllowed, async (req, res) => {
   try {
     const property = String(req.query.property || '');
     const datePreset = req.query.date_preset || req.query.dateRange || 'last_30_days';
@@ -637,7 +732,7 @@ router.get('/funnel', requireSession, async (req, res) => {
 });
 
 /** GET /api/google/analytics/leads */
-router.get('/leads', requireSession, async (req, res) => {
+router.get('/leads', requireSession, ensureGaPropertyAllowed, async (req, res) => {
   try {
     const property = String(req.query.property || '');
     const datePreset = req.query.date_preset || req.query.dateRange || 'last_30_days';
@@ -792,7 +887,7 @@ router.get('/leads', requireSession, async (req, res) => {
 });
 
 /** GET /api/google/analytics/acquisition */
-router.get('/acquisition', requireSession, async (req, res) => {
+router.get('/acquisition', requireSession, ensureGaPropertyAllowed, async (req, res) => {
   try {
     const propertyId = normalizePropertyId(req.query.property);
     const datePreset = req.query.date_preset || req.query.dateRange || 'last_30d';
@@ -907,7 +1002,7 @@ router.get('/acquisition', requireSession, async (req, res) => {
 });
 
 /** GET /api/google/analytics/engagement */
-router.get('/engagement', requireSession, async (req, res) => {
+router.get('/engagement', requireSession, ensureGaPropertyAllowed, async (req, res) => {
   try {
     const propertyId = String(req.query.property || '').replace(/^properties\//, '');
     const datePreset = req.query.date_preset || req.query.dateRange || 'last_30d';
@@ -992,6 +1087,5 @@ router.get('/engagement', requireSession, async (req, res) => {
     res.status(500).json({ ok: false, error: e.message || String(e) });
   }
 });
-
 
 module.exports = router;

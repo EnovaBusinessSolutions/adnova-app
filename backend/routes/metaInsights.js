@@ -11,6 +11,7 @@ const router = express.Router();
 const FB_VERSION = process.env.FACEBOOK_API_VERSION || 'v23.0';
 const FB_GRAPH   = `https://graph.facebook.com/${FB_VERSION}`;
 const APP_SECRET = process.env.FACEBOOK_APP_SECRET;
+const MAX_BY_RULE = 3; // regla: máximo 3 cuentas si no hay selección explícita
 
 const INSIGHT_FIELDS = [
   'date_start','date_stop','spend','impressions','reach','clicks','ctr','cpc','actions','action_values',
@@ -298,10 +299,40 @@ function emptyResponse({ objective, timeZone, cmp, level, message }) {
   };
 }
 
+/* ========= helpers de selección (mínimo cambio) ========= */
+function getSelectedIdsFromReq(req) {
+  // Preferencia oficial
+  const pref = req.user?.preferences?.meta?.auditAccountIds;
+  if (Array.isArray(pref) && pref.length) return pref.map(normActId);
+  // Fallback (si tenías este campo antes)
+  const legacy = req.user?.selectedMetaAccounts;
+  if (Array.isArray(legacy) && legacy.length) return legacy.map(normActId);
+  return [];
+}
+
 /* =========================
- * INSIGHTS (con guardia por selección)
+ * GUARD por selección (cuentas Meta)
  * ========================= */
-router.get('/', requireAuth, async (req, res) => {
+function metaEnsureAllowed(req, res, next) {
+  const wantedRaw =
+    req.query?.account_id ||
+    req.query?.accountId ||
+    req.body?.account_id ||
+    req.body?.accountId ||
+    '';
+  const wanted = normActId(wantedRaw);
+
+  const selected = getSelectedIdsFromReq(req); // <<< usa preferencias del usuario
+  if (selected.length > 0 && wanted && !selected.includes(wanted)) {
+    return res.status(403).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
+  }
+  return next();
+}
+
+/* =========================
+ * INSIGHTS
+ * ========================= */
+router.get('/', requireAuth, metaEnsureAllowed, async (req, res) => {
   try {
     const fallbackTZ = 'America/Mexico_City';
 
@@ -319,6 +350,16 @@ router.get('/', requireAuth, async (req, res) => {
       return res.json(emptyResponse({ objective, timeZone: fallbackTZ, cmp, level, message: 'META_NOT_CONNECTED' }));
     }
 
+    // universo disponible y regla de selección
+    const list = normalizeAccountsList(metaAcc);
+    const availableIds = list.map(a => normActId(a.id || a.account_id)).filter(Boolean);
+    const selected = getSelectedIdsFromReq(req);
+
+    // si no hay selección explícita y hay >3 disponibles → exigir selección y no auditar
+    if (availableIds.length > MAX_BY_RULE && selected.length === 0) {
+      return res.json({ ok: false, reason: 'SELECTION_REQUIRED(>3_ACCOUNTS)', requiredSelection: true });
+    }
+
     const accountId = resolveAccountId(req, metaAcc);
     if (!accountId) {
       const tz = fallbackTZ;
@@ -326,10 +367,7 @@ router.get('/', requireAuth, async (req, res) => {
       return res.json(emptyResponse({ objective, timeZone: tz, cmp, level, message: 'NO_AD_ACCOUNT' }));
     }
 
-    // === NUEVO: respetar selección guardada en User.selectedMetaAccounts
-    const selected = Array.isArray(req.user?.selectedMetaAccounts)
-      ? req.user.selectedMetaAccounts.map(normActId)
-      : [];
+    // Doble seguro: si hay selección y el accountId resuelto no pertenece, 403
     if (selected.length > 0 && !selected.includes(normActId(accountId))) {
       return res.status(403).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
     }
@@ -435,6 +473,8 @@ router.get('/accounts', requireAuth, async (req, res) => {
   try {
     const doc = await loadMetaAccount(req.user._id);
     const list = normalizeAccountsList(doc || {});
+    const availableIds = list.map(a => normActId(a.id || a.account_id)).filter(Boolean);
+
     let accounts = list.map((a) => {
       const raw = String(a.id || a.account_id || '').replace(/^act_/, '');
       return {
@@ -446,12 +486,22 @@ router.get('/accounts', requireAuth, async (req, res) => {
       };
     });
 
-    // === NUEVO: aplicar filtro por selección guardada (selectedMetaAccounts)
-    const selected = Array.isArray(req.user?.selectedMetaAccounts)
-      ? req.user.selectedMetaAccounts.map(s => normActId(s))
-      : [];
+    const selected = getSelectedIdsFromReq(req);
+
+    // Si hay >3 disponibles y no hay selección, forzar selección desde UI
+    if (availableIds.length > MAX_BY_RULE && selected.length === 0) {
+      return res.json({
+        ok: false,
+        reason: 'SELECTION_REQUIRED(>3_ACCOUNTS)',
+        requiredSelection: true,
+        accounts, // las mostramos para que el UI pinte el multiselect
+        defaultAccountId: null,
+      });
+    }
+
+    // Si hay selección, filtramos
     if (selected.length > 0) {
-      const allow = new Set(selected);
+      const allow = new Set(selected.map(normActId));
       accounts = accounts.filter(a => allow.has(normActId(a.id)));
     }
 

@@ -37,7 +37,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
         kpis: c.kpis,
         period: c.period,
         account_id: c.account_id ?? null,
-        // dar contexto multi-cuenta al LLM sin inflar demasiado
+        // contexto multi-cuenta sin inflar
         accountMeta: c.accountMeta ? {
           name: c.accountMeta.name ?? null,
           currency: c.accountMeta.currency ?? null
@@ -54,10 +54,6 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
         revenue: toNum(ch.revenue),
       }));
     }
-
-    // Contexto GA4/GA
-    if (typeof clone.property === 'string') clone.property = clone.property; // "properties/123"
-    if (typeof clone.accountName === 'string') clone.accountName = clone.accountName;
 
     let s = JSON.stringify(clone);
     if (s.length > maxChars) s = s.slice(0, maxChars);
@@ -206,7 +202,7 @@ Estructura estricta:
     "evidence": string,
     "recommendation": string,
     "estimatedImpact": "alto"|"medio"|"bajo",
-    "accountRef": { "id": string, "name": string },   // NUEVO
+    "accountRef": { "id": string, "name": string },
     "campaignRef": { "id": string, "name": string },
     "metrics": object,
     "links": [{ "label": string, "url": string }]
@@ -272,10 +268,9 @@ ${isAnalytics ? SCHEMA_GA : SCHEMA_ADS}
 
 /* ---------------------- OpenAI JSON con reintentos --------------------- */
 async function chatJSON({ system, user, model = 'gpt-4o-mini', retries = 2 }) {
-  // Si no hay API key, dejamos que el caller use el fallback heurístico
   if (!process.env.OPENAI_API_KEY) {
     const err = new Error('OPENAI_API_KEY missing');
-    err.status = 499; // pseudo-status para diferenciar
+    err.status = 499;
     throw err;
   }
 
@@ -296,7 +291,6 @@ async function chatJSON({ system, user, model = 'gpt-4o-mini', retries = 2 }) {
     } catch (e) {
       lastErr = e;
       const code = e?.status || e?.response?.status;
-      // 429/5xx → backoff y reintento
       if ((code === 429 || (code >= 500 && code < 600)) && i < retries) {
         await new Promise(r => setTimeout(r, 700 * (i + 1)));
         continue;
@@ -308,28 +302,19 @@ async function chatJSON({ system, user, model = 'gpt-4o-mini', retries = 2 }) {
 }
 
 /* ----------------------------- entry point ---------------------------- */
-/**
- * generateAudit({ type, inputSnapshot, maxFindings })
- *  - type: 'google' | 'meta' | 'ga' | 'ga4'
- *  - inputSnapshot: salida de collectors (Ads: byCampaign; GA: channels + property/accountName)
- * Retorna: { summary, issues[] }
- */
 module.exports = async function generateAudit({ type, inputSnapshot, maxFindings = 10 }) {
   const analytics = isGA(type);
 
-  // ¿hay datos reales?
   const haveAdsData = Array.isArray(inputSnapshot?.byCampaign) && inputSnapshot.byCampaign.length > 0;
   const haveGAData  = Array.isArray(inputSnapshot?.channels)   && inputSnapshot.channels.length > 0;
   const haveData    = analytics ? haveGAData : haveAdsData;
 
-  // prompts
   const system = analytics
     ? SYSTEM_GA
     : SYSTEM_ADS(type === 'google' ? 'Google Ads' : 'Meta Ads');
 
   const dataStr = tinySnapshot(inputSnapshot);
 
-  // ---------- LOG: entrada al LLM ----------
   if (process.env.DEBUG_AUDIT === 'true') {
     console.log('[LLM:IN]', type, {
       hasByCampaign: !!inputSnapshot?.byCampaign?.length,
@@ -363,17 +348,14 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
       evidence: String(it.evidence || ''),
       recommendation: String(it.recommendation || ''),
       estimatedImpact: impactNorm(it.estimatedImpact),
-      accountRef: it.accountRef || null, // Ads y GA (GA usa {name, property})
-      campaignRef: it.campaignRef,       // Ads
-      segmentRef: it.segmentRef,         // GA
-      accountRefGA: it.accountRef,       // alias no usado, por compat (no se persiste)
-      accountRef: it.accountRef,         // aseguramos propagación
+      accountRef: it.accountRef || null,
+      campaignRef: it.campaignRef,  // Ads
+      segmentRef: it.segmentRef,    // GA
       metrics: (it.metrics && typeof it.metrics === 'object') ? it.metrics : {},
       links: Array.isArray(it.links) ? it.links : []
     }));
   }
 
-  // ---------- LOG: salida del LLM ----------
   if (process.env.DEBUG_AUDIT === 'true') {
     console.log('[LLM:OUT]', {
       summary: (summary || '').slice(0, 160),
@@ -381,7 +363,7 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
     });
   }
 
-  // 3) si el LLM falló o dio muy poco y hay datos, usar fallback para completar hasta MÍNIMO 3 issues
+  // 3) completar con fallback mínimo de 3 si hay datos
   if ((!issues || issues.length < 3) && haveData) {
     const need = Math.min(3, maxFindings) - (issues?.length || 0);
     if (need > 0) {
@@ -396,7 +378,6 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
         accountRef: it.accountRef || null,
         campaignRef: it.campaignRef,
         segmentRef: it.segmentRef,
-        accountRefGA: it.accountRef,
         metrics: it.metrics || {},
         links: []
       }));
@@ -409,7 +390,7 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
     }
   }
 
-  // 4) si no hay datos reales, no inventamos (el caller crea issue de setup)
+  // 4) si no hay datos reales, no inventamos
   if (!haveData && issues.length === 0) {
     return { summary: '', issues: [] };
   }

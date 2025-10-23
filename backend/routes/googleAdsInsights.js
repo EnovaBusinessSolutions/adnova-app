@@ -64,6 +64,9 @@ const ENV_LOGIN_ID = (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || process.env.GO
   .replace(/-/g, '')
   .trim();
 
+// === NUEVO: regla de selección
+const MAX_BY_RULE = 3;
+
 /* =========================
  * Utils / helpers
  * ========================= */
@@ -207,6 +210,20 @@ function axiosErrorInfo(err) {
   };
 }
 
+// === NUEVO: helpers selección
+function getSelectedIdsFromReq(req) {
+  return Array.isArray(req.user?.selectedGoogleAccounts)
+    ? req.user.selectedGoogleAccounts.map(normId)
+    : [];
+}
+
+function availableAccountIds(gaDoc) {
+  const fromAdAcc = (Array.isArray(gaDoc?.ad_accounts) ? gaDoc.ad_accounts : []).map(a => normId(a.id)).filter(Boolean);
+  const fromCust  = (Array.isArray(gaDoc?.customers) ? gaDoc.customers : []).map(c => normId(c.id)).filter(Boolean);
+  const set = new Set([...fromAdAcc, ...fromCust]);
+  return [...set];
+}
+
 /* =========================
  * Google Ads API
  * ========================= */
@@ -303,6 +320,7 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
     return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
   }
 });
+
 /* =========================
  * Insights (KPIs + serie) — con guardia por selección
  * ========================= */
@@ -322,13 +340,29 @@ router.get('/', requireAuth, async (req, res) => {
     const objective = ['ventas', 'alcance', 'leads'].includes(rawObjective) ? rawObjective : 'ventas';
     const ranges = computeRanges(req.query);
 
-    const requestedCustomer = resolveCustomerId(req, gaDoc);
+    // === NUEVO: precondición de selección si hay >3 cuentas disponibles
+    const availableIds = availableAccountIds(gaDoc);
+    const selectedIds  = getSelectedIdsFromReq(req);
+    if (availableIds.length > MAX_BY_RULE && selectedIds.length === 0) {
+      return res.status(400).json({
+        ok: false,
+        reason: 'SELECTION_REQUIRED(>3_ACCOUNTS)',
+        requiredSelection: true
+      });
+    }
+
+    // Resuelve cuenta solicitada
+    let requestedCustomer = resolveCustomerId(req, gaDoc);
     if (!requestedCustomer) return res.status(400).json({ ok: false, error: 'NO_CUSTOMER_ID' });
 
-    // === NUEVO: si hay selección guardada, solo permitir las cuentas elegidas
-    const sel = Array.isArray(req.user?.selectedGoogleAccounts) ? req.user.selectedGoogleAccounts.map(normId) : [];
-    if (sel.length > 0 && !sel.includes(normId(requestedCustomer))) {
-      return res.status(403).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
+    // Si hay selección, forzar default a una permitida si el default/param no están dentro
+    if (selectedIds.length > 0 && !selectedIds.includes(normId(requestedCustomer))) {
+      // si pidieron explícitamente una no permitida → 403
+      if (req.query.account_id || req.query.customer_id) {
+        return res.status(403).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
+      }
+      // si vino por default, reasignamos a la primera seleccionada
+      requestedCustomer = selectedIds[0];
     }
 
     const accessToken = await getFreshAccessToken(gaDoc);
@@ -586,12 +620,16 @@ router.get('/accounts', requireAuth, async (req, res) => {
     }
 
     // === NUEVO: aplicar filtro por selección guardada
-    const selected = Array.isArray(req.user?.selectedGoogleAccounts) ? req.user.selectedGoogleAccounts.map(normId) : [];
+    const selected = getSelectedIdsFromReq(req);
     let filtered = accounts;
     if (selected.length > 0) {
       const allow = new Set(selected);
       filtered = accounts.filter(a => allow.has(normId(a.id)));
     }
+
+    // === NUEVO: si hay >3 disponibles y no hay selección, avisar a la UI
+    const availIds = availableAccountIds(ga);
+    const requiredSelection = availIds.length > MAX_BY_RULE && selected.length === 0;
 
     // Ajustar default si quedó fuera del filtro
     let defaultCustomerId = ga.defaultCustomerId || filtered?.[0]?.id || null;
@@ -605,7 +643,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
       }
     }
 
-    return res.json({ ok: true, accounts: filtered, defaultCustomerId });
+    return res.json({ ok: true, accounts: filtered, defaultCustomerId, requiredSelection });
   } catch (err) {
     console.error('google/ads/accounts error:', err?.response?.data || err);
     res.status(500).json({ ok: false, error: 'ACCOUNTS_ERROR' });
@@ -621,7 +659,7 @@ router.post('/default', requireAuth, express.json(), async (req, res) => {
     if (!customerId) return res.status(400).json({ ok: false, error: 'CUSTOMER_REQUIRED' });
 
     // Si hay selección, valida que el default esté permitido
-    const selected = Array.isArray(req.user?.selectedGoogleAccounts) ? req.user.selectedGoogleAccounts.map(normId) : [];
+    const selected = getSelectedIdsFromReq(req);
     if (selected.length > 0 && !selected.includes(customerId)) {
       return res.status(403).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
     }
