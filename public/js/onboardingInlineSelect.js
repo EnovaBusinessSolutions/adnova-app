@@ -137,8 +137,8 @@ async function _openModal(){
       }
       await Promise.all(tasks);
 
-      if (ASM.needs.meta)   sessionStorage.setItem('metaConnected','1');
-      if (ASM.needs.google) sessionStorage.setItem('googleConnected','1');
+      if (ASM.needs.meta)   sessionStorage.setItem('metaConnected','true');
+      if (ASM.needs.google) sessionStorage.setItem('googleConnected','true');
 
       _hide(_el('account-select-modal'));
     } catch (e) {
