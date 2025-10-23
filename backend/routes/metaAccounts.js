@@ -203,7 +203,7 @@ router.post('/default-account', requireAuth, express.json(), async (req, res) =>
 });
 
 // === NUEVO: Guardar selección de cuentas para el usuario autenticado
-router.post('/accounts/selection', requireAuth, express.json(), async (req, res) => {
+router.post('/selection', requireAuth, express.json(), async (req, res) => {
   try {
     const { accountIds } = req.body;
     if (!Array.isArray(accountIds)) {
