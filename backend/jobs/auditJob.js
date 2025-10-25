@@ -4,6 +4,10 @@
 const Audit = require('../models/Audit');
 const User  = require('../models/User');
 
+// <<< NUEVO: preferir selección desde los conectores >>>
+const MetaAccount    = require('../models/MetaAccount');
+const GoogleAccount  = require('../models/GoogleAccount');
+
 const { collectGoogle } = require('./collect/googleCollector');
 const { collectMeta }   = require('./collect/metaCollector');
 const { collectShopify }= require('./collect/shopifyCollector');
@@ -106,9 +110,30 @@ function autoPickIds(type, snapshot, max = 3) {
 /* ---------- MAIN ---------- */
 async function runAuditFor({ userId, type }) {
   try {
-    const user = await User.findById(userId).select('selectedGoogleAccounts selectedMetaAccounts').lean();
-    const selGoogle = (user?.selectedGoogleAccounts || []).map(normGoogle);
-    const selMeta   = (user?.selectedMetaAccounts   || []).map(normMeta);
+    // Cargamos usuario (fallback legacy) y, NUEVO, los conectores para preferir su selección
+    const user = await User.findById(userId)
+      .select('selectedGoogleAccounts selectedMetaAccounts')
+      .lean();
+
+    const [metaDoc, googleDoc] = await Promise.all([
+      MetaAccount.findOne({ $or: [{ user: userId }, { userId }] })
+        .select('selectedAccountIds')
+        .lean(),
+      GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] })
+        .select('selectedCustomerIds')
+        .lean(),
+    ]);
+
+    // Preferir campos del conector; caer a los del User si vienen vacíos
+    const selMeta = (Array.isArray(metaDoc?.selectedAccountIds) && metaDoc.selectedAccountIds.length
+                      ? metaDoc.selectedAccountIds
+                      : (user?.selectedMetaAccounts || [])
+                    ).map(normMeta);
+
+    const selGoogle = (Array.isArray(googleDoc?.selectedCustomerIds) && googleDoc.selectedCustomerIds.length
+                        ? googleDoc.selectedCustomerIds
+                        : (user?.selectedGoogleAccounts || [])
+                      ).map(normGoogle);
 
     let raw = null;
     let snapshot = null;

@@ -14,6 +14,12 @@ const normScopes = (v) =>
         .filter(Boolean)
     )
   );
+const normIdArr = (arr) =>
+  Array.from(new Set(
+    (Array.isArray(arr) ? arr : [])
+      .map(v => normActId(v))
+      .filter(Boolean)
+  ));
 
 /* ---------------- subdocs ---------------- */
 const AdAccountSchema = new Schema(
@@ -66,6 +72,13 @@ const MetaAccountSchema = new Schema(
     adAccounts:  { type: [AdAccountSchema], default: [] }, // ← legacy (se fusiona en pre-save)
     pages:       { type: Array, default: [] },
 
+    // NUEVO: selección persistente de cuentas (ids sin "act_")
+    selectedAccountIds: {
+      type: [String],
+      default: [],
+      set: normIdArr,
+    },
+
     // scopes otorgados
     scopes: { type: [String], default: [], set: normScopes },
 
@@ -103,6 +116,8 @@ const MetaAccountSchema = new Schema(
 /* -------------- índices -------------- */
 MetaAccountSchema.index({ user: 1   }, { unique: true, sparse: true });
 MetaAccountSchema.index({ userId: 1 }, { unique: true, sparse: true });
+// útil para dashboards/consultas
+MetaAccountSchema.index({ user: 1, selectedAccountIds: 1 });
 
 /* -------------- virtuales -------------- */
 MetaAccountSchema.virtual('accessTokenAny').get(function () {
@@ -193,6 +208,17 @@ MetaAccountSchema.pre('save', function (next) {
 
   // normaliza defaultAccountId
   if (this.defaultAccountId) this.defaultAccountId = normActId(this.defaultAccountId);
+
+  // normaliza/dedup seleccionadas y, si hay cuentas cargadas, filtra a ids existentes
+  if (Array.isArray(this.selectedAccountIds)) {
+    const norm = normIdArr(this.selectedAccountIds);
+    if (this.ad_accounts?.length) {
+      const available = new Set(this.ad_accounts.map(a => a.id));
+      this.selectedAccountIds = norm.filter(id => available.has(id));
+    } else {
+      this.selectedAccountIds = norm;
+    }
+  }
 
   next();
 });

@@ -5,6 +5,14 @@ const { Schema, model, Types } = mongoose;
 
 /* ----------------- helpers internos ----------------- */
 const stripDashes = (s = '') => s.toString().replace(/-/g, '').trim();
+const normCustomerId = (v = '') =>
+  stripDashes(String(v).replace(/^customers\//, '').trim());
+
+const normIdArr = (arr) =>
+  Array.from(new Set((Array.isArray(arr) ? arr : [])
+    .map(normCustomerId)
+    .filter(Boolean)));
+
 const normScopes = (v) => {
   if (!v) return [];
   if (Array.isArray(v)) {
@@ -35,7 +43,7 @@ const GA_READ   = 'https://www.googleapis.com/auth/analytics.readonly';
 /* ----------------- subdocs ----------------- */
 const CustomerSchema = new Schema(
   {
-    id: { type: String, set: (v) => stripDashes(v) },      // "1234567890"
+    id: { type: String, set: (v) => normCustomerId(v) },   // "1234567890"
     resourceName: String,                                  // "customers/1234567890"
     descriptiveName: String,
     currencyCode: String,
@@ -68,9 +76,16 @@ const GoogleAccountSchema = new Schema(
     expiresAt:    { type: Date },
 
     // Google Ads
-    managerCustomerId: { type: String, set: (v) => stripDashes(v) },
+    managerCustomerId: { type: String, set: (v) => normCustomerId(v) },
     customers:         { type: [CustomerSchema], default: [] },
-    defaultCustomerId: { type: String, set: (v) => stripDashes(v) },
+    defaultCustomerId: { type: String, set: (v) => normCustomerId(v) },
+
+    // NUEVO — selección persistente de cuentas Ads (ids “123…”)
+    selectedCustomerIds: {
+      type: [String],
+      default: [],
+      set: normIdArr,
+    },
 
     // GA4
     gaProperties:      { type: [GaPropertySchema], default: [] },
@@ -110,6 +125,8 @@ const GoogleAccountSchema = new Schema(
 GoogleAccountSchema.index({ user: 1   }, { unique: true, sparse: true });
 GoogleAccountSchema.index({ userId: 1 }, { unique: true, sparse: true });
 GoogleAccountSchema.index({ 'gaProperties.propertyId': 1 });
+// útil para dashboards/consultas por selección
+GoogleAccountSchema.index({ user: 1, selectedCustomerIds: 1 });
 
 /* ----------------- virtuals / instance methods ----------------- */
 GoogleAccountSchema.virtual('hasRefresh').get(function () {
@@ -163,7 +180,7 @@ GoogleAccountSchema.methods.setGaProperties = function (list = []) {
 // CustomerId por defecto (fallback al primer customer)
 GoogleAccountSchema.methods.getDefaultCustomerId = function () {
   const cid = this.defaultCustomerId || this.customers?.[0]?.id || '';
-  return cid ? stripDashes(cid) : '';
+  return cid ? normCustomerId(cid) : '';
 };
 
 // PropertyId por defecto (formato "properties/123")
@@ -176,7 +193,7 @@ GoogleAccountSchema.methods.setCustomersFromResourceNames = function (resourceNa
   const list = Array.isArray(resourceNames) ? resourceNames : [];
   this.customers = list.map(rn => {
     const id = String(rn || '').split('/')[1] || '';
-    return { id: stripDashes(id), resourceName: rn };
+    return { id: normCustomerId(id), resourceName: rn };
   });
   if (!this.defaultCustomerId && this.customers[0]?.id) {
     this.defaultCustomerId = this.customers[0].id;
@@ -202,7 +219,7 @@ GoogleAccountSchema.pre('save', function(next) {
   if (Array.isArray(this.customers)) {
     this.customers = this.customers.map(c => ({
       ...c,
-      id: stripDashes(c?.id),
+      id: normCustomerId(c?.id),
       resourceName: c?.resourceName,
       descriptiveName: c?.descriptiveName,
       currencyCode: c?.currencyCode,
@@ -229,9 +246,20 @@ GoogleAccountSchema.pre('save', function(next) {
   }
 
   // normaliza IDs por si entran con guiones o formatos raros
-  if (this.defaultCustomerId)   this.defaultCustomerId   = stripDashes(this.defaultCustomerId);
-  if (this.managerCustomerId)   this.managerCustomerId   = stripDashes(this.managerCustomerId);
+  if (this.defaultCustomerId)   this.defaultCustomerId   = normCustomerId(this.defaultCustomerId);
+  if (this.managerCustomerId)   this.managerCustomerId   = normCustomerId(this.managerCustomerId);
   if (this.defaultPropertyId)   this.defaultPropertyId   = normPropertyId(this.defaultPropertyId);
+
+  // NUEVO — limpiar/dedup selección y, si hay customers, filtrar a existentes
+  if (Array.isArray(this.selectedCustomerIds)) {
+    const norm = normIdArr(this.selectedCustomerIds);
+    if (this.customers?.length) {
+      const available = new Set(this.customers.map(c => c.id));
+      this.selectedCustomerIds = norm.filter(id => available.has(id));
+    } else {
+      this.selectedCustomerIds = norm;
+    }
+  }
 
   next();
 });

@@ -43,6 +43,9 @@ try {
       customers:         { type: Array, default: [] },
       ad_accounts:       { type: [AdAccountSchema], default: [] },
 
+      // NUEVO en el fallback para no romper
+      selectedCustomerIds: { type: [String], default: [] },
+
       objective: { type: String, enum: ['ventas','alcance','leads'], default: 'ventas' },
     },
     { collection: 'googleaccounts', timestamps: true }
@@ -211,10 +214,16 @@ function axiosErrorInfo(err) {
 }
 
 // === NUEVO: helpers selección
-function getSelectedIdsFromReq(req) {
-  return Array.isArray(req.user?.selectedGoogleAccounts)
+function selectedFromDocOrUser(gaDoc, req) {
+  const fromDoc = Array.isArray(gaDoc?.selectedCustomerIds) && gaDoc.selectedCustomerIds.length
+    ? gaDoc.selectedCustomerIds.map(normId)
+    : [];
+  if (fromDoc.length) return [...new Set(fromDoc.filter(Boolean))];
+
+  const fromUser = Array.isArray(req.user?.selectedGoogleAccounts)
     ? req.user.selectedGoogleAccounts.map(normId)
     : [];
+  return [...new Set(fromUser.filter(Boolean))];
 }
 
 function availableAccountIds(gaDoc) {
@@ -266,6 +275,10 @@ async function listAccessibleCustomers(accessToken, managerId) {
   }
 }
 
+/* ======================================================
+ * GUARDAR SELECCIÓN — ahora en GoogleAccount.selectedCustomerIds
+ * (más espejo opcional en User para retrocompat)
+ * ====================================================== */
 router.post('/accounts/selection', requireAuth, express.json(), async (req, res) => {
   try {
     const { accountIds } = req.body;
@@ -273,10 +286,8 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
       return res.status(400).json({ ok: false, error: 'accountIds[] requerido' });
     }
 
-    // Normaliza y deduplica (sin guiones)
     const wanted = [...new Set(accountIds.map(normId).filter(Boolean))];
 
-    // Busca las cuentas del usuario
     const ga = await GoogleAccount
       .findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
       .select('ad_accounts customers defaultCustomerId')
@@ -286,19 +297,23 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
       return res.status(404).json({ ok: false, error: 'GOOGLE_NOT_CONNECTED' });
     }
 
-    // Construye set de cuentas disponibles
     const available = new Set(
       (Array.isArray(ga?.ad_accounts) && ga.ad_accounts.length ? ga.ad_accounts : (ga?.customers || []))
         .map(a => normId(a.id))
     );
 
-    // Filtra las seleccionadas válidas
     const selected = wanted.filter(id => available.has(id));
     if (!selected.length) {
       return res.status(400).json({ ok: false, error: 'NO_VALID_ACCOUNTS' });
     }
 
-    // Guarda selección en el usuario
+    // Guarda selección en el conector
+    await GoogleAccount.updateOne(
+      { $or: [{ user: req.user._id }, { userId: req.user._id }] },
+      { $set: { selectedCustomerIds: selected } }
+    );
+
+    // (opcional) espejo legacy en User
     await User.updateOne(
       { _id: req.user._id },
       { $set: { selectedGoogleAccounts: selected } }
@@ -329,7 +344,7 @@ router.get('/', requireAuth, async (req, res) => {
     const gaDoc = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
-      .select('+refreshToken +accessToken objective defaultCustomerId managerCustomerId loginCustomerId customers ad_accounts')
+      .select('+refreshToken +accessToken objective defaultCustomerId managerCustomerId loginCustomerId customers ad_accounts selectedCustomerIds')
       .lean();
 
     if (!gaDoc?.refreshToken && !gaDoc?.accessToken) {
@@ -342,7 +357,7 @@ router.get('/', requireAuth, async (req, res) => {
 
     // === NUEVO: precondición de selección si hay >3 cuentas disponibles
     const availableIds = availableAccountIds(gaDoc);
-    const selectedIds  = getSelectedIdsFromReq(req);
+    const selectedIds  = selectedFromDocOrUser(gaDoc, req);
     if (availableIds.length > MAX_BY_RULE && selectedIds.length === 0) {
       return res.status(400).json({
         ok: false,
@@ -357,11 +372,9 @@ router.get('/', requireAuth, async (req, res) => {
 
     // Si hay selección, forzar default a una permitida si el default/param no están dentro
     if (selectedIds.length > 0 && !selectedIds.includes(normId(requestedCustomer))) {
-      // si pidieron explícitamente una no permitida → 403
       if (req.query.account_id || req.query.customer_id) {
         return res.status(403).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
       }
-      // si vino por default, reasignamos a la primera seleccionada
       requestedCustomer = selectedIds[0];
     }
 
@@ -404,7 +417,6 @@ router.get('/', requireAuth, async (req, res) => {
         `;
       }
 
-      // ventas
       const SALES_CAT = `segments.conversion_action_category = PURCHASE`;
       return `
         SELECT
@@ -555,7 +567,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount
       .findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
-      .select('+refreshToken +accessToken managerCustomerId loginCustomerId defaultCustomerId customers ad_accounts')
+      .select('+refreshToken +accessToken managerCustomerId loginCustomerId defaultCustomerId customers ad_accounts selectedCustomerIds')
       .lean();
 
     if (!ga || (!ga.refreshToken && !ga.accessToken)) {
@@ -619,8 +631,8 @@ router.get('/accounts', requireAuth, async (req, res) => {
       }
     }
 
-    // === NUEVO: aplicar filtro por selección guardada
-    const selected = getSelectedIdsFromReq(req);
+    // === NUEVO: aplicar filtro por selección guardada (doc → user fallback)
+    const selected = selectedFromDocOrUser(ga, req);
     let filtered = accounts;
     if (selected.length > 0) {
       const allow = new Set(selected);
@@ -659,7 +671,12 @@ router.post('/default', requireAuth, express.json(), async (req, res) => {
     if (!customerId) return res.status(400).json({ ok: false, error: 'CUSTOMER_REQUIRED' });
 
     // Si hay selección, valida que el default esté permitido
-    const selected = getSelectedIdsFromReq(req);
+    const ga = await GoogleAccount
+      .findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
+      .select('selectedCustomerIds')
+      .lean();
+
+    const selected = selectedFromDocOrUser(ga, req);
     if (selected.length > 0 && !selected.includes(customerId)) {
       return res.status(403).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
     }

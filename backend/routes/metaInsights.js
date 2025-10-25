@@ -20,6 +20,7 @@ const INSIGHT_FIELDS = [
 const ALLOWED_OBJECTIVES = new Set(['ventas', 'alcance', 'leads']);
 const ALLOWED_LEVELS     = new Set(['account', 'campaign', 'adset', 'ad']);
 
+/* ===================== Models ===================== */
 let MetaAccount;
 try {
   MetaAccount = require('../models/MetaAccount');
@@ -40,6 +41,9 @@ try {
       adAccounts:       Array,
       defaultAccountId: String,
 
+      // NUEVO en fallback para no romper
+      selectedAccountIds: { type: [String], default: [] },
+
       pages:            Array,
       scopes:           [String],
       objective:        String,
@@ -52,10 +56,16 @@ try {
   MetaAccount = mongoose.models.MetaAccount || mongoose.model('MetaAccount', schema);
 }
 
+// espejo opcional para retrocompat
+const User = require('../models/User');
+
+/* ===================== Middlewares/Utils ===================== */
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
+
+const normActId = (s = '') => String(s).replace(/^act_/, '').trim();
 
 function appSecretProof(accessToken) {
   if (!APP_SECRET) return undefined;
@@ -224,6 +234,7 @@ function zeroKpis(objective) {
   return kpisVentas({ spend:0, clicks:0, impressions:0, revenue:0, purchases:0 });
 }
 
+/* ===================== Meta helpers ===================== */
 async function fetchInsights({ accountId, accessToken, fields, level, dateParams }) {
   const baseUrl = `${FB_GRAPH}/act_${accountId}/insights`;
   const baseParams = {
@@ -231,7 +242,7 @@ async function fetchInsights({ accountId, accessToken, fields, level, dateParams
     appsecret_proof: appSecretProof(accessToken),
     fields, level, time_increment: 1, limit: 5000,
     use_unified_attribution_setting: true, action_report_time: 'conversion',
-    ...(dateParams.datePresetMode ? { date_preset: dateParams.date_preset } : { time_range: dateParams.time_range }),
+    ...(dateParams.datePresetMode ? { date_preset: dateParams.date_preset } : { time_range: dateParams.time_range } ),
   };
 
   const rows = [];
@@ -249,7 +260,7 @@ async function fetchInsights({ accountId, accessToken, fields, level, dateParams
 async function loadMetaAccount(userId){
   return await MetaAccount
     .findOne({ $or: [{ user: userId }, { userId }] })
-    .select('+access_token +token +longlivedToken +accessToken +longLivedToken defaultAccountId ad_accounts adAccounts')
+    .select('+access_token +token +longlivedToken +accessToken +longLivedToken defaultAccountId ad_accounts adAccounts selectedAccountIds objective')
     .lean();
 }
 
@@ -270,8 +281,6 @@ function resolveAccessToken(metaAcc, reqUser){
     null
   );
 }
-
-const normActId = (s = '') => String(s).replace(/^act_/, '').trim();
 
 function resolveAccountId(req, metaAcc){
   const q = req.query?.account_id && String(req.query.account_id);
@@ -299,40 +308,72 @@ function emptyResponse({ objective, timeZone, cmp, level, message }) {
   };
 }
 
-/* ========= helpers de selección (mínimo cambio) ========= */
-function getSelectedIdsFromReq(req) {
-  // Preferencia oficial
-  const pref = req.user?.preferences?.meta?.auditAccountIds;
-  if (Array.isArray(pref) && pref.length) return pref.map(normActId);
-  // Fallback (si tenías este campo antes)
-  const legacy = req.user?.selectedMetaAccounts;
-  if (Array.isArray(legacy) && legacy.length) return legacy.map(normActId);
-  return [];
+/* ========= selección: doc → user fallback ========= */
+function selectedFromDocOrUser(metaDoc, req) {
+  const fromDoc = Array.isArray(metaDoc?.selectedAccountIds) && metaDoc.selectedAccountIds.length
+    ? metaDoc.selectedAccountIds.map(normActId)
+    : [];
+  if (fromDoc.length) return [...new Set(fromDoc.filter(Boolean))];
+
+  const legacy = Array.isArray(req.user?.selectedMetaAccounts)
+    ? req.user.selectedMetaAccounts.map(normActId)
+    : [];
+  return [...new Set(legacy.filter(Boolean))];
 }
 
 /* =========================
- * GUARD por selección (cuentas Meta)
+ * POST /meta/accounts/selection — guarda selección en MetaAccount
  * ========================= */
-function metaEnsureAllowed(req, res, next) {
-  const wantedRaw =
-    req.query?.account_id ||
-    req.query?.accountId ||
-    req.body?.account_id ||
-    req.body?.accountId ||
-    '';
-  const wanted = normActId(wantedRaw);
+router.post('/accounts/selection', requireAuth, express.json(), async (req, res) => {
+  try {
+    const { accountIds } = req.body;
+    if (!Array.isArray(accountIds)) {
+      return res.status(400).json({ ok: false, error: 'accountIds[] requerido' });
+    }
 
-  const selected = getSelectedIdsFromReq(req); // <<< usa preferencias del usuario
-  if (selected.length > 0 && wanted && !selected.includes(wanted)) {
-    return res.status(403).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
+    const wanted = [...new Set(accountIds.map(normActId).filter(Boolean))];
+
+    const meta = await loadMetaAccount(req.user._id);
+    if (!meta) return res.status(404).json({ ok: false, error: 'META_NOT_CONNECTED' });
+
+    const available = new Set(
+      normalizeAccountsList(meta).map(a => normActId(a.id || a.account_id)).filter(Boolean)
+    );
+
+    const selectedIds = wanted.filter(id => available.has(id));
+    if (!selectedIds.length) return res.status(400).json({ ok: false, error: 'NO_VALID_ACCOUNTS' });
+
+    await MetaAccount.updateOne(
+      { $or: [{ user: req.user._id }, { userId: req.user._id }] },
+      { $set: { selectedAccountIds: selectedIds } }
+    );
+
+    // espejo opcional (legacy)
+    await User.updateOne(
+      { _id: req.user._id },
+      { $set: { selectedMetaAccounts: selectedIds } }
+    );
+
+    let nextDefault = meta?.defaultAccountId ? normActId(meta.defaultAccountId) : null;
+    if (!nextDefault || !selectedIds.includes(nextDefault)) {
+      nextDefault = selectedIds[0];
+      await MetaAccount.updateOne(
+        { $or: [{ user: req.user._id }, { userId: req.user._id }] },
+        { $set: { defaultAccountId: nextDefault } }
+      );
+    }
+
+    return res.json({ ok: true, selected: selectedIds, defaultAccountId: nextDefault });
+  } catch (e) {
+    console.error('meta/accounts/selection error:', e);
+    return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
   }
-  return next();
-}
+});
 
 /* =========================
- * INSIGHTS
+ * INSIGHTS (con guardia de selección)
  * ========================= */
-router.get('/', requireAuth, metaEnsureAllowed, async (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   try {
     const fallbackTZ = 'America/Mexico_City';
 
@@ -350,12 +391,11 @@ router.get('/', requireAuth, metaEnsureAllowed, async (req, res) => {
       return res.json(emptyResponse({ objective, timeZone: fallbackTZ, cmp, level, message: 'META_NOT_CONNECTED' }));
     }
 
-    // universo disponible y regla de selección
     const list = normalizeAccountsList(metaAcc);
     const availableIds = list.map(a => normActId(a.id || a.account_id)).filter(Boolean);
-    const selected = getSelectedIdsFromReq(req);
+    const selected = selectedFromDocOrUser(metaAcc, req);
 
-    // si no hay selección explícita y hay >3 disponibles → exigir selección y no auditar
+    // Regla: si hay >3 disponibles y no hay selección → exigir selección
     if (availableIds.length > MAX_BY_RULE && selected.length === 0) {
       return res.json({ ok: false, reason: 'SELECTION_REQUIRED(>3_ACCOUNTS)', requiredSelection: true });
     }
@@ -367,7 +407,7 @@ router.get('/', requireAuth, metaEnsureAllowed, async (req, res) => {
       return res.json(emptyResponse({ objective, timeZone: tz, cmp, level, message: 'NO_AD_ACCOUNT' }));
     }
 
-    // Doble seguro: si hay selección y el accountId resuelto no pertenece, 403
+    // Doble seguro: si hay selección y el accountId no pertenece, 403
     if (selected.length > 0 && !selected.includes(normActId(accountId))) {
       return res.status(403).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
     }
@@ -486,7 +526,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
       };
     });
 
-    const selected = getSelectedIdsFromReq(req);
+    const selected = selectedFromDocOrUser(doc, req);
 
     // Si hay >3 disponibles y no hay selección, forzar selección desde UI
     if (availableIds.length > MAX_BY_RULE && selected.length === 0) {
@@ -494,7 +534,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
         ok: false,
         reason: 'SELECTION_REQUIRED(>3_ACCOUNTS)',
         requiredSelection: true,
-        accounts, // las mostramos para que el UI pinte el multiselect
+        accounts,
         defaultAccountId: null,
       });
     }
