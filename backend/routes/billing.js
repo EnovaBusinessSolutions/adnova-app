@@ -4,7 +4,7 @@ const router = express.Router();
 const Facturapi = (require('facturapi').default || require('facturapi'));
 const facturapi = new Facturapi(process.env.FACTURAPI_KEY);
 const TaxProfile = require('../models/TaxProfile');
-const ensureAuthenticated = require('../middlewares/ensureAuthenticated');
+const ensureAuthenticated = require('../../middlewares/ensureAuthenticated');
 
 router.post('/tax-profile', ensureAuthenticated, async (req, res) => {
   try {
