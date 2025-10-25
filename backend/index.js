@@ -37,6 +37,7 @@ const auditsRoutes = require('./routes/audits');
 const stripeRouter = require('./routes/stripe');
 const facturapiTest = require('./routes/facturapiTest');
 const billingRoutes = require('./routes/billing');
+const stripeWebhook = require('./routes/stripeWebhook');
 
 const metaInsightsRoutes = require('./routes/metaInsights');
 const metaAccountsRoutes = require('./routes/metaAccounts');
@@ -161,6 +162,7 @@ app.use('/api/google/analytics', gaRouter);
 app.use('/api/stripe', stripeRouter);
 app.use('/api/facturapi-test', facturapiTest);
 app.use('/api/billing', billingRoutes);
+app.use('/api/stripe', stripeWebhook);
 
 app.get('/', (req, res) => {
   const { shop } = req.query;

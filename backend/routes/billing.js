@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const router = express.Router();
-const Facturapi = require('facturapi');
+const Facturapi = (require('facturapi').default || require('facturapi'));
 const facturapi = new Facturapi(process.env.FACTURAPI_KEY);
 const TaxProfile = require('../models/TaxProfile');
 const ensureAuthenticated = require('../middlewares/ensureAuthenticated');
