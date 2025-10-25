@@ -35,6 +35,8 @@ const subscribeRouter = require('./routes/subscribe');
 const userRoutes = require('./routes/user');
 const auditsRoutes = require('./routes/audits');
 const stripeRouter = require('./routes/stripe');
+const facturapiTest = require('./routes/facturapiTest');
+const billingRoutes = require('./routes/billing');
 
 const metaInsightsRoutes = require('./routes/metaInsights');
 const metaAccountsRoutes = require('./routes/metaAccounts');
@@ -157,6 +159,8 @@ app.use('/auth/meta', metaAuthRoutes);
 app.use('/', privacyRoutes);
 app.use('/api/google/analytics', gaRouter);
 app.use('/api/stripe', stripeRouter);
+app.use('/api/facturapi-test', facturapiTest);
+app.use('/api/billing', billingRoutes);
 
 app.get('/', (req, res) => {
   const { shop } = req.query;
