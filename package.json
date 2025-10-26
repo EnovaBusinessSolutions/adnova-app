@@ -24,6 +24,7 @@
     "express": "^5.1.0",
     "express-session": "^1.18.1",
     "facturapi": "^4.10.0",
+    "google-ads-api": "^21.0.1",
     "google-auth-library": "^10.3.0",
     "googleapis": "^153.0.0",
     "helmet": "^8.1.0",

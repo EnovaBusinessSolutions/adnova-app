@@ -38,16 +38,18 @@ try {
     ad_accounts:       { type: [AdAccountSchema], default: [] },
     // Opcional
     objective:         { type: String, enum: ['ventas','alcance','leads'], default: 'ventas' },
+    // Guardamos expiry si existe (aunque no esté en el esquema original)
+    expiresAt: { type: Date },
   }, { collection: 'googleaccounts', timestamps: true });
 
   GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
 }
 
-// ===== Servicio de Ads (paso 2) =====
+// ===== Servicio de Ads =====
 const {
-  listAccessibleCustomers,
-  getCustomer,
-  fetchInsights,
+  listAccessibleCustomers, // customers:listAccessibleCustomers (sin login-customer-id)
+  getCustomer,             // GET customers/{cid} (con login-customer-id si MCC)
+  fetchInsights,           // GAQL stream + KPIs
 } = require('../services/googleAdsService');
 
 // ===== ENV & helpers =====
@@ -58,7 +60,8 @@ function requireAuth(req, res, next) {
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-const normId = (s = '') => String(s).replace(/^customers\//, '').replace(/-/g, '').trim();
+const normId = (s = '') =>
+  String(s).replace(/^customers\//, '').replace(/-/g, '').trim();
 
 function oauth() {
   return new OAuth2Client({
@@ -72,7 +75,7 @@ function oauth() {
  * Devuelve un access_token vigente usando accessToken o refreshToken.
  */
 async function getFreshAccessToken(gaDoc) {
-  if (gaDoc?.accessToken && gaDoc.accessToken.length > 10 && gaDoc?.expiresAt) {
+  if (gaDoc?.accessToken && gaDoc?.expiresAt) {
     const ms = new Date(gaDoc.expiresAt).getTime() - Date.now();
     if (ms > 60_000) return gaDoc.accessToken; // válido > 60s
   }
@@ -83,7 +86,7 @@ async function getFreshAccessToken(gaDoc) {
     access_token:  gaDoc?.accessToken  || undefined,
   });
 
-  // Primero intenta refreshAccessToken (devuelve expiry)
+  // 1) intenta refreshAccessToken (devuelve expiry)
   try {
     const { credentials } = await client.refreshAccessToken();
     const access = credentials.access_token;
@@ -96,7 +99,7 @@ async function getFreshAccessToken(gaDoc) {
     }
   } catch (_) { /* ignore */ }
 
-  // Si falla, intenta getAccessToken()
+  // 2) fallback getAccessToken()
   const t = await client.getAccessToken().catch(() => null);
   if (t?.token) return t.token;
 
@@ -107,25 +110,36 @@ async function getFreshAccessToken(gaDoc) {
 /* ============================================================================
  * GET /api/google/ads/insights/accounts
  * Descubre y devuelve las cuentas accesibles para el usuario actual.
+ *  - requiredSelection + reason cuando falte scope o no haya cuentas
  * ==========================================================================*/
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
-      .select('+accessToken +refreshToken customers ad_accounts defaultCustomerId loginCustomerId managerCustomerId scope')
+      .select('+accessToken +refreshToken customers ad_accounts defaultCustomerId loginCustomerId managerCustomerId scope expiresAt')
       .lean();
 
     if (!ga || (!ga.accessToken && !ga.refreshToken)) {
-      return res.json({ ok: true, accounts: [], defaultCustomerId: null, requiredSelection: false });
+      return res.json({ ok: true, accounts: [], defaultCustomerId: null, requiredSelection: true, reason: 'GOOGLE_NOT_CONNECTED' });
     }
 
-    // Si ya tenemos cuentas enriquecidas guardadas, úsalas.
-    let accounts = Array.isArray(ga.ad_accounts) && ga.ad_accounts.length
-      ? ga.ad_accounts
-      : [];
+    // ¿El usuario concedió el scope de Ads?
+    const hasAdwordsScope = (ga.scope || []).includes('https://www.googleapis.com/auth/adwords');
+    if (!hasAdwordsScope) {
+      return res.json({
+        ok: true,
+        accounts: [],
+        defaultCustomerId: null,
+        requiredSelection: true,
+        reason: 'MISSING_ADS_SCOPE',
+      });
+    }
 
-    // Si no hay nada guardado, descubre con la API (listAccessibleCustomers -> getCustomer)
+    // Usa lo guardado si existe
+    let accounts = Array.isArray(ga.ad_accounts) && ga.ad_accounts.length ? ga.ad_accounts : [];
+
+    // Si no hay nada, discovery perezoso
     if (accounts.length === 0) {
       const accessToken = await getFreshAccessToken(ga);
       const resourceNames = await listAccessibleCustomers(accessToken); // ["customers/123", ...]
@@ -137,7 +151,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
       }
       accounts = metas;
 
-      // Guarda enriquecido y espejo en customers
+      // Persiste enriquecido y espejo en customers
       await GoogleAccount.updateOne(
         { _id: ga._id },
         {
@@ -150,9 +164,6 @@ router.get('/accounts', requireAuth, async (req, res) => {
               timeZone: a.timeZone,
               status: a.status,
             })),
-            ...(ga.loginCustomerId ? {} : (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID
-              ? { loginCustomerId: String(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID).replace(/[^\d]/g, '') }
-              : {})),
           },
         }
       );
@@ -162,11 +173,22 @@ router.get('/accounts', requireAuth, async (req, res) => {
     let defaultCustomerId = normId(ga.defaultCustomerId || '');
     if (!defaultCustomerId && accounts.length) defaultCustomerId = normId(accounts[0].id);
 
+    // Si seguimos sin cuentas, avisa a la UI para reconectar/seleccionar
+    if (!accounts.length) {
+      return res.json({
+        ok: true,
+        accounts: [],
+        defaultCustomerId: null,
+        requiredSelection: true,
+        reason: 'NO_ACCESSIBLE_ACCOUNTS',
+      });
+    }
+
     return res.json({
       ok: true,
       accounts,
       defaultCustomerId: defaultCustomerId || null,
-      requiredSelection: false, // si más adelante añades selección forzada, cámbialo aquí
+      requiredSelection: false,
     });
   } catch (err) {
     console.error('google/ads/accounts error:', err?.response?.data || err);
@@ -176,21 +198,25 @@ router.get('/accounts', requireAuth, async (req, res) => {
 
 /* ============================================================================
  * GET /api/google/ads/insights
- * Devuelve KPIs + serie para el customer_id seleccionado o default.
- * Query params esperados por tu hook:
- *   - customer_id (opcional)
- *   - date_preset | range | include_today | objective | compare_mode
+ * KPIs + serie para el customer_id seleccionado o default.
+ * Query params: customer_id | date_preset | range | include_today | objective | compare_mode
  * ==========================================================================*/
 router.get('/', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
-      .select('+accessToken +refreshToken objective defaultCustomerId customers ad_accounts loginCustomerId managerCustomerId')
+      .select('+accessToken +refreshToken objective defaultCustomerId customers ad_accounts loginCustomerId managerCustomerId scope expiresAt')
       .lean();
 
     if (!ga?.refreshToken && !ga?.accessToken) {
-      return res.status(400).json({ ok: false, error: 'GOOGLE_NOT_CONNECTED' });
+      return res.status(400).json({ ok: false, error: 'GOOGLE_NOT_CONNECTED', requiredSelection: true, reason: 'GOOGLE_NOT_CONNECTED' });
+    }
+
+    // Bloquea si no tiene scope de Ads
+    const hasAdwordsScope = (ga.scope || []).includes('https://www.googleapis.com/auth/adwords');
+    if (!hasAdwordsScope) {
+      return res.status(400).json({ ok: false, error: 'MISSING_ADS_SCOPE', requiredSelection: true, reason: 'MISSING_ADS_SCOPE' });
     }
 
     // Resolver customerId: query > default > primero de lista
@@ -203,7 +229,7 @@ router.get('/', requireAuth, async (req, res) => {
     const customerId = qCustomer || defaultCustomer || first;
 
     if (!customerId) {
-      return res.status(400).json({ ok: false, error: 'NO_CUSTOMER_ID' });
+      return res.status(400).json({ ok: false, error: 'NO_CUSTOMER_ID', requiredSelection: true, reason: 'NO_CUSTOMER_ID' });
     }
 
     // Parámetros de fechas/objetivo tal y como los usa el front
@@ -220,14 +246,10 @@ router.get('/', requireAuth, async (req, res) => {
     };
 
     const data = await fetchInsights(opts);
-
-    // Puedes setear currency/locale/time_zone desde el doc si lo tienes
-    // (fetchInsights ya devuelve currency/locale por defecto)
     return res.json(data);
   } catch (err) {
     const status = err?.response?.status || 500;
     const detail = err?.response?.data || err.message || String(err);
-    // Mensaje útil cuando el Developer Token no está autorizado con tu OAuth Client
     if (status === 401 || status === 403) {
       console.error('google/ads auth error: Revisa Developer Token ↔ OAuth Client ID y permisos del MCC.');
     }
@@ -238,7 +260,7 @@ router.get('/', requireAuth, async (req, res) => {
 
 /* ============================================================================
  * POST /api/google/ads/insights/default
- * Guarda defaultCustomerId (si tu UI lo usa).
+ * Guarda defaultCustomerId
  * ==========================================================================*/
 router.post('/default', requireAuth, express.json(), async (req, res) => {
   try {
