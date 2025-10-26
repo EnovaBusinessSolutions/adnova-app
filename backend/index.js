@@ -645,6 +645,34 @@ app.get('/__ls-public', (_req, res) => {
   });
 });
 
+// Logout clásico para destruir la sesión de Passport
+app.post('/api/logout', (req, res, next) => {
+  try {
+    req.logout?.((err) => {
+      if (err) return next(err);
+      req.session?.destroy?.(() => {
+        // borra la cookie de sesión
+        res.clearCookie('connect.sid', {
+          path: '/',
+          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+          secure: process.env.NODE_ENV === 'production',
+          httpOnly: true,
+        });
+        res.json({ ok: true });
+      });
+    });
+  } catch (e) {
+    console.error('logout error:', e);
+    res.status(500).json({ ok: false });
+  }
+});
+
+// (opcional, si el botón navega)
+// GET /logout → usa el POST anterior y redirige
+app.get('/logout', (req, res) => {
+  res.redirect('/login');
+});
+
 /* =========================
  * Rutas éxito/cancel Stripe
  * ========================= */
