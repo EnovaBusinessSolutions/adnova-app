@@ -39,7 +39,7 @@ try {
       expiresAt:         { type: Date },
 
       // Ads
-      managerCustomerId: { type: String },                 // MCC opcional (guardado si aplica)
+      managerCustomerId: { type: String },                 // MCC opcional
       loginCustomerId:   { type: String },                 // copia de MCC si aplica
       defaultCustomerId: { type: String },                 // última seleccionada
       customers:         { type: Array, default: [] },     // [{ id, descriptiveName, currencyCode, timeZone }]
@@ -69,7 +69,6 @@ const {
   GOOGLE_CONNECT_CALLBACK_URL,
 } = process.env;
 
-// Preferimos GOOGLE_ADS_DEVELOPER_TOKEN; si no existe, usamos GOOGLE_DEVELOPER_TOKEN (compat)
 const GOOGLE_ADS_DEVELOPER_TOKEN =
   process.env.GOOGLE_ADS_DEVELOPER_TOKEN || process.env.GOOGLE_DEVELOPER_TOKEN || '';
 
@@ -77,15 +76,12 @@ const GOOGLE_LOGIN_CUSTOMER_ID =
   (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || process.env.GOOGLE_LOGIN_CUSTOMER_ID || '')
     .replace(/-/g, '').trim();
 
-/* =========================
- * Constantes
- * ========================= */
-const ADS_HOST   = 'https://googleads.googleapis.com';
-const ADS_VER    = process.env.GADS_API_VERSION || 'v17';
+const ADS_HOST = 'https://googleads.googleapis.com';
+const ADS_VER  = process.env.GADS_API_VERSION || 'v17';
 const DEFAULT_GOOGLE_OBJECTIVE = 'ventas';
 
 /* =========================
- * Helpers comunes
+ * Helpers
  * ========================= */
 function requireSession(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
@@ -110,9 +106,6 @@ const normalizeScopes = (raw) => Array.from(
   )
 );
 
-/* =========================================================
- *  Google Ads — discovery de cuentas con Ads REST API
- * =======================================================*/
 function adsHeaders(accessToken) {
   const h = {
     Authorization: `Bearer ${accessToken}`,
@@ -120,11 +113,48 @@ function adsHeaders(accessToken) {
     'Content-Type': 'application/json',
     Accept: 'application/json',
   };
-  // Solo usar MCC si lo configuraste (no es obligatorio)
+  // Solo usar MCC si lo configuraste (recomendado para jerarquía MCC->hija)
   if (GOOGLE_LOGIN_CUSTOMER_ID) h['login-customer-id'] = GOOGLE_LOGIN_CUSTOMER_ID;
   return h;
 }
 
+/* =========================================================
+ *  Refresco de Access Token (si expira o falta)
+ * =======================================================*/
+async function ensureFreshAccessToken(userId) {
+  const ga = await GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] })
+    .select('+accessToken +refreshToken expiresAt loginCustomerId');
+  if (!ga) throw new Error('GoogleAccount not found');
+
+  // Si hay accessToken vigente, úsalo
+  const now = Date.now();
+  if (ga.accessToken && ga.expiresAt && (new Date(ga.expiresAt).getTime() - 60_000) > now) {
+    return { accessToken: ga.accessToken, loginCustomerId: ga.loginCustomerId || GOOGLE_LOGIN_CUSTOMER_ID || null };
+  }
+
+  // Refrescar usando refresh_token
+  if (!ga.refreshToken) throw new Error('No refreshToken stored');
+
+  const client = oauth();
+  client.setCredentials({ refresh_token: ga.refreshToken });
+
+  const { credentials } = await client.refreshAccessToken();
+  const newAccess = credentials.access_token;
+  const newExpiry = credentials.expiry_date ? new Date(credentials.expiry_date) : new Date(now + 50 * 60_000);
+
+  if (!newAccess) throw new Error('Failed to refresh access token');
+
+  ga.accessToken = newAccess;
+  ga.expiresAt   = newExpiry;
+  if (!ga.loginCustomerId && GOOGLE_LOGIN_CUSTOMER_ID) ga.loginCustomerId = GOOGLE_LOGIN_CUSTOMER_ID;
+  await ga.save();
+
+  return { accessToken: newAccess, loginCustomerId: ga.loginCustomerId || GOOGLE_LOGIN_CUSTOMER_ID || null };
+}
+
+/* =========================================================
+ *  Google Ads — discovery de cuentas
+ * =======================================================*/
 async function listAccessibleCustomers(accessToken) {
   if (!GOOGLE_ADS_DEVELOPER_TOKEN) {
     console.error('[Google Ads] Falta GOOGLE_ADS_DEVELOPER_TOKEN/GOOGLE_DEVELOPER_TOKEN en .env');
@@ -167,7 +197,8 @@ async function getCustomerInfo(accessToken, customerId) {
   }
 }
 
-async function discoverCustomers(accessToken) {
+async function discoverCustomersWithFreshToken(userId) {
+  const { accessToken } = await ensureFreshAccessToken(userId);
   const rn = await listAccessibleCustomers(accessToken); // ["customers/123", ...]
   const ids = rn.map((r) => (r || '').split('/')[1]).filter(Boolean);
   const out = [];
@@ -216,13 +247,9 @@ async function fetchGA4Properties(oauthClient) {
  *  Sincronización completa post-OAuth (Ads)
  * =======================================================*/
 async function syncGoogleAdsAccountsForUser(userId) {
-  const ga = await GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] })
-    .select('+accessToken +refreshToken');
-
-  if (!ga?.accessToken) throw new Error('No Google accessToken for user');
   if (!GOOGLE_ADS_DEVELOPER_TOKEN) throw new Error('GOOGLE_ADS_DEVELOPER_TOKEN missing');
 
-  const customersBrief = await discoverCustomers(ga.accessToken); // [{ id, name, currencyCode, timeZone, status }]
+  const customersBrief = await discoverCustomersWithFreshToken(userId); // [{ id, name, currencyCode, timeZone, status }]
   const adAccounts = customersBrief.map(c => ({
     id: c.id,
     name: c.name,
@@ -230,7 +257,11 @@ async function syncGoogleAdsAccountsForUser(userId) {
     timeZone: c.timeZone || null,
     status: c.status || null,
   }));
-  const defaultCustomerId = ga.defaultCustomerId || adAccounts?.[0]?.id || null;
+  const defaultCustomerId = adAccounts?.[0]?.id || null;
+
+  const ga = await GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] })
+    .select('+accessToken +refreshToken');
+  if (!ga) throw new Error('GoogleAccount not found for sync');
 
   ga.customers = customersBrief.map(c => ({
     id: c.id,
@@ -239,7 +270,7 @@ async function syncGoogleAdsAccountsForUser(userId) {
     timeZone: c.timeZone
   }));
   ga.ad_accounts = adAccounts;
-  ga.loginCustomerId = ga.loginCustomerId || GOOGLE_LOGIN_CUSTOMER_ID || undefined;
+  if (!ga.loginCustomerId && GOOGLE_LOGIN_CUSTOMER_ID) ga.loginCustomerId = GOOGLE_LOGIN_CUSTOMER_ID;
   if (!ga.defaultCustomerId && defaultCustomerId) ga.defaultCustomerId = defaultCustomerId;
   await ga.save();
 
@@ -265,7 +296,7 @@ router.get('/connect', requireSession, async (req, res) => {
       scope: [
         'https://www.googleapis.com/auth/userinfo.email',
         'https://www.googleapis.com/auth/userinfo.profile',
-        'https://www.googleapis.com/auth/adwords',            // Google Ads
+        'https://www.googleapis.com/auth/adwords',            // Google Ads (read)
         'https://www.googleapis.com/auth/analytics.readonly', // GA4 Data
         'openid'
       ],
@@ -295,9 +326,9 @@ async function googleCallbackHandler(req, res) {
       return res.redirect('/onboarding?google=error&reason=no_access_token');
     }
 
-    const accessToken  = tokens.access_token;
-    const refreshToken = tokens.refresh_token || null;
-    const expiresAt    = tokens.expiry_date ? new Date(tokens.expiry_date) : null;
+    const accessToken   = tokens.access_token;
+    const refreshToken  = tokens.refresh_token || null;
+    const expiresAt     = tokens.expiry_date ? new Date(tokens.expiry_date) : null;
     const grantedScopes = normalizeScopes(tokens.scope);
 
     // === Guardamos tokens mínimos para poder sincronizar ===
@@ -339,7 +370,7 @@ async function googleCallbackHandler(req, res) {
       console.warn('⚠️ GA4 properties listing failed:', e?.response?.data || e.message);
     }
 
-    // Upsert final (por si cambió algo durante el sync)
+    // Upsert final
     const update = {
       user: req.user._id,
       userId: req.user._id,
@@ -402,7 +433,7 @@ router.get('/status', requireSession, async (req, res) => {
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
-      .select('+refreshToken +accessToken objective defaultCustomerId customers ad_accounts managerCustomerId scope gaProperties defaultPropertyId loginCustomerId')
+      .select('+refreshToken +accessToken objective defaultCustomerId customers ad_accounts managerCustomerId scope gaProperties defaultPropertyId loginCustomerId expiresAt')
       .lean();
 
     const hasTokens = !!(ga?.refreshToken || ga?.accessToken);
@@ -422,6 +453,7 @@ router.get('/status', requireSession, async (req, res) => {
       loginCustomerId: ga?.loginCustomerId || null,
       gaProperties: ga?.gaProperties || [],
       defaultPropertyId: ga?.defaultPropertyId || null,
+      expiresAt: ga?.expiresAt || null,
     });
   } catch (err) {
     console.error('google status error:', err);
@@ -454,14 +486,14 @@ router.post('/objective', requireSession, express.json(), async (req, res) => {
 });
 
 /* =========================
- * Listar cuentas Ads (si no hay, refresca)
+ * Listar cuentas Ads (con refresco perezoso)
  * ========================= */
 router.get('/accounts', requireSession, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
-      .select('+accessToken +refreshToken customers ad_accounts scope defaultCustomerId')
+      .select('+accessToken +refreshToken customers ad_accounts scope defaultCustomerId loginCustomerId')
       .lean();
 
     if (!ga || (!ga.accessToken && !ga.refreshToken)) {
@@ -519,6 +551,18 @@ router.post('/ads/refresh', requireSession, async (req, res) => {
   } catch (e) {
     console.error('ads refresh error', e.message);
     res.status(500).json({ ok: false, error: 'ADS_REFRESH_ERROR', detail: e.message });
+  }
+});
+
+/* =========================
+ * (Opcional) Refrescar token manual (debug)
+ * ========================= */
+router.post('/ads/token/refresh', requireSession, async (req, res) => {
+  try {
+    const t = await ensureFreshAccessToken(req.user._id);
+    res.json({ ok: true, ...t });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: 'TOKEN_REFRESH_ERROR', detail: e.message });
   }
 });
 

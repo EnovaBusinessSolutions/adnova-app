@@ -14,19 +14,18 @@ const nodemailer = require('nodemailer');
 const helmet = require('helmet');
 const compression = require('compression');
 
-
 require('./auth');
 
 const User = require('./models/User');
+
+// Routers
 const googleConnect = require('./routes/googleConnect');
+const googleAdsInsightsRouter = require('./routes/googleAdsInsights');
 const gaRouter = require('./routes/googleAnalytics');
 const metaAuthRoutes = require('./routes/meta');
 const privacyRoutes = require('./routes/privacyRoutes');
 const mockShopify = require('./routes/mockShopify');
 const shopifyRoutes = require('./routes/shopify');
-const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
-const connector = require('./routes/shopifyConnector');
-const webhookRoutes = require('./routes/shopifyConnector/webhooks');
 const verifySessionToken = require('../middlewares/verifySessionToken');
 const secureRoutes = require('./routes/secure');
 const dashboardRoute = require('./api/dashboardRoute');
@@ -38,7 +37,10 @@ const stripeRouter = require('./routes/stripe');
 const facturapiTest = require('./routes/facturapiTest');
 const billingRoutes = require('./routes/billing');
 const stripeWebhook = require('./routes/stripeWebhook');
+const connector = require('./routes/shopifyConnector');
+const webhookRoutes = require('./routes/shopifyConnector/webhooks');
 
+// Meta
 const metaInsightsRoutes = require('./routes/metaInsights');
 const metaAccountsRoutes = require('./routes/metaAccounts');
 const metaTable = require('./routes/metaTable');
@@ -46,13 +48,20 @@ const metaTable = require('./routes/metaTable');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+/* =========================
+ * Seguridad y performance
+ * ========================= */
 app.disable('x-powered-by');
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: 'cross-origin' },
-}));
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
+);
 app.use(compression());
 
-
+/* =========================
+ * CORS
+ * ========================= */
 const ALLOWED_ORIGINS = [
   'https://ai.adnova.digital',
   'https://admin.shopify.com',
@@ -62,23 +71,31 @@ const ALLOWED_ORIGINS = [
   'http://127.0.0.1:5173',
 ];
 
-app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin) return cb(null, true); // same-origin / curl
-    const ok = ALLOWED_ORIGINS.some(rule =>
-      rule instanceof RegExp ? rule.test(origin) : rule === origin
-    );
-    cb(ok ? null : new Error('CORS not allowed'), ok);
-  },
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true); // same-origin / curl / server-side
+      const ok = ALLOWED_ORIGINS.some((rule) =>
+        rule instanceof RegExp ? rule.test(origin) : rule === origin
+      );
+      return cb(ok ? null : new Error('CORS not allowed'), ok);
+    },
+    credentials: true,
+  })
+);
 app.options(/.*/, cors());
 
-
+/* =========================
+ * Parsers especiales (antes de JSON global)
+ * ========================= */
 // 1) Webhooks Shopify (raw)
-app.use('/connector/webhooks', express.raw({ type: 'application/json' }), webhookRoutes);
+app.use(
+  '/connector/webhooks',
+  express.raw({ type: 'application/json' }),
+  webhookRoutes
+);
 
-// 2) Stripe: usar RAW **solo** en /api/stripe/webhook, y JSON normal para el resto
+// 2) Stripe: RAW **solo** en /api/stripe/webhook; JSON normal para el resto
 app.use('/api/stripe', (req, res, next) => {
   if (req.path === '/webhook') {
     return express.raw({ type: 'application/json' })(req, res, next);
@@ -86,36 +103,50 @@ app.use('/api/stripe', (req, res, next) => {
   return express.json()(req, res, next);
 });
 
-
-
-// 3) Parsers globales (para todo lo demás)
+/* =========================
+ * Parsers globales
+ * ========================= */
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-
+/* =========================
+ * CSP público
+ * ========================= */
 app.use(publicCSP);
 
-/* ✅ NUEVO: robots.txt explícito (mínimo, no invasivo) */
+/* robots.txt simple */
 app.get('/robots.txt', (_req, res) => {
   res.type('text/plain').send('User-agent: *\nDisallow:');
 });
 
+/* =========================
+ * MongoDB
+ * ========================= */
+if (!process.env.MONGO_URI) {
+  console.warn('⚠️  MONGO_URI no está configurado');
+}
 mongoose
-  .connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+  .connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
   .then(() => console.log('✅ Conectado a MongoDB Atlas'))
   .catch((err) => console.error('❌ Error al conectar con MongoDB:', err));
 
+/* =========================
+ * Sesión y Passport
+ * ========================= */
 app.set('trust proxy', 1);
 app.use(
   session({
-    secret: process.env.SESSION_SECRET,
+    secret: process.env.SESSION_SECRET || 'adnova_secret',
     resave: false,
     saveUninitialized: false,
     cookie: {
-  sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-  secure: process.env.NODE_ENV === 'production',
-  httpOnly: true,
-},
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      httpOnly: true,
+    },
   })
 );
 app.use(passport.initialize());
@@ -126,7 +157,8 @@ function ensureAuthenticated(req, res, next) {
   return res.redirect('/login');
 }
 function ensureNotOnboarded(req, res, next) {
-  if (!(req.isAuthenticated && req.isAuthenticated())) return res.redirect('/login');
+  if (!(req.isAuthenticated && req.isAuthenticated()))
+    return res.redirect('/login');
   if (!req.user?.onboardingComplete) return next();
   return res.redirect('/dashboard');
 }
@@ -135,12 +167,21 @@ function sessionGuard(req, res, next) {
   return res.status(401).json({ error: 'No hay sesión' });
 }
 
+/* =========================
+ * Static / dashboard
+ * ========================= */
 const DASHBOARD_DIST = path.join(__dirname, '../dashboard-src/dist');
 const LEGACY_DASH = path.join(__dirname, '../public/dashboard');
 const HAS_DASHBOARD_DIST = fs.existsSync(path.join(DASHBOARD_DIST, 'index.html'));
 
 if (HAS_DASHBOARD_DIST) {
-  app.use('/assets', express.static(path.join(DASHBOARD_DIST, 'assets'), { immutable: true, maxAge: '1y' }));
+  app.use(
+    '/assets',
+    express.static(path.join(DASHBOARD_DIST, 'assets'), {
+      immutable: true,
+      maxAge: '1y',
+    })
+  );
   app.use('/dashboard', ensureAuthenticated, express.static(DASHBOARD_DIST));
   app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
     res.sendFile(path.join(DASHBOARD_DIST, 'index.html'));
@@ -155,20 +196,56 @@ if (HAS_DASHBOARD_DIST) {
   console.warn('⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard');
 }
 
+/* =========================
+ * Rutas de autenticación e integraciones
+ * ========================= */
 app.use('/auth/google', googleConnect);
 app.use('/auth/meta', metaAuthRoutes);
 app.use('/', privacyRoutes);
+
+// Google Analytics (GA4)
 app.use('/api/google/analytics', gaRouter);
+
+// Google Ads (insights) — protegido por sesión
+app.use('/api/google/ads/insights', sessionGuard, googleAdsInsightsRouter);
+// Alias: /api/google/ads → /api/google/ads/insights
+app.use(
+  '/api/google/ads',
+  sessionGuard,
+  (req, _res, next) => {
+    req.url = `/insights${req.url === '/' ? '' : req.url}`;
+    next();
+  },
+  googleAdsInsightsRouter
+);
+
+// Stripe / Facturapi / Billing
 app.use('/api/stripe', stripeRouter);
 app.use('/api/facturapi-test', facturapiTest);
 app.use('/api/billing', billingRoutes);
-app.use('/api/stripe', stripeWebhook);
+app.use('/api/stripe', stripeWebhook); // /api/stripe/webhook (raw body ya aplicado arriba)
 
+// Meta Ads
+app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);
+app.use('/api/meta/accounts', sessionGuard, metaAccountsRoutes);
+app.use('/api/meta', metaTable);
+
+// Shopify
+const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
+app.use('/connector', connector); // rutas del conector (incluye /webhooks arriba)
+app.use('/api/shopify', shopifyRoutes);
+app.use('/api', mockShopify);
+
+/* =========================
+ * Páginas públicas y flujo de app
+ * ========================= */
 app.get('/', (req, res) => {
   const { shop } = req.query;
   if (shop) return res.redirect(`/connector?shop=${shop}`);
   if (req.isAuthenticated && req.isAuthenticated()) {
-    return req.user.onboardingComplete ? res.redirect('/dashboard') : res.redirect('/onboarding');
+    return req.user.onboardingComplete
+      ? res.redirect('/dashboard')
+      : res.redirect('/onboarding');
   }
   return res.sendFile(path.join(__dirname, '../public/landing/index.html'));
 });
@@ -177,14 +254,60 @@ app.get('/login', (_req, res) => {
   res.sendFile(path.join(__dirname, '../public/login.html'));
 });
 
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, uptime: process.uptime() });
+app.get('/onboarding', ensureNotOnboarded, async (req, res) => {
+  const filePath = path.join(__dirname, '../public/onboarding.html');
+  const user = await User.findById(req.user._id).lean();
+  const alreadyConnectedShopify = user?.shopifyConnected || false;
+
+  fs.readFile(filePath, 'utf8', (err, html) => {
+    if (err) {
+      console.error('❌ Error al leer onboarding.html:', err.stack || err);
+      return res.status(500).send('Error al cargar la página de onboarding.');
+    }
+    let updatedHtml = html.replace('USER_ID_REAL', req.user._id.toString());
+    updatedHtml = updatedHtml.replace(
+      'SHOPIFY_CONNECTED_FLAG',
+      alreadyConnectedShopify ? 'true' : 'false'
+    );
+    updatedHtml = updatedHtml.replace(
+      'GOOGLE_CONNECTED_FLAG',
+      user?.googleConnected ? 'true' : 'false'
+    );
+    res.send(updatedHtml);
+  });
 });
 
-const FROM = process.env.SMTP_FROM || process.env.SMTP_USER;
+app.post('/api/complete-onboarding', async (req, res) => {
+  try {
+    if (!req.isAuthenticated()) {
+      return res
+        .status(401)
+        .json({ success: false, message: 'No autenticado' });
+    }
+    const result = await User.findByIdAndUpdate(req.user._id, {
+      onboardingComplete: true,
+    });
+    if (!result)
+      return res
+        .status(404)
+        .json({ success: false, message: 'Usuario no encontrado' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('❌ Error al completar onboarding:', err.stack || err);
+    res.status(500).json({ success: false, message: 'Error del servidor' });
+  }
+});
 
+/* =========================
+ * Auth básica (email/pass)
+ * ========================= */
+const FROM = process.env.SMTP_FROM || process.env.SMTP_USER;
 let transporter = null;
-const HAS_SMTP = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+const HAS_SMTP = !!(
+  process.env.SMTP_HOST &&
+  process.env.SMTP_USER &&
+  process.env.SMTP_PASS
+);
 
 if (HAS_SMTP) {
   transporter = nodemailer.createTransport({
@@ -205,27 +328,35 @@ if (HAS_SMTP) {
   console.warn('✉️  SMTP no configurado. Se omite verificación/envío de correo.');
 }
 
-
 app.post('/api/register', async (req, res) => {
   try {
     let { email, password } = req.body || {};
     if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Correo y contraseña son requeridos' });
+      return res
+        .status(400)
+        .json({ success: false, message: 'Correo y contraseña son requeridos' });
     }
 
     email = String(email).trim().toLowerCase();
 
     const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRe.test(email)) {
-      return res.status(400).json({ success: false, message: 'Correo inválido' });
+      return res
+        .status(400)
+        .json({ success: false, message: 'Correo inválido' });
     }
     if (password.length < 8) {
-      return res.status(400).json({ success: false, message: 'La contraseña debe tener al menos 8 caracteres' });
+      return res.status(400).json({
+        success: false,
+        message: 'La contraseña debe tener al menos 8 caracteres',
+      });
     }
 
     const exists = await User.findOne({ email });
     if (exists) {
-      return res.status(409).json({ success: false, message: 'El email ya está registrado' });
+      return res
+        .status(409)
+        .json({ success: false, message: 'El email ya está registrado' });
     }
 
     const hashed = await bcrypt.hash(password, 10);
@@ -257,15 +388,14 @@ app.post('/api/register', async (req, res) => {
         html = html.replace('{{YEAR}}', new Date().getFullYear());
 
         if (transporter) {
-  await transporter.sendMail({
-    from: FROM,
-    to: email,
-    subject: 'Activa tu cuenta de Adnova AI',
-    text: 'Tu cuenta se creó con éxito. Ingresa en https://ai.adnova.digital/login',
-    html,
-  });
-}
-
+          await transporter.sendMail({
+            from: FROM,
+            to: email,
+            subject: 'Activa tu cuenta de Adnova AI',
+            text: 'Tu cuenta se creó con éxito. Ingresa en https://ai.adnova.digital/login',
+            html,
+          });
+        }
       } catch (mailErr) {
         console.error('✉️  SMTP fallo (registro OK):', mailErr?.message || mailErr);
       }
@@ -274,20 +404,27 @@ app.post('/api/register', async (req, res) => {
     return res.status(201).json({
       success: true,
       message: 'Usuario registrado',
-      confirmUrl: `/confirmation.html?email=${encodeURIComponent(user.email)}`
+      confirmUrl: `/confirmation.html?email=${encodeURIComponent(user.email)}`,
     });
   } catch (err) {
     if (err && err.code === 11000) {
-      return res.status(409).json({ success: false, message: 'El email ya está registrado' });
+      return res
+        .status(409)
+        .json({ success: false, message: 'El email ya está registrado' });
     }
     console.error('❌ Error al registrar usuario:', err);
-    return res.status(500).json({ success: false, message: 'Error interno al registrar' });
+    return res
+      .status(500)
+      .json({ success: false, message: 'Error interno al registrar' });
   }
 });
 
 app.post('/api/forgot-password', async (req, res) => {
   const { email } = req.body;
-  if (!email) return res.status(400).json({ success: false, message: 'Correo requerido' });
+  if (!email)
+    return res
+      .status(400)
+      .json({ success: false, message: 'Correo requerido' });
 
   try {
     const user = await User.findOne({ email });
@@ -305,27 +442,17 @@ app.post('/api/forgot-password', async (req, res) => {
     const html = `<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><title>Recupera tu contraseña - Adnova AI</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<style>body{margin:0;padding:0;background:#0a0a12;color:#F4F2FF;font-family:'Inter',Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6}
-.card{max-width:410px;background:rgba(16,14,26,.98);border-radius:22px;box-shadow:0 0 32px 0 #a96bff2d;margin:0 auto;padding:0}
-.card-content{padding:0 38px 38px 38px}h1{margin:0 0 24px 0;font-size:2rem;font-weight:800;color:#A96BFF;letter-spacing:-1px;text-align:center}
-p{margin:0 0 18px 0;color:#F4F2FF;font-size:1.04rem;line-height:1.6;text-align:center}
-.btn{background:linear-gradient(90deg,#A96BFF 0%,#9333ea 100%);border-radius:10px;padding:.9rem 2.6rem;font-size:1.1rem;font-weight:700;color:#fff!important;text-decoration:none;display:inline-block;margin:0 0 0 0;box-shadow:0 2px 8px #A96BFF20;border:none;transition:opacity .16s}
-.btn:hover{opacity:.93}.footer{background:#18132a;padding:18px 36px 15px 36px;border-radius:0 0 22px 22px;text-align:center;font-size:.97rem;color:#B6A7E8}
-.footer a{color:#A96BFF;text-decoration:underline;font-weight:600;transition:color .17s}.footer a:hover{color:#fff}
-@media screen and (max-width:600px){.card{width:97vw!important;max-width:98vw!important}.card-content{padding:0 1.1rem 1.7rem 1.1rem}h1{font-size:1.25rem}.footer{font-size:.89rem;padding:1.1rem .3rem 1rem .3rem}.btn{width:100%;padding:.85rem 0}}</style>
-</head>
-<body>...${''}</body></html>`;
+<style>/* estilos */</style></head><body>…</body></html>`;
 
     if (transporter) {
-  await transporter.sendMail({
-    from: FROM,
-    to: user.email,
-    subject: 'Restablece tu contraseña · Adnova AI',
-    text: `Haz clic aquí para cambiar tu contraseña: ${resetUrl}`,
-    html,
-  });
-}
-
+      await transporter.sendMail({
+        from: FROM,
+        to: user.email,
+        subject: 'Restablece tu contraseña · Adnova AI',
+        text: `Haz clic aquí para cambiar tu contraseña: ${resetUrl}`,
+        html,
+      });
+    }
 
     res.json({ success: true });
   } catch (err) {
@@ -337,14 +464,19 @@ p{margin:0 0 18px 0;color:#F4F2FF;font-size:1.04rem;line-height:1.6;text-align:c
 app.post('/api/reset-password', async (req, res) => {
   const { token, password } = req.body;
   if (!token || !password) {
-    return res.status(400).json({ success: false, message: 'Datos incompletos' });
+    return res
+      .status(400)
+      .json({ success: false, message: 'Datos incompletos' });
   }
   try {
     const user = await User.findOne({
       resetPasswordToken: token,
       resetPasswordExpires: { $gt: new Date() },
     });
-    if (!user) return res.status(400).json({ success: false, message: 'Token inválido o expirado' });
+    if (!user)
+      return res
+        .status(400)
+        .json({ success: false, message: 'Token inválido o expirado' });
     user.password = await bcrypt.hash(password, 10);
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
@@ -357,16 +489,24 @@ app.post('/api/reset-password', async (req, res) => {
 });
 
 app.post('/api/login', async (req, res, next) => {
-  const { email, password } = req.body;
+  const { email, password } = req.body || {};
   if (!email || !password) {
-    return res.status(400).json({ success: false, message: 'Correo y contraseña son requeridos' });
+    return res
+      .status(400)
+      .json({ success: false, message: 'Correo y contraseña son requeridos' });
   }
   try {
     const user = await User.findOne({ email });
-    if (!user) return res.status(401).json({ success: false, message: 'Usuario no encontrado' });
+    if (!user)
+      return res
+        .status(401)
+        .json({ success: false, message: 'Usuario no encontrado' });
 
     const match = await bcrypt.compare(password, user.password);
-    if (!match) return res.status(401).json({ success: false, message: 'Contraseña incorrecta' });
+    if (!match)
+      return res
+        .status(401)
+        .json({ success: false, message: 'Contraseña incorrecta' });
 
     req.login(user, (err) => {
       if (err) return next(err);
@@ -374,43 +514,19 @@ app.post('/api/login', async (req, res, next) => {
       if (user.onboardingComplete && user.shopifyConnected) {
         return res.status(200).json({ success: true, redirect: '/dashboard' });
       }
-      return res.status(200).json({ success: true, redirect: '/onboarding' });
+      return res
+        .status(200)
+        .json({ success: true, redirect: '/onboarding' });
     });
   } catch (err) {
-    console.error('❌ Error al hacer login:', err.stack || err);
+    console.error('❌ Error al hacer login:', err);
     res.status(500).json({ success: false, message: 'Error del servidor' });
   }
 });
 
-app.get('/onboarding', ensureNotOnboarded, async (req, res) => {
-  const filePath = path.join(__dirname, '../public/onboarding.html');
-  const user = await User.findById(req.user._id).lean();
-  const alreadyConnectedShopify = user.shopifyConnected || false;
-
-  fs.readFile(filePath, 'utf8', (err, html) => {
-    if (err) {
-      console.error('❌ Error al leer onboarding.html:', err.stack || err);
-      return res.status(500).send('Error al cargar la página de onboarding.');
-    }
-    let updatedHtml = html.replace('USER_ID_REAL', req.user._id.toString());
-    updatedHtml = updatedHtml.replace('SHOPIFY_CONNECTED_FLAG', alreadyConnectedShopify ? 'true' : 'false');
-    updatedHtml = updatedHtml.replace('GOOGLE_CONNECTED_FLAG', user.googleConnected ? 'true' : 'false');
-    res.send(updatedHtml);
-  });
-});
-
-app.post('/api/complete-onboarding', async (req, res) => {
-  try {
-    if (!req.isAuthenticated()) return res.status(401).json({ success: false, message: 'No autenticado' });
-    const result = await User.findByIdAndUpdate(req.user._id, { onboardingComplete: true });
-    if (!result) return res.status(404).json({ success: false, message: 'Usuario no encontrado' });
-    res.json({ success: true });
-  } catch (err) {
-    console.error('❌ Error al completar onboarding:', err.stack || err);
-    res.status(500).json({ success: false, message: 'Error del servidor' });
-  }
-});
-
+/* =========================
+ * Utilidades de sesión / perfil
+ * ========================= */
 app.get('/api/session', async (req, res) => {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
     return res.status(401).json({ authenticated: false });
@@ -442,58 +558,45 @@ app.get('/api/saas/ping', sessionGuard, (req, res) => {
 });
 app.use('/api/saas/shopify', sessionGuard, require('./routes/shopifyMatch'));
 
-app.use('/api/shopify', shopifyRoutes);
-app.use('/api', mockShopify);
+/* =========================
+ * Otras APIs internas
+ * ========================= */
 app.use('/api', userRoutes);
-
-/* ✅ CAMBIO: elimina la ruta sin guardia; deja solo protegidas */
+/* ✅ Protegidas */
 app.use('/api/audits', sessionGuard, auditsRoutes);
-app.use('/api/audit',  sessionGuard, auditsRoutes);
+app.use('/api/audit', sessionGuard, auditsRoutes);
 
-app.post('/api/audit/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/run'));
-app.post('/api/audit/google/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/run'));
-app.post('/api/audit/meta/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/run'));
-app.post('/api/audit/shopify/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/run'));
+app.post('/api/audit/start', sessionGuard, (req, res) =>
+  res.redirect(307, '/api/audits/run')
+);
+app.post('/api/audit/google/start', sessionGuard, (req, res) =>
+  res.redirect(307, '/api/audits/run')
+);
+app.post('/api/audit/meta/start', sessionGuard, (req, res) =>
+  res.redirect(307, '/api/audits/run')
+);
+app.post('/api/audit/shopify/start', sessionGuard, (req, res) =>
+  res.redirect(307, '/api/audits/run')
+);
 
 app.use('/api/secure', verifySessionToken, secureRoutes);
 app.use('/api/dashboard', dashboardRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter);
-app.use('/api', require('./routes/objectives'));
 
-const googleAdsInsightsRouter = require('./routes/googleAdsInsights');
-app.use('/api/google/ads/insights', sessionGuard, googleAdsInsightsRouter);
-app.use('/api/google/ads', sessionGuard, (req, _res, next) => {
-  req.url = `/insights${req.url === '/' ? '' : req.url}`;
-  next();
-}, googleAdsInsightsRouter);
-
-app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);
-app.use('/api/meta/accounts', sessionGuard, metaAccountsRoutes);
-app.use('/api/meta', metaTable);
-
-app.get('/auth/google/login',
-  passport.authenticate('google', { scope: ['profile', 'email'] })
-);
-app.get('/auth/google/login/callback',
-  passport.authenticate('google', { failureRedirect: '/' }),
-  (req, res) => {
-    const destino = req.user.onboardingComplete ? '/dashboard' : '/onboarding';
-    res.redirect(destino);
-  }
-);
-
-/* Estáticos (públicos) */
+// Estáticos (públicos)
 app.use('/assets', express.static(path.join(__dirname, '../public/landing/assets')));
 app.use('/assets', express.static(path.join(__dirname, '../public/support/assets')));
 app.use('/assets', express.static(path.join(__dirname, '../public/plans/assets')));
 app.use(express.static(path.join(__dirname, '../public')));
 
-
-
+/* =========================
+ * Embebido Shopify
+ * ========================= */
 app.get('/connector/interface', shopifyCSP, (req, res) => {
   const { shop, host } = req.query;
-  if (!shop || !host) return res.status(400).send("Faltan parámetros 'shop' o 'host'");
+  if (!shop || !host)
+    return res.status(400).send("Faltan parámetros 'shop' o 'host'");
   res.sendFile(path.join(__dirname, '../public/connector/interface.html'));
 });
 
@@ -505,58 +608,32 @@ app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
   return res.redirect(redirectUrl.toString());
 });
 
-app.get('/logout', (req, res) => {
-  req.logout((err) => {
-    const clearAndReply = () => {
-      res.clearCookie('connect.sid', {
-        path: '/',
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-        secure:   process.env.NODE_ENV === 'production',
-      });
-      return res.send(`
-        <script>
-          localStorage.removeItem('sessionToken');
-          sessionStorage.removeItem('sessionToken');
-          window.location.href = '/';
-        </script>
-      `);
-    };
-    if (err) {
-      console.error('Error al cerrar sesión:', err);
-      return clearAndReply();
-    }
-    req.session.destroy(clearAndReply);
-  });
-});
-  
-
-// DEBUG: devolver mi estado actual (plan, subscription)
-app.get('/api/me', async (req, res) => {
-  if (!req.isAuthenticated || !req.isAuthenticated()) {
-    return res.status(401).json({ authenticated:false });
+/* =========================
+ * OAuth Google (login simple)
+ * ========================= */
+app.get('/auth/google/login', passport.authenticate('google', { scope: ['profile', 'email'] }));
+app.get(
+  '/auth/google/login/callback',
+  passport.authenticate('google', { failureRedirect: '/' }),
+  (req, res) => {
+    const destino = req.user.onboardingComplete ? '/dashboard' : '/onboarding';
+    res.redirect(destino);
   }
-  try {
-    const u = await User.findById(req.user._id)
-      .select('email plan stripeCustomerId subscription')
-      .lean();
-    if (!u) return res.status(404).json({ authenticated:false });
-    res.json({ authenticated:true, ...u });
-  } catch (e) {
-    res.status(500).json({ authenticated:false, error: e.message });
-  }
-});
+);
 
-// --- DEBUG/DIAGNÓSTICO rápido (puedes dejarlas mientras cierras deploy) ---
+/* =========================
+ * Debug / Diagnóstico
+ * ========================= */
 const PUBLIC_DIR = path.join(__dirname, '../public');
 
 app.get('/__ping', (_req, res) => {
   const successExists = fs.existsSync(path.join(PUBLIC_DIR, 'plans', 'success.html'));
-  const cancelExists  = fs.existsSync(path.join(PUBLIC_DIR, 'plans', 'cancel.html'));
+  const cancelExists = fs.existsSync(path.join(PUBLIC_DIR, 'plans', 'cancel.html'));
   res.json({
     ok: true,
     cwd: __dirname,
     successHtml: successExists,
-    cancelHtml:  cancelExists,
+    cancelHtml: cancelExists,
     publicDir: PUBLIC_DIR,
   });
 });
@@ -568,25 +645,30 @@ app.get('/__ls-public', (_req, res) => {
   });
 });
 
-// --- Rutas explícitas de éxito/cancel ---
+/* =========================
+ * Rutas éxito/cancel Stripe
+ * ========================= */
 app.get('/plans/success', (_req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, 'plans', 'success.html'));
 });
-
 app.get('/plans/cancel', (_req, res) => {
   const candidate = path.join(PUBLIC_DIR, 'plans', 'cancel.html');
   if (fs.existsSync(candidate)) return res.sendFile(candidate);
-  // fallback si aún no tienes cancel.html
-  res.redirect('/plans'); 
+  res.redirect('/plans');
 });
 
-
+/* =========================
+ * 404 y errores
+ * ========================= */
 app.use((req, res) => res.status(404).send('Página no encontrada'));
 app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal Server Error' });
 });
 
+/* =========================
+ * Boot
+ * ========================= */
 app.listen(PORT, () => {
   console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
 });

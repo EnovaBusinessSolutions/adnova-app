@@ -48,6 +48,18 @@ const CustomerSchema = new Schema(
     descriptiveName: String,
     currencyCode: String,
     timeZone: String,
+    status: String,
+  },
+  { _id: false }
+);
+
+const AdAccountSchema = new Schema(
+  {
+    id: { type: String, set: (v) => normCustomerId(v) },   // "1234567890"
+    name: String,
+    currencyCode: String,
+    timeZone: String,
+    status: String,
   },
   { _id: false }
 );
@@ -76,11 +88,13 @@ const GoogleAccountSchema = new Schema(
     expiresAt:    { type: Date },
 
     // Google Ads
-    managerCustomerId: { type: String, set: (v) => normCustomerId(v) },
+    managerCustomerId: { type: String, set: (v) => normCustomerId(v) }, // opcional
+    loginCustomerId:   { type: String, set: (v) => normCustomerId(v) }, // MCC usado en headers
     customers:         { type: [CustomerSchema], default: [] },
+    ad_accounts:       { type: [AdAccountSchema], default: [] },        // enriquecidas
     defaultCustomerId: { type: String, set: (v) => normCustomerId(v) },
 
-    // NUEVO — selección persistente de cuentas Ads (ids “123…”)
+    // Selección persistente (ids “123…”)
     selectedCustomerIds: {
       type: [String],
       default: [],
@@ -121,11 +135,10 @@ const GoogleAccountSchema = new Schema(
 );
 
 /* ----------------- índices ----------------- */
-// Ideal: 1 documento por usuario (usa uno de los dos campos user/userId)
+// Ideal: 1 documento por usuario (usa ambos campos user/userId con el mismo _id)
 GoogleAccountSchema.index({ user: 1   }, { unique: true, sparse: true });
 GoogleAccountSchema.index({ userId: 1 }, { unique: true, sparse: true });
 GoogleAccountSchema.index({ 'gaProperties.propertyId': 1 });
-// útil para dashboards/consultas por selección
 GoogleAccountSchema.index({ user: 1, selectedCustomerIds: 1 });
 
 /* ----------------- virtuals / instance methods ----------------- */
@@ -201,12 +214,29 @@ GoogleAccountSchema.methods.setCustomersFromResourceNames = function (resourceNa
   return this;
 };
 
+// Setear ad_accounts con normalización/dedupe
+GoogleAccountSchema.methods.setAdAccounts = function (arr = []) {
+  const list = Array.isArray(arr) ? arr : [];
+  const map = new Map();
+  for (const a of list) {
+    const id = normCustomerId(a?.id);
+    if (!id) continue;
+    map.set(id, {
+      id,
+      name: a?.name || a?.descriptiveName || `Cuenta ${id}`,
+      currencyCode: a?.currencyCode || a?.currency || null,
+      timeZone: a?.timeZone || a?.timezone || null,
+      status: a?.status || null,
+    });
+  }
+  this.ad_accounts = Array.from(map.values());
+  return this;
+};
+
 /* ----------------- statics ----------------- */
-// Recuperar el documento incluyendo tokens (ignora select:false)
 GoogleAccountSchema.statics.findWithTokens = function (query = {}) {
   return this.findOne(query).select('+accessToken +refreshToken');
 };
-// Cargar por userId (o user) con tokens
 GoogleAccountSchema.statics.loadForUserWithTokens = function (userId) {
   return this.findOne({ $or: [{ user: userId }, { userId }] }).select('+accessToken +refreshToken');
 };
@@ -224,7 +254,25 @@ GoogleAccountSchema.pre('save', function(next) {
       descriptiveName: c?.descriptiveName,
       currencyCode: c?.currencyCode,
       timeZone: c?.timeZone,
+      status: c?.status,
     }));
+  }
+
+  // normaliza ad_accounts
+  if (Array.isArray(this.ad_accounts)) {
+    const map = new Map();
+    for (const a of this.ad_accounts) {
+      const id = normCustomerId(a?.id);
+      if (!id) continue;
+      map.set(id, {
+        id,
+        name: a?.name || a?.descriptiveName || `Cuenta ${id}`,
+        currencyCode: a?.currencyCode || a?.currency || null,
+        timeZone: a?.timeZone || a?.timezone || null,
+        status: a?.status || null,
+      });
+    }
+    this.ad_accounts = Array.from(map.values());
   }
 
   // normaliza y dedupe gaProperties
@@ -246,11 +294,12 @@ GoogleAccountSchema.pre('save', function(next) {
   }
 
   // normaliza IDs por si entran con guiones o formatos raros
-  if (this.defaultCustomerId)   this.defaultCustomerId   = normCustomerId(this.defaultCustomerId);
-  if (this.managerCustomerId)   this.managerCustomerId   = normCustomerId(this.managerCustomerId);
-  if (this.defaultPropertyId)   this.defaultPropertyId   = normPropertyId(this.defaultPropertyId);
+  if (this.defaultCustomerId) this.defaultCustomerId = normCustomerId(this.defaultCustomerId);
+  if (this.managerCustomerId) this.managerCustomerId = normCustomerId(this.managerCustomerId);
+  if (this.loginCustomerId)   this.loginCustomerId   = normCustomerId(this.loginCustomerId);
+  if (this.defaultPropertyId) this.defaultPropertyId = normPropertyId(this.defaultPropertyId);
 
-  // NUEVO — limpiar/dedup selección y, si hay customers, filtrar a existentes
+  // limpiar/dedup selección y, si hay customers, filtrar a existentes
   if (Array.isArray(this.selectedCustomerIds)) {
     const norm = normIdArr(this.selectedCustomerIds);
     if (this.customers?.length) {
