@@ -51,6 +51,7 @@ try {
 
       // Misc
       objective:         { type: String, enum: ['ventas','alcance','leads'], default: null },
+      lastAdsDiscoveryError: { type: String, default: null }, // opcional: para UI/debug
       createdAt:         { type: Date, default: Date.now },
       updatedAt:         { type: Date, default: Date.now },
     },
@@ -106,16 +107,14 @@ const normalizeScopes = (raw) => Array.from(
   )
 );
 
+// Headers base para Google Ads (sin login-customer-id por defecto)
 function adsHeaders(accessToken) {
-  const h = {
+  return {
     Authorization: `Bearer ${accessToken}`,
     'developer-token': GOOGLE_ADS_DEVELOPER_TOKEN,
     'Content-Type': 'application/json',
     Accept: 'application/json',
   };
-  // Solo usar MCC si lo configuraste (recomendado para jerarquía MCC->hija)
-  if (GOOGLE_LOGIN_CUSTOMER_ID) h['login-customer-id'] = GOOGLE_LOGIN_CUSTOMER_ID;
-  return h;
 }
 
 /* =========================================================
@@ -126,13 +125,11 @@ async function ensureFreshAccessToken(userId) {
     .select('+accessToken +refreshToken expiresAt loginCustomerId');
   if (!ga) throw new Error('GoogleAccount not found');
 
-  // Si hay accessToken vigente, úsalo
   const now = Date.now();
   if (ga.accessToken && ga.expiresAt && (new Date(ga.expiresAt).getTime() - 60_000) > now) {
     return { accessToken: ga.accessToken, loginCustomerId: ga.loginCustomerId || GOOGLE_LOGIN_CUSTOMER_ID || null };
   }
 
-  // Refrescar usando refresh_token
   if (!ga.refreshToken) throw new Error('No refreshToken stored');
 
   const client = oauth();
@@ -162,20 +159,27 @@ async function listAccessibleCustomers(accessToken) {
   }
   const url = `${ADS_HOST}/${ADS_VER}/customers:listAccessibleCustomers`;
   try {
-    const { data } = await axios.get(url, {
-      headers: adsHeaders(accessToken),
+    // NOTA: NO enviamos login-customer-id aquí.
+    const base = adsHeaders(accessToken);
+    delete base['login-customer-id'];
+
+    const { data, status } = await axios.get(url, {
+      headers: base,
       timeout: 25000,
       validateStatus: () => true,
     });
+
     if (Array.isArray(data?.resourceNames)) return data.resourceNames; // ["customers/123", ...]
     if (data?.error) {
-      console.warn('Ads listAccessibleCustomers error:', data.error);
+      console.warn('Ads listAccessibleCustomers error:', status, data.error);
       return [];
     }
-    console.warn('Ads listAccessibleCustomers unexpected:', data);
+    console.warn('Ads listAccessibleCustomers unexpected:', status, data);
     return [];
   } catch (e) {
-    console.warn('⚠️ Ads listAccessibleCustomers fail:', e?.response?.status, e?.response?.data || e.message);
+    const st = e?.response?.status;
+    const detail = e?.response?.data || e.message;
+    console.warn('⚠️ Ads listAccessibleCustomers fail:', st, detail);
     return [];
   }
 }
@@ -183,7 +187,11 @@ async function listAccessibleCustomers(accessToken) {
 async function getCustomerInfo(accessToken, customerId) {
   const url = `${ADS_HOST}/${ADS_VER}/customers/${customerId}`;
   try {
-    const { data } = await axios.get(url, { headers: adsHeaders(accessToken), timeout: 20000 });
+    const h = adsHeaders(accessToken);
+    // Aquí SÍ podemos mandar login-customer-id (contexto MCC)
+    if (GOOGLE_LOGIN_CUSTOMER_ID) h['login-customer-id'] = GOOGLE_LOGIN_CUSTOMER_ID;
+
+    const { data } = await axios.get(url, { headers: h, timeout: 20000 });
     return {
       id: customerId,
       name: data?.descriptiveName || `Cuenta ${customerId}`,
@@ -249,6 +257,22 @@ async function fetchGA4Properties(oauthClient) {
 async function syncGoogleAdsAccountsForUser(userId) {
   if (!GOOGLE_ADS_DEVELOPER_TOKEN) throw new Error('GOOGLE_ADS_DEVELOPER_TOKEN missing');
 
+  // Evita salir a Ads si no se concedió el scope adwords
+  const scopeDoc = await GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] })
+    .select('scope customers ad_accounts defaultCustomerId').lean();
+  if (!scopeDoc) throw new Error('GoogleAccount not found for sync');
+
+  const hasAdwordsScope = (scopeDoc.scope || [])
+    .includes('https://www.googleapis.com/auth/adwords');
+  if (!hasAdwordsScope) {
+    console.warn('[Ads Sync] usuario sin scope adwords, omito discovery');
+    return {
+      customers: scopeDoc.customers || [],
+      ad_accounts: scopeDoc.ad_accounts || [],
+      defaultCustomerId: scopeDoc.defaultCustomerId || null
+    };
+  }
+
   const customersBrief = await discoverCustomersWithFreshToken(userId); // [{ id, name, currencyCode, timeZone, status }]
   const adAccounts = customersBrief.map(c => ({
     id: c.id,
@@ -257,11 +281,11 @@ async function syncGoogleAdsAccountsForUser(userId) {
     timeZone: c.timeZone || null,
     status: c.status || null,
   }));
-  const defaultCustomerId = adAccounts?.[0]?.id || null;
+  const defaultCustomerId = adAccounts?.[0]?.id || scopeDoc.defaultCustomerId || null;
 
   const ga = await GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] })
     .select('+accessToken +refreshToken');
-  if (!ga) throw new Error('GoogleAccount not found for sync');
+  if (!ga) throw new Error('GoogleAccount not found for sync save');
 
   ga.customers = customersBrief.map(c => ({
     id: c.id,
@@ -272,6 +296,7 @@ async function syncGoogleAdsAccountsForUser(userId) {
   ga.ad_accounts = adAccounts;
   if (!ga.loginCustomerId && GOOGLE_LOGIN_CUSTOMER_ID) ga.loginCustomerId = GOOGLE_LOGIN_CUSTOMER_ID;
   if (!ga.defaultCustomerId && defaultCustomerId) ga.defaultCustomerId = defaultCustomerId;
+  ga.lastAdsDiscoveryError = null;
   await ga.save();
 
   return { customers: ga.customers, ad_accounts: ga.ad_accounts, defaultCustomerId: ga.defaultCustomerId || null };
@@ -346,17 +371,24 @@ async function googleCallbackHandler(req, res) {
     await GoogleAccount.findOneAndUpdate(q, baseUpdate, { upsert: true, new: true, setDefaultsOnInsert: true });
 
     // === Google Ads (descubrir y guardar cuentas enriquecidas) ===
-    let customers = [];
-    let ad_accounts = [];
-    let defaultCustomerId = null;
+    // lee lo que hubiera por si el discovery falla hoy
+    const existing = await GoogleAccount.findOne(q).lean();
+    let customers = Array.isArray(existing?.customers) ? existing.customers : [];
+    let ad_accounts = Array.isArray(existing?.ad_accounts) ? existing.ad_accounts : [];
+    let defaultCustomerId = existing?.defaultCustomerId || null;
+
     try {
       const result = await syncGoogleAdsAccountsForUser(req.user._id);
-      customers = result.customers || [];
-      ad_accounts = result.ad_accounts || [];
-      defaultCustomerId = result.defaultCustomerId || null;
+      if ((result.customers || []).length) {
+        customers = result.customers;
+        ad_accounts = result.ad_accounts || [];
+        defaultCustomerId = result.defaultCustomerId || defaultCustomerId;
+      }
       console.log('[Ads Sync] customers:', customers.length, 'ad_accounts:', ad_accounts.length);
     } catch (e) {
       console.warn('⚠️ Ads customers discovery failed:', e?.response?.data || e.message);
+      // marca para UI si quieres distinguirlo
+      await GoogleAccount.updateOne(q, { $set: { lastAdsDiscoveryError: 'DISCOVERY_FAILED' } }).catch(()=>{});
     }
 
     // === GA4 (listar properties) ===
@@ -386,6 +418,7 @@ async function googleCallbackHandler(req, res) {
       ...(defaultPropertyId ? { defaultPropertyId } : {}),
 
       loginCustomerId: GOOGLE_LOGIN_CUSTOMER_ID || undefined,
+      lastAdsDiscoveryError: null,
       updatedAt: new Date(),
     };
     if (refreshToken) update.refreshToken = refreshToken;
@@ -433,7 +466,7 @@ router.get('/status', requireSession, async (req, res) => {
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
-      .select('+refreshToken +accessToken objective defaultCustomerId customers ad_accounts managerCustomerId scope gaProperties defaultPropertyId loginCustomerId expiresAt')
+      .select('+refreshToken +accessToken objective defaultCustomerId customers ad_accounts managerCustomerId scope gaProperties defaultPropertyId loginCustomerId expiresAt lastAdsDiscoveryError')
       .lean();
 
     const hasTokens = !!(ga?.refreshToken || ga?.accessToken);
@@ -454,6 +487,7 @@ router.get('/status', requireSession, async (req, res) => {
       gaProperties: ga?.gaProperties || [],
       defaultPropertyId: ga?.defaultPropertyId || null,
       expiresAt: ga?.expiresAt || null,
+      lastAdsDiscoveryError: ga?.lastAdsDiscoveryError || null,
     });
   } catch (err) {
     console.error('google status error:', err);
@@ -493,7 +527,7 @@ router.get('/accounts', requireSession, async (req, res) => {
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
-      .select('+accessToken +refreshToken customers ad_accounts scope defaultCustomerId loginCustomerId')
+      .select('+accessToken +refreshToken customers ad_accounts scope defaultCustomerId loginCustomerId lastAdsDiscoveryError')
       .lean();
 
     if (!ga || (!ga.accessToken && !ga.refreshToken)) {
@@ -504,16 +538,24 @@ router.get('/accounts', requireSession, async (req, res) => {
     let ad_accounts = ga.ad_accounts || [];
 
     if ((!customers || customers.length === 0) || (!ad_accounts || ad_accounts.length === 0)) {
-      await syncGoogleAdsAccountsForUser(req.user._id); // refresco perezoso
-      const refreshed = await GoogleAccount.findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
-        .select('customers ad_accounts defaultCustomerId')
-        .lean();
-      customers = refreshed?.customers || [];
-      ad_accounts = refreshed?.ad_accounts || [];
+      try {
+        const result = await syncGoogleAdsAccountsForUser(req.user._id); // refresco perezoso
+        customers = result.customers || [];
+        ad_accounts = result.ad_accounts || [];
+      } catch (e) {
+        console.warn('⚠️ lazy ads refresh failed:', e?.response?.data || e.message);
+      }
     }
 
     const defaultCustomerId = ga.defaultCustomerId || customers?.[0]?.id || null;
-    res.json({ ok: true, customers, ad_accounts, defaultCustomerId, scopes: Array.isArray(ga?.scope) ? ga.scope : [] });
+    res.json({
+      ok: true,
+      customers,
+      ad_accounts,
+      defaultCustomerId,
+      scopes: Array.isArray(ga?.scope) ? ga.scope : [],
+      lastAdsDiscoveryError: ga?.lastAdsDiscoveryError || null,
+    });
   } catch (err) {
     console.error('google accounts error:', err?.response?.data || err);
     res.status(500).json({ ok: false, error: 'ACCOUNTS_ERROR' });
