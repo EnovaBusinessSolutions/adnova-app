@@ -645,33 +645,41 @@ app.get('/__ls-public', (_req, res) => {
   });
 });
 
-// Logout clásico para destruir la sesión de Passport
-app.post('/api/logout', (req, res, next) => {
-  try {
-    req.logout?.((err) => {
-      if (err) return next(err);
-      req.session?.destroy?.(() => {
-        // borra la cookie de sesión
-        res.clearCookie('connect.sid', {
-          path: '/',
-          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-          secure: process.env.NODE_ENV === 'production',
-          httpOnly: true,
-        });
-        res.json({ ok: true });
-      });
+// --- LOGOUT unificado (POST para fetch desde el front y GET para navegación) ---
+
+function destroySessionAndReply(req, res, { redirectTo } = {}) {
+  req.session?.destroy?.(() => {
+    // borra la cookie de sesión (ajusta el nombre si lo cambiaste en session())
+    res.clearCookie('connect.sid', {
+      path: '/',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      httpOnly: true,
     });
-  } catch (e) {
-    console.error('logout error:', e);
-    res.status(500).json({ ok: false });
-  }
+    if (redirectTo) {
+      // sin JS inline (CSP friendly)
+      return res.redirect(303, redirectTo);
+    }
+    return res.json({ ok: true });
+  });
+}
+
+// Para botones que hacen fetch: POST /api/logout
+app.post('/api/logout', (req, res, next) => {
+  req.logout?.((err) => {
+    if (err) return next(err);
+    destroySessionAndReply(req, res);
+  });
 });
 
-// (opcional, si el botón navega)
-// GET /logout → usa el POST anterior y redirige
-app.get('/logout', (req, res) => {
-  res.redirect('/login');
+// Para navegación directa (links): GET /logout
+app.get('/logout', (req, res, next) => {
+  req.logout?.((err) => {
+    if (err) return next(err);
+    destroySessionAndReply(req, res, { redirectTo: '/login' });
+  });
 });
+
 
 /* =========================
  * Rutas éxito/cancel Stripe
