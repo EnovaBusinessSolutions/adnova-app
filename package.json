@@ -1,14 +1,20 @@
 {
   "name": "adnova-functional-app-dash-links-final-clean",
   "version": "1.0.0",
-  "main": "server.js",
+  "private": true,
+  "main": "backend/index.js",
   "scripts": {
-    "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "build:panel": "npm --prefix panel-src run build",
+    "start": "node backend/index.js",
+
+    "build:dashboard": "npm --prefix dashboard-src ci && npm --prefix dashboard-src run build",
+
+    "build:panel": "npm --prefix panel-src ci && npm --prefix panel-src run build",
+
     "sync:bookcall": "shx rm -rf public/bookcall && shx mkdir -p public/bookcall && shx cp -r panel-src/dist/* public/bookcall/",
+
     "build:bookcall": "npm run build:panel && npm run sync:bookcall",
-    "postinstall": "git submodule update --init --recursive && npm --prefix panel-src ci || true"
+
+    "build": "npm run build:dashboard && npm run build:bookcall"
   },
   "keywords": [],
   "author": "",
