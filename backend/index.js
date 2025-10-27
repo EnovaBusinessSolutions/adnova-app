@@ -201,22 +201,15 @@ const relaxedBookcallCSP = (req, res, next) => {
     'Content-Security-Policy',
     [
       "default-src 'self'",
-      // permite js del propio host + pequeños inline + el CDN externo que usa tu panel
-      "script-src 'self' 'unsafe-inline' https://cdn.getneng.co",
-      "script-src-elem 'self' 'unsafe-inline' https://cdn.getneng.co",
-      // estilos inline + Google Fonts CSS
+      "script-src 'self' 'unsafe-inline' https://cdn.gpteng.co",
+      "script-src-elem 'self' 'unsafe-inline' https://cdn.gpteng.co",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      // fonts locales + Google + data:
       "font-src 'self' https://fonts.gstatic.com data:",
-      // imágenes locales + data/blob
       "img-src 'self' data: blob:",
-      // por si ese script hace fetches
-      "connect-src 'self' https://cdn.getneng.co https://fonts.googleapis.com https://fonts.gstatic.com",
-      "worker-src 'self' blob:",
+      "connect-src 'self' https://cdn.gpteng.co",   // por si hace fetch
       "frame-ancestors 'self'",
       "base-uri 'self'",
-      "form-action 'self'"
+      "form-action 'self'",
     ].join('; ')
   );
   next();
