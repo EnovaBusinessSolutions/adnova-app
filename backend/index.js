@@ -196,26 +196,24 @@ if (HAS_DASHBOARD_DIST) {
   console.warn('⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard');
 }
 
-/* =========================
- * CSP específica para /bookcall (Lovable)
- * ========================= */
 const relaxedBookcallCSP = (req, res, next) => {
   res.setHeader(
     'Content-Security-Policy',
     [
       "default-src 'self'",
-      // permite js del propio host + pequeños inline de Vite
-      "script-src 'self' 'unsafe-inline'",
-      "script-src-elem 'self' 'unsafe-inline'",
-      // permite estilos inline (tailwind) + Google Fonts CSS
+      // permite js del propio host + pequeños inline + el CDN externo que usa tu panel
+      "script-src 'self' 'unsafe-inline' https://cdn.getneng.co",
+      "script-src-elem 'self' 'unsafe-inline' https://cdn.getneng.co",
+      // estilos inline + Google Fonts CSS
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      // fuentes locales + Google + data:
+      // fonts locales + Google + data:
       "font-src 'self' https://fonts.gstatic.com data:",
       // imágenes locales + data/blob
       "img-src 'self' data: blob:",
-      // por si hay modulepreload/fetch
-      "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com",
+      // por si ese script hace fetches
+      "connect-src 'self' https://cdn.getneng.co https://fonts.googleapis.com https://fonts.gstatic.com",
+      "worker-src 'self' blob:",
       "frame-ancestors 'self'",
       "base-uri 'self'",
       "form-action 'self'"
@@ -224,6 +222,7 @@ const relaxedBookcallCSP = (req, res, next) => {
   next();
 };
 app.use('/bookcall', relaxedBookcallCSP);
+
 
 
 /* =========================
