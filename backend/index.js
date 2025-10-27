@@ -196,25 +196,31 @@ if (HAS_DASHBOARD_DIST) {
   console.warn('⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard');
 }
 
+// ✅ CSP relajada solo para /bookcall
 const relaxedBookcallCSP = (req, res, next) => {
-  res.setHeader(
-    'Content-Security-Policy',
-    [
-      "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' https://cdn.gpteng.co",
-      "script-src-elem 'self' 'unsafe-inline' https://cdn.gpteng.co",
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-      "font-src 'self' https://fonts.gstatic.com data:",
-      "img-src 'self' data: blob:",
-      "connect-src 'self' https://cdn.gpteng.co",   // por si hace fetch
-      "frame-ancestors 'self'",
-      "base-uri 'self'",
-      "form-action 'self'",
-    ].join('; ')
-  );
+  const csp = [
+    "default-src 'self'",
+    // Habilita el CDN correcto + inline pequeño
+    "script-src 'self' 'unsafe-inline' https://cdn.gpteng.co",
+    "script-src-elem 'self' 'unsafe-inline' https://cdn.gpteng.co",
+    // Estilos y fuentes de Google
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
+    // Imágenes locales / data / blob
+    "img-src 'self' data: blob:",
+    // Si el script externo hiciera fetch/XHR
+    "connect-src 'self' https://cdn.gpteng.co",
+    "frame-ancestors 'self'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join('; ');
+  res.setHeader('Content-Security-Policy', csp);
   next();
 };
+
+// Aplica SOLO a /bookcall (déjalo antes del static)
 app.use('/bookcall', relaxedBookcallCSP);
+
 
 
 
