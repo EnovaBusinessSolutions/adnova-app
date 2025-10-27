@@ -197,29 +197,32 @@ if (HAS_DASHBOARD_DIST) {
 }
 
 /* =========================
- * CSP específica para /bookcall (relajada para Vite)
+ * CSP específica para /bookcall (Lovable)
  * ========================= */
 const relaxedBookcallCSP = (req, res, next) => {
-  // Permite scripts y estilos del propio host, inline styles de Tailwind,
-  // fuentes de Google y data/blob para imágenes y fuentes.
   res.setHeader(
     'Content-Security-Policy',
     [
       "default-src 'self'",
-      "script-src 'self'",              // no inline scripts de Vite en prod
+      // permite js del propio host + pequeños inline de Vite
+      "script-src 'self' 'unsafe-inline'",
+      "script-src-elem 'self' 'unsafe-inline'",
+      // permite estilos inline (tailwind) + Google Fonts CSS
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      // fuentes locales + Google + data:
       "font-src 'self' https://fonts.gstatic.com data:",
+      // imágenes locales + data/blob
       "img-src 'self' data: blob:",
-      "connect-src 'self'",
+      // por si hay modulepreload/fetch
+      "connect-src 'self' https://fonts.googleapis.com https://fonts.gstatic.com",
       "frame-ancestors 'self'",
       "base-uri 'self'",
-      "form-action 'self'",
+      "form-action 'self'"
     ].join('; ')
   );
   next();
 };
-
-// Aplica SOLO en /bookcall
 app.use('/bookcall', relaxedBookcallCSP);
 
 
