@@ -4,7 +4,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:panel": "npm --prefix panel-src run build",
+    "sync:bookcall": "shx rm -rf public/bookcall && shx mkdir -p public/bookcall && shx cp -r panel-src/dist/* public/bookcall/",
+    "build:bookcall": "npm run build:panel && npm run sync:bookcall",
+    "postinstall": "git submodule update --init --recursive && npm --prefix panel-src ci || true"
   },
   "keywords": [],
   "author": "",
