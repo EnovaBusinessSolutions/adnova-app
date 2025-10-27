@@ -10,3 +10,7 @@
 [submodule "plan-src"]
 	path = plan-src
 	url = https://github.com/EnovaBusinessSolutions/adnova-plan-zen-1.git
+[submodule "panel-src"]
+	path = panel-src
+	url = https://github.com/EnovaBusinessSolutions/adnova-46882.git
+	branch = main
