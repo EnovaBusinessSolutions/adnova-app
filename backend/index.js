@@ -196,58 +196,7 @@ if (HAS_DASHBOARD_DIST) {
   console.warn('⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard');
 }
 
-// ✅ CSP relajada solo para /bookcall
-const relaxedBookcallCSP = (req, res, next) => {
-  const csp = [
-    "default-src 'self'",
-    // Habilita el CDN correcto + inline pequeño
-    "script-src 'self' 'unsafe-inline' https://cdn.gpteng.co",
-    "script-src-elem 'self' 'unsafe-inline' https://cdn.gpteng.co",
-    // Estilos y fuentes de Google
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "font-src 'self' https://fonts.gstatic.com data:",
-    // Imágenes locales / data / blob
-    "img-src 'self' data: blob:",
-    // Si el script externo hiciera fetch/XHR
-    "connect-src 'self' https://cdn.gpteng.co",
-    "frame-ancestors 'self'",
-    "base-uri 'self'",
-    "form-action 'self'",
-  ].join('; ');
-  res.setHeader('Content-Security-Policy', csp);
-  next();
-};
 
-// Aplica SOLO a /bookcall (déjalo antes del static)
-app.use('/bookcall', relaxedBookcallCSP);
-
-
-
-
-/* =========================
- * Static / bookcall (Lovable)
- * ========================= */
-const PUBLIC_BOOKCALL = path.join(__dirname, '../public/bookcall');
-const BOOKCALL_DIST   = path.join(__dirname, '../panel-src/dist');
-
-const HAS_PUBLIC_BOOKCALL = fs.existsSync(path.join(PUBLIC_BOOKCALL, 'index.html'));
-const HAS_DIST_BOOKCALL   = fs.existsSync(path.join(BOOKCALL_DIST, 'index.html'));
-
-if (HAS_PUBLIC_BOOKCALL) {
-  app.use('/bookcall', express.static(PUBLIC_BOOKCALL, { index: 'index.html', maxAge: '1h' }));
-  app.get(/^\/bookcall(?:\/.*)?$/, (_req, res) => {
-    res.sendFile(path.join(PUBLIC_BOOKCALL, 'index.html'));
-  });
-  console.log('✅ Bookcall servido desde /public/bookcall');
-} else if (HAS_DIST_BOOKCALL) {
-  app.use('/bookcall', express.static(BOOKCALL_DIST, { index: 'index.html', maxAge: '1h' }));
-  app.get(/^\/bookcall(?:\/.*)?$/, (_req, res) => {
-    res.sendFile(path.join(BOOKCALL_DIST, 'index.html'));
-  });
-  console.log('ℹ️  Bookcall servido desde submódulo: panel-src/dist (fallback)');
-} else {
-  console.warn('⚠️ No se encontró ni /public/bookcall ni panel-src/dist. Ejecuta: npm run build:bookcall');
-}
 
 
 /* =========================
@@ -642,6 +591,7 @@ app.use('/api', subscribeRouter);
 app.use('/assets', express.static(path.join(__dirname, '../public/landing/assets')));
 app.use('/assets', express.static(path.join(__dirname, '../public/support/assets')));
 app.use('/assets', express.static(path.join(__dirname, '../public/plans/assets')));
+app.use('/assets', express.static(path.join(__dirname, '../public/bookcall/assets')));
 app.use(express.static(path.join(__dirname, '../public')));
 
 /* =========================

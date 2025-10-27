@@ -4,17 +4,10 @@
   "private": true,
   "main": "backend/index.js",
   "scripts": {
+    "start": "node backend/index.js",
     "build:dashboard": "npm --prefix dashboard-src ci && npm --prefix dashboard-src run build",
-    "build:panel": "npm --prefix panel-src ci && npm --prefix panel-src run build",
-    "sync:bookcall": "shx rm -rf public/bookcall && shx mkdir -p public/bookcall && shx cp -r panel-src/dist/* public/bookcall/",
-    "build:bookcall": "npm run build:panel && npm run sync:bookcall",
-    "build": "npm run build:dashboard && npm run build:bookcall",
-    "start": "node backend/index.js"
+    "build": "npm run build:dashboard"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "dependencies": {
     "@google-analytics/data": "^5.2.0",
     "@shopify/shopify-api": "^11.12.0",
@@ -44,8 +37,6 @@
     "stripe": "^19.1.0"
   },
   "devDependencies": {
-    "@shopify/app-bridge": "^3.7.10",
-    "shx": "^0.4.0",
-    "vite": "^7.0.0"
+    "@shopify/app-bridge": "^3.7.10"
   }
 }
