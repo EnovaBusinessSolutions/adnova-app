@@ -197,6 +197,33 @@ if (HAS_DASHBOARD_DIST) {
 }
 
 /* =========================
+ * CSP específica para /bookcall (relajada para Vite)
+ * ========================= */
+const relaxedBookcallCSP = (req, res, next) => {
+  // Permite scripts y estilos del propio host, inline styles de Tailwind,
+  // fuentes de Google y data/blob para imágenes y fuentes.
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      "script-src 'self'",              // no inline scripts de Vite en prod
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com data:",
+      "img-src 'self' data: blob:",
+      "connect-src 'self'",
+      "frame-ancestors 'self'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join('; ')
+  );
+  next();
+};
+
+// Aplica SOLO en /bookcall
+app.use('/bookcall', relaxedBookcallCSP);
+
+
+/* =========================
  * Static / bookcall (Lovable)
  * ========================= */
 const PUBLIC_BOOKCALL = path.join(__dirname, '../public/bookcall');
@@ -206,14 +233,12 @@ const HAS_PUBLIC_BOOKCALL = fs.existsSync(path.join(PUBLIC_BOOKCALL, 'index.html
 const HAS_DIST_BOOKCALL   = fs.existsSync(path.join(BOOKCALL_DIST, 'index.html'));
 
 if (HAS_PUBLIC_BOOKCALL) {
-  // ✅ Prioriza /public/bookcall (lo que copias con npm run build:bookcall)
   app.use('/bookcall', express.static(PUBLIC_BOOKCALL, { index: 'index.html', maxAge: '1h' }));
   app.get(/^\/bookcall(?:\/.*)?$/, (_req, res) => {
     res.sendFile(path.join(PUBLIC_BOOKCALL, 'index.html'));
   });
   console.log('✅ Bookcall servido desde /public/bookcall');
 } else if (HAS_DIST_BOOKCALL) {
-  // Fallback: usa el build directo del submódulo si aún no copiaste a /public
   app.use('/bookcall', express.static(BOOKCALL_DIST, { index: 'index.html', maxAge: '1h' }));
   app.get(/^\/bookcall(?:\/.*)?$/, (_req, res) => {
     res.sendFile(path.join(BOOKCALL_DIST, 'index.html'));
@@ -222,6 +247,7 @@ if (HAS_PUBLIC_BOOKCALL) {
 } else {
   console.warn('⚠️ No se encontró ni /public/bookcall ni panel-src/dist. Ejecuta: npm run build:bookcall');
 }
+
 
 /* =========================
  * Rutas de autenticación e integraciones
