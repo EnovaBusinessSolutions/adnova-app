@@ -197,6 +197,8 @@ if (HAS_DASHBOARD_DIST) {
 }
 
 
+app.use(express.json({ limit: '1mb' }));
+app.use('/api/bookcall', require('./routes/bookcall'));
 
 
 /* =========================
