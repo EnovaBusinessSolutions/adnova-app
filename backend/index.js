@@ -642,7 +642,6 @@ app.use('/api', subscribeRouter);
 app.use('/assets', express.static(path.join(__dirname, '../public/landing/assets')));
 app.use('/assets', express.static(path.join(__dirname, '../public/support/assets')));
 app.use('/assets', express.static(path.join(__dirname, '../public/plans/assets')));
-app.use('/assets', express.static(path.join(__dirname, '../public/bookcall/assets')));
 app.use(express.static(path.join(__dirname, '../public')));
 
 /* =========================
