@@ -4,17 +4,12 @@
   "private": true,
   "main": "backend/index.js",
   "scripts": {
-    "start": "node backend/index.js",
-
+    "start": "node server.js",
     "build:dashboard": "npm --prefix dashboard-src ci && npm --prefix dashboard-src run build",
-
     "build:panel": "npm --prefix panel-src ci && npm --prefix panel-src run build",
-
     "sync:bookcall": "shx rm -rf public/bookcall && shx mkdir -p public/bookcall && shx cp -r panel-src/dist/* public/bookcall/",
-
     "build:bookcall": "npm run build:panel && npm run sync:bookcall",
-
-    "build": "npm run build:dashboard && npm run build:bookcall"
+    "build": "git submodule update --init --recursive && npm run build:dashboard && npm run build:bookcall"
   },
   "keywords": [],
   "author": "",
