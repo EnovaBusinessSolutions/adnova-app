@@ -22,26 +22,23 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <script type="module" crossorigin src="/bookcall/assets/index-DCsrbgPs.js"></script>
+    <script type="module" crossorigin src="/bookcall/assets/index-N-4st7Ld.js"></script>
     <link rel="stylesheet" crossorigin href="/bookcall/assets/index-DMNYOTs-.css">
   </head>
 
   <body>
     <div id="root"></div>
 
-    <!-- IMPORTANTE: permite este dominio en la CSP (script-src y script-src-elem): https://cdn.gpteng.co -->
-    <script src="https://cdn.gpteng.co/gptengineer.js" defer></script>
-
+    <!-- Logs útiles por si algo truena antes de montar -->
     <script>
-  window.addEventListener('error', e => {
-    console.log('[window.onerror]', e.message, e.filename, e.lineno, e.colno, e.error);
-  });
-  window.addEventListener('unhandledrejection', e => {
-    console.log('[unhandledrejection]', e.reason);
-  });
-</script>
+      window.addEventListener('error', e => {
+        console.log('[window.onerror]', e.message, e.filename, e.lineno, e.colno, e.error);
+      });
+      window.addEventListener('unhandledrejection', e => {
+        console.log('[unhandledrejection]', e.reason);
+      });
+    </script>
 
-
-    <!-- Entrada Vite: en dev apunta a /src/main.tsx; en build Vite lo reescribe a /bookcall/assets/... -->
+    <!-- Carga SOLO tu bundle. Vite lo reescribe a /bookcall/assets/... en build -->
   </body>
 </html>
