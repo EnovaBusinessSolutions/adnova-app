@@ -1,5 +1,10 @@
+// middlewares/csp.js
 const helmet = require('helmet');
 
+/**
+ * CSP pública (landing, bookcall, etc.)
+ * - Permitimos imágenes desde el propio sitio, data: URIs, cualquier https: y upload.wikimedia.org
+ */
 const publicCSP = helmet({
   contentSecurityPolicy: {
     useDefaults: true,
@@ -10,13 +15,19 @@ const publicCSP = helmet({
       imgSrc: [
         "'self'",
         "data:",
-        "https://img.icons8.com" 
+        "https:",                     // opcional: habilita imágenes seguras en general
+        "https://upload.wikimedia.org",
+        "https://img.icons8.com"
       ],
-      frameAncestors: ["'self'"]   
+      frameAncestors: ["'self'"]
     }
   }
 });
 
+/**
+ * CSP para vistas embebidas en Shopify (iframe)
+ * - Igual añadimos upload.wikimedia.org a imgSrc
+ */
 const shopifyCSP = helmet({
   frameguard: false,
   contentSecurityPolicy: {
@@ -40,6 +51,8 @@ const shopifyCSP = helmet({
       imgSrc: [
         "'self'",
         "data:",
+        "https:",                     // opcional: habilita imágenes seguras en general
+        "https://upload.wikimedia.org",
         "https://img.icons8.com"
       ]
     }
