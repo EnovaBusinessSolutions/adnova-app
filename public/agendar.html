@@ -1,38 +1,49 @@
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Agendar | Adnova AI</title>
-
-  <!-- ⚠️ Sin inline CSS externo roto; usa tu CSS dedicado -->
-  <link rel="stylesheet" href="/agendar.css">
-  <!-- Pasamos la URL sin script inline -->
-  <meta name="booking-url" content="{{BOOKING_URL}}">
+  <link rel="stylesheet" href="/assets/onboarding.css">
+  <style>
+    :root { --brand:#b152e0; }
+    body{background:#0b0a0f;color:#fff;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu}
+    .wrap{max-width:1100px;margin:40px auto;padding:0 16px}
+    .card{background:#14121a;border:1px solid #231c33;border-radius:16px;box-shadow:0 20px 60px #0007;padding:16px}
+    .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+    .btn{display:inline-flex;gap:8px;align-items:center;background:var(--brand);border:none;color:#fff;
+         padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:600;transition:.25s transform,.25s opacity}
+    .btn:hover{transform:translateY(-1px);opacity:.95}
+    .btn.secondary{background:#1e1b26}
+    .btn.ghost{background:transparent;border:1px solid #2a2238}
+    iframe{width:100%;height:78vh;border:0;border-radius:12px;overflow:hidden;background:#0b0a0f}
+    .note{opacity:.85;font-size:13px;margin-top:10px}
+    .fallback{display:none}
+    .stack{display:flex;gap:10px;flex-wrap:wrap}
+    .status{font-size:14px;margin:0 0 12px}
+  </style>
 </head>
 <body>
   <div class="wrap">
     <div class="header">
-      <h1 class="h1">Agenda tu llamada</h1>
-      <div>
-        <a class="btn secondary" href="/bookcall">← Volver</a>
-      </div>
+      <h1 style="font-size:28px;font-weight:700">Agenda tu llamada</h1>
+      <div><a class="btn secondary" href="/bookcall">← Volver</a></div>
     </div>
 
     <div class="card">
-      <div id="frameWrap">
-        <iframe id="bookingFrame" allow="microphone; camera" referrerpolicy="strict-origin-when-cross-origin"></iframe>
-      </div>
+      <div id="frameWrap"><iframe id="bookingFrame"></iframe></div>
 
       <div id="fallback" class="fallback">
-        <p style="margin-bottom:12px">No pudimos embeber la agenda (Google lo bloquea). Da clic para abrirla:</p>
-        <a id="fallbackBtn" class="btn">Abrir agenda</a>
-        <p class="note">La reserva se abrirá en esta pestaña y te enviaremos confirmación por correo.</p>
+        <p id="statusMsg" class="status"></p>
+        <div class="stack">
+          <button id="fallbackBtn" class="btn">Abrir agenda</button>
+          <button id="doneBtn" class="btn ghost">Ya agendé</button>
+        </div>
+        <p class="note">La reserva abre en una pestaña nueva y Google enviará la confirmación por correo.</p>
       </div>
     </div>
   </div>
 
-  <!-- JS externo con defer, cumple CSP -->
-  <script src="/js/agendar.js" defer></script>
+  <script src="/assets/agendar.js" defer></script>
 </body>
 </html>

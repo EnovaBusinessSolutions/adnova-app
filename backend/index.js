@@ -179,6 +179,10 @@ app.get('/agendar', (_req, res) => {
   res.send(html);
 });
 
+app.get('/api/public-config', (_req, res) => {
+  res.json({ bookingUrl: process.env.BOOKING_URL || '' });
+});
+
 /* =========================
  * Static / dashboard
  * ========================= */
