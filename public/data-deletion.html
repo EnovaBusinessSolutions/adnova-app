@@ -5,27 +5,108 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Eliminación de datos | ADNOVA AI</title>
   <meta name="robots" content="index,follow" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
   <style>
-    body{background:#0b0b0d;color:#fff;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;line-height:1.6;padding:24px}
-    .card{max-width:860px;margin:0 auto;padding:28px;border-radius:16px;background:rgba(255,255,255,.04);box-shadow:0 0 0 1px rgba(255,255,255,.06)}
-    h1{font-size:28px;margin:0 0 12px}
-    a{color:#a78bfa}
-    code{background:rgba(255,255,255,.08);padding:2px 6px;border-radius:6px}
-    ul{margin-left:20px}
+    :root{
+      --bg:#0a0a12; --panel:#110e1b; --text:#EAE7FF; --muted:#B9B5D2;
+      --border:#24163A; --brand:#b152e0;
+      --brand-weak: color-mix(in oklab, var(--brand) 35%, white);
+    }
+    html,body{
+      min-height:100vh; background:var(--bg); color:var(--text);
+      font-family:'Inter',system-ui,Segoe UI,Arial,sans-serif;
+      margin:0; padding:0; font-size:15px; line-height:1.7; letter-spacing:.01em;
+      -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+      scroll-behavior:smooth;
+    }
+    ::selection{ background:color-mix(in oklab, var(--brand) 25%, white); color:#0d0012 }
+    :focus-visible{ outline:2px solid var(--brand); outline-offset:3px; border-radius:6px }
+
+    .wrap{
+      max-width: 820px; margin: clamp(1.25rem,3vw,3rem) auto 4rem;
+      background: linear-gradient(180deg, rgba(17,14,27,.98), rgba(17,14,27,.96));
+      border:1px solid var(--border); border-radius:20px;
+      padding: clamp(1.2rem,2.6vw,2.4rem) clamp(1rem,2.4vw,2rem);
+      box-shadow:
+        0 0 0 1px rgba(177,82,224,.06) inset,
+        0 12px 40px rgba(177,82,224,.18),
+        0 2px 18px rgba(0,0,0,.45);
+    }
+
+    h1,h2{ margin:.35rem 0 1rem; line-height:1.2; font-weight:800 }
+    h1{
+      font-size:clamp(1.55rem,3.2vw,2.1rem); letter-spacing:-.02em; color:var(--text);
+      text-shadow:0 0 .65rem rgba(177,82,224,.25), 0 0 1.2rem rgba(177,82,224,.15);
+    }
+    h1::after{
+      content:""; display:block; width:72px; height:3px; border-radius:999px;
+      background:linear-gradient(90deg, transparent, var(--brand), transparent);
+      margin:.6rem 0 .2rem; opacity:.7;
+    }
+    h2{ font-size:clamp(1.05rem,2.2vw,1.18rem); color:var(--brand) }
+    .muted{ color:var(--muted); font-size:.93rem }
+
+    p,li{ color:var(--text); font-size:.98rem; margin:.4rem 0 }
+
+    a{
+      color:var(--brand); font-weight:600; text-decoration:underline;
+      text-underline-offset:3px; text-decoration-thickness:1.5px;
+      transition:color .15s ease;
+    }
+    a:hover{ color:var(--brand-weak) }
+
+    /* Viñetas moradas */
+    ul{ margin:.6rem 0 1rem 0; padding-left:0; list-style:none }
+    ul > li{ position:relative; padding-left:1.35rem }
+    ul > li::before{
+      content:""; position:absolute; left:.2rem; top:.68rem;
+      width:.55rem; height:.55rem; border-radius:50%;
+      background: radial-gradient(closest-side, var(--brand) 70%, transparent);
+      box-shadow: 0 0 .45rem rgba(177,82,224,.55);
+    }
+
+    .footer{ margin:1.4rem auto 0; text-align:center; color:var(--muted); font-size:.95rem }
+    .footer a{ margin:0 .5rem }
   </style>
 </head>
 <body>
-  <main class="card">
+  <main class="wrap">
     <h1>Eliminación de Datos</h1>
-    <p>Si deseas eliminar los datos asociados a tu cuenta de ADNOVA AI (incluyendo tokens de acceso y metadatos de cuentas publicitarias), tienes estas opciones:</p>
+
+    <!-- Nota superior sin créditos -->
+    <p class="muted">
+      ¿Necesitas ayuda? Visita nuestro
+      <a href="/support" target="_blank" rel="noopener">centro de soporte</a>.
+    </p>
+
+    <p>
+      Si deseas eliminar los datos asociados a tu cuenta de ADNOVA AI (incluyendo tokens de acceso y metadatos de cuentas publicitarias), tienes estas opciones:
+    </p>
     <ul>
       <li><strong>Desde la app:</strong> Inicia sesión → <em>Configuración</em> → <em>Conexiones</em> → <em>Desconectar Meta</em> → <em>Eliminar datos</em>.</li>
       <li><strong>Solicitud por correo:</strong> envía un email a <a href="mailto:contact@adnova.digital">contact@adnova.digital</a> con el asunto <em>“Eliminación de datos”</em> desde el correo vinculado a tu cuenta.</li>
     </ul>
+
+    <h2>Plazo y alcance</h2>
     <p>Al recibir tu solicitud, eliminaremos tus datos de forma permanente en un plazo máximo de <strong>30 días</strong>, salvo obligación legal de conservación.</p>
-    <p>Ten en cuenta que <strong>no almacenamos</strong> contenido de anuncios ni información personal de tus clientes; solo guardamos identificadores y tokens cifrados necesarios para consultar métricas.</p>
-    <p>También puedes revocar el acceso a tu cuenta de Facebook/Meta desde: <a href="https://www.facebook.com/settings?tab=business_tools" rel="noopener">facebook.com/settings?tab=business_tools</a>.</p>
+    <p>Ten en cuenta que <strong>no almacenamos</strong> contenido de anuncios ni información personal;solo guardamos identificadores y tokens cifrados necesarios para consultar métricas.</p>
+
+    <h2>Revocar accesos en plataformas</h2>
+    <p>También puedes revocar el acceso a tu cuenta de Facebook/Meta desde: <a href="https://www.facebook.com/settings?tab=business_tools" target="_blank" rel="noopener">facebook.com/settings?tab=business_tools</a>.</p>
+
+    <h2>Contacto</h2>
     <p>Para cualquier duda: <a href="mailto:contact@adnova.digital">contact@adnova.digital</a></p>
+
+    <p class="footer">
+      <a href="/politica.html">Política de Privacidad</a> |
+      <a href="/terms-of-service.html">Términos de Servicio</a> |
+      <a href="/data-deletion.html">Eliminación de datos</a>
+    </p>
+    <p class="muted" style="text-align:center">© <span id="y"></span> ADNOVA AI</p>
   </main>
+
+  <script>
+    document.getElementById('y').textContent = new Date().getFullYear();
+  </script>
 </body>
 </html>
