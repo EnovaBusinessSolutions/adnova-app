@@ -4,98 +4,17 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Agendar | Adnova AI</title>
-  <link rel="stylesheet" href="/assets/onboarding.css">
-  <style>
-    :root{
-      --brand:#b152e0;               /* color pedido */
-      --brand-2:#8a3cc7;             /* tono profundo para degradados */
-      --bg:#0b0a0f;
-      --card:#14121a;
-      --card-border:#231c33;
-      --text:#ffffff;
-      --muted:#c7c2d6;
-    }
 
-    /* ====== Base ====== */
-    html,body{height:100%}
-    body{
-      background: radial-gradient(1200px 700px at 30% -10%, rgba(177,82,224,.14), transparent 55%),
-                  radial-gradient(900px 600px at 90% 10%, rgba(138,60,199,.12), transparent 55%),
-                  var(--bg);
-      color:var(--text);
-      font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;
-      -webkit-font-smoothing:antialiased;
-      -moz-osx-font-smoothing:grayscale;
-    }
-
-    .wrap{max-width:1100px;margin:40px auto;padding:0 16px}
-    .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-    .title{font-size:32px;font-weight:800;letter-spacing:.2px}
-
-    /* ====== Card ====== */
-    .card{
-      background:linear-gradient(180deg, rgba(255,255,255,.02), transparent),
-                 var(--card);
-      border:1px solid color-mix(in srgb, var(--card-border) 85%, #fff 15%);
-      border-radius:18px;
-      box-shadow:0 30px 80px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.02) inset;
-      padding:18px;
-    }
-
-    /* ====== Buttons ====== */
-    .btn{
-      --shadow: drop-shadow(0 8px 24px rgba(177,82,224,.35));
-      display:inline-flex; gap:10px; align-items:center; justify-content:center;
-      padding:12px 18px; border-radius:12px; border:none; cursor:pointer;
-      color:#fff; text-decoration:none; user-select:none; position:relative; isolation:isolate;
-      background:
-        radial-gradient(120% 120% at 10% 0%, rgba(255,255,255,.16) 0 35%, transparent 35%),
-        linear-gradient(135deg, var(--brand), var(--brand-2));
-      filter:var(--shadow);
-      transition: transform .18s ease, filter .18s ease, opacity .18s ease, box-shadow .18s ease;
-      box-shadow:0 0 0 0 rgba(177,82,224,.0);
-    }
-    .btn::after{
-      content:""; position:absolute; inset:-1px; border-radius:inherit; z-index:-1;
-      background: radial-gradient(60% 60% at 50% 0%, rgba(177,82,224,.45), transparent 70%);
-      filter: blur(14px); opacity:.55; transition:opacity .2s ease;
-    }
-    .btn:hover{ transform:translateY(-1px); box-shadow:0 8px 28px rgba(177,82,224,.35) }
-    .btn:active{ transform:translateY(0) scale(.99) }
-    .btn:focus-visible{ outline:2px dashed rgba(177,82,224,.55); outline-offset:3px }
-
-    .btn.secondary{
-      background:linear-gradient(180deg, rgba(255,255,255,.04), transparent 70%), #171421;
-      color:#ddd; filter:none; box-shadow:none;
-      border:1px solid color-mix(in srgb, var(--card-border) 70%, #fff 10%);
-    }
-    .btn.secondary:hover{ border-color: color-mix(in srgb, var(--brand) 45%, var(--card-border) 55%) }
-
-    /* ====== Frame ====== */
-    iframe{
-      width:100%; height:78vh; border:0; border-radius:14px; overflow:hidden;
-      background:
-        linear-gradient(90deg, rgba(177,82,224,.08) 0 40px, transparent 40px 80px) left/160px 100%,
-        #0b0a0f;
-      animation: shimmer 1.2s linear infinite;
-    }
-    @keyframes shimmer{
-      from{ background-position:-160px 0 }
-      to{   background-position:0 0 }
-    }
-
-    .note{opacity:.8;font-size:13px;margin-top:10px;color:var(--muted)}
-    .fallback{display:none}
-
-    /* layout helpers */
-    .top-actions{display:flex;gap:10px;align-items:center}
-  </style>
+  <!-- ⚠️ Sin inline CSS externo roto; usa tu CSS dedicado -->
+  <link rel="stylesheet" href="/agendar.css">
+  <!-- Pasamos la URL sin script inline -->
+  <meta name="booking-url" content="{{BOOKING_URL}}">
 </head>
 <body>
   <div class="wrap">
     <div class="header">
-      <h1 class="title">Agenda tu llamada</h1>
-      <div class="top-actions">
+      <h1 class="h1">Agenda tu llamada</h1>
+      <div>
         <a class="btn secondary" href="/bookcall">← Volver</a>
       </div>
     </div>
@@ -106,55 +25,14 @@
       </div>
 
       <div id="fallback" class="fallback">
-        <p style="margin: 6px 0 12px">
-          No pudimos embeber la agenda (el sitio de Google la bloqueó). Da clic para abrirla:
-        </p>
+        <p style="margin-bottom:12px">No pudimos embeber la agenda (Google lo bloquea). Da clic para abrirla:</p>
         <a id="fallbackBtn" class="btn">Abrir agenda</a>
-        <p class="note">
-          La reserva se hará en una pestaña nueva y te enviaremos confirmación por correo.
-        </p>
+        <p class="note">La reserva se abrirá en esta pestaña y te enviaremos confirmación por correo.</p>
       </div>
     </div>
   </div>
 
-  <script>
-    /* El backend reemplaza {{BOOKING_URL}} por process.env.BOOKING_URL */
-    const BOOKING_URL = "{{BOOKING_URL}}";
-  </script>
-  <script>
-    (async function init(){
-      let url = BOOKING_URL;
-
-      // Fallback si no fue inyectado
-      if(!url || url.includes('{{BOOKING_URL}}')){
-        try{ await fetch('/api/bookcall/ping'); }catch{}
-      }
-
-      if(!url || url.includes('{{BOOKING_URL}}')){
-        document.getElementById('frameWrap').style.display='none';
-        const fb = document.getElementById('fallback');
-        fb.style.display='block';
-        document.getElementById('fallbackBtn').onclick = () => window.open('/', '_self');
-        console.warn('BOOKING_URL no configurado');
-        return;
-      }
-
-      const frame = document.getElementById('bookingFrame');
-      frame.src = url;
-
-      // Si no carga (posible X-Frame-Options), mostramos botón de apertura
-      let loaded = false;
-      const t = setTimeout(() => {
-        if(!loaded){
-          document.getElementById('frameWrap').style.display='none';
-          const fb = document.getElementById('fallback');
-          fb.style.display='block';
-          document.getElementById('fallbackBtn').onclick = () => window.location.href = url;
-        }
-      }, 1500);
-
-      frame.addEventListener('load', () => { loaded = true; clearTimeout(t); });
-    })();
-  </script>
+  <!-- JS externo con defer, cumple CSP -->
+  <script src="/js/agendar.js" defer></script>
 </body>
 </html>

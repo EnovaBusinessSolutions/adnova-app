@@ -1,0 +1,48 @@
+/* Fondo y tipografía a juego con bookcall */
+:root{
+  --bg:#0b0a0f; --card:#14121a; --border:#231c33; --text:#fff;
+  --muted:#c6c0d6; --accent:#b152e0; --accent-weak:#a645d9;
+  --shadow: 0 20px 60px rgba(0,0,0,.45);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:radial-gradient(1200px 500px at 50% 0,#1a1428 0%,#0b0a0f 50%,#0b0a0f 100%);
+  color:var(--text); font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;
+}
+.wrap{max-width:1100px;margin:40px auto;padding:0 16px}
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.h1{font-size:28px;font-weight:800;letter-spacing:.3px;margin:0}
+
+/* Botones */
+.btn{
+  display:inline-flex; gap:10px; align-items:center; cursor:pointer;
+  border:none; border-radius:12px; padding:12px 16px; font-weight:600;
+  background:var(--accent); color:#fff; box-shadow:0 6px 18px rgba(177,82,224,.35);
+  transition:transform .16s ease, box-shadow .2s ease, background .16s ease;
+  text-decoration:none
+}
+.btn:hover{transform:translateY(-1px); background:var(--accent-weak); box-shadow:0 10px 24px rgba(177,82,224,.45)}
+.btn.secondary{background:#1e1b26; box-shadow:none}
+.btn.secondary:hover{background:#242131}
+
+/* Tarjeta contenedora */
+.card{
+  background:linear-gradient(180deg,#161221 0%, #110e1a 100%);
+  border:1px solid var(--border); border-radius:18px; box-shadow:var(--shadow);
+  padding:18px
+}
+
+/* Iframe */
+iframe{
+  width:100%; height:78vh; border:0; border-radius:14px; overflow:hidden; background:#0b0a0f
+}
+
+/* Fallback */
+.note{opacity:.8;font-size:13px;margin-top:10px}
+.fallback{display:none}
+
+@media (max-width:640px){
+  .h1{font-size:22px}
+  iframe{height:72vh}
+}
