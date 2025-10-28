@@ -648,6 +648,10 @@ app.get(
  * ========================= */
 const PUBLIC_DIR = path.join(__dirname, '../public');
 
+app.get('/support/contact', (_req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, 'support', 'contact.html'));
+});
+
 app.get('/__ping', (_req, res) => {
   const successExists = fs.existsSync(path.join(PUBLIC_DIR, 'plans', 'success.html'));
   const cancelExists = fs.existsSync(path.join(PUBLIC_DIR, 'plans', 'cancel.html'));
