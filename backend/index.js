@@ -167,6 +167,18 @@ function sessionGuard(req, res, next) {
   return res.status(401).json({ error: 'No hay sesión' });
 }
 
+app.get('/agendar', (_req, res) => {
+  const file = path.join(__dirname, '../public/agendar.html');
+  let html = fs.readFileSync(file, 'utf8');
+
+  // Inyecta el enlace del booking (Appointment Schedule)
+  const bookingUrl = process.env.BOOKING_URL || '';
+  html = html.replace(/{{BOOKING_URL}}/g, bookingUrl);
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
 /* =========================
  * Static / dashboard
  * ========================= */
