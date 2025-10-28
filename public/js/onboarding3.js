@@ -22,24 +22,50 @@ document.addEventListener("DOMContentLoaded", async () => {
   const markRunning = (idx) => {
     const s = stepEls[idx]; if (!s) return;
     s.root.classList.add("active");
-    s.root.classList.remove("completed", "opacity-50");
+    s.root.classList.remove("completed", "opacity-50", "is-current");
     if (s.icon) s.icon.textContent = "●";
   };
   const markDone = (idx) => {
     const s = stepEls[idx]; if (!s) return;
     s.root.classList.add("completed");
-    s.root.classList.remove("active", "opacity-50");
+    s.root.classList.remove("active", "opacity-50", "is-current");
     if (s.icon) s.icon.textContent = "✓";
   };
   const markOmit = (idx, reason = "") => {
     const s = stepEls[idx]; if (!s) return;
-    s.root.classList.remove("active", "completed");
+    s.root.classList.remove("active", "completed", "is-current");
     s.root.classList.add("opacity-50");
     if (s.icon) s.icon.textContent = "○";
     if (s.text && !s.text.textContent.includes("(omitido)")) {
       s.text.textContent = (s.text.textContent || "") + " (omitido" + (reason ? `: ${reason}` : "") + ")";
     }
   };
+
+  // === NUEVO: resaltar el paso activo ======================================
+  const TYPE_TO_INDEX = { google: 0, meta: 1, shopify: 2, ga4: 3 };
+  const INDEX_TO_LABEL = {
+    0: "Analizando Google Ads",
+    1: "Analizando Meta Ads",
+    2: "Analizando Shopify",
+    3: "Analizando Google Analytics",
+    4: "Generando recomendaciones",
+  };
+
+  function setActiveStep(type) {
+    const idx = TYPE_TO_INDEX[type];
+    if (idx === undefined) return;
+
+    // limpia el "current" de todos los pasos que no estén completados/omitidos
+    stepEls.forEach((s, i) => {
+      if (!s) return;
+      if (!s.root.classList.contains("completed") && !s.root.classList.contains("opacity-50")) {
+        s.root.classList.toggle("is-current", i === idx);
+      } else {
+        s.root.classList.remove("is-current");
+      }
+    });
+  }
+  // ==========================================================================
 
   // Animación de progreso
   let progress = 0;
@@ -56,6 +82,59 @@ document.addEventListener("DOMContentLoaded", async () => {
   setBar(0);
   setText("Preparando análisis…");
   tick();
+
+  // === Mensajes dinámicos (para que no parezca congelado) ===================
+  const STATUS_MESSAGES = [
+    "Conectando fuentes de datos…",
+    "Sincronizando cuentas y permisos…",
+    "Recopilando métricas clave…",
+    "Analizando rendimiento por campaña…",
+    "Buscando fugas de presupuesto…",
+    "Detectando oportunidades de ROAS…",
+    "Evaluando tendencias y estacionalidad…",
+    "Calculando impacto potencial…",
+    "Generando recomendaciones…"
+  ];
+  if (progressText) progressText.style.transition = "opacity .25s ease";
+
+  function startStatusCycler(el, messages, { intervalMs = 2200 } = {}) {
+    if (!el) return () => {};
+    let i = 0;
+    let killed = false;
+
+    const swap = () => {
+      if (killed) return;
+      el.style.opacity = "0";
+      setTimeout(() => {
+        el.textContent = messages[i % messages.length];
+        el.style.opacity = "1";
+        i++;
+      }, 180);
+    };
+
+    swap();
+    const t = setInterval(swap, intervalMs);
+    return () => { killed = true; clearInterval(t); };
+  }
+
+  function observeProgressStopCycler(stopFn) {
+    const bar = document.querySelector(".progress-indicator");
+    if (!bar || !stopFn) return;
+    const obs = new MutationObserver(() => {
+      const w = (bar.style.width || "").trim();
+      const pct = Number(w.replace("%", ""));
+      if (pct >= 99) {
+        stopFn();
+        setText("Listo: generando recomendaciones…");
+        obs.disconnect();
+      }
+    });
+    obs.observe(bar, { attributes: true, attributeFilter: ["style"] });
+  }
+
+  const stopCycler = startStatusCycler(progressText, STATUS_MESSAGES, { intervalMs: 2200 });
+  observeProgressStopCycler(stopCycler);
+  // ==========================================================================
 
   // HTTP helpers
   const getJSON = async (url) => {
@@ -83,18 +162,22 @@ document.addEventListener("DOMContentLoaded", async () => {
     return json || {};
   };
 
-  // Índices de pasos en pantalla:
-  // 0: Google Ads, 1: Meta Ads, 2: Shopify (se mantiene), 3: Google Analytics (nuevo), 4: Recomendaciones
-  const TYPE_TO_INDEX = { google: 0, meta: 1, shopify: 2, ga4: 3 };
-  const INDEX_TO_LABEL = {
-    0: "Analizando Google Ads",
-    1: "Analizando Meta Ads",
-    2: "Analizando Shopify",
-    3: "Analizando Google Analytics",
-    4: "Generando recomendaciones",
+  // Detección real de conexión GA4 (no paloma si no hay Analytics)
+  const detectGA4Connected = async () => {
+    try {
+      const r = await fetch("/api/google/analytics/ping", { credentials: "include" });
+      if (r.ok) {
+        const j = await r.json().catch(() => ({}));
+        return j?.ok !== false; // ok:true => conectado; ok:false => no conectado
+      }
+      const r2 = await fetch("/api/google/analytics?ping=1", { credentials: "include" });
+      return r2.ok;
+    } catch {
+      return false;
+    }
   };
 
-  // Etiquetas iniciales (si no existe el nodo, no pasa nada)
+  // Etiquetas iniciales
   for (let i = 0; i < stepEls.length; i++) {
     setStepLabel(i, INDEX_TO_LABEL[i] || "Procesando…");
   }
@@ -109,7 +192,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     const googleConnected = !!sess.user?.googleConnected;
     const metaConnected   = !!sess.user?.metaConnected;
     const shopConnected   = !!sess.user?.shopifyConnected;
-    const ga4Connected    = googleConnected; // GA4 comparte OAuth con Google (propiedad por defecto se valida en backend)
+
+    // GA4: requiere OAuth Google + verificación de Analytics en backend
+    let ga4Connected = false;
+    if (googleConnected) {
+      ga4Connected = await detectGA4Connected();
+    }
 
     // Marca "corriendo" los pasos visibles
     for (const t of ["google", "meta", "shopify", "ga4"]) {
@@ -130,9 +218,15 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const runSource = async (source, connected) => {
       const idx = TYPE_TO_INDEX[source];
+
       if (!connected) {
+        // Si no está conectado, no lo marcamos como "activo"
         return { type: source, ok: false, error: "NOT_CONNECTED" };
       }
+
+      // Resalta paso activo
+      if (idx !== undefined) setActiveStep(source);
+
       try {
         const res = await postJSON(`/api/audits/${source}/run`, {});
         if (idx !== undefined) markDone(idx);
@@ -148,13 +242,17 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     };
 
+    // Ejecutamos en paralelo, pero el "activo" será el del último que se dispare/cambie
     tasks.push(runSource("google",  googleConnected));
     tasks.push(runSource("meta",    metaConnected));
-    tasks.push(runSource("shopify", shopConnected)); // no tocamos Shopify (si tu backend lo ignora, simplemente marcará omit/error)
+    tasks.push(runSource("shopify", shopConnected));
     tasks.push(runSource("ga4",     ga4Connected));
 
     const results = await Promise.all(tasks);
     resultsPayload = { ok: true, results };
+
+    // Limpia resaltado actual
+    stepEls.forEach((s) => s.root.classList.remove("is-current"));
 
     // 3) Paso final (recomendaciones)
     const finalIdx = Math.min(4, stepEls.length - 1);
@@ -162,6 +260,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     running = false;
     setBar(100);
+    stopCycler();
     setText("¡Análisis completado!");
     if (btn) btn.disabled = false;
 
@@ -170,6 +269,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     console.error("RUN_ERROR:", err?._raw || err);
     running = false;
     setBar(100);
+    stopCycler();
     if (progressBar) progressBar.style.background = "#f55";
     setText("RUN_ERROR");
     alert("RUN_ERROR\n\n" + (err?.message || "Ocurrió un problema."));

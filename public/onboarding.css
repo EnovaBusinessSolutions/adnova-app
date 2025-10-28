@@ -749,3 +749,13 @@ body[data-page="onboarding4"] .ready-content {
 .asm-btn-primary[disabled] {
   opacity:.6; cursor:not-allowed;
 }
+
+.analysis-step.is-current {
+  outline: 1px solid rgba(177,82,224,.35);
+  background: rgba(177,82,224,.06);
+  border-radius: 10px;
+}
+.analysis-step.is-current .analysis-step-text {
+  color: #b152e0;
+  font-weight: 600;
+}
