@@ -12,7 +12,7 @@ const facturapi = facturapiKey ? new Facturapi(facturapiKey) : null;
 const TaxProfile = require('../models/TaxProfile');
 // Si en index.js NO montas esta ruta con sessionGuard, deja este require:
 const ensureAuthenticated =
-  require('../middlewares/ensureAuthenticated'); // <- ajusta si tu carpeta difiere
+  require('../../middlewares/ensureAuthenticated'); // <- ajusta si tu carpeta difiere
 
 /** Utils simples */
 const required = (v) => typeof v === 'string' && v.trim().length > 0;
