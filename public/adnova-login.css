@@ -232,3 +232,56 @@ body {
   height: 1em;
   margin-right: 0.22rem;
 }
+
+/* ====== Password eye (match register.css) ====== */
+.form-input-wrapper { position: relative; }
+.form-input-wrapper .form-input { padding-right: 48px; } /* espacio para el ojo */
+
+.toggle-password {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: 0;
+  padding: 6px;
+  border-radius: 10px;
+  cursor: pointer;
+  line-height: 0;
+  transition: background-color .15s ease, transform .15s ease;
+}
+.toggle-password:hover { background: rgba(255,255,255,.06); }
+.toggle-password:active { transform: translateY(-50%) scale(.98); }
+
+/* icono base */
+.eye-icon {
+  width: 22px;
+  height: 22px;
+  display: inline-block;
+  background-color: #d9d9e3;         /* mismo tono que registro */
+  transition: opacity .2s ease, filter .2s ease;
+  /* usamos máscaras SVG para que herede color via background-color */
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  -webkit-mask-size: 22px 22px;
+          mask-repeat: no-repeat;
+          mask-position: center;
+          mask-size: 22px 22px;
+}
+
+/* ojo oculto (eye-off) */
+.toggle-password.eye-hidden .eye-icon {
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M17.94 17.94A10.94 10.94 0 0 1 12 20C7 20 2.73 16.11 1 12c.46-1.06 1.11-2.07 1.91-2.96M10.58 10.58a2 2 0 0 0 2.84 2.84M9.9 4.24A10.94 10.94 0 0 1 12 4c5 0 9.27 3.89 11 8- .53 1.21-1.29 2.33-2.22 3.29M1 1l22 22'/></svg>");
+          mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M17.94 17.94A10.94 10.94 0 0 1 12 20C7 20 2.73 16.11 1 12c.46-1.06 1.11-2.07 1.91-2.96M10.58 10.58a2 2 0 0 0 2.84 2.84M9.9 4.24A10.94 10.94 0 0 1 12 4c5 0 9.27 3.89 11 8- .53 1.21-1.29 2.33-2.22 3.29M1 1l22 22'/></svg>");
+}
+
+/* ojo visible (eye) */
+.toggle-password.eye-visible .eye-icon {
+  background-color: #ffffff;
+  -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12Z'/><circle cx='12' cy='12' r='3'/></svg>");
+          mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12Z'/><circle cx='12' cy='12' r='3'/></svg>");
+}
+
+/* opcional: suavizar al pasar el mouse */
+.toggle-password:hover .eye-icon { opacity: .95; }
+
