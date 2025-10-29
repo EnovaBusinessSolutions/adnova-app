@@ -110,3 +110,15 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 });
+
+// Asegurar que el ojo coincide con el tipo del input al cargar
+(function syncEyeOnLoad() {
+  const input = document.getElementById('password');
+  const btn = document.querySelector('.toggle-password[data-target="password"]');
+  if (!input || !btn) return;
+  // ojo tachado (eye-visible) cuando está oculto (password)
+  const isHidden = (input.type === 'password');
+  btn.classList.toggle('eye-visible', isHidden);
+  btn.classList.toggle('eye-hidden', !isHidden);
+})();
+

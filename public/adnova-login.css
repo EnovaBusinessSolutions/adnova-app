@@ -267,3 +267,49 @@ body {
   background: url('data:image/svg+xml;utf8,<svg fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><ellipse cx="12" cy="12" rx="7" ry="5"/><circle cx="12" cy="12" r="2.5"/><line x1="4" y1="20" x2="20" y2="4" stroke="white" stroke-width="2"/></svg>') center/contain no-repeat;
   opacity: 0.85;
 }
+
+/* ====== OVERRIDE ESTRICTO OJO LOGIN (igual a register.css) ====== */
+.login-container .form-input-wrapper { position: relative; }
+.login-container .form-input-wrapper .form-input { padding-right: 2.6rem !important; }
+
+.login-container .form-input-wrapper .toggle-password {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: none;
+  background: none;
+  cursor: pointer;
+  width: 2.2rem;
+  height: 2.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  z-index: 2;
+}
+
+.login-container .form-input-wrapper .toggle-password .eye-icon {
+  width: 22px;
+  height: 22px;
+  display: block;
+  background: url('data:image/svg+xml;utf8,<svg fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><ellipse cx="12" cy="12" rx="7" ry="5"/><circle cx="12" cy="12" r="2.5"/></svg>') center/contain no-repeat !important;
+  opacity: 0.58;
+  transition: opacity .2s ease;
+}
+
+/* Cuando está en modo “oculto” (slash) */
+.login-container .form-input-wrapper .toggle-password.eye-visible .eye-icon {
+  background: url('data:image/svg+xml;utf8,<svg fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><ellipse cx="12" cy="12" rx="7" ry="5"/><circle cx="12" cy="12" r="2.5"/><line x1="4" y1="20" x2="20" y2="4" stroke="white" stroke-width="2"/></svg>') center/contain no-repeat !important;
+  opacity: 0.9;
+}
+
+/* Efecto hover suave */
+.login-container .form-input-wrapper .toggle-password:hover .eye-icon { opacity: .95; }
+
+/* Anula cualquier versión previa basada en mask-image */
+.login-container .form-input-wrapper .toggle-password .eye-icon {
+  -webkit-mask-image: none !important;
+          mask-image: none !important;
+  background-color: transparent !important;
+}
