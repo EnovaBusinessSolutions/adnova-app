@@ -108,7 +108,6 @@ app.use('/api/stripe', (req, res, next) => {
  * ========================= */
 app.use(express.urlencoded({ extended: true }));
 
-
 /* =========================
  * CSP público
  * ========================= */
@@ -212,10 +211,8 @@ if (HAS_DASHBOARD_DIST) {
   console.warn('⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard');
 }
 
-
 app.use(express.json({ limit: '1mb' }));
 app.use('/api/bookcall', require('./routes/bookcall'));
-
 
 /* =========================
  * Rutas de autenticación e integraciones
@@ -325,27 +322,35 @@ app.post('/api/complete-onboarding', async (req, res) => {
  * ========================= */
 const FROM = process.env.SMTP_FROM || process.env.SMTP_USER;
 let transporter = null;
-const HAS_SMTP = !!(
-  process.env.SMTP_HOST &&
-  process.env.SMTP_USER &&
-  process.env.SMTP_PASS
-);
+
+const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
+const SMTP_PORT = Number(process.env.SMTP_PORT || 465);
+const SMTP_USER = process.env.SMTP_USER;
+const SMTP_PASS = process.env.SMTP_PASS;
+
+const HAS_SMTP = !!(SMTP_HOST && SMTP_USER && SMTP_PASS);
 
 if (HAS_SMTP) {
+  const secure = SMTP_PORT === 465; // 465 SSL, 587 STARTTLS
   transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: Number(process.env.SMTP_PORT) || 465,
-    secure: (Number(process.env.SMTP_PORT) || 465) === 465,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure,
+    auth: { user: SMTP_USER, pass: SMTP_PASS },
+    pool: true,
+    maxConnections: 5,
+    maxMessages: 100,
+    tls: {
+      rejectUnauthorized: true,
     },
+    connectionTimeout: 20_000,
+    greetingTimeout: 20_000,
+    socketTimeout: 30_000,
   });
 
-  transporter.verify((err) => {
-    if (err) console.error('❌ SMTP error:', err);
-    else console.log('✅ SMTP listo para enviar correo');
-  });
+  transporter.verify()
+    .then(() => console.log(`✅ SMTP verificado: ${SMTP_HOST}:${SMTP_PORT} como ${SMTP_USER}`))
+    .catch((err) => console.error('❌ SMTP verify() falló:', err?.message || err));
 } else {
   console.warn('✉️  SMTP no configurado. Se omite verificación/envío de correo.');
 }
@@ -411,12 +416,18 @@ app.post('/api/register', async (req, res) => {
 
         if (transporter) {
           await transporter.sendMail({
-            from: FROM,
+            from: `"Adnova AI" <${FROM}>`,
             to: email,
             subject: 'Activa tu cuenta de Adnova AI',
             text: 'Tu cuenta se creó con éxito. Ingresa en https://ai.adnova.digital/login',
             html,
+            replyTo: FROM,
+            headers: {
+              'X-Entity-Ref-ID': crypto.randomUUID(),
+            },
           });
+        } else {
+          console.warn('✉️  No hay transporter inicializado (SMTP no configurado).');
         }
       } catch (mailErr) {
         console.error('✉️  SMTP fallo (registro OK):', mailErr?.message || mailErr);
@@ -462,21 +473,43 @@ app.post('/api/forgot-password', async (req, res) => {
     const resetUrl = `https://ai.adnova.digital/reset-password.html?token=${token}`;
 
     const html = `<!doctype html>
-<html lang="es"><head><meta charset="utf-8"><title>Recupera tu contraseña - Adnova AI</title>
+<html lang="es"><head><meta charset="utf-8">
+<title>Recupera tu contraseña - Adnova AI</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<style>/* estilos */</style></head><body>…</body></html>`;
+<style>@media screen and (max-width:600px){.card{width:100%!important}.btn{display:block!important;width:100%!important}}</style>
+</head>
+<body style="margin:0;padding:0;background:#0d081c;color:#fff;font-family:Arial,Helvetica,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+<tr><td align="center" style="padding:48px 10px">
+<table role="presentation" cellpadding="0" cellspacing="0" width="560" class="card" style="max-width:560px;background:#151026;border-radius:16px;box-shadow:0 0 20px #6d3dfc;">
+<tr><td style="padding:0 50px 40px">
+<h1 style="margin:0 0 24px;font-size:26px;color:#6d3dfc;font-weight:700">Recupera tu cuenta</h1>
+<p style="margin:0 0 16px;line-height:24px">Hiciste una solicitud para restablecer tu contraseña.</p>
+<p style="margin:0 0 28px;line-height:24px">Haz clic en el botón para crear una nueva:</p>
+<table role="presentation" align="center" cellpadding="0" cellspacing="0"><tr><td>
+  <a href="${resetUrl}" class="btn" style="background:#6d3dfc;border-radius:8px;padding:14px 36px;font-size:16px;font-weight:600;color:#fff;text-decoration:none;display:inline-block;">Restablecer contraseña</a>
+</td></tr></table>
+<p style="margin:24px 0 0;font-size:14px;color:#c4c4c4">Si no solicitaste este cambio, ignora este correo.</p>
+</td></tr>
+<tr><td style="background:#100c1e;padding:18px 40px;border-radius:0 0 16px 16px;text-align:center;font-size:12px;line-height:18px;color:#777">© ${new Date().getFullYear()} Adnova AI</td></tr>
+</table></td></tr></table>
+</body></html>`;
 
     if (transporter) {
       await transporter.sendMail({
-        from: FROM,
+        from: `"Adnova AI" <${FROM}>`,
         to: user.email,
         subject: 'Restablece tu contraseña · Adnova AI',
-        text: `Haz clic aquí para cambiar tu contraseña: ${resetUrl}`,
+        text: `Para restablecer tu contraseña visita: ${resetUrl}`,
         html,
+        replyTo: FROM,
+        headers: { 'X-Entity-Ref-ID': crypto.randomUUID() },
       });
+    } else {
+      console.warn('✉️  No hay transporter inicializado (SMTP no configurado).');
     }
 
-    res.json({ success: true });
+    return res.json({ success: true });
   } catch (err) {
     console.error('❌ forgot-password:', err);
     res.status(500).json({ success: false, message: 'Error de servidor' });
@@ -507,6 +540,35 @@ app.post('/api/reset-password', async (req, res) => {
   } catch (err) {
     console.error('❌ reset-password:', err);
     res.status(500).json({ success: false, message: 'Error de servidor' });
+  }
+});
+
+// Verifica conexión SMTP en caliente
+app.get('/__mail/verify', async (_req, res) => {
+  try {
+    if (!transporter) return res.status(500).json({ ok:false, error:'transporter no inicializado' });
+    await transporter.verify();
+    res.json({ ok:true, from: FROM });
+  } catch (e) {
+    console.error('[_MAIL_VERIFY] ', e);
+    res.status(500).json({ ok:false, error: e?.message || e });
+  }
+});
+
+// Envía un correo de prueba al SMTP_USER
+app.get('/__mail/test', async (_req, res) => {
+  try {
+    if (!transporter) return res.status(500).json({ ok:false, error:'transporter no inicializado' });
+    const info = await transporter.sendMail({
+      from: `"Adnova AI" <${FROM}>`,
+      to: process.env.SMTP_USER,
+      subject: 'Prueba SMTP · Adnova AI',
+      text: 'Este es un correo de prueba desde /__mail/test',
+    });
+    res.json({ ok:true, messageId: info?.messageId });
+  } catch (e) {
+    console.error('[_MAIL_TEST] ', e);
+    res.status(500).json({ ok:false, error: e?.message || e });
   }
 });
 
@@ -703,7 +765,6 @@ app.get('/logout', (req, res, next) => {
   });
 });
 
-
 /* =========================
  * Rutas éxito/cancel Stripe
  * ========================= */
@@ -724,7 +785,6 @@ app.use((err, _req, res, _next) => {
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal Server Error' });
 });
-
 
 app.listen(PORT, () => {
   console.log(`✅ Servidor corriendo en http://localhost:${PORT}`);
