@@ -2,14 +2,18 @@
 const mongoose = require('mongoose');
 const { Schema, model } = mongoose;
 
-const TaxProfileSchema = new Schema({
-  user: { type: Schema.Types.ObjectId, ref: 'User', index: true, required: true, unique: true },
-  rfc: { type: String, required: true, uppercase: true, trim: true },
-  legal_name: { type: String, required: true, trim: true },
-  tax_regime: { type: String, required: true }, // c_RegimenFiscal del receptor
-  zip: { type: String, required: true },
-  cfdi_use: { type: String, default: process.env.FACTURAPI_DEFAULT_USE || 'G03' },
-  facturapi_customer_id: { type: String },
+const schema = new Schema({
+  user:   { type: Schema.Types.ObjectId, ref: 'User', index: true, required: true },
+  rfc:    { type: String, trim: true, required: true },             // RFC del cliente
+  name:   { type: String, trim: true, required: true },             // Razón social o nombre
+  email:  { type: String, trim: true },                             
+  cfdiUse:{ type: String, trim: true, default: process.env.FACTURAPI_DEFAULT_USE || 'G03' }, // Uso CFDI
+  taxRegime: { type: String, trim: true }, // opcional si tu cliente lo pide
+  zip: { type: String, trim: true },        // CP fiscal (recomendado por SAT)
+  isCompany: { type: Boolean, default: false },                      // para saber si es empresa
+  // auditoría
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
 }, { timestamps: true });
 
-module.exports = model('TaxProfile', TaxProfileSchema);
+module.exports = model('TaxProfile', schema);

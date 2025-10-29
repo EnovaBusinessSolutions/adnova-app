@@ -107,7 +107,7 @@ app.use('/api/stripe', (req, res, next) => {
  * Parsers globales
  * ========================= */
 app.use(express.urlencoded({ extended: true }));
-app.use(express.json());
+
 
 /* =========================
  * CSP público
@@ -243,6 +243,7 @@ app.use(
 // Stripe / Facturapi / Billing
 app.use('/api/stripe', stripeRouter);
 app.use('/api/facturapi-test', facturapiTest);
+app.use('/api/facturapi', require('./routes/facturapi'));
 app.use('/api/billing', billingRoutes);
 app.use('/api/stripe', stripeWebhook); // /api/stripe/webhook (raw body ya aplicado arriba)
 

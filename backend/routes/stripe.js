@@ -90,7 +90,7 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
       if (user.stripeCustomerId) {
         customerId = user.stripeCustomerId;
 
-        // ✅ Backfill de metadata.userId (para que los webhooks puedan mapear usuario)
+        // Backfill de metadata.userId para mapear en webhooks
         try {
           const cust = await stripe.customers.retrieve(customerId);
           const needUpdate = !cust?.metadata?.userId || cust.metadata.userId !== userId;
@@ -175,7 +175,7 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
 });
 
 // =============== WEBHOOK ===============
-// (index.js ya aplica express.raw() SOLO en /api/stripe/webhook)
+// Asegúrate en server/index.js de usar express.raw() SOLO para /api/stripe/webhook
 router.post('/webhook', async (req, res) => {
   const sig = req.headers['stripe-signature'];
 
@@ -245,6 +245,58 @@ router.post('/webhook', async (req, res) => {
         break;
       }
 
+      case 'invoice.paid': {
+        // 1) Traer invoice completo de Stripe (con items, amount, etc.)
+        const inv = event.data.object; // invoice skeleton
+        const stripeInvoice = await stripe.invoices.retrieve(inv.id, {
+          expand: ['lines.data.price.product', 'customer']
+        });
+
+        // 2) Ubicar al user en tu DB por stripeCustomerId
+        if (!User) try { User = require('../models/User'); } catch {}
+        const custId = typeof stripeInvoice.customer === 'string'
+          ? stripeInvoice.customer
+          : stripeInvoice.customer?.id;
+        const user = custId && User
+          ? await User.findOne({ stripeCustomerId: custId }).lean()
+          : null;
+        if (!user) break;
+
+        // 3) Cargar perfil fiscal (si no hay → público en general)
+        let TaxProfile = null;
+        try { TaxProfile = require('../models/TaxProfile'); } catch {}
+        const taxProfile = TaxProfile
+          ? await TaxProfile.findOne({ user: user._id }).lean()
+          : null;
+
+        // 4) Preparar payload para Facturapi
+        const { genCustomerPayload, emitirFactura } = require('../services/facturaService');
+        const customerPayload = genCustomerPayload(taxProfile);
+        const totalWithTax = (stripeInvoice.total || 0) / 100; // Stripe en centavos
+        const conceptDesc = `Suscripción Adnova AI – ${stripeInvoice.lines?.data?.[0]?.price?.nickname || 'Plan'}`;
+        const cfdiUse = taxProfile?.cfdiUse || process.env.FACTURAPI_DEFAULT_USE || 'G03';
+
+        // 5) Timbrar (try/catch para no romper webhook)
+        try {
+          const cfdi = await emitirFactura({
+            customer: customerPayload,
+            description: conceptDesc,
+            totalWithTax,
+            cfdiUse,
+            sendEmailTo: customerPayload.email || user.email,
+            metadata: { userId: String(user._id), stripeInvoiceId: stripeInvoice.id }
+          });
+
+          // (Opcional) Persistir folio en el usuario
+          await User.findByIdAndUpdate(user._id, {
+            $set: { 'subscription.lastCfdiId': cfdi.id, 'subscription.lastCfdiTotal': totalWithTax }
+          }).exec();
+        } catch (e) {
+          console.error('❌ Timbrado Facturapi falló:', e?.response?.data || e.message);
+        }
+        break;
+      }
+
       default:
         // no-op
         break;
@@ -303,7 +355,7 @@ router.post('/sync', ensureAuth, async (req, res) => {
       console.warn('sync: no pude backfillear metadata.userId:', e.message);
     }
 
-    // Trae suscripciones (sin expand profundos)
+    // Trae suscripciones
     const subs = await stripe.subscriptions.list({
       customer: user.stripeCustomerId,
       status: 'all',
@@ -311,7 +363,6 @@ router.post('/sync', ensureAuth, async (req, res) => {
     });
 
     if (!subs?.data?.length) {
-      // Sin suscripciones: pásalo a gratis
       await User.findByIdAndUpdate(user._id, {
         $set: {
           plan: 'gratis',
@@ -325,7 +376,6 @@ router.post('/sync', ensureAuth, async (req, res) => {
       return res.json({ ok:true, updated:true, reason:'no-subscriptions' });
     }
 
-    // Escoge la más "reciente" / relevante (la 1a suele ser la activa)
     const sub = subs.data[0];
 
     const status = (sub.status || '').toLowerCase();
