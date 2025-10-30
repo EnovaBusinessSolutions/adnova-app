@@ -54,6 +54,26 @@ async function listAccessibleCustomers(accessToken) {
   return [];
 }
 
+// Descubre cuentas accesibles y las enriquece con /customers/{id}
+async function discoverAndEnrich(accessToken) {
+  const resourceNames = await listAccessibleCustomers(accessToken); // ["customers/123", ...]
+  const ids = resourceNames
+    .map((rn) => String(rn || '').split('/')[1])
+    .filter(Boolean);
+
+  const out = [];
+  for (const cid of ids) {
+    try {
+      const meta = await getCustomer(accessToken, cid);
+      out.push(meta); // { id, name, currencyCode, timeZone, status }
+    } catch (e) {
+      // Si alguna cuenta da 403/404, continuamos con el resto
+      console.warn('[discoverAndEnrich] skip', cid, e?.api || e.message);
+    }
+  }
+  return out;
+}
+
 /**
  * GET /customers/{cid}
  * Aquí sí podemos mandar login-customer-id (contexto MCC).
@@ -317,4 +337,5 @@ module.exports = {
   searchGAQLStream,
   discoverAndEnrich,
   fetchInsights,
+  discoverAndEnrich,  
 };
