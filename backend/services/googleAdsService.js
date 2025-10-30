@@ -3,16 +3,21 @@
 
 const axios = require('axios');
 
-const DEV_TOKEN = process.env.GOOGLE_ADS_DEVELOPER_TOKEN
-  || process.env.GOOGLE_DEVELOPER_TOKEN
-  || '';
+const DEV_TOKEN =
+  process.env.GOOGLE_ADS_DEVELOPER_TOKEN ||
+  process.env.GOOGLE_DEVELOPER_TOKEN ||
+  '';
 
-const LOGIN_CID = (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID
-  || process.env.GOOGLE_LOGIN_CUSTOMER_ID
-  || '').replace(/[^\d]/g, '');
+const LOGIN_CID = (
+  process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID ||
+  process.env.GOOGLE_LOGIN_CUSTOMER_ID ||
+  ''
+).replace(/[^\d]/g, '');
 
 const ADS_VER  = process.env.GADS_API_VERSION || 'v17';
 const ADS_HOST = 'https://googleads.googleapis.com';
+
+const normId = (s = '') => String(s).replace(/[^\d]/g, '');
 
 function baseHeaders(accessToken) {
   if (!DEV_TOKEN) throw new Error('GOOGLE_ADS_DEVELOPER_TOKEN missing');
@@ -54,14 +59,15 @@ async function listAccessibleCustomers(accessToken) {
  * Aquí sí podemos mandar login-customer-id (contexto MCC).
  */
 async function getCustomer(accessToken, customerId) {
-  const url = `${ADS_HOST}/${ADS_VER}/customers/${customerId}`;
+  const cid = normId(customerId);
+  const url = `${ADS_HOST}/${ADS_VER}/customers/${cid}`;
   const headers = baseHeaders(accessToken);
   if (LOGIN_CID) headers['login-customer-id'] = LOGIN_CID;
 
   const { data } = await axios.get(url, { headers, timeout: 20000 });
   return {
-    id: customerId,
-    name: data?.descriptiveName || `Cuenta ${customerId}`,
+    id: cid,
+    name: data?.descriptiveName || `Cuenta ${cid}`,
     currencyCode: data?.currencyCode || null,
     timeZone: data?.timeZone || null,
     status: data?.status || null,
@@ -69,11 +75,40 @@ async function getCustomer(accessToken, customerId) {
 }
 
 /**
+ * Descubre todas las cuentas accesibles y las enriquece con getCustomer.
+ * Devuelve [{ id, name, currencyCode, timeZone, status }]
+ */
+async function discoverAndEnrich(accessToken) {
+  const list = await listAccessibleCustomers(accessToken); // ["customers/123", ...]
+  const ids = Array.from(
+    new Set(
+      list
+        .map((r) => normId(r.split('/')[1] || r))
+        .filter(Boolean)
+    )
+  );
+
+  const out = [];
+  for (const id of ids) {
+    try {
+      const c = await getCustomer(accessToken, id);
+      out.push(c);
+    } catch (e) {
+      // Si una cuenta falla, continúa con el resto
+      console.warn('discoverAndEnrich:getCustomer fail', id, e?.response?.data || e.message);
+      out.push({ id, name: `Cuenta ${id}`, currencyCode: null, timeZone: null, status: null });
+    }
+  }
+  return out;
+}
+
+/**
  * POST /customers/{cid}/googleAds:searchStream
  * Ejecuta GAQL en stream. Devuelve un arreglo "flat" de filas.
  */
 async function searchGAQLStream(accessToken, customerId, query) {
-  const url = `${ADS_HOST}/${ADS_VER}/customers/${customerId}/googleAds:searchStream`;
+  const cid = normId(customerId);
+  const url = `${ADS_HOST}/${ADS_VER}/customers/${cid}/googleAds:searchStream`;
   const headers = baseHeaders(accessToken);
   if (LOGIN_CID) headers['login-customer-id'] = LOGIN_CID;
 
@@ -193,9 +228,10 @@ async function fetchInsights({
 }) {
   if (!customerId) throw new Error('customerId required');
 
+  const cid = normId(customerId);
   let [since, until] = datePreset ? presetRange(datePreset) : rangeFromCount(range || 30);
 
-  // Serie diaria
+  // Serie diaria (usar métricas en micros donde aplica).
   const GAQL_SERIE = `
     SELECT
       segments.date,
@@ -203,7 +239,7 @@ async function fetchInsights({
       metrics.clicks,
       metrics.cost_micros,
       metrics.ctr,
-      metrics.average_cpc,
+      metrics.average_cpc_micros,
       metrics.conversions,
       metrics.conversion_value
     FROM customer
@@ -211,18 +247,22 @@ async function fetchInsights({
     ORDER BY segments.date
   `;
 
-  const rows = await searchGAQLStream(accessToken, customerId, GAQL_SERIE);
+  const rows = await searchGAQLStream(accessToken, cid, GAQL_SERIE);
 
   const series = rows.map(r => {
     const seg = r.segments || {};
     const met = r.metrics  || {};
+    // metrics.ctr en Ads API suele venir en porcentaje (p.ej. 2.34) — normalizamos a 0..1
+    let ctr = Number(met.ctr || 0);
+    if (ctr > 1) ctr = ctr / 100;
+
     return {
       date: seg.date,
       impressions: Number(met.impressions || 0),
       clicks: Number(met.clicks || 0),
       cost: microsToUnit(met.cost_micros),
-      ctr: Number(met.ctr || 0),                 // 0..1
-      cpc: Number(met.average_cpc || 0),         // en moneda
+      ctr,                                           // 0..1
+      cpc: microsToUnit(met.average_cpc_micros),     // en moneda
       conversions: Number(met.conversions || 0),
       conv_value: Number(met.conversion_value || 0),
     };
@@ -240,9 +280,17 @@ async function fetchInsights({
 
   kpis.ctr = kpis.impressions > 0 ? kpis.clicks / kpis.impressions : 0;
   kpis.cpc = kpis.clicks > 0 ? (kpis.cost / kpis.clicks) : 0;
-  // cpa / roas (cuando aplique)
   kpis.cpa  = kpis.conversions > 0 ? (kpis.cost / kpis.conversions) : undefined;
   kpis.roas = kpis.cost > 0 ? (kpis.conv_value / kpis.cost) : undefined;
+
+  // Enriquecemos con datos de la cuenta (moneda/timeZone)
+  let currency = 'MXN';
+  let tz = 'America/Mexico_City';
+  try {
+    const cust = await getCustomer(accessToken, cid);
+    currency = cust.currencyCode || currency;
+    tz = cust.timeZone || tz;
+  } catch (_) { /* ignore */ }
 
   // Deltas placeholder
   const deltas = {};
@@ -250,15 +298,15 @@ async function fetchInsights({
   return {
     ok: true,
     objective: (['ventas', 'alcance', 'leads'].includes(String(objective)) ? objective : 'ventas'),
-    customer_id: customerId,
+    customer_id: cid,
     range: { since, until },
     prev_range: { since, until }, // placeholder
     is_partial: false,
     kpis,
     deltas,
     series,
-    currency: 'MXN', // opcional
-    locale: 'es-MX',
+    currency,
+    locale: tz?.startsWith('Europe/') ? 'es-ES' : 'es-MX',
   };
 }
 
@@ -267,5 +315,6 @@ module.exports = {
   listAccessibleCustomersRaw: listAccessibleCustomers, // alias por compatibilidad
   getCustomer,
   searchGAQLStream,
+  discoverAndEnrich,
   fetchInsights,
 };

@@ -34,7 +34,7 @@ try {
     managerCustomerId: { type: String },
     loginCustomerId:   { type: String },
     defaultCustomerId: { type: String },
-    customers:         { type: Array, default: [] }, // [{ id, descriptiveName, currencyCode, timeZone }]
+    customers:         { type: Array, default: [] }, // [{ id, descriptiveName, currencyCode, timeZone, status }]
     ad_accounts:       { type: [AdAccountSchema], default: [] },
     // Opcional
     objective:         { type: String, enum: ['ventas','alcance','leads'], default: 'ventas' },
@@ -56,7 +56,7 @@ function requireAuth(req, res, next) {
 }
 
 const normId = (s = '') =>
-  String(s).replace(/^customers\//, '').replace(/-/g, '').trim();
+  String(s).replace(/^customers\//, '').replace(/[^\d]/g, '').trim();
 
 function oauth() {
   return new OAuth2Client({
