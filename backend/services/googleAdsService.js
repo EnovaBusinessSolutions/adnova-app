@@ -3,6 +3,9 @@
 
 const axios = require('axios');
 
+/* =========================
+ * ENV / Constantes
+ * ========================= */
 const DEV_TOKEN =
   process.env.GOOGLE_ADS_DEVELOPER_TOKEN ||
   process.env.GOOGLE_DEVELOPER_TOKEN ||
@@ -19,6 +22,9 @@ const ADS_HOST = 'https://googleads.googleapis.com';
 
 const normId = (s = '') => String(s).replace(/[^\d]/g, '');
 
+/* =========================
+ * Headers base
+ * ========================= */
 function baseHeaders(accessToken) {
   if (!DEV_TOKEN) throw new Error('GOOGLE_ADS_DEVELOPER_TOKEN missing');
   return {
@@ -29,8 +35,13 @@ function baseHeaders(accessToken) {
   };
 }
 
+/* ========================================================================== *
+ * 1) Descubrimiento de cuentas
+ * ========================================================================== */
+
 /**
  * IMPORTANTE: listAccessibleCustomers NO debe llevar login-customer-id.
+ * Devuelve ["customers/123", "customers/456", ...]
  */
 async function listAccessibleCustomers(accessToken) {
   const url = `${ADS_HOST}/${ADS_VER}/customers:listAccessibleCustomers`;
@@ -43,7 +54,8 @@ async function listAccessibleCustomers(accessToken) {
     validateStatus: () => true,
   });
 
-  if (Array.isArray(data?.resourceNames)) return data.resourceNames; // ["customers/123", ...]
+  if (Array.isArray(data?.resourceNames)) return data.resourceNames;
+
   if (data?.error) {
     const code = data.error?.status || 'UNKNOWN';
     const msg  = data.error?.message || 'listAccessibleCustomers failed';
@@ -51,27 +63,8 @@ async function listAccessibleCustomers(accessToken) {
     err.api = { status, error: data.error };
     throw err;
   }
+
   return [];
-}
-
-// Descubre cuentas accesibles y las enriquece con /customers/{id}
-async function discoverAndEnrich(accessToken) {
-  const resourceNames = await listAccessibleCustomers(accessToken); // ["customers/123", ...]
-  const ids = resourceNames
-    .map((rn) => String(rn || '').split('/')[1])
-    .filter(Boolean);
-
-  const out = [];
-  for (const cid of ids) {
-    try {
-      const meta = await getCustomer(accessToken, cid);
-      out.push(meta); // { id, name, currencyCode, timeZone, status }
-    } catch (e) {
-      // Si alguna cuenta da 403/404, continuamos con el resto
-      console.warn('[discoverAndEnrich] skip', cid, e?.api || e.message);
-    }
-  }
-  return out;
 }
 
 /**
@@ -102,8 +95,9 @@ async function discoverAndEnrich(accessToken) {
   const list = await listAccessibleCustomers(accessToken); // ["customers/123", ...]
   const ids = Array.from(
     new Set(
-      list
-        .map((r) => normId(r.split('/')[1] || r))
+      (list || [])
+        .map(rn => String(rn || '').split('/')[1])
+        .map(s => s && s.replace(/[^\d]/g, ''))
         .filter(Boolean)
     )
   );
@@ -111,16 +105,19 @@ async function discoverAndEnrich(accessToken) {
   const out = [];
   for (const id of ids) {
     try {
-      const c = await getCustomer(accessToken, id);
-      out.push(c);
+      const meta = await getCustomer(accessToken, id);
+      out.push(meta);
     } catch (e) {
-      // Si una cuenta falla, continúa con el resto
-      console.warn('discoverAndEnrich:getCustomer fail', id, e?.response?.data || e.message);
-      out.push({ id, name: `Cuenta ${id}`, currencyCode: null, timeZone: null, status: null });
+      // continúa sin tumbar el flujo
+      console.warn('[discoverAndEnrich] getCustomer fail', id, e?.response?.data || e?.api || e.message);
     }
   }
   return out;
 }
+
+/* ========================================================================== *
+ * 2) GAQL (searchStream)
+ * ========================================================================== */
 
 /**
  * POST /customers/{cid}/googleAds:searchStream
@@ -141,7 +138,7 @@ async function searchGAQLStream(accessToken, customerId, query) {
   if (Array.isArray(data)) {
     const rows = [];
     for (const chunk of data) {
-      for (const r of chunk.results || []) rows.push(r);
+      for (const r of (chunk.results || [])) rows.push(r);
     }
     return rows;
   }
@@ -157,16 +154,16 @@ async function searchGAQLStream(accessToken, customerId, query) {
   // Cuando hay BASIC token o sin permisos a veces devuelve HTML (404)
   if (typeof data === 'string') {
     const err = new Error('[searchGAQLStream] Unexpected string response (possible 404 HTML)');
-    err.api = { raw: data };
+    err.api = { raw: data.slice(0, 160) + '…' };
     throw err;
   }
 
   return [];
 }
 
-/* =========================
- * Helpers de fechas
- * ========================= */
+/* ========================================================================== *
+ * 3) Helpers de fechas/formatos
+ * ========================================================================== */
 function fmt(d) {
   const y = d.getUTCFullYear();
   const m = String(d.getUTCMonth() + 1).padStart(2, '0');
@@ -186,29 +183,22 @@ function addDays(d, n) {
 }
 
 function presetRange(preset) {
-  // Devuelve [since, until] inclusive en UTC (yyyy-mm-dd).
   const t = todayUTC();
   switch ((preset || '').toLowerCase()) {
     case 'today': {
-      const d = fmt(t);
-      return [d, d];
+      const d = fmt(t); return [d, d];
     }
     case 'yesterday': {
-      const y = addDays(t, -1);
-      const d = fmt(y);
-      return [d, d];
+      const y = addDays(t, -1); const d = fmt(y); return [d, d];
     }
     case 'last_7d': {
-      const since = addDays(t, -6);
-      return [fmt(since), fmt(t)];
+      const since = addDays(t, -6); return [fmt(since), fmt(t)];
     }
     case 'last_14d': {
-      const since = addDays(t, -13);
-      return [fmt(since), fmt(t)];
+      const since = addDays(t, -13); return [fmt(since), fmt(t)];
     }
     case 'last_28d': {
-      const since = addDays(t, -27);
-      return [fmt(since), fmt(t)];
+      const since = addDays(t, -27); return [fmt(since), fmt(t)];
     }
     case 'this_month': {
       const start = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), 1));
@@ -216,8 +206,7 @@ function presetRange(preset) {
     }
     case 'last_30d':
     default: {
-      const since = addDays(t, -29);
-      return [fmt(since), fmt(t)];
+      const since = addDays(t, -29); return [fmt(since), fmt(t)];
     }
   }
 }
@@ -234,16 +223,16 @@ function microsToUnit(v) {
   return Math.round((n / 1_000_000) * 100) / 100; // 2 decimales
 }
 
-/* =========================
- * Insights
- * ========================= */
+/* ========================================================================== *
+ * 4) Insights (KPIs + Serie)
+ * ========================================================================== */
 async function fetchInsights({
   accessToken,
   customerId,
   datePreset,   // "last_30d" | "today" | ...
   range,        // "30" | "60" | "90" (si no hay datePreset)
-  includeToday, // "1" | "0" (ya lo cubre preset; se deja por compatibilidad)
-  objective,    // ventas | alcance | leads (no afecta GAQL, solo KPIs presentados)
+  includeToday, // "1" | "0" (placeholder compatibilidad)
+  objective,    // ventas | alcance | leads (no cambia GAQL)
   compareMode,  // prev_period (placeholder)
 }) {
   if (!customerId) throw new Error('customerId required');
@@ -251,7 +240,7 @@ async function fetchInsights({
   const cid = normId(customerId);
   let [since, until] = datePreset ? presetRange(datePreset) : rangeFromCount(range || 30);
 
-  // Serie diaria (usar métricas en micros donde aplica).
+  // v17: average_cpc está en moneda; cost en micros.
   const GAQL_SERIE = `
     SELECT
       segments.date,
@@ -259,7 +248,7 @@ async function fetchInsights({
       metrics.clicks,
       metrics.cost_micros,
       metrics.ctr,
-      metrics.average_cpc_micros,
+      metrics.average_cpc,
       metrics.conversions,
       metrics.conversion_value
     FROM customer
@@ -272,8 +261,7 @@ async function fetchInsights({
   const series = rows.map(r => {
     const seg = r.segments || {};
     const met = r.metrics  || {};
-    // metrics.ctr en Ads API suele venir en porcentaje (p.ej. 2.34) — normalizamos a 0..1
-    let ctr = Number(met.ctr || 0);
+    let ctr = Number(met.ctr || 0); // a veces viene como %, normalizamos
     if (ctr > 1) ctr = ctr / 100;
 
     return {
@@ -281,29 +269,28 @@ async function fetchInsights({
       impressions: Number(met.impressions || 0),
       clicks: Number(met.clicks || 0),
       cost: microsToUnit(met.cost_micros),
-      ctr,                                           // 0..1
-      cpc: microsToUnit(met.average_cpc_micros),     // en moneda
+      ctr,
+      cpc: Number(met.average_cpc || 0),
       conversions: Number(met.conversions || 0),
       conv_value: Number(met.conversion_value || 0),
     };
   });
 
   // KPIs sumados
-  const kpis = series.reduce((acc, p) => {
-    acc.impressions += p.impressions || 0;
-    acc.clicks      += p.clicks || 0;
-    acc.cost        += p.cost || 0;
-    acc.conversions += p.conversions || 0;
-    acc.conv_value  += p.conv_value || 0;
-    return acc;
-  }, { impressions: 0, clicks: 0, cost: 0, conversions: 0, conv_value: 0 });
+  const kpis = series.reduce((a, p) => ({
+    impressions: a.impressions + (p.impressions || 0),
+    clicks:      a.clicks + (p.clicks || 0),
+    cost:        a.cost + (p.cost || 0),
+    conversions: a.conversions + (p.conversions || 0),
+    conv_value:  a.conv_value + (p.conv_value || 0),
+  }), { impressions:0, clicks:0, cost:0, conversions:0, conv_value:0 });
 
-  kpis.ctr = kpis.impressions > 0 ? kpis.clicks / kpis.impressions : 0;
-  kpis.cpc = kpis.clicks > 0 ? (kpis.cost / kpis.clicks) : 0;
-  kpis.cpa  = kpis.conversions > 0 ? (kpis.cost / kpis.conversions) : undefined;
-  kpis.roas = kpis.cost > 0 ? (kpis.conv_value / kpis.cost) : undefined;
+  kpis.ctr = kpis.impressions ? (kpis.clicks / kpis.impressions) : 0;
+  kpis.cpc = kpis.clicks ? (kpis.cost / kpis.clicks) : 0;
+  kpis.cpa  = kpis.conversions ? (kpis.cost / kpis.conversions) : undefined;
+  kpis.roas = kpis.cost ? (kpis.conv_value / kpis.cost) : undefined;
 
-  // Enriquecemos con datos de la cuenta (moneda/timeZone)
+  // Enriquecer con moneda/timezone
   let currency = 'MXN';
   let tz = 'America/Mexico_City';
   try {
@@ -312,30 +299,29 @@ async function fetchInsights({
     tz = cust.timeZone || tz;
   } catch (_) { /* ignore */ }
 
-  // Deltas placeholder
-  const deltas = {};
-
   return {
     ok: true,
-    objective: (['ventas', 'alcance', 'leads'].includes(String(objective)) ? objective : 'ventas'),
+    objective: (['ventas','alcance','leads'].includes(String(objective)) ? objective : 'ventas'),
     customer_id: cid,
     range: { since, until },
     prev_range: { since, until }, // placeholder
     is_partial: false,
     kpis,
-    deltas,
+    deltas: {},
     series,
     currency,
     locale: tz?.startsWith('Europe/') ? 'es-ES' : 'es-MX',
   };
 }
 
+/* ========================================================================== *
+ * Exports
+ * ========================================================================== */
 module.exports = {
   listAccessibleCustomers,
-  listAccessibleCustomersRaw: listAccessibleCustomers, // alias por compatibilidad
+  listAccessibleCustomersRaw: listAccessibleCustomers, // alias
   getCustomer,
   searchGAQLStream,
   discoverAndEnrich,
   fetchInsights,
-  discoverAndEnrich,  
 };
