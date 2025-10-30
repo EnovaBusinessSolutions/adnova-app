@@ -68,9 +68,10 @@ function oauth() {
 
 /**
  * Devuelve un access_token vigente usando accessToken o refreshToken.
+ * Actualiza Mongo si logra un refresh con nueva expiración.
  */
 async function getFreshAccessToken(gaDoc) {
-  if (gaDoc?.accessToken && gaDoc.accessToken.length > 10 && gaDoc?.expiresAt) {
+  if (gaDoc?.accessToken && gaDoc?.expiresAt) {
     const ms = new Date(gaDoc.expiresAt).getTime() - Date.now();
     if (ms > 60_000) return gaDoc.accessToken; // válido > 60s
   }
@@ -81,7 +82,7 @@ async function getFreshAccessToken(gaDoc) {
     access_token:  gaDoc?.accessToken  || undefined,
   });
 
-  // Primero intenta refreshAccessToken (devuelve expiry)
+  // 1) refreshAccessToken (con expiry)
   try {
     const { credentials } = await client.refreshAccessToken();
     const access = credentials.access_token;
@@ -92,9 +93,9 @@ async function getFreshAccessToken(gaDoc) {
       );
       return access;
     }
-  } catch (_) { /* ignore */ }
+  } catch (_) { /* ignore y probamos getAccessToken */ }
 
-  // Si falla, intenta getAccessToken()
+  // 2) getAccessToken (sin expiry)
   const t = await client.getAccessToken().catch(() => null);
   if (t?.token) return t.token;
 
@@ -105,6 +106,8 @@ async function getFreshAccessToken(gaDoc) {
 /* ============================================================================
  * GET /api/google/ads/insights/accounts
  * Descubre y devuelve las cuentas accesibles para el usuario actual.
+ * Estructura esperada por el hook del frontend:
+ *   { ok, accounts, defaultCustomerId, requiredSelection }
  * ==========================================================================*/
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
@@ -118,20 +121,26 @@ router.get('/accounts', requireAuth, async (req, res) => {
       return res.json({ ok: true, accounts: [], defaultCustomerId: null, requiredSelection: false });
     }
 
-    // Si ya tenemos cuentas enriquecidas guardadas, úsalas.
+    // Usa lo guardado si existe
     let accounts = Array.isArray(ga.ad_accounts) && ga.ad_accounts.length
       ? ga.ad_accounts
       : [];
 
-    // Si no hay nada guardado, descubre con la API (listAccessibleCustomers -> getCustomer)
+    // Si no hay nada guardado, descubre con la API
     if (accounts.length === 0) {
       const accessToken = await getFreshAccessToken(ga);
       const resourceNames = await Ads.listAccessibleCustomers(accessToken); // ["customers/123", ...]
-      const ids = resourceNames.map((rn) => rn.split('/')[1]).filter(Boolean);
+      const ids = (resourceNames || []).map((rn) => rn.split('/')[1]).filter(Boolean);
 
       const metas = [];
       for (const cid of ids) {
-        metas.push(await Ads.getCustomer(accessToken, cid));
+        try {
+          metas.push(await Ads.getCustomer(accessToken, cid));
+        } catch (e) {
+          // continúa con el resto si alguna cuenta falla
+          // eslint-disable-next-line no-console
+          console.warn('[accounts] getCustomer skip', cid, e?.response?.data || e?.api || e.message);
+        }
       }
       accounts = metas;
 
@@ -151,20 +160,24 @@ router.get('/accounts', requireAuth, async (req, res) => {
             ...(ga.loginCustomerId ? {} : (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID
               ? { loginCustomerId: String(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID).replace(/[^\d]/g, '') }
               : {})),
+            updatedAt: new Date(),
           },
         }
       );
     }
 
-    // defaultCustomerId sensato
-    let defaultCustomerId = normId(ga.defaultCustomerId || '');
-    if (!defaultCustomerId && accounts.length) defaultCustomerId = normId(accounts[0].id);
+    // defaultCustomerId: guardado > primera ENABLED > primera
+    const previous = normId(ga.defaultCustomerId || '');
+    const firstEnabled = accounts.find(a => (a.status || '').toUpperCase() === 'ENABLED')?.id;
+    const defaultCustomerId = previous || firstEnabled || (accounts[0]?.id ? normId(accounts[0].id) : null);
+
+    const requiredSelection = accounts.length > 1 && !previous;
 
     return res.json({
       ok: true,
       accounts,
       defaultCustomerId: defaultCustomerId || null,
-      requiredSelection: false,
+      requiredSelection,
     });
   } catch (err) {
     console.error('google/ads/accounts error:', err?.response?.data || err);
@@ -175,9 +188,8 @@ router.get('/accounts', requireAuth, async (req, res) => {
 /* ============================================================================
  * GET /api/google/ads/insights
  * Devuelve KPIs + serie para el customer_id seleccionado o default.
- * Query params esperados por tu hook:
- *   - customer_id (opcional)
- *   - date_preset | range | include_today | objective | compare_mode
+ * Query params soportados:
+ *   customer_id | account_id, date_preset, range, include_today, objective, compare_mode
  * ==========================================================================*/
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -193,12 +205,9 @@ router.get('/', requireAuth, async (req, res) => {
 
     // Resolver customerId: query > default > primero de lista
     const qCustomer = normId(String(req.query.customer_id || req.query.account_id || ''));
-    const defaultCustomer = normId(ga.defaultCustomerId || '');
-    const first = normId(
-      (ga.ad_accounts?.[0]?.id) ||
-      (ga.customers?.[0]?.id) || ''
-    );
-    const customerId = qCustomer || defaultCustomer || first;
+    const previous  = normId(ga.defaultCustomerId || '');
+    const first     = normId((ga.ad_accounts?.[0]?.id) || (ga.customers?.[0]?.id) || '');
+    const customerId = qCustomer || previous || first;
 
     if (!customerId) {
       return res.status(400).json({ ok: false, error: 'NO_CUSTOMER_ID' });
@@ -208,7 +217,7 @@ router.get('/', requireAuth, async (req, res) => {
       accessToken: await getFreshAccessToken(ga),
       customerId,
       datePreset: String(req.query.date_preset || '').toLowerCase() || null,
-      range: String(req.query.range || '').trim() || null,
+      range: String(req.query.range || '').trim() || null,          // default se aplica dentro del servicio
       includeToday: String(req.query.include_today || '0'),
       objective: (['ventas','alcance','leads'].includes(String(req.query.objective || ga.objective || DEFAULT_OBJECTIVE).toLowerCase())
         ? String(req.query.objective || ga.objective || DEFAULT_OBJECTIVE).toLowerCase()

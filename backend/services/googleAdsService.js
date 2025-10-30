@@ -35,6 +35,23 @@ function baseHeaders(accessToken) {
   };
 }
 
+/* Pequeño detector de errores que ameritan reintento con login-customer-id */
+function shouldRetryWithLoginCid(errData) {
+  const status = errData?.error?.status || '';
+  const msg = (errData?.error?.message || '').toLowerCase();
+  // Casos comunes: PERMISSION_DENIED por falta de contexto, CUSTOMER_NOT_ENABLED, etc.
+  return (
+    status === 'PERMISSION_DENIED' ||
+    status === 'FAILED_PRECONDITION' ||
+    msg.includes('login-customer-id') ||
+    msg.includes('invalid login customer id') ||
+    msg.includes('access not permitted') ||
+    msg.includes('customer not enabled') ||
+    msg.includes('no customer found') ||
+    msg.includes('customer not accessible')
+  );
+}
+
 /* ========================================================================== *
  * 1) Descubrimiento de cuentas
  * ========================================================================== */
@@ -69,22 +86,53 @@ async function listAccessibleCustomers(accessToken) {
 
 /**
  * GET /customers/{cid}
- * Aquí sí podemos mandar login-customer-id (contexto MCC).
+ * Estrategia:
+ *   1) Intento SIN login-customer-id (contexto natural del access_token)
+ *   2) Si la API pide contexto o marca permiso, reintento CON LOGIN_CID (si existe)
  */
 async function getCustomer(accessToken, customerId) {
   const cid = normId(customerId);
   const url = `${ADS_HOST}/${ADS_VER}/customers/${cid}`;
-  const headers = baseHeaders(accessToken);
-  if (LOGIN_CID) headers['login-customer-id'] = LOGIN_CID;
 
-  const { data } = await axios.get(url, { headers, timeout: 20000 });
-  return {
-    id: cid,
-    name: data?.descriptiveName || `Cuenta ${cid}`,
-    currencyCode: data?.currencyCode || null,
-    timeZone: data?.timeZone || null,
-    status: data?.status || null,
-  };
+  // 1) sin login-customer-id
+  try {
+    const { data } = await axios.get(url, {
+      headers: baseHeaders(accessToken),
+      timeout: 20000,
+      validateStatus: s => s >= 200 && s < 300,
+    });
+    return {
+      id: cid,
+      name: data?.descriptiveName || `Cuenta ${cid}`,
+      currencyCode: data?.currencyCode || null,
+      timeZone: data?.timeZone || null,
+      status: data?.status || null,
+    };
+  } catch (e1) {
+    const data = e1?.response?.data;
+    // 2) reintento con login-customer-id (si hay y aplica)
+    if (LOGIN_CID && shouldRetryWithLoginCid(data)) {
+      const h = baseHeaders(accessToken);
+      h['login-customer-id'] = LOGIN_CID;
+      const { data: d2 } = await axios.get(url, {
+        headers: h,
+        timeout: 20000,
+      });
+      return {
+        id: cid,
+        name: d2?.descriptiveName || `Cuenta ${cid}`,
+        currencyCode: d2?.currencyCode || null,
+        timeZone: d2?.timeZone || null,
+        status: d2?.status || null,
+      };
+    }
+    // Si no aplica reintento o también falla, propagamos un error claro
+    const code = data?.error?.status || e1?.response?.status || 'UNKNOWN';
+    const msg  = data?.error?.message || e1?.message || 'getCustomer failed';
+    const err  = new Error(`[getCustomer] ${code}: ${msg}`);
+    err.api = { error: data?.error || data || null };
+    throw err;
+  }
 }
 
 /**
@@ -121,19 +169,35 @@ async function discoverAndEnrich(accessToken) {
 
 /**
  * POST /customers/{cid}/googleAds:searchStream
- * Ejecuta GAQL en stream. Devuelve un arreglo "flat" de filas.
+ * Estrategia:
+ *   1) Intento SIN login-customer-id
+ *   2) Si la API pide contexto/permiso, reintento CON LOGIN_CID (si existe)
+ * Devuelve un arreglo "flat" de filas.
  */
 async function searchGAQLStream(accessToken, customerId, query) {
   const cid = normId(customerId);
   const url = `${ADS_HOST}/${ADS_VER}/customers/${cid}/googleAds:searchStream`;
-  const headers = baseHeaders(accessToken);
-  if (LOGIN_CID) headers['login-customer-id'] = LOGIN_CID;
 
-  const { data } = await axios.post(
-    url,
-    { query },
-    { headers, timeout: 60000, validateStatus: () => true }
-  );
+  // helper para invocar
+  const call = async (headers) => {
+    const { data, status } = await axios.post(
+      url,
+      { query },
+      { headers, timeout: 60000, validateStatus: () => true }
+    );
+    return { data, status };
+  };
+
+  // 1) sin login-customer-id
+  const h1 = baseHeaders(accessToken);
+  let { data, status } = await call(h1);
+
+  // si es error que amerita retry con login-customer-id
+  if ((typeof data === 'object' && data?.error && shouldRetryWithLoginCid(data)) && LOGIN_CID) {
+    const h2 = baseHeaders(accessToken);
+    h2['login-customer-id'] = LOGIN_CID;
+    ({ data, status } = await call(h2));
+  }
 
   if (Array.isArray(data)) {
     const rows = [];
@@ -147,14 +211,14 @@ async function searchGAQLStream(accessToken, customerId, query) {
     const code = data.error?.status || 'UNKNOWN';
     const msg  = data.error?.message || 'searchStream failed';
     const err  = new Error(`[searchGAQLStream] ${code}: ${msg}`);
-    err.api = { error: data.error };
+    err.api = { status, error: data.error };
     throw err;
   }
 
   // Cuando hay BASIC token o sin permisos a veces devuelve HTML (404)
   if (typeof data === 'string') {
     const err = new Error('[searchGAQLStream] Unexpected string response (possible 404 HTML)');
-    err.api = { raw: data.slice(0, 160) + '…' };
+    err.api = { raw: data.slice(0, 200) + '…' };
     throw err;
   }
 

@@ -2,16 +2,11 @@
 'use strict';
 
 const express = require('express');
-const axios = require('axios');
 const { OAuth2Client } = require('google-auth-library');
 const { google } = require('googleapis');
 const mongoose = require('mongoose');
 
-const {
-  listAccessibleCustomersRaw,
-  discoverAndEnrich,
-} = require('../services/googleAdsService');
-
+const { discoverAndEnrich } = require('../services/googleAdsService');
 const router = express.Router();
 
 const User = require('../models/User');
@@ -55,10 +50,10 @@ try {
       defaultPropertyId: { type: String },
 
       // Misc
-      objective:         { type: String, enum: ['ventas','alcance','leads'], default: null },
+      objective:             { type: String, enum: ['ventas','alcance','leads'], default: null },
       lastAdsDiscoveryError: { type: String, default: null },
-      createdAt:         { type: Date, default: Date.now },
-      updatedAt:         { type: Date, default: Date.now },
+      createdAt:             { type: Date, default: Date.now },
+      updatedAt:             { type: Date, default: Date.now },
     },
     { collection: 'googleaccounts' }
   );
@@ -80,8 +75,7 @@ const DEV_TOKEN =
 
 const LOGIN_CID =
   (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || process.env.GOOGLE_LOGIN_CUSTOMER_ID || '')
-    .replace(/-/g, '')
-    .trim();
+    .replace(/[^\d]/g, '');
 
 const DEFAULT_GOOGLE_OBJECTIVE = 'ventas';
 
@@ -105,7 +99,7 @@ const normId = (s='') => String(s).replace(/[^\d]/g, '');
 
 const normalizeScopes = (raw) => Array.from(
   new Set(
-    (Array.isArray(raw) ? raw : String(raw || '').split(' '))
+    (Array.isArray(raw) ? raw : String(raw || '').split(/[,\s]+/))
       .map(s => String(s || '').trim())
       .filter(Boolean)
   )
@@ -120,7 +114,9 @@ async function ensureFreshAccessToken(userId) {
   if (!ga) throw new Error('GoogleAccount not found');
 
   const now = Date.now();
-  if (ga.accessToken && ga.expiresAt && (new Date(ga.expiresAt).getTime() - 60_000) > now) {
+  const notExpiring = ga.expiresAt && (new Date(ga.expiresAt).getTime() - 60_000) > now;
+
+  if (ga.accessToken && notExpiring) {
     return { accessToken: ga.accessToken, loginCustomerId: ga.loginCustomerId || LOGIN_CID || null };
   }
 
@@ -198,11 +194,10 @@ async function syncGoogleAdsAccountsForUserWithToken(userId, accessToken) {
     .includes('https://www.googleapis.com/auth/adwords');
 
   if (!hasAdwordsScope) {
-    // sin adwords no habrá permisos para discovery
     return { customers: [], ad_accounts: [], defaultCustomerId: scopeDoc?.defaultCustomerId || null };
   }
 
-  // descubrimos y enriquecemos con el service (usa MCC si aplica)
+  // descubrimos y enriquecemos (el service maneja MCC cuando aplica)
   const enriched = await discoverAndEnrich(accessToken); // [{ id, name, currencyCode, timeZone, status }]
 
   const customers = enriched.map(c => ({
@@ -221,7 +216,10 @@ async function syncGoogleAdsAccountsForUserWithToken(userId, accessToken) {
     status: c.status || null,
   }));
 
-  const defaultCustomerId = normId(scopeDoc?.defaultCustomerId || (ad_accounts[0]?.id || '')) || null;
+  // prioriza selección previa; si no, primera cuenta ENABLED; si no, la primera
+  const previous = normId(scopeDoc?.defaultCustomerId || '');
+  const firstEnabled = ad_accounts.find(a => (a.status || '').toUpperCase() === 'ENABLED')?.id;
+  const defaultCustomerId = previous || firstEnabled || (ad_accounts[0]?.id || null);
 
   await GoogleAccount.updateOne(
     { $or: [{ user: userId }, { userId }] },
@@ -411,7 +409,11 @@ router.get('/status', requireSession, async (req, res) => {
 
     const hasTokens = !!(ga?.refreshToken || ga?.accessToken);
     const customers = Array.isArray(ga?.customers) ? ga.customers : [];
-    const defaultCustomerId = normId(ga?.defaultCustomerId || customers?.[0]?.id || '') || null;
+
+    // default: guardado > primera ENABLED > primera
+    const previous = normId(ga?.defaultCustomerId || '');
+    const firstEnabled = (ga?.ad_accounts || []).find(a => (a.status || '').toUpperCase() === 'ENABLED')?.id;
+    const defaultCustomerId = previous || firstEnabled || normId(customers?.[0]?.id || '') || null;
 
     res.json({
       ok: true,
@@ -479,9 +481,9 @@ router.get('/accounts', requireSession, async (req, res) => {
 
     if ((!customers || customers.length === 0) || (!ad_accounts || ad_accounts.length === 0)) {
       try {
-        // usa token fresco del doc
         const t = await ensureFreshAccessToken(req.user._id);
         const enriched = await discoverAndEnrich(t.accessToken);
+
         customers = enriched.map(c => ({
           id: normId(c.id),
           descriptiveName: c.name,
@@ -489,6 +491,7 @@ router.get('/accounts', requireSession, async (req, res) => {
           timeZone: c.timeZone || null,
           status: c.status || null,
         }));
+
         ad_accounts = enriched.map(c => ({
           id: normId(c.id),
           name: c.name,
@@ -496,6 +499,7 @@ router.get('/accounts', requireSession, async (req, res) => {
           timeZone: c.timeZone || null,
           status: c.status || null,
         }));
+
         await GoogleAccount.updateOne(
           { $or: [{ user: req.user._id }, { userId: req.user._id }] },
           { $set: { customers, ad_accounts, lastAdsDiscoveryError: null, updatedAt: new Date() } }
@@ -505,7 +509,10 @@ router.get('/accounts', requireSession, async (req, res) => {
       }
     }
 
-    const defaultCustomerId = normId(ga.defaultCustomerId || customers?.[0]?.id || '') || null;
+    const previous = normId(ga?.defaultCustomerId || '');
+    const firstEnabled = ad_accounts.find(a => (a.status || '').toUpperCase() === 'ENABLED')?.id;
+    const defaultCustomerId = previous || firstEnabled || normId(customers?.[0]?.id || '') || null;
+
     res.json({
       ok: true,
       customers,
