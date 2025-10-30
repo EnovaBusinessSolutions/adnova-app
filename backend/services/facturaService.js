@@ -2,72 +2,75 @@
 const Facturapi = (require('facturapi').default || require('facturapi'));
 const facturapi = new Facturapi(process.env.FACTURAPI_KEY);
 
-// Helpers ambientes / defaults
-const DEFAULT_PRODUCT_CODE = process.env.FACTURAPI_DEFAULT_PRODUCT_CODE || '81112100'; // servicios SW
-const DEFAULT_UNIT = process.env.FACTURAPI_DEFAULT_UNIT || 'E48';
-const DEFAULT_PAYMENT_FORM = process.env.FACTURAPI_DEFAULT_PAYMENT_FORM || '03'; // Transferencia
-const DEFAULT_SERIE = process.env.FACTURAPI_SERIE || 'ADN';
-const DEFAULT_CURRENCY = 'MXN';
+// Defaults / ambiente
+const DEFAULT_PRODUCT_CODE = process.env.FACTURAPI_DEFAULT_PRODUCT_CODE || '81112100'; // Servicios de software
+const DEFAULT_UNIT         = process.env.FACTURAPI_DEFAULT_UNIT || 'E48';
+const DEFAULT_PAYMENT_FORM = process.env.FACTURAPI_DEFAULT_PAYMENT_FORM || '03';       // Transferencia
+const DEFAULT_SERIE        = process.env.FACTURAPI_SERIE || 'ADN';
+const DEFAULT_CURRENCY     = 'MXN';
+const DEFAULT_USE          = process.env.FACTURAPI_DEFAULT_USE || 'G03';
+const DEFAULT_TAX_SYSTEM   = process.env.FACTURAPI_DEFAULT_TAX_SYSTEM || '601';       // General de Ley Personas Morales
+const ISSUER_ZIP           = process.env.FACTURAPI_ISSUER_ZIP || '64000';             // ZIP emisor para público en general
 
-const genCustomerPayload = (taxProfile) => {
-  if (!taxProfile) {
-    // Público en general
+
+function genCustomerPayload(taxProfile) {
+  if (taxProfile) {
     return {
-      legal_name: 'PUBLICO EN GENERAL',
-      tax_id: 'XAXX010101000',
-      email: undefined
+      legal_name:  taxProfile.legal_name || taxProfile.name,
+      tax_id:      String(taxProfile.rfc || '').toUpperCase(),
+      tax_system:  taxProfile.tax_regime || taxProfile.tax_system || DEFAULT_TAX_SYSTEM,
+      address:     taxProfile.zip ? { zip: taxProfile.zip } : undefined,
+      email:       taxProfile.email || undefined,
     };
   }
+
+  // Público en general
   return {
-    legal_name: taxProfile.name,
-    tax_id: taxProfile.rfc.toUpperCase(),
-    email: taxProfile.email || undefined,
-    address: taxProfile.zip ? { zip: taxProfile.zip } : undefined
+    legal_name: 'PÚBLICO EN GENERAL',
+    tax_id:     'XAXX010101000',
+    tax_system: DEFAULT_TAX_SYSTEM,
+    address:    { zip: ISSUER_ZIP },
+    // sin email: Facturapi no enviará correo si no lo pasamos
   };
-};
+}
 
-/**
- * Emite CFDI con precio IVA incluido.
- * @param {Object} params
- *  - customer (obj de Facturapi, ya preparado)
- *  - description (string)
- *  - totalWithTax (number en MXN)
- *  - cfdiUse (string SAT, ej 'G03')
- *  - sendEmailTo (string opcional)
- *  - metadata (obj opcional)
- */
+
 async function emitirFactura({ customer, description, totalWithTax, cfdiUse, sendEmailTo, metadata }) {
-  // IVA incluido → obtener base e IVA (16%)
-  const base = +(totalWithTax / 1.16).toFixed(2);
-  const tax = +(totalWithTax - base).toFixed(2);
+  // Desglosa IVA (16%): precio base sin IVA para product.price
+  const base = +(Number(totalWithTax) / 1.16).toFixed(2);
 
-  const invoice = await facturapi.invoices.create({
+  const payload = {
     customer,
     items: [{
       product: {
-        description: description || 'Suscripción Adnova AI',
-        product_key: DEFAULT_PRODUCT_CODE,
-        unit_key: DEFAULT_UNIT
+        description:  description || 'Suscripción Adnova AI',
+        product_key:  DEFAULT_PRODUCT_CODE,
+        unit_key:     DEFAULT_UNIT,
+        price:        base,                // <-- REQUERIDO por Facturapi
       },
-      unit_price: base,
       quantity: 1,
-      taxes: [{ type: 'IVA', rate: 0.16, included: false }],
-      discount: 0
+      taxes: [{
+        type:     'IVA',
+        rate:     0.16,
+        included: false,                   // precio NO incluye IVA (lo desglosa)
+      }],
+      discount: 0,
     }],
-    currency: DEFAULT_CURRENCY,
-    series: DEFAULT_SERIE,
-    payment_form: DEFAULT_PAYMENT_FORM,
-    use: cfdiUse || process.env.FACTURAPI_DEFAULT_USE || 'G03',
-    send_email: !!sendEmailTo,
-    email: sendEmailTo,
-    metadata
-  });
+    currency:      DEFAULT_CURRENCY,
+    series:        DEFAULT_SERIE,
+    payment_form:  DEFAULT_PAYMENT_FORM,
+    use:           cfdiUse || DEFAULT_USE,
+    send_email:    !!sendEmailTo,
+    email:         sendEmailTo,
+    metadata,
+  };
 
+  const invoice = await facturapi.invoices.create(payload);
   return invoice;
 }
 
 module.exports = {
   facturapi,
   genCustomerPayload,
-  emitirFactura
+  emitirFactura,
 };

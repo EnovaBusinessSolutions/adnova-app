@@ -36,7 +36,6 @@ const auditsRoutes = require('./routes/audits');
 const stripeRouter = require('./routes/stripe');
 const facturapiTest = require('./routes/facturapiTest');
 const billingRoutes = require('./routes/billing');
-const stripeWebhook = require('./routes/stripeWebhook');
 const connector = require('./routes/shopifyConnector');
 const webhookRoutes = require('./routes/shopifyConnector/webhooks');
 
@@ -242,7 +241,6 @@ app.use('/api/stripe', stripeRouter);
 app.use('/api/facturapi-test', facturapiTest);
 app.use('/api/facturapi', require('./routes/facturapi'));
 app.use('/api/billing', billingRoutes);
-app.use('/api/stripe', stripeWebhook); // /api/stripe/webhook (raw body ya aplicado arriba)
 
 // Meta Ads
 app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);
@@ -641,6 +639,27 @@ app.get('/api/saas/ping', sessionGuard, (req, res) => {
   res.json({ ok: true, user: req.user?.email });
 });
 app.use('/api/saas/shopify', sessionGuard, require('./routes/shopifyMatch'));
+
+// Alias simple para /api/me (lo usa /plans/success)
+app.get('/api/me', async (req, res) => {
+  if (!req.isAuthenticated || !req.isAuthenticated()) {
+    return res.status(401).json({ authenticated: false });
+  }
+  try {
+    const u = await User.findById(req.user._id).lean();
+    if (!u) return res.status(401).json({ authenticated: false });
+    return res.json({
+      authenticated: true,
+      user: {
+        _id: u._id,
+        email: u.email
+      }
+    });
+  } catch (e) {
+    return res.status(401).json({ authenticated: false });
+  }
+});
+
 
 /* =========================
  * Otras APIs internas
