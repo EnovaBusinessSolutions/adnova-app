@@ -8,16 +8,19 @@ const Facturapi = (require('facturapi').default || require('facturapi'));
 const facturapiKey = process.env.FACTURAPI_KEY;
 const facturapi = facturapiKey ? new Facturapi(facturapiKey) : null;
 
-// Modelos / middlewares
+// Modelos
 const TaxProfile = require('../models/TaxProfile');
-// Si en index.js NO montas esta ruta con sessionGuard, deja este require:
-const ensureAuthenticated =
-  require('../../middlewares/ensureAuthenticated'); // <- ajusta si tu carpeta difiere
 
-/** Utils simples */
+// Guard local para APIs (responde 401 en lugar de redirigir)
+const ensureAuthenticated = (req, res, next) => {
+  if (req.isAuthenticated && req.isAuthenticated()) return next();
+  return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+};
+
+/** Utils */
 const required = (v) => typeof v === 'string' && v.trim().length > 0;
-const toUpper = (v) => (typeof v === 'string' ? v.trim().toUpperCase() : v);
-const toTrim = (v) => (typeof v === 'string' ? v.trim() : v);
+const toUpper  = (v) => (typeof v === 'string' ? v.trim().toUpperCase() : v);
+const toTrim   = (v) => (typeof v === 'string' ? v.trim() : v);
 
 /**
  * GET /api/billing/tax-profile
@@ -36,7 +39,7 @@ router.get('/tax-profile', ensureAuthenticated, async (req, res) => {
 /**
  * POST /api/billing/tax-profile
  * Crea/actualiza el perfil y lo refleja en Facturapi (customer create/update).
- * Body esperado: { rfc, legal_name, tax_regime, zip, cfdi_use }
+ * Body: { rfc, legal_name, tax_regime, zip, cfdi_use }
  */
 router.post('/tax-profile', ensureAuthenticated, async (req, res) => {
   try {
@@ -44,15 +47,21 @@ router.post('/tax-profile', ensureAuthenticated, async (req, res) => {
       return res.status(500).json({ ok: false, error: 'MISSING_FACTURAPI_KEY' });
 
     let { rfc, legal_name, tax_regime, zip, cfdi_use } = req.body || {};
-    // Sanitiza / valida
-    rfc = toUpper(rfc);
-    legal_name = toTrim(legal_name);
-    tax_regime = toUpper(tax_regime);
-    zip = toTrim(zip);
-    cfdi_use = toUpper(cfdi_use);
+
+    // Sanitiza
+    rfc         = toUpper(rfc);
+    legal_name  = toTrim(legal_name);
+    tax_regime  = toUpper(tax_regime);
+    zip         = toTrim(zip);
+    cfdi_use    = toUpper(cfdi_use);
 
     if (![rfc, legal_name, tax_regime, zip, cfdi_use].every(required)) {
       return res.status(400).json({ ok: false, error: 'INVALID_BODY' });
+    }
+
+    // Si alguien captura RFC genérico XAXX, fuerza régimen 616 (requisito de Facturapi)
+    if (rfc === 'XAXX010101000') {
+      tax_regime = '616';
     }
 
     // Upsert local
@@ -72,10 +81,11 @@ router.post('/tax-profile', ensureAuthenticated, async (req, res) => {
       tax_id: rfc,
       tax_system: tax_regime,
       address: { zip },
-      email: req.user.email, // respaldo
+      email: req.user.email,
+      metadata: { userId: String(req.user._id) } // útil para trazabilidad
     };
 
-    // Reflejar en Facturapi (create/update) y guardar el id
+    // Reflejar en Facturapi
     if (!profile.facturapi_customer_id) {
       const created = await facturapi.customers.create(payload);
       profile.facturapi_customer_id = created.id;
