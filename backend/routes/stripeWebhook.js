@@ -3,108 +3,106 @@
 
 const express = require('express');
 const router  = express.Router();
+const stripe  = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
-// Stripe SDK
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-
-// Facturapi (ESM default fix)
-const Facturapi = (require('facturapi').default || require('facturapi'));
-const facturapi = new Facturapi(process.env.FACTURAPI_KEY);
+// 👉 Centralizamos timbrado en facturaService (no timbramos directo aquí)
+const { emitirFactura, genCustomerPayload } = require('../services/facturaService');
 
 // Models
-const TaxProfile = require('../models/TaxProfile');
-const User       = require('../models/User');
+let User = null; try { User = require('../models/User'); } catch {}
+let TaxProfile = null; try { TaxProfile = require('../models/TaxProfile'); } catch {}
 
 const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
-// --- Helpers ---------------------------------------------------------------
+// ⚠️ IMPORTANTE: NO uses express.raw aquí. Ya lo aplicas en index.js
+// app.use('/api/stripe', (req,res,next)=>{ if (req.path==='/webhook') return express.raw(...); ... })
 
-// Convierte líneas de la invoice de Stripe a conceptos CFDI (precio SIN IVA)
-function buildItemsFromStripeInvoice(inv) {
-  return inv.lines.data.map((line) => {
-    // Tomamos el monto SIN impuestos si existe; Stripe reporta en centavos
-    const unitExTax = (line.amount_excluding_tax ?? line.amount) / 100;
+router.post('/webhook', async (req, res) => {
+  // req.body llega como Buffer (raw) por el middleware configurado en index.js
+  const sig = req.headers['stripe-signature'];
 
-    return {
-      product: {
-        // Clave producto/servicio (SAT) + unidad
-        product_key: process.env.FACTURAPI_DEFAULT_PRODUCT_CODE || '81112100',
-        unit_key:    process.env.FACTURAPI_DEFAULT_UNIT || 'E48',
-        description: line.description || line.plan?.nickname || 'Servicio de suscripción',
-        // Precio unitario (sin IVA) DEBE ir dentro de product
-        price: Number((unitExTax).toFixed(2)),
-      },
-      quantity: line.quantity || 1,
-      // IVA no incluido para que Facturapi lo calcule sobre el price
-      taxes: [{ type: 'IVA', rate: 0.16, included: false }],
-      discount: 0,
-    };
-  });
-}
-
-// --- Webhook Stripe (usar cuerpo RAW) -------------------------------------
-router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   let event;
   try {
-    event = stripe.webhooks.constructEvent(
-      req.body,
-      req.headers['stripe-signature'],
-      endpointSecret
-    );
+    event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
   } catch (e) {
-    console.error('Webhook signature failed:', e.message);
-    return res.sendStatus(400);
+    console.error('⚠️ Firma de webhook inválida:', e.message);
+    return res.status(400).send(`Webhook Error: ${e.message}`);
   }
 
   try {
-    if (event.type === 'invoice.payment_succeeded') {
-      const invoice = event.data.object;
+    // Timbran mejor estos dos eventos (ya hay importe definitivo):
+    if (event.type === 'invoice.paid' || event.type === 'invoice.payment_succeeded') {
+      const invSkeleton = event.data.object;
 
-      // Localiza al usuario por su Stripe customer id (campo en tu User)
-      const user = await User.findOne({ stripeCustomerId: invoice.customer });
-      if (!user) throw new Error('User not found for this Stripe customer');
+      // Trae la invoice completa (con lines y customer)
+      const invoice = await stripe.invoices.retrieve(invSkeleton.id, {
+        expand: ['lines.data.price.product', 'customer']
+      });
 
-      // Revisa que tenga perfil fiscal y cliente en Facturapi
-      const profile = await TaxProfile.findOne({ user: user._id });
-      if (!profile || !profile.facturapi_customer_id) {
-        console.warn('No tax profile or facturapi_customer_id → skipping CFDI');
+      // 1) Localiza al usuario por stripeCustomerId
+      const customerId = typeof invoice.customer === 'string'
+        ? invoice.customer
+        : invoice.customer?.id;
+
+      if (!User) return res.sendStatus(200);
+      const user = await User.findOne({ stripeCustomerId: customerId }).lean();
+      if (!user) {
+        console.warn('Invoice sin usuario asociado. customerId:', customerId);
         return res.sendStatus(200);
       }
 
-      const items = buildItemsFromStripeInvoice(invoice);
+      // 2) Carga el TaxProfile (si no hay → público en general)
+      let taxProfile = null;
+      if (TaxProfile) {
+        taxProfile = await TaxProfile.findOne({ user: user._id }).lean();
+      }
 
-      // Arma el CFDI. Currency a MXN y mayúsculas por si acaso
-      const payload = {
-        customer: profile.facturapi_customer_id,
-        items,
-        currency: (invoice.currency || 'mxn').toUpperCase(),
-        use: profile.cfdi_use || process.env.FACTURAPI_DEFAULT_USE || 'G03',
-        payment_form:   process.env.FACTURAPI_DEFAULT_PAYMENT_FORM || '03', // Transferencia
-        payment_method: process.env.FACTURAPI_DEFAULT_PAYMENT_METHOD || 'PUE',
-        series:         process.env.FACTURAPI_SERIE || 'ADN',
-        place_of_issue: process.env.FACTURAPI_ISSUER_ZIP, // ZIP emisor
-        send_pdf: true,
-        metadata: {
-          stripe_invoice_id: invoice.id,
-          stripe_customer_id: invoice.customer,
-          userId: String(user._id)
-        },
-      };
+      // 3) Prepara el payload de cliente y monto total (IVA incluido)
+      const customerPayload = genCustomerPayload(taxProfile);
+      const totalWithTax = (invoice.total || invoice.amount_paid || 0) / 100;
 
-      // Timbrado
-      const cfdi = await facturapi.invoices.create(payload);
-      console.log('✅ CFDI timbrado', cfdi.uuid, 'monto:', invoice.amount_paid / 100);
+      // Evita intentar timbrar con totales 0 (cupones 100%)
+      if (totalWithTax < 0.01) {
+        console.warn('Total < 0.01: se omite timbrado para', invoice.id);
+        return res.sendStatus(200);
+      }
 
-      // TODO opcional: persistir cfdi.uuid, cfdi.pdf_url, cfdi.xml_url en tu DB
+      // 4) Descripción legible (toma nickname del price si existe)
+      const firstLine = invoice.lines?.data?.[0];
+      const planName = firstLine?.price?.nickname || firstLine?.description || 'Plan';
+      const description = `Suscripción Adnova AI – ${planName}`;
+
+      // 5) Uso de CFDI (acepta cfdi_use o cfdiUse)
+      const cfdiUse = taxProfile?.cfdi_use || taxProfile?.cfdiUse || process.env.FACTURAPI_DEFAULT_USE || 'G03';
+
+      // 6) Timbrado vía servicio centralizado
+      try {
+        const cfdi = await emitirFactura({
+          customer: customerPayload,
+          description,
+          totalWithTax,
+          cfdiUse,
+          sendEmailTo: customerPayload.email || user.email,
+          metadata: {
+            stripeInvoiceId: invoice.id,
+            stripeCustomerId: customerId,
+            userId: String(user._id)
+          }
+        });
+
+        console.log('✅ CFDI timbrado', cfdi.uuid, 'total:', totalWithTax);
+
+        
+      } catch (e) {
+        console.error('❌ Timbrado Facturapi falló:', e?.response?.data || e.message);
+        // devolvemos 200 para evitar reintentos infinitos si es fallo de datos
+      }
     }
 
     return res.sendStatus(200);
-  } catch (e) {
-    // Log amigable si viene error de Facturapi
-    const apiErr = e?.response?.data || e;
-    console.error('❌ Error manejando webhook/CFDI:', apiErr);
-    // Devolvemos 200 para que Stripe no reintente indefinidamente (si el fallo es de datos)
-    return res.sendStatus(200);
+  } catch (err) {
+    console.error('❌ Error manejando webhook:', err);
+    return res.sendStatus(500);
   }
 });
 
