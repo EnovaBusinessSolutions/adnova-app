@@ -34,7 +34,6 @@ const subscribeRouter = require('./routes/subscribe');
 const userRoutes = require('./routes/user');
 const auditsRoutes = require('./routes/audits');
 const stripeRouter = require('./routes/stripe');
-const facturapiTest = require('./routes/facturapiTest');
 const billingRoutes = require('./routes/billing');
 const connector = require('./routes/shopifyConnector');
 const webhookRoutes = require('./routes/shopifyConnector/webhooks');
@@ -238,7 +237,6 @@ app.use(
 
 // Stripe / Facturapi / Billing
 app.use('/api/stripe', stripeRouter);
-app.use('/api/facturapi-test', facturapiTest);
 app.use('/api/facturapi', require('./routes/facturapi'));
 app.use('/api/billing', billingRoutes);
 
