@@ -1,3 +1,4 @@
+// backend/services/facturaService.js
 'use strict';
 const Facturapi = (require('facturapi').default || require('facturapi'));
 const facturapi = new Facturapi(process.env.FACTURAPI_KEY);
@@ -24,6 +25,7 @@ function genCustomerPayload(taxProfile) {
     return {
       legal_name: taxProfile.legal_name || taxProfile.name,
       tax_id: (taxProfile.rfc || '').toUpperCase(),
+      // OJO: para clientes con RFC real, este campo debe venir del perfil
       tax_system: (taxProfile.tax_regime || taxProfile.tax_system || '').toString() || DEFAULT_TAX_SYSTEM_EMISOR,
       address: taxProfile.zip ? { zip: taxProfile.zip } : undefined,
       email: taxProfile.email || undefined,
@@ -42,9 +44,9 @@ function genCustomerPayload(taxProfile) {
 
 /**
  * Emite CFDI con precio final IVA incluido.
- * ✅ En tu cuenta, Facturapi exige:
- *    - precio dentro de product.price
- *    - impuestos dentro de product.taxes (NO en el item)
+ * Reglas para Facturapi:
+ *  - product.price = SUBTOTAL (sin IVA)
+ *  - product.taxes = IVA (included:false) => Facturapi calcula el IVA sobre price
  */
 async function emitirFactura({ customer, description, totalWithTax, cfdiUse, sendEmailTo, metadata }) {
   const total = round2(totalWithTax);
@@ -59,24 +61,21 @@ async function emitirFactura({ customer, description, totalWithTax, cfdiUse, sen
     customer,
     items: [
       {
-        // ❗️ Nada de taxes a nivel item
         product: {
           description: description || 'Suscripción Adnova AI',
           product_key: DEFAULT_PRODUCT_CODE,
           unit_key: DEFAULT_UNIT,
           price: base, // subtotal sin IVA
-          // ✅ Impuestos dentro de product
-          taxes: [{ type: 'IVA', rate: 0.16 }],
+          taxes: [{ type: 'IVA', rate: 0.16, included: false }],
         },
         quantity: 1,
-        // discount: 0 // opcional
       }
     ],
     currency: DEFAULT_CURRENCY,
     series: DEFAULT_SERIE,
     payment_form: DEFAULT_PAYMENT_FORM,
     use: cfdiUse || DEFAULT_CFDI_USE,
-    place_of_issue: DEFAULT_ISSUER_ZIP, // recomendado si lo tienes en .env
+    // ❌ place_of_issue ya no es aceptado en invoices.create
     send_email: !!sendEmailTo,
     email: sendEmailTo,
     metadata,
