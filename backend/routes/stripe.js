@@ -272,11 +272,11 @@ router.post('/webhook', async (req, res) => {
         // 4) Preparar payload para Facturapi
         const { genCustomerPayload, emitirFactura } = require('../services/facturaService');
         const customerPayload = genCustomerPayload(taxProfile);
-        const totalWithTax = (stripeInvoice.total || 0) / 100; // Stripe en centavos
+        const totalWithTax = (stripeInvoice.total || stripeInvoice.amount_paid || 0) / 100; // Stripe en centavos
         const conceptDesc = `Suscripción Adnova AI – ${stripeInvoice.lines?.data?.[0]?.price?.nickname || 'Plan'}`;
         const cfdiUse = taxProfile?.cfdiUse || process.env.FACTURAPI_DEFAULT_USE || 'G03';
 
-        // 5) Timbrar (try/catch para no romper webhook)
+        // 5) Timbrar (sin metadata; tu cuenta de Facturapi no lo permite)
         try {
           const cfdi = await emitirFactura({
             customer: customerPayload,
@@ -284,12 +284,15 @@ router.post('/webhook', async (req, res) => {
             totalWithTax,
             cfdiUse,
             sendEmailTo: customerPayload.email || user.email,
-            metadata: { userId: String(user._id), stripeInvoiceId: stripeInvoice.id }
           });
 
-          // (Opcional) Persistir folio en el usuario
+          // (Opcional) Persistir folio/ligas en tu DB
           await User.findByIdAndUpdate(user._id, {
-            $set: { 'subscription.lastCfdiId': cfdi.id, 'subscription.lastCfdiTotal': totalWithTax }
+            $set: {
+              'subscription.lastCfdiId': cfdi.id,
+              'subscription.lastCfdiTotal': totalWithTax,
+              'subscription.lastStripeInvoice': stripeInvoice.id
+            }
           }).exec();
         } catch (e) {
           console.error('❌ Timbrado Facturapi falló:', e?.response?.data || e.message);
@@ -332,7 +335,6 @@ router.post('/portal', ensureAuth, async (req, res) => {
 });
 
 // =============== SYNC (pull desde Stripe) ===============
-// Sin expands profundos (evita error de "more than 4 levels").
 router.post('/sync', ensureAuth, async (req, res) => {
   try {
     if (!User) return res.status(500).json({ ok:false, error: 'Modelo User no disponible' });
