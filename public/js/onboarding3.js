@@ -1,21 +1,21 @@
 // public/js/onboarding3.js
 (function () {
   // =======================
-  // ENDPOINTS (ajusta si cambian)
+  // ENDPOINTS
   // =======================
   const ENDPOINTS = {
-    status:    '/api/onboarding/status',     // GET → { ok, sources: { google:{connected}, meta:{...}, ga4:{...}, shopify:{...} } }
-    start:     '/api/audits/start',          // POST { sources: ['meta','google', ...] } → { ok, started: [...] }
-    progress:  '/api/audits/progress'        // GET → { ok, overallPct, done, items: { meta:{state,pct,msg}, ... } }
+    status:   '/api/onboarding/status', // GET → { ok, status:{ meta:{connected,count}, google:{connected,count}, shopify:{connected}, ... } }
+    start:    '/api/audits/start',      // POST { types: ['meta','google','shopify'] } → { ok, jobId }
+    progress: '/api/audits/progress'    // GET  ?jobId=... → { ok, items:{...}, percent, finished }
   };
 
   // =======================
   // DOM refs
   // =======================
   const $ = (sel) => document.querySelector(sel);
-  const progressBar = $('#progress-bar');          // <div id="progress-bar">
-  const progressText = $('#progress-text');        // <p id="progress-text">
-  const btnContinue = $('#btn-continue');          // <button id="btn-continue">
+  const progressBar = $('#progress-bar');
+  const progressText = $('#progress-text');
+  const btnContinue = $('#btn-continue');
 
   const rows = {
     google:  $('#step-googleads'),
@@ -40,27 +40,27 @@
     row.classList.remove('active', 'completed', 'opacity-50', 'is-current', 'error');
     if (state === 'running') {
       row.classList.add('active', 'is-current');
-      if (ICON(row)) ICON(row).textContent = '●';
+      if (ICON(row))   ICON(row).textContent = '●';
       if (BADGE(row)) BADGE(row).textContent = msg || 'Analizando…';
     } else if (state === 'done') {
       row.classList.add('completed');
-      if (ICON(row)) ICON(row).textContent = '✓';
+      if (ICON(row))   ICON(row).textContent = '✓';
       if (BADGE(row)) BADGE(row).textContent = msg || 'Listo';
     } else if (state === 'skipped') {
       row.classList.add('opacity-50');
-      if (ICON(row)) ICON(row).textContent = '○';
+      if (ICON(row))   ICON(row).textContent = '○';
       if (BADGE(row)) BADGE(row).textContent = msg || 'Omitido';
     } else if (state === 'error') {
       row.classList.add('error', 'opacity-50');
-      if (ICON(row)) ICON(row).textContent = '!';
+      if (ICON(row))   ICON(row).textContent = '!';
       if (BADGE(row)) BADGE(row).textContent = msg || 'Error';
     } else {
-      if (ICON(row)) ICON(row).textContent = '○';
+      if (ICON(row))   ICON(row).textContent = '○';
       if (BADGE(row)) BADGE(row).textContent = msg || '';
     }
   };
 
-  // Ciclo de mensajes sutil para UX mientras corre
+  // Ciclo de mensajes UX mientras corre
   const STATUS_MESSAGES = [
     'Conectando fuentes…',
     'Sincronizando permisos…',
@@ -69,7 +69,6 @@
     'Detectando oportunidades…',
     'Generando recomendaciones…'
   ];
-  let cyclerStop = null;
   function startCycler() {
     if (!progressText) return () => {};
     let i = 0, stop = false;
@@ -86,6 +85,7 @@
     const id = setInterval(tick, 2000);
     return () => { stop = true; clearInterval(id); };
   }
+  let cyclerStop = null;
 
   // =======================
   // HTTP helpers
@@ -124,29 +124,33 @@
       setText('Preparando análisis…');
       cyclerStop = startCycler();
 
-      // 1) Estado real de conexiones
+      // 1) Estado real de conexiones (lee /api/onboarding/status → { ok, status:{...} })
       const st = await getJSON(ENDPOINTS.status);
-      const sources = st?.sources || {};
-      // Normalizamos flags (booleanos)
+      const status = st?.status || {};
+      // Normaliza flags
+      // GA4 se considera conectado si Google está conectado y hay propiedades (count>0)
       const isConnected = {
-        google:  !!sources.google?.connected,
-        meta:    !!sources.meta?.connected,
-        shopify: !!sources.shopify?.connected,
-        ga4:     !!sources.ga4?.connected
+        google:  !!status.google?.connected,
+        meta:    !!status.meta?.connected,
+        shopify: !!status.shopify?.connected,
+        ga4:     !!status.google?.connected && Number(status.google?.count || 0) > 0
       };
 
-      // Marca omitidos los no conectados
+      // Pinta estado inicial por fila
       Object.entries(rows).forEach(([k, row]) => {
         if (!row) return;
         if (!isConnected[k]) {
-          setRowState(row, { state: 'skipped', msg: 'No conectado' });
+          const msg = (k === 'ga4')
+            ? (!!status.google?.connected ? 'Conecta GA4' : 'No conectado')
+            : 'No conectado';
+          setRowState(row, { state: 'skipped', msg });
         } else {
           setRowState(row, { state: 'running', msg: 'Analizando…' });
         }
       });
 
-      // Fuentes a procesar de verdad
-      const toRun = Object.keys(isConnected).filter((k) => isConnected[k]);
+      // Fuentes a procesar realmente
+      const toRun = Object.keys(isConnected).filter((k) => isConnected[k] && (k === 'google' || k === 'meta' || k === 'shopify'));
       if (toRun.length === 0) {
         setBar(100);
         if (cyclerStop) cyclerStop();
@@ -155,48 +159,62 @@
         return;
       }
 
-      // 2) Disparar auditorías en backend
-      await postJSON(ENDPOINTS.start, { sources: toRun });
+      // 2) Disparar auditorías (el backend espera "types")
+      const startResp = await postJSON(ENDPOINTS.start, { types: toRun });
+      const jobId = startResp?.jobId;
+      if (!jobId) {
+        // fallback: permite continuar aunque no haya jobId
+        console.warn('No jobId from /audits/start; continuaré sin polling específico.');
+      }
 
-      // 3) Polling de progreso
+      // 3) Polling de progreso (soporta las dos formas de respuesta)
       let finished = false;
       let lastSnapshot = null;
 
       async function poll() {
         try {
-          const p = await getJSON(ENDPOINTS.progress);
+          const q = jobId ? `${ENDPOINTS.progress}?jobId=${encodeURIComponent(jobId)}` : ENDPOINTS.progress;
+          const p = await getJSON(q);
           lastSnapshot = p;
 
-          // overall
-          const overall = Number(p?.overallPct ?? 0);
+          // overall percent (acepta overallPct o percent)
+          const overall = Number(
+            (p && (p.overallPct ?? p.percent)) ?? 0
+          );
           setBar(overall);
-          if (overall >= 100) {
+          if (overall >= 100 || p?.finished === true) {
             finished = true;
           }
 
-          // por item
+          // items por fuente (acepta estructura flexible)
           const items = p?.items || {};
           for (const [key, row] of Object.entries(rows)) {
             if (!row) continue;
-            const it = items[key];
-            if (!isConnected[key]) continue; // ya está omitido
+            if (!isConnected[key]) continue;
 
+            const it = items[key];
             if (!it) {
               setRowState(row, { state: 'running', msg: 'Analizando…' });
               continue;
             }
 
-            const state = String(it.state || '').toLowerCase();
-            const pct = typeof it.pct === 'number' ? Math.round(it.pct) : null;
+            // Compat: it.status | it.state; it.pct | it.percent
+            const stateRaw = (it.state || it.status || '').toString().toLowerCase();
+            const pct = typeof it.pct === 'number'
+              ? Math.round(it.pct)
+              : (typeof it.percent === 'number' ? Math.round(it.percent) : null);
+
+            let state = 'running';
+            if (stateRaw === 'done') state = 'done';
+            else if (stateRaw === 'error') state = 'error';
+            else if (stateRaw === 'pending') state = 'running';
+
             const label =
               state === 'running'
                 ? (pct != null ? `Analizando… ${pct}%` : 'Analizando…')
-                : (it.msg || '');
+                : (it.msg || (state === 'done' ? 'Listo' : 'Error'));
 
-            if (state === 'running')      setRowState(row, { state: 'running', msg: label });
-            else if (state === 'done')    setRowState(row, { state: 'done', msg: 'Listo' });
-            else if (state === 'error')   setRowState(row, { state: 'error', msg: it.msg || 'Error' });
-            else                          setRowState(row, { state: 'running', msg: 'Analizando…' });
+            setRowState(row, { state, msg: label });
           }
 
           if (!finished) {
@@ -210,7 +228,6 @@
           }
         } catch (e) {
           console.warn('Polling error', e);
-          // marca error global, pero permite continuar para no bloquear
           if (cyclerStop) cyclerStop();
           setText('Hubo un problema al analizar. Puedes continuar.');
           setBar(100);

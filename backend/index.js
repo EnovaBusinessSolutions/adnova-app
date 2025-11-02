@@ -235,8 +235,8 @@ app.use(
   googleAdsInsightsRouter
 );
 
-app.use('/api/onboarding/status', require('./routes/onboardingStatus'));
-app.use('/api/audits', require('./routes/auditRunner'));
+app.use('/api/onboarding/status', sessionGuard, require('./routes/onboardingStatus'));
+app.use('/api/audits', sessionGuard, require('./routes/auditRunner'));
 
 
 // Stripe / Facturapi / Billing
@@ -668,21 +668,22 @@ app.get('/api/me', async (req, res) => {
  * ========================= */
 app.use('/api', userRoutes);
 /* ✅ Protegidas */
-app.use('/api/audits', sessionGuard, auditsRoutes);
+// Usa SOLO /api/audit (singular) para el router legacy
 app.use('/api/audit', sessionGuard, auditsRoutes);
 
 app.post('/api/audit/start', sessionGuard, (req, res) =>
-  res.redirect(307, '/api/audits/run')
-);
-app.post('/api/audit/google/start', sessionGuard, (req, res) =>
-  res.redirect(307, '/api/audits/run')
-);
-app.post('/api/audit/meta/start', sessionGuard, (req, res) =>
-  res.redirect(307, '/api/audits/run')
-);
-app.post('/api/audit/shopify/start', sessionGuard, (req, res) =>
-  res.redirect(307, '/api/audits/run')
-);
+   res.redirect(307, '/api/audits/start')
+ );
+ app.post('/api/audit/google/start', sessionGuard, (req, res) =>
+   res.redirect(307, '/api/audits/start')
+ );
+ app.post('/api/audit/meta/start', sessionGuard, (req, res) =>
+   res.redirect(307, '/api/audits/start')
+ );
+ app.post('/api/audit/shopify/start', sessionGuard, (req, res) =>
+   res.redirect(307, '/api/audits/start')
+ );
+
 
 app.use('/api/secure', verifySessionToken, secureRoutes);
 app.use('/api/dashboard', dashboardRoute);
