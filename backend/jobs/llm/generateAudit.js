@@ -7,14 +7,21 @@ const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 /* ------------------------------ helpers ------------------------------ */
 const AREAS = new Set(['setup','performance','creative','tracking','budget','bidding']);
 const SEVS  = new Set(['alta','media','baja']);
+
 const cap   = (arr, n) => (Array.isArray(arr) ? arr.slice(0, n) : []);
 const toNum = (v) => Number(v || 0);
 const sevNorm  = (s) => (SEVS.has(String(s||'').toLowerCase()) ? String(s).toLowerCase() : 'media');
 const areaNorm = (a) => (AREAS.has(String(a||'').toLowerCase()) ? String(a).toLowerCase() : 'performance');
 const impactNorm = (s) => (['alto','medio','bajo'].includes(String(s||'').toLowerCase()) ? String(s).toLowerCase() : 'medio');
 
-// Acepta tanto "ga" como "ga4" (compat con rutas)
 const isGA = (type) => type === 'ga' || type === 'ga4';
+
+const fmt = (n, d=2) => {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return 0;
+  const factor = 10 ** d;
+  return Math.round(v * factor) / factor;
+};
 
 // intenta encontrar el nombre de cuenta para una campaña
 function inferAccountName(c, snap) {
@@ -25,19 +32,43 @@ function inferAccountName(c, snap) {
   return found?.name || null;
 }
 
+/** Dedupe por título + campaignRef.id para reducir ruido del LLM */
+function dedupeIssues(issues = []) {
+  const seen = new Set();
+  const out = [];
+  for (const it of issues) {
+    const key = `${(it.title||'').trim().toLowerCase()}::${it.campaignRef?.id||''}::${it.segmentRef?.name||''}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(it);
+  }
+  return out;
+}
+
 function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
   try {
     const clone = JSON.parse(JSON.stringify(inputSnapshot || {}));
 
+    // byCampaign (cap + limpieza)
     if (Array.isArray(clone.byCampaign)) {
       clone.byCampaign = clone.byCampaign.slice(0, 60).map(c => ({
         id: String(c.id ?? ''),
         name: c.name ?? '',
         objective: c.objective ?? null,
-        kpis: c.kpis,
+        kpis: {
+          impressions: toNum(c?.kpis?.impressions),
+          clicks:      toNum(c?.kpis?.clicks),
+          cost:        toNum(c?.kpis?.cost ?? c?.kpis?.spend),
+          conversions: toNum(c?.kpis?.conversions),
+          conv_value:  toNum(c?.kpis?.conv_value ?? c?.kpis?.purchase_value),
+          spend:       toNum(c?.kpis?.spend),
+          roas:        toNum(c?.kpis?.roas),
+          cpc:         toNum(c?.kpis?.cpc),
+          cpa:         toNum(c?.kpis?.cpa),
+          ctr:         toNum(c?.kpis?.ctr),
+        },
         period: c.period,
         account_id: c.account_id ?? null,
-        // contexto multi-cuenta sin inflar
         accountMeta: c.accountMeta ? {
           name: c.accountMeta.name ?? null,
           currency: c.accountMeta.currency ?? null
@@ -45,6 +76,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
       }));
     }
 
+    // channels (GA4)
     if (Array.isArray(clone.channels)) {
       clone.channels = clone.channels.slice(0, 60).map(ch => ({
         channel: ch.channel,
@@ -55,6 +87,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
       }));
     }
 
+    // recorta
     let s = JSON.stringify(clone);
     if (s.length > maxChars) s = s.slice(0, maxChars);
     return s;
@@ -90,12 +123,12 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
           title: `[${accountRef.name || accountRef.id}] CTR bajo · ${c.name || c.id}`,
           area: 'performance',
           severity: 'media',
-          evidence: `CTR ${ctr.toFixed(2)}% con ${impr} impresiones y ${clk} clics.`,
+          evidence: `CTR ${fmt(ctr)}% con ${fmt(impr,0)} impresiones y ${fmt(clk,0)} clics.`,
           recommendation: 'Mejora creatividades y relevancia; prueba variantes (RSA/creatives) y ajusta segmentación.',
           estimatedImpact: 'medio',
           accountRef,
           campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
-          metrics: { impressions: impr, clicks: clk, ctr: Number(ctr.toFixed(2)) }
+          metrics: { impressions: impr, clicks: clk, ctr: fmt(ctr) }
         });
       }
 
@@ -104,12 +137,12 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
           title: `[${accountRef.name || accountRef.id}] Gasto sin conversiones · ${c.name || c.id}`,
           area: 'performance',
           severity: 'alta',
-          evidence: `${clk} clics, ${cost.toFixed(2)} de gasto y 0 conversiones.`,
+          evidence: `${fmt(clk,0)} clics, ${fmt(cost)} de gasto y 0 conversiones.`,
           recommendation: 'Revisa términos/segmentos de baja calidad, negativas, coherencia anuncio→landing y tracking.',
           estimatedImpact: 'alto',
           accountRef,
           campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
-          metrics: { clicks: clk, cost: Number(cost.toFixed(2)), conversions: conv }
+          metrics: { clicks: clk, cost: fmt(cost), conversions: conv }
         });
       }
 
@@ -118,12 +151,12 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
           title: `[${accountRef.name || accountRef.id}] ROAS bajo · ${c.name || c.id}`,
           area: 'performance',
           severity: 'media',
-          evidence: `ROAS ${roas.toFixed(2)} con gasto ${cost.toFixed(2)} y valor ${value.toFixed(2)}.`,
+          evidence: `ROAS ${fmt(roas)} con gasto ${fmt(cost)} y valor ${fmt(value)}.`,
           recommendation: 'Ajusta pujas/audiencias, excluye ubicaciones pobres y prueba nuevas creatividades.',
           estimatedImpact: 'medio',
           accountRef,
           campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
-          metrics: { roas: Number(roas.toFixed(2)), cost: Number(cost.toFixed(2)), value: Number(value.toFixed(2)) }
+          metrics: { roas: fmt(roas), cost: fmt(cost), value: fmt(value) }
         });
       }
 
@@ -148,12 +181,12 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
         title: 'Tráfico alto sin conversiones',
         area: 'tracking',
         severity: 'alta',
-        evidence: `${totals.sessions} sesiones y 0 conversiones en el periodo.`,
+        evidence: `${fmt(totals.sessions,0)} sesiones y 0 conversiones en el periodo.`,
         recommendation: 'Verifica eventos de conversión (nombres/flags), etiquetado, consent y filtros; revisa importación a Ads.',
         estimatedImpact: 'alto',
         segmentRef: { type: 'channel', name: 'all' },
         accountRef: { name: accountName || (property || 'GA4'), property: property || '' },
-        metrics: totals
+        metrics: { sessions: fmt(totals.sessions,0), conversions: 0 }
       });
     }
 
@@ -165,12 +198,12 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
         title: 'Tráfico de pago sin conversiones',
         area: 'performance',
         severity: 'media',
-        evidence: `${paidSess} sesiones de pago con 0 conversiones.`,
+        evidence: `${fmt(paidSess,0)} sesiones de pago con 0 conversiones.`,
         recommendation: 'Cruza plataformas de Ads; revisa importación/definición de conversiones y ventanas de atribución.',
         estimatedImpact: 'medio',
         segmentRef: { type: 'channel', name: 'paid' },
         accountRef: { name: accountName || (property || 'GA4'), property: property || '' },
-        metrics: { paidSessions: paidSess, paidConversions: paidConv }
+        metrics: { paidSessions: fmt(paidSess,0), paidConversions: 0 }
       });
     }
   }
@@ -267,7 +300,7 @@ ${isAnalytics ? SCHEMA_GA : SCHEMA_ADS}
 }
 
 /* ---------------------- OpenAI JSON con reintentos --------------------- */
-async function chatJSON({ system, user, model = 'gpt-4o-mini', retries = 2 }) {
+async function chatJSON({ system, user, model, retries = 2 }) {
   if (!process.env.OPENAI_API_KEY) {
     const err = new Error('OPENAI_API_KEY missing');
     err.status = 499;
@@ -284,7 +317,8 @@ async function chatJSON({ system, user, model = 'gpt-4o-mini', retries = 2 }) {
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: user }
-        ]
+        ],
+        timeout: 60_000
       });
       const raw = resp.choices?.[0]?.message?.content || '{}';
       return JSON.parse(raw);
@@ -325,10 +359,13 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
 
   const user = makeUserPrompt({ snapshotStr: dataStr, maxFindings, isAnalytics: analytics });
 
+  // modelo configurable
+  const model = process.env.OPENAI_MODEL_AUDIT || 'gpt-4o-mini';
+
   // 1) intentar con LLM
   let parsed;
   try {
-    parsed = await chatJSON({ system, user });
+    parsed = await chatJSON({ system, user, model });
   } catch (_) {
     parsed = null;
   }
@@ -340,7 +377,7 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
   if (parsed && typeof parsed === 'object') {
     summary = typeof parsed.summary === 'string' ? parsed.summary : '';
     issues = Array.isArray(parsed.issues) ? parsed.issues : [];
-    issues = cap(issues, maxFindings).map((it, i) => ({
+    issues = issues.map((it, i) => ({
       id: it.id || `ai-${type}-${Date.now()}-${i}`,
       title: String(it.title || 'Hallazgo'),
       area: areaNorm(it.area),
@@ -363,7 +400,7 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
     });
   }
 
-  // 3) completar con fallback mínimo de 3 si hay datos
+  // 3) fallback si hay pocos hallazgos y sí hay datos
   if ((!issues || issues.length < 3) && haveData) {
     const need = Math.min(3, maxFindings) - (issues?.length || 0);
     if (need > 0) {
@@ -390,10 +427,14 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
     }
   }
 
-  // 4) si no hay datos reales, no inventamos
+  // 4) dedupe + clamp
+  issues = dedupeIssues(issues);
+  issues = cap(issues, maxFindings);
+
+  // 5) si no hay datos reales, no inventamos
   if (!haveData && issues.length === 0) {
     return { summary: '', issues: [] };
   }
 
-  return { summary, issues: cap(issues, maxFindings) };
+  return { summary, issues };
 };

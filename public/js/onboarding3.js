@@ -1,285 +1,244 @@
 // public/js/onboarding3.js
-document.addEventListener("DOMContentLoaded", async () => {
-  const btn = document.getElementById("continue-btn-3");
-  const progressBar = document.querySelector(".progress-indicator");
-  const progressText = document.querySelector(".progress-text");
-  if (btn) btn.disabled = true;
+(function () {
+  // =======================
+  // ENDPOINTS (ajusta si cambian)
+  // =======================
+  const ENDPOINTS = {
+    status:    '/api/onboarding/status',     // GET → { ok, sources: { google:{connected}, meta:{...}, ga4:{...}, shopify:{...} } }
+    start:     '/api/audits/start',          // POST { sources: ['meta','google', ...] } → { ok, started: [...] }
+    progress:  '/api/audits/progress'        // GET → { ok, overallPct, done, items: { meta:{state,pct,msg}, ... } }
+  };
 
-  // Pasos visuales existentes en el DOM (no tocamos Shopify)
-  const stepEls = Array.from(document.querySelectorAll(".analysis-step")).map((el) => ({
-    root: el,
-    icon: el.querySelector(".analysis-step-icon"),
-    text: el.querySelector(".analysis-step-text"),
-  }));
+  // =======================
+  // DOM refs
+  // =======================
+  const $ = (sel) => document.querySelector(sel);
+  const progressBar = $('#progress-bar');          // <div id="progress-bar">
+  const progressText = $('#progress-text');        // <p id="progress-text">
+  const btnContinue = $('#btn-continue');          // <button id="btn-continue">
 
+  const rows = {
+    google:  $('#step-googleads'),
+    meta:    $('#step-meta'),
+    shopify: $('#step-shopify'),
+    ga4:     $('#step-ga4'),
+  };
+
+  const BADGE = (row) => row?.querySelector('[data-badge]');
+  const ICON  = (row) => row?.querySelector('.analysis-step-icon');
+
+  // =======================
   // Helpers UI
+  // =======================
+  const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+  const setBar = (pct) => { if (progressBar) progressBar.style.width = clamp(pct, 0, 100) + '%'; };
   const setText = (t) => { if (progressText) progressText.textContent = t; };
-  const setBar  = (pct) => { if (progressBar) progressBar.style.width = `${pct}%`; };
-  const setStepLabel = (idx, label) => {
-    const s = stepEls[idx];
-    if (s?.text && label) s.text.textContent = label;
-  };
-  const markRunning = (idx) => {
-    const s = stepEls[idx]; if (!s) return;
-    s.root.classList.add("active");
-    s.root.classList.remove("completed", "opacity-50", "is-current");
-    if (s.icon) s.icon.textContent = "●";
-  };
-  const markDone = (idx) => {
-    const s = stepEls[idx]; if (!s) return;
-    s.root.classList.add("completed");
-    s.root.classList.remove("active", "opacity-50", "is-current");
-    if (s.icon) s.icon.textContent = "✓";
-  };
-  const markOmit = (idx, reason = "") => {
-    const s = stepEls[idx]; if (!s) return;
-    s.root.classList.remove("active", "completed", "is-current");
-    s.root.classList.add("opacity-50");
-    if (s.icon) s.icon.textContent = "○";
-    if (s.text && !s.text.textContent.includes("(omitido)")) {
-      s.text.textContent = (s.text.textContent || "") + " (omitido" + (reason ? `: ${reason}` : "") + ")";
+
+  const setRowState = (row, { state = 'idle', msg = '' } = {}) => {
+    if (!row) return;
+    // estados: idle | running | done | skipped | error
+    row.classList.remove('active', 'completed', 'opacity-50', 'is-current', 'error');
+    if (state === 'running') {
+      row.classList.add('active', 'is-current');
+      if (ICON(row)) ICON(row).textContent = '●';
+      if (BADGE(row)) BADGE(row).textContent = msg || 'Analizando…';
+    } else if (state === 'done') {
+      row.classList.add('completed');
+      if (ICON(row)) ICON(row).textContent = '✓';
+      if (BADGE(row)) BADGE(row).textContent = msg || 'Listo';
+    } else if (state === 'skipped') {
+      row.classList.add('opacity-50');
+      if (ICON(row)) ICON(row).textContent = '○';
+      if (BADGE(row)) BADGE(row).textContent = msg || 'Omitido';
+    } else if (state === 'error') {
+      row.classList.add('error', 'opacity-50');
+      if (ICON(row)) ICON(row).textContent = '!';
+      if (BADGE(row)) BADGE(row).textContent = msg || 'Error';
+    } else {
+      if (ICON(row)) ICON(row).textContent = '○';
+      if (BADGE(row)) BADGE(row).textContent = msg || '';
     }
   };
 
-  // === NUEVO: resaltar el paso activo ======================================
-  const TYPE_TO_INDEX = { google: 0, meta: 1, shopify: 2, ga4: 3 };
-  const INDEX_TO_LABEL = {
-    0: "Analizando Google Ads",
-    1: "Analizando Meta Ads",
-    2: "Analizando Shopify",
-    3: "Analizando Google Analytics",
-    4: "Generando recomendaciones",
-  };
-
-  function setActiveStep(type) {
-    const idx = TYPE_TO_INDEX[type];
-    if (idx === undefined) return;
-
-    // limpia el "current" de todos los pasos que no estén completados/omitidos
-    stepEls.forEach((s, i) => {
-      if (!s) return;
-      if (!s.root.classList.contains("completed") && !s.root.classList.contains("opacity-50")) {
-        s.root.classList.toggle("is-current", i === idx);
-      } else {
-        s.root.classList.remove("is-current");
-      }
-    });
-  }
-  // ==========================================================================
-
-  // Animación de progreso
-  let progress = 0;
-  let running = true;
-  const tick = () => {
-    if (!running) return;
-    if (progress < 90) {
-      progress += Math.random() * 2 + 1;
-      if (progress > 90) progress = 90;
-      setBar(progress);
-      setTimeout(tick, 250);
-    }
-  };
-  setBar(0);
-  setText("Preparando análisis…");
-  tick();
-
-  // === Mensajes dinámicos (para que no parezca congelado) ===================
+  // Ciclo de mensajes sutil para UX mientras corre
   const STATUS_MESSAGES = [
-    "Conectando fuentes de datos…",
-    "Sincronizando cuentas y permisos…",
-    "Recopilando métricas clave…",
-    "Analizando rendimiento por campaña…",
-    "Buscando fugas de presupuesto…",
-    "Detectando oportunidades de ROAS…",
-    "Evaluando tendencias y estacionalidad…",
-    "Calculando impacto potencial…",
-    "Generando recomendaciones…"
+    'Conectando fuentes…',
+    'Sincronizando permisos…',
+    'Recopilando métricas…',
+    'Analizando campañas…',
+    'Detectando oportunidades…',
+    'Generando recomendaciones…'
   ];
-  if (progressText) progressText.style.transition = "opacity .25s ease";
-
-  function startStatusCycler(el, messages, { intervalMs = 2200 } = {}) {
-    if (!el) return () => {};
-    let i = 0;
-    let killed = false;
-
-    const swap = () => {
-      if (killed) return;
-      el.style.opacity = "0";
+  let cyclerStop = null;
+  function startCycler() {
+    if (!progressText) return () => {};
+    let i = 0, stop = false;
+    const tick = () => {
+      if (stop) return;
+      progressText.style.opacity = '0';
       setTimeout(() => {
-        el.textContent = messages[i % messages.length];
-        el.style.opacity = "1";
+        setText(STATUS_MESSAGES[i % STATUS_MESSAGES.length]);
+        progressText.style.opacity = '1';
         i++;
-      }, 180);
+      }, 160);
     };
-
-    swap();
-    const t = setInterval(swap, intervalMs);
-    return () => { killed = true; clearInterval(t); };
+    tick();
+    const id = setInterval(tick, 2000);
+    return () => { stop = true; clearInterval(id); };
   }
 
-  function observeProgressStopCycler(stopFn) {
-    const bar = document.querySelector(".progress-indicator");
-    if (!bar || !stopFn) return;
-    const obs = new MutationObserver(() => {
-      const w = (bar.style.width || "").trim();
-      const pct = Number(w.replace("%", ""));
-      if (pct >= 99) {
-        stopFn();
-        setText("Listo: generando recomendaciones…");
-        obs.disconnect();
-      }
-    });
-    obs.observe(bar, { attributes: true, attributeFilter: ["style"] });
-  }
-
-  const stopCycler = startStatusCycler(progressText, STATUS_MESSAGES, { intervalMs: 2200 });
-  observeProgressStopCycler(stopCycler);
-  // ==========================================================================
-
+  // =======================
   // HTTP helpers
-  const getJSON = async (url) => {
-    const r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
-    try { return await r.json(); } catch { return {}; }
-  };
-
-  const postJSON = async (url, body) => {
+  // =======================
+  async function getJSON(url) {
+    const r = await fetch(url, { credentials: 'include', headers: { Accept: 'application/json' } });
+    let j = {};
+    try { j = await r.json(); } catch {}
+    return j;
+  }
+  async function postJSON(url, body) {
     const r = await fetch(url, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(body || {}),
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body || {})
     });
-    let json = null;
-    try { json = await r.json(); } catch {}
-    if (!r.ok || json?.ok === false) {
-      const msg = (json?.error || `HTTP_${r.status}`) +
-                  (json?.detail ? ` — ${json.detail}` : "") +
-                  (json?.hint ? ` — ${json.hint}` : "");
-      const err = new Error(msg);
-      err._raw = { status: r.status, json };
-      throw err;
+    let j = {};
+    try { j = await r.json(); } catch {}
+    if (!r.ok || j?.ok === false) {
+      const msg = j?.error || `HTTP_${r.status}`;
+      const e = new Error(msg);
+      e.detail = j;
+      throw e;
     }
-    return json || {};
-  };
+    return j;
+  }
 
-  // Detección real de conexión GA4 (no paloma si no hay Analytics)
-  const detectGA4Connected = async () => {
+  // =======================
+  // Main
+  // =======================
+  async function run() {
     try {
-      const r = await fetch("/api/google/analytics/ping", { credentials: "include" });
-      if (r.ok) {
-        const j = await r.json().catch(() => ({}));
-        return j?.ok !== false; // ok:true => conectado; ok:false => no conectado
-      }
-      const r2 = await fetch("/api/google/analytics?ping=1", { credentials: "include" });
-      return r2.ok;
-    } catch {
-      return false;
-    }
-  };
+      if (btnContinue) btnContinue.disabled = true;
+      setBar(0);
+      setText('Preparando análisis…');
+      cyclerStop = startCycler();
 
-  // Etiquetas iniciales
-  for (let i = 0; i < stepEls.length; i++) {
-    setStepLabel(i, INDEX_TO_LABEL[i] || "Procesando…");
+      // 1) Estado real de conexiones
+      const st = await getJSON(ENDPOINTS.status);
+      const sources = st?.sources || {};
+      // Normalizamos flags (booleanos)
+      const isConnected = {
+        google:  !!sources.google?.connected,
+        meta:    !!sources.meta?.connected,
+        shopify: !!sources.shopify?.connected,
+        ga4:     !!sources.ga4?.connected
+      };
+
+      // Marca omitidos los no conectados
+      Object.entries(rows).forEach(([k, row]) => {
+        if (!row) return;
+        if (!isConnected[k]) {
+          setRowState(row, { state: 'skipped', msg: 'No conectado' });
+        } else {
+          setRowState(row, { state: 'running', msg: 'Analizando…' });
+        }
+      });
+
+      // Fuentes a procesar de verdad
+      const toRun = Object.keys(isConnected).filter((k) => isConnected[k]);
+      if (toRun.length === 0) {
+        setBar(100);
+        if (cyclerStop) cyclerStop();
+        setText('No hay fuentes conectadas.');
+        if (btnContinue) btnContinue.disabled = false;
+        return;
+      }
+
+      // 2) Disparar auditorías en backend
+      await postJSON(ENDPOINTS.start, { sources: toRun });
+
+      // 3) Polling de progreso
+      let finished = false;
+      let lastSnapshot = null;
+
+      async function poll() {
+        try {
+          const p = await getJSON(ENDPOINTS.progress);
+          lastSnapshot = p;
+
+          // overall
+          const overall = Number(p?.overallPct ?? 0);
+          setBar(overall);
+          if (overall >= 100) {
+            finished = true;
+          }
+
+          // por item
+          const items = p?.items || {};
+          for (const [key, row] of Object.entries(rows)) {
+            if (!row) continue;
+            const it = items[key];
+            if (!isConnected[key]) continue; // ya está omitido
+
+            if (!it) {
+              setRowState(row, { state: 'running', msg: 'Analizando…' });
+              continue;
+            }
+
+            const state = String(it.state || '').toLowerCase();
+            const pct = typeof it.pct === 'number' ? Math.round(it.pct) : null;
+            const label =
+              state === 'running'
+                ? (pct != null ? `Analizando… ${pct}%` : 'Analizando…')
+                : (it.msg || '');
+
+            if (state === 'running')      setRowState(row, { state: 'running', msg: label });
+            else if (state === 'done')    setRowState(row, { state: 'done', msg: 'Listo' });
+            else if (state === 'error')   setRowState(row, { state: 'error', msg: it.msg || 'Error' });
+            else                          setRowState(row, { state: 'running', msg: 'Analizando…' });
+          }
+
+          if (!finished) {
+            setTimeout(poll, 1200);
+          } else {
+            if (cyclerStop) cyclerStop();
+            setText('¡Análisis completado!');
+            setBar(100);
+            if (btnContinue) btnContinue.disabled = false;
+            try { sessionStorage.setItem('auditProgressSnapshot', JSON.stringify(lastSnapshot || {})); } catch {}
+          }
+        } catch (e) {
+          console.warn('Polling error', e);
+          // marca error global, pero permite continuar para no bloquear
+          if (cyclerStop) cyclerStop();
+          setText('Hubo un problema al analizar. Puedes continuar.');
+          setBar(100);
+          Object.values(rows).forEach((row) => {
+            if (!row) return;
+            if (!row.classList.contains('completed') && !row.classList.contains('opacity-50')) {
+              setRowState(row, { state: 'error', msg: 'Error' });
+            }
+          });
+          if (btnContinue) btnContinue.disabled = false;
+        }
+      }
+
+      poll();
+    } catch (e) {
+      console.error('ONBOARDING3_INIT_ERROR', e);
+      if (cyclerStop) cyclerStop();
+      setText('Error iniciando el análisis');
+      setBar(100);
+      Object.values(rows).forEach((row) => row && setRowState(row, { state: 'error', msg: 'Error' }));
+      if (btnContinue) btnContinue.disabled = false;
+    }
   }
 
-  let resultsPayload = { ok: false, results: [] };
+  document.addEventListener('DOMContentLoaded', run);
 
-  try {
-    // 1) Sesión y estado de conexiones
-    const sess = await getJSON("/api/session");
-    if (!sess?.authenticated) throw new Error("Sesión no encontrada. Inicia sesión nuevamente.");
-
-    const googleConnected = !!sess.user?.googleConnected;
-    const metaConnected   = !!sess.user?.metaConnected;
-    const shopConnected   = !!sess.user?.shopifyConnected;
-
-    // GA4: requiere OAuth Google + verificación de Analytics en backend
-    let ga4Connected = false;
-    if (googleConnected) {
-      ga4Connected = await detectGA4Connected();
-    }
-
-    // Marca "corriendo" los pasos visibles
-    for (const t of ["google", "meta", "shopify", "ga4"]) {
-      const idx = TYPE_TO_INDEX[t];
-      if (idx !== undefined) markRunning(idx);
-    }
-
-    // Omisiones por desconexión
-    if (!googleConnected) markOmit(TYPE_TO_INDEX.google, "no conectado");
-    if (!metaConnected)   markOmit(TYPE_TO_INDEX.meta, "no conectado");
-    if (!shopConnected)   markOmit(TYPE_TO_INDEX.shopify, "no conectado");
-    if (!ga4Connected)    markOmit(TYPE_TO_INDEX.ga4, "no conectado");
-
-    setText("Recopilando datos…");
-
-    // 2) Disparar auditorías REALES por fuente (individuales)
-    const tasks = [];
-
-    const runSource = async (source, connected) => {
-      const idx = TYPE_TO_INDEX[source];
-
-      if (!connected) {
-        // Si no está conectado, no lo marcamos como "activo"
-        return { type: source, ok: false, error: "NOT_CONNECTED" };
-      }
-
-      // Resalta paso activo
-      if (idx !== undefined) setActiveStep(source);
-
-      try {
-        const res = await postJSON(`/api/audits/${source}/run`, {});
-        if (idx !== undefined) markDone(idx);
-        progress = Math.min(95, progress + 12);
-        setBar(progress);
-        return { type: source, ok: true, ...res };
-      } catch (e) {
-        console.warn(`${source} audit failed`, e);
-        if (idx !== undefined) markOmit(idx, "error");
-        progress = Math.min(95, progress + 8);
-        setBar(progress);
-        return { type: source, ok: false, error: e?.message || "ERROR" };
-      }
-    };
-
-    // Ejecutamos en paralelo, pero el "activo" será el del último que se dispare/cambie
-    tasks.push(runSource("google",  googleConnected));
-    tasks.push(runSource("meta",    metaConnected));
-    tasks.push(runSource("shopify", shopConnected));
-    tasks.push(runSource("ga4",     ga4Connected));
-
-    const results = await Promise.all(tasks);
-    resultsPayload = { ok: true, results };
-
-    // Limpia resaltado actual
-    stepEls.forEach((s) => s.root.classList.remove("is-current"));
-
-    // 3) Paso final (recomendaciones)
-    const finalIdx = Math.min(4, stepEls.length - 1);
-    markDone(finalIdx);
-
-    running = false;
-    setBar(100);
-    stopCycler();
-    setText("¡Análisis completado!");
-    if (btn) btn.disabled = false;
-
-    try { sessionStorage.setItem("auditResult", JSON.stringify(resultsPayload)); } catch {}
-  } catch (err) {
-    console.error("RUN_ERROR:", err?._raw || err);
-    running = false;
-    setBar(100);
-    stopCycler();
-    if (progressBar) progressBar.style.background = "#f55";
-    setText("RUN_ERROR");
-    alert("RUN_ERROR\n\n" + (err?.message || "Ocurrió un problema."));
-
-    stepEls.forEach((_, i) => markOmit(i, "error"));
-    if (btn) btn.disabled = false;
-  }
-});
-
-// Continuar
-document.getElementById("continue-btn-3")?.addEventListener("click", () => {
-  window.location.href = "/onboarding4.html";
-});
+  // Navegación
+  btnContinue?.addEventListener('click', () => {
+    window.location.href = '/onboarding4.html';
+  });
+})();

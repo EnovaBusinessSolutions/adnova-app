@@ -9,7 +9,6 @@
 </head>
 <body data-page="onboarding3">
   <div class="onboarding-container">
-    
     <div class="sidebar">
       <div class="logo">
         <h1>ADNOVA/ai<span class="emoji"></span></h1>
@@ -45,43 +44,66 @@
         </div>
       </div>
     </div>
+
     <div class="main-content">
-      
       <div class="content-panel" id="step3-content">
         <h2>Análisis</h2>
-        <p class="panel-description">Estamos analizando los datos de tu tienda para ofrecerte recomendaciones personalizadas de marketing.</p>
+        <p class="panel-description">
+          Estamos analizando los datos de tu tienda para ofrecerte recomendaciones personalizadas de marketing.
+        </p>
+
         <div class="analysis-progress">
           <div class="progress-container">
             <div class="progress-bar">
-              <div class="progress-indicator"></div>
+              <!-- Barra real controlada por JS -->
+              <div id="progress-bar" class="progress-indicator" style="width: 0%"></div>
             </div>
-            <p class="progress-text">Analizando productos y clientes...</p>
+            <p class="progress-text" id="progress-text">Preparando análisis…</p>
           </div>
-          <div class="analysis-steps">
-            <div class="analysis-step completed">
-              <div class="analysis-step-icon">✓</div>
-              <div class="analysis-step-text"> Conectando con Shopify</div>
-            </div>
-            <div class="analysis-step active">
-              <div class="analysis-step-icon">⟳</div>
-              <div class="analysis-step-text">Analizando catálogo de productos</div>
-            </div>
-            <div class="analysis-step">
+
+          <!-- Lista controlada por JS: se ocultan los que no estén conectados -->
+          <ul id="analysis-list" class="analysis-steps">
+            <li id="step-googleads" class="analysis-step">
               <div class="analysis-step-icon">○</div>
-              <div class="analysis-step-text">Analizando segmentos de clientes</div>
-            </div>
-            <div class="analysis-step">
+              <div class="analysis-step-text">
+                Analizando Google Ads
+                <span class="badge" data-badge></span>
+              </div>
+            </li>
+
+            <li id="step-meta" class="analysis-step">
               <div class="analysis-step-icon">○</div>
-              <div class="analysis-step-text">Generando recomendaciones</div>
-            </div>
-          </div>
+              <div class="analysis-step-text">
+                Analizando Meta Ads
+                <span class="badge" data-badge></span>
+              </div>
+            </li>
+
+            <li id="step-shopify" class="analysis-step">
+              <div class="analysis-step-icon">○</div>
+              <div class="analysis-step-text">
+                Analizando Shopify
+                <span class="badge" data-badge></span>
+              </div>
+            </li>
+
+            <li id="step-ga4" class="analysis-step">
+              <div class="analysis-step-icon">○</div>
+              <div class="analysis-step-text">
+                Analizando Google Analytics
+                <span class="badge" data-badge></span>
+              </div>
+            </li>
+          </ul>
         </div>
+
         <div class="bottom-actions">
-          <button class="btn-continue" id="continue-btn-3">Continuar</button>
+          <button class="btn-continue" id="btn-continue" disabled>Continuar</button>
         </div>
       </div>
     </div>
   </div>
+
   <script src="/js/onboarding3.js"></script>
 </body>
 </html>

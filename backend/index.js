@@ -235,6 +235,10 @@ app.use(
   googleAdsInsightsRouter
 );
 
+app.use('/api/onboarding/status', require('./routes/onboardingStatus'));
+app.use('/api/audits', require('./routes/auditRunner'));
+
+
 // Stripe / Facturapi / Billing
 app.use('/api/stripe', stripeRouter);
 app.use('/api/facturapi', require('./routes/facturapi'));

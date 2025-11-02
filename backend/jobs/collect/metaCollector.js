@@ -6,13 +6,11 @@ const mongoose = require('mongoose');
 
 const API_VER = process.env.FACEBOOK_API_VERSION || 'v19.0';
 const MAX_ACCOUNTS = Number(process.env.META_MAX_ACCOUNTS || 8);
-const MAX_BY_RULE = 3; // <<< Regla de auditoría: máximo 3 cuentas
 
 let MetaAccount;
 try {
   MetaAccount = require('../../models/MetaAccount');
 } catch (_) {
-  // Fallback mínimo si el modelo no está disponible (tests/local)
   const { Schema, model } = mongoose;
   const schema = new Schema({
     user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
@@ -31,12 +29,6 @@ try {
   schema.pre('save', function (n) { this.updatedAt = new Date(); n(); });
   MetaAccount = mongoose.models.MetaAccount || model('MetaAccount', schema);
 }
-
-// === NEW: leer preferencias del usuario (selección de cuentas)
-let UserModel = null;
-try {
-  UserModel = require('../../models/User');
-} catch (_) {}
 
 /* ---------------- utils ---------------- */
 const toNum   = (v) => Number(v || 0);
@@ -78,7 +70,7 @@ async function fetchJSON(url, { retries = 1 } = {}) {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
         const code = j?.error?.code || r.status;
-        // 4/17 => rate limit; 5xx => server; reintenta 1–2 veces
+        // 4/17 => rate limit; 5xx => server; reintenta
         if ((code === 4 || code === 17 || String(code).startsWith('5')) && i < retries) {
           await new Promise(res => setTimeout(res, 800 + i * 500));
           continue;
@@ -137,7 +129,7 @@ function extractPurchaseMetrics(x) {
   return { purchases, purchase_value: value };
 }
 
-/* ---------------- helpers de selección ---------------- */
+/* ---------------- helpers de cuentas ---------------- */
 
 // Normaliza todas las cuentas disponibles desde el documento MetaAccount del usuario
 function getAllAvailableAccounts(accDoc) {
@@ -148,74 +140,21 @@ function getAllAvailableAccounts(accDoc) {
   return raw
     .map(x => {
       const id = normAct(x?.id || x || '');
-      const name = x?.name || null;
+      const name = x?.name || x?.account_name || null;
       return id ? { id, name } : null;
     })
     .filter(Boolean);
-}
-
-// Resuelve las cuentas a auditar respetando la selección del usuario
-async function resolveAccountsForAudit({ userId, accDoc, forcedAccountId }) {
-  // 1) universo disponible
-  let available = getAllAvailableAccounts(accDoc);
-
-  // 2) override del caller (forzar una sola)
-  if (forcedAccountId) {
-    const id = normAct(forcedAccountId);
-    if (id) return [{ id, name: null }];
-  }
-
-  // 3) si no hay ninguna guardada, intenta default
-  if (!available.length) {
-    const d = pickDefaultAccountId(accDoc);
-    if (d) available = [{ id: d, name: null }];
-  }
-
-  if (!available.length) return { error: 'NO_DEFAULT_ACCOUNT' };
-
-  // 4) leer preferencias/auditoría seleccionada por el usuario (máx. 3)
-  let selectedIds = [];
-  if (UserModel && userId) {
-    const user = await UserModel.findById(userId).lean().select('preferences');
-    selectedIds = Array.isArray(user?.preferences?.meta?.auditAccountIds)
-      ? user.preferences.meta.auditAccountIds.map(String)
-      : [];
-  }
-
-  // 5) si hay selección explícita, usarla (validando que existan)
-  if (selectedIds.length > 0) {
-    const byId = new Map(available.map(a => [String(a.id), a]));
-    const picked = [...new Set(selectedIds)]
-      .filter(id => byId.has(id))
-      .slice(0, MAX_BY_RULE)
-      .map(id => byId.get(id));
-
-    if (picked.length === 0) {
-      return { error: 'NO_VALID_SELECTED_ACCOUNTS' };
-    }
-
-    return picked;
-  }
-
-  // 6) sin selección explícita:
-  //    - si el usuario tiene <=3 disponibles, permite todas
-  //    - si tiene >3, solicita selección y NO audita
-  if (available.length <= MAX_BY_RULE) {
-    return available;
-  }
-
-  return { error: 'SELECTION_REQUIRED(>3_ACCOUNTS)', availableCount: available.length };
 }
 
 /* ---------------- collector ---------------- */
 
 async function collectMeta(userId, opts = {}) {
   const {
-    account_id,                 // opcional: forzar una sola cuenta
-    date_preset = 'last_30d',   // today, yesterday, last_7d, last_30d, this_month, last_month, lifetime
-    level = 'campaign',         // campaign|adset|ad
-    fields: userFields,         // opcional override
-    since, until                // si defines since/until, ignoramos date_preset
+    account_id,               // opcional: forzar una sola cuenta
+    date_preset = 'last_30d', // today, yesterday, last_7d, last_30d, this_month, last_month, lifetime
+    level = 'campaign',       // campaign|adset|ad
+    fields: userFields,       // opcional override
+    since, until              // si defines since/until, ignoramos date_preset
   } = opts;
 
   // Carga cuenta Meta
@@ -244,57 +183,22 @@ async function collectMeta(userId, opts = {}) {
     };
   }
 
-  /* ---------- RESOLVER CUENTAS A AUDITAR (regla de selección) ---------- */
-  const resolved = await resolveAccountsForAudit({
-    userId,
-    accDoc: acc,
-    forcedAccountId: account_id
-  });
+  // Universo disponible
+  const available = getAllAvailableAccounts(acc);
 
-  if (resolved?.error) {
-    if (resolved.error === 'NO_DEFAULT_ACCOUNT') {
-      return {
-        notAuthorized: true,
-        reason: 'NO_DEFAULT_ACCOUNT',
-        byCampaign: [],
-        accountIds: []
-      };
+  // Selección para este collector:
+  // - Si nos pasan account_id, auditamos solo esa.
+  // - Si no, auditamos TODAS las disponibles (cap por MAX_ACCOUNTS).
+  let accountsToAudit = [];
+  if (account_id) {
+    const id = normAct(account_id);
+    if (!id) {
+      return { notAuthorized: true, reason: 'INVALID_ACCOUNT_ID', byCampaign: [], accountIds: [] };
     }
-    if (resolved.error.startsWith('SELECTION_REQUIRED')) {
-      // Precondición: tiene >3 y no seleccionó; detener auditoría
-      console.warn('[metaCollector] Precondición no cumplida: selección requerida (>3 cuentas).');
-      return {
-        notAuthorized: true,
-        reason: resolved.error,
-        requiredSelection: true,
-        byCampaign: [],
-        accountIds: []
-      };
-    }
-    if (resolved.error === 'NO_VALID_SELECTED_ACCOUNTS') {
-      console.warn('[metaCollector] La selección del usuario no coincide con cuentas disponibles.');
-      return {
-        notAuthorized: true,
-        reason: 'NO_VALID_SELECTED_ACCOUNTS',
-        byCampaign: [],
-        accountIds: []
-      };
-    }
+    accountsToAudit = [{ id, name: null }];
+  } else {
+    accountsToAudit = available.slice(0, Math.max(1, MAX_ACCOUNTS));
   }
-
-  // Límite de seguridad adicional por env
-  const accountsToAudit = (Array.isArray(resolved) ? resolved : []).slice(0, Math.min(MAX_BY_RULE, MAX_ACCOUNTS));
-
-  // Log útil de diagnóstico
-  try {
-    if (UserModel && userId) {
-      const user = await UserModel.findById(userId).lean().select('preferences');
-      console.log('[metaCollector] auditAccountIds(pref):', user?.preferences?.meta?.auditAccountIds || []);
-    }
-  } catch {}
-  console.log('[metaCollector] -> auditing Meta accounts:', accountsToAudit.map(a => a.id));
-
-  /* ---------- helpers ---------- */
 
   // Campos de insights
   const baseFields = [
@@ -443,6 +347,7 @@ async function collectMeta(userId, opts = {}) {
 
   return {
     notAuthorized: false,
+    defaultAccountId: pickDefaultAccountId(acc) || null,
     currency: unifiedCurrency,     // puede ser null si hay mezcla
     timeRange: { from: minStart, to: maxStop },
     kpis: {

@@ -395,9 +395,13 @@ router.get('/', requireAuth, async (req, res) => {
     const availableIds = list.map(a => normActId(a.id || a.account_id)).filter(Boolean);
     const selected = selectedFromDocOrUser(metaAcc, req);
 
-    // Regla: si hay >3 disponibles y no hay selección → exigir selección
+    // ⇨ Consistencia con Google: si hay >3 y no hay selección, 400 + requiredSelection
     if (availableIds.length > MAX_BY_RULE && selected.length === 0) {
-      return res.json({ ok: false, reason: 'SELECTION_REQUIRED(>3_ACCOUNTS)', requiredSelection: true });
+      return res.status(400).json({
+        ok: false,
+        reason: 'SELECTION_REQUIRED(>3_ACCOUNTS)',
+        requiredSelection: true
+      });
     }
 
     const accountId = resolveAccountId(req, metaAcc);
@@ -528,16 +532,8 @@ router.get('/accounts', requireAuth, async (req, res) => {
 
     const selected = selectedFromDocOrUser(doc, req);
 
-    // Si hay >3 disponibles y no hay selección, forzar selección desde UI
-    if (availableIds.length > MAX_BY_RULE && selected.length === 0) {
-      return res.json({
-        ok: false,
-        reason: 'SELECTION_REQUIRED(>3_ACCOUNTS)',
-        requiredSelection: true,
-        accounts,
-        defaultAccountId: null,
-      });
-    }
+    // ⇨ Consistencia con Google: devolver ok:true y flag requiredSelection si aplica
+    const requiredSelection = availableIds.length > MAX_BY_RULE && selected.length === 0;
 
     // Si hay selección, filtramos
     if (selected.length > 0) {
@@ -557,10 +553,10 @@ router.get('/accounts', requireAuth, async (req, res) => {
       }
     }
 
-    return res.json({ ok: true, accounts, defaultAccountId });
+    return res.json({ ok: true, accounts, defaultAccountId, requiredSelection });
   } catch (e) {
     console.error('meta/insights/accounts error:', e);
-    return res.json({ ok: true, accounts: [], defaultAccountId: null });
+    return res.json({ ok: true, accounts: [], defaultAccountId: null, requiredSelection: false });
   }
 });
 

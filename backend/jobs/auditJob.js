@@ -1,17 +1,33 @@
 // backend/jobs/auditJob.js
 'use strict';
 
+const mongoose = require('mongoose');
+
 const Audit = require('../models/Audit');
 const User  = require('../models/User');
 
-// <<< NUEVO: preferir selección desde los conectores >>>
-const MetaAccount    = require('../models/MetaAccount');
-const GoogleAccount  = require('../models/GoogleAccount');
+// Preferir selección desde los conectores
+let MetaAccount, GoogleAccount, ShopConnections;
+try { MetaAccount = require('../models/MetaAccount'); } catch {
+  const { Schema, model } = mongoose;
+  MetaAccount = mongoose.models.MetaAccount ||
+    model('MetaAccount', new Schema({}, { strict:false, collection:'metaaccounts' }));
+}
+try { GoogleAccount = require('../models/GoogleAccount'); } catch {
+  const { Schema, model } = mongoose;
+  GoogleAccount = mongoose.models.GoogleAccount ||
+    model('GoogleAccount', new Schema({}, { strict:false, collection:'googleaccounts' }));
+}
+try { ShopConnections = require('../models/ShopConnections'); } catch {
+  const { Schema, model } = mongoose;
+  ShopConnections = mongoose.models.ShopConnections ||
+    model('ShopConnections', new Schema({}, { strict:false, collection:'shopconnections' }));
+}
 
-const { collectGoogle } = require('./collect/googleCollector');
-const { collectMeta }   = require('./collect/metaCollector');
-const { collectShopify }= require('./collect/shopifyCollector');
-const generateAudit     = require('./llm/generateAudit');
+const { collectGoogle }  = require('./collect/googleCollector');
+const { collectMeta }    = require('./collect/metaCollector');
+const { collectShopify } = require('./collect/shopifyCollector');
+const generateAudit      = require('./llm/generateAudit');
 
 /* ---------- normalizadores ---------- */
 const normMeta   = (s='') => String(s).trim().replace(/^act_/, '');
@@ -21,13 +37,13 @@ const normGoogle = (s='') => String(s).trim().replace(/^customers\//,'').replace
 const safeDiv = (n,d) => (Number(d||0) ? Number(n||0)/Number(d||0) : 0);
 
 function recomputeGoogle(snapshot) {
-  const G = (snapshot.byCampaign || []).reduce((a,c)=>({
+  const G = (snapshot.byCampaign || []).reduce((a,c)=>(Object.assign(a, {
     impr: a.impr + Number(c?.kpis?.impressions||0),
     clk:  a.clk  + Number(c?.kpis?.clicks||0),
     cost: a.cost + Number(c?.kpis?.cost||0),
     conv: a.conv + Number(c?.kpis?.conversions||0),
     val:  a.val  + Number(c?.kpis?.conv_value||0),
-  }), { impr:0,clk:0,cost:0,conv:0,val:0 });
+  })), { impr:0,clk:0,cost:0,conv:0,val:0 });
 
   return {
     impressions: G.impr,
@@ -43,12 +59,12 @@ function recomputeGoogle(snapshot) {
 }
 
 function recomputeMeta(snapshot) {
-  const G = (snapshot.byCampaign || []).reduce((a,c)=>({
+  const G = (snapshot.byCampaign || []).reduce((a,c)=>(Object.assign(a, {
     impr: a.impr + Number(c?.kpis?.impressions||0),
     clk:  a.clk  + Number(c?.kpis?.clicks||0),
     cost: a.cost + Number(c?.kpis?.spend||0),
     val:  a.val  + Number(c?.kpis?.purchase_value || c?.kpis?.conv_value || 0),
-  }), { impr:0,clk:0,cost:0,val:0 });
+  })), { impr:0,clk:0,cost:0,val:0 });
 
   return {
     impressions: G.impr,
@@ -87,18 +103,14 @@ function autoPickIds(type, snapshot, max = 3) {
 
   const ids = new Set();
   const def = norm(snapshot?.defaultAccountId || '');
-
   if (def) ids.add(def);
 
-  // intenta de accountIds primero
   for (const id of idsFromArray(snapshot?.accountIds || [])) {
     if (ids.size >= max) break; ids.add(id);
   }
-  // luego de accounts
   for (const id of idsFromArray(snapshot?.accounts || [])) {
     if (ids.size >= max) break; ids.add(id);
   }
-  // como último recurso: por campañas (account_id)
   for (const c of (snapshot.byCampaign || [])) {
     if (ids.size >= max) break;
     const id = norm(c.account_id || '');
@@ -107,33 +119,64 @@ function autoPickIds(type, snapshot, max = 3) {
   return Array.from(ids);
 }
 
+/* ---------- conexión por fuente ---------- */
+async function detectConnections(userId) {
+  const [meta, google, shop] = await Promise.all([
+    MetaAccount.findOne({ $or:[{user:userId},{userId}] })
+      .select('access_token token accessToken longLivedToken longlivedToken selectedAccountIds defaultAccountId')
+      .lean(),
+    GoogleAccount.findOne({ $or:[{user:userId},{userId}] })
+      .select('refreshToken accessToken selectedCustomerIds defaultCustomerId')
+      .lean(),
+    ShopConnections.findOne({ $or:[{user:userId},{userId}] })
+      .select('shop access_token accessToken')
+      .lean()
+  ]);
+
+  return {
+    meta: {
+      connected: !!(meta && (meta.access_token || meta.token || meta.accessToken || meta.longLivedToken || meta.longlivedToken)),
+      selectedIds: Array.isArray(meta?.selectedAccountIds) ? meta.selectedAccountIds.map(normMeta) : [],
+      defaultId: meta?.defaultAccountId ? normMeta(meta.defaultAccountId) : null,
+    },
+    google: {
+      connected: !!(google && (google.refreshToken || google.accessToken)),
+      selectedIds: Array.isArray(google?.selectedCustomerIds) ? google.selectedCustomerIds.map(normGoogle) : [],
+      defaultId: google?.defaultCustomerId ? normGoogle(google.defaultCustomerId) : null,
+    },
+    shopify: {
+      connected: !!(shop && shop.shop && (shop.access_token || shop.accessToken)),
+    }
+  };
+}
+
 /* ---------- MAIN ---------- */
 async function runAuditFor({ userId, type }) {
   try {
-    // Cargamos usuario (fallback legacy) y, NUEVO, los conectores para preferir su selección
     const user = await User.findById(userId)
       .select('selectedGoogleAccounts selectedMetaAccounts')
       .lean();
 
-    const [metaDoc, googleDoc] = await Promise.all([
-      MetaAccount.findOne({ $or: [{ user: userId }, { userId }] })
-        .select('selectedAccountIds')
-        .lean(),
-      GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] })
-        .select('selectedCustomerIds')
-        .lean(),
-    ]);
+    // Estado real de conexiones y selección preferida desde conectores
+    const connections = await detectConnections(userId);
 
-    // Preferir campos del conector; caer a los del User si vienen vacíos
-    const selMeta = (Array.isArray(metaDoc?.selectedAccountIds) && metaDoc.selectedAccountIds.length
-                      ? metaDoc.selectedAccountIds
-                      : (user?.selectedMetaAccounts || [])
-                    ).map(normMeta);
+    // Guardas de conexión (defensa en profundidad; auditRunner ya filtra)
+    if (type === 'meta'   && !connections.meta.connected)   throw new Error('SOURCE_NOT_CONNECTED_META');
+    if (type === 'google' && !connections.google.connected) throw new Error('SOURCE_NOT_CONNECTED_GOOGLE');
+    if (type === 'shopify'&& !connections.shopify.connected)throw new Error('SOURCE_NOT_CONNECTED_SHOPIFY');
 
-    const selGoogle = (Array.isArray(googleDoc?.selectedCustomerIds) && googleDoc.selectedCustomerIds.length
-                        ? googleDoc.selectedCustomerIds
-                        : (user?.selectedGoogleAccounts || [])
-                      ).map(normGoogle);
+    // Selección efectiva: conector > user (legacy)
+    const selMeta = (
+      connections.meta.selectedIds.length
+        ? connections.meta.selectedIds
+        : (user?.selectedMetaAccounts || [])
+    ).map(normMeta);
+
+    const selGoogle = (
+      connections.google.selectedIds.length
+        ? connections.google.selectedIds
+        : (user?.selectedGoogleAccounts || [])
+    ).map(normGoogle);
 
     let raw = null;
     let snapshot = null;
@@ -148,7 +191,6 @@ async function runAuditFor({ userId, type }) {
       if (selGoogle.length) {
         snapshot = filterSnapshot('google', raw, selGoogle);
       } else if (total > 3) {
-        // soft-gate: limitar a subconjunto y continuar
         const picked = autoPickIds('google', raw, 3);
         snapshot = filterSnapshot('google', raw, picked);
         selectionNote = {
@@ -167,7 +209,6 @@ async function runAuditFor({ userId, type }) {
     if (type === 'meta') {
       raw = await collectMeta(userId);
 
-      // “total” tolera varias formas
       const total = (raw?.accountIds && raw.accountIds.length) ||
                     (raw?.accounts && raw.accounts.length) || 0;
 
@@ -205,7 +246,6 @@ async function runAuditFor({ userId, type }) {
       auditJson = await generateAudit({ type, inputSnapshot: snapshot });
     }
 
-    // anexa nota de “autolimitado” si aplicó
     if (selectionNote) {
       auditJson.issues = Array.isArray(auditJson.issues) ? auditJson.issues : [];
       auditJson.issues.unshift(selectionNote);
@@ -220,14 +260,14 @@ async function runAuditFor({ userId, type }) {
       actionCenter: auditJson?.actionCenter || (auditJson?.issues || []).slice(0, 3),
       topProducts: auditJson?.topProducts || [],
       inputSnapshot: snapshot,
-      version: 'audits@1.0.1',
+      version: 'audits@1.0.2',
     };
 
     await Audit.create(auditDoc);
     return true;
 
   } catch (e) {
-    // siempre escribe un doc, para que el frontend vea el motivo
+    // Siempre escribe un doc para que el frontend vea el motivo
     await Audit.create({
       userId, type, generatedAt: new Date(),
       summary: 'No se pudo generar la auditoría',

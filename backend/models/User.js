@@ -1,11 +1,22 @@
 // backend/models/User.js
+'use strict';
+
 const mongoose = require('mongoose');
 
+/* ---------------- normalizadores ---------------- */
 const normMetaId = (s = '') =>
   String(s).trim().replace(/^act_/, '').replace(/\s+/g, '');
 
 const normGoogleId = (s = '') =>
   String(s).trim().replace(/^customers\//, '').replace(/-/g, '').replace(/\s+/g, '');
+
+// "properties/123" (o "123" → "properties/123")
+const normGaPropertyId = (val = '') => {
+  const v = String(val || '').trim();
+  if (/^properties\/\d+$/.test(v)) return v;
+  const digits = v.replace(/[^\d]/g, '');
+  return digits ? `properties/${digits}` : '';
+};
 
 function normalizeArray(arr, normFn) {
   const out = new Set();
@@ -16,6 +27,7 @@ function normalizeArray(arr, normFn) {
   return Array.from(out);
 }
 
+/* ---------------- schema ---------------- */
 const userSchema = new mongoose.Schema(
   {
     email: {
@@ -46,17 +58,34 @@ const userSchema = new mongoose.Schema(
     metaConnected: { type: Boolean, default: false },
     metaAccessToken: { type: String },
 
-    // === Selección de cuentas (clave para auditorías) ===
+    // === Selección de cuentas (UI / retrocompat) ===
     selectedMetaAccounts: {
       type: [String],
       default: [],
-      // normaliza en asignaciones directas: User.selectedMetaAccounts = [...]
       set: (arr) => normalizeArray(arr, normMetaId),
     },
     selectedGoogleAccounts: {
       type: [String],
       default: [],
       set: (arr) => normalizeArray(arr, normGoogleId),
+    },
+
+    // === GA4: soporte de selección en User (lo lee googleAnalytics.js como preferencia oficial) ===
+    preferences: {
+      googleAnalytics: {
+        auditPropertyIds: {
+          type: [String],
+          default: [],
+          set: (arr) => normalizeArray(arr, normGaPropertyId),
+        },
+      },
+    },
+
+    // (LEGACY opcional) por si tuvieras código viejo leyendo esto
+    selectedGaProperties: {
+      type: [String],
+      default: [],
+      set: (arr) => normalizeArray(arr, normGaPropertyId),
     },
 
     // Recuperación y planes
@@ -81,10 +110,10 @@ const userSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Índices útiles
+/* ---------------- índices útiles ---------------- */
 userSchema.index({ plan: 1 });
 
-// Seguridad extra: normalizar y deduplicar siempre antes de save/update
+/* ---------------- hooks ---------------- */
 userSchema.pre('save', function (next) {
   if (this.isModified('selectedMetaAccounts')) {
     this.selectedMetaAccounts = normalizeArray(this.selectedMetaAccounts, normMetaId);
@@ -92,10 +121,18 @@ userSchema.pre('save', function (next) {
   if (this.isModified('selectedGoogleAccounts')) {
     this.selectedGoogleAccounts = normalizeArray(this.selectedGoogleAccounts, normGoogleId);
   }
+  // Asegura normalización de GA4 tanto en preferences como en legacy
+  if (this.isModified('preferences') && this.preferences?.googleAnalytics?.auditPropertyIds) {
+    this.preferences.googleAnalytics.auditPropertyIds =
+      normalizeArray(this.preferences.googleAnalytics.auditPropertyIds, normGaPropertyId);
+  }
+  if (this.isModified('selectedGaProperties')) {
+    this.selectedGaProperties = normalizeArray(this.selectedGaProperties, normGaPropertyId);
+  }
   next();
 });
 
-// Métodos/estáticos convenientes para usar desde rutas/jobs
+/* ---------------- helpers estáticos convenientes ---------------- */
 userSchema.statics.setSelectedMetaAccounts = async function (userId, ids = []) {
   const normalized = normalizeArray(ids, normMetaId);
   await this.updateOne({ _id: userId }, { $set: { selectedMetaAccounts: normalized } });
@@ -105,6 +142,16 @@ userSchema.statics.setSelectedMetaAccounts = async function (userId, ids = []) {
 userSchema.statics.setSelectedGoogleAccounts = async function (userId, ids = []) {
   const normalized = normalizeArray(ids, normGoogleId);
   await this.updateOne({ _id: userId }, { $set: { selectedGoogleAccounts: normalized } });
+  return normalized;
+};
+
+// Guardar preferencia GA4 “oficial” que leen tus endpoints
+userSchema.statics.setGaAuditProperties = async function (userId, propertyIds = []) {
+  const normalized = normalizeArray(propertyIds, normGaPropertyId);
+  await this.updateOne(
+    { _id: userId },
+    { $set: { 'preferences.googleAnalytics.auditPropertyIds': normalized } }
+  );
   return normalized;
 };
 
