@@ -5,6 +5,13 @@ const express = require('express');
 const router = express.Router();
 const Stripe = require('stripe');
 
+// ⬇️ Timbrado y envío del CFDI separados
+const {
+  emitirFactura,
+  genCustomerPayload,
+  enviarCfdiPorEmail,
+} = require('../services/facturaService');
+
 const {
   STRIPE_SECRET_KEY,
   STRIPE_WEBHOOK_SECRET,
@@ -19,7 +26,7 @@ const {
 // Avisos informativos
 if (!STRIPE_SECRET_KEY) console.warn('⚠️ Falta STRIPE_SECRET_KEY');
 if (!STRIPE_WEBHOOK_SECRET) console.warn('⚠️ Falta STRIPE_WEBHOOK_SECRET');
-['PRICE_ID_EMPRENDEDOR','PRICE_ID_CRECIMIENTO','PRICE_ID_PRO'].forEach(k=>{
+['PRICE_ID_EMPRENDEDOR', 'PRICE_ID_CRECIMIENTO', 'PRICE_ID_PRO'].forEach((k) => {
   if (!process.env[k]) console.warn(`⚠️ Falta ${k}`);
 });
 if (!APP_URL) console.warn('⚠️ Falta APP_URL');
@@ -29,31 +36,37 @@ const stripe = new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2024-06-20' });
 
 // Modelo User (opcional pero esperado)
 let User = null;
-try { User = require('../models/User'); } catch (_) {}
+try {
+  User = require('../models/User');
+} catch (_) {}
 
 const PRICE_MAP = {
   emprendedor: PRICE_ID_EMPRENDEDOR,
   crecimiento: PRICE_ID_CRECIMIENTO,
-  pro:         PRICE_ID_PRO,
+  pro: PRICE_ID_PRO,
 };
 
 // price -> plan (para guardar en DB)
 const PRICE_TO_PLAN = {
   [PRICE_ID_EMPRENDEDOR]: 'emprendedor',
   [PRICE_ID_CRECIMIENTO]: 'crecimiento',
-  [PRICE_ID_PRO]:         'pro',
+  [PRICE_ID_PRO]: 'pro',
 };
 
 // ---------- helpers ----------
 function successUrl() {
   return process.env.STRIPE_SUCCESS_URL
     ? process.env.STRIPE_SUCCESS_URL
-    : (APP_URL && SUCCESS_PATH ? `${APP_URL}${SUCCESS_PATH}` : 'https://ai.adnova.digital/plans/success');
+    : APP_URL && SUCCESS_PATH
+    ? `${APP_URL}${SUCCESS_PATH}`
+    : 'https://ai.adnova.digital/plans/success';
 }
 function cancelUrl() {
   return process.env.STRIPE_CANCEL_URL
     ? process.env.STRIPE_CANCEL_URL
-    : (APP_URL && CANCEL_PATH ? `${APP_URL}${CANCEL_PATH}` : 'https://ai.adnova.digital/plans/cancel.html');
+    : APP_URL && CANCEL_PATH
+    ? `${APP_URL}${CANCEL_PATH}`
+    : 'https://ai.adnova.digital/plans/cancel.html';
 }
 function ensureAuth(req, res, next) {
   try {
@@ -63,7 +76,6 @@ function ensureAuth(req, res, next) {
 }
 
 // =============== CHECKOUT ===============
-// Body: { plan: 'emprendedor'|'crecimiento'|'pro' } ó { priceId: 'price_...' }
 router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
   const startedAt = new Date().toISOString();
 
@@ -96,7 +108,7 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
           const needUpdate = !cust?.metadata?.userId || cust.metadata.userId !== userId;
           if (needUpdate) {
             await stripe.customers.update(customerId, {
-              metadata: { ...(cust.metadata || {}), userId }
+              metadata: { ...(cust.metadata || {}), userId },
             });
           }
         } catch (e) {
@@ -105,7 +117,7 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
       } else {
         const customer = await stripe.customers.create({
           email: user.email || customer_email,
-          metadata: { userId }
+          metadata: { userId },
         });
         customerId = customer.id;
         user.stripeCustomerId = customerId;
@@ -123,7 +135,7 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
       automatic_tax: { enabled: false },
 
       success_url: successUrl(),
-      cancel_url:  cancelUrl(),
+      cancel_url: cancelUrl(),
 
       subscription_data: { metadata: { userId: userId || 'n/a' } },
       metadata: { plan: plan || 'n/a', userId: userId || 'n/a', startedAt },
@@ -149,7 +161,9 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
       return res.status(400).json({ error: 'PRICE_ID inválido para esta clave', details: e.message });
     }
     if (!priceObj.recurring) {
-      return res.status(400).json({ error: 'Este PRICE no es recurrente (one_time). Crea un price recurrente mensual.' });
+      return res
+        .status(400)
+        .json({ error: 'Este PRICE no es recurrente (one_time). Crea un price recurrente mensual.' });
     }
     if (priceObj.active === false) {
       return res.status(400).json({ error: 'El PRICE está inactivo en Stripe.' });
@@ -157,7 +171,6 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
 
     const session = await stripe.checkout.sessions.create(base);
     return res.json({ url: session.url, sessionId: session.id });
-
   } catch (err) {
     console.error('❌ [stripe/checkout] error', {
       message: err?.message,
@@ -169,13 +182,12 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
     });
     return res.status(500).json({
       error: 'No se pudo crear la sesión de checkout',
-      details: { message: err?.message, type: err?.type, code: err?.code }
+      details: { message: err?.message, type: err?.type, code: err?.code },
     });
   }
 });
 
 // =============== WEBHOOK ===============
-// Asegúrate en server/index.js de usar express.raw() SOLO para /api/stripe/webhook
 router.post('/webhook', async (req, res) => {
   const sig = req.headers['stripe-signature'];
 
@@ -249,7 +261,7 @@ router.post('/webhook', async (req, res) => {
         // 1) Traer invoice completo de Stripe (con items, amount, etc.)
         const inv = event.data.object; // invoice skeleton
         const stripeInvoice = await stripe.invoices.retrieve(inv.id, {
-          expand: ['lines.data.price.product', 'customer']
+          expand: ['lines.data.price.product', 'customer'],
         });
 
         // 2) Ubicar al user en tu DB por stripeCustomerId
@@ -270,29 +282,35 @@ router.post('/webhook', async (req, res) => {
           : null;
 
         // 4) Preparar payload para Facturapi
-        const { genCustomerPayload, emitirFactura } = require('../services/facturaService');
         const customerPayload = genCustomerPayload(taxProfile);
         const totalWithTax = (stripeInvoice.total || stripeInvoice.amount_paid || 0) / 100; // Stripe en centavos
         const conceptDesc = `Suscripción Adnova AI – ${stripeInvoice.lines?.data?.[0]?.price?.nickname || 'Plan'}`;
         const cfdiUse = taxProfile?.cfdiUse || process.env.FACTURAPI_DEFAULT_USE || 'G03';
 
-        // 5) Timbrar (sin metadata; tu cuenta de Facturapi no lo permite)
+        // 5) Timbrar primero (sin metadata / sin email)
         try {
           const cfdi = await emitirFactura({
             customer: customerPayload,
             description: conceptDesc,
             totalWithTax,
             cfdiUse,
-            sendEmailTo: customerPayload.email || user.email,
           });
+
+          console.log('✅ CFDI timbrado', cfdi.uuid, 'total:', totalWithTax);
+
+          // 6) Enviar por email de forma separada (no rompe el webhook si falla)
+          const destinatario = customerPayload.email || user.email;
+          if (destinatario) {
+            await enviarCfdiPorEmail(cfdi.id, destinatario);
+          }
 
           // (Opcional) Persistir folio/ligas en tu DB
           await User.findByIdAndUpdate(user._id, {
             $set: {
               'subscription.lastCfdiId': cfdi.id,
               'subscription.lastCfdiTotal': totalWithTax,
-              'subscription.lastStripeInvoice': stripeInvoice.id
-            }
+              'subscription.lastStripeInvoice': stripeInvoice.id,
+            },
           }).exec();
         } catch (e) {
           console.error('❌ Timbrado Facturapi falló:', e?.response?.data || e.message);
@@ -337,12 +355,12 @@ router.post('/portal', ensureAuth, async (req, res) => {
 // =============== SYNC (pull desde Stripe) ===============
 router.post('/sync', ensureAuth, async (req, res) => {
   try {
-    if (!User) return res.status(500).json({ ok:false, error: 'Modelo User no disponible' });
+    if (!User) return res.status(500).json({ ok: false, error: 'Modelo User no disponible' });
 
     const user = await User.findById(req.user._id);
-    if (!user) return res.status(404).json({ ok:false, error: 'Usuario no encontrado' });
+    if (!user) return res.status(404).json({ ok: false, error: 'Usuario no encontrado' });
     if (!user.stripeCustomerId) {
-      return res.status(400).json({ ok:false, error:'Usuario sin stripeCustomerId' });
+      return res.status(400).json({ ok: false, error: 'Usuario sin stripeCustomerId' });
     }
 
     // Asegura metadata.userId en el customer (backfill silencioso)
@@ -350,7 +368,7 @@ router.post('/sync', ensureAuth, async (req, res) => {
       const cust = await stripe.customers.retrieve(user.stripeCustomerId);
       if (!cust?.metadata?.userId || cust.metadata.userId !== String(user._id)) {
         await stripe.customers.update(user.stripeCustomerId, {
-          metadata: { ...(cust.metadata || {}), userId: String(user._id) }
+          metadata: { ...(cust.metadata || {}), userId: String(user._id) },
         });
       }
     } catch (e) {
@@ -373,9 +391,9 @@ router.post('/sync', ensureAuth, async (req, res) => {
           'subscription.priceId': null,
           'subscription.currentPeriodEnd': null,
           'subscription.cancel_at_period_end': false,
-        }
+        },
       }).exec();
-      return res.json({ ok:true, updated:true, reason:'no-subscriptions' });
+      return res.json({ ok: true, updated: true, reason: 'no-subscriptions' });
     }
 
     const sub = subs.data[0];
@@ -402,21 +420,31 @@ router.post('/sync', ensureAuth, async (req, res) => {
 
     await User.findByIdAndUpdate(user._id, { $set: update }).exec();
 
-    return res.json({ ok:true, updated:true, snapshot: {
-      status, priceId, cancel_at_period_end: !!sub.cancel_at_period_end,
-      currentPeriodEnd: sub.current_period_end || null, plan: update.plan || user.plan
-    }});
+    return res.json({
+      ok: true,
+      updated: true,
+      snapshot: {
+        status,
+        priceId,
+        cancel_at_period_end: !!sub.cancel_at_period_end,
+        currentPeriodEnd: sub.current_period_end || null,
+        plan: update.plan || user.plan,
+      },
+    });
   } catch (e) {
     console.error('sync error:', e);
-    return res.status(500).json({ ok:false, error: e.message });
+    return res.status(500).json({ ok: false, error: e.message });
   }
 });
 
 // --- DEBUG (opcionales) ---
 router.get('/health', (req, res) => {
   res.json({
-    mode: (process.env.STRIPE_SECRET_KEY || '').startsWith('sk_live_') ? 'live' :
-          (process.env.STRIPE_SECRET_KEY || '').startsWith('sk_test_') ? 'test' : 'unknown',
+    mode: (process.env.STRIPE_SECRET_KEY || '').startsWith('sk_live_')
+      ? 'live'
+      : (process.env.STRIPE_SECRET_KEY || '').startsWith('sk_test_')
+      ? 'test'
+      : 'unknown',
     hasKey: !!process.env.STRIPE_SECRET_KEY,
     prices: {
       emprendedor: !!process.env.PRICE_ID_EMPRENDEDOR,
@@ -425,17 +453,29 @@ router.get('/health', (req, res) => {
     },
     urls: {
       app: process.env.APP_URL || null,
-      success: process.env.STRIPE_SUCCESS_URL || (process.env.APP_URL && process.env.SUCCESS_PATH ? `${process.env.APP_URL}${process.env.SUCCESS_PATH}` : null),
-      cancel: process.env.STRIPE_CANCEL_URL || (process.env.APP_URL && process.env.CANCEL_PATH ? `${process.env.APP_URL}${process.env.CANCEL_PATH}` : null),
-    }
+      success:
+        process.env.STRIPE_SUCCESS_URL ||
+        (process.env.APP_URL && process.env.SUCCESS_PATH ? `${process.env.APP_URL}${process.env.SUCCESS_PATH}` : null),
+      cancel:
+        process.env.STRIPE_CANCEL_URL ||
+        (process.env.APP_URL && process.env.CANCEL_PATH ? `${process.env.APP_URL}${process.env.CANCEL_PATH}` : null),
+    },
   });
 });
 
 router.get('/check-price', async (req, res) => {
   try {
     const id = req.query.id || process.env.PRICE_ID_CRECIMIENTO;
-    const p = await (new (require('stripe'))(process.env.STRIPE_SECRET_KEY)).prices.retrieve(id);
-    res.json({ ok: true, id: p.id, active: p.active, currency: p.currency, unit_amount: p.unit_amount, product: p.product, recurring: p.recurring || null });
+    const p = await new (require('stripe'))(process.env.STRIPE_SECRET_KEY).prices.retrieve(id);
+    res.json({
+      ok: true,
+      id: p.id,
+      active: p.active,
+      currency: p.currency,
+      unit_amount: p.unit_amount,
+      product: p.product,
+      recurring: p.recurring || null,
+    });
   } catch (e) {
     res.status(400).json({ ok: false, message: e.message, type: e.type, code: e.code });
   }
