@@ -16,12 +16,18 @@
     .btn:hover{transform:translateY(-1px);opacity:.95}
     .btn.secondary{background:#1e1b26}
     .btn.ghost{background:transparent;border:1px solid #2a2238}
-    iframe{width:100%;height:78vh;border:0;border-radius:12px;overflow:hidden;background:#0b0a0f}
     .note{opacity:.85;font-size:13px;margin-top:10px}
-    .fallback{display:none}
-    .stack{display:flex;gap:10px;flex-wrap:wrap}
     .status{font-size:14px;margin:0 0 12px}
+    /* Calendly container */
+    .calendly-inline-widget{width:100%;min-height:78vh;border-radius:12px;overflow:hidden;background:#0b0a0f}
+    /* Success card */
+    .success{display:none;margin-top:16px;padding:16px;border:1px solid #231c33;border-radius:12px;background:#0b0a0f}
+    .stack{display:flex;gap:10px;flex-wrap:wrap}
   </style>
+
+  <!-- Calendly embed assets -->
+  <link href="https://assets.calendly.com/assets/external/widget.css" rel="stylesheet">
+  <script src="https://assets.calendly.com/assets/external/widget.js" async></script>
 </head>
 <body>
   <div class="wrap">
@@ -31,19 +37,37 @@
     </div>
 
     <div class="card">
-      <div id="frameWrap"><iframe id="bookingFrame"></iframe></div>
+      <!-- Calendly INLINE -->
+      <div
+        class="calendly-inline-widget"
+        data-url="TU_URL_CALENDLY?utm_source=app&utm_campaign=adnova-ai"
+        style="min-width:320px;height:78vh;">
+      </div>
 
-      <div id="fallback" class="fallback">
-        <p id="statusMsg" class="status"></p>
+      <!-- Mensaje de éxito (se muestra cuando Calendly confirma) -->
+      <div id="agendado-ok" class="success">
+        <p class="status">¡Tu cita quedó agendada correctamente! Revisa tu correo para el enlace de la reunión.</p>
         <div class="stack">
-          <button id="fallbackBtn" class="btn">Abrir agenda</button>
-          <button id="doneBtn" class="btn ghost">Ya agendé</button>
+          <a class="btn" href="/dashboard">Ir al dashboard</a>
+          <a class="btn ghost" href="/agendar">Agendar otra</a>
         </div>
-        <p class="note">La reserva abre en una pestaña nueva y Google enviará la confirmación por correo.</p>
       </div>
     </div>
   </div>
 
-  <script src="/assets/agendar.js" defer></script>
+  <script>
+    // Detecta el evento de Calendly para mostrar la confirmación
+    window.addEventListener('message', function(e) {
+      if (e && e.data && e.data.event === 'calendly.event_scheduled') {
+        const widget = document.querySelector('.calendly-inline-widget');
+        if (widget) widget.style.display = 'none';
+        document.getElementById('agendado-ok').style.display = 'block';
+        // Marca éxito en la URL (opcional)
+        const url = new URL(window.location.href);
+        url.searchParams.set('success','1');
+        window.history.replaceState({}, '', url);
+      }
+    });
+  </script>
 </body>
 </html>

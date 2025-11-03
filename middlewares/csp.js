@@ -1,33 +1,33 @@
 // middlewares/csp.js
 const helmet = require('helmet');
 
-/**
- * CSP pública (landing, bookcall, etc.)
- * - Permitimos imágenes desde el propio sitio, data: URIs, cualquier https: y upload.wikimedia.org
- */
 const publicCSP = helmet({
   contentSecurityPolicy: {
     useDefaults: true,
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc:  ["'self'"],
-      connectSrc: ["'self'"],
+
+      // Necesario para el widget de Calendly
+      scriptSrc:  ["'self'", "https://assets.calendly.com"],
+      styleSrc:   ["'self'", "'unsafe-inline'", "https://assets.calendly.com"],
+      frameSrc:   ["'self'", "https://calendly.com"],
+      connectSrc: ["'self'", "https://calendly.com"],
+
       imgSrc: [
         "'self'",
         "data:",
-        "https:",                     // opcional: habilita imágenes seguras en general
+        "https:",                          // imágenes seguras en general
         "https://upload.wikimedia.org",
-        "https://img.icons8.com"
+        "https://img.icons8.com",
+        "https://assets.calendly.com"      // iconos/imágenes del widget
       ],
+
+      // Quién puede embeber TU sitio (no quién puedes embeber tú)
       frameAncestors: ["'self'"]
     }
   }
 });
 
-/**
- * CSP para vistas embebidas en Shopify (iframe)
- * - Igual añadimos upload.wikimedia.org a imgSrc
- */
 const shopifyCSP = helmet({
   frameguard: false,
   contentSecurityPolicy: {
@@ -51,7 +51,7 @@ const shopifyCSP = helmet({
       imgSrc: [
         "'self'",
         "data:",
-        "https:",                     // opcional: habilita imágenes seguras en general
+        "https:",
         "https://upload.wikimedia.org",
         "https://img.icons8.com"
       ]
