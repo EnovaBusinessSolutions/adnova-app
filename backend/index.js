@@ -244,7 +244,7 @@ app.use('/api/audits', sessionGuard, auditRunnerRoutes, auditsRoutes);
 app.use('/api/audit',  sessionGuard, auditRunnerRoutes);
 
 // (opcional) alias antiguo del panel
-app.use('/api/dashboard/audits', sessionGuard, auditsRoutes);
+app.use('/api/dashboard/audits', sessionGuard, auditRunnerRoutes);
 
 // Redirects legacy → canonical
 app.post('/api/audit/start',          sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
