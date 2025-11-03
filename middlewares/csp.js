@@ -1,33 +1,59 @@
 // middlewares/csp.js
 const helmet = require('helmet');
 
+/** CSP pública (landing, bookcall, agendar, dashboard, etc.) */
 const publicCSP = helmet({
   contentSecurityPolicy: {
     useDefaults: true,
     directives: {
       defaultSrc: ["'self'"],
 
-      // Necesario para el widget de Calendly
-      scriptSrc:  ["'self'", "https://assets.calendly.com"],
-      styleSrc:   ["'self'", "'unsafe-inline'", "https://assets.calendly.com"],
-      frameSrc:   ["'self'", "https://calendly.com"],
-      connectSrc: ["'self'", "https://calendly.com"],
+      // JS
+      scriptSrc: [
+        "'self'",
+        "https://assets.calendly.com",   // para el widget en /agendar
+      ],
 
+      // CSS (habilita Google Fonts y, si quieres, CSS del widget)
+      styleSrc: [
+        "'self'",
+        "'unsafe-inline'",               // necesario si usas estilos inline o Tailwind preflight
+        "https://fonts.googleapis.com",
+        "https://assets.calendly.com"
+      ],
+
+      // Fuentes (woff2 de Google Fonts)
+      fontSrc: [
+        "'self'",
+        "data:",
+        "https://fonts.gstatic.com"
+      ],
+
+      // AJAX/fetch
+      connectSrc: ["'self'"],
+
+      // Imágenes
       imgSrc: [
         "'self'",
         "data:",
-        "https:",                          // imágenes seguras en general
+        "https:",
         "https://upload.wikimedia.org",
-        "https://img.icons8.com",
-        "https://assets.calendly.com"      // iconos/imágenes del widget
+        "https://img.icons8.com"
       ],
 
-      // Quién puede embeber TU sitio (no quién puedes embeber tú)
-      frameAncestors: ["'self'"]
+      // iframes (para Calendly embebido)
+      frameSrc: [
+        "'self'",
+        "https://calendly.com",
+        "https://assets.calendly.com"
+      ],
+
+      frameAncestors: ["'self'"],
     }
   }
 });
 
+/** CSP Shopify embebida (déjala como la tenías si ya funciona) */
 const shopifyCSP = helmet({
   frameguard: false,
   contentSecurityPolicy: {
@@ -54,7 +80,10 @@ const shopifyCSP = helmet({
         "https:",
         "https://upload.wikimedia.org",
         "https://img.icons8.com"
-      ]
+      ],
+      // (opcional) si usas fuentes en la interfaz embebida:
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
     }
   }
 });
