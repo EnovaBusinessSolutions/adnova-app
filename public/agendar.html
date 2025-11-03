@@ -4,7 +4,10 @@
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Agendar | Adnova AI</title>
-  <link rel="stylesheet" href="/assets/onboarding.css">
+
+  <!-- ❗ Usa la hoja correcta: está en /public/onboarding.css, no en /assets -->
+  <link rel="stylesheet" href="/onboarding.css">
+
   <style>
     :root { --bg:#0a0a0f; --card:#12111a; --stroke:#2a2238; --brand:#7c3aed; --ink:#eaeaf0; }
     html,body{height:100%}
@@ -14,19 +17,14 @@
     .btn{display:inline-flex;gap:8px;align-items:center;background:#1e1b2e;border:1px solid var(--stroke);
          color:#fff;padding:10px 14px;border-radius:10px;font-weight:600;transition:.25s transform,.25s opacity}
     .btn:hover{transform:translateY(-1px);opacity:.95}
-    .card{background:linear-gradient(180deg,#141224, #100f18);
-          border:1px solid var(--stroke); border-radius:18px; padding:18px;
-          box-shadow:0 30px 80px #0007, inset 0 1px 0 #ffffff0d}
+    .card{background:linear-gradient(180deg,#141224,#100f18);border:1px solid var(--stroke);
+          border-radius:18px;padding:18px;box-shadow:0 30px 80px #0007,inset 0 1px 0 #ffffff0d}
     .frameShell{border:1px solid #1f1a2b;border-radius:14px;overflow:hidden;background:#0b0a0f}
-    /* Calendly inline */
     .calendly-inline-widget{width:100%;height:78vh;min-height:640px}
-    @media (max-width: 640px){ .calendly-inline-widget{height:80vh;min-height:560px} }
-    /* Success */
-    .success{display:none;margin-top:16px;padding:16px;border:1px solid var(--stroke);
-             border-radius:12px;background:#0b0a0f}
+    @media (max-width:640px){ .calendly-inline-widget{height:80vh;min-height:560px} }
+    .success{display:none;margin-top:16px;padding:16px;border:1px solid var(--stroke);border-radius:12px;background:#0b0a0f}
     .stack{display:flex;gap:10px;flex-wrap:wrap}
-    .chip{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;
-          background:#191727;border:1px solid #27223a;font-size:13px}
+    .chip{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:#191727;border:1px solid #27223a;font-size:13px}
   </style>
 
   <!-- Calendly embed -->
@@ -43,20 +41,14 @@
     <div class="card">
       <div class="chip">💡 Tip: selecciona la hora que mejor te acomode</div>
 
-      <!-- Shell con bordes redondeados -->
       <div class="frameShell" style="margin-top:12px">
-        <!-- Calendly INLINE con colores de marca -->
+        <!-- ❗ URL en UNA sola línea (sin saltos/espacios) -->
         <div
           class="calendly-inline-widget"
-          data-url="https://calendly.com/josemanuelmejiadominguez2/30min
-            ?utm_source=app&utm_campaign=adnova-ai
-            &background_color=0a0a0f
-            &text_color=eaeaf0
-            &primary_color=7c3aed"
-        ></div>
+          data-url="https://calendly.com/josemanuelmejiadominguez2/30min?utm_source=app&utm_campaign=adnova-ai&background_color=0a0a0f&text_color=eaeaf0&primary_color=7c3aed">
+        </div>
       </div>
 
-      <!-- Confirmación -->
       <div id="agendado-ok" class="success">
         <p style="margin:0 0 10px">✅ ¡Tu cita quedó agendada correctamente! Revisa tu correo para el enlace de la reunión.</p>
         <div class="stack">
@@ -67,16 +59,7 @@
     </div>
   </div>
 
-  <script>
-    // Mostrar confirmación cuando Calendly confirma la reserva
-    window.addEventListener('message', function(e) {
-      if (e?.data?.event === 'calendly.event_scheduled') {
-        document.querySelector('.frameShell').style.display = 'none';
-        document.getElementById('agendado-ok').style.display = 'block';
-        const u = new URL(location.href); u.searchParams.set('success','1');
-        history.replaceState({}, '', u);
-      }
-    });
-  </script>
+  <!-- Mueve el listener a un JS externo para no romper CSP -->
+  <script src="/assets/agendar-inline.js" defer></script>
 </body>
 </html>
