@@ -37,6 +37,8 @@ const stripeRouter = require('./routes/stripe');
 const billingRoutes = require('./routes/billing');
 const connector = require('./routes/shopifyConnector');
 const webhookRoutes = require('./routes/shopifyConnector/webhooks');
+const auditsRoutes = require('./routes/audits');
+
 
 // Meta
 const metaInsightsRoutes = require('./routes/metaInsights');
@@ -237,20 +239,22 @@ app.use(
 
 app.use('/api/onboarding/status', sessionGuard, require('./routes/onboardingStatus'))
 
-// ✅ Auditorías: runner + consultas en el mismo prefijo
-app.use('/api/audits', sessionGuard, auditRunnerRoutes, auditsRoutes);
+// ✅ Auditorías
+// Consultas (latest, action-center, por tipo) + Runner (start)
+// IMPORTANTE: primero consultas, luego runner (comparten prefijo /api/audits)
+app.use('/api/audits', sessionGuard, auditsRoutes, auditRunnerRoutes);
 
-// legacy (singular) solo para /start etc.
-app.use('/api/audit',  sessionGuard, auditRunnerRoutes);
+// Legacy (singular) solo para compatibilidad del runner antiguo
+app.use('/api/audit', sessionGuard, auditRunnerRoutes);
 
-// (opcional) alias antiguo del panel
-app.use('/api/dashboard/audits', sessionGuard, auditRunnerRoutes);
+// Alias antiguo que usaba el dashboard → debe apuntar a CONSULTAS
+app.use('/api/dashboard/audits', sessionGuard, auditsRoutes);
 
-// Redirects legacy → canonical
-app.post('/api/audit/start',          sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
-app.post('/api/audit/google/start',   sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
-app.post('/api/audit/meta/start',     sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
-app.post('/api/audit/shopify/start',  sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
+// Redirects legacy → canonical (por si el front o bookmarks aún pegan a rutas viejas)
+app.post('/api/audit/start',         sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
+app.post('/api/audit/google/start',  sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
+app.post('/api/audit/meta/start',    sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
+app.post('/api/audit/shopify/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
 
 
 
