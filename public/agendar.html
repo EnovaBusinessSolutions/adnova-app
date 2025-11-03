@@ -5,10 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Agendar | Adnova AI</title>
 
-  <!-- CSS base del proyecto -->
   <link rel="stylesheet" href="/onboarding.css">
-
-  <!-- Perf: ayuda a que Calendly cargue antes -->
   <link rel="preconnect" href="https://assets.calendly.com" crossorigin>
   <link rel="preconnect" href="https://calendly.com" crossorigin>
 
@@ -25,7 +22,6 @@
     .btn:hover{transform:translateY(-1px);opacity:.95}
     .btn:focus-visible{ outline:2px solid #7c3aed; outline-offset:2px }
 
-    /* Card adaptativo */
     .card{
       width:100%;
       margin:0 auto;
@@ -36,22 +32,18 @@
       padding:18px;
       box-shadow:0 30px 80px #0007, inset 0 1px 0 #ffffff0d;
     }
-
-    /* Tip/Chip */
     .chip{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;
       background:#191727;border:1px solid #27223a;font-size:13px}
 
-    /* Marco y widget */
     .frameShell{ margin-top:12px; border:1px solid #1f1a2b; border-radius:14px; overflow:hidden; background:var(--shell) }
 
-    /* Alturas responsivas del widget */
     .calendly-inline-widget{ width:100%; height:960px; min-height:720px }
     @media (max-width:1200px){ .calendly-inline-widget{ height:880px } }
     @media (max-width:992px){  .calendly-inline-widget{ height:820px } }
     @media (max-width:768px){  .calendly-inline-widget{ height:85svh; min-height:620px } }
     @media (max-width:420px){  .calendly-inline-widget{ height:88svh; min-height:600px } }
 
-    /* ===== Success card (estilo bookcall) ===== */
+    /* Success (estilo bookcall, SIN acciones) */
     .success{
       display:none;
       margin-top:20px;
@@ -71,20 +63,8 @@
     }
     .s-title{ font-size:clamp(18px,2.4vw,22px); font-weight:800; margin:0 0 4px }
     .s-sub{ margin:0; opacity:.85 }
-    .s-actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:14px }
-    .btn-primary{
-      background:linear-gradient(90deg,#a855f7,#7c3aed); border:1px solid #5b2bb0; color:#fff;
-    }
-    .btn-primary:hover{ transform:translateY(-1px); opacity:.95 }
-    .btn-ghost{ background:transparent; color:#eaeaf0; border:1px solid #2a2238 }
-    .btn-ghost:hover{ background:#1a1626 }
-    @media (max-width:640px){
-      .success{ padding:18px }
-      .s-head{ align-items:flex-start }
-    }
   </style>
 
-  <!-- Calendly embed -->
   <link href="https://assets.calendly.com/assets/external/widget.css" rel="stylesheet">
   <script src="https://assets.calendly.com/assets/external/widget.js" async></script>
 </head>
@@ -99,14 +79,14 @@
       <div class="chip">💡 Tip: selecciona la hora que mejor te acomode</div>
 
       <div class="frameShell">
-        <!-- URL de Agustín (una sola línea) + colores de marca -->
+        <!-- URL de Agustín + colores de marca -->
         <div
           class="calendly-inline-widget"
           data-url="https://calendly.com/agustincorrea-adnova/adnova-ai?utm_source=app&utm_campaign=adnova-ai&background_color=0a0a0f&text_color=eaeaf0&primary_color=7c3aed">
         </div>
       </div>
 
-      <!-- Estado de éxito -->
+      <!-- Éxito (sin botones extra) -->
       <div id="agendado-ok" class="success" role="status" aria-live="polite">
         <div class="s-head">
           <div class="s-icon" aria-hidden="true">✓</div>
@@ -115,15 +95,11 @@
             <p class="s-sub">Te enviamos la confirmación por correo con el enlace de la reunión.</p>
           </div>
         </div>
-        <div class="s-actions">
-          <a class="btn btn-primary" href="/dashboard">Ir al dashboard</a>
-          <a class="btn btn-ghost" href="/agendar">Agendar otra</a>
-        </div>
       </div>
     </div>
   </div>
 
-  <!-- Listener separado (CSP-friendly) -->
+  <!-- Listener que oculta el widget y muestra la tarjeta de éxito -->
   <script src="/assets/agendar-inline.js" defer></script>
 </body>
 </html>
