@@ -8,10 +8,13 @@
   <!-- CSS base del proyecto -->
   <link rel="stylesheet" href="/onboarding.css">
 
+  <!-- Perf: ayuda a que Calendly cargue antes -->
+  <link rel="preconnect" href="https://assets.calendly.com" crossorigin>
+  <link rel="preconnect" href="https://calendly.com" crossorigin>
+
   <style>
     :root{
-      --bg:#0a0a0f; --card:#12111a; --stroke:#2a2238; --brand:#7c3aed; --ink:#eaeaf0;
-      --shell:#0b0a0f;
+      --bg:#0a0a0f; --card:#12111a; --stroke:#2a2238; --brand:#7c3aed; --ink:#eaeaf0; --shell:#0b0a0f;
     }
     html,body{height:100%}
     body{background:var(--bg);color:var(--ink);font-family:Inter,system-ui,Segoe UI,Roboto,Ubuntu}
@@ -20,12 +23,13 @@
     .btn{display:inline-flex;gap:8px;align-items:center;background:#1e1b2e;border:1px solid var(--stroke);
          color:#fff;padding:10px 14px;border-radius:10px;font-weight:600;transition:.25s transform,.25s opacity}
     .btn:hover{transform:translateY(-1px);opacity:.95}
+    .btn:focus-visible{ outline:2px solid #7c3aed; outline-offset:2px }
 
     /* Card adaptativo */
     .card{
       width:100%;
       margin:0 auto;
-      max-width: min(1040px, 100%);
+      max-width:min(1040px,100%);
       background:linear-gradient(180deg,#141224,#100f18);
       border:1px solid var(--stroke);
       border-radius:18px;
@@ -38,27 +42,46 @@
       background:#191727;border:1px solid #27223a;font-size:13px}
 
     /* Marco y widget */
-    .frameShell{
-      margin-top:12px;
-      border:1px solid #1f1a2b; border-radius:14px; overflow:hidden; background:var(--shell);
-    }
+    .frameShell{ margin-top:12px; border:1px solid #1f1a2b; border-radius:14px; overflow:hidden; background:var(--shell) }
 
-    /**
-     * Alturas responsivas:
-     * - Desktop grande: 960px
-     * - Laptop: 880px
-     * - Tablet: 820px
-     * - Móvil: 85svh (viewport seguro) con mínimo 620px
-     */
+    /* Alturas responsivas del widget */
     .calendly-inline-widget{ width:100%; height:960px; min-height:720px }
-    @media (max-width: 1200px){ .calendly-inline-widget{ height:880px } }
-    @media (max-width: 992px){  .calendly-inline-widget{ height:820px } }
-    @media (max-width: 768px){  .calendly-inline-widget{ height:85svh; min-height:620px } }
-    @media (max-width: 420px){  .calendly-inline-widget{ height:88svh; min-height:600px } }
+    @media (max-width:1200px){ .calendly-inline-widget{ height:880px } }
+    @media (max-width:992px){  .calendly-inline-widget{ height:820px } }
+    @media (max-width:768px){  .calendly-inline-widget{ height:85svh; min-height:620px } }
+    @media (max-width:420px){  .calendly-inline-widget{ height:88svh; min-height:600px } }
 
-    /* Mensaje de éxito */
-    .success{display:none;margin-top:16px;padding:16px;border:1px solid var(--stroke);border-radius:12px;background:#0b0a0f}
-    .stack{display:flex;gap:10px;flex-wrap:wrap}
+    /* ===== Success card (estilo bookcall) ===== */
+    .success{
+      display:none;
+      margin-top:20px;
+      padding:22px;
+      border:1px solid var(--stroke);
+      border-radius:16px;
+      background:
+        radial-gradient(1200px 400px at 10% -20%, #1a1630 0%, transparent 60%),
+        linear-gradient(180deg,#10101a,#0b0a12);
+      box-shadow:0 24px 80px #0009, inset 0 1px 0 #ffffff0d;
+    }
+    .s-head{ display:flex; align-items:center; gap:14px }
+    .s-icon{
+      width:36px; height:36px; min-width:36px; display:grid; place-items:center;
+      border-radius:999px; background:linear-gradient(180deg,#22c55e,#16a34a);
+      color:#07130a; font-weight:800; box-shadow:0 6px 18px rgba(34,197,94,.4)
+    }
+    .s-title{ font-size:clamp(18px,2.4vw,22px); font-weight:800; margin:0 0 4px }
+    .s-sub{ margin:0; opacity:.85 }
+    .s-actions{ display:flex; gap:10px; flex-wrap:wrap; margin-top:14px }
+    .btn-primary{
+      background:linear-gradient(90deg,#a855f7,#7c3aed); border:1px solid #5b2bb0; color:#fff;
+    }
+    .btn-primary:hover{ transform:translateY(-1px); opacity:.95 }
+    .btn-ghost{ background:transparent; color:#eaeaf0; border:1px solid #2a2238 }
+    .btn-ghost:hover{ background:#1a1626 }
+    @media (max-width:640px){
+      .success{ padding:18px }
+      .s-head{ align-items:flex-start }
+    }
   </style>
 
   <!-- Calendly embed -->
@@ -76,24 +99,31 @@
       <div class="chip">💡 Tip: selecciona la hora que mejor te acomode</div>
 
       <div class="frameShell">
-        <!-- URL en UNA sola línea. Mantén los colores; sólo cambia el slug cuando uses el de Agustín -->
+        <!-- URL de Agustín (una sola línea) + colores de marca -->
         <div
           class="calendly-inline-widget"
-          data-url="https://calendly.com/josemanuelmejiadominguez2/30min?utm_source=app&utm_campaign=adnova-ai&background_color=0a0a0f&text_color=eaeaf0&primary_color=7c3aed">
+          data-url="https://calendly.com/agustincorrea-adnova/adnova-ai?utm_source=app&utm_campaign=adnova-ai&background_color=0a0a0f&text_color=eaeaf0&primary_color=7c3aed">
         </div>
       </div>
 
-      <div id="agendado-ok" class="success">
-        <p style="margin:0 0 10px">✅ ¡Tu cita quedó agendada correctamente! Revisa tu correo para el enlace de la reunión.</p>
-        <div class="stack">
-          <a class="btn" href="/dashboard">Ir al dashboard</a>
-          <a class="btn" href="/agendar">Agendar otra</a>
+      <!-- Estado de éxito -->
+      <div id="agendado-ok" class="success" role="status" aria-live="polite">
+        <div class="s-head">
+          <div class="s-icon" aria-hidden="true">✓</div>
+          <div class="s-copy">
+            <h2 class="s-title">¡Cita agendada!</h2>
+            <p class="s-sub">Te enviamos la confirmación por correo con el enlace de la reunión.</p>
+          </div>
+        </div>
+        <div class="s-actions">
+          <a class="btn btn-primary" href="/dashboard">Ir al dashboard</a>
+          <a class="btn btn-ghost" href="/agendar">Agendar otra</a>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Listener separado (no rompe CSP) -->
+  <!-- Listener separado (CSP-friendly) -->
   <script src="/assets/agendar-inline.js" defer></script>
 </body>
 </html>
