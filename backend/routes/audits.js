@@ -74,7 +74,6 @@ function normalizeIssue(raw, i = 0, type = 'google') {
       : [],
   };
 
-  // compat: campaignRef → guardado dentro de metrics
   if (raw?.campaignRef && typeof raw.campaignRef === 'object') {
     base.metrics = {
       ...base.metrics,
@@ -84,7 +83,6 @@ function normalizeIssue(raw, i = 0, type = 'google') {
       }
     };
   }
-  // GA (segmentRef)
   if (raw?.segmentRef && typeof raw.segmentRef === 'object') {
     base.metrics = {
       ...base.metrics,
@@ -126,6 +124,32 @@ function sortIssuesBySeverityThenImpact(issues) {
     const ia = a.estimatedImpact === 'alto' ? 3 : a.estimatedImpact === 'medio' ? 2 : a.estimatedImpact === 'bajo' ? 1 : 0;
     return ib - ia;
   });
+}
+
+// ===== Fallback: si no hay issues, espelhar actionCenter =====
+function mirrorActionCenterToIssues(doc) {
+  if (!doc) return doc;
+  const out = { ...doc };
+  const hasIssues = Array.isArray(out.issues) && out.issues.length > 0;
+  const ac = Array.isArray(out.actionCenter) ? out.actionCenter : [];
+  if (!hasIssues && ac.length) {
+    out.issues = ac.map((x, i) =>
+      normalizeIssue(
+        {
+          title: x.title,
+          evidence: x.evidence || x.description || x.detail || '',
+          recommendation: x.recommendation || x.action || '',
+          severity: toSev(x.severity || 'media'),
+          area: x.area || 'performance',
+          campaignRef: x.campaignRef,
+          metrics: x.metrics,
+        },
+        i,
+        out.type || 'google'
+      )
+    );
+  }
+  return out;
 }
 
 // ---------------- Heurísticos (garantiza hallazgos si LLM cae) ----------------
@@ -263,13 +287,12 @@ const SOURCE_ALIASES = {
   googleanalytics: 'ga4',
 };
 
-// Valores válidos que se guardan en BD (respetan tu enum)
+// Valores válidos que se guardan en BD
 const VALID_SOURCES_DB = ['google','meta','ga4'];
 
 // ---------------- Núcleo: ejecutar una auditoría ----------------
 async function runSingleAudit({ userId, type, flags }) {
-  // Aseguramos tipo persistible según enum del modelo
-  const persistType = SOURCE_ALIASES[type] || type; // e.g., 'ga' -> 'ga4'
+  const persistType = SOURCE_ALIASES[type] || type;
 
   // 1) Si la fuente no está conectada → placeholder
   if (!flags[persistType]) {
@@ -290,10 +313,10 @@ async function runSingleAudit({ userId, type, flags }) {
   // 2) Colecta
   let snap = {};
   try {
-    if (persistType === 'google') snap = await collectGoogle(userId);   // Google Ads
-    else if (persistType === 'meta') snap = await collectMeta(userId);  // Meta Ads
+    if (persistType === 'google') snap = await collectGoogle(userId);
+    else if (persistType === 'meta') snap = await collectMeta(userId);
     else if (persistType === 'ga4') {
-      if (typeof collectGA4 === 'function') snap = await collectGA4(userId); // GA4
+      if (typeof collectGA4 === 'function') snap = await collectGA4(userId);
       else return { type: persistType, ok: false, error: 'SOURCE_NOT_READY' };
     }
   } catch (e) {
@@ -301,7 +324,7 @@ async function runSingleAudit({ userId, type, flags }) {
     snap = {};
   }
 
-  // 3) Autorización y si hay datos reales
+  // 3) Autorización y datos
   const authorized = !snap?.notAuthorized;
   const hasData =
     persistType === 'ga4'
@@ -337,7 +360,7 @@ async function runSingleAudit({ userId, type, flags }) {
     }
   }
 
-  // 5) Fallback heurístico si LLM no devolvió nada
+  // 5) Fallback heurístico
   if (issues.length === 0 && hasData && authorized) {
     if (persistType === 'google') issues = heuristicsFromGoogle(snap);
     if (persistType === 'meta')   issues = heuristicsFromMeta(snap);
@@ -351,7 +374,7 @@ async function runSingleAudit({ userId, type, flags }) {
 
   const doc = await Audit.create({
     userId,
-    type: persistType, // <-- ¡clave! respeta el enum del modelo
+    type: persistType,
     generatedAt: new Date(),
     resumen: summary,
     summary,
@@ -382,7 +405,7 @@ router.post('/run', requireAuth, async (req, res) => {
     };
 
     const results = [];
-    for (const type of VALID_SOURCES_DB) {
+    for (const type of ['google','meta','ga4']) {
       const r = await runSingleAudit({ userId, type, flags });
       results.push(r);
     }
@@ -404,7 +427,7 @@ router.post('/:source/run', requireAuth, async (req, res) => {
   const userId = req.user._id;
   const normalized = normalizeSource(req.params.source);
 
-  if (!VALID_SOURCES_DB.includes(normalized)) {
+  if (!['google','meta','ga4'].includes(normalized)) {
     return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
   }
 
@@ -424,38 +447,53 @@ router.post('/:source/run', requireAuth, async (req, res) => {
   }
 });
 
-// (C) Últimas (todas)
+// (C) Últimas (soporta ?type=all | google | meta | ga | ga4)
 router.get('/latest', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
-    const [google, meta, ga4] = await Promise.all(
-      VALID_SOURCES_DB.map((t) =>
-        Audit.findOne({ userId, type: t }).sort({ generatedAt: -1 }).lean()
-      )
-    );
+    const qType = (req.query?.type ? normalizeSource(req.query.type) : 'all');
 
-    return res.json({ ok: true, data: { google: google || null, meta: meta || null, ga4: ga4 || null } });
+    if (qType === 'all') {
+      const docs = await Promise.all(
+        ['google','meta','ga4'].map(t =>
+          Audit.findOne({ userId, type: t }).sort({ generatedAt: -1 }).lean()
+        )
+      );
+      const list = docs
+        .map(mirrorActionCenterToIssues)
+        .filter(Boolean);
+      return res.json({ ok: true, data: list });
+    }
+
+    if (!['google','meta','ga4'].includes(qType)) {
+      return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
+    }
+
+    const doc = await Audit.findOne({ userId, type: qType }).sort({ generatedAt: -1 }).lean();
+    return res.json({ ok: true, data: mirrorActionCenterToIssues(doc) || null });
   } catch (e) {
     console.error('LATEST_ERROR:', e);
     return res.status(400).json({ ok: false, error: 'LATEST_ERROR', detail: e?.message });
   }
 });
 
-// (D) Última por fuente (con alias de entrada)
+// (D) Última por fuente (con alias de entrada) – compat
 router.get('/:source/latest', requireAuth, async (req, res) => {
   const normalized = normalizeSource(req.params.source);
 
-  if (!VALID_SOURCES_DB.includes(normalized)) {
+  if (!['google','meta','ga4'].includes(normalized)) {
     return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
   }
   try {
     const userId = req.user._id;
     const doc = await Audit.findOne({ userId, type: normalized }).sort({ generatedAt: -1 }).lean();
-    if (!doc) return res.json({ summary: null, findings: [], createdAt: null });
+    const finalDoc = mirrorActionCenterToIssues(doc);
+    if (!finalDoc) return res.json({ summary: null, findings: [], createdAt: null });
+
     return res.json({
-      summary: doc.summary || doc.resumen || null,
-      findings: Array.isArray(doc.issues) ? doc.issues : [],
-      createdAt: doc.generatedAt || doc.createdAt || null,
+      summary: finalDoc.summary || finalDoc.resumen || null,
+      findings: Array.isArray(finalDoc.issues) ? finalDoc.issues : [],
+      createdAt: finalDoc.generatedAt || finalDoc.createdAt || null,
     });
   } catch (e) {
     console.error('LATEST_SINGLE_ERROR:', e);
