@@ -292,6 +292,11 @@ const SOURCE_ALIASES = {
 // Valores válidos que se guardan en BD
 const VALID_SOURCES_DB = ['google','meta','ga4'];
 
+function normalizeSource(src = '') {
+  const v = String(src).toLowerCase().trim();
+  return SOURCE_ALIASES[v] || v;
+}
+
 // ---------------- Núcleo: ejecutar una auditoría ----------------
 async function runSingleAudit({ userId, type, flags }) {
   const persistType = SOURCE_ALIASES[type] || type;
@@ -419,12 +424,7 @@ router.post('/run', requireAuth, async (req, res) => {
   }
 });
 
-function normalizeSource(src = '') {
-  const v = String(src).toLowerCase().trim();
-  return SOURCE_ALIASES[v] || v;
-}
-
-// (B) Ejecutar UNA (con alias de entrada, siempre persiste como ga4)
+// (B) Ejecutar UNA (con alias de entrada)
 router.post('/:source/run', requireAuth, async (req, res) => {
   const userId = req.user._id;
   const normalized = normalizeSource(req.params.source);
@@ -449,7 +449,7 @@ router.post('/:source/run', requireAuth, async (req, res) => {
   }
 });
 
-// (C) Últimas (soporta ?type=all | google | meta | ga | ga4)
+// (C) Últimas (soporta ?type=all | google | meta | ga | ga4) con doble formato
 router.get('/latest', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
@@ -461,13 +461,19 @@ router.get('/latest', requireAuth, async (req, res) => {
           Audit.findOne({ userId, type: t }).sort({ generatedAt: -1 }).lean()
         )
       );
+
+      const items = [googleDoc, metaDoc, gaDoc]
+        .map(mirrorActionCenterToIssues)
+        .filter(Boolean);
+
       return res.json({
         ok: true,
         data: {
-          google: mirrorActionCenterToIssues(googleDoc) || null,
-          meta:   mirrorActionCenterToIssues(metaDoc)   || null,
-          ga4:    mirrorActionCenterToIssues(gaDoc)     || null,
-        }
+          google: items.find(d => d?.type === 'google') || null,
+          meta:   items.find(d => d?.type === 'meta')   || null,
+          ga4:    items.find(d => d?.type === 'ga4')    || null,
+        },
+        items
       });
     }
 
@@ -476,14 +482,14 @@ router.get('/latest', requireAuth, async (req, res) => {
     }
 
     const doc = await Audit.findOne({ userId, type: qType }).sort({ generatedAt: -1 }).lean();
-    return res.json({ ok: true, data: mirrorActionCenterToIssues(doc) || null });
+    return res.json({ ok: true, data: mirrorActionCenterToIssues(doc) || null, items: doc ? [mirrorActionCenterToIssues(doc)] : [] });
   } catch (e) {
     console.error('LATEST_ERROR:', e);
     return res.status(400).json({ ok: false, error: 'LATEST_ERROR', detail: e?.message });
   }
 });
 
-// (D) Última por fuente (con alias de entrada) – compat
+// (D) Última por fuente (compat legacy)
 router.get('/:source/latest', requireAuth, async (req, res) => {
   const normalized = normalizeSource(req.params.source);
 
@@ -546,7 +552,7 @@ router.get('/action-center', requireAuth, async (req, res) => {
  * Adapters legacy para el onboarding (compatibilidad)
  * ===================================================== */
 
-// POST /api/audits/start  → ejecuta en sincrónico las 3 fuentes
+// POST /api/audits/start  → ejecuta en sincrónico las 3 fuentes (o las que mandes)
 router.post('/start', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
@@ -558,8 +564,14 @@ router.post('/start', requireAuth, async (req, res) => {
       ga4:     !!(req.body?.googleConnected  ?? user?.googleConnected),
     };
 
+    // Respeta types si vienen; normaliza alias y filtra válidos
+    const typesReq = Array.isArray(req.body?.types) ? req.body.types.map(normalizeSource) : null;
+    const types = (typesReq && typesReq.length)
+      ? [...new Set(typesReq.filter(t => VALID_SOURCES_DB.includes(t)))]
+      : VALID_SOURCES_DB;
+
     const results = [];
-    for (const type of VALID_SOURCES_DB) {
+    for (const type of types) {
       const r = await runSingleAudit({ userId, type, flags });
       results.push(r);
     }
@@ -576,10 +588,17 @@ router.post('/start', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/audits/progress?jobId=... → ya está done (sincrónico)
+// GET /api/audits/progress?jobId=... → ahora reporta percent e items
 router.get('/progress', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
+    const user   = await User.findById(userId).lean();
+
+    const connected = {
+      google: !!user?.googleConnected,
+      meta:   !!user?.metaConnected,
+      ga4:    !!user?.googleConnected, // GA4 comparte login con Google
+    };
 
     const [googleDoc, metaDoc, gaDoc] = await Promise.all([
       Audit.findOne({ userId, type: 'google' }).sort({ generatedAt: -1 }).lean(),
@@ -587,9 +606,37 @@ router.get('/progress', requireAuth, async (req, res) => {
       Audit.findOne({ userId, type: 'ga4'    }).sort({ generatedAt: -1 }).lean(),
     ]);
 
+    const items = {
+      google: connected.google
+        ? (googleDoc ? { state: 'done', pct: 100, at: googleDoc.generatedAt, msg: 'Listo' }
+                     : { state: 'running', pct: 50,  at: null, msg: 'Analizando…' })
+        : { state: 'skipped', pct: 0, at: null, msg: 'No conectado' },
+
+      meta: connected.meta
+        ? (metaDoc ? { state: 'done', pct: 100, at: metaDoc.generatedAt, msg: 'Listo' }
+                   : { state: 'running', pct: 50,  at: null, msg: 'Analizando…' })
+        : { state: 'skipped', pct: 0, at: null, msg: 'No conectado' },
+
+      ga4: connected.ga4
+        ? (gaDoc ? { state: 'done', pct: 100, at: gaDoc.generatedAt, msg: 'Listo' }
+                 : { state: 'running', pct: 50,  at: null, msg: 'Analizando…' })
+        : { state: 'skipped', pct: 0, at: null, msg: 'No conectado' },
+    };
+
+    const totalConsidered = ['google','meta','ga4'].filter(k => connected[k]).length;
+    const done = ['google','meta','ga4'].filter(k => connected[k] && items[k].state === 'done').length;
+    const percent = totalConsidered === 0 ? 100 : Math.round((done / totalConsidered) * 100);
+    const finished = totalConsidered === 0 ? true : (done === totalConsidered);
+
     return res.json({
       ok: true,
-      done: true,
+      finished,
+      overallPct: percent,
+      percent,
+      items,
+
+      // legacy
+      done: finished,
       hasGoogle: !!googleDoc,
       hasMeta:   !!metaDoc,
       hasGA:     !!gaDoc,

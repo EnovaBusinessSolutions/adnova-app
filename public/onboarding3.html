@@ -3,65 +3,79 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
   <title>Onboarding - ADNOVA AI</title>
-  <link rel="stylesheet" href="onboarding.css" />
+
+  <!-- CSS principal -->
+  <link rel="stylesheet" href="/onboarding.css" />
+
+  <!-- Fuente -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+
+  <!-- Evita cachés agresivos durante el flujo -->
+  <meta http-equiv="Cache-Control" content="no-store" />
 </head>
 <body data-page="onboarding3">
   <div class="onboarding-container">
-    <div class="sidebar">
+    <!-- Sidebar -->
+    <aside class="sidebar" aria-label="Progreso de onboarding">
       <div class="logo">
         <h1>ADNOVA/ai<span class="emoji"></span></h1>
       </div>
-      <div class="steps">
-        <div class="step" data-step="1">
+
+      <nav class="steps">
+        <div class="step" data-step="1" aria-current="false">
           <div class="step-indicator"><span class="step-number">1</span></div>
           <div class="step-text">
             <h3>Conecta tus cuentas</h3>
             <p>Agrega tu tienda y cuentas de marketing</p>
           </div>
         </div>
-        <div class="step" data-step="2">
+
+        <div class="step" data-step="2" aria-current="false">
           <div class="step-indicator"><span class="step-number">2</span></div>
           <div class="step-text">
             <h3>Revisar permisos</h3>
             <p>Verifica y acepta los permisos requeridos</p>
           </div>
         </div>
-        <div class="step active" data-step="3">
+
+        <div class="step active" data-step="3" aria-current="step">
           <div class="step-indicator"><span class="step-number">3</span></div>
           <div class="step-text">
             <h3>Análisis</h3>
             <p>Analizaremos los datos de tu tienda</p>
           </div>
         </div>
-        <div class="step" data-step="4">
+
+        <div class="step" data-step="4" aria-current="false">
           <div class="step-indicator"><span class="step-number">4</span></div>
           <div class="step-text">
             <h3>Dashboard</h3>
             <p>Consulta los resultados de optimización</p>
           </div>
         </div>
-      </div>
-    </div>
+      </nav>
+    </aside>
 
-    <div class="main-content">
-      <div class="content-panel" id="step3-content">
-        <h2>Análisis</h2>
+    <!-- Main -->
+    <main class="main-content">
+      <section class="content-panel" id="step3-content" aria-labelledby="title-analisis">
+        <h2 id="title-analisis">Análisis</h2>
         <p class="panel-description">
           Estamos analizando los datos de tu tienda para ofrecerte recomendaciones personalizadas de marketing.
         </p>
 
         <div class="analysis-progress">
           <div class="progress-container">
-            <div class="progress-bar">
+            <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
               <!-- Barra real controlada por JS -->
               <div id="progress-bar" class="progress-indicator" style="width: 0%"></div>
             </div>
             <p class="progress-text" id="progress-text">Preparando análisis…</p>
           </div>
 
-          <!-- Lista controlada por JS: se ocultan los que no estén conectados -->
+          <!-- Lista controlada por JS: se marcan estados (running/done/skipped/error) -->
           <ul id="analysis-list" class="analysis-steps">
             <li id="step-googleads" class="analysis-step">
               <div class="analysis-step-icon">○</div>
@@ -100,10 +114,14 @@
         <div class="bottom-actions">
           <button class="btn-continue" id="btn-continue" disabled>Continuar</button>
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   </div>
 
-  <script src="/js/onboarding3.js"></script>
+  <!-- JS: usa defer para asegurar que el DOM esté listo;
+       el script además escucha DOMContentLoaded internamente -->
+  <script src="/js/onboarding3.js" defer></script>
+
+  <noscript>Por favor activa JavaScript para continuar.</noscript>
 </body>
 </html>
