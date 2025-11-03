@@ -148,14 +148,14 @@
       setFromDoc(rows.meta,    m,  "Analizando Meta Ads");
       setFromDoc(rows.ga4,     ga, "Analizando Google Analytics");
 
-      // Progreso fallback por filas “done” (solo cuenta conectados)
-      const connectedIds = ["google","meta","ga4"].filter((k) => rows[k]);
-      const done = connectedIds
+      // Progreso fallback contando solo filas no omitidas (conectadas)
+      const eligibleRows = ["google","meta","ga4"]
         .map((k) => rows[k])
-        .filter((row) => row && row.classList.contains("completed")).length;
-      const pct = connectedIds.length ? Math.round((done / connectedIds.length) * 100) : 100;
+        .filter((row) => row && !row.classList.contains("opacity-50"));
 
-      // Mantén el máximo entre la barra actual y el fallback
+      const done = eligibleRows.filter((row) => row.classList.contains("completed")).length;
+      const pct  = eligibleRows.length ? Math.round((done / eligibleRows.length) * 100) : 100;
+
       const current = (() => {
         const w = progressBar?.style?.width || "0%";
         const n = parseInt(String(w).replace("%",""), 10);
@@ -163,7 +163,6 @@
       })();
       setBar(Math.max(current, pct));
 
-      // Si ya están todas listas, imprime final
       if (pct >= 100) {
         if (cyclerStop) cyclerStop();
         setText("¡Análisis completado!");
@@ -191,8 +190,7 @@
         google:  !!status.google?.connected,
         meta:    !!status.meta?.connected,
         shopify: !!status.shopify?.connected,
-        // GA4 conectado si Google está conectado y hay al menos 1 propiedad/cuenta
-        ga4:     !!status.google?.connected && Number(status.google?.count || 0) > 0,
+        ga4:     !!status.google?.connected && Number(status.google?.count || 0) > 0, // GA4 usa login de Google
       };
 
       // Pinta estado inicial
@@ -208,10 +206,9 @@
         }
       });
 
-      // Fuentes a procesar realmente (solo las soportadas por auditorías)
+      // Fuentes a procesar realmente
       const toRun = ["google","meta","ga4"].filter((k) => isConnected[k]);
 
-      // Si no hay nada que correr, refresca desde BD por si ya existían docs y termina
       if (toRun.length === 0) {
         await refreshAuditStatusFromDB();
         setBar(100);
@@ -230,16 +227,16 @@
         console.warn("No se pudo iniciar job de auditorías:", e?.message || e);
       }
 
-      // Respaldo: aunque no haya jobId, refrescamos desde BD a los pocos segundos
-      setTimeout(refreshAuditStatusFromDB, 3000);
-      setTimeout(refreshAuditStatusFromDB, 7000);
+      // Refresco por BD aunque no haya jobId
+      const bdInterval = setInterval(refreshAuditStatusFromDB, 3000);
+      setTimeout(() => refreshAuditStatusFromDB(), 7000);
 
       // 3) Polling de progreso (si tenemos job)
       let finished = false;
       let lastSnapshot = null;
 
       async function poll() {
-        if (!jobId) return; // sin jobId, dependemos del refresco por BD
+        if (!jobId) return; // sin jobId dependemos del refresco por BD
         try {
           const q = `${ENDPOINTS.progress}?jobId=${encodeURIComponent(jobId)}`;
           const p = await getJSON(q);
@@ -278,17 +275,17 @@
           if (!finished) {
             setTimeout(poll, 1200);
           } else {
+            clearInterval(bdInterval);
             if (cyclerStop) cyclerStop();
             setBar(100);
             setText("¡Análisis completado!");
             if (btnContinue) btnContinue.disabled = false;
             try { sessionStorage.setItem("auditProgressSnapshot", JSON.stringify(lastSnapshot || {})); } catch {}
-            // Al terminar, aseguramos que las filas reflejen el estado final desde BD
             refreshAuditStatusFromDB();
           }
         } catch (e) {
           console.warn("Polling error", e);
-          // Si el polling cae, intentamos cerrar con refresco desde BD y permitir continuar
+          clearInterval(bdInterval);
           await refreshAuditStatusFromDB();
           if (cyclerStop) cyclerStop();
           setText("Análisis finalizado (con advertencias). Puedes continuar.");
