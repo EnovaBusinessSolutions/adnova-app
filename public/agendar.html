@@ -5,26 +5,60 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Agendar | Adnova AI</title>
 
-  <!-- ❗ Usa la hoja correcta: está en /public/onboarding.css, no en /assets -->
+  <!-- CSS base del proyecto -->
   <link rel="stylesheet" href="/onboarding.css">
 
   <style>
-    :root { --bg:#0a0a0f; --card:#12111a; --stroke:#2a2238; --brand:#7c3aed; --ink:#eaeaf0; }
+    :root{
+      --bg:#0a0a0f; --card:#12111a; --stroke:#2a2238; --brand:#7c3aed; --ink:#eaeaf0;
+      --shell:#0b0a0f;
+    }
     html,body{height:100%}
     body{background:var(--bg);color:var(--ink);font-family:Inter,system-ui,Segoe UI,Roboto,Ubuntu}
-    .wrap{max-width:1100px;margin:40px auto;padding:0 16px}
+    .wrap{width:100%;max-width:1280px;margin:40px auto;padding:0 clamp(12px,3vw,24px)}
     .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
     .btn{display:inline-flex;gap:8px;align-items:center;background:#1e1b2e;border:1px solid var(--stroke);
          color:#fff;padding:10px 14px;border-radius:10px;font-weight:600;transition:.25s transform,.25s opacity}
     .btn:hover{transform:translateY(-1px);opacity:.95}
-    .card{background:linear-gradient(180deg,#141224,#100f18);border:1px solid var(--stroke);
-          border-radius:18px;padding:18px;box-shadow:0 30px 80px #0007,inset 0 1px 0 #ffffff0d}
-    .frameShell{border:1px solid #1f1a2b;border-radius:14px;overflow:hidden;background:#0b0a0f}
-    .calendly-inline-widget{width:100%;height:78vh;min-height:640px}
-    @media (max-width:640px){ .calendly-inline-widget{height:80vh;min-height:560px} }
+
+    /* Card adaptativo */
+    .card{
+      width:100%;
+      margin:0 auto;
+      max-width: min(1040px, 100%);
+      background:linear-gradient(180deg,#141224,#100f18);
+      border:1px solid var(--stroke);
+      border-radius:18px;
+      padding:18px;
+      box-shadow:0 30px 80px #0007, inset 0 1px 0 #ffffff0d;
+    }
+
+    /* Tip/Chip */
+    .chip{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;
+      background:#191727;border:1px solid #27223a;font-size:13px}
+
+    /* Marco y widget */
+    .frameShell{
+      margin-top:12px;
+      border:1px solid #1f1a2b; border-radius:14px; overflow:hidden; background:var(--shell);
+    }
+
+    /**
+     * Alturas responsivas:
+     * - Desktop grande: 960px
+     * - Laptop: 880px
+     * - Tablet: 820px
+     * - Móvil: 85svh (viewport seguro) con mínimo 620px
+     */
+    .calendly-inline-widget{ width:100%; height:960px; min-height:720px }
+    @media (max-width: 1200px){ .calendly-inline-widget{ height:880px } }
+    @media (max-width: 992px){  .calendly-inline-widget{ height:820px } }
+    @media (max-width: 768px){  .calendly-inline-widget{ height:85svh; min-height:620px } }
+    @media (max-width: 420px){  .calendly-inline-widget{ height:88svh; min-height:600px } }
+
+    /* Mensaje de éxito */
     .success{display:none;margin-top:16px;padding:16px;border:1px solid var(--stroke);border-radius:12px;background:#0b0a0f}
     .stack{display:flex;gap:10px;flex-wrap:wrap}
-    .chip{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;background:#191727;border:1px solid #27223a;font-size:13px}
   </style>
 
   <!-- Calendly embed -->
@@ -34,15 +68,15 @@
 <body>
   <div class="wrap">
     <div class="header">
-      <h1 style="font-size:28px;font-weight:700">Agenda tu llamada</h1>
+      <h1 style="font-size:clamp(22px,3.6vw,32px);font-weight:800">Agenda tu llamada</h1>
       <a class="btn" href="/bookcall">← Volver</a>
     </div>
 
     <div class="card">
       <div class="chip">💡 Tip: selecciona la hora que mejor te acomode</div>
 
-      <div class="frameShell" style="margin-top:12px">
-        <!-- ❗ URL en UNA sola línea (sin saltos/espacios) -->
+      <div class="frameShell">
+        <!-- URL en UNA sola línea. Mantén los colores; sólo cambia el slug cuando uses el de Agustín -->
         <div
           class="calendly-inline-widget"
           data-url="https://calendly.com/josemanuelmejiadominguez2/30min?utm_source=app&utm_campaign=adnova-ai&background_color=0a0a0f&text_color=eaeaf0&primary_color=7c3aed">
@@ -59,7 +93,7 @@
     </div>
   </div>
 
-  <!-- Mueve el listener a un JS externo para no romper CSP -->
+  <!-- Listener separado (no rompe CSP) -->
   <script src="/assets/agendar-inline.js" defer></script>
 </body>
 </html>
