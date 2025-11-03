@@ -32,7 +32,7 @@ const dashboardRoute = require('./api/dashboardRoute');
 const { publicCSP, shopifyCSP } = require('../middlewares/csp');
 const subscribeRouter = require('./routes/subscribe');
 const userRoutes = require('./routes/user');
-const auditsRoutes = require('./routes/audits');
+const auditRunnerRoutes = require('./routes/auditRunner');
 const stripeRouter = require('./routes/stripe');
 const billingRoutes = require('./routes/billing');
 const connector = require('./routes/shopifyConnector');
@@ -237,18 +237,18 @@ app.use(
 
 app.use('/api/onboarding/status', sessionGuard, require('./routes/onboardingStatus'))
 
-// --- Auditorías: usar el MISMO router para plural (nuevo) y singular (legacy)
-app.use('/api/audits', sessionGuard, auditsRoutes);  // ← plural: lo usa el front
-app.use('/api/audit',  sessionGuard, auditsRoutes);  // ← singular: compatibilidad
+// ✅ Auditorías: runner único para plural (nuevo) y singular (legacy)
+app.use('/api/audits', sessionGuard, auditRunnerRoutes);
+app.use('/api/audit',  sessionGuard, auditRunnerRoutes);
 
-// Redirects legacy → canonical (/api/audits)
+// (opcional pero útil) Redirects explícitos legacy → canonical
 app.post('/api/audit/start',          sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
 app.post('/api/audit/google/start',   sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
 app.post('/api/audit/meta/start',     sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
 app.post('/api/audit/shopify/start',  sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
 
 
-app.use('/api/dashboard/audits', sessionGuard, auditsRoutes);
+
 
 // Stripe / Facturapi / Billing
 app.use('/api/stripe', stripeRouter);
