@@ -237,15 +237,21 @@ app.use(
 
 app.use('/api/onboarding/status', sessionGuard, require('./routes/onboardingStatus'))
 
-// ✅ Auditorías: runner único para plural (nuevo) y singular (legacy)
-app.use('/api/audits', sessionGuard, auditRunnerRoutes);
+// ✅ Auditorías: runner + consultas en el mismo prefijo
+app.use('/api/audits', sessionGuard, auditRunnerRoutes, auditsRoutes);
+
+// legacy (singular) solo para /start etc.
 app.use('/api/audit',  sessionGuard, auditRunnerRoutes);
 
-// (opcional pero útil) Redirects explícitos legacy → canonical
+// (opcional) alias antiguo del panel
+app.use('/api/dashboard/audits', sessionGuard, auditsRoutes);
+
+// Redirects legacy → canonical
 app.post('/api/audit/start',          sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
 app.post('/api/audit/google/start',   sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
 app.post('/api/audit/meta/start',     sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
 app.post('/api/audit/shopify/start',  sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
+
 
 
 
