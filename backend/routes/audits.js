@@ -74,6 +74,7 @@ function normalizeIssue(raw, i = 0, type = 'google') {
       : [],
   };
 
+  // compat: campaignRef → guardado dentro de metrics
   if (raw?.campaignRef && typeof raw.campaignRef === 'object') {
     base.metrics = {
       ...base.metrics,
@@ -83,6 +84,7 @@ function normalizeIssue(raw, i = 0, type = 'google') {
       }
     };
   }
+  // GA (segmentRef)
   if (raw?.segmentRef && typeof raw.segmentRef === 'object') {
     base.metrics = {
       ...base.metrics,
@@ -126,7 +128,7 @@ function sortIssuesBySeverityThenImpact(issues) {
   });
 }
 
-// ===== Fallback: si no hay issues, espelhar actionCenter =====
+// ===== Fallback: si no hay issues, espejar actionCenter =====
 function mirrorActionCenterToIssues(doc) {
   if (!doc) return doc;
   const out = { ...doc };
@@ -405,7 +407,7 @@ router.post('/run', requireAuth, async (req, res) => {
     };
 
     const results = [];
-    for (const type of ['google','meta','ga4']) {
+    for (const type of VALID_SOURCES_DB) {
       const r = await runSingleAudit({ userId, type, flags });
       results.push(r);
     }
@@ -427,7 +429,7 @@ router.post('/:source/run', requireAuth, async (req, res) => {
   const userId = req.user._id;
   const normalized = normalizeSource(req.params.source);
 
-  if (!['google','meta','ga4'].includes(normalized)) {
+  if (!VALID_SOURCES_DB.includes(normalized)) {
     return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
   }
 
@@ -454,18 +456,22 @@ router.get('/latest', requireAuth, async (req, res) => {
     const qType = (req.query?.type ? normalizeSource(req.query.type) : 'all');
 
     if (qType === 'all') {
-      const docs = await Promise.all(
-        ['google','meta','ga4'].map(t =>
+      const [googleDoc, metaDoc, gaDoc] = await Promise.all(
+        ['google','meta','ga4'].map((t) =>
           Audit.findOne({ userId, type: t }).sort({ generatedAt: -1 }).lean()
         )
       );
-      const list = docs
-        .map(mirrorActionCenterToIssues)
-        .filter(Boolean);
-      return res.json({ ok: true, data: list });
+      return res.json({
+        ok: true,
+        data: {
+          google: mirrorActionCenterToIssues(googleDoc) || null,
+          meta:   mirrorActionCenterToIssues(metaDoc)   || null,
+          ga4:    mirrorActionCenterToIssues(gaDoc)     || null,
+        }
+      });
     }
 
-    if (!['google','meta','ga4'].includes(qType)) {
+    if (!VALID_SOURCES_DB.includes(qType)) {
       return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
     }
 
@@ -481,7 +487,7 @@ router.get('/latest', requireAuth, async (req, res) => {
 router.get('/:source/latest', requireAuth, async (req, res) => {
   const normalized = normalizeSource(req.params.source);
 
-  if (!['google','meta','ga4'].includes(normalized)) {
+  if (!VALID_SOURCES_DB.includes(normalized)) {
     return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
   }
   try {
@@ -533,6 +539,69 @@ router.get('/action-center', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('ACTION_CENTER_ERROR:', e);
     return res.status(500).json({ ok: false, error: 'ACTION_CENTER_ERROR', detail: e?.message });
+  }
+});
+
+/* =====================================================
+ * Adapters legacy para el onboarding (compatibilidad)
+ * ===================================================== */
+
+// POST /api/audits/start  → ejecuta en sincrónico las 3 fuentes
+router.post('/start', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    const user   = await User.findById(userId).lean();
+
+    const flags = {
+      google:  !!(req.body?.googleConnected  ?? user?.googleConnected),
+      meta:    !!(req.body?.metaConnected    ?? user?.metaConnected),
+      ga4:     !!(req.body?.googleConnected  ?? user?.googleConnected),
+    };
+
+    const results = [];
+    for (const type of VALID_SOURCES_DB) {
+      const r = await runSingleAudit({ userId, type, flags });
+      results.push(r);
+    }
+
+    return res.json({
+      ok: true,
+      jobId: 'sync-' + Date.now(),       // dummy para compat
+      started: { google: flags.google, meta: flags.meta, ga: flags.ga4 },
+      results,
+    });
+  } catch (e) {
+    console.error('LEGACY_START_ERROR', e);
+    return res.status(500).json({ ok: false, error: 'LEGACY_START_ERROR' });
+  }
+});
+
+// GET /api/audits/progress?jobId=... → ya está done (sincrónico)
+router.get('/progress', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const [googleDoc, metaDoc, gaDoc] = await Promise.all([
+      Audit.findOne({ userId, type: 'google' }).sort({ generatedAt: -1 }).lean(),
+      Audit.findOne({ userId, type: 'meta'   }).sort({ generatedAt: -1 }).lean(),
+      Audit.findOne({ userId, type: 'ga4'    }).sort({ generatedAt: -1 }).lean(),
+    ]);
+
+    return res.json({
+      ok: true,
+      done: true,
+      hasGoogle: !!googleDoc,
+      hasMeta:   !!metaDoc,
+      hasGA:     !!gaDoc,
+      at: {
+        google: googleDoc?.generatedAt || null,
+        meta:   metaDoc?.generatedAt   || null,
+        ga:     gaDoc?.generatedAt     || null,
+      },
+    });
+  } catch (e) {
+    console.error('LEGACY_PROGRESS_ERROR', e);
+    return res.status(500).json({ ok: false, error: 'LEGACY_PROGRESS_ERROR' });
   }
 });
 
