@@ -9,19 +9,28 @@ const router = express.Router();
 const User = require('../models/User');
 
 let MetaAccount, GoogleAccount, ShopConnections;
-try { MetaAccount = require('../models/MetaAccount'); } catch {
+try {
+  MetaAccount = require('../models/MetaAccount');
+} catch {
   const { Schema, model } = mongoose;
-  MetaAccount = mongoose.models.MetaAccount ||
+  MetaAccount =
+    mongoose.models.MetaAccount ||
     model('MetaAccount', new Schema({}, { strict: false, collection: 'metaaccounts' }));
 }
-try { GoogleAccount = require('../models/GoogleAccount'); } catch {
+try {
+  GoogleAccount = require('../models/GoogleAccount');
+} catch {
   const { Schema, model } = mongoose;
-  GoogleAccount = mongoose.models.GoogleAccount ||
+  GoogleAccount =
+    mongoose.models.GoogleAccount ||
     model('GoogleAccount', new Schema({}, { strict: false, collection: 'googleaccounts' }));
 }
-try { ShopConnections = require('../models/ShopConnections'); } catch {
+try {
+  ShopConnections = require('../models/ShopConnections');
+} catch {
   const { Schema, model } = mongoose;
-  ShopConnections = mongoose.models.ShopConnections ||
+  ShopConnections =
+    mongoose.models.ShopConnections ||
     model('ShopConnections', new Schema({}, { strict: false, collection: 'shopconnections' }));
 }
 
@@ -90,7 +99,7 @@ router.get('/', requireAuth, async (req, res) => {
         .select('_id ad_accounts adAccounts access_token token accessToken longLivedToken longlivedToken selectedAccountIds defaultAccountId')
         .lean(),
       GoogleAccount.findOne({ $or: [{ user: uid }, { userId: uid }] })
-        .select('_id refreshToken accessToken gaProperties selectedCustomerIds defaultCustomerId')
+        .select('_id refreshToken accessToken gaProperties selectedCustomerIds defaultCustomerId defaultPropertyId')
         .lean(),
       ShopConnections.findOne({ $or: [{ user: uid }, { userId: uid }] })
         .select('_id shop accessToken access_token')
@@ -116,50 +125,61 @@ router.get('/', requireAuth, async (req, res) => {
     // ===== SHOPIFY =====
     const shopifyConnected = !!(shopDoc && shopDoc.shop && (shopDoc.accessToken || shopDoc.access_token));
 
-    // ===== Armado de payload claro para Step 3 =====
-    // Importante: separar Google Ads de GA4 para que tu UI no marque GA4 si solo hay Ads (y viceversa).
-    const payload = {
-      ok: true,
-      status: {
-        meta: {
-          connected: metaConnected,
-          availableCount: metaAvailIds.length,
-          selectedCount: metaSelected.length,
-          requiredSelection: metaRequiredSel,
-          selected: metaSelected,
-          defaultAccountId: metaDefault,
-        },
-        googleAds: {
-          connected: googleAdsConnected,
-          availableCount: gAvailIds.length,
-          selectedCount: gSelected.length,
-          requiredSelection: gRequiredSel,
-          selected: gSelected,
-          defaultCustomerId: gDefault,
-        },
-        ga4: {
-          connected: ga4Connected,
-          propertiesCount: Array.isArray(gaDoc?.gaProperties) ? gaDoc.gaProperties.length : 0,
-          defaultPropertyId: gaDoc?.defaultPropertyId || null,
-        },
-        shopify: {
-          connected: shopifyConnected,
-        },
+    // ===== Armado del payload =====
+    const status = {
+      meta: {
+        connected: metaConnected,
+        availableCount: metaAvailIds.length,
+        selectedCount: metaSelected.length,
+        requiredSelection: metaRequiredSel,
+        selected: metaSelected,
+        defaultAccountId: metaDefault,
+        // LEGACY:
+        count: metaAvailIds.length,
       },
-      // Fuentes que SÍ deberían auditarse en este run (para tu barra de progreso)
-      sourcesToAnalyze: [
-        ...(metaConnected ? ['meta'] : []),
-        ...(googleAdsConnected ? ['google'] : []),
-        ...(shopifyConnected ? ['shopify'] : []),
-        // GA4 no lanza auditoría LLM de Ads; si tuvieras una auditoría GA4, agrégala aquí como 'ga4'
-      ],
-      // Reglas de la sesión que puede necesitar la UI:
-      rules: {
-        selectionMaxRule: MAX_BY_RULE,
+      googleAds: {
+        connected: googleAdsConnected,
+        availableCount: gAvailIds.length,
+        selectedCount: gSelected.length,
+        requiredSelection: gRequiredSel,
+        selected: gSelected,
+        defaultCustomerId: gDefault,
+      },
+      ga4: {
+        connected: ga4Connected,
+        propertiesCount: Array.isArray(gaDoc?.gaProperties) ? gaDoc.gaProperties.length : 0,
+        defaultPropertyId: gaDoc?.defaultPropertyId || null,
+        // LEGACY para front:
+        count: Array.isArray(gaDoc?.gaProperties) ? gaDoc.gaProperties.length : 0,
+      },
+      shopify: {
+        connected: shopifyConnected,
       },
     };
 
-    return res.json(payload);
+    // === Claves LEGACY que espera tu onboarding3.js ===
+    // - status.google.connected (alias de googleAds.connected)
+    // - status.google.count     -> usamos el Nº de propiedades GA4 para que el front
+    //   marque GA4 como conectado con la condición que ya tiene (google.connected && count>0)
+    status.google = {
+      connected: status.googleAds.connected,
+      count: status.ga4.count,
+    };
+
+    // Fuentes a analizar (para tu barra/progreso)
+    const sourcesToAnalyze = [
+      ...(metaConnected ? ['meta'] : []),
+      ...(googleAdsConnected ? ['google'] : []),
+      ...(shopifyConnected ? ['shopify'] : []),
+      ...(ga4Connected ? ['ga4'] : []),
+    ];
+
+    return res.json({
+      ok: true,
+      status,
+      sourcesToAnalyze,
+      rules: { selectionMaxRule: MAX_BY_RULE },
+    });
   } catch (e) {
     console.error('onboarding/status error:', e);
     return res.status(500).json({ ok: false, error: 'STATUS_ERROR' });
