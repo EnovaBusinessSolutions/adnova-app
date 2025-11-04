@@ -4,9 +4,9 @@
   // ENDPOINTS
   // =======================
   const ENDPOINTS = {
-    status:   "/api/onboarding/status", // GET → { ok, status:{ meta:{connected,count}, google:{connected,count}, shopify:{connected} } }
-    start:    "/api/audits/start",      // POST { types: ['meta','google','ga4'] } → { ok, jobId }
-    progress: "/api/audits/progress"    // GET  ?jobId=... → { ok, items:{...}, percent|overallPct, finished }
+    status:   "/api/onboarding/status", // GET
+    start:    "/api/audits/start",      // POST { types: [...] }
+    progress: "/api/audits/progress"    // GET  ?jobId=...
   };
 
   // =======================
@@ -34,30 +34,45 @@
   const setBar = (pct) => { if (progressBar) progressBar.style.width = clamp(pct, 0, 100) + "%"; };
   const setText = (t) => { if (progressText) progressText.textContent = t; };
 
-  const setRowState = (row, { state = "idle", msg = "" } = {}) => {
+  // Sufijos base (el label estático del paso queda en el HTML)
+  const BASE_SUFFIX = {
+    idle:    "",
+    running: "Analizando…",
+    done:    "Listo",
+    skipped: "No conectado",
+    error:   "Error",
+  };
+
+  // Idempotente: siempre sobrescribe icono y badge (sin concatenar)
+  function setRowState(row, state = "idle", suffixOverride) {
     if (!row) return;
     row.classList.remove("active", "completed", "opacity-50", "is-current", "error");
+
+    const suffix = (typeof suffixOverride === "string" && suffixOverride.length)
+      ? suffixOverride
+      : (BASE_SUFFIX[state] || "");
+
     if (state === "running") {
       row.classList.add("active", "is-current");
       if (ICON(row))  ICON(row).textContent = "●";
-      if (BADGE(row)) BADGE(row).textContent = msg || "Analizando…";
+      if (BADGE(row)) BADGE(row).textContent = suffix;
     } else if (state === "done") {
       row.classList.add("completed");
       if (ICON(row))  ICON(row).textContent = "✓";
-      if (BADGE(row)) BADGE(row).textContent = msg || "Listo";
+      if (BADGE(row)) BADGE(row).textContent = suffix;
     } else if (state === "skipped") {
       row.classList.add("opacity-50");
       if (ICON(row))  ICON(row).textContent = "○";
-      if (BADGE(row)) BADGE(row).textContent = msg || "Omitido";
+      if (BADGE(row)) BADGE(row).textContent = suffix;
     } else if (state === "error") {
       row.classList.add("error", "opacity-50");
       if (ICON(row))  ICON(row).textContent = "!";
-      if (BADGE(row)) BADGE(row).textContent = msg || "Error";
+      if (BADGE(row)) BADGE(row).textContent = suffix;
     } else {
       if (ICON(row))  ICON(row).textContent = "○";
-      if (BADGE(row)) BADGE(row).textContent = msg || "";
+      if (BADGE(row)) BADGE(row).textContent = suffix;
     }
-  };
+  }
 
   const STATUS_MESSAGES = [
     "Conectando fuentes…",
@@ -121,7 +136,7 @@
 
       // Soportamos dos formatos:
       // 1) { ok:true, data:{google,meta,ga4} }
-      // 2) { ok:true, data:[...docs] } o { ok:true, items:[...docs] }
+      // 2) { ok:true, items:[...] } / { ok:true, data:[...] }
       const dict = (resp?.data && !Array.isArray(resp.data)) ? resp.data : {};
       const list = Array.isArray(resp?.items)
         ? resp.items
@@ -134,19 +149,19 @@
       const m  = pick("meta");
       const ga = pick("ga4");
 
-      const setFromDoc = (row, doc, labelBase) => {
+      const setFromDoc = (row, doc) => {
         if (!row) return;
         const notAuth = !!doc?.inputSnapshot?.notAuthorized;
         if (!doc || notAuth) {
-          setRowState(row, { state: "skipped", msg: (labelBase || "Analizando") + " No conectado" });
+          setRowState(row, "skipped");
         } else {
-          setRowState(row, { state: "done", msg: (labelBase || "Analizando") + " Listo" });
+          setRowState(row, "done");
         }
       };
 
-      setFromDoc(rows.google,  g,  "Analizando Google Ads");
-      setFromDoc(rows.meta,    m,  "Analizando Meta Ads");
-      setFromDoc(rows.ga4,     ga, "Analizando Google Analytics");
+      setFromDoc(rows.google, g);
+      setFromDoc(rows.meta,   m);
+      setFromDoc(rows.ga4,    ga);
 
       // Progreso fallback contando solo filas no omitidas (conectadas)
       const eligibleRows = ["google","meta","ga4"]
@@ -187,22 +202,24 @@
       const st = await getJSON(ENDPOINTS.status);
       const status = st?.status || {};
       const isConnected = {
-        google:  !!status.google?.connected,
+        google:  !!status.googleAds?.connected || !!status.google?.connected, // compat
         meta:    !!status.meta?.connected,
         shopify: !!status.shopify?.connected,
-        ga4:     !!status.google?.connected && Number(status.google?.count || 0) > 0, // GA4 usa login de Google
+        // GA4 usa login Google + al menos 1 propiedad conocida
+        ga4:     !!status.ga4?.connected || ( !!status.google?.connected && Number(status.ga4?.propertiesCount || status.google?.count || 0) > 0 ),
       };
 
-      // Pinta estado inicial
+      // Pinta estado inicial (sin duplicar textos)
       Object.entries(rows).forEach(([k, row]) => {
         if (!row) return;
         if (!isConnected[k]) {
-          const msg = (k === "ga4")
-            ? (!!status.google?.connected ? "Conecta GA4" : "No conectado")
-            : "No conectado";
-          setRowState(row, { state: "skipped", msg });
+          // Mensaje específico para GA4 si Google está conectado pero falta seleccionar propiedad
+          const customMsg = (k === "ga4" && status.google?.connected)
+            ? "Conecta GA4"
+            : undefined; // usa "No conectado" por defecto
+          setRowState(row, "skipped", customMsg);
         } else {
-          setRowState(row, { state: "running", msg: "Analizando…"});
+          setRowState(row, "running"); // "Analizando…"
         }
       });
 
@@ -252,7 +269,7 @@
             const it = items[key];
 
             if (!it) {
-              setRowState(row, { state: "running", msg: "Analizando…" });
+              setRowState(row, "running"); // Analizando…
               continue;
             }
 
@@ -265,11 +282,12 @@
             if (raw === "done") state = "done";
             else if (raw === "error") state = "error";
 
-            const label =
+            const suffix =
               state === "running"
                 ? (pct != null ? `Analizando… ${pct}%` : "Analizando…")
-                : (it.msg || (state === "done" ? "Listo" : "Error"));
-            setRowState(row, { state, msg: label });
+                : (typeof it.msg === "string" && it.msg) ? it.msg : undefined;
+
+            setRowState(row, state, suffix);
           }
 
           if (!finished) {
@@ -300,7 +318,7 @@
       if (cyclerStop) cyclerStop();
       setText("Error iniciando el análisis");
       setBar(100);
-      Object.values(rows).forEach((row) => row && setRowState(row, { state: "error", msg: "Error" }));
+      Object.values(rows).forEach((row) => row && setRowState(row, "error"));
       if (btnContinue) btnContinue.disabled = false;
     }
   }

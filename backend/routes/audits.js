@@ -244,100 +244,73 @@ function heuristicsFromMeta(snap) {
 
 function heuristicsFromGA4(snap) {
   const issues = [];
-  const channels = Array.isArray(snap?.channels) ? snap.channels : [];
-  const totals = channels.reduce((a,c)=>({
-    users: a.users + Number(c.users||0),
-    sessions: a.sessions + Number(c.sessions||0),
-    conv: a.conv + Number(c.conversions||0),
-    rev: a.rev + Number(c.revenue||0),
-  }), {users:0,sessions:0,conv:0,rev:0});
 
-  const convRate = totals.sessions > 0 ? (totals.conv / totals.sessions) * 100 : 0;
+  // Normaliza a lista de propiedades con sus canales
+  const props = Array.isArray(snap?.byProperty) && snap.byProperty.length
+    ? snap.byProperty
+    : (snap?.property
+        ? [{ 
+            property: snap.property,
+            accountName: snap.accountName || '',
+            propertyName: snap.propertyName || '',
+            channels: Array.isArray(snap.channels) ? snap.channels : []
+          }]
+        : []);
 
-  // 1) Conversión baja (regla suave)
-  if (totals.sessions >= 100 && convRate < 0.5) {
-    issues.push({
-      area: 'performance',
-      title: `Tasa de conversión baja (${convRate.toFixed(2)}%)`,
-      severity: totals.sessions >= 500 ? 'alta' : 'media',
-      evidence: `Sesiones: ${totals.sessions}, Conversiones: ${totals.conv}, CR: ${convRate.toFixed(2)}%.`,
-      recommendation: 'Revisa embudos clave, velocidad de página, mensajes de valor y eventos de conversión.',
-      metrics: { sessions: totals.sessions, conversions: totals.conv, conversionRate: convRate }
-    });
-  }
+  for (const p of props.slice(0, 10)) {
+    const channels = Array.isArray(p.channels) ? p.channels : [];
+    const totals = channels.reduce((a, c) => ({
+      users:       a.users + Number(c.users || 0),
+      sessions:    a.sessions + Number(c.sessions || 0),
+      conversions: a.conversions + Number(c.conversions || 0),
+      revenue:     a.revenue + Number(c.revenue || 0),
+    }), { users:0, sessions:0, conversions:0, revenue:0 });
 
-  // 2) Mucho (direct) o (unassigned) → posible problema de tracking/atribución
-  const direct = channels.find(c => String(c.channel||'').toLowerCase() === '(direct)');
-  const unassigned = channels.find(c => String(c.channel||'').toLowerCase() === '(unassigned)');
-  const directShare = totals.sessions>0 ? (Number(direct?.sessions||0)/totals.sessions)*100 : 0;
-  const unassignedShare = totals.sessions>0 ? (Number(unassigned?.sessions||0)/totals.sessions)*100 : 0;
-  if (directShare >= 40 || unassignedShare >= 25) {
-    issues.push({
-      area: 'tracking',
-      title: 'Alta proporción de tráfico sin atribución clara',
-      severity: 'media',
-      evidence: `(direct): ${directShare.toFixed(1)}% · (unassigned): ${unassignedShare.toFixed(1)}% del tráfico.`,
-      recommendation: 'Verifica etiquetado UTM, configuración de dominios de referencia y exclusiones en GA4.',
-      metrics: { directShare, unassignedShare }
-    });
-  }
+    const cr = totals.sessions > 0 ? (totals.conversions / totals.sessions) * 100 : 0;
+    const paid = channels.filter(c => /paid|cpc|display|paid social/i.test(c.channel || ''));
+    const paidSess = paid.reduce((a,c)=> a + Number(c.sessions||0), 0);
+    const paidConv = paid.reduce((a,c)=> a + Number(c.conversions||0), 0);
 
-  // 3) Pago ineficiente: pago con mucha sesión pero pocas conversiones
-  const isPaid = (name) => /paid|cpc|display|paid social|paid search|ppc/i.test(name || '');
-  const paid = channels.filter(c => isPaid(c.channel));
-  const paidSess = paid.reduce((a,c)=>a+Number(c.sessions||0),0);
-  const paidConv = paid.reduce((a,c)=>a+Number(c.conversions||0),0);
-  const paidShare = totals.sessions>0 ? (paidSess/totals.sessions)*100 : 0;
-  const paidCR = paidSess>0 ? (paidConv/paidSess)*100 : 0;
-  if (paidSess >= 100 && paidShare >= 30 && paidCR < 0.5) {
-    issues.push({
-      area: 'performance',
-      title: 'Tráfico de pago con baja eficiencia de conversión',
-      severity: 'media',
-      evidence: `Participación de pago ${paidShare.toFixed(1)}% con CR ${paidCR.toFixed(2)}%.`,
-      recommendation: 'Alinea landing/creativo con intención, revisa ventanas de atribución y eventos importados a Ads.',
-      metrics: { paidSessions: paidSess, paidShare, paidCR }
-    });
-  }
+    const accountLabel  = p.accountName ? ` — ${p.accountName}` : '';
+    const propertyLabel = p.propertyName || p.property || '';
 
-  // 4) Sin ingresos reportados con conversiones > 0 → revisar ecommerce tracking
-  if (totals.conv > 0 && Number(totals.rev||0) === 0) {
-    issues.push({
-      area: 'tracking',
-      title: 'Conversiones sin revenue',
-      severity: 'media',
-      evidence: `Se registran ${totals.conv} conversiones pero revenue = 0.`,
-      recommendation: 'Valida el envío de purchaseRevenue / monetización en GA4 (eventos purchase y parámetros).',
-      metrics: { conversions: totals.conv, revenue: totals.rev }
-    });
-  }
+    // Hallazgo 1: CR bajo
+    if (totals.sessions > 200 && cr < 1) {
+      issues.push({
+        area: 'performance',
+        title: `Tasa de conversión baja (${cr.toFixed(2)}%) · ${propertyLabel}${accountLabel}`,
+        severity: 'alta',
+        evidence: `Sesiones: ${totals.sessions}, Conversiones: ${totals.conversions}, CR: ${cr.toFixed(2)}%.`,
+        recommendation: 'Revisa embudos clave, velocidad de página, mensajes de valor y configuración de eventos de conversión.',
+        metrics: { ...totals, cr },
+        // Contexto GA para tu UI:
+        segmentRef: {
+          type: 'property',
+          name: `${propertyLabel}${accountLabel ? ` — ${p.accountName}` : ''}`,
+        },
+      });
+    }
 
-  // 5) Caso duro original: muchas sesiones sin ninguna conversión
-  if (totals.sessions > 500 && totals.conv === 0) {
-    issues.push({
-      area: 'tracking',
-      title: 'Tráfico significativo sin conversiones',
-      severity: 'alta',
-      evidence: `Sesiones: ${totals.sessions} y 0 conversiones.`,
-      recommendation: 'Confirma configuración de conversiones, calidad de tráfico y fricción de embudo.',
-      metrics: totals
-    });
-  }
-
-  // Fallback: si nada disparó, al menos entrega un insight informativo
-  if (issues.length === 0 && totals.sessions > 0) {
-    issues.push({
-      area: 'performance',
-      title: 'Resumen de comportamiento GA4',
-      severity: 'baja',
-      evidence: `Usuarios: ${totals.users}, Sesiones: ${totals.sessions}, Conversiones: ${totals.conv}, Revenue: ${totals.rev}.`,
-      recommendation: 'Profundiza por canal y página de aterrizaje para detectar oportunidades específicas.',
-      metrics: totals
-    });
+    // Hallazgo 2: Tráfico de pago sin conversiones
+    if (paidSess > 200 && paidConv === 0) {
+      issues.push({
+        area: 'performance',
+        title: `Tráfico de pago sin conversiones · ${propertyLabel}${accountLabel}`,
+        severity: 'media',
+        evidence: `Se observaron ${paidSess} sesiones de canales de pago sin conversiones registradas.`,
+        recommendation: 'Cruza datos con plataformas de Ads; revisa eventos de conversión (duplicados/filtros/consent) y la relevancia de landing pages.',
+        metrics: { paidSessions: paidSess, paidConversions: paidConv },
+        segmentRef: {
+          type: 'property',
+          name: `${propertyLabel}${accountLabel ? ` — ${p.accountName}` : ''}`,
+        },
+      });
+    }
   }
 
   return issues;
 }
+
 
 
 // ---------------- Alias de fuentes (entrada) ----------------
