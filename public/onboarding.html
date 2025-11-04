@@ -223,29 +223,38 @@
 
 
   <div id="account-select-modal" class="hidden">
-    <div class="asm-overlay"></div>
+  <div class="asm-overlay"></div>
 
-    <div class="asm-panel">
-      <h2 class="asm-title">Selecciona tus cuentas</h2>
-      <p class="asm-sub">
-        Elige con qué cuentas quieres trabajar en Adnova AI. Debes seleccionar al menos una por plataforma.
-      </p>
+  <div class="asm-panel">
+    <h2 class="asm-title">Selecciona tus cuentas</h2>
+    <p class="asm-sub">
+      Elige con qué cuentas quieres trabajar en Adnova AI.
+  <strong>Máximo 3 por plataforma.</strong>
+    </p>
 
-      <div id="asm-error" class="asm-error"></div>
 
-      <!-- META -->
-      <h3 class="asm-section-title" id="asm-meta-title" style="display:none">Meta Business Manager</h3>
-      <div id="asm-meta-list" class="asm-list"></div>
+    <div id="asm-error" class="asm-error" style="display:none"></div>
 
-      <!-- GOOGLE -->
-      <h3 class="asm-section-title" id="asm-google-title" style="display:none">Google Analytics & Ads</h3>
-      <div id="asm-google-list" class="asm-list"></div>
+    <!-- META -->
+    <h3 class="asm-section-title" id="asm-meta-title" style="display:none">
+      Meta Business Manager
+      <small>(<span id="asm-meta-count">0/3</span>)</small>
+    </h3>
+    <div id="asm-meta-list" class="asm-list"></div>
 
-      <div class="asm-footer">
-        <button id="asm-save" class="asm-btn asm-btn-primary" disabled>Guardar y continuar</button>
-      </div>
+    <!-- GOOGLE -->
+    <h3 class="asm-section-title" id="asm-google-title" style="display:none">
+      Google Analytics & Ads
+      <small>(<span id="asm-google-count">0/3</span>)</small>
+    </h3>
+    <div id="asm-google-list" class="asm-list"></div>
+
+    <div class="asm-footer">
+      <button id="asm-save" class="asm-btn asm-btn-primary" disabled>Guardar y continuar</button>
     </div>
   </div>
+</div>
+
 
   <!-- scripts -->
   <script type="module" src="/js/onboarding.js"></script>
