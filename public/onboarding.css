@@ -759,3 +759,176 @@ body[data-page="onboarding4"] .ready-content {
   color: #b152e0;
   font-weight: 600;
 }
+
+/* ================================
+   Modal de selección de cuentas — Adnova/ai
+   ================================ */
+:root{
+  --bg-elev: hsl(260 20% 10% / .85);
+  --bg-card: hsl(260 25% 8% / .75);
+  --border: hsl(260 30% 40% / .22);
+  --border-strong: hsl(265 100% 70% / .35);
+  --txt: hsl(260 14% 96%);
+  --txt-dim: hsl(260 10% 78%);
+  --brand: #9a5bff;
+  --brand-2: #7e4aed;
+  --ok: #1f9d67;
+  --warn: #f59e0b;
+  --err: #ef4444;
+  --shadow: 0 15px 50px hsl(260 60% 2% / .6);
+}
+
+/* Estado oculto lo controla tu JS con .hidden */
+#account-select-modal.hidden{ display:none; }
+
+#account-select-modal{
+  position: fixed; inset: 0;
+  display:flex; align-items:center; justify-content:center;
+  padding: 28px;
+  z-index: 9999;
+}
+
+#account-select-modal .asm-overlay{
+  position:absolute; inset:0;
+  background: linear-gradient(180deg, hsl(260 32% 3% / .65), hsl(260 38% 2% / .75));
+  backdrop-filter: blur(6px);
+  animation: asmFade .2s ease-out;
+}
+
+#account-select-modal .asm-panel{
+  position: relative;
+  width: min(980px, 92vw);
+  background: linear-gradient(180deg, var(--bg-elev), var(--bg-card));
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 22px 22px 16px;
+  color: var(--txt);
+  animation: asmPop .18s ease-out;
+  overflow:hidden;
+}
+
+/* Borde sutil reactivo */
+#account-select-modal .asm-panel::before{
+  content:"";
+  position:absolute; inset:0; pointer-events:none;
+  border-radius: 18px;
+  background: radial-gradient(200px 120px at 8% -10%, hsl(265 100% 70% / .18), transparent 70%),
+              radial-gradient(200px 120px at 100% 0%, hsl(280 100% 63% / .12), transparent 70%);
+  mix-blend-mode: screen;
+}
+
+/* Header */
+#account-select-modal .asm-title{
+  font-size: 1.35rem; font-weight: 700; letter-spacing:.2px;
+  margin: 6px 2px 4px;
+}
+#account-select-modal .asm-sub{
+  margin: 0 2px 14px; color: var(--txt-dim);
+}
+#account-select-modal .asm-sub strong{
+  color: var(--txt); font-weight:600;
+}
+
+/* Secciones */
+#account-select-modal .asm-section-title{
+  margin: 18px 2px 10px;
+  font-weight: 600; letter-spacing:.2px;
+  display:flex; align-items:center; gap:10px;
+}
+#account-select-modal .asm-section-title small{
+  color: var(--txt-dim); font-weight: 600;
+  background: hsl(265 60% 20% / .35);
+  border: 1px solid var(--border);
+  padding: 4px 8px; border-radius: 999px;
+}
+
+/* Lista tipo grid */
+#account-select-modal .asm-list{
+  display:grid; gap:10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 900px){
+  #account-select-modal .asm-list{ grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 560px){
+  #account-select-modal .asm-list{ grid-template-columns: 1fr; }
+}
+
+/* Chips (labels) */
+#account-select-modal .asm-chip{
+  display:flex; align-items:center; gap:10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: hsl(260 22% 8% / .55);
+  transition: transform .06s ease, border-color .15s, background-color .15s;
+  cursor:pointer;
+  user-select:none;
+}
+#account-select-modal .asm-chip:hover{
+  border-color: var(--border-strong);
+  background: hsl(260 28% 10% / .6);
+}
+#account-select-modal .asm-chip:has(input:checked){
+  background: linear-gradient(180deg, hsl(265 50% 18% / .55), hsl(265 55% 14% / .55));
+  border-color: hsl(265 100% 70% / .55);
+  box-shadow: inset 0 0 0 1px hsl(265 100% 70% / .18);
+}
+#account-select-modal .asm-chip:has(input:disabled){
+  opacity:.55; cursor:not-allowed;
+}
+
+/* Checkbox moderno */
+#account-select-modal .asm-chip input[type="checkbox"]{
+  appearance:none; -webkit-appearance:none; outline:none;
+  width:18px; height:18px; border-radius:6px;
+  border:1px solid var(--border); background: transparent;
+  display:grid; place-items:center; transition: all .15s ease;
+}
+#account-select-modal .asm-chip input[type="checkbox"]::after{
+  content:""; width:10px; height:10px; border-radius:3px; transform: scale(0);
+  background: linear-gradient(180deg, var(--brand), var(--brand-2));
+  transition: transform .12s ease;
+}
+#account-select-modal .asm-chip input[type="checkbox"]:checked{
+  border-color: hsl(265 100% 70% / .55);
+  box-shadow: 0 0 0 3px hsl(265 100% 70% / .10);
+}
+#account-select-modal .asm-chip input[type="checkbox"]:checked::after{
+  transform: scale(1);
+}
+
+/* Hint + errores */
+#account-select-modal #asm-hint{
+  margin: 8px 2px 0; font-size: .92rem; color: var(--txt-dim);
+}
+#account-select-modal .asm-error{
+  margin: 8px 2px 0; font-size:.92rem; color: var(--err); display:none;
+}
+
+/* Footer */
+#account-select-modal .asm-footer{
+  display:flex; justify-content:flex-end; gap:10px;
+  margin-top: 18px; padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+
+#account-select-modal .asm-btn{
+  appearance:none; border:0; border-radius: 12px; padding: 10px 14px;
+  font-weight: 600; cursor:pointer; transition: transform .06s ease, opacity .2s;
+}
+#account-select-modal .asm-btn:active{ transform: translateY(1px); }
+
+#account-select-modal .asm-btn-primary{
+  background: linear-gradient(180deg, var(--brand), var(--brand-2));
+  color:white; box-shadow: 0 8px 28px hsl(265 90% 60% / .25);
+}
+#account-select-modal .asm-btn-primary--disabled,
+#account-select-modal .asm-btn-primary:disabled{
+  opacity:.55; cursor:not-allowed; box-shadow:none;
+}
+
+/* Animaciones */
+@keyframes asmPop{ from{ transform: translateY(6px) scale(.98); opacity:.0 } to{ transform:none; opacity:1 } }
+@keyframes asmFade{ from{ opacity:0 } to{ opacity:1 } }
