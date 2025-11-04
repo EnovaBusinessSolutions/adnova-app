@@ -24,7 +24,8 @@ const MAX_SELECT = 3;
 const ASM = {
   needs: { meta:false, google:false },
   data:  { meta:[], google:[] },
-  sel:   { meta:new Set(), google:new Set() }
+  sel:   { meta:new Set(), google:new Set() },
+  visible: { meta:false, google:false } // qué se muestra en el modal
 };
 
 // --- UI utils
@@ -33,19 +34,16 @@ const _show = (el) => { if (el){ el.classList.remove('hidden'); el.style.display
 const _hide = (el) => { if (el){ el.classList.add('hidden'); el.style.display = 'none'; } };
 
 function _ensureHintNode(){
-  // Coloca el hint bajo el subtítulo del modal
   let hint = _el('asm-hint');
   if (!hint) {
-    const panel = document.querySelector('#account-select-modal .asm-panel');
+    const panel = _el('account-select-modal')?.querySelector('.asm-panel');
     if (panel) {
-      const sub = panel.querySelector('.asm-sub') || panel;
       hint = document.createElement('div');
       hint.id = 'asm-hint';
       hint.style.margin = '8px 0 0';
       hint.style.fontSize = '.9rem';
-      hint.style.opacity = '0.9';
-      hint.setAttribute('aria-live', 'polite');
-      sub.appendChild(hint);
+      hint.style.opacity = '0.85';
+      panel.insertBefore(hint, panel.querySelector('.asm-footer'));
     }
   }
   return hint;
@@ -66,15 +64,19 @@ function _enableSave(enabled){
 }
 
 function _canSave(){
-  const needsM = ASM.needs.meta;
-  const needsG = ASM.needs.google;
+  const needsM = ASM.visible.meta && ASM.needs.meta;
+  const needsG = ASM.visible.google && ASM.needs.google;
   if (needsM && ASM.sel.meta.size   === 0) return false;
   if (needsG && ASM.sel.google.size === 0) return false;
   return true;
 }
 
+function _updateCount(kind){
+  const span = _el(kind === 'meta' ? 'asm-meta-count' : 'asm-google-count');
+  if (span) span.textContent = `${ASM.sel[kind].size}/${MAX_SELECT}`;
+}
+
 function _chip(label, value, kind, onChange){
-  // kind: 'meta' | 'google'
   const wrap = document.createElement('label');
   wrap.className = 'asm-chip';
 
@@ -84,80 +86,57 @@ function _chip(label, value, kind, onChange){
 
   cb.addEventListener('change', () => onChange(!!cb.checked, value, kind, cb));
 
-  const txt = document.createTextNode(' ' + label);
   wrap.appendChild(cb);
-  wrap.appendChild(txt);
+  wrap.appendChild(document.createTextNode(' ' + label));
   return wrap;
 }
 
-function _setCount(kind, n){
-  const id = kind === 'meta' ? 'asm-meta-count' : 'asm-google-count';
-  const el = _el(id);
-  if (el) el.textContent = `${n}/${MAX_SELECT}`;
-}
-
-/** Aplica UI de límite: deshabilita no seleccionados cuando size >= MAX_SELECT y actualiza contador */
+/** Aplica UI de límite: deshabilita no seleccionados cuando size >= MAX_SELECT */
 function _updateLimitUI(kind){
   const set = ASM.sel[kind];
   const reached = set.size >= MAX_SELECT;
-
-  _setCount(kind, set.size);
 
   const containerId = (kind === 'meta') ? 'asm-meta-list' : 'asm-google-list';
   const list = _el(containerId);
   if (!list) return;
 
-  const checks = list.querySelectorAll('input[type="checkbox"]');
-  checks.forEach(ch => {
-    if (set.has(ch.value)) {
-      ch.disabled = false; // los ya seleccionados siempre se pueden desmarcar
-    } else {
-      ch.disabled = reached; // si alcanzó límite, deshabilita los no seleccionados
-    }
+  list.querySelectorAll('input[type="checkbox"]').forEach(ch => {
+    if (set.has(ch.value)) ch.disabled = false;
+    else ch.disabled = reached;
   });
 
-  if (reached) {
-    _hint(`Límite alcanzado: solo puedes seleccionar hasta ${MAX_SELECT} cuentas.`, 'warn');
-  } else {
-    _hint(`Selecciona hasta ${MAX_SELECT} cuentas por plataforma.`, 'info');
-  }
+  _updateCount(kind);
+
+  if (reached) _hint(`Límite alcanzado: solo puedes seleccionar hasta ${MAX_SELECT} cuentas.`, 'warn');
+  else _hint(`Selecciona hasta ${MAX_SELECT} cuentas por plataforma.`, 'info');
 
   _enableSave(_canSave());
 }
 
 function _renderLists(){
-  // Limpiar mensajes previos
   const err = _el('asm-error');
   if (err){ err.textContent = ''; _hide(err); }
   _hint(`Selecciona hasta ${MAX_SELECT} cuentas por plataforma.`, 'info');
 
-  // META
+  // Mostrar/ocultar títulos según visible.*
   const metaTitle = _el('asm-meta-title');
   const metaList  = _el('asm-meta-list');
-  if (metaList) metaList.innerHTML = '';
-  ASM.sel.meta.clear(); // reset visual/estado por si se reabre
-  _setCount('meta', 0);
+  const gTitle    = _el('asm-google-title');
+  const gList     = _el('asm-google-list');
 
-  if (ASM.needs.meta && ASM.data.meta.length > 0){
-    _show(metaTitle);
-    _show(metaList);
+  // META
+  if (ASM.visible.meta && ASM.needs.meta && ASM.data.meta.length > 0){
+    _show(metaTitle); _show(metaList);
+    metaList.innerHTML = '';
     ASM.data.meta.forEach(a => {
-      // mostrar bonito, enviar normalizado (el backend acepta con/sin act_)
       const id = String(a.id || a.account_id || '').replace(/^act_/, '');
       const label = a.name || a.account_name || id;
       const chip = _chip(label, id, 'meta', (checked, val, kind, cbEl) => {
         const set = ASM.sel[kind];
         if (checked) {
-          if (set.size >= MAX_SELECT) {
-            // revertir y avisar
-            cbEl.checked = false;
-            _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuentas.`, 'warn');
-            return;
-          }
+          if (set.size >= MAX_SELECT) { cbEl.checked = false; return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuentas.`, 'warn'); }
           set.add(val);
-        } else {
-          set.delete(val);
-        }
+        } else set.delete(val);
         _updateLimitUI(kind);
       });
       metaList.appendChild(chip);
@@ -168,30 +147,18 @@ function _renderLists(){
   }
 
   // GOOGLE
-  const gTitle = _el('asm-google-title');
-  const gList  = _el('asm-google-list');
-  if (gList) gList.innerHTML = '';
-  ASM.sel.google.clear();
-  _setCount('google', 0);
-
-  if (ASM.needs.google && ASM.data.google.length > 0){
-    _show(gTitle);
-    _show(gList);
+  if (ASM.visible.google && ASM.needs.google && ASM.data.google.length > 0){
+    _show(gTitle); _show(gList);
+    gList.innerHTML = '';
     ASM.data.google.forEach(a => {
       const id = String(a.id || '').replace(/^customers\//, '').replace(/-/g,'').trim();
       const label = a.name || `Cuenta ${id}`;
       const chip = _chip(label, id, 'google', (checked, val, kind, cbEl) => {
         const set = ASM.sel[kind];
         if (checked) {
-          if (set.size >= MAX_SELECT) {
-            cbEl.checked = false;
-            _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuentas.`, 'warn');
-            return;
-          }
+          if (set.size >= MAX_SELECT) { cbEl.checked = false; return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuentas.`, 'warn'); }
           set.add(val);
-        } else {
-          set.delete(val);
-        }
+        } else set.delete(val);
         _updateLimitUI(kind);
       });
       gList.appendChild(chip);
@@ -208,46 +175,34 @@ async function _openModal(){
   _renderLists();
   _show(_el('account-select-modal'));
 
-  // Sin cerrar por overlay/ESC (no agregamos listeners)
   const saveBtn = _el('asm-save');
   saveBtn.onclick = async () => {
-    // Validación final de límite
-    if (ASM.sel.meta.size > MAX_SELECT || ASM.sel.google.size > MAX_SELECT) {
-      _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuentas.`, 'warn');
-      return;
-    }
     if (!_canSave()) return;
-
     saveBtn.textContent = 'Guardando…';
     saveBtn.disabled = true;
 
     try {
       const tasks = [];
-      if (ASM.needs.meta){
-        // Limitar de nuevo por si acaso
+
+      if (ASM.visible.meta && ASM.needs.meta){
         const ids = Array.from(ASM.sel.meta).slice(0, MAX_SELECT);
         tasks.push(_post('/api/meta/accounts/selection', { accountIds: ids }));
       }
-      if (ASM.needs.google){
+      if (ASM.visible.google && ASM.needs.google){
         const ids = Array.from(ASM.sel.google).slice(0, MAX_SELECT);
         tasks.push(_post('/api/google/ads/insights/accounts/selection', { accountIds: ids }));
       }
+
       await Promise.all(tasks);
 
-      if (ASM.needs.meta)   sessionStorage.setItem('metaConnected','true');
-      if (ASM.needs.google) sessionStorage.setItem('googleConnected','true');
-
-      // Notifica al resto de la UI (onboarding.js escucha este evento)
-      window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved'));
+      if (ASM.visible.meta)   sessionStorage.setItem('metaConnected','true');
+      if (ASM.visible.google) sessionStorage.setItem('googleConnected','true');
 
       _hide(_el('account-select-modal'));
     } catch (e) {
       console.error('save selection error', e);
       const box = _el('asm-error');
-      if (box){
-        box.textContent = 'Ocurrió un error guardando tu selección. Intenta de nuevo.';
-        _show(box);
-      }
+      if (box){ box.textContent = 'Ocurrió un error guardando tu selección. Intenta de nuevo.'; _show(box); }
       _hint('', 'info');
       saveBtn.textContent = 'Guardar y continuar';
       _enableSave(true);
@@ -256,52 +211,65 @@ async function _openModal(){
 }
 
 async function _maybeOpenSelectionModal(){
-  // 1) Traer cuentas una vez finalizado OAuth
-  const [m, g] = await Promise.allSettled([
-    _json('/api/meta/accounts'),
-    _json('/api/google/ads/insights/accounts')
-  ]);
+  // ¿Desde qué OAuth venimos?
+  const url = new URL(location.href);
+  const fromMeta   = url.searchParams.has('meta');
+  const fromGoogle = url.searchParams.has('google');
 
-  const meta = m.status === 'fulfilled'
-    ? (m.value.accounts || m.value.ad_accounts || [])
-    : [];
-  const goog = g.status === 'fulfilled'
-    ? (g.value.accounts || [])
-    : [];
+  // Si ya hay selección guardada (o sessionStorage), no pedir de nuevo
+  const metaAlready = sessionStorage.getItem('metaConnected') === 'true';
+  const googAlready = sessionStorage.getItem('googleConnected') === 'true';
 
-  // 2) Reglas de selección → si hay 3+ se abre modal y se limita a 3
-  ASM.needs.meta   = meta.length  > 2;
-  ASM.needs.google = goog.length  > 2;
-  ASM.data.meta    = meta;
-  ASM.data.google  = goog;
+  // Flags de visibilidad: solo la plataforma que detonó el modal
+  ASM.visible.meta   = fromMeta   && !metaAlready;
+  ASM.visible.google = fromGoogle && !googAlready;
 
-  // 3) Autoselección cuando hay 1–2 por plataforma
-  const calls = [];
-  if (!ASM.needs.meta && meta.length > 0){
-    const ids = meta.map(a => String(a.id || a.account_id || '').replace(/^act_/, ''));
-    calls.push(_post('/api/meta/accounts/selection', {
-      accountIds: ids.slice(0, MAX_SELECT)
-    }).catch(()=>{}));
-    sessionStorage.setItem('metaConnected', '1');
-  }
-  if (!ASM.needs.google && goog.length > 0){
-    const ids = goog.map(a => String(a.id || '').replace(/^customers\//, '').replace(/-/g,'').trim());
-    calls.push(_post('/api/google/ads/insights/accounts/selection', {
-      accountIds: ids.slice(0, MAX_SELECT)
-    }).catch(()=>{}));
-    sessionStorage.setItem('googleConnected', '1');
-  }
-  if (calls.length){
-    try { await Promise.all(calls); } catch(_) {}
+  // Si nada está visible, salir
+  if (!ASM.visible.meta && !ASM.visible.google) return;
+
+  // Carga de cuentas SOLO de lo visible
+  const promises = [];
+  if (ASM.visible.meta){
+    promises.push(
+      _json('/api/meta/accounts').then(v=>{
+        ASM.data.meta = v.accounts || v.ad_accounts || [];
+        // Se necesita modal si hay 3+
+        ASM.needs.meta = (ASM.data.meta.length > 2);
+        // Autoselección si 1–2
+        if (!ASM.needs.meta && ASM.data.meta.length){
+          const ids = ASM.data.meta.map(a => String(a.id || a.account_id || '').replace(/^act_/, ''));
+          return _post('/api/meta/accounts/selection', { accountIds: ids.slice(0, MAX_SELECT) })
+            .then(()=>sessionStorage.setItem('metaConnected','true'))
+            .catch(()=>{});
+        }
+      })
+    );
   }
 
-  // 4) Si alguna plataforma necesita selección, abrir modal
-  if (ASM.needs.meta || ASM.needs.google){
+  if (ASM.visible.google){
+    promises.push(
+      _json('/api/google/ads/insights/accounts').then(v=>{
+        ASM.data.google = v.accounts || [];
+        ASM.needs.google = (ASM.data.google.length > 2);
+        if (!ASM.needs.google && ASM.data.google.length){
+          const ids = ASM.data.google.map(a => String(a.id || '').replace(/^customers\//,'').replace(/-/g,'').trim());
+          return _post('/api/google/ads/insights/accounts/selection', { accountIds: ids.slice(0, MAX_SELECT) })
+            .then(()=>sessionStorage.setItem('googleConnected','true'))
+            .catch(()=>{});
+        }
+      })
+    );
+  }
+
+  await Promise.allSettled(promises);
+
+  // Si alguna necesita selección, abrir modal (muestra solo lo visible)
+  if ((ASM.visible.meta && ASM.needs.meta) || (ASM.visible.google && ASM.needs.google)){
     await _openModal();
   }
 }
 
-// Hook: cuando volvemos del OAuth (query ?meta=ok o ?google=ok)
+// Hook: cuando volvemos del OAuth (query ?meta=ok u ?google=ok)
 document.addEventListener('DOMContentLoaded', () => {
   const url = new URL(location.href);
   const cameFromMeta   = url.searchParams.has('meta');
