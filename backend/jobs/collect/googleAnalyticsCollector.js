@@ -1,4 +1,4 @@
-// backend/api/jobs/collect/googleAnalyticsCollector.js
+// backend/jobs/collect/googleAnalyticsCollector.js
 'use strict';
 
 const fetch = require('node-fetch');

@@ -154,7 +154,7 @@ function mirrorActionCenterToIssues(doc) {
   return out;
 }
 
-// ---------------- Heurísticos (garantiza hallazgos si LLM cae) ----------------
+// ---------------- Heurísticos ----------------
 function heuristicsFromGoogle(snap) {
   const issues = [];
   const byCamp = Array.isArray(snap?.byCampaign) ? snap.byCampaign : [];
@@ -331,11 +331,36 @@ async function runSingleAudit({ userId, type, flags }) {
     snap = {};
   }
 
-  // 3) Autorización y datos
+  // 3) Autorización y datos + 🔧 normalización GA4
   const authorized = !snap?.notAuthorized;
+
+  if (persistType === 'ga4') {
+    // aplanar channels si vienen por propiedad
+    const flatChannels =
+      (Array.isArray(snap?.channels) ? snap.channels : [])
+        .concat(
+          Array.isArray(snap?.byProperty)
+            ? snap.byProperty.flatMap(p => Array.isArray(p?.channels) ? p.channels : [])
+            : []
+        );
+    if ((!snap.channels || !snap.channels.length) && flatChannels.length) {
+      snap.channels = flatChannels;
+    }
+  }
+
   const hasData =
     persistType === 'ga4'
-      ? (Array.isArray(snap?.channels) && snap.channels.length > 0)
+      ? (
+          (Array.isArray(snap?.channels) && snap.channels.length > 0) ||
+          (Array.isArray(snap?.byProperty) &&
+            snap.byProperty.some(p => Array.isArray(p?.channels) && p.channels.length > 0)) ||
+          (snap?.aggregate && (
+            Number(snap.aggregate.users || 0) > 0 ||
+            Number(snap.aggregate.sessions || 0) > 0 ||
+            Number(snap.aggregate.conversions || 0) > 0 ||
+            Number(snap.aggregate.revenue || 0) > 0
+          ))
+        )
       : (Array.isArray(snap?.byCampaign) && snap.byCampaign.length > 0);
 
   // 4) Generar issues
