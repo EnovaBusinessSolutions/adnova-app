@@ -128,6 +128,127 @@ function sortIssuesBySeverityThenImpact(issues) {
   });
 }
 
+// ===== Helpers para repartir “cupos” (6 total) por cuenta/propiedad =====
+function computeQuota(num) {
+  // 1 cuenta → 6; 2 cuentas → 3 y 3; 3+ cuentas → 2 y 2 y 2 (máx. 3)
+  if (num <= 1) return { per: 6, takeAccounts: 1 };
+  if (num === 2) return { per: 3, takeAccounts: 2 };
+  return { per: 2, takeAccounts: 3 };
+}
+
+function accountKeyFromIssue(it) {
+  return (
+    it.metrics?.campaignRef?.accountId || // si el LLM lo incluye
+    it.metrics?.accountId ||
+    it.metrics?.account ||
+    null
+  );
+}
+
+function annotateTitleWithAccount(issue, label) {
+  if (!label) return issue;
+  const t = String(issue.title || '').trim();
+  if (!t.startsWith('[')) issue.title = `[${label}] ${t}`;
+  return issue;
+}
+
+function distributeByAccounts(issues, selectedIds = [], accountMap = {}) {
+  const cleanSelected = Array.isArray(selectedIds) ? [...new Set(selectedIds.map(String))] : [];
+  const { per, takeAccounts } = computeQuota(cleanSelected.length || 1);
+
+  // bucket: accountId -> issues[]
+  const bucket = new Map();
+  for (const id of cleanSelected.slice(0, takeAccounts)) bucket.set(String(id), []);
+  if (bucket.size === 0) bucket.set('default', []);
+
+  const ranked = sortIssuesBySeverityThenImpact(issues);
+
+  // Asignación por accountKey
+  for (const it of ranked) {
+    const k = accountKeyFromIssue(it);
+    if (k && bucket.has(String(k)) && bucket.get(String(k)).length < per) {
+      bucket.get(String(k)).push(it);
+    }
+  }
+
+  // Relleno round-robin
+  const leftovers = ranked.filter(it => ![...bucket.values()].some(arr => arr.includes(it)));
+  const order = [...bucket.keys()];
+  let idx = 0;
+  for (const it of leftovers) {
+    let placed = false;
+    for (let tries = 0; tries < order.length; tries++) {
+      const key = order[idx % order.length];
+      const arr = bucket.get(key);
+      if (arr.length < per) {
+        arr.push(it);
+        placed = true;
+        idx++;
+        break;
+      }
+      idx++;
+    }
+    if (!placed) break;
+  }
+
+  const out = [];
+  for (const [key, arr] of bucket.entries()) {
+    const label =
+      key === 'default'
+        ? null
+        : (accountMap[key]?.name || accountMap[key]?.label || `Cuenta ${key}`);
+    for (const it of arr) out.push(annotateTitleWithAccount(it, label));
+  }
+
+  return out.slice(0, 6);
+}
+
+/** Extrae entidades del snapshot para mapear ids->nombre por fuente */
+function extractEntitiesForSnapshot(type, snap) {
+  // GOOGLE y META: preferimos snap.accounts [{id,name,...}]
+  if (type === 'google' || type === 'meta') {
+    const ids = Array.isArray(snap?.accountIds) ? snap.accountIds.map(String) : [];
+    const map = {};
+    if (Array.isArray(snap?.accounts)) {
+      for (const a of snap.accounts) {
+        const id = String(a.id || '');
+        if (id) map[id] = { name: a.name || `Cuenta ${id}` };
+      }
+    }
+    // fallback: intenta deducir nombres desde byCampaign
+    if (!Object.keys(map).length && Array.isArray(snap?.byCampaign)) {
+      for (const c of snap.byCampaign) {
+        const id = String(c.account_id || '');
+        if (id && !map[id]) map[id] = { name: c.accountMeta?.name || `Cuenta ${id}` };
+      }
+    }
+    return { ids, map };
+  }
+
+  // GA4: usa propiedades de byProperty
+  if (type === 'ga4') {
+    const props = Array.isArray(snap?.byProperty) ? snap.byProperty : [];
+    const ids = props.map(p => String(p.property || '')).filter(Boolean);
+    const map = {};
+    for (const p of props) {
+      const id = String(p.property || '');
+      if (!id) continue;
+      const name = p.propertyName
+        ? `${p.propertyName}${p.accountName ? ` — ${p.accountName}` : ''}`
+        : (p.accountName ? `${id} — ${p.accountName}` : id);
+      map[id] = { name };
+    }
+    if (!props.length && snap?.property) {
+      const id = String(snap.property);
+      ids.push(id);
+      map[id] = { name: snap.propertyName || id };
+    }
+    return { ids, map };
+  }
+
+  return { ids: [], map: {} };
+}
+
 // ===== Fallback: si no hay issues, espejar actionCenter =====
 function mirrorActionCenterToIssues(doc) {
   if (!doc) return doc;
@@ -175,7 +296,7 @@ function heuristicsFromGoogle(snap) {
         severity: 'media',
         evidence: `CTR ${ctr.toFixed(2)}% con ${impr} impresiones y ${clk} clics.`,
         recommendation: 'Optimiza RSA/anuncios, extensiones y relevancia de keywords. Testea creatividades.',
-        metrics: { ctr, impressions: impr, clicks: clk, campaign: c.name },
+        metrics: { ctr, impressions: impr, clicks: clk, campaign: c.name, accountId: c.account_id },
         campaignRef: { id: c.id, name: c.name }
       });
     }
@@ -186,7 +307,7 @@ function heuristicsFromGoogle(snap) {
         severity: 'alta',
         evidence: `Clicks ${clk}, coste ${cost.toFixed(2)} y 0 conversiones.`,
         recommendation: 'Revisa Search Terms, negativas y concordancias. Verifica la calidad de la landing.',
-        metrics: { clicks: clk, cost, conversions: conv, campaign: c.name },
+        metrics: { clicks: clk, cost, conversions: conv, campaign: c.name, accountId: c.account_id },
         campaignRef: { id: c.id, name: c.name }
       });
     }
@@ -197,7 +318,7 @@ function heuristicsFromGoogle(snap) {
         severity: 'media',
         evidence: `ROAS ${roas.toFixed(2)} con gasto ${cost.toFixed(2)}.`,
         recommendation: 'Ajusta pujas, audiencias y ubicaciones; evalúa pausar segmentos de bajo rendimiento.',
-        metrics: { roas, cost, conv_value: value, campaign: c.name },
+        metrics: { roas, cost, conv_value: value, campaign: c.name, accountId: c.account_id },
         campaignRef: { id: c.id, name: c.name }
       });
     }
@@ -223,7 +344,7 @@ function heuristicsFromMeta(snap) {
         severity: 'media',
         evidence: `CTR ${ctr.toFixed(2)}% con ${impr} impresiones.`,
         recommendation: 'Test A/B de creatividades y textos. Revisa el hook visual y la segmentación.',
-        metrics: { impressions: impr, ctr, campaign: c.name },
+        metrics: { impressions: impr, ctr, campaign: c.name, accountId: c.account_id },
         campaignRef: { id: c.id, name: c.name }
       });
     }
@@ -234,7 +355,7 @@ function heuristicsFromMeta(snap) {
         severity: 'media',
         evidence: `ROAS ${roas.toFixed(2)} con inversión ${spend.toFixed(2)}.`,
         recommendation: 'Optimiza creatividades, audiencias y ubicaciones; revisa atribución y ventanas.',
-        metrics: { roas, spend, campaign: c.name },
+        metrics: { roas, spend, campaign: c.name, accountId: c.account_id },
         campaignRef: { id: c.id, name: c.name }
       });
     }
@@ -249,7 +370,7 @@ function heuristicsFromGA4(snap) {
   const props = Array.isArray(snap?.byProperty) && snap.byProperty.length
     ? snap.byProperty
     : (snap?.property
-        ? [{ 
+        ? [{
             property: snap.property,
             accountName: snap.accountName || '',
             propertyName: snap.propertyName || '',
@@ -282,8 +403,7 @@ function heuristicsFromGA4(snap) {
         severity: 'alta',
         evidence: `Sesiones: ${totals.sessions}, Conversiones: ${totals.conversions}, CR: ${cr.toFixed(2)}%.`,
         recommendation: 'Revisa embudos clave, velocidad de página, mensajes de valor y configuración de eventos de conversión.',
-        metrics: { ...totals, cr },
-        // Contexto GA para tu UI:
+        metrics: { ...totals, cr, accountId: p.property },
         segmentRef: {
           type: 'property',
           name: `${propertyLabel}${accountLabel ? ` — ${p.accountName}` : ''}`,
@@ -299,7 +419,7 @@ function heuristicsFromGA4(snap) {
         severity: 'media',
         evidence: `Se observaron ${paidSess} sesiones de canales de pago sin conversiones registradas.`,
         recommendation: 'Cruza datos con plataformas de Ads; revisa eventos de conversión (duplicados/filtros/consent) y la relevancia de landing pages.',
-        metrics: { paidSessions: paidSess, paidConversions: paidConv },
+        metrics: { paidSessions: paidSess, paidConversions: paidConv, accountId: p.property },
         segmentRef: {
           type: 'property',
           name: `${propertyLabel}${accountLabel ? ` — ${p.accountName}` : ''}`,
@@ -433,6 +553,14 @@ async function runSingleAudit({ userId, type, flags }) {
     summary = summary || 'Hallazgos generados con reglas básicas (fallback).';
   }
 
+  // === Reparto 6/3-3/2-2-2 por cuenta/propiedad + anotación de títulos ===
+  try {
+    const { ids, map } = extractEntitiesForSnapshot(persistType, snap);
+    issues = distributeByAccounts(issues, ids, map);
+  } catch (e) {
+    console.warn('ISSUE_DISTRIBUTION_WARN', e?.message || e);
+  }
+
   // 6) Normaliza, ordena y persiste
   issues = normalizeIssues(issues, persistType, 10);
   const top3 = sortIssuesBySeverityThenImpact(issues).slice(0, 3);
@@ -447,7 +575,7 @@ async function runSingleAudit({ userId, type, flags }) {
     actionCenter: top3,
     topProducts: Array.isArray(snap?.topProducts) ? snap.topProducts : [],
     inputSnapshot: snap,
-    version: 'audits@1.1.0',
+    version: 'audits@1.1.2',
   });
 
   return { type: persistType, ok: true, auditId: doc._id };

@@ -11,6 +11,13 @@ const {
   GOOGLE_CONNECT_CALLBACK_URL: GOOGLE_REDIRECT_URI,
 } = process.env;
 
+// [★] Límite duro por requerimiento (3). Se puede sobre-escribir por env.
+const HARD_LIMIT = 3;
+const MAX_BY_RULE = Math.min(
+  HARD_LIMIT,
+  Number(process.env.GA_PROPERTIES_MAX || HARD_LIMIT)
+);
+
 /* ---------------- models ---------------- */
 let GoogleAccount;
 try { GoogleAccount = require('../../models/GoogleAccount'); }
@@ -31,13 +38,15 @@ catch (_) {
   GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
 }
 
-// NEW: leer selección desde User.preferences
+// [★] Leer preferencia/selección guardada en User.preferences.googleAnalytics.auditPropertyIds
 let UserModel = null;
-try { UserModel = require('../../models/User'); } catch (_) {}
+try { UserModel = require('../../models/User'); } catch (_) {
+  const { Schema, model } = mongoose;
+  UserModel = mongoose.models.User || model('User', new Schema({}, { strict: false, collection: 'users' }));
+}
 
 /* ---------------- helpers ---------------- */
 const GA_SCOPE_READ = 'https://www.googleapis.com/auth/analytics.readonly';
-const MAX_BY_RULE = 3; // máx. 3 propiedades por auditoría
 
 const normPropertyId = (val) => {
   if (!val) return '';
@@ -140,21 +149,31 @@ async function resolvePropertiesForAudit({ userId, accDoc, forcedPropertyId }) {
   // 4) leer preferencias del usuario
   let selected = [];
   if (UserModel && userId) {
-    const user = await UserModel.findById(userId).lean().select('preferences');
-    selected = Array.isArray(user?.preferences?.googleAnalytics?.auditPropertyIds)
-      ? user.preferences.googleAnalytics.auditPropertyIds.map(normPropertyId).filter(Boolean)
-      : [];
+    const user = await UserModel.findById(userId).lean().select('preferences selectedProperties');
+    // [★] Soporta preferencia nueva y un alias legado opcional
+    selected =
+      (Array.isArray(user?.preferences?.googleAnalytics?.auditPropertyIds)
+        ? user.preferences.googleAnalytics.auditPropertyIds
+        : Array.isArray(user?.selectedProperties)
+          ? user.selectedProperties
+          : []
+      )
+      .map(normPropertyId)
+      .filter(Boolean);
   }
 
   // 5) si hay selección explícita, úsala (máx. 3 y validada)
   if (selected.length > 0) {
     const byId = new Map(available.map(a => [a.id, a]));
-    const picked = [...new Set(selected)].filter(id => byId.has(id)).slice(0, MAX_BY_RULE).map(id => byId.get(id));
+    const picked = [...new Set(selected)]
+      .filter(id => byId.has(id))
+      .slice(0, MAX_BY_RULE)
+      .map(id => byId.get(id));
     if (picked.length === 0) return { error: 'NO_VALID_SELECTED_PROPERTIES' };
     return picked;
   }
 
-  // 6) sin selección: si disponibles <=3, usa todas; si >3, requiere selección
+  // 6) sin selección: si disponibles <=3, usa todas; si >3, marcar que se requiere selección
   if (available.length <= MAX_BY_RULE) return available;
 
   return { error: 'SELECTION_REQUIRED(>3_PROPERTIES)', availableCount: available.length };
@@ -200,14 +219,14 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
       return { notAuthorized: true, reason: 'NO_VALID_SELECTED_PROPERTIES' };
     }
     if (resolved.error.startsWith('SELECTION_REQUIRED')) {
-      console.warn('[ga4Collector] Precondición: usuario tiene >3 propiedades sin selección explícita.');
+      // [★] Señal para UI/backoffice: requiere pantalla de selección (no creada aún)
       return { notAuthorized: true, reason: resolved.error, requiredSelection: true };
     }
   }
 
   const propertiesToAudit = (Array.isArray(resolved) ? resolved : []).slice(0, MAX_BY_RULE);
 
-  // Log de diagnóstico
+  // (diagnóstico opcional)
   try {
     if (UserModel && userId) {
       const user = await UserModel.findById(userId).lean().select('preferences');
@@ -294,7 +313,14 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
     });
   }
 
-  // Compat: si sólo hubo una propiedad, exponemos los campos “simples” también
+  // [★] Estructura con lista de propiedades para repartir recomendaciones aguas arriba
+  const properties = byProperty.map(p => ({
+    id: p.property,
+    accountName: p.accountName,
+    propertyName: p.propertyName
+  }));
+
+  // Compat: si sólo hubo una propiedad, exponer campos “simples”
   if (byProperty.length === 1) {
     const p = byProperty[0];
     return {
@@ -306,6 +332,8 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
       channels: p.channels,
       byProperty,
       aggregate,
+      properties,                 // [★]
+      version: 'ga4Collector@multi-properties'
     };
   }
 
@@ -313,7 +341,9 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
     notAuthorized: false,
     dateRange,
     byProperty,    // [{ property, accountName, propertyName, channels, ... }]
-    aggregate,     // suma de métricas básicas
+    aggregate,     // suma básica
+    properties,    // [★] para repartir recomendaciones
+    version: 'ga4Collector@multi-properties'
   };
 }
 
