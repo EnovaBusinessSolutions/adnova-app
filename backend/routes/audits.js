@@ -128,9 +128,9 @@ function sortIssuesBySeverityThenImpact(issues) {
   });
 }
 
-// ===== Helpers para repartir “cupos” (6 total) por cuenta/propiedad =====
+/* ================= Helpers para repartir 6/3-3/2-2-2 por cuenta ================= */
+
 function computeQuota(num) {
-  // 1 cuenta → 6; 2 cuentas → 3 y 3; 3+ cuentas → 2 y 2 y 2 (máx. 3)
   if (num <= 1) return { per: 6, takeAccounts: 1 };
   if (num === 2) return { per: 3, takeAccounts: 2 };
   return { per: 2, takeAccounts: 3 };
@@ -138,7 +138,7 @@ function computeQuota(num) {
 
 function accountKeyFromIssue(it) {
   return (
-    it.metrics?.campaignRef?.accountId || // si el LLM lo incluye
+    it.metrics?.campaignRef?.accountId || // si el LLM lo incluyera
     it.metrics?.accountId ||
     it.metrics?.account ||
     null
@@ -215,7 +215,6 @@ function extractEntitiesForSnapshot(type, snap) {
         if (id) map[id] = { name: a.name || `Cuenta ${id}` };
       }
     }
-    // fallback: intenta deducir nombres desde byCampaign
     if (!Object.keys(map).length && Array.isArray(snap?.byCampaign)) {
       for (const c of snap.byCampaign) {
         const id = String(c.account_id || '');
@@ -247,6 +246,35 @@ function extractEntitiesForSnapshot(type, snap) {
   }
 
   return { ids: [], map: {} };
+}
+
+/** Inyecta metrics.accountId en issues usando campaignRef + snapshot (por si el LLM no lo puso) */
+function injectAccountOnIssues(issues = [], snap = {}) {
+  try {
+    // índice campId -> accountId
+    const idx = new Map();
+    if (Array.isArray(snap.byCampaign)) {
+      for (const c of snap.byCampaign) {
+        const campId = String(c?.id || c?.campaign_id || '');
+        const accId  = String(c?.account_id || '');
+        if (campId && accId) idx.set(campId, accId);
+      }
+    }
+    for (const it of issues) {
+      const has = it?.metrics?.accountId || it?.metrics?.account || it?.metrics?.campaignRef?.accountId;
+      if (has) continue;
+      const camp = it?.campaignRef?.id || it?.metrics?.campaignRef?.id;
+      const accId = camp ? idx.get(String(camp)) : null;
+      if (accId) {
+        it.metrics = it.metrics || {};
+        it.metrics.accountId = accId;
+        if (it.metrics.campaignRef && !it.metrics.campaignRef.accountId) {
+          it.metrics.campaignRef.accountId = accId;
+        }
+      }
+    }
+  } catch {}
+  return issues;
 }
 
 // ===== Fallback: si no hay issues, espejar actionCenter =====
@@ -366,7 +394,6 @@ function heuristicsFromMeta(snap) {
 function heuristicsFromGA4(snap) {
   const issues = [];
 
-  // Normaliza a lista de propiedades con sus canales
   const props = Array.isArray(snap?.byProperty) && snap.byProperty.length
     ? snap.byProperty
     : (snap?.property
@@ -395,7 +422,6 @@ function heuristicsFromGA4(snap) {
     const accountLabel  = p.accountName ? ` — ${p.accountName}` : '';
     const propertyLabel = p.propertyName || p.property || '';
 
-    // Hallazgo 1: CR bajo
     if (totals.sessions > 200 && cr < 1) {
       issues.push({
         area: 'performance',
@@ -411,7 +437,6 @@ function heuristicsFromGA4(snap) {
       });
     }
 
-    // Hallazgo 2: Tráfico de pago sin conversiones
     if (paidSess > 200 && paidConv === 0) {
       issues.push({
         area: 'performance',
@@ -431,8 +456,6 @@ function heuristicsFromGA4(snap) {
   return issues;
 }
 
-
-
 // ---------------- Alias de fuentes (entrada) ----------------
 const SOURCE_ALIASES = {
   ga: 'ga4',
@@ -450,6 +473,29 @@ function normalizeSource(src = '') {
   return SOURCE_ALIASES[v] || v;
 }
 
+/* ====== Helpers de selección (lee preferences y selected*; cae a snapshot) ====== */
+function getSelectedIdsForType(type, user = {}, snap = {}) {
+  const p = user?.preferences || {};
+  if (type === 'meta') {
+    const pref = p?.meta?.auditAccountIds || [];
+    const legacy = user?.selectedMetaAccounts || [];
+    return (pref.length ? pref : legacy).map(String);
+  }
+  if (type === 'google') {
+    const pref = p?.googleAds?.auditAccountIds || [];
+    const legacy = user?.selectedGoogleAccounts || [];
+    return (pref.length ? pref : legacy).map(String);
+  }
+  if (type === 'ga4') {
+    const pref = p?.googleAnalytics?.auditPropertyIds || [];
+    const legacy = user?.selectedGAProperties || [];
+    return (pref.length ? pref : legacy).map(String);
+  }
+  // fallback: ids del snapshot
+  if (Array.isArray(snap?.accountIds)) return snap.accountIds.map(String);
+  return [];
+}
+
 // ---------------- Núcleo: ejecutar una auditoría ----------------
 async function runSingleAudit({ userId, type, flags }) {
   const persistType = SOURCE_ALIASES[type] || type;
@@ -465,7 +511,7 @@ async function runSingleAudit({ userId, type, flags }) {
       issues: [buildSetupIssue({ type: persistType, title: 'Fuente no conectada', evidence: 'Conecta la cuenta para auditar.' })],
       actionCenter: [],
       inputSnapshot: { notAuthorized: true, reason: 'NOT_CONNECTED' },
-      version: 'audits@1.1.1',
+      version: 'audits@1.1.2',
     });
     return { type: persistType, ok: true, auditId: doc._id };
   }
@@ -484,11 +530,10 @@ async function runSingleAudit({ userId, type, flags }) {
     snap = {};
   }
 
-  // 3) Autorización y datos + 🔧 normalización GA4
+  // 3) Autorización y datos + normalización GA4
   const authorized = !snap?.notAuthorized;
 
   if (persistType === 'ga4') {
-    // aplanar channels si vienen por propiedad
     const flatChannels =
       (Array.isArray(snap?.channels) ? snap.channels : [])
         .concat(
@@ -545,7 +590,7 @@ async function runSingleAudit({ userId, type, flags }) {
     }
   }
 
-  // 5) Fallback heurístico
+  // 5) Fallback heurístico si no hay nada
   if (issues.length === 0 && hasData && authorized) {
     if (persistType === 'google') issues = heuristicsFromGoogle(snap);
     if (persistType === 'meta')   issues = heuristicsFromMeta(snap);
@@ -553,10 +598,17 @@ async function runSingleAudit({ userId, type, flags }) {
     summary = summary || 'Hallazgos generados con reglas básicas (fallback).';
   }
 
-  // === Reparto 6/3-3/2-2-2 por cuenta/propiedad + anotación de títulos ===
+  // 5.1 Inyecta accountId en issues usando snapshot (por si el LLM no lo trajo)
+  issues = injectAccountOnIssues(issues, snap);
+
+  // 5.2 Reparto 6/3-3/2-2-2 por cuentas/props seleccionadas + anotación de títulos
   try {
-    const { ids, map } = extractEntitiesForSnapshot(persistType, snap);
-    issues = distributeByAccounts(issues, ids, map);
+    const user = await User.findById(userId).lean().select(
+      'selectedMetaAccounts selectedGoogleAccounts selectedGAProperties preferences'
+    );
+    const selectedIds = getSelectedIdsForType(persistType, user, snap);
+    const { map } = extractEntitiesForSnapshot(persistType, snap);
+    issues = distributeByAccounts(issues, selectedIds.length ? selectedIds : (Array.isArray(snap.accountIds) ? snap.accountIds : []), map);
   } catch (e) {
     console.warn('ISSUE_DISTRIBUTION_WARN', e?.message || e);
   }
@@ -575,7 +627,7 @@ async function runSingleAudit({ userId, type, flags }) {
     actionCenter: top3,
     topProducts: Array.isArray(snap?.topProducts) ? snap.topProducts : [],
     inputSnapshot: snap,
-    version: 'audits@1.1.2',
+    version: 'audits@1.1.3',
   });
 
   return { type: persistType, ok: true, auditId: doc._id };
@@ -731,110 +783,6 @@ router.get('/action-center', requireAuth, async (req, res) => {
   } catch (e) {
     console.error('ACTION_CENTER_ERROR:', e);
     return res.status(500).json({ ok: false, error: 'ACTION_CENTER_ERROR', detail: e?.message });
-  }
-});
-
-/* =====================================================
- * Adapters legacy para el onboarding (compatibilidad)
- * ===================================================== */
-
-// POST /api/audits/start  → ejecuta en sincrónico las 3 fuentes (o las que mandes)
-router.post('/start', requireAuth, async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const user   = await User.findById(userId).lean();
-
-    const flags = {
-      google:  !!(req.body?.googleConnected  ?? user?.googleConnected),
-      meta:    !!(req.body?.metaConnected    ?? user?.metaConnected),
-      ga4:     !!(req.body?.googleConnected  ?? user?.googleConnected),
-    };
-
-    // Respeta types si vienen; normaliza alias y filtra válidos
-    const typesReq = Array.isArray(req.body?.types) ? req.body.types.map(normalizeSource) : null;
-    const types = (typesReq && typesReq.length)
-      ? [...new Set(typesReq.filter(t => VALID_SOURCES_DB.includes(t)))]
-      : VALID_SOURCES_DB;
-
-    const results = [];
-    for (const type of types) {
-      const r = await runSingleAudit({ userId, type, flags });
-      results.push(r);
-    }
-
-    return res.json({
-      ok: true,
-      jobId: 'sync-' + Date.now(),       // dummy para compat
-      started: { google: flags.google, meta: flags.meta, ga: flags.ga4 },
-      results,
-    });
-  } catch (e) {
-    console.error('LEGACY_START_ERROR', e);
-    return res.status(500).json({ ok: false, error: 'LEGACY_START_ERROR' });
-  }
-});
-
-// GET /api/audits/progress?jobId=... → ahora reporta percent e items
-router.get('/progress', requireAuth, async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const user   = await User.findById(userId).lean();
-
-    const connected = {
-      google: !!user?.googleConnected,
-      meta:   !!user?.metaConnected,
-      ga4:    !!user?.googleConnected, // GA4 comparte login con Google
-    };
-
-    const [googleDoc, metaDoc, gaDoc] = await Promise.all([
-      Audit.findOne({ userId, type: 'google' }).sort({ generatedAt: -1 }).lean(),
-      Audit.findOne({ userId, type: 'meta'   }).sort({ generatedAt: -1 }).lean(),
-      Audit.findOne({ userId, type: 'ga4'    }).sort({ generatedAt: -1 }).lean(),
-    ]);
-
-    const items = {
-      google: connected.google
-        ? (googleDoc ? { state: 'done', pct: 100, at: googleDoc.generatedAt, msg: 'Listo' }
-                     : { state: 'running', pct: 50,  at: null, msg: 'Analizando…' })
-        : { state: 'skipped', pct: 0, at: null, msg: 'No conectado' },
-
-      meta: connected.meta
-        ? (metaDoc ? { state: 'done', pct: 100, at: metaDoc.generatedAt, msg: 'Listo' }
-                   : { state: 'running', pct: 50,  at: null, msg: 'Analizando…' })
-        : { state: 'skipped', pct: 0, at: null, msg: 'No conectado' },
-
-      ga4: connected.ga4
-        ? (gaDoc ? { state: 'done', pct: 100, at: gaDoc.generatedAt, msg: 'Listo' }
-                 : { state: 'running', pct: 50,  at: null, msg: 'Analizando…' })
-        : { state: 'skipped', pct: 0, at: null, msg: 'No conectado' },
-    };
-
-    const totalConsidered = ['google','meta','ga4'].filter(k => connected[k]).length;
-    const done = ['google','meta','ga4'].filter(k => connected[k] && items[k].state === 'done').length;
-    const percent = totalConsidered === 0 ? 100 : Math.round((done / totalConsidered) * 100);
-    const finished = totalConsidered === 0 ? true : (done === totalConsidered);
-
-    return res.json({
-      ok: true,
-      finished,
-      overallPct: percent,
-      percent,
-      items,
-
-      // legacy
-      done: finished,
-      hasGoogle: !!googleDoc,
-      hasMeta:   !!metaDoc,
-      hasGA:     !!gaDoc,
-      at: {
-        google: googleDoc?.generatedAt || null,
-        meta:   metaDoc?.generatedAt   || null,
-        ga:     gaDoc?.generatedAt     || null,
-      },
-    });
-  } catch (e) {
-    console.error('LEGACY_PROGRESS_ERROR', e);
-    return res.status(500).json({ ok: false, error: 'LEGACY_PROGRESS_ERROR' });
   }
 });
 
