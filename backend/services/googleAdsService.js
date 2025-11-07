@@ -17,7 +17,7 @@ const LOGIN_CID = (
   ''
 ).replace(/[^\d]/g, '');
 
-const ADS_VER  = process.env.GADS_API_VERSION || 'v17';
+const ADS_VER  = process.env.GADS_API_VERSION || process.env.GOOGLE_ADS_API_VERSION || 'v22';
 const ADS_HOST = 'https://googleads.googleapis.com';
 
 const normId = (s = '') => String(s).replace(/[^\d]/g, '');
@@ -35,11 +35,10 @@ function baseHeaders(accessToken) {
   };
 }
 
-/* Pequeño detector de errores que ameritan reintento con login-customer-id */
+/* Errores típicos que ameritan reintento con login-customer-id */
 function shouldRetryWithLoginCid(errData) {
   const status = errData?.error?.status || '';
   const msg = (errData?.error?.message || '').toLowerCase();
-  // Casos comunes: PERMISSION_DENIED por falta de contexto, CUSTOMER_NOT_ENABLED, etc.
   return (
     status === 'PERMISSION_DENIED' ||
     status === 'FAILED_PRECONDITION' ||
@@ -56,10 +55,7 @@ function shouldRetryWithLoginCid(errData) {
  * 1) Descubrimiento de cuentas
  * ========================================================================== */
 
-/**
- * IMPORTANTE: listAccessibleCustomers NO debe llevar login-customer-id.
- * Devuelve ["customers/123", "customers/456", ...]
- */
+/** IMPORTANTE: listAccessibleCustomers NO debe llevar login-customer-id. */
 async function listAccessibleCustomers(accessToken) {
   const url = `${ADS_HOST}/${ADS_VER}/customers:listAccessibleCustomers`;
   const headers = baseHeaders(accessToken);
@@ -88,13 +84,12 @@ async function listAccessibleCustomers(accessToken) {
  * GET /customers/{cid}
  * Estrategia:
  *   1) Intento SIN login-customer-id (contexto natural del access_token)
- *   2) Si la API pide contexto o marca permiso, reintento CON LOGIN_CID (si existe)
+ *   2) Si la API pide contexto/permiso, reintento CON LOGIN_CID (si existe)
  */
 async function getCustomer(accessToken, customerId) {
   const cid = normId(customerId);
   const url = `${ADS_HOST}/${ADS_VER}/customers/${cid}`;
 
-  // 1) sin login-customer-id
   try {
     const { data } = await axios.get(url, {
       headers: baseHeaders(accessToken),
@@ -110,14 +105,10 @@ async function getCustomer(accessToken, customerId) {
     };
   } catch (e1) {
     const data = e1?.response?.data;
-    // 2) reintento con login-customer-id (si hay y aplica)
     if (LOGIN_CID && shouldRetryWithLoginCid(data)) {
       const h = baseHeaders(accessToken);
       h['login-customer-id'] = LOGIN_CID;
-      const { data: d2 } = await axios.get(url, {
-        headers: h,
-        timeout: 20000,
-      });
+      const { data: d2 } = await axios.get(url, { headers: h, timeout: 20000 });
       return {
         id: cid,
         name: d2?.descriptiveName || `Cuenta ${cid}`,
@@ -126,7 +117,6 @@ async function getCustomer(accessToken, customerId) {
         status: d2?.status || null,
       };
     }
-    // Si no aplica reintento o también falla, propagamos un error claro
     const code = data?.error?.status || e1?.response?.status || 'UNKNOWN';
     const msg  = data?.error?.message || e1?.message || 'getCustomer failed';
     const err  = new Error(`[getCustomer] ${code}: ${msg}`);
@@ -135,10 +125,7 @@ async function getCustomer(accessToken, customerId) {
   }
 }
 
-/**
- * Descubre todas las cuentas accesibles y las enriquece con getCustomer.
- * Devuelve [{ id, name, currencyCode, timeZone, status }]
- */
+/** Descubre todas las cuentas y las enriquece con getCustomer. */
 async function discoverAndEnrich(accessToken) {
   const list = await listAccessibleCustomers(accessToken); // ["customers/123", ...]
   const ids = Array.from(
@@ -156,7 +143,6 @@ async function discoverAndEnrich(accessToken) {
       const meta = await getCustomer(accessToken, id);
       out.push(meta);
     } catch (e) {
-      // continúa sin tumbar el flujo
       console.warn('[discoverAndEnrich] getCustomer fail', id, e?.response?.data || e?.api || e.message);
     }
   }
@@ -178,7 +164,6 @@ async function searchGAQLStream(accessToken, customerId, query) {
   const cid = normId(customerId);
   const url = `${ADS_HOST}/${ADS_VER}/customers/${cid}/googleAds:searchStream`;
 
-  // helper para invocar
   const call = async (headers) => {
     const { data, status } = await axios.post(
       url,
@@ -192,7 +177,7 @@ async function searchGAQLStream(accessToken, customerId, query) {
   const h1 = baseHeaders(accessToken);
   let { data, status } = await call(h1);
 
-  // si es error que amerita retry con login-customer-id
+  // 2) si amerita retry y tenemos MCC
   if ((typeof data === 'object' && data?.error && shouldRetryWithLoginCid(data)) && LOGIN_CID) {
     const h2 = baseHeaders(accessToken);
     h2['login-customer-id'] = LOGIN_CID;
@@ -215,7 +200,6 @@ async function searchGAQLStream(accessToken, customerId, query) {
     throw err;
   }
 
-  // Cuando hay BASIC token o sin permisos a veces devuelve HTML (404)
   if (typeof data === 'string') {
     const err = new Error('[searchGAQLStream] Unexpected string response (possible 404 HTML)');
     err.api = { raw: data.slice(0, 200) + '…' };
@@ -304,7 +288,7 @@ async function fetchInsights({
   const cid = normId(customerId);
   let [since, until] = datePreset ? presetRange(datePreset) : rangeFromCount(range || 30);
 
-  // v17: average_cpc está en moneda; cost en micros.
+  // v22: cost_micros / average_cpc_micros / conversion_value
   const GAQL_SERIE = `
     SELECT
       segments.date,
@@ -312,7 +296,7 @@ async function fetchInsights({
       metrics.clicks,
       metrics.cost_micros,
       metrics.ctr,
-      metrics.average_cpc,
+      metrics.average_cpc_micros,
       metrics.conversions,
       metrics.conversion_value
     FROM customer
@@ -325,18 +309,18 @@ async function fetchInsights({
   const series = rows.map(r => {
     const seg = r.segments || {};
     const met = r.metrics  || {};
-    let ctr = Number(met.ctr || 0); // a veces viene como %, normalizamos
-    if (ctr > 1) ctr = ctr / 100;
-
+    // En JSON de REST los campos vienen camelCase:
+    const costMicros = met.costMicros ?? met.cost_micros;
+    const avgCpcMicros = met.averageCpcMicros ?? met.average_cpc_micros;
     return {
       date: seg.date,
       impressions: Number(met.impressions || 0),
       clicks: Number(met.clicks || 0),
-      cost: microsToUnit(met.cost_micros),
-      ctr,
-      cpc: Number(met.average_cpc || 0),
+      cost: microsToUnit(costMicros),
+      ctr: Number(met.ctr || 0), // ya viene 0..1
+      cpc: microsToUnit(avgCpcMicros),
       conversions: Number(met.conversions || 0),
-      conv_value: Number(met.conversion_value || 0),
+      conv_value: Number(met.conversionValue ?? met.conversion_value ?? 0),
     };
   });
 

@@ -6,18 +6,38 @@ const { OAuth2Client } = require('google-auth-library');
 const GoogleAccount = require('../models/GoogleAccount');
 const User = require('../models/User');
 
+/* ================= ENV / Constantes ================= */
 const {
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
   GOOGLE_CONNECT_CALLBACK_URL,
+
+  // Developer token (acepta ambos nombres por compatibilidad)
+  GOOGLE_ADS_DEVELOPER_TOKEN,
   GOOGLE_DEVELOPER_TOKEN,
+
+  // MCC / Login CID (opcional pero recomendado)
   GOOGLE_ADS_LOGIN_CUSTOMER_ID,
-  GOOGLE_ADS_API_VERSION = 'v17',
+
+  // Versión de Ads API (usa v22 por defecto)
+  GADS_API_VERSION,
+  GOOGLE_ADS_API_VERSION,
 } = process.env;
+
+const DEV_TOKEN =
+  GOOGLE_ADS_DEVELOPER_TOKEN ||
+  GOOGLE_DEVELOPER_TOKEN ||
+  '';
+
+const ADS_VER = GADS_API_VERSION || GOOGLE_ADS_API_VERSION || 'v22';
+
+const LOGIN_CID = String(GOOGLE_ADS_LOGIN_CUSTOMER_ID || '')
+  .replace(/[^\d]/g, '')
+  .trim();
 
 /* ================= helpers ================= */
 const normId = (s = '') =>
-  String(s).trim().replace(/^customers\//, '').replace(/-/g, '');
+  String(s).trim().replace(/^customers\//, '').replace(/[^\d]/g, '');
 
 function oauth() {
   return new OAuth2Client({
@@ -29,43 +49,101 @@ function oauth() {
 
 async function refreshAccessToken(doc) {
   const client = oauth();
-  client.setCredentials({ refresh_token: doc.refreshToken, access_token: doc.accessToken });
+  client.setCredentials({
+    refresh_token: doc.refreshToken || undefined,
+    access_token: doc.accessToken || undefined,
+  });
   try {
     const { credentials } = await client.refreshAccessToken();
     return credentials.access_token || doc.accessToken;
   } catch {
-    // si falla, intenta con el que ya teníamos
+    // si falla el refresh, intenta con el que ya teníamos
     return doc.accessToken;
   }
 }
 
 function ymd(d) { return d.toISOString().slice(0, 10); }
-function addDays(d, n) { return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + n)); }
+function addDaysUTC(d, n) {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + n));
+}
 function last30dRange() {
   const today = new Date();
   const base = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
-  const until = addDays(base, -1);
-  const since = addDays(until, -29);
+  const until = addDaysUTC(base, -1);
+  const since = addDaysUTC(until, -29);
   return { since: ymd(since), until: ymd(until) };
 }
 
-function headersFor(accessToken, managerId) {
-  const h = {
+function microsToUnit(v) {
+  const n = Number(v || 0);
+  return Math.round((n / 1_000_000) * 100) / 100;
+}
+
+function baseHeaders(accessToken) {
+  if (!DEV_TOKEN) throw new Error('GOOGLE_ADS_DEVELOPER_TOKEN missing');
+  return {
     Authorization: `Bearer ${accessToken}`,
-    'developer-token': GOOGLE_DEVELOPER_TOKEN,
+    'developer-token': DEV_TOKEN,
     'Content-Type': 'application/json',
     Accept: 'application/json',
   };
-  const loginId = String(managerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '').replace(/-/g, '').trim();
-  if (loginId) h['login-customer-id'] = loginId;
-  return h;
 }
 
+/**
+ * Ejecuta GAQL con reintento:
+ * 1) Primero SIN login-customer-id
+ * 2) Si la API pide contexto o marca permiso, reintenta con login-customer-id
+ */
 async function runGAQL({ accessToken, customerId, gaql, managerId }) {
-  if (!GOOGLE_DEVELOPER_TOKEN) throw new Error('GOOGLE_DEVELOPER_TOKEN missing');
-  const url = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${customerId}/googleAds:search`;
-  const { data } = await axios.post(url, { query: gaql }, { headers: headersFor(accessToken, managerId), timeout: 30000 });
-  return data?.results || [];
+  if (!DEV_TOKEN) throw new Error('GOOGLE_ADS_DEVELOPER_TOKEN missing');
+
+  const cid = normId(customerId);
+  const url = `https://googleads.googleapis.com/${ADS_VER}/customers/${cid}/googleAds:search`;
+  const timeout = 35000;
+
+  // 1) intento sin contexto
+  try {
+    const { data } = await axios.post(
+      url,
+      { query: gaql },
+      { headers: baseHeaders(accessToken), timeout, validateStatus: () => true }
+    );
+
+    if (data?.results) return data.results;
+
+    // si llega con estructura de error, forzamos reintento con login CID
+    if (data?.error) throw { response: { data } };
+  } catch (e) {
+    // 2) reintento con login-customer-id
+    const loginId = String(managerId || LOGIN_CID || '').replace(/[^\d]/g, '');
+    if (!loginId) {
+      // si no hay MCC para reintento, relanza el error original
+      throw e;
+    }
+    const h2 = baseHeaders(accessToken);
+    h2['login-customer-id'] = loginId;
+
+    const { data } = await axios.post(
+      url,
+      { query: gaql },
+      { headers: h2, timeout, validateStatus: () => true }
+    );
+
+    if (data?.results) return data.results;
+
+    // normaliza error
+    if (data?.error) {
+      const msg = data.error?.message || 'googleAds:search failed';
+      const status = data.error?.status || 'UNKNOWN';
+      const err = new Error(`[runGAQL] ${status}: ${msg}`);
+      err.api = data.error;
+      throw err;
+    }
+    // si devuelve string u otra cosa inesperada:
+    const err = new Error('[runGAQL] Unexpected response');
+    err.api = data;
+    throw err;
+  }
 }
 
 /* =============== principal (respeta selección) =============== */
@@ -90,7 +168,9 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
     }
 
     // 2) Resolver lista de cuentas disponibles y selección efectiva
-    const available = Array.isArray(ga.customers) ? ga.customers.map(c => normId(c.id || c.customerId)) : [];
+    const available = Array.isArray(ga.customers)
+      ? ga.customers.map(c => normId(c.id || c.customerId))
+      : [];
     const selectedRaw = Array.isArray(user?.selectedGoogleAccounts) ? user.selectedGoogleAccounts : [];
     const selected = [...new Set(selectedRaw.map(normId).filter(Boolean))];
 
@@ -136,9 +216,10 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
 
     // 3) Token y rangos
     const accessToken = await refreshAccessToken(ga);
-    const ranges = last30dRange();
+    const { since, until } = last30dRange();
 
-    const gaql = `
+    // GAQL para v22 (costo/cpc en micros; conversions value en 'conversion_value')
+    const GAQL = `
       SELECT
         segments.date,
         campaign.id,
@@ -147,12 +228,11 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
         metrics.clicks,
         metrics.cost_micros,
         metrics.conversions,
-        metrics.conversions_value,
+        metrics.conversion_value,
         metrics.ctr,
-        metrics.cpc,
-        metrics.cpm
+        metrics.average_cpc_micros
       FROM campaign
-      WHERE segments.date BETWEEN '${ranges.since}' AND '${ranges.until}'
+      WHERE segments.date BETWEEN '${since}' AND '${until}'
       ORDER BY segments.date
     `;
 
@@ -166,11 +246,11 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
         rows = await runGAQL({
           accessToken,
           customerId,
-          gaql,
+          gaql: GAQL,
           managerId: ga.managerCustomerId,
         });
       } catch (e) {
-        console.warn('GAQL error:', e?.response?.data || e.message);
+        console.warn('GAQL error:', e?.api || e?.response?.data || e.message);
         rows = [];
       }
 
@@ -187,15 +267,19 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
       } catch { /* noop */ }
 
       for (const r of rows) {
-        const campId = r?.campaign?.id;
+        const campId   = r?.campaign?.id;
         const campName = r?.campaign?.name || `Campaign ${campId}`;
         const key = `${customerId}:${campId}`;
 
-        const imp  = Number(r?.metrics?.impressions ?? 0);
-        const clk  = Number(r?.metrics?.clicks ?? 0);
-        const cost = Number(r?.metrics?.costMicros ?? 0) / 1e6;
-        const conv = Number(r?.metrics?.conversions ?? 0);
-        const cval = Number(r?.metrics?.conversionsValue ?? 0);
+        // NOMBRES DE CAMPOS EN LA RESPUESTA REST (camelCase)
+        const met = r?.metrics || {};
+        const imp  = Number(met?.impressions ?? 0);
+        const clk  = Number(met?.clicks ?? 0);
+        const cost = microsToUnit(met?.costMicros);                // moneda
+        const conv = Number(met?.conversions ?? 0);
+        const cval = Number(met?.conversionValue ?? 0);
+        // también viene averageCpcMicros si lo necesitas:
+        // const avgCpc = microsToUnit(met?.averageCpcMicros);
 
         if (!agg.has(key)) {
           // Prefija nombre con cuenta si hay múltiples cuentas
@@ -203,10 +287,18 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
             toAudit.length > 1
               ? `${campName} · ${customerId}`
               : campName;
-          agg.set(key, { accountId: customerId, name: label, spend: 0, impr: 0, clicks: 0, conv: 0, convValue: 0 });
+          agg.set(key, {
+            accountId: customerId,
+            name: label,
+            spend: 0, impr: 0, clicks: 0, conv: 0, convValue: 0
+          });
         }
         const a = agg.get(key);
-        a.spend += cost; a.impr += imp; a.clicks += clk; a.conv += conv; a.convValue += cval;
+        a.spend += cost;
+        a.impr  += imp;
+        a.clicks += clk;
+        a.conv  += conv;
+        a.convValue += cval;
       }
     }
 
@@ -218,17 +310,19 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
     let totalImpr = 0, totalClicks = 0, totalSpend = 0;
 
     for (const [, a] of agg) {
-      totalImpr += a.impr; totalClicks += a.clicks; totalSpend += a.spend;
+      totalImpr += a.impr;
+      totalClicks += a.clicks;
+      totalSpend += a.spend;
 
-      const ctr  = a.impr > 0 ? (a.clicks / a.impr) * 100 : 0;
-      const roas = a.spend > 0 ? (a.convValue / a.spend) : 0;
+      const ctrPct = a.impr > 0 ? (a.clicks / a.impr) * 100 : 0;
+      const roas   = a.spend > 0 ? (a.convValue / a.spend) : 0;
 
-      if (a.impr > 1000 && ctr < 1.0) {
+      if (a.impr > 1000 && ctrPct < 1.0) {
         const issue = {
           title: `CTR bajo · ${a.name}`,
-          description: `CTR ${ctr.toFixed(2)}% con ${a.impr} impresiones y ${a.clicks} clics.`,
+          description: `CTR ${ctrPct.toFixed(2)}% con ${a.impr} impresiones y ${a.clicks} clics.`,
           severity: 'medium',
-          recommendation: 'Mejora RSA, extensiones y relevancia de keywords. Testea creatividades.',
+          recommendation: 'Mejora RSAs, extensiones y relevancia de keywords. Testea creatividades.',
         };
         productos[0].hallazgos.push({ area: 'Performance', ...issue });
         flat.performance.push(issue);
@@ -268,21 +362,26 @@ async function generarAuditoriaGoogleIA(userId, { datePreset = 'last_30d' } = {}
 
     const avgCTR = totalImpr ? (totalClicks / totalImpr) * 100 : 0;
     const cpcAvg = totalClicks ? (totalSpend / totalClicks) : null;
-    const resumen = `Analizadas ${agg.size} campañas en ${toAudit.length} cuenta(s). CTR medio ${avgCTR.toFixed(2)}%. CPC promedio ${cpcAvg?.toFixed(2) ?? 'N/A'}.`;
+    const resumen =
+      `Analizadas ${agg.size} campañas en ${toAudit.length} cuenta(s). ` +
+      `CTR medio ${avgCTR.toFixed(2)}%. CPC promedio ${cpcAvg?.toFixed(2) ?? 'N/A'}.`;
 
     return {
       productsAnalizados: agg.size,
       resumen,
       actionCenter,
-      issues: { productos, ux: flat.ux, seo: flat.seo, performance: flat.performance, media: flat.media, googleads: flat.googleads },
+      issues: {
+        productos,
+        ux: flat.ux, seo: flat.seo, performance: flat.performance, media: flat.media, googleads: flat.googleads
+      },
     };
   } catch (err) {
-    console.error('❌ Google audit error:', err?.response?.data || err);
+    console.error('❌ Google audit error:', err?.api || err?.response?.data || err);
     return {
       productsAnalizados: 0,
       resumen: 'Error al consultar Google Ads.',
       actionCenter: [],
-      issues: { productos: [], ux: [], seo: [], performance: [], media: [], googleads: [] },
+      issues: { productos: [], ux: [], seo: [], performance: [], media: [] , googleads: [] },
     };
   }
 }
