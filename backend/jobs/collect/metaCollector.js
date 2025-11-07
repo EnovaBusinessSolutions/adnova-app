@@ -5,7 +5,7 @@ const fetch = require('node-fetch');
 const mongoose = require('mongoose');
 
 const API_VER = process.env.FACEBOOK_API_VERSION || 'v19.0';
-// [★] Límite duro 3 por requerimiento, sobre-escribible por env
+// [★] Límite duro 3 por requerimiento, sobre-escribible por env (pero no mayor a 3)
 const HARD_LIMIT = 3;
 const MAX_ACCOUNTS = Math.min(
   HARD_LIMIT,
@@ -41,7 +41,8 @@ try { User = require('../../models/User'); } catch (_) {
 /* ---------------- utils ---------------- */
 const toNum   = (v) => Number(v || 0);
 const safeDiv = (n, d) => (Number(d || 0) ? Number(n || 0) / Number(d || 0) : 0);
-const normAct = (s = '') => String(s).replace(/^act_/, '').trim();
+// Normaliza id de ad account: quita "act_" y cualquier no-dígito
+const normAct = (s = '') => String(s).replace(/^act_/, '').replace(/[^\d]/g, '').trim();
 
 function pickToken(acc) {
   return (
@@ -153,7 +154,7 @@ function getAllAvailableAccounts(accDoc) {
 
 async function collectMeta(userId, opts = {}) {
   const {
-    account_id,               // opcional: forzar una sola cuenta (útil para “ver una cuenta”)
+    account_id,               // opcional: forzar una sola cuenta
     date_preset = 'last_30d', // today, yesterday, last_7d, last_30d, this_month, last_month, lifetime
     level = 'campaign',       // campaign|adset|ad
     fields: userFields,       // opcional override
@@ -190,35 +191,52 @@ async function collectMeta(userId, opts = {}) {
 
   // Universo disponible
   const available = getAllAvailableAccounts(acc);
+  const availById = new Map(available.map(a => [a.id, a]));
   const availSet = new Set(available.map(a => a.id));
 
-  // [★] Selección “real” a usar:
-  // - si pasan account_id => solo esa
-  // - si el usuario tiene selectedMetaAccounts => usarlas (cap a 3), y además filtrar a las disponibles
-  // - si nada de lo anterior => defaultAccountId o primeras disponibles (cap a 3)
+  // --- Selección real ---
+  // 1) si pasan account_id => solo esa
+  // 2) merge de users.selectedMetaAccounts + users.preferences.meta.auditAccountIds (en ese orden)
+  // 3) fallback: defaultAccountId ó primeras disponibles
   let accountsToAudit = [];
+
   if (account_id) {
     const id = normAct(account_id);
     if (!id) {
       return { notAuthorized: true, reason: 'INVALID_ACCOUNT_ID', byCampaign: [], accountIds: [] };
     }
-    accountsToAudit = [{ id, name: null }];
-  } else if (Array.isArray(user?.selectedMetaAccounts) && user.selectedMetaAccounts.length) {
-    const normalized = user.selectedMetaAccounts
-      .map((x) => normAct(x))
-      .filter((x) => x && availSet.has(x)); // sólo las que realmente están disponibles para este Meta
-    const unique = Array.from(new Set(normalized)).slice(0, MAX_ACCOUNTS);
-    accountsToAudit = unique.map(id => {
-      const found = available.find(a => a.id === id);
-      return { id, name: found?.name || null };
-    });
+    if (availSet.has(id)) accountsToAudit = [{ id, name: availById.get(id)?.name || null }];
   } else {
-    const fallback = pickDefaultAccountId(acc);
-    if (fallback) {
-      accountsToAudit = [{ id: fallback, name: (available.find(a => a.id === fallback)?.name) || null }];
-    } else {
-      accountsToAudit = available.slice(0, Math.max(1, MAX_ACCOUNTS));
+    const legacySel = Array.isArray(user?.selectedMetaAccounts) ? user.selectedMetaAccounts : [];
+    const prefSel   = Array.isArray(user?.preferences?.meta?.auditAccountIds) ? user.preferences.meta.auditAccountIds : [];
+    const merged = [...legacySel, ...prefSel]
+      .map(normAct)
+      .filter(id => id && availSet.has(id));
+
+    // preserva orden del usuario, dedupe y cap
+    const seen = new Set();
+    const ordered = [];
+    for (const id of merged) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      ordered.push(id);
+      if (ordered.length >= MAX_ACCOUNTS) break;
     }
+    if (ordered.length) {
+      accountsToAudit = ordered.map(id => ({ id, name: availById.get(id)?.name || null }));
+    } else {
+      const fallback = pickDefaultAccountId(acc);
+      if (fallback && availSet.has(fallback)) {
+        accountsToAudit = [{ id: fallback, name: availById.get(fallback)?.name || null }];
+      } else {
+        accountsToAudit = available.slice(0, Math.max(1, MAX_ACCOUNTS));
+      }
+    }
+  }
+
+  // Si por alguna razón quedó vacío, último fallback a primera disponible
+  if (!accountsToAudit.length && available.length) {
+    accountsToAudit = available.slice(0, 1);
   }
 
   // Campos de insights
@@ -376,9 +394,9 @@ async function collectMeta(userId, opts = {}) {
       cpc: safeDiv(G.cost, G.clk),
     },
     byCampaign,
-    accountIds,   // compat
-    accounts,     // { id, name, currency, timezone_name }
-    version: 'metaCollector@multi-accounts',
+    accountIds,   // para audits.js (reparto)
+    accounts,     // para anotar [Nombre] en títulos
+    version: 'metaCollector@multi-accounts+selection',
   };
 }
 
