@@ -27,17 +27,25 @@ try {
   const schema = new Schema({
     user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
     userId: { type: Schema.Types.ObjectId, ref: 'User' },
+
     accessToken: { type: String, select: false },
     refreshToken: { type: String, select: false },
     scope: { type: [String], default: [] },
+
     // Ads
     managerCustomerId: { type: String },
     loginCustomerId:   { type: String },
     defaultCustomerId: { type: String },
     customers:         { type: Array, default: [] }, // [{ id, descriptiveName, currencyCode, timeZone, status }]
     ad_accounts:       { type: [AdAccountSchema], default: [] },
+
     // Selección persistente
     selectedCustomerIds: { type: [String], default: [] },
+
+    // Logs/errores de discovery (útiles para Google soporte)
+    lastAdsDiscoveryError: { type: String, default: null },
+    lastAdsDiscoveryLog:   { type: Schema.Types.Mixed, default: null, select: false },
+
     // Opcional
     objective:         { type: String, enum: ['ventas','alcance','leads'], default: 'ventas' },
     expiresAt:         { type: Date },
@@ -65,7 +73,7 @@ function oauth() {
   return new OAuth2Client({
     clientId:     process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    redirectUri:  process.env.GOOGLE_CONNECT_CALLBACK_URL,
+    redirectUri:  process.env.GOOGLE_REDIRECT_URI || process.env.GOOGLE_CONNECT_CALLBACK_URL,
   });
 }
 
@@ -124,6 +132,17 @@ function availableAccountIds(gaDoc) {
   const fromCust  = (Array.isArray(gaDoc?.customers) ? gaDoc.customers : []).map(c => normId(c.id)).filter(Boolean);
   const set = new Set([...fromAdAcc, ...fromCust]);
   return [...set];
+}
+
+// Guardar error/log de discovery
+async function saveDiscoveryFailure(userId, reason, log) {
+  const safeReason = (() => {
+    try { return JSON.stringify(reason).slice(0, 8000); } catch { return String(reason).slice(0, 2000); }
+  })();
+  await GoogleAccount.updateOne(
+    { $or: [{ user: userId }, { userId }] },
+    { $set: { lastAdsDiscoveryError: safeReason, lastAdsDiscoveryLog: log || null } }
+  ).catch(()=>{});
 }
 
 /* ============================================================================
@@ -199,7 +218,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
-      .select('+accessToken +refreshToken customers ad_accounts defaultCustomerId loginCustomerId managerCustomerId scope selectedCustomerIds')
+      .select('+accessToken +refreshToken customers ad_accounts defaultCustomerId loginCustomerId managerCustomerId scope selectedCustomerIds lastAdsDiscoveryError lastAdsDiscoveryLog')
       .lean();
 
     if (!ga || (!ga.accessToken && !ga.refreshToken)) {
@@ -211,42 +230,51 @@ router.get('/accounts', requireAuth, async (req, res) => {
       ? ga.ad_accounts
       : [];
 
-    // Si no hay nada guardado, descubre con la API
+    // Si no hay nada guardado, descubre con la API (v22)
     if (accounts.length === 0) {
-      const accessToken = await getFreshAccessToken(ga);
-      const resourceNames = await Ads.listAccessibleCustomers(accessToken); // ["customers/123", ...]
-      const ids = (resourceNames || []).map((rn) => rn.split('/')[1]).filter(Boolean);
+      try {
+        const accessToken = await getFreshAccessToken(ga);
+        const enriched = await Ads.discoverAndEnrich(accessToken); // [{id,name,currencyCode,timeZone,status}]
 
-      const metas = [];
-      for (const cid of ids) {
-        try {
-          metas.push(await Ads.getCustomer(accessToken, cid));
-        } catch (e) {
-          console.warn('[accounts] getCustomer skip', cid, e?.response?.data || e?.api || e.message);
-        }
+        accounts = enriched.map(c => ({
+          id: normId(c.id),
+          name: c.name,
+          currencyCode: c.currencyCode || null,
+          timeZone: c.timeZone || null,
+          status: c.status || null,
+        }));
+
+        // Guarda enriquecido y espejo en customers
+        await GoogleAccount.updateOne(
+          { _id: ga._id },
+          {
+            $set: {
+              ad_accounts: accounts,
+              customers: accounts.map(a => ({
+                id: a.id,
+                descriptiveName: a.name,
+                currencyCode: a.currencyCode,
+                timeZone: a.timeZone,
+                status: a.status,
+              })),
+              updatedAt: new Date(),
+              lastAdsDiscoveryError: null,
+              lastAdsDiscoveryLog: null,
+            },
+          }
+        );
+      } catch (e) {
+        const reason = e?.api?.error || e?.response?.data || e?.message || 'LAZY_DISCOVERY_FAILED';
+        const log    = e?.api?.log || null;
+        await saveDiscoveryFailure(req.user._id, reason, log);
+        // devolvemos lo que haya guardado (aunque esté vacío) y el error
+        return res.status(502).json({
+          ok: false,
+          error: 'DISCOVERY_ERROR',
+          reason,
+          apiLog: log || null,
+        });
       }
-      accounts = metas;
-
-      // Guarda enriquecido y espejo en customers
-      await GoogleAccount.updateOne(
-        { _id: ga._id },
-        {
-          $set: {
-            ad_accounts: accounts,
-            customers: accounts.map(a => ({
-              id: a.id,
-              descriptiveName: a.name,
-              currencyCode: a.currencyCode,
-              timeZone: a.timeZone,
-              status: a.status,
-            })),
-            ...(ga.loginCustomerId ? {} : (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID
-              ? { loginCustomerId: String(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID).replace(/[^\d]/g, '') }
-              : {})),
-            updatedAt: new Date(),
-          },
-        }
-      );
     }
 
     // === Regla de selección
@@ -262,7 +290,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
     }
 
     // defaultCustomerId: guardado (si permitido) > primero ENABLED dentro del filtro > primero del filtro
-    let defaultCustomerId = normId(ga.defaultCustomerId || '');
+    let defaultCustomerId = normId(ga?.defaultCustomerId || '');
     if (selected.length > 0 && defaultCustomerId && !selected.includes(defaultCustomerId)) {
       defaultCustomerId = '';
     }
@@ -350,12 +378,13 @@ router.get('/', requireAuth, async (req, res) => {
     return res.json(data);
   } catch (err) {
     const status = err?.response?.status || 500;
-    const detail = err?.response?.data || err.message || String(err);
+    const detail = err?.response?.data || err?.api?.error || err.message || String(err);
+    const apiLog = err?.api?.log || null; // viene del servicio si falló una llamada v22
     if (status === 401 || status === 403) {
       console.error('google/ads auth error: Revisa Developer Token ↔ OAuth Client ID y permisos del MCC.');
     }
     console.error('google/ads insights error:', detail);
-    return res.status(status).json({ ok: false, error: 'GOOGLE_ADS_ERROR', detail });
+    return res.status(status).json({ ok: false, error: 'GOOGLE_ADS_ERROR', detail, apiLog });
   }
 });
 
@@ -401,38 +430,38 @@ router.get('/debug/raw', requireAuth, async (req, res) => {
 
     if (!ga) return res.status(400).json({ ok: false, error: 'NO_GA_DOC' });
 
-    // usa el refresco que ya tienes en este archivo
     const accessToken = await getFreshAccessToken(ga);
 
-    // 1) listAccessibleCustomers (sin login-customer-id)
-    const Ads = require('../services/googleAdsService');
-    let list, errList = null;
+    let list, errList = null, listLog = null;
     try {
       list = await Ads.listAccessibleCustomers(accessToken);
     } catch (e) {
-      errList = e?.api || e?.response?.data || e.message;
+      errList = e?.api?.error || e?.response?.data || e.message;
+      listLog = e?.api?.log || null;
     }
 
-    // 2) si hay ids, prueba el primero con getCustomer (sin/ con login-cid por dentro)
-    let firstMeta = null, errMeta = null;
+    let firstMeta = null, errMeta = null, metaLog = null;
     const firstId = Array.isArray(list) && list.length ? String(list[0]).split('/')[1] : null;
     if (firstId) {
       try {
         firstMeta = await Ads.getCustomer(accessToken, firstId);
       } catch (e) {
-        errMeta = e?.api || e?.response?.data || e.message;
+        errMeta = e?.api?.error || e?.response?.data || e.message;
+        metaLog = e?.api?.log || null;
       }
     }
 
     res.json({
       ok: true,
-      loginCustomerId: ga.loginCustomerId || process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || null,
+      loginCustomerId: ga.loginCustomerId || process.env.GOOGLE_LOGIN_CUSTOMER_ID || null,
       listAccessibleCustomers: list || [],
       listError: errList,
+      listApiLog: listLog,
       firstCustomerTried: firstId,
       firstCustomerMeta: firstMeta,
       firstCustomerError: errMeta,
-      apiVersion: process.env.GADS_API_VERSION || 'v22',
+      firstCustomerApiLog: metaLog,
+      apiVersion: 'v22',
     });
   } catch (err) {
     res.status(500).json({ ok: false, error: 'DEBUG_RAW_ERROR', detail: err?.message || String(err) });

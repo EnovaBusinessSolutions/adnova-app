@@ -7,26 +7,26 @@ const axios = require('axios');
  * ENV / Constantes
  * ========================= */
 const DEV_TOKEN =
-  process.env.GOOGLE_ADS_DEVELOPER_TOKEN ||
   process.env.GOOGLE_DEVELOPER_TOKEN ||
+  process.env.GOOGLE_ADS_DEVELOPER_TOKEN || // compat
   '';
 
 const LOGIN_CID = (
-  process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID ||
   process.env.GOOGLE_LOGIN_CUSTOMER_ID ||
+  process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID ||
   ''
 ).replace(/[^\d]/g, '');
 
-const ADS_VER  = process.env.GADS_API_VERSION || process.env.GOOGLE_ADS_API_VERSION || 'v22';
+const ADS_VER  = 'v22'; // forzamos v22
 const ADS_HOST = 'https://googleads.googleapis.com';
 
 const normId = (s = '') => String(s).replace(/[^\d]/g, '');
 
 /* =========================
- * Headers base
+ * Helpers de logging y headers
  * ========================= */
 function baseHeaders(accessToken) {
-  if (!DEV_TOKEN) throw new Error('GOOGLE_ADS_DEVELOPER_TOKEN missing');
+  if (!DEV_TOKEN) throw new Error('GOOGLE_DEVELOPER_TOKEN missing');
   return {
     Authorization: `Bearer ${accessToken}`,
     'developer-token': DEV_TOKEN,
@@ -35,7 +35,30 @@ function baseHeaders(accessToken) {
   };
 }
 
-/* Errores típicos que ameritan reintento con login-customer-id */
+/**
+ * Construye un objeto de log con request/response para adjuntar en errores o devolver a rutas.
+ */
+function buildApiLog({ url, method, reqHeaders, reqBody, res }) {
+  let requestId = res?.headers?.['request-id'] || res?.headers?.['x-request-id'] || null;
+  return {
+    url,
+    method,
+    reqHeaders,
+    reqBody: reqBody ?? null,
+    status: res?.status,
+    statusText: res?.statusText,
+    resHeaders: res?.headers || {},
+    requestId,
+    resBodyPreview:
+      typeof res?.data === 'string'
+        ? (res.data.length > 1000 ? res.data.slice(0, 1000) + '…' : res.data)
+        : res?.data,
+  };
+}
+
+/**
+ * shouldRetryWithLoginCid: Errores típicos que piden contexto login-customer-id
+ */
 function shouldRetryWithLoginCid(errData) {
   const status = errData?.error?.status || '';
   const msg = (errData?.error?.message || '').toLowerCase();
@@ -51,78 +74,114 @@ function shouldRetryWithLoginCid(errData) {
   );
 }
 
+/**
+ * requestV22: hace una llamada REST a Google Ads v22 con logging consistente.
+ * - path debe empezar por "/"
+ * - headers inyecta developer-token y Authorization
+ * - si pasas loginCustomerId lo incluye
+ * Devuelve: { ok, data, res, log }
+ */
+async function requestV22({ accessToken, path, method = 'GET', body = null, loginCustomerId = null }) {
+  const url = `${ADS_HOST}/${ADS_VER}${path.startsWith('/') ? path : `/${path}`}`;
+  const headers = baseHeaders(accessToken);
+  if (loginCustomerId) headers['login-customer-id'] = String(loginCustomerId);
+
+  try {
+    const res = await axios({
+      url,
+      method,
+      headers,
+      data: body,
+      timeout: 60000,
+      validateStatus: () => true,
+    });
+    const log = buildApiLog({ url, method, reqHeaders: headers, reqBody: body, res });
+
+    return {
+      ok: res.status >= 200 && res.status < 300,
+      data: res.data,
+      res,
+      log,
+    };
+  } catch (e) {
+    const res = e?.response;
+    const log = buildApiLog({ url, method, reqHeaders: headers, reqBody: body, res });
+    return { ok: false, data: res?.data ?? e?.message, res, log };
+  }
+}
+
 /* ========================================================================== *
  * 1) Descubrimiento de cuentas
  * ========================================================================== */
 
 /** IMPORTANTE: listAccessibleCustomers NO debe llevar login-customer-id. */
 async function listAccessibleCustomers(accessToken) {
-  const url = `${ADS_HOST}/${ADS_VER}/customers:listAccessibleCustomers`;
-  const headers = baseHeaders(accessToken);
-  delete headers['login-customer-id'];
-
-  const { data, status } = await axios.get(url, {
-    headers,
-    timeout: 25000,
-    validateStatus: () => true,
+  const r = await requestV22({
+    accessToken,
+    path: '/customers:listAccessibleCustomers',
+    method: 'GET',
   });
 
-  if (Array.isArray(data?.resourceNames)) return data.resourceNames;
-
-  if (data?.error) {
-    const code = data.error?.status || 'UNKNOWN';
-    const msg  = data.error?.message || 'listAccessibleCustomers failed';
-    const err  = new Error(`[listAccessibleCustomers] ${code}: ${msg}`);
-    err.api = { status, error: data.error };
-    throw err;
+  if (r.ok && Array.isArray(r.data?.resourceNames)) {
+    return r.data.resourceNames; // ["customers/123", ...]
   }
 
-  return [];
+  const err = new Error(`[listAccessibleCustomers] ${r.data?.error?.status || r.res?.status || 'UNKNOWN'}: ${r.data?.error?.message || 'failed'}`);
+  err.api = { error: r.data?.error || r.data || null, log: r.log };
+  throw err;
 }
 
 /**
  * GET /customers/{cid}
  * Estrategia:
  *   1) Intento SIN login-customer-id (contexto natural del access_token)
- *   2) Si la API pide contexto/permiso, reintento CON LOGIN_CID (si existe)
+ *   2) Retry con login-customer-id = cid (misma cuenta)
+ *   3) Retry con LOGIN_CID (MCC) si existe
  */
 async function getCustomer(accessToken, customerId) {
   const cid = normId(customerId);
-  const url = `${ADS_HOST}/${ADS_VER}/customers/${cid}`;
 
-  try {
-    const { data } = await axios.get(url, {
-      headers: baseHeaders(accessToken),
-      timeout: 20000,
-      validateStatus: s => s >= 200 && s < 300,
+  // 1) sin login-customer-id
+  let r = await requestV22({
+    accessToken,
+    path: `/customers/${cid}`,
+    method: 'GET',
+  });
+
+  // 2) si amerita retry, probar con login-customer-id = cid
+  if (!r.ok && shouldRetryWithLoginCid(r.data)) {
+    r = await requestV22({
+      accessToken,
+      path: `/customers/${cid}`,
+      method: 'GET',
+      loginCustomerId: cid,
     });
+  }
+
+  // 3) si sigue fallando y tenemos MCC
+  if (!r.ok && LOGIN_CID) {
+    r = await requestV22({
+      accessToken,
+      path: `/customers/${cid}`,
+      method: 'GET',
+      loginCustomerId: LOGIN_CID,
+    });
+  }
+
+  if (r.ok) {
+    const d = r.data || {};
     return {
       id: cid,
-      name: data?.descriptiveName || `Cuenta ${cid}`,
-      currencyCode: data?.currencyCode || null,
-      timeZone: data?.timeZone || null,
-      status: data?.status || null,
+      name: d?.descriptiveName || `Cuenta ${cid}`,
+      currencyCode: d?.currencyCode || null,
+      timeZone: d?.timeZone || null,
+      status: d?.status || null,
     };
-  } catch (e1) {
-    const data = e1?.response?.data;
-    if (LOGIN_CID && shouldRetryWithLoginCid(data)) {
-      const h = baseHeaders(accessToken);
-      h['login-customer-id'] = LOGIN_CID;
-      const { data: d2 } = await axios.get(url, { headers: h, timeout: 20000 });
-      return {
-        id: cid,
-        name: d2?.descriptiveName || `Cuenta ${cid}`,
-        currencyCode: d2?.currencyCode || null,
-        timeZone: d2?.timeZone || null,
-        status: d2?.status || null,
-      };
-    }
-    const code = data?.error?.status || e1?.response?.status || 'UNKNOWN';
-    const msg  = data?.error?.message || e1?.message || 'getCustomer failed';
-    const err  = new Error(`[getCustomer] ${code}: ${msg}`);
-    err.api = { error: data?.error || data || null };
-    throw err;
   }
+
+  const err = new Error(`[getCustomer] ${r.data?.error?.status || r.res?.status || 'UNKNOWN'}: ${r.data?.error?.message || 'failed'}`);
+  err.api = { error: r.data?.error || r.data || null, log: r.log };
+  throw err;
 }
 
 /** Descubre todas las cuentas y las enriquece con getCustomer. */
@@ -143,7 +202,10 @@ async function discoverAndEnrich(accessToken) {
       const meta = await getCustomer(accessToken, id);
       out.push(meta);
     } catch (e) {
-      console.warn('[discoverAndEnrich] getCustomer fail', id, e?.response?.data || e?.api || e.message);
+      // Incluir motivo en el array para que UI pueda mostrarlo
+      out.push({ id, error: true, reason: e?.api?.error || e.message });
+      // y loguear en servidor
+      console.warn('[discoverAndEnrich] getCustomer fail', id, e?.api || e.message);
     }
   }
   return out;
@@ -157,56 +219,60 @@ async function discoverAndEnrich(accessToken) {
  * POST /customers/{cid}/googleAds:searchStream
  * Estrategia:
  *   1) Intento SIN login-customer-id
- *   2) Si la API pide contexto/permiso, reintento CON LOGIN_CID (si existe)
+ *   2) Retry con login-customer-id = cid
+ *   3) Retry con LOGIN_CID (MCC) si existe
  * Devuelve un arreglo "flat" de filas.
  */
 async function searchGAQLStream(accessToken, customerId, query) {
   const cid = normId(customerId);
-  const url = `${ADS_HOST}/${ADS_VER}/customers/${cid}/googleAds:searchStream`;
-
-  const call = async (headers) => {
-    const { data, status } = await axios.post(
-      url,
-      { query },
-      { headers, timeout: 60000, validateStatus: () => true }
-    );
-    return { data, status };
-  };
 
   // 1) sin login-customer-id
-  const h1 = baseHeaders(accessToken);
-  let { data, status } = await call(h1);
+  let r = await requestV22({
+    accessToken,
+    path: `/customers/${cid}/googleAds:searchStream`,
+    method: 'POST',
+    body: { query },
+  });
 
-  // 2) si amerita retry y tenemos MCC
-  if ((typeof data === 'object' && data?.error && shouldRetryWithLoginCid(data)) && LOGIN_CID) {
-    const h2 = baseHeaders(accessToken);
-    h2['login-customer-id'] = LOGIN_CID;
-    ({ data, status } = await call(h2));
+  // 2) retry con login-customer-id = cid
+  if (!r.ok && shouldRetryWithLoginCid(r.data)) {
+    r = await requestV22({
+      accessToken,
+      path: `/customers/${cid}/googleAds:searchStream`,
+      method: 'POST',
+      body: { query },
+      loginCustomerId: cid,
+    });
   }
 
-  if (Array.isArray(data)) {
+  // 3) retry con MCC si aún falla
+  if (!r.ok && LOGIN_CID) {
+    r = await requestV22({
+      accessToken,
+      path: `/customers/${cid}/googleAds:searchStream`,
+      method: 'POST',
+      body: { query },
+      loginCustomerId: LOGIN_CID,
+    });
+  }
+
+  if (r.ok && Array.isArray(r.data)) {
     const rows = [];
-    for (const chunk of data) {
-      for (const r of (chunk.results || [])) rows.push(r);
+    for (const chunk of r.data) {
+      for (const res of (chunk.results || [])) rows.push(res);
     }
     return rows;
   }
 
-  if (data?.error) {
-    const code = data.error?.status || 'UNKNOWN';
-    const msg  = data.error?.message || 'searchStream failed';
-    const err  = new Error(`[searchGAQLStream] ${code}: ${msg}`);
-    err.api = { status, error: data.error };
-    throw err;
-  }
-
-  if (typeof data === 'string') {
+  if (typeof r.data === 'string') {
     const err = new Error('[searchGAQLStream] Unexpected string response (possible 404 HTML)');
-    err.api = { raw: data.slice(0, 200) + '…' };
+    err.api = { raw: r.data.slice(0, 200) + '…', log: r.log };
     throw err;
   }
 
-  return [];
+  const err = new Error(`[searchGAQLStream] ${r.data?.error?.status || r.res?.status || 'UNKNOWN'}: ${r.data?.error?.message || 'failed'}`);
+  err.api = { status: r.res?.status, error: r.data?.error || r.data || null, log: r.log };
+  throw err;
 }
 
 /* ========================================================================== *
@@ -279,16 +345,15 @@ async function fetchInsights({
   customerId,
   datePreset,   // "last_30d" | "today" | ...
   range,        // "30" | "60" | "90" (si no hay datePreset)
-  includeToday, // "1" | "0" (placeholder compatibilidad)
+  includeToday, // placeholder compat
   objective,    // ventas | alcance | leads (no cambia GAQL)
-  compareMode,  // prev_period (placeholder)
+  compareMode,  // placeholder
 }) {
   if (!customerId) throw new Error('customerId required');
 
   const cid = normId(customerId);
   let [since, until] = datePreset ? presetRange(datePreset) : rangeFromCount(range || 30);
 
-  // v22: cost_micros / average_cpc_micros / conversion_value
   const GAQL_SERIE = `
     SELECT
       segments.date,
@@ -298,7 +363,9 @@ async function fetchInsights({
       metrics.ctr,
       metrics.average_cpc_micros,
       metrics.conversions,
-      metrics.conversion_value
+      metrics.conversion_value,
+      customer.currency_code,
+      customer.time_zone
     FROM customer
     WHERE segments.date BETWEEN '${since}' AND '${until}'
     ORDER BY segments.date
@@ -309,7 +376,7 @@ async function fetchInsights({
   const series = rows.map(r => {
     const seg = r.segments || {};
     const met = r.metrics  || {};
-    // En JSON de REST los campos vienen camelCase:
+    const cust = r.customer || {};
     const costMicros = met.costMicros ?? met.cost_micros;
     const avgCpcMicros = met.averageCpcMicros ?? met.average_cpc_micros;
     return {
@@ -317,10 +384,12 @@ async function fetchInsights({
       impressions: Number(met.impressions || 0),
       clicks: Number(met.clicks || 0),
       cost: microsToUnit(costMicros),
-      ctr: Number(met.ctr || 0), // ya viene 0..1
+      ctr: Number(met.ctr || 0), // 0..1
       cpc: microsToUnit(avgCpcMicros),
       conversions: Number(met.conversions || 0),
       conv_value: Number(met.conversionValue ?? met.conversion_value ?? 0),
+      currency_code: cust.currencyCode ?? cust.currency_code,
+      time_zone: cust.timeZone ?? cust.time_zone,
     };
   });
 
@@ -338,14 +407,16 @@ async function fetchInsights({
   kpis.cpa  = kpis.conversions ? (kpis.cost / kpis.conversions) : undefined;
   kpis.roas = kpis.cost ? (kpis.conv_value / kpis.cost) : undefined;
 
-  // Enriquecer con moneda/timezone
-  let currency = 'MXN';
-  let tz = 'America/Mexico_City';
-  try {
-    const cust = await getCustomer(accessToken, cid);
-    currency = cust.currencyCode || currency;
-    tz = cust.timeZone || tz;
-  } catch (_) { /* ignore */ }
+  // Moneda/TimeZone (si no vino en filas, fallback con getCustomer)
+  let currency = series.find(s => s.currency_code)?.currency_code || 'MXN';
+  let tz = series.find(s => s.time_zone)?.time_zone || 'America/Mexico_City';
+  if (!currency || !tz) {
+    try {
+      const cust = await getCustomer(accessToken, cid);
+      currency = cust.currencyCode || currency;
+      tz = cust.timeZone || tz;
+    } catch (_) { /* ignore */ }
+  }
 
   return {
     ok: true,
