@@ -197,8 +197,18 @@ async function syncGoogleAdsAccountsForUserWithToken(userId, accessToken) {
     return { customers: [], ad_accounts: [], defaultCustomerId: scopeDoc?.defaultCustomerId || null };
   }
 
-  // descubrimos y enriquecemos (el service maneja MCC cuando aplica)
-  const enriched = await discoverAndEnrich(accessToken); // [{ id, name, currencyCode, timeZone, status }]
+  // === discovery (con captura del motivo si falla) ===
+  let enriched;
+  try {
+    enriched = await discoverAndEnrich(accessToken); // [{ id, name, currencyCode, timeZone, status }]
+  } catch (e) {
+    const reason = e?.api || e?.response?.data || e?.message || 'DISCOVERY_FAILED';
+    await GoogleAccount.updateOne(
+      { $or: [{ user: userId }, { userId }] },
+      { $set: { lastAdsDiscoveryError: JSON.stringify(reason).slice(0, 2000), updatedAt: new Date() } }
+    ).catch(()=>{});
+    throw e;
+  }
 
   const customers = enriched.map(c => ({
     id: normId(c.id),
@@ -330,12 +340,9 @@ async function googleCallbackHandler(req, res) {
       defaultCustomerId = result.defaultCustomerId || null;
       console.log('[Ads Sync] customers:', customers.length, 'ad_accounts:', ad_accounts.length);
     } catch (e) {
-      console.warn('⚠️ Ads discovery failed:', {
-        status: e?.response?.status,
-        data: e?.response?.data,
-        msg: e?.message
-      });
-      await GoogleAccount.updateOne(q, { $set: { lastAdsDiscoveryError: 'DISCOVERY_FAILED' } }).catch(()=>{});
+      const reason = e?.api || e?.response?.data || e?.message || 'DISCOVERY_FAILED';
+      console.warn('⚠️ Ads discovery failed:', reason);
+      await GoogleAccount.updateOne(q, { $set: { lastAdsDiscoveryError: JSON.stringify(reason).slice(0, 2000) } }).catch(()=>{});
     }
 
     // === GA4 (listar properties) ===
@@ -505,7 +512,12 @@ router.get('/accounts', requireSession, async (req, res) => {
           { $set: { customers, ad_accounts, lastAdsDiscoveryError: null, updatedAt: new Date() } }
         );
       } catch (e) {
-        console.warn('⚠️ lazy ads refresh failed:', e?.response?.data || e.message);
+        const reason = e?.api || e?.response?.data || e?.message || 'LAZY_DISCOVERY_FAILED';
+        console.warn('⚠️ lazy ads refresh failed:', reason);
+        await GoogleAccount.updateOne(
+          { $or: [{ user: req.user._id }, { userId: req.user._id }] },
+          { $set: { lastAdsDiscoveryError: JSON.stringify(reason).slice(0, 2000), updatedAt: new Date() } }
+        ).catch(()=>{});
       }
     }
 

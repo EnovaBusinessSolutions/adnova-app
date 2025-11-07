@@ -392,4 +392,51 @@ router.post('/default', requireAuth, express.json(), async (req, res) => {
   }
 });
 
+// DEBUG: ver respuesta cruda de listAccessibleCustomers y getCustomer
+router.get('/debug/raw', requireAuth, async (req, res) => {
+  try {
+    const ga = await GoogleAccount.findOne({
+      $or: [{ user: req.user._id }, { userId: req.user._id }],
+    }).select('+accessToken +refreshToken loginCustomerId').lean();
+
+    if (!ga) return res.status(400).json({ ok: false, error: 'NO_GA_DOC' });
+
+    // usa el refresco que ya tienes en este archivo
+    const accessToken = await getFreshAccessToken(ga);
+
+    // 1) listAccessibleCustomers (sin login-customer-id)
+    const Ads = require('../services/googleAdsService');
+    let list, errList = null;
+    try {
+      list = await Ads.listAccessibleCustomers(accessToken);
+    } catch (e) {
+      errList = e?.api || e?.response?.data || e.message;
+    }
+
+    // 2) si hay ids, prueba el primero con getCustomer (sin/ con login-cid por dentro)
+    let firstMeta = null, errMeta = null;
+    const firstId = Array.isArray(list) && list.length ? String(list[0]).split('/')[1] : null;
+    if (firstId) {
+      try {
+        firstMeta = await Ads.getCustomer(accessToken, firstId);
+      } catch (e) {
+        errMeta = e?.api || e?.response?.data || e.message;
+      }
+    }
+
+    res.json({
+      ok: true,
+      loginCustomerId: ga.loginCustomerId || process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || null,
+      listAccessibleCustomers: list || [],
+      listError: errList,
+      firstCustomerTried: firstId,
+      firstCustomerMeta: firstMeta,
+      firstCustomerError: errMeta,
+      apiVersion: process.env.GADS_API_VERSION || 'v22',
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: 'DEBUG_RAW_ERROR', detail: err?.message || String(err) });
+  }
+});
+
 module.exports = router;
