@@ -111,6 +111,11 @@ const normalizeScopes = (raw) => Array.from(
   )
 );
 
+// === Scopes/flags Ads
+const ADS_SCOPE = 'https://www.googleapis.com/auth/adwords';
+const hasAdwordsScope = (scopes=[]) =>
+  Array.isArray(scopes) && scopes.some(s => String(s).includes('/auth/adwords'));
+
 // [★] Persistir motivo + log de error de discovery
 async function saveDiscoveryFailure(userId, reason, log) {
   const safeReason = (() => {
@@ -210,17 +215,15 @@ async function syncGoogleAdsAccountsForUserWithToken(userId, accessToken) {
 
   const scopeDoc = await GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] })
     .select('scope defaultCustomerId');
-  const hasAdwordsScope = (scopeDoc?.scope || [])
-    .includes('https://www.googleapis.com/auth/adwords');
+  const hasScope = hasAdwordsScope(scopeDoc?.scope || []);
 
-  if (!hasAdwordsScope) {
+  if (!hasScope) {
     return { customers: [], ad_accounts: [], defaultCustomerId: scopeDoc?.defaultCustomerId || null };
   }
 
   // === discovery (capturando motivo y, si viene, el log) ===
   let enriched;
   try {
-    // Nota: nuestra discoverAndEnrich devuelve array; si lanza error, puede traer e.api.log
     enriched = await discoverAndEnrich(accessToken);
   } catch (e) {
     const reason = e?.api?.error || e?.response?.data || e?.message || 'DISCOVERY_FAILED';
@@ -286,7 +289,7 @@ router.get('/connect', requireSession, async (req, res) => {
       scope: [
         'https://www.googleapis.com/auth/userinfo.email',
         'https://www.googleapis.com/auth/userinfo.profile',
-        'https://www.googleapis.com/auth/adwords',            // Google Ads (read)
+        ADS_SCOPE,                                  // Google Ads (read)
         'https://www.googleapis.com/auth/analytics.readonly', // GA4 Data
         'openid'
       ],
@@ -343,7 +346,33 @@ async function googleCallbackHandler(req, res) {
 
     await GoogleAccount.findOneAndUpdate(q, baseUpdate, { upsert: true, new: true, setDefaultsOnInsert: true });
 
-    // === DISCOVERY Ads ===
+    // === Validación de scope Ads (EVITA discovery si falta)
+    const adsOk = hasAdwordsScope(grantedScopes);
+    if (!adsOk) {
+      await GoogleAccount.updateOne(q, {
+        $set: {
+          lastAdsDiscoveryError: 'ADS_SCOPE_MISSING',
+          lastAdsDiscoveryLog: null,
+          updatedAt: new Date(),
+        }
+      });
+
+      // Redirige marcando que falta el permiso de Ads
+      let returnTo = '/onboarding?google=connected&ads=scope_missing';
+      if (req.query.state) {
+        try {
+          const s = JSON.parse(req.query.state);
+          if (s && typeof s.returnTo === 'string' && s.returnTo.trim()) {
+            const url = new URL(s.returnTo, 'https://dummy.local');
+            url.searchParams.set('ads', 'scope_missing');
+            returnTo = url.pathname + url.search;
+          }
+        } catch {}
+      }
+      return res.redirect(returnTo);
+    }
+
+    // === DISCOVERY Ads (solo si hay scope)
     let customers = [];
     let ad_accounts = [];
     let defaultCustomerId = null;
@@ -438,6 +467,9 @@ router.get('/status', requireSession, async (req, res) => {
     const firstEnabled = (ga?.ad_accounts || []).find(a => (a.status || '').toUpperCase() === 'ENABLED')?.id;
     const defaultCustomerId = previous || firstEnabled || normId(customers?.[0]?.id || '') || null;
 
+    const scopesArr = Array.isArray(ga?.scope) ? ga.scope : [];
+    const adsScopeOk = hasAdwordsScope(scopesArr);
+
     res.json({
       ok: true,
       connected: !!u?.googleConnected && hasTokens,
@@ -445,7 +477,8 @@ router.get('/status', requireSession, async (req, res) => {
       defaultCustomerId,
       customers,
       ad_accounts: ga?.ad_accounts || [],
-      scopes: Array.isArray(ga?.scope) ? ga.scope : [],
+      scopes: scopesArr,
+      adsScopeOk, // <--- NUEVO
       objective: u?.googleObjective || ga?.objective || null,
       managerCustomerId: ga?.managerCustomerId || null,
       loginCustomerId: ga?.loginCustomerId || null,
@@ -501,6 +534,17 @@ router.get('/accounts', requireSession, async (req, res) => {
       return res.json({ ok: true, customers: [], ad_accounts: [], defaultCustomerId: null, scopes: [] });
     }
 
+    // Si falta el scope de Ads, corta con 428 y da URL de reconexión
+    const scopesArr = Array.isArray(ga?.scope) ? ga.scope : [];
+    if (!hasAdwordsScope(scopesArr)) {
+      return res.status(428).json({
+        ok: false,
+        error: 'ADS_SCOPE_MISSING',
+        message: 'Necesitamos permiso de Google Ads para listar tus cuentas.',
+        connectUrl: '/auth/google/connect?returnTo=/onboarding?google=connected',
+      });
+    }
+
     let customers = ga.customers || [];
     let ad_accounts = ga.ad_accounts || [];
 
@@ -546,13 +590,13 @@ router.get('/accounts', requireSession, async (req, res) => {
       customers,
       ad_accounts,
       defaultCustomerId,
-      scopes: Array.isArray(ga?.scope) ? ga.scope : [],
+      scopes: scopesArr,
       lastAdsDiscoveryError: ga?.lastAdsDiscoveryError || null,
       lastAdsDiscoveryLog: ga?.lastAdsDiscoveryLog || null,
     });
   } catch (err) {
     console.error('google accounts error:', err?.response?.data || err);
-    res.status(500).json({ ok: false, error: 'ACCOUNTS_ERROR' });
+    return res.status(500).json({ ok: false, error: 'ACCOUNTS_ERROR' });
   }
 });
 
