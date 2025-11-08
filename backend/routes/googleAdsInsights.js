@@ -421,6 +421,74 @@ router.post('/default', requireAuth, express.json(), async (req, res) => {
   }
 });
 
+/* ============================================================================
+ * GET /api/google/ads/insights/selftest
+ * Autodiagnóstico rápido de searchStream: ejecuta un GAQL mínimo y retorna
+ * requestId / apiLog en caso de error. Útil para soporte de Google.
+ * Query opcional: customer_id
+ * ==========================================================================*/
+router.get('/selftest', requireAuth, async (req, res) => {
+  try {
+    const ga = await GoogleAccount.findOne({
+      $or: [{ user: req.user._id }, { userId: req.user._id }],
+    })
+      .select('+accessToken +refreshToken defaultCustomerId customers ad_accounts selectedCustomerIds')
+      .lean();
+
+    if (!ga) return res.status(400).json({ ok: false, error: 'GOOGLE_NOT_CONNECTED' });
+
+    const accessToken = await getFreshAccessToken(ga);
+
+    // Resolver customerId (query > default > primero)
+    let cid = normId(String(req.query.customer_id || '')) ||
+              normId(ga.defaultCustomerId || '') ||
+              normId((ga.ad_accounts?.[0]?.id) || (ga.customers?.[0]?.id) || '');
+
+    if (!cid) return res.status(400).json({ ok: false, error: 'NO_CUSTOMER_ID' });
+
+    // GAQL mínimo (últimos 7 días)
+    const now = new Date();
+    const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const from = new Date(to); from.setUTCDate(to.getUTCDate() - 6);
+    const fmt = d => `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+
+    const GAQL = `
+      SELECT
+        segments.date,
+        metrics.impressions,
+        metrics.clicks
+      FROM customer
+      WHERE segments.date BETWEEN '${fmt(from)}' AND '${fmt(to)}'
+      ORDER BY segments.date
+    `;
+
+    try {
+      const rows = await Ads.searchGAQLStream(accessToken, cid, GAQL);
+      return res.json({
+        ok: true,
+        customer_id: cid,
+        rows,
+        rowsCount: rows.length,
+        gaql: GAQL.replace(/\s+/g, ' ').trim(),
+      });
+    } catch (e) {
+      // Preserva requestId / apiLog para soporte
+      return res.status(400).json({
+        ok: false,
+        error: 'SEARCHSTREAM_400',
+        detail: e?.api?.error || e.message,
+        apiLog: e?.api?.log || null,
+        requestId: e?.api?.log?.requestId || null,
+        gaql: GAQL.replace(/\s+/g, ' ').trim(),
+        customer_id: cid,
+      });
+    }
+  } catch (err) {
+    console.error('google/ads/selftest error:', err);
+    return res.status(500).json({ ok: false, error: 'SELFTEST_ERROR', detail: err?.message || String(err) });
+  }
+});
+
 // DEBUG: ver respuesta cruda de listAccessibleCustomers y getCustomer
 router.get('/debug/raw', requireAuth, async (req, res) => {
   try {

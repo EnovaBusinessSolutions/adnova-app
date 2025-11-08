@@ -17,7 +17,7 @@ const LOGIN_CID = (
   ''
 ).replace(/[^\d]/g, '');
 
-const ADS_VER  = 'v22'; // forzamos v22
+const ADS_VER  = (process.env.GADS_API_VERSION || 'v22').trim(); // v22 por defecto
 const ADS_HOST = 'https://googleads.googleapis.com';
 
 const normId = (s = '') => String(s).replace(/[^\d]/g, '');
@@ -35,11 +35,13 @@ function baseHeaders(accessToken) {
   };
 }
 
-/**
- * Construye un objeto de log con request/response para adjuntar en errores o devolver a rutas.
- */
+/** Devuelve request-id y un preview útil del body para soporte. */
 function buildApiLog({ url, method, reqHeaders, reqBody, res }) {
-  let requestId = res?.headers?.['request-id'] || res?.headers?.['x-request-id'] || null;
+  const requestId =
+    res?.headers?.['request-id'] ||
+    res?.headers?.['x-request-id'] ||
+    null;
+
   return {
     url,
     method,
@@ -56,9 +58,7 @@ function buildApiLog({ url, method, reqHeaders, reqBody, res }) {
   };
 }
 
-/**
- * shouldRetryWithLoginCid: Errores típicos que piden contexto login-customer-id
- */
+/** Errores típicos que piden contexto login-customer-id */
 function shouldRetryWithLoginCid(errData) {
   const status = errData?.error?.status || '';
   const msg = (errData?.error?.message || '').toLowerCase();
@@ -75,26 +75,28 @@ function shouldRetryWithLoginCid(errData) {
 }
 
 /**
- * requestV22: hace una llamada REST a Google Ads v22 con logging consistente.
- * - path debe empezar por "/"
- * - headers inyecta developer-token y Authorization
- * - si pasas loginCustomerId lo incluye
- * Devuelve: { ok, data, res, log }
+ * requestV22
+ * - path debe empezar con "/"
+ * - incluye developer-token y Authorization
+ * - si pasas loginCustomerId lo agrega como header
+ * - devuelve { ok, data, res, log }
  */
 async function requestV22({ accessToken, path, method = 'GET', body = null, loginCustomerId = null }) {
   const url = `${ADS_HOST}/${ADS_VER}${path.startsWith('/') ? path : `/${path}`}`;
   const headers = baseHeaders(accessToken);
-  if (loginCustomerId) headers['login-customer-id'] = String(loginCustomerId);
+  if (loginCustomerId) headers['login-customer-id'] = String(loginCustomerId).replace(/[^\d]/g, '');
 
   try {
     const res = await axios({
       url,
       method,
       headers,
+      // ⚠️ MUY IMPORTANTE: body debe ser JSON { query: "..." }, no string crudo
       data: body,
       timeout: 60000,
-      validateStatus: () => true,
+      validateStatus: () => true, // dejamos pasar 4xx/5xx para leer request-id
     });
+
     const log = buildApiLog({ url, method, reqHeaders: headers, reqBody: body, res });
 
     return {
@@ -114,7 +116,7 @@ async function requestV22({ accessToken, path, method = 'GET', body = null, logi
  * 1) Descubrimiento de cuentas
  * ========================================================================== */
 
-/** IMPORTANTE: listAccessibleCustomers NO debe llevar login-customer-id. */
+/** IMPORTANTE: listAccessibleCustomers NO lleva login-customer-id. */
 async function listAccessibleCustomers(accessToken) {
   const r = await requestV22({
     accessToken,
@@ -134,8 +136,8 @@ async function listAccessibleCustomers(accessToken) {
 /**
  * GET /customers/{cid}
  * Estrategia:
- *   1) Intento SIN login-customer-id (contexto natural del access_token)
- *   2) Retry con login-customer-id = cid (misma cuenta)
+ *   1) Sin login-customer-id (contexto del access_token)
+ *   2) Retry con login-customer-id = cid
  *   3) Retry con LOGIN_CID (MCC) si existe
  */
 async function getCustomer(accessToken, customerId) {
@@ -148,7 +150,7 @@ async function getCustomer(accessToken, customerId) {
     method: 'GET',
   });
 
-  // 2) si amerita retry, probar con login-customer-id = cid
+  // 2) retry con login-customer-id = cid
   if (!r.ok && shouldRetryWithLoginCid(r.data)) {
     r = await requestV22({
       accessToken,
@@ -158,7 +160,7 @@ async function getCustomer(accessToken, customerId) {
     });
   }
 
-  // 3) si sigue fallando y tenemos MCC
+  // 3) retry con nuestro MCC
   if (!r.ok && LOGIN_CID) {
     r = await requestV22({
       accessToken,
@@ -202,9 +204,7 @@ async function discoverAndEnrich(accessToken) {
       const meta = await getCustomer(accessToken, id);
       out.push(meta);
     } catch (e) {
-      // Incluir motivo en el array para que UI pueda mostrarlo
       out.push({ id, error: true, reason: e?.api?.error || e.message });
-      // y loguear en servidor
       console.warn('[discoverAndEnrich] getCustomer fail', id, e?.api || e.message);
     }
   }
@@ -220,18 +220,21 @@ async function discoverAndEnrich(accessToken) {
  * Estrategia:
  *   1) Intento SIN login-customer-id
  *   2) Retry con login-customer-id = cid
- *   3) Retry con LOGIN_CID (MCC) si existe
- * Devuelve un arreglo "flat" de filas.
+ *   3) Retry con LOGIN_CID (MCC)
+ * Devuelve un arreglo "flat" de filas y preserva requestId en errores.
  */
 async function searchGAQLStream(accessToken, customerId, query) {
   const cid = normId(customerId);
+
+  // body DEBE ser JSON con { query }
+  const body = { query };
 
   // 1) sin login-customer-id
   let r = await requestV22({
     accessToken,
     path: `/customers/${cid}/googleAds:searchStream`,
     method: 'POST',
-    body: { query },
+    body,
   });
 
   // 2) retry con login-customer-id = cid
@@ -240,18 +243,18 @@ async function searchGAQLStream(accessToken, customerId, query) {
       accessToken,
       path: `/customers/${cid}/googleAds:searchStream`,
       method: 'POST',
-      body: { query },
+      body,
       loginCustomerId: cid,
     });
   }
 
-  // 3) retry con MCC si aún falla
+  // 3) retry con nuestro MCC si sigue fallando
   if (!r.ok && LOGIN_CID) {
     r = await requestV22({
       accessToken,
       path: `/customers/${cid}/googleAds:searchStream`,
       method: 'POST',
-      body: { query },
+      body,
       loginCustomerId: LOGIN_CID,
     });
   }
@@ -264,9 +267,10 @@ async function searchGAQLStream(accessToken, customerId, query) {
     return rows;
   }
 
+  // Caso típico cuando Google devuelve el HTML del 400 (robot.html)
   if (typeof r.data === 'string') {
-    const err = new Error('[searchGAQLStream] Unexpected string response (possible 404 HTML)');
-    err.api = { raw: r.data.slice(0, 200) + '…', log: r.log };
+    const err = new Error('[searchGAQLStream] Unexpected string response (possible 400 HTML)');
+    err.api = { raw: r.data.slice(0, 300) + '…', log: r.log };
     throw err;
   }
 
@@ -343,10 +347,10 @@ function microsToUnit(v) {
 async function fetchInsights({
   accessToken,
   customerId,
-  datePreset,   // "last_30d" | "today" | ...
-  range,        // "30" | "60" | "90" (si no hay datePreset)
+  datePreset,
+  range,        // "30" | "60" | "90" si no hay datePreset
   includeToday, // placeholder compat
-  objective,    // ventas | alcance | leads (no cambia GAQL)
+  objective,    // ventas | alcance | leads
   compareMode,  // placeholder
 }) {
   if (!customerId) throw new Error('customerId required');
