@@ -30,8 +30,8 @@ function baseHeaders(accessToken) {
   return {
     Authorization: `Bearer ${accessToken}`,
     'developer-token': DEV_TOKEN,
-    'Content-Type': 'application/json',
     Accept: 'application/json',
+    // ⚠️ NO ponemos Content-Type aquí; solo en requests con body
   };
 }
 
@@ -85,16 +85,18 @@ async function requestV22({ accessToken, path, method = 'GET', body = null, logi
   const url = `${ADS_HOST}/${ADS_VER}${path.startsWith('/') ? path : `/${path}`}`;
   const headers = baseHeaders(accessToken);
   if (loginCustomerId) headers['login-customer-id'] = String(loginCustomerId).replace(/[^\d]/g, '');
+  // Solo añadir Content-Type cuando realmente mandamos un body (POST JSON)
+  if (body != null) headers['Content-Type'] = 'application/json';
 
   try {
     const res = await axios({
       url,
       method,
       headers,
-      // ⚠️ MUY IMPORTANTE: body debe ser JSON { query: "..." }, no string crudo
-      data: body,
+      // ⚠️ NO enviar cuerpo en GET
+      data: body ?? undefined,
       timeout: 60000,
-      validateStatus: () => true, // dejamos pasar 4xx/5xx para leer request-id
+      validateStatus: () => true,
     });
 
     const log = buildApiLog({ url, method, reqHeaders: headers, reqBody: body, res });
@@ -124,6 +126,12 @@ async function listAccessibleCustomers(accessToken) {
     method: 'GET',
   });
 
+  if (typeof r.data === 'string') {
+    const err = new Error('[listAccessibleCustomers] Unexpected string response (possible 400 HTML)');
+    err.api = { raw: r.data.slice(0, 300) + '…', log: r.log };
+    throw err;
+  }
+
   if (r.ok && Array.isArray(r.data?.resourceNames)) {
     return r.data.resourceNames; // ["customers/123", ...]
   }
@@ -136,9 +144,9 @@ async function listAccessibleCustomers(accessToken) {
 /**
  * GET /customers/{cid}
  * Estrategia:
- *   1) Sin login-customer-id (contexto del access_token)
+ *   1) Sin login-customer-id
  *   2) Retry con login-customer-id = cid
- *   3) Retry con LOGIN_CID (MCC) si existe
+ *   3) Retry con LOGIN_CID (MCC)
  */
 async function getCustomer(accessToken, customerId) {
   const cid = normId(customerId);
@@ -221,12 +229,10 @@ async function discoverAndEnrich(accessToken) {
  *   1) Intento SIN login-customer-id
  *   2) Retry con login-customer-id = cid
  *   3) Retry con LOGIN_CID (MCC)
- * Devuelve un arreglo "flat" de filas y preserva requestId en errores.
  */
 async function searchGAQLStream(accessToken, customerId, query) {
   const cid = normId(customerId);
 
-  // body DEBE ser JSON con { query }
   const body = { query };
 
   // 1) sin login-customer-id
@@ -267,7 +273,6 @@ async function searchGAQLStream(accessToken, customerId, query) {
     return rows;
   }
 
-  // Caso típico cuando Google devuelve el HTML del 400 (robot.html)
   if (typeof r.data === 'string') {
     const err = new Error('[searchGAQLStream] Unexpected string response (possible 400 HTML)');
     err.api = { raw: r.data.slice(0, 300) + '…', log: r.log };
@@ -348,10 +353,10 @@ async function fetchInsights({
   accessToken,
   customerId,
   datePreset,
-  range,        // "30" | "60" | "90" si no hay datePreset
-  includeToday, // placeholder compat
-  objective,    // ventas | alcance | leads
-  compareMode,  // placeholder
+  range,
+  includeToday,
+  objective,
+  compareMode,
 }) {
   if (!customerId) throw new Error('customerId required');
 
@@ -378,17 +383,17 @@ async function fetchInsights({
   const rows = await searchGAQLStream(accessToken, cid, GAQL_SERIE);
 
   const series = rows.map(r => {
-    const seg = r.segments || {};
-    const met = r.metrics  || {};
+    const seg  = r.segments || {};
+    const met  = r.metrics  || {};
     const cust = r.customer || {};
-    const costMicros = met.costMicros ?? met.cost_micros;
+    const costMicros   = met.costMicros ?? met.cost_micros;
     const avgCpcMicros = met.averageCpcMicros ?? met.average_cpc_micros;
     return {
       date: seg.date,
       impressions: Number(met.impressions || 0),
       clicks: Number(met.clicks || 0),
       cost: microsToUnit(costMicros),
-      ctr: Number(met.ctr || 0), // 0..1
+      ctr: Number(met.ctr || 0),
       cpc: microsToUnit(avgCpcMicros),
       conversions: Number(met.conversions || 0),
       conv_value: Number(met.conversionValue ?? met.conversion_value ?? 0),
@@ -397,7 +402,6 @@ async function fetchInsights({
     };
   });
 
-  // KPIs sumados
   const kpis = series.reduce((a, p) => ({
     impressions: a.impressions + (p.impressions || 0),
     clicks:      a.clicks + (p.clicks || 0),
@@ -411,7 +415,6 @@ async function fetchInsights({
   kpis.cpa  = kpis.conversions ? (kpis.cost / kpis.conversions) : undefined;
   kpis.roas = kpis.cost ? (kpis.conv_value / kpis.cost) : undefined;
 
-  // Moneda/TimeZone (si no vino en filas, fallback con getCustomer)
   let currency = series.find(s => s.currency_code)?.currency_code || 'MXN';
   let tz = series.find(s => s.time_zone)?.time_zone || 'America/Mexico_City';
   if (!currency || !tz) {
@@ -419,7 +422,7 @@ async function fetchInsights({
       const cust = await getCustomer(accessToken, cid);
       currency = cust.currencyCode || currency;
       tz = cust.timeZone || tz;
-    } catch (_) { /* ignore */ }
+    } catch (_) {}
   }
 
   return {
@@ -427,7 +430,7 @@ async function fetchInsights({
     objective: (['ventas','alcance','leads'].includes(String(objective)) ? objective : 'ventas'),
     customer_id: cid,
     range: { since, until },
-    prev_range: { since, until }, // placeholder
+    prev_range: { since, until },
     is_partial: false,
     kpis,
     deltas: {},
@@ -442,7 +445,7 @@ async function fetchInsights({
  * ========================================================================== */
 module.exports = {
   listAccessibleCustomers,
-  listAccessibleCustomersRaw: listAccessibleCustomers, // alias
+  listAccessibleCustomersRaw: listAccessibleCustomers,
   getCustomer,
   searchGAQLStream,
   discoverAndEnrich,
