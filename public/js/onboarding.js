@@ -29,7 +29,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const domainInput = document.getElementById('shop-domain-input');
   const domainSend  = document.getElementById('shop-domain-send');
 
-  // (Sección demo GA – la conservé tal cual)
+  // DEMO GA (sección existente; no usada por el nuevo flujo)
   const gaPanel = document.getElementById('ga-edit-test');
   const gaBtn   = document.getElementById('ga-create-demo-btn');
   const gaIn    = document.getElementById('ga-property-id');
@@ -47,19 +47,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   const GOOGLE_STATUS_URL    = '/auth/google/status';
   const GOOGLE_OBJECTIVE_URL = '/auth/google/objective';
 
+  // NUEVO: contenedores de estado/selector/fallback MCC
+  const gaStatusBox      = document.getElementById('ga-ads-status');
+  const gaAccountsMount  = document.getElementById('ga-ads-accounts');
+  const mccPanel         = document.getElementById('ga-ads-mcc');
+  const mccVerifyBtn     = document.getElementById('ga-ads-mcc-verify-btn');
+  const mccLogPre        = document.getElementById('ga-ads-mcc-log');
+
   // -------------------------------------------------
   // Utils UI
   // -------------------------------------------------
-  const show = (el) => {
-    if (!el) return;
-    el.style.display = 'block';
-    el.setAttribute('aria-hidden', 'false');
-  };
-  const hide = (el) => {
-    if (!el) return;
-    el.style.display = 'none';
-    el.setAttribute('aria-hidden', 'true');
-  };
+  const show = (el) => { if (!el) return; el.classList.remove('hidden'); el.style.display = ''; el.setAttribute('aria-hidden','false'); };
+  const hide = (el) => { if (!el) return; el.classList.add('hidden');  el.style.display = 'none'; el.setAttribute('aria-hidden','true'); };
 
   const setBtnConnected = (btn) => {
     if (!btn) return;
@@ -77,6 +76,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!btn) return;
     btn.style.pointerEvents = 'auto';
     if ('disabled' in btn) btn.disabled = false;
+  };
+
+  const setStatus = (html) => {
+    if (!gaStatusBox) return;
+    gaStatusBox.innerHTML = html || '';
+    if (html) show(gaStatusBox); else hide(gaStatusBox);
   };
 
   const openGoogleCloseMeta = () => { show(googleObjectiveStep); hide(metaObjectiveStep); };
@@ -110,9 +115,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Reacciona si otro script (onboardingInlineSelect.js) ajusta sessionStorage
-  // 1) en misma pestaña: emitimos/escuchamos un custom event
   window.addEventListener('adnova:accounts-selection-saved', habilitarContinue);
-  // 2) en distinta pestaña: evento storage
   window.addEventListener('storage', (e) => {
     if (!e) return;
     if (e.key === 'metaConnected' || e.key === 'googleConnected' || e.key === 'shopifyConnected') {
@@ -131,7 +134,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       domainInput?.value?.trim().toLowerCase() ||
       sessionStorage.getItem('shop');
 
-    // Si no tenemos todavía shop, considera conectado en fase Beta (como tenías)
     if (!shop) {
       sessionStorage.setItem('shopifyConnected', 'true');
       return habilitarContinue();
@@ -192,7 +194,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     sessionStorage.setItem('metaConnected', 'true');
     if (objective) sessionStorage.setItem('metaObjective', objective);
     habilitarContinue();
-    // notifica a otros listeners (por si el modal vive en la misma pestaña)
     window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved'));
   };
 
@@ -268,7 +269,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // -------------------------------------------------
-  // Google
+  // Google — NUEVO flujo cuentas + self-test + fallback MCC
   // -------------------------------------------------
   const markGoogleConnected = (objective = null) => {
     setBtnConnected(connectGoogleBtn);
@@ -277,6 +278,119 @@ document.addEventListener('DOMContentLoaded', async () => {
     habilitarContinue();
     window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved'));
   };
+
+  // Carga cuentas y dispara evento para que onboardingInlineSelect.js pinte la UI
+  async function ensureGoogleAccountsUI() {
+    try {
+      setStatus('Buscando tus cuentas de Google Ads…');
+      hide(mccPanel);
+      show(gaAccountsMount);
+
+      const res = await apiFetch('/api/google/ads/insights/accounts');
+      if (res?.ok === false && res?.error === 'DISCOVERY_ERROR') {
+        setStatus('Tuvimos un problema al descubrir tus cuentas. Puedes intentar verificar después de aceptar la invitación (si aplica).');
+        // muestra detalle en panel MCC
+        show(mccPanel);
+        if (mccLogPre) mccLogPre.textContent = JSON.stringify(res.apiLog || res.reason || res, null, 2);
+        return { ok: false, accounts: [] };
+      }
+
+      const accounts = Array.isArray(res?.accounts) ? res.accounts : [];
+      const defaultCustomerId = res?.defaultCustomerId || null;
+      const requiredSelection = !!res?.requiredSelection;
+
+      if (accounts.length === 0) {
+        setStatus('No encontramos cuentas accesibles todavía. Si acabas de conectar, intenta nuevamente en un minuto.');
+      } else {
+        setStatus(requiredSelection
+          ? 'Selecciona hasta 3 cuentas para continuar.'
+          : 'Cuentas cargadas. Puedes continuar o ajustar la selección.');
+      }
+
+      // Notifica al otro script para que renderice el selector
+      window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
+        detail: {
+          accounts,
+          defaultCustomerId,
+          requiredSelection,
+          mountEl: gaAccountsMount
+        }
+      }));
+
+      // Si no es requerida la selección, consideramos “conectado”
+      if (!requiredSelection && accounts.length > 0) {
+        markGoogleConnected(sessionStorage.getItem('googleObjective') || null);
+      }
+
+      return { ok: true, accounts, defaultCustomerId, requiredSelection };
+    } catch (e) {
+      console.error('ensureGoogleAccountsUI error:', e);
+      setStatus('No pudimos cargar tus cuentas. Intenta nuevamente.');
+      return { ok: false, accounts: [] };
+    }
+  }
+
+  // Self-test: intenta un GAQL mínimo; en error muestra panel MCC
+  async function runGoogleSelfTest(optionalCid = null) {
+    try {
+      const url = optionalCid
+        ? `/api/google/ads/insights/selftest?customer_id=${encodeURIComponent(optionalCid)}`
+        : `/api/google/ads/insights/selftest`;
+      const r = await apiFetch(url);
+      if (r?.ok) {
+        hide(mccPanel);
+        setStatus('Conexión validada correctamente.');
+        return true;
+      }
+      // Si el backend respondió 400 con detalle del API, apiFetch lo trae como objeto
+      show(mccPanel);
+      if (mccLogPre) mccLogPre.textContent = JSON.stringify(r?.apiLog || r?.detail || r, null, 2);
+      setStatus('Necesitamos que aceptes la invitación de administrador (si ya la enviamos) o que verifiques el acceso y reintentes.');
+      return false;
+    } catch (e) {
+      show(mccPanel);
+      if (mccLogPre) mccLogPre.textContent = e?.message || String(e);
+      setStatus('No pudimos ejecutar la prueba. Intenta nuevamente.');
+      return false;
+    }
+  }
+
+  // Escucha selección desde onboardingInlineSelect.js y guarda en backend
+  window.addEventListener('googleAccountsSelected', async (ev) => {
+    try {
+      const ids = (ev?.detail?.accountIds || []).map(String);
+      if (!ids.length) return;
+
+      const save = await apiFetch('/api/google/ads/insights/accounts/selection', {
+        method: 'POST',
+        body: JSON.stringify({ accountIds: ids }),
+      });
+
+      if (save?.ok) {
+        sessionStorage.setItem('googleConnected', 'true');
+        markGoogleConnected(sessionStorage.getItem('googleObjective') || null);
+        setStatus('Selección guardada. Listo para continuar.');
+        // Autoverificación rápida
+        await runGoogleSelfTest(ids[0]);
+        // Notifica habilitar continue
+        window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved'));
+      } else {
+        alert(save?.error || 'No se pudo guardar la selección.');
+      }
+    } catch (e) {
+      console.error('save selection error:', e);
+      alert('Error al guardar la selección. Intenta nuevamente.');
+    }
+  });
+
+  // Botón “Verificar” del panel MCC
+  mccVerifyBtn?.addEventListener('click', async () => {
+    setStatus('Verificando acceso…');
+    // Primero reintenta discovery (por si ya aceptaron)
+    await ensureGoogleAccountsUI();
+    // Luego self-test
+    await runGoogleSelfTest();
+  });
 
   async function fetchGoogleStatus() {
     try {
@@ -306,6 +420,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       hide(googleObjectiveStep);
       markGoogleConnected(st.objective);
     }
+    // Si ya está conectado a Google OAuth, intentamos cargar cuentas UI
+    if (st.connected) {
+      await ensureGoogleAccountsUI();
+    }
     return st;
   }
 
@@ -326,6 +444,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (r?.ok === false) throw new Error(r?.error || 'No se pudo guardar el objetivo');
       hide(googleObjectiveStep);
       markGoogleConnected(selected);
+      // Después de objetivo, carga cuentas y hace self-test
+      await ensureGoogleAccountsUI();
+      await runGoogleSelfTest();
     } catch (e) {
       console.error(e);
       alert('No se pudo guardar el objetivo. Inténtalo nuevamente.');
@@ -339,6 +460,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         localStorage.removeItem('google_connecting');
         if (!st.objective) openGoogleCloseMeta();
         else { hide(googleObjectiveStep); markGoogleConnected(st.objective); }
+        await ensureGoogleAccountsUI();
         return;
       }
       await new Promise((r) => setTimeout(r, delayMs));
@@ -357,10 +479,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       sessionStorage.setItem('email',   sess.user.email);
 
       if (sess.user.googleConnected) {
-        gaPanel?.classList.remove('hidden');
+        gaPanel?.classList?.remove('hidden');
         sessionStorage.setItem('googleOAuth', 'true');
       } else {
-        gaPanel?.classList.add('hidden');
+        gaPanel?.classList?.add('hidden');
       }
     }
   } catch (err) {

@@ -422,6 +422,78 @@ router.post('/default', requireAuth, express.json(), async (req, res) => {
 });
 
 /* ============================================================================
+ * POST /api/google/ads/insights/mcc/invite
+ * Envía invitación Manager→Client usando el MCC configurado.
+ * Body: { customer_id: "123-456-7890" }
+ * ==========================================================================*/
+router.post('/mcc/invite', requireAuth, express.json(), async (req, res) => {
+  try {
+    const customerId = normId(req.body?.customer_id || req.body?.customerId || '');
+    if (!customerId) return res.status(400).json({ ok: false, error: 'CUSTOMER_ID_REQUIRED' });
+
+    const ga = await GoogleAccount.findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
+      .select('+accessToken +refreshToken managerCustomerId loginCustomerId')
+      .lean();
+    if (!ga) return res.status(400).json({ ok: false, error: 'GOOGLE_NOT_CONNECTED' });
+
+    const accessToken = await getFreshAccessToken(ga);
+
+    // ManagerId: preferimos env → managerCustomerId guardado → loginCustomerId
+    const managerId = normId(process.env.GOOGLE_LOGIN_CUSTOMER_ID || ga.managerCustomerId || ga.loginCustomerId || '');
+    if (!managerId) {
+      return res.status(400).json({ ok: false, error: 'NO_MANAGER_ID', note: 'Configura GOOGLE_LOGIN_CUSTOMER_ID o guarda managerCustomerId/loginCustomerId en GoogleAccount.' });
+    }
+
+    const data = await Ads.mccInviteCustomer({
+      accessToken,
+      managerId,
+      clientId: customerId,
+    });
+
+    return res.json({ ok: true, managerId, customerId, data });
+  } catch (err) {
+    const detail = err?.api?.error || err?.response?.data || err.message || String(err);
+    const apiLog = err?.api?.log || null;
+    return res.status(400).json({ ok: false, error: 'MCC_INVITE_ERROR', detail, apiLog });
+  }
+});
+
+/* ============================================================================
+ * GET /api/google/ads/insights/mcc/invite/status
+ * Consulta el estado del vínculo Manager↔Client para el MCC configurado.
+ * Query: ?customer_id=123-456-7890
+ * ==========================================================================*/
+router.get('/mcc/invite/status', requireAuth, async (req, res) => {
+  try {
+    const customerId = normId(String(req.query.customer_id || req.query.customerId || ''));
+    if (!customerId) return res.status(400).json({ ok: false, error: 'CUSTOMER_ID_REQUIRED' });
+
+    const ga = await GoogleAccount.findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
+      .select('+accessToken +refreshToken managerCustomerId loginCustomerId')
+      .lean();
+    if (!ga) return res.status(400).json({ ok: false, error: 'GOOGLE_NOT_CONNECTED' });
+
+    const accessToken = await getFreshAccessToken(ga);
+    const managerId = normId(process.env.GOOGLE_LOGIN_CUSTOMER_ID || ga.managerCustomerId || ga.loginCustomerId || '');
+    if (!managerId) {
+      return res.status(400).json({ ok: false, error: 'NO_MANAGER_ID', note: 'Configura GOOGLE_LOGIN_CUSTOMER_ID o guarda managerCustomerId/loginCustomerId en GoogleAccount.' });
+    }
+
+    const status = await Ads.getMccLinkStatus({
+      accessToken,
+      managerId,
+      clientId: customerId,
+    });
+
+    return res.json({ ok: true, managerId, customerId, ...status });
+  } catch (err) {
+    const detail = err?.api?.error || err?.response?.data || err.message || String(err);
+    const apiLog = err?.api?.log || null;
+    return res.status(400).json({ ok: false, error: 'MCC_STATUS_ERROR', detail, apiLog });
+  }
+});
+
+/* ============================================================================
  * GET /api/google/ads/insights/selftest
  * Autodiagnóstico rápido de searchStream: ejecuta un GAQL mínimo y retorna
  * requestId / apiLog en caso de error. Útil para soporte de Google.
@@ -529,7 +601,7 @@ router.get('/debug/raw', requireAuth, async (req, res) => {
       firstCustomerMeta: firstMeta,
       firstCustomerError: errMeta,
       firstCustomerApiLog: metaLog,
-      apiVersion: 'v22',
+      apiVersion: process.env.GADS_API_VERSION || 'v22',
     });
   } catch (err) {
     res.status(500).json({ ok: false, error: 'DEBUG_RAW_ERROR', detail: err?.message || String(err) });

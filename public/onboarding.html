@@ -6,6 +6,32 @@
   <title>Onboarding - ADNOVA AI</title>
   <link rel="stylesheet" href="onboarding.css" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+  <style>
+    /* Helpers ligeros para las nuevas secciones */
+    .hidden { display: none !important; }
+    .notice {
+      margin-top: 12px; padding: 10px 12px;
+      border: 1px solid #3a3a48; border-radius: 8px;
+      background:#16161f; color:#e7e7f0; font-size: .95rem;
+    }
+    .mcc-panel {
+      margin-top: 14px; padding: 12px;
+      border: 1px dashed #6b61ff; border-radius: 10px;
+      background: rgba(107,97,255,.08);
+    }
+    .mcc-panel h4 { margin: 0 0 6px; font-size: 1rem; }
+    .mcc-panel code { background: rgba(255,255,255,.08); padding: 2px 6px; border-radius: 6px; }
+    .mcc-panel pre {
+      margin-top: 10px; max-height: 160px; overflow:auto;
+      background:#0f0f16; color:#b7b7d0; padding:10px; border-radius:8px; font-size:.85rem;
+    }
+    .mcc-panel button {
+      margin-top: 10px;
+      padding: 10px 14px; border:0; border-radius:8px;
+      background:#6b61ff; color:#fff; font-weight:600; cursor:pointer;
+    }
+    .mcc-panel button:hover { filter: brightness(1.05); }
+  </style>
 </head>
 
 <body data-page="onboarding" data-user-id="USER_ID_REAL">
@@ -159,6 +185,25 @@
                 <p class="help">Usaremos tu objetivo para personalizar el dashboard de Google.</p>
               </div>
             </div>
+
+            <!-- ====== NUEVO: Estado, selector y fallback MCC ====== -->
+            <div id="ga-ads-status" class="notice hidden" aria-live="polite"></div>
+
+            <!-- Aquí tu JS de selección (onboardingInlineSelect.js) pintará la UI cuando aplique -->
+            <div id="ga-ads-accounts" class="hidden"></div>
+
+            <!-- Panel de fallback MCC (solo si selftest/discovery falla) -->
+            <div id="ga-ads-mcc" class="mcc-panel hidden">
+              <h4>Conectar con nuestro MCC (solo si te lo pedimos)</h4>
+              <p>Si tu cuenta no respondió correctamente, acepta la invitación desde Google Ads y después pulsa <b>Verificar</b>.</p>
+              <ul>
+                <li><b>MCC:</b> <code>606-148-1297</code></li>
+                <li>En Google Ads: <i>Herramientas &gt; Acceso y seguridad &gt; Administradores</i>.</li>
+              </ul>
+              <button id="ga-ads-mcc-verify-btn" type="button">Ya acepté, verificar</button>
+              <pre id="ga-ads-mcc-log" aria-live="polite"></pre>
+            </div>
+            <!-- ====== /NUEVO ====== -->
           </div>
 
           <!-- Meta -->

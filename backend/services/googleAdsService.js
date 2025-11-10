@@ -8,8 +8,7 @@ const axios = require('axios');
  * ========================= */
 const DEV_TOKEN =
   process.env.GOOGLE_DEVELOPER_TOKEN ||
-  process.env.GOOGLE_ADS_DEVELOPER_TOKEN || // compat
-  '';
+  process.env.GOOGLE_ADS_DEVELOPER_TOKEN || '';
 
 const LOGIN_CID = (
   process.env.GOOGLE_LOGIN_CUSTOMER_ID ||
@@ -31,7 +30,7 @@ function baseHeaders(accessToken) {
     Authorization: `Bearer ${accessToken}`,
     'developer-token': DEV_TOKEN,
     Accept: 'application/json',
-    // ⚠️ NO ponemos Content-Type aquí; solo en requests con body
+    // Content-Type se pone SOLO cuando hay body (POST/PUT)
   };
 }
 
@@ -85,7 +84,6 @@ async function requestV22({ accessToken, path, method = 'GET', body = null, logi
   const url = `${ADS_HOST}/${ADS_VER}${path.startsWith('/') ? path : `/${path}`}`;
   const headers = baseHeaders(accessToken);
   if (loginCustomerId) headers['login-customer-id'] = String(loginCustomerId).replace(/[^\d]/g, '');
-  // Solo añadir Content-Type cuando realmente mandamos un body (POST JSON)
   if (body != null) headers['Content-Type'] = 'application/json';
 
   try {
@@ -93,8 +91,7 @@ async function requestV22({ accessToken, path, method = 'GET', body = null, logi
       url,
       method,
       headers,
-      // ⚠️ NO enviar cuerpo en GET
-      data: body ?? undefined,
+      data: body ?? undefined, // NO body en GET
       timeout: 60000,
       validateStatus: () => true,
     });
@@ -285,6 +282,81 @@ async function searchGAQLStream(accessToken, customerId, query) {
 }
 
 /* ========================================================================== *
+ * 2.5) Enlaces MCC (invite + status)
+ * ========================================================================== */
+
+/**
+ * Envía invitación Manager→Client.
+ * REST: POST /v22/customers/{managerId}/customerManagerLinks:mutate
+ * docs: https://developers.google.com/google-ads/api/reference/rpc/v22/CustomerManagerLinkService
+ */
+async function mccInviteCustomer({ accessToken, managerId, clientId }) {
+  const mid = normId(managerId);
+  const cid = normId(clientId);
+
+  const path = `/customers/${mid}/customerManagerLinks:mutate`;
+  const body = {
+    operations: [
+      {
+        create: {
+          // Algunos backends aceptan sólo clientCustomer; incluimos ambos por compatibilidad:
+          manager: `customers/${mid}`,
+          clientCustomer: `customers/${cid}`,
+        }
+      }
+    ]
+  };
+
+  const r = await requestV22({
+    accessToken,
+    path,
+    method: 'POST',
+    body,
+    loginCustomerId: mid, // contexto del manager
+  });
+
+  if (!r.ok) {
+    const err = new Error(`[mccInviteCustomer] ${r.data?.error?.status || r.res?.status}: ${r.data?.error?.message || 'failed'}`);
+    err.api = { error: r.data?.error || r.data, log: r.log };
+    throw err;
+  }
+
+  return r.data; // results/resourceNames
+}
+
+/**
+ * Lee estado del vínculo Manager↔Client para NUESTRO MCC.
+ * REST: GET /v22/customers/{clientId}/customerManagerLinks
+ * Estado esperado: PENDING | ACTIVE | REFUSED | INACTIVE | CANCELLED
+ */
+async function getMccLinkStatus({ accessToken, managerId, clientId }) {
+  const mid = normId(managerId);
+  const cid = normId(clientId);
+
+  const path = `/customers/${cid}/customerManagerLinks`;
+  const r = await requestV22({
+    accessToken,
+    path,
+    method: 'GET',
+  });
+
+  if (!r.ok) {
+    const err = new Error(`[getMccLinkStatus] ${r.data?.error?.status || r.res?.status}: ${r.data?.error?.message || 'failed'}`);
+    err.api = { error: r.data?.error || r.data, log: r.log };
+    throw err;
+  }
+
+  const links = Array.isArray(r.data?.customerManagerLinks) ? r.data.customerManagerLinks : [];
+  const mine  = links.find(l => (l.manager || '').endsWith(`/${mid}`));
+
+  return {
+    exists: !!mine,
+    status: mine?.status || 'UNKNOWN',
+    link: mine || null,
+  };
+}
+
+/* ========================================================================== *
  * 3) Helpers de fechas/formatos
  * ========================================================================== */
 function fmt(d) {
@@ -354,9 +426,9 @@ async function fetchInsights({
   customerId,
   datePreset,
   range,
-  includeToday,
+  includeToday, // compat
   objective,
-  compareMode,
+  compareMode,  // compat
 }) {
   if (!customerId) throw new Error('customerId required');
 
@@ -450,4 +522,7 @@ module.exports = {
   searchGAQLStream,
   discoverAndEnrich,
   fetchInsights,
+  // NUEVOS (MCC):
+  mccInviteCustomer,
+  getMccLinkStatus,
 };
