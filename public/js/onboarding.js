@@ -47,12 +47,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   const GOOGLE_STATUS_URL    = '/auth/google/status';
   const GOOGLE_OBJECTIVE_URL = '/auth/google/objective';
 
-  // NUEVO: contenedores de estado/selector/fallback MCC
+  // NUEVO: contenedores de estado/selector
   const gaStatusBox      = document.getElementById('ga-ads-status');
   const gaAccountsMount  = document.getElementById('ga-ads-accounts');
-  const mccPanel         = document.getElementById('ga-ads-mcc');
-  const mccVerifyBtn     = document.getElementById('ga-ads-mcc-verify-btn');
-  const mccLogPre        = document.getElementById('ga-ads-mcc-log');
+
+  // NUEVO: panel MCC (ids nuevos del HTML)
+  const mccHelpPanel     = document.getElementById('google-mcc-help');
+  const mccStatusPill    = document.getElementById('mcc-status-pill');
+  const mccReasonEl      = document.getElementById('mcc-help-reason');
+  const mccRetryBtn      = document.getElementById('mcc-retry-btn');
+  const mccVerifyBtn     = document.getElementById('mcc-verify-btn');
+  const mccDetails       = document.getElementById('mcc-tech-details');
+  const mccPre           = document.getElementById('mcc-tech-pre');
 
   // -------------------------------------------------
   // Utils UI
@@ -83,6 +89,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     gaStatusBox.innerHTML = html || '';
     if (html) show(gaStatusBox); else hide(gaStatusBox);
   };
+
+  // Pill de estado del panel MCC
+  function setMccPill(kind = 'warn', text = 'Revisión requerida') {
+    if (!mccStatusPill) return;
+    mccStatusPill.classList.remove('pill--ok','pill--warn','pill--error');
+    mccStatusPill.classList.add(kind === 'ok' ? 'pill--ok' : kind === 'error' ? 'pill--error' : 'pill--warn');
+    mccStatusPill.textContent = text;
+  }
+  function setMccReason(text) {
+    if (mccReasonEl) mccReasonEl.textContent = text || '';
+  }
+  function setMccLog(obj) {
+    if (!mccPre || !mccDetails) return;
+    const has = !!obj;
+    mccPre.textContent = has ? (typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2)) : '';
+    mccDetails.open = false; // inicia cerrado
+    mccDetails.classList.toggle('hidden', !has);
+  }
 
   const openGoogleCloseMeta = () => { show(googleObjectiveStep); hide(metaObjectiveStep); };
   const openMetaCloseGoogle = () => { show(metaObjectiveStep);  hide(googleObjectiveStep); };
@@ -269,7 +293,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // -------------------------------------------------
-  // Google — NUEVO flujo cuentas + self-test + fallback MCC
+  // Google — flujo cuentas + self-test + fallback MCC
   // -------------------------------------------------
   const markGoogleConnected = (objective = null) => {
     setBtnConnected(connectGoogleBtn);
@@ -283,15 +307,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function ensureGoogleAccountsUI() {
     try {
       setStatus('Buscando tus cuentas de Google Ads…');
-      hide(mccPanel);
+      hide(mccHelpPanel);
+      setMccLog(null);
       show(gaAccountsMount);
 
       const res = await apiFetch('/api/google/ads/insights/accounts');
+
       if (res?.ok === false && res?.error === 'DISCOVERY_ERROR') {
-        setStatus('Tuvimos un problema al descubrir tus cuentas. Puedes intentar verificar después de aceptar la invitación (si aplica).');
-        // muestra detalle en panel MCC
-        show(mccPanel);
-        if (mccLogPre) mccLogPre.textContent = JSON.stringify(res.apiLog || res.reason || res, null, 2);
+        setStatus('Tuvimos un problema al descubrir tus cuentas.');
+        show(mccHelpPanel);
+        setMccPill('warn', 'Revisión requerida');
+        setMccReason('Si ya aceptaste la invitación de administrador, pulsa “Ya acepté, verificar”.');
+        setMccLog(res.apiLog || res.reason || res);
         return { ok: false, accounts: [] };
       }
 
@@ -338,19 +365,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         : `/api/google/ads/insights/selftest`;
       const r = await apiFetch(url);
       if (r?.ok) {
-        hide(mccPanel);
         setStatus('Conexión validada correctamente.');
+        setMccPill('ok','Validado');
+        setMccReason('');
+        hide(mccHelpPanel);
         return true;
       }
-      // Si el backend respondió 400 con detalle del API, apiFetch lo trae como objeto
-      show(mccPanel);
-      if (mccLogPre) mccLogPre.textContent = JSON.stringify(r?.apiLog || r?.detail || r, null, 2);
-      setStatus('Necesitamos que aceptes la invitación de administrador (si ya la enviamos) o que verifiques el acceso y reintentes.');
+      // Backend devolvió 400/… con detalle
+      show(mccHelpPanel);
+      setMccPill('warn','Revisión requerida');
+      setMccReason('Necesitamos que aceptes la invitación de administrador (si ya la enviamos) o que verifiques el acceso y reintentes.');
+      setMccLog(r?.apiLog || r?.detail || r);
       return false;
     } catch (e) {
-      show(mccPanel);
-      if (mccLogPre) mccLogPre.textContent = e?.message || String(e);
-      setStatus('No pudimos ejecutar la prueba. Intenta nuevamente.');
+      show(mccHelpPanel);
+      setMccPill('error','Error');
+      setMccReason('No pudimos ejecutar la verificación. Intenta nuevamente.');
+      setMccLog(e?.message || String(e));
       return false;
     }
   }
@@ -372,7 +403,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         setStatus('Selección guardada. Listo para continuar.');
         // Autoverificación rápida
         await runGoogleSelfTest(ids[0]);
-        // Notifica habilitar continue
         window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved'));
       } else {
         alert(save?.error || 'No se pudo guardar la selección.');
@@ -383,12 +413,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Botón “Verificar” del panel MCC
+  // Botones del panel MCC
+  mccRetryBtn?.addEventListener('click', async () => {
+    setStatus('Reintentando…');
+    await ensureGoogleAccountsUI();
+  });
   mccVerifyBtn?.addEventListener('click', async () => {
     setStatus('Verificando acceso…');
-    // Primero reintenta discovery (por si ya aceptaron)
-    await ensureGoogleAccountsUI();
-    // Luego self-test
+    await ensureGoogleAccountsUI(); // por si ya aceptaron
     await runGoogleSelfTest();
   });
 
@@ -420,7 +452,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       hide(googleObjectiveStep);
       markGoogleConnected(st.objective);
     }
-    // Si ya está conectado a Google OAuth, intentamos cargar cuentas UI
     if (st.connected) {
       await ensureGoogleAccountsUI();
     }

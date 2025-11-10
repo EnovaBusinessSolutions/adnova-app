@@ -7,30 +7,26 @@
   <link rel="stylesheet" href="onboarding.css" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
   <style>
-    /* Helpers ligeros para las nuevas secciones */
-    .hidden { display: none !important; }
-    .notice {
-      margin-top: 12px; padding: 10px 12px;
-      border: 1px solid #3a3a48; border-radius: 8px;
-      background:#16161f; color:#e7e7f0; font-size: .95rem;
+    /* Helpers ligeros */
+    .hidden{display:none!important}
+    .notice{
+      margin-top:12px;padding:10px 12px;border:1px solid #3a3a48;border-radius:8px;
+      background:#16161f;color:#e7e7f0;font-size:.95rem;
     }
-    .mcc-panel {
-      margin-top: 14px; padding: 12px;
-      border: 1px dashed #6b61ff; border-radius: 10px;
-      background: rgba(107,97,255,.08);
-    }
-    .mcc-panel h4 { margin: 0 0 6px; font-size: 1rem; }
-    .mcc-panel code { background: rgba(255,255,255,.08); padding: 2px 6px; border-radius: 6px; }
-    .mcc-panel pre {
-      margin-top: 10px; max-height: 160px; overflow:auto;
-      background:#0f0f16; color:#b7b7d0; padding:10px; border-radius:8px; font-size:.85rem;
-    }
-    .mcc-panel button {
-      margin-top: 10px;
-      padding: 10px 14px; border:0; border-radius:8px;
-      background:#6b61ff; color:#fff; font-weight:600; cursor:pointer;
-    }
-    .mcc-panel button:hover { filter: brightness(1.05); }
+    /* MCC help (alineado con onboarding.js) */
+    .mcc-help{margin-top:14px;padding:14px;border:1px dashed #5b4a8f;background:#151224;border-radius:12px}
+    .mcc-help__head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+    .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:.85rem}
+    .pill--ok{background:#143b26;color:#90f0bf}
+    .pill--warn{background:#3b2a14;color:#ffd9a0}
+    .pill--error{background:#3b1414;color:#ffb0b0}
+    .mcc-help__reason{opacity:.9;margin:.4rem 0 .6rem}
+    .mcc-help__steps{margin:.2rem 0 .8rem 1.2rem}
+    .mcc-help__actions{display:flex;gap:10px;flex-wrap:wrap}
+    .btn-secondary{background:#2a2740}
+    .btn-secondary:hover{background:#343158}
+    .mcc-help__details{margin-top:10px}
+    .mcc-help__pre{max-height:180px;overflow:auto;background:#0d0b18;padding:10px;border-radius:8px}
   </style>
 </head>
 
@@ -97,19 +93,10 @@
               </div>
             </div>
 
-            <!-- Botón Shopify bloqueado con tooltip -->
             <div class="btn-tooltip-wrapper coming-soon">
-              <button
-                type="button"
-                class="btn-connect"
-                id="connect-shopify-btn"
-                aria-disabled="true"
-                aria-describedby="shopify-tooltip"
-                tabindex="-1"
-              >
+              <button type="button" class="btn-connect" id="connect-shopify-btn" aria-disabled="true" aria-describedby="shopify-tooltip" tabindex="-1">
                 Conectar
               </button>
-
               <div class="btn-tooltip" id="shopify-tooltip" role="tooltip">
                 <div class="btn-tooltip-title">Próximamente</div>
                 <div class="btn-tooltip-desc">Estamos habilitando la conexión nativa con Shopify.</div>
@@ -138,7 +125,7 @@
           <div class="connection-card" id="google-card">
             <div class="connection-details">
               <div class="connection-icon">
-                <img src="https://img.icons8.com/ios-filled/50/FFFFFF/google-logo.png" alt="Google Analytics" width="36" height="36"/>
+                <img src="https://img.icons8.com/ios-filled/50/FFFFFF/google-logo.png" alt="Google" width="36" height="36"/>
               </div>
               <div class="connection-info">
                 <h3>Google Analytics & Ads</h3>
@@ -155,7 +142,6 @@
                 #google-card .connection-details { flex:1 1 auto; }
                 #google-card #connect-google-btn { flex:0 0 auto; margin-left:auto; }
                 #google-card #google-obj { flex-basis:100%; order:99; }
-
                 #google-obj #google-objective-step { display:none; margin-top:12px; }
                 #google-obj .objective-title { display:block; margin-bottom:8px; font-weight:600; }
                 #google-obj .objective-options { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
@@ -186,24 +172,34 @@
               </div>
             </div>
 
-            <!-- ====== NUEVO: Estado, selector y fallback MCC ====== -->
+            <!-- Estado / selector (tu JS lo pinta) -->
             <div id="ga-ads-status" class="notice hidden" aria-live="polite"></div>
-
-            <!-- Aquí tu JS de selección (onboardingInlineSelect.js) pintará la UI cuando aplique -->
             <div id="ga-ads-accounts" class="hidden"></div>
 
-            <!-- Panel de fallback MCC (solo si selftest/discovery falla) -->
-            <div id="ga-ads-mcc" class="mcc-panel hidden">
-              <h4>Conectar con nuestro MCC (solo si te lo pedimos)</h4>
-              <p>Si tu cuenta no respondió correctamente, acepta la invitación desde Google Ads y después pulsa <b>Verificar</b>.</p>
-              <ul>
-                <li><b>MCC:</b> <code>606-148-1297</code></li>
-                <li>En Google Ads: <i>Herramientas &gt; Acceso y seguridad &gt; Administradores</i>.</li>
-              </ul>
-              <button id="ga-ads-mcc-verify-btn" type="button">Ya acepté, verificar</button>
-              <pre id="ga-ads-mcc-log" aria-live="polite"></pre>
+            <!-- Panel MCC (solo si hace falta) -->
+            <div id="google-mcc-help" class="mcc-help hidden" aria-live="polite">
+              <div class="mcc-help__head">
+                <strong>Conectar con nuestro MCC (solo si te lo pedimos)</strong>
+                <span id="mcc-status-pill" class="pill pill--warn">Revisión requerida</span>
+              </div>
+              <p id="mcc-help-reason" class="mcc-help__reason">
+                Tuvimos un problema al descubrir tus cuentas. Si ya aceptaste la invitación de administrador,
+                pulsa <em>Verificar</em>. Si aún no la ves, te la podemos reenviar.
+              </p>
+              <ol class="mcc-help__steps">
+                <li>Entra a Google Ads con tu cuenta.</li>
+                <li>Ve a <b>Herramientas</b> → <b>Acceso y seguridad</b> → <b>Administradores</b>.</li>
+                <li>Acepta la invitación de administrador desde el MCC <b>606-148-1297</b>.</li>
+              </ol>
+              <div class="mcc-help__actions">
+                <button id="mcc-retry-btn" class="btn-connect btn-secondary" type="button">Reintentar</button>
+                <button id="mcc-verify-btn" class="btn-connect" type="button">Ya acepté, verificar</button>
+              </div>
+              <details id="mcc-tech-details" class="mcc-help__details hidden">
+                <summary>Detalles técnicos</summary>
+                <pre id="mcc-tech-pre" class="mcc-help__pre"></pre>
+              </details>
             </div>
-            <!-- ====== /NUEVO ====== -->
           </div>
 
           <!-- Meta -->
@@ -269,7 +265,6 @@
   <!-- Modal selección de cuentas (máx 3 por plataforma) -->
   <div id="account-select-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="asm-title">
     <div class="asm-overlay"></div>
-
     <div class="asm-panel">
       <h2 id="asm-title" class="asm-title">Selecciona tus cuentas</h2>
       <p class="asm-sub">
@@ -277,20 +272,15 @@
         <strong>Máximo 3 por plataforma.</strong>
       </p>
 
-      <!-- Hint informativo (lo usa tu JS con _hint) -->
       <div id="asm-hint"></div>
-
-      <!-- Error (tu JS ya lo controla) -->
       <div id="asm-error" class="asm-error" style="display:none"></div>
 
-      <!-- META -->
       <h3 class="asm-section-title" id="asm-meta-title" style="display:none">
         Meta Business Manager
         <small>(<span id="asm-meta-count">0/3</span>)</small>
       </h3>
       <div id="asm-meta-list" class="asm-list"></div>
 
-      <!-- GOOGLE -->
       <h3 class="asm-section-title" id="asm-google-title" style="display:none">
         Google Analytics & Ads
         <small>(<span id="asm-google-count">0/3</span>)</small>
