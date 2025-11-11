@@ -47,16 +47,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   const GOOGLE_STATUS_URL    = '/auth/google/status';
   const GOOGLE_OBJECTIVE_URL = '/auth/google/objective';
 
-  // NUEVO: contenedores de estado/selector
-  const gaStatusBox      = document.getElementById('ga-ads-status');
-  const gaAccountsMount  = document.getElementById('ga-ads-accounts');
+  // Contenedores estado/selector
+  const gaStatusBox     = document.getElementById('ga-ads-status');
+  const gaAccountsMount = document.getElementById('ga-ads-accounts');
 
-  // NUEVO: panel MCC (ids del HTML nuevo — sin detalles técnicos)
-  const mccHelpPanel     = document.getElementById('google-mcc-help');
-  const mccStatusPill    = document.getElementById('mcc-status-pill');
-  const mccReasonEl      = document.getElementById('mcc-help-reason');
-  const mccRetryBtn      = document.getElementById('mcc-retry-btn');
-  const mccVerifyBtn     = document.getElementById('mcc-verify-btn');
+  // Panel MCC (sin detalles técnicos)
+  const mccHelpPanel  = document.getElementById('google-mcc-help');
+  const mccStatusPill = document.getElementById('mcc-status-pill');
+  const mccReasonEl   = document.getElementById('mcc-help-reason');
+  const mccRetryBtn   = document.getElementById('mcc-retry-btn');
+  const mccVerifyBtn  = document.getElementById('mcc-verify-btn');
 
   // -------------------------------------------------
   // Utils UI
@@ -95,17 +95,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     mccStatusPill.classList.add(kind === 'ok' ? 'pill--ok' : kind === 'error' ? 'pill--error' : 'pill--warn');
     mccStatusPill.textContent = text;
   }
-  function setMccReason(text) {
-    if (mccReasonEl) mccReasonEl.textContent = text || '';
-  }
-  // (No-op: ya no mostramos detalles técnicos)
-  function setMccLog(_) {}
+  function setMccReason(text) { if (mccReasonEl) mccReasonEl.textContent = text || ''; }
+  function setMccLog(_) {} // No-op: sin logs técnicos en UI
 
   const openGoogleCloseMeta = () => { show(googleObjectiveStep); hide(metaObjectiveStep); };
   const openMetaCloseGoogle = () => { show(metaObjectiveStep);  hide(googleObjectiveStep); };
 
   // -------------------------------------------------
-  // Estado de conectividad (basado en sessionStorage + flags)
+  // Estado de conectividad (sessionStorage + flags)
   // -------------------------------------------------
   function getConnectivityState() {
     const shopConnected =
@@ -131,7 +128,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     continueBtn.style.opacity       = anyConnected ? '1'    : '0.6';
   }
 
-  // Reacciona si otro script (onboardingInlineSelect.js) ajusta sessionStorage
+  // Reacciona si otro script ajusta sessionStorage
   window.addEventListener('adnova:accounts-selection-saved', habilitarContinue);
   window.addEventListener('storage', (e) => {
     if (!e) return;
@@ -248,9 +245,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   connectMetaBtn?.addEventListener('click', () => {
     localStorage.setItem('meta_connecting', '1');
     disableBtnWhileConnecting(connectMetaBtn);
-    if (connectMetaBtn.tagName !== 'A') {
-      window.location.href = '/auth/meta/login';
-    }
+    if (connectMetaBtn.tagName !== 'A') window.location.href = '/auth/meta/login';
   });
 
   saveMetaObjective?.addEventListener('click', async () => {
@@ -286,7 +281,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // -------------------------------------------------
-  // Google — flujo cuentas + self-test + fallback MCC
+  // Google — cuentas + self-test + fallback MCC
   // -------------------------------------------------
   const markGoogleConnected = (objective = null) => {
     setBtnConnected(connectGoogleBtn);
@@ -295,82 +290,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     habilitarContinue();
     window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved'));
   };
-
- // Carga cuentas y dispara evento para que onboardingInlineSelect.js pinte la UI
-async function ensureGoogleAccountsUI() {
-  try {
-    setStatus('Buscando tus cuentas de Google Ads…');
-    hide(mccHelpPanel);
-    setMccLog(null);
-    // 👇 No mostramos el mount todavía; solo si se requiere selección
-    hide(gaAccountsMount);
-
-    const res = await apiFetch('/api/google/ads/insights/accounts');
-
-    // Error de discovery → mostramos panel MCC
-    if (res?.ok === false && res?.error === 'DISCOVERY_ERROR') {
-      setStatus('Tuvimos un problema al descubrir tus cuentas.');
-      show(mccHelpPanel);
-      setMccPill('warn', 'Revisión requerida');
-      setMccReason('Si ya aceptaste la invitación de administrador, pulsa “Ya acepté, verificar”.');
-      setMccLog(res.apiLog || res.reason || res);
-      return { ok: false, accounts: [] };
-    }
-
-    const accounts = Array.isArray(res?.accounts) ? res.accounts : [];
-    const defaultCustomerId = res?.defaultCustomerId || null;
-    const requiredSelection = !!res?.requiredSelection;
-
-    // Sin cuentas todavía
-    if (accounts.length === 0) {
-      setStatus('No encontramos cuentas accesibles todavía. Si acabas de conectar, intenta nuevamente en un minuto.');
-      hide(gaAccountsMount);
-      return { ok: true, accounts, defaultCustomerId, requiredSelection };
-    }
-
-    // Si hay >3 cuentas → mostrar mensaje + inline selector/modal
-    if (requiredSelection) {
-      setStatus('Selecciona hasta 3 cuentas para continuar.');
-      show(gaAccountsMount);
-
-      // Notifica al otro script para que renderice el selector
-      window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
-        detail: {
-          accounts,
-          defaultCustomerId,
-          requiredSelection,
-          mountEl: gaAccountsMount
-        }
-      }));
-
-      return { ok: true, accounts, defaultCustomerId, requiredSelection };
-    }
-
-    // 1–2 cuentas → UX limpia (como antes): sin banners ni selector
-    setStatus('');
-    hide(gaAccountsMount);
-
-    // Consideramos conectado y habilitamos continuar
-    markGoogleConnected(sessionStorage.getItem('googleObjective') || null);
-
-    // Igual notificamos por si algún listener necesita los datos (no pinta UI)
-    window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
-      detail: {
-        accounts,
-        defaultCustomerId,
-        requiredSelection,
-        mountEl: gaAccountsMount
-      }
-    }));
-
-    return { ok: true, accounts, defaultCustomerId, requiredSelection };
-  } catch (e) {
-    console.error('ensureGoogleAccountsUI error:', e);
-    setStatus('No pudimos cargar tus cuentas. Intenta nuevamente.');
-    hide(gaAccountsMount);
-    return { ok: false, accounts: [] };
-  }
-}
 
   // Self-test: intenta un GAQL mínimo; en error muestra panel MCC
   async function runGoogleSelfTest(optionalCid = null) {
@@ -400,7 +319,87 @@ async function ensureGoogleAccountsUI() {
     }
   }
 
-  // Escucha selección desde onboardingInlineSelect.js y guarda en backend
+  // Carga cuentas y decide UX (selector/MCC/validación)
+  async function ensureGoogleAccountsUI() {
+    try {
+      setStatus('Buscando tus cuentas de Google Ads…');
+      hide(mccHelpPanel);
+      setMccLog(null);
+      hide(gaAccountsMount); // solo mostramos si hay que seleccionar
+
+      const res = await apiFetch('/api/google/ads/insights/accounts');
+
+      // Error de discovery → activar MCC
+      if (res?.ok === false && res?.error === 'DISCOVERY_ERROR') {
+        setStatus('Tuvimos un problema al descubrir tus cuentas.');
+        show(mccHelpPanel);
+        setMccPill('warn', 'Revisión requerida');
+        setMccReason('Si ya aceptaste la invitación de administrador, pulsa “Ya acepté, verificar”.');
+        setMccLog(res.apiLog || res.reason || res);
+        return { ok: false, accounts: [] };
+      }
+
+      const accounts = Array.isArray(res?.accounts) ? res.accounts : [];
+      const defaultCustomerId = res?.defaultCustomerId || null;
+      const requiredSelection = !!res?.requiredSelection;
+
+      // 0 cuentas → mostrar MCC (no marcar conectado)
+      if (accounts.length === 0) {
+        setStatus('No encontramos cuentas accesibles todavía. Si acabas de conectar, intenta nuevamente en un minuto.');
+        show(mccHelpPanel);
+        setMccPill('warn', 'Sin cuentas accesibles');
+        setMccReason('No vemos cuentas bajo nuestro MCC. Asegúrate de aceptar la invitación o compártenos acceso y pulsa “Ya acepté, verificar”.');
+        return { ok: true, accounts, defaultCustomerId, requiredSelection };
+      }
+
+      // >3 cuentas → selección requerida (no marcar conectado aún)
+      if (requiredSelection) {
+        setStatus('Selecciona hasta 3 cuentas para continuar.');
+        show(gaAccountsMount);
+
+        window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
+          detail: { accounts, defaultCustomerId, requiredSelection, mountEl: gaAccountsMount }
+        }));
+
+        return { ok: true, accounts, defaultCustomerId, requiredSelection };
+      }
+
+      // 1–2 cuentas → validación silenciosa
+      setStatus('Verificando acceso…');
+      hide(gaAccountsMount);
+
+      // avisamos por si alguien escucha, pero no se pinta UI
+      window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
+        detail: { accounts, defaultCustomerId, requiredSelection, mountEl: gaAccountsMount }
+      }));
+
+      const cid = defaultCustomerId || accounts[0]?.id || null;
+      const ok = await runGoogleSelfTest(cid);
+
+      if (ok) {
+        // ahora sí marcamos conectado
+        setStatus('Conexión validada correctamente.');
+        markGoogleConnected(sessionStorage.getItem('googleObjective') || null);
+        return { ok: true, accounts, defaultCustomerId, requiredSelection };
+      }
+
+      // Si falla la validación, mostramos MCC
+      show(mccHelpPanel);
+      setMccPill('warn', 'Revisión requerida');
+      setMccReason('No pudimos validar acceso. Acepta la invitación o verifica permisos y vuelve a intentar.');
+      return { ok: false, accounts, defaultCustomerId, requiredSelection };
+    } catch (e) {
+      console.error('ensureGoogleAccountsUI error:', e);
+      setStatus('No pudimos cargar tus cuentas. Intenta nuevamente.');
+      hide(gaAccountsMount);
+      show(mccHelpPanel);
+      setMccPill('error','Error');
+      setMccReason('Ocurrió un error al consultar Google Ads. Intenta de nuevo.');
+      return { ok: false, accounts: [] };
+    }
+  }
+
+  // Escucha selección (inline/modal) y valida antes de marcar conectado
   window.addEventListener('googleAccountsSelected', async (ev) => {
     try {
       const ids = (ev?.detail?.accountIds || []).map(String);
@@ -412,11 +411,18 @@ async function ensureGoogleAccountsUI() {
       });
 
       if (save?.ok) {
-        sessionStorage.setItem('googleConnected', 'true');
-        markGoogleConnected(sessionStorage.getItem('googleObjective') || null);
-        setStatus('Selección guardada. Listo para continuar.');
-        // Autoverificación rápida
-        await runGoogleSelfTest(ids[0]);
+        setStatus('Verificando acceso…');
+        const ok = await runGoogleSelfTest(ids[0]);
+
+        if (ok) {
+          markGoogleConnected(sessionStorage.getItem('googleObjective') || null);
+          setStatus('Selección guardada y validada. Listo para continuar.');
+        } else {
+          show(mccHelpPanel);
+          setMccPill('warn','Revisión requerida');
+          setMccReason('No pudimos validar acceso. Verifica permisos o acepta la invitación del MCC, y vuelve a intentar.');
+        }
+
         window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved'));
       } else {
         alert(save?.error || 'No se pudo guardar la selección.');
@@ -458,13 +464,13 @@ async function ensureGoogleAccountsUI() {
     }
   }
 
+  // No marcamos “Conectado” aquí; lo decide ensureGoogleAccountsUI + self-test
   async function refreshGoogleUI() {
     const st = await fetchGoogleStatus();
     if (st.connected && !st.objective) {
       openGoogleCloseMeta();
     } else if (st.connected && st.objective) {
       hide(googleObjectiveStep);
-      markGoogleConnected(st.objective);
     }
     if (st.connected) {
       await ensureGoogleAccountsUI();
@@ -478,6 +484,7 @@ async function ensureGoogleAccountsUI() {
     window.location.href = '/auth/google/connect';
   });
 
+  // Guardar objetivo: no marcar conectado; validar después
   saveGoogleObjective?.addEventListener('click', async () => {
     const selected = (document.querySelector('input[name="googleObjective"]:checked') || {}).value;
     if (!selected) return alert('Selecciona un objetivo');
@@ -487,10 +494,12 @@ async function ensureGoogleAccountsUI() {
         body: JSON.stringify({ objective: selected }),
       });
       if (r?.ok === false) throw new Error(r?.error || 'No se pudo guardar el objetivo');
+
       hide(googleObjectiveStep);
-      markGoogleConnected(selected);
+      sessionStorage.setItem('googleObjective', selected);
+
+      // Deja que ensureGoogleAccountsUI ejecute self-test y marque conectado si todo OK
       await ensureGoogleAccountsUI();
-      await runGoogleSelfTest();
     } catch (e) {
       console.error(e);
       alert('No se pudo guardar el objetivo. Inténtalo nuevamente.');
@@ -503,7 +512,7 @@ async function ensureGoogleAccountsUI() {
       if (st.connected) {
         localStorage.removeItem('google_connecting');
         if (!st.objective) openGoogleCloseMeta();
-        else { hide(googleObjectiveStep); markGoogleConnected(st.objective); }
+        else { hide(googleObjectiveStep); }
         await ensureGoogleAccountsUI();
         return;
       }
@@ -514,7 +523,7 @@ async function ensureGoogleAccountsUI() {
   }
 
   // -------------------------------------------------
-  // Sesión (para tu sección demo GA)
+  // Sesión (demo GA)
   // -------------------------------------------------
   try {
     const sess = await apiFetch('/api/session');
@@ -537,7 +546,7 @@ async function ensureGoogleAccountsUI() {
   try { await apiFetch('/api/saas/ping'); } catch {}
 
   // -------------------------------------------------
-  // Shopify domain helper (si viene por query o guardado)
+  // Shopify domain helper
   // -------------------------------------------------
   const savedShop = sessionStorage.getItem('shopDomain');
   if (shopFromQuery || savedShop) {
@@ -550,7 +559,7 @@ async function ensureGoogleAccountsUI() {
   }
 
   // -------------------------------------------------
-  // Refrescar UIs de Google/Meta, habilitar continuar
+  // Refrescar UIs + habilitar continuar
   // -------------------------------------------------
   await Promise.allSettled([ refreshGoogleUI(), refreshMetaUI() ]);
   habilitarContinue();
@@ -577,7 +586,7 @@ async function ensureGoogleAccountsUI() {
     await refreshGoogleUI();
   }
 
-  // Si quedaron “conectando…” activos, hacemos polling
+  // Polling si quedaron “conectando…”
   if (localStorage.getItem('meta_connecting') === '1' &&
       sessionStorage.getItem('metaConnected') !== 'true') {
     pollMetaUntilConnected();
@@ -600,7 +609,7 @@ async function ensureGoogleAccountsUI() {
   });
 
   // -------------------------------------------------
-  // DEMO GA (sin cambios en lógica)
+  // DEMO GA
   // -------------------------------------------------
   gaBtn?.addEventListener('click', async () => {
     const raw = gaIn?.value?.trim();
