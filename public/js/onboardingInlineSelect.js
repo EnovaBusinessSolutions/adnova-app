@@ -152,8 +152,9 @@ function _renderLists(){
     gList.innerHTML = '';
     ASM.data.google.forEach(a => {
       const id = String(a.id || '').replace(/^customers\//, '').replace(/-/g,'').trim();
-      const label = a.name || `Cuenta ${id}`;
-      const chip = _chip(label, id, 'google', (checked, val, kind, cbEl) => {
+      // 👇 Mostrar nombre humano: name -> descriptiveName -> fallback "Cuenta {id}"
+      const displayName = a.name || a.descriptiveName || `Cuenta ${id}`;
+      const chip = _chip(displayName, id, 'google', (checked, val, kind, cbEl) => {
         const set = ASM.sel[kind];
         if (checked) {
           if (set.size >= MAX_SELECT) { cbEl.checked = false; return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuentas.`, 'warn'); }
@@ -199,6 +200,8 @@ async function _openModal(){
       if (ASM.visible.google) sessionStorage.setItem('googleConnected','true');
 
       _hide(_el('account-select-modal'));
+      // Notificar a otras partes del onboarding para habilitar "Continuar"
+      window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved'));
     } catch (e) {
       console.error('save selection error', e);
       const box = _el('asm-error');
@@ -232,12 +235,16 @@ async function _maybeOpenSelectionModal(){
   if (ASM.visible.meta){
     promises.push(
       _json('/api/meta/accounts').then(v=>{
-        ASM.data.meta = v.accounts || v.ad_accounts || [];
+        ASM.data.meta = (v.accounts || v.ad_accounts || []).map(a => ({
+          ...a,
+          id: String(a.id || a.account_id || '').replace(/^act_/, ''),
+          name: a.name || a.account_name || null
+        }));
         // Se necesita modal si hay 3+
         ASM.needs.meta = (ASM.data.meta.length > 2);
         // Autoselección si 1–2
         if (!ASM.needs.meta && ASM.data.meta.length){
-          const ids = ASM.data.meta.map(a => String(a.id || a.account_id || '').replace(/^act_/, ''));
+          const ids = ASM.data.meta.map(a => a.id);
           return _post('/api/meta/accounts/selection', { accountIds: ids.slice(0, MAX_SELECT) })
             .then(()=>sessionStorage.setItem('metaConnected','true'))
             .catch(()=>{});
@@ -249,10 +256,16 @@ async function _maybeOpenSelectionModal(){
   if (ASM.visible.google){
     promises.push(
       _json('/api/google/ads/insights/accounts').then(v=>{
-        ASM.data.google = v.accounts || [];
+        // Normalizamos aquí: dejamos siempre name poblado con fallback a descriptiveName
+        ASM.data.google = (v.accounts || []).map(a => ({
+          ...a,
+          id: String(a.id || '').replace(/^customers\//,'').replace(/-/g,'').trim(),
+          name: a.name || a.descriptiveName || null,
+          descriptiveName: a.descriptiveName || a.name || null
+        }));
         ASM.needs.google = (ASM.data.google.length > 2);
         if (!ASM.needs.google && ASM.data.google.length){
-          const ids = ASM.data.google.map(a => String(a.id || '').replace(/^customers\//,'').replace(/-/g,'').trim());
+          const ids = ASM.data.google.map(a => a.id);
           return _post('/api/google/ads/insights/accounts/selection', { accountIds: ids.slice(0, MAX_SELECT) })
             .then(()=>sessionStorage.setItem('googleConnected','true'))
             .catch(()=>{});

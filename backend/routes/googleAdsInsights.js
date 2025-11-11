@@ -225,26 +225,28 @@ router.get('/accounts', requireAuth, async (req, res) => {
       return res.json({ ok: true, accounts: [], defaultCustomerId: null, requiredSelection: false });
     }
 
-    // Usa lo guardado si existe
-    let accounts = Array.isArray(ga.ad_accounts) && ga.ad_accounts.length
-      ? ga.ad_accounts
-      : [];
+    // 1) Cargar lo guardado
+    let accounts = Array.isArray(ga.ad_accounts) ? ga.ad_accounts : [];
 
-    // Si no hay nada guardado, descubre con la API (v22)
-    if (accounts.length === 0) {
+    // 2) ¿Faltan nombres? Forzamos enriquecido.
+    const needsEnrich =
+      accounts.length === 0 ||
+      accounts.some(a => !(a && (a.name || a.descriptiveName)));
+
+    if (needsEnrich) {
       try {
         const accessToken = await getFreshAccessToken(ga);
         const enriched = await Ads.discoverAndEnrich(accessToken); // [{id,name,currencyCode,timeZone,status}]
 
         accounts = enriched.map(c => ({
           id: normId(c.id),
-          name: c.name,
+          name: c.name || c.descriptiveName || null,
           currencyCode: c.currencyCode || null,
           timeZone: c.timeZone || null,
           status: c.status || null,
         }));
 
-        // Guarda enriquecido y espejo en customers
+        // Guardar enriquecido y espejo en customers
         await GoogleAccount.updateOne(
           { _id: ga._id },
           {
@@ -267,7 +269,6 @@ router.get('/accounts', requireAuth, async (req, res) => {
         const reason = e?.api?.error || e?.response?.data || e?.message || 'LAZY_DISCOVERY_FAILED';
         const log    = e?.api?.log || null;
         await saveDiscoveryFailure(req.user._id, reason, log);
-        // devolvemos lo que haya guardado (aunque esté vacío) y el error
         return res.status(502).json({
           ok: false,
           error: 'DISCOVERY_ERROR',
@@ -275,6 +276,15 @@ router.get('/accounts', requireAuth, async (req, res) => {
           apiLog: log || null,
         });
       }
+    } else {
+      // Normaliza nombres si ya estaban guardados
+      accounts = accounts.map(a => ({
+        id: normId(a.id),
+        name: a.name || a.descriptiveName || null,
+        currencyCode: a.currencyCode || null,
+        timeZone: a.timeZone || null,
+        status: a.status || null,
+      }));
     }
 
     // === Regla de selección
