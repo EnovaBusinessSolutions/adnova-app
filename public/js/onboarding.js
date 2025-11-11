@@ -296,36 +296,42 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved'));
   };
 
-  // Carga cuentas y dispara evento para que onboardingInlineSelect.js pinte la UI
-  async function ensureGoogleAccountsUI() {
-    try {
-      setStatus('Buscando tus cuentas de Google Ads…');
-      hide(mccHelpPanel);
-      setMccLog(null);
+ // Carga cuentas y dispara evento para que onboardingInlineSelect.js pinte la UI
+async function ensureGoogleAccountsUI() {
+  try {
+    setStatus('Buscando tus cuentas de Google Ads…');
+    hide(mccHelpPanel);
+    setMccLog(null);
+    // 👇 No mostramos el mount todavía; solo si se requiere selección
+    hide(gaAccountsMount);
+
+    const res = await apiFetch('/api/google/ads/insights/accounts');
+
+    // Error de discovery → mostramos panel MCC
+    if (res?.ok === false && res?.error === 'DISCOVERY_ERROR') {
+      setStatus('Tuvimos un problema al descubrir tus cuentas.');
+      show(mccHelpPanel);
+      setMccPill('warn', 'Revisión requerida');
+      setMccReason('Si ya aceptaste la invitación de administrador, pulsa “Ya acepté, verificar”.');
+      setMccLog(res.apiLog || res.reason || res);
+      return { ok: false, accounts: [] };
+    }
+
+    const accounts = Array.isArray(res?.accounts) ? res.accounts : [];
+    const defaultCustomerId = res?.defaultCustomerId || null;
+    const requiredSelection = !!res?.requiredSelection;
+
+    // Sin cuentas todavía
+    if (accounts.length === 0) {
+      setStatus('No encontramos cuentas accesibles todavía. Si acabas de conectar, intenta nuevamente en un minuto.');
+      hide(gaAccountsMount);
+      return { ok: true, accounts, defaultCustomerId, requiredSelection };
+    }
+
+    // Si hay >3 cuentas → mostrar mensaje + inline selector/modal
+    if (requiredSelection) {
+      setStatus('Selecciona hasta 3 cuentas para continuar.');
       show(gaAccountsMount);
-
-      const res = await apiFetch('/api/google/ads/insights/accounts');
-
-      if (res?.ok === false && res?.error === 'DISCOVERY_ERROR') {
-        setStatus('Tuvimos un problema al descubrir tus cuentas.');
-        show(mccHelpPanel);
-        setMccPill('warn', 'Revisión requerida');
-        setMccReason('Si ya aceptaste la invitación de administrador, pulsa “Ya acepté, verificar”.');
-        setMccLog(res.apiLog || res.reason || res);
-        return { ok: false, accounts: [] };
-      }
-
-      const accounts = Array.isArray(res?.accounts) ? res.accounts : [];
-      const defaultCustomerId = res?.defaultCustomerId || null;
-      const requiredSelection = !!res?.requiredSelection;
-
-      if (accounts.length === 0) {
-        setStatus('No encontramos cuentas accesibles todavía. Si acabas de conectar, intenta nuevamente en un minuto.');
-      } else {
-        setStatus(requiredSelection
-          ? 'Selecciona hasta 3 cuentas para continuar.'
-          : 'Cuentas cargadas. Puedes continuar o ajustar la selección.');
-      }
 
       // Notifica al otro script para que renderice el selector
       window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
@@ -337,18 +343,34 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       }));
 
-      // Si no es requerida la selección, consideramos “conectado”
-      if (!requiredSelection && accounts.length > 0) {
-        markGoogleConnected(sessionStorage.getItem('googleObjective') || null);
-      }
-
       return { ok: true, accounts, defaultCustomerId, requiredSelection };
-    } catch (e) {
-      console.error('ensureGoogleAccountsUI error:', e);
-      setStatus('No pudimos cargar tus cuentas. Intenta nuevamente.');
-      return { ok: false, accounts: [] };
     }
+
+    // 1–2 cuentas → UX limpia (como antes): sin banners ni selector
+    setStatus('');
+    hide(gaAccountsMount);
+
+    // Consideramos conectado y habilitamos continuar
+    markGoogleConnected(sessionStorage.getItem('googleObjective') || null);
+
+    // Igual notificamos por si algún listener necesita los datos (no pinta UI)
+    window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
+      detail: {
+        accounts,
+        defaultCustomerId,
+        requiredSelection,
+        mountEl: gaAccountsMount
+      }
+    }));
+
+    return { ok: true, accounts, defaultCustomerId, requiredSelection };
+  } catch (e) {
+    console.error('ensureGoogleAccountsUI error:', e);
+    setStatus('No pudimos cargar tus cuentas. Intenta nuevamente.');
+    hide(gaAccountsMount);
+    return { ok: false, accounts: [] };
   }
+}
 
   // Self-test: intenta un GAQL mínimo; en error muestra panel MCC
   async function runGoogleSelfTest(optionalCid = null) {
