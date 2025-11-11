@@ -932,3 +932,66 @@ body[data-page="onboarding4"] .ready-content {
 /* Animaciones */
 @keyframes asmPop{ from{ transform: translateY(6px) scale(.98); opacity:.0 } to{ transform:none; opacity:1 } }
 @keyframes asmFade{ from{ opacity:0 } to{ opacity:1 } }
+
+/* === Alineación y dimensiones consistentes de las 3 tarjetas === */
+.connection-cards .connection-card {
+  display: flex;
+  align-items: center;            /* centra verticalmente */
+  justify-content: space-between; /* contenido izq | botón der */
+  gap: 24px;
+  padding: 20px 24px;             /* padding homogéneo */
+  min-height: 112px;              /* misma altura visual */
+  box-sizing: border-box;
+}
+
+/* La columna izquierda crece; evita que el texto empuje al botón */
+.connection-card .connection-details {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Botón siempre a la derecha y centrado verticalmente */
+.connection-card > .btn-connect,
+.connection-card > .btn-tooltip-wrapper {
+  margin-left: auto;   /* empuja a la derecha */
+  flex: 0 0 auto;
+  align-self: center;  /* centra en eje vertical */
+}
+
+/* Si hay wrapper con tooltip (Shopify), normalizamos también el botón dentro */
+.connection-card .btn-tooltip-wrapper .btn-connect {
+  align-self: center;
+  min-width: 160px;    /* ancho mínimo homogéneo para los tres */
+  text-align: center;
+}
+
+/* Y si el botón está sin wrapper (Google/Meta), el mismo ancho mínimo */
+.connection-card > .btn-connect {
+  min-width: 160px;
+  text-align: center;
+}
+
+/* Pequeños ajustes para que badges/último párrafo no alarguen la tarjeta */
+.connection-card .connection-info p:last-child { margin-bottom: 0; }
+.connection-card .required-badge,
+.connection-card .optional-badge { line-height: 1; }
+
+/* Cuando el botón está "connected", conserva ancho y alineación */
+.btn-connect.connected {
+  min-width: 160px;
+  align-self: center;
+}
+
+/* En móvil seguimos tu patrón de apilar, pero respetando gutters */
+@media (max-width: 600px) {
+  .connection-cards .connection-card {
+    gap: 16px;
+    padding: 16px;
+    min-height: 0; /* que fluya en columna */
+  }
+  .connection-card > .btn-connect,
+  .connection-card .btn-tooltip-wrapper {
+    margin-left: 0;
+    width: 100%;
+  }
+}
