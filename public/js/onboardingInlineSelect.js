@@ -153,7 +153,7 @@ function _renderLists(){
     ASM.data.google.forEach(a => {
       const id = String(a.id || '').replace(/^customers\//, '').replace(/-/g,'').trim();
       // 👇 Mostrar nombre humano: name -> descriptiveName -> fallback "Cuenta {id}"
-      const displayName = a.name || a.descriptiveName || `Cuenta ${id}`;
+    const displayName = a.name || a.descriptiveName || a.descriptive_name || `Cuenta ${id}`;
       const chip = _chip(displayName, id, 'google', (checked, val, kind, cbEl) => {
         const set = ASM.sel[kind];
         if (checked) {
@@ -258,11 +258,12 @@ async function _maybeOpenSelectionModal(){
       _json('/api/google/ads/insights/accounts').then(v=>{
         // Normalizamos aquí: dejamos siempre name poblado con fallback a descriptiveName
         ASM.data.google = (v.accounts || []).map(a => ({
-          ...a,
-          id: String(a.id || '').replace(/^customers\//,'').replace(/-/g,'').trim(),
-          name: a.name || a.descriptiveName || null,
-          descriptiveName: a.descriptiveName || a.name || null
-        }));
+  ...a,
+  id: String(a.id || '').replace(/^customers\//,'').replace(/-/g,'').trim(),
+  // name “normalizado” siempre que exista en cualquiera de las claves:
+  name: a.name || a.descriptiveName || a.descriptive_name || null,
+  descriptiveName: a.descriptiveName || a.descriptive_name || a.name || null
+}));
         ASM.needs.google = (ASM.data.google.length > 2);
         if (!ASM.needs.google && ASM.data.google.length){
           const ids = ASM.data.google.map(a => a.id);

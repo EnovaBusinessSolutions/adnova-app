@@ -220,17 +220,8 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
   }
 });
 
-/* ============================================================================
- * GET /api/google/ads/insights/accounts
- * Descubre y devuelve las cuentas accesibles para el usuario actual.
- * Estructura esperada por el hook del frontend:
- *   { ok, accounts, defaultCustomerId, requiredSelection }
- *   Soporta ?force=1 para re-descubrir y enriquecer nombres ignorando caché.
- * ==========================================================================*/
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
-    const force = String(req.query.force || '').trim() === '1';
-
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
@@ -241,34 +232,54 @@ router.get('/accounts', requireAuth, async (req, res) => {
       return res.json({ ok: true, accounts: [], defaultCustomerId: null, requiredSelection: false });
     }
 
-    // 1) intentamos usar caché salvo que pidan force
-    let accounts = [];
-    if (!force) {
-      const cached = (Array.isArray(ga.ad_accounts) && ga.ad_accounts.length ? ga.ad_accounts : (ga.customers || []));
-      accounts = cached.map(normalizeAcc);
-    }
+    const force = String(req.query.force || '0') === '1';
 
-    // 2) si no hay nombres, o force=1, re-descubrimos con la API
-    const missingNames = accounts.length && accounts.every(a => !a.name);
-    if (force || accounts.length === 0 || missingNames) {
+    // 1) Cargar lo guardado
+    let accounts = Array.isArray(ga.ad_accounts) ? ga.ad_accounts : [];
+
+    // 2) ¿Faltan nombres? Forzamos enriquecido.
+    const hasName = (a) => !!(a && (a.name || a.descriptiveName || a.descriptive_name));
+    const needsEnrich =
+      force ||
+      accounts.length === 0 ||
+      accounts.some(a => !hasName(a));
+
+    if (needsEnrich) {
       try {
         const accessToken = await getFreshAccessToken(ga);
-        const enriched = await Ads.discoverAndEnrich(accessToken); // [{id, name || descriptiveName, ...}]
-        accounts = (Array.isArray(enriched) ? enriched : []).map(c => ({
-          id: normId(c.id),
-          name: c.name || c.descriptiveName || null,
-          currencyCode: c.currencyCode || null,
-          timeZone: c.timeZone || null,
-          status: c.status || null,
-        }));
+        const enriched = await Ads.discoverAndEnrich(accessToken); 
+        // ← Debe regresar: [{ id, name? | descriptiveName? | descriptive_name?, currencyCode, timeZone, status }]
 
-        // guarda enriquecido y espejo en customers (con descriptiveName por compat)
+        accounts = (enriched || []).map(c => {
+          const id  = normId(c.id);
+          const name =
+            c.name ||
+            c.descriptiveName ||
+            c.descriptive_name ||
+            null;
+
+          return {
+            id,
+            name,
+            currencyCode: c.currencyCode || c.currency_code || null,
+            timeZone:     c.timeZone     || c.time_zone     || null,
+            status:       c.status       || null,
+          };
+        });
+
+        // Guardar enriquecido y espejo en customers
         await GoogleAccount.updateOne(
           { _id: ga._id },
           {
             $set: {
-              ad_accounts: accounts.map(a => ({ id: a.id, name: a.name, currencyCode: a.currencyCode, timeZone: a.timeZone, status: a.status })),
-              customers:   accounts.map(a => ({ id: a.id, descriptiveName: a.name, currencyCode: a.currencyCode, timeZone: a.timeZone, status: a.status })),
+              ad_accounts: accounts,
+              customers: accounts.map(a => ({
+                id: a.id,
+                descriptiveName: a.name, // guardamos ya el nombre normalizado
+                currencyCode: a.currencyCode,
+                timeZone: a.timeZone,
+                status: a.status,
+              })),
               updatedAt: new Date(),
               lastAdsDiscoveryError: null,
               lastAdsDiscoveryLog: null,
@@ -279,27 +290,35 @@ router.get('/accounts', requireAuth, async (req, res) => {
         const reason = e?.api?.error || e?.response?.data || e?.message || 'LAZY_DISCOVERY_FAILED';
         const log    = e?.api?.log || null;
         await saveDiscoveryFailure(req.user._id, reason, log);
-        // Si no logramos descubrir y no había caché utilizable, devolvemos error
-        if (!accounts.length) {
-          return res.status(502).json({ ok: false, error: 'DISCOVERY_ERROR', reason, apiLog: log || null });
-        }
-        // De lo contrario, devolvemos la caché (aunque sean ids pelones)
+        return res.status(502).json({
+          ok: false,
+          error: 'DISCOVERY_ERROR',
+          reason,
+          apiLog: log || null,
+        });
       }
+    } else {
+      // Normaliza nombres si ya estaban guardados con otra llave
+      accounts = accounts.map(a => ({
+        id: normId(a.id),
+        name: a.name || a.descriptiveName || a.descriptive_name || null,
+        currencyCode: a.currencyCode || a.currency_code || null,
+        timeZone: a.timeZone || a.time_zone || null,
+        status: a.status || null,
+      }));
     }
 
-    // === Regla de selección
+    // === Regla de selección idéntica a lo que ya tenías
     const availIds = accounts.map(a => normId(a.id));
     const selected = selectedFromDocOrUser(ga, req);
     const requiredSelection = availIds.length > MAX_BY_RULE && selected.length === 0;
 
-    // Filtrar por selección si existe
     let filtered = accounts;
     if (selected.length > 0) {
       const allow = new Set(selected);
       filtered = accounts.filter(a => allow.has(normId(a.id)));
     }
 
-    // defaultCustomerId: guardado (si permitido) > primero ENABLED > primero
     let defaultCustomerId = normId(ga?.defaultCustomerId || '');
     if (selected.length > 0 && defaultCustomerId && !selected.includes(defaultCustomerId)) {
       defaultCustomerId = '';
@@ -317,7 +336,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
 
     return res.json({
       ok: true,
-      accounts: filtered,                 // <-- ya incluyen .name cuando fue posible
+      accounts: filtered,
       defaultCustomerId: defaultCustomerId || null,
       requiredSelection,
     });
