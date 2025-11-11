@@ -77,15 +77,14 @@ function oauth() {
   });
 }
 
-/** Normaliza un objeto de cuenta (API o Mongo) garantizando .name cuando sea posible */
 function normalizeAcc(a = {}) {
   const id = normId(a.id || a.customerId || a.resourceName || '');
-  const name = (a.name || a.descriptiveName || null);
+  const name = (a.name || a.descriptiveName || a.descriptive_name || null);
   return {
     id,
     name,
-    currencyCode: a.currencyCode || a.currency || null,
-    timeZone: a.timeZone || a.timezone || null,
+    currencyCode: a.currencyCode || a.currency || a.currency_code || null,
+    timeZone: a.timeZone || a.timezone || a.time_zone || null,
     status: (a.status || a.accountStatus || null),
   };
 }
@@ -159,9 +158,65 @@ async function saveDiscoveryFailure(userId, reason, log) {
 }
 
 /* ============================================================================
+ * Enriquecimiento vía GAQL desde el MCC (evita 404 de /customers/{cid})
+ * ==========================================================================*/
+async function enrichAccountsWithGAQL(ga) {
+  const accessToken = await getFreshAccessToken(ga);
+  const managerId = normId(process.env.GOOGLE_LOGIN_CUSTOMER_ID || ga.managerCustomerId || ga.loginCustomerId || '');
+  if (!managerId) throw new Error('NO_MANAGER_ID_FOR_GAQL');
+
+  const GAQL = `
+    SELECT
+      customer_client.id,
+      customer_client.descriptive_name,
+      customer_client.currency_code,
+      customer_client.time_zone,
+      customer_client.status,
+      customer_client.level
+    FROM customer_client
+    WHERE customer_client.level <= 1
+    ORDER BY customer_client.id
+  `.replace(/\s+/g, ' ').trim();
+
+  const rows = await Ads.searchGAQLStream(accessToken, managerId, GAQL);
+
+  // rows → [{ customer_client:{ id, descriptive_name, ... } }]
+  const accounts = rows.map(r => {
+    const cc = r?.customer_client || r?.customerClient || {};
+    return normalizeAcc({
+      id: cc.id,
+      descriptive_name: cc.descriptive_name,
+      currency_code: cc.currency_code,
+      time_zone: cc.time_zone,
+      status: cc.status,
+    });
+  }).filter(a => a.id);
+
+  // Persistimos y espejo en customers
+  await GoogleAccount.updateOne(
+    { _id: ga._id },
+    {
+      $set: {
+        ad_accounts: accounts,
+        customers: accounts.map(a => ({
+          id: a.id,
+          descriptiveName: a.name,
+          currencyCode: a.currencyCode,
+          timeZone: a.timeZone,
+          status: a.status,
+        })),
+        updatedAt: new Date(),
+        lastAdsDiscoveryError: null,
+        lastAdsDiscoveryLog: null,
+      },
+    }
+  );
+
+  return accounts;
+}
+
+/* ============================================================================
  * POST /api/google/ads/insights/accounts/selection
- * Guarda selección persistente en GoogleAccount.selectedCustomerIds
- * (y espejo opcional en User.selectedGoogleAccounts para retrocompat)
  * ==========================================================================*/
 router.post('/accounts/selection', requireAuth, express.json(), async (req, res) => {
   try {
@@ -191,19 +246,16 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
       return res.status(400).json({ ok: false, error: 'NO_VALID_ACCOUNTS' });
     }
 
-    // Guarda selección en el conector
     await GoogleAccount.updateOne(
       { $or: [{ user: req.user._id }, { userId: req.user._id }] },
       { $set: { selectedCustomerIds: selected } }
     );
 
-    // (opcional) espejo legacy en User
     await User.updateOne(
       { _id: req.user._id },
       { $set: { selectedGoogleAccounts: selected } }
     );
 
-    // Asegura default dentro de la selección
     let nextDefault = ga?.defaultCustomerId ? normId(ga.defaultCustomerId) : null;
     if (!nextDefault || !selected.includes(nextDefault)) {
       nextDefault = selected[0];
@@ -220,6 +272,9 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
   }
 });
 
+/* ============================================================================
+ * GET /api/google/ads/insights/accounts
+ * ==========================================================================*/
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
@@ -237,94 +292,43 @@ router.get('/accounts', requireAuth, async (req, res) => {
     // 1) Cargar lo guardado
     let accounts = Array.isArray(ga.ad_accounts) ? ga.ad_accounts : [];
 
-    // 2) ¿Faltan nombres? Forzamos enriquecido.
+    // 2) ¿Faltan nombres? usamos GAQL desde MCC
     const hasName = (a) => !!(a && (a.name || a.descriptiveName || a.descriptive_name));
-    const needsEnrich =
-      force ||
-      accounts.length === 0 ||
-      accounts.some(a => !hasName(a));
+    const needsEnrich = force || accounts.length === 0 || accounts.some(a => !hasName(a));
 
     if (needsEnrich) {
       try {
-        const accessToken = await getFreshAccessToken(ga);
-        const enriched = await Ads.discoverAndEnrich(accessToken); 
-        // ← Debe regresar: [{ id, name? | descriptiveName? | descriptive_name?, currencyCode, timeZone, status }]
-
-        accounts = (enriched || []).map(c => {
-          const id  = normId(c.id);
-          const name =
-            c.name ||
-            c.descriptiveName ||
-            c.descriptive_name ||
-            null;
-
-          return {
-            id,
-            name,
-            currencyCode: c.currencyCode || c.currency_code || null,
-            timeZone:     c.timeZone     || c.time_zone     || null,
-            status:       c.status       || null,
-          };
-        });
-
-        // Guardar enriquecido y espejo en customers
-        await GoogleAccount.updateOne(
-          { _id: ga._id },
-          {
-            $set: {
-              ad_accounts: accounts,
-              customers: accounts.map(a => ({
-                id: a.id,
-                descriptiveName: a.name, // guardamos ya el nombre normalizado
-                currencyCode: a.currencyCode,
-                timeZone: a.timeZone,
-                status: a.status,
-              })),
-              updatedAt: new Date(),
-              lastAdsDiscoveryError: null,
-              lastAdsDiscoveryLog: null,
-            },
-          }
-        );
+        accounts = await enrichAccountsWithGAQL(ga);
       } catch (e) {
-        const reason = e?.api?.error || e?.response?.data || e?.message || 'LAZY_DISCOVERY_FAILED';
+        const reason = e?.api?.error || e?.response?.data || e?.message || 'GAQL_ENRICH_FAILED';
         const log    = e?.api?.log || null;
         await saveDiscoveryFailure(req.user._id, reason, log);
-        return res.status(502).json({
-          ok: false,
-          error: 'DISCOVERY_ERROR',
-          reason,
-          apiLog: log || null,
-        });
+        // devolvemos lo que haya guardado (aunque sea solo IDs)
       }
     } else {
       // Normaliza nombres si ya estaban guardados con otra llave
-      accounts = accounts.map(a => ({
-        id: normId(a.id),
-        name: a.name || a.descriptiveName || a.descriptive_name || null,
-        currencyCode: a.currencyCode || a.currency_code || null,
-        timeZone: a.timeZone || a.time_zone || null,
-        status: a.status || null,
-      }));
+      accounts = accounts.map(normalizeAcc);
     }
 
-    // === Regla de selección idéntica a lo que ya tenías
+    // === Regla de selección
     const availIds = accounts.map(a => normId(a.id));
     const selected = selectedFromDocOrUser(ga, req);
     const requiredSelection = availIds.length > MAX_BY_RULE && selected.length === 0;
 
+    // Filtrar por selección si existe
     let filtered = accounts;
     if (selected.length > 0) {
       const allow = new Set(selected);
       filtered = accounts.filter(a => allow.has(normId(a.id)));
     }
 
+    // defaultCustomerId
     let defaultCustomerId = normId(ga?.defaultCustomerId || '');
     if (selected.length > 0 && defaultCustomerId && !selected.includes(defaultCustomerId)) {
       defaultCustomerId = '';
     }
     if (!defaultCustomerId) {
-      const firstEnabled = filtered.find(a => (a.status || '').toUpperCase() === 'ENABLED')?.id;
+      const firstEnabled = filtered.find(a => (String(a.status || '').toUpperCase()) === 'ENABLED')?.id;
       defaultCustomerId = normId(firstEnabled || (filtered[0]?.id || '')) || null;
       if (defaultCustomerId) {
         await GoogleAccount.updateOne(
@@ -348,9 +352,6 @@ router.get('/accounts', requireAuth, async (req, res) => {
 
 /* ============================================================================
  * GET /api/google/ads/insights
- * Devuelve KPIs + serie para el customer_id seleccionado o default.
- * Query params soportados:
- *   customer_id | account_id, date_preset, range, include_today, objective, compare_mode
  * ==========================================================================*/
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -364,7 +365,7 @@ router.get('/', requireAuth, async (req, res) => {
       return res.status(400).json({ ok: false, error: 'GOOGLE_NOT_CONNECTED' });
     }
 
-    // Regla de selección (consistente con Meta): si hay >3 y no hay selección ⇒ 400
+    // Regla de selección
     const availIds = availableAccountIds(ga);
     const selected = selectedFromDocOrUser(ga, req);
     if (availIds.length > MAX_BY_RULE && selected.length === 0) {
@@ -396,7 +397,7 @@ router.get('/', requireAuth, async (req, res) => {
       accessToken: await getFreshAccessToken(ga),
       customerId: requested,
       datePreset: String(req.query.date_preset || '').toLowerCase() || null,
-      range: String(req.query.range || '').trim() || null,          // default se aplica dentro del servicio
+      range: String(req.query.range || '').trim() || null,
       includeToday: String(req.query.include_today || '0'),
       objective: (['ventas','alcance','leads'].includes(String(req.query.objective || ga.objective || DEFAULT_OBJECTIVE).toLowerCase())
         ? String(req.query.objective || ga.objective || DEFAULT_OBJECTIVE).toLowerCase()
@@ -408,7 +409,7 @@ router.get('/', requireAuth, async (req, res) => {
   } catch (err) {
     const status = err?.response?.status || 500;
     const detail = err?.response?.data || err?.api?.error || err.message || String(err);
-    const apiLog = err?.api?.log || null; // viene del servicio si falló una llamada v22
+    const apiLog = err?.api?.log || null;
     if (status === 401 || status === 403) {
       console.error('google/ads auth error: Revisa Developer Token ↔ OAuth Client ID y permisos del MCC.');
     }
@@ -419,14 +420,12 @@ router.get('/', requireAuth, async (req, res) => {
 
 /* ============================================================================
  * POST /api/google/ads/insights/default
- * Guarda defaultCustomerId (si tu UI lo usa).
  * ==========================================================================*/
 router.post('/default', requireAuth, express.json(), async (req, res) => {
   try {
     const cid = normId(req.body?.customerId || '');
     if (!cid) return res.status(400).json({ ok: false, error: 'CUSTOMER_REQUIRED' });
 
-    // Verifica que, si hay selección, el default pertenezca a la selección
     const ga = await GoogleAccount
       .findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] })
       .select('selectedCustomerIds')
@@ -452,8 +451,6 @@ router.post('/default', requireAuth, express.json(), async (req, res) => {
 
 /* ============================================================================
  * POST /api/google/ads/insights/mcc/invite
- * Envía invitación Manager→Client usando el MCC configurado.
- * Body: { customer_id: "123-456-7890" }
  * ==========================================================================*/
 router.post('/mcc/invite', requireAuth, express.json(), async (req, res) => {
   try {
@@ -466,8 +463,6 @@ router.post('/mcc/invite', requireAuth, express.json(), async (req, res) => {
     if (!ga) return res.status(400).json({ ok: false, error: 'GOOGLE_NOT_CONNECTED' });
 
     const accessToken = await getFreshAccessToken(ga);
-
-    // ManagerId: preferimos env → managerCustomerId guardado → loginCustomerId
     const managerId = normId(process.env.GOOGLE_LOGIN_CUSTOMER_ID || ga.managerCustomerId || ga.loginCustomerId || '');
     if (!managerId) {
       return res.status(400).json({ ok: false, error: 'NO_MANAGER_ID', note: 'Configura GOOGLE_LOGIN_CUSTOMER_ID o guarda managerCustomerId/loginCustomerId en GoogleAccount.' });
@@ -489,8 +484,6 @@ router.post('/mcc/invite', requireAuth, express.json(), async (req, res) => {
 
 /* ============================================================================
  * GET /api/google/ads/insights/mcc/invite/status
- * Consulta el estado del vínculo Manager↔Client para el MCC configurado.
- * Query: ?customer_id=123-456-7890
  * ==========================================================================*/
 router.get('/mcc/invite/status', requireAuth, async (req, res) => {
   try {
@@ -524,9 +517,6 @@ router.get('/mcc/invite/status', requireAuth, async (req, res) => {
 
 /* ============================================================================
  * GET /api/google/ads/insights/selftest
- * Autodiagnóstico rápido de searchStream: ejecuta un GAQL mínimo y retorna
- * requestId / apiLog en caso de error. Útil para soporte de Google.
- * Query opcional: customer_id
  * ==========================================================================*/
 router.get('/selftest', requireAuth, async (req, res) => {
   try {
@@ -540,14 +530,12 @@ router.get('/selftest', requireAuth, async (req, res) => {
 
     const accessToken = await getFreshAccessToken(ga);
 
-    // Resolver customerId (query > default > primero)
     let cid = normId(String(req.query.customer_id || '')) ||
               normId(ga.defaultCustomerId || '') ||
               normId((ga.ad_accounts?.[0]?.id) || (ga.customers?.[0]?.id) || '');
 
     if (!cid) return res.status(400).json({ ok: false, error: 'NO_CUSTOMER_ID' });
 
-    // GAQL mínimo (últimos 7 días)
     const now = new Date();
     const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     const from = new Date(to); from.setUTCDate(to.getUTCDate() - 6);
@@ -573,7 +561,6 @@ router.get('/selftest', requireAuth, async (req, res) => {
         gaql: GAQL.replace(/\s+/g, ' ').trim(),
       });
     } catch (e) {
-      // Preserva requestId / apiLog para soporte
       return res.status(400).json({
         ok: false,
         error: 'SEARCHSTREAM_400',
@@ -590,7 +577,44 @@ router.get('/selftest', requireAuth, async (req, res) => {
   }
 });
 
-// DEBUG: ver respuesta cruda de listAccessibleCustomers y getCustomer
+/* ============================================================================
+ * DEBUG: ver respuesta de nombres vía GAQL customer_client
+ * ==========================================================================*/
+router.get('/debug/names', requireAuth, async (req, res) => {
+  try {
+    const ga = await GoogleAccount.findOne({
+      $or: [{ user: req.user._id }, { userId: req.user._id }],
+    }).select('+accessToken +refreshToken managerCustomerId loginCustomerId').lean();
+
+    if (!ga) return res.status(400).json({ ok: false, error: 'NO_GA_DOC' });
+
+    const accessToken = await getFreshAccessToken(ga);
+    const managerId = normId(process.env.GOOGLE_LOGIN_CUSTOMER_ID || ga.managerCustomerId || ga.loginCustomerId || '');
+    if (!managerId) return res.status(400).json({ ok: false, error: 'NO_MANAGER_ID' });
+
+    const GAQL = `
+      SELECT
+        customer_client.id,
+        customer_client.descriptive_name,
+        customer_client.currency_code,
+        customer_client.time_zone,
+        customer_client.status,
+        customer_client.level
+      FROM customer_client
+      WHERE customer_client.level <= 1
+      ORDER BY customer_client.id
+    `.replace(/\s+/g, ' ').trim();
+
+    const rows = await Ads.searchGAQLStream(accessToken, managerId, GAQL);
+    return res.json({ ok: true, managerId, rowsCount: rows.length, rows });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: 'DEBUG_NAMES_ERROR', detail: err?.message || String(err) });
+  }
+});
+
+/* ============================================================================
+ * DEBUG: listAccessibleCustomers y getCustomer del primero
+ * ==========================================================================*/
 router.get('/debug/raw', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
