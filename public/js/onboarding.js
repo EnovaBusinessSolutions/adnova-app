@@ -299,7 +299,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         : `/api/google/ads/insights/selftest`;
       const r = await apiFetch(url);
       if (r?.ok) {
-        setStatus('Conexión validada correctamente.');
+        setStatus('');          
         setMccPill('ok','Validado');
         setMccReason('');
         hide(mccHelpPanel);
@@ -378,7 +378,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (ok) {
         // ahora sí marcamos conectado
-        setStatus('Conexión validada correctamente.');
+        setStatus('');
         markGoogleConnected(sessionStorage.getItem('googleObjective') || null);
         return { ok: true, accounts, defaultCustomerId, requiredSelection };
       }
@@ -416,7 +416,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (ok) {
           markGoogleConnected(sessionStorage.getItem('googleObjective') || null);
-          setStatus('Selección guardada y validada. Listo para continuar.');
+          setStatus(''); 
         } else {
           show(mccHelpPanel);
           setMccPill('warn','Revisión requerida');
