@@ -4,6 +4,10 @@ import { apiFetch } from './apiFetch.saas.js';
 document.addEventListener('DOMContentLoaded', async () => {
   const qs = new URL(location.href).searchParams;
 
+  // --- LEE TEMPRANO EL PARAM DE GOOGLE PARA EVITAR DOBLE REFRESH ---
+  const _googleParam = (qs.get('google') || '').toLowerCase();
+  const _hasGoogleParam = ['connected','ok','error','fail'].includes(_googleParam);
+
   // -------------------------------------------------
   // Session token (embebido Shopify -> SAAS)
   // -------------------------------------------------
@@ -57,6 +61,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const mccReasonEl   = document.getElementById('mcc-help-reason');
   const mccRetryBtn   = document.getElementById('mcc-retry-btn');
   const mccVerifyBtn  = document.getElementById('mcc-verify-btn');
+
+  // --- GUARD ANTI-DUPLICADO PARA ensureGoogleAccountsUI ---
+  let GA_ENSURE_INFLIGHT = null;
 
   // -------------------------------------------------
   // Utils UI
@@ -299,7 +306,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         : `/api/google/ads/insights/selftest`;
       const r = await apiFetch(url);
       if (r?.ok) {
-        setStatus('');          
+        setStatus('');
         setMccPill('ok','Validado');
         setMccReason('');
         hide(mccHelpPanel);
@@ -321,82 +328,89 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Carga cuentas y decide UX (selector/MCC/validación)
   async function ensureGoogleAccountsUI() {
-    try {
-      setStatus('Buscando tus cuentas de Google Ads…');
-      hide(mccHelpPanel);
-      setMccLog(null);
-      hide(gaAccountsMount); // solo mostramos si hay que seleccionar
+    // --- Guard anti-duplicado: reusa la ejecución en vuelo
+    if (GA_ENSURE_INFLIGHT) return GA_ENSURE_INFLIGHT;
+    GA_ENSURE_INFLIGHT = (async () => {
+      try {
+        setStatus('Buscando tus cuentas de Google Ads…');
+        hide(mccHelpPanel);
+        setMccLog(null);
+        hide(gaAccountsMount); // solo mostramos si hay que seleccionar
 
-      const res = await apiFetch('/api/google/ads/insights/accounts');
+        const res = await apiFetch('/api/google/ads/insights/accounts');
 
-      // Error de discovery → activar MCC
-      if (res?.ok === false && res?.error === 'DISCOVERY_ERROR') {
-        setStatus('Tuvimos un problema al descubrir tus cuentas.');
-        show(mccHelpPanel);
-        setMccPill('warn', 'Revisión requerida');
-        setMccReason('Si ya aceptaste la invitación de administrador, pulsa “Ya acepté, verificar”.');
-        setMccLog(res.apiLog || res.reason || res);
-        return { ok: false, accounts: [] };
-      }
+        // Error de discovery → activar MCC
+        if (res?.ok === false && res?.error === 'DISCOVERY_ERROR') {
+          setStatus('Tuvimos un problema al descubrir tus cuentas.');
+          show(mccHelpPanel);
+          setMccPill('warn', 'Revisión requerida');
+          setMccReason('Si ya aceptaste la invitación de administrador, pulsa “Ya acepté, verificar”.');
+          setMccLog(res.apiLog || res.reason || res);
+          return { ok: false, accounts: [] };
+        }
 
-      const accounts = Array.isArray(res?.accounts) ? res.accounts : [];
-      const defaultCustomerId = res?.defaultCustomerId || null;
-      const requiredSelection = !!res?.requiredSelection;
+        const accounts = Array.isArray(res?.accounts) ? res.accounts : [];
+        const defaultCustomerId = res?.defaultCustomerId || null;
+        const requiredSelection = !!res?.requiredSelection;
 
-      // 0 cuentas → mostrar MCC (no marcar conectado)
-      if (accounts.length === 0) {
-        setStatus('No encontramos cuentas accesibles todavía. Si acabas de conectar, intenta nuevamente en un minuto.');
-        show(mccHelpPanel);
-        setMccPill('warn', 'Sin cuentas accesibles');
-        setMccReason('No vemos cuentas bajo nuestro MCC. Asegúrate de aceptar la invitación o compártenos acceso y pulsa “Ya acepté, verificar”.');
-        return { ok: true, accounts, defaultCustomerId, requiredSelection };
-      }
+        // 0 cuentas → mostrar MCC (no marcar conectado)
+        if (accounts.length === 0) {
+          setStatus('No encontramos cuentas accesibles todavía. Si acabas de conectar, intenta nuevamente en un minuto.');
+          show(mccHelpPanel);
+          setMccPill('warn', 'Sin cuentas accesibles');
+          setMccReason('No vemos cuentas bajo nuestro MCC. Asegúrate de aceptar la invitación o compártenos acceso y pulsa “Ya acepté, verificar”.');
+          return { ok: true, accounts, defaultCustomerId, requiredSelection };
+        }
 
-      // >3 cuentas → selección requerida (no marcar conectado aún)
-      if (requiredSelection) {
-        setStatus('Selecciona hasta 3 cuentas para continuar.');
-        show(gaAccountsMount);
+        // >3 cuentas → selección requerida (no marcar conectado aún)
+        if (requiredSelection) {
+          setStatus('Selecciona hasta 3 cuentas para continuar.');
+          show(gaAccountsMount);
 
+          window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
+            detail: { accounts, defaultCustomerId, requiredSelection, mountEl: gaAccountsMount }
+          }));
+
+          return { ok: true, accounts, defaultCustomerId, requiredSelection };
+        }
+
+        // 1–2 cuentas → validación silenciosa
+        setStatus('Verificando acceso…');
+        hide(gaAccountsMount);
+
+        // Notificación silenciosa (por si alguien escucha datos)
         window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
           detail: { accounts, defaultCustomerId, requiredSelection, mountEl: gaAccountsMount }
         }));
 
-        return { ok: true, accounts, defaultCustomerId, requiredSelection };
+        const cid = defaultCustomerId || accounts[0]?.id || null;
+        const ok = await runGoogleSelfTest(cid);
+
+        if (ok) {
+          setStatus('');
+          markGoogleConnected(sessionStorage.getItem('googleObjective') || null);
+          return { ok: true, accounts, defaultCustomerId, requiredSelection };
+        }
+
+        // Si falla la validación, mostramos MCC
+        show(mccHelpPanel);
+        setMccPill('warn', 'Revisión requerida');
+        setMccReason('No pudimos validar acceso. Acepta la invitación o verifica permisos y vuelve a intentar.');
+        return { ok: false, accounts, defaultCustomerId, requiredSelection };
+      } catch (e) {
+        console.error('ensureGoogleAccountsUI error:', e);
+        setStatus('No pudimos cargar tus cuentas. Intenta nuevamente.');
+        hide(gaAccountsMount);
+        show(mccHelpPanel);
+        setMccPill('error','Error');
+        setMccReason('Ocurrió un error al consultar Google Ads. Intenta de nuevo.');
+        return { ok: false, accounts: [] };
       }
+    })();
 
-      // 1–2 cuentas → validación silenciosa
-      setStatus('Verificando acceso…');
-      hide(gaAccountsMount);
-
-      // avisamos por si alguien escucha, pero no se pinta UI
-      window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
-        detail: { accounts, defaultCustomerId, requiredSelection, mountEl: gaAccountsMount }
-      }));
-
-      const cid = defaultCustomerId || accounts[0]?.id || null;
-      const ok = await runGoogleSelfTest(cid);
-
-      if (ok) {
-        // ahora sí marcamos conectado
-        setStatus('');
-        markGoogleConnected(sessionStorage.getItem('googleObjective') || null);
-        return { ok: true, accounts, defaultCustomerId, requiredSelection };
-      }
-
-      // Si falla la validación, mostramos MCC
-      show(mccHelpPanel);
-      setMccPill('warn', 'Revisión requerida');
-      setMccReason('No pudimos validar acceso. Acepta la invitación o verifica permisos y vuelve a intentar.');
-      return { ok: false, accounts, defaultCustomerId, requiredSelection };
-    } catch (e) {
-      console.error('ensureGoogleAccountsUI error:', e);
-      setStatus('No pudimos cargar tus cuentas. Intenta nuevamente.');
-      hide(gaAccountsMount);
-      show(mccHelpPanel);
-      setMccPill('error','Error');
-      setMccReason('Ocurrió un error al consultar Google Ads. Intenta de nuevo.');
-      return { ok: false, accounts: [] };
-    }
+    const result = await GA_ENSURE_INFLIGHT;
+    GA_ENSURE_INFLIGHT = null;
+    return result;
   }
 
   // Escucha selección (inline/modal) y valida antes de marcar conectado
@@ -416,7 +430,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (ok) {
           markGoogleConnected(sessionStorage.getItem('googleObjective') || null);
-          setStatus(''); 
+          setStatus('');
         } else {
           show(mccHelpPanel);
           setMccPill('warn','Revisión requerida');
@@ -560,15 +574,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // -------------------------------------------------
   // Refrescar UIs + habilitar continuar
+  //   (evita doble refresh de Google si venimos con ?google=...)
   // -------------------------------------------------
-  await Promise.allSettled([ refreshGoogleUI(), refreshMetaUI() ]);
+  await Promise.allSettled([
+    _hasGoogleParam ? Promise.resolve() : refreshGoogleUI(),
+    refreshMetaUI()
+  ]);
   habilitarContinue();
 
   // -------------------------------------------------
   // Manejo de retorno por query (?meta|?google)
   // -------------------------------------------------
   const metaParam   = (qs.get('meta')   || '').toLowerCase();
-  const googleParam = (qs.get('google') || '').toLowerCase();
+  const googleParam = _googleParam; // usamos el leído temprano
 
   if (metaParam === 'error' || metaParam === 'fail') {
     localStorage.removeItem('meta_connecting');
@@ -583,7 +601,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     enableBtn(connectGoogleBtn);
   } else if (googleParam === 'connected' || googleParam === 'ok') {
     localStorage.removeItem('google_connecting');
-    await refreshGoogleUI();
+    await refreshGoogleUI(); // <-- solo aquí, una vez
   }
 
   // Polling si quedaron “conectando…”
