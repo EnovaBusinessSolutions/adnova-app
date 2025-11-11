@@ -4,8 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Onboarding - ADNOVA AI</title>
+
   <link rel="stylesheet" href="onboarding.css" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+
   <style>
     /* Helpers ligeros */
     .hidden{display:none!important}
@@ -13,20 +15,29 @@
       margin-top:12px;padding:10px 12px;border:1px solid #3a3a48;border-radius:8px;
       background:#16161f;color:#e7e7f0;font-size:.95rem;
     }
+
+    /* Más aire en la grilla y tarjetas */
+    .connection-cards { display: grid; gap: 22px; }
+    .connection-card  { padding: 18px; border-radius: 14px; }
+
     /* MCC help (alineado con onboarding.js) */
-    .mcc-help{margin-top:14px;padding:14px;border:1px dashed #5b4a8f;background:#151224;border-radius:12px}
-    .mcc-help__head{display:flex;align-items:center;gap:10px;margin-bottom:6px}
-    .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:.85rem}
-    .pill--ok{background:#143b26;color:#90f0bf}
-    .pill--warn{background:#3b2a14;color:#ffd9a0}
-    .pill--error{background:#3b1414;color:#ffb0b0}
-    .mcc-help__reason{opacity:.9;margin:.4rem 0 .6rem}
-    .mcc-help__steps{margin:.2rem 0 .8rem 1.2rem}
-    .mcc-help__actions{display:flex;gap:10px;flex-wrap:wrap}
-    .btn-secondary{background:#2a2740}
-    .btn-secondary:hover{background:#343158}
-    .mcc-help__details{margin-top:10px}
-    .mcc-help__pre{max-height:180px;overflow:auto;background:#0d0b18;padding:10px;border-radius:8px}
+    .mcc-help{
+      margin-top:14px; padding:16px;
+      border:1px dashed #6b61ff; border-radius:14px;
+      background:linear-gradient(180deg, rgba(107,97,255,.08), rgba(107,97,255,.05));
+    }
+    .mcc-help__head{ display:flex; align-items:center; gap:10px; justify-content:space-between; margin-bottom:6px }
+    .pill{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:999px; font-size:.85rem; font-weight:600 }
+    .pill--warn{ background:#3b2f14; color:#ffcf66; border:1px solid #6b561f }
+    .pill--ok  { background:#123523; color:#7ee0a6; border:1px solid #1d5a3a }
+    .mcc-help__reason{ opacity:.9; margin:.4rem 0 .6rem }
+    .mcc-help__steps{ margin:.2rem 0 .8rem 1.2rem; line-height:1.5 }
+    .mcc-help__actions{ display:flex; gap:10px; flex-wrap:wrap }
+    .btn-secondary{ background:#1a1a24; border:1px solid #3a3a48 }
+    .btn-secondary:hover{ background:#20202b }
+
+    /* Aviso encima (status) */
+    #ga-ads-status.notice { margin-top: 12px; margin-bottom: 10px }
   </style>
 </head>
 
@@ -142,6 +153,7 @@
                 #google-card .connection-details { flex:1 1 auto; }
                 #google-card #connect-google-btn { flex:0 0 auto; margin-left:auto; }
                 #google-card #google-obj { flex-basis:100%; order:99; }
+
                 #google-obj #google-objective-step { display:none; margin-top:12px; }
                 #google-obj .objective-title { display:block; margin-bottom:8px; font-weight:600; }
                 #google-obj .objective-options { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
@@ -184,21 +196,17 @@
               </div>
               <p id="mcc-help-reason" class="mcc-help__reason">
                 Tuvimos un problema al descubrir tus cuentas. Si ya aceptaste la invitación de administrador,
-                pulsa <em>Verificar</em>. Si aún no la ves, te la podemos reenviar.
+                pulsa <b>“Ya acepté, verificar”</b>. Si aún no la ves, te la podemos reenviar.
               </p>
               <ol class="mcc-help__steps">
                 <li>Entra a Google Ads con tu cuenta.</li>
                 <li>Ve a <b>Herramientas</b> → <b>Acceso y seguridad</b> → <b>Administradores</b>.</li>
-                <li>Acepta la invitación de administrador desde el MCC <b>606-148-1297</b>.</li>
+                <li>Acepta la invitación del MCC <b>606-148-1297</b>.</li>
               </ol>
               <div class="mcc-help__actions">
-                <button id="mcc-retry-btn" class="btn-connect btn-secondary" type="button">Reintentar</button>
-                <button id="mcc-verify-btn" class="btn-connect" type="button">Ya acepté, verificar</button>
+                <button id="mcc-retry-btn"  class="btn-connect btn-secondary" type="button">Reintentar</button>
+                <button id="mcc-verify-btn" class="btn-connect"               type="button">Ya acepté, verificar</button>
               </div>
-              <details id="mcc-tech-details" class="mcc-help__details hidden">
-                <summary>Detalles técnicos</summary>
-                <pre id="mcc-tech-pre" class="mcc-help__pre"></pre>
-              </details>
             </div>
           </div>
 

@@ -29,7 +29,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const domainInput = document.getElementById('shop-domain-input');
   const domainSend  = document.getElementById('shop-domain-send');
 
-  // DEMO GA (sección existente; no usada por el nuevo flujo)
+  // (Sección demo GA – no afecta el nuevo flujo)
   const gaPanel = document.getElementById('ga-edit-test');
   const gaBtn   = document.getElementById('ga-create-demo-btn');
   const gaIn    = document.getElementById('ga-property-id');
@@ -51,14 +51,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   const gaStatusBox      = document.getElementById('ga-ads-status');
   const gaAccountsMount  = document.getElementById('ga-ads-accounts');
 
-  // NUEVO: panel MCC (ids nuevos del HTML)
+  // NUEVO: panel MCC (ids del HTML nuevo — sin detalles técnicos)
   const mccHelpPanel     = document.getElementById('google-mcc-help');
   const mccStatusPill    = document.getElementById('mcc-status-pill');
   const mccReasonEl      = document.getElementById('mcc-help-reason');
   const mccRetryBtn      = document.getElementById('mcc-retry-btn');
   const mccVerifyBtn     = document.getElementById('mcc-verify-btn');
-  const mccDetails       = document.getElementById('mcc-tech-details');
-  const mccPre           = document.getElementById('mcc-tech-pre');
 
   // -------------------------------------------------
   // Utils UI
@@ -100,13 +98,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   function setMccReason(text) {
     if (mccReasonEl) mccReasonEl.textContent = text || '';
   }
-  function setMccLog(obj) {
-    if (!mccPre || !mccDetails) return;
-    const has = !!obj;
-    mccPre.textContent = has ? (typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2)) : '';
-    mccDetails.open = false; // inicia cerrado
-    mccDetails.classList.toggle('hidden', !has);
-  }
+  // (No-op: ya no mostramos detalles técnicos)
+  function setMccLog(_) {}
 
   const openGoogleCloseMeta = () => { show(googleObjectiveStep); hide(metaObjectiveStep); };
   const openMetaCloseGoogle = () => { show(metaObjectiveStep);  hide(googleObjectiveStep); };
@@ -371,7 +364,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         hide(mccHelpPanel);
         return true;
       }
-      // Backend devolvió 400/… con detalle
       show(mccHelpPanel);
       setMccPill('warn','Revisión requerida');
       setMccReason('Necesitamos que aceptes la invitación de administrador (si ya la enviamos) o que verifiques el acceso y reintentes.');
@@ -475,7 +467,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (r?.ok === false) throw new Error(r?.error || 'No se pudo guardar el objetivo');
       hide(googleObjectiveStep);
       markGoogleConnected(selected);
-      // Después de objetivo, carga cuentas y hace self-test
       await ensureGoogleAccountsUI();
       await runGoogleSelfTest();
     } catch (e) {
