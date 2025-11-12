@@ -8,7 +8,8 @@ const axios = require('axios');
  * ========================= */
 const DEV_TOKEN =
   process.env.GOOGLE_DEVELOPER_TOKEN ||
-  process.env.GOOGLE_ADS_DEVELOPER_TOKEN || '';
+  process.env.GOOGLE_ADS_DEVELOPER_TOKEN ||
+  '';
 
 const LOGIN_CID = (
   process.env.GOOGLE_LOGIN_CUSTOMER_ID ||
@@ -16,8 +17,8 @@ const LOGIN_CID = (
   ''
 ).replace(/[^\d]/g, '');
 
-// ⚠️ Importante: REST estable hoy = v18. Forzamos v18 por defecto.
-const ADS_VER  = (process.env.GADS_API_VERSION || 'v18').trim();
+/** REST estable actual: v22 */
+const ADS_VER  = (process.env.GADS_API_VERSION || 'v22').trim();
 const ADS_HOST = 'https://googleads.googleapis.com';
 
 const normId = (s = '') => String(s).replace(/[^\d]/g, '');
@@ -31,7 +32,7 @@ function baseHeaders(accessToken) {
     Authorization: `Bearer ${accessToken}`,
     'developer-token': DEV_TOKEN,
     Accept: 'application/json',
-    // Content-Type se pone SOLO cuando hay body (POST/PUT)
+    // 'Content-Type' solo cuando hay body (POST/PUT)
   };
 }
 
@@ -42,7 +43,7 @@ function buildApiLog({ url, method, reqHeaders, reqBody, res }) {
     res?.headers?.['x-request-id'] ||
     null;
 
-  // Sanitiza headers sensibles al log (solo para depuración segura)
+  // Sanitiza headers sensibles al log
   const safeHeaders = { ...(reqHeaders || {}) };
   if (safeHeaders.authorization) safeHeaders.authorization = String(safeHeaders.authorization).slice(0, 12) + '…***';
   if (safeHeaders['developer-token']) safeHeaders['developer-token'] = '***';
@@ -81,7 +82,7 @@ function shouldRetryWithLoginCid(errData) {
 }
 
 /**
- * request (REST)
+ * request (REST v22)
  * - path debe empezar con "/"
  * - incluye developer-token y Authorization
  * - si pasas loginCustomerId lo agrega como header
@@ -155,14 +156,12 @@ async function listAccessibleCustomers(accessToken) {
 async function getCustomer(accessToken, customerId) {
   const cid = normId(customerId);
 
-  // 1) sin login-customer-id
   let r = await requestRest({
     accessToken,
     path: `/customers/${cid}`,
     method: 'GET',
   });
 
-  // 2) retry con login-customer-id = cid
   if (!r.ok && shouldRetryWithLoginCid(r.data)) {
     r = await requestRest({
       accessToken,
@@ -172,7 +171,6 @@ async function getCustomer(accessToken, customerId) {
     });
   }
 
-  // 3) retry con nuestro MCC
   if (!r.ok && LOGIN_CID) {
     r = await requestRest({
       accessToken,
@@ -236,10 +234,8 @@ async function discoverAndEnrich(accessToken) {
  */
 async function searchGAQLStream(accessToken, customerId, query) {
   const cid = normId(customerId);
-
   const body = { query };
 
-  // 1) sin login-customer-id
   let r = await requestRest({
     accessToken,
     path: `/customers/${cid}/googleAds:searchStream`,
@@ -247,7 +243,6 @@ async function searchGAQLStream(accessToken, customerId, query) {
     body,
   });
 
-  // 2) retry con login-customer-id = cid
   if (!r.ok && shouldRetryWithLoginCid(r.data)) {
     r = await requestRest({
       accessToken,
@@ -258,7 +253,6 @@ async function searchGAQLStream(accessToken, customerId, query) {
     });
   }
 
-  // 3) retry con nuestro MCC si sigue fallando
   if (!r.ok && LOGIN_CID) {
     r = await requestRest({
       accessToken,
@@ -292,10 +286,7 @@ async function searchGAQLStream(accessToken, customerId, query) {
  * 2.5) Enlaces MCC (invite + status)
  * ========================================================================== */
 
-/**
- * Envía invitación Manager→Client.
- * REST: POST /customers/{managerId}/customerManagerLinks:mutate
- */
+/** Envía invitación Manager→Client. */
 async function mccInviteCustomer({ accessToken, managerId, clientId }) {
   const mid = normId(managerId);
   const cid = normId(clientId);
@@ -305,7 +296,6 @@ async function mccInviteCustomer({ accessToken, managerId, clientId }) {
     operations: [
       {
         create: {
-          // algunos backends aceptan sólo clientCustomer; incluimos ambos por compat:
           manager: `customers/${mid}`,
           clientCustomer: `customers/${cid}`,
         }
@@ -330,11 +320,7 @@ async function mccInviteCustomer({ accessToken, managerId, clientId }) {
   return r.data; // results/resourceNames
 }
 
-/**
- * Lee estado del vínculo Manager↔Client para NUESTRO MCC.
- * REST: GET /customers/{clientId}/customerManagerLinks
- * Estado esperado: PENDING | ACTIVE | REFUSED | INACTIVE | CANCELLED
- */
+/** Lee estado del vínculo Manager↔Client para NUESTRO MCC. */
 async function getMccLinkStatus({ accessToken, managerId, clientId }) {
   const mid = normId(managerId);
   const cid = normId(clientId);
@@ -432,9 +418,8 @@ async function fetchInsights({
   customerId,
   datePreset,
   range,
-  includeToday, // compat
+  includeToday, // compat (no usado aquí, pero lo respetamos por interfaz)
   objective,
-  compareMode,  // compat
 }) {
   if (!customerId) throw new Error('customerId required');
 
