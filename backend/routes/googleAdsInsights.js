@@ -7,6 +7,16 @@ const { OAuth2Client } = require('google-auth-library');
 
 const router = express.Router();
 
+// === Logger con sanitizado (no expone tokens/secretos) ===
+const logger = require('../utils/logger');
+
+// === Helpers Google Ads (normalize, presets y customer via SDK) ===
+const {
+  normalizeId: normalizeIdHelper,
+  mapDatePreset,
+  getAdsCustomer,
+} = require('../utils/googleAdsHelpers');
+
 // ===== Modelos =====
 const User = require('../models/User');
 
@@ -42,7 +52,7 @@ try {
     // Selección persistente
     selectedCustomerIds: { type: [String], default: [] },
 
-    // Logs/errores de discovery (útiles para Google soporte)
+    // Logs/errores de discovery
     lastAdsDiscoveryError: { type: String, default: null },
     lastAdsDiscoveryLog:   { type: Schema.Types.Mixed, default: null, select: false },
 
@@ -267,7 +277,7 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
 
     return res.json({ ok: true, selected, defaultCustomerId: nextDefault });
   } catch (e) {
-    console.error('google/accounts/selection error:', e);
+    logger.error('google/accounts/selection error', e);
     return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
   }
 });
@@ -345,16 +355,17 @@ router.get('/accounts', requireAuth, async (req, res) => {
       requiredSelection,
     });
   } catch (err) {
-    console.error('google/ads/accounts error:', err?.response?.data || err);
+    logger.error('google/ads/accounts error', err?.response?.data || err);
     return res.status(500).json({ ok: false, error: 'ACCOUNTS_ERROR' });
   }
 });
 
 /* ============================================================================
- * GET /api/google/ads/insights
+ * GET /api/google/ads/insights  ← HANDLER REESCRITO (usa SDK + logger)
  * ==========================================================================*/
 router.get('/', requireAuth, async (req, res) => {
   try {
+    // 1) Validar conexión
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
@@ -365,7 +376,7 @@ router.get('/', requireAuth, async (req, res) => {
       return res.status(400).json({ ok: false, error: 'GOOGLE_NOT_CONNECTED' });
     }
 
-    // Regla de selección
+    // 2) Reglas de selección
     const availIds = availableAccountIds(ga);
     const selected = selectedFromDocOrUser(ga, req);
     if (availIds.length > MAX_BY_RULE && selected.length === 0) {
@@ -376,45 +387,89 @@ router.get('/', requireAuth, async (req, res) => {
       });
     }
 
-    // Resolver customerId: query > default > primero de lista
-    let requested = normId(String(req.query.customer_id || req.query.account_id || '')) ||
-                    normId(ga.defaultCustomerId || '') ||
-                    normId((ga.ad_accounts?.[0]?.id) || (ga.customers?.[0]?.id) || '');
+    // 3) Resolver customerId (query > default > primero)
+    const rawQueryId = String(req.query.account_id || req.query.customer_id || req.query.customer || '');
+    let requested = normalizeIdHelper(rawQueryId)
+                 || normalizeIdHelper(ga.defaultCustomerId || '')
+                 || normalizeIdHelper((ga.ad_accounts?.[0]?.id) || (ga.customers?.[0]?.id) || '');
 
     if (!requested) {
       return res.status(400).json({ ok: false, error: 'NO_CUSTOMER_ID' });
     }
 
-    // Si hay selección y el solicitado no pertenece, forzamos a uno permitido o 403 si venía por query
+    // Si hay selección y el solicitado no pertenece, forzar/denegar
     if (selected.length > 0 && !selected.includes(requested)) {
-      if (req.query.customer_id || req.query.account_id) {
+      if (rawQueryId) {
         return res.status(403).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
       }
       requested = selected[0];
     }
 
-    const data = await Ads.fetchInsights({
-      accessToken: await getFreshAccessToken(ga),
+    // 4) Rango de fechas (GAQL DURING)
+    const during = mapDatePreset(req.query.date_preset);
+
+    // 5) Cliente Google Ads con MCC como login_customer_id
+    const loginCustomerId = process.env.GADS_LOGIN_MCC || ga.loginCustomerId || ga.managerCustomerId;
+    const customer = getAdsCustomer({
+      user: req.user,
       customerId: requested,
-      datePreset: String(req.query.date_preset || '').toLowerCase() || null,
-      range: String(req.query.range || '').trim() || null,
-      includeToday: String(req.query.include_today || '0'),
-      objective: (['ventas','alcance','leads'].includes(String(req.query.objective || ga.objective || DEFAULT_OBJECTIVE).toLowerCase())
-        ? String(req.query.objective || ga.objective || DEFAULT_OBJECTIVE).toLowerCase()
-        : DEFAULT_OBJECTIVE),
-      compareMode: String(req.query.compare_mode || 'prev_period'),
+      loginCustomerId,
     });
 
-    return res.json(data);
+    // 6) GAQL y stream
+    const query = `
+      SELECT
+        metrics.impressions,
+        metrics.clicks,
+        metrics.cost_micros,
+        metrics.ctr,
+        metrics.average_cpc,
+        metrics.conversions,
+        metrics.current_model_attributed_conversions,
+        metrics.all_conversions_value
+      FROM customer
+      WHERE segments.date DURING ${during}
+    `;
+
+    logger.debug('google/ads/insights query', { requested, during });
+
+    const rows = [];
+    for await (const chunk of customer.searchStream(query)) {
+      if (Array.isArray(chunk.results)) rows.push(...chunk.results);
+    }
+
+    // 7) Agregados
+    const sum = (k) => rows.reduce((a, r) => a + (r.metrics?.[k] ?? 0), 0);
+    const impressions = sum('impressions');
+    const clicks = sum('clicks');
+    const costMicros = sum('cost_micros');
+    const conversions = sum('conversions') || sum('current_model_attributed_conversions');
+    const convValue = sum('all_conversions_value');
+    const ctr = impressions ? (clicks / impressions) : 0;
+    const averageCpc = clicks ? (costMicros / 1e6) / clicks : 0;
+
+    return res.json({
+      ok: true,
+      account_id: requested,
+      date_preset: during,
+      impressions,
+      clicks,
+      cost_micros: costMicros,
+      ctr,
+      average_cpc: averageCpc,
+      conversions,
+      conv_value: convValue,
+      rows: rows.length, // útil para debug ligero
+    });
   } catch (err) {
     const status = err?.response?.status || 500;
     const detail = err?.response?.data || err?.api?.error || err.message || String(err);
-    const apiLog = err?.api?.log || null;
     if (status === 401 || status === 403) {
-      console.error('google/ads auth error: Revisa Developer Token ↔ OAuth Client ID y permisos del MCC.');
+      logger.error('google/ads auth error', { status, detail });
+    } else {
+      logger.error('google/ads insights error', { status, detail });
     }
-    console.error('google/ads insights error:', detail);
-    return res.status(status).json({ ok: false, error: 'GOOGLE_ADS_ERROR', detail, apiLog });
+    return res.status(status).json({ ok: false, error: 'GOOGLE_ADS_ERROR', detail });
   }
 });
 
@@ -444,7 +499,7 @@ router.post('/default', requireAuth, express.json(), async (req, res) => {
 
     return res.json({ ok: true, defaultCustomerId: cid });
   } catch (err) {
-    console.error('google/ads/default error:', err);
+    logger.error('google/ads/default error', err);
     return res.status(500).json({ ok: false, error: 'SAVE_DEFAULT_ERROR' });
   }
 });
@@ -478,6 +533,7 @@ router.post('/mcc/invite', requireAuth, express.json(), async (req, res) => {
   } catch (err) {
     const detail = err?.api?.error || err?.response?.data || err.message || String(err);
     const apiLog = err?.api?.log || null;
+    logger.error('google/ads mcc/invite error', { detail, apiLog });
     return res.status(400).json({ ok: false, error: 'MCC_INVITE_ERROR', detail, apiLog });
   }
 });
@@ -511,6 +567,7 @@ router.get('/mcc/invite/status', requireAuth, async (req, res) => {
   } catch (err) {
     const detail = err?.api?.error || err?.response?.data || err.message || String(err);
     const apiLog = err?.api?.log || null;
+    logger.error('google/ads mcc/invite/status error', { detail, apiLog });
     return res.status(400).json({ ok: false, error: 'MCC_STATUS_ERROR', detail, apiLog });
   }
 });
@@ -561,6 +618,7 @@ router.get('/selftest', requireAuth, async (req, res) => {
         gaql: GAQL.replace(/\s+/g, ' ').trim(),
       });
     } catch (e) {
+      logger.warn('google/ads/selftest searchStream 400', { detail: e?.api?.error || e.message });
       return res.status(400).json({
         ok: false,
         error: 'SEARCHSTREAM_400',
@@ -572,7 +630,7 @@ router.get('/selftest', requireAuth, async (req, res) => {
       });
     }
   } catch (err) {
-    console.error('google/ads/selftest error:', err);
+    logger.error('google/ads/selftest error', err);
     return res.status(500).json({ ok: false, error: 'SELFTEST_ERROR', detail: err?.message || String(err) });
   }
 });
@@ -608,6 +666,7 @@ router.get('/debug/names', requireAuth, async (req, res) => {
     const rows = await Ads.searchGAQLStream(accessToken, managerId, GAQL);
     return res.json({ ok: true, managerId, rowsCount: rows.length, rows });
   } catch (err) {
+    logger.error('google/ads/debug/names error', err);
     return res.status(500).json({ ok: false, error: 'DEBUG_NAMES_ERROR', detail: err?.message || String(err) });
   }
 });
@@ -654,9 +713,10 @@ router.get('/debug/raw', requireAuth, async (req, res) => {
       firstCustomerMeta: firstMeta,
       firstCustomerError: errMeta,
       firstCustomerApiLog: metaLog,
-      apiVersion: process.env.GADS_API_VERSION || 'v22',
+      apiVersion: process.env.GADS_API_VERSION || 'v16',
     });
   } catch (err) {
+    logger.error('google/ads/debug/raw error', err);
     res.status(500).json({ ok: false, error: 'DEBUG_RAW_ERROR', detail: err?.message || String(err) });
   }
 });

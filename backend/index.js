@@ -227,15 +227,11 @@ app.use('/api/google/analytics', gaRouter);
 // Google Ads (insights) — protegido por sesión
 app.use('/api/google/ads/insights', sessionGuard, googleAdsInsightsRouter);
 // Alias: /api/google/ads → /api/google/ads/insights
-app.use(
-  '/api/google/ads',
-  sessionGuard,
-  (req, _res, next) => {
-    req.url = `/insights${req.url === '/' ? '' : req.url}`;
-    next();
-  },
-  googleAdsInsightsRouter
-);
+// Principal
+app.use('/api/google/ads/insights', sessionGuard, googleAdsInsightsRouter);
+// Alias directo (mismo router, sin rewrite)
+app.use('/api/google/ads', sessionGuard, googleAdsInsightsRouter);
+
 
 app.use('/api/onboarding/status', sessionGuard, require('./routes/onboardingStatus'))
 
