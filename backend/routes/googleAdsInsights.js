@@ -10,11 +10,9 @@ const router = express.Router();
 // === Logger con sanitizado (no expone tokens/secretos) ===
 const logger = require('../utils/logger');
 
-// === Helpers Google Ads (normalize, presets y customer via SDK) ===
+// === Helpers Google Ads (solo normalización) ===
 const {
   normalizeId: normalizeIdHelper,
-  mapDatePreset,
-  getAdsCustomer,
 } = require('../utils/googleAdsHelpers');
 
 // ===== Modelos =====
@@ -46,7 +44,7 @@ try {
     managerCustomerId: { type: String },
     loginCustomerId:   { type: String },
     defaultCustomerId: { type: String },
-    customers:         { type: Array, default: [] }, // [{ id, descriptiveName, currencyCode, timeZone, status }]
+    customers:         { type: Array, default: [] },
     ad_accounts:       { type: [AdAccountSchema], default: [] },
 
     // Selección persistente
@@ -64,7 +62,7 @@ try {
   GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
 }
 
-// ===== Servicio de Ads (import NO-destructurado) =====
+// ===== Servicio de Ads (REST) =====
 const Ads = require('../services/googleAdsService');
 
 // ===== Constantes / helpers =====
@@ -168,7 +166,7 @@ async function saveDiscoveryFailure(userId, reason, log) {
 }
 
 /* ============================================================================
- * Enriquecimiento vía GAQL desde el MCC (evita 404 de /customers/{cid})
+ * Enriquecimiento vía GAQL desde el MCC (REST)
  * ==========================================================================*/
 async function enrichAccountsWithGAQL(ga) {
   const accessToken = await getFreshAccessToken(ga);
@@ -190,7 +188,6 @@ async function enrichAccountsWithGAQL(ga) {
 
   const rows = await Ads.searchGAQLStream(accessToken, managerId, GAQL);
 
-  // rows → [{ customer_client:{ id, descriptive_name, ... } }]
   const accounts = rows.map(r => {
     const cc = r?.customer_client || r?.customerClient || {};
     return normalizeAcc({
@@ -202,7 +199,6 @@ async function enrichAccountsWithGAQL(ga) {
     });
   }).filter(a => a.id);
 
-  // Persistimos y espejo en customers
   await GoogleAccount.updateOne(
     { _id: ga._id },
     {
@@ -361,7 +357,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
 });
 
 /* ============================================================================
- * GET /api/google/ads/insights  ← HANDLER REESCRITO (usa SDK + logger)
+ * GET /api/google/ads/insights  ← AHORA 100% REST (payload estándar)
  * ==========================================================================*/
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -405,62 +401,19 @@ router.get('/', requireAuth, async (req, res) => {
       requested = selected[0];
     }
 
-    // 4) Rango de fechas (GAQL DURING)
-    const during = mapDatePreset(req.query.date_preset);
-
-    // 5) Cliente Google Ads con MCC como login_customer_id
-    const loginCustomerId = process.env.GADS_LOGIN_MCC || ga.loginCustomerId || ga.managerCustomerId;
-    const customer = getAdsCustomer({
-      user: req.user,
+    // 4) Llamar a servicio REST para traer KPIs/serie
+    const accessToken = await getFreshAccessToken(ga);
+    const payload = await Ads.fetchInsights({
+      accessToken,
       customerId: requested,
-      loginCustomerId,
+      datePreset: req.query.date_preset || 'LAST_30_DAYS',
+      range: req.query.range || null,
+      includeToday: String(req.query.include_today || '0') === '1',
+      objective: (req.query.objective || ga.objective || DEFAULT_OBJECTIVE),
+      compareMode: req.query.compare_mode || null,
     });
 
-    // 6) GAQL y stream
-    const query = `
-      SELECT
-        metrics.impressions,
-        metrics.clicks,
-        metrics.cost_micros,
-        metrics.ctr,
-        metrics.average_cpc,
-        metrics.conversions,
-        metrics.current_model_attributed_conversions,
-        metrics.all_conversions_value
-      FROM customer
-      WHERE segments.date DURING ${during}
-    `;
-
-    logger.debug('google/ads/insights query', { requested, during });
-
-    const rows = [];
-    for await (const chunk of customer.searchStream(query)) {
-      if (Array.isArray(chunk.results)) rows.push(...chunk.results);
-    }
-
-    // 7) Agregados
-    const sum = (k) => rows.reduce((a, r) => a + (r.metrics?.[k] ?? 0), 0);
-    const impressions = sum('impressions');
-    const clicks = sum('clicks');
-    const costMicros = sum('cost_micros');
-    const conversions = sum('conversions') || sum('current_model_attributed_conversions');
-    const convValue = sum('all_conversions_value');
-    const ctr = impressions ? (clicks / impressions) : 0;
-    const averageCpc = clicks ? (costMicros / 1e6) / clicks : 0;
-
-    return res.json({
-      ok: true,
-      account_id: requested,
-      date_preset: during,
-      impressions,
-      clicks,
-      cost_micros: costMicros,
-      ctr,
-      average_cpc: averageCpc,
-      conversions,
-      conv_value: convValue,
-      rows: rows.length, // útil para debug ligero
-    });
+    return res.json(payload);
   } catch (err) {
     const status = err?.response?.status || 500;
     const detail = err?.response?.data || err?.api?.error || err.message || String(err);
@@ -713,7 +666,7 @@ router.get('/debug/raw', requireAuth, async (req, res) => {
       firstCustomerMeta: firstMeta,
       firstCustomerError: errMeta,
       firstCustomerApiLog: metaLog,
-      apiVersion: process.env.GADS_API_VERSION || 'v16',
+      apiVersion: process.env.GADS_API_VERSION || 'v18',
     });
   } catch (err) {
     logger.error('google/ads/debug/raw error', err);

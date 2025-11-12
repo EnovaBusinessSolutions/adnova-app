@@ -16,7 +16,8 @@ const LOGIN_CID = (
   ''
 ).replace(/[^\d]/g, '');
 
-const ADS_VER  = (process.env.GADS_API_VERSION || 'v22').trim(); // v22 por defecto
+// ⚠️ Importante: REST estable hoy = v18. Forzamos v18 por defecto.
+const ADS_VER  = (process.env.GADS_API_VERSION || 'v18').trim();
 const ADS_HOST = 'https://googleads.googleapis.com';
 
 const normId = (s = '') => String(s).replace(/[^\d]/g, '');
@@ -41,10 +42,16 @@ function buildApiLog({ url, method, reqHeaders, reqBody, res }) {
     res?.headers?.['x-request-id'] ||
     null;
 
+  // Sanitiza headers sensibles al log (solo para depuración segura)
+  const safeHeaders = { ...(reqHeaders || {}) };
+  if (safeHeaders.authorization) safeHeaders.authorization = String(safeHeaders.authorization).slice(0, 12) + '…***';
+  if (safeHeaders['developer-token']) safeHeaders['developer-token'] = '***';
+  if (safeHeaders['login-customer-id']) safeHeaders['login-customer-id'] = String(safeHeaders['login-customer-id']);
+
   return {
     url,
     method,
-    reqHeaders,
+    reqHeaders: safeHeaders,
     reqBody: reqBody ?? null,
     status: res?.status,
     statusText: res?.statusText,
@@ -74,13 +81,13 @@ function shouldRetryWithLoginCid(errData) {
 }
 
 /**
- * requestV22
+ * request (REST)
  * - path debe empezar con "/"
  * - incluye developer-token y Authorization
  * - si pasas loginCustomerId lo agrega como header
  * - devuelve { ok, data, res, log }
  */
-async function requestV22({ accessToken, path, method = 'GET', body = null, loginCustomerId = null }) {
+async function requestRest({ accessToken, path, method = 'GET', body = null, loginCustomerId = null }) {
   const url = `${ADS_HOST}/${ADS_VER}${path.startsWith('/') ? path : `/${path}`}`;
   const headers = baseHeaders(accessToken);
   if (loginCustomerId) headers['login-customer-id'] = String(loginCustomerId).replace(/[^\d]/g, '');
@@ -117,7 +124,7 @@ async function requestV22({ accessToken, path, method = 'GET', body = null, logi
 
 /** IMPORTANTE: listAccessibleCustomers NO lleva login-customer-id. */
 async function listAccessibleCustomers(accessToken) {
-  const r = await requestV22({
+  const r = await requestRest({
     accessToken,
     path: '/customers:listAccessibleCustomers',
     method: 'GET',
@@ -149,7 +156,7 @@ async function getCustomer(accessToken, customerId) {
   const cid = normId(customerId);
 
   // 1) sin login-customer-id
-  let r = await requestV22({
+  let r = await requestRest({
     accessToken,
     path: `/customers/${cid}`,
     method: 'GET',
@@ -157,7 +164,7 @@ async function getCustomer(accessToken, customerId) {
 
   // 2) retry con login-customer-id = cid
   if (!r.ok && shouldRetryWithLoginCid(r.data)) {
-    r = await requestV22({
+    r = await requestRest({
       accessToken,
       path: `/customers/${cid}`,
       method: 'GET',
@@ -167,7 +174,7 @@ async function getCustomer(accessToken, customerId) {
 
   // 3) retry con nuestro MCC
   if (!r.ok && LOGIN_CID) {
-    r = await requestV22({
+    r = await requestRest({
       accessToken,
       path: `/customers/${cid}`,
       method: 'GET',
@@ -233,7 +240,7 @@ async function searchGAQLStream(accessToken, customerId, query) {
   const body = { query };
 
   // 1) sin login-customer-id
-  let r = await requestV22({
+  let r = await requestRest({
     accessToken,
     path: `/customers/${cid}/googleAds:searchStream`,
     method: 'POST',
@@ -242,7 +249,7 @@ async function searchGAQLStream(accessToken, customerId, query) {
 
   // 2) retry con login-customer-id = cid
   if (!r.ok && shouldRetryWithLoginCid(r.data)) {
-    r = await requestV22({
+    r = await requestRest({
       accessToken,
       path: `/customers/${cid}/googleAds:searchStream`,
       method: 'POST',
@@ -253,7 +260,7 @@ async function searchGAQLStream(accessToken, customerId, query) {
 
   // 3) retry con nuestro MCC si sigue fallando
   if (!r.ok && LOGIN_CID) {
-    r = await requestV22({
+    r = await requestRest({
       accessToken,
       path: `/customers/${cid}/googleAds:searchStream`,
       method: 'POST',
@@ -287,8 +294,7 @@ async function searchGAQLStream(accessToken, customerId, query) {
 
 /**
  * Envía invitación Manager→Client.
- * REST: POST /v22/customers/{managerId}/customerManagerLinks:mutate
- * docs: https://developers.google.com/google-ads/api/reference/rpc/v22/CustomerManagerLinkService
+ * REST: POST /customers/{managerId}/customerManagerLinks:mutate
  */
 async function mccInviteCustomer({ accessToken, managerId, clientId }) {
   const mid = normId(managerId);
@@ -299,7 +305,7 @@ async function mccInviteCustomer({ accessToken, managerId, clientId }) {
     operations: [
       {
         create: {
-          // Algunos backends aceptan sólo clientCustomer; incluimos ambos por compatibilidad:
+          // algunos backends aceptan sólo clientCustomer; incluimos ambos por compat:
           manager: `customers/${mid}`,
           clientCustomer: `customers/${cid}`,
         }
@@ -307,7 +313,7 @@ async function mccInviteCustomer({ accessToken, managerId, clientId }) {
     ]
   };
 
-  const r = await requestV22({
+  const r = await requestRest({
     accessToken,
     path,
     method: 'POST',
@@ -326,7 +332,7 @@ async function mccInviteCustomer({ accessToken, managerId, clientId }) {
 
 /**
  * Lee estado del vínculo Manager↔Client para NUESTRO MCC.
- * REST: GET /v22/customers/{clientId}/customerManagerLinks
+ * REST: GET /customers/{clientId}/customerManagerLinks
  * Estado esperado: PENDING | ACTIVE | REFUSED | INACTIVE | CANCELLED
  */
 async function getMccLinkStatus({ accessToken, managerId, clientId }) {
@@ -334,7 +340,7 @@ async function getMccLinkStatus({ accessToken, managerId, clientId }) {
   const cid = normId(clientId);
 
   const path = `/customers/${cid}/customerManagerLinks`;
-  const r = await requestV22({
+  const r = await requestRest({
     accessToken,
     path,
     method: 'GET',
@@ -435,6 +441,7 @@ async function fetchInsights({
   const cid = normId(customerId);
   let [since, until] = datePreset ? presetRange(datePreset) : rangeFromCount(range || 30);
 
+  // GAQL por día a nivel "customer"
   const GAQL_SERIE = `
     SELECT
       segments.date,
@@ -444,7 +451,7 @@ async function fetchInsights({
       metrics.ctr,
       metrics.average_cpc_micros,
       metrics.conversions,
-      metrics.conversion_value,
+      metrics.conversions_value,
       customer.currency_code,
       customer.time_zone
     FROM customer
@@ -460,6 +467,7 @@ async function fetchInsights({
     const cust = r.customer || {};
     const costMicros   = met.costMicros ?? met.cost_micros;
     const avgCpcMicros = met.averageCpcMicros ?? met.average_cpc_micros;
+    const convValue    = met.conversionsValue ?? met.conversions_value ?? 0;
     return {
       date: seg.date,
       impressions: Number(met.impressions || 0),
@@ -468,7 +476,7 @@ async function fetchInsights({
       ctr: Number(met.ctr || 0),
       cpc: microsToUnit(avgCpcMicros),
       conversions: Number(met.conversions || 0),
-      conv_value: Number(met.conversionValue ?? met.conversion_value ?? 0),
+      conv_value: Number(convValue),
       currency_code: cust.currencyCode ?? cust.currency_code,
       time_zone: cust.timeZone ?? cust.time_zone,
     };
@@ -522,7 +530,7 @@ module.exports = {
   searchGAQLStream,
   discoverAndEnrich,
   fetchInsights,
-  // NUEVOS (MCC):
+  // MCC:
   mccInviteCustomer,
   getMccLinkStatus,
 };
