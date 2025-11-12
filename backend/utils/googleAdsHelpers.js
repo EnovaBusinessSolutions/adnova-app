@@ -1,35 +1,42 @@
+// backend/utils/googleAdsHelpers.js
 'use strict';
-const { GoogleAdsApi } = require('google-ads-api');
 
-// Quita guiones del customerId
-const normalizeId = (s) => String(s || '').replace(/-/g, '');
+/** Normaliza IDs a solo dígitos (y quita 'customers/'). */
+function normalizeId(s = '') {
+  return String(s).replace(/^customers\//, '').replace(/[^\d]/g, '').trim();
+}
 
-// Mapea presets “humanos” a DURING válidos
-const mapDatePreset = (p = 'LAST_30_DAYS') => {
-  const v = String(p || '').toUpperCase();
-  if (['LAST_7_DAYS','LAST_14_DAYS','LAST_30_DAYS','THIS_MONTH','LAST_MONTH','ALL_TIME'].includes(v)) return v;
-  if (['LAST_30','LAST_30D','LAST30','LAST30D'].includes(v)) return 'LAST_30_DAYS';
-  if (['LAST_7','LAST_7D','LAST7','LAST7D'].includes(v)) return 'LAST_7_DAYS';
+/** Mapea presets a los que entiende el backend/Google (con compat). */
+function mapDatePreset(raw) {
+  const v = String(raw || '').toUpperCase();
+
+  // Compatibilidad: last_30d → LAST_30_DAYS, etc.
+  const lc = String(raw || '').toLowerCase();
+  if (lc === 'last_30d') return 'LAST_30_DAYS';
+  if (lc === 'last_7d')  return 'LAST_7_DAYS';
+
+  // Acepta TODAY/YESTERDAY/LAST_7_DAYS/LAST_14_DAYS/LAST_30_DAYS/THIS_MONTH/LAST_MONTH
+  const allowed = new Set([
+    'TODAY','YESTERDAY','LAST_7_DAYS','LAST_14_DAYS','LAST_30_DAYS','THIS_MONTH','LAST_MONTH'
+  ]);
+  if (allowed.has(v)) return v;
+
+  // Acepta LAST_30D / LAST30D / LAST_90D...
+  if (/^LAST_?\d{1,3}D$/.test(v)) return v.replace('_', '');
+
   return 'LAST_30_DAYS';
-};
+}
 
-// Instancia de cliente/customer con MCC login
-const getAdsCustomer = ({ user, customerId, loginCustomerId }) => {
-  if (!user?.google?.refresh_token) {
-    throw new Error('Usuario sin refresh_token de Google.');
-  }
-
-  const client = new GoogleAdsApi({
-    client_id: process.env.GADS_CLIENT_ID,
-    client_secret: process.env.GADS_CLIENT_SECRET,
-    developer_token: process.env.GADS_DEV_TOKEN,
-  });
-
-  return client.Customer({
-    customer_id: normalizeId(customerId),
-    login_customer_id: String(loginCustomerId || process.env.GADS_LOGIN_MCC || '').replace(/-/g, ''),
-    refresh_token: user.google.refresh_token,
-  });
-};
+/**
+ * Firma de compatibilidad: el router lo invoca pero no necesita el SDK.
+ * Devolvemos solo metadatos normalizados por si los quisieras loguear.
+ */
+function getAdsCustomer({ user, customerId, loginCustomerId }) {
+  return {
+    userId: user?._id || null,
+    customerId: normalizeId(customerId || ''),
+    loginCustomerId: normalizeId(loginCustomerId || ''),
+  };
+}
 
 module.exports = { normalizeId, mapDatePreset, getAdsCustomer };
