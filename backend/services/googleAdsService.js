@@ -8,8 +8,7 @@ const axios = require('axios');
  * ========================= */
 const DEV_TOKEN =
   process.env.GOOGLE_DEVELOPER_TOKEN ||
-  process.env.GOOGLE_ADS_DEVELOPER_TOKEN ||
-  '';
+  process.env.GOOGLE_ADS_DEVELOPER_TOKEN || '';
 
 const LOGIN_CID = (
   process.env.GOOGLE_LOGIN_CUSTOMER_ID ||
@@ -17,14 +16,13 @@ const LOGIN_CID = (
   ''
 ).replace(/[^\d]/g, '');
 
-/** REST estable actual: v22 */
-const ADS_VER  = (process.env.GADS_API_VERSION || 'v22').trim();
+const ADS_VER  = (process.env.GADS_API_VERSION || 'v18').trim();
 const ADS_HOST = 'https://googleads.googleapis.com';
 
 const normId = (s = '') => String(s).replace(/[^\d]/g, '');
 
 /* =========================
- * Helpers de logging y headers
+ * Headers / logging
  * ========================= */
 function baseHeaders(accessToken) {
   if (!DEV_TOKEN) throw new Error('GOOGLE_DEVELOPER_TOKEN missing');
@@ -32,26 +30,22 @@ function baseHeaders(accessToken) {
     Authorization: `Bearer ${accessToken}`,
     'developer-token': DEV_TOKEN,
     Accept: 'application/json',
-    // 'Content-Type' solo cuando hay body (POST/PUT)
   };
 }
 
-/** Devuelve request-id y un preview útil del body para soporte. */
 function buildApiLog({ url, method, reqHeaders, reqBody, res }) {
   const requestId =
     res?.headers?.['request-id'] ||
     res?.headers?.['x-request-id'] ||
     null;
 
-  // Sanitiza headers sensibles al log
   const safeHeaders = { ...(reqHeaders || {}) };
   if (safeHeaders.authorization) safeHeaders.authorization = String(safeHeaders.authorization).slice(0, 12) + '…***';
   if (safeHeaders['developer-token']) safeHeaders['developer-token'] = '***';
   if (safeHeaders['login-customer-id']) safeHeaders['login-customer-id'] = String(safeHeaders['login-customer-id']);
 
   return {
-    url,
-    method,
+    url, method,
     reqHeaders: safeHeaders,
     reqBody: reqBody ?? null,
     status: res?.status,
@@ -65,7 +59,6 @@ function buildApiLog({ url, method, reqHeaders, reqBody, res }) {
   };
 }
 
-/** Errores típicos que piden contexto login-customer-id */
 function shouldRetryWithLoginCid(errData) {
   const status = errData?.error?.status || '';
   const msg = (errData?.error?.message || '').toLowerCase();
@@ -81,13 +74,6 @@ function shouldRetryWithLoginCid(errData) {
   );
 }
 
-/**
- * request (REST v22)
- * - path debe empezar con "/"
- * - incluye developer-token y Authorization
- * - si pasas loginCustomerId lo agrega como header
- * - devuelve { ok, data, res, log }
- */
 async function requestRest({ accessToken, path, method = 'GET', body = null, loginCustomerId = null }) {
   const url = `${ADS_HOST}/${ADS_VER}${path.startsWith('/') ? path : `/${path}`}`;
   const headers = baseHeaders(accessToken);
@@ -96,22 +82,14 @@ async function requestRest({ accessToken, path, method = 'GET', body = null, log
 
   try {
     const res = await axios({
-      url,
-      method,
-      headers,
-      data: body ?? undefined, // NO body en GET
+      url, method, headers,
+      data: body ?? undefined,
       timeout: 60000,
       validateStatus: () => true,
     });
 
     const log = buildApiLog({ url, method, reqHeaders: headers, reqBody: body, res });
-
-    return {
-      ok: res.status >= 200 && res.status < 300,
-      data: res.data,
-      res,
-      log,
-    };
+    return { ok: res.status >= 200 && res.status < 300, data: res.data, res, log };
   } catch (e) {
     const res = e?.response;
     const log = buildApiLog({ url, method, reqHeaders: headers, reqBody: body, res });
@@ -123,7 +101,6 @@ async function requestRest({ accessToken, path, method = 'GET', body = null, log
  * 1) Descubrimiento de cuentas
  * ========================================================================== */
 
-/** IMPORTANTE: listAccessibleCustomers NO lleva login-customer-id. */
 async function listAccessibleCustomers(accessToken) {
   const r = await requestRest({
     accessToken,
@@ -132,13 +109,13 @@ async function listAccessibleCustomers(accessToken) {
   });
 
   if (typeof r.data === 'string') {
-    const err = new Error('[listAccessibleCustomers] Unexpected string response (possible 400 HTML)');
+    const err = new Error('[listAccessibleCustomers] Unexpected string response');
     err.api = { raw: r.data.slice(0, 300) + '…', log: r.log };
     throw err;
   }
 
   if (r.ok && Array.isArray(r.data?.resourceNames)) {
-    return r.data.resourceNames; // ["customers/123", ...]
+    return r.data.resourceNames;
   }
 
   const err = new Error(`[listAccessibleCustomers] ${r.data?.error?.status || r.res?.status || 'UNKNOWN'}: ${r.data?.error?.message || 'failed'}`);
@@ -146,13 +123,6 @@ async function listAccessibleCustomers(accessToken) {
   throw err;
 }
 
-/**
- * GET /customers/{cid}
- * Estrategia:
- *   1) Sin login-customer-id
- *   2) Retry con login-customer-id = cid
- *   3) Retry con LOGIN_CID (MCC)
- */
 async function getCustomer(accessToken, customerId) {
   const cid = normId(customerId);
 
@@ -196,9 +166,8 @@ async function getCustomer(accessToken, customerId) {
   throw err;
 }
 
-/** Descubre todas las cuentas y las enriquece con getCustomer. */
 async function discoverAndEnrich(accessToken) {
-  const list = await listAccessibleCustomers(accessToken); // ["customers/123", ...]
+  const list = await listAccessibleCustomers(accessToken);
   const ids = Array.from(
     new Set(
       (list || [])
@@ -225,13 +194,6 @@ async function discoverAndEnrich(accessToken) {
  * 2) GAQL (searchStream)
  * ========================================================================== */
 
-/**
- * POST /customers/{cid}/googleAds:searchStream
- * Estrategia:
- *   1) Intento SIN login-customer-id
- *   2) Retry con login-customer-id = cid
- *   3) Retry con LOGIN_CID (MCC)
- */
 async function searchGAQLStream(accessToken, customerId, query) {
   const cid = normId(customerId);
   const body = { query };
@@ -272,7 +234,7 @@ async function searchGAQLStream(accessToken, customerId, query) {
   }
 
   if (typeof r.data === 'string') {
-    const err = new Error('[searchGAQLStream] Unexpected string response (possible 400 HTML)');
+    const err = new Error('[searchGAQLStream] Unexpected string response');
     err.api = { raw: r.data.slice(0, 300) + '…', log: r.log };
     throw err;
   }
@@ -283,150 +245,88 @@ async function searchGAQLStream(accessToken, customerId, query) {
 }
 
 /* ========================================================================== *
- * 2.5) Enlaces MCC (invite + status)
+ * 3) Fechas — *con zona horaria del cliente* y include_today
  * ========================================================================== */
 
-/** Envía invitación Manager→Client. */
-async function mccInviteCustomer({ accessToken, managerId, clientId }) {
-  const mid = normId(managerId);
-  const cid = normId(clientId);
+function startOfDayTZ(timeZone, date = new Date()) {
+  // Usa Intl para obtener Y/M/D en la TZ y vuelve a construir UTC 00:00 de ese día en esa TZ
+  const fmt = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const parts = Object.fromEntries(fmt.formatToParts(date).map(p => [p.type, p.value]));
+  const y = Number(parts.year), m = Number(parts.month), d = Number(parts.day);
+  return new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
+}
+function addDays(d, n) { const x = new Date(d.getTime()); x.setUTCDate(x.getUTCDate() + n); return x; }
+function ymd(d) { return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`; }
 
-  const path = `/customers/${mid}/customerManagerLinks:mutate`;
-  const body = {
-    operations: [
-      {
-        create: {
-          manager: `customers/${mid}`,
-          clientCustomer: `customers/${cid}`,
-        }
-      }
-    ]
-  };
+/**
+ * Devuelve [since, until] en la TZ dada.
+ * - presets soportados: today, yesterday, last_7d, last_14d, last_28d, last_30d (default)
+ * - includeToday: sólo afecta a presets tipo "last_*"
+ */
+function computeRangeTZ({ preset, rangeDays, includeToday, timeZone }) {
+  const presetLC = String(preset || '').toLowerCase();
+  const anchor = includeToday ? startOfDayTZ(timeZone) : addDays(startOfDayTZ(timeZone), -1);
 
-  const r = await requestRest({
-    accessToken,
-    path,
-    method: 'POST',
-    body,
-    loginCustomerId: mid, // contexto del manager
-  });
-
-  if (!r.ok) {
-    const err = new Error(`[mccInviteCustomer] ${r.data?.error?.status || r.res?.status}: ${r.data?.error?.message || 'failed'}`);
-    err.api = { error: r.data?.error || r.data, log: r.log };
-    throw err;
+  if (presetLC === 'today') {
+    const t0 = startOfDayTZ(timeZone);
+    return [ymd(t0), ymd(t0)];
+  }
+  if (presetLC === 'yesterday') {
+    const y0 = addDays(startOfDayTZ(timeZone), -1);
+    return [ymd(y0), ymd(y0)];
   }
 
-  return r.data; // results/resourceNames
-}
+  const days = (() => {
+    if (rangeDays) return Math.max(1, Number(rangeDays));
+    if (presetLC === 'last_7d')  return 7;
+    if (presetLC === 'last_14d') return 14;
+    if (presetLC === 'last_28d') return 28;
+    return 30; // last_30d por defecto
+  })();
 
-/** Lee estado del vínculo Manager↔Client para NUESTRO MCC. */
-async function getMccLinkStatus({ accessToken, managerId, clientId }) {
-  const mid = normId(managerId);
-  const cid = normId(clientId);
-
-  const path = `/customers/${cid}/customerManagerLinks`;
-  const r = await requestRest({
-    accessToken,
-    path,
-    method: 'GET',
-  });
-
-  if (!r.ok) {
-    const err = new Error(`[getMccLinkStatus] ${r.data?.error?.status || r.res?.status}: ${r.data?.error?.message || 'failed'}`);
-    err.api = { error: r.data?.error || r.data, log: r.log };
-    throw err;
-  }
-
-  const links = Array.isArray(r.data?.customerManagerLinks) ? r.data.customerManagerLinks : [];
-  const mine  = links.find(l => (l.manager || '').endsWith(`/${mid}`));
-
-  return {
-    exists: !!mine,
-    status: mine?.status || 'UNKNOWN',
-    link: mine || null,
-  };
-}
-
-/* ========================================================================== *
- * 3) Helpers de fechas/formatos
- * ========================================================================== */
-function fmt(d) {
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function todayUTC() {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-}
-
-function addDays(d, n) {
-  const dt = new Date(d.getTime());
-  dt.setUTCDate(dt.getUTCDate() + n);
-  return dt;
-}
-
-function presetRange(preset) {
-  const t = todayUTC();
-  switch ((preset || '').toLowerCase()) {
-    case 'today': {
-      const d = fmt(t); return [d, d];
-    }
-    case 'yesterday': {
-      const y = addDays(t, -1); const d = fmt(y); return [d, d];
-    }
-    case 'last_7d': {
-      const since = addDays(t, -6); return [fmt(since), fmt(t)];
-    }
-    case 'last_14d': {
-      const since = addDays(t, -13); return [fmt(since), fmt(t)];
-    }
-    case 'last_28d': {
-      const since = addDays(t, -27); return [fmt(since), fmt(t)];
-    }
-    case 'this_month': {
-      const start = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), 1));
-      return [fmt(start), fmt(t)];
-    }
-    case 'last_30d':
-    default: {
-      const since = addDays(t, -29); return [fmt(since), fmt(t)];
-    }
-  }
-}
-
-function rangeFromCount(days) {
-  const d = Number(days || 30);
-  const t = todayUTC();
-  const since = addDays(t, -(d - 1));
-  return [fmt(since), fmt(t)];
+  const until = anchor;
+  const since = addDays(until, -(days - 1));
+  return [ymd(since), ymd(until)];
 }
 
 function microsToUnit(v) {
   const n = Number(v || 0);
-  return Math.round((n / 1_000_000) * 100) / 100; // 2 decimales
+  return Math.round((n / 1_000_000) * 100) / 100;
 }
 
 /* ========================================================================== *
- * 4) Insights (KPIs + Serie)
+ * 4) Insights (KPIs + Serie) — ahora 100% TZ-aware y sin estáticos
  * ========================================================================== */
 async function fetchInsights({
   accessToken,
   customerId,
   datePreset,
   range,
-  includeToday, // compat (no usado aquí, pero lo respetamos por interfaz)
+  includeToday,
   objective,
+  compareMode,
 }) {
   if (!customerId) throw new Error('customerId required');
-
   const cid = normId(customerId);
-  let [since, until] = datePreset ? presetRange(datePreset) : rangeFromCount(range || 30);
 
-  // GAQL por día a nivel "customer"
+  // 1) Obtener TZ y moneda del cliente primero (para construir el rango correctamente)
+  let currency = 'MXN';
+  let tz = 'America/Mexico_City';
+  try {
+    const cust = await getCustomer(accessToken, cid);
+    currency = cust.currencyCode || currency;
+    tz = cust.timeZone || tz;
+  } catch (_) { /* fallback por si falla */ }
+
+  // 2) Construir rango en la TZ del cliente
+  const [since, until] = computeRangeTZ({
+    preset: datePreset,
+    rangeDays: range,
+    includeToday: !!includeToday,
+    timeZone: tz,
+  });
+
+  // 3) GAQL por día
   const GAQL_SERIE = `
     SELECT
       segments.date,
@@ -436,9 +336,7 @@ async function fetchInsights({
       metrics.ctr,
       metrics.average_cpc_micros,
       metrics.conversions,
-      metrics.conversions_value,
-      customer.currency_code,
-      customer.time_zone
+      metrics.conversions_value
     FROM customer
     WHERE segments.date BETWEEN '${since}' AND '${until}'
     ORDER BY segments.date
@@ -449,7 +347,6 @@ async function fetchInsights({
   const series = rows.map(r => {
     const seg  = r.segments || {};
     const met  = r.metrics  || {};
-    const cust = r.customer || {};
     const costMicros   = met.costMicros ?? met.cost_micros;
     const avgCpcMicros = met.averageCpcMicros ?? met.average_cpc_micros;
     const convValue    = met.conversionsValue ?? met.conversions_value ?? 0;
@@ -462,11 +359,12 @@ async function fetchInsights({
       cpc: microsToUnit(avgCpcMicros),
       conversions: Number(met.conversions || 0),
       conv_value: Number(convValue),
-      currency_code: cust.currencyCode ?? cust.currency_code,
-      time_zone: cust.timeZone ?? cust.time_zone,
+      currency_code: currency,
+      time_zone: tz,
     };
   });
 
+  // 4) KPIs agregados coherentes con la serie
   const kpis = series.reduce((a, p) => ({
     impressions: a.impressions + (p.impressions || 0),
     clicks:      a.clicks + (p.clicks || 0),
@@ -480,23 +378,13 @@ async function fetchInsights({
   kpis.cpa  = kpis.conversions ? (kpis.cost / kpis.conversions) : undefined;
   kpis.roas = kpis.cost ? (kpis.conv_value / kpis.cost) : undefined;
 
-  let currency = series.find(s => s.currency_code)?.currency_code || 'MXN';
-  let tz = series.find(s => s.time_zone)?.time_zone || 'America/Mexico_City';
-  if (!currency || !tz) {
-    try {
-      const cust = await getCustomer(accessToken, cid);
-      currency = cust.currencyCode || currency;
-      tz = cust.timeZone || tz;
-    } catch (_) {}
-  }
-
   return {
     ok: true,
     objective: (['ventas','alcance','leads'].includes(String(objective)) ? objective : 'ventas'),
     customer_id: cid,
     range: { since, until },
-    prev_range: { since, until },
-    is_partial: false,
+    prev_range: { since, until }, // (si luego quieres comparar, aquí puedes calcular prev)
+    is_partial: !!includeToday,
     kpis,
     deltas: {},
     series,

@@ -415,14 +415,14 @@ router.get('/', requireAuth, async (req, res) => {
     // 6) Traer KPIs y serie reales (REST GAQL vía service)
     const accessToken = await getFreshAccessToken(ga);
     const payload = await Ads.fetchInsights({
-      accessToken,
-      customerId: requested,
-      datePreset,         // null => el service usa range
-      range,              // null => el service usa preset
-      includeToday,
-      objective,
-      compareMode: req.query.compare_mode || null,
-    });
+  accessToken,
+  customerId: requested,
+  datePreset: String(req.query.date_preset || 'last_30d').toLowerCase(),
+  range: req.query.range || null,                 // p.ej. '30'
+  includeToday: String(req.query.include_today || '0') === '1',
+  objective: (req.query.objective || ga.objective || DEFAULT_OBJECTIVE),
+  compareMode: req.query.compare_mode || null,
+});
 
     return res.json(payload);
   } catch (err) {
