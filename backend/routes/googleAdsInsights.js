@@ -357,7 +357,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
 });
 
 /* ============================================================================
- * GET /api/google/ads/insights  ← AHORA 100% REST (payload estándar)
+ * GET /api/google/ads/insights  ← 100% REST (dinámico por rango/preset)
  * ==========================================================================*/
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -401,15 +401,26 @@ router.get('/', requireAuth, async (req, res) => {
       requested = selected[0];
     }
 
-    // 4) Llamar a servicio REST para traer KPIs/serie
+    // 4) Normalizar rango: si hay date_preset úsalo; si no, usa range/include_today
+    const datePreset = req.query.date_preset ? String(req.query.date_preset) : null;
+    const range = req.query.range ? Number(req.query.range) : null; // días
+    const includeToday = String(req.query.include_today || '0') === '1';
+
+    // 5) Objetivo
+    const validObjectives = new Set(['ventas', 'alcance', 'leads']);
+    const objective = validObjectives.has(String(req.query.objective || '').toLowerCase())
+      ? String(req.query.objective).toLowerCase()
+      : (ga.objective || DEFAULT_OBJECTIVE);
+
+    // 6) Traer KPIs y serie reales (REST GAQL vía service)
     const accessToken = await getFreshAccessToken(ga);
     const payload = await Ads.fetchInsights({
       accessToken,
       customerId: requested,
-      datePreset: req.query.date_preset || 'LAST_30_DAYS',
-      range: req.query.range || null,
-      includeToday: String(req.query.include_today || '0') === '1',
-      objective: (req.query.objective || ga.objective || DEFAULT_OBJECTIVE),
+      datePreset,         // null => el service usa range
+      range,              // null => el service usa preset
+      includeToday,
+      objective,
       compareMode: req.query.compare_mode || null,
     });
 
