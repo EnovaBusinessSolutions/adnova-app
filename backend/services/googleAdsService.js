@@ -100,7 +100,6 @@ async function requestRest({ accessToken, path, method = 'GET', body = null, log
 /* ========================================================================== *
  * 1) Descubrimiento de cuentas
  * ========================================================================== */
-
 async function listAccessibleCustomers(accessToken) {
   const r = await requestRest({
     accessToken,
@@ -184,7 +183,6 @@ async function discoverAndEnrich(accessToken) {
       out.push(meta);
     } catch (e) {
       out.push({ id, error: true, reason: e?.api?.error || e.message });
-      console.warn('[discoverAndEnrich] getCustomer fail', id, e?.api || e.message);
     }
   }
   return out;
@@ -193,7 +191,6 @@ async function discoverAndEnrich(accessToken) {
 /* ========================================================================== *
  * 2) GAQL (searchStream)
  * ========================================================================== */
-
 async function searchGAQLStream(accessToken, customerId, query) {
   const cid = normId(customerId);
   const body = { query };
@@ -245,11 +242,9 @@ async function searchGAQLStream(accessToken, customerId, query) {
 }
 
 /* ========================================================================== *
- * 3) Fechas — *con zona horaria del cliente* y include_today
+ * 3) Fechas (TZ-aware) + include_today
  * ========================================================================== */
-
 function startOfDayTZ(timeZone, date = new Date()) {
-  // Usa Intl para obtener Y/M/D en la TZ y vuelve a construir UTC 00:00 de ese día en esa TZ
   const fmt = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
   const parts = Object.fromEntries(fmt.formatToParts(date).map(p => [p.type, p.value]));
   const y = Number(parts.year), m = Number(parts.month), d = Number(parts.day);
@@ -258,11 +253,6 @@ function startOfDayTZ(timeZone, date = new Date()) {
 function addDays(d, n) { const x = new Date(d.getTime()); x.setUTCDate(x.getUTCDate() + n); return x; }
 function ymd(d) { return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`; }
 
-/**
- * Devuelve [since, until] en la TZ dada.
- * - presets soportados: today, yesterday, last_7d, last_14d, last_28d, last_30d (default)
- * - includeToday: sólo afecta a presets tipo "last_*"
- */
 function computeRangeTZ({ preset, rangeDays, includeToday, timeZone }) {
   const presetLC = String(preset || '').toLowerCase();
   const anchor = includeToday ? startOfDayTZ(timeZone) : addDays(startOfDayTZ(timeZone), -1);
@@ -270,7 +260,7 @@ function computeRangeTZ({ preset, rangeDays, includeToday, timeZone }) {
   if (presetLC === 'today') {
     const t0 = startOfDayTZ(timeZone);
     return [ymd(t0), ymd(t0)];
-  }
+    }
   if (presetLC === 'yesterday') {
     const y0 = addDays(startOfDayTZ(timeZone), -1);
     return [ymd(y0), ymd(y0)];
@@ -281,7 +271,7 @@ function computeRangeTZ({ preset, rangeDays, includeToday, timeZone }) {
     if (presetLC === 'last_7d')  return 7;
     if (presetLC === 'last_14d') return 14;
     if (presetLC === 'last_28d') return 28;
-    return 30; // last_30d por defecto
+    return 30;
   })();
 
   const until = anchor;
@@ -295,7 +285,7 @@ function microsToUnit(v) {
 }
 
 /* ========================================================================== *
- * 4) Insights (KPIs + Serie) — ahora 100% TZ-aware y sin estáticos
+ * 4) Insights (KPIs + Serie)
  * ========================================================================== */
 async function fetchInsights({
   accessToken,
@@ -309,16 +299,15 @@ async function fetchInsights({
   if (!customerId) throw new Error('customerId required');
   const cid = normId(customerId);
 
-  // 1) Obtener TZ y moneda del cliente primero (para construir el rango correctamente)
+  // tz/moneda del cliente
   let currency = 'MXN';
   let tz = 'America/Mexico_City';
   try {
     const cust = await getCustomer(accessToken, cid);
     currency = cust.currencyCode || currency;
     tz = cust.timeZone || tz;
-  } catch (_) { /* fallback por si falla */ }
+  } catch (_) {}
 
-  // 2) Construir rango en la TZ del cliente
   const [since, until] = computeRangeTZ({
     preset: datePreset,
     rangeDays: range,
@@ -326,7 +315,6 @@ async function fetchInsights({
     timeZone: tz,
   });
 
-  // 3) GAQL por día
   const GAQL_SERIE = `
     SELECT
       segments.date,
@@ -364,7 +352,6 @@ async function fetchInsights({
     };
   });
 
-  // 4) KPIs agregados coherentes con la serie
   const kpis = series.reduce((a, p) => ({
     impressions: a.impressions + (p.impressions || 0),
     clicks:      a.clicks + (p.clicks || 0),
@@ -383,13 +370,76 @@ async function fetchInsights({
     objective: (['ventas','alcance','leads'].includes(String(objective)) ? objective : 'ventas'),
     customer_id: cid,
     range: { since, until },
-    prev_range: { since, until }, // (si luego quieres comparar, aquí puedes calcular prev)
+    prev_range: { since, until },
     is_partial: !!includeToday,
     kpis,
     deltas: {},
     series,
     currency,
     locale: tz?.startsWith('Europe/') ? 'es-ES' : 'es-MX',
+  };
+}
+
+/* ========================================================================== *
+ * 5) Enlaces MCC (invite + status)  ← REST
+ * ========================================================================== */
+async function mccInviteCustomer({ accessToken, managerId, clientId }) {
+  const mid = normId(managerId);
+  const cid = normId(clientId);
+
+  const path = `/customers/${mid}/customerManagerLinks:mutate`;
+  const body = {
+    operations: [
+      {
+        create: {
+          manager: `customers/${mid}`,
+          clientCustomer: `customers/${cid}`,
+        }
+      }
+    ]
+  };
+
+  const r = await requestRest({
+    accessToken,
+    path,
+    method: 'POST',
+    body,
+    loginCustomerId: mid,
+  });
+
+  if (!r.ok) {
+    const err = new Error(`[mccInviteCustomer] ${r.data?.error?.status || r.res?.status}: ${r.data?.error?.message || 'failed'}`);
+    err.api = { error: r.data?.error || r.data, log: r.log };
+    throw err;
+  }
+
+  return r.data;
+}
+
+async function getMccLinkStatus({ accessToken, managerId, clientId }) {
+  const mid = normId(managerId);
+  const cid = normId(clientId);
+
+  const path = `/customers/${cid}/customerManagerLinks`;
+  const r = await requestRest({
+    accessToken,
+    path,
+    method: 'GET',
+  });
+
+  if (!r.ok) {
+    const err = new Error(`[getMccLinkStatus] ${r.data?.error?.status || r.res?.status}: ${r.data?.error?.message || 'failed'}`);
+    err.api = { error: r.data?.error || r.data, log: r.log };
+    throw err;
+  }
+
+  const links = Array.isArray(r.data?.customerManagerLinks) ? r.data.customerManagerLinks : [];
+  const mine  = links.find(l => (l.manager || '').endsWith(`/${mid}`));
+
+  return {
+    exists: !!mine,
+    status: mine?.status || 'UNKNOWN',
+    link: mine || null,
   };
 }
 
