@@ -15,10 +15,15 @@ const LOGIN_CID = (
   ''
 ).replace(/[^\d]/g, '');
 
-const ADS_VER  = (process.env.GADS_API_VERSION || 'v18').trim(); // fija v22 en env
+const ADS_VER  = (process.env.GADS_API_VERSION || 'v18').trim();
 const ADS_HOST = 'https://googleads.googleapis.com';
 
 const normId = (s = '') => String(s).replace(/[^\d]/g, '');
+
+/* Categorías por objetivo */
+const CATS_VENTAS = ['PURCHASE', 'IN_STORE_SALE'];
+const CATS_LEADS  = ['LEAD','SUBMIT_LEAD_FORM','BOOK_APPOINTMENT','REQUEST_QUOTE','SIGNUP'];
+const inList = (arr) => arr.map(s => `'${s}'`).join(',');
 
 /* =========================
  * Mini caché 60s (estabilidad)
@@ -269,7 +274,6 @@ function ymd(d) { return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padS
 function computeRangeTZ({ preset, rangeDays, includeToday, timeZone }) {
   const p = String(preset || '').toLowerCase();
 
-  // "today" y "yesterday" siempre anclados al día completo de la cuenta
   if (p === 'today') {
     const t0 = startOfDayTZ(timeZone);
     return [ymd(t0), ymd(t0)];
@@ -279,7 +283,6 @@ function computeRangeTZ({ preset, rangeDays, includeToday, timeZone }) {
     return [ymd(y0), ymd(y0)];
   }
 
-  // this_month (hasta hoy si includeToday; de lo contrario hasta ayer)
   if (p === 'this_month') {
     const anchor = startOfDayTZ(timeZone);
     const parts = new Intl.DateTimeFormat('en-US', { timeZone, year:'numeric', month:'2-digit' }).formatToParts(anchor);
@@ -290,7 +293,6 @@ function computeRangeTZ({ preset, rangeDays, includeToday, timeZone }) {
     return [ymd(start), ymd(end)];
   }
 
-  // last_Xd (por defecto 30)
   const days = (() => {
     if (rangeDays) return Math.max(1, Number(rangeDays));
     if (p === 'last_7d')  return 7;
@@ -327,6 +329,77 @@ function fillSeriesDates(series, since, until) {
     d = addDays(d, 1);
   }
   return out;
+}
+
+/* =========================
+ * GAQL builders por objetivo
+ * ========================= */
+function makeVentasGaql(since, until) {
+  return `
+    SELECT
+      segments.date,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.cost_micros,
+      metrics.ctr,
+      metrics.average_cpc,
+      metrics.conversions,
+      metrics.conversions_value
+    FROM customer
+    WHERE segments.date BETWEEN '${since}' AND '${until}'
+      AND segments.conversion_action_category IN (${inList(CATS_VENTAS)})
+    ORDER BY segments.date
+  `;
+}
+
+function makeLeadsGaql(since, until) {
+  return `
+    SELECT
+      segments.date,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.cost_micros,
+      metrics.ctr,
+      metrics.average_cpc,
+      metrics.conversions
+    FROM customer
+    WHERE segments.date BETWEEN '${since}' AND '${until}'
+      AND segments.conversion_action_category IN (${inList(CATS_LEADS)})
+    ORDER BY segments.date
+  `;
+}
+
+// Alcance: usar campaign. Algunas cuentas no exponen reach/average_frequency a nivel customer.
+function makeAlcanceGaql(since, until) {
+  return `
+    SELECT
+      segments.date,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.cost_micros,
+      metrics.average_cpc,
+      metrics.reach,
+      metrics.average_frequency
+    FROM campaign
+    WHERE segments.date BETWEEN '${since}' AND '${until}'
+      AND campaign.status != 'REMOVED'
+    ORDER BY segments.date
+  `;
+}
+
+// Fallback (sin reach) para cuando falle la consulta de alcance
+function makeBaseGaql(since, until) {
+  return `
+    SELECT
+      segments.date,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.cost_micros,
+      metrics.average_cpc
+    FROM customer
+    WHERE segments.date BETWEEN '${since}' AND '${until}'
+    ORDER BY segments.date
+  `;
 }
 
 /* ========================================================================== *
@@ -367,49 +440,36 @@ async function fetchInsights({
   if (cached) return cached;
 
   // ============== GAQL (ventana actual) ==============
-  // Para "alcance", pedimos reach y average_frequency; para ventas/leads usamos la serie base.
-  let GAQL_SERIE;
+  let GAQL_SERIE, mapperType;
   if (obj === 'alcance') {
-    GAQL_SERIE = `
-      SELECT
-        segments.date,
-        metrics.impressions,
-        metrics.clicks,
-        metrics.cost_micros,
-        metrics.average_cpc,
-        metrics.reach,
-        metrics.average_frequency
-      FROM customer
-      WHERE segments.date BETWEEN '${since}' AND '${until}'
-      ORDER BY segments.date
-    `;
+    GAQL_SERIE = makeAlcanceGaql(since, until);
+    mapperType = 'alcance';
+  } else if (obj === 'leads') {
+    GAQL_SERIE = makeLeadsGaql(since, until);
+    mapperType = 'leads';
   } else {
-    GAQL_SERIE = `
-      SELECT
-        segments.date,
-        metrics.impressions,
-        metrics.clicks,
-        metrics.cost_micros,
-        metrics.ctr,
-        metrics.average_cpc,
-        metrics.conversions,
-        metrics.conversions_value
-      FROM customer
-      WHERE segments.date BETWEEN '${since}' AND '${until}'
-      ORDER BY segments.date
-    `;
+    GAQL_SERIE = makeVentasGaql(since, until);
+    mapperType = 'ventas';
   }
 
-  const rows = await searchGAQLStream(accessToken, cid, GAQL_SERIE);
+  let rows;
+  try {
+    rows = await searchGAQLStream(accessToken, cid, GAQL_SERIE);
+  } catch (e) {
+    if (obj === 'alcance') {
+      rows = await searchGAQLStream(accessToken, cid, makeBaseGaql(since, until));
+      mapperType = 'base';
+    } else {
+      throw e;
+    }
+  }
 
-  // Mapeo seguro (añadimos reach/frequency si vino de GAQL de alcance)
   const rawSeries = rows.map(r => {
     const seg  = r.segments || {};
     const met  = r.metrics  || {};
 
     const impressions = Number(met.impressions || 0);
     const clicks      = Number(met.clicks || 0);
-
     const costMicros  = met.costMicros ?? met.cost_micros ?? 0;
     const costUnits   = microsToUnit(costMicros);
 
@@ -419,29 +479,29 @@ async function fetchInsights({
       (typeof met.averageCpcMicros === 'number' ? (met.averageCpcMicros / 1_000_000) : undefined) ??
       (typeof met.average_cpc_micros === 'number' ? (met.average_cpc_micros / 1_000_000) : undefined);
 
-    const conversions = Number(met.conversions || 0);
-    const convValue   = met.conversionsValue ?? met.conversions_value ?? 0;
-
-    const out = {
+    const base = {
       date: seg.date,
       impressions,
       clicks,
       cost:  costUnits,
       ctr:   Number(met.ctr ?? (impressions > 0 ? (clicks / impressions) : 0)),
       cpc:   (typeof avgCpcUnits === 'number' ? avgCpcUnits : (clicks > 0 ? (costUnits / clicks) : 0)),
-      conversions,
-      conv_value: Number(convValue),
     };
 
-    if (obj === 'alcance') {
-      out.reach     = Number(met.reach || 0);
-      out.frequency = Number((met.averageFrequency ?? met.average_frequency ?? 0));
+    if (mapperType === 'ventas') {
+      base.conversions = Number(met.conversions || 0);
+      base.conv_value  = Number(met.conversionsValue ?? met.conversions_value ?? 0);
+    } else if (mapperType === 'leads') {
+      base.conversions = Number(met.conversions || 0);
+      base.conv_value  = 0;
+    } else if (mapperType === 'alcance') {
+      base.reach     = Number(met.reach || 0);
+      base.frequency = Number(met.averageFrequency ?? met.average_frequency ?? 0);
     }
 
-    return out;
+    return base;
   }).filter(r => !!r.date);
 
-  // Serie determinística (rellena huecos)
   const series = fillSeriesDates(rawSeries, since, until);
 
   // KPIs actuales = suma de la serie
@@ -455,8 +515,14 @@ async function fetchInsights({
 
   kpis.ctr  = kpis.impressions ? (kpis.clicks / kpis.impressions) : 0;
   kpis.cpc  = kpis.clicks ? (kpis.cost / kpis.clicks) : 0;
-  kpis.cpa  = kpis.conversions ? (kpis.cost / kpis.conversions) : undefined;
-  kpis.roas = kpis.cost ? (kpis.conv_value / kpis.cost) : undefined;
+
+  if (obj === 'ventas') {
+    kpis.cpa  = kpis.conversions ? (kpis.cost / kpis.conversions) : undefined;
+    kpis.roas = kpis.cost ? (kpis.conv_value / kpis.cost) : undefined;
+  } else if (obj === 'leads') {
+    kpis.cpa  = kpis.conversions ? (kpis.cost / kpis.conversions) : undefined;
+    kpis.roas = undefined;
+  } // alcance: no agrega KPIs adicionales
 
   // ============== Ventana previa (mismo tamaño) + deltas ==============
   function daysBetween(a, b) {
@@ -470,39 +536,29 @@ async function fetchInsights({
   const prev_since = ymd(prevSinceD);
   const prev_until = ymd(prevUntilD);
 
-  let GAQL_PREV;
+  let GAQL_PREV, mapperPrev;
   if (obj === 'alcance') {
-    GAQL_PREV = `
-      SELECT
-        segments.date,
-        metrics.impressions,
-        metrics.clicks,
-        metrics.cost_micros,
-        metrics.average_cpc,
-        metrics.reach,
-        metrics.average_frequency
-      FROM customer
-      WHERE segments.date BETWEEN '${prev_since}' AND '${prev_until}'
-      ORDER BY segments.date
-    `;
+    GAQL_PREV = makeAlcanceGaql(prev_since, prev_until);
+    mapperPrev = 'alcance';
+  } else if (obj === 'leads') {
+    GAQL_PREV = makeLeadsGaql(prev_since, prev_until);
+    mapperPrev = 'leads';
   } else {
-    GAQL_PREV = `
-      SELECT
-        segments.date,
-        metrics.impressions,
-        metrics.clicks,
-        metrics.cost_micros,
-        metrics.ctr,
-        metrics.average_cpc,
-        metrics.conversions,
-        metrics.conversions_value
-      FROM customer
-      WHERE segments.date BETWEEN '${prev_since}' AND '${prev_until}'
-      ORDER BY segments.date
-    `;
+    GAQL_PREV = makeVentasGaql(prev_since, prev_until);
+    mapperPrev = 'ventas';
   }
 
-  const rowsPrev = await searchGAQLStream(accessToken, cid, GAQL_PREV);
+  let rowsPrev;
+  try {
+    rowsPrev = await searchGAQLStream(accessToken, cid, GAQL_PREV);
+  } catch (e) {
+    if (obj === 'alcance') {
+      rowsPrev = await searchGAQLStream(accessToken, cid, makeBaseGaql(prev_since, prev_until));
+      mapperPrev = 'base';
+    } else {
+      throw e;
+    }
+  }
 
   const rawPrev = rowsPrev.map(r => {
     const seg  = r.segments || {};
@@ -519,26 +575,27 @@ async function fetchInsights({
       (typeof met.averageCpcMicros === 'number' ? (met.averageCpcMicros / 1_000_000) : undefined) ??
       (typeof met.average_cpc_micros === 'number' ? (met.average_cpc_micros / 1_000_000) : undefined);
 
-    const conversions = Number(met.conversions || 0);
-    const convValue   = met.conversionsValue ?? met.conversions_value ?? 0;
-
-    const out = {
+    const base = {
       date: seg.date,
       impressions,
       clicks,
       cost:  costUnits,
       ctr:   Number(met.ctr ?? (impressions > 0 ? (clicks / impressions) : 0)),
       cpc:   (typeof avgCpcUnits === 'number' ? avgCpcUnits : (clicks > 0 ? (costUnits / clicks) : 0)),
-      conversions,
-      conv_value: Number(convValue),
     };
 
-    if (obj === 'alcance') {
-      out.reach     = Number(met.reach || 0);
-      out.frequency = Number((met.averageFrequency ?? met.average_frequency ?? 0));
+    if (mapperPrev === 'ventas') {
+      base.conversions = Number(met.conversions || 0);
+      base.conv_value  = Number(met.conversionsValue ?? met.conversions_value ?? 0);
+    } else if (mapperPrev === 'leads') {
+      base.conversions = Number(met.conversions || 0);
+      base.conv_value  = 0;
+    } else if (mapperPrev === 'alcance') {
+      base.reach     = Number(met.reach || 0);
+      base.frequency = Number(met.averageFrequency ?? met.average_frequency ?? 0);
     }
 
-    return out;
+    return base;
   }).filter(r => !!r.date);
 
   const prevSeries = fillSeriesDates(rawPrev, prev_since, prev_until);
@@ -552,8 +609,13 @@ async function fetchInsights({
   }), { impressions:0, clicks:0, cost:0, conversions:0, conv_value:0 });
   prev.ctr  = prev.impressions ? (prev.clicks / prev.impressions) : 0;
   prev.cpc  = prev.clicks ? (prev.cost / prev.clicks) : 0;
-  prev.cpa  = prev.conversions ? (prev.cost / prev.conversions) : undefined;
-  prev.roas = prev.cost ? (prev.conv_value / prev.cost) : undefined;
+  if (obj === 'ventas') {
+    prev.cpa  = prev.conversions ? (prev.cost / prev.conversions) : undefined;
+    prev.roas = prev.cost ? (prev.conv_value / prev.cost) : undefined;
+  } else if (obj === 'leads') {
+    prev.cpa  = prev.conversions ? (prev.cost / prev.conversions) : undefined;
+    prev.roas = undefined;
+  }
 
   const rel = (cur, base) => (Number(base) ? ((Number(cur) - Number(base)) / Number(base)) : 0);
   const deltas = {
