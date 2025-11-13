@@ -103,10 +103,14 @@ app.use('/api/stripe', (req, res, next) => {
   return express.json()(req, res, next);
 });
 
-/* =========================
- * Parsers globales
- * ========================= */
+app.use('/api/stripe', stripeRouter);
+
+app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+
+
+
 
 /* =========================
  * CSP público
@@ -211,7 +215,7 @@ if (HAS_DASHBOARD_DIST) {
   console.warn('⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard');
 }
 
-app.use(express.json({ limit: '1mb' }));
+
 app.use('/api/bookcall', require('./routes/bookcall'));
 
 /* =========================
@@ -224,12 +228,7 @@ app.use('/', privacyRoutes);
 // Google Analytics (GA4)
 app.use('/api/google/analytics', gaRouter);
 
-// Google Ads (insights) — protegido por sesión
-app.use('/api/google/ads/insights', sessionGuard, googleAdsInsightsRouter);
-// Alias: /api/google/ads → /api/google/ads/insights
-// Principal
-app.use('/api/google/ads/insights', sessionGuard, googleAdsInsightsRouter);
-// Alias directo (mismo router, sin rewrite)
+
 app.use('/api/google/ads', sessionGuard, googleAdsInsightsRouter);
 
 
@@ -257,7 +256,6 @@ app.post('/api/audit/shopify/start', sessionGuard, (req, res) => res.redirect(30
 
 
 // Stripe / Facturapi / Billing
-app.use('/api/stripe', stripeRouter);
 app.use('/api/facturapi', require('./routes/facturapi'));
 app.use('/api/billing', billingRoutes);
 
@@ -799,6 +797,10 @@ app.get('/plans/cancel', (_req, res) => {
   if (fs.existsSync(candidate)) return res.sendFile(candidate);
   res.redirect('/plans');
 });
+
+ app.use('/api', (req, res) => {
+   res.status(404).json({ ok:false, error:'Not Found', path: req.originalUrl });
+ });
 
 /* =========================
  * 404 y errores
