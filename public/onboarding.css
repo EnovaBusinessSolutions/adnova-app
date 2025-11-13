@@ -995,3 +995,44 @@ body[data-page="onboarding4"] .ready-content {
     width: 100%;
   }
 }
+
+/* 1) El body ya no hace scroll general */
+html, body {
+  height: 100%;
+}
+
+body {
+  overflow: hidden; /* evita la barra blanca del navegador */
+}
+
+/* 2) El panel derecho será el que scrollea */
+.main-content {
+  overflow-y: auto;
+}
+
+/* 3) Scrollbar oscuro SOLO dentro del panel derecho */
+
+/* Firefox */
+.main-content {
+  scrollbar-width: thin;
+  scrollbar-color: #3b2a5a #05040a; /* thumb | track */
+}
+
+/* WebKit (Chrome, Edge, Brave, Safari…) */
+.main-content::-webkit-scrollbar {
+  width: 10px;
+}
+
+.main-content::-webkit-scrollbar-track {
+  background: #05040a;          /* riel oscuro */
+}
+
+.main-content::-webkit-scrollbar-thumb {
+  background: #2d2340;          /* thumb morado oscuro */
+  border-radius: 999px;
+  border: 2px solid #05040a;
+}
+
+.main-content::-webkit-scrollbar-thumb:hover {
+  background: #4b3c75;          /* hover un poco más claro */
+}
