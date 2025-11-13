@@ -360,24 +360,13 @@ async function fetchInsights({
     timeZone: tz,
   });
 
-  // === helper: periodo anterior con el mismo tamaño (para deltas)
-  function previousWindow(a, b) {
-    const d1 = new Date(`${a}T00:00:00Z`);
-    const d2 = new Date(`${b}T00:00:00Z`);
-    const days = Math.round((d2 - d1) / 86400000) + 1;
-    const prevEnd = new Date(d1.getTime() - 86400000);
-    const prevStart = new Date(prevEnd.getTime() - (days - 1) * 86400000);
-    const fmt = (d)=>`${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
-    return [fmt(prevStart), fmt(prevEnd)];
-  }
-  const [prevSince, prevUntil] = previousWindow(since, until);
-
-  // caché por ventana + objetivo
-  const cacheKey = `ins:${cid}:${since}:${until}:${objective||'ventas'}`;
+  // caché por ventana
+  const obj = (['ventas','alcance','leads'].includes(String(objective)) ? String(objective) : 'ventas');
+  const cacheKey = `ins:${cid}:${since}:${until}:${obj}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
-  // --------- Serie diaria (v22: average_cpc está en unidades; dejamos compat micros)
+  // ============== GAQL (ventana actual) ==============
   const GAQL_SERIE = `
     SELECT
       segments.date,
@@ -395,7 +384,7 @@ async function fetchInsights({
 
   const rows = await searchGAQLStream(accessToken, cid, GAQL_SERIE);
 
-  // Mapeo seguro + derivadas (CPM/CPL)
+  // mapeo seguro (v22: average_cpc en UNIDADES; compat *_micros; fallback cost/clicks)
   const rawSeries = rows.map(r => {
     const seg  = r.segments || {};
     const met  = r.metrics  || {};
@@ -403,38 +392,32 @@ async function fetchInsights({
     const impressions = Number(met.impressions || 0);
     const clicks      = Number(met.clicks || 0);
     const costMicros  = met.costMicros ?? met.cost_micros ?? 0;
-    const cost        = microsToUnit(costMicros);
+    const costUnits   = microsToUnit(costMicros);
 
-    // average_cpc en unidades (v22) con compat micros
     const avgCpcUnits =
       (typeof met.averageCpc === 'number' ? met.averageCpc : undefined) ??
       (typeof met.average_cpc === 'number' ? met.average_cpc : undefined) ??
       (typeof met.averageCpcMicros === 'number' ? (met.averageCpcMicros / 1_000_000) : undefined) ??
       (typeof met.average_cpc_micros === 'number' ? (met.average_cpc_micros / 1_000_000) : undefined);
 
-    const conversions = Number(met.conversions || 0);
-    const conv_value  = Number(met.conversionsValue ?? met.conversions_value ?? 0);
-
-    const cpc = (typeof avgCpcUnits === 'number')
-      ? avgCpcUnits
-      : (clicks > 0 ? (cost / clicks) : 0);
-
-    const ctr = impressions ? (clicks / impressions) : 0;
-    const cpm = impressions ? (cost / impressions) * 1000 : 0;
-    const cpl = conversions ? (cost / conversions) : 0;
+    const convValue = met.conversionsValue ?? met.conversions_value ?? 0;
 
     return {
       date: seg.date,
-      impressions, clicks, cost, ctr, cpc,
-      conversions, conv_value,
-      cpm, cpl,
+      impressions,
+      clicks,
+      cost:  costUnits,
+      ctr:   Number(met.ctr || 0), // ya viene ratio
+      cpc:   (typeof avgCpcUnits === 'number' ? avgCpcUnits : (clicks > 0 ? (costUnits / clicks) : 0)),
+      conversions: Number(met.conversions || 0),
+      conv_value:  Number(convValue),
     };
   }).filter(r => !!r.date);
 
-  // Serie con huecos rellenados
+  // serie determinística (rellena huecos)
   const series = fillSeriesDates(rawSeries, since, until);
 
-  // KPIs = suma de la serie (origen único de verdad)
+  // KPIs actuales = suma de la serie
   const kpis = series.reduce((a, p) => ({
     impressions: a.impressions + (p.impressions || 0),
     clicks:      a.clicks      + (p.clicks || 0),
@@ -447,65 +430,97 @@ async function fetchInsights({
   kpis.cpc  = kpis.clicks ? (kpis.cost / kpis.clicks) : 0;
   kpis.cpa  = kpis.conversions ? (kpis.cost / kpis.conversions) : undefined;
   kpis.roas = kpis.cost ? (kpis.conv_value / kpis.cost) : undefined;
-  kpis.cpm  = kpis.impressions ? (kpis.cost / kpis.impressions) * 1000 : 0;
-  kpis.cpl  = kpis.conversions ? (kpis.cost / kpis.conversions) : 0;
 
-  // --------- Totales del periodo anterior (una “fila” de totales)
-  const GAQL_TOTAL = `
+  // ============== Ventana previa (mismo tamaño) + deltas ==============
+  function daysBetween(a, b) {
+    const d1 = new Date(`${a}T00:00:00Z`).getTime();
+    const d2 = new Date(`${b}T00:00:00Z`).getTime();
+    return Math.max(1, Math.round((d2 - d1)/86400000) + 1);
+  }
+  const spanDays = daysBetween(since, until);
+  const prevUntilD = addDays(new Date(`${since}T00:00:00Z`), -1);
+  const prevSinceD = addDays(prevUntilD, -(spanDays - 1));
+  const prev_since = ymd(prevSinceD);
+  const prev_until = ymd(prevUntilD);
+
+  const GAQL_PREV = `
     SELECT
+      segments.date,
       metrics.impressions,
       metrics.clicks,
       metrics.cost_micros,
+      metrics.ctr,
+      metrics.average_cpc,
       metrics.conversions,
       metrics.conversions_value
     FROM customer
-    WHERE segments.date BETWEEN '${prevSince}' AND '${prevUntil}'
+    WHERE segments.date BETWEEN '${prev_since}' AND '${prev_until}'
+    ORDER BY segments.date
   `;
-  const prevRows = await searchGAQLStream(accessToken, cid, GAQL_TOTAL);
-  const pr = prevRows?.[0]?.metrics || {};
-  const prev = {
-    impressions: Number(pr.impressions || 0),
-    clicks:      Number(pr.clicks || 0),
-    cost:        microsToUnit(pr.costMicros ?? pr.cost_micros ?? 0),
-    conversions: Number(pr.conversions || 0),
-    conv_value:  Number(pr.conversionsValue ?? pr.conversions_value ?? 0),
-  };
+
+  const rowsPrev = await searchGAQLStream(accessToken, cid, GAQL_PREV);
+
+  const rawPrev = rowsPrev.map(r => {
+    const seg  = r.segments || {};
+    const met  = r.metrics  || {};
+    const impressions = Number(met.impressions || 0);
+    const clicks      = Number(met.clicks || 0);
+    const costMicros  = met.costMicros ?? met.cost_micros ?? 0;
+    const costUnits   = microsToUnit(costMicros);
+    const avgCpcUnits =
+      (typeof met.averageCpc === 'number' ? met.averageCpc : undefined) ??
+      (typeof met.average_cpc === 'number' ? met.average_cpc : undefined) ??
+      (typeof met.averageCpcMicros === 'number' ? (met.averageCpcMicros / 1_000_000) : undefined) ??
+      (typeof met.average_cpc_micros === 'number' ? (met.average_cpc_micros / 1_000_000) : undefined);
+    const convValue = met.conversionsValue ?? met.conversions_value ?? 0;
+    return {
+      date: seg.date,
+      impressions,
+      clicks,
+      cost:  costUnits,
+      ctr:   Number(met.ctr || 0),
+      cpc:   (typeof avgCpcUnits === 'number' ? avgCpcUnits : (clicks > 0 ? (costUnits / clicks) : 0)),
+      conversions: Number(met.conversions || 0),
+      conv_value:  Number(convValue),
+    };
+  }).filter(r => !!r.date);
+
+  const prevSeries = fillSeriesDates(rawPrev, prev_since, prev_until);
+  const prev = prevSeries.reduce((a, p) => ({
+    impressions: a.impressions + (p.impressions || 0),
+    clicks:      a.clicks      + (p.clicks || 0),
+    cost:        a.cost        + (p.cost || 0),
+    conversions: a.conversions + (p.conversions || 0),
+    conv_value:  a.conv_value  + (p.conv_value || 0),
+  }), { impressions:0, clicks:0, cost:0, conversions:0, conv_value:0 });
   prev.ctr  = prev.impressions ? (prev.clicks / prev.impressions) : 0;
   prev.cpc  = prev.clicks ? (prev.cost / prev.clicks) : 0;
   prev.cpa  = prev.conversions ? (prev.cost / prev.conversions) : undefined;
   prev.roas = prev.cost ? (prev.conv_value / prev.cost) : undefined;
-  prev.cpm  = prev.impressions ? (prev.cost / prev.impressions) * 1000 : 0;
-  prev.cpl  = prev.conversions ? (prev.cost / prev.conversions) : 0;
 
-  // deltas (% vs periodo anterior)
-  function delta(now, before) {
-    const bn = Number(before || 0);
-    if (!bn) return null; // evita infinito
-    return (Number(now || 0) - bn) / bn;
-  }
+  const rel = (cur, base) => (Number(base) ? ((Number(cur) - Number(base)) / Number(base)) : 0);
   const deltas = {
-    impressions: delta(kpis.impressions, prev.impressions),
-    clicks:      delta(kpis.clicks, prev.clicks),
-    cost:        delta(kpis.cost, prev.cost),
-    conversions: delta(kpis.conversions, prev.conversions),
-    conv_value:  delta(kpis.conv_value, prev.conv_value),
-    ctr:         delta(kpis.ctr,  prev.ctr),
-    cpc:         delta(kpis.cpc,  prev.cpc),
-    cpa:         delta(kpis.cpa,  prev.cpa),
-    roas:        delta(kpis.roas, prev.roas),
-    cpm:         delta(kpis.cpm,  prev.cpm),
-    cpl:         delta(kpis.cpl,  prev.cpl),
+    impressions: rel(kpis.impressions, prev.impressions),
+    clicks:      rel(kpis.clicks,      prev.clicks),
+    cost:        rel(kpis.cost,        prev.cost),
+    conversions: rel(kpis.conversions, prev.conversions),
+    conv_value:  rel(kpis.conv_value,  prev.conv_value),
+    ctr:         rel(kpis.ctr ?? 0,    prev.ctr ?? 0),
+    cpc:         rel(kpis.cpc ?? 0,    prev.cpc ?? 0),
+    cpa:         (kpis.cpa != null || prev.cpa != null) ? rel(kpis.cpa ?? 0,  prev.cpa ?? 0) : undefined,
+    roas:        (kpis.roas!= null || prev.roas!= null) ? rel(kpis.roas ?? 0, prev.roas ?? 0) : undefined,
   };
 
+  // ============== Payload ==============
   const payload = {
     ok: true,
-    objective: (['ventas','alcance','leads'].includes(String(objective)) ? objective : 'ventas'),
+    objective: obj,
     customer_id: cid,
     range: { since, until },
-    prev_range: { since: prevSince, until: prevUntil },   // 👈 periodo anterior real
+    prev_range: { since: prev_since, until: prev_until },
     is_partial: String(datePreset||'').toLowerCase()==='today' && !!includeToday,
     kpis,
-    deltas,                                               // 👈 listo para UI
+    deltas,
     series,
     currency,
     locale: tz?.startsWith('Europe/') ? 'es-ES' : 'es-MX',
@@ -515,6 +530,7 @@ async function fetchInsights({
   setCache(cacheKey, payload);
   return payload;
 }
+
 
 /* ========================================================================== *
  * 5) Enlaces MCC (invite + status)  ← REST
