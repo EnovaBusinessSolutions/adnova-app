@@ -366,36 +366,50 @@ async function fetchInsights({
   if (cached) return cached;
 
   const GAQL_SERIE = `
-    SELECT
-      segments.date,
-      metrics.impressions,
-      metrics.clicks,
-      metrics.cost_micros,
-      metrics.ctr,
-      metrics.average_cpc_micros,
-      metrics.conversions,
-      metrics.conversions_value
-    FROM customer
-    WHERE segments.date BETWEEN '${since}' AND '${until}'
-    ORDER BY segments.date
-  `;
+  SELECT
+    segments.date,
+    metrics.impressions,
+    metrics.clicks,
+    metrics.cost_micros,
+    metrics.ctr,
+    metrics.average_cpc,
+    metrics.conversions,
+    metrics.conversions_value
+  FROM customer
+  WHERE segments.date BETWEEN '${since}' AND '${until}'
+  ORDER BY segments.date
+`;
 
   const rows = await searchGAQLStream(accessToken, cid, GAQL_SERIE);
 
-  // mapeo seguro
+  // mapeo seguro (v22: average_cpc en UNIDADES; compat *_micros; fallback cost/clicks)
   const rawSeries = rows.map(r => {
     const seg  = r.segments || {};
     const met  = r.metrics  || {};
-    const costMicros   = met.costMicros ?? met.cost_micros ?? 0;
-    const avgCpcMicros = met.averageCpcMicros ?? met.average_cpc_micros ?? 0;
-    const convValue    = met.conversionsValue ?? met.conversions_value ?? 0;
+
+    const impressions = Number(met.impressions || 0);
+    const clicks      = Number(met.clicks || 0);
+    const costMicros  = met.costMicros ?? met.cost_micros ?? 0;
+    const costUnits   = microsToUnit(costMicros);
+
+    // average CPC:
+    // - v22 -> average_cpc (unidades)
+    // - compat -> averageCpcMicros / average_cpc_micros
+    const avgCpcUnits =
+      (typeof met.averageCpc === 'number' ? met.averageCpc : undefined) ??
+      (typeof met.average_cpc === 'number' ? met.average_cpc : undefined) ??
+      (typeof met.averageCpcMicros === 'number' ? (met.averageCpcMicros / 1_000_000) : undefined) ??
+      (typeof met.average_cpc_micros === 'number' ? (met.average_cpc_micros / 1_000_000) : undefined);
+
+    const convValue = met.conversionsValue ?? met.conversions_value ?? 0;
+
     return {
       date: seg.date,
-      impressions: Number(met.impressions || 0),
-      clicks:      Number(met.clicks || 0),
-      cost:        microsToUnit(costMicros),
-      ctr:         Number(met.ctr || 0),
-      cpc:         microsToUnit(avgCpcMicros),
+      impressions,
+      clicks,
+      cost:  costUnits,
+      ctr:   Number(met.ctr || 0), // ya viene ratio
+      cpc:   (typeof avgCpcUnits === 'number' ? avgCpcUnits : (clicks > 0 ? (costUnits / clicks) : 0)),
       conversions: Number(met.conversions || 0),
       conv_value:  Number(convValue),
     };

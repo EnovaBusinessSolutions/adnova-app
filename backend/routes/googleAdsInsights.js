@@ -85,16 +85,31 @@ function oauth() {
   });
 }
 
+/** Utilidad: primer valor definido entre varias claves (snake/camel). */
+function pickAny(obj = {}, keys = []) {
+  for (const k of keys) {
+    if (obj[k] !== undefined && obj[k] !== null) return obj[k];
+  }
+  return undefined;
+}
+
+/** Acepta objeto con claves camelCase o snake_case y normaliza a nuestro shape. */
 function normalizeAcc(a = {}) {
-  const id = normId(a.id || a.customerId || a.resourceName || '');
-  const name = (a.name || a.descriptiveName || a.descriptive_name || null);
-  return {
-    id,
-    name,
-    currencyCode: a.currencyCode || a.currency || a.currency_code || null,
-    timeZone: a.timeZone || a.timezone || a.time_zone || null,
-    status: (a.status || a.accountStatus || null),
-  };
+  // id puede venir como id, customerId o dentro de resourceName "customers/123"
+  const idRaw = pickAny(a, ['id', 'customerId', 'customer_id', 'customerID', 'resourceName', 'resource_name']) || '';
+  const id = normId(idRaw);
+
+  // nombre: name | descriptiveName | descriptive_name
+  const name = pickAny(a, ['name', 'descriptiveName', 'descriptive_name']) ?? null;
+
+  // currency/timezone en ambas variantes
+  const currencyCode = pickAny(a, ['currencyCode', 'currency_code', 'currency']) ?? null;
+  const timeZone     = pickAny(a, ['timeZone', 'time_zone', 'timezone']) ?? null;
+
+  // status: status | accountStatus
+  const status = pickAny(a, ['status', 'accountStatus']) ?? null;
+
+  return { id, name, currencyCode, timeZone, status };
 }
 
 /**
@@ -167,7 +182,7 @@ async function saveDiscoveryFailure(userId, reason, log) {
 
 /* ============================================================================
  * Enriquecimiento vía GAQL desde el MCC (REST)
- * ==========================================================================*/
+ * ========================================================================= */
 async function enrichAccountsWithGAQL(ga) {
   const accessToken = await getFreshAccessToken(ga);
   const managerId = normId(process.env.GOOGLE_LOGIN_CUSTOMER_ID || ga.managerCustomerId || ga.loginCustomerId || '');
@@ -188,14 +203,20 @@ async function enrichAccountsWithGAQL(ga) {
 
   const rows = await Ads.searchGAQLStream(accessToken, managerId, GAQL);
 
+  // Aceptamos tanto r.customer_client (snake) como r.customerClient (camel)
   const accounts = rows.map(r => {
     const cc = r?.customer_client || r?.customerClient || {};
     return normalizeAcc({
-      id: cc.id,
-      descriptive_name: cc.descriptive_name,
-      currency_code: cc.currency_code,
-      time_zone: cc.time_zone,
-      status: cc.status,
+      // id
+      id: pickAny(cc, ['id', 'customerId', 'customer_id']),
+      // nombre
+      name: pickAny(cc, ['descriptiveName', 'descriptive_name']),
+      descriptive_name: cc.descriptive_name, // por si acaso
+      descriptiveName: cc.descriptiveName,
+      // currency/timezone/status en ambas variantes
+      currency_code: pickAny(cc, ['currency_code', 'currencyCode']),
+      time_zone:     pickAny(cc, ['time_zone', 'timeZone']),
+      status:        cc.status,
     });
   }).filter(a => a.id);
 
@@ -223,7 +244,7 @@ async function enrichAccountsWithGAQL(ga) {
 
 /* ============================================================================
  * POST /api/google/ads/insights/accounts/selection
- * ==========================================================================*/
+ * ========================================================================= */
 router.post('/accounts/selection', requireAuth, express.json(), async (req, res) => {
   try {
     const { accountIds } = req.body;
@@ -280,7 +301,7 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
 
 /* ============================================================================
  * GET /api/google/ads/insights/accounts
- * ==========================================================================*/
+ * ========================================================================= */
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
@@ -358,7 +379,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
 
 /* ============================================================================
  * GET /api/google/ads/insights  ← 100% REST (dinámico por rango/preset)
- * ==========================================================================*/
+ * ========================================================================= */
 router.get('/', requireAuth, async (req, res) => {
   try {
     // 1) Validar conexión
@@ -452,7 +473,7 @@ router.get('/', requireAuth, async (req, res) => {
 
 /* ============================================================================
  * POST /api/google/ads/insights/default
- * ==========================================================================*/
+ * ========================================================================= */
 router.post('/default', requireAuth, express.json(), async (req, res) => {
   try {
     const cid = normId(req.body?.customerId || '');
@@ -483,7 +504,7 @@ router.post('/default', requireAuth, express.json(), async (req, res) => {
 
 /* ============================================================================
  * POST /api/google/ads/insights/mcc/invite
- * ==========================================================================*/
+ * ========================================================================= */
 router.post('/mcc/invite', requireAuth, express.json(), async (req, res) => {
   try {
     const customerId = normId(req.body?.customer_id || req.body?.customerId || '');
@@ -517,7 +538,7 @@ router.post('/mcc/invite', requireAuth, express.json(), async (req, res) => {
 
 /* ============================================================================
  * GET /api/google/ads/insights/mcc/invite/status
- * ==========================================================================*/
+ * ========================================================================= */
 router.get('/mcc/invite/status', requireAuth, async (req, res) => {
   try {
     const customerId = normId(String(req.query.customer_id || req.query.customerId || ''));
@@ -551,7 +572,7 @@ router.get('/mcc/invite/status', requireAuth, async (req, res) => {
 
 /* ============================================================================
  * GET /api/google/ads/insights/selftest
- * ==========================================================================*/
+ * ========================================================================= */
 router.get('/selftest', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
@@ -614,7 +635,7 @@ router.get('/selftest', requireAuth, async (req, res) => {
 
 /* ============================================================================
  * DEBUG: ver respuesta de nombres vía GAQL customer_client
- * ==========================================================================*/
+ * ========================================================================= */
 router.get('/debug/names', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
@@ -650,7 +671,7 @@ router.get('/debug/names', requireAuth, async (req, res) => {
 
 /* ============================================================================
  * DEBUG: listAccessibleCustomers y getCustomer del primero
- * ==========================================================================*/
+ * ========================================================================= */
 router.get('/debug/raw', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
