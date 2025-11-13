@@ -1,4 +1,3 @@
-// backend/services/googleAdsService.js
 'use strict';
 
 const axios = require('axios');
@@ -16,10 +15,24 @@ const LOGIN_CID = (
   ''
 ).replace(/[^\d]/g, '');
 
-const ADS_VER  = (process.env.GADS_API_VERSION || 'v18').trim();
+const ADS_VER  = (process.env.GADS_API_VERSION || 'v18').trim(); // fija v22 en env
 const ADS_HOST = 'https://googleads.googleapis.com';
 
 const normId = (s = '') => String(s).replace(/[^\d]/g, '');
+
+/* =========================
+ * Mini caché 60s (estabilidad)
+ * ========================= */
+const LRU = new Map();
+function getCache(key) {
+  const hit = LRU.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.ts > 60_000) { LRU.delete(key); return null; }
+  return hit.data;
+}
+function setCache(key, data) {
+  LRU.set(key, { ts: Date.now(), data });
+}
 
 /* =========================
  * Headers / logging
@@ -254,26 +267,41 @@ function addDays(d, n) { const x = new Date(d.getTime()); x.setUTCDate(x.getUTCD
 function ymd(d) { return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`; }
 
 function computeRangeTZ({ preset, rangeDays, includeToday, timeZone }) {
-  const presetLC = String(preset || '').toLowerCase();
-  const anchor = includeToday ? startOfDayTZ(timeZone) : addDays(startOfDayTZ(timeZone), -1);
+  const p = String(preset || '').toLowerCase();
 
-  if (presetLC === 'today') {
+  // "today" y "yesterday" siempre anclados al día completo de la cuenta
+  if (p === 'today') {
     const t0 = startOfDayTZ(timeZone);
     return [ymd(t0), ymd(t0)];
-    }
-  if (presetLC === 'yesterday') {
+  }
+  if (p === 'yesterday') {
     const y0 = addDays(startOfDayTZ(timeZone), -1);
     return [ymd(y0), ymd(y0)];
   }
 
+  // this_month (hasta hoy si includeToday; de lo contrario hasta ayer)
+  if (p === 'this_month') {
+    const anchor = startOfDayTZ(timeZone);
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone, year:'numeric', month:'2-digit' }).formatToParts(anchor);
+    const obj = Object.fromEntries(parts.map(pp => [pp.type, pp.value]));
+    const y = +obj.year, m = +obj.month;
+    const start = new Date(Date.UTC(y, m - 1, 1));
+    const end = includeToday ? anchor : addDays(anchor, -1);
+    return [ymd(start), ymd(end)];
+  }
+
+  // last_Xd (por defecto 30)
   const days = (() => {
     if (rangeDays) return Math.max(1, Number(rangeDays));
-    if (presetLC === 'last_7d')  return 7;
-    if (presetLC === 'last_14d') return 14;
-    if (presetLC === 'last_28d') return 28;
+    if (p === 'last_7d')  return 7;
+    if (p === 'last_14d') return 14;
+    if (p === 'last_28d') return 28;
+    if (p === 'last_60d') return 60;
+    if (p === 'last_90d') return 90;
     return 30;
   })();
 
+  const anchor = includeToday ? startOfDayTZ(timeZone) : addDays(startOfDayTZ(timeZone), -1);
   const until = anchor;
   const since = addDays(until, -(days - 1));
   return [ymd(since), ymd(until)];
@@ -282,6 +310,23 @@ function computeRangeTZ({ preset, rangeDays, includeToday, timeZone }) {
 function microsToUnit(v) {
   const n = Number(v || 0);
   return Math.round((n / 1_000_000) * 100) / 100;
+}
+
+// Rellena días vacíos con ceros para que gráfico y KPIs sean consistentes
+function fillSeriesDates(series, since, until) {
+  const map = new Map(series.map(r => [r.date, r]));
+  const out = [];
+  let d = new Date(`${since}T00:00:00Z`);
+  const end = new Date(`${until}T00:00:00Z`);
+  while (d.getTime() <= end.getTime()) {
+    const key = ymd(d);
+    out.push(map.get(key) || {
+      date: key,
+      impressions: 0, clicks: 0, cost: 0, ctr: 0, cpc: 0, conversions: 0, conv_value: 0,
+    });
+    d = addDays(d, 1);
+  }
+  return out;
 }
 
 /* ========================================================================== *
@@ -315,6 +360,11 @@ async function fetchInsights({
     timeZone: tz,
   });
 
+  // caché por ventana
+  const cacheKey = `ins:${cid}:${since}:${until}:${objective||'ventas'}`;
+  const cached = getCache(cacheKey);
+  if (cached) return cached;
+
   const GAQL_SERIE = `
     SELECT
       segments.date,
@@ -332,32 +382,35 @@ async function fetchInsights({
 
   const rows = await searchGAQLStream(accessToken, cid, GAQL_SERIE);
 
-  const series = rows.map(r => {
+  // mapeo seguro
+  const rawSeries = rows.map(r => {
     const seg  = r.segments || {};
     const met  = r.metrics  || {};
-    const costMicros   = met.costMicros ?? met.cost_micros;
-    const avgCpcMicros = met.averageCpcMicros ?? met.average_cpc_micros;
+    const costMicros   = met.costMicros ?? met.cost_micros ?? 0;
+    const avgCpcMicros = met.averageCpcMicros ?? met.average_cpc_micros ?? 0;
     const convValue    = met.conversionsValue ?? met.conversions_value ?? 0;
     return {
       date: seg.date,
       impressions: Number(met.impressions || 0),
-      clicks: Number(met.clicks || 0),
-      cost: microsToUnit(costMicros),
-      ctr: Number(met.ctr || 0),
-      cpc: microsToUnit(avgCpcMicros),
+      clicks:      Number(met.clicks || 0),
+      cost:        microsToUnit(costMicros),
+      ctr:         Number(met.ctr || 0),
+      cpc:         microsToUnit(avgCpcMicros),
       conversions: Number(met.conversions || 0),
-      conv_value: Number(convValue),
-      currency_code: currency,
-      time_zone: tz,
+      conv_value:  Number(convValue),
     };
-  });
+  }).filter(r => !!r.date);
 
+  // serie determinística (rellena huecos)
+  const series = fillSeriesDates(rawSeries, since, until);
+
+  // KPIs = suma de la serie (origen único de verdad)
   const kpis = series.reduce((a, p) => ({
     impressions: a.impressions + (p.impressions || 0),
-    clicks:      a.clicks + (p.clicks || 0),
-    cost:        a.cost + (p.cost || 0),
+    clicks:      a.clicks      + (p.clicks || 0),
+    cost:        a.cost        + (p.cost || 0),
     conversions: a.conversions + (p.conversions || 0),
-    conv_value:  a.conv_value + (p.conv_value || 0),
+    conv_value:  a.conv_value  + (p.conv_value || 0),
   }), { impressions:0, clicks:0, cost:0, conversions:0, conv_value:0 });
 
   kpis.ctr = kpis.impressions ? (kpis.clicks / kpis.impressions) : 0;
@@ -365,19 +418,23 @@ async function fetchInsights({
   kpis.cpa  = kpis.conversions ? (kpis.cost / kpis.conversions) : undefined;
   kpis.roas = kpis.cost ? (kpis.conv_value / kpis.cost) : undefined;
 
-  return {
+  const payload = {
     ok: true,
     objective: (['ventas','alcance','leads'].includes(String(objective)) ? objective : 'ventas'),
     customer_id: cid,
     range: { since, until },
     prev_range: { since, until },
-    is_partial: !!includeToday,
+    is_partial: String(datePreset||'').toLowerCase()==='today' && !!includeToday,
     kpis,
     deltas: {},
     series,
     currency,
     locale: tz?.startsWith('Europe/') ? 'es-ES' : 'es-MX',
+    cachedAt: new Date().toISOString(),
   };
+
+  setCache(cacheKey, payload);
+  return payload;
 }
 
 /* ========================================================================== *

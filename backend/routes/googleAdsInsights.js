@@ -378,6 +378,7 @@ router.get('/', requireAuth, async (req, res) => {
     if (availIds.length > MAX_BY_RULE && selected.length === 0) {
       return res.status(400).json({
         ok: false,
+        error: 'SELECTION_REQUIRED',
         reason: 'SELECTION_REQUIRED(>3_ACCOUNTS)',
         requiredSelection: true
       });
@@ -401,28 +402,40 @@ router.get('/', requireAuth, async (req, res) => {
       requested = selected[0];
     }
 
+    // (Extra) Validar que exista en los disponibles para evitar URL manipulada
+    const availableSet = new Set(availIds);
+    if (!availableSet.has(requested)) {
+      return res.status(404).json({ ok: false, error: 'ACCOUNT_NOT_FOUND' });
+    }
+
     // 4) Normalizar rango: si hay date_preset úsalo; si no, usa range/include_today
-    const datePreset = req.query.date_preset ? String(req.query.date_preset) : null;
-    const range = req.query.range ? Number(req.query.range) : null; // días
+    const datePreset = req.query.date_preset
+      ? String(req.query.date_preset).toLowerCase()
+      : null;
+
+    const range = (req.query.range != null && req.query.range !== '')
+      ? Number(req.query.range)
+      : null; // días (null = default del service)
+
     const includeToday = String(req.query.include_today || '0') === '1';
 
     // 5) Objetivo
     const validObjectives = new Set(['ventas', 'alcance', 'leads']);
-    const objective = validObjectives.has(String(req.query.objective || '').toLowerCase())
-      ? String(req.query.objective).toLowerCase()
-      : (ga.objective || DEFAULT_OBJECTIVE);
+    const rqObj = String(req.query.objective || '').toLowerCase();
+    const objective = validObjectives.has(rqObj) ? rqObj : (ga.objective || DEFAULT_OBJECTIVE);
 
     // 6) Traer KPIs y serie reales (REST GAQL vía service)
     const accessToken = await getFreshAccessToken(ga);
+
     const payload = await Ads.fetchInsights({
-  accessToken,
-  customerId: requested,
-  datePreset: String(req.query.date_preset || 'last_30d').toLowerCase(),
-  range: req.query.range || null,                 // p.ej. '30'
-  includeToday: String(req.query.include_today || '0') === '1',
-  objective: (req.query.objective || ga.objective || DEFAULT_OBJECTIVE),
-  compareMode: req.query.compare_mode || null,
-});
+      accessToken,
+      customerId: requested,
+      datePreset: datePreset || undefined,          // 'today','yesterday','last_7d','this_month', etc.
+      range,                                        // número de días o null
+      includeToday,                                 // boolean
+      objective,                                    // 'ventas' | 'alcance' | 'leads'
+      compareMode: req.query.compare_mode || null,  // reservado para deltas futuras
+    });
 
     return res.json(payload);
   } catch (err) {
