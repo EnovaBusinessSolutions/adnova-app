@@ -38,6 +38,14 @@
 
     /* Aviso encima (status) */
     #ga-ads-status.notice { margin-top: 12px; margin-bottom: 10px }
+
+    /* Shopify dominio */
+    .step--hidden{display:none}
+    .shop-step{margin-top:18px}
+    .shop-input-row{display:flex;gap:8px;margin-top:6px}
+    #shop-domain-input{flex:1;padding:10px 14px;border-radius:6px;border:1px solid #444;background:#1e1e26;color:#fff;}
+    #shop-domain-send{padding:10px 20px;border:0;border-radius:6px;cursor:pointer;background:#9a5bff;color:#fff;font-weight:600;}
+    #shop-domain-send:hover{background:#8249e3}
   </style>
 </head>
 
@@ -91,7 +99,7 @@
         </p>
 
         <div class="connection-cards">
-          <!-- Shopify -->
+          <!-- Shopify (REACTIVADO) -->
           <div class="connection-card">
             <div class="connection-details">
               <div class="connection-icon">
@@ -100,21 +108,23 @@
               <div class="connection-info">
                 <h3>Tienda de Shopify</h3>
                 <p>Conecta tu tienda para optimizar el marketing</p>
-                <span class="required-badge">Próximamente</span>
+                <!-- Cambiamos el badge de “Próximamente” a algo activo -->
+                <span class="required-badge">Requerido</span>
               </div>
             </div>
 
-            <div class="btn-tooltip-wrapper coming-soon">
-              <button type="button" class="btn-connect" id="connect-shopify-btn" aria-disabled="true" aria-describedby="shopify-tooltip" tabindex="-1">
+            <!-- Quitamos 'coming-soon', aria-disabled y el tooltip -->
+            <div class="btn-tooltip-wrapper">
+              <button
+                type="button"
+                class="btn-connect"
+                id="connect-shopify-btn">
                 Conectar
               </button>
-              <div class="btn-tooltip" id="shopify-tooltip" role="tooltip">
-                <div class="btn-tooltip-title">Próximamente</div>
-                <div class="btn-tooltip-desc">Estamos habilitando la conexión nativa con Shopify.</div>
-              </div>
             </div>
           </div>
 
+          <!-- Paso de dominio Shopify (lo controlaremos desde onboarding.js) -->
           <div id="shopify-domain-step" class="shop-step step--hidden">
             <label for="shop-domain-input">Escribe el dominio de tu tienda:</label>
             <div class="shop-input-row">
@@ -122,15 +132,6 @@
               <button id="shop-domain-send">Enviar</button>
             </div>
           </div>
-
-          <style>
-            .step--hidden{display:none}
-            .shop-step{margin-top:18px}
-            .shop-input-row{display:flex;gap:8px;margin-top:6px}
-            #shop-domain-input{flex:1;padding:10px 14px;border-radius:6px;border:1px solid #444;background:#1e1e26;color:#fff;}
-            #shop-domain-send{padding:10px 20px;border:0;border-radius:6px;cursor:pointer;background:#9a5bff;color:#fff;font-weight:600;}
-            #shop-domain-send:hover{background:#8249e3}
-          </style>
 
           <!-- Google -->
           <div class="connection-card" id="google-card">

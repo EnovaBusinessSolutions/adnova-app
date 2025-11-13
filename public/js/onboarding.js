@@ -16,7 +16,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Parámetros potenciales de Shopify embebido
   const shopFromQuery = qs.get('shop');
-  const hostFromQuery = qs.get('host');
+  const hostFromQuery = qs.get('host'); // (ya no lo usamos, pero lo dejamos por compatibilidad)
 
   // -------------------------------------------------
   // DOM
@@ -157,7 +157,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (!shop) {
       sessionStorage.setItem('shopifyConnected', 'true');
-      return habilitarContinue();
+      habilitarContinue();
+      if (domainStep) domainStep.classList.add('step--hidden');
+      return;
     }
 
     try {
@@ -168,34 +170,52 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       sessionStorage.setItem('shopifyConnected', 'true');
       habilitarContinue();
+      if (domainStep) domainStep.classList.add('step--hidden');
     } catch (err) {
       console.error('Error obteniendo shop/accessToken:', err);
     }
   };
 
+  // Si el servidor ya marcó que Shopify está conectado
   if (flagShopify?.textContent.trim() === 'true') await pintarShopifyConectado();
 
+  // Click en "Conectar" → mostrar el paso de dominio (sin redirigir)
   connectShopifyBtn?.addEventListener('click', () => {
-    let shop = shopFromQuery;
-    let host = hostFromQuery;
+    if (domainStep) domainStep.classList.remove('step--hidden');
 
-    if (!shop || !host) {
-      shop = prompt('Ingresa tu dominio (ej: mitienda.myshopify.com):');
-      if (!shop?.endsWith('.myshopify.com')) return alert('Dominio inválido');
-      host = btoa(`${shop}/admin`);
+    // Prefill con lo que sepamos
+    const prefill =
+      shopFromQuery ||
+      sessionStorage.getItem('shop') ||
+      sessionStorage.getItem('shopDomain');
+
+    if (domainInput && prefill && !domainInput.value) {
+      domainInput.value = prefill;
     }
-    location.href = `/connector?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
+    domainInput?.focus();
   });
 
+  // Enviar dominio → hace match y marca conectado
   domainSend?.addEventListener('click', async () => {
     const shop = domainInput?.value?.trim().toLowerCase();
-    if (!shop || !shop.endsWith('.myshopify.com')) return alert('Dominio inválido');
+    if (!shop || !shop.endsWith('.myshopify.com')) {
+      return alert('Dominio inválido. Usa el formato mitienda.myshopify.com');
+    }
+
+    // Guardamos por si se recarga la página
+    sessionStorage.setItem('shopDomain', shop);
+
     try {
       const data = await apiFetch('/api/saas/shopify/match', {
         method: 'POST',
         body: JSON.stringify({ shop }),
       });
+
       if (data.ok) {
+        // Si el backend devolviera shop/accessToken, también los guardamos
+        if (data.shop)       sessionStorage.setItem('shop', data.shop);
+        if (data.accessToken) sessionStorage.setItem('accessToken', data.accessToken);
+
         await pintarShopifyConectado();
         domainStep?.classList.add('step--hidden');
       } else {
@@ -298,7 +318,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved'));
   };
 
-  // Self-test: intenta un GAQL mínimo; en error muestra panel MCC
   async function runGoogleSelfTest(optionalCid = null) {
     try {
       const url = optionalCid
@@ -326,9 +345,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Carga cuentas y decide UX (selector/MCC/validación)
   async function ensureGoogleAccountsUI() {
-    // --- Guard anti-duplicado: reusa la ejecución en vuelo
     if (GA_ENSURE_INFLIGHT) return GA_ENSURE_INFLIGHT;
     GA_ENSURE_INFLIGHT = (async () => {
       try {
@@ -339,7 +356,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         const res = await apiFetch('/api/google/ads/insights/accounts');
 
-        // Error de discovery → activar MCC
         if (res?.ok === false && res?.error === 'DISCOVERY_ERROR') {
           setStatus('Tuvimos un problema al descubrir tus cuentas.');
           show(mccHelpPanel);
@@ -353,7 +369,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const defaultCustomerId = res?.defaultCustomerId || null;
         const requiredSelection = !!res?.requiredSelection;
 
-        // 0 cuentas → mostrar MCC (no marcar conectado)
         if (accounts.length === 0) {
           setStatus('No encontramos cuentas accesibles todavía. Si acabas de conectar, intenta nuevamente en un minuto.');
           show(mccHelpPanel);
@@ -362,7 +377,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           return { ok: true, accounts, defaultCustomerId, requiredSelection };
         }
 
-        // >3 cuentas → selección requerida (no marcar conectado aún)
         if (requiredSelection) {
           setStatus('Selecciona hasta 3 cuentas para continuar.');
           show(gaAccountsMount);
@@ -374,11 +388,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           return { ok: true, accounts, defaultCustomerId, requiredSelection };
         }
 
-        // 1–2 cuentas → validación silenciosa
         setStatus('Verificando acceso…');
         hide(gaAccountsMount);
 
-        // Notificación silenciosa (por si alguien escucha datos)
         window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
           detail: { accounts, defaultCustomerId, requiredSelection, mountEl: gaAccountsMount }
         }));
@@ -392,7 +404,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           return { ok: true, accounts, defaultCustomerId, requiredSelection };
         }
 
-        // Si falla la validación, mostramos MCC
         show(mccHelpPanel);
         setMccPill('warn', 'Revisión requerida');
         setMccReason('No pudimos validar acceso. Acepta la invitación o verifica permisos y vuelve a intentar.');
@@ -413,7 +424,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     return result;
   }
 
-  // Escucha selección (inline/modal) y valida antes de marcar conectado
   window.addEventListener('googleAccountsSelected', async (ev) => {
     try {
       const ids = (ev?.detail?.accountIds || []).map(String);
@@ -447,14 +457,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // Botones del panel MCC
   mccRetryBtn?.addEventListener('click', async () => {
     setStatus('Reintentando…');
     await ensureGoogleAccountsUI();
   });
   mccVerifyBtn?.addEventListener('click', async () => {
     setStatus('Verificando acceso…');
-    await ensureGoogleAccountsUI(); // por si ya aceptaron
+    await ensureGoogleAccountsUI();
     await runGoogleSelfTest();
   });
 
@@ -478,7 +487,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // No marcamos “Conectado” aquí; lo decide ensureGoogleAccountsUI + self-test
   async function refreshGoogleUI() {
     const st = await fetchGoogleStatus();
     if (st.connected && !st.objective) {
@@ -498,7 +506,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.location.href = '/auth/google/connect';
   });
 
-  // Guardar objetivo: no marcar conectado; validar después
   saveGoogleObjective?.addEventListener('click', async () => {
     const selected = (document.querySelector('input[name="googleObjective"]:checked') || {}).value;
     if (!selected) return alert('Selecciona un objetivo');
@@ -512,7 +519,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       hide(googleObjectiveStep);
       sessionStorage.setItem('googleObjective', selected);
 
-      // Deja que ensureGoogleAccountsUI ejecute self-test y marque conectado si todo OK
       await ensureGoogleAccountsUI();
     } catch (e) {
       console.error(e);
@@ -560,7 +566,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   try { await apiFetch('/api/saas/ping'); } catch {}
 
   // -------------------------------------------------
-  // Shopify domain helper
+  // Shopify domain helper (autoprefill si venimos con ?shop= o guardado)
   // -------------------------------------------------
   const savedShop = sessionStorage.getItem('shopDomain');
   if (shopFromQuery || savedShop) {
@@ -574,7 +580,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // -------------------------------------------------
   // Refrescar UIs + habilitar continuar
-  //   (evita doble refresh de Google si venimos con ?google=...)
   // -------------------------------------------------
   await Promise.allSettled([
     _hasGoogleParam ? Promise.resolve() : refreshGoogleUI(),
@@ -586,7 +591,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Manejo de retorno por query (?meta|?google)
   // -------------------------------------------------
   const metaParam   = (qs.get('meta')   || '').toLowerCase();
-  const googleParam = _googleParam; // usamos el leído temprano
+  const googleParam = _googleParam;
 
   if (metaParam === 'error' || metaParam === 'fail') {
     localStorage.removeItem('meta_connecting');
@@ -601,7 +606,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     enableBtn(connectGoogleBtn);
   } else if (googleParam === 'connected' || googleParam === 'ok') {
     localStorage.removeItem('google_connecting');
-    await refreshGoogleUI(); // <-- solo aquí, una vez
+    await refreshGoogleUI();
   }
 
   // Polling si quedaron “conectando…”
