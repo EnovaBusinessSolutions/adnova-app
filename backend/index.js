@@ -228,7 +228,7 @@ app.use('/', privacyRoutes);
 // Google Analytics (GA4)
 app.use('/api/google/analytics', gaRouter);
 
-
+app.use('/api/google/ads/insights', sessionGuard, googleAdsInsightsRouter);
 app.use('/api/google/ads', sessionGuard, googleAdsInsightsRouter);
 
 
