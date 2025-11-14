@@ -15,7 +15,7 @@ const LOGIN_CID = (
   ''
 ).replace(/[^\d]/g, '');
 
-const ADS_VER  = (process.env.GADS_API_VERSION || 'v18').trim();
+const ADS_VER  = (process.env.GADS_API_VERSION || 'v22').trim();
 const ADS_HOST = 'https://googleads.googleapis.com';
 
 const normId = (s = '') => String(s).replace(/[^\d]/g, '');

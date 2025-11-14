@@ -711,7 +711,7 @@ router.get('/debug/raw', requireAuth, async (req, res) => {
       firstCustomerMeta: firstMeta,
       firstCustomerError: errMeta,
       firstCustomerApiLog: metaLog,
-      apiVersion: process.env.GADS_API_VERSION || 'v18',
+      apiVersion: process.env.GADS_API_VERSION || 'v22',
     });
   } catch (err) {
     logger.error('google/ads/debug/raw error', err);
