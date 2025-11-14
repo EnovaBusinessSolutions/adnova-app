@@ -15,7 +15,7 @@ const LOGIN_CID = (
   ''
 ).replace(/[^\d]/g, '');
 
-const ADS_VER  = (process.env.GADS_API_VERSION || 'v22').trim();
+const ADS_VER  = (process.env.GADS_API_VERSION || 'v18').trim(); // fija v22 en env
 const ADS_HOST = 'https://googleads.googleapis.com';
 
 const normId = (s = '') => String(s).replace(/[^\d]/g, '');
@@ -208,16 +208,13 @@ async function searchGAQLStream(accessToken, customerId, query) {
   const cid = normId(customerId);
   const body = { query };
 
-  // 1er intento: si hay LOGIN_CID, úsalo de una vez
   let r = await requestRest({
     accessToken,
     path: `/customers/${cid}/googleAds:searchStream`,
     method: 'POST',
     body,
-    loginCustomerId: LOGIN_CID || undefined,
   });
 
-  // 2do intento: prueba con el propio cid como login-customer-id
   if (!r.ok && shouldRetryWithLoginCid(r.data)) {
     r = await requestRest({
       accessToken,
@@ -225,6 +222,16 @@ async function searchGAQLStream(accessToken, customerId, query) {
       method: 'POST',
       body,
       loginCustomerId: cid,
+    });
+  }
+
+  if (!r.ok && LOGIN_CID) {
+    r = await requestRest({
+      accessToken,
+      path: `/customers/${cid}/googleAds:searchStream`,
+      method: 'POST',
+      body,
+      loginCustomerId: LOGIN_CID,
     });
   }
 
@@ -262,6 +269,7 @@ function ymd(d) { return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padS
 function computeRangeTZ({ preset, rangeDays, includeToday, timeZone }) {
   const p = String(preset || '').toLowerCase();
 
+  // "today" y "yesterday" siempre anclados al día completo de la cuenta
   if (p === 'today') {
     const t0 = startOfDayTZ(timeZone);
     return [ymd(t0), ymd(t0)];
@@ -271,6 +279,7 @@ function computeRangeTZ({ preset, rangeDays, includeToday, timeZone }) {
     return [ymd(y0), ymd(y0)];
   }
 
+  // this_month (hasta hoy si includeToday; de lo contrario hasta ayer)
   if (p === 'this_month') {
     const anchor = startOfDayTZ(timeZone);
     const parts = new Intl.DateTimeFormat('en-US', { timeZone, year:'numeric', month:'2-digit' }).formatToParts(anchor);
@@ -281,6 +290,7 @@ function computeRangeTZ({ preset, rangeDays, includeToday, timeZone }) {
     return [ymd(start), ymd(end)];
   }
 
+  // last_Xd (por defecto 30)
   const days = (() => {
     if (rangeDays) return Math.max(1, Number(rangeDays));
     if (p === 'last_7d')  return 7;
@@ -302,7 +312,7 @@ function microsToUnit(v) {
   return Math.round((n / 1_000_000) * 100) / 100;
 }
 
-// rellena días ausentes
+// Rellena días vacíos con ceros para que gráfico y KPIs sean consistentes
 function fillSeriesDates(series, since, until) {
   const map = new Map(series.map(r => [r.date, r]));
   const out = [];
@@ -312,7 +322,7 @@ function fillSeriesDates(series, since, until) {
     const key = ymd(d);
     out.push(map.get(key) || {
       date: key,
-      impressions: 0, clicks: 0, cost: 0, ctr: 0, cpc: 0, conversions: 0, conv_value: 0, reach: 0, frequency: 0,
+      impressions: 0, clicks: 0, cost: 0, ctr: 0, cpc: 0, conversions: 0, conv_value: 0,
     });
     d = addDays(d, 1);
   }
@@ -322,211 +332,6 @@ function fillSeriesDates(series, since, until) {
 /* ========================================================================== *
  * 4) Insights (KPIs + Serie)
  * ========================================================================== */
-
-// categorías (nombres del enum ConversionActionCategory)
-const PURCHASE_CATS = [
-  'PURCHASE', 'IN_STORE_PURCHASE', 'SUBSCRIBE'
-];
-const LEAD_CATS = [
-  'LEAD', 'SUBMIT_LEAD_FORM', 'BOOK_APPOINTMENT', 'CONTACT', 'SIGN_UP', 'REQUEST_QUOTE'
-];
-
-function buildVentasOrLeadsGAQL({ since, until, cats }) {
-  const catList = cats.map(c => `'${c}'`).join(', ');
-  return `
-    SELECT
-      segments.date,
-      segments.conversion_action_category,
-      metrics.impressions,
-      metrics.clicks,
-      metrics.cost_micros,
-      metrics.ctr,
-      metrics.average_cpc,
-      metrics.conversions,
-      metrics.conversions_value
-    FROM customer
-    WHERE segments.date BETWEEN '${since}' AND '${until}'
-      AND segments.conversion_action_category IN (${catList})
-    ORDER BY segments.date
-  `;
-}
-
-function buildVentasOrLeadsGAQL_noFilter({ since, until }) {
-  return `
-    SELECT
-      segments.date,
-      segments.conversion_action_category,
-      metrics.impressions,
-      metrics.clicks,
-      metrics.cost_micros,
-      metrics.ctr,
-      metrics.average_cpc,
-      metrics.conversions,
-      metrics.conversions_value
-    FROM customer
-    WHERE segments.date BETWEEN '${since}' AND '${until}'
-    ORDER BY segments.date
-  `;
-}
-
-// SIN columna de categoría (por si v22 limita esa dimensión en la vista)
-function buildVentasOrLeadsGAQL_noCat({ since, until }) {
-  return `
-    SELECT
-      segments.date,
-      metrics.impressions,
-      metrics.clicks,
-      metrics.cost_micros,
-      metrics.ctr,
-      metrics.average_cpc,
-      metrics.conversions,
-      metrics.conversions_value
-    FROM customer
-    WHERE segments.date BETWEEN '${since}' AND '${until}'
-    ORDER BY segments.date
-  `;
-}
-
-function buildReachGAQL({ since, until }) {
-  // sin average_frequency; la calculamos como impressions / reach
-  return `
-    SELECT
-      segments.date,
-      metrics.impressions,
-      metrics.clicks,
-      metrics.cost_micros,
-      metrics.average_cpc,
-      metrics.reach
-    FROM customer
-    WHERE segments.date BETWEEN '${since}' AND '${until}'
-    ORDER BY segments.date
-  `;
-}
-
-function mapRowToPoint(r, objective, catsForFilter = null) {
-  const seg = r.segments || {};
-  const met = r.metrics || {};
-
-  const impressions = Number(met.impressions || 0);
-  const clicks      = Number(met.clicks || 0);
-  const costMicros  = met.costMicros ?? met.cost_micros ?? 0;
-  const costUnits   = microsToUnit(costMicros);
-
-  const avgCpcUnits =
-    (typeof met.averageCpc === 'number' ? met.averageCpc : undefined) ??
-    (typeof met.average_cpc === 'number' ? met.average_cpc : undefined) ??
-    (typeof met.averageCpcMicros === 'number' ? (met.averageCpcMicros / 1_000_000) : undefined) ??
-    (typeof met.average_cpc_micros === 'number' ? (met.average_cpc_micros / 1_000_000) : undefined);
-
-  const conversions = Number(met.conversions || 0);
-  const convValue   = met.conversionsValue ?? met.conversions_value ?? 0;
-
-  // si traemos sin filtro, descartamos categorías no deseadas
-  const cat = seg.conversionActionCategory || seg.conversion_action_category || null;
-  if ((objective === 'ventas' || objective === 'leads') && Array.isArray(catsForFilter) && catsForFilter.length) {
-    if (cat && !catsForFilter.includes(String(cat))) return null;
-  }
-
-  const out = {
-    date: seg.date,
-    impressions,
-    clicks,
-    cost: costUnits,
-    ctr: Number(met.ctr ?? (impressions > 0 ? (clicks / impressions) : 0)),
-    cpc: (typeof avgCpcUnits === 'number' ? avgCpcUnits : (clicks > 0 ? (costUnits / clicks) : 0)),
-    conversions,
-    conv_value: Number(convValue),
-  };
-
-  if (objective === 'alcance') {
-    const reach = Number(met.reach || 0);
-    out.reach     = reach;
-    out.frequency = reach > 0 ? (impressions / reach) : 0; // calculada
-  }
-
-  return out.date ? out : null;
-}
-
-function aggregateByDate(points) {
-  const acc = new Map();
-  for (const p of points) {
-    if (!p) continue;
-    const key = p.date;
-    const cur = acc.get(key) || {
-      date: key,
-      impressions: 0, clicks: 0, cost: 0,
-      conversions: 0, conv_value: 0, reach: 0
-    };
-    cur.impressions += p.impressions || 0;
-    cur.clicks      += p.clicks || 0;
-    cur.cost        += p.cost || 0;
-    cur.conversions += p.conversions || 0;
-    cur.conv_value  += p.conv_value || 0;
-    cur.reach       += p.reach || 0;
-    acc.set(key, cur);
-  }
-  // derivados tras acumular
-  const out = Array.from(acc.values()).map(v => ({
-    ...v,
-    ctr: v.impressions ? (v.clicks / v.impressions) : 0,
-    cpc: v.clicks ? (v.cost / v.clicks) : 0,
-    frequency: v.reach > 0 ? (v.impressions / v.reach) : 0,
-  }));
-  return out.sort((a,b) => a.date.localeCompare(b.date));
-}
-
-async function fetchWindow({ accessToken, cid, since, until, objective }) {
-  // GAQL según objetivo, con triple fallback robusto
-  let rows;
-
-  if (objective === 'alcance') {
-    const qReach = buildReachGAQL({ since, until });
-    rows = await searchGAQLStream(accessToken, cid, qReach);
-    const points = rows.map(r => mapRowToPoint(r, 'alcance')).filter(Boolean);
-    return aggregateByDate(points);
-  }
-
-  const cats = (objective === 'ventas') ? PURCHASE_CATS : LEAD_CATS;
-
-  // A) con filtro por categoría (servidor filtra)
-  try {
-    const qA = buildVentasOrLeadsGAQL({ since, until, cats });
-    const rA = await searchGAQLStream(accessToken, cid, qA);
-    const ptsA = rA.map(r => mapRowToPoint(r, objective, cats)).filter(Boolean);
-    return aggregateByDate(ptsA);
-  } catch (_) {}
-
-  // B) sin filtro por categoría, pero con la columna (filtramos en JS)
-  try {
-    const qB = buildVentasOrLeadsGAQL_noFilter({ since, until });
-    const rB = await searchGAQLStream(accessToken, cid, qB);
-    const ptsB = rB.map(r => mapRowToPoint(r, objective, cats)).filter(Boolean);
-    return aggregateByDate(ptsB);
-  } catch (_) {}
-
-  // C) sin la columna de categoría (totales diarios)
-  const qC = buildVentasOrLeadsGAQL_noCat({ since, until });
-  const rC = await searchGAQLStream(accessToken, cid, qC);
-  const ptsC = rC.map(r => mapRowToPoint(r, objective, null)).filter(Boolean);
-  return aggregateByDate(ptsC);
-}
-
-function kpisFromSeries(series) {
-  const k = series.reduce((a, p) => ({
-    impressions: a.impressions + (p.impressions || 0),
-    clicks:      a.clicks      + (p.clicks || 0),
-    cost:        a.cost        + (p.cost || 0),
-    conversions: a.conversions + (p.conversions || 0),
-    conv_value:  a.conv_value  + (p.conv_value || 0),
-  }), { impressions:0, clicks:0, cost:0, conversions:0, conv_value:0 });
-
-  k.ctr  = k.impressions ? (k.clicks / k.impressions) : 0;
-  k.cpc  = k.clicks ? (k.cost / k.clicks) : 0;
-  k.cpa  = k.conversions ? (k.cost / k.conversions) : undefined;
-  k.roas = k.cost ? (k.conv_value / k.cost) : undefined;
-  return k;
-}
-
 async function fetchInsights({
   accessToken,
   customerId,
@@ -534,6 +339,7 @@ async function fetchInsights({
   range,
   includeToday,
   objective,
+  compareMode,
 }) {
   if (!customerId) throw new Error('customerId required');
   const cid = normId(customerId);
@@ -554,54 +360,87 @@ async function fetchInsights({
     timeZone: tz,
   });
 
-  const obj = (['ventas','alcance','leads'].includes(String(objective)) ? String(objective) : 'ventas');
-  const cacheKey = `ins:${cid}:${since}:${until}:${obj}`;
+  // caché por ventana
+  const cacheKey = `ins:${cid}:${since}:${until}:${objective||'ventas'}`;
   const cached = getCache(cacheKey);
   if (cached) return cached;
 
-  // Ventana actual
-  const rawNow = await fetchWindow({ accessToken, cid, since, until, objective: obj });
-  const series = fillSeriesDates(rawNow, since, until);
-  const kpis   = kpisFromSeries(series);
+  const GAQL_SERIE = `
+  SELECT
+    segments.date,
+    metrics.impressions,
+    metrics.clicks,
+    metrics.cost_micros,
+    metrics.ctr,
+    metrics.average_cpc,
+    metrics.conversions,
+    metrics.conversions_value
+  FROM customer
+  WHERE segments.date BETWEEN '${since}' AND '${until}'
+  ORDER BY segments.date
+`;
 
-  // Ventana previa
-  function daysBetween(a, b) {
-    const d1 = new Date(`${a}T00:00:00Z`).getTime();
-    const d2 = new Date(`${b}T00:00:00Z`).getTime();
-    return Math.max(1, Math.round((d2 - d1)/86400000) + 1);
-  }
-  const spanDays = daysBetween(since, until);
-  const prevUntilD = addDays(new Date(`${since}T00:00:00Z`), -1);
-  const prevSinceD = addDays(prevUntilD, -(spanDays - 1));
-  const prev_since = ymd(prevSinceD);
-  const prev_until = ymd(prevUntilD);
+  const rows = await searchGAQLStream(accessToken, cid, GAQL_SERIE);
 
-  const rawPrev = await fetchWindow({ accessToken, cid, since: prev_since, until: prev_until, objective: obj });
-  const prevSeries = fillSeriesDates(rawPrev, prev_since, prev_until);
-  const prev = kpisFromSeries(prevSeries);
+  // mapeo seguro (v22: average_cpc en UNIDADES; compat *_micros; fallback cost/clicks)
+  const rawSeries = rows.map(r => {
+    const seg  = r.segments || {};
+    const met  = r.metrics  || {};
 
-  const rel = (cur, base) => (Number(base) ? ((Number(cur) - Number(base)) / Number(base)) : 0);
-  const deltas = {
-    impressions: rel(kpis.impressions, prev.impressions),
-    clicks:      rel(kpis.clicks,      prev.clicks),
-    cost:        rel(kpis.cost,        prev.cost),
-    conversions: rel(kpis.conversions, prev.conversions),
-    conv_value:  rel(kpis.conv_value,  prev.conv_value),
-    ctr:         rel(kpis.ctr ?? 0,    prev.ctr ?? 0),
-    cpc:         rel(kpis.cpc ?? 0,    prev.cpc ?? 0),
-    cpa:         (kpis.cpa != null || prev.cpa != null) ? rel(kpis.cpa ?? 0,  prev.cpa ?? 0) : undefined,
-    roas:        (kpis.roas!= null || prev.roas!= null) ? rel(kpis.roas ?? 0, prev.roas ?? 0) : undefined,
-  };
+    const impressions = Number(met.impressions || 0);
+    const clicks      = Number(met.clicks || 0);
+    const costMicros  = met.costMicros ?? met.cost_micros ?? 0;
+    const costUnits   = microsToUnit(costMicros);
+
+    // average CPC:
+    // - v22 -> average_cpc (unidades)
+    // - compat -> averageCpcMicros / average_cpc_micros
+    const avgCpcUnits =
+      (typeof met.averageCpc === 'number' ? met.averageCpc : undefined) ??
+      (typeof met.average_cpc === 'number' ? met.average_cpc : undefined) ??
+      (typeof met.averageCpcMicros === 'number' ? (met.averageCpcMicros / 1_000_000) : undefined) ??
+      (typeof met.average_cpc_micros === 'number' ? (met.average_cpc_micros / 1_000_000) : undefined);
+
+    const convValue = met.conversionsValue ?? met.conversions_value ?? 0;
+
+    return {
+      date: seg.date,
+      impressions,
+      clicks,
+      cost:  costUnits,
+      ctr:   Number(met.ctr || 0), // ya viene ratio
+      cpc:   (typeof avgCpcUnits === 'number' ? avgCpcUnits : (clicks > 0 ? (costUnits / clicks) : 0)),
+      conversions: Number(met.conversions || 0),
+      conv_value:  Number(convValue),
+    };
+  }).filter(r => !!r.date);
+
+  // serie determinística (rellena huecos)
+  const series = fillSeriesDates(rawSeries, since, until);
+
+  // KPIs = suma de la serie (origen único de verdad)
+  const kpis = series.reduce((a, p) => ({
+    impressions: a.impressions + (p.impressions || 0),
+    clicks:      a.clicks      + (p.clicks || 0),
+    cost:        a.cost        + (p.cost || 0),
+    conversions: a.conversions + (p.conversions || 0),
+    conv_value:  a.conv_value  + (p.conv_value || 0),
+  }), { impressions:0, clicks:0, cost:0, conversions:0, conv_value:0 });
+
+  kpis.ctr = kpis.impressions ? (kpis.clicks / kpis.impressions) : 0;
+  kpis.cpc = kpis.clicks ? (kpis.cost / kpis.clicks) : 0;
+  kpis.cpa  = kpis.conversions ? (kpis.cost / kpis.conversions) : undefined;
+  kpis.roas = kpis.cost ? (kpis.conv_value / kpis.cost) : undefined;
 
   const payload = {
     ok: true,
-    objective: obj,
+    objective: (['ventas','alcance','leads'].includes(String(objective)) ? objective : 'ventas'),
     customer_id: cid,
     range: { since, until },
-    prev_range: { since: prev_since, until: prev_until },
+    prev_range: { since, until },
     is_partial: String(datePreset||'').toLowerCase()==='today' && !!includeToday,
     kpis,
-    deltas,
+    deltas: {},
     series,
     currency,
     locale: tz?.startsWith('Europe/') ? 'es-ES' : 'es-MX',
@@ -612,9 +451,8 @@ async function fetchInsights({
   return payload;
 }
 
-
 /* ========================================================================== *
- * 5) Enlaces MCC (invite + status)
+ * 5) Enlaces MCC (invite + status)  ← REST
  * ========================================================================== */
 async function mccInviteCustomer({ accessToken, managerId, clientId }) {
   const mid = normId(managerId);

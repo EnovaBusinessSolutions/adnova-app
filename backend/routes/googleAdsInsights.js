@@ -11,7 +11,9 @@ const router = express.Router();
 const logger = require('../utils/logger');
 
 // === Helpers Google Ads (solo normalización) ===
-const { normalizeId: normalizeIdHelper } = require('../utils/googleAdsHelpers');
+const {
+  normalizeId: normalizeIdHelper,
+} = require('../utils/googleAdsHelpers');
 
 // ===== Modelos =====
 const User = require('../models/User');
@@ -52,9 +54,9 @@ try {
     lastAdsDiscoveryError: { type: String, default: null },
     lastAdsDiscoveryLog:   { type: Schema.Types.Mixed, default: null, select: false },
 
-    // Preferencias
-    objective: { type: String, enum: ['ventas','alcance','leads'], default: 'ventas' },
-    expiresAt: { type: Date },
+    // Opcional
+    objective:         { type: String, enum: ['ventas','alcance','leads'], default: 'ventas' },
+    expiresAt:         { type: Date },
   }, { collection: 'googleaccounts', timestamps: true });
 
   GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
@@ -72,7 +74,8 @@ function requireAuth(req, res, next) {
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-const normId = (s = '') => String(s).replace(/^customers\//, '').replace(/[^\d]/g, '').trim();
+const normId = (s = '') =>
+  String(s).replace(/^customers\//, '').replace(/[^\d]/g, '').trim();
 
 function oauth() {
   return new OAuth2Client({
@@ -82,31 +85,50 @@ function oauth() {
   });
 }
 
-/* ------------------------ utilidades locales ------------------------ */
+/** Utilidad: primer valor definido entre varias claves (snake/camel). */
 function pickAny(obj = {}, keys = []) {
-  for (const k of keys) if (obj[k] !== undefined && obj[k] !== null) return obj[k];
+  for (const k of keys) {
+    if (obj[k] !== undefined && obj[k] !== null) return obj[k];
+  }
   return undefined;
 }
+
+/** Acepta objeto con claves camelCase o snake_case y normaliza a nuestro shape. */
 function normalizeAcc(a = {}) {
+  // id puede venir como id, customerId o dentro de resourceName "customers/123"
   const idRaw = pickAny(a, ['id', 'customerId', 'customer_id', 'customerID', 'resourceName', 'resource_name']) || '';
   const id = normId(idRaw);
+
+  // nombre: name | descriptiveName | descriptive_name
   const name = pickAny(a, ['name', 'descriptiveName', 'descriptive_name']) ?? null;
+
+  // currency/timezone en ambas variantes
   const currencyCode = pickAny(a, ['currencyCode', 'currency_code', 'currency']) ?? null;
   const timeZone     = pickAny(a, ['timeZone', 'time_zone', 'timezone']) ?? null;
-  const status       = pickAny(a, ['status', 'accountStatus']) ?? null;
+
+  // status: status | accountStatus
+  const status = pickAny(a, ['status', 'accountStatus']) ?? null;
+
   return { id, name, currencyCode, timeZone, status };
 }
 
+/**
+ * Devuelve un access_token vigente usando accessToken o refreshToken.
+ * Actualiza Mongo si logra un refresh con nueva expiración.
+ */
 async function getFreshAccessToken(gaDoc) {
   if (gaDoc?.accessToken && gaDoc?.expiresAt) {
     const ms = new Date(gaDoc.expiresAt).getTime() - Date.now();
     if (ms > 60_000) return gaDoc.accessToken; // válido > 60s
   }
+
   const client = oauth();
   client.setCredentials({
     refresh_token: gaDoc?.refreshToken || undefined,
     access_token:  gaDoc?.accessToken  || undefined,
   });
+
+  // 1) refreshAccessToken (con expiry)
   try {
     const { credentials } = await client.refreshAccessToken();
     const access = credentials.access_token;
@@ -117,27 +139,37 @@ async function getFreshAccessToken(gaDoc) {
       );
       return access;
     }
-  } catch (_) { /* fallback */ }
+  } catch (_) { /* ignore y probamos getAccessToken */ }
+
+  // 2) getAccessToken (sin expiry)
   const t = await client.getAccessToken().catch(() => null);
   if (t?.token) return t.token;
+
   if (gaDoc?.accessToken) return gaDoc.accessToken;
   throw new Error('NO_ACCESS_OR_REFRESH_TOKEN');
 }
 
+// === selección: helpers
 function selectedFromDocOrUser(gaDoc, req) {
   const fromDoc = Array.isArray(gaDoc?.selectedCustomerIds) && gaDoc.selectedCustomerIds.length
-    ? gaDoc.selectedCustomerIds.map(normId) : [];
+    ? gaDoc.selectedCustomerIds.map(normId)
+    : [];
   if (fromDoc.length) return [...new Set(fromDoc.filter(Boolean))];
 
   const legacy = Array.isArray(req.user?.selectedGoogleAccounts)
-    ? req.user.selectedGoogleAccounts.map(normId) : [];
+    ? req.user.selectedGoogleAccounts.map(normId)
+    : [];
   return [...new Set(legacy.filter(Boolean))];
 }
+
 function availableAccountIds(gaDoc) {
   const fromAdAcc = (Array.isArray(gaDoc?.ad_accounts) ? gaDoc.ad_accounts : []).map(a => normId(a.id)).filter(Boolean);
   const fromCust  = (Array.isArray(gaDoc?.customers) ? gaDoc.customers : []).map(c => normId(c.id)).filter(Boolean);
-  return [...new Set([...fromAdAcc, ...fromCust])];
+  const set = new Set([...fromAdAcc, ...fromCust]);
+  return [...set];
 }
+
+// Guardar error/log de discovery
 async function saveDiscoveryFailure(userId, reason, log) {
   const safeReason = (() => {
     try { return JSON.stringify(reason).slice(0, 8000); } catch { return String(reason).slice(0, 2000); }
@@ -148,9 +180,9 @@ async function saveDiscoveryFailure(userId, reason, log) {
   ).catch(()=>{});
 }
 
-/* ============================================================================ *
- * Enriquecimiento (GAQL customer_client) – compatible v22
- * ============================================================================ */
+/* ============================================================================
+ * Enriquecimiento vía GAQL desde el MCC (REST)
+ * ========================================================================= */
 async function enrichAccountsWithGAQL(ga) {
   const accessToken = await getFreshAccessToken(ga);
   const managerId = normId(process.env.GOOGLE_LOGIN_CUSTOMER_ID || ga.managerCustomerId || ga.loginCustomerId || '');
@@ -171,11 +203,17 @@ async function enrichAccountsWithGAQL(ga) {
 
   const rows = await Ads.searchGAQLStream(accessToken, managerId, GAQL);
 
+  // Aceptamos tanto r.customer_client (snake) como r.customerClient (camel)
   const accounts = rows.map(r => {
     const cc = r?.customer_client || r?.customerClient || {};
     return normalizeAcc({
+      // id
       id: pickAny(cc, ['id', 'customerId', 'customer_id']),
+      // nombre
       name: pickAny(cc, ['descriptiveName', 'descriptive_name']),
+      descriptive_name: cc.descriptive_name, // por si acaso
+      descriptiveName: cc.descriptiveName,
+      // currency/timezone/status en ambas variantes
       currency_code: pickAny(cc, ['currency_code', 'currencyCode']),
       time_zone:     pickAny(cc, ['time_zone', 'timeZone']),
       status:        cc.status,
@@ -204,15 +242,16 @@ async function enrichAccountsWithGAQL(ga) {
   return accounts;
 }
 
-/* ============================================================================ *
+/* ============================================================================
  * POST /api/google/ads/insights/accounts/selection
- * ============================================================================ */
+ * ========================================================================= */
 router.post('/accounts/selection', requireAuth, express.json(), async (req, res) => {
   try {
     const { accountIds } = req.body;
     if (!Array.isArray(accountIds)) {
       return res.status(400).json({ ok: false, error: 'accountIds[] requerido' });
     }
+
     const wanted = [...new Set(accountIds.map(normId).filter(Boolean))];
 
     const ga = await GoogleAccount
@@ -220,7 +259,9 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
       .select('ad_accounts customers defaultCustomerId')
       .lean();
 
-    if (!ga) return res.status(404).json({ ok: false, error: 'GOOGLE_NOT_CONNECTED' });
+    if (!ga) {
+      return res.status(404).json({ ok: false, error: 'GOOGLE_NOT_CONNECTED' });
+    }
 
     const available = new Set(
       (Array.isArray(ga?.ad_accounts) && ga.ad_accounts.length ? ga.ad_accounts : (ga?.customers || []))
@@ -228,13 +269,19 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
     );
 
     const selected = wanted.filter(id => available.has(id));
-    if (!selected.length) return res.status(400).json({ ok: false, error: 'NO_VALID_ACCOUNTS' });
+    if (!selected.length) {
+      return res.status(400).json({ ok: false, error: 'NO_VALID_ACCOUNTS' });
+    }
 
     await GoogleAccount.updateOne(
       { $or: [{ user: req.user._id }, { userId: req.user._id }] },
       { $set: { selectedCustomerIds: selected } }
     );
-    await User.updateOne({ _id: req.user._id }, { $set: { selectedGoogleAccounts: selected } });
+
+    await User.updateOne(
+      { _id: req.user._id },
+      { $set: { selectedGoogleAccounts: selected } }
+    );
 
     let nextDefault = ga?.defaultCustomerId ? normId(ga.defaultCustomerId) : null;
     if (!nextDefault || !selected.includes(nextDefault)) {
@@ -252,9 +299,9 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
   }
 });
 
-/* ============================================================================ *
+/* ============================================================================
  * GET /api/google/ads/insights/accounts
- * ============================================================================ */
+ * ========================================================================= */
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
@@ -269,7 +316,10 @@ router.get('/accounts', requireAuth, async (req, res) => {
 
     const force = String(req.query.force || '0') === '1';
 
+    // 1) Cargar lo guardado
     let accounts = Array.isArray(ga.ad_accounts) ? ga.ad_accounts : [];
+
+    // 2) ¿Faltan nombres? usamos GAQL desde MCC
     const hasName = (a) => !!(a && (a.name || a.descriptiveName || a.descriptive_name));
     const needsEnrich = force || accounts.length === 0 || accounts.some(a => !hasName(a));
 
@@ -280,21 +330,26 @@ router.get('/accounts', requireAuth, async (req, res) => {
         const reason = e?.api?.error || e?.response?.data || e?.message || 'GAQL_ENRICH_FAILED';
         const log    = e?.api?.log || null;
         await saveDiscoveryFailure(req.user._id, reason, log);
+        // devolvemos lo que haya guardado (aunque sea solo IDs)
       }
     } else {
+      // Normaliza nombres si ya estaban guardados con otra llave
       accounts = accounts.map(normalizeAcc);
     }
 
+    // === Regla de selección
     const availIds = accounts.map(a => normId(a.id));
     const selected = selectedFromDocOrUser(ga, req);
     const requiredSelection = availIds.length > MAX_BY_RULE && selected.length === 0;
 
+    // Filtrar por selección si existe
     let filtered = accounts;
     if (selected.length > 0) {
       const allow = new Set(selected);
       filtered = accounts.filter(a => allow.has(normId(a.id)));
     }
 
+    // defaultCustomerId
     let defaultCustomerId = normId(ga?.defaultCustomerId || '');
     if (selected.length > 0 && defaultCustomerId && !selected.includes(defaultCustomerId)) {
       defaultCustomerId = '';
@@ -322,11 +377,12 @@ router.get('/accounts', requireAuth, async (req, res) => {
   }
 });
 
-/* ============================================================================ *
- * GET /api/google/ads/insights  ← REST GAQL (v22)
- * ============================================================================ */
+/* ============================================================================
+ * GET /api/google/ads/insights  ← 100% REST (dinámico por rango/preset)
+ * ========================================================================= */
 router.get('/', requireAuth, async (req, res) => {
   try {
+    // 1) Validar conexión
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
@@ -337,6 +393,7 @@ router.get('/', requireAuth, async (req, res) => {
       return res.status(400).json({ ok: false, error: 'GOOGLE_NOT_CONNECTED' });
     }
 
+    // 2) Reglas de selección
     const availIds = availableAccountIds(ga);
     const selected = selectedFromDocOrUser(ga, req);
     if (availIds.length > MAX_BY_RULE && selected.length === 0) {
@@ -348,39 +405,57 @@ router.get('/', requireAuth, async (req, res) => {
       });
     }
 
+    // 3) Resolver customerId (query > default > primero)
     const rawQueryId = String(req.query.account_id || req.query.customer_id || req.query.customer || '');
     let requested = normalizeIdHelper(rawQueryId)
                  || normalizeIdHelper(ga.defaultCustomerId || '')
                  || normalizeIdHelper((ga.ad_accounts?.[0]?.id) || (ga.customers?.[0]?.id) || '');
-    if (!requested) return res.status(400).json({ ok: false, error: 'NO_CUSTOMER_ID' });
 
+    if (!requested) {
+      return res.status(400).json({ ok: false, error: 'NO_CUSTOMER_ID' });
+    }
+
+    // Si hay selección y el solicitado no pertenece, forzar/denegar
     if (selected.length > 0 && !selected.includes(requested)) {
-      if (rawQueryId) return res.status(403).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
+      if (rawQueryId) {
+        return res.status(403).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
+      }
       requested = selected[0];
     }
+
+    // (Extra) Validar que exista en los disponibles para evitar URL manipulada
     const availableSet = new Set(availIds);
     if (!availableSet.has(requested)) {
       return res.status(404).json({ ok: false, error: 'ACCOUNT_NOT_FOUND' });
     }
 
-    const datePreset = req.query.date_preset ? String(req.query.date_preset).toLowerCase() : null;
-    const range = (req.query.range != null && req.query.range !== '') ? Number(req.query.range) : null;
+    // 4) Normalizar rango: si hay date_preset úsalo; si no, usa range/include_today
+    const datePreset = req.query.date_preset
+      ? String(req.query.date_preset).toLowerCase()
+      : null;
+
+    const range = (req.query.range != null && req.query.range !== '')
+      ? Number(req.query.range)
+      : null; // días (null = default del service)
+
     const includeToday = String(req.query.include_today || '0') === '1';
 
+    // 5) Objetivo
     const validObjectives = new Set(['ventas', 'alcance', 'leads']);
     const rqObj = String(req.query.objective || '').toLowerCase();
     const objective = validObjectives.has(rqObj) ? rqObj : (ga.objective || DEFAULT_OBJECTIVE);
 
+    // 6) Traer KPIs y serie reales (REST GAQL vía service)
     const accessToken = await getFreshAccessToken(ga);
 
     const payload = await Ads.fetchInsights({
       accessToken,
       customerId: requested,
-      datePreset: datePreset || undefined,
-      range,
-      includeToday,
-      objective,
-      compareMode: req.query.compare_mode || null,
+      datePreset: datePreset || undefined,          // 'today','yesterday','last_7d','this_month', etc.
+      range,                                        // número de días o null
+      includeToday,                                 // boolean
+      objective,                                    // 'ventas' | 'alcance' | 'leads'
+      compareMode: req.query.compare_mode || null,  // reservado para deltas futuras
     });
 
     return res.json(payload);
@@ -396,9 +471,9 @@ router.get('/', requireAuth, async (req, res) => {
   }
 });
 
-/* ============================================================================ *
+/* ============================================================================
  * POST /api/google/ads/insights/default
- * ============================================================================ */
+ * ========================================================================= */
 router.post('/default', requireAuth, express.json(), async (req, res) => {
   try {
     const cid = normId(req.body?.customerId || '');
@@ -427,9 +502,9 @@ router.post('/default', requireAuth, express.json(), async (req, res) => {
   }
 });
 
-/* ============================================================================ *
+/* ============================================================================
  * POST /api/google/ads/insights/mcc/invite
- * ============================================================================ */
+ * ========================================================================= */
 router.post('/mcc/invite', requireAuth, express.json(), async (req, res) => {
   try {
     const customerId = normId(req.body?.customer_id || req.body?.customerId || '');
@@ -446,7 +521,12 @@ router.post('/mcc/invite', requireAuth, express.json(), async (req, res) => {
       return res.status(400).json({ ok: false, error: 'NO_MANAGER_ID', note: 'Configura GOOGLE_LOGIN_CUSTOMER_ID o guarda managerCustomerId/loginCustomerId en GoogleAccount.' });
     }
 
-    const data = await Ads.mccInviteCustomer({ accessToken, managerId, clientId: customerId });
+    const data = await Ads.mccInviteCustomer({
+      accessToken,
+      managerId,
+      clientId: customerId,
+    });
+
     return res.json({ ok: true, managerId, customerId, data });
   } catch (err) {
     const detail = err?.api?.error || err?.response?.data || err.message || String(err);
@@ -456,9 +536,9 @@ router.post('/mcc/invite', requireAuth, express.json(), async (req, res) => {
   }
 });
 
-/* ============================================================================ *
+/* ============================================================================
  * GET /api/google/ads/insights/mcc/invite/status
- * ============================================================================ */
+ * ========================================================================= */
 router.get('/mcc/invite/status', requireAuth, async (req, res) => {
   try {
     const customerId = normId(String(req.query.customer_id || req.query.customerId || ''));
@@ -475,7 +555,12 @@ router.get('/mcc/invite/status', requireAuth, async (req, res) => {
       return res.status(400).json({ ok: false, error: 'NO_MANAGER_ID', note: 'Configura GOOGLE_LOGIN_CUSTOMER_ID o guarda managerCustomerId/loginCustomerId en GoogleAccount.' });
     }
 
-    const status = await Ads.getMccLinkStatus({ accessToken, managerId, clientId: customerId });
+    const status = await Ads.getMccLinkStatus({
+      accessToken,
+      managerId,
+      clientId: customerId,
+    });
+
     return res.json({ ok: true, managerId, customerId, ...status });
   } catch (err) {
     const detail = err?.api?.error || err?.response?.data || err.message || String(err);
@@ -485,9 +570,9 @@ router.get('/mcc/invite/status', requireAuth, async (req, res) => {
   }
 });
 
-/* ============================================================================ *
+/* ============================================================================
  * GET /api/google/ads/insights/selftest
- * ============================================================================ */
+ * ========================================================================= */
 router.get('/selftest', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
@@ -548,9 +633,9 @@ router.get('/selftest', requireAuth, async (req, res) => {
   }
 });
 
-/* ============================================================================ *
+/* ============================================================================
  * DEBUG: ver respuesta de nombres vía GAQL customer_client
- * ============================================================================ */
+ * ========================================================================= */
 router.get('/debug/names', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
@@ -584,9 +669,9 @@ router.get('/debug/names', requireAuth, async (req, res) => {
   }
 });
 
-/* ============================================================================ *
+/* ============================================================================
  * DEBUG: listAccessibleCustomers y getCustomer del primero
- * ============================================================================ */
+ * ========================================================================= */
 router.get('/debug/raw', requireAuth, async (req, res) => {
   try {
     const ga = await GoogleAccount.findOne({
@@ -626,7 +711,7 @@ router.get('/debug/raw', requireAuth, async (req, res) => {
       firstCustomerMeta: firstMeta,
       firstCustomerError: errMeta,
       firstCustomerApiLog: metaLog,
-      apiVersion: process.env.GADS_API_VERSION || 'v22',
+      apiVersion: process.env.GADS_API_VERSION || 'v18',
     });
   } catch (err) {
     logger.error('google/ads/debug/raw error', err);
