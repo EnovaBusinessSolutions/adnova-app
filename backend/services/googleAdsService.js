@@ -330,23 +330,15 @@ function fillSeriesDates(series, since, until) {
  * 4) Insights (KPIs + Serie)
  * ========================================================================== */
 
-// categorías
+// categorías (nombres del enum ConversionActionCategory)
 const PURCHASE_CATS = [
-  'PURCHASE',
-  'IN_STORE_PURCHASE',
-  'SUBSCRIBE'
+  'PURCHASE', 'IN_STORE_PURCHASE', 'SUBSCRIBE'
 ];
 const LEAD_CATS = [
-  'LEAD',
-  'SUBMIT_LEAD_FORM',
-  'BOOK_APPOINTMENT',
-  'CONTACT',
-  'SIGN_UP',
-  'REQUEST_QUOTE'
+  'LEAD', 'SUBMIT_LEAD_FORM', 'BOOK_APPOINTMENT', 'CONTACT', 'SIGN_UP', 'REQUEST_QUOTE'
 ];
 
 function buildVentasOrLeadsGAQL({ since, until, cats }) {
-  // intentamos con filtro GAQL por categoría (si falla, haremos fallback sin filtro)
   const catList = cats.map(c => `'${c}'`).join(', ');
   return `
     SELECT
@@ -367,7 +359,6 @@ function buildVentasOrLeadsGAQL({ since, until, cats }) {
 }
 
 function buildVentasOrLeadsGAQL_noFilter({ since, until }) {
-  // mismo SELECT pero sin WHERE de categoría (filtramos en JS)
   return `
     SELECT
       segments.date,
@@ -386,6 +377,7 @@ function buildVentasOrLeadsGAQL_noFilter({ since, until }) {
 }
 
 function buildReachGAQL({ since, until }) {
+  // sin average_frequency; la calculamos como impressions / reach
   return `
     SELECT
       segments.date,
@@ -393,8 +385,7 @@ function buildReachGAQL({ since, until }) {
       metrics.clicks,
       metrics.cost_micros,
       metrics.average_cpc,
-      metrics.reach,
-      metrics.average_frequency
+      metrics.reach
     FROM customer
     WHERE segments.date BETWEEN '${since}' AND '${until}'
     ORDER BY segments.date
@@ -437,8 +428,9 @@ function mapRowToPoint(r, objective, catsForFilter = null) {
   };
 
   if (objective === 'alcance') {
-    out.reach     = Number(met.reach || 0);
-    out.frequency = Number((met.averageFrequency ?? met.average_frequency ?? 0));
+    const reach = Number(met.reach || 0);
+    out.reach     = reach;
+    out.frequency = reach > 0 ? (impressions / reach) : 0; // calculada
   }
 
   return out.date ? out : null;
@@ -451,8 +443,8 @@ function aggregateByDate(points) {
     const key = p.date;
     const cur = acc.get(key) || {
       date: key,
-      impressions: 0, clicks: 0, cost: 0, ctr: 0, cpc: 0,
-      conversions: 0, conv_value: 0, reach: 0, frequency: 0
+      impressions: 0, clicks: 0, cost: 0,
+      conversions: 0, conv_value: 0, reach: 0
     };
     cur.impressions += p.impressions || 0;
     cur.clicks      += p.clicks || 0;
@@ -460,25 +452,14 @@ function aggregateByDate(points) {
     cur.conversions += p.conversions || 0;
     cur.conv_value  += p.conv_value || 0;
     cur.reach       += p.reach || 0;
-
-    // CTR / CPC / Frequency promediados ponderados
-    if ((cur.impressions + p.impressions) > 0) {
-      const totalImp = (cur.impressions);
-      cur.ctr = totalImp ? (cur.clicks / totalImp) : 0;
-    }
-    if ((cur.clicks + p.clicks) > 0) {
-      const totalClicks = (cur.clicks);
-      cur.cpc = totalClicks ? (cur.cost / totalClicks) : 0;
-    }
-    // frecuencia: promedio simple (no hay peso oficial disponible aquí)
-    cur.frequency = (cur.frequency || 0) + (p.frequency || 0);
-
     acc.set(key, cur);
   }
-  // normaliza frecuencia promedio (simple)
+  // derivados tras acumular
   const out = Array.from(acc.values()).map(v => ({
     ...v,
-    frequency: v.frequency // ya acumulada por día (si hubo varias filas del mismo día)
+    ctr: v.impressions ? (v.clicks / v.impressions) : 0,
+    cpc: v.clicks ? (v.cost / v.clicks) : 0,
+    frequency: v.reach > 0 ? (v.impressions / v.reach) : 0,
   }));
   return out.sort((a,b) => a.date.localeCompare(b.date));
 }
@@ -496,12 +477,10 @@ async function fetchWindow({ accessToken, cid, since, until, objective }) {
 
   const cats = (objective === 'ventas') ? PURCHASE_CATS : LEAD_CATS;
 
-  // intento con filtro por categoría
   try {
     query = buildVentasOrLeadsGAQL({ since, until, cats });
     rows = await searchGAQLStream(accessToken, cid, query);
   } catch (_) {
-    // fallback: sin filtro GAQL, filtramos en JS
     query = buildVentasOrLeadsGAQL_noFilter({ since, until });
     rows = await searchGAQLStream(accessToken, cid, query);
   }
