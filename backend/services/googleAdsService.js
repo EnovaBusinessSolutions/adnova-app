@@ -208,13 +208,16 @@ async function searchGAQLStream(accessToken, customerId, query) {
   const cid = normId(customerId);
   const body = { query };
 
+  // 1er intento: si hay LOGIN_CID, úsalo de una vez
   let r = await requestRest({
     accessToken,
     path: `/customers/${cid}/googleAds:searchStream`,
     method: 'POST',
     body,
+    loginCustomerId: LOGIN_CID || undefined,
   });
 
+  // 2do intento: prueba con el propio cid como login-customer-id
   if (!r.ok && shouldRetryWithLoginCid(r.data)) {
     r = await requestRest({
       accessToken,
@@ -222,16 +225,6 @@ async function searchGAQLStream(accessToken, customerId, query) {
       method: 'POST',
       body,
       loginCustomerId: cid,
-    });
-  }
-
-  if (!r.ok && LOGIN_CID) {
-    r = await requestRest({
-      accessToken,
-      path: `/customers/${cid}/googleAds:searchStream`,
-      method: 'POST',
-      body,
-      loginCustomerId: LOGIN_CID,
     });
   }
 
@@ -376,6 +369,24 @@ function buildVentasOrLeadsGAQL_noFilter({ since, until }) {
   `;
 }
 
+// SIN columna de categoría (por si v22 limita esa dimensión en la vista)
+function buildVentasOrLeadsGAQL_noCat({ since, until }) {
+  return `
+    SELECT
+      segments.date,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.cost_micros,
+      metrics.ctr,
+      metrics.average_cpc,
+      metrics.conversions,
+      metrics.conversions_value
+    FROM customer
+    WHERE segments.date BETWEEN '${since}' AND '${until}'
+    ORDER BY segments.date
+  `;
+}
+
 function buildReachGAQL({ since, until }) {
   // sin average_frequency; la calculamos como impressions / reach
   return `
@@ -465,31 +476,39 @@ function aggregateByDate(points) {
 }
 
 async function fetchWindow({ accessToken, cid, since, until, objective }) {
-  // GAQL según objetivo, con fallback si el filtro por categoría falla
-  let query, rows;
+  // GAQL según objetivo, con triple fallback robusto
+  let rows;
 
   if (objective === 'alcance') {
-    query = buildReachGAQL({ since, until });
-    rows = await searchGAQLStream(accessToken, cid, query);
+    const qReach = buildReachGAQL({ since, until });
+    rows = await searchGAQLStream(accessToken, cid, qReach);
     const points = rows.map(r => mapRowToPoint(r, 'alcance')).filter(Boolean);
     return aggregateByDate(points);
   }
 
   const cats = (objective === 'ventas') ? PURCHASE_CATS : LEAD_CATS;
 
+  // A) con filtro por categoría (servidor filtra)
   try {
-    query = buildVentasOrLeadsGAQL({ since, until, cats });
-    rows = await searchGAQLStream(accessToken, cid, query);
-  } catch (_) {
-    query = buildVentasOrLeadsGAQL_noFilter({ since, until });
-    rows = await searchGAQLStream(accessToken, cid, query);
-  }
+    const qA = buildVentasOrLeadsGAQL({ since, until, cats });
+    const rA = await searchGAQLStream(accessToken, cid, qA);
+    const ptsA = rA.map(r => mapRowToPoint(r, objective, cats)).filter(Boolean);
+    return aggregateByDate(ptsA);
+  } catch (_) {}
 
-  const points = rows
-    .map(r => mapRowToPoint(r, objective, cats))
-    .filter(Boolean);
+  // B) sin filtro por categoría, pero con la columna (filtramos en JS)
+  try {
+    const qB = buildVentasOrLeadsGAQL_noFilter({ since, until });
+    const rB = await searchGAQLStream(accessToken, cid, qB);
+    const ptsB = rB.map(r => mapRowToPoint(r, objective, cats)).filter(Boolean);
+    return aggregateByDate(ptsB);
+  } catch (_) {}
 
-  return aggregateByDate(points);
+  // C) sin la columna de categoría (totales diarios)
+  const qC = buildVentasOrLeadsGAQL_noCat({ since, until });
+  const rC = await searchGAQLStream(accessToken, cid, qC);
+  const ptsC = rC.map(r => mapRowToPoint(r, objective, null)).filter(Boolean);
+  return aggregateByDate(ptsC);
 }
 
 function kpisFromSeries(series) {
