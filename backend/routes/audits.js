@@ -40,6 +40,99 @@ const sevRank  = { alta: 3, media: 2, baja: 1 };
 const safeStr = (v, fb = '') => (typeof v === 'string' ? v : fb);
 const cap     = (arr, n) => (Array.isArray(arr) ? arr.slice(0, n) : []);
 
+/* ========= CONFIG DE PLANES (uso de auditorías) =========
+ *
+ * Claves internas de plan que mandaremos al frontend:
+ *  - gratis
+ *  - emprendedor
+ *  - crecimiento
+ *  - pro
+ *
+ * Puedes ajustar los límites cuando quieras.
+ */
+const PLAN_CONFIG = {
+  // 1 auditoría IA al mes
+  gratis: {
+    limit: 1,
+    period: 'monthly',
+    unlimited: false,
+  },
+  // 2 auditorías IA al mes
+  emprendedor: {
+    limit: 2,
+    period: 'monthly',
+    unlimited: false,
+  },
+  // Auditorías semanales (1 por semana)
+  crecimiento: {
+    limit: 1,
+    period: 'weekly',
+    unlimited: false,
+  },
+  // Auditorías ilimitadas
+  pro: {
+    limit: null,
+    period: 'unlimited',
+    unlimited: true,
+  },
+};
+
+/**
+ * Normaliza el plan guardado en Mongo a nuestras claves internas.
+ * Soporta variantes tipo: "free", "gratis", "growth", "crecimiento", etc.
+ */
+function normalizePlan(rawPlan) {
+  const v = String(rawPlan || '').toLowerCase().trim();
+
+  if (['free', 'gratis', 'plan_free', 'plan_gratis'].includes(v)) return 'gratis';
+  if (['emprendedor', 'entrepreneur', 'starter', 'plan_emprendedor'].includes(v)) return 'emprendedor';
+  if (['crecimiento', 'growth', 'growth_plus', 'plan_crecimiento'].includes(v)) return 'crecimiento';
+  if (['pro', 'plan_pro'].includes(v)) return 'pro';
+
+  // fallback por defecto
+  return 'gratis';
+}
+
+/**
+ * Calcula ventana de fechas según el periodo del plan.
+ * Devuelve { start, end } en Date.
+ */
+function getWindowForPeriod(period) {
+  const now = new Date();
+  const start = new Date(now);
+  const end   = new Date(now);
+
+  if (period === 'weekly') {
+    // Semana tipo lunes-domingo
+    const day = start.getDay(); // 0 dom, 1 lun...
+    const diffToMonday = (day + 6) % 7;
+    start.setDate(start.getDate() - diffToMonday);
+    start.setHours(0, 0, 0, 0);
+
+    end.setTime(start.getTime());
+    end.setDate(start.getDate() + 7);
+    end.setHours(0, 0, 0, 0);
+  } else if (period === 'monthly') {
+    // Mes calendario
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+
+    end.setMonth(start.getMonth() + 1, 1);
+    end.setHours(0, 0, 0, 0);
+  } else if (period === 'rolling') {
+    // Rolling 15 días (por si algún día lo quieres así)
+    start.setDate(start.getDate() - 15);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+  } else {
+    // unlimited -> ventana muy amplia sólo para devolver nextResetAt null
+    start.setTime(0);
+    end.setFullYear(now.getFullYear() + 10);
+  }
+
+  return { start, end };
+}
+
 const toSev = (s) => {
   const v = String(s || '').toLowerCase().trim();
   if (v === 'alta' || v === 'high')  return 'alta';
@@ -636,6 +729,47 @@ async function runSingleAudit({ userId, type, flags }) {
 // =====================================================
 // RUTAS
 // =====================================================
+
+// (0) USO DE AUDITORÍAS (para GenerateAudit.tsx)
+// GET /api/audits/usage
+router.get('/usage', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const user = await User.findById(userId).lean().select('plan');
+    if (!user) {
+      return res.status(401).json({ error: 'NO_USER' });
+    }
+
+    const planKey = normalizePlan(user.plan);
+    const cfg = PLAN_CONFIG[planKey] || PLAN_CONFIG.gratis;
+
+    let used = 0;
+    let nextResetAt = null;
+
+    if (!cfg.unlimited) {
+      const { start, end } = getWindowForPeriod(cfg.period);
+      // contamos auditorías del usuario en la ventana actual
+      used = await Audit.countDocuments({
+        userId,
+        generatedAt: { $gte: start, $lt: end },
+      });
+      nextResetAt = end.toISOString();
+    }
+
+    return res.json({
+      plan: planKey,          // "gratis" | "emprendedor" | "crecimiento" | "pro"
+      limit: cfg.limit,       // number | null
+      used,                   // número de auditorías usadas en el periodo
+      period: cfg.period,     // "monthly" | "weekly" | "rolling" | "unlimited"
+      nextResetAt,            // ISO string o null
+      unlimited: cfg.unlimited,
+    });
+  } catch (e) {
+    console.error('AUDIT_USAGE_ERROR:', e);
+    return res.status(500).json({ error: 'FETCH_FAIL' });
+  }
+});
 
 // (A) Ejecutar TODAS
 router.post('/run', requireAuth, async (req, res) => {
