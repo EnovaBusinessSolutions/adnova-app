@@ -265,10 +265,15 @@ app.use('/api/meta/accounts', sessionGuard, metaAccountsRoutes);
 app.use('/api/meta', metaTable);
 
 // Shopify
+// Shopify
 const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
-app.use('/connector', connector); // rutas del conector (incluye /webhooks arriba)
+
+// Aplica el CSP de Shopify a todo lo que cuelgue de /connector
+app.use('/connector', shopifyCSP, connector);
+
 app.use('/api/shopify', shopifyRoutes);
 app.use('/api', mockShopify);
+
 
 /* =========================
  * Páginas públicas y flujo de app
@@ -699,20 +704,24 @@ app.use(express.static(path.join(__dirname, '../public')));
 /* =========================
  * Embebido Shopify
  * ========================= */
-app.get('/connector/interface', shopifyCSP, (req, res) => {
-  const { shop, host } = req.query;
-  if (!shop || !host)
-    return res.status(400).send("Faltan parámetros 'shop' o 'host'");
-  res.sendFile(path.join(__dirname, '../public/connector/interface.html'));
-});
 
+// Entrada desde el Admin de Shopify (/apps/tu-app...)
 app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
   const { shop, host } = req.query;
-  const redirectUrl = new URL('/connector/interface', `https://${req.headers.host}`);
-  if (shop) redirectUrl.searchParams.set('shop', shop);
+
+  if (!shop) {
+    return res.status(400).send("Falta el parámetro 'shop'");
+  }
+
+  // Redirigimos SIEMPRE al entrypoint del conector,
+  // que es quien fuerza OAuth si hace falta.
+  const redirectUrl = new URL('/connector', `https://${req.headers.host}`);
+  redirectUrl.searchParams.set('shop', shop);
   if (host) redirectUrl.searchParams.set('host', host);
+
   return res.redirect(redirectUrl.toString());
 });
+
 
 /* =========================
  * OAuth Google (login simple)
