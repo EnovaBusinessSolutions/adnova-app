@@ -72,10 +72,7 @@ function cancelUrl() {
 // 🔐 Auth más tolerante: acepta req.user o req.isAuthenticated()
 function ensureAuth(req, res, next) {
   try {
-    // Si ya tenemos un usuario con _id, es suficiente
     if (req.user && req.user._id) return next();
-
-    // Fallback por si sólo está passport
     if (typeof req.isAuthenticated === 'function' && req.isAuthenticated()) {
       return next();
     }
@@ -91,7 +88,6 @@ function ensureAuth(req, res, next) {
   );
   return res.status(401).json({ error: 'Unauthorized' });
 }
-
 
 // =============== CHECKOUT ===============
 router.post('/checkout', express.json(), async (req, res) => {
@@ -137,13 +133,12 @@ router.post('/checkout', express.json(), async (req, res) => {
     if (user) {
       userId = String(user._id);
     } else {
-      // sin usuario no queremos crear checkout
       return res
         .status(401)
         .json({ error: 'Usuario no autenticado o no encontrado' });
     }
 
-    // 2) Reutilizar/crear Customer
+    // 2) Reutilizar/crear Customer en Stripe
     let customerId;
     if (user.stripeCustomerId) {
       customerId = user.stripeCustomerId;
@@ -166,7 +161,7 @@ router.post('/checkout', express.json(), async (req, res) => {
       }
     } else {
       const customer = await stripe.customers.create({
-        email: user.email || customer_email,
+        email: user.email || customer_email || undefined,
         metadata: { userId },
       });
       customerId = customer.id;
@@ -174,7 +169,7 @@ router.post('/checkout', express.json(), async (req, res) => {
       await user.save();
     }
 
-    // 3) Base de la sesión de checkout
+    // 3) Base de la sesión de checkout (sin customer_email para evitar conflicto)
     const base = {
       mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
@@ -193,18 +188,13 @@ router.post('/checkout', express.json(), async (req, res) => {
         userId: userId || 'n/a',
         startedAt,
       },
-
-      customer_email: customer_email || user.email || undefined,
     };
 
-    if (customerId) {
-      Object.assign(base, {
-        customer: customerId,
-        customer_update: { name: 'auto', address: 'auto' },
-      });
-    } else {
-      Object.assign(base, { customer_creation: 'always' });
-    }
+    // Siempre tenemos customerId a estas alturas
+    Object.assign(base, {
+      customer: customerId,
+      customer_update: { name: 'auto', address: 'auto' },
+    });
 
     // 4) Prevalidación del PRICE
     let priceObj;
@@ -246,7 +236,6 @@ router.post('/checkout', express.json(), async (req, res) => {
     });
   }
 });
-
 
 // =============== WEBHOOK ===============
 router.post('/webhook', async (req, res) => {
@@ -319,13 +308,11 @@ router.post('/webhook', async (req, res) => {
       }
 
       case 'invoice.paid': {
-        // 1) Traer invoice completo de Stripe (con items, amount, etc.)
-        const inv = event.data.object; // invoice skeleton
+        const inv = event.data.object;
         const stripeInvoice = await stripe.invoices.retrieve(inv.id, {
           expand: ['lines.data.price.product', 'customer'],
         });
 
-        // 2) Ubicar al user en tu DB por stripeCustomerId
         if (!User) try { User = require('../models/User'); } catch {}
         const custId = typeof stripeInvoice.customer === 'string'
           ? stripeInvoice.customer
@@ -335,20 +322,17 @@ router.post('/webhook', async (req, res) => {
           : null;
         if (!user) break;
 
-        // 3) Cargar perfil fiscal (si no hay → público en general)
         let TaxProfile = null;
         try { TaxProfile = require('../models/TaxProfile'); } catch {}
         const taxProfile = TaxProfile
           ? await TaxProfile.findOne({ user: user._id }).lean()
           : null;
 
-        // 4) Preparar payload para Facturapi
         const customerPayload = genCustomerPayload(taxProfile);
-        const totalWithTax = (stripeInvoice.total || stripeInvoice.amount_paid || 0) / 100; // Stripe en centavos
+        const totalWithTax = (stripeInvoice.total || stripeInvoice.amount_paid || 0) / 100;
         const conceptDesc = `Suscripción Adnova AI – ${stripeInvoice.lines?.data?.[0]?.price?.nickname || 'Plan'}`;
         const cfdiUse = taxProfile?.cfdiUse || process.env.FACTURAPI_DEFAULT_USE || 'G03';
 
-        // 5) Timbrar primero (sin metadata / sin email)
         try {
           const cfdi = await emitirFactura({
             customer: customerPayload,
@@ -359,13 +343,11 @@ router.post('/webhook', async (req, res) => {
 
           console.log('✅ CFDI timbrado', cfdi.uuid, 'total:', totalWithTax);
 
-          // 6) Enviar por email de forma separada (no rompe el webhook si falla)
           const destinatario = customerPayload.email || user.email;
           if (destinatario) {
             await enviarCfdiPorEmail(cfdi.id, destinatario);
           }
 
-          // (Opcional) Persistir folio/ligas en tu DB
           await User.findByIdAndUpdate(user._id, {
             $set: {
               'subscription.lastCfdiId': cfdi.id,
@@ -380,7 +362,6 @@ router.post('/webhook', async (req, res) => {
       }
 
       default:
-        // no-op
         break;
     }
 
@@ -424,7 +405,6 @@ router.post('/sync', ensureAuth, async (req, res) => {
       return res.status(400).json({ ok: false, error: 'Usuario sin stripeCustomerId' });
     }
 
-    // Asegura metadata.userId en el customer (backfill silencioso)
     try {
       const cust = await stripe.customers.retrieve(user.stripeCustomerId);
       if (!cust?.metadata?.userId || cust.metadata.userId !== String(user._id)) {
@@ -436,7 +416,6 @@ router.post('/sync', ensureAuth, async (req, res) => {
       console.warn('sync: no pude backfillear metadata.userId:', e.message);
     }
 
-    // Trae suscripciones
     const subs = await stripe.subscriptions.list({
       customer: user.stripeCustomerId,
       status: 'all',

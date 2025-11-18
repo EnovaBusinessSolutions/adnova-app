@@ -662,22 +662,31 @@ app.get('/api/saas/ping', sessionGuard, (req, res) => {
 });
 app.use('/api/saas/shopify', sessionGuard, require('./routes/shopifyMatch'));
 
-// Alias simple para /api/me (lo usa /plans/success)
+// Alias simple para /api/me (lo usa /plans y /plans/success)
 app.get('/api/me', async (req, res) => {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
     return res.status(401).json({ authenticated: false });
   }
+
   try {
     const u = await User.findById(req.user._id).lean();
-    if (!u) return res.status(401).json({ authenticated: false });
+    if (!u) {
+      return res.status(401).json({ authenticated: false });
+    }
+
     return res.json({
       authenticated: true,
+      // lo que necesita Pricing.tsx
+      plan: (u.plan || 'gratis').toLowerCase(),
+      subscription: u.subscription || null,
+      // y mantenemos el objeto user para otras vistas
       user: {
         _id: u._id,
-        email: u.email
-      }
+        email: u.email,
+      },
     });
   } catch (e) {
+    console.error('❌ /api/me error:', e);
     return res.status(401).json({ authenticated: false });
   }
 });
