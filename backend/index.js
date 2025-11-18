@@ -241,6 +241,12 @@ app.post('/api/audit/start',        sessionGuard, (req, res) => res.redirect(307
 app.post('/api/audit/google/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
 app.post('/api/audit/meta/start',   sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
 app.post('/api/audit/shopify/start',sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
+// Alias legacy del dashboard → usa el runner nuevo de auditorías
+app.post('/api/dashboard/audit', sessionGuard, (req, res) => {
+  // 307 = mantiene método y body (POST + JSON)
+  return res.redirect(307, '/api/audits/start');
+});
+
 
 // Stripe / Facturapi / Billing
 app.use('/api/facturapi', require('./routes/facturapi'));
