@@ -27,7 +27,28 @@ function normalizeArray(arr, normFn) {
   return Array.from(out);
 }
 
-/* ---------------- schema ---------------- */
+/* ---------------- sub-schema de suscripción (Stripe) ---------------- */
+const subscriptionSchema = new mongoose.Schema(
+  {
+    id: { type: String }, // subscription.id de Stripe
+    status: { type: String, default: 'inactive' }, // incomplete | active | trialing | ...
+    priceId: { type: String },                     // price_xxx
+    plan: {
+      type: String,
+      enum: ['emprendedor', 'crecimiento', 'pro', 'enterprise', 'gratis'],
+    },
+    currentPeriodEnd: { type: Date },
+    cancel_at_period_end: { type: Boolean, default: false },
+
+    // Facturapi / facturación
+    lastCfdiId: { type: String },
+    lastCfdiTotal: { type: Number },
+    lastStripeInvoice: { type: String },
+  },
+  { _id: false }
+);
+
+/* ---------------- schema principal ---------------- */
 const userSchema = new mongoose.Schema(
   {
     email: {
@@ -70,7 +91,7 @@ const userSchema = new mongoose.Schema(
       set: (arr) => normalizeArray(arr, normGoogleId),
     },
 
-    // === GA4: soporte de selección en User (lo lee googleAnalytics.js como preferencia oficial) ===
+    // === Preferencias de auditoría ===
     preferences: {
       googleAnalytics: {
         auditPropertyIds: {
@@ -79,10 +100,25 @@ const userSchema = new mongoose.Schema(
           set: (arr) => normalizeArray(arr, normGaPropertyId),
         },
       },
+      googleAds: {
+        auditAccountIds: {
+          type: [String],
+          default: [],
+          set: (arr) => normalizeArray(arr, normGoogleId),
+        },
+      },
+      meta: {
+        auditAccountIds: {
+          type: [String],
+          default: [],
+          set: (arr) => normalizeArray(arr, normMetaId),
+        },
+      },
     },
 
     // (LEGACY opcional) por si tuvieras código viejo leyendo esto
-    selectedGaProperties: {
+    // ⚠️ Nombre alineado con audits.js → selectedGAProperties
+    selectedGAProperties: {
       type: [String],
       default: [],
       set: (arr) => normalizeArray(arr, normGaPropertyId),
@@ -93,6 +129,7 @@ const userSchema = new mongoose.Schema(
     resetPasswordExpires: { type: Date },
 
     stripeCustomerId: { type: String },
+
     plan: {
       type: String,
       enum: ['gratis', 'emprendedor', 'crecimiento', 'pro', 'enterprise'],
@@ -100,12 +137,8 @@ const userSchema = new mongoose.Schema(
       index: true,
     },
     planStartedAt: { type: Date, default: Date.now },
-    subscription: {
-      status: { type: String, default: 'inactive' },
-      priceId: { type: String },
-      plan: { type: String, enum: ['emprendedor', 'crecimiento', 'pro', 'enterprise'] },
-      currentPeriodEnd: { type: Date },
-    },
+
+    subscription: subscriptionSchema,
   },
   { timestamps: true }
 );
@@ -121,14 +154,21 @@ userSchema.pre('save', function (next) {
   if (this.isModified('selectedGoogleAccounts')) {
     this.selectedGoogleAccounts = normalizeArray(this.selectedGoogleAccounts, normGoogleId);
   }
+
   // Asegura normalización de GA4 tanto en preferences como en legacy
   if (this.isModified('preferences') && this.preferences?.googleAnalytics?.auditPropertyIds) {
     this.preferences.googleAnalytics.auditPropertyIds =
       normalizeArray(this.preferences.googleAnalytics.auditPropertyIds, normGaPropertyId);
   }
-  if (this.isModified('selectedGaProperties')) {
-    this.selectedGaProperties = normalizeArray(this.selectedGaProperties, normGaPropertyId);
+  if (this.isModified('selectedGAProperties')) {
+    this.selectedGAProperties = normalizeArray(this.selectedGAProperties, normGaPropertyId);
   }
+
+  // Si cambia el plan, actualizamos fecha de inicio
+  if (this.isModified('plan')) {
+    this.planStartedAt = new Date();
+  }
+
   next();
 });
 

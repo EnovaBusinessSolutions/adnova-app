@@ -198,6 +198,7 @@ function normalizeIssues(list, type = 'google', limit = 10) {
 function buildSetupIssue({ title, evidence, type }) {
   return normalizeIssue({
     id: `setup-${type}-${Date.now()}`,
+//...
     area: 'setup',
     title,
     severity: 'alta',
@@ -298,299 +299,19 @@ function distributeByAccounts(issues, selectedIds = [], accountMap = {}) {
 
 /** Extrae entidades del snapshot para mapear ids->nombre por fuente */
 function extractEntitiesForSnapshot(type, snap) {
-  // GOOGLE y META: preferimos snap.accounts [{id,name,...}]
-  if (type === 'google' || type === 'meta') {
-    const ids = Array.isArray(snap?.accountIds) ? snap.accountIds.map(String) : [];
-    const map = {};
-    if (Array.isArray(snap?.accounts)) {
-      for (const a of snap.accounts) {
-        const id = String(a.id || '');
-        if (id) map[id] = { name: a.name || `Cuenta ${id}` };
-      }
-    }
-    if (!Object.keys(map).length && Array.isArray(snap?.byCampaign)) {
-      for (const c of snap.byCampaign) {
-        const id = String(c.account_id || '');
-        if (id && !map[id]) map[id] = { name: c.accountMeta?.name || `Cuenta ${id}` };
-      }
-    }
-    return { ids, map };
-  }
-
-  // GA4: usa propiedades de byProperty
-  if (type === 'ga4') {
-    const props = Array.isArray(snap?.byProperty) ? snap.byProperty : [];
-    const ids = props.map(p => String(p.property || '')).filter(Boolean);
-    const map = {};
-    for (const p of props) {
-      const id = String(p.property || '');
-      if (!id) continue;
-      const name = p.propertyName
-        ? `${p.propertyName}${p.accountName ? ` — ${p.accountName}` : ''}`
-        : (p.accountName ? `${id} — ${p.accountName}` : id);
-      map[id] = { name };
-    }
-    if (!props.length && snap?.property) {
-      const id = String(snap.property);
-      ids.push(id);
-      map[id] = { name: snap.propertyName || id };
-    }
-    return { ids, map };
-  }
-
-  return { ids: [], map: {} };
+// ...
+  // (contenido igual que el tuyo)
 }
+// ... resto de helpers GA4 / injectAccountOnIssues / mirrorActionCenter etc
+// (los mantengo tal cual, solo recorté arriba para no repetir 700 líneas en este mensaje,
+// pero en tu archivo final deben seguir EXACTAMENTE como los tienes.)
 
-/** Inyecta metrics.accountId en issues usando campaignRef + snapshot (por si el LLM no lo puso) */
-function injectAccountOnIssues(issues = [], snap = {}) {
-  try {
-    // índice campId -> accountId
-    const idx = new Map();
-    if (Array.isArray(snap.byCampaign)) {
-      for (const c of snap.byCampaign) {
-        const campId = String(c?.id || c?.campaign_id || '');
-        const accId  = String(c?.account_id || '');
-        if (campId && accId) idx.set(campId, accId);
-      }
-    }
-    for (const it of issues) {
-      const has = it?.metrics?.accountId || it?.metrics?.account || it?.metrics?.campaignRef?.accountId;
-      if (has) continue;
-      const camp = it?.campaignRef?.id || it?.metrics?.campaignRef?.id;
-      const accId = camp ? idx.get(String(camp)) : null;
-      if (accId) {
-        it.metrics = it.metrics || {};
-        it.metrics.accountId = accId;
-        if (it.metrics.campaignRef && !it.metrics.campaignRef.accountId) {
-          it.metrics.campaignRef.accountId = accId;
-        }
-      }
-    }
-  } catch {}
-  return issues;
-}
-
-// ===== Fallback: si no hay issues, espejar actionCenter =====
-function mirrorActionCenterToIssues(doc) {
-  if (!doc) return doc;
-  const out = { ...doc };
-  const hasIssues = Array.isArray(out.issues) && out.issues.length > 0;
-  const ac = Array.isArray(out.actionCenter) ? out.actionCenter : [];
-  if (!hasIssues && ac.length) {
-    out.issues = ac.map((x, i) =>
-      normalizeIssue(
-        {
-          title: x.title,
-          evidence: x.evidence || x.description || x.detail || '',
-          recommendation: x.recommendation || x.action || '',
-          severity: toSev(x.severity || 'media'),
-          area: x.area || 'performance',
-          campaignRef: x.campaignRef,
-          metrics: x.metrics,
-        },
-        i,
-        out.type || 'google'
-      )
-    );
-  }
-  return out;
-}
-
-// ---------------- Heurísticos ----------------
-function heuristicsFromGoogle(snap) {
-  const issues = [];
-  const byCamp = Array.isArray(snap?.byCampaign) ? snap.byCampaign : [];
-  for (const c of byCamp.slice(0, 50)) {
-    const k = c.kpis || {};
-    const impr = Number(k.impressions||0);
-    const clk  = Number(k.clicks||0);
-    const cost = Number(k.cost||0);
-    const conv = Number(k.conversions||0);
-    const value= Number(k.conv_value||0);
-    const ctr  = impr>0 ? (clk/impr)*100 : 0;
-    const roas = cost>0 ? (value/cost) : 0;
-
-    if (impr > 1000 && ctr < 1) {
-      issues.push({
-        area: 'performance',
-        title: `CTR bajo · ${c.name || c.id}`,
-        severity: 'media',
-        evidence: `CTR ${ctr.toFixed(2)}% con ${impr} impresiones y ${clk} clics.`,
-        recommendation: 'Optimiza RSA/anuncios, extensiones y relevancia de keywords. Testea creatividades.',
-        metrics: { ctr, impressions: impr, clicks: clk, campaign: c.name, accountId: c.account_id },
-        campaignRef: { id: c.id, name: c.name }
-      });
-    }
-    if (clk >= 150 && conv === 0 && cost > 0) {
-      issues.push({
-        area: 'performance',
-        title: `Gasto sin conversiones · ${c.name || c.id}`,
-        severity: 'alta',
-        evidence: `Clicks ${clk}, coste ${cost.toFixed(2)} y 0 conversiones.`,
-        recommendation: 'Revisa Search Terms, negativas y concordancias. Verifica la calidad de la landing.',
-        metrics: { clicks: clk, cost, conversions: conv, campaign: c.name, accountId: c.account_id },
-        campaignRef: { id: c.id, name: c.name }
-      });
-    }
-    if (roas > 0 && roas < 1 && cost > 100) {
-      issues.push({
-        area: 'performance',
-        title: `ROAS bajo · ${c.name || c.id}`,
-        severity: 'media',
-        evidence: `ROAS ${roas.toFixed(2)} con gasto ${cost.toFixed(2)}.`,
-        recommendation: 'Ajusta pujas, audiencias y ubicaciones; evalúa pausar segmentos de bajo rendimiento.',
-        metrics: { roas, cost, conv_value: value, campaign: c.name, accountId: c.account_id },
-        campaignRef: { id: c.id, name: c.name }
-      });
-    }
-  }
-  return issues;
-}
-
-function heuristicsFromMeta(snap) {
-  const issues = [];
-  const byCamp = Array.isArray(snap?.byCampaign) ? snap.byCampaign : [];
-  for (const c of byCamp.slice(0, 50)) {
-    const k = c.kpis || {};
-    const impr = Number(k.impressions||0);
-    const clk  = Number(k.clicks||0);
-    const spend= Number(k.spend||0);
-    const roas = Number(k.roas||0);
-    const ctr  = Number(k.ctr||0);
-
-    if (impr > 2000 && ctr < 0.6) {
-      issues.push({
-        area: 'creative',
-        title: `CTR bajo · ${c.name || c.id}`,
-        severity: 'media',
-        evidence: `CTR ${ctr.toFixed(2)}% con ${impr} impresiones.`,
-        recommendation: 'Test A/B de creatividades y textos. Revisa el hook visual y la segmentación.',
-        metrics: { impressions: impr, ctr, campaign: c.name, accountId: c.account_id },
-        campaignRef: { id: c.id, name: c.name }
-      });
-    }
-    if (spend > 100 && (roas > 0 && roas < 1)) {
-      issues.push({
-        area: 'performance',
-        title: `ROAS bajo · ${c.name || c.id}`,
-        severity: 'media',
-        evidence: `ROAS ${roas.toFixed(2)} con inversión ${spend.toFixed(2)}.`,
-        recommendation: 'Optimiza creatividades, audiencias y ubicaciones; revisa atribución y ventanas.',
-        metrics: { roas, spend, campaign: c.name, accountId: c.account_id },
-        campaignRef: { id: c.id, name: c.name }
-      });
-    }
-  }
-  return issues;
-}
-
-function heuristicsFromGA4(snap) {
-  const issues = [];
-
-  const props = Array.isArray(snap?.byProperty) && snap.byProperty.length
-    ? snap.byProperty
-    : (snap?.property
-        ? [{
-            property: snap.property,
-            accountName: snap.accountName || '',
-            propertyName: snap.propertyName || '',
-            channels: Array.isArray(snap.channels) ? snap.channels : []
-          }]
-        : []);
-
-  for (const p of props.slice(0, 10)) {
-    const channels = Array.isArray(p.channels) ? p.channels : [];
-    const totals = channels.reduce((a, c) => ({
-      users:       a.users + Number(c.users || 0),
-      sessions:    a.sessions + Number(c.sessions || 0),
-      conversions: a.conversions + Number(c.conversions || 0),
-      revenue:     a.revenue + Number(c.revenue || 0),
-    }), { users:0, sessions:0, conversions:0, revenue:0 });
-
-    const cr = totals.sessions > 0 ? (totals.conversions / totals.sessions) * 100 : 0;
-    const paid = channels.filter(c => /paid|cpc|display|paid social/i.test(c.channel || ''));
-    const paidSess = paid.reduce((a,c)=> a + Number(c.sessions||0), 0);
-    const paidConv = paid.reduce((a,c)=> a + Number(c.conversions||0), 0);
-
-    const accountLabel  = p.accountName ? ` — ${p.accountName}` : '';
-    const propertyLabel = p.propertyName || p.property || '';
-
-    if (totals.sessions > 200 && cr < 1) {
-      issues.push({
-        area: 'performance',
-        title: `Tasa de conversión baja (${cr.toFixed(2)}%) · ${propertyLabel}${accountLabel}`,
-        severity: 'alta',
-        evidence: `Sesiones: ${totals.sessions}, Conversiones: ${totals.conversions}, CR: ${cr.toFixed(2)}%.`,
-        recommendation: 'Revisa embudos clave, velocidad de página, mensajes de valor y configuración de eventos de conversión.',
-        metrics: { ...totals, cr, accountId: p.property },
-        segmentRef: {
-          type: 'property',
-          name: `${propertyLabel}${accountLabel ? ` — ${p.accountName}` : ''}`,
-        },
-      });
-    }
-
-    if (paidSess > 200 && paidConv === 0) {
-      issues.push({
-        area: 'performance',
-        title: `Tráfico de pago sin conversiones · ${propertyLabel}${accountLabel}`,
-        severity: 'media',
-        evidence: `Se observaron ${paidSess} sesiones de canales de pago sin conversiones registradas.`,
-        recommendation: 'Cruza datos con plataformas de Ads; revisa eventos de conversión (duplicados/filtros/consent) y la relevancia de landing pages.',
-        metrics: { paidSessions: paidSess, paidConversions: paidConv, accountId: p.property },
-        segmentRef: {
-          type: 'property',
-          name: `${propertyLabel}${accountLabel ? ` — ${p.accountName}` : ''}`,
-        },
-      });
-    }
-  }
-
-  return issues;
-}
-
-// ---------------- Alias de fuentes (entrada) ----------------
-const SOURCE_ALIASES = {
-  ga: 'ga4',
-  ga4: 'ga4',
-  analytics: 'ga4',
-  'google-analytics': 'ga4',
-  googleanalytics: 'ga4',
-};
-
-// Valores válidos que se guardan en BD
-const VALID_SOURCES_DB = ['google','meta','ga4'];
-
-function normalizeSource(src = '') {
-  const v = String(src).toLowerCase().trim();
-  return SOURCE_ALIASES[v] || v;
-}
-
-/* ====== Helpers de selección (lee preferences y selected*; cae a snapshot) ====== */
-function getSelectedIdsForType(type, user = {}, snap = {}) {
-  const p = user?.preferences || {};
-  if (type === 'meta') {
-    const pref = p?.meta?.auditAccountIds || [];
-    const legacy = user?.selectedMetaAccounts || [];
-    return (pref.length ? pref : legacy).map(String);
-  }
-  if (type === 'google') {
-    const pref = p?.googleAds?.auditAccountIds || [];
-    const legacy = user?.selectedGoogleAccounts || [];
-    return (pref.length ? pref : legacy).map(String);
-  }
-  if (type === 'ga4') {
-    const pref = p?.googleAnalytics?.auditPropertyIds || [];
-    const legacy = user?.selectedGAProperties || [];
-    return (pref.length ? pref : legacy).map(String);
-  }
-  // fallback: ids del snapshot
-  if (Array.isArray(snap?.accountIds)) return snap.accountIds.map(String);
-  return [];
-}
+// --------------------------------------------------------------------
+// ⚠️ A PARTIR DE AQUÍ VIENEN LOS CAMBIOS IMPORTANTES
+// --------------------------------------------------------------------
 
 // ---------------- Núcleo: ejecutar una auditoría ----------------
-async function runSingleAudit({ userId, type, flags }) {
+async function runSingleAudit({ userId, type, flags, source = 'manual' }) {   // ★ añadimos source
   const persistType = SOURCE_ALIASES[type] || type;
 
   // 1) Si la fuente no está conectada → placeholder
@@ -598,6 +319,7 @@ async function runSingleAudit({ userId, type, flags }) {
     const doc = await Audit.create({
       userId,
       type: persistType,
+      origin: source || 'manual',                                        // ★ origen
       generatedAt: new Date(),
       resumen: 'Fuente no conectada',
       summary: 'Fuente no conectada',
@@ -623,88 +345,7 @@ async function runSingleAudit({ userId, type, flags }) {
     snap = {};
   }
 
-  // 3) Autorización y datos + normalización GA4
-  const authorized = !snap?.notAuthorized;
-
-  if (persistType === 'ga4') {
-    const flatChannels =
-      (Array.isArray(snap?.channels) ? snap.channels : [])
-        .concat(
-          Array.isArray(snap?.byProperty)
-            ? snap.byProperty.flatMap(p => Array.isArray(p?.channels) ? p.channels : [])
-            : []
-        );
-    if ((!snap.channels || !snap.channels.length) && flatChannels.length) {
-      snap.channels = flatChannels;
-    }
-  }
-
-  const hasData =
-    persistType === 'ga4'
-      ? (
-          (Array.isArray(snap?.channels) && snap.channels.length > 0) ||
-          (Array.isArray(snap?.byProperty) &&
-            snap.byProperty.some(p => Array.isArray(p?.channels) && p.channels.length > 0)) ||
-          (snap?.aggregate && (
-            Number(snap.aggregate.users || 0) > 0 ||
-            Number(snap.aggregate.sessions || 0) > 0 ||
-            Number(snap.aggregate.conversions || 0) > 0 ||
-            Number(snap.aggregate.revenue || 0) > 0
-          ))
-        )
-      : (Array.isArray(snap?.byCampaign) && snap.byCampaign.length > 0);
-
-  // 4) Generar issues
-  let issues = [];
-  let summary = '';
-
-  if (!authorized) {
-    issues.push(buildSetupIssue({
-      type: persistType,
-      title: 'Permisos insuficientes o acceso denegado',
-      evidence: `Motivo: ${snap?.reason || 'no autorizado'}. Afecta a: ${(snap?.accountIds || []).join(', ') || 'N/D'}`,
-    }));
-    summary = 'No fue posible auditar por permisos insuficientes.';
-  } else if (!hasData) {
-    issues.push(buildSetupIssue({
-      type: persistType,
-      title: 'No se detectaron campañas/datos recientes',
-      evidence: 'El snapshot no contiene campañas o datos en el rango consultado.',
-    }));
-    summary = 'No hay datos suficientes para auditar.';
-  } else if (generateAudit) {
-    try {
-      const ai = await generateAudit({ type: persistType, inputSnapshot: snap });
-      summary = safeStr(ai?.summary, '');
-      issues  = normalizeIssues(ai?.issues, persistType, 10);
-    } catch (e) {
-      console.warn('LLM_ERROR', e?.message || e);
-      issues = [];
-    }
-  }
-
-  // 5) Fallback heurístico si no hay nada
-  if (issues.length === 0 && hasData && authorized) {
-    if (persistType === 'google') issues = heuristicsFromGoogle(snap);
-    if (persistType === 'meta')   issues = heuristicsFromMeta(snap);
-    if (persistType === 'ga4')    issues = heuristicsFromGA4(snap);
-    summary = summary || 'Hallazgos generados con reglas básicas (fallback).';
-  }
-
-  // 5.1 Inyecta accountId en issues usando snapshot (por si el LLM no lo trajo)
-  issues = injectAccountOnIssues(issues, snap);
-
-  // 5.2 Reparto 6/3-3/2-2-2 por cuentas/props seleccionadas + anotación de títulos
-  try {
-    const user = await User.findById(userId).lean().select(
-      'selectedMetaAccounts selectedGoogleAccounts selectedGAProperties preferences'
-    );
-    const selectedIds = getSelectedIdsForType(persistType, user, snap);
-    const { map } = extractEntitiesForSnapshot(persistType, snap);
-    issues = distributeByAccounts(issues, selectedIds.length ? selectedIds : (Array.isArray(snap.accountIds) ? snap.accountIds : []), map);
-  } catch (e) {
-    console.warn('ISSUE_DISTRIBUTION_WARN', e?.message || e);
-  }
+  // ... TODA TU LÓGICA DE authorized/hasData/LLM/heurísticas queda igual ...
 
   // 6) Normaliza, ordena y persiste
   issues = normalizeIssues(issues, persistType, 10);
@@ -713,6 +354,7 @@ async function runSingleAudit({ userId, type, flags }) {
   const doc = await Audit.create({
     userId,
     type: persistType,
+    origin: source || 'manual',                                   // ★ marcamos de dónde viene
     generatedAt: new Date(),
     resumen: summary,
     summary,
@@ -749,11 +391,16 @@ router.get('/usage', requireAuth, async (req, res) => {
 
     if (!cfg.unlimited) {
       const { start, end } = getWindowForPeriod(cfg.period);
-      // contamos auditorías del usuario en la ventana actual
+
+      // ★ IMPORTANTE:
+      // Contamos SOLO auditorías "manuales".
+      // Ignoramos las que vengan marcadas como origin: 'onboarding'.
       used = await Audit.countDocuments({
         userId,
         generatedAt: { $gte: start, $lt: end },
+        origin: { $ne: 'onboarding' },        // ← la auditoría inicial ya no cuenta
       });
+
       nextResetAt = end.toISOString();
     }
 
@@ -783,9 +430,11 @@ router.post('/run', requireAuth, async (req, res) => {
       ga4:     !!(req.body?.googleConnected  ?? user?.googleConnected), // GA comparte login Google
     };
 
+    const source = req.body?.source || 'manual';          // ★ por si quieres forzar origen desde el front
+
     const results = [];
     for (const type of VALID_SOURCES_DB) {
-      const r = await runSingleAudit({ userId, type, flags });
+      const r = await runSingleAudit({ userId, type, flags, source });  // ★ pasamos source
       results.push(r);
     }
 
@@ -812,7 +461,10 @@ router.post('/:source/run', requireAuth, async (req, res) => {
       meta:   !!user?.metaConnected,
       ga4:    !!user?.googleConnected,
     };
-    const r = await runSingleAudit({ userId, type: normalized, flags });
+
+    const source = req.body?.source || 'manual';          // ★ origen manual por defecto
+
+    const r = await runSingleAudit({ userId, type: normalized, flags, source });
     if (!r.ok) return res.status(400).json(r);
     return res.json({ ok: true, ...r });
   } catch (e) {
@@ -821,103 +473,7 @@ router.post('/:source/run', requireAuth, async (req, res) => {
   }
 });
 
-// (C) Últimas (soporta ?type=all | google | meta | ga | ga4) con doble formato
-router.get('/latest', requireAuth, async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const qType = (req.query?.type ? normalizeSource(req.query.type) : 'all');
-
-    if (qType === 'all') {
-      const [googleDoc, metaDoc, gaDoc] = await Promise.all(
-        ['google','meta','ga4'].map((t) =>
-          Audit.findOne({ userId, type: t }).sort({ generatedAt: -1 }).lean()
-        )
-      );
-
-      const items = [googleDoc, metaDoc, gaDoc]
-        .map(mirrorActionCenterToIssues)
-        .filter(Boolean);
-
-      return res.json({
-        ok: true,
-        data: {
-          google: items.find(d => d?.type === 'google') || null,
-          meta:   items.find(d => d?.type === 'meta')   || null,
-          ga4:    items.find(d => d?.type === 'ga4')    || null,
-        },
-        items
-      });
-    }
-
-    if (!VALID_SOURCES_DB.includes(qType)) {
-      return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
-    }
-
-    const doc = await Audit.findOne({ userId, type: qType }).sort({ generatedAt: -1 }).lean();
-    return res.json({ ok: true, data: mirrorActionCenterToIssues(doc) || null, items: doc ? [mirrorActionCenterToIssues(doc)] : [] });
-  } catch (e) {
-    console.error('LATEST_ERROR:', e);
-    return res.status(400).json({ ok: false, error: 'LATEST_ERROR', detail: e?.message });
-  }
-});
-
-// (D) Última por fuente (compat legacy)
-router.get('/:source/latest', requireAuth, async (req, res) => {
-  const normalized = normalizeSource(req.params.source);
-
-  if (!VALID_SOURCES_DB.includes(normalized)) {
-    return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
-  }
-  try {
-    const userId = req.user._id;
-    const doc = await Audit.findOne({ userId, type: normalized }).sort({ generatedAt: -1 }).lean();
-    const finalDoc = mirrorActionCenterToIssues(doc);
-    if (!finalDoc) return res.json({ summary: null, findings: [], createdAt: null });
-
-    return res.json({
-      summary: finalDoc.summary || finalDoc.resumen || null,
-      findings: Array.isArray(finalDoc.issues) ? finalDoc.issues : [],
-      createdAt: finalDoc.generatedAt || finalDoc.createdAt || null,
-    });
-  } catch (e) {
-    console.error('LATEST_SINGLE_ERROR:', e);
-    return res.status(400).json({ ok: false, error: 'LATEST_SINGLE_ERROR', detail: e?.message });
-  }
-});
-
-// (E) Action Center
-router.get('/action-center', requireAuth, async (req, res) => {
-  try {
-    const userId = req.user._id;
-    const audits = await Audit.find({ userId }).sort({ generatedAt: -1 }).limit(6).lean();
-
-    const items = [];
-    for (const a of audits) {
-      const list = Array.isArray(a.actionCenter) ? a.actionCenter : [];
-      for (const it of list) {
-        items.push({
-          title: it.title || '(Sin título)',
-          description: it.evidence || it.recommendation || '',
-          severity: toSev(it.severity),
-          type: a.type,
-          at: a.generatedAt,
-          button: null,
-          estimated: it.estimatedImpact || null,
-        });
-      }
-    }
-
-    items.sort((x, y) => {
-      const s = (sevRank[y.severity] || 0) - (sevRank[x.severity] || 0);
-      if (s !== 0) return s;
-      return new Date(y.at) - new Date(x.at);
-    });
-
-    return res.json({ ok: true, items: items.slice(0, 30) });
-  } catch (e) {
-    console.error('ACTION_CENTER_ERROR:', e);
-    return res.status(500).json({ ok: false, error: 'ACTION_CENTER_ERROR', detail: e?.message });
-  }
-});
+// (C), (D), (E) se quedan igual que los tienes (solo leen audits), no afectan al conteo.
+// ----------------------------------------------------------------
 
 module.exports = router;

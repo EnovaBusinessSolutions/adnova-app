@@ -31,8 +31,12 @@
   // Helpers UI
   // =======================
   const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-  const setBar = (pct) => { if (progressBar) progressBar.style.width = clamp(pct, 0, 100) + "%"; };
-  const setText = (t) => { if (progressText) progressText.textContent = t; };
+  const setBar = (pct) => {
+    if (progressBar) progressBar.style.width = clamp(pct, 0, 100) + "%";
+  };
+  const setText = (t) => {
+    if (progressText) progressText.textContent = t;
+  };
 
   // Sufijos base (el label estático del paso queda en el HTML)
   const BASE_SUFFIX = {
@@ -48,9 +52,10 @@
     if (!row) return;
     row.classList.remove("active", "completed", "opacity-50", "is-current", "error");
 
-    const suffix = (typeof suffixOverride === "string" && suffixOverride.length)
-      ? suffixOverride
-      : (BASE_SUFFIX[state] || "");
+    const suffix =
+      typeof suffixOverride === "string" && suffixOverride.length
+        ? suffixOverride
+        : BASE_SUFFIX[state] || "";
 
     if (state === "running") {
       row.classList.add("active", "is-current");
@@ -82,9 +87,12 @@
     "Detectando oportunidades…",
     "Generando recomendaciones…",
   ];
+
   function startCycler() {
     if (!progressText) return () => {};
-    let i = 0, stop = false;
+    let i = 0;
+    let stop = false;
+
     const tick = () => {
       if (stop) return;
       progressText.style.opacity = "0";
@@ -94,30 +102,46 @@
         i++;
       }, 160);
     };
+
     tick();
     const id = setInterval(tick, 2000);
-    return () => { stop = true; clearInterval(id); };
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
   }
+
   let cyclerStop = null;
 
   // =======================
   // HTTP helpers
   // =======================
   async function getJSON(url) {
-    const r = await fetch(url, { credentials: "include", headers: { Accept: "application/json" } });
+    const r = await fetch(url, {
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    });
     let j = {};
-    try { j = await r.json(); } catch {}
+    try {
+      j = await r.json();
+    } catch {}
     return j;
   }
+
   async function postJSON(url, body) {
     const r = await fetch(url, {
       method: "POST",
       credentials: "include",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
       body: JSON.stringify(body || {}),
     });
     let j = {};
-    try { j = await r.json(); } catch {}
+    try {
+      j = await r.json();
+    } catch {}
     if (!r.ok || j?.ok === false) {
       const msg = j?.error || `HTTP_${r.status}`;
       const e = new Error(msg);
@@ -135,19 +159,25 @@
       const resp = await getJSON("/api/audits/latest?type=all");
 
       // Soportamos dos formatos:
-      // 1) { ok:true, data:{google,meta,ga4} }
+      // 1) { ok:true, data:{google,meta,ga4,shopify} }
       // 2) { ok:true, items:[...] } / { ok:true, data:[...] }
-      const dict = (resp?.data && !Array.isArray(resp.data)) ? resp.data : {};
+      const dict =
+        resp?.data && !Array.isArray(resp.data) ? resp.data : {};
       const list = Array.isArray(resp?.items)
         ? resp.items
-        : (Array.isArray(resp?.data) ? resp.data : []);
+        : Array.isArray(resp?.data)
+        ? resp.data
+        : [];
 
       const pick = (t) =>
-        dict[t] || list.find((x) => String(x?.type).toLowerCase() === t) || null;
+        dict[t] ||
+        list.find((x) => String(x?.type).toLowerCase() === t) ||
+        null;
 
       const g  = pick("google");
       const m  = pick("meta");
       const ga = pick("ga4");
+      const s  = pick("shopify");
 
       const setFromDoc = (row, doc) => {
         if (!row) return;
@@ -159,21 +189,28 @@
         }
       };
 
-      setFromDoc(rows.google, g);
-      setFromDoc(rows.meta,   m);
-      setFromDoc(rows.ga4,    ga);
+      setFromDoc(rows.google,  g);
+      setFromDoc(rows.meta,    m);
+      setFromDoc(rows.ga4,     ga);
+      setFromDoc(rows.shopify, s);
 
-      // Progreso fallback contando solo filas no omitidas (conectadas)
-      const eligibleRows = ["google","meta","ga4"]
+      // Progreso fallback contando solo filas analizadas (google/meta/shopify)
+      const eligibleRows = ["google", "meta", "shopify"]
         .map((k) => rows[k])
-        .filter((row) => row && !row.classList.contains("opacity-50"));
+        .filter(
+          (row) => row && !row.classList.contains("opacity-50")
+        );
 
-      const done = eligibleRows.filter((row) => row.classList.contains("completed")).length;
-      const pct  = eligibleRows.length ? Math.round((done / eligibleRows.length) * 100) : 100;
+      const done = eligibleRows.filter((row) =>
+        row.classList.contains("completed")
+      ).length;
+      const pct = eligibleRows.length
+        ? Math.round((done / eligibleRows.length) * 100)
+        : 100;
 
       const current = (() => {
         const w = progressBar?.style?.width || "0%";
-        const n = parseInt(String(w).replace("%",""), 10);
+        const n = parseInt(String(w).replace("%", ""), 10);
         return isNaN(n) ? 0 : n;
       })();
       setBar(Math.max(current, pct));
@@ -201,30 +238,43 @@
       // 1) Estado real de conexiones
       const st = await getJSON(ENDPOINTS.status);
       const status = st?.status || {};
+
       const isConnected = {
-        google:  !!status.googleAds?.connected || !!status.google?.connected, // compat
-        meta:    !!status.meta?.connected,
+        google:
+          !!status.googleAds?.connected || !!status.google?.connected, // compat
+        meta: !!status.meta?.connected,
         shopify: !!status.shopify?.connected,
-        // GA4 usa login Google + al menos 1 propiedad conocida
-        ga4:     !!status.ga4?.connected || ( !!status.google?.connected && Number(status.ga4?.propertiesCount || status.google?.count || 0) > 0 ),
+        // De momento GA4 no se lanza en este paso,
+        // así que lo tratamos como "opcional / pendiente"
+        ga4: !!status.ga4?.connected,
       };
 
-      // Pinta estado inicial (sin duplicar textos)
+      // Pinta estado inicial sin duplicar textos
       Object.entries(rows).forEach(([k, row]) => {
         if (!row) return;
-        if (!isConnected[k]) {
-          // Mensaje específico para GA4 si Google está conectado pero falta seleccionar propiedad
-          const customMsg = (k === "ga4" && status.google?.connected)
-            ? "Conecta GA4"
-            : undefined; // usa "No conectado" por defecto
+
+        // GA4 → sólo mostramos como "Conecta GA4" si Google está conectado,
+        // pero **no** formará parte del job de /api/audits/start
+        if (k === "ga4") {
+          const customMsg =
+            status.google?.connected || status.googleAds?.connected
+              ? "Conecta GA4"
+              : "Opcional";
           setRowState(row, "skipped", customMsg);
+          return;
+        }
+
+        if (!isConnected[k]) {
+          setRowState(row, "skipped");
         } else {
           setRowState(row, "running"); // "Analizando…"
         }
       });
 
-      // Fuentes a procesar realmente
-      const toRun = ["google","meta","ga4"].filter((k) => isConnected[k]);
+      // Fuentes que realmente vamos a procesar en este paso
+      const toRun = ["google", "meta", "shopify"].filter(
+        (k) => isConnected[k]
+      );
 
       if (toRun.length === 0) {
         await refreshAuditStatusFromDB();
@@ -235,16 +285,21 @@
         return;
       }
 
-      // 2) Disparar auditorías
+      // 2) Disparar auditorías (job background)
       let jobId = null;
       try {
-        const startResp = await postJSON(ENDPOINTS.start, { types: toRun });
+        const startResp = await postJSON(ENDPOINTS.start, {
+          types: toRun,
+        });
         jobId = startResp?.jobId || null;
       } catch (e) {
-        console.warn("No se pudo iniciar job de auditorías:", e?.message || e);
+        console.warn(
+          "No se pudo iniciar job de auditorías:",
+          e?.message || e
+        );
       }
 
-      // Refresco por BD aunque no haya jobId
+      // Refresco periódico desde BD, aunque no haya jobId
       const bdInterval = setInterval(refreshAuditStatusFromDB, 3000);
       setTimeout(() => refreshAuditStatusFromDB(), 7000);
 
@@ -253,19 +308,27 @@
       let lastSnapshot = null;
 
       async function poll() {
-        if (!jobId) return; // sin jobId dependemos del refresco por BD
+        if (!jobId) return; // sin jobId dependemos sólo del refresco por BD
         try {
-          const q = `${ENDPOINTS.progress}?jobId=${encodeURIComponent(jobId)}`;
+          const q = `${ENDPOINTS.progress}?jobId=${encodeURIComponent(
+            jobId
+          )}`;
           const p = await getJSON(q);
           lastSnapshot = p;
 
-          const overall = Number((p && (p.overallPct ?? p.percent)) ?? 0);
+          const overall = Number(
+            (p && (p.overallPct ?? p.percent)) ?? 0
+          );
           if (!isNaN(overall)) setBar(overall);
           if (overall >= 100 || p?.finished === true) finished = true;
 
           const items = p?.items || {};
           for (const [key, row] of Object.entries(rows)) {
-            if (!row || !isConnected[key]) continue;
+            // Sólo manejamos progreso para google/meta/shopify
+            if (!row || !["google", "meta", "shopify"].includes(key))
+              continue;
+            if (!isConnected[key]) continue;
+
             const it = items[key];
 
             if (!it) {
@@ -273,10 +336,15 @@
               continue;
             }
 
-            const raw  = (it.state || it.status || "").toString().toLowerCase();
-            const pct  = (typeof it.pct === "number")
-              ? Math.round(it.pct)
-              : (typeof it.percent === "number" ? Math.round(it.percent) : null);
+            const raw = (it.state || it.status || "")
+              .toString()
+              .toLowerCase();
+            const pct =
+              typeof it.pct === "number"
+                ? Math.round(it.pct)
+                : typeof it.percent === "number"
+                ? Math.round(it.percent)
+                : null;
 
             let state = "running";
             if (raw === "done") state = "done";
@@ -284,8 +352,12 @@
 
             const suffix =
               state === "running"
-                ? (pct != null ? `Analizando… ${pct}%` : "Analizando…")
-                : (typeof it.msg === "string" && it.msg) ? it.msg : undefined;
+                ? pct != null
+                  ? `Analizando… ${pct}%`
+                  : "Analizando…"
+                : typeof it.msg === "string" && it.msg
+                ? it.msg
+                : undefined;
 
             setRowState(row, state, suffix);
           }
@@ -298,7 +370,12 @@
             setBar(100);
             setText("¡Análisis completado!");
             if (btnContinue) btnContinue.disabled = false;
-            try { sessionStorage.setItem("auditProgressSnapshot", JSON.stringify(lastSnapshot || {})); } catch {}
+            try {
+              sessionStorage.setItem(
+                "auditProgressSnapshot",
+                JSON.stringify(lastSnapshot || {})
+              );
+            } catch {}
             refreshAuditStatusFromDB();
           }
         } catch (e) {
@@ -306,7 +383,9 @@
           clearInterval(bdInterval);
           await refreshAuditStatusFromDB();
           if (cyclerStop) cyclerStop();
-          setText("Análisis finalizado (con advertencias). Puedes continuar.");
+          setText(
+            "Análisis finalizado (con advertencias). Puedes continuar."
+          );
           setBar(100);
           if (btnContinue) btnContinue.disabled = false;
         }
@@ -318,7 +397,9 @@
       if (cyclerStop) cyclerStop();
       setText("Error iniciando el análisis");
       setBar(100);
-      Object.values(rows).forEach((row) => row && setRowState(row, "error"));
+      Object.values(rows).forEach(
+        (row) => row && setRowState(row, "error")
+      );
       if (btnContinue) btnContinue.disabled = false;
     }
   }

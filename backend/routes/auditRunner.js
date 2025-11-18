@@ -8,6 +8,12 @@ const router = express.Router();
 const { runAuditFor } = require('../jobs/auditJob');
 const Audit = require('../models/Audit');
 
+// ★ (opcional, para futuros usos de límites / usos por usuario)
+let User = null;
+try {
+  User = require('../models/User');
+} catch {}
+
 // Modelos para detección de conexiones (auto)
 let MetaAccount, GoogleAccount, ShopConnections;
 try { MetaAccount = require('../models/MetaAccount'); } catch {
@@ -63,7 +69,7 @@ async function detectConnectedSources(userId) {
 async function fetchLatestAuditSummary(userId, type) {
   const doc = await Audit.findOne({ userId, type })
     .sort({ generatedAt: -1 })
-    .select('_id type generatedAt summary issues')
+    .select('_id type generatedAt summary issues origin')
     .lean();
   if (!doc) return null;
   return {
@@ -71,7 +77,8 @@ async function fetchLatestAuditSummary(userId, type) {
     type: doc.type,
     generatedAt: doc.generatedAt,
     summary: doc.summary,
-    issuesCount: Array.isArray(doc.issues) ? doc.issues.length : 0
+    issuesCount: Array.isArray(doc.issues) ? doc.issues.length : 0,
+    origin: doc.origin || null,       // ★ para distinguir onboarding/manual si el modelo lo guarda
   };
 }
 
@@ -90,34 +97,53 @@ router.post('/:type/run', requireAuth, async (req, res) => {
       return res.status(400).json({ ok:false, error:'INVALID_TYPE' });
     }
 
+    // ★ origen: por defecto consideramos que este endpoint se usa en ONBOARDING
+    const source = (req.body && req.body.source) || 'onboarding';
+
     // Checa conexión antes de correr (evita “errores confusos”)
     const connectedTypes = await detectConnectedSources(req.user._id);
     if (!connectedTypes.includes(type)) {
-      return res.status(400).json({ ok:false, error:'SOURCE_NOT_CONNECTED', type });
+      return res.status(400).json({
+        ok:false,
+        error:'SOURCE_NOT_CONNECTED',
+        type,
+      });
     }
 
-    const ok = await runAuditFor({ userId: req.user._id, type });
+    // ★ Pasamos también el 'source' a runAuditFor (no rompe nada si la función lo ignora)
+    const ok = await runAuditFor({ userId: req.user._id, type, source });
+
     const latest = await fetchLatestAuditSummary(req.user._id, type);
 
     return res.json({
       ok: !!ok,
       type,
-      latestAudit: latest
+      source,              // ★ para que el front sepa de dónde viene
+      latestAudit: latest,
     });
   } catch (e) {
     console.error('audit run error:', e);
-    return res.status(500).json({ ok:false, error:'RUN_ERROR', detail: e?.message || String(e) });
+    return res.status(500).json({
+      ok:false,
+      error:'RUN_ERROR',
+      detail: e?.message || String(e),
+    });
   }
 });
 
 /* ===========================================================
  * POST /api/audits/start
- * { types: ['meta','google','shopify'] }  |  { types: 'auto' }
+ * { types: ['meta','google','shopify'], source?: 'manual' | 'onboarding' }
+ *  |  { types: 'auto' }  (usa detectConnectedSources)
  * Crea un job y corre en background; /progress para consultar.
  * =========================================================*/
 router.post('/start', requireAuth, express.json(), async (req,res) => {
   try {
     let types = [];
+
+    // ★ origen: este endpoint se utilizará normalmente desde el panel
+    // "Generar Auditoría con IA" → lo marcamos como 'manual' por defecto
+    const source = (req.body && req.body.source) || 'manual';
 
     if (req.body?.types === 'auto' || !Array.isArray(req.body?.types)) {
       types = await detectConnectedSources(req.user._id);
@@ -136,19 +162,36 @@ router.post('/start', requireAuth, express.json(), async (req,res) => {
       id: jobId,
       userId: String(req.user._id),
       startedAt: Date.now(),
+      source,              // ★ guardamos el origen del job
       items: {}
     };
-    for (const t of types) state.items[t] = { status:'pending', ok:null, error:null };
+    for (const t of types) {
+      state.items[t] = {
+        status: 'pending',
+        ok: null,
+        error: null,
+        source,            // ★ opcional, por claridad
+      };
+    }
 
     jobs.set(jobId, state);
-    res.json({ ok:true, jobId, types });
+
+    // devolvemos info básica al front
+    res.json({
+      ok: true,
+      jobId,
+      types,
+      source,
+    });
 
     // Ejecuta asíncrono, uno por tipo
     setImmediate(async () => {
       for (const t of types) {
         state.items[t].status = 'running';
         try {
-          const ok = await runAuditFor({ userId: req.user._id, type: t });
+          // ★ Pasamos 'source' para que el job e incluso el modelo Audit
+          // puedan marcar origin: 'manual' | 'onboarding'
+          const ok = await runAuditFor({ userId: req.user._id, type: t, source });
           state.items[t].status = 'done';
           state.items[t].ok = !!ok;
         } catch (e) {
@@ -195,7 +238,14 @@ router.get('/progress', requireAuth, async (req,res) => {
     if (allPersisted) s.finishedAt = Date.now();
   }
 
-  res.json({ ok:true, jobId, items, percent, finished: percent >= 100 });
+  res.json({
+    ok:true,
+    jobId,
+    source: s.source || null,   // ★ devolvemos también el origen del job
+    items,
+    percent,
+    finished: percent >= 100
+  });
 });
 
 module.exports = router;
