@@ -68,10 +68,27 @@ function cancelUrl() {
     ? `${APP_URL}${CANCEL_PATH}`
     : 'https://ai.adnova.digital/plans/cancel.html';
 }
+
+// 🔐 Auth más tolerante: acepta req.user o req.isAuthenticated()
 function ensureAuth(req, res, next) {
   try {
-    if (req.isAuthenticated?.() && req.user?._id) return next();
-  } catch {}
+    // Si ya tenemos un usuario con _id, es suficiente
+    if (req.user && req.user._id) return next();
+
+    // Fallback por si sólo está passport
+    if (typeof req.isAuthenticated === 'function' && req.isAuthenticated()) {
+      return next();
+    }
+  } catch (e) {
+    console.warn('ensureAuth error:', e?.message || e);
+  }
+
+  console.warn(
+    '[stripe.ensureAuth] Unauthorized - hasUser:',
+    !!req.user,
+    'userId:',
+    req.user && req.user._id
+  );
   return res.status(401).json({ error: 'Unauthorized' });
 }
 
