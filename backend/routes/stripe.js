@@ -92,56 +92,89 @@ function ensureAuth(req, res, next) {
   return res.status(401).json({ error: 'Unauthorized' });
 }
 
+
 // =============== CHECKOUT ===============
-router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
+router.post('/checkout', express.json(), async (req, res) => {
   const startedAt = new Date().toISOString();
 
   try {
     if (!STRIPE_SECRET_KEY) {
-      return res.status(500).json({ error: 'Falta STRIPE_SECRET_KEY en el servidor' });
+      return res
+        .status(500)
+        .json({ error: 'Falta STRIPE_SECRET_KEY en el servidor' });
     }
 
-    const { plan, priceId: rawPriceId, customer_email } = req.body || {};
-    const priceId = rawPriceId || PRICE_MAP[String(plan || '').toLowerCase()];
+    const {
+      plan,
+      priceId: rawPriceId,
+      customer_email,
+      userId: userIdFromBody,
+    } = req.body || {};
+
+    const priceId =
+      rawPriceId || PRICE_MAP[String(plan || '').toLowerCase()];
 
     if (!priceId) {
       return res.status(400).json({ error: 'Plan o priceId inválido' });
     }
 
-    // Reutilizar/crear Customer si tenemos User
-    let customerId;
-    let userId;
-    if (User && req.user?._id) {
-      const user = await User.findById(req.user._id);
-      if (!user) return res.status(401).json({ error: 'Usuario no encontrado' });
-      userId = String(user._id);
+    // 1) Buscar usuario: primero por body.userId, luego por req.user (fallback)
+    let user = null;
+    let userId = null;
 
-      if (user.stripeCustomerId) {
-        customerId = user.stripeCustomerId;
-
-        // Backfill de metadata.userId para mapear en webhooks
-        try {
-          const cust = await stripe.customers.retrieve(customerId);
-          const needUpdate = !cust?.metadata?.userId || cust.metadata.userId !== userId;
-          if (needUpdate) {
-            await stripe.customers.update(customerId, {
-              metadata: { ...(cust.metadata || {}), userId },
-            });
-          }
-        } catch (e) {
-          console.warn('No se pudo actualizar metadata del customer:', e.message);
-        }
-      } else {
-        const customer = await stripe.customers.create({
-          email: user.email || customer_email,
-          metadata: { userId },
-        });
-        customerId = customer.id;
-        user.stripeCustomerId = customerId;
-        await user.save();
-      }
+    if (User && userIdFromBody) {
+      try {
+        user = await User.findById(userIdFromBody);
+      } catch (_) {}
     }
 
+    if (!user && User && req.user?._id) {
+      try {
+        user = await User.findById(req.user._id);
+      } catch (_) {}
+    }
+
+    if (user) {
+      userId = String(user._id);
+    } else {
+      // sin usuario no queremos crear checkout
+      return res
+        .status(401)
+        .json({ error: 'Usuario no autenticado o no encontrado' });
+    }
+
+    // 2) Reutilizar/crear Customer
+    let customerId;
+    if (user.stripeCustomerId) {
+      customerId = user.stripeCustomerId;
+
+      // Backfill de metadata.userId para mapear en webhooks
+      try {
+        const cust = await stripe.customers.retrieve(customerId);
+        const needUpdate =
+          !cust?.metadata?.userId || cust.metadata.userId !== userId;
+        if (needUpdate) {
+          await stripe.customers.update(customerId, {
+            metadata: { ...(cust.metadata || {}), userId },
+          });
+        }
+      } catch (e) {
+        console.warn(
+          'No se pudo actualizar metadata del customer:',
+          e.message
+        );
+      }
+    } else {
+      const customer = await stripe.customers.create({
+        email: user.email || customer_email,
+        metadata: { userId },
+      });
+      customerId = customer.id;
+      user.stripeCustomerId = customerId;
+      await user.save();
+    }
+
+    // 3) Base de la sesión de checkout
     const base = {
       mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
@@ -155,9 +188,13 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
       cancel_url: cancelUrl(),
 
       subscription_data: { metadata: { userId: userId || 'n/a' } },
-      metadata: { plan: plan || 'n/a', userId: userId || 'n/a', startedAt },
+      metadata: {
+        plan: plan || 'n/a',
+        userId: userId || 'n/a',
+        startedAt,
+      },
 
-      customer_email: customer_email || undefined,
+      customer_email: customer_email || user.email || undefined,
     };
 
     if (customerId) {
@@ -169,21 +206,27 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
       Object.assign(base, { customer_creation: 'always' });
     }
 
-    // Prevalidación del PRICE
+    // 4) Prevalidación del PRICE
     let priceObj;
     try {
       priceObj = await stripe.prices.retrieve(priceId);
     } catch (e) {
       console.error('[checkout] price retrieve failed:', e.message);
-      return res.status(400).json({ error: 'PRICE_ID inválido para esta clave', details: e.message });
+      return res.status(400).json({
+        error: 'PRICE_ID inválido para esta clave',
+        details: e.message,
+      });
     }
     if (!priceObj.recurring) {
-      return res
-        .status(400)
-        .json({ error: 'Este PRICE no es recurrente (one_time). Crea un price recurrente mensual.' });
+      return res.status(400).json({
+        error:
+          'Este PRICE no es recurrente (one_time). Crea un price recurrente mensual.',
+      });
     }
     if (priceObj.active === false) {
-      return res.status(400).json({ error: 'El PRICE está inactivo en Stripe.' });
+      return res
+        .status(400)
+        .json({ error: 'El PRICE está inactivo en Stripe.' });
     }
 
     const session = await stripe.checkout.sessions.create(base);
@@ -203,6 +246,7 @@ router.post('/checkout', ensureAuth, express.json(), async (req, res) => {
     });
   }
 });
+
 
 // =============== WEBHOOK ===============
 router.post('/webhook', async (req, res) => {
