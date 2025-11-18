@@ -90,9 +90,6 @@
       background:transparent; border:1px solid var(--chip-border);
       color: var(--soft); box-shadow:none;
     }
-    .btn.warn{
-      background:transparent; border:1px solid var(--warn); color:var(--warn);
-    }
     @media (max-width:640px){
       .card{padding:24px 18px}
       .cta{justify-content:stretch}
@@ -123,12 +120,11 @@
       </div>
 
       <div class="note" id="hint">
-        Si tu suscripción quedó en estado <strong>incomplete</strong>, ábrela en el portal de facturación para continuar con el pago.
+        Si tu suscripción quedó en estado <strong>incomplete</strong>, vuelve a <strong>Planes</strong> para reintentar el pago.
       </div>
 
       <div class="cta">
         <a class="btn secondary" href="/dashboard">Ir al dashboard</a>
-        <button class="btn warn" id="openPortal" type="button">Abrir portal de facturación</button>
         <a class="btn" href="/plans">Volver a planes</a>
       </div>
     </section>
@@ -142,7 +138,6 @@
     const chipPlan = $('#chip-plan');
     const chipSub  = $('#chip-sub');
     const hint     = $('#hint');
-    const btnPortal= $('#openPortal');
 
     async function getSession(){
       const r = await fetch('/api/session',{credentials:'include'});
@@ -166,33 +161,8 @@
       else if(['incomplete','incomplete_expired'].includes(s)) chipSub.classList.add('warn');
       else if(['canceled','unpaid'].includes(s)) chipSub.classList.add('err');
 
-      // Mostrar/ocultar hint de ayuda
       hint.style.display = ['incomplete','incomplete_expired'].includes(s) ? 'block' : 'none';
     }
-
-    async function openPortal(){
-      try{
-        btnPortal.disabled = true;
-        const r = await fetch('/api/stripe/portal', {
-          method:'POST',
-          credentials:'include'
-        });
-        if(!r.ok){
-          // Si no hay stripeCustomerId o falla, esconder botón.
-          btnPortal.style.display = 'none';
-          return;
-        }
-        const j = await r.json();
-        if (j?.url) location.href = j.url;
-        else btnPortal.style.display = 'none';
-      }catch(_){
-        btnPortal.style.display = 'none';
-      }finally{
-        btnPortal.disabled = false;
-      }
-    }
-
-    btnPortal.addEventListener('click', openPortal);
 
     (async function init(){
       try{
@@ -203,7 +173,7 @@
         }
         paintSession(sess);
       }catch(_){
-        // si no hay sesión, sólo dejamos los CTAs visibles
+        /* sin sesión: dejamos CTAs visibles */
       }
     })();
   </script>
