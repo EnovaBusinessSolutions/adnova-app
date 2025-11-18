@@ -3,10 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Pago confirmado · Adnova AI</title>
+  <title>Pago cancelado · Adnova AI</title>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root{
       --bg:#151219;
@@ -36,45 +35,28 @@
       display:flex; align-items:center; justify-content:center;
       padding:32px;
     }
-
-    .wrap{
-      width:100%;
-      max-width: 980px;
-    }
-
+    .wrap{ width:100%; max-width:980px; }
     .card{
       background:var(--card);
       border-radius:16px;
       box-shadow: var(--shadow);
-      border: 1px solid rgba(255,255,255,.04);
-      padding: 32px 28px 28px;
+      border:1px solid rgba(255,255,255,.04);
+      padding:32px 28px 28px;
     }
-
     .pill{
       display:inline-flex; align-items:center; gap:8px;
       background: var(--chip);
       border:1px solid var(--chip-border);
       color: var(--soft);
       padding:8px 12px; border-radius:999px;
-      font-size:12px; font-weight:600; letter-spacing:.2px;
+      font-size:12px; font-weight:700; letter-spacing:.2px;
     }
-    .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
-
-    h1{
-      margin:14px 0 10px;
-      font-size: clamp(22px, 2.6vw, 28px);
-      font-weight:800;
-    }
-    .sub{
-      color: var(--muted);
-      margin:0 0 22px;
-      font-size:14px;
-    }
-
+    .dot{width:8px;height:8px;border-radius:50%;background:var(--err)}
+    h1{ margin:14px 0 10px; font-size: clamp(22px, 2.6vw, 28px); font-weight:800; }
+    .sub{ color:var(--muted); margin:0 0 22px; font-size:14px; }
     .row{display:flex; gap:12px; flex-wrap:wrap; margin-bottom:18px}
     .chip{
-      flex:1 1 220px;
-      min-width:220px;
+      flex:1 1 220px; min-width:220px;
       display:flex; align-items:center; justify-content:space-between;
       background:var(--chip);
       border:1px solid var(--chip-border);
@@ -85,31 +67,21 @@
     .chip.ok .val{color:var(--ok)}
     .chip.warn .val{color:var(--warn)}
     .chip.err .val{color:var(--err)}
-
-    .status{
-      display:flex; align-items:center; gap:10px;
+    .note{
+      background: var(--card-2);
+      border:1px dashed var(--chip-border);
+      border-radius:12px;
       color: var(--muted);
-      font-size:14px;
-      margin-top:6px;
+      padding:12px 14px;
+      font-size:13px;
     }
-    .spin{
-      width:14px;height:14px;border-radius:50%;
-      border:2px solid rgba(255,255,255,.15);
-      border-top-color: var(--accent);
-      animation: r .9s linear infinite;
-    }
-    @keyframes r{to{transform:rotate(360deg)}}
-
-    .cta{
-      margin-top: 20px;
-      display:flex; gap:12px; justify-content:flex-end;
-    }
+    .cta{ margin-top:20px; display:flex; gap:12px; flex-wrap:wrap; justify-content:flex-end }
     .btn{
       appearance:none; border:0; cursor:pointer;
       background:linear-gradient(135deg, var(--accent), var(--accent-2));
-      color:#fff; font-weight:700; letter-spacing:.2px;
+      color:#fff; font-weight:800; letter-spacing:.2px;
       padding:12px 20px; border-radius:10px;
-      box-shadow: 0 10px 30px rgba(109,61,252,.35);
+      box-shadow:0 10px 30px rgba(109,61,252,.35);
       transition: transform .06s ease;
       text-decoration:none; display:inline-flex; align-items:center; gap:8px;
     }
@@ -118,8 +90,9 @@
       background:transparent; border:1px solid var(--chip-border);
       color: var(--soft); box-shadow:none;
     }
-
-    /* Responsive */
+    .btn.warn{
+      background:transparent; border:1px solid var(--warn); color:var(--warn);
+    }
     @media (max-width:640px){
       .card{padding:24px 18px}
       .cta{justify-content:stretch}
@@ -130,9 +103,9 @@
 <body>
   <main class="wrap">
     <section class="card">
-      <span class="pill"><span class="dot"></span> Procesando pago…</span>
-      <h1>¡Gracias! <span style="font-weight:700;color:#fff">Estamos activando tu plan…</span></h1>
-      <p class="sub">No cierres esta pestaña. En segundos confirmamos con Stripe y actualizamos tu cuenta.</p>
+      <span class="pill"><span class="dot"></span> Operación cancelada</span>
+      <h1>Pago cancelado</h1>
+      <p class="sub">No se realizó ningún cargo. Puedes volver a intentarlo desde <strong>Planes</strong> o regresar a tu dashboard.</p>
 
       <div class="row">
         <div class="chip" id="chip-session">
@@ -149,14 +122,14 @@
         </div>
       </div>
 
-      <div class="status" id="status">
-        <span class="spin" id="spinner"></span>
-        <span id="status-text">Confirmando pago…</span>
+      <div class="note" id="hint">
+        Si tu suscripción quedó en estado <strong>incomplete</strong>, ábrela en el portal de facturación para continuar con el pago.
       </div>
 
       <div class="cta">
-        <a class="btn secondary" href="/plans">Ver planes</a>
-        <a class="btn" href="/dashboard" id="goDash">Ir al dashboard</a>
+        <a class="btn secondary" href="/dashboard">Ir al dashboard</a>
+        <button class="btn warn" id="openPortal" type="button">Abrir portal de facturación</button>
+        <a class="btn" href="/plans">Volver a planes</a>
       </div>
     </section>
   </main>
@@ -168,7 +141,8 @@
     const subEl   = $('#sub');
     const chipPlan = $('#chip-plan');
     const chipSub  = $('#chip-sub');
-    const statusText = $('#status-text');
+    const hint     = $('#hint');
+    const btnPortal= $('#openPortal');
 
     async function getSession(){
       const r = await fetch('/api/session',{credentials:'include'});
@@ -176,24 +150,14 @@
       return r.json();
     }
 
-    async function syncStripe(){
-      // Empuja una sincronización fresquita desde Stripe → DB
-      const r = await fetch('/api/stripe/sync',{
-        method:'POST',
-        credentials:'include',
-        headers:{'content-type':'application/json'}
-      });
-      // aunque falle, seguimos; el polling leerá /api/session
-      return r.ok;
-    }
-
     function paintSession(data){
       if(!data?.authenticated) return;
       emailEl.textContent = data.user?.email || '—';
+
       const plan = (data.user?.plan || '').toLowerCase() || 'gratis';
       planEl.textContent = plan;
       chipPlan.classList.remove('ok','warn','err');
-      chipPlan.classList.add(plan === 'gratis' ? '' : 'ok');
+      if (plan !== 'gratis') chipPlan.classList.add('ok');
 
       const s = (data.user?.subscription?.status || '').toLowerCase() || '—';
       subEl.textContent = s;
@@ -201,9 +165,36 @@
       if(['active','trialing','past_due'].includes(s)) chipSub.classList.add('ok');
       else if(['incomplete','incomplete_expired'].includes(s)) chipSub.classList.add('warn');
       else if(['canceled','unpaid'].includes(s)) chipSub.classList.add('err');
+
+      // Mostrar/ocultar hint de ayuda
+      hint.style.display = ['incomplete','incomplete_expired'].includes(s) ? 'block' : 'none';
     }
 
-    async function init(){
+    async function openPortal(){
+      try{
+        btnPortal.disabled = true;
+        const r = await fetch('/api/stripe/portal', {
+          method:'POST',
+          credentials:'include'
+        });
+        if(!r.ok){
+          // Si no hay stripeCustomerId o falla, esconder botón.
+          btnPortal.style.display = 'none';
+          return;
+        }
+        const j = await r.json();
+        if (j?.url) location.href = j.url;
+        else btnPortal.style.display = 'none';
+      }catch(_){
+        btnPortal.style.display = 'none';
+      }finally{
+        btnPortal.disabled = false;
+      }
+    }
+
+    btnPortal.addEventListener('click', openPortal);
+
+    (async function init(){
       try{
         const sess = await getSession();
         if(!sess?.authenticated){
@@ -211,39 +202,10 @@
           return;
         }
         paintSession(sess);
-      }catch(_){ /* si no hay sesión, no bloqueamos; botón sigue disponible */ }
-
-      // Disparar sync y hacer un polling corto para reflejar cambio
-      await syncStripe();
-
-      let tries = 0, max = 5;
-      const tick = async ()=>{
-        tries++;
-        try{
-          const s = await getSession();
-          paintSession(s);
-
-          const plan = (s?.user?.plan || '').toLowerCase();
-          const status = (s?.user?.subscription?.status || '').toLowerCase();
-
-          if (['active','trialing','past_due'].includes(status) && plan && plan !== 'gratis'){
-            statusText.textContent = '¡Listo! Plan activado correctamente.';
-            $('#spinner')?.remove();
-            return; // dejamos de poller
-          }
-        }catch(_){}
-
-        if(tries < max){
-          setTimeout(tick, 1500);
-        }else{
-          statusText.textContent = 'Sincronización completada. Si aún ves “gratis”, actualiza en unos segundos.';
-          $('#spinner')?.remove();
-        }
-      };
-      tick();
-    }
-
-    init();
+      }catch(_){
+        // si no hay sesión, sólo dejamos los CTAs visibles
+      }
+    })();
   </script>
 </body>
 </html>
