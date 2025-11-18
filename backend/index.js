@@ -662,7 +662,7 @@ app.get('/api/saas/ping', sessionGuard, (req, res) => {
 });
 app.use('/api/saas/shopify', sessionGuard, require('./routes/shopifyMatch'));
 
-// Alias simple para /api/me (lo usa /plans y /plans/success)
+// Alias simple para /api/me (lo usa /plans/success y /plans)
 app.get('/api/me', async (req, res) => {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
     return res.status(401).json({ authenticated: false });
@@ -674,22 +674,33 @@ app.get('/api/me', async (req, res) => {
       return res.status(401).json({ authenticated: false });
     }
 
+    // Limpia campos sensibles para no exponerlos
+    const {
+      password,
+      resetPasswordToken,
+      resetPasswordExpires,
+      ...safeUser
+    } = u;
+
     return res.json({
       authenticated: true,
-      // lo que necesita Pricing.tsx
-      plan: (u.plan || 'gratis').toLowerCase(),
-      subscription: u.subscription || null,
-      // y mantenemos el objeto user para otras vistas
       user: {
-        _id: u._id,
-        email: u.email,
+        _id: safeUser._id,
+        email: safeUser.email,
       },
+      // estos dos son los que necesita /plans y /plans/success
+      plan: safeUser.plan || 'gratis',
+      subscription: safeUser.subscription || null,
     });
   } catch (e) {
-    console.error('❌ /api/me error:', e);
-    return res.status(401).json({ authenticated: false });
+    console.error('/api/me error', e);
+    return res.status(500).json({
+      authenticated: false,
+      error: 'internal',
+    });
   }
 });
+
 
 
 /* =========================
