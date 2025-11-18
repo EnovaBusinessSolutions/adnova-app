@@ -39,7 +39,6 @@ const connector = require('./routes/shopifyConnector');
 const webhookRoutes = require('./routes/shopifyConnector/webhooks');
 const auditsRoutes = require('./routes/audits');
 
-
 // Meta
 const metaInsightsRoutes = require('./routes/metaInsights');
 const metaAccountsRoutes = require('./routes/metaAccounts');
@@ -86,58 +85,8 @@ app.use(
 app.options(/.*/, cors());
 
 /* =========================
- * Parsers especiales (antes de JSON global)
- * ========================= */
-// 1) Webhooks Shopify (raw)
-app.use(
-  '/connector/webhooks',
-  express.raw({ type: 'application/json' }),
-  webhookRoutes
-);
-
-// 2) Stripe: RAW **solo** en /api/stripe/webhook; JSON normal para el resto
-app.use('/api/stripe', (req, res, next) => {
-  if (req.path === '/webhook') {
-    return express.raw({ type: 'application/json' })(req, res, next);
-  }
-  return express.json()(req, res, next);
-});
-
-app.use('/api/stripe', stripeRouter);
-
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true }));
-
-
-
-
-
-/* =========================
- * CSP público
- * ========================= */
-app.use(publicCSP);
-
-/* robots.txt simple */
-app.get('/robots.txt', (_req, res) => {
-  res.type('text/plain').send('User-agent: *\nDisallow:');
-});
-
-/* =========================
- * MongoDB
- * ========================= */
-if (!process.env.MONGO_URI) {
-  console.warn('⚠️  MONGO_URI no está configurado');
-}
-mongoose
-  .connect(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
-  .then(() => console.log('✅ Conectado a MongoDB Atlas'))
-  .catch((err) => console.error('❌ Error al conectar con MongoDB:', err));
-
-/* =========================
  * Sesión y Passport
+ * (ANTES de Stripe, webhooks y APIs)
  * ========================= */
 app.set('trust proxy', 1);
 app.use(
@@ -170,11 +119,62 @@ function sessionGuard(req, res, next) {
   return res.status(401).json({ error: 'No hay sesión' });
 }
 
+/* =========================
+ * Parsers especiales (antes de JSON global)
+ * ========================= */
+// 1) Webhooks Shopify (raw)
+app.use(
+  '/connector/webhooks',
+  express.raw({ type: 'application/json' }),
+  webhookRoutes
+);
+
+// 2) Stripe: RAW **solo** en /api/stripe/webhook; JSON normal para el resto
+app.use('/api/stripe', (req, res, next) => {
+  if (req.path === '/webhook') {
+    return express.raw({ type: 'application/json' })(req, res, next);
+  }
+  return express.json()(req, res, next);
+});
+
+// Router de Stripe (ya con sesión/passport disponibles)
+app.use('/api/stripe', stripeRouter);
+
+// Parsers globales
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+/* =========================
+ * CSP público
+ * ========================= */
+app.use(publicCSP);
+
+/* robots.txt simple */
+app.get('/robots.txt', (_req, res) => {
+  res.type('text/plain').send('User-agent: *\nDisallow:');
+});
+
+/* =========================
+ * MongoDB
+ * ========================= */
+if (!process.env.MONGO_URI) {
+  console.warn('⚠️  MONGO_URI no está configurado');
+}
+mongoose
+  .connect(process.env.MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+  })
+  .then(() => console.log('✅ Conectado a MongoDB Atlas'))
+  .catch((err) => console.error('❌ Error al conectar con MongoDB:', err));
+
+/* =========================
+ * Rutas utilitarias públicas
+ * ========================= */
 app.get('/agendar', (_req, res) => {
   const file = path.join(__dirname, '../public/agendar.html');
   let html = fs.readFileSync(file, 'utf8');
 
-  // Inyecta el enlace del booking (Appointment Schedule)
   const bookingUrl = process.env.BOOKING_URL || '';
   html = html.replace(/{{BOOKING_URL}}/g, bookingUrl);
 
@@ -215,7 +215,6 @@ if (HAS_DASHBOARD_DIST) {
   console.warn('⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard');
 }
 
-
 app.use('/api/bookcall', require('./routes/bookcall'));
 
 /* =========================
@@ -231,29 +230,17 @@ app.use('/api/google/analytics', gaRouter);
 app.use('/api/google/ads/insights', sessionGuard, googleAdsInsightsRouter);
 app.use('/api/google/ads', sessionGuard, googleAdsInsightsRouter);
 
-
-app.use('/api/onboarding/status', sessionGuard, require('./routes/onboardingStatus'))
+app.use('/api/onboarding/status', sessionGuard, require('./routes/onboardingStatus'));
 
 // ✅ Auditorías
-// Consultas (latest, action-center, por tipo) + Runner (start)
-// IMPORTANTE: primero consultas, luego runner (comparten prefijo /api/audits)
 app.use('/api/audits', sessionGuard, auditsRoutes, auditRunnerRoutes);
-
-// Legacy (singular) solo para compatibilidad del runner antiguo
 app.use('/api/audit', sessionGuard, auditRunnerRoutes);
-
-// Alias antiguo que usaba el dashboard → debe apuntar a CONSULTAS
 app.use('/api/dashboard/audits', sessionGuard, auditsRoutes);
 
-// Redirects legacy → canonical (por si el front o bookmarks aún pegan a rutas viejas)
-app.post('/api/audit/start',         sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
-app.post('/api/audit/google/start',  sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
-app.post('/api/audit/meta/start',    sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
-app.post('/api/audit/shopify/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
-
-
-
-
+app.post('/api/audit/start',        sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
+app.post('/api/audit/google/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
+app.post('/api/audit/meta/start',   sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
+app.post('/api/audit/shopify/start',sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
 
 // Stripe / Facturapi / Billing
 app.use('/api/facturapi', require('./routes/facturapi'));
@@ -265,15 +252,13 @@ app.use('/api/meta/accounts', sessionGuard, metaAccountsRoutes);
 app.use('/api/meta', metaTable);
 
 // Shopify
-// Shopify
-const verifyShopifyToken = require('../middlewares/verifyShopifyToken');
+const verifyShopifyToken = require('../middlewares/verifyShopifyToken'); // (por ahora no usado)
 
 // Aplica el CSP de Shopify a todo lo que cuelgue de /connector
 app.use('/connector', shopifyCSP, connector);
 
 app.use('/api/shopify', shopifyRoutes);
 app.use('/api', mockShopify);
-
 
 /* =========================
  * Páginas públicas y flujo de app
@@ -674,7 +659,6 @@ app.get('/api/me', async (req, res) => {
       return res.status(401).json({ authenticated: false });
     }
 
-    // Limpia campos sensibles para no exponerlos
     const {
       password,
       resetPasswordToken,
@@ -688,7 +672,6 @@ app.get('/api/me', async (req, res) => {
         _id: safeUser._id,
         email: safeUser.email,
       },
-      // estos dos son los que necesita /plans y /plans/success
       plan: safeUser.plan || 'gratis',
       subscription: safeUser.subscription || null,
     });
@@ -701,13 +684,10 @@ app.get('/api/me', async (req, res) => {
   }
 });
 
-
-
 /* =========================
  * Otras APIs internas
  * ========================= */
 app.use('/api', userRoutes);
-
 
 app.use('/api/secure', verifySessionToken, secureRoutes);
 app.use('/api/dashboard', dashboardRoute);
@@ -733,15 +713,12 @@ app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
     return res.status(400).send("Falta el parámetro 'shop'");
   }
 
-  // Redirigimos SIEMPRE al entrypoint del conector,
-  // que es quien fuerza OAuth si hace falta.
   const redirectUrl = new URL('/connector', `https://${req.headers.host}`);
   redirectUrl.searchParams.set('shop', shop);
   if (host) redirectUrl.searchParams.set('host', host);
 
   return res.redirect(redirectUrl.toString());
 });
-
 
 /* =========================
  * OAuth Google (login simple)
@@ -780,11 +757,9 @@ app.get('/__ls-public', (_req, res) => {
   });
 });
 
-// --- LOGOUT unificado (POST para fetch desde el front y GET para navegación) ---
-
+// --- LOGOUT unificado --- //
 function destroySessionAndReply(req, res, { redirectTo } = {}) {
   req.session?.destroy?.(() => {
-    // borra la cookie de sesión (ajusta el nombre si lo cambiaste en session())
     res.clearCookie('connect.sid', {
       path: '/',
       sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
@@ -792,14 +767,12 @@ function destroySessionAndReply(req, res, { redirectTo } = {}) {
       httpOnly: true,
     });
     if (redirectTo) {
-      // sin JS inline (CSP friendly)
       return res.redirect(303, redirectTo);
     }
     return res.json({ ok: true });
   });
 }
 
-// Para botones que hacen fetch: POST /api/logout
 app.post('/api/logout', (req, res, next) => {
   req.logout?.((err) => {
     if (err) return next(err);
@@ -807,7 +780,6 @@ app.post('/api/logout', (req, res, next) => {
   });
 });
 
-// Para navegación directa (links): GET /logout
 app.get('/logout', (req, res, next) => {
   req.logout?.((err) => {
     if (err) return next(err);
@@ -827,9 +799,9 @@ app.get('/plans/cancel', (_req, res) => {
   res.redirect('/plans');
 });
 
- app.use('/api', (req, res) => {
-   res.status(404).json({ ok:false, error:'Not Found', path: req.originalUrl });
- });
+app.use('/api', (req, res) => {
+  res.status(404).json({ ok:false, error:'Not Found', path: req.originalUrl });
+});
 
 /* =========================
  * 404 y errores

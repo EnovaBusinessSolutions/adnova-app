@@ -308,58 +308,111 @@ router.post('/webhook', async (req, res) => {
       }
 
       case 'invoice.paid': {
-        const inv = event.data.object;
-        const stripeInvoice = await stripe.invoices.retrieve(inv.id, {
-          expand: ['lines.data.price.product', 'customer'],
-        });
+  // 1) Traer invoice completo de Stripe (con items, amount, etc.)
+  const inv = event.data.object; // invoice skeleton
+  const stripeInvoice = await stripe.invoices.retrieve(inv.id, {
+    expand: ['lines.data.price.product', 'customer'],
+  });
 
-        if (!User) try { User = require('../models/User'); } catch {}
-        const custId = typeof stripeInvoice.customer === 'string'
-          ? stripeInvoice.customer
-          : stripeInvoice.customer?.id;
-        const user = custId && User
-          ? await User.findOne({ stripeCustomerId: custId }).lean()
-          : null;
-        if (!user) break;
+  // 2) Ubicar al user en tu DB por stripeCustomerId
+  if (!User) try { User = require('../models/User'); } catch {}
+  const custId = typeof stripeInvoice.customer === 'string'
+    ? stripeInvoice.customer
+    : stripeInvoice.customer?.id;
+  const user = custId && User
+    ? await User.findOne({ stripeCustomerId: custId }).lean()
+    : null;
+  if (!user) break;
 
-        let TaxProfile = null;
-        try { TaxProfile = require('../models/TaxProfile'); } catch {}
-        const taxProfile = TaxProfile
-          ? await TaxProfile.findOne({ user: user._id }).lean()
-          : null;
+  // 3) Cargar perfil fiscal (si no hay → público en general)
+  let TaxProfile = null;
+  try { TaxProfile = require('../models/TaxProfile'); } catch {}
+  const taxProfile = TaxProfile
+    ? await TaxProfile.findOne({ user: user._id }).lean()
+    : null;
 
-        const customerPayload = genCustomerPayload(taxProfile);
-        const totalWithTax = (stripeInvoice.total || stripeInvoice.amount_paid || 0) / 100;
-        const conceptDesc = `Suscripción Adnova AI – ${stripeInvoice.lines?.data?.[0]?.price?.nickname || 'Plan'}`;
-        const cfdiUse = taxProfile?.cfdiUse || process.env.FACTURAPI_DEFAULT_USE || 'G03';
+  // 4) Preparar payload para Facturapi
+  const customerPayload = genCustomerPayload(taxProfile);
+  const totalWithTax = (stripeInvoice.total || stripeInvoice.amount_paid || 0) / 100; // Stripe en centavos
+  const conceptDesc = `Suscripción Adnova AI – ${stripeInvoice.lines?.data?.[0]?.price?.nickname || 'Plan'}`;
+  const cfdiUse = taxProfile?.cfdiUse || process.env.FACTURAPI_DEFAULT_USE || 'G03';
 
-        try {
-          const cfdi = await emitirFactura({
-            customer: customerPayload,
-            description: conceptDesc,
-            totalWithTax,
-            cfdiUse,
-          });
+  // 5) Timbrar primero (sin metadata / sin email)
+  try {
+    const cfdi = await emitirFactura({
+      customer: customerPayload,
+      description: conceptDesc,
+      totalWithTax,
+      cfdiUse,
+    });
 
-          console.log('✅ CFDI timbrado', cfdi.uuid, 'total:', totalWithTax);
+    console.log('✅ CFDI timbrado', cfdi.uuid, 'total:', totalWithTax);
 
-          const destinatario = customerPayload.email || user.email;
-          if (destinatario) {
-            await enviarCfdiPorEmail(cfdi.id, destinatario);
-          }
+    // 6) Enviar por email de forma separada (no rompe el webhook si falla)
+    const destinatario = customerPayload.email || user.email;
+    if (destinatario) {
+      await enviarCfdiPorEmail(cfdi.id, destinatario);
+    }
 
-          await User.findByIdAndUpdate(user._id, {
-            $set: {
-              'subscription.lastCfdiId': cfdi.id,
-              'subscription.lastCfdiTotal': totalWithTax,
-              'subscription.lastStripeInvoice': stripeInvoice.id,
-            },
-          }).exec();
-        } catch (e) {
-          console.error('❌ Timbrado Facturapi falló:', e?.response?.data || e.message);
-        }
-        break;
+    // (Opcional) Persistir folio/ligas en tu DB
+    await User.findByIdAndUpdate(user._id, {
+      $set: {
+        'subscription.lastCfdiId': cfdi.id,
+        'subscription.lastCfdiTotal': totalWithTax,
+        'subscription.lastStripeInvoice': stripeInvoice.id,
+      },
+    }).exec();
+  } catch (e) {
+    console.error('❌ Timbrado Facturapi falló:', e?.response?.data || e.message);
+  }
+
+  // 🔁 EXTRA: sincroniza también la suscripción (por si no llegó customer.subscription.updated)
+  try {
+    if (stripeInvoice.subscription) {
+      const subId = typeof stripeInvoice.subscription === 'string'
+        ? stripeInvoice.subscription
+        : stripeInvoice.subscription.id;
+
+      const sub = await stripe.subscriptions.retrieve(subId, {
+        expand: ['items.data.price'],
+      });
+
+      const status = (sub.status || '').toLowerCase();
+      const priceId = sub.items?.data?.[0]?.price?.id || null;
+      const mappedPlan = priceId ? PRICE_TO_PLAN[priceId] : null;
+
+      const update = {
+        'subscription.id': sub.id,
+        'subscription.status': status,
+        'subscription.priceId': priceId,
+        'subscription.cancel_at_period_end': !!sub.cancel_at_period_end,
+        'subscription.currentPeriodEnd': sub.current_period_end
+          ? new Date(sub.current_period_end * 1000)
+          : null,
+      };
+
+      if (['canceled', 'incomplete_expired', 'unpaid'].includes(status)) {
+        update['plan'] = 'gratis';
+        update['subscription.plan'] = 'gratis';
+      } else if (['active', 'trialing', 'past_due'].includes(status) && mappedPlan) {
+        update['plan'] = mappedPlan;
+        update['subscription.plan'] = mappedPlan;
       }
+
+      await User.findByIdAndUpdate(user._id, { $set: update }).exec();
+      console.log('🔄 Suscripción sincronizada desde invoice.paid:', {
+        userId: user._id.toString(),
+        status,
+        plan: update.plan,
+      });
+    }
+  } catch (e) {
+    console.error('❌ No se pudo sincronizar suscripción desde invoice.paid:', e?.message || e);
+  }
+
+  break;
+}
+
 
       default:
         break;
