@@ -5,7 +5,7 @@
   // =======================
   const ENDPOINTS = {
     status:   "/api/onboarding/status", // GET
-    start:    "/api/audits/start",      // POST { types: [...] }
+    start:    "/api/audits/start",      // POST { types: [...] , source, origin }
     progress: "/api/audits/progress"    // GET  ?jobId=...
   };
 
@@ -244,8 +244,7 @@
           !!status.googleAds?.connected || !!status.google?.connected, // compat
         meta: !!status.meta?.connected,
         shopify: !!status.shopify?.connected,
-        // De momento GA4 no se lanza en este paso,
-        // así que lo tratamos como "opcional / pendiente"
+        // GA4 lo tratamos como opcional (no lanza auditoría aquí)
         ga4: !!status.ga4?.connected,
       };
 
@@ -286,10 +285,13 @@
       }
 
       // 2) Disparar auditorías (job background)
+      //    IMPORTANTE: marcamos explícitamente que el origen es "onboarding"
       let jobId = null;
       try {
         const startResp = await postJSON(ENDPOINTS.start, {
           types: toRun,
+          source: "onboarding",   // 👈 para que el backend guarde origin/source
+          origin: "onboarding",   // 👈 si el job usa esta clave directamente
         });
         jobId = startResp?.jobId || null;
       } catch (e) {
