@@ -755,33 +755,40 @@ router.get('/usage', requireAuth, async (req, res) => {
 
     if (!cfg.unlimited) {
       const { start, end } = getWindowForPeriod(cfg.period);
+      const range = { $gte: start, $lt: end };
 
-      // 🔢 Traemos todas las auditorías del periodo
+      // 🔢 Traemos solo auditorías del periodo que NO sean de onboarding
       const docs = await Audit.find({
         userId,
-        generatedAt: { $gte: start, $lt: end },
+        origin: { $ne: 'onboarding' },
+        $or: [
+          { generatedAt: range },
+          { createdAt: range },
+        ],
       })
-        .select('generatedAt')
-        .sort({ generatedAt: 1 })
+        .select('generatedAt createdAt')
+        .sort({ generatedAt: 1, createdAt: 1 })
         .lean();
 
-      // Cada "sesión" de auditoría (Google+Meta+GA4 juntas) cuenta como 1 uso.
-      // La PRIMERA sesión del periodo se considera la auditoría inicial (onboarding) y NO suma.
-      const MAX_GAP_MS = 10 * 60 * 1000; // 10 minutos entre fuentes
+      // Cada "sesión" (click en Generar Auditoría) cuenta como 1 uso,
+      // aunque se creen 3 docs (google/meta/ga4) muy seguidos.
+      const MAX_GAP_MS = 10 * 60 * 1000; // 10 minutos
       let sessions = 0;
       let lastTs = null;
 
       for (const d of docs) {
-        const ts = d.generatedAt instanceof Date
-          ? d.generatedAt.getTime()
-          : new Date(d.generatedAt).getTime();
+        const base = d.generatedAt || d.createdAt;
+        if (!base) continue;
+        const ts = base instanceof Date ? base.getTime() : new Date(base).getTime();
+        if (!ts) continue;
+
         if (!lastTs || ts - lastTs > MAX_GAP_MS) {
           sessions++;
         }
         lastTs = ts;
       }
 
-      used = Math.max(0, sessions - 1); // primera sesión = auditoría inicial gratis
+      used = sessions;
       nextResetAt = end.toISOString();
     }
 
@@ -908,6 +915,7 @@ router.get('/:source/latest', requireAuth, async (req, res) => {
     return res.json({
       summary: finalDoc.summary || finalDoc.resumen || null,
       findings: Array.isArray(finalDoc.issues) ? finalDoc.issues : [],
+
       createdAt: finalDoc.generatedAt || finalDoc.createdAt || null,
     });
   } catch (e) {
