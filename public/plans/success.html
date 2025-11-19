@@ -5,72 +5,95 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Pago confirmado · Adnova AI</title>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root{
-      --bg:#151219; --card:#0b0b0d; --card-2:#100c1e; --text:#F4F2FF;
-      --muted:#bfb7e6; --soft:#cfc7f5; --chip:#1d1633; --chip-border:#2b2147;
-      --ok:#4ade80; --warn:#f59e0b; --err:#ef4444; --accent:#bd25ce; --accent-2:#b55cff;
+      --bg:#151219;
+      --card:#0b0b0d;
+      --text:#F4F2FF;
+      --muted:#bfb7e6;
+      --accent:#bd25ce;
+      --accent-2:#b55cff;
+      --chip:#1d1633;
+      --chip-border:#2b2147;
+      --ok:#4ade80;
       --shadow:0 18px 60px rgba(109,61,252,.25);
     }
-    *{box-sizing:border-box} html,body{height:100%}
+    *{box-sizing:border-box}
+    html,body{height:100%}
     body{
-      margin:0; font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji";
-      background: radial-gradient(1200px 600px at 30% -10%, rgba(109,61,252,.12), transparent 60%),
-                  radial-gradient(1200px 600px at 80% 120%, rgba(138,104,255,.10), transparent 60%),
-                  var(--bg);
-      color:var(--text); display:flex; align-items:center; justify-content:center; padding:32px;
+      margin:0;
+      font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,"Apple Color Emoji","Segoe UI Emoji";
+      background:
+        radial-gradient(1200px 600px at 30% -10%, rgba(109,61,252,.12), transparent 60%),
+        radial-gradient(1200px 600px at 80% 120%, rgba(138,104,255,.10), transparent 60%),
+        var(--bg);
+      color:var(--text);
+      display:flex; align-items:center; justify-content:center;
+      padding:32px;
     }
     .wrap{ width:100%; max-width:980px; }
-    .card{ background:var(--card); border-radius:16px; box-shadow:var(--shadow);
-      border:1px solid rgba(255,255,255,.04); padding:32px 28px 28px; }
-    .pill{ display:inline-flex; align-items:center; gap:8px; background:var(--chip);
-      border:1px solid var(--chip-border); color:var(--soft); padding:8px 12px; border-radius:999px;
-      font-size:12px; font-weight:700; letter-spacing:.2px; }
-    .dot{width:8px;height:8px;border-radius:50%;background:#a78bfa}
-    h1{ margin:14px 0 10px; font-size: clamp(22px, 2.6vw, 28px); font-weight:800; }
-    .sub{ color:var(--muted); margin:0 0 22px; font-size:14px; }
-    .row{display:flex; gap:12px; flex-wrap:wrap; margin-bottom:18px}
-    .chip{ flex:1 1 220px; min-width:220px; display:flex; align-items:center; justify-content:space-between;
-      background:var(--chip); border:1px solid var(--chip-border); border-radius:12px; padding:14px 16px;
-      color:var(--soft); font-weight:600; }
-    .chip .val{color:var(--text); font-weight:700}
-    .chip.ok .val{color:var(--ok)} .chip.warn .val{color:var(--warn)} .chip.err .val{color:var(--err)}
-    .status{ display:flex; align-items:center; gap:8px; color:var(--muted); font-size:14px; }
-    .dot2{ width:10px; height:10px; border-radius:50%; background:#a78bfa; box-shadow:0 0 18px rgba(167,139,250,.7)}
-    .cta{ margin-top:20px; display:flex; gap:12px; flex-wrap:wrap; justify-content:flex-end }
-    .btn{ appearance:none; border:0; cursor:pointer; background:linear-gradient(135deg, var(--accent), var(--accent-2));
-      color:#fff; font-weight:800; letter-spacing:.2px; padding:12px 20px; border-radius:10px;
-      box-shadow:0 10px 30px rgba(109,61,252,.35); transition: transform .06s ease; text-decoration:none;
-      display:inline-flex; align-items:center; gap:8px; }
+    .card{
+      background:var(--card);
+      border-radius:16px;
+      box-shadow: var(--shadow);
+      border:1px solid rgba(255,255,255,.04);
+      padding:36px 28px 30px;
+    }
+    .pill{
+      display:inline-flex; align-items:center; gap:8px;
+      background: var(--chip);
+      border:1px solid var(--chip-border);
+      color: var(--ok);
+      padding:8px 12px; border-radius:999px;
+      font-size:12px; font-weight:800; letter-spacing:.2px;
+    }
+    .dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+    h1{
+      margin:16px 0 10px;
+      font-size: clamp(22px, 2.8vw, 30px);
+      font-weight:800;
+    }
+    .sub{
+      color:var(--muted);
+      margin:0 0 20px;
+      font-size:15px;
+      line-height:1.6;
+    }
+    .cta{
+      margin-top:26px;
+      display:flex; gap:12px; justify-content:flex-end;
+    }
+    .btn{
+      appearance:none; border:0; cursor:pointer;
+      background:linear-gradient(135deg, var(--accent), var(--accent-2));
+      color:#fff; font-weight:800; letter-spacing:.2px;
+      padding:12px 20px; border-radius:10px;
+      box-shadow:0 10px 30px rgba(109,61,252,.35);
+      transition: transform .06s ease;
+      text-decoration:none; display:inline-flex; align-items:center; gap:8px;
+    }
     .btn:active{ transform:translateY(1px) }
-    .btn.secondary{ background:transparent; border:1px solid var(--chip-border); color:var(--soft); box-shadow:none; }
-    @media (max-width:640px){ .card{padding:24px 18px} .cta{justify-content:stretch} .btn{flex:1 1 auto; justify-content:center} }
+    @media (max-width:640px){
+      .card{padding:28px 18px}
+      .cta{justify-content:stretch}
+      .btn{flex:1 1 auto; justify-content:center}
+    }
   </style>
 </head>
 <body>
   <main class="wrap">
     <section class="card">
-      <span class="pill"><span class="dot"></span> Procesando pago...</span>
-      <h1>¡Gracias! Estamos activando tu plan…</h1>
-      <p class="sub">No cierres esta pestaña. En segundos confirmamos con Stripe y actualizamos tu cuenta.</p>
-
-      <div class="row">
-        <div class="chip" id="chip-session"><span>Sesión</span><span class="val" id="email">—</span></div>
-        <div class="chip" id="chip-plan"><span>Mi plan detectado</span><span class="val" id="plan">—</span></div>
-        <div class="chip" id="chip-sub"><span>Suscripción</span><span class="val" id="sub">—</span></div>
-      </div>
-
-      <div class="status" id="statusLine"><span class="dot2"></span> Confirmando pago…</div>
+      <span class="pill"><span class="dot"></span> Pago confirmado</span>
+      <h1>¡Gracias! Tu plan fue activado correctamente</h1>
+      <p class="sub">
+        Ya registramos tu suscripción en Adnova AI. Puedes volver al dashboard para empezar a usar todas las funciones de tu plan.
+      </p>
 
       <div class="cta">
-        <a class="btn secondary" href="/plans">Ver planes</a>
         <a class="btn" href="/dashboard">Ir al dashboard</a>
       </div>
     </section>
   </main>
-
-  <!-- JS externo (sin inline) -->
-  <script src="/assets/js/plans-success.js" defer></script>
 </body>
 </html>
