@@ -732,17 +732,17 @@ async function runSingleAudit({ userId, type, flags, source = 'manual' }) {
   return { type: persistType, ok: true, auditId: doc._id };
 }
 
-// =====================================================
-// RUTAS
-// =====================================================
-
 // (0) USO DE AUDITORÍAS (para GenerateAudit.tsx)
 // GET /api/audits/usage
 router.get('/usage', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
 
-    const user = await User.findById(userId).lean().select('plan');
+    // 👇 Importante: leemos también auditUsageResetAt para reiniciar al cambiar de plan
+    const user = await User.findById(userId)
+      .lean()
+      .select('plan auditUsageResetAt createdAt');
+
     if (!user) {
       return res.status(401).json({ error: 'NO_USER' });
     }
@@ -754,36 +754,53 @@ router.get('/usage', requireAuth, async (req, res) => {
     let nextResetAt = null;
 
     if (!cfg.unlimited) {
-      const { start, end } = getWindowForPeriod(cfg.period);
+      // 1) Ventana del periodo (mensual, semanal, etc.)
+      let { start, end } = getWindowForPeriod(cfg.period);
+
+      // 2) Si tenemos un "reset" (cambio de plan), empezamos a contar desde ahí
+      let resetAt = null;
+      if (user.auditUsageResetAt instanceof Date) {
+        resetAt = user.auditUsageResetAt;
+      } else if (user.auditUsageResetAt) {
+        resetAt = new Date(user.auditUsageResetAt);
+      }
+
+      if (resetAt && resetAt > start && resetAt < end) {
+        start = resetAt;
+      }
+
       const range = { $gte: start, $lt: end };
 
-      // 🔢 Traemos solo auditorías del periodo que NO sean de onboarding
+      // 3) Traemos SOLO auditorías manuales (excluimos onboarding)
       const docs = await Audit.find({
         userId,
-        origin: { $ne: 'onboarding' },
+        origin: { $ne: 'onboarding' }, // ← onboarding no suma uso
         $or: [
           { generatedAt: range },
           { createdAt: range },
         ],
       })
-        .select('generatedAt createdAt')
+        .select('generatedAt createdAt origin')
         .sort({ generatedAt: 1, createdAt: 1 })
         .lean();
 
-      // Cada "sesión" (click en Generar Auditoría) cuenta como 1 uso,
-      // aunque se creen 3 docs (google/meta/ga4) muy seguidos.
-      const MAX_GAP_MS = 10 * 60 * 1000; // 10 minutos
+      // 4) Agrupamos docs en "sesiones" (un clic en Generar Auditoría)
+      //    google/meta/ga4 se crean casi al mismo tiempo, así que:
+      //    - si la diferencia entre docs es < 30s → misma sesión
+      //    - si es > 30s → nueva sesión (nuevo clic)
+      const MAX_GAP_MS = 30 * 1000; // 30 segundos
       let sessions = 0;
       let lastTs = null;
 
       for (const d of docs) {
         const base = d.generatedAt || d.createdAt;
         if (!base) continue;
+
         const ts = base instanceof Date ? base.getTime() : new Date(base).getTime();
-        if (!ts) continue;
+        if (!Number.isFinite(ts)) continue;
 
         if (!lastTs || ts - lastTs > MAX_GAP_MS) {
-          sessions++;
+          sessions++; // nueva sesión de auditoría
         }
         lastTs = ts;
       }
@@ -793,11 +810,11 @@ router.get('/usage', requireAuth, async (req, res) => {
     }
 
     return res.json({
-      plan: planKey,          // "gratis" | "emprendedor" | "crecimiento" | "pro"
-      limit: cfg.limit,       // number | null
-      used,                   // número de auditorías usadas en el periodo
-      period: cfg.period,     // "monthly" | "weekly" | "rolling" | "unlimited"
-      nextResetAt,            // ISO string o null
+      plan: planKey,      // "gratis" | "emprendedor" | "crecimiento" | "pro"
+      limit: cfg.limit,   // número de auditorías IA del plan
+      used,               // usos en el periodo
+      period: cfg.period, // "monthly" | "weekly" | ...
+      nextResetAt,        // cuándo se reinicia el periodo
       unlimited: cfg.unlimited,
     });
   } catch (e) {
@@ -805,6 +822,7 @@ router.get('/usage', requireAuth, async (req, res) => {
     return res.status(500).json({ error: 'FETCH_FAIL' });
   }
 });
+
 
 // (A) Ejecutar TODAS
 router.post('/run', requireAuth, async (req, res) => {

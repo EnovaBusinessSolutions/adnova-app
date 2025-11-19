@@ -5,7 +5,8 @@
   // =======================
   const ENDPOINTS = {
     status:   "/api/onboarding/status", // GET
-    start:    "/api/audits/start",      // POST { types: [...] , source, origin }
+    // IMPORTANTE: este endpoint debe disparar auditorías con origin/source = 'onboarding'
+    start:    "/api/audits/start",      // POST { types: [...], source: 'onboarding' }
     progress: "/api/audits/progress"    // GET  ?jobId=...
   };
 
@@ -122,9 +123,7 @@
       headers: { Accept: "application/json" },
     });
     let j = {};
-    try {
-      j = await r.json();
-    } catch {}
+    try { j = await r.json(); } catch {}
     return j;
   }
 
@@ -139,9 +138,7 @@
       body: JSON.stringify(body || {}),
     });
     let j = {};
-    try {
-      j = await r.json();
-    } catch {}
+    try { j = await r.json(); } catch {}
     if (!r.ok || j?.ok === false) {
       const msg = j?.error || `HTTP_${r.status}`;
       const e = new Error(msg);
@@ -159,7 +156,7 @@
       const resp = await getJSON("/api/audits/latest?type=all");
 
       // Soportamos dos formatos:
-      // 1) { ok:true, data:{google,meta,ga4,shopify} }
+      // 1) { ok:true, data:{google,meta,ga4} }
       // 2) { ok:true, items:[...] } / { ok:true, data:[...] }
       const dict =
         resp?.data && !Array.isArray(resp.data) ? resp.data : {};
@@ -177,7 +174,8 @@
       const g  = pick("google");
       const m  = pick("meta");
       const ga = pick("ga4");
-      const s  = pick("shopify");
+      // NOTA: actualmente no guardamos auditorías tipo "shopify" en Mongo,
+      // así que no intentamos leerlas aquí para no sobre-escribir el estado visual.
 
       const setFromDoc = (row, doc) => {
         if (!row) return;
@@ -192,10 +190,9 @@
       setFromDoc(rows.google,  g);
       setFromDoc(rows.meta,    m);
       setFromDoc(rows.ga4,     ga);
-      setFromDoc(rows.shopify, s);
 
-      // Progreso fallback contando solo filas analizadas (google/meta/shopify)
-      const eligibleRows = ["google", "meta", "shopify"]
+      // Progreso fallback contando solo filas analizadas (google/meta)
+      const eligibleRows = ["google", "meta"]
         .map((k) => rows[k])
         .filter(
           (row) => row && !row.classList.contains("opacity-50")
@@ -219,6 +216,11 @@
         if (cyclerStop) cyclerStop();
         setText("¡Análisis completado!");
         if (btnContinue) btnContinue.disabled = false;
+
+        // Visualmente marcamos Shopify como "Listo" si estaba conectado
+        if (rows.shopify && !rows.shopify.classList.contains("opacity-50")) {
+          setRowState(rows.shopify, "done");
+        }
       }
     } catch (e) {
       console.warn("refreshAuditStatusFromDB error", e);
@@ -290,8 +292,8 @@
       try {
         const startResp = await postJSON(ENDPOINTS.start, {
           types: toRun,
-          source: "onboarding",   // 👈 para que el backend guarde origin/source
-          origin: "onboarding",   // 👈 si el job usa esta clave directamente
+          // el backend debe pasar este "source" a runSingleAudit → origin = 'onboarding'
+          source: "onboarding",
         });
         jobId = startResp?.jobId || null;
       } catch (e) {

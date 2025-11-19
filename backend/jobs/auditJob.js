@@ -151,7 +151,14 @@ async function detectConnections(userId) {
 }
 
 /* ---------- MAIN ---------- */
-async function runAuditFor({ userId, type }) {
+/**
+ * Ejecuta una auditoría para una fuente.
+ * @param {Object} params
+ * @param {string} params.userId
+ * @param {('google'|'meta'|'shopify')} params.type
+ * @param {string} [params.source='manual']  // 'onboarding' | 'panel' | 'manual'
+ */
+async function runAuditFor({ userId, type, source = 'manual' }) {
   try {
     const user = await User.findById(userId)
       .select('selectedGoogleAccounts selectedMetaAccounts')
@@ -243,7 +250,8 @@ async function runAuditFor({ userId, type }) {
 
     let auditJson = { summary: '', issues: [] };
     if (!noData) {
-      auditJson = await generateAudit({ type, inputSnapshot: snapshot });
+      // Pasamos también 'source' por si generateAudit quiere adaptar el mensaje
+      auditJson = await generateAudit({ type, inputSnapshot: snapshot, source });
     }
 
     if (selectionNote) {
@@ -254,6 +262,7 @@ async function runAuditFor({ userId, type }) {
     const auditDoc = {
       userId,
       type,
+      origin: source || 'manual',  // 👈 clave para diferenciar onboarding vs panel
       generatedAt: new Date(),
       summary: auditJson?.summary || (noData ? 'No hay datos suficientes en el periodo.' : 'Auditoría generada'),
       issues: auditJson?.issues || [],
@@ -269,7 +278,10 @@ async function runAuditFor({ userId, type }) {
   } catch (e) {
     // Siempre escribe un doc para que el frontend vea el motivo
     await Audit.create({
-      userId, type, generatedAt: new Date(),
+      userId,
+      type,
+      origin: source || 'manual',   // 👈 también marcamos origen en caso de error
+      generatedAt: new Date(),
       summary: 'No se pudo generar la auditoría',
       issues: [{
         id: 'setup_incompleto',
