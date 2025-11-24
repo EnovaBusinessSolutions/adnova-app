@@ -5,7 +5,10 @@
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Agendar | Adnova AI</title>
 
+  <!-- CSS base del proyecto -->
   <link rel="stylesheet" href="/onboarding.css">
+
+  <!-- Ayuda a que el widget cargue más rápido -->
   <link rel="preconnect" href="https://assets.calendly.com" crossorigin>
   <link rel="preconnect" href="https://calendly.com" crossorigin>
 
@@ -14,11 +17,35 @@
       --bg:#0a0a0f; --card:#12111a; --stroke:#2a2238; --brand:#7c3aed; --ink:#eaeaf0; --shell:#0b0a0f;
     }
     html,body{height:100%}
-    body{background:var(--bg);color:var(--ink);font-family:Inter,system-ui,Segoe UI,Roboto,Ubuntu}
-    .wrap{width:100%;max-width:1280px;margin:40px auto;padding:0 clamp(12px,3vw,24px)}
-    .header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
-    .btn{display:inline-flex;gap:8px;align-items:center;background:#1e1b2e;border:1px solid var(--stroke);
-         color:#fff;padding:10px 14px;border-radius:10px;font-weight:600;transition:.25s transform,.25s opacity}
+    body{
+      background:var(--bg);
+      color:var(--ink);
+      font-family:Inter,system-ui,Segoe UI,Roboto,Ubuntu
+    }
+    .wrap{
+      width:100%;
+      max-width:1280px;
+      margin:40px auto;
+      padding:0 clamp(12px,3vw,24px)
+    }
+    .header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      margin-bottom:18px
+    }
+    .btn{
+      display:inline-flex;
+      gap:8px;
+      align-items:center;
+      background:#1e1b2e;
+      border:1px solid var(--stroke);
+      color:#fff;
+      padding:10px 14px;
+      border-radius:10px;
+      font-weight:600;
+      transition:.25s transform,.25s opacity
+    }
     .btn:hover{transform:translateY(-1px);opacity:.95}
     .btn:focus-visible{ outline:2px solid #7c3aed; outline-offset:2px }
 
@@ -32,10 +59,24 @@
       padding:18px;
       box-shadow:0 30px 80px #0007, inset 0 1px 0 #ffffff0d;
     }
-    .chip{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;
-      background:#191727;border:1px solid #27223a;font-size:13px}
+    .chip{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:8px 12px;
+      border-radius:999px;
+      background:#191727;
+      border:1px solid #27223a;
+      font-size:13px
+    }
 
-    .frameShell{ margin-top:12px; border:1px solid #1f1a2b; border-radius:14px; overflow:hidden; background:var(--shell) }
+    .frameShell{
+      margin-top:12px;
+      border:1px solid #1f1a2b;
+      border-radius:14px;
+      overflow:hidden;
+      background:var(--shell)
+    }
 
     .calendly-inline-widget{ width:100%; height:960px; min-height:720px }
     @media (max-width:1200px){ .calendly-inline-widget{ height:880px } }
@@ -57,14 +98,19 @@
     }
     .s-head{ display:flex; align-items:center; gap:14px }
     .s-icon{
-      width:36px; height:36px; min-width:36px; display:grid; place-items:center;
-      border-radius:999px; background:linear-gradient(180deg,#22c55e,#16a34a);
-      color:#07130a; font-weight:800; box-shadow:0 6px 18px rgba(34,197,94,.4)
+      width:36px; height:36px; min-width:36px;
+      display:grid; place-items:center;
+      border-radius:999px;
+      background:linear-gradient(180deg,#22c55e,#16a34a);
+      color:#07130a;
+      font-weight:800;
+      box-shadow:0 6px 18px rgba(34,197,94,.4)
     }
     .s-title{ font-size:clamp(18px,2.4vw,22px); font-weight:800; margin:0 0 4px }
     .s-sub{ margin:0; opacity:.85 }
   </style>
 
+  <!-- Calendly -->
   <link href="https://assets.calendly.com/assets/external/widget.css" rel="stylesheet">
   <script src="https://assets.calendly.com/assets/external/widget.js" async></script>
 </head>
@@ -79,11 +125,12 @@
       <div class="chip">💡 Tip: selecciona la hora que mejor te acomode</div>
 
       <div class="frameShell">
-        <!-- URL de Agustín + colores de marca -->
+        <!-- URL de Agustín + parámetros de embed + colores oscuros Adnova -->
         <div
           class="calendly-inline-widget"
-          data-url="https://calendly.com/agustincorrea-adnova/adnova-ai?utm_source=app&utm_campaign=adnova-ai&background_color=0a0a0f&text_color=eaeaf0&primary_color=7c3aed">
-        </div>
+          data-url="https://calendly.com/agustincorrea-adnova/adnova-ai?embed_domain=ai.adnova.digital&embed_type=Inline&utm_source=app&utm_campaign=adnova-ai&background_color=0b0a0f&text_color=eaeaf0&primary_color=7c3aed"
+          style="color-scheme: light;"
+        ></div>
       </div>
 
       <!-- Éxito (sin botones extra) -->
