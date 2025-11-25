@@ -181,57 +181,44 @@ async function saveDiscoveryFailure(userId, reason, log) {
 }
 
 /* ============================================================================
- * Enriquecimiento vía GAQL desde el MCC (REST)
+ * Enriquecimiento de cuentas usando OAuth del usuario (sin MCC obligatorio)
  * ========================================================================= */
 async function enrichAccountsWithGAQL(ga) {
-  const accessToken = await getFreshAccessToken(ga);
-  const managerId = normId(process.env.GOOGLE_LOGIN_CUSTOMER_ID || ga.managerCustomerId || ga.loginCustomerId || '');
-  if (!managerId) throw new Error('NO_MANAGER_ID_FOR_GAQL');
+  // Usamos el mismo flujo que el callback: discoverAndEnrich basado en OAuth multi-usuario.
+  // Ads.discoverAndEnrich acepta un "source" con accessToken/refreshToken o el doc entero.
+  const tokenSource = {
+    accessToken: ga.accessToken || undefined,
+    refreshToken: ga.refreshToken || undefined,
+  };
 
-  const GAQL = `
-    SELECT
-      customer_client.id,
-      customer_client.descriptive_name,
-      customer_client.currency_code,
-      customer_client.time_zone,
-      customer_client.status,
-      customer_client.level
-    FROM customer_client
-    WHERE customer_client.level <= 1
-    ORDER BY customer_client.id
-  `.replace(/\s+/g, ' ').trim();
+  const raw = await Ads.discoverAndEnrich(tokenSource);
 
-  const rows = await Ads.searchGAQLStream(accessToken, managerId, GAQL);
+  // Filtramos errores y normalizamos a nuestro shape
+  const accounts = raw
+    .filter(c => c && !c.error)
+    .map(c => normalizeAcc({
+      id: c.id,
+      name: c.name,
+      currencyCode: c.currencyCode,
+      timeZone: c.timeZone,
+      status: c.status,
+    }))
+    .filter(a => a.id);
 
-  // Aceptamos tanto r.customer_client (snake) como r.customerClient (camel)
-  const accounts = rows.map(r => {
-    const cc = r?.customer_client || r?.customerClient || {};
-    return normalizeAcc({
-      // id
-      id: pickAny(cc, ['id', 'customerId', 'customer_id']),
-      // nombre
-      name: pickAny(cc, ['descriptiveName', 'descriptive_name']),
-      descriptive_name: cc.descriptive_name, // por si acaso
-      descriptiveName: cc.descriptiveName,
-      // currency/timezone/status en ambas variantes
-      currency_code: pickAny(cc, ['currency_code', 'currencyCode']),
-      time_zone:     pickAny(cc, ['time_zone', 'timeZone']),
-      status:        cc.status,
-    });
-  }).filter(a => a.id);
+  const customers = accounts.map(a => ({
+    id: a.id,
+    descriptiveName: a.name,
+    currencyCode: a.currencyCode,
+    timeZone: a.timeZone,
+    status: a.status,
+  }));
 
   await GoogleAccount.updateOne(
     { _id: ga._id },
     {
       $set: {
         ad_accounts: accounts,
-        customers: accounts.map(a => ({
-          id: a.id,
-          descriptiveName: a.name,
-          currencyCode: a.currencyCode,
-          timeZone: a.timeZone,
-          status: a.status,
-        })),
+        customers,
         updatedAt: new Date(),
         lastAdsDiscoveryError: null,
         lastAdsDiscoveryLog: null,
@@ -319,7 +306,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
     // 1) Cargar lo guardado
     let accounts = Array.isArray(ga.ad_accounts) ? ga.ad_accounts : [];
 
-    // 2) ¿Faltan nombres? usamos GAQL desde MCC
+    // 2) ¿Faltan cuentas/nombres? usamos discovery multi-usuario (Ads.discoverAndEnrich)
     const hasName = (a) => !!(a && (a.name || a.descriptiveName || a.descriptive_name));
     const needsEnrich = force || accounts.length === 0 || accounts.some(a => !hasName(a));
 
@@ -327,10 +314,11 @@ router.get('/accounts', requireAuth, async (req, res) => {
       try {
         accounts = await enrichAccountsWithGAQL(ga);
       } catch (e) {
-        const reason = e?.api?.error || e?.response?.data || e?.message || 'GAQL_ENRICH_FAILED';
+        const reason = e?.api?.error || e?.response?.data || e?.message || 'DISCOVERY_FAILED';
         const log    = e?.api?.log || null;
         await saveDiscoveryFailure(req.user._id, reason, log);
-        // devolvemos lo que haya guardado (aunque sea solo IDs)
+        // si falla, seguimos con lo que hubiera en la BD (aunque sea sólo IDs)
+        accounts = Array.isArray(ga.ad_accounts) ? ga.ad_accounts.map(normalizeAcc) : [];
       }
     } else {
       // Normaliza nombres si ya estaban guardados con otra llave
@@ -429,14 +417,14 @@ router.get('/', requireAuth, async (req, res) => {
       return res.status(404).json({ ok: false, error: 'ACCOUNT_NOT_FOUND' });
     }
 
-    // 4) Normalizar rango: si hay date_preset úsalo; si no, usa range/include_today
+    // 4) Normalizar rango
     const datePreset = req.query.date_preset
       ? String(req.query.date_preset).toLowerCase()
       : null;
 
     const range = (req.query.range != null && req.query.range !== '')
       ? Number(req.query.range)
-      : null; // días (null = default del service)
+      : null;
 
     const includeToday = String(req.query.include_today || '0') === '1';
 
@@ -451,11 +439,11 @@ router.get('/', requireAuth, async (req, res) => {
     const payload = await Ads.fetchInsights({
       accessToken,
       customerId: requested,
-      datePreset: datePreset || undefined,          // 'today','yesterday','last_7d','this_month', etc.
-      range,                                        // número de días o null
-      includeToday,                                 // boolean
-      objective,                                    // 'ventas' | 'alcance' | 'leads'
-      compareMode: req.query.compare_mode || null,  // reservado para deltas futuras
+      datePreset: datePreset || undefined,
+      range,
+      includeToday,
+      objective,
+      compareMode: req.query.compare_mode || null,
     });
 
     return res.json(payload);
@@ -504,6 +492,7 @@ router.post('/default', requireAuth, express.json(), async (req, res) => {
 
 /* ============================================================================
  * POST /api/google/ads/insights/mcc/invite
+ * (flujo opcional/legacy: no se usa en el onboarding sencillo tipo Master Metrics)
  * ========================================================================= */
 router.post('/mcc/invite', requireAuth, express.json(), async (req, res) => {
   try {
@@ -537,7 +526,7 @@ router.post('/mcc/invite', requireAuth, express.json(), async (req, res) => {
 });
 
 /* ============================================================================
- * GET /api/google/ads/insights/mcc/invite/status
+ * GET /api/google/ads/insights/mcc/invite/status  (legacy)
  * ========================================================================= */
 router.get('/mcc/invite/status', requireAuth, async (req, res) => {
   try {
@@ -634,7 +623,7 @@ router.get('/selftest', requireAuth, async (req, res) => {
 });
 
 /* ============================================================================
- * DEBUG: ver respuesta de nombres vía GAQL customer_client
+ * DEBUG: ver respuesta de nombres vía GAQL customer_client (legacy MCC)
  * ========================================================================= */
 router.get('/debug/names', requireAuth, async (req, res) => {
   try {
