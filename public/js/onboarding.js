@@ -106,11 +106,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Estado de conectividad (sessionStorage + flags)
   // -------------------------------------------------
   function getConnectivityState() {
+    // Shopify se considera conectado únicamente si:
+    // - El backend lo indica (flag) o
+    // - Hemos marcado explícitamente shopifyConnected en esta sesión.
     const shopConnected =
       flagShopify?.textContent.trim() === 'true' ||
-      sessionStorage.getItem('shopifyConnected') === 'true' ||
-      (!!sessionStorage.getItem('shop') && !!sessionStorage.getItem('accessToken'));
+      sessionStorage.getItem('shopifyConnected') === 'true';
 
+    // Google / Meta: sólo se activan cuando llamamos markGoogleConnected / markMetaConnected
     const googleConnected = sessionStorage.getItem('googleConnected') === 'true';
     const metaConnected   = sessionStorage.getItem('metaConnected') === 'true';
 
@@ -338,8 +341,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     GA_ENSURE_INFLIGHT = (async () => {
       try {
-        // Antes: setStatus('Buscando tus cuentas de Google Ads…');
-        // Para evitar el mensaje de carga, simplemente limpiamos el estado.
+        // Antes: "Buscando tus cuentas de Google Ads…"
+        // Ahora no mostramos mensaje de carga.
         setStatus('');
         hide(gaAccountsMount);
 
@@ -374,8 +377,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           return { ok: true, accounts, defaultCustomerId, requiredSelection };
         }
 
-        // Antes: setStatus('Verificando acceso…');
-        // Para evitar el parpadeo visual, no mostramos mensaje de verificación.
+        // Antes: "Verificando acceso…"
+        // Para evitar parpadeo, no mostramos mensaje aquí.
         setStatus('');
         hide(gaAccountsMount);
 
@@ -427,7 +430,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
 
       if (save?.ok) {
-        // Antes: setStatus('Verificando acceso…'). Ya no mostramos texto de carga.
+        // Antes: "Verificando acceso…". Ahora lo quitamos.
         setStatus('');
         const ok = await runGoogleSelfTest(ids[0]);
 
@@ -530,12 +533,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // -------------------------------------------------
-  // Sesión (demo GA)
+  // Sesión (demo GA) + limpieza de estado si cambia usuario
   // -------------------------------------------------
   try {
+    const prevUserId = sessionStorage.getItem('userId');
     const sess = await apiFetch('/api/session');
     if (sess?.authenticated && sess?.user) {
-      sessionStorage.setItem('userId',  sess.user._id);
+      const currentId = String(sess.user._id);
+
+      // Si cambió de usuario, limpiamos flags de conexión viejos
+      if (prevUserId && prevUserId !== currentId) {
+        [
+          'shopifyConnected',
+          'googleConnected',
+          'metaConnected',
+          'shop',
+          'accessToken',
+          'metaObjective',
+          'googleObjective'
+        ].forEach((k) => sessionStorage.removeItem(k));
+      }
+
+      sessionStorage.setItem('userId',  currentId);
       sessionStorage.setItem('email',   sess.user.email);
 
       if (sess.user.googleConnected) {
