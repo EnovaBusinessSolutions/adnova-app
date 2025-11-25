@@ -302,7 +302,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // -------------------------------------------------
-  // Google — cuentas + self-test (sin MCC)
+  // Google — cuentas + self-test
   // -------------------------------------------------
   const markGoogleConnected = (objective = null) => {
     setBtnConnected(connectGoogleBtn);
@@ -338,7 +338,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     GA_ENSURE_INFLIGHT = (async () => {
       try {
-        setStatus('Buscando tus cuentas de Google Ads…');
+        // Antes: setStatus('Buscando tus cuentas de Google Ads…');
+        // Para evitar el mensaje de carga, simplemente limpiamos el estado.
+        setStatus('');
         hide(gaAccountsMount);
 
         const res = await apiFetch('/api/google/ads/insights/accounts');
@@ -372,8 +374,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           return { ok: true, accounts, defaultCustomerId, requiredSelection };
         }
 
-        // Si no requiere selección, usamos la cuenta por defecto y hacemos self-test
-        setStatus('Verificando acceso…');
+        // Antes: setStatus('Verificando acceso…');
+        // Para evitar el parpadeo visual, no mostramos mensaje de verificación.
+        setStatus('');
         hide(gaAccountsMount);
 
         window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
@@ -424,7 +427,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
 
       if (save?.ok) {
-        setStatus('Verificando acceso…');
+        // Antes: setStatus('Verificando acceso…'). Ya no mostramos texto de carga.
+        setStatus('');
         const ok = await runGoogleSelfTest(ids[0]);
 
         if (ok) {
