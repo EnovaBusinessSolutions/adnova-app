@@ -4,10 +4,8 @@
   // ENDPOINTS
   // =======================
   const ENDPOINTS = {
-    status:   "/api/onboarding/status", // GET
-    // IMPORTANTE: este endpoint debe disparar auditorías con origin/source = 'onboarding'
-    start:    "/api/audits/start",      // POST { types: [...], source: 'onboarding' }
-    progress: "/api/audits/progress"    // GET  ?jobId=...
+    status: "/api/onboarding/status", // GET
+    run: "/api/audits/run",           // POST { source: 'onboarding', ... }
   };
 
   // =======================
@@ -149,7 +147,7 @@
   }
 
   // =======================
-  // Refresco desde BD (clave para barra y pills)
+  // Refresco desde BD (pinta filas según últimas auditorías)
   // =======================
   async function refreshAuditStatusFromDB() {
     try {
@@ -174,54 +172,34 @@
       const g  = pick("google");
       const m  = pick("meta");
       const ga = pick("ga4");
-      // NOTA: actualmente no guardamos auditorías tipo "shopify" en Mongo,
-      // así que no intentamos leerlas aquí para no sobre-escribir el estado visual.
 
       const setFromDoc = (row, doc) => {
-        if (!row) return;
+        if (!row || !doc) return;
         const notAuth = !!doc?.inputSnapshot?.notAuthorized;
-        if (!doc || notAuth) {
-          setRowState(row, "skipped");
+
+        // Sin permisos → lo marcamos como error suave
+        if (notAuth) {
+          setRowState(row, "error", "Sin permisos");
+          return;
+        }
+
+        const noDataSummary =
+          typeof doc.summary === "string" &&
+          /no hay datos suficientes|no hay datos suficientes para auditar|no hay datos suficientes en el periodo/i.test(
+            doc.summary
+          );
+
+        if (Array.isArray(doc.issues) && doc.issues.length === 0 && noDataSummary) {
+          setRowState(row, "skipped", "Sin datos recientes");
         } else {
           setRowState(row, "done");
         }
       };
 
-      setFromDoc(rows.google,  g);
-      setFromDoc(rows.meta,    m);
-      setFromDoc(rows.ga4,     ga);
-
-      // Progreso fallback contando solo filas analizadas (google/meta)
-      const eligibleRows = ["google", "meta"]
-        .map((k) => rows[k])
-        .filter(
-          (row) => row && !row.classList.contains("opacity-50")
-        );
-
-      const done = eligibleRows.filter((row) =>
-        row.classList.contains("completed")
-      ).length;
-      const pct = eligibleRows.length
-        ? Math.round((done / eligibleRows.length) * 100)
-        : 100;
-
-      const current = (() => {
-        const w = progressBar?.style?.width || "0%";
-        const n = parseInt(String(w).replace("%", ""), 10);
-        return isNaN(n) ? 0 : n;
-      })();
-      setBar(Math.max(current, pct));
-
-      if (pct >= 100) {
-        if (cyclerStop) cyclerStop();
-        setText("¡Análisis completado!");
-        if (btnContinue) btnContinue.disabled = false;
-
-        // Visualmente marcamos Shopify como "Listo" si estaba conectado
-        if (rows.shopify && !rows.shopify.classList.contains("opacity-50")) {
-          setRowState(rows.shopify, "done");
-        }
-      }
+      setFromDoc(rows.google, g);
+      setFromDoc(rows.meta,   m);
+      setFromDoc(rows.ga4,    ga);
+      // Shopify no tiene auditoría en Mongo, se deja como estaba (visual)
     } catch (e) {
       console.warn("refreshAuditStatusFromDB error", e);
     }
@@ -231,6 +209,8 @@
   // Main
   // =======================
   async function run() {
+    let progressTimer = null;
+
     try {
       if (btnContinue) btnContinue.disabled = true;
       setBar(0);
@@ -246,159 +226,126 @@
           !!status.googleAds?.connected || !!status.google?.connected, // compat
         meta: !!status.meta?.connected,
         shopify: !!status.shopify?.connected,
-        // GA4 lo tratamos como opcional (no lanza auditoría aquí)
         ga4: !!status.ga4?.connected,
       };
 
-      // Pinta estado inicial sin duplicar textos
+      // 2) Pinta estado inicial de filas
       Object.entries(rows).forEach(([k, row]) => {
         if (!row) return;
 
-        // GA4 → sólo mostramos como "Conecta GA4" si Google está conectado,
-        // pero **no** formará parte del job de /api/audits/start
-        if (k === "ga4") {
-          const customMsg =
-            status.google?.connected || status.googleAds?.connected
-              ? "Conecta GA4"
-              : "Opcional";
-          setRowState(row, "skipped", customMsg);
+        if (k === "shopify") {
+          // Shopify: solo visual (no hay auditoría IA oficial aún)
+          if (isConnected.shopify) {
+            setRowState(row, "done", "Conectado");
+          } else {
+            setRowState(row, "skipped");
+          }
           return;
         }
 
+        if (k === "ga4") {
+          if (isConnected.ga4) {
+            setRowState(row, "running");
+          } else {
+            setRowState(row, "skipped", "Opcional");
+          }
+          return;
+        }
+
+        // Google Ads / Meta
         if (!isConnected[k]) {
           setRowState(row, "skipped");
         } else {
-          setRowState(row, "running"); // "Analizando…"
+          setRowState(row, "running");
         }
       });
 
-      // Fuentes que realmente vamos a procesar en este paso
-      const toRun = ["google", "meta", "shopify"].filter(
-        (k) => isConnected[k]
-      );
+      // Fuentes con auditoría IA real que esperamos analizar
+      const toAudit = [];
+      if (isConnected.google) toAudit.push("google");
+      if (isConnected.meta)   toAudit.push("meta");
+      if (isConnected.ga4)    toAudit.push("ga4");
 
-      if (toRun.length === 0) {
+      if (toAudit.length === 0) {
         await refreshAuditStatusFromDB();
         setBar(100);
         if (cyclerStop) cyclerStop();
-        setText("No hay fuentes conectadas.");
+        setText("No hay fuentes conectadas para auditar.");
         if (btnContinue) btnContinue.disabled = false;
         return;
       }
 
-      // 2) Disparar auditorías (job background)
-      //    IMPORTANTE: marcamos explícitamente que el origen es "onboarding"
-      let jobId = null;
+      // 3) Simulación de progreso mientras corre /api/audits/run
+      let logicalPct = 10;
+      setBar(logicalPct);
+
+      progressTimer = setInterval(() => {
+        logicalPct = Math.min(logicalPct + 7, 85); // nunca pasa de 85% hasta que termine
+        setBar(logicalPct);
+      }, 1200);
+
+      // 4) Disparar auditorías IA (Google, Meta, GA4) con origen 'onboarding'
+      let runResp = null;
       try {
-        const startResp = await postJSON(ENDPOINTS.start, {
-          types: toRun,
-          // el backend debe pasar este "source" a runSingleAudit → origin = 'onboarding'
+        runResp = await postJSON(ENDPOINTS.run, {
           source: "onboarding",
+          // Estas flags las usa el backend para decidir qué fuentes procesar
+          googleConnected: isConnected.google,
+          metaConnected:   isConnected.meta,
         });
-        jobId = startResp?.jobId || null;
       } catch (e) {
-        console.warn(
-          "No se pudo iniciar job de auditorías:",
-          e?.message || e
-        );
-      }
-
-      // Refresco periódico desde BD, aunque no haya jobId
-      const bdInterval = setInterval(refreshAuditStatusFromDB, 3000);
-      setTimeout(() => refreshAuditStatusFromDB(), 7000);
-
-      // 3) Polling de progreso (si tenemos job)
-      let finished = false;
-      let lastSnapshot = null;
-
-      async function poll() {
-        if (!jobId) return; // sin jobId dependemos sólo del refresco por BD
-        try {
-          const q = `${ENDPOINTS.progress}?jobId=${encodeURIComponent(
-            jobId
-          )}`;
-          const p = await getJSON(q);
-          lastSnapshot = p;
-
-          const overall = Number(
-            (p && (p.overallPct ?? p.percent)) ?? 0
-          );
-          if (!isNaN(overall)) setBar(overall);
-          if (overall >= 100 || p?.finished === true) finished = true;
-
-          const items = p?.items || {};
-          for (const [key, row] of Object.entries(rows)) {
-            // Sólo manejamos progreso para google/meta/shopify
-            if (!row || !["google", "meta", "shopify"].includes(key))
-              continue;
-            if (!isConnected[key]) continue;
-
-            const it = items[key];
-
-            if (!it) {
-              setRowState(row, "running"); // Analizando…
-              continue;
-            }
-
-            const raw = (it.state || it.status || "")
-              .toString()
-              .toLowerCase();
-            const pct =
-              typeof it.pct === "number"
-                ? Math.round(it.pct)
-                : typeof it.percent === "number"
-                ? Math.round(it.percent)
-                : null;
-
-            let state = "running";
-            if (raw === "done") state = "done";
-            else if (raw === "error") state = "error";
-
-            const suffix =
-              state === "running"
-                ? pct != null
-                  ? `Analizando… ${pct}%`
-                  : "Analizando…"
-                : typeof it.msg === "string" && it.msg
-                ? it.msg
-                : undefined;
-
-            setRowState(row, state, suffix);
-          }
-
-          if (!finished) {
-            setTimeout(poll, 1200);
-          } else {
-            clearInterval(bdInterval);
-            if (cyclerStop) cyclerStop();
-            setBar(100);
-            setText("¡Análisis completado!");
-            if (btnContinue) btnContinue.disabled = false;
-            try {
-              sessionStorage.setItem(
-                "auditProgressSnapshot",
-                JSON.stringify(lastSnapshot || {})
-              );
-            } catch {}
-            refreshAuditStatusFromDB();
-          }
-        } catch (e) {
-          console.warn("Polling error", e);
-          clearInterval(bdInterval);
-          await refreshAuditStatusFromDB();
-          if (cyclerStop) cyclerStop();
-          setText(
-            "Análisis finalizado (con advertencias). Puedes continuar."
-          );
-          setBar(100);
-          if (btnContinue) btnContinue.disabled = false;
+        console.warn("No se pudo ejecutar /api/audits/run:", e?.message || e);
+        throw e;
+      } finally {
+        if (progressTimer) {
+          clearInterval(progressTimer);
+          progressTimer = null;
         }
       }
 
-      poll();
+      // 5) Refrescar filas desde Mongo en base a las últimas auditorías
+      await refreshAuditStatusFromDB();
+
+      // Shopify: si estaba conectado, lo marcamos como listo
+      if (rows.shopify && isConnected.shopify) {
+        setRowState(rows.shopify, "done", "Conectado");
+      }
+
+      // 6) Cálculo final de progreso en función de filas completadas
+      const doneCount = toAudit.reduce((acc, key) => {
+        const row = rows[key];
+        if (!row) return acc;
+        return acc + (row.classList.contains("completed") ? 1 : 0);
+      }, 0);
+
+      const finalPct = toAudit.length
+        ? Math.round((doneCount / toAudit.length) * 100)
+        : 100;
+
+      setBar(100);
+
+      if (cyclerStop) cyclerStop();
+      if (doneCount === toAudit.length) {
+        setText("¡Análisis completado!");
+      } else {
+        setText("Análisis finalizado (con advertencias).");
+      }
+
+      // Guardamos una foto rápida por si la quieres usar luego
+      try {
+        const latest = await getJSON("/api/audits/latest?type=all");
+        sessionStorage.setItem(
+          "auditLatest",
+          JSON.stringify(latest || {})
+        );
+      } catch {}
+
+      if (btnContinue) btnContinue.disabled = false;
     } catch (e) {
       console.error("ONBOARDING3_INIT_ERROR", e);
+      if (progressTimer) clearInterval(progressTimer);
       if (cyclerStop) cyclerStop();
+
       setText("Error iniciando el análisis");
       setBar(100);
       Object.values(rows).forEach(
