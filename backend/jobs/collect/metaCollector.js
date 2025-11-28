@@ -41,7 +41,7 @@ try { User = require('../../models/User'); } catch (_) {
 /* ---------------- utils ---------------- */
 const toNum   = (v) => Number(v || 0);
 const safeDiv = (n, d) => (Number(d || 0) ? Number(n || 0) / Number(d || 0) : 0);
-// Normaliza id de ad account: quita "act_" y cualquier no-dígito
+// Normaliza id de ad account / campaña: quita "act_" y cualquier no-dígito
 const normAct = (s = '') => String(s).replace(/^act_/, '').replace(/[^\d]/g, '').trim();
 
 function pickToken(acc) {
@@ -148,6 +148,32 @@ function getAllAvailableAccounts(accDoc) {
       return id ? { id, name } : null;
     })
     .filter(Boolean);
+}
+
+/** Trae todos los statuses de campañas de una ad account (status + effective_status) */
+async function fetchAllCampaignStatuses(actId, token) {
+  const map = new Map();
+  let next = `https://graph.facebook.com/${API_VER}/act_${actId}/campaigns?fields=id,name,status,effective_status&limit=500&access_token=${encodeURIComponent(token)}`;
+  let guard = 0;
+
+  while (next && guard < 20) {
+    guard += 1;
+    const j = await fetchJSON(next, { retries: 1 });
+    const data = Array.isArray(j?.data) ? j.data : [];
+    for (const c of data) {
+      const id = normAct(c.id || '');
+      if (!id) continue;
+      map.set(id, {
+        id,
+        name: c.name || null,
+        status: c.status || null,
+        effective_status: c.effective_status || null,
+      });
+    }
+    next = j?.paging?.next || null;
+  }
+
+  return map;
 }
 
 /* ---------------- collector ---------------- */
@@ -294,11 +320,19 @@ async function collectMeta(userId, opts = {}) {
     const actId = acct.id;
     accountIds.push(actId);
 
-    // metadatos
+    // metadatos de la cuenta
     const meta = await getAccountMeta(actId);
     accountCurrency.set(actId, meta.currency);
     accountNameMap.set(actId, acct.name || meta.accountName || null);
     accountTzMap.set(actId, meta.timezone_name);
+
+    // map de status de campañas (status + effective_status)
+    let statusMap = new Map();
+    try {
+      statusMap = await fetchAllCampaignStatuses(actId, token);
+    } catch {
+      statusMap = new Map();
+    }
 
     // insights
     let data = [];
@@ -331,11 +365,16 @@ async function collectMeta(userId, opts = {}) {
       if (x.date_start && (!minStart || x.date_start < minStart)) minStart = x.date_start;
       if (x.date_stop  && (!maxStop  || x.date_stop  > maxStop )) maxStop  = x.date_stop;
 
+      const campIdNorm = normAct(x.campaign_id || '');
+      const stInfo = campIdNorm ? (statusMap.get(campIdNorm) || {}) : {};
+
       byCampaign.push({
         account_id: actId,
         id: x.campaign_id,
         name: x.campaign_name || 'Sin nombre',
         objective: x.objective || null,
+        status: stInfo.status || stInfo.effective_status || null,   // 👈 para normStatus()
+        effectiveStatus: stInfo.effective_status || null,           // 👈 generateAudit también mira este campo
         kpis: {
           spend: toNum(x.spend),
           impressions: toNum(x.impressions),
@@ -396,7 +435,7 @@ async function collectMeta(userId, opts = {}) {
     byCampaign,
     accountIds,   // para audits.js (reparto)
     accounts,     // para anotar [Nombre] en títulos
-    version: 'metaCollector@multi-accounts+selection',
+    version: 'metaCollector@multi-accounts+selection+status',
   };
 }
 

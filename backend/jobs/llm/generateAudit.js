@@ -23,6 +23,23 @@ const fmt = (n, d=2) => {
   return Math.round(v * factor) / factor;
 };
 
+// normaliza estados de campaña (activo / pausado / desconocido)
+function normStatus(raw) {
+  const s = String(raw || '').toLowerCase();
+
+  if (!s) return 'unknown';
+
+  if (['enabled','active','serving','running','eligible','on'].some(k => s.includes(k))) {
+    return 'active';
+  }
+
+  if (['paused','pause','stopped','stopped','removed','deleted','inactive','ended','off'].some(k => s.includes(k))) {
+    return 'paused';
+  }
+
+  return 'unknown';
+}
+
 // intenta encontrar el nombre de cuenta para una campaña
 function inferAccountName(c, snap) {
   if (c?.accountMeta?.name) return String(c.accountMeta.name);
@@ -50,36 +67,66 @@ function dedupeIssues(issues = []) {
  * - Cap de campañas
  * - Cap de canales GA4
  * - Incluye un resumen ligero de byProperty (GA4)
+ * - Prioriza campañas activas cuando hay muchas
  */
 function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
   try {
     const clone = JSON.parse(JSON.stringify(inputSnapshot || {}));
 
-    // byCampaign (cap + limpieza)
+    // byCampaign (cap + limpieza + estados)
     if (Array.isArray(clone.byCampaign)) {
-      clone.byCampaign = clone.byCampaign.slice(0, 60).map(c => ({
-        id: String(c.id ?? ''),
-        name: c.name ?? '',
-        objective: c.objective ?? null,
-        kpis: {
-          impressions: toNum(c?.kpis?.impressions),
-          clicks:      toNum(c?.kpis?.clicks),
-          cost:        toNum(c?.kpis?.cost ?? c?.kpis?.spend),
-          conversions: toNum(c?.kpis?.conversions),
-          conv_value:  toNum(c?.kpis?.conv_value ?? c?.kpis?.purchase_value),
-          spend:       toNum(c?.kpis?.spend),
-          roas:        toNum(c?.kpis?.roas),
-          cpc:         toNum(c?.kpis?.cpc),
-          cpa:         toNum(c?.kpis?.cpa),
-          ctr:         toNum(c?.kpis?.ctr),
-        },
-        period: c.period,
-        account_id: c.account_id ?? null,
-        accountMeta: c.accountMeta ? {
-          name: c.accountMeta.name ?? null,
-          currency: c.accountMeta.currency ?? null
-        } : undefined
-      }));
+      const rawList = clone.byCampaign.map(c => {
+        const statusNorm = normStatus(
+          c.status ||
+          c.state ||
+          c.servingStatus ||
+          c.serving_status ||
+          c.effectiveStatus
+        );
+
+        return {
+          id: String(c.id ?? ''),
+          name: c.name ?? '',
+          objective: c.objective ?? null,
+          status: statusNorm, // 👈 se lo mandamos explícito a la IA
+          kpis: {
+            impressions: toNum(c?.kpis?.impressions),
+            clicks:      toNum(c?.kpis?.clicks),
+            cost:        toNum(c?.kpis?.cost ?? c?.kpis?.spend),
+            conversions: toNum(c?.kpis?.conversions),
+            conv_value:  toNum(c?.kpis?.conv_value ?? c?.kpis?.purchase_value),
+            spend:       toNum(c?.kpis?.spend),
+            roas:        toNum(c?.kpis?.roas),
+            cpc:         toNum(c?.kpis?.cpc),
+            cpa:         toNum(c?.kpis?.cpa),
+            ctr:         toNum(c?.kpis?.ctr),
+          },
+          period: c.period,
+          account_id: c.account_id ?? null,
+          accountMeta: c.accountMeta ? {
+            name: c.accountMeta.name ?? null,
+            currency: c.accountMeta.currency ?? null
+          } : undefined
+        };
+      });
+
+      const active = rawList.filter(c => c.status === 'active');
+      const paused = rawList.filter(c => c.status === 'paused');
+      const unknown = rawList.filter(c => c.status === 'unknown');
+
+      const ordered = active.length > 0
+        ? [...active, ...paused, ...unknown] // 👈 primero activas
+        : rawList;
+
+      // pequeño resumen para que la IA sepa el contexto de estados
+      clone.byCampaignMeta = {
+        total: rawList.length,
+        active: active.length,
+        paused: paused.length,
+        unknown: unknown.length
+      };
+
+      clone.byCampaign = ordered.slice(0, 60);
     }
 
     // channels (GA4)
@@ -123,7 +170,61 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
 
   // ------------------ GOOGLE ADS / META ADS -------------------
   if (type === 'google' || type === 'meta') {
-    const list = Array.isArray(inputSnapshot?.byCampaign) ? inputSnapshot.byCampaign : [];
+    const rawList = Array.isArray(inputSnapshot?.byCampaign) ? inputSnapshot.byCampaign : [];
+
+    // enriquecemos con estado normalizado
+    const enriched = rawList.map(c => {
+      const st = normStatus(
+        c.status ||
+        c.state ||
+        c.servingStatus ||
+        c.serving_status ||
+        c.effectiveStatus
+      );
+      return { ...c, _statusNorm: st };
+    });
+
+    const active = enriched.filter(c => c._statusNorm === 'active');
+    const paused = enriched.filter(c => c._statusNorm === 'paused');
+    const anyWithStatus = enriched.some(c => c._statusNorm !== 'unknown');
+
+    // Si TODAS las campañas conocidas están pausadas/inactivas -> issue específico
+    if (anyWithStatus && active.length === 0 && paused.length > 0 && paused.length === enriched.length) {
+      // podemos agrupar por cuenta para dar más contexto
+      const byAccount = new Map();
+      for (const c of paused) {
+        const accId = String(c.account_id ?? '');
+        const accName = inferAccountName(c, inputSnapshot) || accId || 'Cuenta sin nombre';
+        const key = accId || accName;
+        if (!byAccount.has(key)) {
+          byAccount.set(key, { id: accId, name: accName, campaigns: 0 });
+        }
+        byAccount.get(key).campaigns += 1;
+      }
+
+      const accountsTxt = Array.from(byAccount.values()).map(a =>
+        `${a.name} (${a.campaigns} campañas pausadas)`
+      ).join(' · ');
+
+      out.push({
+        title: 'Todas las campañas están pausadas o inactivas',
+        area: 'setup',
+        severity: 'media',
+        evidence: `Se detectaron ${enriched.length} campañas y ninguna está activa. ${accountsTxt || ''}`.trim(),
+        recommendation: 'Define qué campañas quieres volver a activar. Empieza por las que históricamente tienen mejor rendimiento, revisa presupuesto, segmentación y creatividades antes de reactivarlas y establece reglas claras de pausa si no cumplen con el ROAS/CPA objetivo.',
+        estimatedImpact: 'medio',
+        accountRef: null,
+        campaignRef: null,
+        metrics: { totalCampaigns: enriched.length, activeCampaigns: 0 },
+        links: []
+      });
+
+      return cap(out, limit);
+    }
+
+    // Si hay activas, priorizamos esas para analizar rendimiento; si no, usamos todo
+    const list = active.length > 0 ? active : enriched;
+
     for (const c of list.slice(0, 100)) {
       const k = c.kpis || {};
       const impr = toNum(k.impressions);
@@ -277,6 +378,9 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
 const SYSTEM_ADS = (platform) => `
 Eres un auditor senior de ${platform} enfocado en performance marketing.
 Objetivo: detectar puntos críticos y oportunidades accionables con alta claridad y rigor.
+Debes priorizar campañas ACTIVAS; las campañas pausadas solo sirven como contexto histórico.
+Si detectas que todas las campañas están pausadas/inactivas, explícalo claramente y enfoca
+las recomendaciones en qué reactivar, cómo reestructurar y cómo testear de forma segura.
 Responde SIEMPRE en JSON válido (sin texto extra). No inventes datos que no estén en el snapshot.
 `.trim();
 
@@ -327,6 +431,13 @@ Estructura estricta:
 function makeUserPrompt({ snapshotStr, maxFindings, isAnalytics }) {
   const adsExtras = `
 - Cada issue DEBE incluir **accountRef** ({ id, name }) y **campaignRef** ({ id, name }).
+- Usa el campo "status" de las campañas (active/paused/unknown):
+  - Prioriza campañas con status "active".
+  - Las campañas "paused" o "inactive" solo deben generar hallazgos si aportan contexto
+    (por ejemplo: hubo gasto fuerte en el pasado o hay una estructura mal diseñada).
+  - Si detectas que todas las campañas están pausadas/inactivas, indícalo explícitamente
+    en alguno de los issues y orienta la recomendación a qué tipo de campañas reactivar
+    o cómo relanzar la cuenta.
 - En el título CITA la cuenta: formato sugerido **"[{accountRef.name||accountRef.id}] {campaignRef.name}: ..."**.
   `.trim();
 
@@ -347,6 +458,13 @@ PRIORIDAD (de mayor a menor)
 2) Gasto ineficiente: gasto alto sin conversiones o ROAS bajo.
 3) Oportunidades de creatividad/segmentación/puja/estructura.
 4) Problemas de setup/higiene solo si afectan resultados.
+
+CASOS ESPECIALES IMPORTANTE
+- Si el snapshot indica que TODAS las campañas están pausadas/inactivas, debes
+  mencionarlo en al menos un issue y enfocar las recomendaciones en cómo reactivar
+  la cuenta de forma inteligente (qué priorizar, estructura sugerida, tests, etc.).
+- Si hay muchas campañas, concéntrate en las que tienen más gasto, impresiones o
+  volumen de conversiones según los KPIs disponibles.
 
 ESTILO
 - Títulos concisos (p. ej. “Gasto sin conversiones en {campaña}” o “[{cuenta}] {campaña}: ROAS bajo”).

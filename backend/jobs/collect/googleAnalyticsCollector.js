@@ -252,6 +252,7 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
 
   const byProperty = [];
   let aggregate = { users: 0, sessions: 0, conversions: 0, revenue: 0 };
+  const globalChannelsMap = new Map(); // channel -> {users,sessions,conversions,revenue}
 
   // 6) Ejecutar para cada propiedad seleccionada
   for (const prop of propertiesToAudit) {
@@ -282,6 +283,10 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
           error: true,
           reason,
           channels: [],
+          users: 0,
+          sessions: 0,
+          conversions: 0,
+          revenue: 0,
         });
         continue; // sigue con las demás propiedades
       }
@@ -296,12 +301,27 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
       revenue:     toNum(rw.metricValues?.[3]?.value),
     }));
 
-    // Suma al agregado
+    // Agregados por propiedad y globales
+    const propAgg = { users: 0, sessions: 0, conversions: 0, revenue: 0 };
+
     for (const c of channels) {
-      aggregate.users += c.users || 0;
-      aggregate.sessions += c.sessions || 0;
+      propAgg.users       += c.users || 0;
+      propAgg.sessions    += c.sessions || 0;
+      propAgg.conversions += c.conversions || 0;
+      propAgg.revenue     += c.revenue || 0;
+
+      aggregate.users       += c.users || 0;
+      aggregate.sessions    += c.sessions || 0;
       aggregate.conversions += c.conversions || 0;
-      aggregate.revenue += c.revenue || 0;
+      aggregate.revenue     += c.revenue || 0;
+
+      const key = c.channel || '(other)';
+      const g = globalChannelsMap.get(key) || { users: 0, sessions: 0, conversions: 0, revenue: 0 };
+      g.users       += c.users || 0;
+      g.sessions    += c.sessions || 0;
+      g.conversions += c.conversions || 0;
+      g.revenue     += c.revenue || 0;
+      globalChannelsMap.set(key, g);
     }
 
     byProperty.push({
@@ -310,8 +330,20 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
       propertyName,
       dateRange,
       channels,
+      users: propAgg.users,
+      sessions: propAgg.sessions,
+      conversions: propAgg.conversions,
+      revenue: propAgg.revenue,
     });
   }
+
+  const channelsGlobal = Array.from(globalChannelsMap.entries()).map(([channel, m]) => ({
+    channel,
+    users: m.users,
+    sessions: m.sessions,
+    conversions: m.conversions,
+    revenue: m.revenue,
+  }));
 
   // [★] Estructura con lista de propiedades para repartir recomendaciones aguas arriba
   const properties = byProperty.map(p => ({
@@ -329,21 +361,22 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
       accountName: p.accountName,
       propertyName: p.propertyName,
       dateRange,
-      channels: p.channels,
+      channels: channelsGlobal,   // global (equivale a los de esta propiedad)
       byProperty,
       aggregate,
       properties,                 // [★]
-      version: 'ga4Collector@multi-properties'
+      version: 'ga4Collector@multi-properties+metrics',
     };
   }
 
   return {
     notAuthorized: false,
     dateRange,
-    byProperty,    // [{ property, accountName, propertyName, channels, ... }]
-    aggregate,     // suma básica
-    properties,    // [★] para repartir recomendaciones
-    version: 'ga4Collector@multi-properties'
+    channels: channelsGlobal,     // 👈 ahora siempre hay channels globales
+    byProperty,                   // [{ property, accountName, propertyName, channels, users, ... }]
+    aggregate,                    // suma básica
+    properties,                   // [★] para repartir recomendaciones
+    version: 'ga4Collector@multi-properties+metrics',
   };
 }
 

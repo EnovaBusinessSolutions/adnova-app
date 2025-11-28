@@ -427,6 +427,8 @@ async function collectGoogle(userId, opts = {}) {
           campaign.id,
           campaign.name,
           campaign.advertising_channel_type,
+          campaign.status,
+          campaign.serving_status,
           metrics.impressions,
           metrics.clicks,
           metrics.cost_micros,
@@ -456,6 +458,8 @@ async function collectGoogle(userId, opts = {}) {
       const campId = r.campaign?.id;
       const name   = r.campaign?.name || 'Untitled';
       const chType = r.campaign?.advertisingChannelType || null;
+      const status = r.campaign?.status || null;            // 👈 nuevo
+      const servingStatus = r.campaign?.servingStatus || null; // 👈 nuevo
 
       const impr  = Number(r.metrics?.impressions || 0);
       const clk   = Number(r.metrics?.clicks || 0);
@@ -480,6 +484,8 @@ async function collectGoogle(userId, opts = {}) {
           byCampAgg.get(campId) || {
             name,
             channel: chType,
+            status,         // 👈 guardamos el primero que vemos
+            servingStatus,  // 👈
             impressions: 0,
             clicks: 0,
             cost: 0,
@@ -502,6 +508,8 @@ async function collectGoogle(userId, opts = {}) {
         id: cid,
         name: v.name,
         channel: v.channel,
+        status: v.status || null,              // 👈 ahora disponible para generateAudit
+        servingStatus: v.servingStatus || null,
         kpis: {
           impressions: v.impressions,
           clicks: v.clicks,
@@ -560,7 +568,7 @@ async function collectGoogle(userId, opts = {}) {
     defaultCustomerId: gaDoc.defaultCustomerId ? normId(gaDoc.defaultCustomerId) : null,
     accounts, // [{id,name,currency,timezone_name}] para distribuir recomendaciones
     targets: { cpaHigh: 15 },
-    version: 'gadsCollector@multi-accounts',
+    version: 'gadsCollector@multi-accounts+status',
   };
 }
 

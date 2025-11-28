@@ -49,6 +49,20 @@ const generateAudit = require('./llm/generateAudit');
 const normMeta   = (s='') => String(s).trim().replace(/^act_/, '');
 const normGoogle = (s='') => String(s).trim().replace(/^customers\//,'').replace(/-/g,'');
 
+/* ---------- límites por plan (issues por fuente) ---------- */
+const PLAN_MAX_FINDINGS = {
+  gratis: 5,          // 👉 plan Gratis: hasta 5 recomendaciones por auditoría/fuente
+  emprendedor: 8,
+  crecimiento: 10,
+  pro: 15
+};
+
+function getPlanSlug(user) {
+  if (!user) return 'gratis';
+  // priorizamos planSlug, luego plan, luego default
+  return (user.planSlug || user.plan || 'gratis').toString().toLowerCase();
+}
+
 /* ---------- helpers kpis tras filtro ---------- */
 const safeDiv = (n,d) => (Number(d||0) ? Number(n||0)/Number(d||0) : 0);
 
@@ -181,8 +195,11 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
   try {
     const user = await User.findById(userId)
-      .select('selectedGoogleAccounts selectedMetaAccounts')
+      .select('selectedGoogleAccounts selectedMetaAccounts plan planSlug')
       .lean();
+
+    const planSlug = getPlanSlug(user);
+    const maxFindings = PLAN_MAX_FINDINGS[planSlug] || PLAN_MAX_FINDINGS.gratis;
 
     // Estado real de conexiones y selección preferida desde conectores
     const connections = await detectConnections(userId);
@@ -222,6 +239,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
         const picked = autoPickIds('google', raw, 3);
         snapshot = filterSnapshot('google', raw, picked);
         selectionNote = {
+          id: 'auto_selection_google',
           title: 'Auditoría limitada a 3 cuentas',
           area: 'setup',
           severity: 'media',
@@ -246,6 +264,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
         const picked = autoPickIds('meta', raw, 3);
         snapshot = filterSnapshot('meta', raw, picked);
         selectionNote = {
+          id: 'auto_selection_meta',
           title: 'Auditoría limitada a 3 cuentas',
           area: 'setup',
           severity: 'media',
@@ -288,8 +307,12 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
     let auditJson = { summary: '', issues: [] };
     if (!noData) {
-      // Pasamos también 'source' por si generateAudit quiere adaptar el mensaje
-      auditJson = await generateAudit({ type: t, inputSnapshot: snapshot, source });
+      // Pasamos maxFindings segun plan (gratis, emprendedor, crecimiento, pro)
+      auditJson = await generateAudit({
+        type: t,
+        inputSnapshot: snapshot,
+        maxFindings
+      });
     }
 
     if (selectionNote) {
@@ -297,17 +320,24 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       auditJson.issues.unshift(selectionNote);
     }
 
+    // clamp final al límite por plan (dejando la nota de selección al frente)
+    if (Array.isArray(auditJson.issues) && auditJson.issues.length > maxFindings) {
+      auditJson.issues = auditJson.issues.slice(0, maxFindings);
+    }
+
     const auditDoc = {
       userId,
       type: t,
-      origin: source || 'manual',  // 👈 clave para diferenciar onboarding vs panel
+      origin: source || 'manual',  // onboarding | panel | manual
       generatedAt: new Date(),
+      plan: planSlug,
+      maxFindings,
       summary: auditJson?.summary || (noData ? 'No hay datos suficientes en el periodo.' : 'Auditoría generada'),
       issues: auditJson?.issues || [],
       actionCenter: auditJson?.actionCenter || (auditJson?.issues || []).slice(0, 3),
       topProducts: auditJson?.topProducts || [],
       inputSnapshot: snapshot,
-      version: 'audits@1.0.3',
+      version: 'audits@1.1.0',
     };
 
     await Audit.create(auditDoc);
@@ -318,8 +348,10 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     await Audit.create({
       userId,
       type: String(type || '').toLowerCase() === 'ga' ? 'ga4' : String(type || '').toLowerCase(),
-      origin: source || 'manual',   // 👈 también marcamos origen en caso de error
+      origin: source || 'manual',
       generatedAt: new Date(),
+      plan: 'unknown',
+      maxFindings: PLAN_MAX_FINDINGS.gratis,
       summary: 'No se pudo generar la auditoría',
       issues: [{
         id: 'setup_incompleto',
@@ -330,7 +362,8 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
         estimatedImpact: 'alto'
       }],
       actionCenter: [],
-      inputSnapshot: {}
+      inputSnapshot: {},
+      version: 'audits@1.1.0-error'
     });
     return false;
   }
