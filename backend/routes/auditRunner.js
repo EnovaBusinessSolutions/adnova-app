@@ -42,7 +42,7 @@ function requireAuth(req, res, next) {
 }
 
 /* ============== helpers ============== */
-const VALID_TYPES = new Set(['meta', 'google', 'shopify']);
+const VALID_TYPES = new Set(['meta', 'google', 'shopify', 'ga4', 'ga']);
 const isValidType = (t) => VALID_TYPES.has(String(t));
 
 async function detectConnectedSources(userId) {

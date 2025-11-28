@@ -45,6 +45,12 @@ function dedupeIssues(issues = []) {
   return out;
 }
 
+/**
+ * Snapshot reducido para mandar al LLM
+ * - Cap de campañas
+ * - Cap de canales GA4
+ * - Incluye un resumen ligero de byProperty (GA4)
+ */
 function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
   try {
     const clone = JSON.parse(JSON.stringify(inputSnapshot || {}));
@@ -87,6 +93,20 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
       }));
     }
 
+    // byProperty (GA4 multi-prop): lo dejamos muy ligero
+    if (Array.isArray(clone.byProperty)) {
+      clone.byProperty = clone.byProperty.slice(0, 10).map(p => ({
+        property: p.property,
+        propertyName: p.propertyName,
+        accountName: p.accountName,
+        // si el collector trae métricas a nivel propiedad, las normalizamos
+        users: toNum(p.users),
+        sessions: toNum(p.sessions),
+        conversions: toNum(p.conversions),
+        revenue: toNum(p.revenue),
+      }));
+    }
+
     // recorta
     let s = JSON.stringify(clone);
     if (s.length > maxChars) s = s.slice(0, maxChars);
@@ -101,6 +121,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
 function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
   const out = [];
 
+  // ------------------ GOOGLE ADS / META ADS -------------------
   if (type === 'google' || type === 'meta') {
     const list = Array.isArray(inputSnapshot?.byCampaign) ? inputSnapshot.byCampaign : [];
     for (const c of list.slice(0, 100)) {
@@ -164,6 +185,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
     }
   }
 
+  // ------------------------- GA4 / GA --------------------------
   if (isGA(type)) {
     const channels = Array.isArray(inputSnapshot?.channels) ? inputSnapshot.channels : [];
     const totals = channels.reduce((a,c)=>({
@@ -173,38 +195,78 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
       revenue: a.revenue + toNum(c.revenue),
     }), { users:0, sessions:0, conversions:0, revenue:0 });
 
-    const accountName = inputSnapshot?.accountName || null;
-    const property    = inputSnapshot?.property || null;
+    // byProperty puede traer info a nivel propiedad
+    const byProperty = Array.isArray(inputSnapshot?.byProperty) ? inputSnapshot.byProperty : [];
+    const firstProp  = byProperty[0] || {};
+    const propName   = inputSnapshot?.propertyName || firstProp.propertyName || null;
+    const propId     = inputSnapshot?.property     || firstProp.property     || '';
 
-    if (totals.sessions > 500 && totals.conversions === 0) {
-      out.push({
-        title: 'Tráfico alto sin conversiones',
-        area: 'tracking',
-        severity: 'alta',
-        evidence: `${fmt(totals.sessions,0)} sesiones y 0 conversiones en el periodo.`,
-        recommendation: 'Verifica eventos de conversión (nombres/flags), etiquetado, consent y filtros; revisa importación a Ads.',
-        estimatedImpact: 'alto',
-        segmentRef: { type: 'channel', name: 'all' },
-        accountRef: { name: accountName || (property || 'GA4'), property: property || '' },
-        metrics: { sessions: fmt(totals.sessions,0), conversions: 0 }
-      });
+    // Reglas con canales
+    if (channels.length > 0) {
+      if (totals.sessions > 500 && totals.conversions === 0) {
+        out.push({
+          title: 'Tráfico alto sin conversiones',
+          area: 'tracking',
+          severity: 'alta',
+          evidence: `${fmt(totals.sessions,0)} sesiones y 0 conversiones en el periodo.`,
+          recommendation: 'Verifica eventos de conversión (nombres/flags), etiquetado, consent y filtros; revisa importación a Ads.',
+          estimatedImpact: 'alto',
+          segmentRef: { type: 'channel', name: 'all' },
+          accountRef: { name: propName || (propId || 'GA4'), property: propId || '' },
+          metrics: { sessions: fmt(totals.sessions,0), conversions: 0 }
+        });
+      }
+
+      const paid = channels.filter(c => /paid|cpc|display|paid social|ads/i.test(String(c.channel || '')));
+      const paidSess = paid.reduce((a,c)=>a+toNum(c.sessions),0);
+      const paidConv = paid.reduce((a,c)=>a+toNum(c.conversions),0);
+      if (paidSess > 200 && paidConv === 0) {
+        out.push({
+          title: 'Tráfico de pago sin conversiones',
+          area: 'performance',
+          severity: 'media',
+          evidence: `${fmt(paidSess,0)} sesiones de pago con 0 conversiones.`,
+          recommendation: 'Cruza plataformas de Ads; revisa importación/definición de conversiones y ventanas de atribución.',
+          estimatedImpact: 'medio',
+          segmentRef: { type: 'channel', name: 'paid' },
+          accountRef: { name: propName || (propId || 'GA4'), property: propId || '' },
+          metrics: { paidSessions: fmt(paidSess,0), paidConversions: 0 }
+        });
+      }
     }
 
-    const paid = channels.filter(c => /paid|cpc|display|paid social|ads/i.test(String(c.channel || '')));
-    const paidSess = paid.reduce((a,c)=>a+toNum(c.sessions),0);
-    const paidConv = paid.reduce((a,c)=>a+toNum(c.conversions),0);
-    if (paidSess > 200 && paidConv === 0) {
-      out.push({
-        title: 'Tráfico de pago sin conversiones',
-        area: 'performance',
-        severity: 'media',
-        evidence: `${fmt(paidSess,0)} sesiones de pago con 0 conversiones.`,
-        recommendation: 'Cruza plataformas de Ads; revisa importación/definición de conversiones y ventanas de atribución.',
-        estimatedImpact: 'medio',
-        segmentRef: { type: 'channel', name: 'paid' },
-        accountRef: { name: accountName || (property || 'GA4'), property: property || '' },
-        metrics: { paidSessions: fmt(paidSess,0), paidConversions: 0 }
-      });
+    // Si NO hay channels pero sí byProperty, intentamos una heurística básica
+    if (channels.length === 0 && byProperty.length > 0) {
+      const pSessions    = toNum(firstProp.sessions);
+      const pConversions = toNum(firstProp.conversions);
+      const pRevenue     = toNum(firstProp.revenue);
+
+      if (pSessions === 0 && pConversions === 0 && pRevenue === 0) {
+        // Propiedad conectada pero sin datos en el rango
+        out.push({
+          title: 'Sin datos recientes en GA4',
+          area: 'setup',
+          severity: 'alta',
+          evidence: 'La propiedad de GA4 conectada no muestra sesiones ni conversiones en el rango analizado.',
+          recommendation: 'Verifica que el tag de GA4 esté instalado, que la propiedad correcta esté conectada y que haya tráfico en el periodo seleccionado.',
+          estimatedImpact: 'alto',
+          segmentRef: { type: 'channel', name: 'all' },
+          accountRef: { name: propName || 'Propiedad GA4', property: propId || '' },
+          metrics: {}
+        });
+      } else if (pSessions > 0 && pConversions === 0) {
+        out.push({
+          title: 'Tráfico sin conversiones en GA4',
+          area: 'tracking',
+          severity: 'alta',
+          evidence: `${fmt(pSessions,0)} sesiones registradas en la propiedad y 0 conversiones reportadas.`,
+          recommendation: 'Revisa la configuración de eventos de conversión en GA4 (mark as conversion, parámetros, debugview) y el mapeo con objetivos de negocio.',
+          estimatedImpact: 'alto',
+          segmentRef: { type: 'channel', name: 'all' },
+          accountRef: { name: propName || 'Propiedad GA4', property: propId || '' },
+          metrics: { sessions: fmt(pSessions,0), conversions: 0 }
+        });
+      }
     }
   }
 
@@ -340,7 +402,10 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
   const analytics = isGA(type);
 
   const haveAdsData = Array.isArray(inputSnapshot?.byCampaign) && inputSnapshot.byCampaign.length > 0;
-  const haveGAData  = Array.isArray(inputSnapshot?.channels)   && inputSnapshot.channels.length > 0;
+  const haveGAData  =
+    (Array.isArray(inputSnapshot?.channels)   && inputSnapshot.channels.length   > 0) ||
+    (Array.isArray(inputSnapshot?.byProperty) && inputSnapshot.byProperty.length > 0);
+
   const haveData    = analytics ? haveGAData : haveAdsData;
 
   const system = analytics
@@ -352,7 +417,8 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
   if (process.env.DEBUG_AUDIT === 'true') {
     console.log('[LLM:IN]', type, {
       hasByCampaign: !!inputSnapshot?.byCampaign?.length,
-      hasChannels: !!inputSnapshot?.channels?.length
+      hasChannels: !!inputSnapshot?.channels?.length,
+      hasByProperty: !!inputSnapshot?.byProperty?.length
     });
     console.log('[LLM:SNAPSHOT]', tinySnapshot(inputSnapshot, { maxChars: 2000 }));
   }
@@ -421,7 +487,7 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
       issues = [...(issues || []), ...fb];
       if (!summary) {
         summary = analytics
-          ? 'Resumen basado en datos de GA4 priorizando tracking y eficiencia por canal.'
+          ? 'Resumen basado en datos de GA4 priorizando tracking y eficiencia por canal/propiedad.'
           : 'Resumen basado en rendimiento de campañas priorizando eficiencia y conversión.';
       }
     }
@@ -431,7 +497,7 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
   issues = dedupeIssues(issues);
   issues = cap(issues, maxFindings);
 
-  // 5) si no hay datos reales, no inventamos
+  // 5) si no hay datos reales y el LLM tampoco generó nada, devolvemos vacío
   if (!haveData && issues.length === 0) {
     return { summary: '', issues: [] };
   }

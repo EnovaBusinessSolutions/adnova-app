@@ -24,10 +24,26 @@ try { ShopConnections = require('../models/ShopConnections'); } catch {
     model('ShopConnections', new Schema({}, { strict:false, collection:'shopconnections' }));
 }
 
+// Collectors principales
 const { collectGoogle }  = require('./collect/googleCollector');
 const { collectMeta }    = require('./collect/metaCollector');
 const { collectShopify } = require('./collect/shopifyCollector');
-const generateAudit      = require('./llm/generateAudit');
+
+// Collector GA4 (lo hacemos robusto a distintos nombres de export)
+let collectGA4 = null;
+try {
+  const ga4Mod = require('./collect/ga4Collector');
+  collectGA4 =
+    ga4Mod.collectGA4 ||
+    ga4Mod.collectGa4 ||
+    ga4Mod.collectGA ||
+    ga4Mod.collect ||
+    null;
+} catch (_) {
+  collectGA4 = null;
+}
+
+const generateAudit = require('./llm/generateAudit');
 
 /* ---------- normalizadores ---------- */
 const normMeta   = (s='') => String(s).trim().replace(/^act_/, '');
@@ -155,10 +171,14 @@ async function detectConnections(userId) {
  * Ejecuta una auditoría para una fuente.
  * @param {Object} params
  * @param {string} params.userId
- * @param {('google'|'meta'|'shopify')} params.type
+ * @param {('google'|'meta'|'shopify'|'ga4'|'ga')} params.type
  * @param {string} [params.source='manual']  // 'onboarding' | 'panel' | 'manual'
  */
 async function runAuditFor({ userId, type, source = 'manual' }) {
+  // Normalizamos type para manejar alias "ga"
+  let t = String(type || '').toLowerCase();
+  if (t === 'ga') t = 'ga4';
+
   try {
     const user = await User.findById(userId)
       .select('selectedGoogleAccounts selectedMetaAccounts')
@@ -168,9 +188,10 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     const connections = await detectConnections(userId);
 
     // Guardas de conexión (defensa en profundidad; auditRunner ya filtra)
-    if (type === 'meta'   && !connections.meta.connected)   throw new Error('SOURCE_NOT_CONNECTED_META');
-    if (type === 'google' && !connections.google.connected) throw new Error('SOURCE_NOT_CONNECTED_GOOGLE');
-    if (type === 'shopify'&& !connections.shopify.connected)throw new Error('SOURCE_NOT_CONNECTED_SHOPIFY');
+    if (t === 'meta'   && !connections.meta.connected)    throw new Error('SOURCE_NOT_CONNECTED_META');
+    if (t === 'google' && !connections.google.connected)  throw new Error('SOURCE_NOT_CONNECTED_GOOGLE');
+    if (t === 'ga4'    && !connections.google.connected)  throw new Error('SOURCE_NOT_CONNECTED_GA4');
+    if (t === 'shopify'&& !connections.shopify.connected) throw new Error('SOURCE_NOT_CONNECTED_SHOPIFY');
 
     // Selección efectiva: conector > user (legacy)
     const selMeta = (
@@ -189,7 +210,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     let snapshot = null;
     let selectionNote = null;
 
-    if (type === 'google') {
+    if (t === 'google') {
       raw = await collectGoogle(userId);
 
       const total = (raw?.accountIds && raw.accountIds.length) ||
@@ -213,7 +234,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       }
     }
 
-    if (type === 'meta') {
+    if (t === 'meta') {
       raw = await collectMeta(userId);
 
       const total = (raw?.accountIds && raw.accountIds.length) ||
@@ -237,7 +258,16 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       }
     }
 
-    if (type === 'shopify') {
+    if (t === 'ga4') {
+      if (!collectGA4) {
+        throw new Error('GA4_COLLECTOR_NOT_AVAILABLE');
+      }
+      // El collector GA4 ya se encarga de propiedades seleccionadas / defaults
+      snapshot = await collectGA4(userId);
+      raw = snapshot;
+    }
+
+    if (t === 'shopify') {
       snapshot = await collectShopify(userId);
     }
 
@@ -245,13 +275,21 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
     // Si no hay datos después del filtrado, registra setup claro (pero sin abortar antes)
     const hasAdsData = Array.isArray(snapshot.byCampaign) && snapshot.byCampaign.length > 0;
-    const hasGAData  = Array.isArray(snapshot.channels)   && snapshot.channels.length > 0;
-    const noData = (type === 'google' || type === 'meta') ? !hasAdsData : !hasGAData;
+    const hasGAData  =
+      (Array.isArray(snapshot.channels) && snapshot.channels.length > 0) ||
+      (Array.isArray(snapshot.byProperty) && snapshot.byProperty.length > 0);
+
+    let noData = false;
+    if (t === 'google' || t === 'meta') {
+      noData = !hasAdsData;
+    } else if (t === 'ga4') {
+      noData = !hasGAData;
+    }
 
     let auditJson = { summary: '', issues: [] };
     if (!noData) {
       // Pasamos también 'source' por si generateAudit quiere adaptar el mensaje
-      auditJson = await generateAudit({ type, inputSnapshot: snapshot, source });
+      auditJson = await generateAudit({ type: t, inputSnapshot: snapshot, source });
     }
 
     if (selectionNote) {
@@ -261,7 +299,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
     const auditDoc = {
       userId,
-      type,
+      type: t,
       origin: source || 'manual',  // 👈 clave para diferenciar onboarding vs panel
       generatedAt: new Date(),
       summary: auditJson?.summary || (noData ? 'No hay datos suficientes en el periodo.' : 'Auditoría generada'),
@@ -269,7 +307,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       actionCenter: auditJson?.actionCenter || (auditJson?.issues || []).slice(0, 3),
       topProducts: auditJson?.topProducts || [],
       inputSnapshot: snapshot,
-      version: 'audits@1.0.2',
+      version: 'audits@1.0.3',
     };
 
     await Audit.create(auditDoc);
@@ -279,7 +317,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     // Siempre escribe un doc para que el frontend vea el motivo
     await Audit.create({
       userId,
-      type,
+      type: String(type || '').toLowerCase() === 'ga' ? 'ga4' : String(type || '').toLowerCase(),
       origin: source || 'manual',   // 👈 también marcamos origen en caso de error
       generatedAt: new Date(),
       summary: 'No se pudo generar la auditoría',
