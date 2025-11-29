@@ -16,24 +16,33 @@ try {
 
 // Modelos para detección de conexiones (auto)
 let MetaAccount, GoogleAccount, ShopConnections;
-try { MetaAccount = require('../models/MetaAccount'); } catch {
+try {
+  MetaAccount = require('../models/MetaAccount');
+} catch {
   const { Schema, model } = mongoose;
   MetaAccount =
     mongoose.models.MetaAccount ||
     model('MetaAccount', new Schema({}, { strict: false, collection: 'metaaccounts' }));
 }
-try { GoogleAccount = require('../models/GoogleAccount'); } catch {
+try {
+  GoogleAccount = require('../models/GoogleAccount');
+} catch {
   const { Schema, model } = mongoose;
   GoogleAccount =
     mongoose.models.GoogleAccount ||
     model('GoogleAccount', new Schema({}, { strict: false, collection: 'googleaccounts' }));
 }
-try { ShopConnections = require('../models/ShopConnections'); } catch {
+try {
+  ShopConnections = require('../models/ShopConnections');
+} catch {
   const { Schema, model } = mongoose;
   ShopConnections =
     mongoose.models.ShopConnections ||
     model('ShopConnections', new Schema({}, { strict: false, collection: 'shopconnections' }));
 }
+
+// Scope de lectura de GA4 (para detectar conexión de Analytics)
+const GA_SCOPE_READ = 'https://www.googleapis.com/auth/analytics.readonly';
 
 /* ============== auth ============== */
 function requireAuth(req, res, next) {
@@ -51,7 +60,7 @@ async function detectConnectedSources(userId) {
       .select('access_token token accessToken longLivedToken longlivedToken')
       .lean(),
     GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] })
-      .select('refreshToken accessToken')
+      .select('refreshToken accessToken scope')
       .lean(),
     ShopConnections.findOne({ $or: [{ user: userId }, { userId }] })
       .select('shop access_token accessToken')
@@ -59,13 +68,28 @@ async function detectConnectedSources(userId) {
   ]);
 
   const metaConnected =
-    !!(meta && (meta.access_token || meta.token || meta.accessToken || meta.longLivedToken || meta.longlivedToken));
-  const googleConnected = !!(google && (google.refreshToken || google.accessToken));
+    !!(
+      meta &&
+      (meta.access_token ||
+        meta.token ||
+        meta.accessToken ||
+        meta.longLivedToken ||
+        meta.longlivedToken)
+    );
+
+  const googleAdsConnected = !!(google && (google.refreshToken || google.accessToken));
   const shopifyConnected = !!(shop && shop.shop && (shop.access_token || shop.accessToken));
+
+  // GA4 conectado = GoogleAccount con token + scope analytics.readonly
+  const googleScopes = Array.isArray(google?.scope)
+    ? google.scope.map((s) => String(s))
+    : [];
+  const ga4Connected = googleAdsConnected && googleScopes.includes(GA_SCOPE_READ);
 
   const types = [];
   if (metaConnected) types.push('meta');
-  if (googleConnected) types.push('google');
+  if (googleAdsConnected) types.push('google');
+  if (ga4Connected) types.push('ga4');
   if (shopifyConnected) types.push('shopify');
   return types;
 }
@@ -94,7 +118,7 @@ const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36
  * POST /api/audits/:type/run
  * Lanza una auditoría individual (uso puntual; por defecto ONBOARDING)
  * =========================================================*/
-router.post('/:type/run', requireAuth, async (req, res) => {
+router.post('/:type/run', requireAuth, express.json(), async (req, res) => {
   try {
     const type = String(req.params.type || '').toLowerCase();
     if (!isValidType(type)) {
@@ -166,7 +190,8 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
     const jobId = newId();
     const state = {
       id: jobId,
-      userId: String(req.user._id),
+      // guardamos el ObjectId real, no string
+      userId: req.user._id,
       startedAt: Date.now(),
       source, // guardamos el origen del job (onboarding/panel)
       items: {},
@@ -240,6 +265,8 @@ router.get('/progress', requireAuth, async (req, res) => {
     if (s.source) {
       query.origin = s.source;
     }
+    // opcional: acotar a los tipos del job
+    query.type = { $in: Object.keys(items) };
 
     const docs = await Audit.find(query)
       .select('type generatedAt origin')
