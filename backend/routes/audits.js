@@ -54,7 +54,7 @@ const PLAN_CONFIG = {
   // 1 auditoría IA al mes
   gratis: {
     limit: 1,
-    period: 'monthly',
+    period: 'daily',
     unlimited: false,
   },
   // 2 auditorías IA al mes
@@ -93,16 +93,17 @@ function normalizePlan(rawPlan) {
   return 'gratis';
 }
 
-/**
- * Calcula ventana de fechas según el periodo del plan.
- * Devuelve { start, end } en Date.
- */
 function getWindowForPeriod(period) {
   const now = new Date();
   const start = new Date(now);
   const end   = new Date(now);
 
-  if (period === 'weekly') {
+  if (period === 'daily') {
+    // Ventana: hoy 00:00 → mañana 00:00 (hora local del servidor)
+    start.setHours(0, 0, 0, 0);
+    end.setDate(start.getDate() + 1);
+    end.setHours(0, 0, 0, 0);
+  } else if (period === 'weekly') {
     // Semana tipo lunes-domingo
     const day = start.getDay(); // 0 dom, 1 lun...
     const diffToMonday = (day + 6) % 7;
@@ -120,18 +121,19 @@ function getWindowForPeriod(period) {
     end.setMonth(start.getMonth() + 1, 1);
     end.setHours(0, 0, 0, 0);
   } else if (period === 'rolling') {
-    // Rolling 15 días (por si algún día lo quieres así)
+    // Rolling 15 días
     start.setDate(start.getDate() - 15);
     start.setHours(0, 0, 0, 0);
     end.setHours(23, 59, 59, 999);
   } else {
-    // unlimited -> ventana muy amplia sólo para devolver nextResetAt null
+    // unlimited
     start.setTime(0);
     end.setFullYear(now.getFullYear() + 10);
   }
 
   return { start, end };
 }
+
 
 const toSev = (s) => {
   const v = String(s || '').toLowerCase().trim();
