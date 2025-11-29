@@ -33,7 +33,7 @@ function normStatus(raw) {
     return 'active';
   }
 
-  if (['paused','pause','stopped','stopped','removed','deleted','inactive','ended','off'].some(k => s.includes(k))) {
+  if (['paused','pause','stopped','removed','deleted','inactive','ended','off'].some(k => s.includes(k))) {
     return 'paused';
   }
 
@@ -146,7 +146,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
         property: p.property,
         propertyName: p.propertyName,
         accountName: p.accountName,
-        // si el collector trae métricas a nivel propiedad, las normalizamos
+        // métricas a nivel propiedad (si existen)
         users: toNum(p.users),
         sessions: toNum(p.sessions),
         conversions: toNum(p.conversions),
@@ -381,12 +381,14 @@ Objetivo: detectar puntos críticos y oportunidades accionables con alta clarida
 Debes priorizar campañas ACTIVAS; las campañas pausadas solo sirven como contexto histórico.
 Si detectas que todas las campañas están pausadas/inactivas, explícalo claramente y enfoca
 las recomendaciones en qué reactivar, cómo reestructurar y cómo testear de forma segura.
+Entrega una síntesis ejecutiva en "summary" y recomendaciones muy concretas en "issues".
 Responde SIEMPRE en JSON válido (sin texto extra). No inventes datos que no estén en el snapshot.
 `.trim();
 
 const SYSTEM_GA = `
 Eres un auditor senior de Google Analytics 4 especializado en analítica de negocio y atribución.
 Objetivo: detectar puntos críticos y oportunidades accionables con alta claridad y rigor.
+El "summary" debe ser una síntesis ejecutiva centrada en canales/embudos con mayor impacto.
 Responde SIEMPRE en JSON válido (sin texto extra). No inventes datos que no estén en el snapshot.
 `.trim();
 
@@ -444,7 +446,8 @@ function makeUserPrompt({ snapshotStr, maxFindings, isAnalytics }) {
   return `
 CONSIGNA
 - Devuelve JSON válido EXACTAMENTE con: { "summary": string, "issues": Issue[] }.
-- MÁXIMO ${maxFindings} issues. Si hay muchos hallazgos, prioriza por impacto esperado en revenue/conversiones.
+- Máximo ${maxFindings} issues. Prioriza por impacto esperado en revenue/conversiones.
+- Si los datos son suficientes, intenta acercarte a ${maxFindings} issues sin inventar hallazgos.
 - Idioma: español neutro, directo y claro.
 - Prohibido inventar métricas o campañas/canales no presentes en el snapshot.
 - Cada "issue" DEBE incluir:
@@ -516,7 +519,8 @@ async function chatJSON({ system, user, model, retries = 2 }) {
 }
 
 /* ----------------------------- entry point ---------------------------- */
-module.exports = async function generateAudit({ type, inputSnapshot, maxFindings = 10 }) {
+// ⚠️ Aquí ponemos por defecto 5 hallazgos máximos
+module.exports = async function generateAudit({ type, inputSnapshot, maxFindings = 5 }) {
   const analytics = isGA(type);
 
   const haveAdsData = Array.isArray(inputSnapshot?.byCampaign) && inputSnapshot.byCampaign.length > 0;
@@ -543,7 +547,7 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
 
   const user = makeUserPrompt({ snapshotStr: dataStr, maxFindings, isAnalytics: analytics });
 
-  // modelo configurable
+  // modelo configurable (puedes cambiarlo en tu .env)
   const model = process.env.OPENAI_MODEL_AUDIT || 'gpt-4o-mini';
 
   // 1) intentar con LLM
@@ -585,8 +589,9 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
   }
 
   // 3) fallback si hay pocos hallazgos y sí hay datos
-  if ((!issues || issues.length < 3) && haveData) {
-    const need = Math.min(3, maxFindings) - (issues?.length || 0);
+  if ((!issues || issues.length < maxFindings) && haveData) {
+    const current = issues?.length || 0;
+    const need = maxFindings - current;
     if (need > 0) {
       const fb = fallbackIssues({ type, inputSnapshot, limit: need }).map((it, idx) => ({
         id: `fb-${type}-${Date.now()}-${idx}`,
