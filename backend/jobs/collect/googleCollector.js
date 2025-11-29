@@ -353,15 +353,19 @@ async function collectGoogle(userId, opts = {}) {
   // 5) Parámetros globales y acumuladores
   const untilGlobal = todayISO();
 
-  let G = { impr: 0, clk: 0, cost: 0, conv: 0, val: 0 };
+  let G = { impr: 0, clk: 0, cost: 0, conv: 0, val: 0, allConv: 0, allVal: 0 };
   const seriesMap = new Map(); // date -> agg
   const byCampaign = [];
+  const byCampaignDevice = [];   // 👈 nuevo
+  const byCampaignNetwork = [];  // 👈 nuevo
+
   let currency = 'USD';
   let timeZone = null;
   let lastSinceUsed = null;
 
-  // Para construir "accounts" al final (con nombres/monedas cuando sea posible)
-  const accountsMeta = new Map(); // id -> { name, currencyCode, timeZone }
+  // Para construir "accounts" y KPI por cuenta al final
+  const accountsMeta = new Map();   // id -> { name, currencyCode, timeZone }
+  const byAccountAgg = new Map();   // id -> agg kpis
 
   // 6) Recorre cada customer a auditar
   for (const customerId of idsToAudit) {
@@ -424,16 +428,24 @@ async function collectGoogle(userId, opts = {}) {
       const query = `
         SELECT
           segments.date,
+          segments.device,
+          segments.ad_network_type,
           campaign.id,
           campaign.name,
           campaign.advertising_channel_type,
+          campaign.advertising_channel_sub_type,
           campaign.status,
           campaign.serving_status,
+          campaign.bidding_strategy_type,
+          campaign.target_cpa_micros,
+          campaign.target_roas,
           metrics.impressions,
           metrics.clicks,
           metrics.cost_micros,
           metrics.conversions,
-          metrics.conversions_value
+          metrics.conversions_value,
+          metrics.all_conversions,
+          metrics.all_conversions_value
         FROM campaign
         WHERE segments.date BETWEEN '${rg.since}' AND '${rg.until}'
         ${rg.where}
@@ -452,52 +464,130 @@ async function collectGoogle(userId, opts = {}) {
     lastSinceUsed = actualSince;
 
     const byCampAgg = new Map();
+    const byCampDeviceAgg = new Map();   // campId::device -> agg
+    const byCampNetworkAgg = new Map();  // campId::network -> agg
 
     for (const r of rows.slice(0, 5000)) {
       const d      = r.segments?.date;
+      const device = r.segments?.device || null;
+      const network = r.segments?.adNetworkType || null;
+
       const campId = r.campaign?.id;
       const name   = r.campaign?.name || 'Untitled';
       const chType = r.campaign?.advertisingChannelType || null;
-      const status = r.campaign?.status || null;            // 👈 nuevo
-      const servingStatus = r.campaign?.servingStatus || null; // 👈 nuevo
+      const chSub  = r.campaign?.advertisingChannelSubType || null;
+      const status = r.campaign?.status || null;
+      const servingStatus = r.campaign?.servingStatus || null;
+      const biddingType = r.campaign?.biddingStrategyType || null;
+      const targetCpaMicros = r.campaign?.targetCpaMicros ?? null;
+      const targetRoas = r.campaign?.targetRoas ?? null;
 
       const impr  = Number(r.metrics?.impressions || 0);
       const clk   = Number(r.metrics?.clicks || 0);
-      const cost  = microsTo(r.metrics?.cost_micros);
-      const conv  = Number(r.metrics?.conversions || 0);
-      const value = Number(r.metrics?.conversions_value || 0);
+      const cost  = microsTo(r.metrics?.costMicros ?? r.metrics?.cost_micros);
+      const conv  = Number(
+        r.metrics?.conversions ??
+        r.metrics?.conversions_value ?? // por si llegaron mal mapeados
+        r.metrics?.conversionsValue ??
+        0
+      );
+      const convValue = Number(
+        r.metrics?.conversions_value ??
+        r.metrics?.conversionsValue ??
+        0
+      );
+      const allConv = Number(r.metrics?.allConversions ?? r.metrics?.all_conversions ?? 0);
+      const allVal  = Number(r.metrics?.allConversionsValue ?? r.metrics?.all_conversions_value ?? 0);
 
-      G.impr += impr; G.clk += clk; G.cost += cost; G.conv += conv; G.val += value;
+      // totales globales (todas las cuentas)
+      G.impr += impr; G.clk += clk; G.cost += cost; G.conv += conv; G.val += convValue;
+      G.allConv += allConv; G.allVal += allVal;
 
+      // serie diaria global
       if (d) {
-        const cur = seriesMap.get(d) || { impressions: 0, clicks: 0, cost: 0, conversions: 0, conv_value: 0 };
+        const cur = seriesMap.get(d) || {
+          impressions: 0, clicks: 0, cost: 0,
+          conversions: 0, conv_value: 0,
+          all_conversions: 0, all_conv_value: 0
+        };
         cur.impressions += impr;
         cur.clicks      += clk;
         cur.cost        += cost;
         cur.conversions += conv;
-        cur.conv_value  += value;
+        cur.conv_value  += convValue;
+        cur.all_conversions  += allConv;
+        cur.all_conv_value   += allVal;
         seriesMap.set(d, cur);
       }
 
+      // agregación por campaña
       if (campId) {
         const agg =
           byCampAgg.get(campId) || {
             name,
             channel: chType,
-            status,         // 👈 guardamos el primero que vemos
-            servingStatus,  // 👈
+            channelSubType: chSub,
+            status,
+            servingStatus,
+            bidding: {
+              type: biddingType,
+              target_cpa: targetCpaMicros != null ? microsTo(targetCpaMicros) : null,
+              target_roas: targetRoas != null ? Number(targetRoas) : null,
+            },
             impressions: 0,
             clicks: 0,
             cost: 0,
             conversions: 0,
             convValue: 0,
+            allConversions: 0,
+            allConvValue: 0,
           };
-        agg.impressions += impr;
-        agg.clicks      += clk;
-        agg.cost        += cost;
-        agg.conversions += conv;
-        agg.convValue   += value;
+        agg.impressions    += impr;
+        agg.clicks         += clk;
+        agg.cost           += cost;
+        agg.conversions    += conv;
+        agg.convValue      += convValue;
+        agg.allConversions += allConv;
+        agg.allConvValue   += allVal;
         byCampAgg.set(campId, agg);
+
+        // desglose por dispositivo
+        if (device) {
+          const key = `${campId}::${device}`;
+          const dv = byCampDeviceAgg.get(key) || {
+            device,
+            impressions: 0, clicks: 0, cost: 0,
+            conversions: 0, convValue: 0,
+            allConversions: 0, allConvValue: 0,
+          };
+          dv.impressions    += impr;
+          dv.clicks         += clk;
+          dv.cost           += cost;
+          dv.conversions    += conv;
+          dv.convValue      += convValue;
+          dv.allConversions += allConv;
+          dv.allConvValue   += allVal;
+          byCampDeviceAgg.set(key, dv);
+        }
+
+        // desglose por red (Search, Display, YouTube, etc.)
+        if (network) {
+          const key = `${campId}::${network}`;
+          const nw = byCampNetworkAgg.get(key) || {
+            network,
+            impressions: 0, clicks: 0, cost: 0,
+            conversions: 0, convValue: 0,
+            allConversions: 0, allConvValue: 0,
+          };
+          nw.impressions    += impr;
+          nw.clicks         += clk;
+          nw.cost           += cost;
+          nw.conversions    += conv;
+          nw.convValue      += convValue;
+          nw.allConversions += allConv;
+          nw.allConvValue   += allVal;
+          byCampNetworkAgg.set(key, nw);
+        }
       }
     }
 
@@ -508,24 +598,95 @@ async function collectGoogle(userId, opts = {}) {
         id: cid,
         name: v.name,
         channel: v.channel,
-        status: v.status || null,              // 👈 ahora disponible para generateAudit
+        channelSubType: v.channelSubType || null,
+        status: v.status || null,
         servingStatus: v.servingStatus || null,
+        bidding: v.bidding || null,
         kpis: {
           impressions: v.impressions,
           clicks: v.clicks,
           cost: v.cost,
           conversions: v.conversions,
           conv_value: v.convValue,
+          all_conversions: v.allConversions,
+          all_conv_value: v.allConvValue,
           ctr: safeDiv(v.clicks, v.impressions) * 100,
           cpc: safeDiv(v.cost, v.clicks),
           cpa: safeDiv(v.cost, v.conversions),
           roas: safeDiv(v.convValue, v.cost),
+          all_roas: safeDiv(v.allConvValue, v.cost),
         },
         period: { since: actualSince, until: untilGlobal },
-        // [opcional] etiqueta para LLM/UI
         accountMeta: accountsMeta.get(customerId) || null,
       });
     }
+
+    // Exporta desglose por dispositivo
+    for (const [key, v] of byCampDeviceAgg.entries()) {
+      const [campId] = key.split('::');
+      byCampaignDevice.push({
+        account_id: customerId,
+        campaign_id: campId,
+        device: v.device,
+        kpis: {
+          impressions: v.impressions,
+          clicks: v.clicks,
+          cost: v.cost,
+          conversions: v.conversions,
+          conv_value: v.convValue,
+          all_conversions: v.allConversions,
+          all_conv_value: v.allConvValue,
+          ctr: safeDiv(v.clicks, v.impressions) * 100,
+          cpc: safeDiv(v.cost, v.clicks),
+          cpa: safeDiv(v.cost, v.conversions),
+          roas: safeDiv(v.convValue, v.cost),
+          all_roas: safeDiv(v.allConvValue, v.cost),
+        },
+        period: { since: actualSince, until: untilGlobal },
+      });
+    }
+
+    // Exporta desglose por red
+    for (const [key, v] of byCampNetworkAgg.entries()) {
+      const [campId] = key.split('::');
+      byCampaignNetwork.push({
+        account_id: customerId,
+        campaign_id: campId,
+        network: v.network,
+        kpis: {
+          impressions: v.impressions,
+          clicks: v.clicks,
+          cost: v.cost,
+          conversions: v.conversions,
+          conv_value: v.convValue,
+          all_conversions: v.allConversions,
+          all_conv_value: v.allConvValue,
+          ctr: safeDiv(v.clicks, v.impressions) * 100,
+          cpc: safeDiv(v.cost, v.clicks),
+          cpa: safeDiv(v.cost, v.conversions),
+          roas: safeDiv(v.convValue, v.cost),
+          all_roas: safeDiv(v.allConvValue, v.cost),
+        },
+        period: { since: actualSince, until: untilGlobal },
+      });
+    }
+
+    // KPI por cuenta (suma de campañas)
+    let accAgg = byAccountAgg.get(customerId) || {
+      impressions: 0, clicks: 0, cost: 0,
+      conversions: 0, convValue: 0,
+      allConversions: 0, allConvValue: 0,
+    };
+    for (const [, v] of byCampAgg.entries()) {
+      accAgg.impressions    += v.impressions;
+      accAgg.clicks         += v.clicks;
+      accAgg.cost           += v.cost;
+      accAgg.conversions    += v.conversions;
+      accAgg.convValue      += v.convValue;
+      accAgg.allConversions += v.allConversions;
+      accAgg.allConvValue   += v.allConvValue;
+    }
+    byAccountAgg.set(customerId, accAgg);
   }
 
   const series = Array.from(seriesMap.keys())
@@ -535,14 +696,33 @@ async function collectGoogle(userId, opts = {}) {
   const sinceGlobal = lastSinceUsed || daysAgoISO(30);
   const untilGlobalFinal = todayISO();
 
-  // Construir listado de cuentas (para UI/LLM)
+  // Construir listado de cuentas (para UI/LLM) con KPI por cuenta
   const accounts = idsToAudit.map(cid => {
     const m = accountsMeta.get(cid) || {};
+    const agg = byAccountAgg.get(cid) || {
+      impressions: 0, clicks: 0, cost: 0,
+      conversions: 0, convValue: 0,
+      allConversions: 0, allConvValue: 0,
+    };
     return {
       id: cid,
       name: m.name || `Cuenta ${cid}`,
       currency: m.currencyCode || null,
       timezone_name: m.timeZone || null,
+      kpis: {
+        impressions: agg.impressions,
+        clicks: agg.clicks,
+        cost: agg.cost,
+        conversions: agg.conversions,
+        conv_value: agg.convValue,
+        all_conversions: agg.allConversions,
+        all_conv_value: agg.allConvValue,
+        ctr: safeDiv(agg.clicks, agg.impressions) * 100,
+        cpc: safeDiv(agg.cost, agg.clicks),
+        cpa: safeDiv(agg.cost, agg.conversions),
+        roas: safeDiv(agg.convValue, agg.cost),
+        all_roas: safeDiv(agg.allConvValue, agg.cost),
+      },
     };
   });
 
@@ -557,18 +737,23 @@ async function collectGoogle(userId, opts = {}) {
       cost: G.cost,
       conversions: G.conv,
       conv_value: G.val,
+      all_conversions: G.allConv,
+      all_conv_value: G.allVal,
       ctr: safeDiv(G.clk, G.impr) * 100,
       cpc: safeDiv(G.cost, G.clk),
       cpa: safeDiv(G.cost, G.conv),
       roas: safeDiv(G.val, G.cost),
+      all_roas: safeDiv(G.allVal, G.cost),
     },
     byCampaign,
+    byCampaignDevice,   // 👈 NUEVO: desglose por dispositivo
+    byCampaignNetwork,  // 👈 NUEVO: desglose por red
     series,
     accountIds: idsToAudit, // <- las realmente auditadas (máx. 3)
     defaultCustomerId: gaDoc.defaultCustomerId ? normId(gaDoc.defaultCustomerId) : null,
-    accounts, // [{id,name,currency,timezone_name}] para distribuir recomendaciones
+    accounts, // [{id,name,currency,timezone_name,kpis}] para distribuir recomendaciones
     targets: { cpaHigh: 15 },
-    version: 'gadsCollector@multi-accounts+status',
+    version: 'gadsCollector@rich-v2',
   };
 }
 

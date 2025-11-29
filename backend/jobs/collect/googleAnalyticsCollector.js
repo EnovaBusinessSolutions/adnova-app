@@ -48,6 +48,14 @@ try { UserModel = require('../../models/User'); } catch (_) {
 /* ---------------- helpers ---------------- */
 const GA_SCOPE_READ = 'https://www.googleapis.com/auth/analytics.readonly';
 
+// usamos siempre el mismo orden de métricas en los reportes
+const BASE_METRICS = [
+  'totalUsers',
+  'sessions',
+  'conversions',
+  'purchaseRevenue',
+];
+
 const normPropertyId = (val) => {
   if (!val) return '';
   const v = String(val).trim();
@@ -180,7 +188,10 @@ async function resolvePropertiesForAudit({ userId, accDoc, forcedPropertyId }) {
 }
 
 /* ---------------- collector ---------------- */
-async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yesterday' } = {}) {
+async function collectGA4(
+  userId,
+  { property_id, start = '30daysAgo', end = 'yesterday' } = {}
+) {
   // 1) Cargar cuenta con tokens y scopes
   const acc = await GoogleAccount
     .findOne({ $or: [{ user: userId }, { userId }] })
@@ -202,6 +213,20 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
   if (!token && acc.refreshToken) token = await ensureAccessToken(acc);
   if (!token) {
     return { notAuthorized: true, reason: 'NO_ACCESS_TOKEN' };
+  }
+
+  // helper local: runReport con refresco en caso de 401/403
+  async function runReportWithRetry(property, body) {
+    try {
+      return await ga4RunReport({ token, property, body });
+    } catch (e) {
+      const http = e?._ga?.http;
+      if ((http === 401 || http === 403) && acc.refreshToken) {
+        token = await ensureAccessToken({ ...acc, accessToken: null });
+        return await ga4RunReport({ token, property, body });
+      }
+      throw e;
+    }
   }
 
   // 4) resolver propiedades a auditar (respeta selección del usuario)
@@ -238,21 +263,39 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
   const dateRange = resolveDateRange({ start, end });
 
   // 5) Reporte base (por canales)
-  const reportBody = {
+  const channelsBody = {
     dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
     dimensions: [{ name: 'sessionDefaultChannelGroup' }],
+    metrics: BASE_METRICS.map(name => ({ name })),
+    limit: '1000',
+  };
+
+  // 5.b) Reporte por dispositivo
+  const devicesBody = {
+    dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
+    dimensions: [{ name: 'deviceCategory' }],
+    metrics: BASE_METRICS.map(name => ({ name })),
+    limit: '1000',
+  };
+
+  // 5.c) Reporte por landing page
+  const landingBody = {
+    dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
+    dimensions: [{ name: 'landingPagePlusQueryString' }],
     metrics: [
-      { name: 'totalUsers' },
       { name: 'sessions' },
       { name: 'conversions' },
       { name: 'purchaseRevenue' },
     ],
-    limit: '1000',
+    limit: '5000',
   };
 
   const byProperty = [];
   let aggregate = { users: 0, sessions: 0, conversions: 0, revenue: 0 };
+
   const globalChannelsMap = new Map(); // channel -> {users,sessions,conversions,revenue}
+  const globalDevicesMap  = new Map(); // device  -> {users,sessions,conversions,revenue}
+  const globalLandingMap  = new Map(); // path    -> {sessions,conversions,revenue}
 
   // 6) Ejecutar para cada propiedad seleccionada
   for (const prop of propertiesToAudit) {
@@ -263,36 +306,32 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
     const accountName  = meta.accountName || meta.account || prop.accountName || '';
     const propertyName = meta.displayName || prop.displayName || '';
 
-    let j;
+    // ---- canales ----
+    let jChannels;
     try {
-      j = await ga4RunReport({ token, property, body: reportBody });
+      jChannels = await runReportWithRetry(property, channelsBody);
     } catch (e) {
-      const http = e?._ga?.http;
-      // 401/403 → intentamos refrescar token una vez
-      if ((http === 401 || http === 403) && acc.refreshToken) {
-        token = await ensureAccessToken({ ...acc, accessToken: null });
-        j = await ga4RunReport({ token, property, body: reportBody });
-      } else {
-        const msg = e?.message || 'GA4 runReport failed';
-        const reason = (e?._ga?.code === 'PERMISSION_DENIED') ? 'PERMISSION_DENIED(analytics.readonly?)' : msg;
-        byProperty.push({
-          property,
-          accountName,
-          propertyName,
-          dateRange,
-          error: true,
-          reason,
-          channels: [],
-          users: 0,
-          sessions: 0,
-          conversions: 0,
-          revenue: 0,
-        });
-        continue; // sigue con las demás propiedades
-      }
+      const msg = e?.message || 'GA4 runReport (channels) failed';
+      const reason = (e?._ga?.code === 'PERMISSION_DENIED') ? 'PERMISSION_DENIED(analytics.readonly?)' : msg;
+      byProperty.push({
+        property,
+        accountName,
+        propertyName,
+        dateRange,
+        error: true,
+        reason,
+        channels: [],
+        devices: [],
+        landingPages: [],
+        users: 0,
+        sessions: 0,
+        conversions: 0,
+        revenue: 0,
+      });
+      continue; // sigue con las demás propiedades
     }
 
-    const rows = Array.isArray(j?.rows) ? j.rows : [];
+    const rows = Array.isArray(jChannels?.rows) ? jChannels.rows : [];
     const channels = rows.map(rw => ({
       channel:     rw.dimensionValues?.[0]?.value || '(other)',
       users:       toNum(rw.metricValues?.[0]?.value),
@@ -301,7 +340,6 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
       revenue:     toNum(rw.metricValues?.[3]?.value),
     }));
 
-    // Agregados por propiedad y globales
     const propAgg = { users: 0, sessions: 0, conversions: 0, revenue: 0 };
 
     for (const c of channels) {
@@ -324,12 +362,65 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
       globalChannelsMap.set(key, g);
     }
 
+    // ---- dispositivos ----
+    let devices = [];
+    try {
+      const jDevices = await runReportWithRetry(property, devicesBody);
+      const dRows = Array.isArray(jDevices?.rows) ? jDevices.rows : [];
+      devices = dRows.map(rw => ({
+        device:      rw.dimensionValues?.[0]?.value || '(other)',
+        users:       toNum(rw.metricValues?.[0]?.value),
+        sessions:    toNum(rw.metricValues?.[1]?.value),
+        conversions: toNum(rw.metricValues?.[2]?.value),
+        revenue:     toNum(rw.metricValues?.[3]?.value),
+      }));
+
+      for (const d of devices) {
+        const key = d.device || '(other)';
+        const g = globalDevicesMap.get(key) || { users: 0, sessions: 0, conversions: 0, revenue: 0 };
+        g.users       += d.users || 0;
+        g.sessions    += d.sessions || 0;
+        g.conversions += d.conversions || 0;
+        g.revenue     += d.revenue || 0;
+        globalDevicesMap.set(key, g);
+      }
+    } catch {
+      // si falla el reporte por dispositivo, seguimos sin romper nada
+      devices = [];
+    }
+
+    // ---- landing pages ----
+    let landingPages = [];
+    try {
+      const jLanding = await runReportWithRetry(property, landingBody);
+      const lRows = Array.isArray(jLanding?.rows) ? jLanding.rows : [];
+      landingPages = lRows.map(rw => ({
+        page:        rw.dimensionValues?.[0]?.value || '(not set)',
+        sessions:    toNum(rw.metricValues?.[0]?.value),
+        conversions: toNum(rw.metricValues?.[1]?.value),
+        revenue:     toNum(rw.metricValues?.[2]?.value),
+      }));
+
+      for (const lp of landingPages) {
+        const key = lp.page || '(not set)';
+        const g = globalLandingMap.get(key) || { sessions: 0, conversions: 0, revenue: 0 };
+        g.sessions    += lp.sessions || 0;
+        g.conversions += lp.conversions || 0;
+        g.revenue     += lp.revenue || 0;
+        globalLandingMap.set(key, g);
+      }
+    } catch {
+      landingPages = [];
+    }
+
     byProperty.push({
       property,
       accountName,
       propertyName,
       dateRange,
       channels,
+      devices,
+      landingPages,
       users: propAgg.users,
       sessions: propAgg.sessions,
       conversions: propAgg.conversions,
@@ -344,6 +435,24 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
     conversions: m.conversions,
     revenue: m.revenue,
   }));
+
+  const devicesGlobal = Array.from(globalDevicesMap.entries()).map(([device, m]) => ({
+    device,
+    users: m.users,
+    sessions: m.sessions,
+    conversions: m.conversions,
+    revenue: m.revenue,
+  }));
+
+  let landingGlobal = Array.from(globalLandingMap.entries()).map(([page, m]) => ({
+    page,
+    sessions: m.sessions,
+    conversions: m.conversions,
+    revenue: m.revenue,
+  }));
+  // ordenamos por sesiones y limitamos para no mandar un monstruo al LLM
+  landingGlobal.sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
+  landingGlobal = landingGlobal.slice(0, 100);
 
   // [★] Estructura con lista de propiedades para repartir recomendaciones aguas arriba
   const properties = byProperty.map(p => ({
@@ -362,21 +471,25 @@ async function collectGA4(userId, { property_id, start = '30daysAgo', end = 'yes
       propertyName: p.propertyName,
       dateRange,
       channels: channelsGlobal,   // global (equivale a los de esta propiedad)
+      devices: devicesGlobal,
+      landingPages: landingGlobal,
       byProperty,
       aggregate,
       properties,                 // [★]
-      version: 'ga4Collector@multi-properties+metrics',
+      version: 'ga4Collector@multi-properties+rich-v2',
     };
   }
 
   return {
     notAuthorized: false,
     dateRange,
-    channels: channelsGlobal,     // 👈 ahora siempre hay channels globales
-    byProperty,                   // [{ property, accountName, propertyName, channels, users, ... }]
+    channels: channelsGlobal,     // 👈 global por canales
+    devices: devicesGlobal,       // 👈 global por dispositivo
+    landingPages: landingGlobal,  // 👈 landings top globales
+    byProperty,                   // [{ property, accountName, propertyName, channels, devices, landingPages, ... }]
     aggregate,                    // suma básica
     properties,                   // [★] para repartir recomendaciones
-    version: 'ga4Collector@multi-properties+metrics',
+    version: 'ga4Collector@multi-properties+rich-v2',
   };
 }
 

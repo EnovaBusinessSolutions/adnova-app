@@ -4,19 +4,29 @@
 const OpenAI = require('openai');
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-/* ------------------------------ helpers ------------------------------ */
-const AREAS = new Set(['setup','performance','creative','tracking','budget','bidding']);
-const SEVS  = new Set(['alta','media','baja']);
+// Modelo por defecto (sobrescribible por ENV)
+// Recomendado en producción: OPENAI_MODEL_AUDIT="gpt-5.1" o "gpt-4.1"
+const DEFAULT_MODEL =
+  process.env.OPENAI_MODEL_AUDIT ||
+  process.env.OPENAI_MODEL ||
+  'gpt-4.1-mini';
 
-const cap   = (arr, n) => (Array.isArray(arr) ? arr.slice(0, n) : []);
-const toNum = (v) => Number(v || 0);
-const sevNorm  = (s) => (SEVS.has(String(s||'').toLowerCase()) ? String(s).toLowerCase() : 'media');
-const areaNorm = (a) => (AREAS.has(String(a||'').toLowerCase()) ? String(a).toLowerCase() : 'performance');
-const impactNorm = (s) => (['alto','medio','bajo'].includes(String(s||'').toLowerCase()) ? String(s).toLowerCase() : 'medio');
+/* ------------------------------ helpers ------------------------------ */
+const AREAS = new Set(['setup', 'performance', 'creative', 'tracking', 'budget', 'bidding']);
+const SEVS  = new Set(['alta', 'media', 'baja']);
+
+const cap      = (arr, n) => (Array.isArray(arr) ? arr.slice(0, n) : []);
+const toNum    = (v) => Number(v || 0);
+const sevNorm  = (s) => (SEVS.has(String(s || '').toLowerCase()) ? String(s).toLowerCase() : 'media');
+const areaNorm = (a) => (AREAS.has(String(a || '').toLowerCase()) ? String(a).toLowerCase() : 'performance');
+const impactNorm = (s) =>
+  (['alto', 'medio', 'bajo'].includes(String(s || '').toLowerCase())
+    ? String(s).toLowerCase()
+    : 'medio');
 
 const isGA = (type) => type === 'ga' || type === 'ga4';
 
-const fmt = (n, d=2) => {
+const fmt = (n, d = 2) => {
   const v = Number(n);
   if (!Number.isFinite(v)) return 0;
   const factor = 10 ** d;
@@ -49,12 +59,12 @@ function inferAccountName(c, snap) {
   return found?.name || null;
 }
 
-/** Dedupe por título + campaignRef.id para reducir ruido del LLM */
+/** Dedupe por título + campaignRef.id + segmentRef.name para reducir ruido del LLM */
 function dedupeIssues(issues = []) {
   const seen = new Set();
   const out = [];
-  for (const it of issues) {
-    const key = `${(it.title||'').trim().toLowerCase()}::${it.campaignRef?.id||''}::${it.segmentRef?.name||''}`;
+  for (const it of issues || []) {
+    const key = `${(it.title || '').trim().toLowerCase()}::${it.campaignRef?.id || ''}::${it.segmentRef?.name || ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(it);
@@ -68,6 +78,7 @@ function dedupeIssues(issues = []) {
  * - Cap de canales GA4
  * - Incluye un resumen ligero de byProperty (GA4)
  * - Prioriza campañas activas cuando hay muchas
+ * - Conserva meta-información básica de cuentas/propiedades
  */
 function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
   try {
@@ -88,6 +99,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
           id: String(c.id ?? ''),
           name: c.name ?? '',
           objective: c.objective ?? null,
+          channel: c.channel ?? null,
           status: statusNorm, // 👈 se lo mandamos explícito a la IA
           kpis: {
             impressions: toNum(c?.kpis?.impressions),
@@ -100,18 +112,21 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
             cpc:         toNum(c?.kpis?.cpc),
             cpa:         toNum(c?.kpis?.cpa),
             ctr:         toNum(c?.kpis?.ctr),
+            purchases:   toNum(c?.kpis?.purchases),
+            purchase_value: toNum(c?.kpis?.purchase_value),
           },
           period: c.period,
           account_id: c.account_id ?? null,
           accountMeta: c.accountMeta ? {
-            name: c.accountMeta.name ?? null,
-            currency: c.accountMeta.currency ?? null
+            name:     c.accountMeta.name ?? null,
+            currency: c.accountMeta.currency ?? null,
+            timezone_name: c.accountMeta.timezone_name ?? null
           } : undefined
         };
       });
 
-      const active = rawList.filter(c => c.status === 'active');
-      const paused = rawList.filter(c => c.status === 'paused');
+      const active  = rawList.filter(c => c.status === 'active');
+      const paused  = rawList.filter(c => c.status === 'paused');
       const unknown = rawList.filter(c => c.status === 'unknown');
 
       const ordered = active.length > 0
@@ -120,9 +135,9 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
 
       // pequeño resumen para que la IA sepa el contexto de estados
       clone.byCampaignMeta = {
-        total: rawList.length,
-        active: active.length,
-        paused: paused.length,
+        total:   rawList.length,
+        active:  active.length,
+        paused:  paused.length,
         unknown: unknown.length
       };
 
@@ -132,29 +147,38 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
     // channels (GA4)
     if (Array.isArray(clone.channels)) {
       clone.channels = clone.channels.slice(0, 60).map(ch => ({
-        channel: ch.channel,
-        users: toNum(ch.users),
-        sessions: toNum(ch.sessions),
+        channel:     ch.channel,
+        users:       toNum(ch.users),
+        sessions:    toNum(ch.sessions),
         conversions: toNum(ch.conversions),
-        revenue: toNum(ch.revenue),
+        revenue:     toNum(ch.revenue),
       }));
     }
 
-    // byProperty (GA4 multi-prop): lo dejamos muy ligero
+    // byProperty (GA4 multi-prop): lo dejamos ligero pero útil
     if (Array.isArray(clone.byProperty)) {
       clone.byProperty = clone.byProperty.slice(0, 10).map(p => ({
-        property: p.property,
+        property:     p.property,
         propertyName: p.propertyName,
-        accountName: p.accountName,
+        accountName:  p.accountName,
         // métricas a nivel propiedad (si existen)
-        users: toNum(p.users),
-        sessions: toNum(p.sessions),
+        users:       toNum(p.users),
+        sessions:    toNum(p.sessions),
         conversions: toNum(p.conversions),
-        revenue: toNum(p.revenue),
+        revenue:     toNum(p.revenue),
       }));
     }
 
-    // recorta
+    // Lista simple de propiedades (para contexto multi-propiedades)
+    if (Array.isArray(clone.properties)) {
+      clone.properties = clone.properties.slice(0, 10).map(p => ({
+        id:           p.id,
+        accountName:  p.accountName,
+        propertyName: p.propertyName
+      }));
+    }
+
+    // recorta duro por seguridad
     let s = JSON.stringify(clone);
     if (s.length > maxChars) s = s.slice(0, maxChars);
     return s;
@@ -167,6 +191,9 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
 /* ----------------------- fallback determinístico ---------------------- */
 function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
   const out = [];
+
+  // Targets opcionales definidos por collector (por ahora sólo usamos cpaHigh)
+  const cpaHigh = Number(inputSnapshot?.targets?.cpaHigh || 0) || null;
 
   // ------------------ GOOGLE ADS / META ADS -------------------
   if (type === 'google' || type === 'meta') {
@@ -227,26 +254,30 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
 
     for (const c of list.slice(0, 100)) {
       const k = c.kpis || {};
-      const impr = toNum(k.impressions);
-      const clk  = toNum(k.clicks);
-      const cost = toNum(k.cost ?? k.spend);
-      const conv = toNum(k.conversions);
-      const value= toNum(k.conv_value ?? k.purchase_value);
-      const ctr  = impr > 0 ? (clk / impr) * 100 : 0;
-      const roas = cost > 0 ? (value / cost) : 0;
+      const impr   = toNum(k.impressions);
+      const clk    = toNum(k.clicks);
+      const cost   = toNum(k.cost ?? k.spend);
+      const conv   = toNum(k.conversions);
+      const value  = toNum(k.conv_value ?? k.purchase_value);
+      const ctr    = impr > 0 ? (clk / impr) * 100 : 0;
+      const roas   = cost > 0 ? (value / cost) : 0;
+      const cpa    = conv > 0 ? (cost / conv) : 0;
+      const ch     = c.channel || '';
+      const isRemarketing = /remarketing|retarget/i.test(String(ch));
 
       const accountRef = {
         id: String(c.account_id ?? ''),
         name: inferAccountName(c, inputSnapshot) || ''
       };
 
+      // 1) CTR bajo con volumen
       if (impr > 1000 && ctr < 1) {
         out.push({
           title: `[${accountRef.name || accountRef.id}] CTR bajo · ${c.name || c.id}`,
           area: 'performance',
           severity: 'media',
           evidence: `CTR ${fmt(ctr)}% con ${fmt(impr,0)} impresiones y ${fmt(clk,0)} clics.`,
-          recommendation: 'Mejora creatividades y relevancia; prueba variantes (RSA/creatives) y ajusta segmentación.',
+          recommendation: 'Mejora creatividades y relevancia; prueba variantes (RSA/creatives), ajusta segmentación y excluye audiencias poco relevantes.',
           estimatedImpact: 'medio',
           accountRef,
           campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
@@ -254,13 +285,14 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
         });
       }
 
+      // 2) Gasto sin conversiones
       if (clk >= 150 && conv === 0 && cost > 0) {
         out.push({
           title: `[${accountRef.name || accountRef.id}] Gasto sin conversiones · ${c.name || c.id}`,
           area: 'performance',
           severity: 'alta',
           evidence: `${fmt(clk,0)} clics, ${fmt(cost)} de gasto y 0 conversiones.`,
-          recommendation: 'Revisa términos/segmentos de baja calidad, negativas, coherencia anuncio→landing y tracking.',
+          recommendation: 'Revisa términos/segmentos de baja calidad, añade negativas, alinea mejor anuncio→landing y verifica que las conversiones estén bien configuradas y disparando.',
           estimatedImpact: 'alto',
           accountRef,
           campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
@@ -268,17 +300,33 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
         });
       }
 
+      // 3) ROAS bajo con gasto relevante
       if (value > 0 && roas > 0 && roas < 1 && cost > 100) {
         out.push({
           title: `[${accountRef.name || accountRef.id}] ROAS bajo · ${c.name || c.id}`,
           area: 'performance',
           severity: 'media',
           evidence: `ROAS ${fmt(roas)} con gasto ${fmt(cost)} y valor ${fmt(value)}.`,
-          recommendation: 'Ajusta pujas/audiencias, excluye ubicaciones pobres y prueba nuevas creatividades.',
+          recommendation: 'Ajusta pujas y audiencias, excluye ubicaciones con baja rentabilidad y prueba nuevas creatividades/formatos orientados a conversión.',
           estimatedImpact: 'medio',
           accountRef,
           campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
           metrics: { roas: fmt(roas), cost: fmt(cost), value: fmt(value) }
+        });
+      }
+
+      // 4) CPA por encima del target (si collector definió cpaHigh)
+      if (cpaHigh && conv > 0 && cpa > cpaHigh * 1.1 && cost > 50) {
+        out.push({
+          title: `[${accountRef.name || accountRef.id}] CPA alto vs objetivo · ${c.name || c.id}`,
+          area: 'performance',
+          severity: isRemarketing ? 'alta' : 'media',
+          evidence: `CPA ${fmt(cpa)} vs objetivo ${fmt(cpaHigh)} con gasto ${fmt(cost)} y ${fmt(conv,0)} conversiones.`,
+          recommendation: 'Revisa segmentos con peor CPA, baja pujas o exclúyelos, concentra presupuesto en grupos y creatividades con mejor costo por conversión y ajusta el funnel si es necesario.',
+          estimatedImpact: 'alto',
+          accountRef,
+          campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
+          metrics: { cpa: fmt(cpa), targetCpa: fmt(cpaHigh), cost: fmt(cost), conversions: conv }
         });
       }
 
@@ -288,19 +336,18 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
 
   // ------------------------- GA4 / GA --------------------------
   if (isGA(type)) {
-    const channels = Array.isArray(inputSnapshot?.channels) ? inputSnapshot.channels : [];
-    const totals = channels.reduce((a,c)=>({
-      users: a.users + toNum(c.users),
-      sessions: a.sessions + toNum(c.sessions),
-      conversions: a.conversions + toNum(c.conversions),
-      revenue: a.revenue + toNum(c.revenue),
-    }), { users:0, sessions:0, conversions:0, revenue:0 });
-
-    // byProperty puede traer info a nivel propiedad
+    const channels   = Array.isArray(inputSnapshot?.channels) ? inputSnapshot.channels : [];
     const byProperty = Array.isArray(inputSnapshot?.byProperty) ? inputSnapshot.byProperty : [];
     const firstProp  = byProperty[0] || {};
     const propName   = inputSnapshot?.propertyName || firstProp.propertyName || null;
     const propId     = inputSnapshot?.property     || firstProp.property     || '';
+
+    const totals = channels.reduce((a, c) => ({
+      users:       a.users + toNum(c.users),
+      sessions:    a.sessions + toNum(c.sessions),
+      conversions: a.conversions + toNum(c.conversions),
+      revenue:     a.revenue + toNum(c.revenue),
+    }), { users: 0, sessions: 0, conversions: 0, revenue: 0 });
 
     // Reglas con canales
     if (channels.length > 0) {
@@ -310,7 +357,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
           area: 'tracking',
           severity: 'alta',
           evidence: `${fmt(totals.sessions,0)} sesiones y 0 conversiones en el periodo.`,
-          recommendation: 'Verifica eventos de conversión (nombres/flags), etiquetado, consent y filtros; revisa importación a Ads.',
+          recommendation: 'Verifica eventos de conversión (nombres, marcar como conversión, parámetros), el etiquetado (UTM), el consentimiento y posibles filtros que estén excluyendo tráfico; revisa también la importación de conversiones hacia plataformas de Ads.',
           estimatedImpact: 'alto',
           segmentRef: { type: 'channel', name: 'all' },
           accountRef: { name: propName || (propId || 'GA4'), property: propId || '' },
@@ -318,7 +365,9 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
         });
       }
 
-      const paid = channels.filter(c => /paid|cpc|display|paid social|ads/i.test(String(c.channel || '')));
+      const paid = channels.filter(c =>
+        /paid|cpc|display|paid social|ads/i.test(String(c.channel || ''))
+      );
       const paidSess = paid.reduce((a,c)=>a+toNum(c.sessions),0);
       const paidConv = paid.reduce((a,c)=>a+toNum(c.conversions),0);
       if (paidSess > 200 && paidConv === 0) {
@@ -327,7 +376,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
           area: 'performance',
           severity: 'media',
           evidence: `${fmt(paidSess,0)} sesiones de pago con 0 conversiones.`,
-          recommendation: 'Cruza plataformas de Ads; revisa importación/definición de conversiones y ventanas de atribución.',
+          recommendation: 'Cruza datos con las plataformas de Ads para confirmar que haya conversiones; revisa definición de eventos de conversión, ventanas de atribución y que estés importando las acciones correctas.',
           estimatedImpact: 'medio',
           segmentRef: { type: 'channel', name: 'paid' },
           accountRef: { name: propName || (propId || 'GA4'), property: propId || '' },
@@ -349,7 +398,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
           area: 'setup',
           severity: 'alta',
           evidence: 'La propiedad de GA4 conectada no muestra sesiones ni conversiones en el rango analizado.',
-          recommendation: 'Verifica que el tag de GA4 esté instalado, que la propiedad correcta esté conectada y que haya tráfico en el periodo seleccionado.',
+          recommendation: 'Verifica que el tag de GA4 esté correctamente instalado, que la propiedad conectada sea la correcta y que haya tráfico en el sitio durante el periodo seleccionado.',
           estimatedImpact: 'alto',
           segmentRef: { type: 'channel', name: 'all' },
           accountRef: { name: propName || 'Propiedad GA4', property: propId || '' },
@@ -361,7 +410,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
           area: 'tracking',
           severity: 'alta',
           evidence: `${fmt(pSessions,0)} sesiones registradas en la propiedad y 0 conversiones reportadas.`,
-          recommendation: 'Revisa la configuración de eventos de conversión en GA4 (mark as conversion, parámetros, debugview) y el mapeo con objetivos de negocio.',
+          recommendation: 'Revisa la configuración de eventos de conversión en GA4 (marcar como conversión, parámetros, debugview) y el mapeo con objetivos de negocio; comprueba también la configuración de eventos en el sitio/app.',
           estimatedImpact: 'alto',
           segmentRef: { type: 'channel', name: 'all' },
           accountRef: { name: propName || 'Propiedad GA4', property: propId || '' },
@@ -440,7 +489,15 @@ function makeUserPrompt({ snapshotStr, maxFindings, isAnalytics }) {
   - Si detectas que todas las campañas están pausadas/inactivas, indícalo explícitamente
     en alguno de los issues y orienta la recomendación a qué tipo de campañas reactivar
     o cómo relanzar la cuenta.
-- En el título CITA la cuenta: formato sugerido **"[{accountRef.name||accountRef.id}] {campaignRef.name}: ..."**.
+- En el título CITA la cuenta: formato sugerido "[{accountRef.name||accountRef.id}] {campaignRef.name}: ...".
+- Si hay varias cuentas, agrupa mentalmente los hallazgos por cuenta para no mezclar mensajes.
+  `.trim();
+
+  const gaExtras = `
+- Cada issue DEBE incluir:
+  - accountRef con { name, property }
+  - segmentRef con el canal (por ejemplo "Organic Search", "Paid Social", etc.).
+- Si hay varias propiedades, enfoca los hallazgos en las que tienen más sesiones/conversiones.
   `.trim();
 
   return `
@@ -451,7 +508,7 @@ CONSIGNA
 - Idioma: español neutro, directo y claro.
 - Prohibido inventar métricas o campañas/canales no presentes en el snapshot.
 - Cada "issue" DEBE incluir:
-  ${isAnalytics ? '- accountRef con {name, property}\n- segmentRef con el canal' : adsExtras}
+  ${isAnalytics ? gaExtras : adsExtras}
   - evidence con métricas textuales del snapshot
   - recommendation con pasos concretos (no genéricos)
   - estimatedImpact coherente con la evidencia
@@ -470,8 +527,8 @@ CASOS ESPECIALES IMPORTANTE
   volumen de conversiones según los KPIs disponibles.
 
 ESTILO
-- Títulos concisos (p. ej. “Gasto sin conversiones en {campaña}” o “[{cuenta}] {campaña}: ROAS bajo”).
-- Evidencia SIEMPRE con números del snapshot (ej. “10,172 sesiones, 23 conversiones, ROAS 0.42”).
+- Títulos concisos (p. ej. "Gasto sin conversiones en {campaña}" o "[{cuenta}] {campaña}: ROAS bajo").
+- Evidencia SIEMPRE con números del snapshot (ej. "10,172 sesiones, 23 conversiones, ROAS 0.42").
 - Recomendaciones en imperativo y específicas (qué tocar, dónde y con umbrales sugeridos).
 
 DATOS (snapshot reducido)
@@ -483,7 +540,7 @@ ${isAnalytics ? SCHEMA_GA : SCHEMA_ADS}
 }
 
 /* ---------------------- OpenAI JSON con reintentos --------------------- */
-async function chatJSON({ system, user, model, retries = 2 }) {
+async function chatJSON({ system, user, model = DEFAULT_MODEL, retries = 2 }) {
   if (!process.env.OPENAI_API_KEY) {
     const err = new Error('OPENAI_API_KEY missing');
     err.status = 499;
@@ -519,7 +576,7 @@ async function chatJSON({ system, user, model, retries = 2 }) {
 }
 
 /* ----------------------------- entry point ---------------------------- */
-// ⚠️ Aquí ponemos por defecto 5 hallazgos máximos
+// maxFindings viene de auditJob (según plan). Default 5 por seguridad.
 module.exports = async function generateAudit({ type, inputSnapshot, maxFindings = 5 }) {
   const analytics = isGA(type);
 
@@ -528,7 +585,7 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
     (Array.isArray(inputSnapshot?.channels)   && inputSnapshot.channels.length   > 0) ||
     (Array.isArray(inputSnapshot?.byProperty) && inputSnapshot.byProperty.length > 0);
 
-  const haveData    = analytics ? haveGAData : haveAdsData;
+  const haveData = analytics ? haveGAData : haveAdsData;
 
   const system = analytics
     ? SYSTEM_GA
@@ -545,15 +602,15 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
     console.log('[LLM:SNAPSHOT]', tinySnapshot(inputSnapshot, { maxChars: 2000 }));
   }
 
-  const user = makeUserPrompt({ snapshotStr: dataStr, maxFindings, isAnalytics: analytics });
+  const userPrompt = makeUserPrompt({ snapshotStr: dataStr, maxFindings, isAnalytics: analytics });
 
-  // modelo configurable (puedes cambiarlo en tu .env)
-  const model = process.env.OPENAI_MODEL_AUDIT || 'gpt-4o-mini';
+  // modelo configurable
+  const model = DEFAULT_MODEL;
 
   // 1) intentar con LLM
   let parsed;
   try {
-    parsed = await chatJSON({ system, user, model });
+    parsed = await chatJSON({ system, user: userPrompt, model });
   } catch (_) {
     parsed = null;
   }

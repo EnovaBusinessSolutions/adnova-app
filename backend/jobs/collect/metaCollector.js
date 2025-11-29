@@ -44,6 +44,9 @@ const safeDiv = (n, d) => (Number(d || 0) ? Number(n || 0) / Number(d || 0) : 0)
 // Normaliza id de ad account / campaña: quita "act_" y cualquier no-dígito
 const normAct = (s = '') => String(s).replace(/^act_/, '').replace(/[^\d]/g, '').trim();
 
+// budgets en Meta vienen en unidades menores (p.ej. centavos)
+const minorToUnit = (v) => (v == null ? null : Number(v) / 100);
+
 function pickToken(acc) {
   return (
     acc?.longLivedToken ||
@@ -150,10 +153,10 @@ function getAllAvailableAccounts(accDoc) {
     .filter(Boolean);
 }
 
-/** Trae todos los statuses de campañas de una ad account (status + effective_status) */
-async function fetchAllCampaignStatuses(actId, token) {
+/** Trae metadatos de campañas de una ad account (status + objetivo + budgets) */
+async function fetchAllCampaignMeta(actId, token) {
   const map = new Map();
-  let next = `https://graph.facebook.com/${API_VER}/act_${actId}/campaigns?fields=id,name,status,effective_status&limit=500&access_token=${encodeURIComponent(token)}`;
+  let next = `https://graph.facebook.com/${API_VER}/act_${actId}/campaigns?fields=id,name,status,effective_status,objective,buying_type,bid_strategy,daily_budget,lifetime_budget,special_ad_category&limit=500&access_token=${encodeURIComponent(token)}`;
   let guard = 0;
 
   while (next && guard < 20) {
@@ -168,6 +171,12 @@ async function fetchAllCampaignStatuses(actId, token) {
         name: c.name || null,
         status: c.status || null,
         effective_status: c.effective_status || null,
+        objective: c.objective || null,
+        buying_type: c.buying_type || null,
+        bid_strategy: c.bid_strategy || null,
+        daily_budget: minorToUnit(c.daily_budget),
+        lifetime_budget: minorToUnit(c.lifetime_budget),
+        special_ad_category: c.special_ad_category || null,
       });
     }
     next = j?.paging?.next || null;
@@ -265,17 +274,19 @@ async function collectMeta(userId, opts = {}) {
     accountsToAudit = available.slice(0, 1);
   }
 
-  // Campos de insights
+  // Campos de insights base (puedes añadir más si hace falta)
   const baseFields = [
     'date_start', 'date_stop',
     'campaign_id', 'campaign_name', 'objective',
-    'spend', 'impressions', 'clicks', 'cpm', 'cpc', 'ctr',
+    'spend', 'impressions', 'reach', 'frequency',
+    'clicks', 'cpm', 'cpc', 'ctr',
+    'unique_clicks', 'inline_link_clicks',
     'actions', 'action_values', 'purchase_roas'
   ];
   const fields = Array.isArray(userFields) && userFields.length ? userFields : baseFields;
 
-  // Construye URL con presets/rangos
-  const mkUrl = (actId, preset) => {
+  // Construye URL con presets/rangos (+ extras como breakdowns)
+  const mkUrl = (actId, preset, extra = {}) => {
     const qp = new URLSearchParams();
     if (since && until) {
       qp.set('time_range', JSON.stringify({ since, until }));
@@ -286,6 +297,8 @@ async function collectMeta(userId, opts = {}) {
     qp.set('fields', fields.join(','));
     qp.set('limit', '5000');
     qp.set('use_unified_attribution_setting', 'true');
+    if (extra.breakdowns) qp.set('breakdowns', extra.breakdowns);
+    if (extra.time_increment != null) qp.set('time_increment', String(extra.time_increment));
     qp.set('access_token', token);
     return `https://graph.facebook.com/${API_VER}/act_${actId}/insights?${qp.toString()}`;
   };
@@ -308,6 +321,8 @@ async function collectMeta(userId, opts = {}) {
   /* ---------- loop por cuentas ---------- */
 
   const byCampaign = [];
+  const byCampaignDevice = [];     // 👈 nuevo
+  const byCampaignPlacement = [];  // 👈 nuevo
   const accountIds = [];
   const accountCurrency = new Map();
   const accountNameMap = new Map();
@@ -326,15 +341,15 @@ async function collectMeta(userId, opts = {}) {
     accountNameMap.set(actId, acct.name || meta.accountName || null);
     accountTzMap.set(actId, meta.timezone_name);
 
-    // map de status de campañas (status + effective_status)
-    let statusMap = new Map();
+    // metadatos de campañas (status, objetivo, budgets, etc.)
+    let campMeta = new Map();
     try {
-      statusMap = await fetchAllCampaignStatuses(actId, token);
+      campMeta = await fetchAllCampaignMeta(actId, token);
     } catch {
-      statusMap = new Map();
+      campMeta = new Map();
     }
 
-    // insights
+    // insights generales por campaña
     let data = [];
     let presetTried = since && until ? undefined : (date_preset || 'last_30d');
     try {
@@ -347,6 +362,7 @@ async function collectMeta(userId, opts = {}) {
       return { notAuthorized: true, reason, byCampaign: [], accountIds };
     }
 
+    // si no hay datos recientes, probamos rangos más largos
     if (!since && !until && data.length === 0) {
       for (const p of ['last_90d', 'last_180d', 'last_year']) {
         try {
@@ -357,36 +373,218 @@ async function collectMeta(userId, opts = {}) {
       }
     }
 
-    // campañas
+    // agregadores por campaña (cuenta actual)
+    const byCampAgg = new Map();
+
     for (const x of data) {
-      const roas = Array.isArray(x.purchase_roas) && x.purchase_roas[0]?.value ? Number(x.purchase_roas[0].value) : null;
       const { purchases, purchase_value } = extractPurchaseMetrics(x);
+      const roasField = (Array.isArray(x.purchase_roas) && x.purchase_roas[0]?.value)
+        ? Number(x.purchase_roas[0].value)
+        : null;
 
       if (x.date_start && (!minStart || x.date_start < minStart)) minStart = x.date_start;
       if (x.date_stop  && (!maxStop  || x.date_stop  > maxStop )) maxStop  = x.date_stop;
 
       const campIdNorm = normAct(x.campaign_id || '');
-      const stInfo = campIdNorm ? (statusMap.get(campIdNorm) || {}) : {};
+      const metaInfo = campMeta.get(campIdNorm) || {};
 
-      byCampaign.push({
+      const key = campIdNorm || x.campaign_id || 'unknown';
+
+      const cur = byCampAgg.get(key) || {
         account_id: actId,
         id: x.campaign_id,
-        name: x.campaign_name || 'Sin nombre',
-        objective: x.objective || null,
-        status: stInfo.status || stInfo.effective_status || null,   // 👈 para normStatus()
-        effectiveStatus: stInfo.effective_status || null,           // 👈 generateAudit también mira este campo
-        kpis: {
-          spend: toNum(x.spend),
-          impressions: toNum(x.impressions),
-          clicks: toNum(x.clicks),
-          cpm: toNum(x.cpm),
-          cpc: toNum(x.cpc),
-          ctr: toNum(x.ctr),
-          roas: roas ?? (purchase_value ? safeDiv(purchase_value, toNum(x.spend)) : 0),
-          purchases: purchases ?? null,
-          purchase_value: purchase_value ?? null,
+        name: x.campaign_name || metaInfo.name || 'Sin nombre',
+        objective: x.objective || metaInfo.objective || null,
+        status: metaInfo.status || metaInfo.effective_status || null,
+        effectiveStatus: metaInfo.effective_status || null,
+        buying_type: metaInfo.buying_type || null,
+        bid_strategy: metaInfo.bid_strategy || null,
+        budget: {
+          daily: metaInfo.daily_budget || null,
+          lifetime: metaInfo.lifetime_budget || null,
         },
+        special_ad_category: metaInfo.special_ad_category || null,
         period: { since: x.date_start, until: x.date_stop },
+        kpis: {
+          spend: 0,
+          impressions: 0,
+          reach: 0,
+          frequency: 0,
+          clicks: 0,
+          cpm: 0,
+          cpc: 0,
+          ctr: 0,
+          unique_clicks: 0,
+          inline_link_clicks: 0,
+          purchases: 0,
+          purchase_value: 0,
+          roas: 0,
+        },
+        _freqDenominator: 0, // para promediar frequency correctamente
+      };
+
+      const k = cur.kpis;
+      k.spend       += toNum(x.spend);
+      k.impressions += toNum(x.impressions);
+      k.reach       += toNum(x.reach);
+      k.clicks      += toNum(x.clicks);
+      k.unique_clicks      += toNum(x.unique_clicks);
+      k.inline_link_clicks += toNum(x.inline_link_clicks);
+      if (purchases != null)      k.purchases      += purchases;
+      if (purchase_value != null) k.purchase_value += purchase_value;
+
+      // frequency viene ya promediada por fila, la re-promediamos ponderada por impresiones
+      const freqVal = toNum(x.frequency);
+      if (freqVal && toNum(x.impressions) > 0) {
+        cur._freqDenominator += toNum(x.impressions);
+        k.frequency = safeDiv(
+          (k.frequency * (cur._freqDenominator - toNum(x.impressions)) + freqVal * toNum(x.impressions)),
+          cur._freqDenominator
+        );
+      }
+
+      // recalculamos métricas derivadas
+      k.cpm  = k.impressions ? (k.spend / k.impressions) * 1000 : 0;
+      k.cpc  = k.clicks ? (k.spend / k.clicks) : 0;
+      k.ctr  = k.impressions ? (k.clicks / k.impressions) * 100 : 0;
+      k.roas = roasField != null
+        ? roasField
+        : (k.purchase_value ? safeDiv(k.purchase_value, k.spend) : 0);
+
+      byCampAgg.set(key, cur);
+    }
+
+    // insights por dispositivo
+    const byCampDeviceAgg = new Map();
+    try {
+      const devData = await pageAllInsights(
+        mkUrl(actId, presetTried, { breakdowns: 'device_platform' })
+      );
+      for (const x of devData) {
+        const campIdNorm = normAct(x.campaign_id || '');
+        if (!campIdNorm) continue;
+        const device = x.device_platform || null;
+        if (!device) continue;
+
+        const { purchases, purchase_value } = extractPurchaseMetrics(x);
+
+        const dupKey = `${campIdNorm}::${device}`;
+        const cur = byCampDeviceAgg.get(dupKey) || {
+          account_id: actId,
+          campaign_id: campIdNorm,
+          device,
+          kpis: {
+            spend: 0,
+            impressions: 0,
+            reach: 0,
+            clicks: 0,
+            cpm: 0,
+            cpc: 0,
+            ctr: 0,
+            purchases: 0,
+            purchase_value: 0,
+            roas: 0,
+          },
+        };
+        const k = cur.kpis;
+        k.spend       += toNum(x.spend);
+        k.impressions += toNum(x.impressions);
+        k.reach       += toNum(x.reach);
+        k.clicks      += toNum(x.clicks);
+        if (purchases != null)      k.purchases      += purchases;
+        if (purchase_value != null) k.purchase_value += purchase_value;
+
+        k.cpm  = k.impressions ? (k.spend / k.impressions) * 1000 : 0;
+        k.cpc  = k.clicks ? (k.spend / k.clicks) : 0;
+        k.ctr  = k.impressions ? (k.clicks / k.impressions) * 100 : 0;
+        k.roas = k.purchase_value ? safeDiv(k.purchase_value, k.spend) : 0;
+
+        byCampDeviceAgg.set(dupKey, cur);
+      }
+    } catch {
+      // si falla el breakdown, no rompemos el collector
+    }
+
+    // insights por plataforma (Facebook / Instagram / Audience Network…)
+    const byCampPlacementAgg = new Map();
+    try {
+      const plData = await pageAllInsights(
+        mkUrl(actId, presetTried, { breakdowns: 'publisher_platform' })
+      );
+      for (const x of plData) {
+        const campIdNorm = normAct(x.campaign_id || '');
+        if (!campIdNorm) continue;
+        const platform = x.publisher_platform || null;
+        if (!platform) continue;
+
+        const { purchases, purchase_value } = extractPurchaseMetrics(x);
+
+        const dupKey = `${campIdNorm}::${platform}`;
+        const cur = byCampPlacementAgg.get(dupKey) || {
+          account_id: actId,
+          campaign_id: campIdNorm,
+          platform,
+          kpis: {
+            spend: 0,
+            impressions: 0,
+            reach: 0,
+            clicks: 0,
+            cpm: 0,
+            cpc: 0,
+            ctr: 0,
+            purchases: 0,
+            purchase_value: 0,
+            roas: 0,
+          },
+        };
+        const k = cur.kpis;
+        k.spend       += toNum(x.spend);
+        k.impressions += toNum(x.impressions);
+        k.reach       += toNum(x.reach);
+        k.clicks      += toNum(x.clicks);
+        if (purchases != null)      k.purchases      += purchases;
+        if (purchase_value != null) k.purchase_value += purchase_value;
+
+        k.cpm  = k.impressions ? (k.spend / k.impressions) * 1000 : 0;
+        k.cpc  = k.clicks ? (k.spend / k.clicks) : 0;
+        k.ctr  = k.impressions ? (k.clicks / k.impressions) * 100 : 0;
+        k.roas = k.purchase_value ? safeDiv(k.purchase_value, k.spend) : 0;
+
+        byCampPlacementAgg.set(dupKey, cur);
+      }
+    } catch {
+      // igual, si falla no se rompe nada
+    }
+
+    // volcamos campañas agregadas de la cuenta a byCampaign
+    for (const [, v] of byCampAgg.entries()) {
+      byCampaign.push({
+        account_id: v.account_id,
+        id: v.id,
+        name: v.name,
+        objective: v.objective,
+        status: v.status,
+        effectiveStatus: v.effectiveStatus,
+        buying_type: v.buying_type,
+        bid_strategy: v.bid_strategy,
+        budget: v.budget,
+        special_ad_category: v.special_ad_category,
+        kpis: {
+          spend: v.kpis.spend,
+          impressions: v.kpis.impressions,
+          reach: v.kpis.reach,
+          frequency: v.kpis.frequency,
+          clicks: v.kpis.clicks,
+          cpm: v.kpis.cpm,
+          cpc: v.kpis.cpc,
+          ctr: v.kpis.ctr,
+          unique_clicks: v.kpis.unique_clicks,
+          inline_link_clicks: v.kpis.inline_link_clicks,
+          purchases: v.kpis.purchases,
+          purchase_value: v.kpis.purchase_value,
+          roas: v.kpis.roas,
+        },
+        period: v.period,
         accountMeta: {
           name: accountNameMap.get(actId) || null,
           currency: accountCurrency.get(actId) || null,
@@ -394,17 +592,42 @@ async function collectMeta(userId, opts = {}) {
         }
       });
     }
-  }
 
-  // KPIs globales
+    // volcamos desglose por dispositivo
+    for (const [, v] of byCampDeviceAgg.entries()) {
+      byCampaignDevice.push({
+        account_id: v.account_id,
+        campaign_id: v.campaign_id,
+        device: v.device,
+        kpis: v.kpis,
+        period: { since: minStart, until: maxStop },
+      });
+    }
+
+    // volcamos desglose por plataforma
+    for (const [, v] of byCampPlacementAgg.entries()) {
+      byCampaignPlacement.push({
+        account_id: v.account_id,
+        campaign_id: v.campaign_id,
+        platform: v.platform,
+        kpis: v.kpis,
+        period: { since: minStart, until: maxStop },
+      });
+    }
+  } // fin loop cuentas
+
+  // KPIs globales (todas las cuentas / campañas)
   const G = byCampaign.reduce(
     (a, c) => {
-      a.impr += c.kpis.impressions || 0;
-      a.clk  += c.kpis.clicks || 0;
-      a.cost += c.kpis.spend || 0;
+      const k = c.kpis || {};
+      a.impr += k.impressions || 0;
+      a.clk  += k.clicks || 0;
+      a.cost += k.spend || 0;
+      a.pur  += k.purchases || 0;
+      a.val  += k.purchase_value || 0;
       return a;
     },
-    { impr: 0, clk: 0, cost: 0 }
+    { impr: 0, clk: 0, cost: 0, pur: 0, val: 0 }
   );
 
   // moneda unificada (si aplica)
@@ -413,13 +636,39 @@ async function collectMeta(userId, opts = {}) {
   ));
   const unifiedCurrency = uniqueCurrencies.length === 1 ? uniqueCurrencies[0] : null;
 
-  // arreglo de cuentas para UI/LLM
-  const accounts = accountIds.map(id => ({
-    id,
-    name: accountNameMap.get(id) || null,
-    currency: accountCurrency.get(id) || null,
-    timezone_name: accountTzMap.get(id) || null,
-  }));
+  // KPI por cuenta
+  const byAccountAgg = new Map();
+  for (const c of byCampaign) {
+    const id = c.account_id;
+    const k = c.kpis || {};
+    const agg = byAccountAgg.get(id) || { impr: 0, clk: 0, cost: 0, pur: 0, val: 0 };
+    agg.impr += k.impressions || 0;
+    agg.clk  += k.clicks || 0;
+    agg.cost += k.spend || 0;
+    agg.pur  += k.purchases || 0;
+    agg.val  += k.purchase_value || 0;
+    byAccountAgg.set(id, agg);
+  }
+
+  // arreglo de cuentas para UI/LLM (con KPIs)
+  const accounts = accountIds.map(id => {
+    const agg = byAccountAgg.get(id) || { impr: 0, clk: 0, cost: 0, pur: 0, val: 0 };
+    return {
+      id,
+      name: accountNameMap.get(id) || null,
+      currency: accountCurrency.get(id) || null,
+      timezone_name: accountTzMap.get(id) || null,
+      kpis: {
+        impressions: agg.impr,
+        clicks: agg.clk,
+        cost: agg.cost,
+        purchases: agg.pur,
+        purchase_value: agg.val,
+        cpc: safeDiv(agg.cost, agg.clk),
+        roas: agg.val ? safeDiv(agg.val, agg.cost) : 0,
+      },
+    };
+  });
 
   return {
     notAuthorized: false,
@@ -430,12 +679,17 @@ async function collectMeta(userId, opts = {}) {
       impressions: G.impr,
       clicks: G.clk,
       cost: G.cost,
+      purchases: G.pur,
+      purchase_value: G.val,
       cpc: safeDiv(G.cost, G.clk),
+      roas: G.val ? safeDiv(G.val, G.cost) : 0,
     },
     byCampaign,
+    byCampaignDevice,     // 👈 NUEVO: desglose por tipo de dispositivo
+    byCampaignPlacement,  // 👈 NUEVO: desglose por plataforma (FB, IG, Audience, etc.)
     accountIds,   // para audits.js (reparto)
-    accounts,     // para anotar [Nombre] en títulos
-    version: 'metaCollector@multi-accounts+selection+status',
+    accounts,     // para anotar [Nombre] en títulos y dar contexto de cuenta
+    version: 'metaCollector@multi-accounts+rich-v2',
   };
 }
 

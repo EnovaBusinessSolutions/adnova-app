@@ -29,7 +29,7 @@ const { collectGoogle }  = require('./collect/googleCollector');
 const { collectMeta }    = require('./collect/metaCollector');
 const { collectShopify } = require('./collect/shopifyCollector');
 
-// Collector GA4 (lo hacemos robusto a distintos nombres de export)
+// Collector GA4 (robusto a distintos nombres de export)
 let collectGA4 = null;
 try {
   const ga4Mod = require('./collect/ga4Collector');
@@ -51,7 +51,7 @@ const normGoogle = (s='') => String(s).trim().replace(/^customers\//,'').replace
 
 /* ---------- límites por plan (issues por fuente) ---------- */
 const PLAN_MAX_FINDINGS = {
-  gratis: 5,          // 👉 plan Gratis: hasta 5 recomendaciones por auditoría/fuente
+  gratis: 5,          // plan Gratis: hasta 5 recomendaciones por fuente
   emprendedor: 8,
   crecimiento: 10,
   pro: 15
@@ -124,6 +124,8 @@ function filterSnapshot(type, snapshot, allowedIds = []) {
 }
 
 /* ---------- escoger subconjunto seguro si no hay selección ---------- */
+/* (hoy casi no se usa porque los collectors ya respetan máx. 3,
+ *  pero lo dejamos para compat si snapshot ya viene con varias cuentas) */
 function autoPickIds(type, snapshot, max = 3) {
   const norm = type === 'meta' ? normMeta : normGoogle;
 
@@ -149,7 +151,7 @@ function autoPickIds(type, snapshot, max = 3) {
   return Array.from(ids);
 }
 
-/* ---------- conexión por fuente ---------- */
+/* ---------- helpers de conexiones ---------- */
 async function detectConnections(userId) {
   const [meta, google, shop] = await Promise.all([
     MetaAccount.findOne({ $or:[{user:userId},{userId}] })
@@ -177,6 +179,38 @@ async function detectConnections(userId) {
     shopify: {
       connected: !!(shop && shop.shop && (shop.access_token || shop.accessToken)),
     }
+  };
+}
+
+/* ---------- helpers de issues especiales ---------- */
+
+/**
+ * Issue específico cuando el collector pide selección explícita (>3 cuentas/propiedades).
+ */
+function buildSelectionRequiredIssue(type, raw) {
+  const reason = String(raw?.reason || '').toUpperCase();
+  const available = Number(raw?.availableCount || (raw?.accountIds || []).length || 0);
+
+  let title = 'Selecciona las fuentes que quieres auditar';
+  let platform = 'la fuente conectada';
+  if (type === 'google') platform = 'Google Ads';
+  if (type === 'meta')   platform = 'Meta Ads (Facebook/Instagram)';
+  if (type === 'ga4')    platform = 'Google Analytics 4';
+
+  if (reason.startsWith('SELECTION_REQUIRED')) {
+    title = `Selecciona qué cuentas de ${platform} auditar`;
+  }
+
+  return {
+    id: `selection_required_${type}`,
+    area: 'setup',
+    severity: 'media',
+    title,
+    evidence: available
+      ? `Se detectaron ${available} cuentas/propiedades conectadas en ${platform}. Por claridad y rendimiento solo se pueden auditar hasta 3 a la vez.`
+      : `Hay varias cuentas/propiedades conectadas en ${platform} y es necesario elegir cuáles auditar.`,
+    recommendation: 'En Ajustes → Conexiones selecciona explícitamente las cuentas o propiedades que quieras incluir en la auditoría.',
+    estimatedImpact: 'medio'
   };
 }
 
@@ -210,7 +244,9 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     if (t === 'ga4'    && !connections.google.connected)  throw new Error('SOURCE_NOT_CONNECTED_GA4');
     if (t === 'shopify'&& !connections.shopify.connected) throw new Error('SOURCE_NOT_CONNECTED_SHOPIFY');
 
-    // Selección efectiva: conector > user (legacy)
+    // Selección efectiva “extra” desde los conectores (legacy),
+    // los collectors ya usan preferencias nuevas, pero esto permite
+    // filtrar aún más si el usuario marcó algo ahí.
     const selMeta = (
       connections.meta.selectedIds.length
         ? connections.meta.selectedIds
@@ -225,74 +261,149 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
     let raw = null;
     let snapshot = null;
-    let selectionNote = null;
+    let selectionNote = null; // nota informativa si llegamos a autoPick (hoy casi nunca)
 
+    /* ---------- GOOGLE ADS ---------- */
     if (t === 'google') {
       raw = await collectGoogle(userId);
 
+      // Caso especial: collector pide selección explícita (>3 cuentas)
+      if (raw?.notAuthorized && raw.requiredSelection &&
+          String(raw.reason || '').startsWith('SELECTION_REQUIRED')) {
+
+        const issue = buildSelectionRequiredIssue('google', raw);
+        await Audit.create({
+          userId,
+          type: 'google',
+          origin: source || 'manual',
+          generatedAt: new Date(),
+          plan: planSlug,
+          maxFindings,
+          summary: 'Antes de generar la auditoría, selecciona qué cuentas de Google Ads quieres analizar.',
+          issues: [issue],
+          actionCenter: [issue],
+          topProducts: [],
+          inputSnapshot: raw,
+          version: 'audits@1.1.3-selection'
+        });
+        return true;
+      }
+
       const total = (raw?.accountIds && raw.accountIds.length) ||
                     (raw?.accounts && raw.accounts.length) || 0;
 
-      if (selGoogle.length) {
+      if (selGoogle.length && total > 0) {
         snapshot = filterSnapshot('google', raw, selGoogle);
-      } else if (total > 3) {
-        const picked = autoPickIds('google', raw, 3);
-        snapshot = filterSnapshot('google', raw, picked);
-        selectionNote = {
-          id: 'auto_selection_google',
-          title: 'Auditoría limitada a 3 cuentas',
-          area: 'setup',
-          severity: 'media',
-          evidence: `Se detectaron ${total} cuentas de Google Ads y aún no has seleccionado. Se auditó: ${picked.join(', ')}.`,
-          recommendation: 'En Ajustes → Conexiones elige explícitamente las cuentas a auditar.',
-          estimatedImpact: 'medio'
-        };
       } else {
+        // Confiamos en la lógica de selección del collector (máx. 3)
         snapshot = raw;
+        // fallback ultra-defensivo: si por alguna razón el snapshot viene con >3 cuentas,
+        // auto-limitamos y dejamos nota
+        if (total > 3) {
+          const picked = autoPickIds('google', raw, 3);
+          snapshot = filterSnapshot('google', raw, picked);
+          selectionNote = {
+            id: 'auto_selection_google',
+            title: 'Auditoría limitada a 3 cuentas',
+            area: 'setup',
+            severity: 'media',
+            evidence: `Se detectaron ${total} cuentas de Google Ads. Se auditó solo: ${picked.join(', ')}.`,
+            recommendation: 'En Ajustes → Conexiones elige explícitamente las cuentas a auditar.',
+            estimatedImpact: 'medio'
+          };
+        }
       }
     }
 
+    /* ---------- META ADS ---------- */
     if (t === 'meta') {
       raw = await collectMeta(userId);
 
+      if (raw?.notAuthorized && raw.requiredSelection &&
+          String(raw.reason || '').startsWith('SELECTION_REQUIRED')) {
+
+        const issue = buildSelectionRequiredIssue('meta', raw);
+        await Audit.create({
+          userId,
+          type: 'meta',
+          origin: source || 'manual',
+          generatedAt: new Date(),
+          plan: planSlug,
+          maxFindings,
+          summary: 'Antes de generar la auditoría, selecciona qué cuentas de Meta Ads quieres analizar.',
+          issues: [issue],
+          actionCenter: [issue],
+          topProducts: [],
+          inputSnapshot: raw,
+          version: 'audits@1.1.3-selection'
+        });
+        return true;
+      }
+
       const total = (raw?.accountIds && raw.accountIds.length) ||
                     (raw?.accounts && raw.accounts.length) || 0;
 
-      if (selMeta.length) {
+      if (selMeta.length && total > 0) {
         snapshot = filterSnapshot('meta', raw, selMeta);
-      } else if (total > 3) {
-        const picked = autoPickIds('meta', raw, 3);
-        snapshot = filterSnapshot('meta', raw, picked);
-        selectionNote = {
-          id: 'auto_selection_meta',
-          title: 'Auditoría limitada a 3 cuentas',
-          area: 'setup',
-          severity: 'media',
-          evidence: `Se detectaron ${total} cuentas de Meta Ads y aún no has seleccionado. Se auditó: ${picked.map(x=>'act_'+x).join(', ')}.`,
-          recommendation: 'En Ajustes → Conexiones elige explícitamente las cuentas a auditar.',
-          estimatedImpact: 'medio'
-        };
       } else {
         snapshot = raw;
+        if (total > 3) {
+          const picked = autoPickIds('meta', raw, 3);
+          snapshot = filterSnapshot('meta', raw, picked);
+          selectionNote = {
+            id: 'auto_selection_meta',
+            title: 'Auditoría limitada a 3 cuentas',
+            area: 'setup',
+            severity: 'media',
+            evidence: `Se detectaron ${total} cuentas de Meta Ads. Se auditó solo: ${picked.map(x=>'act_'+x).join(', ')}.`,
+            recommendation: 'En Ajustes → Conexiones elige explícitamente las cuentas a auditar.',
+            estimatedImpact: 'medio'
+          };
+        }
       }
     }
 
+    /* ---------- GA4 ---------- */
     if (t === 'ga4') {
       if (!collectGA4) {
         throw new Error('GA4_COLLECTOR_NOT_AVAILABLE');
       }
-      // El collector GA4 ya se encarga de propiedades seleccionadas / defaults
-      snapshot = await collectGA4(userId);
-      raw = snapshot;
+
+      raw = await collectGA4(userId);
+
+      if (raw?.notAuthorized && raw.requiredSelection &&
+          String(raw.reason || '').startsWith('SELECTION_REQUIRED')) {
+
+        const issue = buildSelectionRequiredIssue('ga4', raw);
+        await Audit.create({
+          userId,
+          type: 'ga4',
+          origin: source || 'manual',
+          generatedAt: new Date(),
+          plan: planSlug,
+          maxFindings,
+          summary: 'Antes de generar la auditoría, selecciona qué propiedades de GA4 quieres analizar.',
+          issues: [issue],
+          actionCenter: [issue],
+          topProducts: [],
+          inputSnapshot: raw,
+          version: 'audits@1.1.3-selection'
+        });
+        return true;
+      }
+
+      snapshot = raw;
     }
 
+    /* ---------- SHOPIFY ---------- */
     if (t === 'shopify') {
       snapshot = await collectShopify(userId);
+      raw = snapshot;
     }
 
     if (!snapshot) throw new Error('SNAPSHOT_EMPTY');
 
-    // Si no hay datos después del filtrado, registra setup claro (pero sin abortar antes)
+    // ¿Tenemos datos reales tras el filtrado?
     const hasAdsData = Array.isArray(snapshot.byCampaign) && snapshot.byCampaign.length > 0;
     const hasGAData  =
       (Array.isArray(snapshot.channels) && snapshot.channels.length > 0) ||
@@ -307,7 +418,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
     let auditJson = { summary: '', issues: [] };
     if (!noData) {
-      // Pasamos maxFindings segun plan (gratis, emprendedor, crecimiento, pro)
+      // Pasamos maxFindings según plan (gratis, emprendedor, crecimiento, pro)
       auditJson = await generateAudit({
         type: t,
         inputSnapshot: snapshot,
@@ -315,6 +426,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       });
     }
 
+    // Nota de selección (si aplicó autoPick de seguridad)
     if (selectionNote) {
       auditJson.issues = Array.isArray(auditJson.issues) ? auditJson.issues : [];
       auditJson.issues.unshift(selectionNote);
@@ -337,7 +449,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       actionCenter: auditJson?.actionCenter || (auditJson?.issues || []).slice(0, 3),
       topProducts: auditJson?.topProducts || [],
       inputSnapshot: snapshot,
-      version: 'audits@1.1.0',
+      version: 'audits@1.1.3',
     };
 
     await Audit.create(auditDoc);
@@ -363,7 +475,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       }],
       actionCenter: [],
       inputSnapshot: {},
-      version: 'audits@1.1.0-error'
+      version: 'audits@1.1.3-error'
     });
     return false;
   }
