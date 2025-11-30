@@ -293,6 +293,7 @@ async function discoverAndEnrich(source) {
  * Igual que arriba: source puede ser accessToken string o GoogleAccount.
  */
 async function searchGAQLStream(source, customerId, query) {
+  // 👇 Esto sigue igual que antes
   const accessToken = await resolveAccessToken(source);
   const cid = normId(customerId);
   const body = { query };
@@ -324,6 +325,7 @@ async function searchGAQLStream(source, customerId, query) {
     });
   }
 
+  // 👇 Esto también se queda igual: cómo procesamos la respuesta OK
   if (r.ok && Array.isArray(r.data)) {
     const rows = [];
     for (const chunk of r.data) {
@@ -338,14 +340,36 @@ async function searchGAQLStream(source, customerId, query) {
     throw err;
   }
 
-  const err = new Error(
-    `[searchGAQLStream] ${r.data?.error?.status || r.res?.status || 'UNKNOWN'}: ${
-      r.data?.error?.message || 'failed'
-    }`
-  );
-  err.api = { status: r.res?.status, error: r.data?.error || r.data || null, log: r.log };
+  // 👇 AQUÍ VIENE EL CAMBIO IMPORTANTE (solo enriquecemos el error)
+  const statusCode = r.res?.status || 500;
+  const errStatus  = r.data?.error?.status || String(statusCode);
+  const errMsg     = r.data?.error?.message || 'failed';
+
+  const err = new Error(`[searchGAQLStream] ${errStatus}: ${errMsg}`);
+
+  // añadimos campos directos para que el collector pueda loguearlos
+  err.status = statusCode;
+  err.code   = r.data?.error?.code;
+  err.data   = r.data;
+
+  // mantenemos err.api como ya estaba, para no romper nada existente
+  err.api = {
+    status: statusCode,
+    error: r.data?.error || r.data || null,
+    log: r.log,
+  };
+
+  // opcional: log interno (no afecta lógica)
+  console.error('[searchGAQLStream] ERROR', {
+    customerId: cid,
+    status: err.status,
+    code: err.code,
+    message: errMsg,
+  });
+
   throw err;
 }
+
 
 /* ========================================================================== *
  * 3) Fechas (TZ-aware) + include_today

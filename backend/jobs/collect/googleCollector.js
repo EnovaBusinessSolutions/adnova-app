@@ -383,48 +383,37 @@ async function collectGoogle(userId, opts = {}) {
     let gotRows = false;
     let actualSince = ranges[0].since;
 
-    // [★] loginCustomerId igual que en el panel (ENV o la misma cuenta)
-    const loginCustomerId =
-      normId(process.env.GOOGLE_LOGIN_CUSTOMER_ID ||
-             process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID ||
-             customerId);
-
-    // función ejecutora con reintentos de auth
+        // función ejecutora con reintentos de auth
     const runQuery = async (query) => {
       try {
-        return await Ads.searchGAQLStream(accessToken, customerId, {
-          loginCustomerId,
-          query,
-        });
+        // 👇 ahora le mandamos el GAQL como string, como en el panel
+        return await Ads.searchGAQLStream(accessToken, customerId, query);
       } catch (e) {
         if (process.env.DEBUG_GOOGLE_COLLECTOR) {
           console.log('[gadsCollector] runQuery ERROR', {
             customerId,
             message: e?.message,
+            status: e?.status,
             code: e?.code,
-            status: e?.response?.status,
-            data: e?.response?.data
-              ? JSON.stringify(e.response.data, null, 2)
-              : null,
+            data: e?.data ? JSON.stringify(e.data, null, 2) : null,
           });
         }
 
-        // Si es auth, intentamos refrescar una vez
-        if (e?.response?.status === 401 || e?.response?.status === 403 || e?.code === 'UNAUTHENTICATED') {
+        // Reintento sólo si es tema de auth
+        if (e?.status === 401 || e?.status === 403 || e?.code === 'UNAUTHENTICATED') {
           accessToken = await ensureAccessToken({
             ...(gaDoc.toObject?.() || {}),
             _id: gaDoc._id,
             accessToken: null,
           });
 
-          return await Ads.searchGAQLStream(accessToken, customerId, {
-            loginCustomerId,
-            query,
-          });
+          return await Ads.searchGAQLStream(accessToken, customerId, query);
         }
+
         throw e;
       }
     };
+
 
     for (const rg of ranges) {
       const query = `
@@ -478,16 +467,14 @@ async function collectGoogle(userId, opts = {}) {
         }
 
         if (gotRows) break;
-      } catch (e) {
+            } catch (e) {
         if (process.env.DEBUG_GOOGLE_COLLECTOR) {
           console.log('[gadsCollector] range ERROR', {
             customerId,
             since: rg.since,
-            code: e && e.code,
-            status: e && e.response && e.response.status,
-            data: e && e.response && e.response.data
-              ? JSON.stringify(e.response.data, null, 2)
-              : null,
+            code: e?.code,
+            status: e?.status,
+            data: e?.data ? JSON.stringify(e.data, null, 2) : null,
           });
         }
         // probamos el siguiente rango
