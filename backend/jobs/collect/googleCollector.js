@@ -753,7 +753,7 @@ async function collectGoogle(userId, opts = {}) {
     defaultCustomerId: gaDoc.defaultCustomerId ? normId(gaDoc.defaultCustomerId) : null,
     accounts, // [{id,name,currency,timezone_name,kpis}] para distribuir recomendaciones
     targets: { cpaHigh: 15 },
-    version: 'gadsCollector@rich-v2',
+    version: 'gadsCollector@multi-accounts+status',
   };
 }
 
