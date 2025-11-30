@@ -3,8 +3,9 @@
 
 const mongoose = require('mongoose');
 const { OAuth2Client } = require('google-auth-library');
+const axios = require('axios');
 
-// Usamos el mismo servicio que el panel de Google Ads
+// Usamos el mismo servicio que el panel de Google Ads (para listAccessibleCustomers / getCustomer)
 const Ads = require('../../services/googleAdsService');
 
 const {
@@ -18,6 +19,10 @@ const {
 } = process.env;
 
 const DEV_TOKEN = GOOGLE_ADS_DEVELOPER_TOKEN || GOOGLE_DEVELOPER_TOKEN;
+
+// Versión / host de la API de Google Ads
+const ADS_VER  = (process.env.GADS_API_VERSION || 'v22').trim();
+const ADS_HOST = 'https://googleads.googleapis.com';
 
 // [★] Límite duro por requerimiento (3). Se puede “bajar” por env, pero nunca >3.
 const HARD_LIMIT = 3;
@@ -113,6 +118,33 @@ async function ensureAccessToken(gaDoc) {
   }
 
   return gaDoc?.accessToken || null;
+}
+
+/** Llamada directa a Google Ads searchStream (sin MCC, solo customer conectado) */
+async function searchGAQLStreamDirect(accessToken, customerId, query) {
+  const cid = normId(customerId);
+  const url = `${ADS_HOST}/${ADS_VER}/customers/${cid}/googleAds:searchStream`;
+
+  const res = await axios.post(
+    url,
+    { query },
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'developer-token': DEV_TOKEN,
+        'Content-Type': 'application/json',
+      },
+    }
+  );
+
+  const out = [];
+  const streams = res.data || [];
+  for (const chunk of streams) {
+    if (Array.isArray(chunk.results)) {
+      out.push(...chunk.results);
+    }
+  }
+  return out;
 }
 
 /** Lista customers accesibles (IDs) usando el mismo helper que el panel */
@@ -332,10 +364,10 @@ async function collectGoogle(userId, opts = {}) {
   }
 
   if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-  console.log('[gadsCollector] userId=', String(userId));
-  console.log('[gadsCollector] universe=', universe);
-  console.log('[gadsCollector] idsToAudit=', idsToAudit);
-}
+    console.log('[gadsCollector] userId=', String(userId));
+    console.log('[gadsCollector] universe=', universe);
+    console.log('[gadsCollector] idsToAudit=', idsToAudit);
+  }
 
   // 5) Parámetros globales y acumuladores
   const untilGlobal = todayISO();
@@ -383,25 +415,45 @@ async function collectGoogle(userId, opts = {}) {
     let gotRows = false;
     let actualSince = ranges[0].since;
 
-    // función ejecutora con reintentos de auth
+    // función ejecutora con reintentos de auth (via llamada directa a la API)
     const runQuery = async (query) => {
       try {
-        return await Ads.searchGAQLStream(accessToken, customerId, query);
+        return await searchGAQLStreamDirect(accessToken, customerId, query);
       } catch (e) {
-        // Si es auth, intentamos refrescar una vez
-        if (e?.response?.status === 401 || e?.response?.status === 403 || e?.code === 'UNAUTHENTICATED') {
+        const status = e && e.response && e.response.status;
+        if (status === 401 || status === 403 || e?.code === 'UNAUTHENTICATED') {
+          if (process.env.DEBUG_GOOGLE_COLLECTOR) {
+            console.log('[gadsCollector] auth error, intentando refresh accessToken', {
+              customerId,
+              status,
+              code: e && e.code,
+            });
+          }
+
           accessToken = await ensureAccessToken({
             ...(gaDoc.toObject?.() || {}),
             _id: gaDoc._id,
             accessToken: null,
           });
-          return await Ads.searchGAQLStream(accessToken, customerId, query);
+
+          return await searchGAQLStreamDirect(accessToken, customerId, query);
         }
+
+        if (process.env.DEBUG_GOOGLE_COLLECTOR) {
+          console.error('[gadsCollector] runQuery ERROR', {
+            customerId,
+            message: e && e.message,
+            code: e && e.code,
+            status,
+            data: e && e.response && e.response.data,
+          });
+        }
+
         throw e;
       }
     };
 
-        for (const rg of ranges) {
+    for (const rg of ranges) {
       const query = `
         SELECT
           segments.date,
@@ -476,37 +528,24 @@ async function collectGoogle(userId, opts = {}) {
 
     // Aquí ya sabemos que SÍ hubo filas
     if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-      console.log('[gadsCollector] customerId=', customerId,
-        'rowsLen=', Array.isArray(rows) ? rows.length : null);
+      console.log(
+        '[gadsCollector] customerId=',
+        customerId,
+        'rowsLen=',
+        Array.isArray(rows) ? rows.length : null
+      );
       if (rows && rows.length) {
+        const sample = rows[0];
+        console.log(
+          '[gadsCollector] sample row keys =',
+          Object.keys(sample || {})
+        );
         console.log(
           '[gadsCollector] sample row =',
-          JSON.stringify(rows[0], null, 2)
+          JSON.stringify(sample, null, 2)
         );
       }
     }
-
-
-    if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-  console.log(
-    '[gadsCollector] customerId=',
-    customerId,
-    'rowsLen=',
-    Array.isArray(rows) ? rows.length : null
-  );cls
-  if (rows && rows.length) {
-    const sample = rows[0];
-    console.log(
-      '[gadsCollector] sample row keys =',
-      Object.keys(sample || {})
-    );
-    console.log(
-      '[gadsCollector] sample row =',
-      JSON.stringify(sample, null, 2)
-    );
-  }
-}
-
 
     lastSinceUsed = actualSince;
 
@@ -516,46 +555,46 @@ async function collectGoogle(userId, opts = {}) {
 
     for (const r of rows.slice(0, 5000)) {
       const d      = getField(r, 'segments.date');
-const device = getField(r, 'segments.device') || null;
-const network =
-  getField(r, 'segments.ad_network_type') ??
-  getField(r, 'segments.adNetworkType') ??
-  null;
+      const device = getField(r, 'segments.device') || null;
+      const network =
+        getField(r, 'segments.ad_network_type') ??
+        getField(r, 'segments.adNetworkType') ??
+        null;
 
-const campId = getField(r, 'campaign.id');
-const name   = getField(r, 'campaign.name') || 'Untitled';
+      const campId = getField(r, 'campaign.id');
+      const name   = getField(r, 'campaign.name') || 'Untitled';
 
-const chType =
-  getField(r, 'campaign.advertising_channel_type') ??
-  getField(r, 'campaign.advertisingChannelType') ??
-  null;
+      const chType =
+        getField(r, 'campaign.advertising_channel_type') ??
+        getField(r, 'campaign.advertisingChannelType') ??
+        null;
 
-const chSub  =
-  getField(r, 'campaign.advertising_channel_sub_type') ??
-  getField(r, 'campaign.advertisingChannelSubType') ??
-  null;
+      const chSub  =
+        getField(r, 'campaign.advertising_channel_sub_type') ??
+        getField(r, 'campaign.advertisingChannelSubType') ??
+        null;
 
-const status = getField(r, 'campaign.status') || null;
+      const status = getField(r, 'campaign.status') || null;
 
-const servingStatus =
-  getField(r, 'campaign.serving_status') ??
-  getField(r, 'campaign.servingStatus') ??
-  null;
+      const servingStatus =
+        getField(r, 'campaign.serving_status') ??
+        getField(r, 'campaign.servingStatus') ??
+        null;
 
-const biddingType =
-  getField(r, 'campaign.bidding_strategy_type') ??
-  getField(r, 'campaign.biddingStrategyType') ??
-  null;
+      const biddingType =
+        getField(r, 'campaign.bidding_strategy_type') ??
+        getField(r, 'campaign.biddingStrategyType') ??
+        null;
 
-const targetCpaMicros =
-  getField(r, 'campaign.target_cpa_micros') ??
-  getField(r, 'campaign.targetCpaMicros') ??
-  null;
+      const targetCpaMicros =
+        getField(r, 'campaign.target_cpa_micros') ??
+        getField(r, 'campaign.targetCpaMicros') ??
+        null;
 
-const targetRoas =
-  getField(r, 'campaign.target_roas') ??
-  getField(r, 'campaign.targetRoas') ??
-  null;
+      const targetRoas =
+        getField(r, 'campaign.target_roas') ??
+        getField(r, 'campaign.targetRoas') ??
+        null;
 
       const impr  = Number(getField(r, 'metrics.impressions') || 0);
       const clk   = Number(getField(r, 'metrics.clicks') || 0);
