@@ -4,14 +4,22 @@
 const mongoose = require('mongoose');
 const { OAuth2Client } = require('google-auth-library');
 
-// Usaremos SIEMPRE el mismo servicio que el panel
+// Usamos el mismo servicio que el panel de Google Ads
 const Ads = require('../../services/googleAdsService');
 
-// =========================
-//  Constantes / configuración
-// =========================
+const {
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
+  GOOGLE_CONNECT_CALLBACK_URL,
 
-// Límite duro por requerimiento (3). Se puede “bajar” por env, pero nunca >3.
+  // Acepta ambos nombres para el developer token
+  GOOGLE_ADS_DEVELOPER_TOKEN,
+  GOOGLE_DEVELOPER_TOKEN,
+} = process.env;
+
+const DEV_TOKEN = GOOGLE_ADS_DEVELOPER_TOKEN || GOOGLE_DEVELOPER_TOKEN;
+
+// [★] Límite duro por requerimiento (3). Se puede “bajar” por env, pero nunca >3.
 const HARD_LIMIT = 3;
 const MAX_BY_RULE = Math.min(
   HARD_LIMIT,
@@ -21,91 +29,62 @@ const MAX_BY_RULE = Math.min(
 // Límite de seguridad de requests (no afecta la regla 3 máx. para auditoría)
 const MAX_ACCOUNTS_FETCH = Number(process.env.GOOGLE_MAX_ACCOUNTS || 12);
 
-// =========================
-//  Modelos
-// =========================
-
+/* ---------------- modelos ---------------- */
 let GoogleAccount;
 try {
   GoogleAccount = require('../../models/GoogleAccount');
 } catch (_) {
   const { Schema, model } = mongoose;
-
-  const AdAccountSchema = new Schema({
-    id: String,
-    name: String,
-    currencyCode: String,
-    timeZone: String,
-    status: String,
-  }, { _id: false });
-
   const schema = new Schema(
     {
-      user:  { type: Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
-      userId:{ type: Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
-
-      accessToken:  { type: String, select: false },
+      user: { type: Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
+      userId: { type: Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
+      accessToken: { type: String, select: false },
       refreshToken: { type: String, select: false },
-      scope:        { type: [String], default: [] },
-
-      customers:         { type: Array, default: [] },
-      ad_accounts:       { type: [AdAccountSchema], default: [] },
-      defaultCustomerId: { type: String },
-      managerCustomerId: { type: String },
-      loginCustomerId:   { type: String },
-      selectedCustomerIds: { type: [String], default: [] },
-
-      expiresAt: { type: Date },
+      scope: { type: [String], default: [] },
+      customers: { type: Array, default: [] }, // [{id, descriptiveName, currencyCode, timeZone}]
+      ad_accounts: { type: Array, default: [] }, // enriquecidas si existen
+      defaultCustomerId: String,
+      managerCustomerId: String,
       updatedAt: { type: Date, default: Date.now },
     },
-    { collection: 'googleaccounts', timestamps: true }
+    { collection: 'googleaccounts' }
   );
   schema.pre('save', function (n) { this.updatedAt = new Date(); n(); });
   GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
 }
 
+// [★] Leer preferencia/selección guardada en User.preferences.googleAds.auditCustomerIds
 let UserModel = null;
-try {
-  UserModel = require('../../models/User');
-} catch (_) {
+try { UserModel = require('../../models/User'); } catch (_) {
   const { Schema, model } = mongoose;
-  UserModel = mongoose.models.User || model(
-    'User',
-    new Schema({}, { strict: false, collection: 'users' })
-  );
+  UserModel = mongoose.models.User || model('User', new Schema({}, { strict: false, collection: 'users' }));
 }
 
-// =========================
-//  Helpers genéricos
-// =========================
-
+/* ---------------- utilidades ---------------- */
 const normId   = (s = '') => String(s).replace(/^customers\//,'').replace(/[^\d]/g, '').trim();
 const microsTo = (v) => Number(v || 0) / 1_000_000;
 const safeDiv  = (n, d) => (Number(d || 0) ? Number(n || 0) / Number(d || 0) : 0);
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
-const daysAgoISO = (n) => {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - n);
-  return d.toISOString().slice(0, 10);
-};
+const daysAgoISO = (n) => { const d = new Date(); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
 
 function oauth() {
   return new OAuth2Client({
-    clientId:     process.env.GOOGLE_CLIENT_ID,
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    redirectUri:  process.env.GOOGLE_CONNECT_CALLBACK_URL,
+    clientId: GOOGLE_CLIENT_ID,
+    clientSecret: GOOGLE_CLIENT_SECRET,
+    redirectUri: GOOGLE_CONNECT_CALLBACK_URL,
   });
 }
 
-/**
- * Refresca access_token como en googleAdsInsights.js
- */
-async function getFreshAccessToken(gaDoc) {
+/** Refresca el access token si es necesario y lo persiste */
+async function ensureAccessToken(gaDoc) {
   if (gaDoc?.accessToken && gaDoc?.expiresAt) {
     const ms = new Date(gaDoc.expiresAt).getTime() - Date.now();
     if (ms > 60_000) return gaDoc.accessToken; // válido > 60s
   }
+
+  if (!gaDoc?.refreshToken && !gaDoc?.accessToken) return null;
 
   const client = oauth();
   client.setCredentials({
@@ -113,72 +92,82 @@ async function getFreshAccessToken(gaDoc) {
     access_token:  gaDoc?.accessToken  || undefined,
   });
 
-  // 1) refreshAccessToken (con expiry)
   try {
     const { credentials } = await client.refreshAccessToken();
-    const access = credentials.access_token;
-    if (access) {
+    const token = credentials?.access_token || null;
+    if (token) {
       await GoogleAccount.updateOne(
         { _id: gaDoc._id },
         {
           $set: {
-            accessToken: access,
-            expiresAt: credentials.expiry_date ? new Date(credentials.expiry_date) : null,
+            accessToken: token,
+            expiresAt: credentials?.expiry_date ? new Date(credentials.expiry_date) : null,
             updatedAt: new Date(),
           },
         }
       );
-      return access;
+      return token;
     }
   } catch (_) {
-    // ignoramos y probamos getAccessToken
+    // si falla el refresh, probamos con el accessToken que hubiera
   }
 
-  // 2) getAccessToken (sin expiry)
-  const t = await client.getAccessToken().catch(() => null);
-  if (t?.token) return t.token;
-
-  if (gaDoc?.accessToken) return gaDoc.accessToken;
-  throw new Error('NO_ACCESS_OR_REFRESH_TOKEN');
+  return gaDoc?.accessToken || null;
 }
 
-// === selección: helpers (mismo concepto que en googleAdsInsights.js) ===
-function selectedFromDocOrUser(gaDoc, userDoc) {
-  const fromDoc = Array.isArray(gaDoc?.selectedCustomerIds) && gaDoc.selectedCustomerIds.length
-    ? gaDoc.selectedCustomerIds.map(normId)
-    : [];
-  if (fromDoc.length) return [...new Set(fromDoc.filter(Boolean))];
-
-  const legacy = Array.isArray(userDoc?.selectedGoogleAccounts)
-    ? userDoc.selectedGoogleAccounts.map(normId)
-    : [];
-  return [...new Set(legacy.filter(Boolean))];
-}
-
-function availableAccountIds(gaDoc) {
-  const fromAdAcc = (Array.isArray(gaDoc?.ad_accounts) ? gaDoc.ad_accounts : [])
-    .map(a => normId(a.id))
+/** Lista customers accesibles (IDs) usando el mismo helper que el panel */
+async function listAccessibleCustomers(accessToken) {
+  const rns = await Ads.listAccessibleCustomers(accessToken); // devuelve ["customers/123", ...] o ["123", ...]
+  return (Array.isArray(rns) ? rns : [])
+    .map((r) => String(r).split('/').pop())
     .filter(Boolean);
-  const fromCust  = (Array.isArray(gaDoc?.customers) ? gaDoc.customers : [])
-    .map(c => normId(c.id))
-    .filter(Boolean);
-  const set = new Set([...fromAdAcc, ...fromCust]);
-  return [...set];
 }
 
-// =========================
-//  Collector principal
-// =========================
+/** Lee metadata de un customer (id, nombre, moneda, timezone) */
+async function getCustomer(accessToken, cid) {
+  const data = await Ads.getCustomer(accessToken, cid);
+  return {
+    id: normId(cid),
+    resourceName: data?.resourceName || `customers/${cid}`,
+    descriptiveName: data?.descriptiveName || null,
+    currencyCode: data?.currencyCode || 'USD',
+    timeZone: data?.timeZone || null,
+  };
+}
+
+/* ---------------- helpers selección (respeta preferencias) ---------------- */
+
+function intersect(aSet, ids) {
+  const out = [];
+  for (const id of ids) if (aSet.has(id)) out.push(id);
+  return out;
+}
+
+/* ---------------- collector principal ---------------- */
 
 async function collectGoogle(userId, opts = {}) {
   const { account_id } = opts || {};
 
-  // 1) Traer el GoogleAccount con tokens
-  const gaDoc = await GoogleAccount.findOne({
-    $or: [{ user: userId }, { userId }],
-  }).select(
-    '+accessToken +refreshToken scope customers ad_accounts defaultCustomerId managerCustomerId loginCustomerId selectedCustomerIds expiresAt'
-  );
+  // 0) Developer Token obligatorio
+  if (!DEV_TOKEN) {
+    return {
+      notAuthorized: true,
+      reason: 'MISSING_DEVELOPER_TOKEN',
+      currency: null,
+      timeZone: null,
+      timeRange: { from: null, to: null },
+      kpis: {}, byCampaign: [], byCampaignDevice: [], byCampaignNetwork: [], series: [], accountIds: [],
+      defaultCustomerId: null, accounts: [],
+    };
+  }
+
+  // 1) Trae el GoogleAccount con tokens
+  const gaDoc =
+    typeof GoogleAccount.findWithTokens === 'function'
+      ? await GoogleAccount.findWithTokens({ $or: [{ user: userId }, { userId }] })
+      : await GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] }).select(
+          '+accessToken +refreshToken customers ad_accounts defaultCustomerId managerCustomerId scope expiresAt'
+        );
 
   if (!gaDoc) {
     return {
@@ -187,20 +176,11 @@ async function collectGoogle(userId, opts = {}) {
       currency: null,
       timeZone: null,
       timeRange: { from: null, to: null },
-      kpis: {},
-      byCampaign: [],
-      byCampaignDevice: [],
-      byCampaignNetwork: [],
-      series: [],
-      accountIds: [],
-      defaultCustomerId: null,
-      accounts: [],
-      targets: { cpaHigh: 15 },
-      version: 'gadsCollector@no-account',
+      kpis: {}, byCampaign: [], byCampaignDevice: [], byCampaignNetwork: [], series: [], accountIds: [],
+      defaultCustomerId: null, accounts: [],
     };
   }
 
-  // 2) Validar scope adwords
   const scopes = new Set((gaDoc.scope || []).map(String));
   if (!scopes.has('https://www.googleapis.com/auth/adwords')) {
     return {
@@ -209,66 +189,49 @@ async function collectGoogle(userId, opts = {}) {
       currency: null,
       timeZone: null,
       timeRange: { from: null, to: null },
-      kpis: {},
-      byCampaign: [],
-      byCampaignDevice: [],
-      byCampaignNetwork: [],
-      series: [],
-      accountIds: [],
-      defaultCustomerId: gaDoc.defaultCustomerId || null,
-      accounts: [],
-      targets: { cpaHigh: 15 },
-      version: 'gadsCollector@no-scope',
+      kpis: {}, byCampaign: [], byCampaignDevice: [], byCampaignNetwork: [], series: [], accountIds: [],
+      defaultCustomerId: gaDoc.defaultCustomerId || null, accounts: [],
     };
   }
 
-  // 3) Refrescar access_token con la misma lógica del panel
-  let accessToken;
-  try {
-    accessToken = await getFreshAccessToken(gaDoc);
-  } catch (_) {
+  // 2) Asegura access token
+  let accessToken = await ensureAccessToken(gaDoc);
+  if (!accessToken) {
     return {
       notAuthorized: true,
       reason: 'NO_ACCESS_TOKEN',
       currency: null,
       timeZone: null,
       timeRange: { from: null, to: null },
-      kpis: {},
-      byCampaign: [],
-      byCampaignDevice: [],
-      byCampaignNetwork: [],
-      series: [],
-      accountIds: [],
-      defaultCustomerId: gaDoc.defaultCustomerId || null,
-      accounts: [],
-      targets: { cpaHigh: 15 },
-      version: 'gadsCollector@token-error',
+      kpis: {}, byCampaign: [], byCampaignDevice: [], byCampaignNetwork: [], series: [], accountIds: [],
+      defaultCustomerId: gaDoc.defaultCustomerId || null, accounts: [],
     };
   }
 
-  // 4) Universo de cuentas accesibles (igual filosofía que el panel, PERO SIN MCC)
-  const universeIds = new Set(availableAccountIds(gaDoc));
+  // 3) Descubrir universo de cuentas accesibles (unión de guardadas + descubiertas)
+  const universeIds = new Set();
+
+  if (Array.isArray(gaDoc.ad_accounts)) {
+    for (const a of gaDoc.ad_accounts) {
+      const cid = normId(a?.id);
+      if (cid) universeIds.add(cid);
+    }
+  }
+  if (Array.isArray(gaDoc.customers)) {
+    for (const c of gaDoc.customers) {
+      const cid = normId(c?.id);
+      if (cid) universeIds.add(cid);
+    }
+  }
 
   try {
-    // Reutilizamos listAccessibleCustomers del servicio
-    const extra = await Ads.listAccessibleCustomers(accessToken);
-    if (Array.isArray(extra)) {
-      for (const r of extra) {
-        let id;
-        if (typeof r === 'string') {
-          id = r.split('/')[1];
-        } else {
-          id = normId(r.resourceName || r.resource_name || r.id || '');
-        }
-        if (id) universeIds.add(normId(id));
-      }
-    }
+    const accessible = await listAccessibleCustomers(accessToken);
+    for (const id of accessible) universeIds.add(normId(id));
   } catch {
-    // si falla, seguimos con lo que haya en BD
+    // noop, si falla seguimos con lo guardado
   }
 
   const universe = Array.from(universeIds).slice(0, MAX_ACCOUNTS_FETCH);
-
   if (universe.length === 0) {
     return {
       notAuthorized: false,
@@ -276,49 +239,40 @@ async function collectGoogle(userId, opts = {}) {
       currency: null,
       timeZone: null,
       timeRange: { from: null, to: null },
-      kpis: {},
-      byCampaign: [],
-      byCampaignDevice: [],
-      byCampaignNetwork: [],
-      series: [],
-      accountIds: [],
-      defaultCustomerId: gaDoc.defaultCustomerId || null,
-      accounts: [],
-      targets: { cpaHigh: 15 },
-      version: 'gadsCollector@no-customers',
+      kpis: {}, byCampaign: [], byCampaignDevice: [], byCampaignNetwork: [], series: [],
+      accountIds: [], defaultCustomerId: gaDoc.defaultCustomerId || null, accounts: [],
     };
   }
 
-  // 5) Resolver cuentas a auditar (máx. 3)
+  // 4) Resolver cuentas a auditar
   let idsToAudit = [];
 
-  // 5.a) override explícito
+  // 4.a) override del caller
   if (account_id) {
     const forced = normId(account_id);
     if (forced) idsToAudit = [forced];
   }
 
-  // 5.b) si no hay override, usar selección del usuario
+  // 4.b) si no hay override, usar selección de usuario si existe
   if (idsToAudit.length === 0 && UserModel && userId) {
     try {
       const user = await UserModel.findById(userId).lean().select('preferences selectedGoogleAccounts');
-      let selected = Array.isArray(gaDoc.selectedCustomerIds) && gaDoc.selectedCustomerIds.length
-        ? gaDoc.selectedCustomerIds
+      // preferencia nueva y alias legado
+      let selected = Array.isArray(user?.preferences?.googleAds?.auditCustomerIds)
+        ? user.preferences.googleAds.auditCustomerIds
         : (Array.isArray(user?.selectedGoogleAccounts) ? user.selectedGoogleAccounts : []);
       selected = selected.map(normId).filter(Boolean);
-
-      const set = new Set(universe);
-      const picked = [...new Set(selected)].filter(id => set.has(id)).slice(0, MAX_BY_RULE);
+      const picked = intersect(new Set(universe), [...new Set(selected)]).slice(0, MAX_BY_RULE);
       if (picked.length) idsToAudit = picked;
     } catch {
       // noop
     }
   }
 
-  // 5.c) si aún no hay selección: si universo <=3 usamos todas; si >3 pedimos selección
+  // 4.c) sin selección: si universo <=3, usa todas; si >3, pedimos selección explícita
   if (idsToAudit.length === 0) {
     if (universe.length <= MAX_BY_RULE) {
-      idsToAudit = universe.slice(0, MAX_BY_RULE);
+      idsToAudit = universe;
     } else {
       return {
         notAuthorized: true,
@@ -327,17 +281,11 @@ async function collectGoogle(userId, opts = {}) {
         availableCount: universe.length,
         accountIds: universe,
         defaultCustomerId: gaDoc.defaultCustomerId ? normId(gaDoc.defaultCustomerId) : null,
-        accounts: [],
-        targets: { cpaHigh: 15 },
-        version: 'gadsCollector@selection-required',
       };
     }
   }
 
-  // =========================
-  //  Agregación de datos
-  // =========================
-
+  // 5) Parámetros globales y acumuladores
   const untilGlobal = todayISO();
 
   let G = { impr: 0, clk: 0, cost: 0, conv: 0, val: 0, allConv: 0, allVal: 0 };
@@ -350,18 +298,19 @@ async function collectGoogle(userId, opts = {}) {
   let timeZone = null;
   let lastSinceUsed = null;
 
-  const accountsMeta = new Map(); // id -> { name, currencyCode, timeZone }
-  const byAccountAgg = new Map(); // id -> agg
+  // Para construir "accounts" y KPI por cuenta al final
+  const accountsMeta = new Map();   // id -> { name, currencyCode, timeZone }
+  const byAccountAgg = new Map();   // id -> agg kpis
 
-  // Recorremos cada cuenta a auditar
+  // 6) Recorre cada customer a auditar
   for (const customerId of idsToAudit) {
-    // 1) Metadata de la cuenta usando el mismo servicio que el panel
+    // currency/timezone/desc por customer
     try {
-      const cInfo = await Ads.getCustomer(accessToken, customerId);
+      const cInfo = await getCustomer(accessToken, customerId);
       accountsMeta.set(customerId, {
-        name: cInfo.descriptiveName || cInfo.name || `Cuenta ${customerId}`,
-        currencyCode: cInfo.currencyCode || cInfo.currency || null,
-        timeZone: cInfo.timeZone || cInfo.timezone || null,
+        name: cInfo.descriptiveName || `Cuenta ${customerId}`,
+        currencyCode: cInfo.currencyCode || null,
+        timeZone: cInfo.timeZone || null,
       });
       currency = cInfo.currencyCode || currency;
       timeZone = cInfo.timeZone || timeZone;
@@ -371,7 +320,7 @@ async function collectGoogle(userId, opts = {}) {
       }
     }
 
-    // 2) Intentos de rango: 30d → 180d → 365d
+    // — intentos de rango: 30d → 180d → 365d (campañas habilitadas)
     const ranges = [
       { since: daysAgoISO(30),  until: untilGlobal, where: '' },
       { since: daysAgoISO(180), until: untilGlobal, where: '' },
@@ -382,8 +331,26 @@ async function collectGoogle(userId, opts = {}) {
     let gotRows = false;
     let actualSince = ranges[0].since;
 
+    // función ejecutora con reintentos de auth
+    const runQuery = async (query) => {
+      try {
+        return await Ads.searchGAQLStream(accessToken, customerId, query);
+      } catch (e) {
+        // Si es auth, intentamos refrescar una vez
+        if (e?.response?.status === 401 || e?.response?.status === 403 || e?.code === 'UNAUTHENTICATED') {
+          accessToken = await ensureAccessToken({
+            ...(gaDoc.toObject?.() || {}),
+            _id: gaDoc._id,
+            accessToken: null,
+          });
+          return await Ads.searchGAQLStream(accessToken, customerId, query);
+        }
+        throw e;
+      }
+    };
+
     for (const rg of ranges) {
-      const GAQL = `
+      const query = `
         SELECT
           segments.date,
           segments.device,
@@ -409,14 +376,13 @@ async function collectGoogle(userId, opts = {}) {
         ${rg.where}
         ORDER BY segments.date ASC
       `;
-
       try {
-        rows = await Ads.searchGAQLStream(accessToken, customerId, GAQL);
+        rows = await runQuery(query);
         gotRows = Array.isArray(rows) && rows.length > 0;
         actualSince = rg.since;
         if (gotRows) break;
       } catch {
-        // probamos siguiente rango
+        // probar siguiente rango
       }
     }
 
@@ -429,8 +395,8 @@ async function collectGoogle(userId, opts = {}) {
     const byCampNetworkAgg = new Map();  // campId::network -> agg
 
     for (const r of rows.slice(0, 5000)) {
-      const d       = r.segments?.date;
-      const device  = r.segments?.device || null;
+      const d      = r.segments?.date;
+      const device = r.segments?.device || null;
       const network = r.segments?.adNetworkType || r.segments?.ad_network_type || null;
 
       const campId = r.campaign?.id;
@@ -439,9 +405,9 @@ async function collectGoogle(userId, opts = {}) {
       const chSub  = r.campaign?.advertisingChannelSubType || r.campaign?.advertising_channel_sub_type || null;
       const status = r.campaign?.status || null;
       const servingStatus = r.campaign?.servingStatus || r.campaign?.serving_status || null;
-      const biddingType   = r.campaign?.biddingStrategyType || r.campaign?.bidding_strategy_type || null;
+      const biddingType = r.campaign?.biddingStrategyType || r.campaign?.bidding_strategy_type || null;
       const targetCpaMicros = r.campaign?.targetCpaMicros ?? r.campaign?.target_cpa_micros ?? null;
-      const targetRoas      = r.campaign?.targetRoas ?? r.campaign?.target_roas ?? null;
+      const targetRoas = r.campaign?.targetRoas ?? r.campaign?.target_roas ?? null;
 
       const impr  = Number(r.metrics?.impressions || 0);
       const clk   = Number(r.metrics?.clicks || 0);
@@ -471,13 +437,13 @@ async function collectGoogle(userId, opts = {}) {
           conversions: 0, conv_value: 0,
           all_conversions: 0, all_conv_value: 0
         };
-        cur.impressions     += impr;
-        cur.clicks          += clk;
-        cur.cost            += cost;
-        cur.conversions     += conv;
-        cur.conv_value      += convValue;
-        cur.all_conversions += allConv;
-        cur.all_conv_value  += allVal;
+        cur.impressions += impr;
+        cur.clicks      += clk;
+        cur.cost        += cost;
+        cur.conversions += conv;
+        cur.conv_value  += convValue;
+        cur.all_conversions  += allConv;
+        cur.all_conv_value   += allVal;
         seriesMap.set(d, cur);
       }
 
@@ -650,7 +616,6 @@ async function collectGoogle(userId, opts = {}) {
     byAccountAgg.set(customerId, accAgg);
   }
 
-  // Serie global
   const series = Array.from(seriesMap.keys())
     .sort()
     .map((d) => ({ date: d, ...seriesMap.get(d) }));
@@ -713,9 +678,9 @@ async function collectGoogle(userId, opts = {}) {
     series,
     accountIds: idsToAudit, // <- las realmente auditadas (máx. 3)
     defaultCustomerId: gaDoc.defaultCustomerId ? normId(gaDoc.defaultCustomerId) : null,
-    accounts, // [{id,name,currency,timezone_name,kpis}]
+    accounts, // [{id,name,currency,timezone_name,kpis}] para distribuir recomendaciones
     targets: { cpaHigh: 15 },
-    version: 'gadsCollector@multi-accounts+no-mcc',
+    version: 'gadsCollector@multi-accounts+no-mcc+stream',
   };
 }
 
