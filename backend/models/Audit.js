@@ -12,6 +12,9 @@ const toSev = (s) => {
   return 'media';
 };
 
+// Áreas “oficiales” que usamos en la IA
+const OK_AREAS = ['setup', 'performance', 'creative', 'tracking', 'budget', 'bidding', 'otros'];
+
 // ⬅️  AÑADIMOS 'ga' PARA EVITAR EL 500 POR ENUM
 const OK_TYPES = ['google', 'meta', 'shopify', 'ga', 'ga4'];
 const OK_SEV   = ['alta', 'media', 'baja'];
@@ -24,21 +27,63 @@ const LinkSchema = new Schema(
   { _id: false }
 );
 
+// Referencia a cuenta (Ads y GA4)
+const AccountRefSchema = new Schema(
+  {
+    id:       { type: String, default: '' }, // customerId / act_ / propertyId
+    name:     { type: String, default: '' }, // nombre de cuenta/propiedad
+    property: { type: String, default: '' }, // para GA4 (opcional)
+  },
+  { _id: false }
+);
+
+// Referencia a campaña (Google / Meta)
+const CampaignRefSchema = new Schema(
+  {
+    id:   { type: String, default: '' },
+    name: { type: String, default: '' },
+  },
+  { _id: false }
+);
+
+// Referencia a segmento (ej. canal en GA4)
+const SegmentRefSchema = new Schema(
+  {
+    type: { type: String, default: '' }, // ej. "channel"
+    name: { type: String, default: '' }, // ej. "Paid Search"
+  },
+  { _id: false }
+);
+
 const IssueSchema = new Schema(
   {
     id:    { type: String, required: true },
     area:  { type: String, default: 'otros' }, // el dashboard lo tolera
+
     title: { type: String, required: true },
 
     // aceptar legacy y normalizar en pre('save')
-    severity: { type: String, enum: [...OK_SEV, 'high', 'medium', 'low'], required: true },
+    severity: {
+      type: String,
+      enum: [...OK_SEV, 'high', 'medium', 'low'],
+      required: true
+    },
 
     evidence:       { type: String, default: '' },
     metrics:        { type: Schema.Types.Mixed, default: {} },
     recommendation: { type: String, default: '' },
 
     // aceptar legacy y normalizar en pre('save')
-    estimatedImpact:{ type: String, enum: ['alto','medio','bajo','high','medium','low'], default: 'medio' },
+    estimatedImpact: {
+      type: String,
+      enum: ['alto','medio','bajo','high','medium','low'],
+      default: 'medio'
+    },
+
+    // NUEVO: referencias ricas para UI / análisis
+    accountRef:  { type: AccountRefSchema, default: null },
+    campaignRef: { type: CampaignRefSchema, default: null },
+    segmentRef:  { type: SegmentRefSchema, default: null },
 
     blockers: { type: [String], default: [] },
     links:    { type: [LinkSchema], default: [] },
@@ -55,6 +100,20 @@ const AuditSchema = new Schema(
 
     generatedAt: { type: Date, default: Date.now, index: true },
 
+    // De dónde salió la auditoría (onboarding, panel, manual)
+    origin: {
+      type: String,
+      enum: ['manual', 'onboarding', 'panel'],
+      default: 'manual',
+      index: true
+    },
+
+    // Plan del usuario al momento de generar la auditoría
+    plan: { type: String, default: 'gratis', index: true },
+
+    // Máx. de hallazgos que se pidió a la IA para esta ejecución
+    maxFindings: { type: Number, default: 5 },
+
     // compat: algunos flujos usan 'resumen'
     summary: { type: String, default: '' },
     resumen: { type: String, default: '' },
@@ -63,7 +122,7 @@ const AuditSchema = new Schema(
     issues:       { type: [IssueSchema], default: [] },
     actionCenter: { type: [IssueSchema], default: [] },
 
-    // extras/legacy
+    // extras/legacy (principalmente Shopify / e-commerce)
     topProducts:   { type: Array,              default: [] },
     salesLast30:   { type: Number,             default: 0 },
     ordersLast30:  { type: Number,             default: 0 },
@@ -73,7 +132,7 @@ const AuditSchema = new Schema(
     // snapshot de entrada (colecciones crudas)
     inputSnapshot: { type: Schema.Types.Mixed, default: {} },
 
-    version: { type: String, default: 'audits@1.1.1' },
+    version: { type: String, default: 'audits@1.1.3' },
 
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
@@ -89,15 +148,25 @@ AuditSchema.pre('save', function(next) {
   if (!this.summary && typeof this.resumen === 'string') this.summary = this.resumen;
   if (!this.resumen && typeof this.summary === 'string') this.resumen = this.summary;
 
+  const toArea = (a) => {
+    const v = String(a || '').toLowerCase().trim();
+    return OK_AREAS.includes(v) ? v : 'otros';
+  };
+
   // normaliza severidades/impacto a alta/media/baja y alto/medio/bajo
   const normalizeIssues = (arr = []) =>
-    arr.map((it) => ({
-      ...it,
-      severity: toSev(it?.severity),
-      estimatedImpact:
-        toSev(it?.estimatedImpact) === 'alta' ? 'alto' :
-        toSev(it?.estimatedImpact) === 'baja' ? 'bajo' : 'medio',
-    }));
+    arr.map((it) => {
+      const sev = toSev(it?.severity);
+      const impSev = toSev(it?.estimatedImpact);
+      return {
+        ...it,
+        area: toArea(it?.area),
+        severity: sev,
+        estimatedImpact:
+          impSev === 'alta' ? 'alto' :
+          impSev === 'baja' ? 'bajo' : 'medio',
+      };
+    });
 
   if (Array.isArray(this.issues))       this.issues       = normalizeIssues(this.issues);
   if (Array.isArray(this.actionCenter)) this.actionCenter = normalizeIssues(this.actionCenter);
