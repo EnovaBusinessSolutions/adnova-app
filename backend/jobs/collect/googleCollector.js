@@ -401,7 +401,7 @@ async function collectGoogle(userId, opts = {}) {
       }
     };
 
-    for (const rg of ranges) {
+        for (const rg of ranges) {
       const query = `
         SELECT
           segments.date,
@@ -428,17 +428,64 @@ async function collectGoogle(userId, opts = {}) {
         ${rg.where}
         ORDER BY segments.date ASC
       `;
+
       try {
+        if (process.env.DEBUG_GOOGLE_COLLECTOR) {
+          console.log('[gadsCollector] range START', {
+            customerId,
+            since: rg.since,
+            until: rg.until,
+            where: rg.where
+          });
+        }
+
         rows = await runQuery(query);
         gotRows = Array.isArray(rows) && rows.length > 0;
         actualSince = rg.since;
+
+        if (process.env.DEBUG_GOOGLE_COLLECTOR) {
+          console.log('[gadsCollector] range RESULT', {
+            customerId,
+            since: rg.since,
+            gotRows,
+            len: Array.isArray(rows) ? rows.length : null
+          });
+        }
+
         if (gotRows) break;
-      } catch {
-        // probar siguiente rango
+      } catch (e) {
+        if (process.env.DEBUG_GOOGLE_COLLECTOR) {
+          console.log('[gadsCollector] range ERROR', {
+            customerId,
+            since: rg.since,
+            code: e && e.code,
+            status: e && e.response && e.response.status,
+            data: e && e.response && e.response.data
+          });
+        }
+        // probamos el siguiente rango
       }
     }
 
-    if (!gotRows) continue;
+    if (!gotRows) {
+      if (process.env.DEBUG_GOOGLE_COLLECTOR) {
+        console.log('[gadsCollector] NO_ROWS for customer', customerId);
+      }
+      continue;
+    }
+
+    // Aquí ya sabemos que SÍ hubo filas
+    if (process.env.DEBUG_GOOGLE_COLLECTOR) {
+      console.log('[gadsCollector] customerId=', customerId,
+        'rowsLen=', Array.isArray(rows) ? rows.length : null);
+      if (rows && rows.length) {
+        console.log(
+          '[gadsCollector] sample row =',
+          JSON.stringify(rows[0], null, 2)
+        );
+      }
+    }
+
 
     if (process.env.DEBUG_GOOGLE_COLLECTOR) {
   console.log(
