@@ -136,7 +136,7 @@ async function getCustomer(accessToken, cid) {
 }
 
 /**
- * [★ NUEVO HELPER] Lee un campo de forma robusta:
+ * Lee un campo de forma robusta:
  *  - row.segments.date
  *  - row['segments.date']
  *  - row['segments_date']
@@ -383,37 +383,53 @@ async function collectGoogle(userId, opts = {}) {
     let gotRows = false;
     let actualSince = ranges[0].since;
 
-        // función ejecutora con reintentos de auth
+    // función ejecutora con reintentos de auth
     const runQuery = async (query) => {
       try {
-        // 👇 ahora le mandamos el GAQL como string, como en el panel
+        // Igual que el panel: primer parámetro = accessToken, tercer parámetro = GAQL string
         return await Ads.searchGAQLStream(accessToken, customerId, query);
       } catch (e) {
         if (process.env.DEBUG_GOOGLE_COLLECTOR) {
           console.log('[gadsCollector] runQuery ERROR', {
             customerId,
             message: e?.message,
-            status: e?.status,
-            code: e?.code,
-            data: e?.data ? JSON.stringify(e.data, null, 2) : null,
+            status: e?.api?.status,
+            errorStatus: e?.api?.error?.status,
+            errorMessage: e?.api?.error?.message,
           });
         }
 
-        // Reintento sólo si es tema de auth
-        if (e?.status === 401 || e?.status === 403 || e?.code === 'UNAUTHENTICATED') {
-          accessToken = await ensureAccessToken({
-            ...(gaDoc.toObject?.() || {}),
-            _id: gaDoc._id,
-            accessToken: null,
-          });
+        const status = e?.api?.status;
+        const errorStatus = e?.api?.error?.status;
+        const code = e?.code;
 
-          return await Ads.searchGAQLStream(accessToken, customerId, query);
+        // Solo consideramos reintentar si parece error de autenticación
+        const isAuthError =
+          status === 401 ||
+          errorStatus === 'UNAUTHENTICATED' ||
+          code === 'UNAUTHENTICATED';
+
+        if (!isAuthError) {
+          // PERMISSION_DENIED u otros: no sirve refrescar el token
+          throw e;
         }
 
-        throw e;
+        const refreshed = await ensureAccessToken(gaDoc);
+        if (!refreshed) {
+          if (process.env.DEBUG_GOOGLE_COLLECTOR) {
+            console.log('[gadsCollector] no se pudo refrescar token, abortando reintento');
+          }
+          throw e;
+        }
+
+        accessToken = refreshed;
+        if (process.env.DEBUG_GOOGLE_COLLECTOR) {
+          console.log('[gadsCollector] token refrescado, repitiendo query');
+        }
+
+        return await Ads.searchGAQLStream(accessToken, customerId, query);
       }
     };
-
 
     for (const rg of ranges) {
       const query = `
@@ -449,7 +465,7 @@ async function collectGoogle(userId, opts = {}) {
             customerId,
             since: rg.since,
             until: rg.until,
-            where: rg.where
+            where: rg.where,
           });
         }
 
@@ -462,19 +478,20 @@ async function collectGoogle(userId, opts = {}) {
             customerId,
             since: rg.since,
             gotRows,
-            len: Array.isArray(rows) ? rows.length : null
+            len: Array.isArray(rows) ? rows.length : null,
           });
         }
 
         if (gotRows) break;
-            } catch (e) {
+      } catch (e) {
         if (process.env.DEBUG_GOOGLE_COLLECTOR) {
           console.log('[gadsCollector] range ERROR', {
             customerId,
             since: rg.since,
             code: e?.code,
-            status: e?.status,
-            data: e?.data ? JSON.stringify(e.data, null, 2) : null,
+            status: e?.api?.status,
+            errorStatus: e?.api?.error?.status,
+            errorMessage: e?.api?.error?.message,
           });
         }
         // probamos el siguiente rango
@@ -596,7 +613,7 @@ async function collectGoogle(userId, opts = {}) {
         const cur = seriesMap.get(d) || {
           impressions: 0, clicks: 0, cost: 0,
           conversions: 0, conv_value: 0,
-          all_conversions: 0, all_conv_value: 0
+          all_conversions: 0, all_conv_value: 0,
         };
         cur.impressions += impr;
         cur.clicks      += clk;
