@@ -331,6 +331,12 @@ async function collectGoogle(userId, opts = {}) {
     }
   }
 
+  if (process.env.DEBUG_GOOGLE_COLLECTOR) {
+  console.log('[gadsCollector] userId=', String(userId));
+  console.log('[gadsCollector] universe=', universe);
+  console.log('[gadsCollector] idsToAudit=', idsToAudit);
+}
+
   // 5) Parámetros globales y acumuladores
   const untilGlobal = todayISO();
 
@@ -433,6 +439,27 @@ async function collectGoogle(userId, opts = {}) {
     }
 
     if (!gotRows) continue;
+
+    if (process.env.DEBUG_GOOGLE_COLLECTOR) {
+  console.log(
+    '[gadsCollector] customerId=',
+    customerId,
+    'rowsLen=',
+    Array.isArray(rows) ? rows.length : null
+  );cls
+  if (rows && rows.length) {
+    const sample = rows[0];
+    console.log(
+      '[gadsCollector] sample row keys =',
+      Object.keys(sample || {})
+    );
+    console.log(
+      '[gadsCollector] sample row =',
+      JSON.stringify(sample, null, 2)
+    );
+  }
+}
+
 
     lastSinceUsed = actualSince;
 
