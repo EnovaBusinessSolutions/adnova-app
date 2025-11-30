@@ -5,7 +5,10 @@ const axios = require('axios');
 const mongoose = require('mongoose');
 const { OAuth2Client } = require('google-auth-library');
 
-const ADS_API_VERSION = process.env.GADS_API_VERSION || 'v17';
+/**
+ * Versión de la API de Google Ads
+ */
+const ADS_API_VERSION = process.env.GADS_API_VERSION || 'v22';
 const ADS_API = `https://googleads.googleapis.com/${ADS_API_VERSION}`;
 
 const {
@@ -16,12 +19,10 @@ const {
   // Acepta ambos nombres para el developer token
   GOOGLE_ADS_DEVELOPER_TOKEN,
   GOOGLE_DEVELOPER_TOKEN,
-
-  // Opcional: MCC (login-customer-id)
-  GOOGLE_ADS_LOGIN_CUSTOMER_ID,
 } = process.env;
 
-const DEV_TOKEN = GOOGLE_ADS_DEVELOPER_TOKEN || GOOGLE_DEVELOPER_TOKEN;
+/** Developer token unificado (obligatorio) */
+const DEV_TOKEN = (GOOGLE_ADS_DEVELOPER_TOKEN || GOOGLE_DEVELOPER_TOKEN || '').trim();
 
 // [★] Límite duro por requerimiento (3). Se puede “bajar” por env, pero nunca >3.
 const HARD_LIMIT = 3;
@@ -49,7 +50,7 @@ try {
       customers: { type: Array, default: [] }, // [{id, descriptiveName, currencyCode, timeZone}]
       ad_accounts: { type: Array, default: [] }, // enriquecidas si existen
       defaultCustomerId: String,
-      managerCustomerId: String,
+      managerCustomerId: String, // opcional, por si el usuario se conectó con un MCC propio
       updatedAt: { type: Date, default: Date.now },
     },
     { collection: 'googleaccounts' }
@@ -118,9 +119,8 @@ async function listAccessibleCustomers(accessToken) {
 }
 
 /** Lee metadata de un customer */
-async function getCustomer(accessToken, cid, loginCustomerId) {
+async function getCustomer(accessToken, cid /* loginCustomerId opcional */) {
   const headers = { Authorization: `Bearer ${accessToken}`, 'developer-token': DEV_TOKEN };
-  if (loginCustomerId) headers['login-customer-id'] = String(loginCustomerId);
   const { data } = await axios.get(`${ADS_API}/customers/${cid}`, { headers, timeout: 15000 });
   return {
     id: normId(cid),
@@ -131,54 +131,19 @@ async function getCustomer(accessToken, cid, loginCustomerId) {
   };
 }
 
-/** Ejecuta GAQL por streaming y concatena resultados */
-async function gaqlSearchStream({ accessToken, customerId, loginCustomerId, query }) {
+/** Ejecuta GAQL por streaming y concatena resultados (sin MCC global) */
+async function gaqlSearchStream({ accessToken, customerId, query }) {
   const url = `${ADS_API}/customers/${customerId}/googleAds:searchStream`;
   const headers = {
     Authorization: `Bearer ${accessToken}`,
     'developer-token': DEV_TOKEN,
     'Content-Type': 'application/json',
   };
-  if (loginCustomerId) headers['login-customer-id'] = String(loginCustomerId);
 
   const { data } = await axios.post(url, { query }, { headers, timeout: 60000 });
   const out = [];
   for (const chunk of (Array.isArray(data) ? data : [])) {
     if (Array.isArray(chunk.results)) out.push(...chunk.results);
-  }
-  return out;
-}
-
-/** 🔎 Lista hijos directos (nivel 1) de un MCC usando GAQL sobre customer_client */
-async function listMccChildren({ accessToken, managerId }) {
-  const q = `
-    SELECT
-      customer_client.client_customer,
-      customer_client.descriptive_name,
-      customer_client.level,
-      customer_client.currency_code,
-      customer_client.time_zone
-    FROM customer_client
-    WHERE customer_client.level = 1
-  `;
-  const rows = await gaqlSearchStream({
-    accessToken,
-    customerId: managerId,
-    loginCustomerId: managerId,
-    query: q,
-  });
-
-  const out = [];
-  for (const r of rows || []) {
-    const res = r.customerClient?.clientCustomer; // "customers/1234567890"
-    const id = res ? String(res).split('/')[1] : null;
-    if (!id) continue;
-    out.push({
-      id: normId(id),
-      name: r.customerClient?.descriptiveName || null,
-      currencyCode: r.customerClient?.currencyCode || null,
-      timeZone: r.customerClient?.timeZone || null,
-    });
   }
   return out;
 }
@@ -256,7 +221,9 @@ async function collectGoogle(userId, opts = {}) {
     };
   }
 
-  const loginCustomerIdHeader = normId(gaDoc.managerCustomerId || GOOGLE_ADS_LOGIN_CUSTOMER_ID || '');
+  if (process.env.DEBUG_AUDIT === 'true') {
+    console.log('[GADS COLLECT] userId=', String(userId));
+  }
 
   // 3) Descubrir universo de cuentas accesibles (unión de guardadas + descubiertas)
   const universeIds = new Set();
@@ -273,29 +240,13 @@ async function collectGoogle(userId, opts = {}) {
       if (cid) universeIds.add(cid);
     }
   }
+
+  // Lo que Google diga que este usuario puede ver con su token
   try {
     const accessible = await listAccessibleCustomers(accessToken);
     for (const id of accessible) universeIds.add(normId(id));
-  } catch { /* noop */ }
-
-  if (loginCustomerIdHeader) {
-    try {
-      const children = await listMccChildren({ accessToken, managerId: loginCustomerIdHeader });
-      for (const c of children) universeIds.add(normId(c.id));
-      // persistir si no tenías customers guardados
-      if ((!gaDoc.customers || gaDoc.customers.length === 0) && children.length) {
-        await GoogleAccount.updateOne(
-          { _id: gaDoc._id },
-          {
-            $set: {
-              customers: children,
-              defaultCustomerId: children[0]?.id || gaDoc.defaultCustomerId || null,
-              updatedAt: new Date()
-            }
-          }
-        );
-      }
-    } catch { /* noop */ }
+  } catch {
+    /* noop */
   }
 
   const universe = Array.from(universeIds).slice(0, MAX_ACCOUNTS_FETCH);
@@ -350,14 +301,18 @@ async function collectGoogle(userId, opts = {}) {
     }
   }
 
+  if (process.env.DEBUG_AUDIT === 'true') {
+    console.log('[GADS COLLECT] idsToAudit =', idsToAudit);
+  }
+
   // 5) Parámetros globales y acumuladores
   const untilGlobal = todayISO();
 
   let G = { impr: 0, clk: 0, cost: 0, conv: 0, val: 0, allConv: 0, allVal: 0 };
   const seriesMap = new Map(); // date -> agg
   const byCampaign = [];
-  const byCampaignDevice = [];   // 👈 nuevo
-  const byCampaignNetwork = [];  // 👈 nuevo
+  const byCampaignDevice = [];
+  const byCampaignNetwork = [];
 
   let currency = 'USD';
   let timeZone = null;
@@ -371,7 +326,7 @@ async function collectGoogle(userId, opts = {}) {
   for (const customerId of idsToAudit) {
     // currency/timezone/desc por customer
     try {
-      const cInfo = await getCustomer(accessToken, customerId, loginCustomerIdHeader);
+      const cInfo = await getCustomer(accessToken, customerId);
       accountsMeta.set(customerId, {
         name: cInfo.descriptiveName || `Cuenta ${customerId}`,
         currencyCode: cInfo.currencyCode || null,
@@ -396,29 +351,23 @@ async function collectGoogle(userId, opts = {}) {
     let gotRows = false;
     let actualSince = ranges[0].since;
 
-    // función ejecutora con reintentos de auth y header MCC
+    // función ejecutora con reintentos de auth
     const runQuery = async (query) => {
       try {
         return await gaqlSearchStream({
           accessToken,
           customerId,
-          loginCustomerId: loginCustomerIdHeader || undefined,
           query,
         });
       } catch (e) {
-        if (e?.response?.status === 401 || e?.response?.status === 403) {
+        const status = e?.response?.status;
+        if (status === 401 || status === 403) {
           accessToken = await ensureAccessToken({ ...(gaDoc.toObject?.() || {}), _id: gaDoc._id, accessToken: null });
-          try {
-            return await gaqlSearchStream({
-              accessToken,
-              customerId,
-              loginCustomerId: loginCustomerIdHeader || undefined,
-              query,
-            });
-          } catch {
-            // Último intento: sin login-customer-id
-            return await gaqlSearchStream({ accessToken, customerId, loginCustomerId: undefined, query });
-          }
+          return await gaqlSearchStream({
+            accessToken,
+            customerId,
+            query,
+          });
         }
         throw e;
       }
@@ -456,7 +405,13 @@ async function collectGoogle(userId, opts = {}) {
         gotRows = Array.isArray(rows) && rows.length > 0;
         actualSince = rg.since;
         if (gotRows) break;
-      } catch { /* probar siguiente rango */ }
+      } catch (e) {
+        if (process.env.DEBUG_AUDIT === 'true') {
+          console.log('[GADS COLLECT] GAQL error for customer', customerId,
+            'range', rg, 'status', e?.response?.status, 'msg', e?.message);
+        }
+        // probamos siguiente rango
+      }
     }
 
     if (!gotRows) continue;
@@ -487,7 +442,7 @@ async function collectGoogle(userId, opts = {}) {
       const cost  = microsTo(r.metrics?.costMicros ?? r.metrics?.cost_micros);
       const conv  = Number(
         r.metrics?.conversions ??
-        r.metrics?.conversions_value ?? // por si llegaron mal mapeados
+        r.metrics?.conversions_value ??
         r.metrics?.conversionsValue ??
         0
       );
@@ -746,14 +701,14 @@ async function collectGoogle(userId, opts = {}) {
       all_roas: safeDiv(G.allVal, G.cost),
     },
     byCampaign,
-    byCampaignDevice,   // 👈 NUEVO: desglose por dispositivo
-    byCampaignNetwork,  // 👈 NUEVO: desglose por red
+    byCampaignDevice,
+    byCampaignNetwork,
     series,
     accountIds: idsToAudit, // <- las realmente auditadas (máx. 3)
     defaultCustomerId: gaDoc.defaultCustomerId ? normId(gaDoc.defaultCustomerId) : null,
-    accounts, // [{id,name,currency,timezone_name,kpis}] para distribuir recomendaciones
+    accounts,
     targets: { cpaHigh: 15 },
-    version: 'gadsCollector@multi-accounts+status',
+    version: 'gadsCollector@multi-accounts+no-mcc',
   };
 }
 
