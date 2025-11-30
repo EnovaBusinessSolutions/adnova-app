@@ -129,18 +129,14 @@ async function getCustomer(accessToken, cid) {
   return {
     id: normId(cid),
     resourceName: data?.resourceName || `customers/${cid}`,
-    descriptiveName: data?.descriptiveName || null,
+    descriptiveName: data?.name || data?.descriptiveName || null,
     currencyCode: data?.currencyCode || 'USD',
     timeZone: data?.timeZone || null,
   };
 }
 
 /**
- * Lee un campo de forma robusta:
- *  - row.segments.date
- *  - row['segments.date']
- *  - row['segments_date']
- *  - row.segmentsDate / campaignId / costMicros...
+ * Lee un campo de forma robusta (nested, snake_case, camelCase…)
  */
 function getField(row, path) {
   if (!row) return undefined;
@@ -171,9 +167,12 @@ function getField(row, path) {
   }
 
   // 4) camelCase: aB c → aBc
-  const camelKey = parts[0] + parts.slice(1)
-    .map(p => p.charAt(0).toUpperCase() + p.slice(1))
-    .join('');
+  const camelKey =
+    parts[0] +
+    parts
+      .slice(1)
+      .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
+      .join('');
   if (Object.prototype.hasOwnProperty.call(row, camelKey)) {
     return row[camelKey];
   }
@@ -240,9 +239,9 @@ async function collectGoogle(userId, opts = {}) {
     };
   }
 
-  // 2) Asegura access token
+  // 2) Asegura access token al menos para getCustomer (GAQL usará el gaDoc directamente)
   let accessToken = await ensureAccessToken(gaDoc);
-  if (!accessToken) {
+  if (!accessToken && !gaDoc.refreshToken) {
     return {
       notAuthorized: true,
       reason: 'NO_ACCESS_TOKEN',
@@ -271,8 +270,10 @@ async function collectGoogle(userId, opts = {}) {
   }
 
   try {
-    const accessible = await listAccessibleCustomers(accessToken);
-    for (const id of accessible) universeIds.add(normId(id));
+    if (accessToken) {
+      const accessible = await listAccessibleCustomers(accessToken);
+      for (const id of accessible) universeIds.add(normId(id));
+    }
   } catch {
     // noop, si falla seguimos con lo guardado
   }
@@ -358,6 +359,10 @@ async function collectGoogle(userId, opts = {}) {
   for (const customerId of idsToAudit) {
     // currency/timezone/desc por customer
     try {
+      // para getCustomer usamos accessToken; si por algún motivo no hay, intentamos refrescar
+      if (!accessToken) accessToken = await ensureAccessToken(gaDoc);
+      if (!accessToken) throw new Error('NO_ACCESS_TOKEN_FOR_GET_CUSTOMER');
+
       const cInfo = await getCustomer(accessToken, customerId);
       accountsMeta.set(customerId, {
         name: cInfo.descriptiveName || `Cuenta ${customerId}`,
@@ -383,11 +388,11 @@ async function collectGoogle(userId, opts = {}) {
     let gotRows = false;
     let actualSince = ranges[0].since;
 
-    // función ejecutora con reintentos de auth
+    // función ejecutora: usa el mismo motor multi-usuario que el panel
     const runQuery = async (query) => {
       try {
-        // Igual que el panel: primer parámetro = accessToken, tercer parámetro = GAQL string
-        return await Ads.searchGAQLStream(accessToken, customerId, query);
+        // 👇 importante: pasamos el GoogleAccount completo, no sólo el accessToken
+        return await Ads.searchGAQLStream(gaDoc, customerId, query);
       } catch (e) {
         if (process.env.DEBUG_GOOGLE_COLLECTOR) {
           console.log('[gadsCollector] runQuery ERROR', {
@@ -396,38 +401,10 @@ async function collectGoogle(userId, opts = {}) {
             status: e?.api?.status,
             errorStatus: e?.api?.error?.status,
             errorMessage: e?.api?.error?.message,
+            rawError: e?.api?.error || null,
           });
         }
-
-        const status = e?.api?.status;
-        const errorStatus = e?.api?.error?.status;
-        const code = e?.code;
-
-        // Solo consideramos reintentar si parece error de autenticación
-        const isAuthError =
-          status === 401 ||
-          errorStatus === 'UNAUTHENTICATED' ||
-          code === 'UNAUTHENTICATED';
-
-        if (!isAuthError) {
-          // PERMISSION_DENIED u otros: no sirve refrescar el token
-          throw e;
-        }
-
-        const refreshed = await ensureAccessToken(gaDoc);
-        if (!refreshed) {
-          if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-            console.log('[gadsCollector] no se pudo refrescar token, abortando reintento');
-          }
-          throw e;
-        }
-
-        accessToken = refreshed;
-        if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-          console.log('[gadsCollector] token refrescado, repitiendo query');
-        }
-
-        return await Ads.searchGAQLStream(accessToken, customerId, query);
+        throw e;
       }
     };
 
@@ -488,7 +465,6 @@ async function collectGoogle(userId, opts = {}) {
           console.log('[gadsCollector] range ERROR', {
             customerId,
             since: rg.since,
-            code: e?.code,
             status: e?.api?.status,
             errorStatus: e?.api?.error?.status,
             errorMessage: e?.api?.error?.message,
@@ -802,7 +778,7 @@ async function collectGoogle(userId, opts = {}) {
   const untilGlobalFinal = todayISO();
 
   // Construir listado de cuentas (para UI/LLM) con KPI por cuenta
-  const accounts = idsToAudit.map(cid => {
+  const accounts = idsToAudit.map((cid) => {
     const m = accountsMeta.get(cid) || {};
     const agg = byAccountAgg.get(cid) || {
       impressions: 0, clicks: 0, cost: 0,
