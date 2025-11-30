@@ -3,9 +3,8 @@
 
 const mongoose = require('mongoose');
 const { OAuth2Client } = require('google-auth-library');
-const axios = require('axios');
 
-// Usamos el mismo servicio que el panel de Google Ads (para listAccessibleCustomers / getCustomer)
+// Usamos el mismo servicio que el panel de Google Ads
 const Ads = require('../../services/googleAdsService');
 
 const {
@@ -19,10 +18,6 @@ const {
 } = process.env;
 
 const DEV_TOKEN = GOOGLE_ADS_DEVELOPER_TOKEN || GOOGLE_DEVELOPER_TOKEN;
-
-// Versión / host de la API de Google Ads
-const ADS_VER  = (process.env.GADS_API_VERSION || 'v22').trim();
-const ADS_HOST = 'https://googleads.googleapis.com';
 
 // [★] Límite duro por requerimiento (3). Se puede “bajar” por env, pero nunca >3.
 const HARD_LIMIT = 3;
@@ -118,33 +113,6 @@ async function ensureAccessToken(gaDoc) {
   }
 
   return gaDoc?.accessToken || null;
-}
-
-/** Llamada directa a Google Ads searchStream (sin MCC, solo customer conectado) */
-async function searchGAQLStreamDirect(accessToken, customerId, query) {
-  const cid = normId(customerId);
-  const url = `${ADS_HOST}/${ADS_VER}/customers/${cid}/googleAds:searchStream`;
-
-  const res = await axios.post(
-    url,
-    { query },
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'developer-token': DEV_TOKEN,
-        'Content-Type': 'application/json',
-      },
-    }
-  );
-
-  const out = [];
-  const streams = res.data || [];
-  for (const chunk of streams) {
-    if (Array.isArray(chunk.results)) {
-      out.push(...chunk.results);
-    }
-  }
-  return out;
 }
 
 /** Lista customers accesibles (IDs) usando el mismo helper que el panel */
@@ -415,40 +383,45 @@ async function collectGoogle(userId, opts = {}) {
     let gotRows = false;
     let actualSince = ranges[0].since;
 
-    // función ejecutora con reintentos de auth (via llamada directa a la API)
+    // [★] loginCustomerId igual que en el panel (ENV o la misma cuenta)
+    const loginCustomerId =
+      normId(process.env.GOOGLE_LOGIN_CUSTOMER_ID ||
+             process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID ||
+             customerId);
+
+    // función ejecutora con reintentos de auth
     const runQuery = async (query) => {
       try {
-        return await searchGAQLStreamDirect(accessToken, customerId, query);
+        return await Ads.searchGAQLStream(accessToken, customerId, {
+          loginCustomerId,
+          query,
+        });
       } catch (e) {
-        const status = e && e.response && e.response.status;
-        if (status === 401 || status === 403 || e?.code === 'UNAUTHENTICATED') {
-          if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-            console.log('[gadsCollector] auth error, intentando refresh accessToken', {
-              customerId,
-              status,
-              code: e && e.code,
-            });
-          }
+        if (process.env.DEBUG_GOOGLE_COLLECTOR) {
+          console.log('[gadsCollector] runQuery ERROR', {
+            customerId,
+            message: e?.message,
+            code: e?.code,
+            status: e?.response?.status,
+            data: e?.response?.data
+              ? JSON.stringify(e.response.data, null, 2)
+              : null,
+          });
+        }
 
+        // Si es auth, intentamos refrescar una vez
+        if (e?.response?.status === 401 || e?.response?.status === 403 || e?.code === 'UNAUTHENTICATED') {
           accessToken = await ensureAccessToken({
             ...(gaDoc.toObject?.() || {}),
             _id: gaDoc._id,
             accessToken: null,
           });
 
-          return await searchGAQLStreamDirect(accessToken, customerId, query);
-        }
-
-        if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-          console.error('[gadsCollector] runQuery ERROR', {
-            customerId,
-            message: e && e.message,
-            code: e && e.code,
-            status,
-            data: e && e.response && e.response.data,
+          return await Ads.searchGAQLStream(accessToken, customerId, {
+            loginCustomerId,
+            query,
           });
         }
-
         throw e;
       }
     };
@@ -513,6 +486,8 @@ async function collectGoogle(userId, opts = {}) {
             code: e && e.code,
             status: e && e.response && e.response.status,
             data: e && e.response && e.response.data
+              ? JSON.stringify(e.response.data, null, 2)
+              : null,
           });
         }
         // probamos el siguiente rango
