@@ -1,4 +1,3 @@
-// backend/jobs/auditJob.js
 'use strict';
 
 const mongoose = require('mongoose');
@@ -134,7 +133,9 @@ function autoPickIds(type, snapshot, max = 3) {
     .map(norm).filter(Boolean);
 
   const ids = new Set();
-  const def = norm(snapshot?.defaultAccountId || '');
+
+  // [★ CAMBIO 1] soportar defaultCustomerId además de defaultAccountId
+  const def = norm(snapshot?.defaultAccountId || snapshot?.defaultCustomerId || '');
   if (def) ids.add(def);
 
   for (const id of idsFromArray(snapshot?.accountIds || [])) {
@@ -292,8 +293,23 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       const total = (raw?.accountIds && raw.accountIds.length) ||
                     (raw?.accounts && raw.accounts.length) || 0;
 
+      // [★ CAMBIO 2] Solo filtramos por selGoogle si HAY intersección con las
+      // cuentas realmente presentes en el snapshot. Si no, usamos raw tal cual
+      // para no matar datos por una selección vieja o desalineada.
       if (selGoogle.length && total > 0) {
-        snapshot = filterSnapshot('google', raw, selGoogle);
+        const norm = normGoogle;
+        const snapshotIds = new Set(
+          (raw.accountIds || (raw.accounts || []).map(a => a.id) || [])
+            .map(norm)
+        );
+        const effectiveSel = selGoogle.filter(id => snapshotIds.has(norm(id)));
+
+        if (effectiveSel.length > 0) {
+          snapshot = filterSnapshot('google', raw, effectiveSel);
+        } else {
+          // selección no coincide con lo que trajo el collector → no filtramos
+          snapshot = raw;
+        }
       } else {
         // Confiamos en la lógica de selección del collector (máx. 3)
         snapshot = raw;
@@ -343,8 +359,20 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       const total = (raw?.accountIds && raw.accountIds.length) ||
                     (raw?.accounts && raw.accounts.length) || 0;
 
+      // [★ CAMBIO 3] Mismo patrón de intersección para Meta
       if (selMeta.length && total > 0) {
-        snapshot = filterSnapshot('meta', raw, selMeta);
+        const norm = normMeta;
+        const snapshotIds = new Set(
+          (raw.accountIds || (raw.accounts || []).map(a => a.id) || [])
+            .map(norm)
+        );
+        const effectiveSel = selMeta.filter(id => snapshotIds.has(norm(id)));
+
+        if (effectiveSel.length > 0) {
+          snapshot = filterSnapshot('meta', raw, effectiveSel);
+        } else {
+          snapshot = raw;
+        }
       } else {
         snapshot = raw;
         if (total > 3) {
