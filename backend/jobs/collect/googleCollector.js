@@ -135,6 +135,52 @@ async function getCustomer(accessToken, cid) {
   };
 }
 
+/**
+ * [★ NUEVO HELPER] Lee un campo de forma robusta:
+ *  - row.segments.date
+ *  - row['segments.date']
+ *  - row['segments_date']
+ *  - row.segmentsDate / campaignId / costMicros...
+ */
+function getField(row, path) {
+  if (!row) return undefined;
+  const parts = String(path).split('.');
+
+  // 1) Forma anidada: row.a.b.c
+  let cur = row;
+  for (const p of parts) {
+    if (cur && typeof cur === 'object' && p in cur) {
+      cur = cur[p];
+    } else {
+      cur = undefined;
+      break;
+    }
+  }
+  if (cur !== undefined) return cur;
+
+  // 2) Clave con puntos: 'a.b.c'
+  const dotKey = parts.join('.');
+  if (Object.prototype.hasOwnProperty.call(row, dotKey)) {
+    return row[dotKey];
+  }
+
+  // 3) snake_case: 'a_b_c'
+  const snakeKey = parts.join('_');
+  if (Object.prototype.hasOwnProperty.call(row, snakeKey)) {
+    return row[snakeKey];
+  }
+
+  // 4) camelCase: aB c → aBc
+  const camelKey = parts[0] + parts.slice(1)
+    .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+    .join('');
+  if (Object.prototype.hasOwnProperty.call(row, camelKey)) {
+    return row[camelKey];
+  }
+
+  return undefined;
+}
+
 /* ---------------- helpers selección (respeta preferencias) ---------------- */
 
 function intersect(aSet, ids) {
@@ -324,7 +370,7 @@ async function collectGoogle(userId, opts = {}) {
     const ranges = [
       { since: daysAgoISO(30),  until: untilGlobal, where: '' },
       { since: daysAgoISO(180), until: untilGlobal, where: '' },
-      { since: daysAgoISO(365), until: untilGlobal, where: "AND campaign.status = ENABLED" },
+      { since: daysAgoISO(365), until: untilGlobal, where: "AND campaign.status = 'ENABLED'" },
     ];
 
     let rows = [];
@@ -395,36 +441,76 @@ async function collectGoogle(userId, opts = {}) {
     const byCampNetworkAgg = new Map();  // campId::network -> agg
 
     for (const r of rows.slice(0, 5000)) {
-      const d      = r.segments?.date;
-      const device = r.segments?.device || null;
-      const network = r.segments?.adNetworkType || r.segments?.ad_network_type || null;
+      const d      = getField(r, 'segments.date');
+const device = getField(r, 'segments.device') || null;
+const network =
+  getField(r, 'segments.ad_network_type') ??
+  getField(r, 'segments.adNetworkType') ??
+  null;
 
-      const campId = r.campaign?.id;
-      const name   = r.campaign?.name || 'Untitled';
-      const chType = r.campaign?.advertisingChannelType || r.campaign?.advertising_channel_type || null;
-      const chSub  = r.campaign?.advertisingChannelSubType || r.campaign?.advertising_channel_sub_type || null;
-      const status = r.campaign?.status || null;
-      const servingStatus = r.campaign?.servingStatus || r.campaign?.serving_status || null;
-      const biddingType = r.campaign?.biddingStrategyType || r.campaign?.bidding_strategy_type || null;
-      const targetCpaMicros = r.campaign?.targetCpaMicros ?? r.campaign?.target_cpa_micros ?? null;
-      const targetRoas = r.campaign?.targetRoas ?? r.campaign?.target_roas ?? null;
+const campId = getField(r, 'campaign.id');
+const name   = getField(r, 'campaign.name') || 'Untitled';
 
-      const impr  = Number(r.metrics?.impressions || 0);
-      const clk   = Number(r.metrics?.clicks || 0);
-      const cost  = microsTo(r.metrics?.costMicros ?? r.metrics?.cost_micros);
+const chType =
+  getField(r, 'campaign.advertising_channel_type') ??
+  getField(r, 'campaign.advertisingChannelType') ??
+  null;
+
+const chSub  =
+  getField(r, 'campaign.advertising_channel_sub_type') ??
+  getField(r, 'campaign.advertisingChannelSubType') ??
+  null;
+
+const status = getField(r, 'campaign.status') || null;
+
+const servingStatus =
+  getField(r, 'campaign.serving_status') ??
+  getField(r, 'campaign.servingStatus') ??
+  null;
+
+const biddingType =
+  getField(r, 'campaign.bidding_strategy_type') ??
+  getField(r, 'campaign.biddingStrategyType') ??
+  null;
+
+const targetCpaMicros =
+  getField(r, 'campaign.target_cpa_micros') ??
+  getField(r, 'campaign.targetCpaMicros') ??
+  null;
+
+const targetRoas =
+  getField(r, 'campaign.target_roas') ??
+  getField(r, 'campaign.targetRoas') ??
+  null;
+
+      const impr  = Number(getField(r, 'metrics.impressions') || 0);
+      const clk   = Number(getField(r, 'metrics.clicks') || 0);
+      const cost  = microsTo(
+        getField(r, 'metrics.cost_micros') ??
+        getField(r, 'metrics.costMicros') ??
+        0
+      );
       const conv  = Number(
-        r.metrics?.conversions ??
-        r.metrics?.conversions_value ??
-        r.metrics?.conversionsValue ??
+        getField(r, 'metrics.conversions') ??
+        getField(r, 'metrics.conversions_value') ??
+        getField(r, 'metrics.conversionsValue') ??
         0
       );
       const convValue = Number(
-        r.metrics?.conversions_value ??
-        r.metrics?.conversionsValue ??
+        getField(r, 'metrics.conversions_value') ??
+        getField(r, 'metrics.conversionsValue') ??
         0
       );
-      const allConv = Number(r.metrics?.allConversions ?? r.metrics?.all_conversions ?? 0);
-      const allVal  = Number(r.metrics?.allConversionsValue ?? r.metrics?.all_conversions_value ?? 0);
+      const allConv = Number(
+        getField(r, 'metrics.all_conversions') ??
+        getField(r, 'metrics.allConversions') ??
+        0
+      );
+      const allVal  = Number(
+        getField(r, 'metrics.all_conversions_value') ??
+        getField(r, 'metrics.allConversionsValue') ??
+        0
+      );
 
       // totales globales (todas las cuentas)
       G.impr += impr; G.clk += clk; G.cost += cost; G.conv += conv; G.val += convValue;
