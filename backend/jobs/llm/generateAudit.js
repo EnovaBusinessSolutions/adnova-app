@@ -27,7 +27,10 @@ const impactNorm = (s) =>
     ? String(s).toLowerCase()
     : 'medio');
 
-const isGA = (type) => type === 'ga' || type === 'ga4';
+const isGA = (type) => {
+  const t = String(type || '').toLowerCase();
+  return t === 'ga' || t === 'ga4' || t === 'google-analytics' || t === 'analytics';
+};
 
 const fmt = (n, d = 2) => {
   const v = Number(n);
@@ -508,14 +511,18 @@ function buildHistoryContext({ type, previousAudit, trend }) {
 }
 
 /* ----------------------- fallback determinístico ---------------------- */
-/* (SIN CAMBIOS: lo dejamos igual, pero su uso se controla con USE_FALLBACK_RULES) */
+/* (SIN CAMBIOS DE LÓGICA PRINCIPAL, SOLO MEJOR DETECCIÓN DE TIPOS) */
 function fallbackIssues({ type, inputSnapshot, limit = 6, trend = null, previousSnapshot = null, previousAudit = null }) {
   const out = [];
+
+  const t = String(type || '').toLowerCase();
+  const isGoogleAdsType = (t === 'google' || t === 'googleads' || t === 'gads');
+  const isMetaType      = (t === 'meta'   || t === 'metaads'   || t === 'facebook');
 
   const cpaHigh = Number(inputSnapshot?.targets?.cpaHigh || 0) || null;
 
   // ------------------ GOOGLE ADS / META ADS -------------------
-  if (type === 'google' || type === 'meta') {
+  if (isGoogleAdsType || isMetaType) {
     const rawList = Array.isArray(inputSnapshot?.byCampaign) ? inputSnapshot.byCampaign : [];
 
     const enriched = rawList.map(c => {
@@ -787,7 +794,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6, trend = null, previous
   }
 
   // ------------------------- GA4 / GA --------------------------
-  if (isGA(type)) {
+  if (isGA(t)) {
     const channels   = Array.isArray(inputSnapshot?.channels) ? inputSnapshot.channels : [];
     const byProperty = Array.isArray(inputSnapshot?.byProperty) ? inputSnapshot.byProperty : [];
     const firstProp  = byProperty[0] || {};
@@ -1144,7 +1151,8 @@ module.exports = async function generateAudit({
   previousAudit = null,
   trend = null,
 }) {
-  const analytics = isGA(type);
+  const t = String(type || '').toLowerCase();
+  const analytics = isGA(t);
 
   const haveAdsData = Array.isArray(inputSnapshot?.byCampaign) && inputSnapshot.byCampaign.length > 0;
   const haveGAData  =
@@ -1153,9 +1161,11 @@ module.exports = async function generateAudit({
 
   const haveData = analytics ? haveGAData : haveAdsData;
 
-  const system = analytics
-    ? SYSTEM_GA
-    : SYSTEM_ADS(type === 'google' ? 'Google Ads' : 'Meta Ads');
+  const platformLabel = analytics
+    ? 'GA4'
+    : ((t === 'google' || t === 'googleads' || t === 'gads') ? 'Google Ads' : 'Meta Ads');
+
+  const system = analytics ? SYSTEM_GA : SYSTEM_ADS(platformLabel);
 
   // 👇 Metemos diagnostics al snapshot que ve la IA
   const snapshotForLLM = {
@@ -1252,10 +1262,65 @@ module.exports = async function generateAudit({
       links: []
     }));
     issues = fb;
-    if (!summary) {
+    if (!summary && issues.length > 0) {
       summary = analytics
         ? 'Resumen de emergencia generado sin IA por falta de respuesta del modelo.'
         : 'Resumen de emergencia generado sin IA por falta de respuesta del modelo.';
+    }
+  }
+
+  // 3.bis) Seguro extra: si hay datos y seguimos sin hallazgos, generamos issues determinísticos
+  if (haveData && (!issues || issues.length === 0)) {
+    const fb = fallbackIssues({
+      type,
+      inputSnapshot,
+      limit: Math.max(minFindings, maxFindings),
+      trend,
+      previousSnapshot,
+      previousAudit,
+    }).map((it, idx) => ({
+      id: `fb2-${type}-${Date.now()}-${idx}`,
+      title: it.title,
+      area: areaNorm(it.area),
+      severity: sevNorm(it.severity),
+      evidence: it.evidence || '',
+      recommendation: it.recommendation || '',
+      estimatedImpact: impactNorm(it.estimatedImpact),
+      accountRef: it.accountRef || null,
+      campaignRef: it.campaignRef,
+      segmentRef: it.segmentRef,
+      metrics: it.metrics || {},
+      links: [],
+    }));
+
+    let finalIssues = fb;
+
+    // Si aun así no sale nada, metemos 1 issue genérico pero accionable
+    if (finalIssues.length === 0) {
+      finalIssues = [{
+        id: `fb2-generic-${type}-${Date.now()}`,
+        title: analytics
+          ? 'Revisa el comportamiento de tus canales en el periodo analizado'
+          : 'Revisa el rendimiento global de tus campañas en el periodo analizado',
+        area: 'performance',
+        severity: 'media',
+        evidence: 'Se detectaron datos en la cuenta, pero no se identificó ningún patrón crítico específico. Aun así, siempre hay oportunidades de optimización.',
+        recommendation: 'Analiza las campañas o canales con mayor inversión y volumen de tráfico para crear pruebas A/B de mensajes, segmentaciones y landings. Prioriza las áreas con más impacto en conversiones o ventas.',
+        estimatedImpact: 'medio',
+        accountRef: null,
+        campaignRef: null,
+        segmentRef: null,
+        metrics: {},
+        links: [],
+      }];
+    }
+
+    issues = finalIssues;
+
+    if (!summary && issues.length > 0) {
+      summary = analytics
+        ? 'Auditoría generada automáticamente a partir de los datos de GA4.'
+        : 'Auditoría generada automáticamente a partir del rendimiento de campañas.';
     }
   }
 
