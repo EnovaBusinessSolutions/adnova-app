@@ -223,7 +223,9 @@ async function accumulateCampaignBreakdowns({
     const keyC = `${cid}|${id}`;
     let c = byCampaignMap.get(keyC);
     if (!c) {
+      // 👇 IMPORTANTE: usar account_id (y opcionalmente accountId para compat)
       c = {
+        account_id: cid,
         accountId: cid,
         id,
         name,
@@ -247,7 +249,9 @@ async function accumulateCampaignBreakdowns({
     let d = byCampaignDeviceMap.get(keyD);
     if (!d) {
       d = {
+        account_id: cid,
         accountId: cid,
+        campaign_id: id,
         campaignId: id,
         campaignName: name,
         device,
@@ -270,7 +274,9 @@ async function accumulateCampaignBreakdowns({
     let n = byCampaignNetworkMap.get(keyN);
     if (!n) {
       n = {
+        account_id: cid,
         accountId: cid,
+        campaign_id: id,
         campaignId: id,
         campaignName: name,
         network,
