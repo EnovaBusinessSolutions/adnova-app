@@ -32,7 +32,8 @@ const { collectShopify } = require('./collect/shopifyCollector');
 // Collector GA4 (robusto a distintos nombres de export)
 let collectGA4 = null;
 try {
-  const ga4Mod = require('./collect/ga4Collector');
+  // usamos el archivo real que tienes hoy
+  const ga4Mod = require('./collect/googleAnalyticsCollector');
   collectGA4 =
     ga4Mod.collectGA4 ||
     ga4Mod.collectGa4 ||
@@ -42,6 +43,7 @@ try {
 } catch (_) {
   collectGA4 = null;
 }
+
 
 const generateAudit = require('./llm/generateAudit');
 
