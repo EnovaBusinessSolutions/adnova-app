@@ -50,11 +50,15 @@ const normGoogle = (s='') => String(s).trim().replace(/^customers\//,'').replace
 
 /* ---------- límites por plan (issues por fuente) ---------- */
 const PLAN_MAX_FINDINGS = {
-  gratis: 5,          // plan Gratis: hasta 5 recomendaciones por fuente
+  gratis: 5,
   emprendedor: 8,
   crecimiento: 10,
   pro: 15
 };
+
+// [★ CAMBIO] Límite global “duro” para cualquier plan
+const GLOBAL_MAX_FINDINGS = 5;
+const GLOBAL_MIN_FINDINGS = 1;
 
 function getPlanSlug(user) {
   if (!user) return 'gratis';
@@ -134,7 +138,7 @@ function autoPickIds(type, snapshot, max = 3) {
 
   const ids = new Set();
 
-  // [★ CAMBIO 1] soportar defaultCustomerId además de defaultAccountId
+  // [★ CAMBIO] soportar defaultCustomerId además de defaultAccountId
   const def = norm(snapshot?.defaultAccountId || snapshot?.defaultCustomerId || '');
   if (def) ids.add(def);
 
@@ -234,7 +238,11 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       .lean();
 
     const planSlug = getPlanSlug(user);
-    const maxFindings = PLAN_MAX_FINDINGS[planSlug] || PLAN_MAX_FINDINGS.gratis;
+
+    // [★ CAMBIO] límite efectivo por plan PERO capado a 5
+    const planLimit   = PLAN_MAX_FINDINGS[planSlug] || PLAN_MAX_FINDINGS.gratis;
+    const maxFindings = Math.min(GLOBAL_MAX_FINDINGS, planLimit);
+    const minFindings = GLOBAL_MIN_FINDINGS;
 
     // Estado real de conexiones y selección preferida desde conectores
     const connections = await detectConnections(userId);
@@ -285,7 +293,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
           actionCenter: [issue],
           topProducts: [],
           inputSnapshot: raw,
-          version: 'audits@1.1.3-selection'
+          version: 'audits@1.2.0-selection'
         });
         return true;
       }
@@ -293,9 +301,8 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       const total = (raw?.accountIds && raw.accountIds.length) ||
                     (raw?.accounts && raw.accounts.length) || 0;
 
-      // [★ CAMBIO 2] Solo filtramos por selGoogle si HAY intersección con las
-      // cuentas realmente presentes en el snapshot. Si no, usamos raw tal cual
-      // para no matar datos por una selección vieja o desalineada.
+      // Solo filtramos por selGoogle si HAY intersección con las
+      // cuentas realmente presentes en el snapshot.
       if (selGoogle.length && total > 0) {
         const norm = normGoogle;
         const snapshotIds = new Set(
@@ -351,7 +358,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
           actionCenter: [issue],
           topProducts: [],
           inputSnapshot: raw,
-          version: 'audits@1.1.3-selection'
+          version: 'audits@1.2.0-selection'
         });
         return true;
       }
@@ -359,7 +366,6 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       const total = (raw?.accountIds && raw.accountIds.length) ||
                     (raw?.accounts && raw.accounts.length) || 0;
 
-      // [★ CAMBIO 3] Mismo patrón de intersección para Meta
       if (selMeta.length && total > 0) {
         const norm = normMeta;
         const snapshotIds = new Set(
@@ -415,7 +421,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
           actionCenter: [issue],
           topProducts: [],
           inputSnapshot: raw,
-          version: 'audits@1.1.3-selection'
+          version: 'audits@1.2.0-selection'
         });
         return true;
       }
@@ -446,11 +452,12 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
     let auditJson = { summary: '', issues: [] };
     if (!noData) {
-      // Pasamos maxFindings según plan (gratis, emprendedor, crecimiento, pro)
+      // [★ CAMBIO] Pasamos maxFindings limitado a 5 y minFindings = 1
       auditJson = await generateAudit({
         type: t,
         inputSnapshot: snapshot,
-        maxFindings
+        maxFindings,
+        minFindings
       });
     }
 
@@ -460,8 +467,24 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       auditJson.issues.unshift(selectionNote);
     }
 
-    // clamp final al límite por plan (dejando la nota de selección al frente)
-    if (Array.isArray(auditJson.issues) && auditJson.issues.length > maxFindings) {
+    // Normalizamos issues a array
+    auditJson.issues = Array.isArray(auditJson.issues) ? auditJson.issues : [];
+
+    // [★ CAMBIO] Si hay datos pero la IA no devolvió nada, forzamos al menos 1 recomendación suave
+    if (!noData && auditJson.issues.length === 0) {
+      auditJson.issues.push({
+        id: 'mantener_y_experimentar',
+        area: 'estrategia',
+        severity: 'baja',
+        title: 'La cuenta está razonablemente optimizada, pero puedes seguir experimentando',
+        evidence: 'En la revisión de los últimos datos no se detectaron problemas críticos, pero siempre hay margen para optimizar creatividades, audiencias y pruebas A/B.',
+        recommendation: 'Define al menos un experimento para los próximos 30 días (por ejemplo, probar nuevas creatividades, pujas o segmentaciones) para evitar que el rendimiento se estanque.',
+        estimatedImpact: 'bajo'
+      });
+    }
+
+    // [★ CAMBIO] clamp final al límite por plan y al máximo global de 5
+    if (auditJson.issues.length > maxFindings) {
       auditJson.issues = auditJson.issues.slice(0, maxFindings);
     }
 
@@ -477,7 +500,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       actionCenter: auditJson?.actionCenter || (auditJson?.issues || []).slice(0, 3),
       topProducts: auditJson?.topProducts || [],
       inputSnapshot: snapshot,
-      version: 'audits@1.1.3',
+      version: 'audits@1.2.0',
     };
 
     await Audit.create(auditDoc);
@@ -491,7 +514,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       origin: source || 'manual',
       generatedAt: new Date(),
       plan: 'unknown',
-      maxFindings: PLAN_MAX_FINDINGS.gratis,
+      maxFindings: GLOBAL_MAX_FINDINGS,
       summary: 'No se pudo generar la auditoría',
       issues: [{
         id: 'setup_incompleto',
@@ -503,7 +526,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       }],
       actionCenter: [],
       inputSnapshot: {},
-      version: 'audits@1.1.3-error'
+      version: 'audits@1.2.0-error'
     });
     return false;
   }

@@ -479,7 +479,8 @@ Estructura estricta:
 }
 `.trim();
 
-function makeUserPrompt({ snapshotStr, maxFindings, isAnalytics }) {
+// [★ CAMBIO] añadimos minFindings al prompt para que la IA se mueva entre min y max
+function makeUserPrompt({ snapshotStr, maxFindings, minFindings, isAnalytics }) {
   const adsExtras = `
 - Cada issue DEBE incluir **accountRef** ({ id, name }) y **campaignRef** ({ id, name }).
 - Usa el campo "status" de las campañas (active/paused/unknown):
@@ -503,8 +504,9 @@ function makeUserPrompt({ snapshotStr, maxFindings, isAnalytics }) {
   return `
 CONSIGNA
 - Devuelve JSON válido EXACTAMENTE con: { "summary": string, "issues": Issue[] }.
-- Máximo ${maxFindings} issues. Prioriza por impacto esperado en revenue/conversiones.
-- Si los datos son suficientes, intenta acercarte a ${maxFindings} issues sin inventar hallazgos.
+- Devuelve ENTRE ${minFindings} y ${maxFindings} issues, según la gravedad de lo que encuentres.
+  - Si ves muchos problemas importantes, acerca el número a ${maxFindings}.
+  - Si la cuenta está relativamente sana, quédate más cerca de ${minFindings} sin inventar hallazgos.
 - Idioma: español neutro, directo y claro.
 - Prohibido inventar métricas o campañas/canales no presentes en el snapshot.
 - Cada "issue" DEBE incluir:
@@ -576,9 +578,18 @@ async function chatJSON({ system, user, model = DEFAULT_MODEL, retries = 2 }) {
 }
 
 /* ----------------------------- entry point ---------------------------- */
-// maxFindings viene de auditJob (según plan). Default 5 por seguridad.
-module.exports = async function generateAudit({ type, inputSnapshot, maxFindings = 5 }) {
+// [★ CAMBIO] ahora aceptamos también minFindings (viene de auditJob)
+module.exports = async function generateAudit({
+  type,
+  inputSnapshot,
+  maxFindings = 5,
+  minFindings = 1
+}) {
   const analytics = isGA(type);
+
+  // seguridad por si alguien pasa valores raros
+  maxFindings = Math.max(1, Number(maxFindings) || 5);
+  minFindings = Math.max(0, Math.min(Number(minFindings) || 0, maxFindings));
 
   const haveAdsData = Array.isArray(inputSnapshot?.byCampaign) && inputSnapshot.byCampaign.length > 0;
   const haveGAData  =
@@ -602,7 +613,12 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
     console.log('[LLM:SNAPSHOT]', tinySnapshot(inputSnapshot, { maxChars: 2000 }));
   }
 
-  const userPrompt = makeUserPrompt({ snapshotStr: dataStr, maxFindings, isAnalytics: analytics });
+  const userPrompt = makeUserPrompt({
+    snapshotStr: dataStr,
+    maxFindings,
+    minFindings,
+    isAnalytics: analytics
+  });
 
   // modelo configurable
   const model = DEFAULT_MODEL;
@@ -645,35 +661,39 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
     });
   }
 
-  // 3) fallback si hay pocos hallazgos y sí hay datos
-  if ((!issues || issues.length < maxFindings) && haveData) {
+  // 3) fallback solo si tenemos datos y el LLM se quedó por debajo del mínimo
+  if (haveData) {
     const current = issues?.length || 0;
-    const need = maxFindings - current;
-    if (need > 0) {
-      const fb = fallbackIssues({ type, inputSnapshot, limit: need }).map((it, idx) => ({
-        id: `fb-${type}-${Date.now()}-${idx}`,
-        title: it.title,
-        area: areaNorm(it.area),
-        severity: sevNorm(it.severity),
-        evidence: it.evidence || '',
-        recommendation: it.recommendation || '',
-        estimatedImpact: impactNorm(it.estimatedImpact),
-        accountRef: it.accountRef || null,
-        campaignRef: it.campaignRef,
-        segmentRef: it.segmentRef,
-        metrics: it.metrics || {},
-        links: []
-      }));
-      issues = [...(issues || []), ...fb];
-      if (!summary) {
-        summary = analytics
-          ? 'Resumen basado en datos de GA4 priorizando tracking y eficiencia por canal/propiedad.'
-          : 'Resumen basado en rendimiento de campañas priorizando eficiencia y conversión.';
+
+    if (current < minFindings) {
+      const need = minFindings - current;
+      if (need > 0) {
+        const fb = fallbackIssues({ type, inputSnapshot, limit: need }).map((it, idx) => ({
+          id: `fb-${type}-${Date.now()}-${idx}`,
+          title: it.title,
+          area: areaNorm(it.area),
+          severity: sevNorm(it.severity),
+          evidence: it.evidence || '',
+          recommendation: it.recommendation || '',
+          estimatedImpact: impactNorm(it.estimatedImpact),
+          accountRef: it.accountRef || null,
+          campaignRef: it.campaignRef,
+          segmentRef: it.segmentRef,
+          metrics: it.metrics || {},
+          links: []
+        }));
+        issues = [...(issues || []), ...fb];
+
+        if (!summary) {
+          summary = analytics
+            ? 'Resumen basado en datos de GA4 priorizando tracking y eficiencia por canal/propiedad.'
+            : 'Resumen basado en rendimiento de campañas priorizando eficiencia y conversión.';
+        }
       }
     }
   }
 
-  // 4) dedupe + clamp
+  // 4) dedupe + clamp al máximo solicitado
   issues = dedupeIssues(issues);
   issues = cap(issues, maxFindings);
 
