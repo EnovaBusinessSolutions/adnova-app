@@ -10,6 +10,10 @@ const DEFAULT_MODEL =
   process.env.OPENAI_MODEL ||
   'gpt-4.1-mini';
 
+// Flag para permitir usar reglas de fallback (DESACTIVADO por defecto)
+// Si quieres reactivarlas como “modo emergencia”, pon AUDIT_FALLBACK_RULES=true en los envs.
+const USE_FALLBACK_RULES = process.env.AUDIT_FALLBACK_RULES === 'true';
+
 /* ------------------------------ helpers ------------------------------ */
 const AREAS = new Set(['setup', 'performance', 'creative', 'tracking', 'budget', 'bidding']);
 const SEVS  = new Set(['alta', 'media', 'baja']);
@@ -504,7 +508,7 @@ function buildHistoryContext({ type, previousAudit, trend }) {
 }
 
 /* ----------------------- fallback determinístico ---------------------- */
-/* (SIN CAMBIOS: lo dejamos como estaba para no romper nada) */
+/* (SIN CAMBIOS: lo dejamos igual, pero su uso se controla con USE_FALLBACK_RULES) */
 function fallbackIssues({ type, inputSnapshot, limit = 6, trend = null, previousSnapshot = null, previousAudit = null }) {
   const out = [];
 
@@ -910,7 +914,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6, trend = null, previous
           recommendation: 'Revisa qué cambios se hicieron en páginas clave, mensajes y configuración de eventos desde la auditoría anterior. Recupera la versión que funcionaba mejor o crea una variante inspirada en los elementos previos que daban mejor CR.',
           estimatedImpact: 'alto',
           segmentRef: { type: 'channel', name: 'all' },
-          accountRef: { name: propName || (propId || 'GA4'), property: propId || '' },
+          accountRef: { name: propName || 'Propiedad GA4', property: propId || '' },
           metrics: {}
         });
       }
@@ -1153,7 +1157,7 @@ module.exports = async function generateAudit({
     ? SYSTEM_GA
     : SYSTEM_ADS(type === 'google' ? 'Google Ads' : 'Meta Ads');
 
-  // 👇 NUEVO: metemos diagnostics al snapshot que ve la IA
+  // 👇 Metemos diagnostics al snapshot que ve la IA
   const snapshotForLLM = {
     ...(inputSnapshot || {}),
     diagnostics: buildDiagnostics(type, inputSnapshot || {})
@@ -1221,39 +1225,37 @@ module.exports = async function generateAudit({
     });
   }
 
-  // 3) fallback si hay pocos hallazgos y sí hay datos
+  // 3) Fallback SOLO si la IA no generó nada y explícitamente lo permitimos
   const desired = Math.max(minFindings, maxFindings);
-  if ((!issues || issues.length < desired) && haveData) {
-    const current = issues?.length || 0;
-    const need = desired - current;
-    if (need > 0) {
-      const fb = fallbackIssues({
-        type,
-        inputSnapshot,
-        limit: need,
-        trend,
-        previousSnapshot,
-        previousAudit,
-      }).map((it, idx) => ({
-        id: `fb-${type}-${Date.now()}-${idx}`,
-        title: it.title,
-        area: areaNorm(it.area),
-        severity: sevNorm(it.severity),
-        evidence: it.evidence || '',
-        recommendation: it.recommendation || '',
-        estimatedImpact: impactNorm(it.estimatedImpact),
-        accountRef: it.accountRef || null,
-        campaignRef: it.campaignRef,
-        segmentRef: it.segmentRef,
-        metrics: it.metrics || {},
-        links: []
-      }));
-      issues = [...(issues || []), ...fb];
-      if (!summary) {
-        summary = analytics
-          ? 'Resumen basado en datos de GA4 priorizando tracking y eficiencia por canal/propiedad.'
-          : 'Resumen basado en rendimiento de campañas priorizando eficiencia y conversión.';
-      }
+  const allowFallback = USE_FALLBACK_RULES;
+
+  if (allowFallback && haveData && (!issues || issues.length === 0)) {
+    const fb = fallbackIssues({
+      type,
+      inputSnapshot,
+      limit: Math.min(desired, 3), // máximo 3 hallazgos de emergencia
+      trend,
+      previousSnapshot,
+      previousAudit,
+    }).map((it, idx) => ({
+      id: `fb-${type}-${Date.now()}-${idx}`,
+      title: it.title,
+      area: areaNorm(it.area),
+      severity: sevNorm(it.severity),
+      evidence: it.evidence || '',
+      recommendation: it.recommendation || '',
+      estimatedImpact: impactNorm(it.estimatedImpact),
+      accountRef: it.accountRef || null,
+      campaignRef: it.campaignRef,
+      segmentRef: it.segmentRef,
+      metrics: it.metrics || {},
+      links: []
+    }));
+    issues = fb;
+    if (!summary) {
+      summary = analytics
+        ? 'Resumen de emergencia generado sin IA por falta de respuesta del modelo.'
+        : 'Resumen de emergencia generado sin IA por falta de respuesta del modelo.';
     }
   }
 
