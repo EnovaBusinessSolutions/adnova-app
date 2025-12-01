@@ -179,8 +179,59 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
   }
 }
 
+/* ---------------- contexto histórico compacto para el prompt --------- */
+function compactTrend(type, trend) {
+  if (!trend || !trend.deltas) return null;
+  const d = trend.deltas || {};
+  const lines = [];
+
+  const add = (label, key, decimals = 2) => {
+    const k = d[key];
+    if (!k || (k.current == null && k.previous == null)) return;
+    const prev = fmt(k.previous ?? 0, decimals);
+    const curr = fmt(k.current ?? 0, decimals);
+    const pct  = fmt(k.percent ?? 0, 1);
+    lines.push(`${label}: ${prev} → ${curr} (${pct}% vs anterior)`);
+  };
+
+  if (!isGA(type)) {
+    add('Conversiones', 'conversions', 0);
+    add('ROAS',        'roas',        2);
+    add('CPA',         'cpa',         2);
+    add('Coste',       'cost',        2);
+  } else {
+    add('Sesiones',    'sessions',    0);
+    add('Conversiones','conversions', 0);
+    add('Ingresos',    'revenue',     2);
+    add('CR',          'cr',          2);
+  }
+
+  return lines.length ? lines.join('\n') : null;
+}
+
+function buildHistoryContext({ type, previousAudit, trend }) {
+  const parts = [];
+
+  if (previousAudit) {
+    const ts = previousAudit.generatedAt || previousAudit.createdAt || null;
+    const when = ts ? new Date(ts).toISOString() : 'desconocida';
+    const prevSummary = String(previousAudit.summary || previousAudit.resumen || '')
+      .replace(/\s+/g, ' ')
+      .slice(0, 400);
+    parts.push(`- Auditoría anterior (${when}): ${prevSummary || 'sin resumen disponible'}`);
+  }
+
+  const trendTxt = compactTrend(type, trend);
+  if (trendTxt) {
+    parts.push(`- Comparativa numérica clave (actual vs anterior):\n${trendTxt}`);
+  }
+
+  if (!parts.length) return '';
+  return parts.join('\n');
+}
+
 /* ----------------------- fallback determinístico ---------------------- */
-function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
+function fallbackIssues({ type, inputSnapshot, limit = 6, trend = null, previousSnapshot = null, previousAudit = null }) {
   const out = [];
 
   const cpaHigh = Number(inputSnapshot?.targets?.cpaHigh || 0) || null;
@@ -249,7 +300,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
       totalConv += toNum(k.conversions);
       totalVal  += toNum(k.conv_value ?? k.purchase_value);
     }
-    const globalCtr  = totalImpr > 0 ? (totalClk / totalImpr) * 100 : 0;
+    const globalCtr  = totalImpr > 0 ? (totalClk / totalImpr) * 100 : 0; // por si lo quieres usar a futuro
     const globalRoas = totalCost > 0 ? (totalVal / totalCost) : 0;
     const globalCpa  = totalConv > 0 ? (totalCost / totalConv) : 0;
 
@@ -331,6 +382,64 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
           accountRef,
           campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
           metrics: { cpa: fmt(cpa), targetCpa: fmt(cpaHigh), cost: fmt(cost), conversions: conv }
+        });
+      }
+    }
+
+    // --- Insight de mejora/empeoramiento vs auditoría anterior (Ads) ---
+    if (trend && trend.deltas && out.length < limit) {
+      const dConv = trend.deltas.conversions;
+      const dRoas = trend.deltas.roas;
+      const convPct = dConv ? dConv.percent : 0;
+      const roasPct = dRoas ? dRoas.percent : 0;
+
+      const improved =
+        (dConv && dConv.previous > 0 && convPct >= 15) ||
+        (dRoas && dRoas.previous > 0 && roasPct >= 15);
+
+      const worsened =
+        (dConv && dConv.previous > 0 && convPct <= -15) ||
+        (dRoas && dRoas.previous > 0 && roasPct <= -15);
+
+      if (improved) {
+        out.push({
+          title: 'Buen avance respecto a la auditoría anterior',
+          area: 'performance',
+          severity: 'baja',
+          evidence: [
+            dConv ? `Conversiones: ${fmt(dConv.previous,0)} → ${fmt(dConv.current,0)} (${fmt(dConv.percent,1)}%).` : null,
+            dRoas ? `ROAS: ${fmt(dRoas.previous,2)} → ${fmt(dRoas.current,2)} (${fmt(dRoas.percent,1)}%).` : null
+          ].filter(Boolean).join(' '),
+          recommendation: 'Mantén los cambios que generaron la mejora (segmentaciones, creatividades, pujas) y documenta qué se modificó. Aprovecha para escalar campañas ganadoras y seguir probando variaciones de anuncios.',
+          estimatedImpact: 'medio',
+          accountRef: null,
+          campaignRef: null,
+          metrics: {
+            conversions_prev: dConv?.previous,
+            conversions_curr: dConv?.current,
+            roas_prev: dRoas?.previous,
+            roas_curr: dRoas?.current
+          }
+        });
+      } else if (worsened) {
+        out.push({
+          title: 'Advertencia: el rendimiento bajó vs la auditoría anterior',
+          area: 'performance',
+          severity: 'alta',
+          evidence: [
+            dConv ? `Conversiones: ${fmt(dConv.previous,0)} → ${fmt(dConv.current,0)} (${fmt(dConv.percent,1)}%).` : null,
+            dRoas ? `ROAS: ${fmt(dRoas.previous,2)} → ${fmt(dRoas.current,2)} (${fmt(dRoas.percent,1)}%).` : null
+          ].filter(Boolean).join(' '),
+          recommendation: 'Revisa qué cambios se hicieron desde la auditoría anterior (campañas pausadas/activadas, cambios de presupuesto o puja, nuevas creatividades) y vuelve a concentrar inversión en las campañas y segmentos que antes tenían mejor rendimiento.',
+          estimatedImpact: 'alto',
+          accountRef: null,
+          campaignRef: null,
+          metrics: {
+            conversions_prev: dConv?.previous,
+            conversions_curr: dConv?.current,
+            roas_prev: dRoas?.previous,
+            roas_curr: dRoas?.current
+          }
         });
       }
     }
@@ -485,6 +594,54 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
       }
     }
 
+    // Insight de mejora/empeoramiento vs auditoría anterior (GA)
+    if (trend && trend.deltas && out.length < limit) {
+      const dConv = trend.deltas.conversions;
+      const dCr   = trend.deltas.cr;
+      const convPct = dConv ? dConv.percent : 0;
+      const crPct   = dCr ? dCr.percent : 0;
+
+      const improved =
+        (dConv && dConv.previous > 0 && convPct >= 15) ||
+        (dCr && dCr.previous > 0 && crPct >= 15);
+
+      const worsened =
+        (dConv && dConv.previous > 0 && convPct <= -15) ||
+        (dCr && dCr.previous > 0 && crPct <= -15);
+
+      if (improved) {
+        out.push({
+          title: 'Mejora en el embudo vs la auditoría anterior',
+          area: 'performance',
+          severity: 'baja',
+          evidence: [
+            dConv ? `Conversiones: ${fmt(dConv.previous,0)} → ${fmt(dConv.current,0)} (${fmt(dConv.percent,1)}%).` : null,
+            dCr ? `CR global: ${fmt(dCr.previous,2)}% → ${fmt(dCr.current,2)}% (${fmt(dCr.percent,1)}%).` : null
+          ].filter(Boolean).join(' '),
+          recommendation: 'Identifica qué cambios del funnel (mensajes, landings, pasos, canales) explican la mejora y consolídalos. A partir de ahí, diseña nuevos tests A/B para seguir aumentando la tasa de conversión sin perder calidad de tráfico.',
+          estimatedImpact: 'medio',
+          segmentRef: { type: 'channel', name: 'all' },
+          accountRef: { name: propName || (propId || 'GA4'), property: propId || '' },
+          metrics: {}
+        });
+      } else if (worsened) {
+        out.push({
+          title: 'Advertencia: el embudo rinde peor que en la auditoría anterior',
+          area: 'tracking',
+          severity: 'alta',
+          evidence: [
+            dConv ? `Conversiones: ${fmt(dConv.previous,0)} → ${fmt(dConv.current,0)} (${fmt(dConv.percent,1)}%).` : null,
+            dCr ? `CR global: ${fmt(dCr.previous,2)}% → ${fmt(dCr.current,2)}% (${fmt(dCr.percent,1)}%).` : null
+          ].filter(Boolean).join(' '),
+          recommendation: 'Revisa qué cambios se hicieron en páginas clave, mensajes y configuración de eventos desde la auditoría anterior. Recupera la versión que funcionaba mejor o crea una variante inspirada en los elementos previos que daban mejor CR.',
+          estimatedImpact: 'alto',
+          segmentRef: { type: 'channel', name: 'all' },
+          accountRef: { name: propName || (propId || 'GA4'), property: propId || '' },
+          metrics: {}
+        });
+      }
+    }
+
     // Sin channels pero con byProperty
     if (channels.length === 0 && byProperty.length > 0 && out.length < limit) {
       const pSessions    = toNum(firstProp.sessions);
@@ -580,7 +737,7 @@ Estructura estricta:
 }
 `.trim();
 
-function makeUserPrompt({ snapshotStr, maxFindings, isAnalytics }) {
+function makeUserPrompt({ snapshotStr, historyStr, maxFindings, minFindings, isAnalytics }) {
   const adsExtras = `
 - Cada issue DEBE incluir **accountRef** ({ id, name }) y **campaignRef** ({ id, name }).
 - Usa el campo "status" de las campañas (active/paused/unknown):
@@ -601,12 +758,19 @@ function makeUserPrompt({ snapshotStr, maxFindings, isAnalytics }) {
 - Si hay varias propiedades, enfoca los hallazgos en las que tienen más sesiones/conversiones.
   `.trim();
 
+  const historyBlock = historyStr
+    ? `
+CONTEXTO_HISTORICO
+${historyStr}
+`.trim()
+    : '';
+
   return `
 CONSIGNA
 - Devuelve JSON válido EXACTAMENTE con: { "summary": string, "issues": Issue[] }.
-- Máximo ${maxFindings} issues. Prioriza por impacto esperado en revenue/conversiones.
-- Si los datos son suficientes, intenta acercarte lo máximo posible a ${maxFindings} issues
-  sin inventar hallazgos. Si los datos son muy limitados, genera solo 1-2 issues sólidos.
+- Genera entre ${minFindings} y ${maxFindings} issues. Si los datos son suficientes,
+  intenta acercarte lo máximo posible a ${maxFindings} sin inventar hallazgos.
+- Si los datos son muy limitados, genera solo 1-2 issues sólidos.
 - Idioma: español neutro, directo y claro.
 - Prohibido inventar métricas o campañas/canales no presentes en el snapshot.
 - Cada "issue" DEBE incluir:
@@ -614,6 +778,15 @@ CONSIGNA
   - evidence con métricas textuales del snapshot
   - recommendation con pasos concretos (no genéricos)
   - estimatedImpact coherente con la evidencia
+
+USO DEL CONTEXTO HISTÓRICO (si existe)
+- Lee el bloque CONTEXTO_HISTORICO cuando aparezca.
+- Si ves mejoras claras vs la auditoría anterior (por ejemplo sube ROAS, bajan CPA o suben conversiones),
+  menciónalo en el "summary" y crea al menos un issue tipo "mejora" explicando qué mejoró y cómo consolidarlo.
+- Si ves deterioros claros, crea al menos un issue de advertencia comparando explícitamente "antes vs ahora"
+  y proponiendo acciones para recuperar o superar el rendimiento anterior.
+- Evita repetir literalmente los mismos títulos y textos de la auditoría anterior: mantén la idea,
+  pero actualiza la evidencia, los matices y los siguientes pasos.
 
 PRIORIDAD (de mayor a menor)
 1) Tracking roto/ausente o discrepancias que impidan optimizar.
@@ -635,6 +808,8 @@ ESTILO
 
 DATOS (snapshot reducido)
 ${snapshotStr}
+
+${historyBlock ? historyBlock + '\n' : ''}
 
 FORMATO JSON
 ${isAnalytics ? SCHEMA_GA : SCHEMA_ADS}
@@ -678,7 +853,15 @@ async function chatJSON({ system, user, model = DEFAULT_MODEL, retries = 2 }) {
 }
 
 /* ----------------------------- entry point ---------------------------- */
-module.exports = async function generateAudit({ type, inputSnapshot, maxFindings = 5 }) {
+module.exports = async function generateAudit({
+  type,
+  inputSnapshot,
+  maxFindings = 5,
+  minFindings = 1,
+  previousSnapshot = null,
+  previousAudit = null,
+  trend = null,
+}) {
   const analytics = isGA(type);
 
   const haveAdsData = Array.isArray(inputSnapshot?.byCampaign) && inputSnapshot.byCampaign.length > 0;
@@ -692,18 +875,27 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
     ? SYSTEM_GA
     : SYSTEM_ADS(type === 'google' ? 'Google Ads' : 'Meta Ads');
 
-  const dataStr = tinySnapshot(inputSnapshot);
+  const dataStr     = tinySnapshot(inputSnapshot);
+  const historyStr  = buildHistoryContext({ type, previousAudit, trend });
 
   if (process.env.DEBUG_AUDIT === 'true') {
     console.log('[LLM:IN]', type, {
       hasByCampaign: !!inputSnapshot?.byCampaign?.length,
       hasChannels: !!inputSnapshot?.channels?.length,
-      hasByProperty: !!inputSnapshot?.byProperty?.length
+      hasByProperty: !!inputSnapshot?.byProperty?.length,
+      hasHistory: !!historyStr,
     });
     console.log('[LLM:SNAPSHOT]', tinySnapshot(inputSnapshot, { maxChars: 2000 }));
+    if (historyStr) console.log('[LLM:HISTORY]', historyStr);
   }
 
-  const userPrompt = makeUserPrompt({ snapshotStr: dataStr, maxFindings, isAnalytics: analytics });
+  const userPrompt = makeUserPrompt({
+    snapshotStr: dataStr,
+    historyStr,
+    maxFindings,
+    minFindings,
+    isAnalytics: analytics,
+  });
 
   const model = DEFAULT_MODEL;
 
@@ -746,11 +938,19 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
   }
 
   // 3) fallback si hay pocos hallazgos y sí hay datos
-  if ((!issues || issues.length < maxFindings) && haveData) {
+  const desired = Math.max(minFindings, maxFindings);
+  if ((!issues || issues.length < desired) && haveData) {
     const current = issues?.length || 0;
-    const need = maxFindings - current;
+    const need = desired - current;
     if (need > 0) {
-      const fb = fallbackIssues({ type, inputSnapshot, limit: need }).map((it, idx) => ({
+      const fb = fallbackIssues({
+        type,
+        inputSnapshot,
+        limit: need,
+        trend,
+        previousSnapshot,
+        previousAudit,
+      }).map((it, idx) => ({
         id: `fb-${type}-${Date.now()}-${idx}`,
         title: it.title,
         area: areaNorm(it.area),

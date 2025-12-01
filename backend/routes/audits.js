@@ -919,6 +919,44 @@ router.get('/latest', requireAuth, async (req, res) => {
   }
 });
 
+// (C.1) Historial de auditorías por fuente (para panel de sitio)
+// GET /api/audits/site/history?type=google&limit=5
+router.get('/site/history', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const rawType = req.query?.type || 'google';
+    const normalized = normalizeSource(rawType);
+
+    if (!VALID_SOURCES_DB.includes(normalized)) {
+      return res.status(400).json({ ok: false, error: 'INVALID_SOURCE' });
+    }
+
+    let limit = Number(req.query?.limit || 5);
+    if (!Number.isFinite(limit) || limit <= 0) limit = 5;
+    if (limit > 30) limit = 30; // tope sano
+
+    const docs = await Audit.find({ userId, type: normalized })
+      .sort({ generatedAt: -1, createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    const audits = docs
+      .map(mirrorActionCenterToIssues)
+      .filter(Boolean);
+
+    return res.json({
+      ok: true,
+      type: normalized,
+      count: audits.length,
+      audits,
+    });
+  } catch (e) {
+    console.error('HISTORY_ERROR:', e);
+    return res.status(500).json({ ok: false, error: 'HISTORY_ERROR', detail: e?.message || 'Unexpected error' });
+  }
+});
+
 // (D) Última por fuente (compat legacy)
 router.get('/:source/latest', requireAuth, async (req, res) => {
   const normalized = normalizeSource(req.params.source);

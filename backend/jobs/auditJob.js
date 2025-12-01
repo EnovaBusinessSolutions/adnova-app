@@ -56,7 +56,7 @@ const PLAN_MAX_FINDINGS = {
   pro: 15
 };
 
-// [★ CAMBIO] Límite global “duro” para cualquier plan
+// [★] Límite global “duro” para cualquier plan
 const GLOBAL_MAX_FINDINGS = 5;
 const GLOBAL_MIN_FINDINGS = 1;
 
@@ -66,7 +66,7 @@ function getPlanSlug(user) {
   return (user.planSlug || user.plan || 'gratis').toString().toLowerCase();
 }
 
-/* ---------- helpers kpis tras filtro ---------- */
+/* ---------- helpers kpis / tendencias ---------- */
 const safeDiv = (n,d) => (Number(d||0) ? Number(n||0)/Number(d||0) : 0);
 
 function recomputeGoogle(snapshot) {
@@ -78,16 +78,20 @@ function recomputeGoogle(snapshot) {
     val:  a.val  + Number(c?.kpis?.conv_value||0),
   })), { impr:0,clk:0,cost:0,conv:0,val:0 });
 
-  return {
+  const base = {
     impressions: G.impr,
     clicks:      G.clk,
     cost:        G.cost,
     conversions: G.conv,
     conv_value:  G.val,
-    ctr: safeDiv(G.clk, G.impr) * 100,
-    cpc: safeDiv(G.cost, G.clk),
-    cpa: safeDiv(G.cost, G.conv),
-    roas: safeDiv(G.val, G.cost),
+  };
+
+  return {
+    ...base,
+    ctr:  safeDiv(G.clk, G.impr) * 100,
+    cpc:  safeDiv(G.cost, G.clk),
+    cpa:  safeDiv(G.cost, G.conv),
+    roas: safeDiv(G.val,  G.cost),
   };
 }
 
@@ -99,13 +103,108 @@ function recomputeMeta(snapshot) {
     val:  a.val  + Number(c?.kpis?.purchase_value || c?.kpis?.conv_value || 0),
   })), { impr:0,clk:0,cost:0,val:0 });
 
-  return {
+  const base = {
     impressions: G.impr,
     clicks:      G.clk,
     cost:        G.cost,
-    cpc: safeDiv(G.cost, G.clk),
-    roas: safeDiv(G.val, G.cost),
   };
+
+  return {
+    ...base,
+    cpc:  safeDiv(G.cost, G.clk),
+    roas: safeDiv(G.val,  G.cost),
+  };
+}
+
+function recomputeGA4(snapshot) {
+  if (!snapshot) {
+    return { users:0, sessions:0, conversions:0, revenue:0, cr:0 };
+  }
+
+  let users = 0, sessions = 0, conversions = 0, revenue = 0;
+  if (snapshot.aggregate) {
+    users       = Number(snapshot.aggregate.users || 0);
+    sessions    = Number(snapshot.aggregate.sessions || 0);
+    conversions = Number(snapshot.aggregate.conversions || 0);
+    revenue     = Number(snapshot.aggregate.revenue || 0);
+  }
+
+  // Fallback: sumar canales si no hay aggregate
+  if (!sessions && !conversions && Array.isArray(snapshot.channels)) {
+    for (const c of snapshot.channels) {
+      users       += Number(c.users || 0);
+      sessions    += Number(c.sessions || 0);
+      conversions += Number(c.conversions || 0);
+      revenue     += Number(c.revenue || 0);
+    }
+  }
+
+  const base = { users, sessions, conversions, revenue };
+  const cr = safeDiv(conversions, sessions) * 100;
+
+  return { ...base, cr };
+}
+
+function diffKpis(cur = {}, prev = {}) {
+  const out = {};
+  const keys = new Set([...Object.keys(cur), ...Object.keys(prev)]);
+  for (const k of keys) {
+    const c = Number(cur[k] ?? 0);
+    const p = Number(prev[k] ?? 0);
+    const abs = c - p;
+    const pct = safeDiv(abs, Math.abs(p) || 1) * 100;
+    out[k] = {
+      current: c,
+      previous: p,
+      absolute: abs,
+      percent: pct,
+    };
+  }
+  return out;
+}
+
+/**
+ * Construye un objeto de tendencia simple para que la IA pueda
+ * decir “mejoraste/empeoraste” entre la auditoría anterior y la actual.
+ */
+function buildTrend(type, currentSnapshot, previousSnapshot) {
+  if (!previousSnapshot) return null;
+  try {
+    if (type === 'google') {
+      const cur = recomputeGoogle(currentSnapshot);
+      const prev = recomputeGoogle(previousSnapshot);
+      return {
+        type,
+        kpisCurrent: cur,
+        kpisPrevious: prev,
+        deltas: diffKpis(cur, prev),
+      };
+    }
+    if (type === 'meta') {
+      const cur = recomputeMeta(currentSnapshot);
+      const prev = recomputeMeta(previousSnapshot);
+      return {
+        type,
+        kpisCurrent: cur,
+        kpisPrevious: prev,
+        deltas: diffKpis(cur, prev),
+      };
+    }
+    if (type === 'ga4') {
+      const cur = recomputeGA4(currentSnapshot);
+      const prev = recomputeGA4(previousSnapshot);
+      return {
+        type,
+        kpisCurrent: cur,
+        kpisPrevious: prev,
+        deltas: diffKpis(cur, prev),
+      };
+    }
+    // Shopify u otros: de momento sin tendencia numérica
+    return null;
+  } catch (_) {
+    return null;
+  }
 }
 
 /* ---------- util: filtrar snapshot por cuentas ---------- */
@@ -138,7 +237,7 @@ function autoPickIds(type, snapshot, max = 3) {
 
   const ids = new Set();
 
-  // [★ CAMBIO] soportar defaultCustomerId además de defaultAccountId
+  // soportar defaultCustomerId además de defaultAccountId
   const def = norm(snapshot?.defaultAccountId || snapshot?.defaultCustomerId || '');
   if (def) ids.add(def);
 
@@ -239,7 +338,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
     const planSlug = getPlanSlug(user);
 
-    // [★ CAMBIO] límite efectivo por plan PERO capado a 5
+    // límite efectivo por plan PERO capado a GLOBAL_MAX_FINDINGS
     const planLimit   = PLAN_MAX_FINDINGS[planSlug] || PLAN_MAX_FINDINGS.gratis;
     const maxFindings = Math.min(GLOBAL_MAX_FINDINGS, planLimit);
     const minFindings = GLOBAL_MIN_FINDINGS;
@@ -437,6 +536,15 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
     if (!snapshot) throw new Error('SNAPSHOT_EMPTY');
 
+    // Buscar auditoría anterior de esta misma fuente para tendencias
+    const previousAudit = await Audit.findOne({
+      userId,
+      type: t,
+    }).sort({ generatedAt: -1 }).lean();
+
+    const previousSnapshot = previousAudit?.inputSnapshot || null;
+    const trend = buildTrend(t, snapshot, previousSnapshot);
+
     // ¿Tenemos datos reales tras el filtrado?
     const hasAdsData = Array.isArray(snapshot.byCampaign) && snapshot.byCampaign.length > 0;
     const hasGAData  =
@@ -452,12 +560,21 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
     let auditJson = { summary: '', issues: [] };
     if (!noData) {
-      // [★ CAMBIO] Pasamos maxFindings limitado a 5 y minFindings = 1
+      // Pasamos maxFindings limitado y contexto de auditoría anterior
       auditJson = await generateAudit({
         type: t,
         inputSnapshot: snapshot,
         maxFindings,
-        minFindings
+        minFindings,
+        previousSnapshot,
+        previousAudit: previousAudit
+          ? {
+              id: previousAudit._id,
+              generatedAt: previousAudit.generatedAt || previousAudit.createdAt || null,
+              summary: previousAudit.summary || previousAudit.resumen || '',
+            }
+          : null,
+        trend,
       });
     }
 
@@ -470,7 +587,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     // Normalizamos issues a array
     auditJson.issues = Array.isArray(auditJson.issues) ? auditJson.issues : [];
 
-    // [★ CAMBIO] Si hay datos pero la IA no devolvió nada, forzamos al menos 1 recomendación suave
+    // Si hay datos pero la IA no devolvió nada, forzamos al menos 1 recomendación suave
     if (!noData && auditJson.issues.length === 0) {
       auditJson.issues.push({
         id: 'mantener_y_experimentar',
@@ -483,7 +600,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       });
     }
 
-    // [★ CAMBIO] clamp final al límite por plan y al máximo global de 5
+    // clamp final al límite por plan y al máximo global de 5
     if (auditJson.issues.length > maxFindings) {
       auditJson.issues = auditJson.issues.slice(0, maxFindings);
     }
@@ -501,6 +618,8 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       topProducts: auditJson?.topProducts || [],
       inputSnapshot: snapshot,
       version: 'audits@1.2.0',
+      // [opcional] guardamos un trozo del trend para debug futuro
+      trendSummary: trend || null,
     };
 
     await Audit.create(auditDoc);
