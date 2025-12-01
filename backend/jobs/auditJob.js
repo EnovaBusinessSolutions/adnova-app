@@ -1,3 +1,4 @@
+// backend/jobs/auditJob.js
 'use strict';
 
 const mongoose = require('mongoose');
@@ -35,8 +36,8 @@ try {
   collectGA4 =
     ga4Mod.collectGA4 ||
     ga4Mod.collectGa4 ||
-    ga4Mod.collectGA ||
-    ga4Mod.collect ||
+    ga4Mod.collectGA  ||
+    ga4Mod.collect    ||
     null;
 } catch (_) {
   collectGA4 = null;
@@ -50,13 +51,13 @@ const normGoogle = (s='') => String(s).trim().replace(/^customers\//,'').replace
 
 /* ---------- límites por plan (issues por fuente) ---------- */
 const PLAN_MAX_FINDINGS = {
-  gratis: 5,
-  emprendedor: 8,
+  gratis:       5,
+  emprendedor:  8,
   crecimiento: 10,
-  pro: 15
+  pro:         15,
 };
 
-// [★] Límite global “duro” para cualquier plan
+// Límite global “duro” para cualquier plan
 const GLOBAL_MAX_FINDINGS = 5;
 const GLOBAL_MIN_FINDINGS = 1;
 
@@ -122,6 +123,7 @@ function recomputeGA4(snapshot) {
   }
 
   let users = 0, sessions = 0, conversions = 0, revenue = 0;
+
   if (snapshot.aggregate) {
     users       = Number(snapshot.aggregate.users || 0);
     sessions    = Number(snapshot.aggregate.sessions || 0);
@@ -154,10 +156,10 @@ function diffKpis(cur = {}, prev = {}) {
     const abs = c - p;
     const pct = safeDiv(abs, Math.abs(p) || 1) * 100;
     out[k] = {
-      current: c,
+      current:  c,
       previous: p,
       absolute: abs,
-      percent: pct,
+      percent:  pct,
     };
   }
   return out;
@@ -171,31 +173,31 @@ function buildTrend(type, currentSnapshot, previousSnapshot) {
   if (!previousSnapshot) return null;
   try {
     if (type === 'google') {
-      const cur = recomputeGoogle(currentSnapshot);
+      const cur  = recomputeGoogle(currentSnapshot);
       const prev = recomputeGoogle(previousSnapshot);
       return {
         type,
-        kpisCurrent: cur,
+        kpisCurrent:  cur,
         kpisPrevious: prev,
         deltas: diffKpis(cur, prev),
       };
     }
     if (type === 'meta') {
-      const cur = recomputeMeta(currentSnapshot);
+      const cur  = recomputeMeta(currentSnapshot);
       const prev = recomputeMeta(previousSnapshot);
       return {
         type,
-        kpisCurrent: cur,
+        kpisCurrent:  cur,
         kpisPrevious: prev,
         deltas: diffKpis(cur, prev),
       };
     }
     if (type === 'ga4') {
-      const cur = recomputeGA4(currentSnapshot);
+      const cur  = recomputeGA4(currentSnapshot);
       const prev = recomputeGA4(previousSnapshot);
       return {
         type,
-        kpisCurrent: cur,
+        kpisCurrent:  cur,
         kpisPrevious: prev,
         deltas: diffKpis(cur, prev),
       };
@@ -211,11 +213,11 @@ function buildTrend(type, currentSnapshot, previousSnapshot) {
 function filterSnapshot(type, snapshot, allowedIds = []) {
   if (!snapshot || !Array.isArray(allowedIds) || allowedIds.length === 0) return snapshot;
 
-  const norm = type === 'meta' ? normMeta : normGoogle;
+  const norm  = type === 'meta' ? normMeta : normGoogle;
   const allow = new Set(allowedIds.map(norm));
 
   const byCampaign = (snapshot.byCampaign || []).filter(c => allow.has(norm(c.account_id)));
-  const accounts   = (snapshot.accounts || []).filter(a => allow.has(norm(a.id)));
+  const accounts   = (snapshot.accounts   || []).filter(a => allow.has(norm(a.id)));
   const accountIds = (snapshot.accountIds || []).filter(id => allow.has(norm(id)));
 
   let kpis = snapshot.kpis || {};
@@ -233,7 +235,8 @@ function autoPickIds(type, snapshot, max = 3) {
 
   const idsFromArray = (arr=[]) => arr
     .map(x => (typeof x === 'string' ? x : x?.id))
-    .map(norm).filter(Boolean);
+    .map(norm)
+    .filter(Boolean);
 
   const ids = new Set();
 
@@ -242,10 +245,12 @@ function autoPickIds(type, snapshot, max = 3) {
   if (def) ids.add(def);
 
   for (const id of idsFromArray(snapshot?.accountIds || [])) {
-    if (ids.size >= max) break; ids.add(id);
+    if (ids.size >= max) break;
+    ids.add(id);
   }
   for (const id of idsFromArray(snapshot?.accounts || [])) {
-    if (ids.size >= max) break; ids.add(id);
+    if (ids.size >= max) break;
+    ids.add(id);
   }
   for (const c of (snapshot.byCampaign || [])) {
     if (ids.size >= max) break;
@@ -292,10 +297,10 @@ async function detectConnections(userId) {
  * Issue específico cuando el collector pide selección explícita (>3 cuentas/propiedades).
  */
 function buildSelectionRequiredIssue(type, raw) {
-  const reason = String(raw?.reason || '').toUpperCase();
+  const reason    = String(raw?.reason || '').toUpperCase();
   const available = Number(raw?.availableCount || (raw?.accountIds || []).length || 0);
 
-  let title = 'Selecciona las fuentes que quieres auditar';
+  let title    = 'Selecciona las fuentes que quieres auditar';
   let platform = 'la fuente conectada';
   if (type === 'google') platform = 'Google Ads';
   if (type === 'meta')   platform = 'Meta Ads (Facebook/Instagram)';
@@ -314,7 +319,7 @@ function buildSelectionRequiredIssue(type, raw) {
       ? `Se detectaron ${available} cuentas/propiedades conectadas en ${platform}. Por claridad y rendimiento solo se pueden auditar hasta 3 a la vez.`
       : `Hay varias cuentas/propiedades conectadas en ${platform} y es necesario elegir cuáles auditar.`,
     recommendation: 'En Ajustes → Conexiones selecciona explícitamente las cuentas o propiedades que quieras incluir en la auditoría.',
-    estimatedImpact: 'medio'
+    estimatedImpact: 'medio',
   };
 }
 
@@ -346,11 +351,11 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     // Estado real de conexiones y selección preferida desde conectores
     const connections = await detectConnections(userId);
 
-    // Guardas de conexión (defensa en profundidad; auditRunner ya filtra)
-    if (t === 'meta'   && !connections.meta.connected)    throw new Error('SOURCE_NOT_CONNECTED_META');
-    if (t === 'google' && !connections.google.connected)  throw new Error('SOURCE_NOT_CONNECTED_GOOGLE');
-    if (t === 'ga4'    && !connections.google.connected)  throw new Error('SOURCE_NOT_CONNECTED_GA4');
-    if (t === 'shopify'&& !connections.shopify.connected) throw new Error('SOURCE_NOT_CONNECTED_SHOPIFY');
+    // Guardas de conexión (defensa en profundidad; auditRunner / router ya filtran)
+    if (t === 'meta'    && !connections.meta.connected)    throw new Error('SOURCE_NOT_CONNECTED_META');
+    if (t === 'google'  && !connections.google.connected)  throw new Error('SOURCE_NOT_CONNECTED_GOOGLE');
+    if (t === 'ga4'     && !connections.google.connected)  throw new Error('SOURCE_NOT_CONNECTED_GA4');
+    if (t === 'shopify' && !connections.shopify.connected) throw new Error('SOURCE_NOT_CONNECTED_SHOPIFY');
 
     // Selección efectiva “extra” desde los conectores (legacy),
     // los collectors ya usan preferencias nuevas, pero esto permite
@@ -367,8 +372,8 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
         : (user?.selectedGoogleAccounts || [])
     ).map(normGoogle);
 
-    let raw = null;
-    let snapshot = null;
+    let raw          = null;
+    let snapshot     = null;
     let selectionNote = null; // nota informativa si llegamos a autoPick (hoy casi nunca)
 
     /* ---------- GOOGLE ADS ---------- */
@@ -392,13 +397,13 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
           actionCenter: [issue],
           topProducts: [],
           inputSnapshot: raw,
-          version: 'audits@1.2.0-selection'
+          version: 'audits@1.2.0-selection',
         });
         return true;
       }
 
       const total = (raw?.accountIds && raw.accountIds.length) ||
-                    (raw?.accounts && raw.accounts.length) || 0;
+                    (raw?.accounts   && raw.accounts.length)   || 0;
 
       // Solo filtramos por selGoogle si HAY intersección con las
       // cuentas realmente presentes en el snapshot.
@@ -419,6 +424,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       } else {
         // Confiamos en la lógica de selección del collector (máx. 3)
         snapshot = raw;
+
         // fallback ultra-defensivo: si por alguna razón el snapshot viene con >3 cuentas,
         // auto-limitamos y dejamos nota
         if (total > 3) {
@@ -431,7 +437,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
             severity: 'media',
             evidence: `Se detectaron ${total} cuentas de Google Ads. Se auditó solo: ${picked.join(', ')}.`,
             recommendation: 'En Ajustes → Conexiones elige explícitamente las cuentas a auditar.',
-            estimatedImpact: 'medio'
+            estimatedImpact: 'medio',
           };
         }
       }
@@ -457,13 +463,13 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
           actionCenter: [issue],
           topProducts: [],
           inputSnapshot: raw,
-          version: 'audits@1.2.0-selection'
+          version: 'audits@1.2.0-selection',
         });
         return true;
       }
 
       const total = (raw?.accountIds && raw.accountIds.length) ||
-                    (raw?.accounts && raw.accounts.length) || 0;
+                    (raw?.accounts   && raw.accounts.length)   || 0;
 
       if (selMeta.length && total > 0) {
         const norm = normMeta;
@@ -490,7 +496,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
             severity: 'media',
             evidence: `Se detectaron ${total} cuentas de Meta Ads. Se auditó solo: ${picked.map(x=>'act_'+x).join(', ')}.`,
             recommendation: 'En Ajustes → Conexiones elige explícitamente las cuentas a auditar.',
-            estimatedImpact: 'medio'
+            estimatedImpact: 'medio',
           };
         }
       }
@@ -520,7 +526,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
           actionCenter: [issue],
           topProducts: [],
           inputSnapshot: raw,
-          version: 'audits@1.2.0-selection'
+          version: 'audits@1.2.0-selection',
         });
         return true;
       }
@@ -546,10 +552,18 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     const trend = buildTrend(t, snapshot, previousSnapshot);
 
     // ¿Tenemos datos reales tras el filtrado?
-    const hasAdsData = Array.isArray(snapshot.byCampaign) && snapshot.byCampaign.length > 0;
-    const hasGAData  =
-      (Array.isArray(snapshot.channels) && snapshot.channels.length > 0) ||
-      (Array.isArray(snapshot.byProperty) && snapshot.byProperty.length > 0);
+    const hasAdsData =
+      Array.isArray(snapshot.byCampaign) && snapshot.byCampaign.length > 0;
+
+    const hasGAData =
+      (Array.isArray(snapshot.channels)   && snapshot.channels.length   > 0) ||
+      (Array.isArray(snapshot.byProperty) && snapshot.byProperty.length > 0) ||
+      (snapshot.aggregate && (
+        Number(snapshot.aggregate.users || 0)       > 0 ||
+        Number(snapshot.aggregate.sessions || 0)    > 0 ||
+        Number(snapshot.aggregate.conversions || 0) > 0 ||
+        Number(snapshot.aggregate.revenue || 0)     > 0
+      ));
 
     let noData = false;
     if (t === 'google' || t === 'meta') {
@@ -559,6 +573,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     }
 
     let auditJson = { summary: '', issues: [] };
+
     if (!noData) {
       // Pasamos maxFindings limitado y contexto de auditoría anterior
       auditJson = await generateAudit({
@@ -569,9 +584,9 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
         previousSnapshot,
         previousAudit: previousAudit
           ? {
-              id: previousAudit._id,
+              id:         previousAudit._id,
               generatedAt: previousAudit.generatedAt || previousAudit.createdAt || null,
-              summary: previousAudit.summary || previousAudit.resumen || '',
+              summary:     previousAudit.summary || previousAudit.resumen || '',
             }
           : null,
         trend,
@@ -596,7 +611,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
         title: 'La cuenta está razonablemente optimizada, pero puedes seguir experimentando',
         evidence: 'En la revisión de los últimos datos no se detectaron problemas críticos, pero siempre hay margen para optimizar creatividades, audiencias y pruebas A/B.',
         recommendation: 'Define al menos un experimento para los próximos 30 días (por ejemplo, probar nuevas creatividades, pujas o segmentaciones) para evitar que el rendimiento se estanque.',
-        estimatedImpact: 'bajo'
+        estimatedImpact: 'bajo',
       });
     }
 
@@ -618,7 +633,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       topProducts: auditJson?.topProducts || [],
       inputSnapshot: snapshot,
       version: 'audits@1.2.0',
-      // [opcional] guardamos un trozo del trend para debug futuro
+      // guardamos un trozo del trend para debug / comparativas futuras
       trendSummary: trend || null,
     };
 
@@ -641,11 +656,11 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
         title: 'Faltan datos o permisos',
         evidence: String(e && (e.message || e)),
         recommendation: 'Verifica conexión y permisos. Si tienes varias cuentas, elige cuáles auditar en Ajustes.',
-        estimatedImpact: 'alto'
+        estimatedImpact: 'alto',
       }],
       actionCenter: [],
       inputSnapshot: {},
-      version: 'audits@1.2.0-error'
+      version: 'audits@1.2.0-error',
     });
     return false;
   }

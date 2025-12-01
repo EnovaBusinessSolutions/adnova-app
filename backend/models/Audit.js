@@ -15,7 +15,7 @@ const toSev = (s) => {
 // Áreas “oficiales” que usamos en la IA
 const OK_AREAS = ['setup', 'performance', 'creative', 'tracking', 'budget', 'bidding', 'otros'];
 
-// ⬅️  AÑADIMOS 'ga' PARA EVITAR EL 500 POR ENUM
+// permitimos también 'ga' para docs legacy
 const OK_TYPES = ['google', 'meta', 'shopify', 'ga', 'ga4'];
 const OK_SEV   = ['alta', 'media', 'baja'];
 
@@ -80,7 +80,7 @@ const IssueSchema = new Schema(
       default: 'medio'
     },
 
-    // NUEVO: referencias ricas para UI / análisis
+    // Referencias ricas para UI / análisis
     accountRef:  { type: AccountRefSchema, default: null },
     campaignRef: { type: CampaignRefSchema, default: null },
     segmentRef:  { type: SegmentRefSchema, default: null },
@@ -95,7 +95,7 @@ const AuditSchema = new Schema(
   {
     userId: { type: Types.ObjectId, ref: 'User', index: true, required: true },
 
-    // permite ga y ga4
+    // permite ga y ga4 (ga es legacy)
     type:   { type: String, enum: OK_TYPES, index: true, required: true },
 
     generatedAt: { type: Date, default: Date.now, index: true },
@@ -132,7 +132,12 @@ const AuditSchema = new Schema(
     // snapshot de entrada (colecciones crudas)
     inputSnapshot: { type: Schema.Types.Mixed, default: {} },
 
-    version: { type: String, default: 'audits@1.1.3' },
+    // Versión de la “lógica” de auditoría
+    version: { type: String, default: 'audits@1.2.0' },
+
+    // NUEVO: resumen de tendencias entre auditoría anterior y actual
+    // (lo que genera auditJob.buildTrend y se guarda como trendSummary)
+    trendSummary: { type: Schema.Types.Mixed, default: null },
 
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
