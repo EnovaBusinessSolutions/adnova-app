@@ -44,7 +44,6 @@ try {
   collectGA4 = null;
 }
 
-
 const generateAudit = require('./llm/generateAudit');
 
 /* ---------- normalizadores ---------- */
@@ -604,18 +603,9 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     // Normalizamos issues a array
     auditJson.issues = Array.isArray(auditJson.issues) ? auditJson.issues : [];
 
-    // Si hay datos pero la IA no devolvió nada, forzamos al menos 1 recomendación suave
-    if (!noData && auditJson.issues.length === 0) {
-      auditJson.issues.push({
-        id: 'mantener_y_experimentar',
-        area: 'estrategia',
-        severity: 'baja',
-        title: 'La cuenta está razonablemente optimizada, pero puedes seguir experimentando',
-        evidence: 'En la revisión de los últimos datos no se detectaron problemas críticos, pero siempre hay margen para optimizar creatividades, audiencias y pruebas A/B.',
-        recommendation: 'Define al menos un experimento para los próximos 30 días (por ejemplo, probar nuevas creatividades, pujas o segmentaciones) para evitar que el rendimiento se estanque.',
-        estimatedImpact: 'bajo',
-      });
-    }
+    // *** IMPORTANTE ***
+    // A partir de aquí NO añadimos issues inventados.
+    // Solo se guarda lo que venga de la IA (y selectionNote si aplica).
 
     // clamp final al límite por plan y al máximo global de 5
     if (auditJson.issues.length > maxFindings) {
