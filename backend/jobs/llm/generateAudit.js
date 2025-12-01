@@ -32,6 +32,9 @@ const fmt = (n, d = 2) => {
   return Math.round(v * factor) / factor;
 };
 
+const safeNum = toNum;
+const safeDiv = (n, d) => (safeNum(d) ? safeNum(n) / safeNum(d) : 0);
+
 // normaliza estados de campaña (activo / pausado / desconocido)
 function normStatus(raw) {
   const s = String(raw || '').toLowerCase();
@@ -69,6 +72,276 @@ function dedupeIssues(issues = []) {
     out.push(it);
   }
   return out;
+}
+
+/* ---------------------- DIAGNOSTICS (pre-análisis) ------------------- */
+/**
+ * Estos helpers NO sustituyen al LLM, sólo le dan "pistas" ya calculadas
+ * para que no tenga que descubrir todo desde cero y pueda variar más
+ * los ángulos de la auditoría.
+ */
+
+function buildGoogleDiagnostics(snapshot = {}) {
+  const byCampaign = Array.isArray(snapshot.byCampaign) ? snapshot.byCampaign : [];
+  const kpis = snapshot.kpis || {};
+
+  const globalImpr   = safeNum(kpis.impressions);
+  const globalClicks = safeNum(kpis.clicks);
+  const globalConv   = safeNum(kpis.conversions);
+  const globalCtr    = safeDiv(globalClicks, globalImpr);
+  const globalCr     = safeDiv(globalConv, globalClicks);
+
+  // CPA por campaña
+  const withCpa = byCampaign
+    .map(c => {
+      const conv = safeNum(c?.kpis?.conversions);
+      const cost = safeNum(c?.kpis?.cost ?? c?.kpis?.spend);
+      const cpa  = safeDiv(cost, conv);
+      return { ...c, _conv: conv, _cost: cost, _cpa: cpa };
+    })
+    .filter(c => c._conv > 0 && c._cost > 0);
+
+  const worstCpaCampaigns = [...withCpa]
+    .sort((a, b) => b._cpa - a._cpa)
+    .slice(0, 5)
+    .map(c => ({
+      accountId: String(c.account_id ?? ''),
+      campaignId: String(c.id ?? ''),
+      campaignName: String(c.name ?? ''),
+      cpa: c._cpa,
+      conversions: c._conv,
+      cost: c._cost,
+    }));
+
+  // CTR bajo (campañas con impresiones relevantes y CTR muy por debajo de la media)
+  const lowCtrCampaigns = byCampaign
+    .map(c => {
+      const impr   = safeNum(c?.kpis?.impressions);
+      const clicks = safeNum(c?.kpis?.clicks);
+      const ctr    = safeDiv(clicks, impr);
+      return { ...c, _impr: impr, _clicks: clicks, _ctr: ctr };
+    })
+    .filter(c => c._impr > 1000)
+    .filter(c => {
+      if (!globalCtr) return c._ctr < 0.01;
+      return c._ctr < globalCtr * 0.6;
+    })
+    .slice(0, 5)
+    .map(c => ({
+      accountId: String(c.account_id ?? ''),
+      campaignId: String(c.id ?? ''),
+      campaignName: String(c.name ?? ''),
+      impressions: c._impr,
+      clicks: c._clicks,
+      ctr: c._ctr,
+    }));
+
+  // Campañas con poco volumen (aprendizaje limitado)
+  const limitedLearning = byCampaign
+    .map(c => {
+      const impr = safeNum(c?.kpis?.impressions);
+      const clicks = safeNum(c?.kpis?.clicks);
+      const conv = safeNum(c?.kpis?.conversions);
+      const cost = safeNum(c?.kpis?.cost ?? c?.kpis?.spend);
+      return { ...c, _impr: impr, _clicks: clicks, _conv: conv, _cost: cost };
+    })
+    .filter(c => c._cost > 0 && (c._impr < 1000 || c._clicks < 20))
+    .slice(0, 10)
+    .map(c => ({
+      accountId: String(c.account_id ?? ''),
+      campaignId: String(c.id ?? ''),
+      campaignName: String(c.name ?? ''),
+      impressions: c._impr,
+      clicks: c._clicks,
+      conversions: c._conv,
+      cost: c._cost,
+    }));
+
+  // Problemas de estructura (demasiadas campañas chiquitas)
+  const smallCampaigns = byCampaign.filter(c => safeNum(c?.kpis?.impressions) < 2000);
+  const structureIssues = {
+    totalCampaigns: byCampaign.length,
+    smallCampaigns: smallCampaigns.length,
+    manySmallCampaigns:
+      byCampaign.length >= 10 &&
+      smallCampaigns.length / Math.max(byCampaign.length, 1) > 0.6,
+  };
+
+  return {
+    kpis: {
+      impressions: globalImpr,
+      clicks: globalClicks,
+      conversions: globalConv,
+      ctr: globalCtr,
+      cr: globalCr,
+    },
+    worstCpaCampaigns,
+    lowCtrCampaigns,
+    limitedLearning,
+    structureIssues,
+  };
+}
+
+function buildGa4Diagnostics(snapshot = {}) {
+  const channels = Array.isArray(snapshot.channels) ? snapshot.channels : [];
+  const devices  = Array.isArray(snapshot.devices)  ? snapshot.devices  : [];
+  const landings = Array.isArray(snapshot.landingPages) ? snapshot.landingPages : [];
+
+  const aggregate = snapshot.aggregate || {};
+  const totalSessions = safeNum(aggregate.sessions);
+  const totalConv     = safeNum(aggregate.conversions);
+  const globalCr      = safeDiv(totalConv, totalSessions);
+
+  // Canales con muchas sesiones pero pocas conversiones
+  const lowConvChannels = channels
+    .map(ch => {
+      const sessions = safeNum(ch.sessions);
+      const conv     = safeNum(ch.conversions);
+      const cr       = safeDiv(conv, sessions);
+      return { ...ch, _sessions: sessions, _conv: conv, _cr: cr };
+    })
+    .filter(ch => ch._sessions > 500)
+    .filter(ch => {
+      if (!globalCr) return ch._cr < 0.01;
+      return ch._cr < globalCr * 0.5;
+    })
+    .slice(0, 5)
+    .map(ch => ({
+      channel: ch.channel,
+      sessions: ch._sessions,
+      conversions: ch._conv,
+      convRate: ch._cr,
+    }));
+
+  // Landings con muchas sesiones y pocas conversiones
+  const badLandingPages = landings
+    .map(lp => {
+      const sessions = safeNum(lp.sessions);
+      const conv     = safeNum(lp.conversions);
+      const cr       = safeDiv(conv, sessions);
+      return { ...lp, _sessions: sessions, _conv: conv, _cr: cr };
+    })
+    .filter(lp => lp._sessions > 300)
+    .filter(lp => {
+      if (!globalCr) return lp._cr < 0.01;
+      return lp._cr < globalCr * 0.5;
+    })
+    .slice(0, 10)
+    .map(lp => ({
+      page: lp.page,
+      sessions: lp._sessions,
+      conversions: lp._conv,
+      convRate: lp._cr,
+    }));
+
+  // Gaps por dispositivo
+  const devicesWithCr = devices.map(d => {
+    const sessions = safeNum(d.sessions);
+    const conv     = safeNum(d.conversions);
+    const cr       = safeDiv(conv, sessions);
+    return { ...d, _sessions: sessions, _conv: conv, _cr: cr };
+  });
+
+  const bestDevice  = [...devicesWithCr].sort((a, b) => b._cr - a._cr)[0] || null;
+  const worstDevice = [...devicesWithCr].sort((a, b) => a._cr - b._cr)[0] || null;
+
+  let deviceGaps = null;
+  if (bestDevice && worstDevice && bestDevice.device !== worstDevice.device) {
+    const diff = bestDevice._cr - worstDevice._cr;
+    if (diff > 0.01) {
+      deviceGaps = { bestDevice, worstDevice, diff };
+    }
+  }
+
+  return {
+    aggregate: {
+      users: safeNum(aggregate.users),
+      sessions: totalSessions,
+      conversions: totalConv,
+      revenue: safeNum(aggregate.revenue),
+      convRate: globalCr,
+    },
+    lowConvChannels,
+    badLandingPages,
+    deviceGaps,
+  };
+}
+
+function buildMetaDiagnostics(snapshot = {}) {
+  const byCampaign = Array.isArray(snapshot.byCampaign) ? snapshot.byCampaign : [];
+  const kpis = snapshot.kpis || {};
+
+  const totalSpend   = safeNum(kpis.spend ?? kpis.cost);
+  const totalConv    = safeNum(kpis.conversions);
+  const totalClicks  = safeNum(kpis.clicks);
+  const totalImpr    = safeNum(kpis.impressions);
+  const globalCtr    = safeDiv(totalClicks, totalImpr);
+  const globalCr     = safeDiv(totalConv, totalClicks);
+
+  const mapped = byCampaign.map(c => ({
+    ...c,
+    _spend: safeNum(c?.kpis?.spend ?? c?.kpis?.cost),
+    _conv:  safeNum(c?.kpis?.conversions),
+    _clicks: safeNum(c?.kpis?.clicks),
+    _impr: safeNum(c?.kpis?.impressions),
+  }));
+
+  const highSpendNoConvAdsets = mapped
+    .filter(c => c._spend > 100 && c._conv === 0)
+    .sort((a, b) => b._spend - a._spend)
+    .slice(0, 10)
+    .map(c => ({
+      accountId: String(c.account_id ?? ''),
+      campaignId: String(c.id ?? ''),
+      campaignName: String(c.name ?? ''),
+      spend: c._spend,
+      impressions: c._impr,
+      clicks: c._clicks,
+    }));
+
+  const lowCtrAdsets = mapped
+    .filter(c => c._impr > 2000)
+    .map(c => ({ ...c, _ctr: safeDiv(c._clicks, c._impr) }))
+    .filter(c => {
+      if (!globalCtr) return c._ctr < 0.01;
+      return c._ctr < globalCtr * 0.6;
+    })
+    .slice(0, 10)
+    .map(c => ({
+      accountId: String(c.account_id ?? ''),
+      campaignId: String(c.id ?? ''),
+      campaignName: String(c.name ?? ''),
+      impressions: c._impr,
+      clicks: c._clicks,
+      ctr: c._ctr,
+    }));
+
+  return {
+    kpis: {
+      spend: totalSpend,
+      conversions: totalConv,
+      clicks: totalClicks,
+      impressions: totalImpr,
+      ctr: globalCtr,
+      cr: globalCr,
+    },
+    highSpendNoConvAdsets,
+    lowCtrAdsets,
+  };
+}
+
+function buildDiagnostics(source, snapshot) {
+  const type = String(source || '').toLowerCase();
+  if (type === 'google' || type === 'googleads' || type === 'gads') {
+    return { google: buildGoogleDiagnostics(snapshot) };
+  }
+  if (type === 'ga' || type === 'ga4' || type === 'google-analytics') {
+    return { ga4: buildGa4Diagnostics(snapshot) };
+  }
+  if (type === 'meta' || type === 'metaads' || type === 'facebook') {
+    return { meta: buildMetaDiagnostics(snapshot) };
+  }
+  return {};
 }
 
 /**
@@ -231,6 +504,7 @@ function buildHistoryContext({ type, previousAudit, trend }) {
 }
 
 /* ----------------------- fallback determinístico ---------------------- */
+/* (SIN CAMBIOS: lo dejamos como estaba para no romper nada) */
 function fallbackIssues({ type, inputSnapshot, limit = 6, trend = null, previousSnapshot = null, previousAudit = null }) {
   const out = [];
 
@@ -773,6 +1047,10 @@ CONSIGNA
 - Si los datos son muy limitados, genera solo 1-2 issues sólidos.
 - Idioma: español neutro, directo y claro.
 - Prohibido inventar métricas o campañas/canales no presentes en el snapshot.
+- El snapshot puede incluir un objeto "diagnostics" con análisis previos
+  (peores campañas por CPA, CTR bajo, landings débiles, gaps entre dispositivos, etc.).
+  Úsalo como punto de partida para priorizar hallazgos, pero verifica siempre con
+  los números del snapshot y puedes añadir matices adicionales.
 - Cada "issue" DEBE incluir:
   ${isAnalytics ? gaExtras : adsExtras}
   - evidence con métricas textuales del snapshot
@@ -875,7 +1153,13 @@ module.exports = async function generateAudit({
     ? SYSTEM_GA
     : SYSTEM_ADS(type === 'google' ? 'Google Ads' : 'Meta Ads');
 
-  const dataStr     = tinySnapshot(inputSnapshot);
+  // 👇 NUEVO: metemos diagnostics al snapshot que ve la IA
+  const snapshotForLLM = {
+    ...(inputSnapshot || {}),
+    diagnostics: buildDiagnostics(type, inputSnapshot || {})
+  };
+
+  const dataStr     = tinySnapshot(snapshotForLLM);
   const historyStr  = buildHistoryContext({ type, previousAudit, trend });
 
   if (process.env.DEBUG_AUDIT === 'true') {
@@ -885,7 +1169,7 @@ module.exports = async function generateAudit({
       hasByProperty: !!inputSnapshot?.byProperty?.length,
       hasHistory: !!historyStr,
     });
-    console.log('[LLM:SNAPSHOT]', tinySnapshot(inputSnapshot, { maxChars: 2000 }));
+    console.log('[LLM:SNAPSHOT]', tinySnapshot(snapshotForLLM, { maxChars: 2000 }));
     if (historyStr) console.log('[LLM:HISTORY]', historyStr);
   }
 
