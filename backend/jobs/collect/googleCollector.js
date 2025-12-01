@@ -7,6 +7,12 @@ const { OAuth2Client } = require('google-auth-library');
 // Usamos el mismo servicio que el panel de Google Ads
 const Ads = require('../../services/googleAdsService');
 
+// Logger opcional (si lo tienes); si no, usa console
+let logger = console;
+try {
+  logger = require('../../utils/logger');
+} catch (_) {}
+
 const {
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
@@ -15,6 +21,8 @@ const {
   // Acepta ambos nombres para el developer token
   GOOGLE_ADS_DEVELOPER_TOKEN,
   GOOGLE_DEVELOPER_TOKEN,
+  GOOGLE_LOGIN_CUSTOMER_ID,
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID,
 } = process.env;
 
 const DEV_TOKEN = GOOGLE_ADS_DEVELOPER_TOKEN || GOOGLE_DEVELOPER_TOKEN;
@@ -46,6 +54,8 @@ try {
       ad_accounts: { type: Array, default: [] }, // enriquecidas si existen
       defaultCustomerId: String,
       managerCustomerId: String,
+      loginCustomerId: String,
+      expiresAt: { type: Date },
       updatedAt: { type: Date, default: Date.now },
     },
     { collection: 'googleaccounts' }
@@ -56,7 +66,9 @@ try {
 
 // [★] Leer preferencia/selección guardada en User.preferences.googleAds.auditCustomerIds
 let UserModel = null;
-try { UserModel = require('../../models/User'); } catch (_) {
+try {
+  UserModel = require('../../models/User');
+} catch (_) {
   const { Schema, model } = mongoose;
   UserModel = mongoose.models.User || model('User', new Schema({}, { strict: false, collection: 'users' }));
 }
@@ -129,14 +141,18 @@ async function getCustomer(accessToken, cid) {
   return {
     id: normId(cid),
     resourceName: data?.resourceName || `customers/${cid}`,
-    descriptiveName: data?.name || data?.descriptiveName || null,
+    descriptiveName: data?.descriptiveName || null,
     currencyCode: data?.currencyCode || 'USD',
     timeZone: data?.timeZone || null,
   };
 }
 
 /**
- * Lee un campo de forma robusta (nested, snake_case, camelCase…)
+ * [★] Lee un campo de forma robusta:
+ *  - row.segments.date
+ *  - row['segments.date']
+ *  - row['segments_date']
+ *  - row.segmentsDate / campaignId / costMicros...
  */
 function getField(row, path) {
   if (!row) return undefined;
@@ -167,12 +183,9 @@ function getField(row, path) {
   }
 
   // 4) camelCase: aB c → aBc
-  const camelKey =
-    parts[0] +
-    parts
-      .slice(1)
-      .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-      .join('');
+  const camelKey = parts[0] + parts.slice(1)
+    .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+    .join('');
   if (Object.prototype.hasOwnProperty.call(row, camelKey)) {
     return row[camelKey];
   }
@@ -211,7 +224,7 @@ async function collectGoogle(userId, opts = {}) {
     typeof GoogleAccount.findWithTokens === 'function'
       ? await GoogleAccount.findWithTokens({ $or: [{ user: userId }, { userId }] })
       : await GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] }).select(
-          '+accessToken +refreshToken customers ad_accounts defaultCustomerId managerCustomerId scope expiresAt'
+          '+accessToken +refreshToken customers ad_accounts defaultCustomerId managerCustomerId loginCustomerId scope expiresAt'
         );
 
   if (!gaDoc) {
@@ -239,9 +252,9 @@ async function collectGoogle(userId, opts = {}) {
     };
   }
 
-  // 2) Asegura access token al menos para getCustomer (GAQL usará el gaDoc directamente)
+  // 2) Asegura access token (como en el panel)
   let accessToken = await ensureAccessToken(gaDoc);
-  if (!accessToken && !gaDoc.refreshToken) {
+  if (!accessToken) {
     return {
       notAuthorized: true,
       reason: 'NO_ACCESS_TOKEN',
@@ -252,6 +265,18 @@ async function collectGoogle(userId, opts = {}) {
       defaultCustomerId: gaDoc.defaultCustomerId || null, accounts: [],
     };
   }
+
+  // Helper: construir "source" para googleAdsService (igual que espera resolveAccessToken)
+  const buildSource = (overrideToken) => ({
+    accessToken: overrideToken || accessToken,
+    refreshToken: gaDoc.refreshToken || undefined,
+    googleAccount: {
+      _id: gaDoc._id,
+      managerCustomerId: gaDoc.managerCustomerId || null,
+      loginCustomerId: gaDoc.loginCustomerId || null,
+      defaultCustomerId: gaDoc.defaultCustomerId || null,
+    },
+  });
 
   // 3) Descubrir universo de cuentas accesibles (unión de guardadas + descubiertas)
   const universeIds = new Set();
@@ -270,10 +295,8 @@ async function collectGoogle(userId, opts = {}) {
   }
 
   try {
-    if (accessToken) {
-      const accessible = await listAccessibleCustomers(accessToken);
-      for (const id of accessible) universeIds.add(normId(id));
-    }
+    const accessible = await listAccessibleCustomers(accessToken);
+    for (const id of accessible) universeIds.add(normId(id));
   } catch {
     // noop, si falla seguimos con lo guardado
   }
@@ -333,9 +356,9 @@ async function collectGoogle(userId, opts = {}) {
   }
 
   if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-    console.log('[gadsCollector] userId=', String(userId));
-    console.log('[gadsCollector] universe=', universe);
-    console.log('[gadsCollector] idsToAudit=', idsToAudit);
+    logger.info('[gadsCollector] userId=', String(userId));
+    logger.info('[gadsCollector] universe=', universe);
+    logger.info('[gadsCollector] idsToAudit=', idsToAudit);
   }
 
   // 5) Parámetros globales y acumuladores
@@ -359,10 +382,6 @@ async function collectGoogle(userId, opts = {}) {
   for (const customerId of idsToAudit) {
     // currency/timezone/desc por customer
     try {
-      // para getCustomer usamos accessToken; si por algún motivo no hay, intentamos refrescar
-      if (!accessToken) accessToken = await ensureAccessToken(gaDoc);
-      if (!accessToken) throw new Error('NO_ACCESS_TOKEN_FOR_GET_CUSTOMER');
-
       const cInfo = await getCustomer(accessToken, customerId);
       accountsMeta.set(customerId, {
         name: cInfo.descriptiveName || `Cuenta ${customerId}`,
@@ -388,21 +407,43 @@ async function collectGoogle(userId, opts = {}) {
     let gotRows = false;
     let actualSince = ranges[0].since;
 
-    // función ejecutora: usa el mismo motor multi-usuario que el panel
+    // loginCustomerId con misma lógica que el resto de la app
+    const managerId = normId(
+      GOOGLE_LOGIN_CUSTOMER_ID ||
+      GOOGLE_ADS_LOGIN_CUSTOMER_ID ||
+      gaDoc.managerCustomerId ||
+      gaDoc.loginCustomerId ||
+      ''
+    );
+
+    // función ejecutora con reintentos de auth
     const runQuery = async (query) => {
+      const opts = {
+        query,
+        loginCustomerId: managerId || undefined,
+      };
+
       try {
-        // 👇 importante: pasamos el GoogleAccount completo, no sólo el accessToken
-        return await Ads.searchGAQLStream(gaDoc, customerId, query);
+        return await Ads.searchGAQLStream(buildSource(), customerId, opts);
       } catch (e) {
         if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-          console.log('[gadsCollector] runQuery ERROR', {
+          logger.error('[gadsCollector] runQuery ERROR', {
             customerId,
             message: e?.message,
-            status: e?.api?.status,
-            errorStatus: e?.api?.error?.status,
-            errorMessage: e?.api?.error?.message,
-            rawError: e?.api?.error || null,
+            status: e?.status || e?.response?.status,
+            code: e?.code,
+            errorStatus: e?.errorStatus,
+            errorMessage: e?.errorMessage,
+            rawError: e?.error || e?.response?.data || null,
           });
+        }
+
+        // Si es auth, intentamos refrescar una vez
+        const status = e?.status || e?.response?.status;
+        if (status === 401 || status === 403 || e?.code === 'UNAUTHENTICATED') {
+          accessToken = await ensureAccessToken(gaDoc);
+          if (!accessToken) throw e;
+          return await Ads.searchGAQLStream(buildSource(), customerId, opts);
         }
         throw e;
       }
@@ -438,11 +479,11 @@ async function collectGoogle(userId, opts = {}) {
 
       try {
         if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-          console.log('[gadsCollector] range START', {
+          logger.info('[gadsCollector] range START', {
             customerId,
             since: rg.since,
             until: rg.until,
-            where: rg.where,
+            where: rg.where
           });
         }
 
@@ -451,23 +492,25 @@ async function collectGoogle(userId, opts = {}) {
         actualSince = rg.since;
 
         if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-          console.log('[gadsCollector] range RESULT', {
+          logger.info('[gadsCollector] range RESULT', {
             customerId,
             since: rg.since,
             gotRows,
-            len: Array.isArray(rows) ? rows.length : null,
+            len: Array.isArray(rows) ? rows.length : null
           });
         }
 
         if (gotRows) break;
       } catch (e) {
         if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-          console.log('[gadsCollector] range ERROR', {
+          logger.error('[gadsCollector] range ERROR', {
             customerId,
             since: rg.since,
-            status: e?.api?.status,
-            errorStatus: e?.api?.error?.status,
-            errorMessage: e?.api?.error?.message,
+            status: e?.status || e?.response?.status,
+            code: e?.code,
+            errorStatus: e?.errorStatus,
+            errorMessage: e?.errorMessage,
+            data: e?.response?.data ? JSON.stringify(e.response.data, null, 2) : null,
           });
         }
         // probamos el siguiente rango
@@ -476,14 +519,14 @@ async function collectGoogle(userId, opts = {}) {
 
     if (!gotRows) {
       if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-        console.log('[gadsCollector] NO_ROWS for customer', customerId);
+        logger.info('[gadsCollector] NO_ROWS for customer', customerId);
       }
       continue;
     }
 
     // Aquí ya sabemos que SÍ hubo filas
     if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-      console.log(
+      logger.info(
         '[gadsCollector] customerId=',
         customerId,
         'rowsLen=',
@@ -491,11 +534,11 @@ async function collectGoogle(userId, opts = {}) {
       );
       if (rows && rows.length) {
         const sample = rows[0];
-        console.log(
+        logger.info(
           '[gadsCollector] sample row keys =',
           Object.keys(sample || {})
         );
-        console.log(
+        logger.info(
           '[gadsCollector] sample row =',
           JSON.stringify(sample, null, 2)
         );
@@ -589,7 +632,7 @@ async function collectGoogle(userId, opts = {}) {
         const cur = seriesMap.get(d) || {
           impressions: 0, clicks: 0, cost: 0,
           conversions: 0, conv_value: 0,
-          all_conversions: 0, all_conv_value: 0,
+          all_conversions: 0, all_conv_value: 0
         };
         cur.impressions += impr;
         cur.clicks      += clk;
@@ -778,7 +821,7 @@ async function collectGoogle(userId, opts = {}) {
   const untilGlobalFinal = todayISO();
 
   // Construir listado de cuentas (para UI/LLM) con KPI por cuenta
-  const accounts = idsToAudit.map((cid) => {
+  const accounts = idsToAudit.map(cid => {
     const m = accountsMeta.get(cid) || {};
     const agg = byAccountAgg.get(cid) || {
       impressions: 0, clicks: 0, cost: 0,
@@ -834,7 +877,7 @@ async function collectGoogle(userId, opts = {}) {
     defaultCustomerId: gaDoc.defaultCustomerId ? normId(gaDoc.defaultCustomerId) : null,
     accounts, // [{id,name,currency,timezone_name,kpis}] para distribuir recomendaciones
     targets: { cpaHigh: 15 },
-    version: 'gadsCollector@multi-accounts+no-mcc+stream',
+    version: 'gadsCollector@multi-accounts+stream+source',
   };
 }
 
