@@ -5,7 +5,6 @@ const OpenAI = require('openai');
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Modelo por defecto (sobrescribible por ENV)
-// Recomendado en producción: OPENAI_MODEL_AUDIT="gpt-5.1" o "gpt-4.1"
 const DEFAULT_MODEL =
   process.env.OPENAI_MODEL_AUDIT ||
   process.env.OPENAI_MODEL ||
@@ -59,7 +58,7 @@ function inferAccountName(c, snap) {
   return found?.name || null;
 }
 
-/** Dedupe por título + campaignRef.id + segmentRef.name para reducir ruido del LLM */
+/** Dedupe por título + campaignRef.id + segmentRef.name para reducir ruido */
 function dedupeIssues(issues = []) {
   const seen = new Set();
   const out = [];
@@ -74,11 +73,6 @@ function dedupeIssues(issues = []) {
 
 /**
  * Snapshot reducido para mandar al LLM
- * - Cap de campañas
- * - Cap de canales GA4
- * - Incluye un resumen ligero de byProperty (GA4)
- * - Prioriza campañas activas cuando hay muchas
- * - Conserva meta-información básica de cuentas/propiedades
  */
 function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
   try {
@@ -100,7 +94,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
           name: c.name ?? '',
           objective: c.objective ?? null,
           channel: c.channel ?? null,
-          status: statusNorm, // 👈 se lo mandamos explícito a la IA
+          status: statusNorm,
           kpis: {
             impressions: toNum(c?.kpis?.impressions),
             clicks:      toNum(c?.kpis?.clicks),
@@ -130,10 +124,9 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
       const unknown = rawList.filter(c => c.status === 'unknown');
 
       const ordered = active.length > 0
-        ? [...active, ...paused, ...unknown] // 👈 primero activas
+        ? [...active, ...paused, ...unknown]
         : rawList;
 
-      // pequeño resumen para que la IA sepa el contexto de estados
       clone.byCampaignMeta = {
         total:   rawList.length,
         active:  active.length,
@@ -155,13 +148,12 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
       }));
     }
 
-    // byProperty (GA4 multi-prop): lo dejamos ligero pero útil
+    // byProperty (GA4 multi-prop)
     if (Array.isArray(clone.byProperty)) {
       clone.byProperty = clone.byProperty.slice(0, 10).map(p => ({
         property:     p.property,
         propertyName: p.propertyName,
         accountName:  p.accountName,
-        // métricas a nivel propiedad (si existen)
         users:       toNum(p.users),
         sessions:    toNum(p.sessions),
         conversions: toNum(p.conversions),
@@ -169,7 +161,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
       }));
     }
 
-    // Lista simple de propiedades (para contexto multi-propiedades)
+    // Lista simple de propiedades
     if (Array.isArray(clone.properties)) {
       clone.properties = clone.properties.slice(0, 10).map(p => ({
         id:           p.id,
@@ -178,7 +170,6 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
       }));
     }
 
-    // recorta duro por seguridad
     let s = JSON.stringify(clone);
     if (s.length > maxChars) s = s.slice(0, maxChars);
     return s;
@@ -192,14 +183,12 @@ function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
 function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
   const out = [];
 
-  // Targets opcionales definidos por collector (por ahora sólo usamos cpaHigh)
   const cpaHigh = Number(inputSnapshot?.targets?.cpaHigh || 0) || null;
 
   // ------------------ GOOGLE ADS / META ADS -------------------
   if (type === 'google' || type === 'meta') {
     const rawList = Array.isArray(inputSnapshot?.byCampaign) ? inputSnapshot.byCampaign : [];
 
-    // enriquecemos con estado normalizado
     const enriched = rawList.map(c => {
       const st = normStatus(
         c.status ||
@@ -215,9 +204,8 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
     const paused = enriched.filter(c => c._statusNorm === 'paused');
     const anyWithStatus = enriched.some(c => c._statusNorm !== 'unknown');
 
-    // Si TODAS las campañas conocidas están pausadas/inactivas -> issue específico
+    // Todas pausadas/inactivas
     if (anyWithStatus && active.length === 0 && paused.length > 0 && paused.length === enriched.length) {
-      // podemos agrupar por cuenta para dar más contexto
       const byAccount = new Map();
       for (const c of paused) {
         const accId = String(c.account_id ?? '');
@@ -249,10 +237,26 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
       return cap(out, limit);
     }
 
-    // Si hay activas, priorizamos esas para analizar rendimiento; si no, usamos todo
     const list = active.length > 0 ? active : enriched;
 
+    // Métricas globales para posibles issues agregados
+    let totalImpr = 0, totalClk = 0, totalCost = 0, totalConv = 0, totalVal = 0;
+    for (const c of list) {
+      const k = c.kpis || {};
+      totalImpr += toNum(k.impressions);
+      totalClk  += toNum(k.clicks);
+      totalCost += toNum(k.cost ?? k.spend);
+      totalConv += toNum(k.conversions);
+      totalVal  += toNum(k.conv_value ?? k.purchase_value);
+    }
+    const globalCtr  = totalImpr > 0 ? (totalClk / totalImpr) * 100 : 0;
+    const globalRoas = totalCost > 0 ? (totalVal / totalCost) : 0;
+    const globalCpa  = totalConv > 0 ? (totalCost / totalConv) : 0;
+
+    // Reglas por campaña (problemas)
     for (const c of list.slice(0, 100)) {
+      if (out.length >= limit) break;
+
       const k = c.kpis || {};
       const impr   = toNum(k.impressions);
       const clk    = toNum(k.clicks);
@@ -271,7 +275,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
       };
 
       // 1) CTR bajo con volumen
-      if (impr > 1000 && ctr < 1) {
+      if (impr > 1000 && ctr < 1 && out.length < limit) {
         out.push({
           title: `[${accountRef.name || accountRef.id}] CTR bajo · ${c.name || c.id}`,
           area: 'performance',
@@ -286,7 +290,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
       }
 
       // 2) Gasto sin conversiones
-      if (clk >= 150 && conv === 0 && cost > 0) {
+      if (clk >= 150 && conv === 0 && cost > 0 && out.length < limit) {
         out.push({
           title: `[${accountRef.name || accountRef.id}] Gasto sin conversiones · ${c.name || c.id}`,
           area: 'performance',
@@ -301,7 +305,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
       }
 
       // 3) ROAS bajo con gasto relevante
-      if (value > 0 && roas > 0 && roas < 1 && cost > 100) {
+      if (value > 0 && roas > 0 && roas < 1 && cost > 100 && out.length < limit) {
         out.push({
           title: `[${accountRef.name || accountRef.id}] ROAS bajo · ${c.name || c.id}`,
           area: 'performance',
@@ -315,8 +319,8 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
         });
       }
 
-      // 4) CPA por encima del target (si collector definió cpaHigh)
-      if (cpaHigh && conv > 0 && cpa > cpaHigh * 1.1 && cost > 50) {
+      // 4) CPA alto vs objetivo
+      if (cpaHigh && conv > 0 && cpa > cpaHigh * 1.1 && cost > 50 && out.length < limit) {
         out.push({
           title: `[${accountRef.name || accountRef.id}] CPA alto vs objetivo · ${c.name || c.id}`,
           area: 'performance',
@@ -329,9 +333,70 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
           metrics: { cpa: fmt(cpa), targetCpa: fmt(cpaHigh), cost: fmt(cost), conversions: conv }
         });
       }
-
-      if (out.length >= limit) break;
     }
+
+    // --- Si no se detectó nada “malo”, generamos oportunidades de optimización ---
+    if (out.length < limit && list.length > 0) {
+      const remaining = limit - out.length;
+
+      // Top campañas por gasto
+      const byCost = [...list].sort((a,b) => {
+        const ka = a.kpis || {};
+        const kb = b.kpis || {};
+        return (kb.cost ?? kb.spend ?? 0) - (ka.cost ?? ka.spend ?? 0);
+      });
+
+      const best = byCost[0];
+      if (best && remaining > 0) {
+        const k = best.kpis || {};
+        const cost   = toNum(k.cost ?? k.spend);
+        const conv   = toNum(k.conversions);
+        const value  = toNum(k.conv_value ?? k.purchase_value);
+        const roas   = cost > 0 ? (value / cost) : 0;
+        const cpa    = conv > 0 ? (cost / conv) : 0;
+        const accountRef = {
+          id: String(best.account_id ?? ''),
+          name: inferAccountName(best, inputSnapshot) || ''
+        };
+
+        out.push({
+          title: `[${accountRef.name || accountRef.id}] Escala campañas ganadoras y redistribuye presupuesto`,
+          area: 'performance',
+          severity: 'media',
+          evidence: `A nivel cuenta se gastaron ${fmt(totalCost)} con ${fmt(totalConv,0)} conversiones y ROAS global ${fmt(globalRoas)}. La campaña "${best.name || best.id}" concentra la mayor parte del gasto con ROAS ${fmt(roas)} y CPA ${fmt(cpa)}.`,
+          recommendation: 'Identifica las campañas con mejor ROAS/CPA y aumenta gradualmente su presupuesto (10-20% cada pocos días), mientras reduces inversión en campañas con rendimiento por debajo del promedio global. Evita tener muchas campañas pequeñas compitiendo por el mismo público.',
+          estimatedImpact: 'medio',
+          accountRef,
+          campaignRef: { id: String(best.id ?? ''), name: String(best.name ?? best.id ?? '') },
+          metrics: {
+            globalCost: fmt(totalCost),
+            globalConversions: fmt(totalConv,0),
+            globalRoas: fmt(globalRoas),
+            campaignCost: fmt(cost),
+            campaignConversions: fmt(conv,0),
+            campaignRoas: fmt(roas),
+            campaignCpa: fmt(cpa)
+          }
+        });
+      }
+
+      // Segundo issue opcional sobre estructura si aún hay espacio
+      if (remaining > 1 && list.length > 5) {
+        out.push({
+          title: 'Simplifica la estructura de campañas para concentrar aprendizaje',
+          area: 'setup',
+          severity: 'baja',
+          evidence: `Se detectaron ${list.length} campañas activas/recientes, lo que puede fragmentar impresiones, presupuesto y aprendizaje del algoritmo.`,
+          recommendation: 'Agrupa campañas redundantes (mismo objetivo, país y tipo de puja) y prioriza tener menos campañas con mayor volumen por cada una. Esto acelera el aprendizaje, estabiliza el CPA/ROAS y facilita probar creatividades de forma ordenada.',
+          estimatedImpact: 'medio',
+          accountRef: null,
+          campaignRef: null,
+          metrics: { activeOrRecentCampaigns: list.length }
+        });
+      }
+    }
+
+    return cap(out, limit);
   }
 
   // ------------------------- GA4 / GA --------------------------
@@ -349,9 +414,8 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
       revenue:     a.revenue + toNum(c.revenue),
     }), { users: 0, sessions: 0, conversions: 0, revenue: 0 });
 
-    // Reglas con canales
     if (channels.length > 0) {
-      if (totals.sessions > 500 && totals.conversions === 0) {
+      if (totals.sessions > 500 && totals.conversions === 0 && out.length < limit) {
         out.push({
           title: 'Tráfico alto sin conversiones',
           area: 'tracking',
@@ -370,7 +434,7 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
       );
       const paidSess = paid.reduce((a,c)=>a+toNum(c.sessions),0);
       const paidConv = paid.reduce((a,c)=>a+toNum(c.conversions),0);
-      if (paidSess > 200 && paidConv === 0) {
+      if (paidSess > 200 && paidConv === 0 && out.length < limit) {
         out.push({
           title: 'Tráfico de pago sin conversiones',
           area: 'performance',
@@ -383,16 +447,51 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
           metrics: { paidSessions: fmt(paidSess,0), paidConversions: 0 }
         });
       }
+
+      // Issue de oportunidad: escalar canales ganadores y optimizar débiles
+      if (out.length < limit && channels.length > 1) {
+        const withRates = channels.map(ch => {
+          const sessions = toNum(ch.sessions);
+          const conv     = toNum(ch.conversions);
+          const revenue  = toNum(ch.revenue);
+          const cr       = sessions > 0 ? (conv / sessions) * 100 : 0;
+          const rps      = sessions > 0 ? (revenue / sessions) : 0;
+          return { ...ch, _cr: cr, _rps: rps };
+        });
+
+        const best = [...withRates].sort((a,b) => (b._rps - a._rps))[0];
+        const worst = [...withRates].sort((a,b) => (a._cr - b._cr))[0];
+
+        if (best && worst && best.channel !== worst.channel) {
+          out.push({
+            title: 'Optimiza el embudo según canales de mayor impacto',
+            area: 'performance',
+            severity: 'media',
+            evidence: `A nivel global se observan ${fmt(totals.sessions,0)} sesiones y ${fmt(totals.conversions,0)} conversiones. El canal "${best.channel}" destaca por mayor revenue por sesión, mientras que "${worst.channel}" tiene la tasa de conversión más baja.`,
+            recommendation: 'Refuerza inversión y presencia en el canal con mayor revenue por sesión (más creatividades, mejores landings y pruebas de mensajes), y revisa el funnel de los canales débiles para mejorar mensajes, pasos del embudo y experiencia de usuario donde se pierden usuarios.',
+            estimatedImpact: 'medio',
+            segmentRef: { type: 'channel', name: best.channel },
+            accountRef: { name: propName || (propId || 'GA4'), property: propId || '' },
+            metrics: {
+              totalSessions: fmt(totals.sessions,0),
+              totalConversions: fmt(totals.conversions,0),
+              bestChannel: best.channel,
+              bestChannelRevenuePerSession: fmt(best._rps),
+              worstChannel: worst.channel,
+              worstChannelCR: fmt(worst._cr)
+            }
+          });
+        }
+      }
     }
 
-    // Si NO hay channels pero sí byProperty, intentamos una heurística básica
-    if (channels.length === 0 && byProperty.length > 0) {
+    // Sin channels pero con byProperty
+    if (channels.length === 0 && byProperty.length > 0 && out.length < limit) {
       const pSessions    = toNum(firstProp.sessions);
       const pConversions = toNum(firstProp.conversions);
       const pRevenue     = toNum(firstProp.revenue);
 
       if (pSessions === 0 && pConversions === 0 && pRevenue === 0) {
-        // Propiedad conectada pero sin datos en el rango
         out.push({
           title: 'Sin datos recientes en GA4',
           area: 'setup',
@@ -418,147 +517,11 @@ function fallbackIssues({ type, inputSnapshot, limit = 6 }) {
         });
       }
     }
+
+    return cap(out, limit);
   }
 
   return cap(out, limit);
-}
-
-/* --------- fallback genérico para asegurar mínimo 1 issue --------- */
-function buildGenericIssue({ type, inputSnapshot }) {
-  if (!inputSnapshot) return null;
-
-  // GOOGLE / META (usa kpis agregados)
-  if (type === 'google' || type === 'meta') {
-    const k = inputSnapshot.kpis || {};
-    const impr  = toNum(k.impressions);
-    const clk   = toNum(k.clicks);
-    const cost  = toNum(k.cost || k.spend);
-    const conv  = toNum(k.conversions);
-    const value = toNum(k.conv_value || k.purchase_value);
-    const roas  = cost > 0 ? value / cost : 0;
-    const cpa   = conv > 0 ? cost / conv : 0;
-
-    const firstAcc = Array.isArray(inputSnapshot.accounts) && inputSnapshot.accounts[0]
-      ? inputSnapshot.accounts[0]
-      : null;
-    const accName = firstAcc?.name || firstAcc?.id || '';
-    const platform = type === 'google' ? 'Google Ads' : 'Meta Ads';
-
-    // Sin casi datos
-    if (impr === 0 && clk === 0 && cost === 0 && conv === 0 && value === 0) {
-      return {
-        title: `Bajo volumen de datos en ${platform}`,
-        area: 'setup',
-        severity: 'media',
-        evidence: 'En el periodo analizado la cuenta tiene muy poco o ningún tráfico/conversiones agregadas.',
-        recommendation: 'Amplía el rango de fechas, asegura que haya campañas activas con presupuesto suficiente y valida que el tracking de conversiones esté funcionando para poder evaluar el rendimiento real.',
-        estimatedImpact: 'medio',
-        accountRef: { id: firstAcc?.id || '', name: accName || platform },
-        campaignRef: null,
-        metrics: { impressions: impr, clicks: clk, cost, conversions: conv, value }
-      };
-    }
-
-    // Hay conversiones
-    if (conv > 0) {
-      return {
-        title: `[${accName || platform}] Optimiza presupuesto según desempeño global`,
-        area: 'performance',
-        severity: 'media',
-        evidence: `A nivel agregado se observan ${fmt(clk,0)} clics, ${fmt(conv,0)} conversiones, ROAS ${fmt(roas)} y CPA ${fmt(cpa)} en el periodo.`,
-        recommendation: 'Clasifica las campañas en ganadoras, neutras y débiles según su ROAS/CPA frente al promedio. Sube presupuesto y pujas en las ganadoras, mantén bajo observación las neutras y reduce o pausa las débiles redirigiendo inversión a las mejores.',
-        estimatedImpact: 'medio',
-        accountRef: { id: firstAcc?.id || '', name: accName || platform },
-        campaignRef: null,
-        metrics: {
-          impressions: impr,
-          clicks: clk,
-          cost: fmt(cost),
-          conversions: fmt(conv,0),
-          roas: fmt(roas),
-          cpa: fmt(cpa)
-        }
-      };
-    }
-
-    // Hay tráfico/gasto pero 0 conversiones
-    return {
-      title: `[${accName || platform}] Tráfico sin conversiones a nivel cuenta`,
-      area: 'tracking',
-      severity: 'alta',
-      evidence: `A nivel cuenta hay ${fmt(clk,0)} clics y un gasto de ${fmt(cost)} con 0 conversiones registradas.`,
-      recommendation: 'Prioriza revisar el tracking de conversiones (etiquetas, eventos y objetivos). Una vez validado, identifica campañas y segmentos con peor comportamiento y aplica exclusiones, ajustes de audiencia y pruebas de creatividades para mejorar el funnel.',
-      estimatedImpact: 'alto',
-      accountRef: { id: firstAcc?.id || '', name: accName || platform },
-      campaignRef: null,
-      metrics: { impressions: impr, clicks: clk, cost: fmt(cost), conversions: conv }
-    };
-  }
-
-  // GA4
-  if (isGA(type)) {
-    const channels = Array.isArray(inputSnapshot.channels) ? inputSnapshot.channels : [];
-    const byProperty = Array.isArray(inputSnapshot.byProperty) ? inputSnapshot.byProperty : [];
-    const firstProp = byProperty[0] || {};
-    const propName = inputSnapshot.propertyName || firstProp.propertyName || 'Propiedad GA4';
-    const propId   = inputSnapshot.property || firstProp.property || '';
-
-    const totals = channels.reduce((a, c) => ({
-      users:       a.users + toNum(c.users),
-      sessions:    a.sessions + toNum(c.sessions),
-      conversions: a.conversions + toNum(c.conversions),
-      revenue:     a.revenue + toNum(c.revenue),
-    }), { users: 0, sessions: 0, conversions: 0, revenue: 0 });
-
-    // Sin datos
-    if (totals.sessions === 0 && totals.conversions === 0 && totals.revenue === 0) {
-      return {
-        title: 'Poco tráfico medido en GA4',
-        area: 'setup',
-        severity: 'media',
-        evidence: 'La propiedad conectada muestra muy poco o ningún tráfico en el rango analizado.',
-        recommendation: 'Comprueba que el tag de GA4 esté instalado correctamente (sin bloqueos por consent o adblockers) y que la vista conectada sea la que realmente recibe tráfico del sitio.',
-        estimatedImpact: 'medio',
-        segmentRef: { type: 'channel', name: 'all' },
-        accountRef: { name: propName, property: propId },
-        metrics: { sessions: totals.sessions, conversions: totals.conversions, revenue: totals.revenue }
-      };
-    }
-
-    // Tráfico pero 0 conversiones
-    if (totals.sessions > 0 && totals.conversions === 0) {
-      return {
-        title: 'Tráfico sin conversiones medibles en GA4',
-        area: 'tracking',
-        severity: 'alta',
-        evidence: `${fmt(totals.sessions,0)} sesiones registradas y 0 conversiones en el periodo.`,
-        recommendation: 'Revisa la definición de eventos de conversión en GA4 (marcar como conversión, parámetros clave, debugview) y asegúrate de que los eventos del sitio/app estén disparando correctamente y mapeados a objetivos de negocio.',
-        estimatedImpact: 'alto',
-        segmentRef: { type: 'channel', name: 'all' },
-        accountRef: { name: propName, property: propId },
-        metrics: { sessions: fmt(totals.sessions,0), conversions: 0 }
-      };
-    }
-
-    // Tráfico y conversiones → optimización del embudo
-    return {
-      title: 'Optimiza el embudo según canales de mayor impacto',
-      area: 'performance',
-      severity: 'media',
-      evidence: `A nivel global se observan ${fmt(totals.sessions,0)} sesiones y ${fmt(totals.conversions,0)} conversiones en el periodo.`,
-      recommendation: 'Identifica los canales con mejor tasa de conversión y mayor revenue por sesión, refuerza su inversión/visibilidad y revisa el comportamiento de los canales débiles para mejorar mensajes, landings y pasos del embudo donde se pierden usuarios.',
-      estimatedImpact: 'medio',
-      segmentRef: { type: 'channel', name: 'all' },
-      accountRef: { name: propName, property: propId },
-      metrics: {
-        sessions: fmt(totals.sessions,0),
-        conversions: fmt(totals.conversions,0),
-        revenue: fmt(totals.revenue,2)
-      }
-    };
-  }
-
-  return null;
 }
 
 /* ----------------------------- prompts ----------------------------- */
@@ -641,9 +604,9 @@ function makeUserPrompt({ snapshotStr, maxFindings, isAnalytics }) {
   return `
 CONSIGNA
 - Devuelve JSON válido EXACTAMENTE con: { "summary": string, "issues": Issue[] }.
-- Entre 1 y ${maxFindings} issues como máximo cuando haya datos suficientes.
-- Si los datos son suficientes, intenta acercarte a ${maxFindings} issues sin inventar hallazgos;
-  si detectas pocos problemas reales, devuelve menos issues pero al menos 1.
+- Máximo ${maxFindings} issues. Prioriza por impacto esperado en revenue/conversiones.
+- Si los datos son suficientes, intenta acercarte lo máximo posible a ${maxFindings} issues
+  sin inventar hallazgos. Si los datos son muy limitados, genera solo 1-2 issues sólidos.
 - Idioma: español neutro, directo y claro.
 - Prohibido inventar métricas o campañas/canales no presentes en el snapshot.
 - Cada "issue" DEBE incluir:
@@ -715,7 +678,6 @@ async function chatJSON({ system, user, model = DEFAULT_MODEL, retries = 2 }) {
 }
 
 /* ----------------------------- entry point ---------------------------- */
-// maxFindings viene de auditJob (según plan). Default 5 por seguridad.
 module.exports = async function generateAudit({ type, inputSnapshot, maxFindings = 5 }) {
   const analytics = isGA(type);
 
@@ -743,7 +705,6 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
 
   const userPrompt = makeUserPrompt({ snapshotStr: dataStr, maxFindings, isAnalytics: analytics });
 
-  // modelo configurable
   const model = DEFAULT_MODEL;
 
   // 1) intentar con LLM
@@ -770,8 +731,8 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
       recommendation: String(it.recommendation || ''),
       estimatedImpact: impactNorm(it.estimatedImpact),
       accountRef: it.accountRef || null,
-      campaignRef: it.campaignRef,  // Ads
-      segmentRef: it.segmentRef,    // GA
+      campaignRef: it.campaignRef,
+      segmentRef: it.segmentRef,
       metrics: (it.metrics && typeof it.metrics === 'object') ? it.metrics : {},
       links: Array.isArray(it.links) ? it.links : []
     }));
@@ -816,21 +777,8 @@ module.exports = async function generateAudit({ type, inputSnapshot, maxFindings
   issues = dedupeIssues(issues);
   issues = cap(issues, maxFindings);
 
-  // 5) Si HAY datos pero seguimos sin issues, generamos uno genérico
-  if (haveData && (!issues || issues.length === 0)) {
-    const generic = buildGenericIssue({ type, inputSnapshot });
-    if (generic) {
-      issues = [generic];
-      if (!summary) {
-        summary = analytics
-          ? 'Resumen basado en datos agregados de GA4, con foco en calidad de medición y eficiencia del embudo.'
-          : 'Resumen basado en métricas agregadas de la cuenta, con foco en eficiencia de inversión y tracking.';
-      }
-    }
-  }
-
-  // 6) si no hay datos reales y el LLM tampoco generó nada, devolvemos vacío
-  if (!haveData && (!issues || issues.length === 0)) {
+  // 5) si no hay datos reales y tampoco issues, devolvemos vacío
+  if (!haveData && issues.length === 0) {
     return { summary: '', issues: [] };
   }
 
