@@ -65,6 +65,10 @@ try {
 
 const normId   = (s = '') => String(s).replace(/^customers\//, '').replace(/[^\d]/g, '').trim();
 const safeDiv  = (n, d) => (Number(d || 0) ? Number(n || 0) / Number(d || 0) : 0);
+const microsToUnit = (v) => {
+  const n = Number(v || 0);
+  return Math.round((n / 1_000_000) * 100) / 100;
+};
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const daysAgoISO = (n) => { const d = new Date(); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
@@ -141,6 +145,149 @@ function intersect(aSet, ids) {
   const out = [];
   for (const id of ids) if (aSet.has(id)) out.push(id);
   return out;
+}
+
+/* ====================== GAQL por campañas ====================== */
+
+/**
+ * Acumula métricas por campaña / device / network en los Map globales
+ * usando el mismo accessToken y rango (since/until) que usa el panel.
+ */
+async function accumulateCampaignBreakdowns({
+  accessToken,
+  customerId,
+  since,
+  until,
+  byCampaignMap,
+  byCampaignDeviceMap,
+  byCampaignNetworkMap,
+}) {
+  const cid = normId(customerId);
+  if (!cid || !since || !until) return;
+
+  const GAQL = `
+    SELECT
+      campaign.id,
+      campaign.name,
+      campaign.status,
+      segments.date,
+      segments.device,
+      segments.ad_network_type,
+      metrics.impressions,
+      metrics.clicks,
+      metrics.cost_micros,
+      metrics.conversions,
+      metrics.conversions_value
+    FROM campaign
+    WHERE segments.date BETWEEN '${since}' AND '${until}'
+      AND metrics.impressions > 0
+    ORDER BY metrics.impressions DESC
+  `;
+
+  let rows;
+  try {
+    rows = await Ads.searchGAQLStream(accessToken, cid, GAQL);
+  } catch (e) {
+    logger.error('[gadsCollector] campaigns GAQL error', {
+      customerId: cid,
+      status: e?.status,
+      code: e?.code,
+      message: e?.message,
+      apiError: e?.data?.error || e?.api?.error,
+    });
+    return;
+  }
+
+  for (const r of rows) {
+    const camp = r.campaign || {};
+    const seg  = r.segments || {};
+    const met  = r.metrics || {};
+
+    const id     = normId(camp.id);
+    const name   = camp.name || `Campaña ${id || '?'}`;
+    const status = camp.status || 'UNSPECIFIED';
+
+    if (!id) continue;
+
+    const impressions = Number(met.impressions || 0);
+    const clicks      = Number(met.clicks || 0);
+    const costMicros  = met.costMicros ?? met.cost_micros ?? 0;
+    const cost        = microsToUnit(costMicros);
+    const conversions = Number(met.conversions || 0);
+    const conv_value  = Number(met.conversionsValue ?? met.conversions_value ?? 0);
+
+    const device  = seg.device || 'UNSPECIFIED';
+    const network = seg.adNetworkType || seg.ad_network_type || 'UNSPECIFIED';
+
+    // --- Por campaña (accountId + campaignId) ---
+    const keyC = `${cid}|${id}`;
+    let c = byCampaignMap.get(keyC);
+    if (!c) {
+      c = {
+        accountId: cid,
+        id,
+        name,
+        status,
+        impressions: 0,
+        clicks: 0,
+        cost: 0,
+        conversions: 0,
+        conv_value: 0,
+      };
+      byCampaignMap.set(keyC, c);
+    }
+    c.impressions += impressions;
+    c.clicks      += clicks;
+    c.cost        += cost;
+    c.conversions += conversions;
+    c.conv_value  += conv_value;
+
+    // --- Por campaña + device ---
+    const keyD = `${cid}|${id}|${device}`;
+    let d = byCampaignDeviceMap.get(keyD);
+    if (!d) {
+      d = {
+        accountId: cid,
+        campaignId: id,
+        campaignName: name,
+        device,
+        impressions: 0,
+        clicks: 0,
+        cost: 0,
+        conversions: 0,
+        conv_value: 0,
+      };
+      byCampaignDeviceMap.set(keyD, d);
+    }
+    d.impressions += impressions;
+    d.clicks      += clicks;
+    d.cost        += cost;
+    d.conversions += conversions;
+    d.conv_value  += conv_value;
+
+    // --- Por campaña + network ---
+    const keyN = `${cid}|${id}|${network}`;
+    let n = byCampaignNetworkMap.get(keyN);
+    if (!n) {
+      n = {
+        accountId: cid,
+        campaignId: id,
+        campaignName: name,
+        network,
+        impressions: 0,
+        clicks: 0,
+        cost: 0,
+        conversions: 0,
+        conv_value: 0,
+      };
+      byCampaignNetworkMap.set(keyN, n);
+    }
+    n.impressions += impressions;
+    n.clicks      += clicks;
+    n.cost        += cost;
+    n.conversions += conversions;
+    n.conv_value  += conv_value;
+  }
 }
 
 /* ====================== Collector principal ====================== */
@@ -339,9 +486,10 @@ async function collectGoogle(userId, opts = {}) {
   const accountsMeta = new Map(); // id -> { name, currencyCode, timeZone }
   const byAccountAgg = new Map(); // id -> agg kpis
 
-  const byCampaign = [];          // Dejamos vacío por ahora (sin GAQL manual)
-  const byCampaignDevice = [];
-  const byCampaignNetwork = [];
+  // Nuevos acumuladores globales de campañas
+  const byCampaignMap        = new Map();
+  const byCampaignDeviceMap  = new Map();
+  const byCampaignNetworkMap = new Map();
 
   /* ====================== Loop por cuenta (fetchInsights) ====================== */
 
@@ -466,10 +614,12 @@ async function collectGoogle(userId, opts = {}) {
       seriesMap.set(d, cur);
     }
 
-    lastSinceUsed = payload?.timeRange?.from
-      || payload?.range?.from
+    const sinceThis = payload?.range?.since
+      || payload?.timeRange?.from
       || payload?.dateRange?.from
       || daysAgoISO(30);
+
+    lastSinceUsed = sinceThis;
 
     // KPI agregados por cuenta
     const accAgg = {
@@ -491,8 +641,23 @@ async function collectGoogle(userId, opts = {}) {
       });
     }
 
-    // NOTA: si en el futuro Ads.fetchInsights devuelve campañas,
-    // aquí podríamos mapear a byCampaign / byCampaignDevice / byCampaignNetwork.
+    // 3) Cargar breakdowns de campañas para ESTA cuenta con el mismo rango
+    try {
+      await accumulateCampaignBreakdowns({
+        accessToken,
+        customerId,
+        since: sinceThis,
+        until: payload?.range?.until || payload?.timeRange?.to || untilGlobal,
+        byCampaignMap,
+        byCampaignDeviceMap,
+        byCampaignNetworkMap,
+      });
+    } catch (e) {
+      logger.error('[gadsCollector] accumulateCampaignBreakdowns error', {
+        customerId,
+        error: e?.message || String(e),
+      });
+    }
   }
 
   // Serie final ordenada
@@ -537,6 +702,24 @@ async function collectGoogle(userId, opts = {}) {
     };
   });
 
+  // Pasar los mapas de campañas a arrays ordenados
+  const byCampaign = Array.from(byCampaignMap.values())
+    .map((c) => ({
+      ...c,
+      ctr: safeDiv(c.clicks, c.impressions) * 100,
+      cpc: safeDiv(c.cost, c.clicks),
+      cpa: safeDiv(c.cost, c.conversions),
+      roas: safeDiv(c.conv_value, c.cost),
+    }))
+    .sort((a, b) => b.impressions - a.impressions)
+    .slice(0, 50);
+
+  const byCampaignDevice = Array.from(byCampaignDeviceMap.values())
+    .sort((a, b) => b.impressions - a.impressions);
+
+  const byCampaignNetwork = Array.from(byCampaignNetworkMap.values())
+    .sort((a, b) => b.impressions - a.impressions);
+
   return {
     notAuthorized: false,
     currency,
@@ -556,7 +739,7 @@ async function collectGoogle(userId, opts = {}) {
       roas: safeDiv(G.val, G.cost),
       all_roas: safeDiv(G.allVal, G.cost),
     },
-    byCampaign,          // de momento vacío (sin GAQL manual)
+    byCampaign,
     byCampaignDevice,
     byCampaignNetwork,
     series,
@@ -564,7 +747,7 @@ async function collectGoogle(userId, opts = {}) {
     defaultCustomerId: gaDoc.defaultCustomerId ? normId(gaDoc.defaultCustomerId) : null,
     accounts,
     targets: { cpaHigh: 15 },
-    version: 'gadsCollector@fetchInsights-no-mcc',
+    version: 'gadsCollector@fetchInsights-campaigns-no-mcc',
   };
 }
 
