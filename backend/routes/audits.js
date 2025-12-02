@@ -38,7 +38,7 @@ const PLAN_CONFIG = {
   // 1 auditoría IA al día
   gratis: {
     limit: 1,
-    period: 'daily',
+    period: 'weekly',
     unlimited: false,
   },
   // 2 auditorías IA al mes
