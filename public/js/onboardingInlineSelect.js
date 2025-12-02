@@ -18,7 +18,7 @@ async function _post(u, b){
 }
 
 // === hard limit por plataforma ===
-const MAX_SELECT = 3;
+const MAX_SELECT = 1;
 
 // --- state
 const ASM = {
@@ -107,8 +107,8 @@ function _updateLimitUI(kind){
 
   _updateCount(kind);
 
-  if (reached) _hint(`Límite alcanzado: solo puedes seleccionar hasta ${MAX_SELECT} cuentas.`, 'warn');
-  else _hint(`Selecciona hasta ${MAX_SELECT} cuentas por plataforma.`, 'info');
+  if (reached) _hint(`Límite alcanzado: solo puedes seleccionar ${MAX_SELECT} cuenta.`, 'warn');
+  else _hint(`Selecciona hasta ${MAX_SELECT} cuenta por plataforma.`, 'info');
 
   _enableSave(_canSave());
 }
@@ -116,7 +116,7 @@ function _updateLimitUI(kind){
 function _renderLists(){
   const err = _el('asm-error');
   if (err){ err.textContent = ''; _hide(err); }
-  _hint(`Selecciona hasta ${MAX_SELECT} cuentas por plataforma.`, 'info');
+  _hint(`Selecciona hasta ${MAX_SELECT} cuenta por plataforma.`, 'info');
 
   // Mostrar/ocultar títulos según visible.*
   const metaTitle = _el('asm-meta-title');
@@ -134,7 +134,7 @@ function _renderLists(){
       const chip = _chip(label, id, 'meta', (checked, val, kind, cbEl) => {
         const set = ASM.sel[kind];
         if (checked) {
-          if (set.size >= MAX_SELECT) { cbEl.checked = false; return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuentas.`, 'warn'); }
+          if (set.size >= MAX_SELECT) { cbEl.checked = false; return _hint(`Solo puedes seleccionar hast ${MAX_SELECT} cuenta.`, 'warn'); }
           set.add(val);
         } else set.delete(val);
         _updateLimitUI(kind);
@@ -157,7 +157,7 @@ function _renderLists(){
       const chip = _chip(displayName, id, 'google', (checked, val, kind, cbEl) => {
         const set = ASM.sel[kind];
         if (checked) {
-          if (set.size >= MAX_SELECT) { cbEl.checked = false; return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuentas.`, 'warn'); }
+          if (set.size >= MAX_SELECT) { cbEl.checked = false; return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuenta.`, 'warn'); }
           set.add(val);
         } else set.delete(val);
         _updateLimitUI(kind);
