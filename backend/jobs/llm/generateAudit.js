@@ -8,7 +8,10 @@ const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const DEFAULT_MODEL =
   process.env.OPENAI_MODEL_AUDIT ||
   process.env.OPENAI_MODEL ||
-  'gpt-4.1-mini';
+  'gpt-4o-mini';
+
+// Este flag se queda por si en el futuro quisieras reactivar reglas determinísticas
+const USE_FALLBACK_RULES = process.env.AUDIT_FALLBACK_RULES === 'true';
 
 /* ------------------------------ helpers ------------------------------ */
 const AREAS = new Set(['setup', 'performance', 'creative', 'tracking', 'budget', 'bidding']);
@@ -23,7 +26,10 @@ const impactNorm = (s) =>
     ? String(s).toLowerCase()
     : 'medio');
 
-const isGA = (type) => type === 'ga' || type === 'ga4';
+const isGA = (type) => {
+  const t = String(type || '').toLowerCase();
+  return t === 'ga' || t === 'ga4' || t === 'google-analytics' || t === 'analytics';
+};
 
 const fmt = (n, d = 2) => {
   const v = Number(n);
@@ -52,15 +58,6 @@ function normStatus(raw) {
   return 'unknown';
 }
 
-// intenta encontrar el nombre de cuenta para una campaña
-function inferAccountName(c, snap) {
-  if (c?.accountMeta?.name) return String(c.accountMeta.name);
-  const id = String(c?.account_id || '');
-  const list = Array.isArray(snap?.accounts) ? snap.accounts : [];
-  const found = list.find(a => String(a.id) === id);
-  return found?.name || null;
-}
-
 /** Dedupe por título + campaignRef.id + segmentRef.name para reducir ruido */
 function dedupeIssues(issues = []) {
   const seen = new Set();
@@ -75,11 +72,7 @@ function dedupeIssues(issues = []) {
 }
 
 /* ---------------------- DIAGNOSTICS (pre-análisis) ------------------- */
-/**
- * Estos helpers NO sustituyen al LLM, sólo le dan "pistas" ya calculadas
- * para que no tenga que descubrir todo desde cero y pueda variar más
- * los ángulos de la auditoría.
- */
+/* (los mantengo tal cual, solo ayudan a la IA) */
 
 function buildGoogleDiagnostics(snapshot = {}) {
   const byCampaign = Array.isArray(snapshot.byCampaign) ? snapshot.byCampaign : [];
@@ -91,7 +84,6 @@ function buildGoogleDiagnostics(snapshot = {}) {
   const globalCtr    = safeDiv(globalClicks, globalImpr);
   const globalCr     = safeDiv(globalConv, globalClicks);
 
-  // CPA por campaña
   const withCpa = byCampaign
     .map(c => {
       const conv = safeNum(c?.kpis?.conversions);
@@ -113,7 +105,6 @@ function buildGoogleDiagnostics(snapshot = {}) {
       cost: c._cost,
     }));
 
-  // CTR bajo (campañas con impresiones relevantes y CTR muy por debajo de la media)
   const lowCtrCampaigns = byCampaign
     .map(c => {
       const impr   = safeNum(c?.kpis?.impressions);
@@ -136,7 +127,6 @@ function buildGoogleDiagnostics(snapshot = {}) {
       ctr: c._ctr,
     }));
 
-  // Campañas con poco volumen (aprendizaje limitado)
   const limitedLearning = byCampaign
     .map(c => {
       const impr = safeNum(c?.kpis?.impressions);
@@ -157,7 +147,6 @@ function buildGoogleDiagnostics(snapshot = {}) {
       cost: c._cost,
     }));
 
-  // Problemas de estructura (demasiadas campañas chiquitas)
   const smallCampaigns = byCampaign.filter(c => safeNum(c?.kpis?.impressions) < 2000);
   const structureIssues = {
     totalCampaigns: byCampaign.length,
@@ -192,7 +181,6 @@ function buildGa4Diagnostics(snapshot = {}) {
   const totalConv     = safeNum(aggregate.conversions);
   const globalCr      = safeDiv(totalConv, totalSessions);
 
-  // Canales con muchas sesiones pero pocas conversiones
   const lowConvChannels = channels
     .map(ch => {
       const sessions = safeNum(ch.sessions);
@@ -213,7 +201,6 @@ function buildGa4Diagnostics(snapshot = {}) {
       convRate: ch._cr,
     }));
 
-  // Landings con muchas sesiones y pocas conversiones
   const badLandingPages = landings
     .map(lp => {
       const sessions = safeNum(lp.sessions);
@@ -234,7 +221,6 @@ function buildGa4Diagnostics(snapshot = {}) {
       convRate: lp._cr,
     }));
 
-  // Gaps por dispositivo
   const devicesWithCr = devices.map(d => {
     const sessions = safeNum(d.sessions);
     const conv     = safeNum(d.conversions);
@@ -347,7 +333,7 @@ function buildDiagnostics(source, snapshot) {
 /**
  * Snapshot reducido para mandar al LLM
  */
-function tinySnapshot(inputSnapshot, { maxChars = 140_000 } = {}) {
+function tinySnapshot(inputSnapshot, { maxChars = 60_000 } = {}) {
   try {
     const clone = JSON.parse(JSON.stringify(inputSnapshot || {}));
 
@@ -503,465 +489,11 @@ function buildHistoryContext({ type, previousAudit, trend }) {
   return parts.join('\n');
 }
 
-/* ----------------------- fallback determinístico ---------------------- */
-/* (SIN CAMBIOS: lo dejamos como estaba para no romper nada) */
-function fallbackIssues({ type, inputSnapshot, limit = 6, trend = null, previousSnapshot = null, previousAudit = null }) {
-  const out = [];
-
-  const cpaHigh = Number(inputSnapshot?.targets?.cpaHigh || 0) || null;
-
-  // ------------------ GOOGLE ADS / META ADS -------------------
-  if (type === 'google' || type === 'meta') {
-    const rawList = Array.isArray(inputSnapshot?.byCampaign) ? inputSnapshot.byCampaign : [];
-
-    const enriched = rawList.map(c => {
-      const st = normStatus(
-        c.status ||
-        c.state ||
-        c.servingStatus ||
-        c.serving_status ||
-        c.effectiveStatus
-      );
-      return { ...c, _statusNorm: st };
-    });
-
-    const active = enriched.filter(c => c._statusNorm === 'active');
-    const paused = enriched.filter(c => c._statusNorm === 'paused');
-    const anyWithStatus = enriched.some(c => c._statusNorm !== 'unknown');
-
-    // Todas pausadas/inactivas
-    if (anyWithStatus && active.length === 0 && paused.length > 0 && paused.length === enriched.length) {
-      const byAccount = new Map();
-      for (const c of paused) {
-        const accId = String(c.account_id ?? '');
-        const accName = inferAccountName(c, inputSnapshot) || accId || 'Cuenta sin nombre';
-        const key = accId || accName;
-        if (!byAccount.has(key)) {
-          byAccount.set(key, { id: accId, name: accName, campaigns: 0 });
-        }
-        byAccount.get(key).campaigns += 1;
-      }
-
-      const accountsTxt = Array.from(byAccount.values()).map(a =>
-        `${a.name} (${a.campaigns} campañas pausadas)`
-      ).join(' · ');
-
-      out.push({
-        title: 'Todas las campañas están pausadas o inactivas',
-        area: 'setup',
-        severity: 'media',
-        evidence: `Se detectaron ${enriched.length} campañas y ninguna está activa. ${accountsTxt || ''}`.trim(),
-        recommendation: 'Define qué campañas quieres volver a activar. Empieza por las que históricamente tienen mejor rendimiento, revisa presupuesto, segmentación y creatividades antes de reactivarlas y establece reglas claras de pausa si no cumplen con el ROAS/CPA objetivo.',
-        estimatedImpact: 'medio',
-        accountRef: null,
-        campaignRef: null,
-        metrics: { totalCampaigns: enriched.length, activeCampaigns: 0 },
-        links: []
-      });
-
-      return cap(out, limit);
-    }
-
-    const list = active.length > 0 ? active : enriched;
-
-    // Métricas globales para posibles issues agregados
-    let totalImpr = 0, totalClk = 0, totalCost = 0, totalConv = 0, totalVal = 0;
-    for (const c of list) {
-      const k = c.kpis || {};
-      totalImpr += toNum(k.impressions);
-      totalClk  += toNum(k.clicks);
-      totalCost += toNum(k.cost ?? k.spend);
-      totalConv += toNum(k.conversions);
-      totalVal  += toNum(k.conv_value ?? k.purchase_value);
-    }
-    const globalCtr  = totalImpr > 0 ? (totalClk / totalImpr) * 100 : 0; // por si lo quieres usar a futuro
-    const globalRoas = totalCost > 0 ? (totalVal / totalCost) : 0;
-    const globalCpa  = totalConv > 0 ? (totalCost / totalConv) : 0;
-
-    // Reglas por campaña (problemas)
-    for (const c of list.slice(0, 100)) {
-      if (out.length >= limit) break;
-
-      const k = c.kpis || {};
-      const impr   = toNum(k.impressions);
-      const clk    = toNum(k.clicks);
-      const cost   = toNum(k.cost ?? k.spend);
-      const conv   = toNum(k.conversions);
-      const value  = toNum(k.conv_value ?? k.purchase_value);
-      const ctr    = impr > 0 ? (clk / impr) * 100 : 0;
-      const roas   = cost > 0 ? (value / cost) : 0;
-      const cpa    = conv > 0 ? (cost / conv) : 0;
-      const ch     = c.channel || '';
-      const isRemarketing = /remarketing|retarget/i.test(String(ch));
-
-      const accountRef = {
-        id: String(c.account_id ?? ''),
-        name: inferAccountName(c, inputSnapshot) || ''
-      };
-
-      // 1) CTR bajo con volumen
-      if (impr > 1000 && ctr < 1 && out.length < limit) {
-        out.push({
-          title: `[${accountRef.name || accountRef.id}] CTR bajo · ${c.name || c.id}`,
-          area: 'performance',
-          severity: 'media',
-          evidence: `CTR ${fmt(ctr)}% con ${fmt(impr,0)} impresiones y ${fmt(clk,0)} clics.`,
-          recommendation: 'Mejora creatividades y relevancia; prueba variantes (RSA/creatives), ajusta segmentación y excluye audiencias poco relevantes.',
-          estimatedImpact: 'medio',
-          accountRef,
-          campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
-          metrics: { impressions: impr, clicks: clk, ctr: fmt(ctr) }
-        });
-      }
-
-      // 2) Gasto sin conversiones
-      if (clk >= 150 && conv === 0 && cost > 0 && out.length < limit) {
-        out.push({
-          title: `[${accountRef.name || accountRef.id}] Gasto sin conversiones · ${c.name || c.id}`,
-          area: 'performance',
-          severity: 'alta',
-          evidence: `${fmt(clk,0)} clics, ${fmt(cost)} de gasto y 0 conversiones.`,
-          recommendation: 'Revisa términos/segmentos de baja calidad, añade negativas, alinea mejor anuncio→landing y verifica que las conversiones estén bien configuradas y disparando.',
-          estimatedImpact: 'alto',
-          accountRef,
-          campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
-          metrics: { clicks: clk, cost: fmt(cost), conversions: conv }
-        });
-      }
-
-      // 3) ROAS bajo con gasto relevante
-      if (value > 0 && roas > 0 && roas < 1 && cost > 100 && out.length < limit) {
-        out.push({
-          title: `[${accountRef.name || accountRef.id}] ROAS bajo · ${c.name || c.id}`,
-          area: 'performance',
-          severity: 'media',
-          evidence: `ROAS ${fmt(roas)} con gasto ${fmt(cost)} y valor ${fmt(value)}.`,
-          recommendation: 'Ajusta pujas y audiencias, excluye ubicaciones con baja rentabilidad y prueba nuevas creatividades/formatos orientados a conversión.',
-          estimatedImpact: 'medio',
-          accountRef,
-          campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
-          metrics: { roas: fmt(roas), cost: fmt(cost), value: fmt(value) }
-        });
-      }
-
-      // 4) CPA alto vs objetivo
-      if (cpaHigh && conv > 0 && cpa > cpaHigh * 1.1 && cost > 50 && out.length < limit) {
-        out.push({
-          title: `[${accountRef.name || accountRef.id}] CPA alto vs objetivo · ${c.name || c.id}`,
-          area: 'performance',
-          severity: isRemarketing ? 'alta' : 'media',
-          evidence: `CPA ${fmt(cpa)} vs objetivo ${fmt(cpaHigh)} con gasto ${fmt(cost)} y ${fmt(conv,0)} conversiones.`,
-          recommendation: 'Revisa segmentos con peor CPA, baja pujas o exclúyelos, concentra presupuesto en grupos y creatividades con mejor costo por conversión y ajusta el funnel si es necesario.',
-          estimatedImpact: 'alto',
-          accountRef,
-          campaignRef: { id: String(c.id ?? ''), name: String(c.name ?? c.id ?? '') },
-          metrics: { cpa: fmt(cpa), targetCpa: fmt(cpaHigh), cost: fmt(cost), conversions: conv }
-        });
-      }
-    }
-
-    // --- Insight de mejora/empeoramiento vs auditoría anterior (Ads) ---
-    if (trend && trend.deltas && out.length < limit) {
-      const dConv = trend.deltas.conversions;
-      const dRoas = trend.deltas.roas;
-      const convPct = dConv ? dConv.percent : 0;
-      const roasPct = dRoas ? dRoas.percent : 0;
-
-      const improved =
-        (dConv && dConv.previous > 0 && convPct >= 15) ||
-        (dRoas && dRoas.previous > 0 && roasPct >= 15);
-
-      const worsened =
-        (dConv && dConv.previous > 0 && convPct <= -15) ||
-        (dRoas && dRoas.previous > 0 && roasPct <= -15);
-
-      if (improved) {
-        out.push({
-          title: 'Buen avance respecto a la auditoría anterior',
-          area: 'performance',
-          severity: 'baja',
-          evidence: [
-            dConv ? `Conversiones: ${fmt(dConv.previous,0)} → ${fmt(dConv.current,0)} (${fmt(dConv.percent,1)}%).` : null,
-            dRoas ? `ROAS: ${fmt(dRoas.previous,2)} → ${fmt(dRoas.current,2)} (${fmt(dRoas.percent,1)}%).` : null
-          ].filter(Boolean).join(' '),
-          recommendation: 'Mantén los cambios que generaron la mejora (segmentaciones, creatividades, pujas) y documenta qué se modificó. Aprovecha para escalar campañas ganadoras y seguir probando variaciones de anuncios.',
-          estimatedImpact: 'medio',
-          accountRef: null,
-          campaignRef: null,
-          metrics: {
-            conversions_prev: dConv?.previous,
-            conversions_curr: dConv?.current,
-            roas_prev: dRoas?.previous,
-            roas_curr: dRoas?.current
-          }
-        });
-      } else if (worsened) {
-        out.push({
-          title: 'Advertencia: el rendimiento bajó vs la auditoría anterior',
-          area: 'performance',
-          severity: 'alta',
-          evidence: [
-            dConv ? `Conversiones: ${fmt(dConv.previous,0)} → ${fmt(dConv.current,0)} (${fmt(dConv.percent,1)}%).` : null,
-            dRoas ? `ROAS: ${fmt(dRoas.previous,2)} → ${fmt(dRoas.current,2)} (${fmt(dRoas.percent,1)}%).` : null
-          ].filter(Boolean).join(' '),
-          recommendation: 'Revisa qué cambios se hicieron desde la auditoría anterior (campañas pausadas/activadas, cambios de presupuesto o puja, nuevas creatividades) y vuelve a concentrar inversión en las campañas y segmentos que antes tenían mejor rendimiento.',
-          estimatedImpact: 'alto',
-          accountRef: null,
-          campaignRef: null,
-          metrics: {
-            conversions_prev: dConv?.previous,
-            conversions_curr: dConv?.current,
-            roas_prev: dRoas?.previous,
-            roas_curr: dRoas?.current
-          }
-        });
-      }
-    }
-
-    // --- Si no se detectó nada “malo”, generamos oportunidades de optimización ---
-    if (out.length < limit && list.length > 0) {
-      const remaining = limit - out.length;
-
-      // Top campañas por gasto
-      const byCost = [...list].sort((a,b) => {
-        const ka = a.kpis || {};
-        const kb = b.kpis || {};
-        return (kb.cost ?? kb.spend ?? 0) - (ka.cost ?? ka.spend ?? 0);
-      });
-
-      const best = byCost[0];
-      if (best && remaining > 0) {
-        const k = best.kpis || {};
-        const cost   = toNum(k.cost ?? k.spend);
-        const conv   = toNum(k.conversions);
-        const value  = toNum(k.conv_value ?? k.purchase_value);
-        const roas   = cost > 0 ? (value / cost) : 0;
-        const cpa    = conv > 0 ? (cost / conv) : 0;
-        const accountRef = {
-          id: String(best.account_id ?? ''),
-          name: inferAccountName(best, inputSnapshot) || ''
-        };
-
-        out.push({
-          title: `[${accountRef.name || accountRef.id}] Escala campañas ganadoras y redistribuye presupuesto`,
-          area: 'performance',
-          severity: 'media',
-          evidence: `A nivel cuenta se gastaron ${fmt(totalCost)} con ${fmt(totalConv,0)} conversiones y ROAS global ${fmt(globalRoas)}. La campaña "${best.name || best.id}" concentra la mayor parte del gasto con ROAS ${fmt(roas)} y CPA ${fmt(cpa)}.`,
-          recommendation: 'Identifica las campañas con mejor ROAS/CPA y aumenta gradualmente su presupuesto (10-20% cada pocos días), mientras reduces inversión en campañas con rendimiento por debajo del promedio global. Evita tener muchas campañas pequeñas compitiendo por el mismo público.',
-          estimatedImpact: 'medio',
-          accountRef,
-          campaignRef: { id: String(best.id ?? ''), name: String(best.name ?? best.id ?? '') },
-          metrics: {
-            globalCost: fmt(totalCost),
-            globalConversions: fmt(totalConv,0),
-            globalRoas: fmt(globalRoas),
-            campaignCost: fmt(cost),
-            campaignConversions: fmt(conv,0),
-            campaignRoas: fmt(roas),
-            campaignCpa: fmt(cpa)
-          }
-        });
-      }
-
-      // Segundo issue opcional sobre estructura si aún hay espacio
-      if (remaining > 1 && list.length > 5) {
-        out.push({
-          title: 'Simplifica la estructura de campañas para concentrar aprendizaje',
-          area: 'setup',
-          severity: 'baja',
-          evidence: `Se detectaron ${list.length} campañas activas/recientes, lo que puede fragmentar impresiones, presupuesto y aprendizaje del algoritmo.`,
-          recommendation: 'Agrupa campañas redundantes (mismo objetivo, país y tipo de puja) y prioriza tener menos campañas con mayor volumen por cada una. Esto acelera el aprendizaje, estabiliza el CPA/ROAS y facilita probar creatividades de forma ordenada.',
-          estimatedImpact: 'medio',
-          accountRef: null,
-          campaignRef: null,
-          metrics: { activeOrRecentCampaigns: list.length }
-        });
-      }
-    }
-
-    return cap(out, limit);
-  }
-
-  // ------------------------- GA4 / GA --------------------------
-  if (isGA(type)) {
-    const channels   = Array.isArray(inputSnapshot?.channels) ? inputSnapshot.channels : [];
-    const byProperty = Array.isArray(inputSnapshot?.byProperty) ? inputSnapshot.byProperty : [];
-    const firstProp  = byProperty[0] || {};
-    const propName   = inputSnapshot?.propertyName || firstProp.propertyName || null;
-    const propId     = inputSnapshot?.property     || firstProp.property     || '';
-
-    const totals = channels.reduce((a, c) => ({
-      users:       a.users + toNum(c.users),
-      sessions:    a.sessions + toNum(c.sessions),
-      conversions: a.conversions + toNum(c.conversions),
-      revenue:     a.revenue + toNum(c.revenue),
-    }), { users: 0, sessions: 0, conversions: 0, revenue: 0 });
-
-    if (channels.length > 0) {
-      if (totals.sessions > 500 && totals.conversions === 0 && out.length < limit) {
-        out.push({
-          title: 'Tráfico alto sin conversiones',
-          area: 'tracking',
-          severity: 'alta',
-          evidence: `${fmt(totals.sessions,0)} sesiones y 0 conversiones en el periodo.`,
-          recommendation: 'Verifica eventos de conversión (nombres, marcar como conversión, parámetros), el etiquetado (UTM), el consentimiento y posibles filtros que estén excluyendo tráfico; revisa también la importación de conversiones hacia plataformas de Ads.',
-          estimatedImpact: 'alto',
-          segmentRef: { type: 'channel', name: 'all' },
-          accountRef: { name: propName || (propId || 'GA4'), property: propId || '' },
-          metrics: { sessions: fmt(totals.sessions,0), conversions: 0 }
-        });
-      }
-
-      const paid = channels.filter(c =>
-        /paid|cpc|display|paid social|ads/i.test(String(c.channel || ''))
-      );
-      const paidSess = paid.reduce((a,c)=>a+toNum(c.sessions),0);
-      const paidConv = paid.reduce((a,c)=>a+toNum(c.conversions),0);
-      if (paidSess > 200 && paidConv === 0 && out.length < limit) {
-        out.push({
-          title: 'Tráfico de pago sin conversiones',
-          area: 'performance',
-          severity: 'media',
-          evidence: `${fmt(paidSess,0)} sesiones de pago con 0 conversiones.`,
-          recommendation: 'Cruza datos con las plataformas de Ads para confirmar que haya conversiones; revisa definición de eventos de conversión, ventanas de atribución y que estés importando las acciones correctas.',
-          estimatedImpact: 'medio',
-          segmentRef: { type: 'channel', name: 'paid' },
-          accountRef: { name: propName || (propId || 'GA4'), property: propId || '' },
-          metrics: { paidSessions: fmt(paidSess,0), paidConversions: 0 }
-        });
-      }
-
-      // Issue de oportunidad: escalar canales ganadores y optimizar débiles
-      if (out.length < limit && channels.length > 1) {
-        const withRates = channels.map(ch => {
-          const sessions = toNum(ch.sessions);
-          const conv     = toNum(ch.conversions);
-          const revenue  = toNum(ch.revenue);
-          const cr       = sessions > 0 ? (conv / sessions) * 100 : 0;
-          const rps      = sessions > 0 ? (revenue / sessions) : 0;
-          return { ...ch, _cr: cr, _rps: rps };
-        });
-
-        const best = [...withRates].sort((a,b) => (b._rps - a._rps))[0];
-        const worst = [...withRates].sort((a,b) => (a._cr - b._cr))[0];
-
-        if (best && worst && best.channel !== worst.channel) {
-          out.push({
-            title: 'Optimiza el embudo según canales de mayor impacto',
-            area: 'performance',
-            severity: 'media',
-            evidence: `A nivel global se observan ${fmt(totals.sessions,0)} sesiones y ${fmt(totals.conversions,0)} conversiones. El canal "${best.channel}" destaca por mayor revenue por sesión, mientras que "${worst.channel}" tiene la tasa de conversión más baja.`,
-            recommendation: 'Refuerza inversión y presencia en el canal con mayor revenue por sesión (más creatividades, mejores landings y pruebas de mensajes), y revisa el funnel de los canales débiles para mejorar mensajes, pasos del embudo y experiencia de usuario donde se pierden usuarios.',
-            estimatedImpact: 'medio',
-            segmentRef: { type: 'channel', name: best.channel },
-            accountRef: { name: propName || (propId || 'GA4'), property: propId || '' },
-            metrics: {
-              totalSessions: fmt(totals.sessions,0),
-              totalConversions: fmt(totals.conversions,0),
-              bestChannel: best.channel,
-              bestChannelRevenuePerSession: fmt(best._rps),
-              worstChannel: worst.channel,
-              worstChannelCR: fmt(worst._cr)
-            }
-          });
-        }
-      }
-    }
-
-    // Insight de mejora/empeoramiento vs auditoría anterior (GA)
-    if (trend && trend.deltas && out.length < limit) {
-      const dConv = trend.deltas.conversions;
-      const dCr   = trend.deltas.cr;
-      const convPct = dConv ? dConv.percent : 0;
-      const crPct   = dCr ? dCr.percent : 0;
-
-      const improved =
-        (dConv && dConv.previous > 0 && convPct >= 15) ||
-        (dCr && dCr.previous > 0 && crPct >= 15);
-
-      const worsened =
-        (dConv && dConv.previous > 0 && convPct <= -15) ||
-        (dCr && dCr.previous > 0 && crPct <= -15);
-
-      if (improved) {
-        out.push({
-          title: 'Mejora en el embudo vs la auditoría anterior',
-          area: 'performance',
-          severity: 'baja',
-          evidence: [
-            dConv ? `Conversiones: ${fmt(dConv.previous,0)} → ${fmt(dConv.current,0)} (${fmt(dConv.percent,1)}%).` : null,
-            dCr ? `CR global: ${fmt(dCr.previous,2)}% → ${fmt(dCr.current,2)}% (${fmt(dCr.percent,1)}%).` : null
-          ].filter(Boolean).join(' '),
-          recommendation: 'Identifica qué cambios del funnel (mensajes, landings, pasos, canales) explican la mejora y consolídalos. A partir de ahí, diseña nuevos tests A/B para seguir aumentando la tasa de conversión sin perder calidad de tráfico.',
-          estimatedImpact: 'medio',
-          segmentRef: { type: 'channel', name: 'all' },
-          accountRef: { name: propName || (propId || 'GA4'), property: propId || '' },
-          metrics: {}
-        });
-      } else if (worsened) {
-        out.push({
-          title: 'Advertencia: el embudo rinde peor que en la auditoría anterior',
-          area: 'tracking',
-          severity: 'alta',
-          evidence: [
-            dConv ? `Conversiones: ${fmt(dConv.previous,0)} → ${fmt(dConv.current,0)} (${fmt(dConv.percent,1)}%).` : null,
-            dCr ? `CR global: ${fmt(dCr.previous,2)}% → ${fmt(dCr.current,2)}% (${fmt(dCr.percent,1)}%).` : null
-          ].filter(Boolean).join(' '),
-          recommendation: 'Revisa qué cambios se hicieron en páginas clave, mensajes y configuración de eventos desde la auditoría anterior. Recupera la versión que funcionaba mejor o crea una variante inspirada en los elementos previos que daban mejor CR.',
-          estimatedImpact: 'alto',
-          segmentRef: { type: 'channel', name: 'all' },
-          accountRef: { name: propName || (propId || 'GA4'), property: propId || '' },
-          metrics: {}
-        });
-      }
-    }
-
-    // Sin channels pero con byProperty
-    if (channels.length === 0 && byProperty.length > 0 && out.length < limit) {
-      const pSessions    = toNum(firstProp.sessions);
-      const pConversions = toNum(firstProp.conversions);
-      const pRevenue     = toNum(firstProp.revenue);
-
-      if (pSessions === 0 && pConversions === 0 && pRevenue === 0) {
-        out.push({
-          title: 'Sin datos recientes en GA4',
-          area: 'setup',
-          severity: 'alta',
-          evidence: 'La propiedad de GA4 conectada no muestra sesiones ni conversiones en el rango analizado.',
-          recommendation: 'Verifica que el tag de GA4 esté correctamente instalado, que la propiedad conectada sea la correcta y que haya tráfico en el sitio durante el periodo seleccionado.',
-          estimatedImpact: 'alto',
-          segmentRef: { type: 'channel', name: 'all' },
-          accountRef: { name: propName || 'Propiedad GA4', property: propId || '' },
-          metrics: {}
-        });
-      } else if (pSessions > 0 && pConversions === 0) {
-        out.push({
-          title: 'Tráfico sin conversiones en GA4',
-          area: 'tracking',
-          severity: 'alta',
-          evidence: `${fmt(pSessions,0)} sesiones registradas en la propiedad y 0 conversiones reportadas.`,
-          recommendation: 'Revisa la configuración de eventos de conversión en GA4 (marcar como conversión, parámetros, debugview) y el mapeo con objetivos de negocio; comprueba también la configuración de eventos en el sitio/app.',
-          estimatedImpact: 'alto',
-          segmentRef: { type: 'channel', name: 'all' },
-          accountRef: { name: propName || 'Propiedad GA4', property: propId || '' },
-          metrics: { sessions: fmt(pSessions,0), conversions: 0 }
-        });
-      }
-    }
-
-    return cap(out, limit);
-  }
-
-  return cap(out, limit);
-}
-
 /* ----------------------------- prompts ----------------------------- */
 const SYSTEM_ADS = (platform) => `
 Eres un auditor senior de ${platform} enfocado en performance marketing.
 Objetivo: detectar puntos críticos y oportunidades accionables con alta claridad y rigor.
 Debes priorizar campañas ACTIVAS; las campañas pausadas solo sirven como contexto histórico.
-Si detectas que todas las campañas están pausadas/inactivas, explícalo claramente y enfoca
-las recomendaciones en qué reactivar, cómo reestructurar y cómo testear de forma segura.
 Entrega una síntesis ejecutiva en "summary" y recomendaciones muy concretas en "issues".
 Responde SIEMPRE en JSON válido (sin texto extra). No inventes datos que no estén en el snapshot.
 `.trim();
@@ -974,7 +506,6 @@ Responde SIEMPRE en JSON válido (sin texto extra). No inventes datos que no est
 `.trim();
 
 const SCHEMA_ADS = `
-Estructura estricta:
 {
   "summary": string,
   "issues": [{
@@ -993,7 +524,6 @@ Estructura estricta:
 `.trim();
 
 const SCHEMA_GA = `
-Estructura estricta:
 {
   "summary": string,
   "issues": [{
@@ -1013,23 +543,14 @@ Estructura estricta:
 
 function makeUserPrompt({ snapshotStr, historyStr, maxFindings, minFindings, isAnalytics }) {
   const adsExtras = `
-- Cada issue DEBE incluir **accountRef** ({ id, name }) y **campaignRef** ({ id, name }).
-- Usa el campo "status" de las campañas (active/paused/unknown):
-  - Prioriza campañas con status "active".
-  - Las campañas "paused" o "inactive" solo deben generar hallazgos si aportan contexto
-    (por ejemplo: hubo gasto fuerte en el pasado o hay una estructura mal diseñada).
-  - Si detectas que todas las campañas están pausadas/inactivas, indícalo explícitamente
-    en alguno de los issues y orienta la recomendación a qué tipo de campañas reactivar
-    o cómo relanzar la cuenta.
-- En el título CITA la cuenta: formato sugerido "[{accountRef.name||accountRef.id}] {campaignRef.name}: ...".
-- Si hay varias cuentas, agrupa mentalmente los hallazgos por cuenta para no mezclar mensajes.
+- Cada issue DEBE incluir accountRef ({ id, name }) y campaignRef ({ id, name }).
+- Usa el campo "status" de las campañas (active/paused/unknown) para priorizar.
   `.trim();
 
   const gaExtras = `
 - Cada issue DEBE incluir:
   - accountRef con { name, property }
   - segmentRef con el canal (por ejemplo "Organic Search", "Paid Social", etc.).
-- Si hay varias propiedades, enfoca los hallazgos en las que tienen más sesiones/conversiones.
   `.trim();
 
   const historyBlock = historyStr
@@ -1049,45 +570,18 @@ CONSIGNA
 - Prohibido inventar métricas o campañas/canales no presentes en el snapshot.
 - El snapshot puede incluir un objeto "diagnostics" con análisis previos
   (peores campañas por CPA, CTR bajo, landings débiles, gaps entre dispositivos, etc.).
-  Úsalo como punto de partida para priorizar hallazgos, pero verifica siempre con
-  los números del snapshot y puedes añadir matices adicionales.
+  Úsalo como punto de partida para priorizar hallazgos.
+
 - Cada "issue" DEBE incluir:
   ${isAnalytics ? gaExtras : adsExtras}
   - evidence con métricas textuales del snapshot
-  - recommendation con pasos concretos (no genéricos)
+  - recommendation con pasos concretos
   - estimatedImpact coherente con la evidencia
 
-USO DEL CONTEXTO HISTÓRICO (si existe)
-- Lee el bloque CONTEXTO_HISTORICO cuando aparezca.
-- Si ves mejoras claras vs la auditoría anterior (por ejemplo sube ROAS, bajan CPA o suben conversiones),
-  menciónalo en el "summary" y crea al menos un issue tipo "mejora" explicando qué mejoró y cómo consolidarlo.
-- Si ves deterioros claros, crea al menos un issue de advertencia comparando explícitamente "antes vs ahora"
-  y proponiendo acciones para recuperar o superar el rendimiento anterior.
-- Evita repetir literalmente los mismos títulos y textos de la auditoría anterior: mantén la idea,
-  pero actualiza la evidencia, los matices y los siguientes pasos.
-
-PRIORIDAD (de mayor a menor)
-1) Tracking roto/ausente o discrepancias que impidan optimizar.
-2) Gasto ineficiente: gasto alto sin conversiones o ROAS bajo.
-3) Oportunidades de creatividad/segmentación/puja/estructura.
-4) Problemas de setup/higiene solo si afectan resultados.
-
-CASOS ESPECIALES IMPORTANTE
-- Si el snapshot indica que TODAS las campañas están pausadas/inactivas, debes
-  mencionarlo en al menos un issue y enfocar las recomendaciones en cómo reactivar
-  la cuenta de forma inteligente (qué priorizar, estructura sugerida, tests, etc.).
-- Si hay muchas campañas, concéntrate en las que tienen más gasto, impresiones o
-  volumen de conversiones según los KPIs disponibles.
-
-ESTILO
-- Títulos concisos (p. ej. "Gasto sin conversiones en {campaña}" o "[{cuenta}] {campaña}: ROAS bajo").
-- Evidencia SIEMPRE con números del snapshot (ej. "10,172 sesiones, 23 conversiones, ROAS 0.42").
-- Recomendaciones en imperativo y específicas (qué tocar, dónde y con umbrales sugeridos).
+${historyBlock ? historyBlock + '\n' : ''}
 
 DATOS (snapshot reducido)
 ${snapshotStr}
-
-${historyBlock ? historyBlock + '\n' : ''}
 
 FORMATO JSON
 ${isAnalytics ? SCHEMA_GA : SCHEMA_ADS}
@@ -1095,7 +589,7 @@ ${isAnalytics ? SCHEMA_GA : SCHEMA_ADS}
 }
 
 /* ---------------------- OpenAI JSON con reintentos --------------------- */
-async function chatJSON({ system, user, model = DEFAULT_MODEL, retries = 2 }) {
+async function chatJSON({ system, user, model = DEFAULT_MODEL, retries = 1 }) {
   if (!process.env.OPENAI_API_KEY) {
     const err = new Error('OPENAI_API_KEY missing');
     err.status = 499;
@@ -1112,19 +606,20 @@ async function chatJSON({ system, user, model = DEFAULT_MODEL, retries = 2 }) {
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: user }
-        ],
-        timeout: 60_000
+        ]
       });
       const raw = resp.choices?.[0]?.message?.content || '{}';
       return JSON.parse(raw);
     } catch (e) {
       lastErr = e;
       const code = e?.status || e?.response?.status;
+      console.error('[LLM:ERROR] Intento falló', code, e?.message, e?.response?.data || e?.response?.body || '');
+      // solo reintento en 429/5xx
       if ((code === 429 || (code >= 500 && code < 600)) && i < retries) {
         await new Promise(r => setTimeout(r, 700 * (i + 1)));
         continue;
       }
-      throw e;
+      break;
     }
   }
   throw lastErr || new Error('openai_failed');
@@ -1140,7 +635,8 @@ module.exports = async function generateAudit({
   previousAudit = null,
   trend = null,
 }) {
-  const analytics = isGA(type);
+  const t = String(type || '').toLowerCase();
+  const analytics = isGA(t);
 
   const haveAdsData = Array.isArray(inputSnapshot?.byCampaign) && inputSnapshot.byCampaign.length > 0;
   const haveGAData  =
@@ -1149,11 +645,13 @@ module.exports = async function generateAudit({
 
   const haveData = analytics ? haveGAData : haveAdsData;
 
-  const system = analytics
-    ? SYSTEM_GA
-    : SYSTEM_ADS(type === 'google' ? 'Google Ads' : 'Meta Ads');
+  const platformLabel = analytics
+    ? 'GA4'
+    : ((t === 'google' || t === 'googleads' || t === 'gads') ? 'Google Ads' : 'Meta Ads');
 
-  // 👇 NUEVO: metemos diagnostics al snapshot que ve la IA
+  const system = analytics ? SYSTEM_GA : SYSTEM_ADS(platformLabel);
+
+  // Metemos diagnostics al snapshot que ve la IA
   const snapshotForLLM = {
     ...(inputSnapshot || {}),
     diagnostics: buildDiagnostics(type, inputSnapshot || {})
@@ -1183,15 +681,15 @@ module.exports = async function generateAudit({
 
   const model = DEFAULT_MODEL;
 
-  // 1) intentar con LLM
-  let parsed;
+  let parsed = null;
   try {
     parsed = await chatJSON({ system, user: userPrompt, model });
-  } catch (_) {
-    parsed = null;
+  } catch (e) {
+    // Aquí solo logueamos; NO inventamos issues
+    const code = e?.status || e?.response?.status;
+    console.error('[LLM:ERROR] Falló definitivamente', code, e?.message);
   }
 
-  // 2) normalizar resultados del LLM
   let issues = [];
   let summary = '';
 
@@ -1219,52 +717,19 @@ module.exports = async function generateAudit({
       summary: (summary || '').slice(0, 160),
       issues: Array.isArray(issues) ? issues.length : 0
     });
-  }
-
-  // 3) fallback si hay pocos hallazgos y sí hay datos
-  const desired = Math.max(minFindings, maxFindings);
-  if ((!issues || issues.length < desired) && haveData) {
-    const current = issues?.length || 0;
-    const need = desired - current;
-    if (need > 0) {
-      const fb = fallbackIssues({
-        type,
-        inputSnapshot,
-        limit: need,
-        trend,
-        previousSnapshot,
-        previousAudit,
-      }).map((it, idx) => ({
-        id: `fb-${type}-${Date.now()}-${idx}`,
-        title: it.title,
-        area: areaNorm(it.area),
-        severity: sevNorm(it.severity),
-        evidence: it.evidence || '',
-        recommendation: it.recommendation || '',
-        estimatedImpact: impactNorm(it.estimatedImpact),
-        accountRef: it.accountRef || null,
-        campaignRef: it.campaignRef,
-        segmentRef: it.segmentRef,
-        metrics: it.metrics || {},
-        links: []
-      }));
-      issues = [...(issues || []), ...fb];
-      if (!summary) {
-        summary = analytics
-          ? 'Resumen basado en datos de GA4 priorizando tracking y eficiencia por canal/propiedad.'
-          : 'Resumen basado en rendimiento de campañas priorizando eficiencia y conversión.';
-      }
+    if (haveData && (!issues || issues.length === 0)) {
+      console.warn('[LLM:WARN] IA no devolvió issues pese a haber datos. Sin fallbacks determinísticos.');
     }
   }
 
-  // 4) dedupe + clamp
-  issues = dedupeIssues(issues);
-  issues = cap(issues, maxFindings);
-
-  // 5) si no hay datos reales y tampoco issues, devolvemos vacío
-  if (!haveData && issues.length === 0) {
+  // Sin datos y sin issues → devolvemos vacío
+  if (!haveData && (!issues || issues.length === 0)) {
     return { summary: '', issues: [] };
   }
+
+  // dedupe + clamp
+  issues = dedupeIssues(issues);
+  issues = cap(issues, maxFindings);
 
   return { summary, issues };
 };
