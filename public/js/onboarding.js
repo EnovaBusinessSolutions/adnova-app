@@ -366,12 +366,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         if (requiredSelection) {
-          // Más de 3 cuentas: abrimos selector (ASM)
-          setStatus('Selecciona hasta 3 cuentas de Google Ads para continuar.');
-          show(gaAccountsMount);
+         // Más de 1 cuenta: abrimos selector (ASM) pero el límite es 1
+          setStatus('Selecciona 1 cuenta de Google Ads para continuar.');
+           show(gaAccountsMount);
 
-          window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
-            detail: { accounts, defaultCustomerId, requiredSelection, mountEl: gaAccountsMount }
+           window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
+           detail: { accounts, defaultCustomerId, requiredSelection, mountEl: gaAccountsMount }
           }));
 
           return { ok: true, accounts, defaultCustomerId, requiredSelection };
