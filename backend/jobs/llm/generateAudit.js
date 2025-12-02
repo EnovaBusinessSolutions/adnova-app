@@ -399,6 +399,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 60_000 } = {}) {
     // channels (GA4)
     if (Array.isArray(clone.channels)) {
       clone.channels = clone.channels.slice(0, 60).map(ch => ({
+
         channel:     ch.channel,
         users:       toNum(ch.users),
         sessions:    toNum(ch.sessions),
@@ -492,16 +493,22 @@ function buildHistoryContext({ type, previousAudit, trend }) {
 /* ----------------------------- prompts ----------------------------- */
 const SYSTEM_ADS = (platform) => `
 Eres un auditor senior de ${platform} enfocado en performance marketing.
-Objetivo: detectar puntos críticos y oportunidades accionables con alta claridad y rigor.
+Tu estilo es muy conciso, profesional y fácil de leer: párrafos cortos y sin relleno.
+Objetivo: detectar los 3–5 puntos críticos de mayor impacto y las mejores oportunidades accionables.
 Debes priorizar campañas ACTIVAS; las campañas pausadas solo sirven como contexto histórico.
-Entrega una síntesis ejecutiva en "summary" y recomendaciones muy concretas en "issues".
+- El "summary" debe ser una síntesis ejecutiva breve (máximo 3–5 frases).
+- Cada "issue" debe ser muy concreto: evidencia y recomendación en un total de 2–4 frases.
+Evita repetir la misma idea con diferentes palabras o hacer textos demasiado largos.
 Responde SIEMPRE en JSON válido (sin texto extra). No inventes datos que no estén en el snapshot.
 `.trim();
 
 const SYSTEM_GA = `
 Eres un auditor senior de Google Analytics 4 especializado en analítica de negocio y atribución.
-Objetivo: detectar puntos críticos y oportunidades accionables con alta claridad y rigor.
-El "summary" debe ser una síntesis ejecutiva centrada en canales/embudos con mayor impacto.
+Tu estilo es muy conciso, profesional y fácil de leer: párrafos cortos y directos.
+Objetivo: identificar los 3–5 hallazgos clave sobre canales, embudos y dispositivos que más impactan el negocio.
+- El "summary" debe ser una síntesis ejecutiva breve (máximo 3–5 frases).
+- Cada "issue" debe ser muy concreto: evidencia y recomendación en un total de 2–4 frases.
+Evita repetir la misma idea con diferentes palabras o hacer textos demasiado largos.
 Responde SIEMPRE en JSON válido (sin texto extra). No inventes datos que no estén en el snapshot.
 `.trim();
 
@@ -563,10 +570,11 @@ ${historyStr}
   return `
 CONSIGNA
 - Devuelve JSON válido EXACTAMENTE con: { "summary": string, "issues": Issue[] }.
-- Genera entre ${minFindings} y ${maxFindings} issues. Si los datos son suficientes,
-  intenta acercarte lo máximo posible a ${maxFindings} sin inventar hallazgos.
-- Si los datos son muy limitados, genera solo 1-2 issues sólidos.
+- Genera entre ${minFindings} y ${maxFindings} issues, pero prioriza 3–5 issues de mayor impacto.
+  Si hay muchos problemas similares, agrúpalos en un solo issue temático en lugar de repetirlos.
+- Si los datos son muy limitados, genera solo 1–2 issues sólidos.
 - Idioma: español neutro, directo y claro.
+- Escribe en párrafos cortos (2–4 frases por issue como máximo) y evita texto redundante.
 - Prohibido inventar métricas o campañas/canales no presentes en el snapshot.
 - El snapshot puede incluir un objeto "diagnostics" con análisis previos
   (peores campañas por CPA, CTR bajo, landings débiles, gaps entre dispositivos, etc.).
@@ -574,8 +582,8 @@ CONSIGNA
 
 - Cada "issue" DEBE incluir:
   ${isAnalytics ? gaExtras : adsExtras}
-  - evidence con métricas textuales del snapshot
-  - recommendation con pasos concretos
+  - evidence con métricas textuales del snapshot (máximo 2–3 frases muy concretas)
+  - recommendation con 2–4 pasos accionables, escritos de forma breve y clara
   - estimatedImpact coherente con la evidencia
 
 ${historyBlock ? historyBlock + '\n' : ''}
