@@ -266,6 +266,40 @@ async function getCustomer(source, customerId) {
   };
 }
 
+async function discoverAndEnrich(source) {
+  // "source" puede ser:
+  //  - string accessToken
+  //  - doc GoogleAccount con refreshToken/accessToken
+  const accessToken = await resolveAccessToken(source);
+
+  const list = await listAccessibleCustomers(accessToken);
+  const ids = Array.from(
+    new Set(
+      (list || [])
+        .map((rn) => String(rn || '').split('/')[1])
+        .map((s) => s && s.replace(/[^\d]/g, ''))
+        .filter(Boolean)
+    )
+  );
+
+  const out = [];
+  for (const id of ids) {
+    try {
+      // Usamos "source" para que getCustomer pueda usar refreshToken si es doc completo
+      const meta = await getCustomer(source, id);
+      out.push(meta);
+    } catch (e) {
+      out.push({
+        id,
+        error: true,
+        reason: e?.api?.error || e.message,
+      });
+    }
+  }
+
+  return out;
+}
+
 
 /* ========================================================================== *
  * 2) GAQL (searchStream)
