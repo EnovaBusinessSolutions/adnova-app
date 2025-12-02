@@ -67,7 +67,7 @@ const Ads = require('../services/googleAdsService');
 
 // ===== Constantes / helpers =====
 const DEFAULT_OBJECTIVE = 'ventas';
-const MAX_BY_RULE = 3;
+const MAX_BY_RULE = 1;
 
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();

@@ -211,6 +211,7 @@ async function listAccessibleCustomers(accessToken) {
 async function getCustomer(accessToken, customerId) {
   const cid = normId(customerId);
 
+  // 1) Primer intento: REST /customers/{cid}
   let r = await requestRest({
     accessToken,
     path: `/customers/${cid}`,
@@ -235,25 +236,92 @@ async function getCustomer(accessToken, customerId) {
     });
   }
 
-  if (r.ok) {
-    const d = r.data || {};
-    return {
-      id: cid,
-      name: d?.descriptiveName || `Cuenta ${cid}`,
-      currencyCode: d?.currencyCode || null,
-      timeZone: d?.timeZone || null,
-      status: d?.status || null,
-    };
+  if (!r.ok) {
+    const err = new Error(
+      `[getCustomer] ${r.data?.error?.status || r.res?.status || 'UNKNOWN'}: ${
+        r.data?.error?.message || 'failed'
+      }`
+    );
+    err.api = { error: r.data?.error || r.data || null, log: r.log };
+    throw err;
   }
 
-  const err = new Error(
-    `[getCustomer] ${r.data?.error?.status || r.res?.status || 'UNKNOWN'}: ${
-      r.data?.error?.message || 'failed'
-    }`
-  );
-  err.api = { error: r.data?.error || r.data || null, log: r.log };
-  throw err;
+  const d = r.data || {};
+
+  // Meta inicial desde REST
+  let meta = {
+    id: cid,
+    name:
+      d.descriptiveName ||
+      d.descriptive_name ||
+      null,
+    currencyCode:
+      d.currencyCode ||
+      d.currency_code ||
+      null,
+    timeZone:
+      d.timeZone ||
+      d.time_zone ||
+      null,
+    status: d.status || null,
+  };
+
+  // 2) Si REST no trajo bien name / currency / tz, hacemos fallback con GAQL
+  const needsGaql =
+    !meta.name || !meta.currencyCode || !meta.timeZone;
+
+  if (needsGaql) {
+    try {
+      const GAQL = `
+        SELECT
+          customer.id,
+          customer.descriptive_name,
+          customer.currency_code,
+          customer.time_zone,
+          customer.status
+        FROM customer
+      `;
+
+      // Ojo: aquí pasamos el accessToken como string; searchGAQLStream vuelve a usarlo tal cual
+      const rows = await searchGAQLStream(accessToken, cid, GAQL);
+      const row = Array.isArray(rows) && rows.length ? rows[0] : null;
+      const c = row?.customer || {};
+
+      meta = {
+        id: cid,
+        name:
+          meta.name ||
+          c.descriptiveName ||
+          c.descriptive_name ||
+          `Cuenta ${cid}`,
+        currencyCode:
+          meta.currencyCode ||
+          c.currencyCode ||
+          c.currency_code ||
+          null,
+        timeZone:
+          meta.timeZone ||
+          c.timeZone ||
+          c.time_zone ||
+          null,
+        status: meta.status || c.status || null,
+      };
+    } catch (e) {
+      console.warn(
+        '[getCustomer] GAQL fallback failed',
+        e?.api?.error || e?.response?.data || e.message
+      );
+      // seguimos con lo que tengamos en meta (aunque falten campos)
+    }
+  }
+
+  if (!meta.name) {
+    meta.name = `Cuenta ${cid}`;
+  }
+
+  return meta;
 }
+
 
 /**
  * discoverAndEnrich ahora acepta:
