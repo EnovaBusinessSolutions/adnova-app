@@ -1037,62 +1037,43 @@ body {
   background: #4b3c75;          /* hover un poco más claro */
 }
 
-/* ===== Recordatorio de análisis (onboarding paso 3) ===== */
-
-.content-panel .panel-description {
-  margin-bottom: 0.5rem;
-  max-width: 640px;
-  color: #b3a3cf;
-  font-size: 0.95rem;
-}
-
-/* Contenedor del recordatorio */
-.analysis-reminder {
+/* Aviso sutil bajo el título del análisis */
+.analysis-hint {
+  margin: 14px 0 22px;
+  padding: 8px 14px;
+  border-radius: 999px;
   display: inline-flex;
   align-items: center;
-  gap: 0.6rem;
-  margin: 0.25rem 0 1.75rem;
-  padding: 0.55rem 0.9rem;
-  border-radius: 9999px;
-  background: radial-gradient(circle at 0% 0%, rgba(235,44,255,0.18), transparent 55%);
-  background-color: rgba(18, 12, 28, 0.95);
-  border: 1px solid rgba(181, 92, 255, 0.45);
-  box-shadow: 0 0 22px rgba(181, 92, 255, 0.26);
+  gap: 8px;
+
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: #e4d8ff;
+
+  background: radial-gradient(circle at 0% 50%, rgba(181, 92, 255, 0.20), rgba(10, 8, 18, 0.98));
+  border: 1px solid rgba(181, 92, 255, 0.5);
+  box-shadow: 0 0 14px rgba(181, 92, 255, 0.25);
 }
 
-/* Icono de alerta */
-.analysis-reminder-icon {
-  width: 22px;
-  height: 22px;
-  flex-shrink: 0;
-  border-radius: 9999px;
+/* Icono circular, sin amarillo feo 😅 */
+.analysis-hint-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.8rem;
+
+  font-size: 0.75rem;
   font-weight: 700;
-  color: #fef9c3; /* amarillo pastel */
-  background: radial-gradient(circle at 30% 20%, #facc15, #b453ff);
-  box-shadow: 0 0 16px rgba(250, 204, 21, 0.55);
+  color: #f9efff;
+
+  background: radial-gradient(circle at 30% 30%, #ff8cff, #b55cff);
+  box-shadow: 0 0 10px rgba(181, 92, 255, 0.7);
 }
 
-/* Texto del recordatorio: más pequeño y suave */
-.analysis-reminder-text {
+/* Texto más pequeño y ligero */
+.analysis-hint-text {
   font-size: 0.78rem;
-  letter-spacing: 0.02em;
-  color: #d9c4ff;
-  max-width: 420px;
-}
-
-/* En pantallas pequeñas centramos el bloque */
-@media (max-width: 768px) {
-  .analysis-reminder {
-    display: flex;
-    justify-content: center;
-    text-align: left;
-  }
-
-  .analysis-reminder-text {
-    max-width: none;
-  }
+  opacity: 0.92;
 }
