@@ -1049,10 +1049,8 @@ body {
   font-size: 0.78rem;
   line-height: 1.4;
   color: #e4d8ff;
-
-  background: radial-gradient(circle at 0% 50%, rgba(181, 92, 255, 0.20), rgba(10, 8, 18, 0.98));
   border: 1px solid rgba(181, 92, 255, 0.5);
-  box-shadow: 0 0 14px rgba(181, 92, 255, 0.25);
+  
 }
 
 /* Icono circular, sin amarillo feo 😅 */
@@ -1068,8 +1066,7 @@ body {
   font-weight: 700;
   color: #f9efff;
 
-  background: radial-gradient(circle at 30% 30%, #ff8cff, #b55cff);
-  box-shadow: 0 0 10px rgba(181, 92, 255, 0.7);
+  background: radial-gradient(circle at 30% 30%, #A96BFF, #b55cff);
 }
 
 /* Texto más pequeño y ligero */
