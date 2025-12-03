@@ -1036,3 +1036,63 @@ body {
 .main-content::-webkit-scrollbar-thumb:hover {
   background: #4b3c75;          /* hover un poco más claro */
 }
+
+/* ===== Recordatorio de análisis (onboarding paso 3) ===== */
+
+.content-panel .panel-description {
+  margin-bottom: 0.5rem;
+  max-width: 640px;
+  color: #b3a3cf;
+  font-size: 0.95rem;
+}
+
+/* Contenedor del recordatorio */
+.analysis-reminder {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.25rem 0 1.75rem;
+  padding: 0.55rem 0.9rem;
+  border-radius: 9999px;
+  background: radial-gradient(circle at 0% 0%, rgba(235,44,255,0.18), transparent 55%);
+  background-color: rgba(18, 12, 28, 0.95);
+  border: 1px solid rgba(181, 92, 255, 0.45);
+  box-shadow: 0 0 22px rgba(181, 92, 255, 0.26);
+}
+
+/* Icono de alerta */
+.analysis-reminder-icon {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #fef9c3; /* amarillo pastel */
+  background: radial-gradient(circle at 30% 20%, #facc15, #b453ff);
+  box-shadow: 0 0 16px rgba(250, 204, 21, 0.55);
+}
+
+/* Texto del recordatorio: más pequeño y suave */
+.analysis-reminder-text {
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  color: #d9c4ff;
+  max-width: 420px;
+}
+
+/* En pantallas pequeñas centramos el bloque */
+@media (max-width: 768px) {
+  .analysis-reminder {
+    display: flex;
+    justify-content: center;
+    text-align: left;
+  }
+
+  .analysis-reminder-text {
+    max-width: none;
+  }
+}

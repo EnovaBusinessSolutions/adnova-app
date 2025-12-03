@@ -62,9 +62,19 @@
     <main class="main-content">
       <section class="content-panel" id="step3-content" aria-labelledby="title-analisis">
         <h2 id="title-analisis">Análisis</h2>
+
+        <!-- Descripción principal -->
         <p class="panel-description">
-          Estamos analizando los datos de tus cuentas para ofrecerte recomendaciones personalizadas de marketing. Este proceso puede tardar unos minutos, por favor esperé a que la IA finalice.
+          Estamos analizando los datos de tus cuentas para ofrecerte recomendaciones personalizadas de marketing.
         </p>
+
+        <!-- Recordatorio centrado entre el texto y la barra -->
+        <div class="analysis-reminder" role="status" aria-live="polite">
+          <div class="analysis-reminder-icon">!</div>
+          <div class="analysis-reminder-text">
+            Este proceso puede tardar unos minutos. Te avisaremos cuando la IA termine el análisis.
+          </div>
+        </div>
 
         <div class="analysis-progress">
           <div class="progress-container">
@@ -124,8 +134,7 @@
     </main>
   </div>
 
-  <!-- JS: usa defer para asegurar que el DOM esté listo;
-       el script además escucha DOMContentLoaded internamente -->
+  <!-- JS -->
   <script src="/js/onboarding3.js" defer></script>
 
   <noscript>Por favor activa JavaScript para continuar.</noscript>
