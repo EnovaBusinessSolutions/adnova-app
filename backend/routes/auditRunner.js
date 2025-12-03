@@ -170,21 +170,51 @@ router.post('/:type/run', requireAuth, express.json(), async (req, res) => {
  * =========================================================*/
 router.post('/start', requireAuth, express.json(), async (req, res) => {
   try {
-    let types = [];
-
     // ★ Por defecto asumimos que este endpoint viene del PANEL
     const source = (req.body && req.body.source) || 'panel';
 
-    if (req.body?.types === 'auto' || !Array.isArray(req.body?.types)) {
-      types = await detectConnectedSources(req.user._id);
+    // 1) Qué fuentes están REALMENTE conectadas
+    const connectedTypes = await detectConnectedSources(req.user._id);
+
+    // 2) Qué pidió el frontend
+    const rawTypes = Array.isArray(req.body?.types)
+      ? req.body.types.map((t) => String(t).toLowerCase()).filter(isValidType)
+      : null;
+
+    let types = [];
+    const skippedByConnection = {};
+
+    if (req.body?.types === 'auto' || !rawTypes) {
+      // Modo automático → usamos SOLO las conectadas
+      types = [...connectedTypes];
+
+      // Y registramos como "skipped" todas las válidas que NO están conectadas
+      for (const t of VALID_TYPES) {
+        const tt = String(t);
+        if (!connectedTypes.includes(tt)) {
+          skippedByConnection[tt] = 'NOT_CONNECTED';
+        }
+      }
     } else {
-      types = req.body.types
-        .map((t) => String(t).toLowerCase())
-        .filter(isValidType);
+      // El front pidió tipos concretos → intersectamos con las conectadas
+      for (const t of rawTypes) {
+        if (connectedTypes.includes(t)) {
+          types.push(t);
+        } else {
+          skippedByConnection[t] = 'NOT_CONNECTED';
+        }
+      }
     }
 
+    // 3) Si no hay nada que auditar, no lanzamos job
     if (!types.length) {
-      return res.status(400).json({ ok: false, error: 'NO_TYPES' });
+      return res.status(400).json({
+        ok: false,
+        error: 'NO_TYPES_CONNECTED',
+        detail:
+          'No hay integraciones conectadas para auditar (Google Ads, Meta Ads, GA4 o Shopify).',
+        skippedByConnection,
+      });
     }
 
     const jobId = newId();
@@ -213,6 +243,7 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
       jobId,
       types,
       source,
+      skippedByConnection, // 👈 útil si quieres pintar "No conectado" desde esta respuesta
     });
 
     // Ejecuta asíncrono, uno por tipo
