@@ -149,7 +149,7 @@
   // =======================
   // Refresco desde BD (pinta filas según últimas auditorías)
   // =======================
-  async function refreshAuditStatusFromDB() {
+  async function refreshAuditStatusFromDB(isConnected = null) {
     try {
       const resp = await getJSON("/api/audits/latest?type=all");
 
@@ -173,8 +173,17 @@
       const m  = pick("meta");
       const ga = pick("ga4");
 
-      const setFromDoc = (row, doc) => {
-        if (!row || !doc) return;
+      const setFromDoc = (row, doc, key) => {
+        if (!row) return;
+
+        // 👇 Si en esta sesión NO está conectada esa fuente,
+        // no sobreescribimos el estado visual ("No conectado").
+        if (isConnected && isConnected[key] === false) {
+          return;
+        }
+
+        if (!doc) return;
+
         const notAuth = !!doc?.inputSnapshot?.notAuthorized;
 
         // Sin permisos → lo marcamos como error suave
@@ -196,9 +205,9 @@
         }
       };
 
-      setFromDoc(rows.google, g);
-      setFromDoc(rows.meta,   m);
-      setFromDoc(rows.ga4,    ga);
+      setFromDoc(rows.google, g, "google");
+      setFromDoc(rows.meta,   m, "meta");
+      setFromDoc(rows.ga4,    ga, "ga4");
       // Shopify no tiene auditoría en Mongo, se deja como estaba (visual)
     } catch (e) {
       console.warn("refreshAuditStatusFromDB error", e);
@@ -267,7 +276,7 @@
       if (isConnected.ga4)    toAudit.push("ga4");
 
       if (toAudit.length === 0) {
-        await refreshAuditStatusFromDB();
+        await refreshAuditStatusFromDB(isConnected);
         setBar(100);
         if (cyclerStop) cyclerStop();
         setText("No hay fuentes conectadas para auditar.");
@@ -304,7 +313,7 @@
       }
 
       // 5) Refrescar filas desde Mongo en base a las últimas auditorías
-      await refreshAuditStatusFromDB();
+      await refreshAuditStatusFromDB(isConnected);
 
       // Shopify: si estaba conectado, lo marcamos como listo
       if (rows.shopify && isConnected.shopify) {
