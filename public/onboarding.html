@@ -252,30 +252,47 @@
     </div>
   </div>
 
-  <!-- Modal selección de cuentas (máx 3 por plataforma) -->
+  <!-- Modal selección de cuentas -->
   <div id="account-select-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="asm-title">
     <div class="asm-overlay"></div>
     <div class="asm-panel">
       <h2 id="asm-title" class="asm-title">Selecciona tu cuenta</h2>
       <p class="asm-sub">
-        Elige con qué cuenta quieres trabajar en Adnova AI.
-        <strong>Máximo 1 por plataforma.</strong>
+        Elige con qué cuentas quieres trabajar en Adnova AI.
+        <strong>Puedes seleccionar 1 cuenta de Google Ads y 1 propiedad de Google Analytics, máximo 1 por cada una.</strong>
       </p>
 
       <div id="asm-hint"></div>
       <div id="asm-error" class="asm-error" style="display:none"></div>
 
+      <!-- META -->
       <h3 class="asm-section-title" id="asm-meta-title" style="display:none">
         Meta Business Manager
         <small>(<span id="asm-meta-count">0/1</span>)</small>
       </h3>
       <div id="asm-meta-list" class="asm-list"></div>
 
+      <!-- GOOGLE (wrapper general, mantenemos IDs existentes) -->
       <h3 class="asm-section-title" id="asm-google-title" style="display:none">
-        Google Analytics & Ads
+        Google
         <small>(<span id="asm-google-count">0/1</span>)</small>
       </h3>
-      <div id="asm-google-list" class="asm-list"></div>
+
+      <div id="asm-google-list">
+        <!-- Bloque: Google Ads -->
+        <h4 class="asm-section-title" id="asm-google-ads-title" style="display:none">
+          Google Ads
+          <small>(<span id="asm-google-ads-count">0/1</span>)</small>
+        </h4>
+        <div id="asm-google-ads-list" class="asm-list"></div>
+
+        <!-- Bloque: Google Analytics -->
+        <h4 class="asm-section-title" id="asm-google-ga-title" style="display:none">
+          Google Analytics (GA4)
+          <small>(<span id="asm-google-ga-count">0/1</span>)</small>
+        </h4>
+        <div id="asm-google-ga-list" class="asm-list"></div>
+      </div>
 
       <div class="asm-footer">
         <button id="asm-save" class="asm-btn asm-btn-primary" disabled>Guardar y continuar</button>

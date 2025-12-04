@@ -4,13 +4,13 @@
 const OpenAI = require('openai');
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Modelo por defecto (sobrescribible por ENV)
+
 const DEFAULT_MODEL =
   process.env.OPENAI_MODEL_AUDIT ||
   process.env.OPENAI_MODEL ||
   'gpt-4o-mini';
 
-// Este flag se queda por si en el futuro quisieras reactivar reglas determinísticas
+
 const USE_FALLBACK_RULES = process.env.AUDIT_FALLBACK_RULES === 'true';
 
 /* ------------------------------ helpers ------------------------------ */
@@ -41,7 +41,7 @@ const fmt = (n, d = 2) => {
 const safeNum = toNum;
 const safeDiv = (n, d) => (safeNum(d) ? safeNum(n) / safeNum(d) : 0);
 
-// normaliza estados de campaña (activo / pausado / desconocido)
+
 function normStatus(raw) {
   const s = String(raw || '').toLowerCase();
 
@@ -58,7 +58,7 @@ function normStatus(raw) {
   return 'unknown';
 }
 
-/** Dedupe por título + campaignRef.id + segmentRef.name para reducir ruido */
+
 function dedupeIssues(issues = []) {
   const seen = new Set();
   const out = [];
@@ -72,7 +72,7 @@ function dedupeIssues(issues = []) {
 }
 
 /* ---------------------- DIAGNOSTICS (pre-análisis) ------------------- */
-/* (los mantengo tal cual, solo ayudan a la IA) */
+
 
 function buildGoogleDiagnostics(snapshot = {}) {
   const byCampaign = Array.isArray(snapshot.byCampaign) ? snapshot.byCampaign : [];
@@ -330,14 +330,12 @@ function buildDiagnostics(source, snapshot) {
   return {};
 }
 
-/**
- * Snapshot reducido para mandar al LLM
- */
+
 function tinySnapshot(inputSnapshot, { maxChars = 60_000 } = {}) {
   try {
     const clone = JSON.parse(JSON.stringify(inputSnapshot || {}));
 
-    // byCampaign (cap + limpieza + estados)
+    
     if (Array.isArray(clone.byCampaign)) {
       const rawList = clone.byCampaign.map(c => {
         const statusNorm = normStatus(
@@ -396,7 +394,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 60_000 } = {}) {
       clone.byCampaign = ordered.slice(0, 60);
     }
 
-    // channels (GA4)
+    
     if (Array.isArray(clone.channels)) {
       clone.channels = clone.channels.slice(0, 60).map(ch => ({
 
@@ -408,7 +406,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 60_000 } = {}) {
       }));
     }
 
-    // byProperty (GA4 multi-prop)
+    
     if (Array.isArray(clone.byProperty)) {
       clone.byProperty = clone.byProperty.slice(0, 10).map(p => ({
         property:     p.property,
@@ -421,7 +419,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 60_000 } = {}) {
       }));
     }
 
-    // Lista simple de propiedades
+    
     if (Array.isArray(clone.properties)) {
       clone.properties = clone.properties.slice(0, 10).map(p => ({
         id:           p.id,
@@ -659,7 +657,7 @@ module.exports = async function generateAudit({
 
   const system = analytics ? SYSTEM_GA : SYSTEM_ADS(platformLabel);
 
-  // Metemos diagnostics al snapshot que ve la IA
+  
   const snapshotForLLM = {
     ...(inputSnapshot || {}),
     diagnostics: buildDiagnostics(type, inputSnapshot || {})
@@ -693,7 +691,7 @@ module.exports = async function generateAudit({
   try {
     parsed = await chatJSON({ system, user: userPrompt, model });
   } catch (e) {
-    // Aquí solo logueamos; NO inventamos issues
+    
     const code = e?.status || e?.response?.status;
     console.error('[LLM:ERROR] Falló definitivamente', code, e?.message);
   }
@@ -730,12 +728,12 @@ module.exports = async function generateAudit({
     }
   }
 
-  // Sin datos y sin issues → devolvemos vacío
+  
   if (!haveData && (!issues || issues.length === 0)) {
     return { summary: '', issues: [] };
   }
 
-  // dedupe + clamp
+  
   issues = dedupeIssues(issues);
   issues = cap(issues, maxFindings);
 
