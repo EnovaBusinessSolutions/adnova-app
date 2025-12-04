@@ -290,13 +290,12 @@ async function _openModal() {
         _notifyGoogleAdsSelection(ids);
       }
 
-      // GOOGLE GA4 → guardamos defaultProperty en backend
+      // GOOGLE GA4 → guardamos selección en backend (nuevo endpoint)
       if (ASM.visible.googleGa && ASM.needs.googleGa) {
         const ids = Array.from(ASM.sel.googleGa).slice(0, MAX_SELECT);
-        const propertyId = ids[0];
-        if (propertyId) {
+        if (ids.length) {
           tasks.push(
-            _post('/auth/google/default-property', { propertyId })
+            _post('/api/google/analytics/selection', { propertyIds: ids })
           );
         }
       }
@@ -353,7 +352,7 @@ async function _maybeOpenSelectionModal() {
         }));
 
         const count = ASM.data.meta.length;
-        ASM.needs.meta = count > 1;              // más de 1 → selector
+        ASM.needs.meta   = count > 1;   // más de 1 → selector
         ASM.visible.meta = ASM.needs.meta;
 
         // 0 o 1 → autoselección y no mostramos bloque
@@ -402,15 +401,16 @@ async function _maybeOpenSelectionModal() {
           }
         }
 
-        // AUTOPICK GA4 si solo hay 1 propiedad
+        // AUTOPICK GA4 si solo hay 1 propiedad → guardamos selección en backend
         if (!ASM.needs.googleGa && gaCount === 1) {
           const propertyId =
             ASM.data.googleGa[0].propertyId ||
             ASM.data.googleGa[0].property_id ||
             ASM.data.googleGa[0].name;
+
           if (propertyId) {
-            return _post('/auth/google/default-property', {
-              propertyId,
+            return _post('/api/google/analytics/selection', {
+              propertyIds: [propertyId],
             }).catch(() => {});
           }
         }

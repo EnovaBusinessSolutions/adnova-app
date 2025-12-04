@@ -24,7 +24,7 @@ try {
       gaProperties:      { type: Array, default: [] }, // [{propertyId, displayName, timeZone, currencyCode}]
       defaultPropertyId: { type: String, default: null },
 
-      // <<< NUEVO: selección persistida en el conector >>>
+      // selección de propiedades GA4
       selectedPropertyIds: { type: [String], default: [] },
     },
     { collection: 'googleaccounts' }
@@ -33,7 +33,7 @@ try {
 }
 
 /* =============== CONST & HELPERS NUEVOS =============== */
-const MAX_BY_RULE = 3; // máximo 3 propiedades si el usuario no ha seleccionado
+const MAX_BY_RULE = 3; // máximo propiedades antes de exigir selección
 
 function requireSession(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
@@ -46,23 +46,28 @@ function normalizePropertyId(p) {
   return /^\d+$/.test(id) ? id : '';
 }
 
-// --- NUEVO: lee selección desde el DOC; cae a legacy en User si no existe en el doc
+// --- lee selección desde el DOC; cae a legacy en User si no existe en el doc
 function selectedPropsFromDocOrUser(doc, req) {
-  const fromDoc = Array.isArray(doc?.selectedPropertyIds) && doc.selectedPropertyIds.length
-    ? doc.selectedPropertyIds
-    : [];
+  const fromDoc =
+    Array.isArray(doc?.selectedPropertyIds) && doc.selectedPropertyIds.length
+      ? doc.selectedPropertyIds
+      : [];
 
   if (fromDoc.length) return fromDoc;
 
-  // fallback legacy (temporal por retrocompat)
+  // preferencias antiguas (auditPropertyIds)
   const pref = req.user?.preferences?.googleAnalytics?.auditPropertyIds;
   if (Array.isArray(pref) && pref.length) {
-    return pref.map(v => `properties/${String(v).replace(/^properties\//,'')}`);
+    return pref.map(v => `properties/${String(v).replace(/^properties\//, '')}`);
   }
-  const legacy = req.user?.selectedGaProperties;
-  if (Array.isArray(legacy) && legacy.length) {
-    return legacy.map(v => `properties/${String(v).replace(/^properties\//,'')}`);
+
+  // LEGACY: en el usuario pueden existir selectedGAProperties o selectedGaProperties
+  const legacyArr =
+    (req.user && (req.user.selectedGAProperties || req.user.selectedGaProperties)) || [];
+  if (Array.isArray(legacyArr) && legacyArr.length) {
+    return legacyArr.map(v => `properties/${String(v).replace(/^properties\//, '')}`);
   }
+
   return [];
 }
 
@@ -79,21 +84,19 @@ function availablePropertyIdsFromDoc(doc) {
     .filter(Boolean);
 }
 
-/** Middleware: valida que la propiedad consultada esté permitida por la selección.
- *  Si hay >3 disponibles y no hay selección → precondición de selección.
- */
+/** Middleware: valida que la propiedad consultada esté permitida por la selección. */
 async function ensureGaPropertyAllowed(req, res, next) {
   try {
     const doc = await getGaAccountDoc(req.user._id);
     if (!doc) return res.status(401).json({ ok: false, error: 'NO_GOOGLEACCOUNT' });
 
     const available = availablePropertyIdsFromDoc(doc); // ["properties/123", ...]
-    // Si aún no hay cache de propiedades, dejamos que las rutas sigan su flujo (resync en /properties)
+    // Si aún no hay cache de propiedades, dejamos que las rutas sigan su flujo
     if (!available.length) return next();
 
     const selected = selectedPropsFromDocOrUser(doc, req);
 
-    // Precondición: >3 disponibles y sin selección explícita
+    // Precondición: >MAX_BY_RULE disponibles y sin selección explícita
     if (available.length > MAX_BY_RULE && selected.length === 0) {
       return res.status(400).json({
         ok: false,
@@ -105,9 +108,12 @@ async function ensureGaPropertyAllowed(req, res, next) {
     // Si hay selección, valida parámetro "property" (o "propertyId")
     if (selected.length > 0) {
       const raw = String(req.query.property || req.query.propertyId || '');
-      const normalized = raw.startsWith('properties/')
-        ? raw
-        : (normalizePropertyId(raw) ? `properties/${normalizePropertyId(raw)}` : '');
+      const normId = normalizePropertyId(raw);
+      const normalized =
+        raw.startsWith('properties/') ?
+          raw :
+          (normId ? `properties/${normId}` : '');
+
       if (!normalized || !selected.includes(normalized)) {
         return res.status(403).json({ ok: false, error: 'PROPERTY_NOT_ALLOWED' });
       }
@@ -115,6 +121,7 @@ async function ensureGaPropertyAllowed(req, res, next) {
 
     return next();
   } catch (e) {
+    console.error('ensureGaPropertyAllowed error:', e);
     return res.status(500).json({ ok: false, error: 'SELECTION_GUARD_FAILED' });
   }
 }
@@ -135,7 +142,7 @@ async function getOAuthClientForUser(userId) {
   const oAuth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET
-    // no fijamos redirectUri para evitar invalid_grant si el refresh se emitió con otra URI
+    // no fijamos redirectUri para evitar invalid_grant
   );
   oAuth2Client.setCredentials({
     refresh_token: ga.refreshToken,
@@ -146,7 +153,6 @@ async function getOAuthClientForUser(userId) {
   return oAuth2Client;
 }
 
-// admite last_30d y last_30_days, etc.
 function buildDateRange(preset = 'last_30_days', includeToday = true) {
   const map = {
     last_7d: 7, last_7_days: 7,
@@ -220,12 +226,20 @@ async function resyncAndPersistProperties(userId) {
   const doc = await GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] });
   if (doc) {
     doc.gaProperties = properties;
-    if (!doc.defaultPropertyId && properties[0]?.propertyId) doc.defaultPropertyId = properties[0].propertyId;
+    if (!doc.defaultPropertyId && properties[0]?.propertyId) {
+      doc.defaultPropertyId = properties[0].propertyId;
+    }
     await doc.save();
   } else {
     await GoogleAccount.findOneAndUpdate(
       { $or: [{ user: userId }, { userId }] },
-      { $set: { gaProperties: properties, defaultPropertyId: properties[0]?.propertyId || null, updatedAt: new Date() } },
+      {
+        $set: {
+          gaProperties: properties,
+          defaultPropertyId: properties[0]?.propertyId || null,
+          updatedAt: new Date()
+        }
+      },
       { upsert: true }
     );
   }
@@ -240,6 +254,7 @@ async function gaDataRunReport({ auth, property, body }) {
 }
 
 /* ======================= RUTAS (RELATIVAS) ======================= */
+
 /** GET /api/google/analytics/properties */
 router.get('/properties', requireSession, async (req, res) => {
   try {
@@ -265,7 +280,7 @@ router.get('/properties', requireSession, async (req, res) => {
     const availableIds = properties.map(p => p.propertyId);
     const selected = selectedPropsFromDocOrUser(doc, req);
 
-    // si hay >3 disponibles y no hay selección → UI debe forzar selección
+    // si hay >MAX_BY_RULE disponibles y no hay selección → UI debe forzar selección
     if (availableIds.length > MAX_BY_RULE && selected.length === 0) {
       return res.json({
         ok: false,
@@ -293,12 +308,13 @@ router.get('/properties', requireSession, async (req, res) => {
 
     res.json({ ok: true, properties, defaultPropertyId });
   } catch (e) {
+    console.error('GA /properties error:', e);
     res.status(500).json({ ok: false, error: String(e) });
   }
 });
 
-/** POST /api/google/analytics/properties/selection  (guardar selección en el conector) */
-router.post('/properties/selection', requireSession, express.json(), async (req, res) => {
+/* ==== HANDLER COMPARTIDO PARA GUARDAR SELECCIÓN DE GA4 ==== */
+async function handleGaSelection(req, res) {
   try {
     const { propertyIds } = req.body; // ["properties/123", "123", ...]
     if (!Array.isArray(propertyIds)) {
@@ -307,39 +323,77 @@ router.post('/properties/selection', requireSession, express.json(), async (req,
 
     const doc = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
-    }).select('_id gaProperties defaultPropertyId');
+    }).select('_id gaProperties defaultPropertyId selectedPropertyIds');
 
     if (!doc) return res.status(404).json({ ok: false, error: 'NO_GOOGLEACCOUNT' });
 
     const available = new Set((doc.gaProperties || []).map(p => p.propertyId));
-    const selected = Array.from(new Set(
-      propertyIds.map(p => {
-        const s = String(p || '').replace(/^properties\//,'');
-        return /^\d+$/.test(s) ? `properties/${s}` : null;
-      }).filter(Boolean)
-    )).filter(pid => available.has(pid));
+    const selected = Array.from(
+      new Set(
+        propertyIds
+          .map(p => {
+            const s = String(p || '').replace(/^properties\//, '');
+            return /^\d+$/.test(s) ? `properties/${s}` : null;
+          })
+          .filter(Boolean)
+      )
+    ).filter(pid => available.has(pid));
 
     if (!selected.length) {
       return res.status(400).json({ ok: false, error: 'NO_VALID_PROPERTIES' });
     }
 
-    // guarda en el conector
-    await GoogleAccount.updateOne({ _id: doc._id }, { $set: { selectedPropertyIds: selected } });
-
-    // espejo legacy opcional (para UI vieja)
-    await User.updateOne({ _id: req.user._id }, { $set: { selectedGaProperties: selected } });
-
-    // ajusta default si quedó fuera
+    // siguiente default: si el actual no está, usamos el primero seleccionado
     let nextDefault = doc.defaultPropertyId;
-    if (!nextDefault || !selected.includes(nextDefault)) nextDefault = selected[0];
-    await GoogleAccount.updateOne({ _id: doc._id }, { $set: { defaultPropertyId: nextDefault } });
+    if (!nextDefault || !selected.includes(nextDefault)) {
+      nextDefault = selected[0];
+    }
+
+    // guarda en el conector
+    await GoogleAccount.updateOne(
+      { _id: doc._id },
+      {
+        $set: {
+          selectedPropertyIds: selected,
+          defaultPropertyId: nextDefault
+        }
+      }
+    );
+
+    // espejo en el usuario (campo real de tu colección: selectedGAProperties)
+    await User.updateOne(
+      { _id: req.user._id },
+      {
+        $set: {
+          selectedGAProperties: selected,
+          // opcional: mantener también la variante camelCase antigua
+          selectedGaProperties: selected
+        }
+      }
+    );
 
     return res.json({ ok: true, selected, defaultPropertyId: nextDefault });
   } catch (e) {
     console.error('GA properties/selection error:', e);
     return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
   }
-});
+}
+
+/** POST /api/google/analytics/properties/selection  (usado por algunas UIs) */
+router.post(
+  '/properties/selection',
+  requireSession,
+  express.json(),
+  handleGaSelection
+);
+
+/** POST /api/google/analytics/selection  (alias para el onboarding) */
+router.post(
+  '/selection',
+  requireSession,
+  express.json(),
+  handleGaSelection
+);
 
 /** GET /api/google/analytics/overview */
 router.get('/overview', requireSession, ensureGaPropertyAllowed, async (req, res) => {
