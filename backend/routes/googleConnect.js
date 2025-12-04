@@ -686,4 +686,32 @@ router.post(
   }
 );
 
+/* =========================
+ * Guardar defaultPropertyId (GA4)
+ * ========================= */
+router.post('/default-property', requireSession, express.json(), async (req, res) => {
+  try {
+    const pid = String(req.body?.propertyId || '').trim();
+    if (!pid) {
+      return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
+    }
+
+    await GoogleAccount.findOneAndUpdate(
+      { $or: [{ user: req.user._id }, { userId: req.user._id }] },
+      {
+        $set: {
+          defaultPropertyId: pid,
+          updatedAt: new Date(),
+        },
+      },
+      { upsert: true }
+    );
+
+    res.json({ ok: true, defaultPropertyId: pid });
+  } catch (err) {
+    console.error('[googleConnect] default-property error:', err);
+    res.status(500).json({ ok: false, error: 'SAVE_DEFAULT_PROPERTY_ERROR' });
+  }
+});
+
 module.exports = router;

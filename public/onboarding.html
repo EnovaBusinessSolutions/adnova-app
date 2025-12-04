@@ -93,7 +93,7 @@
         </p>
 
         <div class="connection-cards">
-          <!-- Shopify (REACTIVADO) -->
+          <!-- Shopify -->
           <div class="connection-card">
             <div class="connection-details">
               <div class="connection-icon">
@@ -116,7 +116,7 @@
             </div>
           </div>
 
-          <!-- Paso de dominio Shopify (lo controlaremos desde onboarding.js) -->
+          <!-- Paso de dominio Shopify -->
           <div id="shopify-domain-step" class="shop-step step--hidden">
             <label for="shop-domain-input">Escribe el dominio de tu tienda:</label>
             <div class="shop-input-row">
@@ -182,7 +182,7 @@
               </div>
             </div>
 
-            <!-- Estado / selector (tu JS lo pinta) -->
+            <!-- Estado / selector (lo pinta JS) -->
             <div id="ga-ads-status" class="notice hidden" aria-live="polite"></div>
             <div id="ga-ads-accounts" class="hidden"></div>
           </div>
@@ -272,27 +272,19 @@
       </h3>
       <div id="asm-meta-list" class="asm-list"></div>
 
-      <!-- GOOGLE (wrapper general, mantenemos IDs existentes) -->
-      <h3 class="asm-section-title" id="asm-google-title" style="display:none">
-        Google
-        <small>(<span id="asm-google-count">0/1</span>)</small>
+      <!-- GOOGLE ADS -->
+      <h3 class="asm-section-title" id="asm-google-ads-title" style="display:none">
+        Google Ads
+        <small>(<span id="asm-google-ads-count">0/1</span>)</small>
       </h3>
+      <div id="asm-google-ads-list" class="asm-list"></div>
 
-      <div id="asm-google-list">
-        <!-- Bloque: Google Ads -->
-        <h4 class="asm-section-title" id="asm-google-ads-title" style="display:none">
-          Google Ads
-          <small>(<span id="asm-google-ads-count">0/1</span>)</small>
-        </h4>
-        <div id="asm-google-ads-list" class="asm-list"></div>
-
-        <!-- Bloque: Google Analytics -->
-        <h4 class="asm-section-title" id="asm-google-ga-title" style="display:none">
-          Google Analytics (GA4)
-          <small>(<span id="asm-google-ga-count">0/1</span>)</small>
-        </h4>
-        <div id="asm-google-ga-list" class="asm-list"></div>
-      </div>
+      <!-- GOOGLE ANALYTICS (GA4) -->
+      <h3 class="asm-section-title" id="asm-google-ga-title" style="display:none">
+        Google Analytics (GA4)
+        <small>(<span id="asm-google-ga-count">0/1</span>)</small>
+      </h3>
+      <div id="asm-google-ga-list" class="asm-list"></div>
 
       <div class="asm-footer">
         <button id="asm-save" class="asm-btn asm-btn-primary" disabled>Guardar y continuar</button>
