@@ -335,7 +335,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 60_000 } = {}) {
   try {
     const clone = JSON.parse(JSON.stringify(inputSnapshot || {}));
 
-    
+    // byCampaign reducido
     if (Array.isArray(clone.byCampaign)) {
       const rawList = clone.byCampaign.map(c => {
         const statusNorm = normStatus(
@@ -394,7 +394,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 60_000 } = {}) {
       clone.byCampaign = ordered.slice(0, 60);
     }
 
-    
+    // channels reducido (GA4)
     if (Array.isArray(clone.channels)) {
       clone.channels = clone.channels.slice(0, 60).map(ch => ({
 
@@ -406,7 +406,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 60_000 } = {}) {
       }));
     }
 
-    
+    // byProperty reducido (GA4 multi-property)
     if (Array.isArray(clone.byProperty)) {
       clone.byProperty = clone.byProperty.slice(0, 10).map(p => ({
         property:     p.property,
@@ -419,7 +419,7 @@ function tinySnapshot(inputSnapshot, { maxChars = 60_000 } = {}) {
       }));
     }
 
-    
+    // properties reducido
     if (Array.isArray(clone.properties)) {
       clone.properties = clone.properties.slice(0, 10).map(p => ({
         id:           p.id,
@@ -490,24 +490,61 @@ function buildHistoryContext({ type, previousAudit, trend }) {
 
 /* ----------------------------- prompts ----------------------------- */
 const SYSTEM_ADS = (platform) => `
-Eres un auditor senior de ${platform} enfocado en performance marketing.
-Tu estilo es muy conciso, profesional y fácil de leer: párrafos cortos y sin relleno.
-Objetivo: detectar los 3–5 puntos críticos de mayor impacto y las mejores oportunidades accionables.
-Debes priorizar campañas ACTIVAS; las campañas pausadas solo sirven como contexto histórico.
-- El "summary" debe ser una síntesis ejecutiva breve (máximo 3–5 frases).
-- Cada "issue" debe ser muy concreto: evidencia y recomendación en un total de 2–4 frases.
-Evita repetir la misma idea con diferentes palabras o hacer textos demasiado largos.
-Responde SIEMPRE en JSON válido (sin texto extra). No inventes datos que no estén en el snapshot.
+Eres un consultor senior de performance marketing especializado en ${platform}.
+Tu rol es auditar campañas con mentalidad de negocio: priorizas rentabilidad (ROAS), eficiencia (CPA/CPC) y volumen de conversiones por encima de métricas de vanidad.
+Estilo: extremadamente claro y profesional, sin frases de relleno ni explicaciones obvias.
+
+Objetivo principal:
+- Detectar y priorizar los 3–5 problemas y oportunidades de mayor impacto en resultados.
+- Ayudar al anunciante a tomar decisiones concretas sobre presupuesto, pujas, segmentación y creatividades.
+
+Instrucciones generales:
+- Analiza primero las campañas ACTIVAS; las pausadas o finalizadas solo sirven como contexto histórico.
+- No te limites a describir métricas: explica brevemente qué implican para el negocio (pérdida de ventas, coste desperdiciado, oportunidades de escalado, etc.).
+- Utiliza siempre números específicos del snapshot (gasto, impresiones, CTR, conversiones, ROAS, CPA, etc.) en la evidencia de cada issue.
+- Si el snapshot incluye un objeto "diagnostics", úsalo como radar inicial para focalizarte en:
+  - campañas con CPA alto o ROAS bajo,
+  - campañas/adsets con CTR muy bajo,
+  - gasto significativo sin conversiones,
+  - problemas de estructura (muchas campañas pequeñas con poco volumen).
+- Evita repetir la misma idea en varios issues: agrupa hallazgos similares en un solo issue fuerte y bien justificado.
+
+Formato de salida:
+- "summary": síntesis ejecutiva (máximo 3–5 frases) pensada para un director de marketing.
+- Cada elemento de "issues" combina:
+  - evidencia numérica concreta, y
+  - recomendaciones tácticas muy accionables (2–4 frases).
+- Tono siempre en español neutro, directo y profesional.
+- Devuelve exclusivamente JSON válido, sin texto adicional antes o después.
+- Nunca inventes campañas, métricas ni estructuras que no existan en el snapshot.
 `.trim();
 
 const SYSTEM_GA = `
-Eres un auditor senior de Google Analytics 4 especializado en analítica de negocio y atribución.
-Tu estilo es muy conciso, profesional y fácil de leer: párrafos cortos y directos.
-Objetivo: identificar los 3–5 hallazgos clave sobre canales, embudos y dispositivos que más impactan el negocio.
-- El "summary" debe ser una síntesis ejecutiva breve (máximo 3–5 frases).
-- Cada "issue" debe ser muy concreto: evidencia y recomendación en un total de 2–4 frases.
-Evita repetir la misma idea con diferentes palabras o hacer textos demasiado largos.
-Responde SIEMPRE en JSON válido (sin texto extra). No inventes datos que no estén en el snapshot.
+Eres un consultor senior de analítica digital especializado en Google Analytics 4 (GA4).
+Tu rol es traducir datos en decisiones de negocio: qué canales, páginas y dispositivos están impulsando o frenando resultados.
+
+Estilo:
+- Ejecutivo, claro y directo.
+- Sin jerga innecesaria y sin texto de relleno.
+- Siempre orientado a responder "¿qué está pasando?" y "¿qué deberíamos hacer?".
+
+Objetivo:
+- Identificar los 3–5 hallazgos más importantes sobre:
+  - rendimiento de canales,
+  - calidad y comportamiento del tráfico,
+  - páginas de aterrizaje,
+  - diferencias relevantes entre dispositivos.
+- Responder a preguntas como:
+  - ¿dónde se está perdiendo negocio?,
+  - ¿qué canal/página/dispositivo es la mejor palanca de crecimiento?,
+  - ¿qué experimentos o correcciones deberían priorizarse?
+
+Formato de salida:
+- "summary": síntesis ejecutiva (3–5 frases) que un director pueda leer en menos de un minuto.
+- Cada "issue" debe incluir evidencia numérica muy concreta + 2–4 recomendaciones accionables (cambios, pruebas A/B, ajustes de canal, etc.).
+- Tono en español neutro, directo y profesional.
+- Devuelve exclusivamente JSON válido, sin texto adicional antes o después.
+- Nunca inventes métricas, canales ni segmentos que no existan en el snapshot.
 `.trim();
 
 const SCHEMA_ADS = `
@@ -548,14 +585,30 @@ const SCHEMA_GA = `
 
 function makeUserPrompt({ snapshotStr, historyStr, maxFindings, minFindings, isAnalytics }) {
   const adsExtras = `
-- Cada issue DEBE incluir accountRef ({ id, name }) y campaignRef ({ id, name }).
-- Usa el campo "status" de las campañas (active/paused/unknown) para priorizar.
+- Cada issue DEBE incluir:
+  - accountRef con { id, name } representando la cuenta publicitaria.
+  - campaignRef con { id, name } representando la campaña (o conjunto de anuncios más relevante).
+  - metrics con un pequeño objeto que resuma las métricas clave que cites en evidence (por ejemplo: { "spend": número, "conversions": número, "roas": número, "cpa": número }).
+- Usa el campo "status" de las campañas (active/paused/unknown) para priorizar: céntrate en lo que hoy está gastando dinero.
+- Utiliza, cuando existan, los bloques de "diagnostics" (por ejemplo: worstCpaCampaigns, lowCtrCampaigns, highSpendNoConvAdsets, limitedLearning, structureIssues) como candidatos prioritarios para construir issues de alto impacto.
+- La severidad ("severity") debe reflejar el riesgo/impacto real para el negocio:
+  - "alta" para problemas que puedan destruir ROAS, disparar CPA o quemar presupuesto de forma significativa.
+  - "media" para oportunidades relevantes pero no críticas.
+  - "baja" para ajustes finos o mejoras marginales.
+- El campo "area" clasifica el origen principal del problema: elige la categoría más representativa (por ejemplo, "budget" si el principal problema es la asignación de inversión, "bidding" si es estrategia de puja, "creative" si es calidad de anuncios, etc.).
   `.trim();
 
   const gaExtras = `
 - Cada issue DEBE incluir:
-  - accountRef con { name, property }
-  - segmentRef con el canal (por ejemplo "Organic Search", "Paid Social", etc.).
+  - accountRef con { name, property } para indicar la propiedad de GA4 analizada.
+  - segmentRef con el canal o segmento principal afectado (por ejemplo "Organic Search", "Paid Social", "Direct", "Mobile", etc.).
+  - metrics con un pequeño objeto que resuma las métricas clave citadas en evidence (por ejemplo: { "sessions": número, "conversions": número, "convRate": número, "revenue": número }).
+- Usa los bloques de "diagnostics.ga4" cuando existan, en especial:
+  - lowConvChannels para detectar canales con mucho tráfico pero poca conversión.
+  - badLandingPages para identificar páginas de destino problemáticas.
+  - deviceGaps para resaltar diferencias fuertes entre dispositivos.
+- La severidad ("severity") debe reflejar el impacto potencial en ingresos, leads o conversiones.
+- El campo "area" clasifica si el problema es de configuración (setup/tracking), calidad de tráfico (performance), experiencia en página (creative/landing) o de asignación de presupuesto/canales (budget/performance).
   `.trim();
 
   const historyBlock = historyStr
@@ -566,30 +619,32 @@ ${historyStr}
     : '';
 
   return `
-CONSIGNA
-- Devuelve JSON válido EXACTAMENTE con: { "summary": string, "issues": Issue[] }.
-- Genera entre ${minFindings} y ${maxFindings} issues, pero prioriza 3–5 issues de mayor impacto.
-  Si hay muchos problemas similares, agrúpalos en un solo issue temático en lugar de repetirlos.
-- Si los datos son muy limitados, genera solo 1–2 issues sólidos.
-- Idioma: español neutro, directo y claro.
+CONSIGNA GENERAL
+- Devuelve JSON válido EXACTAMENTE con la forma: { "summary": string, "issues": Issue[] }.
+- Genera entre ${minFindings} y ${maxFindings} issues, priorizando SIEMPRE entre 3 y 5 issues de mayor impacto cuando haya datos suficientes.
+- Si los datos son muy limitados (casi sin impresiones/sesiones ni conversions), puedes devolver solo 1–2 issues muy sólidos.
+- Si en el snapshot existen campañas/canales con gasto, impresiones o sesiones significativas, NO está permitido devolver una lista vacía de issues: debes generar al menos ${minFindings} issues.
+- Idioma: español neutro, directo y claro, como un consultor senior hablando con un CMO.
 - Escribe en párrafos cortos (2–4 frases por issue como máximo) y evita texto redundante.
-- Prohibido inventar métricas o campañas/canales no presentes en el snapshot.
+- Prohibido inventar métricas, campañas, canales o propiedades que no estén en el snapshot.
 - El snapshot puede incluir un objeto "diagnostics" con análisis previos
   (peores campañas por CPA, CTR bajo, landings débiles, gaps entre dispositivos, etc.).
-  Úsalo como punto de partida para priorizar hallazgos.
+  Úsalo como punto de partida para priorizar hallazgos y no ignores esa información.
 
+REQUISITOS POR ISSUE
 - Cada "issue" DEBE incluir:
   ${isAnalytics ? gaExtras : adsExtras}
-  - evidence con métricas textuales del snapshot (máximo 2–3 frases muy concretas)
-  - recommendation con 2–4 pasos accionables, escritos de forma breve y clara
-  - estimatedImpact coherente con la evidencia
+  - "evidence": un texto muy concreto con las métricas clave (máximo 2–3 frases).
+  - "recommendation": 2–4 pasos accionables y específicos, no genéricos ("mejorar creativos" a secas no es suficiente).
+  - "estimatedImpact": "alto" | "medio" | "bajo", coherente con la intensidad del problema y el volumen afectado.
+- Ordena los issues de mayor a menor impacto percibido.
 
 ${historyBlock ? historyBlock + '\n' : ''}
 
 DATOS (snapshot reducido)
 ${snapshotStr}
 
-FORMATO JSON
+FORMATO JSON ESPERADO
 ${isAnalytics ? SCHEMA_GA : SCHEMA_ADS}
 `.trim();
 }
@@ -657,7 +712,7 @@ module.exports = async function generateAudit({
 
   const system = analytics ? SYSTEM_GA : SYSTEM_ADS(platformLabel);
 
-  
+  // snapshot enviado al LLM (ya reducido + diagnostics)
   const snapshotForLLM = {
     ...(inputSnapshot || {}),
     diagnostics: buildDiagnostics(type, inputSnapshot || {})
@@ -691,7 +746,7 @@ module.exports = async function generateAudit({
   try {
     parsed = await chatJSON({ system, user: userPrompt, model });
   } catch (e) {
-    
+    // Importante: no rompemos el flujo aunque la IA falle; devolvemos sin issues.
     const code = e?.status || e?.response?.status;
     console.error('[LLM:ERROR] Falló definitivamente', code, e?.message);
   }
@@ -728,12 +783,12 @@ module.exports = async function generateAudit({
     }
   }
 
-  
+  // Si no hay datos y tampoco issues, no fingimos auditoría.
   if (!haveData && (!issues || issues.length === 0)) {
     return { summary: '', issues: [] };
   }
 
-  
+  // Limpieza final: dedupe + cap
   issues = dedupeIssues(issues);
   issues = cap(issues, maxFindings);
 
