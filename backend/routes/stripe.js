@@ -59,14 +59,14 @@ function successUrl() {
     ? process.env.STRIPE_SUCCESS_URL
     : APP_URL && SUCCESS_PATH
     ? `${APP_URL}${SUCCESS_PATH}`
-    : 'https://ai.adnova.digital/plans/success';
+    : 'https://adray.ai/plans/success';
 }
 function cancelUrl() {
   return process.env.STRIPE_CANCEL_URL
     ? process.env.STRIPE_CANCEL_URL
     : APP_URL && CANCEL_PATH
     ? `${APP_URL}${CANCEL_PATH}`
-    : 'https://ai.adnova.digital/plans/cancel.html';
+    : 'https://adray.ai/plans/cancel.html';
 }
 
 // 🔐 Auth más tolerante: acepta req.user o req.isAuthenticated()
@@ -433,7 +433,7 @@ router.post('/portal', ensureAuth, async (req, res) => {
       return res.status(400).json({ error: 'Usuario sin stripeCustomerId' });
     }
 
-    const returnUrl = `${process.env.PUBLIC_BASE_URL || 'https://ai.adnova.digital'}/plans/cancel.html`;
+    const returnUrl = `${process.env.PUBLIC_BASE_URL || 'https://adray.ai'}/plans/cancel.html`;
 
     const session = await stripe.billingPortal.sessions.create({
       customer: user.stripeCustomerId,

@@ -62,7 +62,7 @@ app.use(compression());
  * CORS
  * ========================= */
 const ALLOWED_ORIGINS = [
-  'https://ai.adnova.digital',
+  'https://adray.ai',
   'https://admin.shopify.com',
   /^https?:\/\/[^/]+\.myshopify\.com$/i,
   'http://localhost:3000',
@@ -417,11 +417,11 @@ app.post('/api/register', async (req, res) => {
 <p style="margin:0 0 20px;font-size:16px;line-height:24px">Tu cuenta se creó con éxito.</p>
 <p style="margin:0 0 28px;font-size:16px;line-height:24px">Haz clic en el botón para iniciar sesión:</p>
 <table role="presentation" align="center" cellpadding="0" cellspacing="0"><tr><td>
-<a href="https://ai.adnova.digital/login" class="btn" style="background:#6d3dfc;border-radius:8px;padding:14px 36px;font-size:16px;font-weight:600;color:#fff;text-decoration:none;display:inline-block;">Iniciar sesión</a>
+<a href="https://adray.ai/login" class="btn" style="background:#6d3dfc;border-radius:8px;padding:14px 36px;font-size:16px;font-weight:600;color:#fff;text-decoration:none;display:inline-block;">Iniciar sesión</a>
 </td></tr></table>
 <p style="margin:32px 0 0;font-size:14px;line-height:20px;color:#c4c4c4">Si no solicitaste esta cuenta, ignora este correo.</p>
 </td></tr>
-<tr><td style="background:#100c1e;padding:18px 40px;border-radius:0 0 16px 16px;text-align:center;font-size:12px;line-height:18px;color:#777">© {{YEAR}} Adnova AI · <a href="https://ai.adnova.digital/politica.html" style="color:#777;text-decoration:underline">Política de privacidad</a></td></tr>
+<tr><td style="background:#100c1e;padding:18px 40px;border-radius:0 0 16px 16px;text-align:center;font-size:12px;line-height:18px;color:#777">© {{YEAR}} Adnova AI · <a href="https://adray.ai/politica.html" style="color:#777;text-decoration:underline">Política de privacidad</a></td></tr>
 </table></td></tr></table></body></html>`;
         html = html.replace('{{YEAR}}', new Date().getFullYear());
 
@@ -430,7 +430,7 @@ app.post('/api/register', async (req, res) => {
             from: `"Adnova AI" <${FROM}>`,
             to: email,
             subject: 'Activa tu cuenta de Adnova AI',
-            text: 'Tu cuenta se creó con éxito. Ingresa en https://ai.adnova.digital/login',
+            text: 'Tu cuenta se creó con éxito. Ingresa en https://adray.ai/login',
             html,
             replyTo: FROM,
             headers: {
@@ -481,7 +481,7 @@ app.post('/api/forgot-password', async (req, res) => {
     user.resetPasswordExpires = expira;
     await user.save();
 
-    const resetUrl = `https://ai.adnova.digital/reset-password.html?token=${token}`;
+    const resetUrl = `https://adray.ai/reset-password.html?token=${token}`;
 
     const html = `<!doctype html>
 <html lang="es"><head><meta charset="utf-8">

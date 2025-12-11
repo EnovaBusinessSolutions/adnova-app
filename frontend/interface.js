@@ -31,7 +31,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       sessionStorage.setItem('sessionToken', sessionToken);
       localStorage.setItem('sessionToken', sessionToken); 
 
-      fetch('https://ai.adnova.digital/api/secure/ping', {
+      fetch('https://adray.ai/api/secure/ping', {
         headers: { Authorization: `Bearer ${sessionToken}` },
         credentials: 'include'
       });
@@ -58,7 +58,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (btn) {
     btn.addEventListener('click', () => {
-      window.open('https://ai.adnova.digital/', '_blank');
+      window.open('https://adray.ai/', '_blank');
     });
   }
 

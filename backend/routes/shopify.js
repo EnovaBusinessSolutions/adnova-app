@@ -21,7 +21,7 @@ const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
 // Redirect específico para el flujo SAAS (NO el del conector)
 const SAAS_REDIRECT_URI =
   process.env.SHOPIFY_SAAS_REDIRECT_URI ||
-  'https://ai.adnova.digital/api/shopify/callback';
+  'https://adray.ai/api/shopify/callback';
 
 if (!SHOPIFY_API_KEY || !SHOPIFY_API_SECRET) {
   console.warn(

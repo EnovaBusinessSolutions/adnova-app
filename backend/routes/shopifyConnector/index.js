@@ -16,7 +16,7 @@ const {
 
 // Fallback sensato para redirect_uri (debe coincidir con tu configuración en Shopify)
 const REDIRECT_URI =
-  SHOPIFY_REDIRECT_URI || 'https://ai.adnova.digital/connector/auth/callback';
+  SHOPIFY_REDIRECT_URI || 'https://adray.ai/connector/auth/callback';
 
 // --- Pequeña verificación de entorno (evitamos crashes raros) ---
 if (!SHOPIFY_API_KEY || !SHOPIFY_API_SECRET) {
