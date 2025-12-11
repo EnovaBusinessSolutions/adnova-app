@@ -90,4 +90,3 @@ ngrok http 3000
 
 # instalar plugin en WP y poner la URL de ngrok como server URL
 ```
-
