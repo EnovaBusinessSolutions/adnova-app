@@ -16,7 +16,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Parámetros potenciales de Shopify embebido
   const shopFromQuery = qs.get('shop');
-  const hostFromQuery = qs.get('host'); // (ya no lo usamos, pero lo dejamos por compatibilidad)
+  const hostFromQuery = qs.get('host'); // compat (no se usa)
 
   // -------------------------------------------------
   // DOM
@@ -57,6 +57,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // --- GUARD ANTI-DUPLICADO PARA ensureGoogleAccountsUI ---
   let GA_ENSURE_INFLIGHT = null;
+
+  // --- GUARD ANTI-DUPLICADO PARA selection ---
+  const GOOGLE_SELECTION_LOCK = {
+    inflight: false,
+    pendingEmitSelectionSaved: false, // 👈 cola para emitir cuando termine inflight
+    lastReqId: null,
+    lastIdsKey: null,
+  };
 
   // -------------------------------------------------
   // Utils UI
@@ -106,14 +114,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Estado de conectividad (sessionStorage + flags)
   // -------------------------------------------------
   function getConnectivityState() {
-    // Shopify se considera conectado únicamente si:
-    // - El backend lo indica (flag) o
-    // - Hemos marcado explícitamente shopifyConnected en esta sesión.
     const shopConnected =
       flagShopify?.textContent.trim() === 'true' ||
       sessionStorage.getItem('shopifyConnected') === 'true';
 
-    // Google / Meta: sólo se activan cuando llamamos markGoogleConnected / markMetaConnected
     const googleConnected = sessionStorage.getItem('googleConnected') === 'true';
     const metaConnected   = sessionStorage.getItem('metaConnected') === 'true';
 
@@ -132,8 +136,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     continueBtn.style.opacity       = anyConnected ? '1'    : '0.6';
   }
 
-  // Reacciona si otro script ajusta sessionStorage
+  // -------------------------------------------------
+  // Dispatcher único (anti-duplicados + respeta inflight)
+  // -------------------------------------------------
+  let _selSavedDebounceT = null;
+  let _selSavedLastAt = 0;
+
+  function dispatchAccountsSelectionSaved(reason = '') {
+    // Si Google está guardando selección, encolamos y salimos
+    if (GOOGLE_SELECTION_LOCK.inflight) {
+      GOOGLE_SELECTION_LOCK.pendingEmitSelectionSaved = true;
+      return;
+    }
+
+    // Debounce + throttle ligero (evita doble disparo por flows distintos)
+    const now = Date.now();
+    if (now - _selSavedLastAt < 250) return;
+
+    if (_selSavedDebounceT) return;
+    _selSavedDebounceT = setTimeout(() => {
+      _selSavedDebounceT = null;
+      _selSavedLastAt = Date.now();
+      try {
+        window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved', {
+          detail: { reason: reason || null, ts: _selSavedLastAt }
+        }));
+      } catch {}
+    }, 0);
+  }
+
+  // Reacciona si otro script dispara este evento (ej. modal)
   window.addEventListener('adnova:accounts-selection-saved', habilitarContinue);
+
+  // Nota: "storage" no dispara en la misma pestaña; lo dejamos por compat multi-tab.
   window.addEventListener('storage', (e) => {
     if (!e) return;
     if (e.key === 'metaConnected' || e.key === 'googleConnected' || e.key === 'shopifyConnected') {
@@ -156,6 +191,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       sessionStorage.setItem('shopifyConnected', 'true');
       habilitarContinue();
       if (domainStep) domainStep.classList.add('step--hidden');
+      dispatchAccountsSelectionSaved('shopify-connected');
       return;
     }
 
@@ -168,19 +204,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       sessionStorage.setItem('shopifyConnected', 'true');
       habilitarContinue();
       if (domainStep) domainStep.classList.add('step--hidden');
+      dispatchAccountsSelectionSaved('shopify-connected');
     } catch (err) {
       console.error('Error obteniendo shop/accessToken:', err);
     }
   };
 
-  // Si el servidor ya marcó que Shopify está conectado
   if (flagShopify?.textContent.trim() === 'true') await pintarShopifyConectado();
 
-  // Click en "Conectar" → mostrar el paso de dominio (sin redirigir)
   connectShopifyBtn?.addEventListener('click', () => {
     if (domainStep) domainStep.classList.remove('step--hidden');
 
-    // Prefill con lo que sepamos
     const prefill =
       shopFromQuery ||
       sessionStorage.getItem('shop') ||
@@ -192,14 +226,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     domainInput?.focus();
   });
 
-  // Enviar dominio → hace match y marca conectado
   domainSend?.addEventListener('click', async () => {
     const shop = domainInput?.value?.trim().toLowerCase();
     if (!shop || !shop.endsWith('.myshopify.com')) {
       return alert('Dominio inválido. Usa el formato mitienda.myshopify.com');
     }
 
-    // Guardamos por si se recarga la página
     sessionStorage.setItem('shopDomain', shop);
 
     try {
@@ -209,7 +241,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
 
       if (data.ok) {
-        // Si el backend devolviera shop/accessToken, también los guardamos
         if (data.shop)        sessionStorage.setItem('shop', data.shop);
         if (data.accessToken) sessionStorage.setItem('accessToken', data.accessToken);
 
@@ -232,7 +263,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     sessionStorage.setItem('metaConnected', 'true');
     if (objective) sessionStorage.setItem('metaObjective', objective);
     habilitarContinue();
-    window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved'));
+    dispatchAccountsSelectionSaved('meta-connected');
   };
 
   async function fetchMetaStatus() {
@@ -312,8 +343,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     sessionStorage.setItem('googleConnected', 'true');
     if (objective) sessionStorage.setItem('googleObjective', objective);
     habilitarContinue();
-    window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved'));
+    dispatchAccountsSelectionSaved('google-connected');
   };
+
+  function ackGoogleAdsSelection({ reqId, ok, error, ids }) {
+    try {
+      window.dispatchEvent(new CustomEvent('adnova:google-ads-selection-saved', {
+        detail: {
+          reqId: reqId || null,
+          ok: !!ok,
+          error: error || null,
+          accountIds: Array.isArray(ids) ? ids : null,
+        }
+      }));
+    } catch (e) {
+      console.warn('ACK dispatch failed', e);
+    }
+  }
 
   async function runGoogleSelfTest(optionalCid = null) {
     try {
@@ -322,11 +368,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         : `/api/google/ads/insights/selftest`;
       const r = await apiFetch(url);
       if (r?.ok) {
-        // Todo bien: pudimos leer impresiones/clics aunque sean 0.
         setStatus('');
         return true;
       }
-
       setStatus('No pudimos validar el acceso a tu cuenta de Google Ads. Revisa que tu usuario tenga permisos en esa cuenta e inténtalo nuevamente.');
       return false;
     } catch (e) {
@@ -341,8 +385,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     GA_ENSURE_INFLIGHT = (async () => {
       try {
-        // Antes: "Buscando tus cuentas de Google Ads…"
-        // Ahora no mostramos mensaje de carga.
         setStatus('');
         hide(gaAccountsMount);
 
@@ -366,19 +408,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         if (requiredSelection) {
-         // Más de 1 cuenta: abrimos selector (ASM) pero el límite es 1
           setStatus('Selecciona 1 cuenta de Google Ads para continuar.');
-           show(gaAccountsMount);
+          show(gaAccountsMount);
 
-           window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
-           detail: { accounts, defaultCustomerId, requiredSelection, mountEl: gaAccountsMount }
+          window.dispatchEvent(new CustomEvent('googleAccountsLoaded', {
+            detail: { accounts, defaultCustomerId, requiredSelection, mountEl: gaAccountsMount }
           }));
 
           return { ok: true, accounts, defaultCustomerId, requiredSelection };
         }
 
-        // Antes: "Verificando acceso…"
-        // Para evitar parpadeo, no mostramos mensaje aquí.
         setStatus('');
         hide(gaAccountsMount);
 
@@ -399,7 +438,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           return { ok: true, accounts, defaultCustomerId, requiredSelection };
         }
 
-        // Self-test falló
         setStatus(
           'No pudimos validar el acceso a tu cuenta de Google Ads. ' +
           'Verifica que tu usuario tenga permisos y vuelve a intentar.'
@@ -420,37 +458,77 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Evento disparado desde onboardingInlineSelect.js cuando el usuario elige cuentas
   window.addEventListener('googleAccountsSelected', async (ev) => {
+    const reqId = ev?.detail?.reqId || null;
+
     try {
-      const ids = (ev?.detail?.accountIds || []).map(String);
-      if (!ids.length) return;
+      const ids = (ev?.detail?.accountIds || []).map(String).filter(Boolean);
+      if (!ids.length) {
+        ackGoogleAdsSelection({ reqId, ok: false, error: 'EMPTY_SELECTION', ids: [] });
+        return;
+      }
+
+      const idsKey = ids.slice().sort().join(',');
+
+      // Si ya estamos procesando exactamente lo mismo, no duplicamos
+      if (GOOGLE_SELECTION_LOCK.inflight && GOOGLE_SELECTION_LOCK.lastIdsKey === idsKey) {
+        ackGoogleAdsSelection({ reqId, ok: true, error: null, ids });
+        return;
+      }
+
+      // Si recibimos el mismo reqId otra vez, ignore
+      if (reqId && GOOGLE_SELECTION_LOCK.lastReqId === reqId) {
+        ackGoogleAdsSelection({ reqId, ok: true, error: null, ids });
+        return;
+      }
+
+      GOOGLE_SELECTION_LOCK.inflight = true;
+      GOOGLE_SELECTION_LOCK.lastReqId = reqId || null;
+      GOOGLE_SELECTION_LOCK.lastIdsKey = idsKey;
 
       const save = await apiFetch('/api/google/ads/insights/accounts/selection', {
         method: 'POST',
         body: JSON.stringify({ accountIds: ids }),
       });
 
-      if (save?.ok) {
-        // Antes: "Verificando acceso…". Ahora lo quitamos.
-        setStatus('');
-        const ok = await runGoogleSelfTest(ids[0]);
-
-        if (ok) {
-          markGoogleConnected(sessionStorage.getItem('googleObjective') || null);
-          setStatus('');
-        } else {
-          setStatus(
-            'No pudimos validar el acceso a esa cuenta de Google Ads. ' +
-            'Revisa permisos e inténtalo nuevamente.'
-          );
-        }
-
-        window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved'));
-      } else {
+      if (!save?.ok) {
+        const msg = save?.error || 'NO_SE_PUDO_GUARDAR_SELECCION';
+        ackGoogleAdsSelection({ reqId, ok: false, error: msg, ids });
         alert(save?.error || 'No se pudo guardar la selección.');
+        return;
+      }
+
+      // ✅ Persistido: ACK al modal
+      ackGoogleAdsSelection({ reqId, ok: true, error: null, ids });
+
+      // ✅ Aviso global: “selección guardada” (SIN duplicar)
+      dispatchAccountsSelectionSaved('google-selection-persisted');
+
+      // Self-test para marcar Google como realmente conectado
+      setStatus('');
+      const ok = await runGoogleSelfTest(ids[0]);
+      if (ok) {
+        markGoogleConnected(sessionStorage.getItem('googleObjective') || null);
+        setStatus('');
+      } else {
+        // Persistido pero no validado: NO marcamos googleConnected
       }
     } catch (e) {
       console.error('save selection error:', e);
+      ackGoogleAdsSelection({
+        reqId,
+        ok: false,
+        error: e?.message || 'SAVE_SELECTION_ERROR',
+        ids: (ev?.detail?.accountIds || []).map(String),
+      });
       alert('Error al guardar la selección. Intenta nuevamente.');
+    } finally {
+      GOOGLE_SELECTION_LOCK.inflight = false;
+
+      // Si alguien quiso emitir el evento mientras estábamos guardando, lo emitimos ahora
+      if (GOOGLE_SELECTION_LOCK.pendingEmitSelectionSaved) {
+        GOOGLE_SELECTION_LOCK.pendingEmitSelectionSaved = false;
+        dispatchAccountsSelectionSaved('queued-after-google-selection');
+      }
     }
   });
 
@@ -492,7 +570,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   connectGoogleBtn?.addEventListener('click', () => {
     localStorage.setItem('google_connecting', '1');
     disableBtnWhileConnecting(connectGoogleBtn);
-    // El backend ya pone returnTo=/onboarding?google=connected por defecto
     window.location.href = '/auth/google/connect';
   });
 
@@ -541,7 +618,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (sess?.authenticated && sess?.user) {
       const currentId = String(sess.user._id);
 
-      // Si cambió de usuario, limpiamos flags de conexión viejos
       if (prevUserId && prevUserId !== currentId) {
         [
           'shopifyConnected',

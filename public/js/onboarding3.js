@@ -1,119 +1,14 @@
 // public/js/onboarding3.js
 (function () {
-  // =======================
-  // ENDPOINTS
-  // =======================
   const ENDPOINTS = {
-    status: "/api/onboarding/status", // GET
-    run: "/api/audits/run",           // POST { source: 'onboarding', ... }
+    status:   "/api/onboarding/status",  // GET
+    start:    "/api/audits/start",       // POST { types:[...], source:'onboarding' }
+    progress: "/api/audits/progress",    // GET ?jobId=...
+    latest:   "/api/audits/latest?type=all",
   };
 
   // =======================
-  // DOM refs
-  // =======================
-  const $ = (sel) => document.querySelector(sel);
-  const progressBar  = $("#progress-bar");
-  const progressText = $("#progress-text");
-  const btnContinue  = $("#btn-continue");
-
-  const rows = {
-    google:  $("#step-googleads"),
-    meta:    $("#step-meta"),
-    shopify: $("#step-shopify"),
-    ga4:     $("#step-ga4"),
-  };
-
-  const BADGE = (row) => row?.querySelector("[data-badge]");
-  const ICON  = (row) => row?.querySelector(".analysis-step-icon");
-
-  // =======================
-  // Helpers UI
-  // =======================
-  const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-  const setBar = (pct) => {
-    if (progressBar) progressBar.style.width = clamp(pct, 0, 100) + "%";
-  };
-  const setText = (t) => {
-    if (progressText) progressText.textContent = t;
-  };
-
-  // Sufijos base (el label estático del paso queda en el HTML)
-  const BASE_SUFFIX = {
-    idle:    "",
-    running: "Analizando…",
-    done:    "Listo",
-    skipped: "No conectado",
-    error:   "Error",
-  };
-
-  // Idempotente: siempre sobrescribe icono y badge (sin concatenar)
-  function setRowState(row, state = "idle", suffixOverride) {
-    if (!row) return;
-    row.classList.remove("active", "completed", "opacity-50", "is-current", "error");
-
-    const suffix =
-      typeof suffixOverride === "string" && suffixOverride.length
-        ? suffixOverride
-        : BASE_SUFFIX[state] || "";
-
-    if (state === "running") {
-      row.classList.add("active", "is-current");
-      if (ICON(row))  ICON(row).textContent = "●";
-      if (BADGE(row)) BADGE(row).textContent = suffix;
-    } else if (state === "done") {
-      row.classList.add("completed");
-      if (ICON(row))  ICON(row).textContent = "✓";
-      if (BADGE(row)) BADGE(row).textContent = suffix;
-    } else if (state === "skipped") {
-      row.classList.add("opacity-50");
-      if (ICON(row))  ICON(row).textContent = "○";
-      if (BADGE(row)) BADGE(row).textContent = suffix;
-    } else if (state === "error") {
-      row.classList.add("error", "opacity-50");
-      if (ICON(row))  ICON(row).textContent = "!";
-      if (BADGE(row)) BADGE(row).textContent = suffix;
-    } else {
-      if (ICON(row))  ICON(row).textContent = "○";
-      if (BADGE(row)) BADGE(row).textContent = suffix;
-    }
-  }
-
-  const STATUS_MESSAGES = [
-    "Conectando fuentes…",
-    "Sincronizando permisos…",
-    "Recopilando métricas…",
-    "Analizando campañas…",
-    "Detectando oportunidades…",
-    "Generando recomendaciones…",
-  ];
-
-  function startCycler() {
-    if (!progressText) return () => {};
-    let i = 0;
-    let stop = false;
-
-    const tick = () => {
-      if (stop) return;
-      progressText.style.opacity = "0";
-      setTimeout(() => {
-        setText(STATUS_MESSAGES[i % STATUS_MESSAGES.length]);
-        progressText.style.opacity = "1";
-        i++;
-      }, 160);
-    };
-
-    tick();
-    const id = setInterval(tick, 2000);
-    return () => {
-      stop = true;
-      clearInterval(id);
-    };
-  }
-
-  let cyclerStop = null;
-
-  // =======================
-  // HTTP helpers
+  // Helpers HTTP
   // =======================
   async function getJSON(url) {
     const r = await fetch(url, {
@@ -135,8 +30,10 @@
       },
       body: JSON.stringify(body || {}),
     });
+
     let j = {};
     try { j = await r.json(); } catch {}
+
     if (!r.ok || j?.ok === false) {
       const msg = j?.error || `HTTP_${r.status}`;
       const e = new Error(msg);
@@ -147,17 +44,93 @@
   }
 
   // =======================
-  // Refresco desde BD (pinta filas según últimas auditorías)
+  // UI helpers
   // =======================
-  async function refreshAuditStatusFromDB(isConnected = null) {
-    try {
-      const resp = await getJSON("/api/audits/latest?type=all");
+  const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
 
-      // Soportamos dos formatos:
-      // 1) { ok:true, data:{google,meta,ga4} }
-      // 2) { ok:true, items:[...] } / { ok:true, data:[...] }
-      const dict =
-        resp?.data && !Array.isArray(resp.data) ? resp.data : {};
+  const BASE_SUFFIX = {
+    idle:    "",
+    running: "Analizando…",
+    done:    "Listo",
+    skipped: "No conectado",
+    error:   "Atención",
+  };
+
+  function setRowState(row, state = "idle", suffixOverride) {
+    if (!row) return;
+    row.classList.remove("active", "completed", "opacity-50", "is-current", "error");
+
+    const suffix =
+      typeof suffixOverride === "string" && suffixOverride.length
+        ? suffixOverride
+        : BASE_SUFFIX[state] || "";
+
+    const badge = row.querySelector("[data-badge]");
+    const icon  = row.querySelector(".analysis-step-icon");
+
+    if (state === "running") {
+      row.classList.add("active", "is-current");
+      if (icon)  icon.textContent = "●";
+      if (badge) badge.textContent = suffix;
+    } else if (state === "done") {
+      row.classList.add("completed");
+      if (icon)  icon.textContent = "✓";
+      if (badge) badge.textContent = suffix;
+    } else if (state === "skipped") {
+      row.classList.add("opacity-50");
+      if (icon)  icon.textContent = "○";
+      if (badge) badge.textContent = suffix;
+    } else if (state === "error") {
+      row.classList.add("error");
+      if (icon)  icon.textContent = "!";
+      if (badge) badge.textContent = suffix;
+    } else {
+      if (icon)  icon.textContent = "○";
+      if (badge) badge.textContent = suffix;
+    }
+  }
+
+  const STATUS_MESSAGES = [
+    "Conectando fuentes…",
+    "Sincronizando permisos…",
+    "Recopilando métricas…",
+    "Analizando campañas…",
+    "Detectando oportunidades…",
+    "Generando recomendaciones…",
+  ];
+
+  function startCycler(progressTextEl, setTextFn) {
+    if (!progressTextEl) return () => {};
+    let i = 0;
+    let stop = false;
+
+    const tick = () => {
+      if (stop) return;
+      progressTextEl.style.opacity = "0";
+      setTimeout(() => {
+        setTextFn(STATUS_MESSAGES[i % STATUS_MESSAGES.length]);
+        progressTextEl.style.opacity = "1";
+        i++;
+      }, 160);
+    };
+
+    tick();
+    const id = setInterval(tick, 2000);
+
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }
+
+  // =======================
+  // Refresco desde Mongo (visual final)
+  // =======================
+  async function refreshAuditStatusFromDB(rows, isConnected) {
+    try {
+      const resp = await getJSON(ENDPOINTS.latest);
+
+      const dict = resp?.data && !Array.isArray(resp.data) ? resp.data : {};
       const list = Array.isArray(resp?.items)
         ? resp.items
         : Array.isArray(resp?.data)
@@ -175,28 +148,28 @@
 
       const setFromDoc = (row, doc, key) => {
         if (!row) return;
-
-        // 👇 Si en esta sesión NO está conectada esa fuente,
-        // no sobreescribimos el estado visual ("No conectado").
-        if (isConnected && isConnected[key] === false) {
-          return;
-        }
-
+        if (isConnected && isConnected[key] === false) return;
         if (!doc) return;
 
         const notAuth = !!doc?.inputSnapshot?.notAuthorized;
-
-        // Sin permisos → lo marcamos como error suave
         if (notAuth) {
           setRowState(row, "error", "Sin permisos");
           return;
         }
 
+        // 👇 si el backend guardó el issue “selection_required_*”
+        const hasSelectionRequired =
+          Array.isArray(doc?.issues) &&
+          doc.issues.some((x) => String(x?.id || "").startsWith("selection_required_"));
+
+        if (hasSelectionRequired) {
+          setRowState(row, "error", "Selección requerida");
+          return;
+        }
+
         const noDataSummary =
           typeof doc.summary === "string" &&
-          /no hay datos suficientes|no hay datos suficientes para auditar|no hay datos suficientes en el periodo/i.test(
-            doc.summary
-          );
+          /no hay datos suficientes|sin datos suficientes|sin datos recientes/i.test(doc.summary);
 
         if (Array.isArray(doc.issues) && doc.issues.length === 0 && noDataSummary) {
           setRowState(row, "skipped", "Sin datos recientes");
@@ -208,166 +181,222 @@
       setFromDoc(rows.google, g, "google");
       setFromDoc(rows.meta,   m, "meta");
       setFromDoc(rows.ga4,    ga, "ga4");
-      // Shopify no tiene auditoría en Mongo, se deja como estaba (visual)
     } catch (e) {
       console.warn("refreshAuditStatusFromDB error", e);
     }
   }
 
   // =======================
-  // Main
+  // MAIN
   // =======================
   async function run() {
-    let progressTimer = null;
+    const $ = (sel) => document.querySelector(sel);
+
+    // DOM (ya con DOM listo)
+    const progressBar  = $("#progress-bar");
+    const progressText = $("#progress-text");
+    const btnContinue  = $("#btn-continue");
+
+    const rows = {
+      google:  $("#step-googleads"),
+      meta:    $("#step-meta"),
+      shopify: $("#step-shopify"),
+      ga4:     $("#step-ga4"),
+    };
+
+    const setBar = (pct) => {
+      if (progressBar) progressBar.style.width = clamp(pct, 0, 100) + "%";
+    };
+    const setText = (t) => {
+      if (progressText) progressText.textContent = t;
+    };
+
+    // Navigation (asegurar listener)
+    btnContinue?.addEventListener("click", () => {
+      window.location.href = "/onboarding4.html";
+    });
+
+    let cyclerStop = null;
+    let pollTimer = null;
 
     try {
       if (btnContinue) btnContinue.disabled = true;
       setBar(0);
       setText("Preparando análisis…");
-      cyclerStop = startCycler();
+      cyclerStop = startCycler(progressText, setText);
 
-      // 1) Estado real de conexiones
+      // 1) Estado de conexiones
       const st = await getJSON(ENDPOINTS.status);
       const status = st?.status || {};
 
       const isConnected = {
-        google:
-          !!status.googleAds?.connected || !!status.google?.connected, // compat
-        meta: !!status.meta?.connected,
+        google:  !!status.googleAds?.connected || !!status.google?.connected,
+        meta:    !!status.meta?.connected,
         shopify: !!status.shopify?.connected,
-        ga4: !!status.ga4?.connected,
+        ga4:     !!status.ga4?.connected,
       };
 
-      // 2) Pinta estado inicial de filas
-      Object.entries(rows).forEach(([k, row]) => {
-        if (!row) return;
+      // 2) Detectar “selection required”
+      const needsSelection = {
+        google: !!status.googleAds?.requiredSelection,
+        meta:   !!status.meta?.requiredSelection,
+        // ga4: el endpoint actual no lo expone; inferimos:
+        ga4:
+          !!status.ga4?.connected &&
+          (Number(status.ga4?.propertiesCount || 0) > 3) &&
+          !String(status.ga4?.defaultPropertyId || "").trim(),
+      };
 
-        if (k === "shopify") {
-          // Shopify: solo visual (no hay auditoría IA oficial aún)
-          if (isConnected.shopify) {
-            setRowState(row, "done", "Conectado");
-          } else {
-            setRowState(row, "skipped");
-          }
-          return;
-        }
+      // 3) Pintar estado inicial de filas
+      // Shopify (solo visual)
+      if (rows.shopify) {
+        if (isConnected.shopify) setRowState(rows.shopify, "done", "Conectado");
+        else setRowState(rows.shopify, "skipped");
+      }
 
-        if (k === "ga4") {
-          if (isConnected.ga4) {
-            setRowState(row, "running");
-          } else {
-            setRowState(row, "skipped", "Opcional");
-          }
-          return;
-        }
+      // Google / Meta / GA4
+      if (rows.google) {
+        if (!isConnected.google) setRowState(rows.google, "skipped");
+        else if (needsSelection.google) setRowState(rows.google, "error", "Selecciona 1 cuenta");
+        else setRowState(rows.google, "running");
+      }
 
-        // Google Ads / Meta
-        if (!isConnected[k]) {
-          setRowState(row, "skipped");
-        } else {
-          setRowState(row, "running");
-        }
-      });
+      if (rows.meta) {
+        if (!isConnected.meta) setRowState(rows.meta, "skipped");
+        else if (needsSelection.meta) setRowState(rows.meta, "error", "Selecciona 1 cuenta");
+        else setRowState(rows.meta, "running");
+      }
 
-      // Fuentes con auditoría IA real que esperamos analizar
-      const toAudit = [];
-      if (isConnected.google) toAudit.push("google");
-      if (isConnected.meta)   toAudit.push("meta");
-      if (isConnected.ga4)    toAudit.push("ga4");
+      if (rows.ga4) {
+        if (!isConnected.ga4) setRowState(rows.ga4, "skipped", "No conectado");
+        else if (needsSelection.ga4) setRowState(rows.ga4, "error", "Selecciona 1 propiedad");
+        else setRowState(rows.ga4, "running");
+      }
 
-      if (toAudit.length === 0) {
-        await refreshAuditStatusFromDB(isConnected);
+      // 4) Definir qué se audita (solo conectadas y sin “selection required”)
+      const types = [];
+      if (isConnected.google && !needsSelection.google) types.push("google");
+      if (isConnected.meta   && !needsSelection.meta)   types.push("meta");
+      if (isConnected.ga4    && !needsSelection.ga4)    types.push("ga4");
+
+      // Si no hay nada auditable…
+      if (!types.length) {
+        await refreshAuditStatusFromDB(rows, isConnected);
         setBar(100);
         if (cyclerStop) cyclerStop();
-        setText("No hay fuentes conectadas para auditar.");
+
+        if (
+          (isConnected.google && needsSelection.google) ||
+          (isConnected.meta && needsSelection.meta) ||
+          (isConnected.ga4 && needsSelection.ga4)
+        ) {
+          setText("Falta seleccionar cuentas/propiedades para continuar.");
+        } else {
+          setText("No hay fuentes conectadas para auditar.");
+        }
+
         if (btnContinue) btnContinue.disabled = false;
         return;
       }
 
-      // 3) Simulación de progreso mientras corre /api/audits/run
-      let logicalPct = 10;
-      setBar(logicalPct);
+      // 5) Arrancar job real (backend)
+      setBar(10);
+      const startResp = await postJSON(ENDPOINTS.start, {
+        types,
+        source: "onboarding",
+      });
 
-      progressTimer = setInterval(() => {
-        logicalPct = Math.min(logicalPct + 7, 85); // nunca pasa de 85% hasta que termine
-        setBar(logicalPct);
-      }, 1200);
+      const jobId = startResp?.jobId;
+      if (!jobId) throw new Error("NO_JOB_ID");
 
-      // 4) Disparar auditorías IA (Google, Meta, GA4) con origen 'onboarding'
-      let runResp = null;
-      try {
-        runResp = await postJSON(ENDPOINTS.run, {
-          source: "onboarding",
-          // Estas flags las usa el backend para decidir qué fuentes procesar
-          googleConnected: isConnected.google,
-          metaConnected:   isConnected.meta,
+      // 6) Poll progreso
+      const pollOnce = async () => {
+        const pr = await getJSON(`${ENDPOINTS.progress}?jobId=${encodeURIComponent(jobId)}`);
+        if (!pr?.ok) throw new Error(pr?.error || "PROGRESS_ERROR");
+
+        // Barra
+        const pct = typeof pr.percent === "number" ? pr.percent : 50;
+        setBar(clamp(pct, 0, 100));
+
+        // Estados por item
+        const items = pr.items || {};
+        Object.keys(items).forEach((t) => {
+          const it = items[t];
+          const row = rows[t];
+          if (!row) return;
+
+          if (it.status === "pending" || it.status === "running") {
+            setRowState(row, "running");
+            return;
+          }
+          if (it.status === "done") {
+            if (it.ok) setRowState(row, "done");
+            else setRowState(row, "error", "Advertencia");
+          }
         });
-      } catch (e) {
-        console.warn("No se pudo ejecutar /api/audits/run:", e?.message || e);
-        throw e;
-      } finally {
-        if (progressTimer) {
-          clearInterval(progressTimer);
-          progressTimer = null;
+
+        // Termina
+        if (pr.finished) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+
+          // Estado final desde DB (la “verdad”)
+          await refreshAuditStatusFromDB(rows, isConnected);
+
+          setBar(100);
+          if (cyclerStop) cyclerStop();
+
+          // Mensaje final
+          const completed = types.filter((t) => rows[t]?.classList.contains("completed")).length;
+          if (completed === types.length) setText("¡Análisis completado!");
+          else setText("Análisis finalizado (con advertencias).");
+
+          // Snapshot en sessionStorage (opcional)
+          try {
+            const latest = await getJSON(ENDPOINTS.latest);
+            sessionStorage.setItem("auditLatest", JSON.stringify(latest || {}));
+          } catch {}
+
+          if (btnContinue) btnContinue.disabled = false;
         }
-      }
+      };
 
-      // 5) Refrescar filas desde Mongo en base a las últimas auditorías
-      await refreshAuditStatusFromDB(isConnected);
+      // poll rápido
+      await pollOnce();
+      pollTimer = setInterval(() => {
+        pollOnce().catch((e) => {
+          console.warn("progress poll error", e);
+        });
+      }, 1100);
 
-      // Shopify: si estaba conectado, lo marcamos como listo
-      if (rows.shopify && isConnected.shopify) {
-        setRowState(rows.shopify, "done", "Conectado");
-      }
-
-      // 6) Cálculo final de progreso en función de filas completadas
-      const doneCount = toAudit.reduce((acc, key) => {
-        const row = rows[key];
-        if (!row) return acc;
-        return acc + (row.classList.contains("completed") ? 1 : 0);
-      }, 0);
-
-      const finalPct = toAudit.length
-        ? Math.round((doneCount / toAudit.length) * 100)
-        : 100;
-
-      setBar(100);
-
-      if (cyclerStop) cyclerStop();
-      if (doneCount === toAudit.length) {
-        setText("¡Análisis completado!");
-      } else {
-        setText("Análisis finalizado (con advertencias).");
-      }
-
-      // Guardamos una foto rápida por si la quieres usar luego
-      try {
-        const latest = await getJSON("/api/audits/latest?type=all");
-        sessionStorage.setItem(
-          "auditLatest",
-          JSON.stringify(latest || {})
-        );
-      } catch {}
-
-      if (btnContinue) btnContinue.disabled = false;
     } catch (e) {
       console.error("ONBOARDING3_INIT_ERROR", e);
-      if (progressTimer) clearInterval(progressTimer);
+
+      // fail-safe UI
+      if (pollTimer) clearInterval(pollTimer);
       if (cyclerStop) cyclerStop();
 
-      setText("Error iniciando el análisis");
-      setBar(100);
-      Object.values(rows).forEach(
-        (row) => row && setRowState(row, "error")
-      );
+      const $ = (sel) => document.querySelector(sel);
+      const progressBar  = $("#progress-bar");
+      const progressText = $("#progress-text");
+      const btnContinue  = $("#btn-continue");
+
+      if (progressText) progressText.textContent = "Error iniciando el análisis";
+      if (progressBar)  progressBar.style.width = "100%";
+
+      // no reventar Shopify visual si existe
+      ["google", "meta", "ga4"].forEach((k) => {
+        const row = document.querySelector(
+          k === "google" ? "#step-googleads" :
+          k === "meta"   ? "#step-meta" :
+          "#step-ga4"
+        );
+        if (row) setRowState(row, "error");
+      });
+
       if (btnContinue) btnContinue.disabled = false;
     }
   }
 
   document.addEventListener("DOMContentLoaded", run);
-
-  // Navegación
-  btnContinue?.addEventListener("click", () => {
-    window.location.href = "/onboarding4.html";
-  });
 })();

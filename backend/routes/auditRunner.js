@@ -41,9 +41,6 @@ try {
     model('ShopConnections', new Schema({}, { strict: false, collection: 'shopconnections' }));
 }
 
-// Scope de lectura de GA4 (para detectar conexión de Analytics)
-const GA_SCOPE_READ = 'https://www.googleapis.com/auth/analytics.readonly';
-
 /* ============== auth ============== */
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
@@ -51,47 +48,197 @@ function requireAuth(req, res, next) {
 }
 
 /* ============== helpers ============== */
+const MAX_SELECT = 1;
+
+// Tipos válidos (aceptamos alias "ga" pero lo normalizamos a "ga4")
 const VALID_TYPES = new Set(['meta', 'google', 'shopify', 'ga4', 'ga']);
+const normalizeType = (t) => {
+  const x = String(t || '').toLowerCase();
+  return x === 'ga' ? 'ga4' : x;
+};
 const isValidType = (t) => VALID_TYPES.has(String(t));
 
-async function detectConnectedSources(userId) {
-  const [meta, google, shop] = await Promise.all([
+const normActId = (s = '') => String(s).trim().replace(/^act_/, '');
+const normGaId  = (s = '') => String(s).trim().replace(/^customers\//, '').replace(/[^\d]/g, '');
+const normGA4Id = (s = '') => {
+  const raw = String(s || '').trim();
+  const digits = raw.replace(/^properties\//, '').replace(/[^\d]/g, '');
+  return digits || raw.replace(/^properties\//, '').trim();
+};
+
+const uniq = (arr = []) => [...new Set((arr || []).filter(Boolean))];
+
+function hasAnyMetaToken(metaDoc) {
+  return !!(metaDoc?.access_token || metaDoc?.token || metaDoc?.accessToken || metaDoc?.longLivedToken || metaDoc?.longlivedToken);
+}
+function hasGoogleOAuth(gaDoc) {
+  return !!(gaDoc?.refreshToken || gaDoc?.accessToken);
+}
+
+function metaAvailableIds(metaDoc) {
+  const list = Array.isArray(metaDoc?.ad_accounts) ? metaDoc.ad_accounts
+            : Array.isArray(metaDoc?.adAccounts)  ? metaDoc.adAccounts
+            : [];
+  return uniq(list.map(a => normActId(a?.id || a?.account_id || '')).filter(Boolean));
+}
+
+function googleAdsAvailableIds(gaDoc) {
+  const fromAd = (Array.isArray(gaDoc?.ad_accounts) ? gaDoc.ad_accounts : [])
+    .map(a => normGaId(a?.id))
+    .filter(Boolean);
+  const fromCu = (Array.isArray(gaDoc?.customers) ? gaDoc.customers : [])
+    .map(c => normGaId(c?.id))
+    .filter(Boolean);
+  return uniq([...fromAd, ...fromCu]);
+}
+
+function ga4AvailableIds(gaDoc) {
+  const props = Array.isArray(gaDoc?.gaProperties) ? gaDoc.gaProperties : [];
+  const ids = props.map(p => normGA4Id(p?.propertyId || p?.property_id || p?.name || '')).filter(Boolean);
+  return uniq(ids);
+}
+
+// Selecciones (doc > legacy user)
+function selectedMetaIds(metaDoc, userDoc) {
+  const fromDoc = Array.isArray(metaDoc?.selectedAccountIds) ? metaDoc.selectedAccountIds.map(normActId) : [];
+  if (fromDoc.length) return uniq(fromDoc).slice(0, MAX_SELECT);
+  const legacy = Array.isArray(userDoc?.selectedMetaAccounts) ? userDoc.selectedMetaAccounts.map(normActId) : [];
+  return uniq(legacy).slice(0, MAX_SELECT);
+}
+
+function selectedGoogleAdsIds(gaDoc, userDoc) {
+  const fromDoc = Array.isArray(gaDoc?.selectedCustomerIds) ? gaDoc.selectedCustomerIds.map(normGaId) : [];
+  if (fromDoc.length) return uniq(fromDoc).slice(0, MAX_SELECT);
+  const legacy = Array.isArray(userDoc?.selectedGoogleAccounts) ? userDoc.selectedGoogleAccounts.map(normGaId) : [];
+  return uniq(legacy).slice(0, MAX_SELECT);
+}
+
+function selectedGA4Ids(gaDoc, userDoc) {
+  const fromDoc = Array.isArray(gaDoc?.selectedPropertyIds) ? gaDoc.selectedPropertyIds.map(normGA4Id) : [];
+  if (fromDoc.length) return uniq(fromDoc).slice(0, MAX_SELECT);
+
+  const def = gaDoc?.defaultPropertyId ? normGA4Id(gaDoc.defaultPropertyId) : '';
+  if (def) return [def];
+
+  const legacy = Array.isArray(userDoc?.selectedGAProperties) ? userDoc.selectedGAProperties.map(normGA4Id) : [];
+  return uniq(legacy).slice(0, MAX_SELECT);
+}
+
+function needsSelection(availableCount, selectedCount) {
+  return availableCount > MAX_SELECT && selectedCount === 0;
+}
+
+/**
+ * Detecta:
+ * - connected: hay OAuth/token válido
+ * - requiredSelection: hay >1 opción y no hay selección persistida
+ * - ready: connected && !requiredSelection
+ *
+ * Nota: GA4 NO se detecta por scopes; se detecta por OAuth + gaProperties disponibles.
+ */
+async function getSourcesState(userId) {
+  const [meta, google, shop, user] = await Promise.all([
     MetaAccount.findOne({ $or: [{ user: userId }, { userId }] })
-      .select('access_token token accessToken longLivedToken longlivedToken')
+      .select('access_token token accessToken longLivedToken longlivedToken ad_accounts adAccounts selectedAccountIds')
       .lean(),
     GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] })
-      .select('refreshToken accessToken scope')
+      .select('refreshToken accessToken ad_accounts customers gaProperties selectedCustomerIds defaultCustomerId selectedPropertyIds defaultPropertyId')
       .lean(),
     ShopConnections.findOne({ $or: [{ user: userId }, { userId }] })
       .select('shop access_token accessToken')
       .lean(),
+    User
+      ? User.findById(userId).select('selectedMetaAccounts selectedGoogleAccounts selectedGAProperties').lean()
+      : Promise.resolve(null),
   ]);
 
-  const metaConnected =
-    !!(
-      meta &&
-      (meta.access_token ||
-        meta.token ||
-        meta.accessToken ||
-        meta.longLivedToken ||
-        meta.longlivedToken)
-    );
+  // META
+  const metaConnected = !!(meta && hasAnyMetaToken(meta));
+  const metaAvail = meta ? metaAvailableIds(meta) : [];
+  const metaSel  = meta ? selectedMetaIds(meta, user) : selectedMetaIds({}, user);
+  const metaReq  = metaConnected && needsSelection(metaAvail.length, metaSel.length);
 
-  const googleAdsConnected = !!(google && (google.refreshToken || google.accessToken));
+  // GOOGLE ADS
+  const googleConnected = !!(google && hasGoogleOAuth(google));
+  const gAdsAvail = google ? googleAdsAvailableIds(google) : [];
+  const gAdsSel   = google ? selectedGoogleAdsIds(google, user) : selectedGoogleAdsIds({}, user);
+  const gAdsReq   = googleConnected && needsSelection(gAdsAvail.length, gAdsSel.length);
+
+  // GA4 (depende de OAuth + props disponibles)
+  const ga4Avail = google ? ga4AvailableIds(google) : [];
+  const ga4Connected = !!(googleConnected && ga4Avail.length > 0);
+  const ga4Sel = google ? selectedGA4Ids(google, user) : selectedGA4Ids({}, user);
+  const ga4Req = ga4Connected && needsSelection(ga4Avail.length, ga4Sel.length);
+
+  // SHOPIFY
   const shopifyConnected = !!(shop && shop.shop && (shop.access_token || shop.accessToken));
 
-  // GA4 conectado = GoogleAccount con token + scope analytics.readonly
-  const googleScopes = Array.isArray(google?.scope)
-    ? google.scope.map((s) => String(s))
-    : [];
-  const ga4Connected = googleAdsConnected && googleScopes.includes(GA_SCOPE_READ);
+  const state = {
+    meta: {
+      connected: metaConnected,
+      requiredSelection: metaReq,
+      ready: metaConnected && !metaReq,
+      availableCount: metaAvail.length,
+      selectedCount: metaSel.length,
+      selected: metaSel,
+    },
+    google: {
+      connected: googleConnected,
+      requiredSelection: gAdsReq,
+      ready: googleConnected && !gAdsReq,
+      availableCount: gAdsAvail.length,
+      selectedCount: gAdsSel.length,
+      selected: gAdsSel,
+    },
+    ga4: {
+      connected: ga4Connected,
+      requiredSelection: ga4Req,
+      ready: ga4Connected && !ga4Req,
+      availableCount: ga4Avail.length,
+      selectedCount: ga4Sel.length,
+      selected: ga4Sel,
+    },
+    shopify: {
+      connected: shopifyConnected,
+      requiredSelection: false,
+      ready: shopifyConnected,
+      availableCount: shopifyConnected ? 1 : 0,
+      selectedCount: shopifyConnected ? 1 : 0,
+      selected: shopifyConnected ? ['shopify'] : [],
+    },
+  };
 
-  const types = [];
-  if (metaConnected) types.push('meta');
-  if (googleAdsConnected) types.push('google');
-  if (ga4Connected) types.push('ga4');
-  if (shopifyConnected) types.push('shopify');
-  return types;
+  return state;
+}
+
+/**
+ * Devuelve tipos conectados “listos” para auditar.
+ * Si están conectados pero falta selección, los dejamos como skipped con razón SELECTION_REQUIRED.
+ */
+async function detectReadySources(userId) {
+  const state = await getSourcesState(userId);
+
+  const typesReady = [];
+  const skipped = {};
+
+  for (const t of ['meta', 'google', 'ga4', 'shopify']) {
+    const st = state[t];
+    if (!st?.connected) {
+      skipped[t] = 'NOT_CONNECTED';
+      continue;
+    }
+    if (st.requiredSelection) {
+      skipped[t] = 'SELECTION_REQUIRED';
+      continue;
+    }
+    if (st.ready) {
+      typesReady.push(t);
+      continue;
+    }
+    skipped[t] = 'NOT_READY';
+  }
+
+  return { state, typesReady, skipped };
 }
 
 async function fetchLatestAuditSummary(userId, type) {
@@ -106,7 +253,7 @@ async function fetchLatestAuditSummary(userId, type) {
     generatedAt: doc.generatedAt,
     summary: doc.summary,
     issuesCount: Array.isArray(doc.issues) ? doc.issues.length : 0,
-    origin: doc.origin || null, // para distinguir onboarding/panel
+    origin: doc.origin || null,
   };
 }
 
@@ -116,39 +263,40 @@ const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36
 
 /* ===========================================================
  * POST /api/audits/:type/run
- * Lanza una auditoría individual (uso puntual; por defecto ONBOARDING)
  * =========================================================*/
 router.post('/:type/run', requireAuth, express.json(), async (req, res) => {
   try {
-    const type = String(req.params.type || '').toLowerCase();
-    if (!isValidType(type)) {
+    const typeRaw = String(req.params.type || '').toLowerCase();
+    if (!isValidType(typeRaw)) {
       return res.status(400).json({ ok: false, error: 'INVALID_TYPE' });
     }
 
-    // ★ Por defecto consideramos este endpoint como de ONBOARDING
+    const type = normalizeType(typeRaw);
     const source = (req.body && req.body.source) || 'onboarding';
 
-    // Checa conexión antes de correr (evita errores raros)
-    const connectedTypes = await detectConnectedSources(req.user._id);
-    if (!connectedTypes.includes(type)) {
-      return res.status(400).json({
+    const state = await getSourcesState(req.user._id);
+    const st = state[type];
+
+    if (!st?.connected) {
+      return res.status(400).json({ ok: false, error: 'SOURCE_NOT_CONNECTED', type });
+    }
+
+    if (st.requiredSelection) {
+      // ✅ importantísimo: no correr auditoría hasta que haya selección persistida
+      return res.status(409).json({
         ok: false,
-        error: 'SOURCE_NOT_CONNECTED',
+        error: 'SELECTION_REQUIRED',
         type,
+        detail: 'Debes seleccionar 1 cuenta/propiedad antes de generar la auditoría.',
+        availableCount: st.availableCount,
+        selectedCount: st.selectedCount,
       });
     }
 
-    // Pasamos también 'source' (el job/modelo lo usará como origin)
     const ok = await runAuditFor({ userId: req.user._id, type, source });
-
     const latest = await fetchLatestAuditSummary(req.user._id, type);
 
-    return res.json({
-      ok: !!ok,
-      type,
-      source,
-      latestAudit: latest,
-    });
+    return res.json({ ok: !!ok, type, source, latestAudit: latest });
   } catch (e) {
     console.error('audit run error:', e);
     return res.status(500).json({
@@ -161,73 +309,60 @@ router.post('/:type/run', requireAuth, express.json(), async (req, res) => {
 
 /* ===========================================================
  * POST /api/audits/start
- * { types: ['meta','google','shopify'], source?: 'panel' | 'onboarding' }
- *  |  { types: 'auto' }  (usa detectConnectedSources)
- *
- * - Onboarding3 manda source: "onboarding"
- * - El panel de "Generar Auditoría con IA" puede mandar source: "panel"
- *   (por defecto usamos "panel" aquí)
  * =========================================================*/
 router.post('/start', requireAuth, express.json(), async (req, res) => {
   try {
-    // ★ Por defecto asumimos que este endpoint viene del PANEL
     const source = (req.body && req.body.source) || 'panel';
 
-    // 1) Qué fuentes están REALMENTE conectadas
-    const connectedTypes = await detectConnectedSources(req.user._id);
+    // ✅ Tipos listos (conectados y sin requerir selección)
+    const { state, typesReady, skipped } = await detectReadySources(req.user._id);
 
     // 2) Qué pidió el frontend
     const rawTypes = Array.isArray(req.body?.types)
-      ? req.body.types.map((t) => String(t).toLowerCase()).filter(isValidType)
+      ? req.body.types.map((t) => normalizeType(String(t))).filter((t) => ['meta','google','shopify','ga4'].includes(t))
       : null;
 
     let types = [];
-    const skippedByConnection = {};
+    const skippedByConnection = { ...skipped };
 
     if (req.body?.types === 'auto' || !rawTypes) {
-      // Modo automático → usamos SOLO las conectadas
-      types = [...connectedTypes];
-
-      // Y registramos como "skipped" todas las válidas que NO están conectadas
-      for (const t of VALID_TYPES) {
-        const tt = String(t);
-        if (!connectedTypes.includes(tt)) {
-          skippedByConnection[tt] = 'NOT_CONNECTED';
-        }
-      }
+      // Modo auto: SOLO los ready (evita carreras / selection_required)
+      types = [...typesReady];
     } else {
-      // El front pidió tipos concretos → intersectamos con las conectadas
+      // Intersección: lo pedido vs lo que está listo
       for (const t of rawTypes) {
-        if (connectedTypes.includes(t)) {
-          types.push(t);
-        } else {
-          skippedByConnection[t] = 'NOT_CONNECTED';
-        }
+        if (typesReady.includes(t)) types.push(t);
+        else if (!skippedByConnection[t]) skippedByConnection[t] = 'NOT_READY';
       }
     }
 
-    // 3) Si no hay nada que auditar, no lanzamos job
     if (!types.length) {
+      // Si hay selection required, lo devolvemos tal cual para que el front abra el modal
       return res.status(400).json({
         ok: false,
-        error: 'NO_TYPES_CONNECTED',
+        error: 'NO_TYPES_READY',
         detail:
-          'No hay integraciones conectadas para auditar (Google Ads, Meta Ads, GA4 o Shopify).',
-        skippedByConnection,
+          'No hay integraciones listas para auditar. Si tienes varias cuentas/propiedades, selecciona cuál auditar.',
+        skippedByConnection: skippedByConnection,
+        state: {
+          meta: state.meta,
+          google: state.google,
+          ga4: state.ga4,
+          shopify: state.shopify,
+        },
       });
     }
 
     const jobId = newId();
-    const state = {
+    const stateJob = {
       id: jobId,
-      // guardamos el ObjectId real, no string
       userId: req.user._id,
       startedAt: Date.now(),
-      source, // guardamos el origen del job (onboarding/panel)
+      source,
       items: {},
     };
     for (const t of types) {
-      state.items[t] = {
+      stateJob.items[t] = {
         status: 'pending',
         ok: null,
         error: null,
@@ -235,30 +370,27 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
       };
     }
 
-    jobs.set(jobId, state);
+    jobs.set(jobId, stateJob);
 
-    // devolvemos info básica al front
     res.json({
       ok: true,
       jobId,
       types,
       source,
-      skippedByConnection, // 👈 útil si quieres pintar "No conectado" desde esta respuesta
+      skippedByConnection,
     });
 
-    // Ejecuta asíncrono, uno por tipo
     setImmediate(async () => {
       for (const t of types) {
-        state.items[t].status = 'running';
+        stateJob.items[t].status = 'running';
         try {
-          // Pasamos 'source' para que el job y Audit guarden origin correcto
           const ok = await runAuditFor({ userId: req.user._id, type: t, source });
-          state.items[t].status = 'done';
-          state.items[t].ok = !!ok;
+          stateJob.items[t].status = 'done';
+          stateJob.items[t].ok = !!ok;
         } catch (e) {
-          state.items[t].status = 'done';
-          state.items[t].ok = false;
-          state.items[t].error = e?.message || String(e);
+          stateJob.items[t].status = 'done';
+          stateJob.items[t].ok = false;
+          stateJob.items[t].error = e?.message || String(e);
         }
       }
     });
@@ -270,7 +402,6 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
 
 /* ===========================================================
  * GET /api/audits/progress?jobId=...
- * Devuelve estado + %; llega a 100 cuando los docs ya existen.
  * =========================================================*/
 router.get('/progress', requireAuth, async (req, res) => {
   const jobId = String(req.query.jobId || '');
@@ -281,27 +412,20 @@ router.get('/progress', requireAuth, async (req, res) => {
   const total = Object.keys(items).length;
   const done = Object.values(items).filter((x) => x.status === 'done').length;
 
-  // porcentaje suave (hasta 90 cuando terminan tareas; luego 97→100 cuando ya están en DB)
   let percent = Math.round((done / total) * 90);
 
   if (done === total) {
     percent = 95;
 
-    // ★ Filtramos también por origin = s.source para evitar mezclar
-    // auditorías antiguas de otro flujo.
+    // ✅ Ventana más amplia para evitar “97% pegado” por latencia de DB / Render
     const query = {
       userId: s.userId,
-      generatedAt: { $gte: new Date(s.startedAt - 60 * 1000) },
+      generatedAt: { $gte: new Date(s.startedAt - 10 * 60 * 1000) }, // -10 min
+      type: { $in: Object.keys(items) },
     };
-    if (s.source) {
-      query.origin = s.source;
-    }
-    // opcional: acotar a los tipos del job
-    query.type = { $in: Object.keys(items) };
+    if (s.source) query.origin = s.source;
 
-    const docs = await Audit.find(query)
-      .select('type generatedAt origin')
-      .lean();
+    const docs = await Audit.find(query).select('type generatedAt origin').lean();
 
     const have = new Set((docs || []).map((d) => d.type));
     const allPersisted = Object.keys(items).every((t) => have.has(t));
@@ -318,5 +442,56 @@ router.get('/progress', requireAuth, async (req, res) => {
     finished: percent >= 100,
   });
 });
+
+/* ===========================================================
+ * GET /api/audits/latest?type=all|google|meta|ga4|shopify&origin=onboarding|panel
+ * Devuelve la última auditoría por tipo para el usuario actual.
+ * =========================================================*/
+router.get('/latest', requireAuth, async (req, res) => {
+  try {
+    const typeQ = String(req.query.type || 'all').toLowerCase();
+    const originQ = req.query.origin ? String(req.query.origin) : null;
+
+    const wantedTypes =
+      typeQ === 'all'
+        ? ['google', 'meta', 'ga4', 'shopify']
+        : [typeQ];
+
+    // Validación básica
+    const allowed = new Set(['google', 'meta', 'ga4', 'shopify', 'all']);
+    if (!allowed.has(typeQ)) {
+      return res.status(400).json({ ok: false, error: 'INVALID_TYPE' });
+    }
+
+    const query = {
+      userId: req.user._id,
+      type: { $in: wantedTypes },
+    };
+    if (originQ) query.origin = originQ;
+
+    // Traemos varias y nos quedamos con la primera por tipo (la más reciente)
+    const docs = await Audit.find(query)
+      .sort({ generatedAt: -1 })
+      .limit(50)
+      .select('type generatedAt summary issues inputSnapshot origin')
+      .lean();
+
+    const data = {};
+    for (const d of docs) {
+      const t = String(d.type || '').toLowerCase();
+      if (!data[t]) data[t] = d; // primera = más reciente por el sort desc
+    }
+
+    return res.json({
+      ok: true,
+      data,  // { google: {...}, meta: {...}, ga4: {...}, shopify: {...} }
+      items: Object.values(data),
+    });
+  } catch (e) {
+    console.error('audits/latest error:', e);
+    return res.status(500).json({ ok: false, error: 'LATEST_ERROR' });
+  }
+});
+
 
 module.exports = router;

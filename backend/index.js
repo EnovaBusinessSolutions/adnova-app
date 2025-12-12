@@ -233,7 +233,8 @@ app.use('/api/google/ads', sessionGuard, googleAdsInsightsRouter);
 app.use('/api/onboarding/status', sessionGuard, require('./routes/onboardingStatus'));
 
 // ✅ Auditorías
-app.use('/api/audits', sessionGuard, auditsRoutes, auditRunnerRoutes);
+app.use('/api/audits', sessionGuard, auditRunnerRoutes);
+app.use('/api/audits', sessionGuard, auditsRoutes);
 app.use('/api/audit', sessionGuard, auditRunnerRoutes);
 app.use('/api/dashboard/audits', sessionGuard, auditsRoutes);
 

@@ -40,51 +40,105 @@ function requireAuth(req, res, next) {
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-const MAX_BY_RULE = 3;
+// ✅ Tu UX actual: 1 selección por tipo (Meta / Google Ads / GA4)
+const MAX_SELECT = 1;
 
 const normActId = (s = '') => String(s).trim().replace(/^act_/, '');
 const normGaId  = (s = '') => String(s).trim().replace(/^customers\//, '').replace(/[^\d]/g, '');
+const normGA4Id = (s = '') => {
+  const raw = String(s || '').trim();
+  const digits = raw.replace(/^properties\//, '').replace(/[^\d]/g, '');
+  return digits || raw.replace(/^properties\//, '').trim();
+};
 
-function selectedMetaFromDocOrUser(metaDoc, user) {
-  const fromDoc = Array.isArray(metaDoc?.selectedAccountIds) ? metaDoc.selectedAccountIds.map(normActId) : [];
-  if (fromDoc.length) return [...new Set(fromDoc.filter(Boolean))];
-  const legacy = Array.isArray(user?.selectedMetaAccounts) ? user.selectedMetaAccounts.map(normActId) : [];
-  return [...new Set(legacy.filter(Boolean))];
-}
-
-function selectedGoogleFromDocOrUser(gaDoc, user) {
-  const fromDoc = Array.isArray(gaDoc?.selectedCustomerIds) ? gaDoc.selectedCustomerIds.map(normGaId) : [];
-  if (fromDoc.length) return [...new Set(fromDoc.filter(Boolean))];
-  const legacy = Array.isArray(user?.selectedGoogleAccounts) ? user.selectedGoogleAccounts.map(normGaId) : [];
-  return [...new Set(legacy.filter(Boolean))];
+function uniq(arr = []) {
+  return [...new Set((arr || []).filter(Boolean))];
 }
 
 function metaAvailableIds(metaDoc) {
   const list = Array.isArray(metaDoc?.ad_accounts) ? metaDoc.ad_accounts
             : Array.isArray(metaDoc?.adAccounts)  ? metaDoc.adAccounts
             : [];
-  return list.map(a => normActId(a?.id || a?.account_id || '')).filter(Boolean);
+  return uniq(list.map(a => normActId(a?.id || a?.account_id || '')).filter(Boolean));
 }
 
 function googleAvailableIds(gaDoc) {
-  const fromAd = (Array.isArray(gaDoc?.ad_accounts) ? gaDoc.ad_accounts : []).map(a => normGaId(a?.id)).filter(Boolean);
-  const fromCu = (Array.isArray(gaDoc?.customers)   ? gaDoc.customers   : []).map(c => normGaId(c?.id)).filter(Boolean);
-  return [...new Set([...fromAd, ...fromCu])];
+  const fromAd = (Array.isArray(gaDoc?.ad_accounts) ? gaDoc.ad_accounts : [])
+    .map(a => normGaId(a?.id))
+    .filter(Boolean);
+  const fromCu = (Array.isArray(gaDoc?.customers) ? gaDoc.customers : [])
+    .map(c => normGaId(c?.id))
+    .filter(Boolean);
+  return uniq([...fromAd, ...fromCu]);
+}
+
+function ga4AvailableIds(gaDoc) {
+  // gaProperties puede traer objetos {propertyId, name:"properties/123", displayName}
+  const props = Array.isArray(gaDoc?.gaProperties) ? gaDoc.gaProperties : [];
+  const ids = props.map(p => normGA4Id(p?.propertyId || p?.property_id || p?.name || '')).filter(Boolean);
+  return uniq(ids);
 }
 
 function hasAnyMetaToken(metaDoc) {
   return !!(metaDoc?.access_token || metaDoc?.token || metaDoc?.accessToken || metaDoc?.longLivedToken || metaDoc?.longlivedToken);
 }
 
-function hasGoogleAdsOAuth(gaDoc) {
+function hasGoogleOAuth(gaDoc) {
   return !!(gaDoc?.refreshToken || gaDoc?.accessToken);
 }
 
-function isGA4Connected(gaDoc) {
-  // Requiere OAuth de Google y al menos una propiedad GA4 conocida
-  const hasOauth = hasGoogleAdsOAuth(gaDoc);
-  const props = Array.isArray(gaDoc?.gaProperties) ? gaDoc.gaProperties : [];
-  return !!(hasOauth && props.length);
+/** Selección Meta: doc.selectedAccountIds > user.selectedMetaAccounts */
+function selectedMetaFromDocOrUser(metaDoc, user) {
+  const fromDoc = Array.isArray(metaDoc?.selectedAccountIds)
+    ? metaDoc.selectedAccountIds.map(normActId)
+    : [];
+  if (fromDoc.length) return uniq(fromDoc);
+  const legacy = Array.isArray(user?.selectedMetaAccounts)
+    ? user.selectedMetaAccounts.map(normActId)
+    : [];
+  return uniq(legacy);
+}
+
+/** Selección Google Ads: doc.selectedCustomerIds > user.selectedGoogleAccounts */
+function selectedGoogleFromDocOrUser(gaDoc, user) {
+  const fromDoc = Array.isArray(gaDoc?.selectedCustomerIds)
+    ? gaDoc.selectedCustomerIds.map(normGaId)
+    : [];
+  if (fromDoc.length) return uniq(fromDoc);
+  const legacy = Array.isArray(user?.selectedGoogleAccounts)
+    ? user.selectedGoogleAccounts.map(normGaId)
+    : [];
+  return uniq(legacy);
+}
+
+/**
+ * ✅ Selección GA4:
+ * - Preferimos GoogleAccount.selectedPropertyIds (nuevo)
+ * - fallback a GoogleAccount.defaultPropertyId
+ * - fallback legacy user.selectedGAProperties
+ */
+function selectedGA4FromDocOrUser(gaDoc, user) {
+  const fromDoc = Array.isArray(gaDoc?.selectedPropertyIds)
+    ? gaDoc.selectedPropertyIds.map(normGA4Id)
+    : [];
+  if (fromDoc.length) return uniq(fromDoc);
+
+  const def = gaDoc?.defaultPropertyId ? normGA4Id(gaDoc.defaultPropertyId) : '';
+  if (def) return [def];
+
+  const legacy = Array.isArray(user?.selectedGAProperties)
+    ? user.selectedGAProperties.map(normGA4Id)
+    : [];
+  return uniq(legacy);
+}
+
+/**
+ * Conectado vs Listo:
+ * - connected: hay OAuth
+ * - requiredSelection: hay >1 disponible y no hay selección guardada
+ */
+function requiredSelectionByUX(availableCount, selectedCount) {
+  return availableCount > MAX_SELECT && selectedCount === 0;
 }
 
 /* ======================= route ======================= */
@@ -94,91 +148,118 @@ router.get('/', requireAuth, async (req, res) => {
     const uid = req.user._id;
 
     // Carga docs (tokens/selección/defaults)
-    const [metaDoc, gaDoc, shopDoc] = await Promise.all([
+    const [metaDoc, gaDoc, shopDoc, userDoc] = await Promise.all([
       MetaAccount.findOne({ $or: [{ user: uid }, { userId: uid }] })
         .select('_id ad_accounts adAccounts access_token token accessToken longLivedToken longlivedToken selectedAccountIds defaultAccountId')
         .lean(),
       GoogleAccount.findOne({ $or: [{ user: uid }, { userId: uid }] })
-        .select('_id refreshToken accessToken gaProperties selectedCustomerIds defaultCustomerId defaultPropertyId')
+        .select('_id refreshToken accessToken scope ad_accounts customers gaProperties selectedCustomerIds defaultCustomerId selectedPropertyIds defaultPropertyId')
         .lean(),
       ShopConnections.findOne({ $or: [{ user: uid }, { userId: uid }] })
         .select('_id shop accessToken access_token')
         .lean(),
+      // 👇 traemos legacy selections de User para consistencia total
+      User.findById(uid)
+        .select('_id selectedMetaAccounts selectedGoogleAccounts selectedGAProperties')
+        .lean(),
     ]);
 
+    const user = userDoc || req.user || {};
+
     // ===== META =====
-    const metaConnected   = !!(metaDoc && hasAnyMetaToken(metaDoc));
-    const metaAvailIds    = metaDoc ? metaAvailableIds(metaDoc) : [];
-    const metaSelected    = selectedMetaFromDocOrUser(metaDoc || {}, req.user);
-    const metaRequiredSel = metaAvailIds.length > MAX_BY_RULE && metaSelected.length === 0;
-    const metaDefault     = metaDoc?.defaultAccountId ? normActId(metaDoc.defaultAccountId) : null;
+    const metaConnected = !!(metaDoc && hasAnyMetaToken(metaDoc));
+    const metaAvailIds  = metaDoc ? metaAvailableIds(metaDoc) : [];
+    const metaSelected  = metaDoc ? selectedMetaFromDocOrUser(metaDoc, user) : selectedMetaFromDocOrUser({}, user);
 
-    // ===== GOOGLE ADS / GA4 =====
-    const googleAdsConnected = !!(gaDoc && hasGoogleAdsOAuth(gaDoc));
-    const ga4Connected       = !!(gaDoc && isGA4Connected(gaDoc));
+    // en tu UX solo debe existir 1 selection; limitamos por seguridad
+    const metaSelected1 = metaSelected.slice(0, MAX_SELECT);
+    const metaRequiredSel = metaConnected && requiredSelectionByUX(metaAvailIds.length, metaSelected1.length);
 
-    const gAvailIds    = gaDoc ? googleAvailableIds(gaDoc) : [];
-    const gSelected    = selectedGoogleFromDocOrUser(gaDoc || {}, req.user);
-    const gRequiredSel = gAvailIds.length > MAX_BY_RULE && gSelected.length === 0;
-    const gDefault     = gaDoc?.defaultCustomerId ? normGaId(gaDoc.defaultCustomerId) : null;
+    const metaDefault = metaDoc?.defaultAccountId ? normActId(metaDoc.defaultAccountId) : null;
+
+    // ===== GOOGLE ADS =====
+    const googleAdsConnected = !!(gaDoc && hasGoogleOAuth(gaDoc));
+    const gAvailIds = gaDoc ? googleAvailableIds(gaDoc) : [];
+
+    const gSelected = gaDoc ? selectedGoogleFromDocOrUser(gaDoc, user) : selectedGoogleFromDocOrUser({}, user);
+    const gSelected1 = gSelected.slice(0, MAX_SELECT);
+    const gRequiredSel = googleAdsConnected && requiredSelectionByUX(gAvailIds.length, gSelected1.length);
+
+    const gDefault = gaDoc?.defaultCustomerId ? normGaId(gaDoc.defaultCustomerId) : null;
+
+    // ===== GA4 =====
+    // GA4 conectado: OAuth + al menos 1 propiedad detectada (disponible)
+    const ga4AvailIds = gaDoc ? ga4AvailableIds(gaDoc) : [];
+    const ga4Connected = !!(googleAdsConnected && ga4AvailIds.length > 0);
+
+    const ga4Selected = gaDoc ? selectedGA4FromDocOrUser(gaDoc, user) : selectedGA4FromDocOrUser({}, user);
+    const ga4Selected1 = ga4Selected.slice(0, MAX_SELECT);
+    const ga4RequiredSel = ga4Connected && requiredSelectionByUX(ga4AvailIds.length, ga4Selected1.length);
+
+    const ga4Default = gaDoc?.defaultPropertyId ? normGA4Id(gaDoc.defaultPropertyId) : (ga4Selected1[0] || null);
 
     // ===== SHOPIFY =====
     const shopifyConnected = !!(shopDoc && shopDoc.shop && (shopDoc.accessToken || shopDoc.access_token));
 
-    // ===== Armado del payload =====
+    // ===== Payload =====
     const status = {
       meta: {
         connected: metaConnected,
         availableCount: metaAvailIds.length,
-        selectedCount: metaSelected.length,
+        selectedCount: metaSelected1.length,
         requiredSelection: metaRequiredSel,
-        selected: metaSelected,
+        selected: metaSelected1,
         defaultAccountId: metaDefault,
-        // LEGACY:
+        // legacy:
         count: metaAvailIds.length,
+        maxSelect: MAX_SELECT,
       },
       googleAds: {
         connected: googleAdsConnected,
         availableCount: gAvailIds.length,
-        selectedCount: gSelected.length,
+        selectedCount: gSelected1.length,
         requiredSelection: gRequiredSel,
-        selected: gSelected,
+        selected: gSelected1,
         defaultCustomerId: gDefault,
+        maxSelect: MAX_SELECT,
       },
       ga4: {
         connected: ga4Connected,
-        propertiesCount: Array.isArray(gaDoc?.gaProperties) ? gaDoc.gaProperties.length : 0,
-        defaultPropertyId: gaDoc?.defaultPropertyId || null,
-        // LEGACY para front:
-        count: Array.isArray(gaDoc?.gaProperties) ? gaDoc.gaProperties.length : 0,
+        propertiesCount: ga4AvailIds.length,
+        availableCount: ga4AvailIds.length,
+        selectedCount: ga4Selected1.length,
+        requiredSelection: ga4RequiredSel,
+        selected: ga4Selected1,
+        defaultPropertyId: ga4Default,
+        // legacy:
+        count: ga4AvailIds.length,
+        maxSelect: MAX_SELECT,
       },
       shopify: {
         connected: shopifyConnected,
       },
     };
 
-    // === Claves LEGACY que espera tu onboarding3.js ===
-    // - status.google.connected (alias de googleAds.connected)
-    // - status.google.count     -> usamos el Nº de propiedades GA4 para que el front
-    //   marque GA4 como conectado con la condición que ya tiene (google.connected && count>0)
+    // === LEGACY: onboarding3.js ===
     status.google = {
       connected: status.googleAds.connected,
       count: status.ga4.count,
     };
 
     // Fuentes a analizar (para tu barra/progreso)
+    // ✅ importante: google solo si NO requiere selección (evita la carrera)
     const sourcesToAnalyze = [
-      ...(metaConnected ? ['meta'] : []),
-      ...(googleAdsConnected ? ['google'] : []),
+      ...(metaConnected && !metaRequiredSel ? ['meta'] : []),
+      ...(googleAdsConnected && !gRequiredSel ? ['google'] : []),
       ...(shopifyConnected ? ['shopify'] : []),
-      ...(ga4Connected ? ['ga4'] : []),
+      ...(ga4Connected && !ga4RequiredSel ? ['ga4'] : []),
     ];
 
     return res.json({
       ok: true,
       status,
       sourcesToAnalyze,
-      rules: { selectionMaxRule: MAX_BY_RULE },
+      rules: { selectionMaxRule: MAX_SELECT },
     });
   } catch (e) {
     console.error('onboarding/status error:', e);

@@ -32,7 +32,6 @@ const { collectShopify } = require('./collect/shopifyCollector');
 // Collector GA4 (robusto a distintos nombres de export)
 let collectGA4 = null;
 try {
-  // usamos el archivo real que tienes hoy
   const ga4Mod = require('./collect/googleAnalyticsCollector');
   collectGA4 =
     ga4Mod.collectGA4 ||
@@ -48,7 +47,24 @@ const generateAudit = require('./llm/generateAudit');
 
 /* ---------- normalizadores ---------- */
 const normMeta   = (s='') => String(s).trim().replace(/^act_/, '');
-const normGoogle = (s='') => String(s).trim().replace(/^customers\//,'').replace(/-/g,'');
+const normGoogle = (s='') => String(s).trim().replace(/^customers\//,'').replace(/-/g,'').replace(/[^\d]/g,'');
+
+/**
+ * GA4 Property suele venir como:
+ * - "385966493"
+ * - "properties/385966493"
+ * - objeto { propertyId: "385..." } / { name: "properties/385..." }
+ */
+const normGA4 = (s='') => {
+  const raw = String(s || '').trim();
+  const digits = raw.replace(/^properties\//, '').replace(/[^\d]/g, '');
+  // preferimos dígitos si existen
+  return digits || raw.replace(/^properties\//, '').trim();
+};
+const ga4ToApiName = (id='') => {
+  const n = normGA4(id);
+  return n ? (String(id).startsWith('properties/') ? String(id) : `properties/${n}`) : '';
+};
 
 /* ---------- límites por plan (issues por fuente) ---------- */
 const PLAN_MAX_FINDINGS = {
@@ -58,13 +74,15 @@ const PLAN_MAX_FINDINGS = {
   pro:         15,
 };
 
-// Límite global “duro” para cualquier plan
+// Límite global “duro”
 const GLOBAL_MAX_FINDINGS = 5;
 const GLOBAL_MIN_FINDINGS = 1;
 
+// 👇 Importante: tu UX quiere 1 selección por tipo
+const MAX_SELECT_PER_TYPE = 1;
+
 function getPlanSlug(user) {
   if (!user) return 'gratis';
-  // priorizamos planSlug, luego plan, luego default
   return (user.planSlug || user.plan || 'gratis').toString().toLowerCase();
 }
 
@@ -132,7 +150,6 @@ function recomputeGA4(snapshot) {
     revenue     = Number(snapshot.aggregate.revenue || 0);
   }
 
-  // Fallback: sumar canales si no hay aggregate
   if (!sessions && !conversions && Array.isArray(snapshot.channels)) {
     for (const c of snapshot.channels) {
       users       += Number(c.users || 0);
@@ -144,7 +161,6 @@ function recomputeGA4(snapshot) {
 
   const base = { users, sessions, conversions, revenue };
   const cr = safeDiv(conversions, sessions) * 100;
-
   return { ...base, cr };
 }
 
@@ -166,44 +182,24 @@ function diffKpis(cur = {}, prev = {}) {
   return out;
 }
 
-/**
- * Construye un objeto de tendencia simple para que la IA pueda
- * decir “mejoraste/empeoraste” entre la auditoría anterior y la actual.
- */
 function buildTrend(type, currentSnapshot, previousSnapshot) {
   if (!previousSnapshot) return null;
   try {
     if (type === 'google') {
       const cur  = recomputeGoogle(currentSnapshot);
       const prev = recomputeGoogle(previousSnapshot);
-      return {
-        type,
-        kpisCurrent:  cur,
-        kpisPrevious: prev,
-        deltas: diffKpis(cur, prev),
-      };
+      return { type, kpisCurrent: cur, kpisPrevious: prev, deltas: diffKpis(cur, prev) };
     }
     if (type === 'meta') {
       const cur  = recomputeMeta(currentSnapshot);
       const prev = recomputeMeta(previousSnapshot);
-      return {
-        type,
-        kpisCurrent:  cur,
-        kpisPrevious: prev,
-        deltas: diffKpis(cur, prev),
-      };
+      return { type, kpisCurrent: cur, kpisPrevious: prev, deltas: diffKpis(cur, prev) };
     }
     if (type === 'ga4') {
       const cur  = recomputeGA4(currentSnapshot);
       const prev = recomputeGA4(previousSnapshot);
-      return {
-        type,
-        kpisCurrent:  cur,
-        kpisPrevious: prev,
-        deltas: diffKpis(cur, prev),
-      };
+      return { type, kpisCurrent: cur, kpisPrevious: prev, deltas: diffKpis(cur, prev) };
     }
-    // Shopify u otros: de momento sin tendencia numérica
     return null;
   } catch (_) {
     return null;
@@ -228,9 +224,48 @@ function filterSnapshot(type, snapshot, allowedIds = []) {
   return { ...snapshot, byCampaign, accounts, accountIds, kpis };
 }
 
+/* ---------- util: filtrar snapshot GA4 por property ---------- */
+function filterGA4Snapshot(snapshot, selectedPropertyId) {
+  if (!snapshot || !selectedPropertyId) return snapshot;
+
+  const wanted = normGA4(selectedPropertyId);
+  const matchPropId = (x) => {
+    const pid = normGA4(x?.propertyId || x?.property_id || x?.property || x?.id || '');
+    const name = normGA4(x?.name || x?.propertyName || '');
+    return pid === wanted || name === wanted;
+  };
+
+  const out = { ...snapshot };
+
+  // si el snapshot trae "gaProperties" o "properties"
+  if (Array.isArray(out.gaProperties)) out.gaProperties = out.gaProperties.filter(matchPropId);
+  if (Array.isArray(out.properties))   out.properties   = out.properties.filter(matchPropId);
+
+  // si trae "byProperty"
+  if (Array.isArray(out.byProperty)) {
+    out.byProperty = out.byProperty.filter(matchPropId);
+    // si solo queda 1, y trae aggregate por propiedad, intenta fijarlo
+    const one = out.byProperty[0];
+    if (one && one.aggregate && !out.aggregate) out.aggregate = one.aggregate;
+  }
+
+  // si trae un "propertyId" plano
+  if (out.propertyId || out.property_id || out.property) {
+    const pid = normGA4(out.propertyId || out.property_id || out.property);
+    if (pid !== wanted) {
+      // lo anulamos para no confundir
+      delete out.propertyId;
+      delete out.property_id;
+      delete out.property;
+    }
+  }
+
+  // marcar explícitamente cuál se auditó
+  out.selectedPropertyId = ga4ToApiName(wanted) || wanted;
+  return out;
+}
+
 /* ---------- escoger subconjunto seguro si no hay selección ---------- */
-/* (hoy casi no se usa porque los collectors ya respetan máx. 3,
- *  pero lo dejamos para compat si snapshot ya viene con varias cuentas) */
 function autoPickIds(type, snapshot, max = 3) {
   const norm = type === 'meta' ? normMeta : normGoogle;
 
@@ -241,7 +276,6 @@ function autoPickIds(type, snapshot, max = 3) {
 
   const ids = new Set();
 
-  // soportar defaultCustomerId además de defaultAccountId
   const def = norm(snapshot?.defaultAccountId || snapshot?.defaultCustomerId || '');
   if (def) ids.add(def);
 
@@ -268,7 +302,7 @@ async function detectConnections(userId) {
       .select('access_token token accessToken longLivedToken longlivedToken selectedAccountIds defaultAccountId')
       .lean(),
     GoogleAccount.findOne({ $or:[{user:userId},{userId}] })
-      .select('refreshToken accessToken selectedCustomerIds defaultCustomerId')
+      .select('refreshToken accessToken selectedCustomerIds defaultCustomerId selectedPropertyIds defaultPropertyId')
       .lean(),
     ShopConnections.findOne({ $or:[{user:userId},{userId}] })
       .select('shop access_token accessToken')
@@ -285,6 +319,10 @@ async function detectConnections(userId) {
       connected: !!(google && (google.refreshToken || google.accessToken)),
       selectedIds: Array.isArray(google?.selectedCustomerIds) ? google.selectedCustomerIds.map(normGoogle) : [],
       defaultId: google?.defaultCustomerId ? normGoogle(google.defaultCustomerId) : null,
+
+      // 👇 GA4 selections
+      selectedPropertyIds: Array.isArray(google?.selectedPropertyIds) ? google.selectedPropertyIds.map(normGA4) : [],
+      defaultPropertyId: google?.defaultPropertyId ? normGA4(google.defaultPropertyId) : null,
     },
     shopify: {
       connected: !!(shop && shop.shop && (shop.access_token || shop.accessToken)),
@@ -292,24 +330,61 @@ async function detectConnections(userId) {
   };
 }
 
-/* ---------- helpers de issues especiales ---------- */
+/* ---------- wait/retry por condición de carrera ---------- */
+async function sleep(ms) {
+  await new Promise((r) => setTimeout(r, ms));
+}
 
-/**
- * Issue específico cuando el collector pide selección explícita (>3 cuentas/propiedades).
- */
+async function waitForSelectionIfOnboarding({ userId, type, source, maxTries = 6, delayMs = 500 }) {
+  if (String(source || '').toLowerCase() !== 'onboarding') return null;
+
+  for (let i = 0; i < maxTries; i++) {
+    const [user, conn] = await Promise.all([
+      User.findById(userId)
+        .select('selectedGoogleAccounts selectedMetaAccounts selectedGAProperties')
+        .lean(),
+      detectConnections(userId),
+    ]);
+
+    if (type === 'google') {
+      const sel =
+        (conn.google.selectedIds?.length ? conn.google.selectedIds : (user?.selectedGoogleAccounts || []).map(normGoogle));
+      if (sel && sel.length) return { user, conn };
+    }
+
+    if (type === 'meta') {
+      const sel =
+        (conn.meta.selectedIds?.length ? conn.meta.selectedIds : (user?.selectedMetaAccounts || []).map(normMeta));
+      if (sel && sel.length) return { user, conn };
+    }
+
+    if (type === 'ga4') {
+      const userSel = Array.isArray(user?.selectedGAProperties) ? user.selectedGAProperties.map(normGA4) : [];
+      const connSel = conn.google.selectedPropertyIds || [];
+      const eff = (connSel.length ? connSel : userSel);
+      if (eff && eff.length) return { user, conn };
+    }
+
+    await sleep(delayMs);
+  }
+
+  return null;
+}
+
+/* ---------- helpers de issues especiales ---------- */
 function buildSelectionRequiredIssue(type, raw) {
   const reason    = String(raw?.reason || '').toUpperCase();
   const available = Number(raw?.availableCount || (raw?.accountIds || []).length || 0);
 
-  let title    = 'Selecciona las fuentes que quieres auditar';
   let platform = 'la fuente conectada';
   if (type === 'google') platform = 'Google Ads';
   if (type === 'meta')   platform = 'Meta Ads (Facebook/Instagram)';
   if (type === 'ga4')    platform = 'Google Analytics 4';
 
-  if (reason.startsWith('SELECTION_REQUIRED')) {
-    title = `Selecciona qué cuentas de ${platform} auditar`;
-  }
+  const title =
+    reason.startsWith('SELECTION_REQUIRED')
+      ? `Selecciona qué cuenta de ${platform} auditar`
+      : `Selecciona la cuenta / propiedad de ${platform}`;
 
   return {
     id: `selection_required_${type}`,
@@ -317,127 +392,180 @@ function buildSelectionRequiredIssue(type, raw) {
     severity: 'media',
     title,
     evidence: available
-      ? `Se detectaron ${available} cuentas/propiedades conectadas en ${platform}. Por claridad y rendimiento solo se pueden auditar hasta 3 a la vez.`
-      : `Hay varias cuentas/propiedades conectadas en ${platform} y es necesario elegir cuáles auditar.`,
-    recommendation: 'En Ajustes → Conexiones selecciona explícitamente las cuentas o propiedades que quieras incluir en la auditoría.',
+      ? `Se detectaron ${available} cuentas/propiedades en ${platform}. Debes elegir 1 para auditar.`
+      : `Hay varias cuentas/propiedades conectadas en ${platform} y es necesario elegir 1.`,
+    recommendation: 'Vuelve al onboarding y selecciona 1 cuenta / 1 propiedad. Si el problema persiste, desconecta y vuelve a conectar Google/Meta.',
     estimatedImpact: 'medio',
   };
 }
 
+function buildSelectionMismatchIssue({ type, selected, available = [] }) {
+  let platform = 'la fuente';
+  if (type === 'google') platform = 'Google Ads';
+  if (type === 'meta')   platform = 'Meta Ads';
+  if (type === 'ga4')    platform = 'Google Analytics 4';
+
+  return {
+    id: `selection_mismatch_${type}`,
+    area: 'setup',
+    severity: 'alta',
+    title: `La selección guardada no coincide con lo disponible en ${platform}`,
+    evidence: `Seleccionado: ${selected}. Disponible: ${available.slice(0, 8).join(', ')}${available.length > 8 ? '…' : ''}`,
+    recommendation: 'En Ajustes → Conexiones vuelve a seleccionar 1 cuenta / 1 propiedad. Si no aparece, reconecta la integración con el usuario correcto.',
+    estimatedImpact: 'alto',
+  };
+}
+
 /* ---------- MAIN ---------- */
-/**
- * Ejecuta una auditoría para una fuente.
- * @param {Object} params
- * @param {string} params.userId
- * @param {('google'|'meta'|'shopify'|'ga4'|'ga')} params.type
- * @param {string} [params.source='manual']  // 'onboarding' | 'panel' | 'manual'
- */
 async function runAuditFor({ userId, type, source = 'manual' }) {
-  // Normalizamos type para manejar alias "ga"
   let t = String(type || '').toLowerCase();
   if (t === 'ga') t = 'ga4';
 
   try {
     const user = await User.findById(userId)
-      .select('selectedGoogleAccounts selectedMetaAccounts plan planSlug')
+      .select('selectedGoogleAccounts selectedMetaAccounts selectedGAProperties plan planSlug')
       .lean();
 
     const planSlug = getPlanSlug(user);
 
-    // límite efectivo por plan PERO capado a GLOBAL_MAX_FINDINGS
     const planLimit   = PLAN_MAX_FINDINGS[planSlug] || PLAN_MAX_FINDINGS.gratis;
     const maxFindings = Math.min(GLOBAL_MAX_FINDINGS, planLimit);
     const minFindings = GLOBAL_MIN_FINDINGS;
 
-    // Estado real de conexiones y selección preferida desde conectores
     const connections = await detectConnections(userId);
 
-    // Guardas de conexión (defensa en profundidad; auditRunner / router ya filtran)
+    // Guardas de conexión
     if (t === 'meta'    && !connections.meta.connected)    throw new Error('SOURCE_NOT_CONNECTED_META');
     if (t === 'google'  && !connections.google.connected)  throw new Error('SOURCE_NOT_CONNECTED_GOOGLE');
     if (t === 'ga4'     && !connections.google.connected)  throw new Error('SOURCE_NOT_CONNECTED_GA4');
     if (t === 'shopify' && !connections.shopify.connected) throw new Error('SOURCE_NOT_CONNECTED_SHOPIFY');
 
-    // Selección efectiva “extra” desde los conectores (legacy),
-    // los collectors ya usan preferencias nuevas, pero esto permite
-    // filtrar aún más si el usuario marcó algo ahí.
-    const selMeta = (
+    // Selección efectiva (1) — PRIORIDAD:
+    // 1) conector (MetaAccount/GoogleAccount)
+    // 2) User legacy/compat (selectedMetaAccounts/selectedGoogleAccounts/selectedGAProperties)
+    const selMetaAll = (
       connections.meta.selectedIds.length
         ? connections.meta.selectedIds
         : (user?.selectedMetaAccounts || [])
-    ).map(normMeta);
+    ).map(normMeta).filter(Boolean);
 
-    const selGoogle = (
+    const selGoogleAll = (
       connections.google.selectedIds.length
         ? connections.google.selectedIds
         : (user?.selectedGoogleAccounts || [])
-    ).map(normGoogle);
+    ).map(normGoogle).filter(Boolean);
 
-    let raw          = null;
-    let snapshot     = null;
-    let selectionNote = null; // nota informativa si llegamos a autoPick (hoy casi nunca)
+    const selGA4All = (
+      connections.google.selectedPropertyIds.length
+        ? connections.google.selectedPropertyIds
+        : (Array.isArray(user?.selectedGAProperties) ? user.selectedGAProperties : [])
+    ).map(normGA4).filter(Boolean);
+
+    // aplicamos el límite de UX: 1 por tipo
+    const selMeta   = selMetaAll.slice(0, MAX_SELECT_PER_TYPE);
+    const selGoogle = selGoogleAll.slice(0, MAX_SELECT_PER_TYPE);
+    const selGA4    = selGA4All.slice(0, MAX_SELECT_PER_TYPE);
+
+    let raw = null;
+    let snapshot = null;
+    let selectionNote = null;
 
     /* ---------- GOOGLE ADS ---------- */
     if (t === 'google') {
       raw = await collectGoogle(userId);
 
-      // Caso especial: collector pide selección explícita (>3 cuentas)
-      if (raw?.notAuthorized && raw.requiredSelection &&
-          String(raw.reason || '').startsWith('SELECTION_REQUIRED')) {
+      // Si el collector pide selección pero YA hay selección (o está por guardarse),
+      // evitamos falso "Sin permisos" por condición de carrera.
+      if (raw?.requiredSelection && String(raw?.reason || '').startsWith('SELECTION_REQUIRED')) {
+        // si no hay selección aún, damos chance corto en onboarding
+        if (!selGoogle.length) {
+          const waited = await waitForSelectionIfOnboarding({ userId, type: 'google', source });
+          if (waited) {
+            // re-leemos selección tras esperar
+            const conn2 = waited.conn;
+            const user2 = waited.user;
+            const sel2 = (
+              (conn2.google.selectedIds?.length ? conn2.google.selectedIds : (user2?.selectedGoogleAccounts || []).map(normGoogle))
+            ).filter(Boolean).slice(0, 1);
 
-        const issue = buildSelectionRequiredIssue('google', raw);
-        await Audit.create({
-          userId,
-          type: 'google',
-          origin: source || 'manual',
-          generatedAt: new Date(),
-          plan: planSlug,
-          maxFindings,
-          summary: 'Antes de generar la auditoría, selecciona qué cuentas de Google Ads quieres analizar.',
-          issues: [issue],
-          actionCenter: [issue],
-          topProducts: [],
-          inputSnapshot: raw,
-          version: 'audits@1.2.0-selection',
-        });
-        return true;
+            if (sel2.length) {
+              // retry collector ya con selección persistida (si el collector la usa internamente)
+              raw = await collectGoogle(userId);
+            }
+          }
+        }
+
+        // si aún no hay selección, sí guardamos issue de selección requerida
+        if (!selGoogle.length) {
+          const issue = buildSelectionRequiredIssue('google', raw);
+          await Audit.create({
+            userId,
+            type: 'google',
+            origin: source || 'manual',
+            generatedAt: new Date(),
+            plan: planSlug,
+            maxFindings,
+            summary: 'Antes de generar la auditoría, selecciona 1 cuenta de Google Ads para analizar.',
+            issues: [issue],
+            actionCenter: [issue],
+            topProducts: [],
+            inputSnapshot: raw,
+            version: 'audits@1.3.0-selection-1',
+          });
+          return true;
+        }
       }
 
       const total = (raw?.accountIds && raw.accountIds.length) ||
                     (raw?.accounts   && raw.accounts.length)   || 0;
 
-      // Solo filtramos por selGoogle si HAY intersección con las
-      // cuentas realmente presentes en el snapshot.
       if (selGoogle.length && total > 0) {
-        const norm = normGoogle;
         const snapshotIds = new Set(
-          (raw.accountIds || (raw.accounts || []).map(a => a.id) || [])
-            .map(norm)
+          (raw.accountIds || (raw.accounts || []).map(a => a.id) || []).map(normGoogle)
         );
-        const effectiveSel = selGoogle.filter(id => snapshotIds.has(norm(id)));
+
+        const effectiveSel = selGoogle.filter(id => snapshotIds.has(normGoogle(id)));
 
         if (effectiveSel.length > 0) {
           snapshot = filterSnapshot('google', raw, effectiveSel);
         } else {
-          // selección no coincide con lo que trajo el collector → no filtramos
-          snapshot = raw;
+          // mismatch: guardamos doc de setup claro
+          const available = Array.from(snapshotIds);
+          const issue = buildSelectionMismatchIssue({
+            type: 'google',
+            selected: effectiveSel[0] || selGoogle[0],
+            available,
+          });
+          await Audit.create({
+            userId,
+            type: 'google',
+            origin: source || 'manual',
+            generatedAt: new Date(),
+            plan: planSlug,
+            maxFindings,
+            summary: 'No pudimos auditar porque la selección no coincide con las cuentas disponibles.',
+            issues: [issue],
+            actionCenter: [issue],
+            topProducts: [],
+            inputSnapshot: raw,
+            version: 'audits@1.3.0-mismatch',
+          });
+          return true;
         }
       } else {
-        // Confiamos en la lógica de selección del collector (máx. 3)
         snapshot = raw;
 
-        // fallback ultra-defensivo: si por alguna razón el snapshot viene con >3 cuentas,
-        // auto-limitamos y dejamos nota
-        if (total > 3) {
-          const picked = autoPickIds('google', raw, 3);
+        // fallback defensivo (solo si llega con >1 y no hay selección)
+        if (!selGoogle.length && total > 1) {
+          const picked = autoPickIds('google', raw, MAX_SELECT_PER_TYPE);
           snapshot = filterSnapshot('google', raw, picked);
           selectionNote = {
             id: 'auto_selection_google',
-            title: 'Auditoría limitada a 3 cuentas',
+            title: 'Auditoría limitada automáticamente',
             area: 'setup',
             severity: 'media',
-            evidence: `Se detectaron ${total} cuentas de Google Ads. Se auditó solo: ${picked.join(', ')}.`,
-            recommendation: 'En Ajustes → Conexiones elige explícitamente las cuentas a auditar.',
+            evidence: `No había selección guardada. Se auditó 1 cuenta por defecto: ${picked.join(', ')}.`,
+            recommendation: 'En Ajustes → Conexiones selecciona explícitamente 1 cuenta de Google Ads.',
             estimatedImpact: 'medio',
           };
         }
@@ -448,55 +576,80 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     if (t === 'meta') {
       raw = await collectMeta(userId);
 
-      if (raw?.notAuthorized && raw.requiredSelection &&
-          String(raw.reason || '').startsWith('SELECTION_REQUIRED')) {
+      if (raw?.requiredSelection && String(raw?.reason || '').startsWith('SELECTION_REQUIRED')) {
+        if (!selMeta.length) {
+          const waited = await waitForSelectionIfOnboarding({ userId, type: 'meta', source });
+          if (waited) raw = await collectMeta(userId);
+        }
 
-        const issue = buildSelectionRequiredIssue('meta', raw);
-        await Audit.create({
-          userId,
-          type: 'meta',
-          origin: source || 'manual',
-          generatedAt: new Date(),
-          plan: planSlug,
-          maxFindings,
-          summary: 'Antes de generar la auditoría, selecciona qué cuentas de Meta Ads quieres analizar.',
-          issues: [issue],
-          actionCenter: [issue],
-          topProducts: [],
-          inputSnapshot: raw,
-          version: 'audits@1.2.0-selection',
-        });
-        return true;
+        if (!selMeta.length) {
+          const issue = buildSelectionRequiredIssue('meta', raw);
+          await Audit.create({
+            userId,
+            type: 'meta',
+            origin: source || 'manual',
+            generatedAt: new Date(),
+            plan: planSlug,
+            maxFindings,
+            summary: 'Antes de generar la auditoría, selecciona 1 cuenta de Meta Ads para analizar.',
+            issues: [issue],
+            actionCenter: [issue],
+            topProducts: [],
+            inputSnapshot: raw,
+            version: 'audits@1.3.0-selection-1',
+          });
+          return true;
+        }
       }
 
       const total = (raw?.accountIds && raw.accountIds.length) ||
                     (raw?.accounts   && raw.accounts.length)   || 0;
 
       if (selMeta.length && total > 0) {
-        const norm = normMeta;
         const snapshotIds = new Set(
-          (raw.accountIds || (raw.accounts || []).map(a => a.id) || [])
-            .map(norm)
+          (raw.accountIds || (raw.accounts || []).map(a => a.id) || []).map(normMeta)
         );
-        const effectiveSel = selMeta.filter(id => snapshotIds.has(norm(id)));
+
+        const effectiveSel = selMeta.filter(id => snapshotIds.has(normMeta(id)));
 
         if (effectiveSel.length > 0) {
           snapshot = filterSnapshot('meta', raw, effectiveSel);
         } else {
-          snapshot = raw;
+          const available = Array.from(snapshotIds);
+          const issue = buildSelectionMismatchIssue({
+            type: 'meta',
+            selected: effectiveSel[0] || selMeta[0],
+            available: available.map(x => `act_${x}`),
+          });
+          await Audit.create({
+            userId,
+            type: 'meta',
+            origin: source || 'manual',
+            generatedAt: new Date(),
+            plan: planSlug,
+            maxFindings,
+            summary: 'No pudimos auditar porque la selección no coincide con las cuentas disponibles.',
+            issues: [issue],
+            actionCenter: [issue],
+            topProducts: [],
+            inputSnapshot: raw,
+            version: 'audits@1.3.0-mismatch',
+          });
+          return true;
         }
       } else {
         snapshot = raw;
-        if (total > 3) {
-          const picked = autoPickIds('meta', raw, 3);
+
+        if (!selMeta.length && total > 1) {
+          const picked = autoPickIds('meta', raw, MAX_SELECT_PER_TYPE);
           snapshot = filterSnapshot('meta', raw, picked);
           selectionNote = {
             id: 'auto_selection_meta',
-            title: 'Auditoría limitada a 3 cuentas',
+            title: 'Auditoría limitada automáticamente',
             area: 'setup',
             severity: 'media',
-            evidence: `Se detectaron ${total} cuentas de Meta Ads. Se auditó solo: ${picked.map(x=>'act_'+x).join(', ')}.`,
-            recommendation: 'En Ajustes → Conexiones elige explícitamente las cuentas a auditar.',
+            evidence: `No había selección guardada. Se auditó 1 cuenta por defecto: ${picked.map(x=>'act_'+x).join(', ')}.`,
+            recommendation: 'En Ajustes → Conexiones selecciona explícitamente 1 cuenta de Meta Ads.',
             estimatedImpact: 'medio',
           };
         }
@@ -505,34 +658,86 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
     /* ---------- GA4 ---------- */
     if (t === 'ga4') {
-      if (!collectGA4) {
-        throw new Error('GA4_COLLECTOR_NOT_AVAILABLE');
-      }
+      if (!collectGA4) throw new Error('GA4_COLLECTOR_NOT_AVAILABLE');
 
       raw = await collectGA4(userId);
 
-      if (raw?.notAuthorized && raw.requiredSelection &&
-          String(raw.reason || '').startsWith('SELECTION_REQUIRED')) {
+      if (raw?.requiredSelection && String(raw?.reason || '').startsWith('SELECTION_REQUIRED')) {
+        if (!selGA4.length) {
+          const waited = await waitForSelectionIfOnboarding({ userId, type: 'ga4', source });
+          if (waited) raw = await collectGA4(userId);
+        }
 
-        const issue = buildSelectionRequiredIssue('ga4', raw);
-        await Audit.create({
-          userId,
-          type: 'ga4',
-          origin: source || 'manual',
-          generatedAt: new Date(),
-          plan: planSlug,
-          maxFindings,
-          summary: 'Antes de generar la auditoría, selecciona qué propiedades de GA4 quieres analizar.',
-          issues: [issue],
-          actionCenter: [issue],
-          topProducts: [],
-          inputSnapshot: raw,
-          version: 'audits@1.2.0-selection',
-        });
-        return true;
+        if (!selGA4.length) {
+          const issue = buildSelectionRequiredIssue('ga4', raw);
+          await Audit.create({
+            userId,
+            type: 'ga4',
+            origin: source || 'manual',
+            generatedAt: new Date(),
+            plan: planSlug,
+            maxFindings,
+            summary: 'Antes de generar la auditoría, selecciona 1 propiedad de GA4 para analizar.',
+            issues: [issue],
+            actionCenter: [issue],
+            topProducts: [],
+            inputSnapshot: raw,
+            version: 'audits@1.3.0-selection-1',
+          });
+          return true;
+        }
       }
 
+      // snapshot base
       snapshot = raw;
+
+      // ✅ APLICAR SELECCIÓN GA4 (1)
+      if (selGA4.length) {
+        const wanted = selGA4[0]; // normalizado
+        const filtered = filterGA4Snapshot(snapshot, wanted);
+
+        // validación de que “sí existe” la property en el snapshot
+        const avail = new Set();
+
+        const pushAvail = (x) => {
+          const n = normGA4(x);
+          if (n) avail.add(n);
+          const api = ga4ToApiName(n);
+          if (api) avail.add(normGA4(api));
+        };
+
+        (snapshot?.gaProperties || []).forEach((p) => pushAvail(p?.propertyId || p?.property_id || p?.name || p?.id));
+        (snapshot?.properties || []).forEach((p) => pushAvail(p?.propertyId || p?.property_id || p?.name || p?.id));
+        (snapshot?.byProperty || []).forEach((p) => pushAvail(p?.propertyId || p?.property_id || p?.name || p?.id));
+
+        // Si el snapshot no trae listas, aún así dejamos pasar (algunos collectors retornan aggregate directo)
+        if (avail.size) {
+          if (!avail.has(normGA4(wanted))) {
+            const issue = buildSelectionMismatchIssue({
+              type: 'ga4',
+              selected: ga4ToApiName(wanted) || wanted,
+              available: Array.from(avail),
+            });
+            await Audit.create({
+              userId,
+              type: 'ga4',
+              origin: source || 'manual',
+              generatedAt: new Date(),
+              plan: planSlug,
+              maxFindings,
+              summary: 'No pudimos auditar porque la property seleccionada no aparece como disponible para este usuario.',
+              issues: [issue],
+              actionCenter: [issue],
+              topProducts: [],
+              inputSnapshot: raw,
+              version: 'audits@1.3.0-mismatch',
+            });
+            return true;
+          }
+        }
+
+        snapshot = filtered;
+      }
     }
 
     /* ---------- SHOPIFY ---------- */
@@ -543,18 +748,16 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
     if (!snapshot) throw new Error('SNAPSHOT_EMPTY');
 
-    // Buscar auditoría anterior de esta misma fuente para tendencias
-    const previousAudit = await Audit.findOne({
-      userId,
-      type: t,
-    }).sort({ generatedAt: -1 }).lean();
+    // Auditoría anterior para tendencia
+    const previousAudit = await Audit.findOne({ userId, type: t })
+      .sort({ generatedAt: -1 })
+      .lean();
 
     const previousSnapshot = previousAudit?.inputSnapshot || null;
     const trend = buildTrend(t, snapshot, previousSnapshot);
 
     // ¿Tenemos datos reales tras el filtrado?
-    const hasAdsData =
-      Array.isArray(snapshot.byCampaign) && snapshot.byCampaign.length > 0;
+    const hasAdsData = Array.isArray(snapshot.byCampaign) && snapshot.byCampaign.length > 0;
 
     const hasGAData =
       (Array.isArray(snapshot.channels)   && snapshot.channels.length   > 0) ||
@@ -567,16 +770,12 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       ));
 
     let noData = false;
-    if (t === 'google' || t === 'meta') {
-      noData = !hasAdsData;
-    } else if (t === 'ga4') {
-      noData = !hasGAData;
-    }
+    if (t === 'google' || t === 'meta') noData = !hasAdsData;
+    else if (t === 'ga4') noData = !hasGAData;
 
     let auditJson = { summary: '', issues: [] };
 
     if (!noData) {
-      // Pasamos maxFindings limitado y contexto de auditoría anterior
       auditJson = await generateAudit({
         type: t,
         inputSnapshot: snapshot,
@@ -594,20 +793,13 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       });
     }
 
-    // Nota de selección (si aplicó autoPick de seguridad)
     if (selectionNote) {
       auditJson.issues = Array.isArray(auditJson.issues) ? auditJson.issues : [];
       auditJson.issues.unshift(selectionNote);
     }
 
-    // Normalizamos issues a array
     auditJson.issues = Array.isArray(auditJson.issues) ? auditJson.issues : [];
 
-    // *** IMPORTANTE ***
-    // A partir de aquí NO añadimos issues inventados.
-    // Solo se guarda lo que venga de la IA (y selectionNote si aplica).
-
-    // clamp final al límite por plan y al máximo global de 5
     if (auditJson.issues.length > maxFindings) {
       auditJson.issues = auditJson.issues.slice(0, maxFindings);
     }
@@ -615,7 +807,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     const auditDoc = {
       userId,
       type: t,
-      origin: source || 'manual',  // onboarding | panel | manual
+      origin: source || 'manual',
       generatedAt: new Date(),
       plan: planSlug,
       maxFindings,
@@ -624,8 +816,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       actionCenter: auditJson?.actionCenter || (auditJson?.issues || []).slice(0, 3),
       topProducts: auditJson?.topProducts || [],
       inputSnapshot: snapshot,
-      version: 'audits@1.2.0',
-      // guardamos un trozo del trend para debug / comparativas futuras
+      version: 'audits@1.3.0',
       trendSummary: trend || null,
     };
 
@@ -633,7 +824,6 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     return true;
 
   } catch (e) {
-    // Siempre escribe un doc para que el frontend vea el motivo
     await Audit.create({
       userId,
       type: String(type || '').toLowerCase() === 'ga' ? 'ga4' : String(type || '').toLowerCase(),
@@ -647,12 +837,12 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
         area: 'setup', severity: 'alta',
         title: 'Faltan datos o permisos',
         evidence: String(e && (e.message || e)),
-        recommendation: 'Verifica conexión y permisos. Si tienes varias cuentas, elige cuáles auditar en Ajustes.',
+        recommendation: 'Verifica conexión y permisos. Asegúrate de seleccionar 1 cuenta/property antes de auditar.',
         estimatedImpact: 'alto',
       }],
       actionCenter: [],
       inputSnapshot: {},
-      version: 'audits@1.2.0-error',
+      version: 'audits@1.3.0-error',
     });
     return false;
   }

@@ -11,7 +11,7 @@ async function _post(u, b) {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(b || {})
+    body: JSON.stringify(b || {}),
   });
   if (!r.ok) throw new Error(await r.text());
   return r.json();
@@ -41,13 +41,23 @@ const ASM = {
     meta: false,
     googleAds: false,
     googleGa: false, // qué bloques se muestran en el modal
-  }
+  },
 };
 
 // --- UI utils
 const _el = (id) => document.getElementById(id);
-const _show = (el) => { if (el) { el.classList.remove('hidden'); el.style.display = ''; } };
-const _hide = (el) => { if (el) { el.classList.add('hidden'); el.style.display = 'none'; } };
+const _show = (el) => {
+  if (el) {
+    el.classList.remove('hidden');
+    el.style.display = '';
+  }
+};
+const _hide = (el) => {
+  if (el) {
+    el.classList.add('hidden');
+    el.style.display = 'none';
+  }
+};
 
 function _ensureHintNode() {
   let hint = _el('asm-hint');
@@ -85,13 +95,13 @@ function _enableSave(enabled) {
 }
 
 function _canSave() {
-  const needsM  = ASM.visible.meta       && ASM.needs.meta;
-  const needsGA = ASM.visible.googleAds  && ASM.needs.googleAds;
-  const needsGP = ASM.visible.googleGa   && ASM.needs.googleGa;
+  const needsM = ASM.visible.meta && ASM.needs.meta;
+  const needsGA = ASM.visible.googleAds && ASM.needs.googleAds;
+  const needsGP = ASM.visible.googleGa && ASM.needs.googleGa;
 
-  if (needsM  && ASM.sel.meta.size      === 0) return false;
+  if (needsM && ASM.sel.meta.size === 0) return false;
   if (needsGA && ASM.sel.googleAds.size === 0) return false;
-  if (needsGP && ASM.sel.googleGa.size  === 0) return false;
+  if (needsGP && ASM.sel.googleGa.size === 0) return false;
   return true;
 }
 
@@ -140,23 +150,79 @@ function _updateLimitUI(kind) {
 
   _updateCount(kind);
 
-  if (reached) _hint(`Límite alcanzado: solo puedes seleccionar ${MAX_SELECT} cuenta.`, 'warn');
+  if (reached)
+    _hint(`Límite alcanzado: solo puedes seleccionar ${MAX_SELECT} cuenta.`, 'warn');
   else _hint(`Selecciona hasta ${MAX_SELECT} cuenta por tipo.`, 'info');
 
   _enableSave(_canSave());
 }
 
-/** Notificar selección de cuentas de Google Ads al script principal (onboarding.js) */
-function _notifyGoogleAdsSelection(ids) {
+/* =========================================================
+ *  ✅ FIX E2E: Esperar ACK de Google Ads selection
+ *  ---------------------------------------------------------
+ *  Este script dispara "googleAccountsSelected" para que
+ *  onboarding.js haga el POST a:
+ *    /api/google/ads/insights/accounts/selection
+ *
+ *  Para evitar la condición de carrera, NO cerramos modal
+ *  hasta recibir:
+ *    "adnova:google-ads-selection-saved"
+ *
+ *  onboarding.js deberá emitir ese evento al terminar.
+ * ========================================================= */
+
+function _newReqId() {
+  return `asm_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function _waitForAck(eventName, reqId, timeoutMs = 12000) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+
+    const t = setTimeout(() => {
+      if (done) return;
+      done = true;
+      window.removeEventListener(eventName, onAck);
+      reject(new Error('GOOGLE_ADS_SELECTION_ACK_TIMEOUT'));
+    }, timeoutMs);
+
+    function onAck(ev) {
+      const d = ev?.detail || {};
+      if (!d || d.reqId !== reqId) return; // ignorar ACKs de otra ejecución
+      if (done) return;
+      done = true;
+      clearTimeout(t);
+      window.removeEventListener(eventName, onAck);
+
+      if (d.ok === false) {
+        reject(new Error(d.error || 'GOOGLE_ADS_SELECTION_FAILED'));
+      } else {
+        resolve(d);
+      }
+    }
+
+    window.addEventListener(eventName, onAck);
+  });
+}
+
+/** Notificar selección de cuentas de Google Ads al script principal (onboarding.js) y ESPERAR ACK */
+async function _saveGoogleAdsSelection(ids, { timeoutMs = 12000 } = {}) {
+  const reqId = _newReqId();
+
+  // Disparamos evento para que onboarding.js haga el POST real
   try {
     window.dispatchEvent(
       new CustomEvent('googleAccountsSelected', {
-        detail: { accountIds: ids },
+        detail: { accountIds: ids, reqId, source: 'asm' },
       })
     );
   } catch (e) {
     console.error('Error dispatching googleAccountsSelected', e);
+    throw new Error('GOOGLE_ADS_SELECTION_DISPATCH_FAILED');
   }
+
+  // Esperar confirmación (onboarding.js debe emitir este evento al terminar)
+  await _waitForAck('adnova:google-ads-selection-saved', reqId, timeoutMs);
 }
 
 function _renderLists() {
@@ -167,12 +233,12 @@ function _renderLists() {
   }
   _hint(`Selecciona hasta ${MAX_SELECT} cuenta por tipo.`, 'info');
 
-  const metaTitle   = _el('asm-meta-title');
-  const metaList    = _el('asm-meta-list');
-  const gAdsTitle   = _el('asm-google-ads-title');
-  const gAdsList    = _el('asm-google-ads-list');
-  const gGaTitle    = _el('asm-google-ga-title');
-  const gGaList     = _el('asm-google-ga-list');
+  const metaTitle = _el('asm-meta-title');
+  const metaList = _el('asm-meta-list');
+  const gAdsTitle = _el('asm-google-ads-title');
+  const gAdsList = _el('asm-google-ads-list');
+  const gGaTitle = _el('asm-google-ga-title');
+  const gGaList = _el('asm-google-ga-list');
 
   // META
   if (ASM.visible.meta && ASM.needs.meta && ASM.data.meta.length > 0) {
@@ -209,7 +275,10 @@ function _renderLists() {
     _show(gAdsList);
     gAdsList.innerHTML = '';
     ASM.data.googleAds.forEach((a) => {
-      const id = String(a.id || '').replace(/^customers\//, '').replace(/-/g, '').trim();
+      const id = String(a.id || '')
+        .replace(/^customers\//, '')
+        .replace(/-/g, '')
+        .trim();
       const displayName =
         a.name || a.descriptiveName || a.descriptive_name || `Cuenta ${id}`;
       const chip = _chip(displayName, id, 'googleAds', (checked, val, kind, cbEl) => {
@@ -270,33 +339,37 @@ async function _openModal() {
   _show(_el('account-select-modal'));
 
   const saveBtn = _el('asm-save');
+  if (!saveBtn) return;
+
   saveBtn.onclick = async () => {
     if (!_canSave()) return;
+
+    const originalText = saveBtn.textContent;
     saveBtn.textContent = 'Guardando…';
     saveBtn.disabled = true;
 
     try {
       const tasks = [];
 
-      // META
+      // META (POST directo)
       if (ASM.visible.meta && ASM.needs.meta) {
         const ids = Array.from(ASM.sel.meta).slice(0, MAX_SELECT);
         tasks.push(_post('/api/meta/accounts/selection', { accountIds: ids }));
       }
 
-      // GOOGLE ADS → notificamos a onboarding.js
-      if (ASM.visible.googleAds && ASM.needs.googleAds) {
-        const ids = Array.from(ASM.sel.googleAds).slice(0, MAX_SELECT);
-        _notifyGoogleAdsSelection(ids);
-      }
-
-      // GOOGLE GA4 → guardamos selección en backend (nuevo endpoint)
+      // GA4 (POST directo)
       if (ASM.visible.googleGa && ASM.needs.googleGa) {
         const ids = Array.from(ASM.sel.googleGa).slice(0, MAX_SELECT);
         if (ids.length) {
-          tasks.push(
-            _post('/api/google/analytics/selection', { propertyIds: ids })
-          );
+          tasks.push(_post('/api/google/analytics/selection', { propertyIds: ids }));
+        }
+      }
+
+      // Google Ads (ESPERA ACK)
+      if (ASM.visible.googleAds && ASM.needs.googleAds) {
+        const ids = Array.from(ASM.sel.googleAds).slice(0, MAX_SELECT);
+        if (ids.length) {
+          tasks.push(_saveGoogleAdsSelection(ids));
         }
       }
 
@@ -305,22 +378,24 @@ async function _openModal() {
       if (ASM.visible.meta) {
         sessionStorage.setItem('metaConnected', 'true');
       }
-      // googleConnected se marca dentro de onboarding.js (markGoogleConnected)
+      // googleConnected se marca en onboarding.js (markGoogleConnected)
 
       _hide(_el('account-select-modal'));
-      window.dispatchEvent(
-        new CustomEvent('adnova:accounts-selection-saved')
-      );
+      window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved'));
     } catch (e) {
       console.error('save selection error', e);
+
       const box = _el('asm-error');
       if (box) {
         box.textContent =
-          'Ocurrió un error guardando tu selección. Intenta de nuevo.';
+          e?.message === 'GOOGLE_ADS_SELECTION_ACK_TIMEOUT'
+            ? 'No pudimos confirmar el guardado de tu cuenta de Google Ads. Intenta de nuevo.'
+            : 'Ocurrió un error guardando tu selección. Intenta de nuevo.';
         _show(box);
       }
       _hint('', 'info');
-      saveBtn.textContent = 'Guardar y continuar';
+
+      saveBtn.textContent = originalText || 'Guardar y continuar';
       _enableSave(true);
     }
   };
@@ -328,16 +403,16 @@ async function _openModal() {
 
 async function _maybeOpenSelectionModal() {
   const url = new URL(location.href);
-  const fromMeta   = url.searchParams.has('meta');
+  const fromMeta = url.searchParams.has('meta');
   const fromGoogle = url.searchParams.has('google');
 
-  const metaAlready  = sessionStorage.getItem('metaConnected')   === 'true';
-  const googAlready  = sessionStorage.getItem('googleConnected') === 'true';
+  const metaAlready = sessionStorage.getItem('metaConnected') === 'true';
+  const googAlready = sessionStorage.getItem('googleConnected') === 'true';
 
   // Reset visibilidad
-  ASM.visible.meta      = false;
+  ASM.visible.meta = false;
   ASM.visible.googleAds = false;
-  ASM.visible.googleGa  = false;
+  ASM.visible.googleGa = false;
 
   const loaders = [];
 
@@ -352,18 +427,14 @@ async function _maybeOpenSelectionModal() {
         }));
 
         const count = ASM.data.meta.length;
-        ASM.needs.meta   = count > 1;   // más de 1 → selector
+        ASM.needs.meta = count > 1;
         ASM.visible.meta = ASM.needs.meta;
 
-        // 0 o 1 → autoselección y no mostramos bloque
+        // 0 o 1 → autoselección
         if (!ASM.needs.meta && count === 1) {
           const id = ASM.data.meta[0].id;
-          return _post('/api/meta/accounts/selection', {
-            accountIds: [id],
-          })
-            .then(() => {
-              sessionStorage.setItem('metaConnected', 'true');
-            })
+          return _post('/api/meta/accounts/selection', { accountIds: [id] })
+            .then(() => sessionStorage.setItem('metaConnected', 'true'))
             .catch(() => {});
         }
       })
@@ -373,31 +444,30 @@ async function _maybeOpenSelectionModal() {
   // --- GOOGLE (Ads + GA4, usando /auth/google/status) ---
   if (fromGoogle && !googAlready) {
     loaders.push(
-      _json('/auth/google/status').then((st) => {
-        ASM.data.googleAds = Array.isArray(st.ad_accounts)
-          ? st.ad_accounts
-          : [];
-        ASM.data.googleGa = Array.isArray(st.gaProperties)
-          ? st.gaProperties
-          : [];
+      _json('/auth/google/status').then(async (st) => {
+        ASM.data.googleAds = Array.isArray(st.ad_accounts) ? st.ad_accounts : [];
+        ASM.data.googleGa = Array.isArray(st.gaProperties) ? st.gaProperties : [];
 
         const adsCount = ASM.data.googleAds.length;
-        const gaCount  = ASM.data.googleGa.length;
+        const gaCount = ASM.data.googleGa.length;
 
         ASM.needs.googleAds = adsCount > 1;
-        ASM.needs.googleGa  = gaCount > 1;
+        ASM.needs.googleGa = gaCount > 1;
 
         ASM.visible.googleAds = ASM.needs.googleAds;
-        ASM.visible.googleGa  = ASM.needs.googleGa;
+        ASM.visible.googleGa = ASM.needs.googleGa;
 
-        // AUTOPICK Ads si solo hay 1 cuenta
+        const autoTasks = [];
+
+        // AUTOPICK Ads si solo hay 1 cuenta → DISPARA SELECCIÓN (sin modal)
         if (!ASM.needs.googleAds && adsCount === 1) {
           const id = String(ASM.data.googleAds[0].id || '')
             .replace(/^customers\//, '')
             .replace(/-/g, '')
             .trim();
           if (id) {
-            _notifyGoogleAdsSelection([id]);
+            // aquí sí esperamos ACK para evitar carreras
+            autoTasks.push(_saveGoogleAdsSelection([id]).catch(() => {}));
           }
         }
 
@@ -407,12 +477,15 @@ async function _maybeOpenSelectionModal() {
             ASM.data.googleGa[0].propertyId ||
             ASM.data.googleGa[0].property_id ||
             ASM.data.googleGa[0].name;
-
           if (propertyId) {
-            return _post('/api/google/analytics/selection', {
-              propertyIds: [propertyId],
-            }).catch(() => {});
+            autoTasks.push(
+              _post('/api/google/analytics/selection', { propertyIds: [propertyId] }).catch(() => {})
+            );
           }
+        }
+
+        if (autoTasks.length) {
+          await Promise.allSettled(autoTasks);
         }
       })
     );
@@ -436,7 +509,7 @@ async function _maybeOpenSelectionModal() {
 // Hook: cuando volvemos del OAuth (query ?meta=ok u ?google=ok)
 document.addEventListener('DOMContentLoaded', () => {
   const url = new URL(location.href);
-  const cameFromMeta   = url.searchParams.has('meta');
+  const cameFromMeta = url.searchParams.has('meta');
   const cameFromGoogle = url.searchParams.has('google');
   if (cameFromMeta || cameFromGoogle) {
     _maybeOpenSelectionModal().catch(console.error);
