@@ -18,6 +18,18 @@ const normGaPropertyId = (val = '') => {
   return digits ? `properties/${digits}` : '';
 };
 
+const normScopes = (v) => {
+  if (!v) return [];
+  const arr = Array.isArray(v) ? v : String(v).split(/[,\s]+/);
+  return Array.from(
+    new Set(
+      arr
+        .map(x => String(x || '').trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
+};
+
 function normalizeArray(arr, normFn) {
   const out = new Set();
   for (const v of Array.isArray(arr) ? arr : []) {
@@ -75,11 +87,32 @@ const userSchema = new mongoose.Schema(
     googleRefreshToken: { type: String },
     googleConnected: { type: Boolean, default: false },
 
+    // ✅ Objetivo (lo usas en /api/session y lo setean rutas)
+    googleObjective: {
+      type: String,
+      enum: ['ventas', 'alcance', 'leads'],
+      default: null,
+    },
+
     // Meta (OAuth atajo legado, opcional)
     metaConnected: { type: Boolean, default: false },
     metaAccessToken: { type: String },
 
+    // ✅ Datos meta “legacy” que tu código puede setear/leer
+    metaFbUserId: { type: String },
+    metaTokenExpiresAt: { type: Date },
+    metaDefaultAccountId: { type: String, set: normMetaId },
+    metaScopes: { type: [String], default: [], set: normScopes },
+
+    // ✅ Objetivo meta (lo usas en /api/session y lo setean rutas)
+    metaObjective: {
+      type: String,
+      enum: ['ventas', 'alcance', 'leads'],
+      default: null,
+    },
+
     // === Selección de cuentas (UI / retrocompat) ===
+    // Nota: aquí guardamos SIN "act_" ni "customers/" para consistencia.
     selectedMetaAccounts: {
       type: [String],
       default: [],
@@ -117,7 +150,7 @@ const userSchema = new mongoose.Schema(
     },
 
     // (LEGACY opcional) por si tuvieras código viejo leyendo esto
-    // ⚠️ Nombre alineado con audits.js → selectedGAProperties
+    // ⚠️ Nombre alineado con onboardingStatus.js → selectedGAProperties
     selectedGAProperties: {
       type: [String],
       default: [],
@@ -164,6 +197,13 @@ userSchema.pre('save', function (next) {
     this.selectedGAProperties = normalizeArray(this.selectedGAProperties, normGaPropertyId);
   }
 
+  if (this.isModified('metaScopes')) {
+    this.metaScopes = normScopes(this.metaScopes);
+  }
+  if (this.isModified('metaDefaultAccountId') && this.metaDefaultAccountId) {
+    this.metaDefaultAccountId = normMetaId(this.metaDefaultAccountId);
+  }
+
   // Si cambia el plan, actualizamos fecha de inicio
   if (this.isModified('plan')) {
     this.planStartedAt = new Date();
@@ -185,12 +225,27 @@ userSchema.statics.setSelectedGoogleAccounts = async function (userId, ids = [])
   return normalized;
 };
 
-// Guardar preferencia GA4 “oficial” que leen tus endpoints
+// Guardar preferencia GA4 “oficial” que leen tus endpoints (preferences)
 userSchema.statics.setGaAuditProperties = async function (userId, propertyIds = []) {
   const normalized = normalizeArray(propertyIds, normGaPropertyId);
   await this.updateOne(
     { _id: userId },
     { $set: { 'preferences.googleAnalytics.auditPropertyIds': normalized } }
+  );
+  return normalized;
+};
+
+// ✅ NUEVO: mantener GA4 E2E sin romper legacy (guarda en ambos)
+userSchema.statics.setSelectedGA4Properties = async function (userId, propertyIds = []) {
+  const normalized = normalizeArray(propertyIds, normGaPropertyId);
+  await this.updateOne(
+    { _id: userId },
+    {
+      $set: {
+        selectedGAProperties: normalized,
+        'preferences.googleAnalytics.auditPropertyIds': normalized,
+      },
+    }
   );
   return normalized;
 };

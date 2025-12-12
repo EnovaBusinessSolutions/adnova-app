@@ -1,4 +1,5 @@
 // public/js/onboardingInlineSelect.js
+'use strict';
 
 // --- helpers fetch JSON / POST
 async function _json(u) {
@@ -20,8 +21,29 @@ async function _post(u, b) {
 // === hard limit por plataforma / tipo ===
 const MAX_SELECT = 1;
 
+// --- normalizers (alineado con backend)
+const normActId = (s = '') => String(s || '').trim().replace(/^act_/, '');
+const toActId = (s = '') => {
+  const id = normActId(s);
+  return id ? `act_${id}` : '';
+};
+const normGadsId = (s = '') =>
+  String(s || '')
+    .replace(/^customers\//, '')
+    .replace(/[^\d]/g, '')
+    .trim();
+const normGA4Id = (s = '') => {
+  const raw = String(s || '').trim();
+  const digits = raw.replace(/^properties\//, '').replace(/[^\d]/g, '');
+  return digits || raw.replace(/^properties\//, '').trim();
+};
+
 // --- state
 const ASM = {
+  // modo: "oauth" (onboarding) o "manual" (integraciones)
+  mode: 'oauth',
+  force: false,
+
   needs: {
     meta: false,
     googleAds: false,
@@ -40,7 +62,7 @@ const ASM = {
   visible: {
     meta: false,
     googleAds: false,
-    googleGa: false, // qué bloques se muestran en el modal
+    googleGa: false,
   },
 };
 
@@ -115,13 +137,14 @@ function _updateCount(kind) {
   if (span) span.textContent = `${ASM.sel[kind].size}/${MAX_SELECT}`;
 }
 
-function _chip(label, value, kind, onChange) {
+function _chip(label, value, kind, checked, onChange) {
   const wrap = document.createElement('label');
   wrap.className = 'asm-chip';
 
   const cb = document.createElement('input');
   cb.type = 'checkbox';
   cb.value = value;
+  cb.checked = !!checked;
 
   cb.addEventListener('change', () => onChange(!!cb.checked, value, kind, cb));
 
@@ -159,22 +182,10 @@ function _updateLimitUI(kind) {
 
 /* =========================================================
  *  ✅ FIX E2E: Esperar ACK de Google Ads selection
- *  ---------------------------------------------------------
- *  Este script dispara "googleAccountsSelected" para que
- *  onboarding.js haga el POST a:
- *    /api/google/ads/insights/accounts/selection
- *
- *  Para evitar la condición de carrera, NO cerramos modal
- *  hasta recibir:
- *    "adnova:google-ads-selection-saved"
- *
- *  onboarding.js deberá emitir ese evento al terminar.
- * ========================================================= */
-
+ * =======================================================*/
 function _newReqId() {
   return `asm_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
-
 function _waitForAck(eventName, reqId, timeoutMs = 12000) {
   return new Promise((resolve, reject) => {
     let done = false;
@@ -188,43 +199,34 @@ function _waitForAck(eventName, reqId, timeoutMs = 12000) {
 
     function onAck(ev) {
       const d = ev?.detail || {};
-      if (!d || d.reqId !== reqId) return; // ignorar ACKs de otra ejecución
+      if (!d || d.reqId !== reqId) return;
       if (done) return;
       done = true;
       clearTimeout(t);
       window.removeEventListener(eventName, onAck);
 
-      if (d.ok === false) {
-        reject(new Error(d.error || 'GOOGLE_ADS_SELECTION_FAILED'));
-      } else {
-        resolve(d);
-      }
+      if (d.ok === false) reject(new Error(d.error || 'GOOGLE_ADS_SELECTION_FAILED'));
+      else resolve(d);
     }
 
     window.addEventListener(eventName, onAck);
   });
 }
-
-/** Notificar selección de cuentas de Google Ads al script principal (onboarding.js) y ESPERAR ACK */
 async function _saveGoogleAdsSelection(ids, { timeoutMs = 12000 } = {}) {
   const reqId = _newReqId();
 
-  // Disparamos evento para que onboarding.js haga el POST real
-  try {
-    window.dispatchEvent(
-      new CustomEvent('googleAccountsSelected', {
-        detail: { accountIds: ids, reqId, source: 'asm' },
-      })
-    );
-  } catch (e) {
-    console.error('Error dispatching googleAccountsSelected', e);
-    throw new Error('GOOGLE_ADS_SELECTION_DISPATCH_FAILED');
-  }
+  window.dispatchEvent(
+    new CustomEvent('googleAccountsSelected', {
+      detail: { accountIds: ids, reqId, source: ASM.mode === 'manual' ? 'integrations' : 'asm' },
+    })
+  );
 
-  // Esperar confirmación (onboarding.js debe emitir este evento al terminar)
   await _waitForAck('adnova:google-ads-selection-saved', reqId, timeoutMs);
 }
 
+/* =========================
+ * Render / Modal
+ * ========================= */
 function _renderLists() {
   const err = _el('asm-error');
   if (err) {
@@ -241,14 +243,16 @@ function _renderLists() {
   const gGaList = _el('asm-google-ga-list');
 
   // META
-  if (ASM.visible.meta && ASM.needs.meta && ASM.data.meta.length > 0) {
+  if (ASM.visible.meta && ASM.data.meta.length > 0) {
     _show(metaTitle);
     _show(metaList);
     metaList.innerHTML = '';
     ASM.data.meta.forEach((a) => {
-      const id = String(a.id || a.account_id || '').replace(/^act_/, '');
+      const id = normActId(a.id || a.account_id || '');
       const label = a.name || a.account_name || id;
-      const chip = _chip(label, id, 'meta', (checked, val, kind, cbEl) => {
+      const isChecked = ASM.sel.meta.has(id);
+
+      const chip = _chip(label, id, 'meta', isChecked, (checked, val, kind, cbEl) => {
         const set = ASM.sel[kind];
         if (checked) {
           if (set.size >= MAX_SELECT) {
@@ -261,6 +265,7 @@ function _renderLists() {
         }
         _updateLimitUI(kind);
       });
+
       metaList.appendChild(chip);
     });
     _updateLimitUI('meta');
@@ -270,18 +275,16 @@ function _renderLists() {
   }
 
   // GOOGLE ADS
-  if (ASM.visible.googleAds && ASM.needs.googleAds && ASM.data.googleAds.length > 0) {
+  if (ASM.visible.googleAds && ASM.data.googleAds.length > 0) {
     _show(gAdsTitle);
     _show(gAdsList);
     gAdsList.innerHTML = '';
     ASM.data.googleAds.forEach((a) => {
-      const id = String(a.id || '')
-        .replace(/^customers\//, '')
-        .replace(/-/g, '')
-        .trim();
-      const displayName =
-        a.name || a.descriptiveName || a.descriptive_name || `Cuenta ${id}`;
-      const chip = _chip(displayName, id, 'googleAds', (checked, val, kind, cbEl) => {
+      const id = normGadsId(a.id || a.customerId || a.customer_id || '');
+      const displayName = a.name || a.descriptiveName || a.descriptive_name || `Cuenta ${id}`;
+      const isChecked = ASM.sel.googleAds.has(id);
+
+      const chip = _chip(displayName, id, 'googleAds', isChecked, (checked, val, kind, cbEl) => {
         const set = ASM.sel[kind];
         if (checked) {
           if (set.size >= MAX_SELECT) {
@@ -294,6 +297,7 @@ function _renderLists() {
         }
         _updateLimitUI(kind);
       });
+
       gAdsList.appendChild(chip);
     });
     _updateLimitUI('googleAds');
@@ -303,26 +307,41 @@ function _renderLists() {
   }
 
   // GOOGLE ANALYTICS (GA4)
-  if (ASM.visible.googleGa && ASM.needs.googleGa && ASM.data.googleGa.length > 0) {
+  if (ASM.visible.googleGa && ASM.data.googleGa.length > 0) {
     _show(gGaTitle);
     _show(gGaList);
     gGaList.innerHTML = '';
     ASM.data.googleGa.forEach((p) => {
-      const id = String(p.propertyId || p.property_id || p.name || '').trim();
+      const raw = String(p.propertyId || p.property_id || p.name || '').trim();
+      const id = raw || '';
       const displayName = p.displayName || p.name || id;
-      const chip = _chip(displayName, id, 'googleGa', (checked, val, kind, cbEl) => {
+
+      // Marcamos seleccionado si coincide por forma raw o por digits
+      const isChecked =
+        ASM.sel.googleGa.has(id) ||
+        (normGA4Id(id) && ASM.sel.googleGa.has(normGA4Id(id)));
+
+      const chip = _chip(displayName, id, 'googleGa', isChecked, (checked, val, kind, cbEl) => {
         const set = ASM.sel[kind];
+
+        // Guardamos tal cual (raw) para POST, pero también limpiamos duplicados por norm
+        const valNorm = normGA4Id(val);
+
         if (checked) {
           if (set.size >= MAX_SELECT) {
             cbEl.checked = false;
             return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuenta.`, 'warn');
           }
-          set.add(val);
+          set.clear(); // UX: 1 por tipo, evitamos valores inconsistentes
+          set.add(val); // raw
+          if (valNorm) set.add(valNorm); // soporte comparaciones
         } else {
           set.delete(val);
+          if (valNorm) set.delete(valNorm);
         }
         _updateLimitUI(kind);
       });
+
       gGaList.appendChild(chip);
     });
     _updateLimitUI('googleGa');
@@ -352,36 +371,52 @@ async function _openModal() {
       const tasks = [];
 
       // META (POST directo)
-      if (ASM.visible.meta && ASM.needs.meta) {
+      if (ASM.visible.meta) {
         const ids = Array.from(ASM.sel.meta).slice(0, MAX_SELECT);
-        tasks.push(_post('/api/meta/accounts/selection', { accountIds: ids }));
+        if (ids.length) tasks.push(_post('/api/meta/accounts/selection', { accountIds: ids }));
       }
 
-      // GA4 (POST directo)
-      if (ASM.visible.googleGa && ASM.needs.googleGa) {
-        const ids = Array.from(ASM.sel.googleGa).slice(0, MAX_SELECT);
-        if (ids.length) {
-          tasks.push(_post('/api/google/analytics/selection', { propertyIds: ids }));
+      // GA4 (POST directo) — mandamos RAW si existe (properties/123), si no, digits
+      if (ASM.visible.googleGa) {
+        const rawIds = Array.from(ASM.sel.googleGa)
+          .filter(Boolean)
+          .filter((x) => String(x).includes('properties/') || !String(x).match(/^\d+$/) ? true : true);
+
+        // preferimos el primer valor "properties/xxx" si existe
+        let chosen = rawIds.find((x) => String(x).includes('properties/')) || rawIds[0];
+        if (!chosen) {
+          const any = Array.from(ASM.sel.googleGa)[0];
+          chosen = any || null;
+        }
+
+        if (chosen) {
+          tasks.push(_post('/api/google/analytics/selection', { propertyIds: [chosen] }));
         }
       }
 
       // Google Ads (ESPERA ACK)
-      if (ASM.visible.googleAds && ASM.needs.googleAds) {
+      if (ASM.visible.googleAds) {
         const ids = Array.from(ASM.sel.googleAds).slice(0, MAX_SELECT);
-        if (ids.length) {
-          tasks.push(_saveGoogleAdsSelection(ids));
-        }
+        if (ids.length) tasks.push(_saveGoogleAdsSelection(ids));
       }
 
       await Promise.all(tasks);
 
-      if (ASM.visible.meta) {
-        sessionStorage.setItem('metaConnected', 'true');
-      }
-      // googleConnected se marca en onboarding.js (markGoogleConnected)
+      if (ASM.visible.meta) sessionStorage.setItem('metaConnected', 'true');
 
       _hide(_el('account-select-modal'));
-      window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved'));
+
+      // Evento único para onboarding + integraciones
+      window.dispatchEvent(
+        new CustomEvent('adnova:accounts-selection-saved', {
+          detail: {
+            meta: Array.from(ASM.sel.meta).slice(0, 1),
+            googleAds: Array.from(ASM.sel.googleAds).slice(0, 1),
+            ga4: Array.from(ASM.sel.googleGa).filter((x) => String(x).includes('properties/') || String(x).match(/^\d+$/)).slice(0, 1),
+            mode: ASM.mode,
+          },
+        })
+      );
     } catch (e) {
       console.error('save selection error', e);
 
@@ -396,122 +431,164 @@ async function _openModal() {
       _hint('', 'info');
 
       saveBtn.textContent = originalText || 'Guardar y continuar';
-      _enableSave(true);
+      _enableSave(_canSave());
     }
   };
 }
 
+/* =========================
+ * Loader (OAuth / Manual)
+ * ========================= */
+async function _loadMeta({ force } = {}) {
+  // Nota: si tu backend filtra por selección, el “panel” no podrá cambiar de cuenta.
+  // Intentamos primero con ?all=1 (si lo implementaste), y si no existe, caemos al endpoint normal.
+  let v = null;
+  try {
+    v = await _json('/api/meta/accounts?all=1');
+  } catch {
+    v = await _json('/api/meta/accounts');
+  }
+
+  const list = (v?.ad_accounts || v?.accounts || []).map((a) => ({
+    ...a,
+    id: normActId(a.id || a.account_id || ''),
+    name: a.name || a.account_name || null,
+  }));
+
+  ASM.data.meta = list;
+
+  // Prefill selección si el backend la manda (opcional)
+  const selected = Array.isArray(v?.selected) ? v.selected.map(normActId) : [];
+  ASM.sel.meta.clear();
+  if (selected[0]) ASM.sel.meta.add(selected[0]);
+
+  // En modo OAuth: solo si hay >1 pedimos selector.
+  // En modo Manual/Integraciones: mostramos siempre que haya >=1 (para poder cambiar).
+  const count = ASM.data.meta.length;
+  ASM.needs.meta = count > 1;
+  ASM.visible.meta = ASM.mode === 'manual' ? count > 0 : ASM.needs.meta;
+
+  // Autoselección si solo hay 1 (sigue igual para onboarding)
+  if (!ASM.visible.meta && count === 1 && (force || ASM.mode === 'oauth')) {
+    const id = ASM.data.meta[0].id;
+    await _post('/api/meta/accounts/selection', { accountIds: [id] }).catch(() => {});
+    sessionStorage.setItem('metaConnected', 'true');
+  }
+}
+
+async function _loadGoogle({ force } = {}) {
+  const st = await _json('/auth/google/status');
+
+  ASM.data.googleAds = Array.isArray(st.ad_accounts) ? st.ad_accounts : [];
+  ASM.data.googleGa = Array.isArray(st.gaProperties) ? st.gaProperties : [];
+
+  // Prefill Google Ads selection si viene en status
+  const selAds = Array.isArray(st.selectedCustomerIds) ? st.selectedCustomerIds.map(normGadsId) : [];
+  ASM.sel.googleAds.clear();
+  if (selAds[0]) ASM.sel.googleAds.add(selAds[0]);
+  else if (st.defaultCustomerId) ASM.sel.googleAds.add(normGadsId(st.defaultCustomerId));
+
+  // Prefill GA4 selection si viene en status (o default)
+  const selGA4 = Array.isArray(st.selectedPropertyIds)
+    ? st.selectedPropertyIds.map(String)
+    : [];
+  ASM.sel.googleGa.clear();
+  if (selGA4[0]) {
+    ASM.sel.googleGa.add(selGA4[0]);
+    ASM.sel.googleGa.add(normGA4Id(selGA4[0]));
+  } else if (st.defaultPropertyId) {
+    ASM.sel.googleGa.add(String(st.defaultPropertyId));
+    ASM.sel.googleGa.add(normGA4Id(st.defaultPropertyId));
+  }
+
+  const adsCount = ASM.data.googleAds.length;
+  const gaCount = ASM.data.googleGa.length;
+
+  ASM.needs.googleAds = adsCount > 1;
+  ASM.needs.googleGa = gaCount > 1;
+
+  ASM.visible.googleAds = ASM.mode === 'manual' ? adsCount > 0 : ASM.needs.googleAds;
+  ASM.visible.googleGa = ASM.mode === 'manual' ? gaCount > 0 : ASM.needs.googleGa;
+
+  const autoTasks = [];
+
+  // AUTOPICK Ads si solo hay 1 cuenta (onboarding) → espera ACK
+  if (ASM.mode === 'oauth' && !ASM.needs.googleAds && adsCount === 1) {
+    const id = normGadsId(ASM.data.googleAds[0].id || '');
+    if (id) autoTasks.push(_saveGoogleAdsSelection([id]).catch(() => {}));
+  }
+
+  // AUTOPICK GA4 si solo hay 1 propiedad (onboarding)
+  if (ASM.mode === 'oauth' && !ASM.needs.googleGa && gaCount === 1) {
+    const propertyId =
+      ASM.data.googleGa[0].propertyId ||
+      ASM.data.googleGa[0].property_id ||
+      ASM.data.googleGa[0].name;
+    if (propertyId) {
+      autoTasks.push(_post('/api/google/analytics/selection', { propertyIds: [propertyId] }).catch(() => {}));
+    }
+  }
+
+  if (autoTasks.length) await Promise.allSettled(autoTasks);
+}
+
+async function openAccountSelectModal({ mode = 'manual', force = true } = {}) {
+  // Reseteo básico
+  ASM.mode = mode;
+  ASM.force = !!force;
+
+  ASM.sel.meta.clear();
+  ASM.sel.googleAds.clear();
+  ASM.sel.googleGa.clear();
+
+  ASM.visible.meta = false;
+  ASM.visible.googleAds = false;
+  ASM.visible.googleGa = false;
+
+  const tasks = [];
+
+  // En modo manual (integraciones) NO bloqueamos por sessionStorage.
+  // En modo oauth mantenemos el comportamiento actual.
+  const metaAlready = sessionStorage.getItem('metaConnected') === 'true';
+  const googAlready = sessionStorage.getItem('googleConnected') === 'true';
+
+  if (force || mode === 'manual' || !metaAlready) tasks.push(_loadMeta({ force }).catch(console.error));
+  if (force || mode === 'manual' || !googAlready) tasks.push(_loadGoogle({ force }).catch(console.error));
+
+  await Promise.allSettled(tasks);
+
+  // Abrimos si hay algo que mostrar
+  const mustOpen = ASM.visible.meta || ASM.visible.googleAds || ASM.visible.googleGa;
+  if (mustOpen) await _openModal();
+}
+
+// Exponemos para panel de Integraciones
+window.ADNOVA_ASM = window.ADNOVA_ASM || {};
+window.ADNOVA_ASM.openAccountSelectModal = openAccountSelectModal;
+
+// También permitimos abrirlo por evento desde cualquier UI (React o HTML)
+window.addEventListener('adnova:open-account-select', (ev) => {
+  const detail = ev?.detail || {};
+  openAccountSelectModal({
+    mode: detail.mode || 'manual',
+    force: detail.force !== false,
+  }).catch(console.error);
+});
+
+/* =========================
+ * Hook actual (OAuth return)
+ * ========================= */
 async function _maybeOpenSelectionModal() {
   const url = new URL(location.href);
   const fromMeta = url.searchParams.has('meta');
   const fromGoogle = url.searchParams.has('google');
 
-  const metaAlready = sessionStorage.getItem('metaConnected') === 'true';
-  const googAlready = sessionStorage.getItem('googleConnected') === 'true';
+  if (!fromMeta && !fromGoogle) return;
 
-  // Reset visibilidad
-  ASM.visible.meta = false;
-  ASM.visible.googleAds = false;
-  ASM.visible.googleGa = false;
-
-  const loaders = [];
-
-  // --- META ---
-  if (fromMeta && !metaAlready) {
-    loaders.push(
-      _json('/api/meta/accounts').then((v) => {
-        ASM.data.meta = (v.accounts || v.ad_accounts || []).map((a) => ({
-          ...a,
-          id: String(a.id || a.account_id || '').replace(/^act_/, ''),
-          name: a.name || a.account_name || null,
-        }));
-
-        const count = ASM.data.meta.length;
-        ASM.needs.meta = count > 1;
-        ASM.visible.meta = ASM.needs.meta;
-
-        // 0 o 1 → autoselección
-        if (!ASM.needs.meta && count === 1) {
-          const id = ASM.data.meta[0].id;
-          return _post('/api/meta/accounts/selection', { accountIds: [id] })
-            .then(() => sessionStorage.setItem('metaConnected', 'true'))
-            .catch(() => {});
-        }
-      })
-    );
-  }
-
-  // --- GOOGLE (Ads + GA4, usando /auth/google/status) ---
-  if (fromGoogle && !googAlready) {
-    loaders.push(
-      _json('/auth/google/status').then(async (st) => {
-        ASM.data.googleAds = Array.isArray(st.ad_accounts) ? st.ad_accounts : [];
-        ASM.data.googleGa = Array.isArray(st.gaProperties) ? st.gaProperties : [];
-
-        const adsCount = ASM.data.googleAds.length;
-        const gaCount = ASM.data.googleGa.length;
-
-        ASM.needs.googleAds = adsCount > 1;
-        ASM.needs.googleGa = gaCount > 1;
-
-        ASM.visible.googleAds = ASM.needs.googleAds;
-        ASM.visible.googleGa = ASM.needs.googleGa;
-
-        const autoTasks = [];
-
-        // AUTOPICK Ads si solo hay 1 cuenta → DISPARA SELECCIÓN (sin modal)
-        if (!ASM.needs.googleAds && adsCount === 1) {
-          const id = String(ASM.data.googleAds[0].id || '')
-            .replace(/^customers\//, '')
-            .replace(/-/g, '')
-            .trim();
-          if (id) {
-            // aquí sí esperamos ACK para evitar carreras
-            autoTasks.push(_saveGoogleAdsSelection([id]).catch(() => {}));
-          }
-        }
-
-        // AUTOPICK GA4 si solo hay 1 propiedad → guardamos selección en backend
-        if (!ASM.needs.googleGa && gaCount === 1) {
-          const propertyId =
-            ASM.data.googleGa[0].propertyId ||
-            ASM.data.googleGa[0].property_id ||
-            ASM.data.googleGa[0].name;
-          if (propertyId) {
-            autoTasks.push(
-              _post('/api/google/analytics/selection', { propertyIds: [propertyId] }).catch(() => {})
-            );
-          }
-        }
-
-        if (autoTasks.length) {
-          await Promise.allSettled(autoTasks);
-        }
-      })
-    );
-  }
-
-  if (!loaders.length) return;
-
-  await Promise.allSettled(loaders);
-
-  // Solo abrir si realmente hay alguna sección que NECESITE selección
-  const mustOpen =
-    (ASM.visible.meta && ASM.needs.meta) ||
-    (ASM.visible.googleAds && ASM.needs.googleAds) ||
-    (ASM.visible.googleGa && ASM.needs.googleGa);
-
-  if (mustOpen) {
-    await _openModal();
-  }
+  // comportamiento actual: solo cuando volvemos del OAuth
+  await openAccountSelectModal({ mode: 'oauth', force: false });
 }
 
-// Hook: cuando volvemos del OAuth (query ?meta=ok u ?google=ok)
 document.addEventListener('DOMContentLoaded', () => {
-  const url = new URL(location.href);
-  const cameFromMeta = url.searchParams.has('meta');
-  const cameFromGoogle = url.searchParams.has('google');
-  if (cameFromMeta || cameFromGoogle) {
-    _maybeOpenSelectionModal().catch(console.error);
-  }
+  _maybeOpenSelectionModal().catch(console.error);
 });

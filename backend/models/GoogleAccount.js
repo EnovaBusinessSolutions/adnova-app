@@ -5,28 +5,32 @@ const { Schema, model, Types } = mongoose;
 
 /* ----------------- helpers internos ----------------- */
 const stripDashes = (s = '') => s.toString().replace(/-/g, '').trim();
+
 const normCustomerId = (v = '') =>
   stripDashes(String(v).replace(/^customers\//, '').trim());
 
 const normIdArr = (arr) =>
-  Array.from(new Set((Array.isArray(arr) ? arr : [])
-    .map(normCustomerId)
-    .filter(Boolean)));
+  Array.from(
+    new Set(
+      (Array.isArray(arr) ? arr : [])
+        .map(normCustomerId)
+        .filter(Boolean)
+    )
+  );
 
+// scopes pueden venir separados por espacios o comas
 const normScopes = (v) => {
   if (!v) return [];
-  if (Array.isArray(v)) {
-    return Array.from(new Set(v.map(x => String(x || '').trim().toLowerCase()).filter(Boolean)));
-  }
+  const arr = Array.isArray(v) ? v : String(v).split(/[,\s]+/);
   return Array.from(
     new Set(
-      String(v)
-        .split(/\s+/)
-        .map(x => x.trim().toLowerCase())
+      arr
+        .map(x => String(x || '').trim().toLowerCase())
         .filter(Boolean)
     )
   );
 };
+
 // Forzar "properties/123..." y quitar espacios
 const normPropertyId = (val) => {
   if (!val) return '';
@@ -35,6 +39,15 @@ const normPropertyId = (val) => {
   const onlyDigits = v.replace(/[^\d]/g, '');
   return onlyDigits ? `properties/${onlyDigits}` : '';
 };
+
+const normPropertyArr = (arr) =>
+  Array.from(
+    new Set(
+      (Array.isArray(arr) ? arr : [])
+        .map(normPropertyId)
+        .filter(Boolean)
+    )
+  );
 
 /* Scopes que nos interesan */
 const ADS_SCOPE = 'https://www.googleapis.com/auth/adwords';
@@ -81,6 +94,9 @@ const GoogleAccountSchema = new Schema(
     user:   { type: Types.ObjectId, ref: 'User', index: true, sparse: true },
     userId: { type: Types.ObjectId, ref: 'User', index: true, sparse: true },
 
+    // ✅ email del perfil (lo setea googleConnect.js)
+    email: { type: String, index: true },
+
     // tokens
     accessToken:  { type: String, select: false },
     refreshToken: { type: String, select: false },
@@ -94,7 +110,7 @@ const GoogleAccountSchema = new Schema(
     ad_accounts:       { type: [AdAccountSchema], default: [] },        // enriquecidas
     defaultCustomerId: { type: String, set: (v) => normCustomerId(v) },
 
-    // Selección persistente (ids “123…”)
+    // ✅ Selección persistente (ids “123…”)
     selectedCustomerIds: {
       type: [String],
       default: [],
@@ -105,12 +121,27 @@ const GoogleAccountSchema = new Schema(
     gaProperties:      { type: [GaPropertySchema], default: [] },
     defaultPropertyId: { type: String, set: normPropertyId }, // "properties/123456789"
 
+    // ✅ NUEVO (lo usa onboardingStatus.js): selección GA4 “oficial”
+    selectedPropertyIds: {
+      type: [String],
+      default: [],
+      set: normPropertyArr,
+    },
+
+    // ✅ LEGACY (lo setea googleConnect.js hoy): mantener para no romper
+    // (guardamos 1 sola como string, pero internamente la sincronizamos con selectedPropertyIds)
+    selectedGaPropertyId: { type: String, set: normPropertyId },
+
     // preferencia de objetivo en onboarding (Ads)
     objective: {
       type: String,
       enum: ['ventas', 'alcance', 'leads'],
       default: null,
     },
+
+    // ✅ Logs de discovery (los usa googleConnect.js / status)
+    lastAdsDiscoveryError: { type: String, default: null },
+    lastAdsDiscoveryLog:   { type: Schema.Types.Mixed, default: null, select: false },
 
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },
@@ -140,6 +171,7 @@ GoogleAccountSchema.index({ user: 1   }, { unique: true, sparse: true });
 GoogleAccountSchema.index({ userId: 1 }, { unique: true, sparse: true });
 GoogleAccountSchema.index({ 'gaProperties.propertyId': 1 });
 GoogleAccountSchema.index({ user: 1, selectedCustomerIds: 1 });
+GoogleAccountSchema.index({ user: 1, selectedPropertyIds: 1 });
 
 /* ----------------- virtuals / instance methods ----------------- */
 GoogleAccountSchema.virtual('hasRefresh').get(function () {
@@ -299,15 +331,48 @@ GoogleAccountSchema.pre('save', function(next) {
   if (this.loginCustomerId)   this.loginCustomerId   = normCustomerId(this.loginCustomerId);
   if (this.defaultPropertyId) this.defaultPropertyId = normPropertyId(this.defaultPropertyId);
 
-  // limpiar/dedup selección y, si hay customers, filtrar a existentes
+  // ---------- selección Ads: dedupe + filtrar a lo disponible ----------
   if (Array.isArray(this.selectedCustomerIds)) {
     const norm = normIdArr(this.selectedCustomerIds);
-    if (this.customers?.length) {
-      const available = new Set(this.customers.map(c => c.id));
-      this.selectedCustomerIds = norm.filter(id => available.has(id));
-    } else {
-      this.selectedCustomerIds = norm;
+
+    // disponible puede venir por customers o por ad_accounts
+    const available = new Set([
+      ...(Array.isArray(this.customers) ? this.customers.map(c => c.id) : []),
+      ...(Array.isArray(this.ad_accounts) ? this.ad_accounts.map(a => a.id) : []),
+    ].filter(Boolean));
+
+    // si no tenemos catálogo aún, NO recortamos (para no perder selección por carrera)
+    this.selectedCustomerIds = available.size ? norm.filter(id => available.has(id)) : norm;
+  }
+
+  // ---------- selección GA4: mantener consistencia ----------
+  // 1) normaliza arrays
+  if (Array.isArray(this.selectedPropertyIds)) {
+    const norm = normPropertyArr(this.selectedPropertyIds);
+
+    const available = new Set(
+      (Array.isArray(this.gaProperties) ? this.gaProperties : [])
+        .map(p => p.propertyId)
+        .filter(Boolean)
+    );
+
+    // si no hay catálogo, NO recortamos (evita carreras)
+    this.selectedPropertyIds = available.size ? norm.filter(pid => available.has(pid)) : norm;
+  } else {
+    this.selectedPropertyIds = [];
+  }
+
+  // 2) si llega legacy selectedGaPropertyId, lo reflejamos en selectedPropertyIds si no hay nada
+  if (this.selectedGaPropertyId) {
+    this.selectedGaPropertyId = normPropertyId(this.selectedGaPropertyId);
+    if (!this.selectedPropertyIds?.length) {
+      this.selectedPropertyIds = [this.selectedGaPropertyId];
     }
+  }
+
+  // 3) si llega selectedPropertyIds y no hay legacy, lo rellenamos (1ro)
+  if (this.selectedPropertyIds?.length && !this.selectedGaPropertyId) {
+    this.selectedGaPropertyId = this.selectedPropertyIds[0];
   }
 
   next();

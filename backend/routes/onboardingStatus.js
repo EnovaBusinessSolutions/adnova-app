@@ -40,11 +40,12 @@ function requireAuth(req, res, next) {
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-// ✅ Tu UX actual: 1 selección por tipo (Meta / Google Ads / GA4)
+// ✅ UX: máximo 1 selección por tipo (Meta / Google Ads / GA4)
 const MAX_SELECT = 1;
 
-const normActId = (s = '') => String(s).trim().replace(/^act_/, '');
-const normGaId  = (s = '') => String(s).trim().replace(/^customers\//, '').replace(/[^\d]/g, '');
+// --- normalizers ---
+const normActId = (s = '') => String(s || '').trim().replace(/^act_/, '');
+const normGaId  = (s = '') => String(s || '').trim().replace(/^customers\//, '').replace(/[^\d]/g, '');
 const normGA4Id = (s = '') => {
   const raw = String(s || '').trim();
   const digits = raw.replace(/^properties\//, '').replace(/[^\d]/g, '');
@@ -52,9 +53,40 @@ const normGA4Id = (s = '') => {
 };
 
 function uniq(arr = []) {
-  return [...new Set((arr || []).filter(Boolean))];
+  return [...new Set((Array.isArray(arr) ? arr : []).filter(Boolean))];
 }
 
+function hasAnyMetaToken(metaDoc) {
+  return !!(
+    metaDoc?.access_token ||
+    metaDoc?.token ||
+    metaDoc?.accessToken ||
+    metaDoc?.longLivedToken ||
+    metaDoc?.longlivedToken
+  );
+}
+
+function hasGoogleOAuth(gaDoc) {
+  return !!(gaDoc?.refreshToken || gaDoc?.accessToken);
+}
+
+function normalizeScopes(raw) {
+  if (!raw) return [];
+  const arr = Array.isArray(raw) ? raw : String(raw).split(/[,\s]+/);
+  return uniq(arr.map(s => String(s || '').trim()).filter(Boolean));
+}
+
+function hasAdwordsScope(scopes = []) {
+  const s = normalizeScopes(scopes);
+  return s.some(x => String(x).includes('/auth/adwords'));
+}
+
+function hasGAReadScope(scopes = []) {
+  const s = normalizeScopes(scopes);
+  return s.some(x => String(x).includes('/auth/analytics.readonly'));
+}
+
+// --- availability builders ---
 function metaAvailableIds(metaDoc) {
   const list = Array.isArray(metaDoc?.ad_accounts) ? metaDoc.ad_accounts
             : Array.isArray(metaDoc?.adAccounts)  ? metaDoc.adAccounts
@@ -73,18 +105,12 @@ function googleAvailableIds(gaDoc) {
 }
 
 function ga4AvailableIds(gaDoc) {
-  // gaProperties puede traer objetos {propertyId, name:"properties/123", displayName}
+  // gaProperties puede traer objetos { propertyId:"properties/123" } o { name:"properties/123" }
   const props = Array.isArray(gaDoc?.gaProperties) ? gaDoc.gaProperties : [];
-  const ids = props.map(p => normGA4Id(p?.propertyId || p?.property_id || p?.name || '')).filter(Boolean);
+  const ids = props
+    .map(p => normGA4Id(p?.propertyId || p?.property_id || p?.name || ''))
+    .filter(Boolean);
   return uniq(ids);
-}
-
-function hasAnyMetaToken(metaDoc) {
-  return !!(metaDoc?.access_token || metaDoc?.token || metaDoc?.accessToken || metaDoc?.longLivedToken || metaDoc?.longlivedToken);
-}
-
-function hasGoogleOAuth(gaDoc) {
-  return !!(gaDoc?.refreshToken || gaDoc?.accessToken);
 }
 
 /** Selección Meta: doc.selectedAccountIds > user.selectedMetaAccounts */
@@ -93,6 +119,7 @@ function selectedMetaFromDocOrUser(metaDoc, user) {
     ? metaDoc.selectedAccountIds.map(normActId)
     : [];
   if (fromDoc.length) return uniq(fromDoc);
+
   const legacy = Array.isArray(user?.selectedMetaAccounts)
     ? user.selectedMetaAccounts.map(normActId)
     : [];
@@ -105,6 +132,7 @@ function selectedGoogleFromDocOrUser(gaDoc, user) {
     ? gaDoc.selectedCustomerIds.map(normGaId)
     : [];
   if (fromDoc.length) return uniq(fromDoc);
+
   const legacy = Array.isArray(user?.selectedGoogleAccounts)
     ? user.selectedGoogleAccounts.map(normGaId)
     : [];
@@ -112,16 +140,20 @@ function selectedGoogleFromDocOrUser(gaDoc, user) {
 }
 
 /**
- * ✅ Selección GA4:
+ * ✅ Selección GA4 (alineado):
  * - Preferimos GoogleAccount.selectedPropertyIds (nuevo)
- * - fallback a GoogleAccount.defaultPropertyId
- * - fallback legacy user.selectedGAProperties
+ * - Fallback: GoogleAccount.selectedGaPropertyId (legacy de googleConnect viejo)
+ * - Fallback: GoogleAccount.defaultPropertyId
+ * - Fallback: user.selectedGAProperties (legacy)
  */
 function selectedGA4FromDocOrUser(gaDoc, user) {
   const fromDoc = Array.isArray(gaDoc?.selectedPropertyIds)
     ? gaDoc.selectedPropertyIds.map(normGA4Id)
     : [];
   if (fromDoc.length) return uniq(fromDoc);
+
+  const legacyOne = gaDoc?.selectedGaPropertyId ? normGA4Id(gaDoc.selectedGaPropertyId) : '';
+  if (legacyOne) return [legacyOne];
 
   const def = gaDoc?.defaultPropertyId ? normGA4Id(gaDoc.defaultPropertyId) : '';
   if (def) return [def];
@@ -133,12 +165,21 @@ function selectedGA4FromDocOrUser(gaDoc, user) {
 }
 
 /**
- * Conectado vs Listo:
- * - connected: hay OAuth
- * - requiredSelection: hay >1 disponible y no hay selección guardada
+ * connected vs requiredSelection:
+ * - connected = hay OAuth válido (y scope, si aplica)
+ * - requiredSelection = hay > MAX_SELECT disponibles y NO hay selección
  */
 function requiredSelectionByUX(availableCount, selectedCount) {
   return availableCount > MAX_SELECT && selectedCount === 0;
+}
+
+// Si sólo hay 1 disponible y no hay selección guardada,
+// reportamos “effectiveSelected” para no bloquear el flujo.
+function effectiveSelected(selectedArr, availableArr) {
+  const s = Array.isArray(selectedArr) ? selectedArr.filter(Boolean) : [];
+  if (s.length) return s;
+  if (Array.isArray(availableArr) && availableArr.length === 1) return [availableArr[0]];
+  return [];
 }
 
 /* ======================= route ======================= */
@@ -153,87 +194,116 @@ router.get('/', requireAuth, async (req, res) => {
         .select('_id ad_accounts adAccounts access_token token accessToken longLivedToken longlivedToken selectedAccountIds defaultAccountId')
         .lean(),
       GoogleAccount.findOne({ $or: [{ user: uid }, { userId: uid }] })
-        .select('_id refreshToken accessToken scope ad_accounts customers gaProperties selectedCustomerIds defaultCustomerId selectedPropertyIds defaultPropertyId')
+        .select('_id refreshToken accessToken scope ad_accounts customers gaProperties selectedCustomerIds defaultCustomerId selectedPropertyIds selectedGaPropertyId defaultPropertyId')
         .lean(),
       ShopConnections.findOne({ $or: [{ user: uid }, { userId: uid }] })
         .select('_id shop accessToken access_token')
         .lean(),
-      // 👇 traemos legacy selections de User para consistencia total
+      // legacy selections de User (para compat total)
       User.findById(uid)
-        .select('_id selectedMetaAccounts selectedGoogleAccounts selectedGAProperties')
+        .select('_id metaConnected googleConnected shopifyConnected selectedMetaAccounts selectedGoogleAccounts selectedGAProperties')
         .lean(),
     ]);
 
     const user = userDoc || req.user || {};
 
     // ===== META =====
-    const metaConnected = !!(metaDoc && hasAnyMetaToken(metaDoc));
-    const metaAvailIds  = metaDoc ? metaAvailableIds(metaDoc) : [];
-    const metaSelected  = metaDoc ? selectedMetaFromDocOrUser(metaDoc, user) : selectedMetaFromDocOrUser({}, user);
+    const metaAvailIds = metaDoc ? metaAvailableIds(metaDoc) : [];
+    const metaSelectedRaw = selectedMetaFromDocOrUser(metaDoc || {}, user);
+    const metaSelectedEff = effectiveSelected(metaSelectedRaw, metaAvailIds).slice(0, MAX_SELECT);
 
-    // en tu UX solo debe existir 1 selection; limitamos por seguridad
-    const metaSelected1 = metaSelected.slice(0, MAX_SELECT);
-    const metaRequiredSel = metaConnected && requiredSelectionByUX(metaAvailIds.length, metaSelected1.length);
+    // conectado = token en MetaAccount o flag en User (no rompe)
+    const metaConnected = !!(hasAnyMetaToken(metaDoc) || user?.metaConnected);
 
-    const metaDefault = metaDoc?.defaultAccountId ? normActId(metaDoc.defaultAccountId) : null;
+    const metaRequiredSel =
+      metaConnected && requiredSelectionByUX(metaAvailIds.length, metaSelectedEff.length);
+
+    const metaDefault =
+      metaDoc?.defaultAccountId
+        ? normActId(metaDoc.defaultAccountId)
+        : (metaSelectedEff[0] || null);
 
     // ===== GOOGLE ADS =====
-    const googleAdsConnected = !!(gaDoc && hasGoogleOAuth(gaDoc));
+    const googleOAuth = !!(gaDoc && hasGoogleOAuth(gaDoc));
+    const scopesArr = normalizeScopes(gaDoc?.scope || []);
+    const adsScopeOk = hasAdwordsScope(scopesArr);
+    const gaScopeOk  = hasGAReadScope(scopesArr);
+
+    // Ads conectado = OAuth + adwords scope
+    const googleAdsConnected = !!(googleOAuth && adsScopeOk);
+
     const gAvailIds = gaDoc ? googleAvailableIds(gaDoc) : [];
+    const gSelectedRaw = selectedGoogleFromDocOrUser(gaDoc || {}, user);
+    const gSelectedEff = effectiveSelected(gSelectedRaw, gAvailIds).slice(0, MAX_SELECT);
 
-    const gSelected = gaDoc ? selectedGoogleFromDocOrUser(gaDoc, user) : selectedGoogleFromDocOrUser({}, user);
-    const gSelected1 = gSelected.slice(0, MAX_SELECT);
-    const gRequiredSel = googleAdsConnected && requiredSelectionByUX(gAvailIds.length, gSelected1.length);
+    const gRequiredSel =
+      googleAdsConnected && requiredSelectionByUX(gAvailIds.length, gSelectedEff.length);
 
-    const gDefault = gaDoc?.defaultCustomerId ? normGaId(gaDoc.defaultCustomerId) : null;
+    const gDefault =
+      gaDoc?.defaultCustomerId
+        ? normGaId(gaDoc.defaultCustomerId)
+        : (gSelectedEff[0] || null);
 
     // ===== GA4 =====
-    // GA4 conectado: OAuth + al menos 1 propiedad detectada (disponible)
+    // GA4 conectado = OAuth + analytics.readonly scope (aunque aún no haya gaProperties cacheadas)
+    const ga4Connected = !!(googleOAuth && gaScopeOk);
+
     const ga4AvailIds = gaDoc ? ga4AvailableIds(gaDoc) : [];
-    const ga4Connected = !!(googleAdsConnected && ga4AvailIds.length > 0);
+    const ga4SelectedRaw = selectedGA4FromDocOrUser(gaDoc || {}, user);
+    const ga4SelectedEff = effectiveSelected(ga4SelectedRaw, ga4AvailIds).slice(0, MAX_SELECT);
 
-    const ga4Selected = gaDoc ? selectedGA4FromDocOrUser(gaDoc, user) : selectedGA4FromDocOrUser({}, user);
-    const ga4Selected1 = ga4Selected.slice(0, MAX_SELECT);
-    const ga4RequiredSel = ga4Connected && requiredSelectionByUX(ga4AvailIds.length, ga4Selected1.length);
+    // requiredSelection SOLO si ya hay propiedades disponibles
+    const ga4RequiredSel =
+      ga4Connected &&
+      ga4AvailIds.length > 0 &&
+      requiredSelectionByUX(ga4AvailIds.length, ga4SelectedEff.length);
 
-    const ga4Default = gaDoc?.defaultPropertyId ? normGA4Id(gaDoc.defaultPropertyId) : (ga4Selected1[0] || null);
+    const ga4Default =
+      gaDoc?.defaultPropertyId
+        ? normGA4Id(gaDoc.defaultPropertyId)
+        : (ga4SelectedEff[0] || null);
 
     // ===== SHOPIFY =====
-    const shopifyConnected = !!(shopDoc && shopDoc.shop && (shopDoc.accessToken || shopDoc.access_token));
+    const shopifyConnected = !!(
+      (shopDoc && shopDoc.shop && (shopDoc.accessToken || shopDoc.access_token)) ||
+      user?.shopifyConnected
+    );
 
     // ===== Payload =====
     const status = {
       meta: {
         connected: metaConnected,
         availableCount: metaAvailIds.length,
-        selectedCount: metaSelected1.length,
+        selectedCount: metaSelectedEff.length,
         requiredSelection: metaRequiredSel,
-        selected: metaSelected1,
+        selected: metaSelectedEff,
         defaultAccountId: metaDefault,
-        // legacy:
+        // legacy compat
         count: metaAvailIds.length,
         maxSelect: MAX_SELECT,
       },
       googleAds: {
         connected: googleAdsConnected,
         availableCount: gAvailIds.length,
-        selectedCount: gSelected1.length,
+        selectedCount: gSelectedEff.length,
         requiredSelection: gRequiredSel,
-        selected: gSelected1,
+        selected: gSelectedEff,
         defaultCustomerId: gDefault,
         maxSelect: MAX_SELECT,
+        adsScopeOk,
       },
       ga4: {
         connected: ga4Connected,
         propertiesCount: ga4AvailIds.length,
         availableCount: ga4AvailIds.length,
-        selectedCount: ga4Selected1.length,
+        selectedCount: ga4SelectedEff.length,
         requiredSelection: ga4RequiredSel,
-        selected: ga4Selected1,
+        selected: ga4SelectedEff,
         defaultPropertyId: ga4Default,
-        // legacy:
+        // legacy compat
         count: ga4AvailIds.length,
         maxSelect: MAX_SELECT,
+        gaScopeOk,
       },
       shopify: {
         connected: shopifyConnected,
@@ -241,18 +311,20 @@ router.get('/', requireAuth, async (req, res) => {
     };
 
     // === LEGACY: onboarding3.js ===
+    // "google.connected" históricamente se usaba como “google ok”
+    // mantenemos: conectado si Ads o GA4 están conectados (por OAuth)
     status.google = {
-      connected: status.googleAds.connected,
+      connected: !!(googleOAuth && (adsScopeOk || gaScopeOk)),
       count: status.ga4.count,
     };
 
-    // Fuentes a analizar (para tu barra/progreso)
-    // ✅ importante: google solo si NO requiere selección (evita la carrera)
+    // Fuentes a analizar (para barra/progreso)
+    // ✅ clave: NO incluir si requiere selección (evita la carrera)
     const sourcesToAnalyze = [
-      ...(metaConnected && !metaRequiredSel ? ['meta'] : []),
-      ...(googleAdsConnected && !gRequiredSel ? ['google'] : []),
+      ...(metaConnected && !metaRequiredSel && status.meta.selectedCount > 0 ? ['meta'] : []),
+      ...(googleAdsConnected && !gRequiredSel && status.googleAds.selectedCount > 0 ? ['google'] : []),
+      ...(ga4Connected && ga4AvailIds.length > 0 && !ga4RequiredSel && status.ga4.selectedCount > 0 ? ['ga4'] : []),
       ...(shopifyConnected ? ['shopify'] : []),
-      ...(ga4Connected && !ga4RequiredSel ? ['ga4'] : []),
     ];
 
     return res.json({

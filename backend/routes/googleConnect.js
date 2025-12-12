@@ -48,12 +48,19 @@ try {
       defaultCustomerId:   { type: String },
       customers:           { type: Array, default: [] },
       ad_accounts:         { type: [AdAccountSchema], default: [] },
-      selectedCustomerIds: { type: [String], default: [] },   // 👈 NUEVO
 
-      // GA4
+      // ✅ Canonical selección Ads (array)
+      selectedCustomerIds: { type: [String], default: [] },
+
+      // GA4 cache
       gaProperties:        { type: Array, default: [] },
       defaultPropertyId:   { type: String },
-      selectedGaPropertyId:{ type: String },                   // 👈 NUEVO
+
+      // ✅ Canonical selección GA4 (array)
+      selectedPropertyIds: { type: [String], default: [] },
+
+      // Legacy GA4 (para compat con código viejo)
+      selectedGaPropertyId:{ type: String },
 
       // Misc
       objective:             { type: String, enum: ['ventas','alcance','leads'], default: null },
@@ -103,7 +110,18 @@ function oauth() {
   });
 }
 
-const normId = (s = '') => String(s).replace(/[^\d]/g, '');
+const normCustomerId = (s = '') => String(s || '').replace(/^customers\//, '').replace(/[^\d]/g, '');
+const normId = (s = '') => normCustomerId(s);
+
+const normPropertyId = (val = '') => {
+  const raw = String(val || '').trim();
+  if (!raw) return '';
+  if (/^properties\/\d+$/.test(raw)) return raw;
+  const digits = raw.replace(/^properties\//, '').replace(/[^\d]/g, '');
+  return digits ? `properties/${digits}` : '';
+};
+
+const uniq = (arr = []) => [...new Set((arr || []).filter(Boolean))];
 
 const normalizeScopes = (raw) =>
   Array.from(
@@ -121,44 +139,76 @@ const GA_SCOPE  = 'https://www.googleapis.com/auth/analytics.readonly';
 const hasAdwordsScope = (scopes = []) =>
   Array.isArray(scopes) && scopes.some((s) => String(s).includes('/auth/adwords'));
 
+const hasGaScope = (scopes = []) =>
+  Array.isArray(scopes) && scopes.some((s) => String(s).includes('/auth/analytics.readonly'));
+
 /* =========================================================
  *  Google Analytics Admin — listar GA4 properties
  * =======================================================*/
 async function fetchGA4Properties(oauthClient) {
   const admin = google.analyticsadmin({ version: 'v1beta', auth: oauthClient });
 
-  const props = [];
-  const accounts = await admin.accounts
-    .list({ pageSize: 200 })
-    .then((r) => r.data.accounts || [])
-    .catch(() => []);
+  // ✅ Método robusto (si falla accounts.list + properties.list, intentamos properties.search)
+  // 1) Intento legacy: accounts.list -> properties.list
+  try {
+    const props = [];
+    const accounts = await admin.accounts
+      .list({ pageSize: 200 })
+      .then((r) => r.data.accounts || [])
+      .catch(() => []);
 
-  for (const acc of accounts) {
-    const accountId = (acc.name || '').split('/')[1];
-    if (!accountId) continue;
-    try {
-      const resp = await admin.properties.list({
-        filter: `parent:accounts/${accountId}`,
-        pageSize: 200,
-      });
-      const list = resp.data.properties || [];
-      for (const p of list) {
-        props.push({
-          propertyId:  p.name, // "properties/123"
-          displayName: p.displayName || p.name,
-          timeZone:    p.timeZone,
-          currencyCode:p.currencyCode,
+    for (const acc of accounts) {
+      const accountId = (acc.name || '').split('/')[1];
+      if (!accountId) continue;
+      try {
+        const resp = await admin.properties.list({
+          filter: `parent:accounts/${accountId}`,
+          pageSize: 200,
         });
+        const list = resp.data.properties || [];
+        for (const p of list) {
+          props.push({
+            propertyId:  p.name, // "properties/123"
+            displayName: p.displayName || p.name,
+            timeZone:    p.timeZone,
+            currencyCode:p.currencyCode,
+          });
+        }
+      } catch (e) {
+        console.warn(
+          '⚠️ properties.list fail for account',
+          accountId,
+          e?.response?.data || e.message
+        );
       }
-    } catch (e) {
-      console.warn(
-        '⚠️ properties.list fail for account',
-        accountId,
-        e?.response?.data || e.message
-      );
     }
+
+    if (props.length) return props;
+  } catch (_) {
+    // ignore y cae al fallback
   }
-  return props;
+
+  // 2) Fallback moderno: properties.search
+  const out = [];
+  let pageToken;
+  do {
+    const resp = await admin.properties.search({
+      requestBody: { query: '' },
+      pageToken,
+      pageSize: 200,
+    });
+    (resp.data.properties || []).forEach((p) => {
+      out.push({
+        propertyId:  p.name,
+        displayName: p.displayName || p.name,
+        timeZone:    p.timeZone || null,
+        currencyCode:p.currencyCode || null,
+      });
+    });
+    pageToken = resp.data.nextPageToken || undefined;
+  } while (pageToken);
+
+  return out;
 }
 
 /* =========================================================
@@ -252,7 +302,6 @@ async function googleCallbackHandler(req, res) {
     if (refreshToken) {
       ga.refreshToken = refreshToken;
     } else if (!ga.refreshToken && tokens.refresh_token) {
-      // por si Google lo manda en otra propiedad (raro)
       ga.refreshToken = tokens.refresh_token;
     }
 
@@ -271,7 +320,7 @@ async function googleCallbackHandler(req, res) {
     // ============================
     if (hasAdwordsScope(ga.scope) && ga.refreshToken) {
       try {
-        const enriched = await discoverAndEnrich(ga); // <-- multi-usuario (usa refreshToken)
+        const enriched = await discoverAndEnrich(ga); // multi-usuario (usa refreshToken)
 
         const customers = enriched.map((c) => ({
           id:             normId(c.id),
@@ -299,17 +348,25 @@ async function googleCallbackHandler(req, res) {
         ga.customers   = customers;
         ga.ad_accounts = ad_accounts;
 
-        if (defaultCustomerId) {
-          ga.defaultCustomerId = normId(defaultCustomerId);
-        }
+        if (defaultCustomerId) ga.defaultCustomerId = normId(defaultCustomerId);
 
-        // 👇 LÓGICA DE SELECCIÓN DE ADS
+        // ✅ Selección Ads (canonical)
         const adsCount = customers.length;
         if (adsCount === 1) {
           const onlyId = normId(customers[0].id);
           ga.selectedCustomerIds = [onlyId];
+
+          // espejo en User (legacy/compat UI)
+          await User.updateOne(
+            { _id: req.user._id },
+            {
+              $set: {
+                selectedGoogleAccounts: [onlyId],
+                'preferences.googleAds.auditAccountIds': [onlyId],
+              },
+            }
+          );
         } else if (adsCount > 1) {
-          // más de una cuenta: el usuario debe elegir
           ga.selectedCustomerIds = [];
         }
 
@@ -342,32 +399,68 @@ async function googleCallbackHandler(req, res) {
     // ============================
     // 2) Listar properties GA4
     // ============================
-    try {
-      const props = await fetchGA4Properties(client);
-      if (Array.isArray(props) && props.length > 0) {
-        ga.gaProperties = props;
+    if (hasGaScope(ga.scope) && ga.refreshToken) {
+      try {
+        const propsRaw = await fetchGA4Properties(client);
 
-        // defaultPropertyId (legacy)
-        if (!ga.defaultPropertyId) {
-          ga.defaultPropertyId = props[0].propertyId;
+        // normaliza + dedupe
+        const map = new Map();
+        for (const p of Array.isArray(propsRaw) ? propsRaw : []) {
+          const pid = normPropertyId(p?.propertyId || p?.name || '');
+          if (!pid) continue;
+          map.set(pid, {
+            propertyId: pid,
+            displayName: p?.displayName || pid,
+            timeZone: p?.timeZone || null,
+            currencyCode: p?.currencyCode || null,
+          });
         }
+        const props = Array.from(map.values());
 
-        // 👇 LÓGICA DE SELECCIÓN DE GA
-        const gaCount = props.length;
-        if (gaCount === 1) {
-          ga.selectedGaPropertyId = props[0].propertyId;
-        } else if (gaCount > 1) {
-          ga.selectedGaPropertyId = null; // el usuario debe elegir
+        if (props.length > 0) {
+          ga.gaProperties = props;
+
+          // defaultPropertyId
+          if (!ga.defaultPropertyId) {
+            ga.defaultPropertyId = props[0].propertyId;
+          } else {
+            ga.defaultPropertyId = normPropertyId(ga.defaultPropertyId) || props[0].propertyId;
+          }
+
+          // ✅ Selección GA4 canonical + legacy
+          if (props.length === 1) {
+            const onlyPid = props[0].propertyId;
+            ga.selectedPropertyIds = [onlyPid];
+            ga.selectedGaPropertyId = onlyPid; // legacy mirror
+            ga.defaultPropertyId = onlyPid;
+
+            // espejo en User (legacy + preferences)
+            await User.updateOne(
+              { _id: req.user._id },
+              {
+                $set: {
+                  selectedGAProperties: [onlyPid],
+                  'preferences.googleAnalytics.auditPropertyIds': [onlyPid],
+                },
+              }
+            );
+          } else if (props.length > 1) {
+            ga.selectedPropertyIds = ga.selectedPropertyIds || [];
+            // si venía legacy seleccionado, lo respetamos solo si existe en disponibles
+            const legacy = normPropertyId(ga.selectedGaPropertyId);
+            if (legacy && props.some(x => x.propertyId === legacy)) {
+              if (!ga.selectedPropertyIds.length) ga.selectedPropertyIds = [legacy];
+            } else {
+              ga.selectedGaPropertyId = null;
+            }
+          }
+
+          ga.updatedAt = new Date();
+          await ga.save();
         }
-
-        ga.updatedAt = new Date();
-        await ga.save();
+      } catch (e) {
+        console.warn('⚠️ GA4 properties listing failed:', e?.response?.data || e.message);
       }
-    } catch (e) {
-      console.warn(
-        '⚠️ GA4 properties listing failed:',
-        e?.response?.data || e.message
-      );
     }
 
     // Marcar usuario como conectado a Google
@@ -388,30 +481,19 @@ async function googleCallbackHandler(req, res) {
         }),
         GoogleAccount.findOneAndUpdate(
           q,
-          {
-            $set: {
-              objective: DEFAULT_GOOGLE_OBJECTIVE,
-              updatedAt: new Date(),
-            },
-          },
+          { $set: { objective: DEFAULT_GOOGLE_OBJECTIVE, updatedAt: new Date() } },
           { upsert: true }
         ),
       ]);
     }
 
-    // ==========
-    // Selector?
-    // ==========
+    // ========== Selector? ==========
     const freshGa = await GoogleAccount.findOne(q)
       .select('customers gaProperties')
       .lean();
 
-    const adsCount = Array.isArray(freshGa?.customers)
-      ? freshGa.customers.length
-      : 0;
-    const gaCount = Array.isArray(freshGa?.gaProperties)
-      ? freshGa.gaProperties.length
-      : 0;
+    const adsCount = Array.isArray(freshGa?.customers) ? freshGa.customers.length : 0;
+    const gaCount  = Array.isArray(freshGa?.gaProperties) ? freshGa.gaProperties.length : 0;
 
     const needsSelector = adsCount > 1 || gaCount > 1;
 
@@ -428,16 +510,12 @@ async function googleCallbackHandler(req, res) {
       }
     }
 
-    // Le agregamos un flag para que el frontend pueda saber si debe abrir el modal
     const sep = returnTo.includes('?') ? '&' : '?';
     returnTo = `${returnTo}${sep}selector=${needsSelector ? '1' : '0'}`;
 
     return res.redirect(returnTo);
   } catch (err) {
-    console.error(
-      '[googleConnect] callback error:',
-      err?.response?.data || err.message || err
-    );
+    console.error('[googleConnect] callback error:', err?.response?.data || err.message || err);
     return res.redirect('/onboarding?google=error&reason=callback_exception');
   }
 }
@@ -461,7 +539,7 @@ router.get('/status', requireSession, async (req, res) => {
         '+refreshToken +accessToken objective defaultCustomerId ' +
           'customers ad_accounts scope gaProperties defaultPropertyId ' +
           'lastAdsDiscoveryError lastAdsDiscoveryLog expiresAt ' +
-          'selectedCustomerIds selectedGaPropertyId'
+          'selectedCustomerIds selectedGaPropertyId selectedPropertyIds'
       )
       .lean();
 
@@ -478,21 +556,43 @@ router.get('/status', requireSession, async (req, res) => {
 
     const scopesArr  = Array.isArray(ga?.scope) ? ga.scope : [];
     const adsScopeOk = hasAdwordsScope(scopesArr);
+    const gaScopeOk  = hasGaScope(scopesArr);
+
+    // ✅ Selección canonical/legacy para UI
+    const selectedCustomerIds = Array.isArray(ga?.selectedCustomerIds)
+      ? ga.selectedCustomerIds.map(normId).filter(Boolean)
+      : [];
+
+    const selectedPropertyIds = Array.isArray(ga?.selectedPropertyIds)
+      ? ga.selectedPropertyIds.map(normPropertyId).filter(Boolean)
+      : [];
+
+    const legacySelectedGaPropertyId = ga?.selectedGaPropertyId ? normPropertyId(ga.selectedGaPropertyId) : null;
 
     res.json({
       ok: true,
-      connected:        !!u?.googleConnected && hasTokens,
+      connected: !!u?.googleConnected && hasTokens,
+
+      // Ads
       hasCustomers:     customers.length > 0,
       defaultCustomerId,
       customers,
       ad_accounts:      adAccounts,
+      selectedCustomerIds,
+
+      // Scopes/objetivo
       scopes:           scopesArr,
       adsScopeOk,
+      gaScopeOk,
       objective:        u?.googleObjective || ga?.objective || null,
-      gaProperties:     ga?.gaProperties || [],
-      defaultPropertyId:ga?.defaultPropertyId || null,
-      selectedCustomerIds: ga?.selectedCustomerIds || [],
-      selectedGaPropertyId: ga?.selectedGaPropertyId || null,
+
+      // GA4
+      gaProperties:      Array.isArray(ga?.gaProperties) ? ga.gaProperties : [],
+      defaultPropertyId: ga?.defaultPropertyId ? normPropertyId(ga.defaultPropertyId) : null,
+      selectedPropertyIds,
+      selectedGaPropertyId: legacySelectedGaPropertyId, // legacy para compat
+
+      // Debug
       expiresAt:        ga?.expiresAt || null,
       lastAdsDiscoveryError: ga?.lastAdsDiscoveryError || null,
       lastAdsDiscoveryLog:   ga?.lastAdsDiscoveryLog || null,
@@ -513,9 +613,7 @@ router.post('/objective', requireSession, express.json(), async (req, res) => {
       return res.status(400).json({ ok: false, error: 'BAD_OBJECTIVE' });
     }
 
-    await User.findByIdAndUpdate(req.user._id, {
-      $set: { googleObjective: val },
-    });
+    await User.findByIdAndUpdate(req.user._id, { $set: { googleObjective: val } });
     await GoogleAccount.findOneAndUpdate(
       { $or: [{ user: req.user._id }, { userId: req.user._id }] },
       { $set: { objective: val, updatedAt: new Date() } },
@@ -530,8 +628,7 @@ router.post('/objective', requireSession, express.json(), async (req, res) => {
 });
 
 /* =========================
- * Listar cuentas Ads (selector en onboarding)
- * (se mantiene igual, sólo lee del mismo GoogleAccount)
+ * Listar cuentas Ads (selector / Integraciones)
  * ========================= */
 router.get('/accounts', requireSession, async (req, res) => {
   try {
@@ -539,7 +636,8 @@ router.get('/accounts', requireSession, async (req, res) => {
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
       .select(
-        '+refreshToken customers ad_accounts scope defaultCustomerId lastAdsDiscoveryError lastAdsDiscoveryLog'
+        '+refreshToken +accessToken customers ad_accounts scope defaultCustomerId ' +
+        'lastAdsDiscoveryError lastAdsDiscoveryLog selectedCustomerIds'
       )
       .lean();
 
@@ -549,6 +647,7 @@ router.get('/accounts', requireSession, async (req, res) => {
         customers: [],
         ad_accounts: [],
         defaultCustomerId: null,
+        selectedCustomerIds: [],
         scopes: [],
         lastAdsDiscoveryError: ga?.lastAdsDiscoveryError || null,
         lastAdsDiscoveryLog: ga?.lastAdsDiscoveryLog || null,
@@ -561,18 +660,15 @@ router.get('/accounts', requireSession, async (req, res) => {
         ok: false,
         error: 'ADS_SCOPE_MISSING',
         message: 'Necesitamos permiso de Google Ads para listar tus cuentas.',
-        connectUrl:
-          '/auth/google/connect?returnTo=/onboarding?google=connected',
+        connectUrl: '/auth/google/connect?returnTo=/onboarding?google=connected',
       });
     }
 
     let customers = ga.customers || [];
     let ad_accounts = ga.ad_accounts || [];
-
     const forceRefresh = req.query.refresh === '1';
 
     if (forceRefresh || customers.length === 0 || ad_accounts.length === 0) {
-      // Recargamos usando el flujo multi-usuario (refreshToken se usa en el service)
       const fullGa = await GoogleAccount.findOne({
         $or: [{ user: req.user._id }, { userId: req.user._id }],
       });
@@ -583,6 +679,7 @@ router.get('/accounts', requireSession, async (req, res) => {
           customers: [],
           ad_accounts: [],
           defaultCustomerId: null,
+          selectedCustomerIds: [],
           scopes: scopesArr,
           lastAdsDiscoveryError: ga?.lastAdsDiscoveryError || null,
           lastAdsDiscoveryLog: ga?.lastAdsDiscoveryLog || null,
@@ -617,17 +714,11 @@ router.get('/accounts', requireSession, async (req, res) => {
 
         ga = fullGa.toObject();
       } catch (e) {
-        const reason =
-          e?.response?.data || e?.message || 'LAZY_DISCOVERY_FAILED';
+        const reason = e?.response?.data || e?.message || 'LAZY_DISCOVERY_FAILED';
         console.warn('⚠️ lazy ads refresh failed:', reason);
         await GoogleAccount.updateOne(
           { $or: [{ user: req.user._id }, { userId: req.user._id }] },
-          {
-            $set: {
-              lastAdsDiscoveryError: String(reason).slice(0, 4000),
-              updatedAt: new Date(),
-            },
-          }
+          { $set: { lastAdsDiscoveryError: String(reason).slice(0, 4000), updatedAt: new Date() } }
         );
       }
     }
@@ -639,11 +730,16 @@ router.get('/accounts', requireSession, async (req, res) => {
     const defaultCustomerId =
       previous || firstEnabledId || normId(customers?.[0]?.id || '') || null;
 
+    const selectedCustomerIds = Array.isArray(ga?.selectedCustomerIds)
+      ? ga.selectedCustomerIds.map(normId).filter(Boolean)
+      : [];
+
     res.json({
       ok: true,
       customers,
       ad_accounts,
       defaultCustomerId,
+      selectedCustomerIds,
       scopes: scopesArr,
       lastAdsDiscoveryError: ga?.lastAdsDiscoveryError || null,
       lastAdsDiscoveryLog: ga?.lastAdsDiscoveryLog || null,
@@ -655,55 +751,95 @@ router.get('/accounts', requireSession, async (req, res) => {
 });
 
 /* =========================
- * Guardar defaultCustomerId
- * (legacy, se mantiene)
+ * ✅ Guardar selección Ads (Integraciones / onboarding)
+ * Body: { customerIds: ["123", "customers/123", ...] }
  * ========================= */
-router.post(
-  '/default-customer',
-  requireSession,
-  express.json(),
-  async (req, res) => {
-    try {
-      const cid = normId(req.body?.customerId || '');
-      if (!cid)
-        return res
-          .status(400)
-          .json({ ok: false, error: 'CUSTOMER_REQUIRED' });
-
-      await GoogleAccount.findOneAndUpdate(
-        { $or: [{ user: req.user._id }, { userId: req.user._id }] },
-        { $set: { defaultCustomerId: cid, updatedAt: new Date() } },
-        { upsert: true }
-      );
-
-      res.json({ ok: true, defaultCustomerId: cid });
-    } catch (err) {
-      console.error('[googleConnect] default-customer error:', err);
-      res
-        .status(500)
-        .json({ ok: false, error: 'SAVE_DEFAULT_CUSTOMER_ERROR' });
+router.post('/accounts/selection', requireSession, express.json(), async (req, res) => {
+  try {
+    const customerIds = req.body?.customerIds || req.body?.accountIds;
+    if (!Array.isArray(customerIds)) {
+      return res.status(400).json({ ok: false, error: 'customerIds[] requerido' });
     }
+
+    const doc = await GoogleAccount.findOne({
+      $or: [{ user: req.user._id }, { userId: req.user._id }],
+    }).select('_id customers ad_accounts defaultCustomerId selectedCustomerIds');
+
+    if (!doc) return res.status(404).json({ ok: false, error: 'NO_GOOGLEACCOUNT' });
+
+    const available = new Set(
+      uniq([
+        ...(Array.isArray(doc.customers) ? doc.customers.map(c => normId(c?.id)) : []),
+        ...(Array.isArray(doc.ad_accounts) ? doc.ad_accounts.map(a => normId(a?.id)) : []),
+      ]).filter(Boolean)
+    );
+
+    const wanted = uniq(customerIds.map(normId)).filter(Boolean);
+    const selected = wanted.filter(id => available.has(id));
+
+    if (!selected.length) {
+      return res.status(400).json({ ok: false, error: 'NO_VALID_CUSTOMERS' });
+    }
+
+    // default dentro de selección
+    let nextDefault = doc.defaultCustomerId ? normId(doc.defaultCustomerId) : '';
+    if (!nextDefault || !selected.includes(nextDefault)) nextDefault = selected[0];
+
+    await GoogleAccount.updateOne(
+      { _id: doc._id },
+      { $set: { selectedCustomerIds: selected, defaultCustomerId: nextDefault, updatedAt: new Date() } }
+    );
+
+    // espejo en User
+    await User.updateOne(
+      { _id: req.user._id },
+      {
+        $set: {
+          selectedGoogleAccounts: selected,
+          'preferences.googleAds.auditAccountIds': selected,
+        },
+      }
+    );
+
+    return res.json({ ok: true, selectedCustomerIds: selected, defaultCustomerId: nextDefault });
+  } catch (e) {
+    console.error('[googleConnect] accounts/selection error:', e);
+    return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
   }
-);
+});
+
+/* =========================
+ * Guardar defaultCustomerId (legacy, se mantiene)
+ * ========================= */
+router.post('/default-customer', requireSession, express.json(), async (req, res) => {
+  try {
+    const cid = normId(req.body?.customerId || '');
+    if (!cid) return res.status(400).json({ ok: false, error: 'CUSTOMER_REQUIRED' });
+
+    await GoogleAccount.findOneAndUpdate(
+      { $or: [{ user: req.user._id }, { userId: req.user._id }] },
+      { $set: { defaultCustomerId: cid, updatedAt: new Date() } },
+      { upsert: true }
+    );
+
+    res.json({ ok: true, defaultCustomerId: cid });
+  } catch (err) {
+    console.error('[googleConnect] default-customer error:', err);
+    res.status(500).json({ ok: false, error: 'SAVE_DEFAULT_CUSTOMER_ERROR' });
+  }
+});
 
 /* =========================
  * Guardar defaultPropertyId (GA4)
  * ========================= */
 router.post('/default-property', requireSession, express.json(), async (req, res) => {
   try {
-    const pid = String(req.body?.propertyId || '').trim();
-    if (!pid) {
-      return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
-    }
+    const pid = normPropertyId(req.body?.propertyId || '');
+    if (!pid) return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
 
     await GoogleAccount.findOneAndUpdate(
       { $or: [{ user: req.user._id }, { userId: req.user._id }] },
-      {
-        $set: {
-          defaultPropertyId: pid,
-          updatedAt: new Date(),
-        },
-      },
+      { $set: { defaultPropertyId: pid, updatedAt: new Date() } },
       { upsert: true }
     );
 
@@ -711,6 +847,70 @@ router.post('/default-property', requireSession, express.json(), async (req, res
   } catch (err) {
     console.error('[googleConnect] default-property error:', err);
     res.status(500).json({ ok: false, error: 'SAVE_DEFAULT_PROPERTY_ERROR' });
+  }
+});
+
+/* =========================
+ * ✅ (Opcional) Guardar selección GA4 también desde aquí
+ * Body: { propertyIds: ["properties/123","123"] }
+ * Nota: tu canonical sigue siendo /api/google/analytics/selection,
+ * pero esto ayuda si tu UI de Integraciones pega a /auth/google/...
+ * ========================= */
+router.post('/ga4/selection', requireSession, express.json(), async (req, res) => {
+  try {
+    const propertyIds = req.body?.propertyIds;
+    if (!Array.isArray(propertyIds)) {
+      return res.status(400).json({ ok: false, error: 'propertyIds[] requerido' });
+    }
+
+    const doc = await GoogleAccount.findOne({
+      $or: [{ user: req.user._id }, { userId: req.user._id }],
+    }).select('_id gaProperties defaultPropertyId selectedPropertyIds selectedGaPropertyId');
+
+    if (!doc) return res.status(404).json({ ok: false, error: 'NO_GOOGLEACCOUNT' });
+
+    const available = new Set(
+      (Array.isArray(doc.gaProperties) ? doc.gaProperties : [])
+        .map(p => normPropertyId(p?.propertyId || p?.name))
+        .filter(Boolean)
+    );
+
+    const wanted = uniq(propertyIds.map(normPropertyId)).filter(Boolean);
+    const selected = wanted.filter(pid => available.has(pid));
+
+    if (!selected.length) {
+      return res.status(400).json({ ok: false, error: 'NO_VALID_PROPERTIES' });
+    }
+
+    let nextDefault = doc.defaultPropertyId ? normPropertyId(doc.defaultPropertyId) : '';
+    if (!nextDefault || !selected.includes(nextDefault)) nextDefault = selected[0];
+
+    await GoogleAccount.updateOne(
+      { _id: doc._id },
+      {
+        $set: {
+          selectedPropertyIds: selected,
+          selectedGaPropertyId: selected[0], // legacy mirror
+          defaultPropertyId: nextDefault,
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    await User.updateOne(
+      { _id: req.user._id },
+      {
+        $set: {
+          selectedGAProperties: selected,
+          'preferences.googleAnalytics.auditPropertyIds': selected,
+        },
+      }
+    );
+
+    return res.json({ ok: true, selectedPropertyIds: selected, defaultPropertyId: nextDefault });
+  } catch (e) {
+    console.error('[googleConnect] ga4/selection error:', e);
+    return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
   }
 });
 
