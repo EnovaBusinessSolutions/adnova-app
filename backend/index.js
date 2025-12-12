@@ -237,10 +237,10 @@ app.use('/api/audits', sessionGuard, auditsRoutes, auditRunnerRoutes);
 app.use('/api/audit', sessionGuard, auditRunnerRoutes);
 app.use('/api/dashboard/audits', sessionGuard, auditsRoutes);
 
-app.post('/api/audit/start',        sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
+app.post('/api/audit/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
 app.post('/api/audit/google/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
-app.post('/api/audit/meta/start',   sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
-app.post('/api/audit/shopify/start',sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
+app.post('/api/audit/meta/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
+app.post('/api/audit/shopify/start', sessionGuard, (req, res) => res.redirect(307, '/api/audits/start'));
 // Alias legacy del dashboard → usa el runner nuevo de auditorías
 app.post('/api/dashboard/audit', sessionGuard, (req, res) => {
   // 307 = mantiene método y body (POST + JSON)
@@ -265,6 +265,12 @@ app.use('/connector', shopifyCSP, connector);
 
 app.use('/api/shopify', shopifyRoutes);
 app.use('/api', mockShopify);
+
+// WooCommerce
+app.use('/api/woocommerce', require('./routes/woocommerceConnector'));
+
+// Plugin Download
+app.use('/api/plugin', require('./routes/pluginDownload'));
 
 /* =========================
  * Páginas públicas y flujo de app
@@ -557,29 +563,29 @@ app.post('/api/reset-password', async (req, res) => {
 // Verifica conexión SMTP en caliente
 app.get('/__mail/verify', async (_req, res) => {
   try {
-    if (!transporter) return res.status(500).json({ ok:false, error:'transporter no inicializado' });
+    if (!transporter) return res.status(500).json({ ok: false, error: 'transporter no inicializado' });
     await transporter.verify();
-    res.json({ ok:true, from: FROM });
+    res.json({ ok: true, from: FROM });
   } catch (e) {
     console.error('[_MAIL_VERIFY] ', e);
-    res.status(500).json({ ok:false, error: e?.message || e });
+    res.status(500).json({ ok: false, error: e?.message || e });
   }
 });
 
 // Envía un correo de prueba al SMTP_USER
 app.get('/__mail/test', async (_req, res) => {
   try {
-    if (!transporter) return res.status(500).json({ ok:false, error:'transporter no inicializado' });
+    if (!transporter) return res.status(500).json({ ok: false, error: 'transporter no inicializado' });
     const info = await transporter.sendMail({
       from: `"Adnova AI" <${FROM}>`,
       to: process.env.SMTP_USER,
       subject: 'Prueba SMTP · Adnova AI',
       text: 'Este es un correo de prueba desde /__mail/test',
     });
-    res.json({ ok:true, messageId: info?.messageId });
+    res.json({ ok: true, messageId: info?.messageId });
   } catch (e) {
     console.error('[_MAIL_TEST] ', e);
-    res.status(500).json({ ok:false, error: e?.message || e });
+    res.status(500).json({ ok: false, error: e?.message || e });
   }
 });
 
@@ -806,7 +812,7 @@ app.get('/plans/cancel', (_req, res) => {
 });
 
 app.use('/api', (req, res) => {
-  res.status(404).json({ ok:false, error:'Not Found', path: req.originalUrl });
+  res.status(404).json({ ok: false, error: 'Not Found', path: req.originalUrl });
 });
 
 /* =========================

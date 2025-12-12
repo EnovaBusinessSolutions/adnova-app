@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>ADRAY - Descargar Plugin WooCommerce</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet" />
+
+    <style>
+        :root {
+            --bg-dark: #0d0a1c;
+            --bg-card: #1a1430;
+            --primary: #8b5cf6;
+            --primary-dark: #7c3aed;
+            --success: #10b981;
+            --text: #e5e5e5;
+            --text-muted: #a0a0b0;
+            --border: #2a2245;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            min-height: 100vh;
+            background: linear-gradient(135deg, var(--bg-dark) 0%, #1a0f2e 100%);
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 600px;
+            width: 100%;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 2.5rem;
+            text-align: center;
+        }
+
+        .logo {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--primary) 0%, #c084fc 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+        }
+
+        .plugin-icon {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #9333ea 0%, #7c3aed 100%);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 1.5rem;
+            font-size: 2.5rem;
+        }
+
+        .plugin-name {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .plugin-version {
+            color: var(--success);
+            font-size: 0.875rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+            padding: 1rem 2rem;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: white;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(139, 92, 246, 0.4);
+        }
+
+        .btn svg {
+            width: 24px;
+            height: 24px;
+        }
+
+        .requirements {
+            margin-top: 2rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border);
+            text-align: left;
+        }
+
+        .requirements h3 {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .req-list {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+        }
+
+        .req-item {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 0.75rem;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .req-item .label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .req-item .value {
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+
+        .instructions {
+            margin-top: 2rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid var(--border);
+            text-align: left;
+        }
+
+        .instructions h3 {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-bottom: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .instructions ol {
+            padding-left: 1.25rem;
+            line-height: 1.8;
+            color: var(--text-muted);
+        }
+
+        .instructions li {
+            margin-bottom: 0.5rem;
+        }
+
+        .instructions code {
+            background: rgba(139, 92, 246, 0.2);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            color: var(--primary);
+        }
+
+        @media (max-width: 500px) {
+            .req-list {
+                grid-template-columns: 1fr;
+            }
+
+            .card {
+                padding: 1.5rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="card">
+            <h1 class="logo">ADRAY</h1>
+            <p class="subtitle">Plugin para WooCommerce</p>
+
+            <div class="plugin-icon">🛒</div>
+            <h2 class="plugin-name">ADRAY for WooCommerce</h2>
+            <p class="plugin-version" id="version">v1.0.0</p>
+
+            <a href="/api/plugin/download" class="btn" id="downloadBtn">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Descargar Plugin
+            </a>
+
+            <div class="requirements">
+                <h3>Requisitos</h3>
+                <div class="req-list">
+                    <div class="req-item">
+                        <div class="label">WordPress</div>
+                        <div class="value">5.8+</div>
+                    </div>
+                    <div class="req-item">
+                        <div class="label">WooCommerce</div>
+                        <div class="value">5.0+</div>
+                    </div>
+                    <div class="req-item">
+                        <div class="label">PHP</div>
+                        <div class="value">7.4+</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="instructions">
+                <h3>Instrucciones de Instalación</h3>
+                <ol>
+                    <li>Descarga el archivo <code>adray-woocommerce.zip</code></li>
+                    <li>Ve a tu WordPress Admin → <strong>Plugins</strong> → <strong>Añadir nuevo</strong></li>
+                    <li>Haz clic en <strong>Subir plugin</strong> y selecciona el archivo zip</li>
+                    <li>Activa el plugin después de instalarlo</li>
+                    <li>Ve a <strong>WooCommerce → ADRAY</strong> para conectar tu tienda</li>
+                </ol>
+            </div>
+        </div>
+    </div>
+
+    <script src="/js/woo-download.js"></script>
+</body>
+
+</html>

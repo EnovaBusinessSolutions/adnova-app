@@ -1,0 +1,339 @@
+/**
+ * ADRAY WooCommerce Admin Styles
+ */
+
+/* CSS Variables */
+:root {
+    --adray-primary: #8b5cf6;
+    --adray-primary-dark: #7c3aed;
+    --adray-success: #10b981;
+    --adray-error: #ef4444;
+    --adray-warning: #f59e0b;
+    --adray-bg-dark: #1a1430;
+    --adray-border: #e5e7eb;
+    --adray-text: #1f2937;
+    --adray-text-muted: #6b7280;
+}
+
+/* Main Container */
+.adray-wrap {
+    max-width: 900px;
+    margin: 20px 20px 20px 0;
+}
+
+/* Header */
+.adray-header {
+    background: linear-gradient(135deg, #1a0f2e 0%, #2d1f4e 100%);
+    padding: 30px;
+    border-radius: 12px;
+    margin-bottom: 24px;
+    color: white;
+}
+
+.adray-title {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin: 0 0 10px 0;
+    padding: 0;
+}
+
+.adray-logo {
+    font-size: 32px;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--adray-primary) 0%, #c084fc 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.adray-subtitle {
+    font-size: 18px;
+    font-weight: 400;
+    color: #a0a0b0;
+}
+
+.adray-description {
+    margin: 0;
+    color: #d1d5db;
+    font-size: 14px;
+}
+
+/* Cards */
+.adray-card {
+    background: white;
+    border: 1px solid var(--adray-border);
+    border-radius: 12px;
+    margin-bottom: 20px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.adray-card-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--adray-border);
+    background: #f9fafb;
+}
+
+.adray-card-header h2 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--adray-text);
+}
+
+.adray-card-body {
+    padding: 24px;
+}
+
+.adray-card-help {
+    background: #f0f9ff;
+    border-color: #bae6fd;
+}
+
+/* Status */
+.adray-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px;
+    background: #f3f4f6;
+    border-radius: 8px;
+    margin-bottom: 16px;
+}
+
+.adray-status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.adray-status.connected .adray-status-dot {
+    background: var(--adray-success);
+    box-shadow: 0 0 8px var(--adray-success);
+}
+
+.adray-status.disconnected .adray-status-dot {
+    background: var(--adray-error);
+}
+
+.adray-status-text {
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.adray-status.connected .adray-status-text {
+    color: var(--adray-success);
+}
+
+.adray-status.disconnected .adray-status-text {
+    color: var(--adray-error);
+}
+
+.adray-status-since {
+    color: var(--adray-text-muted);
+    font-size: 13px;
+    margin-left: auto;
+}
+
+/* Webhooks Summary */
+.adray-webhooks-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    background: rgba(16, 185, 129, 0.1);
+    border-radius: 8px;
+    color: var(--adray-success);
+    font-size: 14px;
+}
+
+.adray-webhooks-summary .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+}
+
+/* Messages */
+.adray-message {
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin-top: 16px;
+    font-size: 14px;
+}
+
+.adray-message.success {
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid var(--adray-success);
+    color: var(--adray-success);
+}
+
+.adray-message.error {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid var(--adray-error);
+    color: var(--adray-error);
+}
+
+.adray-message.info {
+    background: rgba(139, 92, 246, 0.1);
+    border: 1px solid var(--adray-primary);
+    color: var(--adray-primary);
+}
+
+/* Form */
+.adray-card .form-table th {
+    padding-left: 0;
+    width: 200px;
+}
+
+.adray-card .form-table td {
+    padding-left: 0;
+}
+
+/* Actions */
+.adray-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--adray-border);
+}
+
+.adray-actions .button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    height: auto;
+    font-size: 14px;
+}
+
+.adray-actions .button .dashicons {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+    line-height: 1;
+}
+
+.adray-actions .button-primary {
+    background: var(--adray-primary);
+    border-color: var(--adray-primary-dark);
+}
+
+.adray-actions .button-primary:hover {
+    background: var(--adray-primary-dark);
+    border-color: var(--adray-primary-dark);
+}
+
+.adray-btn-danger {
+    color: var(--adray-error) !important;
+    border-color: var(--adray-error) !important;
+}
+
+.adray-btn-danger:hover {
+    background: rgba(239, 68, 68, 0.1) !important;
+}
+
+/* Webhooks Grid */
+.adray-webhooks-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.adray-webhook-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    background: #f9fafb;
+    border-radius: 8px;
+    font-size: 13px;
+}
+
+.adray-webhook-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.adray-webhook-item.active .adray-webhook-dot {
+    background: var(--adray-success);
+}
+
+.adray-webhook-item.inactive .adray-webhook-dot {
+    background: var(--adray-text-muted);
+}
+
+.adray-webhook-topic {
+    font-weight: 500;
+    font-family: 'Monaco', 'Consolas', monospace;
+    font-size: 12px;
+    color: var(--adray-primary);
+}
+
+.adray-webhook-desc {
+    color: var(--adray-text-muted);
+    font-size: 12px;
+    margin-left: auto;
+}
+
+/* Info text */
+.adray-info {
+    color: var(--adray-text-muted);
+    font-size: 14px;
+    margin: 0;
+}
+
+/* Loading state */
+.adray-loading {
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+.adray-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: white;
+    animation: adray-spin 0.8s linear infinite;
+}
+
+@keyframes adray-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Responsive */
+@media (max-width: 782px) {
+    .adray-wrap {
+        margin-right: 10px;
+    }
+    
+    .adray-header {
+        padding: 20px;
+    }
+    
+    .adray-title {
+        flex-direction: column;
+        gap: 4px;
+    }
+    
+    .adray-actions {
+        flex-direction: column;
+    }
+    
+    .adray-actions .button {
+        justify-content: center;
+    }
+    
+    .adray-webhooks-grid {
+        grid-template-columns: 1fr;
+    }
+}

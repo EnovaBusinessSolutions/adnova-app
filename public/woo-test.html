@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>ADRAY - WooCommerce Test (Internal)</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg-dark: #0d0a1c;
+      --bg-card: #1a1430;
+      --primary: #8b5cf6;
+      --primary-dark: #7c3aed;
+      --success: #10b981;
+      --error: #ef4444;
+      --warning: #f59e0b;
+      --text: #e5e5e5;
+      --text-muted: #a0a0b0;
+      --border: #2a2245;
+      --radius: 12px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      min-height: 100vh;
+      background: linear-gradient(135deg, var(--bg-dark) 0%, #1a0f2e 100%);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      padding: 2rem;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 2rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--primary) 0%, #c084fc 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      margin-bottom: 0.5rem;
+    }
+
+    .header .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid var(--error);
+      color: var(--error);
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .header p {
+      color: var(--text-muted);
+      margin-top: 0.75rem;
+    }
+
+    .header .server-url {
+      font-family: monospace;
+      background: rgba(139, 92, 246, 0.2);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      color: var(--primary);
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .card-title {
+      font-size: 1.125rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .card-title .num {
+      width: 28px;
+      height: 28px;
+      background: var(--primary);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.875rem;
+      font-weight: 700;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+      margin-bottom: 0.5rem;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 0.95rem;
+      font-family: monospace;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.5rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 15px rgba(139, 92, 246, 0.4);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .btn-danger {
+      background: var(--error);
+      color: white;
+    }
+
+    .status-box {
+      padding: 1rem;
+      border-radius: 8px;
+      margin-top: 1rem;
+      display: none;
+    }
+
+    .status-box.show {
+      display: block;
+    }
+
+    .status-box.success {
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid var(--success);
+      color: var(--success);
+    }
+
+    .status-box.error {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid var(--error);
+      color: var(--error);
+    }
+
+    .status-box.warning {
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid var(--warning);
+      color: var(--warning);
+    }
+
+    .connection-status {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 1rem;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      margin-bottom: 1rem;
+    }
+
+    .status-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #666;
+    }
+
+    .status-dot.connected {
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+    }
+
+    .status-dot.disconnected {
+      background: var(--error);
+    }
+
+    .log-box {
+      background: #000;
+      border-radius: 8px;
+      padding: 1rem;
+      max-height: 200px;
+      overflow-y: auto;
+      font-family: 'Monaco', 'Consolas', monospace;
+      font-size: 0.8rem;
+      line-height: 1.6;
+    }
+
+    .log-entry {
+      padding: 2px 0;
+      border-bottom: 1px solid #222;
+    }
+
+    .log-entry:last-child {
+      border-bottom: none;
+    }
+
+    .log-time {
+      color: #666;
+    }
+
+    .log-success {
+      color: var(--success);
+    }
+
+    .log-error {
+      color: var(--error);
+    }
+
+    .log-info {
+      color: var(--primary);
+    }
+
+    .webhook-list {
+      display: grid;
+      gap: 0.5rem;
+    }
+
+    .webhook-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem;
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 8px;
+      font-size: 0.875rem;
+    }
+
+    .webhook-item .topic {
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .webhook-item .status {
+      margin-left: auto;
+      font-size: 0.75rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    .webhook-item .status.active {
+      background: rgba(16, 185, 129, 0.2);
+      color: var(--success);
+    }
+
+    .webhook-item .status.pending {
+      background: rgba(245, 158, 11, 0.2);
+      color: var(--warning);
+    }
+
+    .actions {
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .info-box {
+      background: rgba(139, 92, 246, 0.1);
+      border: 1px solid var(--primary);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+    }
+
+    @media (max-width: 600px) {
+      body {
+        padding: 1rem;
+      }
+
+      .actions {
+        flex-direction: column;
+      }
+
+      .btn {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>ADRAY WooCommerce Test</h1>
+      <span class="badge">🔒 Internal Only</span>
+      <p>Simula la conexión de una tienda WooCommerce con ADRAY</p>
+      <p style="margin-top: 0.5rem;">Servidor: <span class="server-url" id="serverDisplay">detectando...</span></p>
+    </header>
+
+    <!-- Step 1: Connection -->
+    <div class="card">
+      <h2 class="card-title"><span class="num">1</span> Conexión</h2>
+
+      <div class="info-box">
+        <strong>Tienda de prueba:</strong> interhomesmart.com.mx<br>
+        <strong>Email:</strong> albertgpt1@gmail.com
+      </div>
+
+      <div class="connection-status">
+        <span id="statusDot" class="status-dot disconnected"></span>
+        <span id="statusText">No conectado</span>
+      </div>
+
+      <div id="healthStatus" class="status-box"></div>
+      <div id="connectionStatus" class="status-box"></div>
+
+      <div class="actions">
+        <button type="button" id="btnHealthCheck" class="btn btn-secondary">
+          🩺 Health Check
+        </button>
+        <button type="button" id="btnConnect" class="btn btn-primary">
+          🔗 Conectar Tienda
+        </button>
+        <button type="button" id="btnDisconnect" class="btn btn-danger hidden">
+          ⛓️‍💥 Desconectar
+        </button>
+      </div>
+
+      <div id="tokenDisplay" class="hidden" style="margin-top: 1rem;">
+        <label class="form-label">Token de Acceso</label>
+        <input type="text" id="accessToken" class="form-input" readonly />
+      </div>
+    </div>
+
+    <!-- Step 2: Webhook Simulation -->
+    <div class="card">
+      <h2 class="card-title"><span class="num">2</span> Simular Webhooks</h2>
+
+      <p style="color: var(--text-muted); margin-bottom: 1rem; font-size: 0.9rem;">
+        Estos eventos se enviarán al servidor cuando hagas clic:
+      </p>
+
+      <div class="actions" style="margin-bottom: 1rem;">
+        <button type="button" id="btnTestOrder" class="btn btn-secondary" disabled>
+          🛒 Simular Orden
+        </button>
+        <button type="button" id="btnTestProduct" class="btn btn-secondary" disabled>
+          📦 Simular Producto
+        </button>
+        <button type="button" id="btnTestCustomer" class="btn btn-secondary" disabled>
+          👤 Simular Cliente
+        </button>
+      </div>
+
+      <div id="webhookStatus" class="status-box"></div>
+
+      <p style="color: var(--text-muted); margin: 1rem 0 0.5rem; font-size: 0.8rem;">
+        14 webhooks que el plugin registra:
+      </p>
+      <div class="webhook-list" id="webhookList"></div>
+    </div>
+
+    <!-- Step 3: Activity Log -->
+    <div class="card">
+      <h2 class="card-title"><span class="num">3</span> Log de Actividad</h2>
+      <div class="log-box" id="logBox">
+        <div class="log-entry"><span class="log-time">[--:--:--]</span> Esperando acciones...</div>
+      </div>
+      <button type="button" id="btnClearLog" class="btn btn-secondary" style="margin-top: 1rem;">
+        🗑️ Limpiar Log
+      </button>
+    </div>
+  </div>
+
+  <script src="/js/woo-test.js"></script>
+</body>
+
+</html>
