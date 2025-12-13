@@ -1,3 +1,4 @@
+// backend/routes/googleAnalytics.js
 'use strict';
 
 const express = require('express');
@@ -49,6 +50,14 @@ function toPropertyResource(val) {
   if (/^properties\/\d+$/.test(raw)) return raw;
   const digits = raw.replace(/^properties\//, '').replace(/[^\d]/g, '');
   return digits ? `properties/${digits}` : '';
+}
+
+/** GA data API suele mandar date como YYYYMMDD. Lo normalizamos a YYYY-MM-DD. */
+function normalizeDateKey(raw) {
+  const s = String(raw || '').trim();
+  if (/^\d{8}$/.test(s)) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  return s;
 }
 
 async function getGaAccountDoc(userId) {
@@ -133,7 +142,7 @@ async function ensureGaPropertyAllowed(req, res, next) {
 
     if (!doc) return res.status(401).json({ ok: false, error: 'NO_GOOGLEACCOUNT' });
 
-    const available = availablePropertyIdsFromDoc(doc); // ["properties/123", ...]
+    const available = availablePropertyIdsFromDoc(doc);
     if (!available.length) return next();
 
     const selected = selectedPropsFromDocOrUser(doc, userDoc);
@@ -204,6 +213,7 @@ function buildDateRange(preset = 'last_30_days', includeToday = true) {
     last_14d: 14, last_14_days: 14,
     last_28d: 28, last_28_days: 28,
     last_30d: 30, last_30_days: 30,
+    last_60d: 60, last_60_days: 60,
     last_90d: 90, last_90_days: 90,
   };
 
@@ -237,31 +247,73 @@ function parseIncludeToday(req) {
   const v = String(req.query.include_today ?? '').trim().toLowerCase();
   if (v === '1' || v === 'true') return true;
   if (v === '0' || v === 'false') return false;
-  // default: true (histórico en tu UI es “incluye hoy” apagable)
-  return true;
+  return true; // mantenemos tu comportamiento histórico
 }
 
 function parseDatePreset(req, fallback = 'last_30_days') {
-  // tu UI manda date_preset=last_30d o dateRange=last_30d
   const raw = String(req.query.date_preset || req.query.dateRange || fallback).trim();
-  // normalizamos last_30d => last_30_days
   const norm = raw
     .replace(/^last_(\d+)d$/i, 'last_$1_days')
     .replace(/^last_(\d+)_day$/i, 'last_$1_days');
   return norm || fallback;
 }
 
-function pct(now, prev) {
-  if (!prev) return now ? 1 : 0;
-  return (now - prev) / prev;
+/* =============== NUEVOS HELPERS (FIX E2E) =============== */
+function n(v) {
+  const x = Number(v);
+  return Number.isFinite(x) ? x : 0;
 }
-function deltaObj(now, prev) {
-  return {
-    value: now,
-    prev: prev,
-    delta: now - prev,
-    deltaPct: pct(now, prev),
+
+function pctChange(now, prev) {
+  const a = n(now);
+  const b = n(prev);
+  if (!b) return a ? 1 : 0;
+  return (a - b) / b;
+}
+
+function buildDeltas(nowObj, prevObj, keys) {
+  const deltas = {};
+  for (const k of keys) deltas[k] = pctChange(nowObj[k], prevObj[k]);
+  return deltas;
+}
+
+async function runReportNowPrev({ auth, property, nowRange, prevRange, metrics, dimensions, dimensionFilter, orderBys, limit }) {
+  const baseBody = {
+    metrics: (metrics || []).map(name => ({ name })),
+    ...(dimensions ? { dimensions: dimensions.map(name => ({ name })) } : {}),
+    ...(dimensionFilter ? { dimensionFilter } : {}),
+    ...(orderBys ? { orderBys } : {}),
+    ...(limit ? { limit } : {}),
   };
+
+  const [repNow, repPrev] = await Promise.all([
+    gaDataRunReport({ auth, property, body: { ...baseBody, dateRanges: [nowRange] } }),
+    gaDataRunReport({ auth, property, body: { ...baseBody, dateRanges: [prevRange] } }),
+  ]);
+
+  return { repNow, repPrev };
+}
+
+function firstRowMetrics(rep) {
+  const row = rep?.rows?.[0];
+  const vals = row?.metricValues || [];
+  return vals.map(x => n(x?.value));
+}
+
+/** Meta de propiedad (currency/timeZone) desde gaProperties */
+async function getPropertyMeta(userId, property) {
+  try {
+    const doc = await getGaAccountDoc(userId);
+    const list = Array.isArray(doc?.gaProperties) ? doc.gaProperties : [];
+    const hit = list.find(p => String(p?.propertyId || '').trim() === String(property || '').trim());
+    return {
+      currencyCode: hit?.currencyCode || null,
+      timeZone: hit?.timeZone || null,
+      displayName: hit?.displayName || null,
+    };
+  } catch {
+    return { currencyCode: null, timeZone: null, displayName: null };
+  }
 }
 
 /* =============== GA ADMIN: SYNC PROPIEDADES =============== */
@@ -447,194 +499,7 @@ async function handleGaSelection(req, res) {
 router.post('/properties/selection', requireSession, express.json(), handleGaSelection);
 router.post('/selection', requireSession, express.json(), handleGaSelection);
 
-/** GET /api/google/analytics/overview */
-router.get('/overview', requireSession, ensureGaPropertyAllowed, async (req, res) => {
-  try {
-    const property = await resolvePropertyForRequest(req);
-    const datePreset = parseDatePreset(req, 'last_30_days');
-    const includeToday = parseIncludeToday(req);
-    const objective = String(req.query.objective || 'ventas');
-
-    if (!/^properties\/\d+$/.test(property)) {
-      return res.status(400).json({ ok: false, error: 'PROPERTY_REQUIRED' });
-    }
-
-    const auth = await getOAuthClientForUser(req.user._id);
-
-    const { startDate, endDate, days } = buildDateRange(datePreset, includeToday);
-    const prevStart = new Date(startDate); prevStart.setDate(prevStart.getDate() - days);
-    const prevEnd   = new Date(endDate);   prevEnd.setDate(prevEnd.getDate() - days);
-    const fmt = (d) => (typeof d === 'string' ? d : d.toISOString().slice(0, 10));
-
-    const kpi = await gaDataRunReport({
-      auth, property,
-      body: {
-        dateRanges: [
-          { startDate, endDate },
-          { startDate: fmt(prevStart), endDate: fmt(prevEnd) },
-        ],
-        metrics: [
-          { name: 'totalUsers' },
-          { name: 'sessions' },
-          { name: 'newUsers' },
-          { name: 'conversions' },
-          { name: 'purchaseRevenue' },
-          { name: 'averageSessionDuration' },
-          { name: 'engagementRate' },
-        ],
-      },
-    });
-
-    const V = (row, i) => Number(row?.metricValues?.[i]?.value || 0);
-    const rowNow  = kpi.rows?.[0];
-    const rowPrev = kpi.rows?.[1];
-
-    const base = {
-      totalUsers: V(rowNow, 0),
-      sessions:   V(rowNow, 1),
-      newUsers:   V(rowNow, 2),
-      conversions: V(rowNow, 3),
-      revenue:    V(rowNow, 4),
-      avgSessionDuration: V(rowNow, 5),
-      engagementRate:    V(rowNow, 6),
-    };
-    const basePrev = {
-      totalUsers: V(rowPrev, 0),
-      sessions:   V(rowPrev, 1),
-      newUsers:   V(rowPrev, 2),
-      conversions: V(rowPrev, 3),
-      revenue:    V(rowPrev, 4),
-      avgSessionDuration: V(rowPrev, 5),
-      engagementRate:    V(rowPrev, 6),
-    };
-
-    const out = { ok: true, data: {}, property, range: { startDate, endDate, days } };
-
-    if (objective === 'ventas') {
-      const [purNow, purPrev] = await Promise.all([
-        gaDataRunReport({
-          auth, property,
-          body: {
-            dateRanges: [{ startDate, endDate }],
-            dimensions: [{ name: 'eventName' }],
-            metrics: [{ name: 'eventCount' }],
-            dimensionFilter: {
-              filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'purchase' } },
-            },
-          },
-        }),
-        gaDataRunReport({
-          auth, property,
-          body: {
-            dateRanges: [{ startDate: fmt(prevStart), endDate: fmt(prevEnd) }],
-            dimensions: [{ name: 'eventName' }],
-            metrics: [{ name: 'eventCount' }],
-            dimensionFilter: {
-              filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'purchase' } },
-            },
-          },
-        }),
-      ]);
-
-      const purchasesNow  = Number(purNow.rows?.[0]?.metricValues?.[0]?.value || 0);
-      const purchasesPrev = Number(purPrev.rows?.[0]?.metricValues?.[0]?.value || 0);
-
-      const pcrNow  = base.sessions ? purchasesNow / base.sessions : 0;
-      const pcrPrev = basePrev.sessions ? purchasesPrev / basePrev.sessions : 0;
-      const aovNow  = purchasesNow ? base.revenue / purchasesNow : 0;
-      const aovPrev = purchasesPrev ? basePrev.revenue / purchasesPrev : 0;
-
-      out.data = {
-        kpis: {
-          revenue:  deltaObj(base.revenue, basePrev.revenue),
-          orders:   deltaObj(purchasesNow, purchasesPrev),
-          aov:      deltaObj(aovNow, aovPrev),
-          purchaseConversionRate: deltaObj(pcrNow, pcrPrev),
-        },
-      };
-    } else if (objective === 'leads') {
-      const leadEvt = await gaDataRunReport({
-        auth, property,
-        body: {
-          dateRanges: [{ startDate, endDate }],
-          dimensions: [{ name: 'eventName' }],
-          metrics: [{ name: 'eventCount' }],
-          dimensionFilter: {
-            filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'generate_lead' } },
-          },
-        },
-      });
-      const leads = Number(leadEvt.rows?.[0]?.metricValues?.[0]?.value || 0);
-      const leadConversionRate = base.sessions ? leads / base.sessions : 0;
-
-      out.data = {
-        kpis: {
-          leads: deltaObj(leads, 0),
-          leadConversionRate: deltaObj(leadConversionRate, 0),
-        },
-      };
-    } else if (objective === 'adquisicion') {
-      const ch = await gaDataRunReport({
-        auth, property,
-        body: {
-          dateRanges: [{ startDate, endDate }],
-          dimensions: [{ name: 'sessionDefaultChannelGroup' }],
-          metrics: [{ name: 'sessions' }],
-          orderBys: [{ desc: true, metric: { metricName: 'sessions' } }],
-          limit: 25,
-        },
-      });
-
-      const channels = {};
-      for (const r of ch.rows || []) {
-        const name = r.dimensionValues?.[0]?.value || 'Other';
-        const val  = Number(r.metricValues?.[0]?.value || 0);
-        const key =
-          (/organic/i.test(name) ? 'organic'
-          : /paid|cpc|ppc/i.test(name) ? 'paid'
-          : /social/i.test(name) ? 'social'
-          : /referral/i.test(name) ? 'referral'
-          : /direct/i.test(name) ? 'direct'
-          : name);
-        channels[key] = (channels[key] || 0) + val;
-      }
-
-      out.data = {
-        kpis: {
-          users:    deltaObj(base.totalUsers, basePrev.totalUsers),
-          sessions: deltaObj(base.sessions, basePrev.sessions),
-          newUsers: deltaObj(base.newUsers, basePrev.newUsers),
-        },
-        channels,
-      };
-    } else {
-      out.data = {
-        kpis: {
-          engagementRate: deltaObj(base.engagementRate, basePrev.engagementRate),
-          avgSessionDuration: deltaObj(base.avgSessionDuration, basePrev.avgSessionDuration),
-        },
-      };
-    }
-
-    return res.json(out);
-  } catch (e) {
-    console.error('GA /overview error:', e?.response?.data || e);
-    const code = e?.code || e?.response?.status || 500;
-    return res.status(code === 'NO_REFRESH_TOKEN' ? 401 : 500).json({ ok: false, error: e.message || String(e) });
-  }
-});
-
-/* =========================================================
- * ✅ NUEVAS RUTAS PARA EL DASHBOARD (E2E)
- * - /sales
- * - /leads
- * - /acquisition
- * - /engagement
- * Extras útiles si tu UI ya los usa:
- * - /landing-pages
- * - /funnel
- * ======================================================= */
-
+/* ===================== RESOLVER BASICS ===================== */
 async function resolveBasics(req) {
   const property = await resolvePropertyForRequest(req);
   if (!/^properties\/\d+$/.test(property)) {
@@ -650,106 +515,391 @@ async function resolveBasics(req) {
   const prevEnd   = new Date(endDate);   prevEnd.setDate(prevEnd.getDate() - days);
   const fmt = (d) => (typeof d === 'string' ? d : d.toISOString().slice(0, 10));
 
-  return { property, datePreset, includeToday, startDate, endDate, days, prevStart, prevEnd, fmt };
+  const nowRange  = { startDate, endDate };
+  const prevRange = { startDate: fmt(prevStart), endDate: fmt(prevEnd) };
+
+  const meta = await getPropertyMeta(req.user._id, property);
+
+  return { property, datePreset, includeToday, startDate, endDate, days, prevStart, prevEnd, fmt, nowRange, prevRange, meta };
 }
+
+/** GET /api/google/analytics/overview */
+router.get('/overview', requireSession, ensureGaPropertyAllowed, async (req, res) => {
+  try {
+    const auth = await getOAuthClientForUser(req.user._id);
+    const { property, startDate, endDate, days, nowRange, prevRange, meta } = await resolveBasics(req);
+    const objective = String(req.query.objective || 'ventas');
+
+    const { repNow: baseNowRep, repPrev: basePrevRep } = await runReportNowPrev({
+      auth, property,
+      nowRange, prevRange,
+      metrics: [
+        'totalUsers',
+        'sessions',
+        'newUsers',
+        'conversions',
+        'purchaseRevenue',
+        'averageSessionDuration',
+        'engagementRate',
+      ],
+    });
+
+    const [
+      totalUsersNow,
+      sessionsNow,
+      newUsersNow,
+      conversionsNow,
+      revenueNow,
+      avgSessionDurationNow,
+      engagementRateNow
+    ] = firstRowMetrics(baseNowRep);
+
+    const [
+      totalUsersPrev,
+      sessionsPrev,
+      newUsersPrev,
+      conversionsPrev,
+      revenuePrev,
+      avgSessionDurationPrev,
+      engagementRatePrev
+    ] = firstRowMetrics(basePrevRep);
+
+    const commonNow = {
+      totalUsers: totalUsersNow,
+      sessions: sessionsNow,
+      newUsers: newUsersNow,
+      conversions: conversionsNow,
+      revenue: revenueNow,
+      engagementRate: engagementRateNow,
+      avgEngagementTime: avgSessionDurationNow,
+      currencyCode: meta?.currencyCode || null,
+      timeZone: meta?.timeZone || null,
+    };
+
+    const commonPrev = {
+      totalUsers: totalUsersPrev,
+      sessions: sessionsPrev,
+      newUsers: newUsersPrev,
+      conversions: conversionsPrev,
+      revenue: revenuePrev,
+      engagementRate: engagementRatePrev,
+      avgEngagementTime: avgSessionDurationPrev,
+      currencyCode: meta?.currencyCode || null,
+      timeZone: meta?.timeZone || null,
+    };
+
+    const out = {
+      ok: true,
+      property,
+      range: { startDate, endDate, days },
+      data: {
+        kpis: { ...commonNow },
+        prev: { ...commonPrev },
+        deltas: buildDeltas(commonNow, commonPrev, Object.keys(commonNow)),
+      },
+    };
+
+    if (objective === 'ventas') {
+      const { repNow: purNowRep, repPrev: purPrevRep } = await runReportNowPrev({
+        auth, property,
+        nowRange, prevRange,
+        metrics: ['eventCount'],
+        dimensions: ['eventName'],
+        dimensionFilter: {
+          filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'purchase' } },
+        },
+        limit: 50,
+      });
+
+      const purchasesNow = n(purNowRep.rows?.[0]?.metricValues?.[0]?.value);
+      const purchasesPrev = n(purPrevRep.rows?.[0]?.metricValues?.[0]?.value);
+
+      const purchaseConversionRateNow = sessionsNow ? (purchasesNow / sessionsNow) : 0;
+      const purchaseConversionRatePrev = sessionsPrev ? (purchasesPrev / sessionsPrev) : 0;
+
+      const aovNow = purchasesNow ? (revenueNow / purchasesNow) : 0;
+      const aovPrev = purchasesPrev ? (revenuePrev / purchasesPrev) : 0;
+
+      const ventasNow = {
+        revenue: revenueNow,
+        purchases: purchasesNow,
+        aov: aovNow,
+        purchaseConversionRate: purchaseConversionRateNow,
+      };
+      const ventasPrev = {
+        revenue: revenuePrev,
+        purchases: purchasesPrev,
+        aov: aovPrev,
+        purchaseConversionRate: purchaseConversionRatePrev,
+      };
+
+      out.data.kpis = { ...out.data.kpis, ...ventasNow };
+      out.data.prev = { ...out.data.prev, ...ventasPrev };
+      out.data.deltas = { ...out.data.deltas, ...buildDeltas(ventasNow, ventasPrev, Object.keys(ventasNow)) };
+
+      return res.json(out);
+    }
+
+    if (objective === 'leads') {
+      const rawLeadEvents = String(req.query.lead_events || req.query.events || 'generate_lead').trim();
+      const leadEvents = rawLeadEvents.split(',').map(s => String(s || '').trim()).filter(Boolean);
+
+      const { repNow: leadsNowRep, repPrev: leadsPrevRep } = await runReportNowPrev({
+        auth, property,
+        nowRange, prevRange,
+        metrics: ['eventCount'],
+        dimensions: ['eventName'],
+        dimensionFilter: {
+          filter: { fieldName: 'eventName', inListFilter: { values: leadEvents } },
+        },
+        limit: 200,
+      });
+
+      const sumRows = (rep) =>
+        (rep.rows || []).reduce((acc, r) => acc + n(r.metricValues?.[0]?.value), 0);
+
+      const leadsNow = sumRows(leadsNowRep);
+      const leadsPrev = sumRows(leadsPrevRep);
+
+      const leadConversionRateNow = sessionsNow ? (leadsNow / sessionsNow) : 0;
+      const leadConversionRatePrev = sessionsPrev ? (leadsPrev / sessionsPrev) : 0;
+
+      const leadsNowObj = { leads: leadsNow, leadConversionRate: leadConversionRateNow, conversionRate: leadConversionRateNow };
+      const leadsPrevObj = { leads: leadsPrev, leadConversionRate: leadConversionRatePrev, conversionRate: leadConversionRatePrev };
+
+      out.data.kpis = { ...out.data.kpis, ...leadsNowObj };
+      out.data.prev = { ...out.data.prev, ...leadsPrevObj };
+      out.data.deltas = { ...out.data.deltas, ...buildDeltas(leadsNowObj, leadsPrevObj, Object.keys(leadsNowObj)) };
+
+      return res.json(out);
+    }
+
+    if (objective === 'adquisicion') {
+      const ch = await gaDataRunReport({
+        auth, property,
+        body: {
+          dateRanges: [nowRange],
+          dimensions: [{ name: 'sessionDefaultChannelGroup' }],
+          metrics: [{ name: 'sessions' }],
+          orderBys: [{ desc: true, metric: { metricName: 'sessions' } }],
+          limit: 25,
+        },
+      });
+
+      const channels = {};
+      for (const r of ch.rows || []) {
+        const name = r.dimensionValues?.[0]?.value || 'Other';
+        const val  = n(r.metricValues?.[0]?.value);
+        const key =
+          (/organic/i.test(name) ? 'organic'
+          : /paid|cpc|ppc/i.test(name) ? 'paid'
+          : /social/i.test(name) ? 'social'
+          : /referral/i.test(name) ? 'referral'
+          : /direct/i.test(name) ? 'direct'
+          : name);
+        channels[key] = (channels[key] || 0) + val;
+      }
+
+      out.data.channels = channels;
+      return res.json(out);
+    }
+
+    // engagement
+    const engNowObj = {
+      engagementRate: engagementRateNow,
+      avgEngagementTime: avgSessionDurationNow,
+    };
+    const engPrevObj = {
+      engagementRate: engagementRatePrev,
+      avgEngagementTime: avgSessionDurationPrev,
+    };
+
+    out.data.kpis = { ...out.data.kpis, ...engNowObj };
+    out.data.prev = { ...out.data.prev, ...engPrevObj };
+    out.data.deltas = { ...out.data.deltas, ...buildDeltas(engNowObj, engPrevObj, Object.keys(engNowObj)) };
+
+    return res.json(out);
+  } catch (e) {
+    console.error('GA /overview error:', e?.response?.data || e);
+    const status =
+      e?.code === 'PROPERTY_REQUIRED' ? 400 :
+      e?.code === 'NO_REFRESH_TOKEN' ? 401 : 500;
+    return res.status(status).json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+/* =========================================================
+ * ✅ RUTAS DASHBOARD (E2E)
+ * ======================================================= */
 
 router.get('/sales', requireSession, ensureGaPropertyAllowed, async (req, res) => {
   try {
     const auth = await getOAuthClientForUser(req.user._id);
-    const { property, startDate, endDate, days, prevStart, prevEnd, fmt } = await resolveBasics(req);
+    const { property, startDate, endDate, days, nowRange, prevRange, meta } = await resolveBasics(req);
 
-    // KPIs base (revenue + sessions)
-    const base = await gaDataRunReport({
+    const { repNow: baseNowRep, repPrev: basePrevRep } = await runReportNowPrev({
       auth, property,
-      body: {
-        dateRanges: [
-          { startDate, endDate },
-          { startDate: fmt(prevStart), endDate: fmt(prevEnd) },
-        ],
-        metrics: [
-          { name: 'sessions' },
-          { name: 'purchaseRevenue' },
-        ],
-      },
+      nowRange, prevRange,
+      metrics: ['sessions', 'purchaseRevenue'],
     });
 
-    const V = (row, i) => Number(row?.metricValues?.[i]?.value || 0);
-    const rowNow  = base.rows?.[0];
-    const rowPrev = base.rows?.[1];
+    const [sessionsNow, revenueNow] = firstRowMetrics(baseNowRep);
+    const [sessionsPrev, revenuePrev] = firstRowMetrics(basePrevRep);
 
-    const sessionsNow = V(rowNow, 0);
-    const sessionsPrev= V(rowPrev, 0);
+    const { repNow: purNowRep, repPrev: purPrevRep } = await runReportNowPrev({
+      auth, property,
+      nowRange, prevRange,
+      metrics: ['eventCount'],
+      dimensions: ['eventName'],
+      dimensionFilter: {
+        filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'purchase' } },
+      },
+      limit: 50,
+    });
 
-    const revenueNow  = V(rowNow, 1);
-    const revenuePrev = V(rowPrev, 1);
+    const purchasesNow = n(purNowRep.rows?.[0]?.metricValues?.[0]?.value);
+    const purchasesPrev = n(purPrevRep.rows?.[0]?.metricValues?.[0]?.value);
 
-    // Purchases (purchase eventCount) ahora y previo
-    const [purNow, purPrev] = await Promise.all([
-      gaDataRunReport({
+    const purchaseConversionRateNow = sessionsNow ? (purchasesNow / sessionsNow) : 0;
+    const purchaseConversionRatePrev = sessionsPrev ? (purchasesPrev / sessionsPrev) : 0;
+
+    const aovNow = purchasesNow ? (revenueNow / purchasesNow) : 0;
+    const aovPrev = purchasesPrev ? (revenuePrev / purchasesPrev) : 0;
+
+    const funnelReport = async (range) => {
+      const rep = await gaDataRunReport({
         auth, property,
         body: {
-          dateRanges: [{ startDate, endDate }],
+          dateRanges: [range],
           dimensions: [{ name: 'eventName' }],
           metrics: [{ name: 'eventCount' }],
           dimensionFilter: {
-            filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'purchase' } },
+            filter: {
+              fieldName: 'eventName',
+              inListFilter: { values: ['view_item','add_to_cart','begin_checkout','purchase'] },
+            },
           },
+          limit: 50,
         },
-      }),
-      gaDataRunReport({
-        auth, property,
-        body: {
-          dateRanges: [{ startDate: fmt(prevStart), endDate: fmt(prevEnd) }],
-          dimensions: [{ name: 'eventName' }],
-          metrics: [{ name: 'eventCount' }],
-          dimensionFilter: {
-            filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'purchase' } },
-          },
-        },
-      }),
+      });
+      const fObj = {};
+      for (const r of rep.rows || []) {
+        fObj[r.dimensionValues?.[0]?.value] = n(r.metricValues?.[0]?.value);
+      }
+      return {
+        view_item:      fObj.view_item || 0,
+        add_to_cart:    fObj.add_to_cart || 0,
+        begin_checkout: fObj.begin_checkout || 0,
+        purchase:       fObj.purchase || 0,
+      };
+    };
+
+    const [funnelNow, funnelPrev] = await Promise.all([
+      funnelReport(nowRange),
+      funnelReport(prevRange),
     ]);
 
-    const purchasesNow  = Number(purNow.rows?.[0]?.metricValues?.[0]?.value || 0);
-    const purchasesPrev = Number(purPrev.rows?.[0]?.metricValues?.[0]?.value || 0);
+    const convTotalNow = funnelNow.view_item ? (funnelNow.purchase / funnelNow.view_item) : 0;
+    const convTotalPrev = funnelPrev.view_item ? (funnelPrev.purchase / funnelPrev.view_item) : 0;
 
-    const aovNow  = purchasesNow ? revenueNow / purchasesNow : 0;
-    const aovPrev = purchasesPrev ? revenuePrev / purchasesPrev : 0;
-
-    const pcrNow  = sessionsNow ? purchasesNow / sessionsNow : 0;
-    const pcrPrev = sessionsPrev ? purchasesPrev / sessionsPrev : 0;
-
-    // Serie diaria (para chart)
-    const series = await gaDataRunReport({
+    // 1) revenue + sessions por date
+    const seriesBase = await gaDataRunReport({
       auth, property,
       body: {
-        dateRanges: [{ startDate, endDate }],
+        dateRanges: [nowRange],
         dimensions: [{ name: 'date' }],
-        metrics: [
-          { name: 'purchaseRevenue' },
-          { name: 'sessions' },
-        ],
+        metrics: [{ name: 'purchaseRevenue' }, { name: 'sessions' }],
         orderBys: [{ dimension: { dimensionName: 'date' } }],
         limit: 10000,
       },
     });
 
-    const trend = (series.rows || []).map(r => ({
-      date: r.dimensionValues?.[0]?.value || null, // YYYYMMDD
-      revenue: Number(r.metricValues?.[0]?.value || 0),
-      sessions: Number(r.metricValues?.[1]?.value || 0),
-    }));
+    const byDay = new Map();
+    for (const r of seriesBase.rows || []) {
+      const dateRaw = r.dimensionValues?.[0]?.value || '';
+      const date = normalizeDateKey(dateRaw);
+      const revenue = n(r.metricValues?.[0]?.value);
+      const sessions = n(r.metricValues?.[1]?.value);
+      byDay.set(date, { date, revenue, sessions, purchases: 0 });
+    }
+
+    // 2) purchases por date (filtrado purchase)
+    const seriesPurch = await gaDataRunReport({
+      auth, property,
+      body: {
+        dateRanges: [nowRange],
+        dimensions: [{ name: 'date' }, { name: 'eventName' }], // ✅ más compatible
+        metrics: [{ name: 'eventCount' }],
+        dimensionFilter: {
+          filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'purchase' } },
+        },
+        orderBys: [{ dimension: { dimensionName: 'date' } }],
+        limit: 10000,
+      },
+    });
+
+    for (const r of seriesPurch.rows || []) {
+      const dateRaw = r.dimensionValues?.[0]?.value || '';
+      const date = normalizeDateKey(dateRaw);
+      const purchases = n(r.metricValues?.[0]?.value);
+      const cur = byDay.get(date) || { date, revenue: 0, sessions: 0, purchases: 0 };
+      cur.purchases = purchases;
+      byDay.set(date, cur);
+    }
+
+    const trend = Array.from(byDay.values())
+      .sort((a,b) => String(a.date).localeCompare(String(b.date)))
+      .map((d) => {
+        const conversionRate = d.sessions ? (d.purchases / d.sessions) : 0;
+        const aov = d.purchases ? (d.revenue / d.purchases) : 0;
+        return {
+          date: d.date, // ✅ ISO
+          revenue: d.revenue,
+          purchases: d.purchases,
+          sessions: d.sessions,
+          conversionRate,
+          aov,
+        };
+      });
+
+    const nowData = {
+      revenue: revenueNow,
+      purchases: purchasesNow,
+      purchaseConversionRate: purchaseConversionRateNow,
+      aov: aovNow,
+      currencyCode: meta?.currencyCode || null,
+      timeZone: meta?.timeZone || null,
+    };
+    const prevData = {
+      revenue: revenuePrev,
+      purchases: purchasesPrev,
+      purchaseConversionRate: purchaseConversionRatePrev,
+      aov: aovPrev,
+      funnel: funnelPrev,
+      convTotal: convTotalPrev,
+      currencyCode: meta?.currencyCode || null,
+      timeZone: meta?.timeZone || null,
+    };
+
+    const deltas = {
+      revenue: pctChange(nowData.revenue, prevData.revenue),
+      purchases: pctChange(nowData.purchases, prevData.purchases),
+      purchaseConversionRate: pctChange(nowData.purchaseConversionRate, prevData.purchaseConversionRate),
+      aov: pctChange(nowData.aov, prevData.aov),
+      funnelConversion: pctChange(convTotalNow, convTotalPrev),
+    };
 
     return res.json({
       ok: true,
       property,
       range: { startDate, endDate, days },
-      kpis: {
-        revenue: deltaObj(revenueNow, revenuePrev),
-        orders: deltaObj(purchasesNow, purchasesPrev),
-        aov: deltaObj(aovNow, aovPrev),
-        purchaseConversionRate: deltaObj(pcrNow, pcrPrev),
+      data: {
+        ...nowData,
+        trend,
+        funnel: funnelNow,
+        prev: prevData,
+        deltas,
       },
-      trend,
     });
   } catch (e) {
     console.error('GA /sales error:', e?.response?.data || e);
@@ -763,70 +913,46 @@ router.get('/sales', requireSession, ensureGaPropertyAllowed, async (req, res) =
 router.get('/leads', requireSession, ensureGaPropertyAllowed, async (req, res) => {
   try {
     const auth = await getOAuthClientForUser(req.user._id);
-    const { property, startDate, endDate, days, prevStart, prevEnd, fmt } = await resolveBasics(req);
+    const { property, startDate, endDate, days, nowRange, prevRange, meta } = await resolveBasics(req);
 
-    // Permitir lista de eventos de lead desde UI:
-    // ?lead_events=generate_lead,form_submit,contact_click
     const rawLeadEvents = String(req.query.lead_events || req.query.events || 'generate_lead').trim();
     const leadEvents = rawLeadEvents
       .split(',')
       .map(s => String(s || '').trim())
       .filter(Boolean);
 
-    // Sessions ahora y previo (para rate)
-    const base = await gaDataRunReport({
+    const { repNow: sessNowRep, repPrev: sessPrevRep } = await runReportNowPrev({
       auth, property,
-      body: {
-        dateRanges: [
-          { startDate, endDate },
-          { startDate: fmt(prevStart), endDate: fmt(prevEnd) },
-        ],
-        metrics: [{ name: 'sessions' }],
-      },
+      nowRange, prevRange,
+      metrics: ['sessions'],
     });
-    const sessionsNow = Number(base.rows?.[0]?.metricValues?.[0]?.value || 0);
-    const sessionsPrev= Number(base.rows?.[1]?.metricValues?.[0]?.value || 0);
+    const [sessionsNow] = firstRowMetrics(sessNowRep);
+    const [sessionsPrev] = firstRowMetrics(sessPrevRep);
 
-    // Sumar leads por eventName IN LIST
-    const leadsNowRep = await gaDataRunReport({
+    const { repNow: leadsNowRep, repPrev: leadsPrevRep } = await runReportNowPrev({
       auth, property,
-      body: {
-        dateRanges: [{ startDate, endDate }],
-        dimensions: [{ name: 'eventName' }],
-        metrics: [{ name: 'eventCount' }],
-        dimensionFilter: {
-          filter: { fieldName: 'eventName', inListFilter: { values: leadEvents } },
-        },
-        limit: 200,
+      nowRange, prevRange,
+      metrics: ['eventCount'],
+      dimensions: ['eventName'],
+      dimensionFilter: {
+        filter: { fieldName: 'eventName', inListFilter: { values: leadEvents } },
       },
-    });
-    const leadsPrevRep = await gaDataRunReport({
-      auth, property,
-      body: {
-        dateRanges: [{ startDate: fmt(prevStart), endDate: fmt(prevEnd) }],
-        dimensions: [{ name: 'eventName' }],
-        metrics: [{ name: 'eventCount' }],
-        dimensionFilter: {
-          filter: { fieldName: 'eventName', inListFilter: { values: leadEvents } },
-        },
-        limit: 200,
-      },
+      limit: 200,
     });
 
     const sumRows = (rep) =>
-      (rep.rows || []).reduce((acc, r) => acc + Number(r.metricValues?.[0]?.value || 0), 0);
+      (rep.rows || []).reduce((acc, r) => acc + n(r.metricValues?.[0]?.value), 0);
 
     const leadsNow = sumRows(leadsNowRep);
     const leadsPrev = sumRows(leadsPrevRep);
 
-    const rateNow = sessionsNow ? leadsNow / sessionsNow : 0;
-    const ratePrev= sessionsPrev ? leadsPrev / sessionsPrev : 0;
+    const leadConversionRateNow = sessionsNow ? (leadsNow / sessionsNow) : 0;
+    const leadConversionRatePrev = sessionsPrev ? (leadsPrev / sessionsPrev) : 0;
 
-    // Trend (daily leads)
     const leadsDaily = await gaDataRunReport({
       auth, property,
       body: {
-        dateRanges: [{ startDate, endDate }],
+        dateRanges: [nowRange],
         dimensions: [{ name: 'date' }, { name: 'eventName' }],
         metrics: [{ name: 'eventCount' }],
         dimensionFilter: {
@@ -837,27 +963,42 @@ router.get('/leads', requireSession, ensureGaPropertyAllowed, async (req, res) =
       },
     });
 
-    // agregamos por día
     const byDay = new Map();
     for (const r of leadsDaily.rows || []) {
-      const d = r.dimensionValues?.[0]?.value || '';
-      const c = Number(r.metricValues?.[0]?.value || 0);
+      const dRaw = r.dimensionValues?.[0]?.value || '';
+      const d = normalizeDateKey(dRaw);
+      const c = n(r.metricValues?.[0]?.value);
       byDay.set(d, (byDay.get(d) || 0) + c);
     }
     const trend = Array.from(byDay.entries())
       .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
       .map(([date, leads]) => ({ date, leads }));
 
+    const deltas = {
+      leads: pctChange(leadsNow, leadsPrev),
+      leadConversionRate: pctChange(leadConversionRateNow, leadConversionRatePrev),
+      conversionRate: pctChange(leadConversionRateNow, leadConversionRatePrev),
+    };
+
     return res.json({
       ok: true,
       property,
       range: { startDate, endDate, days },
-      leadEvents,
-      kpis: {
-        leads: deltaObj(leadsNow, leadsPrev),
-        leadConversionRate: deltaObj(rateNow, ratePrev),
+      data: {
+        leads: leadsNow,
+        leadConversionRate: leadConversionRateNow,
+        conversionRate: leadConversionRateNow,
+        trend,
+        leadEvents,
+        currencyCode: meta?.currencyCode || null,
+        timeZone: meta?.timeZone || null,
+        prev: {
+          leads: leadsPrev,
+          leadConversionRate: leadConversionRatePrev,
+          conversionRate: leadConversionRatePrev,
+        },
+        deltas,
       },
-      trend,
     });
   } catch (e) {
     console.error('GA /leads error:', e?.response?.data || e);
@@ -871,36 +1012,21 @@ router.get('/leads', requireSession, ensureGaPropertyAllowed, async (req, res) =
 router.get('/acquisition', requireSession, ensureGaPropertyAllowed, async (req, res) => {
   try {
     const auth = await getOAuthClientForUser(req.user._id);
-    const { property, startDate, endDate, days, prevStart, prevEnd, fmt } = await resolveBasics(req);
+    const { property, startDate, endDate, days, nowRange, prevRange, meta } = await resolveBasics(req);
 
-    const kpi = await gaDataRunReport({
+    const { repNow: kNowRep, repPrev: kPrevRep } = await runReportNowPrev({
       auth, property,
-      body: {
-        dateRanges: [
-          { startDate, endDate },
-          { startDate: fmt(prevStart), endDate: fmt(prevEnd) },
-        ],
-        metrics: [
-          { name: 'totalUsers' },
-          { name: 'sessions' },
-          { name: 'newUsers' },
-        ],
-      },
+      nowRange, prevRange,
+      metrics: ['totalUsers', 'sessions', 'newUsers'],
     });
 
-    const V = (row, i) => Number(row?.metricValues?.[i]?.value || 0);
-    const rowNow  = kpi.rows?.[0];
-    const rowPrev = kpi.rows?.[1];
+    const [totalUsersNow, sessionsNow, newUsersNow] = firstRowMetrics(kNowRep);
+    const [totalUsersPrev, sessionsPrev, newUsersPrev] = firstRowMetrics(kPrevRep);
 
-    const usersNow = V(rowNow,0), usersPrev = V(rowPrev,0);
-    const sessionsNow = V(rowNow,1), sessionsPrev = V(rowPrev,1);
-    const newUsersNow = V(rowNow,2), newUsersPrev = V(rowPrev,2);
-
-    // canales
     const ch = await gaDataRunReport({
       auth, property,
       body: {
-        dateRanges: [{ startDate, endDate }],
+        dateRanges: [nowRange],
         dimensions: [{ name: 'sessionDefaultChannelGroup' }],
         metrics: [{ name: 'sessions' }],
         orderBys: [{ desc: true, metric: { metricName: 'sessions' } }],
@@ -911,7 +1037,7 @@ router.get('/acquisition', requireSession, ensureGaPropertyAllowed, async (req, 
     const channels = {};
     for (const r of ch.rows || []) {
       const name = r.dimensionValues?.[0]?.value || 'Other';
-      const val  = Number(r.metricValues?.[0]?.value || 0);
+      const val  = n(r.metricValues?.[0]?.value);
       const key =
         (/organic/i.test(name) ? 'organic'
         : /paid|cpc|ppc/i.test(name) ? 'paid'
@@ -922,33 +1048,58 @@ router.get('/acquisition', requireSession, ensureGaPropertyAllowed, async (req, 
       channels[key] = (channels[key] || 0) + val;
     }
 
-    // trend daily sessions
     const s = await gaDataRunReport({
       auth, property,
       body: {
-        dateRanges: [{ startDate, endDate }],
+        dateRanges: [nowRange],
         dimensions: [{ name: 'date' }],
         metrics: [{ name: 'sessions' }],
         orderBys: [{ dimension: { dimensionName: 'date' } }],
         limit: 10000,
       },
     });
+
     const trend = (s.rows || []).map(r => ({
-      date: r.dimensionValues?.[0]?.value || null,
-      sessions: Number(r.metricValues?.[0]?.value || 0),
+      date: normalizeDateKey(r.dimensionValues?.[0]?.value || null),
+      sessions: n(r.metricValues?.[0]?.value),
     }));
 
+    const deltas = {
+      totalUsers: pctChange(totalUsersNow, totalUsersPrev),
+      sessions: pctChange(sessionsNow, sessionsPrev),
+      newUsers: pctChange(newUsersNow, newUsersPrev),
+    };
+
+    // ✅ CLAVE: tu UI hoy usa acq.kpis.totalUsers / sessions / newUsers
     return res.json({
       ok: true,
       property,
       range: { startDate, endDate, days },
-      kpis: {
-        users: deltaObj(usersNow, usersPrev),
-        sessions: deltaObj(sessionsNow, sessionsPrev),
-        newUsers: deltaObj(newUsersNow, newUsersPrev),
+      data: {
+        kpis: {
+          totalUsers: totalUsersNow,
+          sessions: sessionsNow,
+          newUsers: newUsersNow,
+        },
+        // (compat extra, por si algo consume plano)
+        totalUsers: totalUsersNow,
+        sessions: sessionsNow,
+        newUsers: newUsersNow,
+
+        channels,
+        trend,
+
+        currencyCode: meta?.currencyCode || null,
+        timeZone: meta?.timeZone || null,
+
+        prev: {
+          kpis: { totalUsers: totalUsersPrev, sessions: sessionsPrev, newUsers: newUsersPrev },
+          totalUsers: totalUsersPrev,
+          sessions: sessionsPrev,
+          newUsers: newUsersPrev,
+        },
+        deltas,
       },
-      channels,
-      trend,
     });
   } catch (e) {
     console.error('GA /acquisition error:', e?.response?.data || e);
@@ -962,57 +1113,57 @@ router.get('/acquisition', requireSession, ensureGaPropertyAllowed, async (req, 
 router.get('/engagement', requireSession, ensureGaPropertyAllowed, async (req, res) => {
   try {
     const auth = await getOAuthClientForUser(req.user._id);
-    const { property, startDate, endDate, days, prevStart, prevEnd, fmt } = await resolveBasics(req);
+    const { property, startDate, endDate, days, nowRange, prevRange, meta } = await resolveBasics(req);
 
-    const rep = await gaDataRunReport({
+    const { repNow: repNow, repPrev: repPrev } = await runReportNowPrev({
       auth, property,
-      body: {
-        dateRanges: [
-          { startDate, endDate },
-          { startDate: fmt(prevStart), endDate: fmt(prevEnd) },
-        ],
-        metrics: [
-          { name: 'engagementRate' },
-          { name: 'averageSessionDuration' },
-          { name: 'conversions' },
-        ],
-      },
+      nowRange, prevRange,
+      metrics: ['engagementRate', 'averageSessionDuration', 'conversions'],
     });
 
-    const V = (row, i) => Number(row?.metricValues?.[i]?.value || 0);
-    const rowNow  = rep.rows?.[0];
-    const rowPrev = rep.rows?.[1];
+    const [engagementRateNow, avgSessionDurationNow, conversionsNow] = firstRowMetrics(repNow);
+    const [engagementRatePrev, avgSessionDurationPrev, conversionsPrev] = firstRowMetrics(repPrev);
 
-    const erNow = V(rowNow,0), erPrev = V(rowPrev,0);
-    const durNow = V(rowNow,1), durPrev = V(rowPrev,1);
-    const convNow = V(rowNow,2), convPrev = V(rowPrev,2);
-
-    // trend daily engagementRate
     const s = await gaDataRunReport({
       auth, property,
       body: {
-        dateRanges: [{ startDate, endDate }],
+        dateRanges: [nowRange],
         dimensions: [{ name: 'date' }],
         metrics: [{ name: 'engagementRate' }],
         orderBys: [{ dimension: { dimensionName: 'date' } }],
         limit: 10000,
       },
     });
+
     const trend = (s.rows || []).map(r => ({
-      date: r.dimensionValues?.[0]?.value || null,
-      engagementRate: Number(r.metricValues?.[0]?.value || 0),
+      date: normalizeDateKey(r.dimensionValues?.[0]?.value || null),
+      engagementRate: n(r.metricValues?.[0]?.value),
     }));
+
+    const deltas = {
+      engagementRate: pctChange(engagementRateNow, engagementRatePrev),
+      avgEngagementTime: pctChange(avgSessionDurationNow, avgSessionDurationPrev),
+      conversions: pctChange(conversionsNow, conversionsPrev),
+    };
 
     return res.json({
       ok: true,
       property,
       range: { startDate, endDate, days },
-      kpis: {
-        engagementRate: deltaObj(erNow, erPrev),
-        avgSessionDuration: deltaObj(durNow, durPrev),
-        conversions: deltaObj(convNow, convPrev),
+      data: {
+        engagementRate: engagementRateNow,
+        avgEngagementTime: avgSessionDurationNow,
+        conversions: conversionsNow,
+        trend,
+        currencyCode: meta?.currencyCode || null,
+        timeZone: meta?.timeZone || null,
+        prev: {
+          engagementRate: engagementRatePrev,
+          avgEngagementTime: avgSessionDurationPrev,
+          conversions: conversionsPrev,
+        },
+        deltas,
       },
-      trend,
     });
   } catch (e) {
     console.error('GA /engagement error:', e?.response?.data || e);
@@ -1023,16 +1174,16 @@ router.get('/engagement', requireSession, ensureGaPropertyAllowed, async (req, r
   }
 });
 
-// (Opcional) Top landing pages
+// Top landing pages
 router.get('/landing-pages', requireSession, ensureGaPropertyAllowed, async (req, res) => {
   try {
     const auth = await getOAuthClientForUser(req.user._id);
-    const { property, startDate, endDate, days } = await resolveBasics(req);
+    const { property, startDate, endDate, days, nowRange } = await resolveBasics(req);
 
     const rep = await gaDataRunReport({
       auth, property,
       body: {
-        dateRanges: [{ startDate, endDate }],
+        dateRanges: [nowRange],
         dimensions: [{ name: 'landingPagePlusQueryString' }],
         metrics: [
           { name: 'sessions' },
@@ -1047,13 +1198,13 @@ router.get('/landing-pages', requireSession, ensureGaPropertyAllowed, async (req
 
     const rows = (rep.rows || []).map(r => ({
       page: r.dimensionValues?.[0]?.value || '/',
-      sessions: Number(r.metricValues?.[0]?.value || 0),
-      users: Number(r.metricValues?.[1]?.value || 0),
-      conversions: Number(r.metricValues?.[2]?.value || 0),
-      revenue: Number(r.metricValues?.[3]?.value || 0),
+      sessions: n(r.metricValues?.[0]?.value),
+      users: n(r.metricValues?.[1]?.value),
+      conversions: n(r.metricValues?.[2]?.value),
+      revenue: n(r.metricValues?.[3]?.value),
     }));
 
-    return res.json({ ok: true, property, range: { startDate, endDate, days }, rows });
+    return res.json({ ok: true, property, range: { startDate, endDate, days }, data: { rows } });
   } catch (e) {
     console.error('GA /landing-pages error:', e?.response?.data || e);
     const status =
@@ -1063,16 +1214,16 @@ router.get('/landing-pages', requireSession, ensureGaPropertyAllowed, async (req
   }
 });
 
-// (Opcional) Funnel ecommerce
+// Funnel ecommerce
 router.get('/funnel', requireSession, ensureGaPropertyAllowed, async (req, res) => {
   try {
     const auth = await getOAuthClientForUser(req.user._id);
-    const { property, startDate, endDate, days } = await resolveBasics(req);
+    const { property, startDate, endDate, days, nowRange } = await resolveBasics(req);
 
     const funnel = await gaDataRunReport({
       auth, property,
       body: {
-        dateRanges: [{ startDate, endDate }],
+        dateRanges: [nowRange],
         dimensions: [{ name: 'eventName' }],
         metrics: [{ name: 'eventCount' }],
         dimensionFilter: {
@@ -1087,18 +1238,20 @@ router.get('/funnel', requireSession, ensureGaPropertyAllowed, async (req, res) 
 
     const fObj = {};
     for (const r of funnel.rows || []) {
-      fObj[r.dimensionValues?.[0]?.value] = Number(r.metricValues?.[0]?.value || 0);
+      fObj[r.dimensionValues?.[0]?.value] = n(r.metricValues?.[0]?.value);
     }
 
     return res.json({
       ok: true,
       property,
       range: { startDate, endDate, days },
-      funnel: {
-        view_item:      fObj.view_item || 0,
-        add_to_cart:    fObj.add_to_cart || 0,
-        begin_checkout: fObj.begin_checkout || 0,
-        purchase:       fObj.purchase || 0,
+      data: {
+        funnel: {
+          view_item:      fObj.view_item || 0,
+          add_to_cart:    fObj.add_to_cart || 0,
+          begin_checkout: fObj.begin_checkout || 0,
+          purchase:       fObj.purchase || 0,
+        },
       },
     });
   } catch (e) {
