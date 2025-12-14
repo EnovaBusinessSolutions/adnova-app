@@ -140,11 +140,14 @@ function selectedGoogleFromDocOrUser(gaDoc, user) {
 }
 
 /**
- * ✅ Selección GA4 (alineado):
+ * ✅ Selección GA4 (fix crítico):
  * - Preferimos GoogleAccount.selectedPropertyIds (nuevo)
- * - Fallback: GoogleAccount.selectedGaPropertyId (legacy de googleConnect viejo)
- * - Fallback: GoogleAccount.defaultPropertyId
+ * - Fallback: GoogleAccount.selectedGaPropertyId (legacy)
  * - Fallback: user.selectedGAProperties (legacy)
+ *
+ * 🚫 Importante: NO usar defaultPropertyId como “selección”.
+ * defaultPropertyId es un default técnico interno (por ejemplo “primera propiedad”)
+ * y cuando hay 2+ propiedades, NO debe evitar el selector.
  */
 function selectedGA4FromDocOrUser(gaDoc, user) {
   const fromDoc = Array.isArray(gaDoc?.selectedPropertyIds)
@@ -154,9 +157,6 @@ function selectedGA4FromDocOrUser(gaDoc, user) {
 
   const legacyOne = gaDoc?.selectedGaPropertyId ? normGA4Id(gaDoc.selectedGaPropertyId) : '';
   if (legacyOne) return [legacyOne];
-
-  const def = gaDoc?.defaultPropertyId ? normGA4Id(gaDoc.defaultPropertyId) : '';
-  if (def) return [def];
 
   const legacy = Array.isArray(user?.selectedGAProperties)
     ? user.selectedGAProperties.map(normGA4Id)
@@ -249,6 +249,8 @@ router.get('/', requireAuth, async (req, res) => {
     const ga4Connected = !!(googleOAuth && gaScopeOk);
 
     const ga4AvailIds = gaDoc ? ga4AvailableIds(gaDoc) : [];
+
+    // 🔥 FIX: ya no cuenta defaultPropertyId como selección
     const ga4SelectedRaw = selectedGA4FromDocOrUser(gaDoc || {}, user);
     const ga4SelectedEff = effectiveSelected(ga4SelectedRaw, ga4AvailIds).slice(0, MAX_SELECT);
 
