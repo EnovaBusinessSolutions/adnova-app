@@ -1,3 +1,4 @@
+// backend/routes/meta.js
 'use strict';
 
 const express = require('express');
@@ -132,6 +133,34 @@ function sanitizeReturnTo(raw) {
   }
 
   return val;
+}
+
+/**
+ * ✅ Revocar permisos de Meta (best-effort)
+ * - DELETE /me/permissions invalida permisos y token para esta app.
+ * - si falla, NO bloquea la desconexión local.
+ */
+async function revokeMetaPermissionsBestEffort(accessToken) {
+  if (!accessToken) return { attempted: false, ok: true };
+
+  try {
+    const proof = makeAppSecretProof(accessToken);
+
+    // Graph: DELETE /me/permissions
+    // Respuesta típica: { success: true }
+    await axios.delete(`${FB_GRAPH}/me/permissions`, {
+      params: {
+        access_token: accessToken,
+        appsecret_proof: proof
+      },
+      timeout: 15000
+    });
+
+    return { attempted: true, ok: true };
+  } catch (e) {
+    console.warn('[meta] revoke permissions failed (best-effort):', e?.response?.data || e.message);
+    return { attempted: true, ok: false };
+  }
 }
 
 /* =========================
@@ -483,6 +512,108 @@ router.post('/default-account', requireAuth, express.json(), async (req, res) =>
   } catch (e) {
     console.error('default-account meta error:', e);
     res.status(500).json({ ok: false, error: 'save_failed' });
+  }
+});
+
+/* =========================
+ * ✅ DISCONNECT META (Ads)
+ * POST /auth/meta/disconnect
+ * ========================= */
+router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // 1) Obtener token (best-effort) para revocar permisos
+    let accessToken = null;
+
+    if (MetaAccount) {
+      const docTok = await MetaAccount
+        .findOne({ $or: [{ userId }, { user: userId }] })
+        .select('+longLivedToken +longlivedToken +access_token +accessToken +token')
+        .lean();
+
+      accessToken =
+        docTok?.longLivedToken ||
+        docTok?.longlivedToken ||
+        docTok?.access_token ||
+        docTok?.accessToken ||
+        docTok?.token ||
+        null;
+    } else {
+      const u = await User.findById(userId).select('metaAccessToken').lean();
+      accessToken = u?.metaAccessToken || null;
+    }
+
+    // 2) Revocar permisos en Meta (best-effort)
+    const revoke = await revokeMetaPermissionsBestEffort(accessToken);
+
+    // 3) Limpiar persistencia canónica (MetaAccount) o fallback legacy (User)
+    if (MetaAccount) {
+      await MetaAccount.updateOne(
+        { $or: [{ userId }, { user: userId }] },
+        {
+          $set: {
+            // tokens
+            longLivedToken: null,
+            longlivedToken: null,
+            access_token: null,
+            accessToken: null,
+            token: null,
+
+            expiresAt: null,
+            expires_at: null,
+
+            // cuentas
+            ad_accounts: [],
+            adAccounts: [],
+
+            // selección
+            selectedAccountIds: [],
+            defaultAccountId: null,
+
+            // permisos
+            scopes: [],
+
+            // identidad (opcional, pero recomendable al “desconectar”)
+            fb_user_id: null,
+            email: null,
+            name: null,
+
+            updatedAt: new Date()
+          }
+        }
+      );
+    }
+
+    // 4) Limpiar User (sin tocar metaObjective para no borrar preferencia)
+    await User.updateOne(
+      { _id: userId },
+      {
+        $set: {
+          metaConnected: false,
+          metaFbUserId: null,
+
+          // legacy tokens/estado
+          metaAccessToken: null,
+          metaTokenExpiresAt: null,
+          metaDefaultAccountId: null,
+          metaScopes: [],
+
+          // selección
+          selectedMetaAccounts: [],
+        }
+      }
+    );
+
+    return res.json({
+      ok: true,
+      disconnected: true,
+      revokeAttempted: revoke.attempted,
+      revokeOk: revoke.ok,
+    });
+  } catch (err) {
+    console.error('[meta] disconnect error:', err?.response?.data || err?.message || err);
+    return res.status(500).json({ ok: false, error: 'DISCONNECT_ERROR' });
   }
 });
 

@@ -18,6 +18,16 @@ require('./auth');
 
 const User = require('./models/User');
 
+/* =========================
+ * Modelos para Integraciones (Disconnect)
+ * (cargan con fallback para NO romper si cambia el schema)
+ * ========================= */
+let MetaAccount, GoogleAccount, ShopConnections;
+try { MetaAccount = require('./models/MetaAccount'); } catch (_) { MetaAccount = null; }
+try { GoogleAccount = require('./models/GoogleAccount'); } catch (_) { GoogleAccount = null; }
+try { ShopConnections = require('./models/ShopConnections'); } catch (_) { ShopConnections = null; }
+
+
 // Routers
 const googleConnect = require('./routes/googleConnect');
 const googleAdsInsightsRouter = require('./routes/googleAdsInsights');
@@ -231,6 +241,209 @@ app.use('/api/google/ads/insights', sessionGuard, googleAdsInsightsRouter);
 app.use('/api/google/ads', sessionGuard, googleAdsInsightsRouter);
 
 app.use('/api/onboarding/status', sessionGuard, require('./routes/onboardingStatus'));
+
+/* =========================
+ * ✅ Integraciones: DISCONNECT (E2E)
+ * - Limpia tokens + selección (DB)
+ * - No rompe nada de lo actual (solo agrega rutas nuevas)
+ * ========================= */
+
+// Utilidad pequeña para limpiar arrays
+const emptyArr = () => [];
+
+// GOOGLE (Ads + GA4) — desconectar
+app.post('/api/integrations/disconnect/google', sessionGuard, async (req, res) => {
+  try {
+    const uid = req.user._id;
+
+    // 1) GoogleAccount (canónico)
+    if (GoogleAccount) {
+      await GoogleAccount.updateOne(
+        { $or: [{ user: uid }, { userId: uid }] },
+        {
+          $set: {
+            accessToken: null,
+            refreshToken: null,
+            expiresAt: null,
+            scope: emptyArr(),
+
+            // Ads
+            managerCustomerId: null,
+            loginCustomerId: null,
+            defaultCustomerId: null,
+            customers: emptyArr(),
+            ad_accounts: emptyArr(),
+            selectedCustomerIds: emptyArr(),
+            lastAdsDiscoveryError: null,
+
+            // GA4
+            gaProperties: emptyArr(),
+            defaultPropertyId: null,
+            selectedPropertyIds: emptyArr(),
+            selectedGaPropertyId: null,
+
+            updatedAt: new Date(),
+          },
+        },
+        { upsert: false }
+      );
+    }
+
+    // 2) User (legacy flags + selections)
+    await User.updateOne(
+      { _id: uid },
+      {
+        $set: {
+          googleConnected: false,
+          selectedGoogleAccounts: emptyArr(),
+          selectedGAProperties: emptyArr(),
+        },
+        $unset: {
+          // si existen en tu User schema viejo, los quitamos sin romper
+          googleAccessToken: '',
+          googleRefreshToken: '',
+        },
+      }
+    );
+
+    // 3) Preferences (si existen, no rompe si no existen)
+    await User.updateOne(
+      { _id: uid },
+      {
+        $set: {
+          'preferences.googleAds.auditAccountIds': emptyArr(),
+          'preferences.googleAnalytics.auditPropertyIds': emptyArr(),
+        },
+      }
+    );
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[disconnect/google] error:', e);
+    return res.status(500).json({ ok: false, error: 'DISCONNECT_GOOGLE_FAILED' });
+  }
+});
+
+// Alias (por si tu frontend lo llama así)
+app.post('/api/integrations/google/disconnect', sessionGuard, (req, res) =>
+  res.redirect(307, '/api/integrations/disconnect/google')
+);
+
+
+// META — desconectar
+app.post('/api/integrations/disconnect/meta', sessionGuard, async (req, res) => {
+  try {
+    const uid = req.user._id;
+
+    // 1) MetaAccount (canónico)
+    if (MetaAccount) {
+      await MetaAccount.updateOne(
+        { $or: [{ user: uid }, { userId: uid }] },
+        {
+          $set: {
+            // tokens (alias)
+            longLivedToken: null,
+            longlivedToken: null,
+            access_token: null,
+            accessToken: null,
+            token: null,
+
+            expiresAt: null,
+            expires_at: null,
+
+            // cuentas + selección
+            ad_accounts: emptyArr(),
+            adAccounts: emptyArr(),
+            selectedAccountIds: emptyArr(),
+            defaultAccountId: null,
+
+            // scopes / metadata
+            scopes: emptyArr(),
+            fb_user_id: null,
+
+            updatedAt: new Date(),
+          },
+        },
+        { upsert: false }
+      );
+    }
+
+    // 2) User (legacy flags + selections)
+    await User.updateOne(
+      { _id: uid },
+      {
+        $set: {
+          metaConnected: false,
+          metaFbUserId: null,
+          metaScopes: emptyArr(),
+          selectedMetaAccounts: emptyArr(),
+        },
+        $unset: {
+          metaAccessToken: '',
+          metaTokenExpiresAt: '',
+          metaDefaultAccountId: '',
+        },
+      }
+    );
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[disconnect/meta] error:', e);
+    return res.status(500).json({ ok: false, error: 'DISCONNECT_META_FAILED' });
+  }
+});
+
+// Alias
+app.post('/api/integrations/meta/disconnect', sessionGuard, (req, res) =>
+  res.redirect(307, '/api/integrations/disconnect/meta')
+);
+
+
+// SHOPIFY — desconectar
+app.post('/api/integrations/disconnect/shopify', sessionGuard, async (req, res) => {
+  try {
+    const uid = req.user._id;
+
+    // 1) ShopConnections (si existe)
+    if (ShopConnections) {
+      await ShopConnections.updateOne(
+        { $or: [{ user: uid }, { userId: uid }] },
+        {
+          $set: {
+            shop: null,
+            accessToken: null,
+            access_token: null,
+            updatedAt: new Date(),
+          },
+        },
+        { upsert: false }
+      );
+    }
+
+    // 2) User
+    await User.updateOne(
+      { _id: uid },
+      {
+        $set: { shopifyConnected: false },
+        $unset: {
+          shop: '',
+          shopifyAccessToken: '',
+        },
+      }
+    );
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[disconnect/shopify] error:', e);
+    return res.status(500).json({ ok: false, error: 'DISCONNECT_SHOPIFY_FAILED' });
+  }
+});
+
+// Alias
+app.post('/api/integrations/shopify/disconnect', sessionGuard, (req, res) =>
+  res.redirect(307, '/api/integrations/disconnect/shopify')
+);
+
 
 // ✅ Auditorías
 app.use('/api/audits', sessionGuard, auditRunnerRoutes);

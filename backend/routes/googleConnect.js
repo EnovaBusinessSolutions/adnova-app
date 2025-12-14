@@ -118,7 +118,31 @@ function oauth() {
   });
 }
 
-const normCustomerId = (s = '') => String(s || '').replace(/^customers\//, '').replace(/[^\d]/g, '');
+/**
+ * ✅ Revocar token en Google (best-effort)
+ * - intenta revocar refresh_token primero (ideal)
+ * - si no hay refresh_token, intenta access_token
+ * - si falla revocación, NO bloquea la desconexión local
+ */
+async function revokeGoogleTokenBestEffort({ refreshToken, accessToken }) {
+  const token = refreshToken || accessToken;
+  if (!token) return { attempted: false, ok: true };
+
+  try {
+    const client = oauth();
+    await client.revokeToken(token);
+    return { attempted: true, ok: true };
+  } catch (e) {
+    console.warn(
+      '[googleConnect] revokeToken failed (best-effort):',
+      e?.response?.data || e?.message || e
+    );
+    return { attempted: true, ok: false };
+  }
+}
+
+const normCustomerId = (s = '') =>
+  String(s || '').replace(/^customers\//, '').replace(/[^\d]/g, '');
 const normId = (s = '') => normCustomerId(s);
 
 const normPropertyId = (val = '') => {
@@ -306,7 +330,9 @@ async function googleCallbackHandler(req, res) {
     const { data: profile } = await oauth2.userinfo.get().catch(() => ({ data: {} }));
 
     const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
-    let ga = await GoogleAccount.findOne(q).select('+refreshToken scope selectedCustomerIds selectedPropertyIds selectedGaPropertyId');
+    let ga = await GoogleAccount.findOne(q).select(
+      '+refreshToken scope selectedCustomerIds selectedPropertyIds selectedGaPropertyId'
+    );
 
     if (!ga) {
       ga = new GoogleAccount({ user: req.user._id, userId: req.user._id });
@@ -1000,6 +1026,89 @@ router.post('/ga4/selection', requireSession, express.json(), async (req, res) =
   } catch (e) {
     console.error('[googleConnect] ga4/selection error:', e);
     return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
+  }
+});
+
+/* =========================
+ * ✅ Desconectar Google (Ads + GA4)
+ * POST /auth/google/disconnect
+ * ========================= */
+router.post('/disconnect', requireSession, express.json(), async (req, res) => {
+  try {
+    const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
+
+    // Traemos tokens (select:false) para poder revocar best-effort
+    const ga = await GoogleAccount.findOne(q).select('+refreshToken +accessToken').lean();
+
+    const refreshToken = ga?.refreshToken || null;
+    const accessToken  = ga?.accessToken || null;
+
+    // 1) Revocar token (best-effort)
+    const revoke = await revokeGoogleTokenBestEffort({ refreshToken, accessToken });
+
+    // 2) Limpiar GoogleAccount (canónico)
+    await GoogleAccount.updateOne(
+      q,
+      {
+        $set: {
+          accessToken: null,
+          refreshToken: null,
+          expiresAt: null,
+
+          scope: [],
+
+          // Ads
+          customers: [],
+          ad_accounts: [],
+          defaultCustomerId: null,
+          selectedCustomerIds: [],
+          managerCustomerId: null,
+          loginCustomerId: null,
+
+          // GA4
+          gaProperties: [],
+          defaultPropertyId: null,
+          selectedPropertyIds: [],
+          selectedGaPropertyId: null,
+
+          // misc / debug
+          lastAdsDiscoveryError: null,
+          lastAdsDiscoveryLog: null,
+
+          updatedAt: new Date(),
+        },
+      },
+      { upsert: false }
+    );
+
+    // 3) Limpiar User (flags + selecciones)
+    // ⚠️ NO tocamos googleObjective para no borrar preferencias del usuario.
+    await User.updateOne(
+      { _id: req.user._id },
+      {
+        $set: {
+          googleConnected: false,
+
+          // legacy selections
+          selectedGoogleAccounts: [],
+          selectedGAProperties: [],
+
+          // preferences
+          'preferences.googleAds.auditAccountIds': [],
+          'preferences.googleAnalytics.auditPropertyIds': [],
+        },
+      }
+    );
+
+    return res.json({
+      ok: true,
+      disconnected: true,
+      revokeAttempted: revoke.attempted,
+      revokeOk: revoke.ok,
+    });
+  } catch (err) {
+    console.error('[googleConnect] disconnect error:', err?.response?.data || err?.message || err);
+    return res.status(500).json({ ok: false, error: 'DISCONNECT_ERROR' });
   }
 });
 

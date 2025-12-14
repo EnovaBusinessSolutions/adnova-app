@@ -48,6 +48,7 @@ const normActId = (s = '') => String(s || '').trim().replace(/^act_/, '');
 const normGaId  = (s = '') => String(s || '').trim().replace(/^customers\//, '').replace(/[^\d]/g, '');
 const normGA4Id = (s = '') => {
   const raw = String(s || '').trim();
+  if (!raw) return '';
   const digits = raw.replace(/^properties\//, '').replace(/[^\d]/g, '');
   return digits || raw.replace(/^properties\//, '').trim();
 };
@@ -105,7 +106,6 @@ function googleAvailableIds(gaDoc) {
 }
 
 function ga4AvailableIds(gaDoc) {
-  // gaProperties puede traer objetos { propertyId:"properties/123" } o { name:"properties/123" }
   const props = Array.isArray(gaDoc?.gaProperties) ? gaDoc.gaProperties : [];
   const ids = props
     .map(p => normGA4Id(p?.propertyId || p?.property_id || p?.name || ''))
@@ -146,8 +146,6 @@ function selectedGoogleFromDocOrUser(gaDoc, user) {
  * - Fallback: user.selectedGAProperties (legacy)
  *
  * 🚫 Importante: NO usar defaultPropertyId como “selección”.
- * defaultPropertyId es un default técnico interno (por ejemplo “primera propiedad”)
- * y cuando hay 2+ propiedades, NO debe evitar el selector.
  */
 function selectedGA4FromDocOrUser(gaDoc, user) {
   const fromDoc = Array.isArray(gaDoc?.selectedPropertyIds)
@@ -199,9 +197,9 @@ router.get('/', requireAuth, async (req, res) => {
       ShopConnections.findOne({ $or: [{ user: uid }, { userId: uid }] })
         .select('_id shop accessToken access_token')
         .lean(),
-      // legacy selections de User (para compat total)
+      // ✅ legacy selections + legacy token (Meta) para compat y para “disconnect” sin falsos positivos
       User.findById(uid)
-        .select('_id metaConnected googleConnected shopifyConnected selectedMetaAccounts selectedGoogleAccounts selectedGAProperties')
+        .select('_id metaConnected googleConnected shopifyConnected metaAccessToken selectedMetaAccounts selectedGoogleAccounts selectedGAProperties')
         .lean(),
     ]);
 
@@ -212,8 +210,11 @@ router.get('/', requireAuth, async (req, res) => {
     const metaSelectedRaw = selectedMetaFromDocOrUser(metaDoc || {}, user);
     const metaSelectedEff = effectiveSelected(metaSelectedRaw, metaAvailIds).slice(0, MAX_SELECT);
 
-    // conectado = token en MetaAccount o flag en User (no rompe)
-    const metaConnected = !!(hasAnyMetaToken(metaDoc) || user?.metaConnected);
+    // ✅ connected robusto:
+    // - tokens reales (MetaAccount)
+    // - o token legacy en User.metaAccessToken (si tuvieras ese caso viejo)
+    // 🚫 NO confiar solo en user.metaConnected (evita “conectado fantasma” tras desconectar)
+    const metaConnected = !!(hasAnyMetaToken(metaDoc) || user?.metaAccessToken);
 
     const metaRequiredSel =
       metaConnected && requiredSelectionByUX(metaAvailIds.length, metaSelectedEff.length);
@@ -245,7 +246,7 @@ router.get('/', requireAuth, async (req, res) => {
         : (gSelectedEff[0] || null);
 
     // ===== GA4 =====
-    // GA4 conectado = OAuth + analytics.readonly scope (aunque aún no haya gaProperties cacheadas)
+    // GA4 conectado = OAuth + analytics.readonly scope
     const ga4Connected = !!(googleOAuth && gaScopeOk);
 
     const ga4AvailIds = gaDoc ? ga4AvailableIds(gaDoc) : [];
@@ -266,6 +267,8 @@ router.get('/', requireAuth, async (req, res) => {
         : (ga4SelectedEff[0] || null);
 
     // ===== SHOPIFY =====
+    // ✅ connected robusto: si hay token real, conectado.
+    // fallback suave: user.shopifyConnected (legacy)
     const shopifyConnected = !!(
       (shopDoc && shopDoc.shop && (shopDoc.accessToken || shopDoc.access_token)) ||
       user?.shopifyConnected
@@ -321,7 +324,7 @@ router.get('/', requireAuth, async (req, res) => {
     };
 
     // Fuentes a analizar (para barra/progreso)
-    // ✅ clave: NO incluir si requiere selección (evita la carrera)
+    // ✅ clave: NO incluir si requiere selección
     const sourcesToAnalyze = [
       ...(metaConnected && !metaRequiredSel && status.meta.selectedCount > 0 ? ['meta'] : []),
       ...(googleAdsConnected && !gRequiredSel && status.googleAds.selectedCount > 0 ? ['google'] : []),
