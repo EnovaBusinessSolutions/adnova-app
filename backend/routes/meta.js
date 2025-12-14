@@ -1,4 +1,3 @@
-// backend/routes/meta.js
 'use strict';
 
 const express = require('express');
@@ -19,8 +18,8 @@ const APP_ID       = process.env.FACEBOOK_APP_ID;
 const APP_SECRET   = process.env.FACEBOOK_APP_SECRET;
 const REDIRECT_URI = process.env.FACEBOOK_REDIRECT_URI;
 
-// regla de UX: selector sólo si hay >3 cuentas
-const MAX_BY_RULE = 3;
+// ✅ Nuevo UX: máximo 1 cuenta por tipo
+const MAX_SELECT = 1;
 
 const SCOPES = [
   'ads_read',
@@ -90,6 +89,51 @@ const toActId   = (s = '') => {
 
 const uniq = (arr) => Array.from(new Set((Array.isArray(arr) ? arr : []).filter(Boolean)));
 
+function appendQuery(url, key, value) {
+  try {
+    // solo para paths relativos
+    const u = new URL(url, 'http://local');
+    u.searchParams.set(key, value);
+    return u.pathname + (u.search ? u.search : '') + (u.hash ? u.hash : '');
+  } catch {
+    if (url.includes('?')) return `${url}&${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+    return `${url}?${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+  }
+}
+
+/**
+ * ✅ Blindaje anti open-redirect:
+ * Solo permitimos returnTo relativo y dentro del SAAS.
+ * Ajustamos además a Settings/Integraciones si viene desde ahí.
+ */
+function sanitizeReturnTo(raw) {
+  const val = String(raw || '').trim();
+  if (!val) return '';
+
+  // bloquear intentos con protocolo
+  if (/^https?:\/\//i.test(val)) return '';
+  if (val.includes('\n') || val.includes('\r')) return '';
+
+  // solo rutas relativas
+  if (!val.startsWith('/')) return '';
+
+  // allowlist mínima (puedes ampliar si quieres)
+  const allowed = [
+    '/dashboard/settings',
+    '/dashboard',
+    '/onboarding',
+  ];
+  const ok = allowed.some(prefix => val.startsWith(prefix));
+  if (!ok) return '';
+
+  // Si viene a settings sin tab, forzamos tab=integrations
+  if (val.startsWith('/dashboard/settings')) {
+    return appendQuery(val, 'tab', 'integrations');
+  }
+
+  return val;
+}
+
 /* =========================
  * LOGIN
  * ========================= */
@@ -98,6 +142,11 @@ router.get('/login', (req, res) => {
 
   const state = crypto.randomBytes(20).toString('hex');
   req.session.fb_state = state;
+
+  // ✅ Guardar returnTo en session para usarlo en callback
+  const returnTo = sanitizeReturnTo(req.query.returnTo);
+  if (returnTo) req.session.fb_returnTo = returnTo;
+  else delete req.session.fb_returnTo;
 
   const params = new URLSearchParams({
     client_id: APP_ID,
@@ -119,8 +168,10 @@ router.get('/callback', async (req, res) => {
   const { code, state } = req.query || {};
   if (!code || !state || state !== req.session.fb_state) {
     delete req.session.fb_state;
+    delete req.session.fb_returnTo;
     return res.redirect('/onboarding?meta=fail');
   }
+
   delete req.session.fb_state;
 
   try {
@@ -142,7 +193,8 @@ router.get('/callback', async (req, res) => {
 
     // 3) debug token validity
     const dbg = await debugToken(accessToken);
-    if (dbg?.app_id !== APP_ID || dbg?.is_valid !== true) {
+    if (String(dbg?.app_id) !== String(APP_ID) || dbg?.is_valid !== true) {
+      delete req.session.fb_returnTo;
       return res.redirect('/onboarding?meta=error');
     }
 
@@ -177,7 +229,6 @@ router.get('/callback', async (req, res) => {
       });
 
       adAccounts = (ads.data?.data || []).map((a) => ({
-        // guardamos ambos formatos por compatibilidad
         id: toActId(a.account_id),              // "act_XXXX"
         account_id: normActId(a.account_id),    // "XXXX"
         name: a.name,
@@ -216,18 +267,20 @@ router.get('/callback', async (req, res) => {
       }
     });
 
-    // 8) persistencia en MetaAccount (canónico)
+    // ✅ Nuevo criterio de selector con UX MAX_SELECT=1:
+    // Si hay más de 1 cuenta disponible, forzamos selector y dejamos selección vacía.
     const allDigits = adAccounts.map(a => normActId(a.account_id)).filter(Boolean);
-    const shouldForceSelector = allDigits.length > MAX_BY_RULE;
+    const availableCount = allDigits.length;
+    const shouldForceSelector = availableCount > MAX_SELECT;
 
     // selección canónica:
-    // - si <=3: selecciona todas
-    // - si >3: vacío (UI debe seleccionar)
-    const selectedDigits = shouldForceSelector ? [] : uniq(allDigits);
+    // - si solo 1 => autoseleccionamos
+    // - si >1 => vacío (UI selecciona)
+    const selectedDigits = shouldForceSelector ? [] : uniq(allDigits).slice(0, MAX_SELECT);
 
     // default canónico:
-    // - si <=3: primero
-    // - si >3: null (para forzar selector)
+    // - si solo 1 => ese
+    // - si >1 => null
     const defaultAccountId = shouldForceSelector ? null : (selectedDigits[0] || null);
 
     if (MetaAccount) {
@@ -238,12 +291,11 @@ router.get('/callback', async (req, res) => {
             userId,
             user: userId,
 
-            // OJO: el modelo que me pasaste usa fb_user_id (snake_case)
             fb_user_id: fbUserId || undefined,
             email: email || undefined,
             name:  name  || undefined,
 
-            // tokens (guardamos todos los alias por compatibilidad)
+            // tokens (aliases por compat)
             longLivedToken: accessToken,
             longlivedToken: accessToken,
             access_token:   accessToken,
@@ -253,13 +305,12 @@ router.get('/callback', async (req, res) => {
             expiresAt:  expiresAt || null,
             expires_at: expiresAt || null,
 
-            // cuentas (guardamos canónico; el router metaAccounts lee ambos de todos modos)
             ad_accounts: adAccounts,
             adAccounts:  adAccounts,
 
-            // ✅ selección / default canónicos (Integraciones)
-            selectedAccountIds: selectedDigits,     // sin act_
-            defaultAccountId:   defaultAccountId,   // sin act_
+            // ✅ selección/default canónicos
+            selectedAccountIds: selectedDigits,     // digits sin act_
+            defaultAccountId:   defaultAccountId,   // digits sin act_
 
             updatedAt: new Date()
           },
@@ -268,7 +319,6 @@ router.get('/callback', async (req, res) => {
         { upsert: true, new: true }
       );
 
-      // objetivo por defecto (si no existe)
       if (!up.objective) {
         await MetaAccount.updateOne(
           { _id: up._id },
@@ -276,17 +326,14 @@ router.get('/callback', async (req, res) => {
         );
       }
 
-      // espejo en User (legacy / UI vieja)
-      // - si autoseleccionamos (<=3) reflejamos act_XXXX
-      // - si >3 dejamos vacío para forzar selector
+      // espejo legacy en User (UI vieja)
       await User.findByIdAndUpdate(userId, {
         $set: {
           metaObjective: DEFAULT_META_OBJECTIVE,
-          selectedMetaAccounts: selectedDigits.map(toActId) // legacy con act_
+          selectedMetaAccounts: selectedDigits.map(toActId)
         }
       });
     } else {
-      // fallback legacy puro en User
       await User.findByIdAndUpdate(userId, {
         $set: {
           metaAccessToken: accessToken,
@@ -299,10 +346,27 @@ router.get('/callback', async (req, res) => {
       });
     }
 
-    // 9) redirect final (mantenemos tu comportamiento actual)
-    const destino = req.user.onboardingComplete
-      ? '/dashboard'
-      : `/onboarding?meta=ok&selector=${shouldForceSelector ? '1' : '0'}`;
+    // ✅ 9) redirect final E2E:
+    // - Si viene returnTo (Settings/Integraciones), lo usamos SIEMPRE.
+    // - Si no viene, dejamos tu lógica histórica de onboarding/dashboard.
+    let destino = '';
+    const sessionReturnTo = sanitizeReturnTo(req.session.fb_returnTo);
+    delete req.session.fb_returnTo;
+
+    if (sessionReturnTo) {
+      destino = sessionReturnTo;
+
+      // si hay >1 ad account => selector=1 para que Settings abra modal automático
+      if (shouldForceSelector) {
+        destino = appendQuery(destino, 'selector', '1');
+      }
+      // opcional: status param para UI/analytics
+      destino = appendQuery(destino, 'meta', 'ok');
+    } else {
+      destino = req.user.onboardingComplete
+        ? '/dashboard'
+        : `/onboarding?meta=ok&selector=${shouldForceSelector ? '1' : '0'}`;
+    }
 
     req.login(req.user, (err) => {
       if (err) return res.redirect('/onboarding?meta=error');
@@ -310,6 +374,7 @@ router.get('/callback', async (req, res) => {
     });
   } catch (err) {
     console.error('❌ Meta callback error:', err?.response?.data || err.message);
+    delete req.session.fb_returnTo;
     return res.redirect('/onboarding?meta=error');
   }
 });
@@ -332,7 +397,6 @@ router.get('/status', requireAuth, async (req, res) => {
         scopes,
         hasAdsRead: scopes.includes('ads_read'),
         hasAdsMgmt: scopes.includes('ads_management'),
-        // extras útiles (no rompen)
         selectedMetaAccounts: Array.isArray(u?.selectedMetaAccounts) ? u.selectedMetaAccounts : [],
       });
     }
@@ -361,9 +425,9 @@ router.get('/status', requireAuth, async (req, res) => {
       scopes,
       hasAdsRead,
       hasAdsMgmt,
-      // extras útiles (no rompen)
       selectedAccountIds: Array.isArray(doc?.selectedAccountIds) ? doc.selectedAccountIds : [],
-      selectionRequired: accounts.length > MAX_BY_RULE && (!doc?.selectedAccountIds || doc.selectedAccountIds.length === 0),
+      // ✅ ahora selector requerido si hay >1 y no hay selección explícita
+      selectionRequired: accounts.length > MAX_SELECT && (!doc?.selectedAccountIds || doc.selectedAccountIds.length === 0),
     });
   } catch (e) {
     console.error('status meta error:', e);
@@ -381,7 +445,6 @@ router.post('/default-account', requireAuth, express.json(), async (req, res) =>
     if (!accountId) return res.status(400).json({ ok: false, error: 'account_required' });
 
     if (MetaAccount) {
-      // carga cuentas para validar y ajustar selección
       const doc = await MetaAccount
         .findOne({ $or: [{ userId: req.user._id }, { user: req.user._id }] })
         .select('ad_accounts adAccounts selectedAccountIds defaultAccountId')
@@ -394,30 +457,25 @@ router.post('/default-account', requireAuth, express.json(), async (req, res) =>
         return res.status(400).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
       }
 
-      // si ya hay selección canónica, garantizamos que el default esté dentro
-      const prevSelected = Array.isArray(doc?.selectedAccountIds) ? doc.selectedAccountIds.map(normActId) : [];
-      const nextSelected = prevSelected.length ? uniq([...prevSelected, accountId]) : prevSelected;
+      const nextSelected = [accountId]; // ✅ con UX max=1, el default es la selección
 
       await MetaAccount.findOneAndUpdate(
         { $or: [{ userId: req.user._id }, { user: req.user._id }] },
         {
           $set: {
             defaultAccountId: accountId,
-            ...(nextSelected.length ? { selectedAccountIds: nextSelected } : {}),
+            selectedAccountIds: nextSelected,
             updatedAt: new Date()
           }
         },
         { upsert: true }
       );
 
-      // espejo legacy en User para no romper frontend viejo
-      if (nextSelected.length) {
-        await User.findByIdAndUpdate(req.user._id, {
-          $set: { selectedMetaAccounts: nextSelected.map(toActId) }
-        });
-      }
+      await User.findByIdAndUpdate(req.user._id, {
+        $set: { selectedMetaAccounts: nextSelected.map(toActId) }
+      });
 
-      return res.json({ ok: true, defaultAccountId: accountId });
+      return res.json({ ok: true, defaultAccountId: accountId, selectedAccountIds: nextSelected });
     }
 
     await User.findByIdAndUpdate(req.user._id, { $set: { metaDefaultAccountId: accountId } });

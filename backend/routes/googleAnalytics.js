@@ -8,6 +8,7 @@ const router = express.Router();
 
 /* ================= MODELOS ================= */
 const User = require('../models/User');
+
 let GoogleAccount;
 try {
   GoogleAccount = require('../models/GoogleAccount');
@@ -32,12 +33,13 @@ try {
     },
     { collection: 'googleaccounts' }
   );
+
   GoogleAccount = mongoose.models.GoogleAccount || mongoose.model('GoogleAccount', schema);
 }
 
 /* =============== CONST & HELPERS =============== */
-// Regla histórica: >3 disponibles => exigir selección explícita
-const MAX_BY_RULE = 3;
+// ✅ Regla UX actual: si hay >1 disponible => exigir selección explícita
+const MAX_SELECT = 1;
 
 function requireSession(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
@@ -73,27 +75,23 @@ async function getUserDoc(userId) {
 
 function availablePropertyIdsFromDoc(doc) {
   const list = Array.isArray(doc?.gaProperties) ? doc.gaProperties : [];
-  return list.map(p => String(p?.propertyId || '').trim()).filter(Boolean);
+  return list
+    .map(p => toPropertyResource(p?.propertyId || p?.name || ''))
+    .filter(Boolean);
 }
 
 /**
  * Selección GA4 robusta (orden de prioridad):
  * 1) GoogleAccount.selectedPropertyIds (nuevo)
- * 2) GoogleAccount.selectedGaPropertyId (legacy)
- * 3) GoogleAccount.defaultPropertyId (fallback)
- * 4) User.preferences.googleAnalytics.auditPropertyIds
- * 5) User.selectedGAProperties (legacy)
+ * 2) User.preferences.googleAnalytics.auditPropertyIds
+ * 3) User.selectedGAProperties (legacy)
+ * 4) GoogleAccount.selectedGaPropertyId (legacy viejo)
+ * 5) GoogleAccount.defaultPropertyId (fallback SOLO si no hay multi-prop sin selección)
  */
 function selectedPropsFromDocOrUser(doc, userDoc) {
   const fromDocArr = Array.isArray(doc?.selectedPropertyIds) ? doc.selectedPropertyIds : [];
   const normalizedDocArr = fromDocArr.map(toPropertyResource).filter(Boolean);
   if (normalizedDocArr.length) return [...new Set(normalizedDocArr)];
-
-  const legacyOne = toPropertyResource(doc?.selectedGaPropertyId);
-  if (legacyOne) return [legacyOne];
-
-  const def = toPropertyResource(doc?.defaultPropertyId);
-  if (def) return [def];
 
   const pref = userDoc?.preferences?.googleAnalytics?.auditPropertyIds;
   if (Array.isArray(pref) && pref.length) {
@@ -107,14 +105,49 @@ function selectedPropsFromDocOrUser(doc, userDoc) {
     if (out.length) return [...new Set(out)];
   }
 
+  const legacyOne = toPropertyResource(doc?.selectedGaPropertyId);
+  if (legacyOne) return [legacyOne];
+
+  // ❗️defaultPropertyId NO cuenta como selección explícita en multi-prop
+  const def = toPropertyResource(doc?.defaultPropertyId);
+  if (def) return [def];
+
   return [];
+}
+
+/** Detecta si existe selección EXPLÍCITA (no default). */
+function hasExplicitGASelection(doc, userDoc) {
+  const docSelArr = Array.isArray(doc?.selectedPropertyIds) && doc.selectedPropertyIds.length > 0;
+  const docLegacy = !!toPropertyResource(doc?.selectedGaPropertyId);
+
+  const pref = userDoc?.preferences?.googleAnalytics?.auditPropertyIds;
+  const userPref = Array.isArray(pref) && pref.length > 0;
+
+  const userLegacy = Array.isArray(userDoc?.selectedGAProperties) && userDoc.selectedGAProperties.length > 0;
+
+  return !!(docSelArr || docLegacy || userPref || userLegacy);
+}
+
+function selectionIsRequired({ availableCount, explicitSelectedCount }) {
+  return availableCount > MAX_SELECT && explicitSelectedCount === 0;
+}
+
+function respondSelectionRequired(res, extra = {}) {
+  return res.status(428).json({
+    ok: false,
+    error: 'SELECTION_REQUIRED',
+    reason: 'SELECTION_REQUIRED(>1_PROPERTIES)',
+    requiredSelection: true,
+    ...extra,
+  });
 }
 
 /**
  * Resolver property para endpoints:
  * - si viene en query => se usa
- * - si NO viene => usa selección (selectedPropertyIds/legacy/default)
- * - si aún no hay => '' (y el handler decide si es requerido)
+ * - si NO viene => usa selección (selectedPropertyIds / user pref / legacy)
+ * - si hay 1 disponible y no hay selección => usa esa
+ * - si hay >1 disponible y NO hay selección explícita => '' (para disparar 428)
  */
 async function resolvePropertyForRequest(req) {
   const raw = req.query.property || req.query.propertyId || '';
@@ -128,11 +161,24 @@ async function resolvePropertyForRequest(req) {
 
   if (!doc) return '';
 
+  const available = availablePropertyIdsFromDoc(doc);
   const selected = selectedPropsFromDocOrUser(doc, userDoc);
-  return selected[0] || toPropertyResource(doc.defaultPropertyId) || '';
+  const explicit = hasExplicitGASelection(doc, userDoc) ? selected : [];
+
+  if (selectionIsRequired({ availableCount: available.length, explicitSelectedCount: explicit.length })) {
+    return '';
+  }
+
+  if (explicit.length) return explicit[0];
+
+  // si solo hay 1 property, dejamos pasar aunque no esté “seleccionada”
+  if (available.length === 1) return available[0];
+
+  // fallback final
+  return toPropertyResource(doc.defaultPropertyId) || '';
 }
 
-/** Middleware: valida que la propiedad consultada esté permitida por la selección. */
+/** Middleware: valida selección y/o propiedad permitida por la selección. */
 async function ensureGaPropertyAllowed(req, res, next) {
   try {
     const [doc, userDoc] = await Promise.all([
@@ -143,34 +189,41 @@ async function ensureGaPropertyAllowed(req, res, next) {
     if (!doc) return res.status(401).json({ ok: false, error: 'NO_GOOGLEACCOUNT' });
 
     const available = availablePropertyIdsFromDoc(doc);
-    if (!available.length) return next();
+    const selectedAll = selectedPropsFromDocOrUser(doc, userDoc);
 
-    const selected = selectedPropsFromDocOrUser(doc, userDoc);
+    const explicitSelected = hasExplicitGASelection(doc, userDoc) ? selectedAll : [];
+    const needSel = selectionIsRequired({
+      availableCount: available.length,
+      explicitSelectedCount: explicitSelected.length,
+    });
 
-    // Regla: > MAX y sin selección explícita
-    if (
-      available.length > MAX_BY_RULE &&
-      (!Array.isArray(doc?.selectedPropertyIds) || doc.selectedPropertyIds.length === 0) &&
-      !doc?.selectedGaPropertyId
-    ) {
-      return res.status(400).json({
-        ok: false,
-        reason: 'SELECTION_REQUIRED(>3_PROPERTIES)',
-        requiredSelection: true,
+    // ✅ Blindaje: si hay >1 disponibles y no hay selección explícita, NO dejamos correr endpoints de datos.
+    if (needSel) {
+      return respondSelectionRequired(res, {
+        availableCount: available.length,
+        selectedPropertyIds: [],
       });
     }
 
-    // Si la request trae property explícita y hay selección => validar
+    // Si la request trae property explícita, debe ser válida/permitida
     const raw = String(req.query.property || req.query.propertyId || '').trim();
     const normalized = raw ? toPropertyResource(raw) : '';
 
-    if (selected.length > 0 && normalized) {
-      if (!selected.includes(normalized)) {
+    // Si hay selección explícita, solo permitimos esas
+    if (explicitSelected.length > 0 && normalized) {
+      if (!explicitSelected.includes(normalized)) {
         return res.status(403).json({
           ok: false,
           error: 'PROPERTY_NOT_ALLOWED',
-          allowed: selected,
+          allowed: explicitSelected,
         });
+      }
+    }
+
+    // Si NO hay selección explícita (y no se requiere), pero hay query property, validamos que exista en disponibles (si tenemos lista)
+    if (explicitSelected.length === 0 && normalized && available.length > 0) {
+      if (!available.includes(normalized)) {
+        return res.status(404).json({ ok: false, error: 'PROPERTY_NOT_FOUND' });
       }
     }
 
@@ -198,6 +251,7 @@ async function getOAuthClientForUser(userId) {
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET
   );
+
   oAuth2Client.setCredentials({
     refresh_token: ga.refreshToken,
     access_token: ga.accessToken || undefined,
@@ -247,7 +301,7 @@ function parseIncludeToday(req) {
   const v = String(req.query.include_today ?? '').trim().toLowerCase();
   if (v === '1' || v === 'true') return true;
   if (v === '0' || v === 'false') return false;
-  return true; // mantenemos tu comportamiento histórico
+  return true;
 }
 
 function parseDatePreset(req, fallback = 'last_30_days') {
@@ -258,7 +312,7 @@ function parseDatePreset(req, fallback = 'last_30_days') {
   return norm || fallback;
 }
 
-/* =============== NUEVOS HELPERS (FIX E2E) =============== */
+/* =============== HELPERS KPIs =============== */
 function n(v) {
   const x = Number(v);
   return Number.isFinite(x) ? x : 0;
@@ -275,6 +329,12 @@ function buildDeltas(nowObj, prevObj, keys) {
   const deltas = {};
   for (const k of keys) deltas[k] = pctChange(nowObj[k], prevObj[k]);
   return deltas;
+}
+
+async function gaDataRunReport({ auth, property, body }) {
+  const dataApi = google.analyticsdata({ version: 'v1beta', auth });
+  const resp = await dataApi.properties.runReport({ property, requestBody: body });
+  return resp.data;
 }
 
 async function runReportNowPrev({ auth, property, nowRange, prevRange, metrics, dimensions, dimensionFilter, orderBys, limit }) {
@@ -300,12 +360,12 @@ function firstRowMetrics(rep) {
   return vals.map(x => n(x?.value));
 }
 
-/** Meta de propiedad (currency/timeZone) desde gaProperties */
+/** Meta de propiedad (currency/timeZone/displayName) desde gaProperties */
 async function getPropertyMeta(userId, property) {
   try {
     const doc = await getGaAccountDoc(userId);
     const list = Array.isArray(doc?.gaProperties) ? doc.gaProperties : [];
-    const hit = list.find(p => String(p?.propertyId || '').trim() === String(property || '').trim());
+    const hit = list.find(p => String(toPropertyResource(p?.propertyId || p?.name || '')).trim() === String(property || '').trim());
     return {
       currencyCode: hit?.currencyCode || null,
       timeZone: hit?.timeZone || null,
@@ -347,9 +407,12 @@ async function resyncAndPersistProperties(userId) {
   const doc = await GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] });
   if (doc) {
     doc.gaProperties = properties;
+
+    // defaultPropertyId solo como fallback, NO como selección explícita
     if (!doc.defaultPropertyId && properties[0]?.propertyId) {
       doc.defaultPropertyId = properties[0].propertyId;
     }
+
     await doc.save();
   } else {
     await GoogleAccount.findOneAndUpdate(
@@ -364,14 +427,8 @@ async function resyncAndPersistProperties(userId) {
       { upsert: true }
     );
   }
-  return properties;
-}
 
-/* =============== GA DATA helper =============== */
-async function gaDataRunReport({ auth, property, body }) {
-  const dataApi = google.analyticsdata({ version: 'v1beta', auth });
-  const resp = await dataApi.properties.runReport({ property, requestBody: body });
-  return resp.data;
+  return properties;
 }
 
 /* ======================= RUTAS ======================= */
@@ -398,18 +455,17 @@ router.get('/properties', requireSession, async (req, res) => {
     }
 
     const userDoc = await getUserDoc(req.user._id);
-    const availableIds = properties.map(p => p.propertyId);
-    const selected = selectedPropsFromDocOrUser(doc, userDoc);
+    const availableIds = properties.map(p => toPropertyResource(p?.propertyId || p?.name || '')).filter(Boolean);
 
-    const needsSelection =
-      availableIds.length > MAX_BY_RULE &&
-      (!Array.isArray(doc?.selectedPropertyIds) || doc.selectedPropertyIds.length === 0) &&
-      !doc?.selectedGaPropertyId;
+    const selectedAll = selectedPropsFromDocOrUser(doc, userDoc);
+    const explicitSelected = hasExplicitGASelection(doc, userDoc) ? selectedAll : [];
 
-    if (needsSelection) {
+    // ✅ Para /properties NO bloqueamos con 428: devolvemos lista para que UI seleccione
+    if (selectionIsRequired({ availableCount: availableIds.length, explicitSelectedCount: explicitSelected.length })) {
       return res.json({
         ok: false,
-        reason: 'SELECTION_REQUIRED(>3_PROPERTIES)',
+        error: 'SELECTION_REQUIRED',
+        reason: 'SELECTION_REQUIRED(>1_PROPERTIES)',
         requiredSelection: true,
         properties,
         availableCount: availableIds.length,
@@ -418,26 +474,27 @@ router.get('/properties', requireSession, async (req, res) => {
       });
     }
 
-    const explicitSelected =
-      (Array.isArray(doc?.selectedPropertyIds) && doc.selectedPropertyIds.length) ||
-      !!doc?.selectedGaPropertyId;
+    // Si hay selección explícita, filtramos
+    if (explicitSelected.length > 0) {
+      const allow = new Set(explicitSelected);
+      properties = properties.filter(p => allow.has(toPropertyResource(p?.propertyId || p?.name || '')));
 
-    if (explicitSelected && selected.length > 0) {
-      const allow = new Set(selected);
-      properties = properties.filter(p => allow.has(p.propertyId));
       if (defaultPropertyId && !allow.has(defaultPropertyId)) {
         defaultPropertyId = properties[0]?.propertyId || null;
         if (doc && defaultPropertyId) {
           await GoogleAccount.updateOne({ _id: doc._id }, { $set: { defaultPropertyId } });
         }
       }
+    } else {
+      // si solo hay 1, lo dejamos como default (sin considerarlo selección)
+      if (!defaultPropertyId && properties[0]?.propertyId) defaultPropertyId = properties[0].propertyId;
     }
 
     return res.json({
       ok: true,
       properties,
       availableCount: properties.length,
-      selectedPropertyIds: selected,
+      selectedPropertyIds: explicitSelected,
       defaultPropertyId,
     });
   } catch (e) {
@@ -460,7 +517,11 @@ async function handleGaSelection(req, res) {
 
     if (!doc) return res.status(404).json({ ok: false, error: 'NO_GOOGLEACCOUNT' });
 
-    const available = new Set((doc.gaProperties || []).map(p => String(p.propertyId || '').trim()).filter(Boolean));
+    const available = new Set(
+      (Array.isArray(doc.gaProperties) ? doc.gaProperties : [])
+        .map(p => toPropertyResource(p?.propertyId || p?.name || ''))
+        .filter(Boolean)
+    );
 
     const wanted = [...new Set(propertyIds.map(toPropertyResource).filter(Boolean))];
     const selected = wanted.filter(pid => available.has(pid));
@@ -475,7 +536,7 @@ async function handleGaSelection(req, res) {
     }
 
     doc.selectedPropertyIds = selected;
-    doc.selectedGaPropertyId = selected[0];
+    doc.selectedGaPropertyId = selected[0]; // legacy mirror
     doc.defaultPropertyId = nextDefault;
     await doc.save();
 
@@ -502,11 +563,24 @@ router.post('/selection', requireSession, express.json(), handleGaSelection);
 /* ===================== RESOLVER BASICS ===================== */
 async function resolveBasics(req) {
   const property = await resolvePropertyForRequest(req);
+
   if (!/^properties\/\d+$/.test(property)) {
+    // si no resolvió property es porque se requiere selección o falta el query
+    const [doc, userDoc] = await Promise.all([getGaAccountDoc(req.user._id), getUserDoc(req.user._id)]);
+    const available = availablePropertyIdsFromDoc(doc);
+    const selectedAll = selectedPropsFromDocOrUser(doc, userDoc);
+    const explicitSelected = hasExplicitGASelection(doc, userDoc) ? selectedAll : [];
+    if (selectionIsRequired({ availableCount: available.length, explicitSelectedCount: explicitSelected.length })) {
+      const err = new Error('SELECTION_REQUIRED');
+      err.code = 'SELECTION_REQUIRED';
+      throw err;
+    }
+
     const err = new Error('PROPERTY_REQUIRED');
     err.code = 'PROPERTY_REQUIRED';
     throw err;
   }
+
   const datePreset = parseDatePreset(req, 'last_30_days');
   const includeToday = parseIncludeToday(req);
   const { startDate, endDate, days } = buildDateRange(datePreset, includeToday);
@@ -704,7 +778,6 @@ router.get('/overview', requireSession, ensureGaPropertyAllowed, async (req, res
       return res.json(out);
     }
 
-    // engagement
     const engNowObj = {
       engagementRate: engagementRateNow,
       avgEngagementTime: avgSessionDurationNow,
@@ -721,9 +794,15 @@ router.get('/overview', requireSession, ensureGaPropertyAllowed, async (req, res
     return res.json(out);
   } catch (e) {
     console.error('GA /overview error:', e?.response?.data || e);
+
+    if (e?.code === 'SELECTION_REQUIRED' || e?.message === 'SELECTION_REQUIRED') {
+      return respondSelectionRequired(res);
+    }
+
     const status =
       e?.code === 'PROPERTY_REQUIRED' ? 400 :
       e?.code === 'NO_REFRESH_TOKEN' ? 401 : 500;
+
     return res.status(status).json({ ok: false, error: e?.message || String(e) });
   }
 });
@@ -802,7 +881,6 @@ router.get('/sales', requireSession, ensureGaPropertyAllowed, async (req, res) =
     const convTotalNow = funnelNow.view_item ? (funnelNow.purchase / funnelNow.view_item) : 0;
     const convTotalPrev = funnelPrev.view_item ? (funnelPrev.purchase / funnelPrev.view_item) : 0;
 
-    // 1) revenue + sessions por date
     const seriesBase = await gaDataRunReport({
       auth, property,
       body: {
@@ -823,12 +901,11 @@ router.get('/sales', requireSession, ensureGaPropertyAllowed, async (req, res) =
       byDay.set(date, { date, revenue, sessions, purchases: 0 });
     }
 
-    // 2) purchases por date (filtrado purchase)
     const seriesPurch = await gaDataRunReport({
       auth, property,
       body: {
         dateRanges: [nowRange],
-        dimensions: [{ name: 'date' }, { name: 'eventName' }], // ✅ más compatible
+        dimensions: [{ name: 'date' }, { name: 'eventName' }],
         metrics: [{ name: 'eventCount' }],
         dimensionFilter: {
           filter: { fieldName: 'eventName', stringFilter: { matchType: 'EXACT', value: 'purchase' } },
@@ -853,7 +930,7 @@ router.get('/sales', requireSession, ensureGaPropertyAllowed, async (req, res) =
         const conversionRate = d.sessions ? (d.purchases / d.sessions) : 0;
         const aov = d.purchases ? (d.revenue / d.purchases) : 0;
         return {
-          date: d.date, // ✅ ISO
+          date: d.date,
           revenue: d.revenue,
           purchases: d.purchases,
           sessions: d.sessions,
@@ -903,9 +980,15 @@ router.get('/sales', requireSession, ensureGaPropertyAllowed, async (req, res) =
     });
   } catch (e) {
     console.error('GA /sales error:', e?.response?.data || e);
+
+    if (e?.code === 'SELECTION_REQUIRED' || e?.message === 'SELECTION_REQUIRED') {
+      return respondSelectionRequired(res);
+    }
+
     const status =
       e?.code === 'PROPERTY_REQUIRED' ? 400 :
       e?.code === 'NO_REFRESH_TOKEN' ? 401 : 500;
+
     return res.status(status).json({ ok: false, error: e?.message || String(e) });
   }
 });
@@ -1002,9 +1085,15 @@ router.get('/leads', requireSession, ensureGaPropertyAllowed, async (req, res) =
     });
   } catch (e) {
     console.error('GA /leads error:', e?.response?.data || e);
+
+    if (e?.code === 'SELECTION_REQUIRED' || e?.message === 'SELECTION_REQUIRED') {
+      return respondSelectionRequired(res);
+    }
+
     const status =
       e?.code === 'PROPERTY_REQUIRED' ? 400 :
       e?.code === 'NO_REFRESH_TOKEN' ? 401 : 500;
+
     return res.status(status).json({ ok: false, error: e?.message || String(e) });
   }
 });
@@ -1070,7 +1159,6 @@ router.get('/acquisition', requireSession, ensureGaPropertyAllowed, async (req, 
       newUsers: pctChange(newUsersNow, newUsersPrev),
     };
 
-    // ✅ CLAVE: tu UI hoy usa acq.kpis.totalUsers / sessions / newUsers
     return res.json({
       ok: true,
       property,
@@ -1081,7 +1169,6 @@ router.get('/acquisition', requireSession, ensureGaPropertyAllowed, async (req, 
           sessions: sessionsNow,
           newUsers: newUsersNow,
         },
-        // (compat extra, por si algo consume plano)
         totalUsers: totalUsersNow,
         sessions: sessionsNow,
         newUsers: newUsersNow,
@@ -1103,9 +1190,15 @@ router.get('/acquisition', requireSession, ensureGaPropertyAllowed, async (req, 
     });
   } catch (e) {
     console.error('GA /acquisition error:', e?.response?.data || e);
+
+    if (e?.code === 'SELECTION_REQUIRED' || e?.message === 'SELECTION_REQUIRED') {
+      return respondSelectionRequired(res);
+    }
+
     const status =
       e?.code === 'PROPERTY_REQUIRED' ? 400 :
       e?.code === 'NO_REFRESH_TOKEN' ? 401 : 500;
+
     return res.status(status).json({ ok: false, error: e?.message || String(e) });
   }
 });
@@ -1167,9 +1260,15 @@ router.get('/engagement', requireSession, ensureGaPropertyAllowed, async (req, r
     });
   } catch (e) {
     console.error('GA /engagement error:', e?.response?.data || e);
+
+    if (e?.code === 'SELECTION_REQUIRED' || e?.message === 'SELECTION_REQUIRED') {
+      return respondSelectionRequired(res);
+    }
+
     const status =
       e?.code === 'PROPERTY_REQUIRED' ? 400 :
       e?.code === 'NO_REFRESH_TOKEN' ? 401 : 500;
+
     return res.status(status).json({ ok: false, error: e?.message || String(e) });
   }
 });
@@ -1207,9 +1306,15 @@ router.get('/landing-pages', requireSession, ensureGaPropertyAllowed, async (req
     return res.json({ ok: true, property, range: { startDate, endDate, days }, data: { rows } });
   } catch (e) {
     console.error('GA /landing-pages error:', e?.response?.data || e);
+
+    if (e?.code === 'SELECTION_REQUIRED' || e?.message === 'SELECTION_REQUIRED') {
+      return respondSelectionRequired(res);
+    }
+
     const status =
       e?.code === 'PROPERTY_REQUIRED' ? 400 :
       e?.code === 'NO_REFRESH_TOKEN' ? 401 : 500;
+
     return res.status(status).json({ ok: false, error: e?.message || String(e) });
   }
 });
@@ -1256,9 +1361,15 @@ router.get('/funnel', requireSession, ensureGaPropertyAllowed, async (req, res) 
     });
   } catch (e) {
     console.error('GA /funnel error:', e?.response?.data || e);
+
+    if (e?.code === 'SELECTION_REQUIRED' || e?.message === 'SELECTION_REQUIRED') {
+      return respondSelectionRequired(res);
+    }
+
     const status =
       e?.code === 'PROPERTY_REQUIRED' ? 400 :
       e?.code === 'NO_REFRESH_TOKEN' ? 401 : 500;
+
     return res.status(status).json({ ok: false, error: e?.message || String(e) });
   }
 });
