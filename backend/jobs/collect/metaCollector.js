@@ -71,6 +71,24 @@ function pickDefaultAccountId(acc) {
   return '';
 }
 
+/* ---------------- rango fijo 30 días (estricto) ---------------- */
+/**
+ * Por defecto: últimos 30 días completos (hasta AYER).
+ * Esto reduce discrepancias por “hoy parcial”.
+ */
+function getStrictLast30dRange() {
+  const end = new Date();
+  end.setUTCDate(end.getUTCDate() - 1); // ayer
+  end.setUTCHours(0, 0, 0, 0);
+
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - 29); // total 30 días contando end
+  start.setUTCHours(0, 0, 0, 0);
+
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  return { since: fmt(start), until: fmt(end) };
+}
+
 /**
  * Normaliza objective para que la IA no evalúe “conversiones” en campañas que NO son de conversiones.
  * Mantiene objective original (raw) y añade objective_norm.
@@ -168,29 +186,49 @@ async function pageAllInsights(baseUrl) {
   return out;
 }
 
+/* ---------------- compras/valor SIN doble conteo ---------------- */
+/**
+ * Meta suele traer múltiples action_type que representan “compras” (purchase, omni_purchase,
+ * offsite_conversion.fb_pixel_purchase, etc.). Si los sumas, te da x2/x3.
+ *
+ * Aquí elegimos UNO canónico por prioridad (para empatar con Ads Manager).
+ */
+const PURCHASE_ACTION_PRIORITY = [
+  'offsite_conversion.fb_pixel_purchase', // “Compras en el sitio web” típicamente
+  'omni_purchase',
+  'purchase',
+];
+
+function pickActionValue(list, priority) {
+  const arr = Array.isArray(list) ? list : [];
+  const byType = new Map();
+  for (const a of arr) {
+    const t = String(a?.action_type || '').toLowerCase();
+    if (!t) continue;
+    byType.set(t, a?.value);
+  }
+  for (const p of priority) {
+    const v = byType.get(String(p).toLowerCase());
+    if (v != null && v !== '') {
+      const n = Number(v);
+      if (!Number.isNaN(n)) return { value: n, type: p };
+    }
+  }
+  return { value: null, type: null };
+}
+
 function extractPurchaseMetrics(x) {
-  let purchases = null;
-  let value = null;
+  const actions = x?.actions;
+  const actionValues = x?.action_values;
 
-  const actions = Array.isArray(x.actions) ? x.actions : [];
-  for (const a of actions) {
-    const t = (a.action_type || '').toLowerCase();
-    if (t === 'purchase' || t.includes('fb_pixel_purchase')) {
-      const v = Number(a.value);
-      if (!Number.isNaN(v)) purchases = (purchases || 0) + v;
-    }
-  }
+  const p = pickActionValue(actions, PURCHASE_ACTION_PRIORITY);
+  const v = pickActionValue(actionValues, PURCHASE_ACTION_PRIORITY);
 
-  const actionValues = Array.isArray(x.action_values) ? x.action_values : [];
-  for (const av of actionValues) {
-    const t = (av.action_type || '').toLowerCase();
-    if (t === 'purchase' || t.includes('fb_pixel_purchase')) {
-      const v = Number(av.value);
-      if (!Number.isNaN(v)) value = (value || 0) + v;
-    }
-  }
-
-  return { purchases, purchase_value: value };
+  return {
+    purchases: p.value,
+    purchase_value: v.value,
+    purchase_action_type: p.type || v.type || null,
+  };
 }
 
 /* ---------------- helpers de cuentas ---------------- */
@@ -250,10 +288,11 @@ async function fetchAllCampaignMeta(actId, token) {
 async function collectMeta(userId, opts = {}) {
   const {
     account_id,               // opcional: forzar una sola cuenta
-    date_preset = 'last_30d', // today, yesterday, last_7d, last_30d, this_month, last_month, lifetime
+    date_preset = 'last_30d', // legacy compat (se ignora por defecto si strict30)
     level = 'campaign',       // campaign|adset|ad
     fields: userFields,       // opcional override
-    since, until              // si defines since/until, ignoramos date_preset
+    since, until,             // si defines since/until, se usa SOLO si strict30=false
+    strict30 = true           // ✅ por defecto: SIEMPRE últimos 30 días fijos
   } = opts;
 
   // Carga MetaAccount (tokens) y User (selección)
@@ -340,20 +379,34 @@ async function collectMeta(userId, opts = {}) {
   ];
   const fields = Array.isArray(userFields) && userFields.length ? userFields : baseFields;
 
-  // Construye URL con presets/rangos (+ extras como breakdowns)
+  // Rango fijo 30 días (estricto por defecto)
+  const strictRange = getStrictLast30dRange();
+
+  // Construye URL con presets/rangos
   const mkUrl = (actId, preset, extra = {}) => {
     const qp = new URLSearchParams();
-    if (since && until) {
+
+    if (strict30) {
+      qp.set('time_range', JSON.stringify(strictRange));
+    } else if (since && until) {
       qp.set('time_range', JSON.stringify({ since, until }));
     } else if (preset) {
       qp.set('date_preset', preset);
     }
+
     qp.set('level', level);
     qp.set('fields', fields.join(','));
     qp.set('limit', '5000');
+
+    // Empatar UI: típicamente “conversion”
+    qp.set('action_report_time', process.env.META_ACTION_REPORT_TIME || 'conversion');
+
+    // Preferimos el setting unificado del ad account
     qp.set('use_unified_attribution_setting', 'true');
+
     if (extra.breakdowns) qp.set('breakdowns', extra.breakdowns);
     if (extra.time_increment != null) qp.set('time_increment', String(extra.time_increment));
+
     qp.set('access_token', token);
     return `https://graph.facebook.com/${API_VER}/act_${actId}/insights?${qp.toString()}`;
   };
@@ -405,7 +458,8 @@ async function collectMeta(userId, opts = {}) {
 
     // insights generales por campaña
     let data = [];
-    let presetTried = since && until ? undefined : (date_preset || 'last_30d');
+    const presetTried = strict30 ? null : (date_preset || 'last_30d');
+
     try {
       data = await pageAllInsights(mkUrl(actId, presetTried));
     } catch (e) {
@@ -416,23 +470,13 @@ async function collectMeta(userId, opts = {}) {
       return { notAuthorized: true, reason, byCampaign: [], accountIds };
     }
 
-    if (!since && !until && data.length === 0) {
-      for (const p of ['last_90d', 'last_180d', 'last_year']) {
-        try {
-          presetTried = p;
-          data = await pageAllInsights(mkUrl(actId, p));
-          if (data.length > 0) break;
-        } catch { /* sigue */ }
-      }
-    }
+    // ✅ NO auto-expandimos rango si strict30=true
+    // (si está vacío, se queda vacío y listo)
 
     const byCampAgg = new Map();
 
     for (const x of data) {
       const { purchases, purchase_value } = extractPurchaseMetrics(x);
-      const roasField = (Array.isArray(x.purchase_roas) && x.purchase_roas[0]?.value)
-        ? Number(x.purchase_roas[0].value)
-        : null;
 
       if (x.date_start && (!minStart || x.date_start < minStart)) minStart = x.date_start;
       if (x.date_stop  && (!maxStop  || x.date_stop  > maxStop )) maxStop  = x.date_stop;
@@ -453,7 +497,6 @@ async function collectMeta(userId, opts = {}) {
         name: x.campaign_name || metaInfo.name || 'Sin nombre',
         campaignName: x.campaign_name || metaInfo.name || 'Sin nombre',
 
-        // objetivo raw + normalizado
         objective: rawObjective,
         objective_norm,
 
@@ -492,6 +535,7 @@ async function collectMeta(userId, opts = {}) {
       k.clicks      += toNum(x.clicks);
       k.unique_clicks      += toNum(x.unique_clicks);
       k.inline_link_clicks += toNum(x.inline_link_clicks);
+
       if (purchases != null)      k.purchases      += purchases;
       if (purchase_value != null) k.purchase_value += purchase_value;
 
@@ -507,9 +551,9 @@ async function collectMeta(userId, opts = {}) {
       k.cpm  = k.impressions ? (k.spend / k.impressions) * 1000 : 0;
       k.cpc  = k.clicks ? (k.spend / k.clicks) : 0;
       k.ctr  = k.impressions ? (k.clicks / k.impressions) * 100 : 0;
-      k.roas = roasField != null
-        ? roasField
-        : (k.purchase_value ? safeDiv(k.purchase_value, k.spend) : 0);
+
+      // ✅ ROAS consistente con lo que realmente usamos (value/spend)
+      k.roas = (k.purchase_value && k.spend) ? safeDiv(k.purchase_value, k.spend) : 0;
 
       byCampAgg.set(key, cur);
     }
@@ -559,19 +603,18 @@ async function collectMeta(userId, opts = {}) {
         k.impressions += toNum(x.impressions);
         k.reach       += toNum(x.reach);
         k.clicks      += toNum(x.clicks);
+
         if (purchases != null)      k.purchases      += purchases;
         if (purchase_value != null) k.purchase_value += purchase_value;
 
         k.cpm  = k.impressions ? (k.spend / k.impressions) * 1000 : 0;
         k.cpc  = k.clicks ? (k.spend / k.clicks) : 0;
         k.ctr  = k.impressions ? (k.clicks / k.impressions) * 100 : 0;
-        k.roas = k.purchase_value ? safeDiv(k.purchase_value, k.spend) : 0;
+        k.roas = (k.purchase_value && k.spend) ? safeDiv(k.purchase_value, k.spend) : 0;
 
         byCampDeviceAgg.set(dupKey, cur);
       }
-    } catch {
-      // si falla el breakdown, no rompemos el collector
-    }
+    } catch {}
 
     // insights por plataforma (Facebook / Instagram / Audience Network…)
     const byCampPlacementAgg = new Map();
@@ -618,32 +661,30 @@ async function collectMeta(userId, opts = {}) {
         k.impressions += toNum(x.impressions);
         k.reach       += toNum(x.reach);
         k.clicks      += toNum(x.clicks);
+
         if (purchases != null)      k.purchases      += purchases;
         if (purchase_value != null) k.purchase_value += purchase_value;
 
         k.cpm  = k.impressions ? (k.spend / k.impressions) * 1000 : 0;
         k.cpc  = k.clicks ? (k.spend / k.clicks) : 0;
         k.ctr  = k.impressions ? (k.clicks / k.impressions) * 100 : 0;
-        k.roas = k.purchase_value ? safeDiv(k.purchase_value, k.spend) : 0;
+        k.roas = (k.purchase_value && k.spend) ? safeDiv(k.purchase_value, k.spend) : 0;
 
         byCampPlacementAgg.set(dupKey, cur);
       }
-    } catch {
-      // igual, si falla no se rompe nada
-    }
+    } catch {}
 
     // volcamos campañas agregadas de la cuenta a byCampaign
     for (const [, v] of byCampAgg.entries()) {
       byCampaign.push({
         account_id: v.account_id,
-
         id: v.id,
         campaign_id: v.campaign_id || normAct(v.id || ''),
         name: v.name,
         campaignName: v.campaignName || v.name,
 
-        objective: v.objective,              // raw (Meta)
-        objective_norm: v.objective_norm,    // normalizado para IA
+        objective: v.objective,
+        objective_norm: v.objective_norm,
 
         status: v.status,
         effectiveStatus: v.effectiveStatus,
@@ -675,7 +716,6 @@ async function collectMeta(userId, opts = {}) {
       });
     }
 
-    // volcamos desglose por dispositivo
     for (const [, v] of byCampDeviceAgg.entries()) {
       byCampaignDevice.push({
         account_id: v.account_id,
@@ -689,7 +729,6 @@ async function collectMeta(userId, opts = {}) {
       });
     }
 
-    // volcamos desglose por plataforma
     for (const [, v] of byCampPlacementAgg.entries()) {
       byCampaignPlacement.push({
         account_id: v.account_id,
@@ -753,7 +792,7 @@ async function collectMeta(userId, opts = {}) {
         purchases: agg.pur,
         purchase_value: agg.val,
         cpc: safeDiv(agg.cost, agg.clk),
-        roas: agg.val ? safeDiv(agg.val, agg.cost) : 0,
+        roas: (agg.val && agg.cost) ? safeDiv(agg.val, agg.cost) : 0,
       },
     };
   });
@@ -762,7 +801,7 @@ async function collectMeta(userId, opts = {}) {
     notAuthorized: false,
     defaultAccountId: pickDefaultAccountId(acc) || null,
     currency: unifiedCurrency,
-    timeRange: { from: minStart, to: maxStop },
+    timeRange: strict30 ? strictRange : { from: minStart, to: maxStop },
     kpis: {
       impressions: G.impr,
       clicks: G.clk,
@@ -770,14 +809,14 @@ async function collectMeta(userId, opts = {}) {
       purchases: G.pur,
       purchase_value: G.val,
       cpc: safeDiv(G.cost, G.clk),
-      roas: G.val ? safeDiv(G.val, G.cost) : 0,
+      roas: (G.val && G.cost) ? safeDiv(G.val, G.cost) : 0,
     },
     byCampaign,
     byCampaignDevice,
     byCampaignPlacement,
     accountIds,
     accounts,
-    version: 'metaCollector@multi-accounts+objective-norm-v3',
+    version: 'metaCollector@strict30d+no-doublecount-purchase-v4',
   };
 }
 
