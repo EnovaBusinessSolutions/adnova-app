@@ -6,8 +6,11 @@ body {
   min-height: 100vh;
   margin: 0;
 
-  /* El fondo global ya vive en theme.css */
-  background: transparent;
+  /* ✅ FIX anti-fondo-blanco:
+     no dejamos transparent como definitivo; heredamos el fondo global del theme
+     y ponemos fallback sólido por si algo falla/carga tarde */
+  background: inherit;
+  background-color: var(--ad-black);
 
   display: flex;
   align-items: center;

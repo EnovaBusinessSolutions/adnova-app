@@ -3,9 +3,15 @@
 html, body { height: 100%; }
 
 body {
-  background: transparent; /* theme.css controla el fondo global */
+  /* ✅ FIX anti-fondo-blanco:
+     NO usamos transparent como definitivo; heredamos el fondo global (theme.css)
+     y dejamos fallback sólido por si algo falla. */
+  background: inherit;
+  background-color: var(--ad-black);
+
   color: var(--ad-ice);
   font-family: var(--font-sans);
+
   margin: 0;
   min-height: 100vh;
 
@@ -16,6 +22,7 @@ body {
   padding: 24px;
 }
 
+/* Card */
 .card {
   background: var(--card);
   border-radius: 22px;

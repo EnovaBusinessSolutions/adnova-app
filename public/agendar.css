@@ -7,10 +7,16 @@
 
 html, body { height: 100%; }
 
+/* ✅ FIX GLOBAL: evita “transparente” (que se ve blanco/lavanda) */
 body{
   margin: 0;
-  font-family: var(--font-sans);
-  background: transparent; /* theme.css controla el fondo global */
+
+  /* Inter por defecto */
+  font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+
+  /* ✅ NO transparente: hereda el fondo real del theme + fallback */
+  background: inherit;
+  background-color: var(--ad-black); /* fallback sólido */
   color: var(--ad-ice);
 }
 
@@ -30,7 +36,9 @@ body{
   margin-bottom: 16px;
 }
 
+/* ✅ SOLO el título principal en Ulm Grotesk */
 .h1{
+  font-family: "Ulm Grotesk", 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   font-size: 28px;
   font-weight: 900;
   letter-spacing: .3px;
@@ -52,7 +60,7 @@ body{
   padding: 12px 16px;
 
   font-weight: 900;
-  font-family: var(--font-sans);
+  font-family: inherit; /* hereda Inter */
 
   background: linear-gradient(180deg, var(--ad-primary), rgba(202,138,229,.72));
   color: #0b0614;
@@ -101,6 +109,8 @@ iframe{
   border: 0;
   border-radius: 14px;
   overflow: hidden;
+
+  /* opcional: si el iframe “parpadea” blanco mientras carga */
   background: rgba(0,0,0,.45);
 }
 

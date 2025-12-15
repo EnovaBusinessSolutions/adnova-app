@@ -23,8 +23,10 @@ body {
   align-items: center;
   justify-content: center;
 
-  /* El fondo ya lo pone theme.css; no lo sobreescribimos */
-  background: transparent;
+  /* ✅ FIX: NO background transparent (evita blanco/lavanda) */
+  background: inherit;
+  background-color: var(--ad-black); /* fallback sólido */
+  
   overflow: hidden; /* evita scroll del body (solo scrollea el panel derecho) */
 }
 
@@ -971,4 +973,10 @@ body[data-page="onboarding4"] .ready-content {
     margin-left: 0;
     width: 100%;
   }
+}
+
+/* ✅ SOLO LOGO con ULM Grotesk (sin afectar el resto) */
+.logo h1{
+  font-family: "Ulm Grotesk", "UlmGrotesk", "Ulm-Grotesk", var(--font-sans) !important;
+  font-weight: 800;
 }

@@ -11,16 +11,16 @@
 }
 
 /* =========================
-   Base
+   Base (Inter para TODO)
    ========================= */
 html, body {
-  font-family: var(--font-sans);
+  font-family: 'Inter', sans-serif; /* <- vuelve Inter en todo */
   min-height: 100vh;
   min-width: 100vw;
 
-  /* ✅ FIX: NO TRANSPARENT (rompía el theme y se veía blanco) */
+  /* NO pisar el fondo del theme */
   background: inherit;
-  background-color: var(--ad-black); /* fallback */
+  background-color: var(--ad-black); /* fallback si algo falla */
   color: var(--ad-ice);
 
   display: flex;
@@ -53,9 +53,11 @@ body { overflow: hidden; }
   margin-bottom: 1.5rem;
 }
 
+/* ✅ SOLO el título “Adray/ADRAY” en Ulm Grotesk */
 .header h1 {
+  font-family: "Ulm Grotesk", 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
   font-size: 2.1rem;
-  font-weight: 900;
+  font-weight: 800;
   color: var(--ad-primary);
   letter-spacing: -1px;
 }
@@ -111,7 +113,7 @@ body { overflow: hidden; }
 }
 
 /* =========================
-   Buttons
+   Buttons (Inter)
    ========================= */
 .btn {
   display: flex;
@@ -131,7 +133,7 @@ body { overflow: hidden; }
   border: none;
   letter-spacing: 0.01em;
 
-  font-family: var(--font-sans);
+  font-family: inherit; /* <- Inter heredado del body */
 }
 
 .btn-primary {
@@ -265,7 +267,9 @@ body { overflow: hidden; }
   margin-right: 0.22rem;
 }
 
-/* ====== Password eye (se mantiene) ====== */
+/* =========================
+   Password eye (se mantiene)
+   ========================= */
 .form-input-wrapper {
   position: relative;
   width: 100%;
@@ -309,6 +313,7 @@ body { overflow: hidden; }
   opacity: 0.9;
 }
 
+/* Compat con tus overrides previos */
 .login-container .form-input-wrapper { position: relative; }
 .login-container .form-input-wrapper .form-input { padding-right: 2.6rem !important; }
 
