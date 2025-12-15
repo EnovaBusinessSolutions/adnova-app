@@ -1,66 +1,19 @@
-@import url("/theme.css");
-
-/* =========================
-   Fuente base del onboarding (LA DE ANTES)
-   - Si tu tipografía anterior NO era Inter, cámbiala aquí.
-   ========================= */
-:root{
-  --ad-font-base: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-}
-
-/* =========================
-   Reset
-   ========================= */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
-/* =========================
-   Layout base (sin pisar el fondo global de theme.css)
-   ========================= */
-html, body { height: 100%; }
-
-html{
-  /* fallback sólido para evitar “transparente/blanco” */
-  background-color: var(--ad-black);
-}
-
 body {
-  /* ✅ Tipografía base anterior para TODO el onboarding */
-  font-family: var(--ad-font-base) !important;
-  color: var(--ad-ice);
+  font-family: 'Inter', sans-serif;
+  background: #0a0a12;
+  color: #F4F2FF;
   min-height: 100vh;
-
   display: flex;
   align-items: center;
   justify-content: center;
-
-  /* ✅ FIX fondo: heredamos si theme.css trae gradiente, y dejamos fallback sólido */
-  background: inherit !important;
-  background-color: var(--ad-black) !important;
-
-  overflow: hidden; /* solo scrollea el panel derecho */
 }
 
-/* ✅ Blindaje anti-ULM:
-   Forzamos que TODO lo dentro del onboarding herede la fuente base,
-   aunque theme.css tenga --font-sans = ULM o haya reglas globales. */
-.onboarding-container,
-.onboarding-container * {
-  font-family: var(--ad-font-base) !important;
-}
-
-/* ✅ Modal ASM también con la fuente base (evita ULM en el modal) */
-#account-select-modal,
-#account-select-modal * {
-  font-family: var(--ad-font-base) !important;
-}
-
-/* =========================
-   Container
-   ========================= */
 .onboarding-container {
   display: flex;
   width: 100%;
@@ -68,42 +21,39 @@ body {
   height: 90vh;
   max-height: 800px;
   margin: 2rem;
-
-  background: var(--card);
-  border: 1px solid var(--stroke);
+  background: rgba(16, 14, 26, 0.98);
   border-radius: 18px;
-  box-shadow: var(--shadow-soft);
-
+  box-shadow: 0 8px 40px 0 rgba(85, 34, 145, 0.20);
   overflow: hidden;
   position: relative;
 }
 
-/* Sidebar */
 .sidebar {
   width: 320px;
+  background: rgba(15, 15, 25, 1);
   padding: 2rem;
   display: flex;
   flex-direction: column;
-
-  background: rgba(62, 40, 111, 0.18);
-  border-right: 1px solid var(--stroke);
+  border-right: 1.5px solid #23143A;
 }
 
-/* Logo */
-.logo { margin-bottom: 3rem; }
+.logo {
+  margin-bottom: 3rem;
+}
 
 .logo h1 {
   font-size: 1.85rem;
   font-weight: 800;
-  color: var(--ad-primary);
+  color: #A96BFF;
   letter-spacing: -1px;
   display: inline-flex;
   align-items: center;
 }
 
-.emoji { margin-left: 0.5rem; }
+.emoji {
+  margin-left: 0.5rem;
+}
 
-/* Steps */
 .steps {
   display: flex;
   flex-direction: column;
@@ -116,7 +66,7 @@ body {
   padding: 1rem;
   border-radius: 9px;
   position: relative;
-  transition: all 0.25s ease;
+  transition: all 0.3s ease;
   background: transparent;
 }
 
@@ -127,25 +77,25 @@ body {
   top: 100%;
   bottom: -1.5rem;
   width: 2px;
-  background: rgba(202, 138, 229, 0.22);
+  background: #382058;
 }
 
-.step:last-child::after { display: none; }
+.step:last-child::after {
+  display: none;
+}
 
 .step-indicator {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-
-  background: rgba(202, 138, 229, 0.14);
+  background: rgba(169, 107, 255, 0.13);
   display: flex;
   align-items: center;
   justify-content: center;
-
   flex-shrink: 0;
   font-weight: 700;
-  color: var(--ad-primary);
-  transition: all 0.25s ease;
+  color: #A96BFF;
+  transition: all 0.3s ease;
   font-size: 1.1rem;
 }
 
@@ -153,34 +103,30 @@ body {
   font-size: 1.08rem;
   margin-bottom: 0.22rem;
   font-weight: 700;
-  color: var(--ad-ice);
+  color: #F4F2FF;
 }
 
 .step-text p {
   font-size: 0.91rem;
-  color: rgba(225, 216, 243, 0.72);
+  color: #B6A7E8;
 }
 
 .step.active {
-  background: rgba(202, 138, 229, 0.10);
-  border: 1px solid rgba(202, 138, 229, 0.14);
+  background: rgba(169, 107, 255, 0.10);
 }
 
 .step.active .step-indicator,
 .step.completed .step-indicator {
-  background: linear-gradient(90deg, var(--ad-primary) 0%, var(--ad-deep) 100%);
-  color: #0b0614;
+  background: linear-gradient(90deg, #A96BFF 0%, #9333ea 100%);
+  color: #fff;
 }
 
 .step.completed .step-indicator::after {
   content: '✓';
-  color: #0b0614;
+  color: #fff;
   font-size: 1.2rem;
 }
 
-/* =========================
-   Main content
-   ========================= */
 .main-content {
   flex: 1;
   padding: 2.5rem;
@@ -188,33 +134,20 @@ body {
   background: none;
   position: relative;
   z-index: 2;
-
-  scrollbar-width: thin;
-  scrollbar-color: rgba(202, 138, 229, 0.35) rgba(0, 0, 0, 0.45);
 }
 
-.main-content::-webkit-scrollbar { width: 10px; }
-.main-content::-webkit-scrollbar-track { background: rgba(0,0,0,0.45); }
-.main-content::-webkit-scrollbar-thumb {
-  background: rgba(62, 40, 111, 0.75);
-  border-radius: 999px;
-  border: 2px solid rgba(0,0,0,0.45);
-}
-.main-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(202, 138, 229, 0.35);
+.hidden {
+  display: none !important;
 }
 
-/* Helpers */
-.hidden { display: none !important; }
-.content-panel.hidden { display: none !important; }
+.content-panel.hidden {
+  display: none !important;
+}
 
 .content-panel {
   height: 100%;
   display: flex;
   flex-direction: column;
-  flex: 1;
-  min-width: 0;
-  min-height: 100%;
 }
 
 .content-panel:not(.hidden) {
@@ -229,18 +162,15 @@ body {
   font-size: 1.9rem;
   font-weight: 800;
   margin-bottom: 0.85rem;
-  color: var(--ad-primary);
+  color: #A96BFF;
 }
 
 .panel-description {
   font-size: 1.06rem;
-  color: rgba(225, 216, 243, 0.72);
+  color: #B6A7E8;
   margin-bottom: 2rem;
 }
 
-/* =========================
-   Connection cards
-   ========================= */
 .connection-cards {
   display: flex;
   flex-direction: column;
@@ -250,35 +180,31 @@ body {
 }
 
 .connection-card {
-  background: rgba(62, 40, 111, 0.22);
+  background: rgba(169, 107, 255, 0.09);
   border-radius: 13px;
   padding: 1.25rem;
-
   display: flex;
   justify-content: space-between;
   align-items: center;
-
   transition: all 0.2s;
-  border: 1px solid var(--stroke);
+  border: 1px solid #382058;
 }
 
 .connection-card:hover {
-  background: rgba(202, 138, 229, 0.14);
-  border-color: rgba(202, 138, 229, 0.35);
+  background: rgba(169, 107, 255, 0.14);
+  border-color: #A96BFF;
 }
 
 .connection-details {
   display: flex;
   align-items: center;
   gap: 1rem;
-  flex: 1 1 auto;
-  min-width: 0;
 }
 
 .connection-icon {
   width: 48px;
   height: 48px;
-  background: rgba(202, 138, 229, 0.14);
+  background: rgba(169, 107, 255, 0.13);
   border-radius: 8px;
   display: flex;
   align-items: center;
@@ -289,16 +215,15 @@ body {
   font-size: 1rem;
   font-weight: 700;
   margin-bottom: 0.18rem;
-  color: var(--ad-ice);
+  color: #F4F2FF;
 }
 
 .connection-info p {
   font-size: 0.91rem;
-  color: rgba(225, 216, 243, 0.78);
+  color: #C5B8E6;
   margin-bottom: 0.5rem;
 }
 
-/* Badges */
 .required-badge {
   background: rgba(236, 72, 153, 0.15);
   color: #ec4899;
@@ -309,32 +234,31 @@ body {
 }
 
 .optional-badge {
-  background: rgba(225, 216, 243, 0.10);
-  color: rgba(225, 216, 243, 0.75);
+  background: rgba(255, 255, 255, 0.11);
+  color: #B6A7E8;
   font-size: 0.79rem;
   padding: 0.22rem 0.5rem;
   border-radius: 5px;
   font-weight: 600;
 }
 
-/* Buttons */
 .btn-connect {
-  background: rgba(202, 138, 229, 0.10);
-  border: 1px solid var(--stroke);
-  color: var(--ad-primary);
-
-  font-weight: 800;
+  background: rgba(169, 107, 255, 0.09);
+  border: 1.5px solid #382058;
+  color: #A96BFF;
+  font-weight: 700;
   padding: 0.5rem 1.25rem;
-  border-radius: 10px;
+  border-radius: 7px;
   cursor: pointer;
   transition: all 0.17s;
+  font-family: 'Inter', sans-serif;
   font-size: 1rem;
 }
 
 .btn-connect:hover {
-  background: rgba(62, 40, 111, 0.55);
-  color: var(--ad-ice);
-  border-color: rgba(202, 138, 229, 0.35);
+  background: #22122F;
+  color: #fff;
+  border-color: #A96BFF;
 }
 
 .btn-connect.connected {
@@ -343,7 +267,6 @@ body {
   border: none;
 }
 
-/* Bottom actions */
 .bottom-actions {
   display: flex;
   justify-content: flex-end;
@@ -353,24 +276,22 @@ body {
 
 .btn-continue,
 .btn-gradient {
-  background: linear-gradient(90deg, var(--ad-primary) 0%, var(--ad-deep) 100%);
+  background: linear-gradient(90deg, #A96BFF 0%, #9333ea 100%);
   border: none;
-  color: #0b0614;
-  font-weight: 900;
-
+  color: #fff;
+  font-weight: 700;
   padding: 0.75rem 2.1rem;
-  border-radius: 12px;
+  border-radius: 7px;
   cursor: pointer;
-
-  transition: opacity 0.17s, transform 0.08s;
+  transition: opacity 0.17s;
+  font-family: 'Inter', sans-serif;
   font-size: 1.07rem;
 }
 
 .btn-continue:hover,
-.btn-gradient:hover { opacity: 0.94; }
-
-.btn-continue:active,
-.btn-gradient:active { transform: translateY(1px); }
+.btn-gradient:hover {
+  opacity: 0.93;
+}
 
 .btn-continue:disabled {
   opacity: 0.4;
@@ -378,27 +299,906 @@ body {
 }
 
 .btn-secondary {
-  background: rgba(62, 40, 111, 0.35);
-  color: var(--ad-ice);
-  border: 1px solid var(--stroke);
-  font-weight: 800;
-  border-radius: 12px;
-  transition: background 0.2s, border-color 0.2s;
-  padding: 0.75rem 1.4rem;
+  background: #241d36;
+  color: #E3D6FF;
+  border: none;
+  font-weight: 600;
+  border-radius: 0.5rem;
+  transition: background 0.3s;
 }
 
 .btn-secondary:hover {
-  background: rgba(202, 138, 229, 0.12);
-  border-color: rgba(202, 138, 229, 0.35);
-  color: var(--ad-primary);
+  background: #382058;
+  color: #A96BFF;
 }
 
-/* =========================
-   (Todo lo demás igual que tu CSS actual)
-   ========================= */
+.permissions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 2rem;
+}
 
-/* ✅ SOLO LOGO con ULM Grotesk (sin afectar el resto) */
-.logo h1{
-  font-family: "Ulm Grotesk", "UlmGrotesk", "Ulm-Grotesk", var(--ad-font-base) !important;
+.permission-item {
+  display: flex;
+  gap: 1rem;
+  padding: 1.25rem;
+  background: rgba(169, 107, 255, 0.09);
+  border-radius: 9px;
+}
+
+.permission-icon {
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(90deg, #A96BFF 0%, #9333ea 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #fff;
+}
+
+.permission-text h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 0.18rem;
+  color: #F4F2FF;
+}
+
+.permission-text p {
+  font-size: 0.91rem;
+  color: #C5B8E6;
+}
+
+.analysis-progress {
+  margin-top: 2rem;
+}
+
+.progress-container {
+  margin-bottom: 2rem;
+}
+
+.progress-bar {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+
+.progress-indicator {
+  height: 100%;
+  background: linear-gradient(90deg, #A96BFF 0%, #9333ea 100%);
+  width: 0%;
+  transition: width 0.5s ease;
+}
+
+.progress-text {
+  font-size: 0.91rem;
+  color: #B6A7E8;
+}
+
+.analysis-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.analysis-step {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.analysis-step-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(169, 107, 255, 0.13);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.96rem;
+  color: #A96BFF;
+}
+
+.analysis-step.active .analysis-step-icon {
+  background: #22122F;
+  color: #fff;
+}
+
+.analysis-step.completed .analysis-step-icon {
+  background: linear-gradient(90deg, #A96BFF 0%, #9333ea 100%);
+  color: #fff;
+}
+
+.analysis-step-text {
+  font-size: 0.91rem;
+  color: #B6A7E8;
+}
+
+.analysis-step.completed .analysis-step-text {
+  color: #fff;
+}
+
+.success-message {
+  text-align: center;
+  margin: 3rem 0;
+}
+
+.success-icon {
+  width: 80px;
+  height: 80px;
+  background: linear-gradient(90deg, #A96BFF 0%, #9333ea 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.5rem;
+  margin: 0 auto 1.5rem;
+  color: #fff;
+}
+
+.success-message h3 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+  color: #A96BFF;
+}
+
+.success-message p {
+  font-size: 1rem;
+  color: #B6A7E8;
+  max-width: 500px;
+  margin: 0 auto;
+}
+
+.features-summary {
+  display: flex;
+  justify-content: center;
+  gap: 1.5rem;
+  margin: 2rem 0;
+}
+
+.feature-item {
+  flex: 1;
+  background: rgba(169, 107, 255, 0.09);
+  border-radius: 9px;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.feature-icon {
+  font-size: 2rem;
+  margin-bottom: 1rem;
+  color: #A96BFF;
+}
+
+.feature-text h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+  color: #F4F2FF;
+}
+
+.feature-text p {
+  font-size: 0.91rem;
+  color: #C5B8E6;
+}
+
+@media (max-width: 900px) {
+  .onboarding-container {
+    flex-direction: column;
+    height: auto;
+    max-height: none;
+    margin: 1rem;
+  }
+
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1.5px solid #23143A;
+    padding: 1.5rem;
+  }
+
+  .logo {
+    margin-bottom: 1.5rem;
+  }
+
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1rem;
+  }
+
+  .step::after {
+    display: none;
+  }
+
+  .main-content {
+    padding: 1.5rem;
+    height: auto;
+  }
+
+  .features-summary {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 600px) {
+  .steps {
+    grid-template-columns: 1fr;
+  }
+
+  .connection-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  .connection-card .btn-connect {
+    width: 100%;
+  }
+
+  .bottom-actions {
+    flex-direction: column;
+  }
+
+  .bottom-actions button {
+    width: 100%;
+  }
+}
+
+body[data-page="onboarding4"] .content-panel {
+  max-width: 700px;
+  min-width: 360px;
+  margin: auto;
+  padding: 0 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  justify-content: center;
+}
+
+body[data-page="onboarding4"] .ready-content {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.main-content {
+  display: flex;
+  position: relative;
+  z-index: 2;
+}
+
+.content-panel {
+  flex: 1;
+  min-width: 0;
+  min-height: 100%;
+}
+
+/* ================= Coming Soon — Shopify (solo CSS) ================= */
+/* El wrapper mantiene el botón alineado a la derecha dentro del .connection-card */
+.connection-card .btn-tooltip-wrapper {
+  position: relative;
+  display: inline-block;
+  margin-left: auto; /* empuja el wrapper/botón a la derecha */
+  flex: 0 0 auto;
+}
+
+/* Estado visual de "bloqueado" y bloqueo real del click sin JS */
+.btn-tooltip-wrapper.coming-soon .btn-connect {
+  pointer-events: none; /* <- desactiva el click */
+  cursor: not-allowed;
+  opacity: 0.9;
+  background: #1A1622 !important;
+  border: 1px solid #2C2530 !important;
+  color: #9A8CA8 !important;
+  box-shadow: none !important;
+}
+
+/* Evita que el hover "normal" del botón cambie estilos cuando está bloqueado */
+.btn-tooltip-wrapper.coming-soon .btn-connect:hover {
+  background: #1A1622 !important;
+  color: #9A8CA8 !important;
+  border-color: #2C2530 !important;
+}
+
+/* Burbuja con look Adnova */
+.btn-tooltip {
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  transform: translate(-12px, -50%);
+  min-width: 220px;
+  max-width: 280px;
+  padding: 10px 12px;
+  background: #0B0B0D;
+  border: 1px solid #2C2530;
+  border-radius: 12px;
+  box-shadow: 0 0 20px rgba(181, 92, 255, 0.15);
+  color: #E5D3FF;
+  z-index: 30;
+  pointer-events: none; /* no interfiere con el mouse */
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity .15s ease, visibility .15s ease, transform .15s ease;
+  text-align: left;
+}
+
+.btn-tooltip-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #E5D3FF;
+  margin-bottom: 2px;
+}
+
+.btn-tooltip-desc {
+  font-size: 11px;
+  color: #9A8CA8;
+}
+
+/* Flechita lateral hacia el botón */
+.btn-tooltip::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: -6px;
+  transform: translateY(-50%);
+  border: 6px solid transparent;
+  border-left-color: #2C2530; /* borde */
+}
+
+.btn-tooltip::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: -5px;
+  transform: translateY(-50%);
+  border: 5px solid transparent;
+  border-left-color: #0B0B0D; /* fondo */
+}
+
+/* Mostrar tooltip al pasar el cursor o al enfocar con teclado */
+.btn-tooltip-wrapper:hover .btn-tooltip,
+.btn-tooltip-wrapper:focus-within .btn-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-8px, -50%);
+}
+
+/* Responsive: si la tarjeta queda pegada al borde, sube la burbuja y céntrala */
+@media (max-width: 640px) {
+  .btn-tooltip {
+    top: auto;
+    bottom: 110%;
+    right: 50%;
+    transform: translate(50%, 0);
+  }
+
+  .btn-tooltip::after,
+  .btn-tooltip::before {
+    display: none;
+  }
+}
+
+/* ==== Account Select Modal (ASM) ==== */
+#account-select-modal.hidden {
+  display: none !important;
+}
+
+#account-select-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+}
+
+#account-select-modal .asm-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,.55);
+  backdrop-filter: blur(2px);
+}
+
+#account-select-modal .asm-panel {
+  position: relative;
+  margin: 0 auto;
+  width: 100%;
+  max-width: 1120px;
+  border: 1px solid #26273b;
+  background: #0f1017;
+  border-radius: 16px;
+  padding: 22px 22px 16px;
+  box-shadow: 0 14px 60px rgba(0,0,0,.45);
+  top: 18px;
+}
+
+.asm-title {
+  color: #e9e9f2;
   font-weight: 800;
+  font-size: 22px;
+  margin: 0 0 6px;
+}
+
+.asm-sub {
+  color: #a9aac7;
+  margin: 0 0 14px;
+}
+
+.asm-error {
+  color: #ff7b7b;
+  margin: 6px 0 8px;
+  display: none;
+}
+
+.asm-error.show {
+  display: block;
+}
+
+.asm-section-title {
+  color: #e9e9f2;
+  font-weight: 700;
+  margin: 12px 0 8px;
+}
+
+.asm-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px;
+  max-height: 240px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.asm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #11131c;
+  border: 1px solid #2b2d44;
+  color: #e9e9f2;
+  cursor: pointer;
+  user-select: none;
+  transition: .15s background, .15s border-color;
+}
+
+.asm-chip:hover {
+  background: #141729;
+  border-color: #35385a;
+}
+
+.asm-chip input {
+  accent-color: #8a5cff;
+}
+
+.asm-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.asm-btn {
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.asm-btn-primary {
+  background: #7b5cff;
+  color: white;
+}
+
+.asm-btn-primary[disabled] {
+  opacity: .6;
+  cursor: not-allowed;
+}
+
+.analysis-step.is-current {
+  outline: 1px solid rgba(177,82,224,.35);
+  background: rgba(177,82,224,.06);
+  border-radius: 10px;
+}
+
+.analysis-step.is-current .analysis-step-text {
+  color: #b152e0;
+  font-weight: 600;
+}
+
+/* ================================ Modal de selección de cuentas — Adnova/ai ================================ */
+:root {
+  --bg-elev: hsl(260 20% 10% / .85);
+  --bg-card: hsl(260 25% 8% / .75);
+  --border: hsl(260 30% 40% / .22);
+  --border-strong: hsl(265 100% 70% / .35);
+  --txt: hsl(260 14% 96%);
+  --txt-dim: hsl(260 10% 78%);
+  --brand: #9a5bff;
+  --brand-2: #7e4aed;
+  --ok: #1f9d67;
+  --warn: #f59e0b;
+  --err: #ef4444;
+  --shadow: 0 15px 50px hsl(260 60% 2% / .6);
+}
+
+/* Estado oculto lo controla tu JS con .hidden */
+#account-select-modal.hidden {
+  display: none;
+}
+
+#account-select-modal {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  z-index: 9999;
+}
+
+#account-select-modal .asm-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, hsl(260 32% 3% / .65), hsl(260 38% 2% / .75));
+  backdrop-filter: blur(6px);
+  animation: asmFade .2s ease-out;
+}
+
+#account-select-modal .asm-panel {
+  position: relative;
+  width: min(980px, 92vw);
+  background: linear-gradient(180deg, var(--bg-elev), var(--bg-card));
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 22px 22px 16px;
+  color: var(--txt);
+  animation: asmPop .18s ease-out;
+  overflow: hidden;
+}
+
+/* Borde sutil reactivo */
+#account-select-modal .asm-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 18px;
+  background: radial-gradient(200px 120px at 8% -10%, hsl(265 100% 70% / .18), transparent 70%),
+              radial-gradient(200px 120px at 100% 0%, hsl(280 100% 63% / .12), transparent 70%);
+  mix-blend-mode: screen;
+}
+
+/* Header */
+#account-select-modal .asm-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: .2px;
+  margin: 6px 2px 4px;
+}
+
+#account-select-modal .asm-sub {
+  margin: 0 2px 14px;
+  color: var(--txt-dim);
+}
+
+#account-select-modal .asm-sub strong {
+  color: var(--txt);
+  font-weight: 600;
+}
+
+/* Secciones */
+#account-select-modal .asm-section-title {
+  margin: 18px 2px 10px;
+  font-weight: 600;
+  letter-spacing: .2px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+#account-select-modal .asm-section-title small {
+  color: var(--txt-dim);
+  font-weight: 600;
+  background: hsl(265 60% 20% / .35);
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  border-radius: 999px;
+}
+
+/* Lista tipo grid */
+#account-select-modal .asm-list {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 900px) {
+  #account-select-modal .asm-list {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 560px) {
+  #account-select-modal .asm-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Chips (labels) */
+#account-select-modal .asm-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: hsl(260 22% 8% / .55);
+  transition: transform .06s ease, border-color .15s, background-color .15s;
+  cursor: pointer;
+  user-select: none;
+}
+
+#account-select-modal .asm-chip:hover {
+  border-color: var(--border-strong);
+  background: hsl(260 28% 10% / .6);
+}
+
+#account-select-modal .asm-chip:has(input:checked) {
+  background: linear-gradient(180deg, hsl(265 50% 18% / .55), hsl(265 55% 14% / .55));
+  border-color: hsl(265 100% 70% / .55);
+  box-shadow: inset 0 0 0 1px hsl(265 100% 70% / .18);
+}
+
+#account-select-modal .asm-chip:has(input:disabled) {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+/* Checkbox moderno */
+#account-select-modal .asm-chip input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  display: grid;
+  place-items: center;
+  transition: all .15s ease;
+}
+
+#account-select-modal .asm-chip input[type="checkbox"]::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  transform: scale(0);
+  background: linear-gradient(180deg, var(--brand), var(--brand-2));
+  transition: transform .12s ease;
+}
+
+#account-select-modal .asm-chip input[type="checkbox"]:checked {
+  border-color: hsl(265 100% 70% / .55);
+  box-shadow: 0 0 0 3px hsl(265 100% 70% / .10);
+}
+
+#account-select-modal .asm-chip input[type="checkbox"]:checked::after {
+  transform: scale(1);
+}
+
+/* Hint + errores */
+#account-select-modal #asm-hint {
+  margin: 8px 2px 0;
+  font-size: .92rem;
+  color: var(--txt-dim);
+}
+
+#account-select-modal .asm-error {
+  margin: 8px 2px 0;
+  font-size: .92rem;
+  color: var(--err);
+  display: none;
+}
+
+/* Footer */
+#account-select-modal .asm-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+
+#account-select-modal .asm-btn {
+  appearance: none;
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform .06s ease, opacity .2s;
+}
+
+#account-select-modal .asm-btn:active {
+  transform: translateY(1px);
+}
+
+#account-select-modal .asm-btn-primary {
+  background: linear-gradient(180deg, var(--brand), var(--brand-2));
+  color: white;
+  box-shadow: 0 8px 28px hsl(265 90% 60% / .25);
+}
+
+#account-select-modal .asm-btn-primary--disabled,
+#account-select-modal .asm-btn-primary:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* Animaciones */
+@keyframes asmPop {
+  from { transform: translateY(6px) scale(.98); opacity: .0; }
+  to { transform: none; opacity: 1; }
+}
+
+@keyframes asmFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* === Alineación y dimensiones consistentes de las 3 tarjetas === */
+.connection-cards .connection-card {
+  display: flex;
+  align-items: center; /* centra verticalmente */
+  justify-content: space-between; /* contenido izq | botón der */
+  gap: 24px;
+  padding: 20px 24px; /* padding homogéneo */
+  min-height: 112px; /* misma altura visual */
+  box-sizing: border-box;
+}
+
+/* La columna izquierda crece; evita que el texto empuje al botón */
+.connection-card .connection-details {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Botón siempre a la derecha y centrado verticalmente */
+.connection-card > .btn-connect,
+.connection-card > .btn-tooltip-wrapper {
+  margin-left: auto; /* empuja a la derecha */
+  flex: 0 0 auto;
+  align-self: center; /* centra en eje vertical */
+}
+
+/* Si hay wrapper con tooltip (Shopify), normalizamos también el botón dentro */
+.connection-card .btn-tooltip-wrapper .btn-connect {
+  align-self: center;
+  min-width: 160px; /* ancho mínimo homogéneo para los tres */
+  text-align: center;
+}
+
+/* Y si el botón está sin wrapper (Google/Meta), el mismo ancho mínimo */
+.connection-card > .btn-connect {
+  min-width: 160px;
+  text-align: center;
+}
+
+/* Pequeños ajustes para que badges/último párrafo no alarguen la tarjeta */
+.connection-card .connection-info p:last-child {
+  margin-bottom: 0;
+}
+
+.connection-card .required-badge,
+.connection-card .optional-badge {
+  line-height: 1;
+}
+
+/* Cuando el botón está "connected", conserva ancho y alineación */
+.btn-connect.connected {
+  min-width: 160px;
+  align-self: center;
+}
+
+/* En móvil seguimos tu patrón de apilar, pero respetando gutters */
+@media (max-width: 600px) {
+  .connection-cards .connection-card {
+    gap: 16px;
+    padding: 16px;
+    min-height: 0; /* que fluya en columna */
+  }
+
+  .connection-card > .btn-connect,
+  .connection-card .btn-tooltip-wrapper {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+
+/* 1) El body ya no hace scroll general */
+html,
+body {
+  height: 100%;
+}
+
+body {
+  overflow: hidden; /* evita la barra blanca del navegador */
+}
+
+/* 2) El panel derecho será el que scrollea */
+.main-content {
+  overflow-y: auto;
+}
+
+/* 3) Scrollbar oscuro SOLO dentro del panel derecho */
+/* Firefox */
+.main-content {
+  scrollbar-width: thin;
+  scrollbar-color: #3b2a5a #05040a; /* thumb | track */
+}
+
+/* WebKit (Chrome, Edge, Brave, Safari…) */
+.main-content::-webkit-scrollbar {
+  width: 10px;
+}
+
+.main-content::-webkit-scrollbar-track {
+  background: #05040a; /* riel oscuro */
+}
+
+.main-content::-webkit-scrollbar-thumb {
+  background: #2d2340; /* thumb morado oscuro */
+  border-radius: 999px;
+  border: 2px solid #05040a;
+}
+
+.main-content::-webkit-scrollbar-thumb:hover {
+  background: #4b3c75; /* hover un poco más claro */
+}
+
+/* Aviso sutil bajo el título del análisis */
+.analysis-hint {
+  margin: 14px 0 22px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: #e4d8ff;
+  border: 1px solid rgba(181, 92, 255, 0.5);
+}
+
+/* Icono circular, sin amarillo feo 😅 */
+.analysis-hint-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #f9efff;
+  background: radial-gradient(circle at 30% 30%, #A96BFF, #b55cff);
+}
+
+/* Texto más pequeño y ligero */
+.analysis-hint-text {
+  font-size: 0.78rem;
+  opacity: 0.92;
 }
