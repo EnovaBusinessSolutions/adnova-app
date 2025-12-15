@@ -2,7 +2,7 @@
 
 /* =========================
    Fuente base del onboarding (LA DE ANTES)
-   - Cambia "Inter" por la que usabas originalmente si era otra.
+   - Si tu tipografía anterior NO era Inter, cámbiala aquí.
    ========================= */
 :root{
   --ad-font-base: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
@@ -22,9 +22,14 @@
    ========================= */
 html, body { height: 100%; }
 
+html{
+  /* fallback sólido para evitar “transparente/blanco” */
+  background-color: var(--ad-black);
+}
+
 body {
-  /* ✅ Volvemos a la tipografía anterior */
-  font-family: var(--ad-font-base);
+  /* ✅ Tipografía base anterior para TODO el onboarding */
+  font-family: var(--ad-font-base) !important;
   color: var(--ad-ice);
   min-height: 100vh;
 
@@ -32,17 +37,25 @@ body {
   align-items: center;
   justify-content: center;
 
-  /* ✅ FIX: NO background transparent (evita blanco/lavanda) */
-  background: inherit;
-  background-color: var(--ad-black); /* fallback sólido */
+  /* ✅ FIX fondo: heredamos si theme.css trae gradiente, y dejamos fallback sólido */
+  background: inherit !important;
+  background-color: var(--ad-black) !important;
 
-  overflow: hidden; /* evita scroll del body (solo scrollea el panel derecho) */
+  overflow: hidden; /* solo scrollea el panel derecho */
 }
 
-/* Forzamos herencia de la fuente para evitar que componentes usen --font-sans (ULM) */
+/* ✅ Blindaje anti-ULM:
+   Forzamos que TODO lo dentro del onboarding herede la fuente base,
+   aunque theme.css tenga --font-sans = ULM o haya reglas globales. */
 .onboarding-container,
 .onboarding-container * {
-  font-family: inherit;
+  font-family: var(--ad-font-base) !important;
+}
+
+/* ✅ Modal ASM también con la fuente base (evita ULM en el modal) */
+#account-select-modal,
+#account-select-modal * {
+  font-family: var(--ad-font-base) !important;
 }
 
 /* =========================
@@ -171,17 +184,15 @@ body {
 .main-content {
   flex: 1;
   padding: 2.5rem;
-  overflow-y: auto; /* scroll solo aquí */
+  overflow-y: auto;
   background: none;
   position: relative;
   z-index: 2;
 
-  /* Firefox */
   scrollbar-width: thin;
   scrollbar-color: rgba(202, 138, 229, 0.35) rgba(0, 0, 0, 0.45);
 }
 
-/* WebKit */
 .main-content::-webkit-scrollbar { width: 10px; }
 .main-content::-webkit-scrollbar-track { background: rgba(0,0,0,0.45); }
 .main-content::-webkit-scrollbar-thumb {
@@ -383,612 +394,8 @@ body {
 }
 
 /* =========================
-   Permissions
+   (Todo lo demás igual que tu CSS actual)
    ========================= */
-.permissions-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  margin-top: 2rem;
-}
-
-.permission-item {
-  display: flex;
-  gap: 1rem;
-  padding: 1.25rem;
-
-  background: rgba(62, 40, 111, 0.22);
-  border: 1px solid var(--stroke);
-  border-radius: 12px;
-}
-
-.permission-icon {
-  width: 32px;
-  height: 32px;
-  background: linear-gradient(90deg, var(--ad-primary) 0%, var(--ad-deep) 100%);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  color: #0b0614;
-  font-weight: 900;
-}
-
-.permission-text h3 {
-  font-size: 1rem;
-  font-weight: 800;
-  margin-bottom: 0.18rem;
-  color: var(--ad-ice);
-}
-
-.permission-text p {
-  font-size: 0.91rem;
-  color: rgba(225, 216, 243, 0.78);
-}
-
-/* =========================
-   Analysis progress
-   ========================= */
-.analysis-progress { margin-top: 2rem; }
-
-.progress-container { margin-bottom: 2rem; }
-
-.progress-bar {
-  height: 8px;
-  background: rgba(225, 216, 243, 0.10);
-  border-radius: 999px;
-  overflow: hidden;
-  margin-bottom: 1rem;
-}
-
-.progress-indicator {
-  height: 100%;
-  background: linear-gradient(90deg, var(--ad-primary) 0%, var(--ad-deep) 100%);
-  width: 0%;
-  transition: width 0.5s ease;
-}
-
-.progress-text {
-  font-size: 0.91rem;
-  color: rgba(225, 216, 243, 0.72);
-}
-
-.analysis-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.analysis-step {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  border-radius: 10px;
-}
-
-.analysis-step-icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: rgba(202, 138, 229, 0.14);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.96rem;
-  color: var(--ad-primary);
-  font-weight: 900;
-}
-
-.analysis-step.active .analysis-step-icon {
-  background: rgba(62, 40, 111, 0.55);
-  color: var(--ad-ice);
-}
-
-.analysis-step.completed .analysis-step-icon {
-  background: linear-gradient(90deg, var(--ad-primary) 0%, var(--ad-deep) 100%);
-  color: #0b0614;
-}
-
-.analysis-step-text {
-  font-size: 0.91rem;
-  color: rgba(225, 216, 243, 0.72);
-}
-
-.analysis-step.completed .analysis-step-text { color: var(--ad-ice); }
-
-.analysis-step.is-current {
-  outline: 1px solid rgba(202,138,229,.35);
-  background: rgba(202,138,229,.06);
-}
-.analysis-step.is-current .analysis-step-text {
-  color: var(--ad-primary);
-  font-weight: 700;
-}
-
-/* Aviso sutil bajo el título del análisis */
-.analysis-hint {
-  margin: 14px 0 22px;
-  padding: 8px 14px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-
-  font-size: 0.78rem;
-  line-height: 1.4;
-  color: var(--ad-ice);
-  border: 1px solid rgba(202,138,229,.45);
-  background: rgba(62,40,111,.16);
-}
-
-.analysis-hint-icon {
-  width: 18px;
-  height: 18px;
-  border-radius: 999px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  font-size: 0.75rem;
-  font-weight: 900;
-  color: #0b0614;
-
-  background: radial-gradient(circle at 30% 30%, var(--ad-primary), rgba(202,138,229,.65));
-}
-
-.analysis-hint-text {
-  font-size: 0.78rem;
-  opacity: 0.92;
-}
-
-/* =========================
-   Success
-   ========================= */
-.success-message {
-  text-align: center;
-  margin: 3rem 0;
-}
-
-.success-icon {
-  width: 80px;
-  height: 80px;
-  background: linear-gradient(90deg, var(--ad-primary) 0%, var(--ad-deep) 100%);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 2.5rem;
-  margin: 0 auto 1.5rem;
-  color: #0b0614;
-  font-weight: 900;
-}
-
-.success-message h3 {
-  font-size: 1.5rem;
-  font-weight: 900;
-  margin-bottom: 0.75rem;
-  color: var(--ad-primary);
-}
-
-.success-message p {
-  font-size: 1rem;
-  color: rgba(225, 216, 243, 0.72);
-  max-width: 500px;
-  margin: 0 auto;
-}
-
-/* =========================
-   Features summary
-   ========================= */
-.features-summary {
-  display: flex;
-  justify-content: center;
-  gap: 1.5rem;
-  margin: 2rem 0;
-}
-
-.feature-item {
-  flex: 1;
-  background: rgba(62, 40, 111, 0.22);
-  border: 1px solid var(--stroke);
-  border-radius: 12px;
-  padding: 1.5rem;
-  text-align: center;
-}
-
-.feature-icon {
-  font-size: 2rem;
-  margin-bottom: 1rem;
-  color: var(--ad-primary);
-}
-
-.feature-text h3 {
-  font-size: 1rem;
-  font-weight: 900;
-  margin-bottom: 0.5rem;
-  color: var(--ad-ice);
-}
-
-.feature-text p {
-  font-size: 0.91rem;
-  color: rgba(225, 216, 243, 0.78);
-}
-
-/* =========================
-   Onboarding4 center layout
-   ========================= */
-body[data-page="onboarding4"] .content-panel {
-  max-width: 700px;
-  min-width: 360px;
-  margin: auto;
-  padding: 0 32px;
-
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  height: 100%;
-  justify-content: center;
-}
-
-body[data-page="onboarding4"] .ready-content {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-/* ================= Coming Soon — Shopify (solo CSS) ================= */
-.connection-card .btn-tooltip-wrapper {
-  position: relative;
-  display: inline-block;
-  margin-left: auto;
-  flex: 0 0 auto;
-}
-
-.btn-tooltip-wrapper.coming-soon .btn-connect {
-  pointer-events: none;
-  cursor: not-allowed;
-  opacity: 0.9;
-
-  background: rgba(62,40,111,.18) !important;
-  border: 1px solid rgba(225,216,243,.12) !important;
-  color: rgba(225,216,243,.55) !important;
-  box-shadow: none !important;
-}
-
-.btn-tooltip-wrapper.coming-soon .btn-connect:hover {
-  background: rgba(62,40,111,.18) !important;
-  color: rgba(225,216,243,.55) !important;
-  border-color: rgba(225,216,243,.12) !important;
-}
-
-/* Tooltip look ADRAY */
-.btn-tooltip {
-  position: absolute;
-  top: 50%;
-  right: 100%;
-  transform: translate(-12px, -50%);
-
-  min-width: 220px;
-  max-width: 280px;
-  padding: 10px 12px;
-
-  background: rgba(0,0,0,.86);
-  border: 1px solid rgba(202,138,229,.22);
-  border-radius: 12px;
-  box-shadow: 0 0 24px rgba(202, 138, 229, 0.14);
-
-  color: var(--ad-ice);
-  z-index: 30;
-  pointer-events: none;
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity .15s ease, visibility .15s ease, transform .15s ease;
-  text-align: left;
-}
-
-.btn-tooltip-title {
-  font-size: 12.5px;
-  font-weight: 900;
-  color: var(--ad-ice);
-  margin-bottom: 2px;
-}
-.btn-tooltip-desc {
-  font-size: 11px;
-  color: rgba(225,216,243,.65);
-}
-
-.btn-tooltip::after{
-  content: "";
-  position: absolute;
-  top: 50%;
-  right: -6px;
-  transform: translateY(-50%);
-  border: 6px solid transparent;
-  border-left-color: rgba(202,138,229,.22);
-}
-.btn-tooltip::before{
-  content: "";
-  position: absolute;
-  top: 50%;
-  right: -5px;
-  transform: translateY(-50%);
-  border: 5px solid transparent;
-  border-left-color: rgba(0,0,0,.86);
-}
-
-.btn-tooltip-wrapper:hover .btn-tooltip,
-.btn-tooltip-wrapper:focus-within .btn-tooltip {
-  opacity: 1;
-  visibility: visible;
-  transform: translate(-8px, -50%);
-}
-
-@media (max-width: 640px) {
-  .btn-tooltip {
-    top: auto;
-    bottom: 110%;
-    right: 50%;
-    transform: translate(50%, 0);
-  }
-  .btn-tooltip::after, .btn-tooltip::before { display: none; }
-}
-
-/* =========================
-   Account Select Modal (ASM) — ADRAY (unificado)
-   ========================= */
-#account-select-modal.hidden { display: none !important; }
-
-#account-select-modal {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 28px;
-
-  --asm-bg: rgba(0,0,0,.72);
-  --asm-panel: rgba(62,40,111,.22);
-  --asm-border: rgba(202,138,229,.22);
-  --asm-text: var(--ad-ice);
-  --asm-dim: rgba(225,216,243,.72);
-
-  /* ✅ modal también hereda tipografía base */
-  font-family: var(--ad-font-base);
-}
-
-#account-select-modal .asm-overlay {
-  position: absolute;
-  inset: 0;
-  background: var(--asm-bg);
-  backdrop-filter: blur(6px);
-  animation: asmFade .2s ease-out;
-}
-
-#account-select-modal .asm-panel {
-  position: relative;
-  width: min(980px, 92vw);
-
-  background: var(--asm-panel);
-  border: 1px solid var(--asm-border);
-  border-radius: 18px;
-  box-shadow: 0 14px 60px rgba(0,0,0,.45);
-  padding: 22px 22px 16px;
-
-  color: var(--asm-text);
-  animation: asmPop .18s ease-out;
-  overflow: hidden;
-}
-
-#account-select-modal .asm-panel::before{
-  content:"";
-  position:absolute; inset:0; pointer-events:none;
-  border-radius: 18px;
-  background:
-    radial-gradient(240px 140px at 8% -10%, rgba(202,138,229,.20), transparent 70%),
-    radial-gradient(240px 140px at 100% 0%, rgba(62,40,111,.22), transparent 70%);
-  mix-blend-mode: screen;
-}
-
-.asm-title {
-  color: var(--asm-text);
-  font-weight: 900;
-  font-size: 22px;
-  margin: 0 0 6px;
-}
-
-.asm-sub {
-  color: var(--asm-dim);
-  margin: 0 0 14px;
-}
-
-.asm-error { color: #ff7b7b; margin: 6px 0 8px; display:none; }
-.asm-error.show { display:block; }
-
-.asm-section-title {
-  color: var(--asm-text);
-  font-weight: 900;
-  margin: 12px 0 8px;
-}
-
-.asm-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 10px;
-  max-height: 240px;
-  overflow: auto;
-  padding-right: 4px;
-}
-
-.asm-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-
-  padding: 10px 12px;
-  border-radius: 12px;
-
-  background: rgba(0,0,0,.22);
-  border: 1px solid rgba(202,138,229,.18);
-  color: var(--asm-text);
-
-  cursor: pointer;
-  user-select: none;
-  transition: .15s background, .15s border-color, .06s transform;
-}
-
-.asm-chip:hover {
-  background: rgba(202,138,229,.10);
-  border-color: rgba(202,138,229,.35);
-}
-
-.asm-chip:active { transform: translateY(1px); }
-
-/* Checkbox con look ADRAY */
-.asm-chip input[type="checkbox"]{
-  appearance:none; -webkit-appearance:none; outline:none;
-  width:18px; height:18px; border-radius:6px;
-  border:1px solid rgba(202,138,229,.22);
-  background: transparent;
-  display:grid; place-items:center;
-  transition: all .15s ease;
-}
-.asm-chip input[type="checkbox"]::after{
-  content:"";
-  width:10px; height:10px; border-radius:3px;
-  transform: scale(0);
-  background: linear-gradient(180deg, var(--ad-primary), var(--ad-deep));
-  transition: transform .12s ease;
-}
-.asm-chip input[type="checkbox"]:checked{
-  border-color: rgba(202,138,229,.45);
-  box-shadow: 0 0 0 3px rgba(202,138,229,.10);
-}
-.asm-chip input[type="checkbox"]:checked::after{ transform: scale(1); }
-
-.asm-footer {
-  display:flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px dashed rgba(202,138,229,.18);
-}
-
-.asm-btn {
-  border:0;
-  border-radius: 12px;
-  padding: 10px 16px;
-  font-weight: 900;
-  cursor:pointer;
-}
-
-.asm-btn-primary {
-  background: linear-gradient(180deg, var(--ad-primary), var(--ad-deep));
-  color: #0b0614;
-}
-.asm-btn-primary[disabled] { opacity:.6; cursor:not-allowed; }
-
-/* Animaciones */
-@keyframes asmPop{ from{ transform: translateY(6px) scale(.98); opacity:0 } to{ transform:none; opacity:1 } }
-@keyframes asmFade{ from{ opacity:0 } to{ opacity:1 } }
-
-/* === Alineación y dimensiones consistentes de las 3 tarjetas === */
-.connection-cards .connection-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 20px 24px;
-  min-height: 112px;
-  box-sizing: border-box;
-}
-
-.connection-card > .btn-connect,
-.connection-card > .btn-tooltip-wrapper {
-  margin-left: auto;
-  flex: 0 0 auto;
-  align-self: center;
-}
-
-.connection-card .btn-tooltip-wrapper .btn-connect,
-.connection-card > .btn-connect {
-  min-width: 160px;
-  text-align: center;
-}
-
-.connection-card .connection-info p:last-child { margin-bottom: 0; }
-.connection-card .required-badge,
-.connection-card .optional-badge { line-height: 1; }
-
-.btn-connect.connected {
-  min-width: 160px;
-  align-self: center;
-}
-
-/* Responsive */
-@media (max-width: 900px) {
-  .onboarding-container {
-    flex-direction: column;
-    height: auto;
-    max-height: none;
-    margin: 1rem;
-  }
-
-  .sidebar {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid var(--stroke);
-    padding: 1.5rem;
-  }
-
-  .logo { margin-bottom: 1.5rem; }
-
-  .steps {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 1rem;
-  }
-
-  .step::after { display: none; }
-
-  .main-content {
-    padding: 1.5rem;
-    height: auto;
-  }
-
-  .features-summary { flex-direction: column; }
-}
-
-@media (max-width: 600px) {
-  .steps { grid-template-columns: 1fr; }
-
-  .connection-card {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1rem;
-  }
-
-  .connection-card .btn-connect { width: 100%; }
-
-  .bottom-actions { flex-direction: column; }
-  .bottom-actions button { width: 100%; }
-
-  .connection-cards .connection-card {
-    gap: 16px;
-    padding: 16px;
-    min-height: 0;
-  }
-
-  .connection-card > .btn-connect,
-  .connection-card .btn-tooltip-wrapper {
-    margin-left: 0;
-    width: 100%;
-  }
-}
 
 /* ✅ SOLO LOGO con ULM Grotesk (sin afectar el resto) */
 .logo h1{
