@@ -1,6 +1,14 @@
 @import url("/theme.css");
 
 /* =========================
+   Fuente base del onboarding (LA DE ANTES)
+   - Cambia "Inter" por la que usabas originalmente si era otra.
+   ========================= */
+:root{
+  --ad-font-base: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
+/* =========================
    Reset
    ========================= */
 * {
@@ -15,7 +23,8 @@
 html, body { height: 100%; }
 
 body {
-  font-family: var(--font-sans);
+  /* ✅ Volvemos a la tipografía anterior */
+  font-family: var(--ad-font-base);
   color: var(--ad-ice);
   min-height: 100vh;
 
@@ -26,8 +35,14 @@ body {
   /* ✅ FIX: NO background transparent (evita blanco/lavanda) */
   background: inherit;
   background-color: var(--ad-black); /* fallback sólido */
-  
+
   overflow: hidden; /* evita scroll del body (solo scrollea el panel derecho) */
+}
+
+/* Forzamos herencia de la fuente para evitar que componentes usen --font-sans (ULM) */
+.onboarding-container,
+.onboarding-container * {
+  font-family: inherit;
 }
 
 /* =========================
@@ -302,7 +317,6 @@ body {
   border-radius: 10px;
   cursor: pointer;
   transition: all 0.17s;
-  font-family: var(--font-sans);
   font-size: 1rem;
 }
 
@@ -338,7 +352,6 @@ body {
   cursor: pointer;
 
   transition: opacity 0.17s, transform 0.08s;
-  font-family: var(--font-sans);
   font-size: 1.07rem;
 }
 
@@ -737,12 +750,14 @@ body[data-page="onboarding4"] .ready-content {
   justify-content: center;
   padding: 28px;
 
-  /* Tokens locales del modal (no pisamos :root global) */
   --asm-bg: rgba(0,0,0,.72);
   --asm-panel: rgba(62,40,111,.22);
   --asm-border: rgba(202,138,229,.22);
   --asm-text: var(--ad-ice);
   --asm-dim: rgba(225,216,243,.72);
+
+  /* ✅ modal también hereda tipografía base */
+  font-family: var(--ad-font-base);
 }
 
 #account-select-modal .asm-overlay {
@@ -977,6 +992,6 @@ body[data-page="onboarding4"] .ready-content {
 
 /* ✅ SOLO LOGO con ULM Grotesk (sin afectar el resto) */
 .logo h1{
-  font-family: "Ulm Grotesk", "UlmGrotesk", "Ulm-Grotesk", var(--font-sans) !important;
+  font-family: "Ulm Grotesk", "UlmGrotesk", "Ulm-Grotesk", var(--ad-font-base) !important;
   font-weight: 800;
 }
