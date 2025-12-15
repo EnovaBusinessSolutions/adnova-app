@@ -1,37 +1,44 @@
 @import url("/theme.css");
 
 /* =========================
-   Reset
+   Reset (sin tocar border-color global)
    ========================= */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
-  border-color: rgba(202, 138, 229, 0.22);
 }
 
 /* =========================
    Base (Inter para TODO)
    ========================= */
 html, body {
-  font-family: 'Inter', sans-serif; /* <- vuelve Inter en todo */
+  font-family: 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   min-height: 100vh;
   min-width: 100vw;
 
-  /* NO pisar el fondo del theme */
+  /* Anti-fondo blanco */
   background: inherit;
-  background-color: var(--ad-black); /* fallback si algo falla */
+  background-color: var(--ad-black);
   color: var(--ad-ice);
 
   display: flex;
   align-items: center;
   justify-content: center;
+
+  padding: 24px;
 }
 
 body { overflow: hidden; }
 
+/* Asegura que nada herede ULM por theme.css */
+.login-container,
+.login-container * {
+  font-family: inherit;
+}
+
 /* =========================
-   Card
+   Card (con glow como antes)
    ========================= */
 .login-container {
   width: 100%;
@@ -43,6 +50,21 @@ body { overflow: hidden; }
 
   padding: 2.5rem 2rem 2rem 2rem;
   border: 1px solid var(--stroke);
+
+  position: relative;
+  overflow: hidden;
+}
+
+/* Glow sutil */
+.login-container::before{
+  content:"";
+  position:absolute;
+  inset:-2px;
+  pointer-events:none;
+  background:
+    radial-gradient(260px 160px at 50% 0%, rgba(202,138,229,.20), transparent 70%),
+    radial-gradient(240px 140px at 100% 20%, rgba(62,40,111,.20), transparent 70%);
+  mix-blend-mode: screen;
 }
 
 /* =========================
@@ -51,13 +73,15 @@ body { overflow: hidden; }
 .header {
   text-align: center;
   margin-bottom: 1.5rem;
+  position: relative;
+  z-index: 1;
 }
 
-/* ✅ SOLO el título “Adray/ADRAY” en Ulm Grotesk */
+/* ✅ SOLO el título en Ulm Grotesk */
 .header h1 {
-  font-family: "Ulm Grotesk", 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  font-family: "Ulm Grotesk", "UlmGrotesk", "Ulm-Grotesk", 'Inter', system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   font-size: 2.1rem;
-  font-weight: 800;
+  font-weight: 900;
   color: var(--ad-primary);
   letter-spacing: -1px;
 }
@@ -78,16 +102,15 @@ body { overflow: hidden; }
 /* =========================
    Form
    ========================= */
-.form { margin-bottom: 1.5rem; }
-
-.form-group { margin-bottom: 1.1rem; }
+.form { margin-bottom: 1.5rem; position: relative; z-index: 1; }
+.form-group { margin-bottom: 1.1rem; position: relative; }
 
 .form-label {
   display: block;
   font-size: 0.93rem;
   color: rgba(225, 216, 243, 0.92);
-  margin-bottom: 0.25rem;
-  font-weight: 700;
+  margin-bottom: 0.35rem;
+  font-weight: 800;
   letter-spacing: 0.01em;
 }
 
@@ -98,7 +121,7 @@ body { overflow: hidden; }
   background: rgba(62, 40, 111, 0.22);
   color: var(--ad-ice);
 
-  padding: 0.58rem 1rem;
+  padding: 0.62rem 1rem;
   border: 1px solid var(--stroke);
   outline: none;
 
@@ -107,13 +130,13 @@ body { overflow: hidden; }
 }
 
 .form-input:focus {
-  border: 1px solid rgba(202, 138, 229, 0.55);
+  border-color: rgba(202, 138, 229, 0.55);
   box-shadow: 0 0 0 3px rgba(202, 138, 229, 0.12);
   background: rgba(62, 40, 111, 0.30);
 }
 
 /* =========================
-   Buttons (Inter)
+   Buttons
    ========================= */
 .btn {
   display: flex;
@@ -122,7 +145,7 @@ body { overflow: hidden; }
   gap: 0.5rem;
 
   width: 100%;
-  padding: 0.65rem 1rem;
+  padding: 0.8rem 1rem;
   border-radius: 0.75rem;
 
   font-size: 1.05rem;
@@ -132,8 +155,6 @@ body { overflow: hidden; }
   transition: all 0.17s;
   border: none;
   letter-spacing: 0.01em;
-
-  font-family: inherit; /* <- Inter heredado del body */
 }
 
 .btn-primary {
@@ -145,23 +166,6 @@ body { overflow: hidden; }
 .btn-primary:hover {
   filter: brightness(1.06);
   box-shadow: 0 14px 38px rgba(202, 138, 229, 0.22);
-}
-
-.btn-outline {
-  background: rgba(0, 0, 0, 0.35);
-  color: var(--ad-ice);
-  border: 1px solid var(--stroke);
-
-  font-size: 1.05rem;
-  font-weight: 900;
-  gap: 10px;
-  border-radius: 0.75rem;
-}
-
-.btn-outline:hover {
-  background: rgba(62, 40, 111, 0.40);
-  color: var(--ad-primary);
-  border-color: rgba(202, 138, 229, 0.35);
 }
 
 .btn-secondary {
@@ -179,6 +183,21 @@ body { overflow: hidden; }
   border-color: rgba(202, 138, 229, 0.35);
 }
 
+.btn-outline {
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--ad-ice);
+  border: 1px solid var(--stroke);
+  font-weight: 900;
+  border-radius: 0.75rem;
+  gap: 10px;
+}
+
+.btn-outline:hover {
+  background: rgba(62, 40, 111, 0.40);
+  color: var(--ad-primary);
+  border-color: rgba(202, 138, 229, 0.35);
+}
+
 /* =========================
    Divider
    ========================= */
@@ -192,13 +211,10 @@ body { overflow: hidden; }
 .divider-text {
   position: relative;
   top: -0.88rem;
-
   background: rgba(0, 0, 0, 0.45);
   border: 1px solid rgba(202, 138, 229, 0.12);
-
   padding: 0.2rem 0.7rem;
   border-radius: 999px;
-
   font-size: 0.79rem;
   color: rgba(225, 216, 243, 0.72);
   text-transform: uppercase;
@@ -252,46 +268,22 @@ body { overflow: hidden; }
   margin-top: 14px;
 }
 
-@media (max-width: 640px) {
-  .login-container {
-    margin: 1rem;
-    padding: 1.5rem 1rem 1.2rem 1rem;
-  }
-}
-
-.bi {
-  display: inline-block;
-  vertical-align: -0.125em;
-  width: 1em;
-  height: 1em;
-  margin-right: 0.22rem;
-}
-
 /* =========================
-   Password eye (se mantiene)
+   Password eye
    ========================= */
-.form-input-wrapper {
-  position: relative;
-  width: 100%;
-}
-
-.form-input-wrapper .form-input {
-  padding-right: 2.5rem;
-}
+.form-input-wrapper { position: relative; width: 100%; }
+.form-input-wrapper .form-input { padding-right: 2.6rem; }
 
 .toggle-password {
   position: absolute;
   right: 10px;
   top: 50%;
   transform: translateY(-50%);
-
   border: none;
   background: none;
   cursor: pointer;
-
   width: 2.2rem;
   height: 2.2rem;
-
   display: flex;
   align-items: center;
   justify-content: center;
@@ -313,45 +305,10 @@ body { overflow: hidden; }
   opacity: 0.9;
 }
 
-/* Compat con tus overrides previos */
-.login-container .form-input-wrapper { position: relative; }
-.login-container .form-input-wrapper .form-input { padding-right: 2.6rem !important; }
-
-.login-container .form-input-wrapper .toggle-password {
-  position: absolute;
-  right: 10px;
-  top: 50%;
-  transform: translateY(-50%);
-  border: none;
-  background: none;
-  cursor: pointer;
-  width: 2.2rem;
-  height: 2.2rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  z-index: 2;
-}
-
-.login-container .form-input-wrapper .toggle-password .eye-icon {
-  width: 22px;
-  height: 22px;
-  display: block;
-  background: url('data:image/svg+xml;utf8,<svg fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><ellipse cx="12" cy="12" rx="7" ry="5"/><circle cx="12" cy="12" r="2.5"/></svg>') center/contain no-repeat !important;
-  opacity: 0.58;
-  transition: opacity .2s ease;
-}
-
-.login-container .form-input-wrapper .toggle-password.eye-visible .eye-icon {
-  background: url('data:image/svg+xml;utf8,<svg fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><ellipse cx="12" cy="12" rx="7" ry="5"/><circle cx="12" cy="12" r="2.5"/><line x1="4" y1="20" x2="20" y2="4" stroke="white" stroke-width="2"/></svg>') center/contain no-repeat !important;
-  opacity: 0.9;
-}
-
-.login-container .form-input-wrapper .toggle-password:hover .eye-icon { opacity: .95; }
-
-.login-container .form-input-wrapper .toggle-password .eye-icon {
-  -webkit-mask-image: none !important;
-          mask-image: none !important;
-  background-color: transparent !important;
+/* Responsive */
+@media (max-width: 640px) {
+  .login-container {
+    margin: 1rem;
+    padding: 1.5rem 1rem 1.2rem 1rem;
+  }
 }

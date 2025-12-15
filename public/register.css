@@ -1,23 +1,43 @@
 @import url("/theme.css");
 
+/* =========================
+   Fuente base del Login (LA DE ANTES)
+   - Si tu tipografía anterior NO era Inter, cámbiala aquí.
+   ========================= */
+:root{
+  --ad-login-font-base: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+}
+
 html, body {
-  font-family: var(--font-sans);
   height: 100%;
   width: 100%;
   margin: 0;
+}
 
-  /* ✅ FIX anti-fondo-blanco:
-     no dejamos transparent como definitivo; heredamos el fondo global del theme
-     y ponemos fallback sólido por si algo falla/carga tarde */
-  background: inherit;
+/* ✅ FIX anti-fondo-blanco (fallback sólido) */
+html{
   background-color: var(--ad-black);
+}
+
+body {
+  font-family: var(--ad-login-font-base) !important;
+  color: var(--ad-ice);
+
+  /* heredamos el fondo global del theme + fallback */
+  background: inherit !important;
+  background-color: var(--ad-black) !important;
 
   display: flex;
   align-items: center;
   justify-content: center;
 
-  color: var(--ad-ice);
   padding: 24px;
+}
+
+/* Forzamos herencia para que inputs/botones no “tomen” ULM por theme.css */
+.login-container,
+.login-container *{
+  font-family: var(--ad-login-font-base) !important;
 }
 
 .login-container {
@@ -54,7 +74,9 @@ html, body {
   z-index: 1;
 }
 
+/* ✅ SOLO el “logo/título” puede ir en ULM */
 .header h1 {
+  font-family: "Ulm Grotesk", "UlmGrotesk", "Ulm-Grotesk", var(--ad-login-font-base) !important;
   font-size: 2.1rem;
   font-weight: 900;
   color: var(--ad-primary);
@@ -97,7 +119,6 @@ input[type="text"].form-input {
   transition: border 0.2s, box-shadow 0.2s, background 0.18s;
 
   padding-right: 2.6rem;
-  font-family: var(--font-sans);
 }
 
 input[type="password"].form-input:focus,
@@ -164,8 +185,6 @@ input[type="text"].form-input:focus {
   transition: all 0.18s;
   border: none;
   letter-spacing: 0.01em;
-
-  font-family: var(--font-sans);
 }
 
 .btn-primary {
