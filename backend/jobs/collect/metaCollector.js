@@ -71,6 +71,63 @@ function pickDefaultAccountId(acc) {
   return '';
 }
 
+/**
+ * Normaliza objective para que la IA no evalúe “conversiones” en campañas que NO son de conversiones.
+ * Mantiene objective original (raw) y añade objective_norm.
+ */
+function normalizeMetaObjective(raw) {
+  const o = String(raw || '').toUpperCase().trim();
+  if (!o) return 'OTHER';
+
+  // Sales
+  if (
+    o.includes('OUTCOME_SALES') ||
+    o === 'CONVERSIONS' ||
+    o.includes('PURCHASE') ||
+    o.includes('CATALOG_SALES') ||
+    o.includes('PRODUCT_CATALOG_SALES')
+  ) return 'SALES';
+
+  // Leads
+  if (
+    o.includes('OUTCOME_LEADS') ||
+    o.includes('LEAD') ||
+    o.includes('LEAD_GENERATION')
+  ) return 'LEADS';
+
+  // Traffic
+  if (
+    o.includes('OUTCOME_TRAFFIC') ||
+    o === 'TRAFFIC' ||
+    o.includes('LINK_CLICKS') ||
+    o.includes('LANDING_PAGE_VIEWS')
+  ) return 'TRAFFIC';
+
+  // Awareness / Reach
+  if (
+    o.includes('OUTCOME_AWARENESS') ||
+    o.includes('AWARENESS') ||
+    o.includes('BRAND_AWARENESS') ||
+    o === 'REACH'
+  ) return 'AWARENESS';
+
+  // Engagement / Video
+  if (
+    o.includes('ENGAGEMENT') ||
+    o.includes('OUTCOME_ENGAGEMENT') ||
+    o.includes('VIDEO_VIEWS') ||
+    o.includes('POST_ENGAGEMENT')
+  ) return 'ENGAGEMENT';
+
+  // Messages
+  if (o.includes('MESSAGES')) return 'MESSAGES';
+
+  // App
+  if (o.includes('APP')) return 'APP';
+
+  return 'OTHER';
+}
+
 async function fetchJSON(url, { retries = 1 } = {}) {
   let lastErr = null;
   for (let i = 0; i <= retries; i++) {
@@ -166,12 +223,15 @@ async function fetchAllCampaignMeta(actId, token) {
     for (const c of data) {
       const id = normAct(c.id || '');
       if (!id) continue;
+
+      const rawObj = c.objective || null;
       map.set(id, {
         id,
         name: c.name || null,
         status: c.status || null,
         effective_status: c.effective_status || null,
-        objective: c.objective || null,
+        objective: rawObj,
+        objective_norm: normalizeMetaObjective(rawObj),
         buying_type: c.buying_type || null,
         bid_strategy: c.bid_strategy || null,
         daily_budget: minorToUnit(c.daily_budget),
@@ -230,9 +290,6 @@ async function collectMeta(userId, opts = {}) {
   const availSet = new Set(available.map(a => a.id));
 
   // --- Selección real ---
-  // 1) si pasan account_id => solo esa
-  // 2) merge de users.selectedMetaAccounts + users.preferences.meta.auditAccountIds (en ese orden)
-  // 3) fallback: defaultAccountId ó primeras disponibles
   let accountsToAudit = [];
 
   if (account_id) {
@@ -248,7 +305,6 @@ async function collectMeta(userId, opts = {}) {
       .map(normAct)
       .filter(id => id && availSet.has(id));
 
-    // preserva orden del usuario, dedupe y cap
     const seen = new Set();
     const ordered = [];
     for (const id of merged) {
@@ -269,12 +325,11 @@ async function collectMeta(userId, opts = {}) {
     }
   }
 
-  // Si por alguna razón quedó vacío, último fallback a primera disponible
   if (!accountsToAudit.length && available.length) {
     accountsToAudit = available.slice(0, 1);
   }
 
-  // Campos de insights base (puedes añadir más si hace falta)
+  // Campos de insights base
   const baseFields = [
     'date_start', 'date_stop',
     'campaign_id', 'campaign_name', 'objective',
@@ -303,7 +358,6 @@ async function collectMeta(userId, opts = {}) {
     return `https://graph.facebook.com/${API_VER}/act_${actId}/insights?${qp.toString()}`;
   };
 
-  // Lee metadatos de una cuenta
   async function getAccountMeta(actId) {
     try {
       const u = `https://graph.facebook.com/${API_VER}/act_${actId}?fields=currency,name,timezone_name&access_token=${encodeURIComponent(token)}`;
@@ -321,8 +375,8 @@ async function collectMeta(userId, opts = {}) {
   /* ---------- loop por cuentas ---------- */
 
   const byCampaign = [];
-  const byCampaignDevice = [];     // 👈 nuevo
-  const byCampaignPlacement = [];  // 👈 nuevo
+  const byCampaignDevice = [];
+  const byCampaignPlacement = [];
   const accountIds = [];
   const accountCurrency = new Map();
   const accountNameMap = new Map();
@@ -362,7 +416,6 @@ async function collectMeta(userId, opts = {}) {
       return { notAuthorized: true, reason, byCampaign: [], accountIds };
     }
 
-    // si no hay datos recientes, probamos rangos más largos
     if (!since && !until && data.length === 0) {
       for (const p of ['last_90d', 'last_180d', 'last_year']) {
         try {
@@ -373,7 +426,6 @@ async function collectMeta(userId, opts = {}) {
       }
     }
 
-    // agregadores por campaña (cuenta actual)
     const byCampAgg = new Map();
 
     for (const x of data) {
@@ -388,13 +440,23 @@ async function collectMeta(userId, opts = {}) {
       const campIdNorm = normAct(x.campaign_id || '');
       const metaInfo = campMeta.get(campIdNorm) || {};
 
+      const rawObjective = x.objective || metaInfo.objective || null;
+      const objective_norm = metaInfo.objective_norm || normalizeMetaObjective(rawObjective);
+
       const key = campIdNorm || x.campaign_id || 'unknown';
 
       const cur = byCampAgg.get(key) || {
         account_id: actId,
         id: x.campaign_id,
+        campaign_id: campIdNorm || x.campaign_id,
+
         name: x.campaign_name || metaInfo.name || 'Sin nombre',
-        objective: x.objective || metaInfo.objective || null,
+        campaignName: x.campaign_name || metaInfo.name || 'Sin nombre',
+
+        // objetivo raw + normalizado
+        objective: rawObjective,
+        objective_norm,
+
         status: metaInfo.status || metaInfo.effective_status || null,
         effectiveStatus: metaInfo.effective_status || null,
         buying_type: metaInfo.buying_type || null,
@@ -420,7 +482,7 @@ async function collectMeta(userId, opts = {}) {
           purchase_value: 0,
           roas: 0,
         },
-        _freqDenominator: 0, // para promediar frequency correctamente
+        _freqDenominator: 0,
       };
 
       const k = cur.kpis;
@@ -433,7 +495,6 @@ async function collectMeta(userId, opts = {}) {
       if (purchases != null)      k.purchases      += purchases;
       if (purchase_value != null) k.purchase_value += purchase_value;
 
-      // frequency viene ya promediada por fila, la re-promediamos ponderada por impresiones
       const freqVal = toNum(x.frequency);
       if (freqVal && toNum(x.impressions) > 0) {
         cur._freqDenominator += toNum(x.impressions);
@@ -443,7 +504,6 @@ async function collectMeta(userId, opts = {}) {
         );
       }
 
-      // recalculamos métricas derivadas
       k.cpm  = k.impressions ? (k.spend / k.impressions) * 1000 : 0;
       k.cpc  = k.clicks ? (k.spend / k.clicks) : 0;
       k.ctr  = k.impressions ? (k.clicks / k.impressions) * 100 : 0;
@@ -466,12 +526,20 @@ async function collectMeta(userId, opts = {}) {
         const device = x.device_platform || null;
         if (!device) continue;
 
+        const metaInfo = campMeta.get(campIdNorm) || {};
+        const rawObjective = x.objective || metaInfo.objective || null;
+        const objective_norm = metaInfo.objective_norm || normalizeMetaObjective(rawObjective);
+        const campaignName = x.campaign_name || metaInfo.name || null;
+
         const { purchases, purchase_value } = extractPurchaseMetrics(x);
 
         const dupKey = `${campIdNorm}::${device}`;
         const cur = byCampDeviceAgg.get(dupKey) || {
           account_id: actId,
           campaign_id: campIdNorm,
+          campaignName,
+          objective: rawObjective,
+          objective_norm,
           device,
           kpis: {
             spend: 0,
@@ -517,12 +585,20 @@ async function collectMeta(userId, opts = {}) {
         const platform = x.publisher_platform || null;
         if (!platform) continue;
 
+        const metaInfo = campMeta.get(campIdNorm) || {};
+        const rawObjective = x.objective || metaInfo.objective || null;
+        const objective_norm = metaInfo.objective_norm || normalizeMetaObjective(rawObjective);
+        const campaignName = x.campaign_name || metaInfo.name || null;
+
         const { purchases, purchase_value } = extractPurchaseMetrics(x);
 
         const dupKey = `${campIdNorm}::${platform}`;
         const cur = byCampPlacementAgg.get(dupKey) || {
           account_id: actId,
           campaign_id: campIdNorm,
+          campaignName,
+          objective: rawObjective,
+          objective_norm,
           platform,
           kpis: {
             spend: 0,
@@ -560,9 +636,15 @@ async function collectMeta(userId, opts = {}) {
     for (const [, v] of byCampAgg.entries()) {
       byCampaign.push({
         account_id: v.account_id,
+
         id: v.id,
+        campaign_id: v.campaign_id || normAct(v.id || ''),
         name: v.name,
-        objective: v.objective,
+        campaignName: v.campaignName || v.name,
+
+        objective: v.objective,              // raw (Meta)
+        objective_norm: v.objective_norm,    // normalizado para IA
+
         status: v.status,
         effectiveStatus: v.effectiveStatus,
         buying_type: v.buying_type,
@@ -598,9 +680,12 @@ async function collectMeta(userId, opts = {}) {
       byCampaignDevice.push({
         account_id: v.account_id,
         campaign_id: v.campaign_id,
+        campaignName: v.campaignName || null,
+        objective: v.objective || null,
+        objective_norm: v.objective_norm || 'OTHER',
         device: v.device,
         kpis: v.kpis,
-        period: { since: minStart, until: maxStop },
+        period: { from: minStart, to: maxStop },
       });
     }
 
@@ -609,9 +694,12 @@ async function collectMeta(userId, opts = {}) {
       byCampaignPlacement.push({
         account_id: v.account_id,
         campaign_id: v.campaign_id,
+        campaignName: v.campaignName || null,
+        objective: v.objective || null,
+        objective_norm: v.objective_norm || 'OTHER',
         platform: v.platform,
         kpis: v.kpis,
-        period: { since: minStart, until: maxStop },
+        period: { from: minStart, to: maxStop },
       });
     }
   } // fin loop cuentas
@@ -685,11 +773,11 @@ async function collectMeta(userId, opts = {}) {
       roas: G.val ? safeDiv(G.val, G.cost) : 0,
     },
     byCampaign,
-    byCampaignDevice,     // 👈 NUEVO: desglose por tipo de dispositivo
-    byCampaignPlacement,  // 👈 NUEVO: desglose por plataforma (FB, IG, Audience, etc.)
-    accountIds,   // para audits.js (reparto)
-    accounts,     // para anotar [Nombre] en títulos y dar contexto de cuenta
-    version: 'metaCollector@multi-accounts+rich-v2',
+    byCampaignDevice,
+    byCampaignPlacement,
+    accountIds,
+    accounts,
+    version: 'metaCollector@multi-accounts+objective-norm-v3',
   };
 }
 

@@ -4,12 +4,10 @@
 const OpenAI = require('openai');
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-
 const DEFAULT_MODEL =
   process.env.OPENAI_MODEL_AUDIT ||
   process.env.OPENAI_MODEL ||
   'gpt-4o-mini';
-
 
 const USE_FALLBACK_RULES = process.env.AUDIT_FALLBACK_RULES === 'true';
 
@@ -41,29 +39,21 @@ const fmt = (n, d = 2) => {
 const safeNum = toNum;
 const safeDiv = (n, d) => (safeNum(d) ? safeNum(n) / safeNum(d) : 0);
 
-
 function normStatus(raw) {
   const s = String(raw || '').toLowerCase();
-
   if (!s) return 'unknown';
 
-  if (['enabled','active','serving','running','eligible','on'].some(k => s.includes(k))) {
-    return 'active';
-  }
-
-  if (['paused','pause','stopped','removed','deleted','inactive','ended','off'].some(k => s.includes(k))) {
-    return 'paused';
-  }
+  if (['enabled','active','serving','running','eligible','on'].some(k => s.includes(k))) return 'active';
+  if (['paused','pause','stopped','removed','deleted','inactive','ended','off'].some(k => s.includes(k))) return 'paused';
 
   return 'unknown';
 }
-
 
 function dedupeIssues(issues = []) {
   const seen = new Set();
   const out = [];
   for (const it of issues || []) {
-    const key = `${(it.title || '').trim().toLowerCase()}::${it.campaignRef?.id || ''}::${it.segmentRef?.name || ''}`;
+    const key = `${(it.title || '').trim().toLowerCase()}::${it.accountRef?.id || it.accountRef?.property || ''}::${it.campaignRef?.id || ''}::${it.segmentRef?.type || ''}::${it.segmentRef?.name || ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(it);
@@ -72,7 +62,6 @@ function dedupeIssues(issues = []) {
 }
 
 /* ---------------------- DIAGNOSTICS (pre-análisis) ------------------- */
-
 
 function buildGoogleDiagnostics(snapshot = {}) {
   const byCampaign = Array.isArray(snapshot.byCampaign) ? snapshot.byCampaign : [];
@@ -181,6 +170,11 @@ function buildGa4Diagnostics(snapshot = {}) {
   const totalConv     = safeNum(aggregate.conversions);
   const globalCr      = safeDiv(totalConv, totalSessions);
 
+  // Señales extra (si tu collector ya las trae)
+  const daily = Array.isArray(snapshot.daily) ? snapshot.daily : [];
+  const sourceMedium = Array.isArray(snapshot.sourceMedium) ? snapshot.sourceMedium : [];
+  const topEvents = Array.isArray(snapshot.topEvents) ? snapshot.topEvents : [];
+
   const lowConvChannels = channels
     .map(ch => {
       const sessions = safeNum(ch.sessions);
@@ -234,9 +228,27 @@ function buildGa4Diagnostics(snapshot = {}) {
   let deviceGaps = null;
   if (bestDevice && worstDevice && bestDevice.device !== worstDevice.device) {
     const diff = bestDevice._cr - worstDevice._cr;
-    if (diff > 0.01) {
-      deviceGaps = { bestDevice, worstDevice, diff };
-    }
+    if (diff > 0.01) deviceGaps = { bestDevice, worstDevice, diff };
+  }
+
+  // Señal de posible tracking roto (no determinista, solo “bandera”)
+  const sessionsLargeNoConv = totalSessions >= 500 && totalConv === 0;
+  const hasPurchaseLikeEvent = topEvents.some(e => String(e.event || '').toLowerCase().includes('purchase'));
+  const hasLeadLikeEvent = topEvents.some(e => {
+    const n = String(e.event || '').toLowerCase();
+    return n.includes('generate_lead') || n.includes('lead') || n.includes('form');
+  });
+
+  // caída fuerte vs últimos días (si hay daily)
+  let last7 = null;
+  if (daily.length >= 10) {
+    const tail = daily.slice(-7);
+    const prev = daily.slice(-14, -7);
+    const sum = (arr, k) => arr.reduce((a, x) => a + safeNum(x?.[k]), 0);
+    const s1 = sum(prev, 'sessions');
+    const s2 = sum(tail, 'sessions');
+    const drop = s1 > 0 ? (s2 - s1) / s1 : 0;
+    last7 = { prevSessions: s1, lastSessions: s2, dropPct: drop };
   }
 
   return {
@@ -250,6 +262,12 @@ function buildGa4Diagnostics(snapshot = {}) {
     lowConvChannels,
     badLandingPages,
     deviceGaps,
+    trackingFlags: {
+      sessionsLargeNoConv,
+      hasPurchaseLikeEvent,
+      hasLeadLikeEvent,
+      last7Drop: last7 && last7.dropPct < -0.25 ? last7 : null
+    }
   };
 }
 
@@ -318,24 +336,22 @@ function buildMetaDiagnostics(snapshot = {}) {
 
 function buildDiagnostics(source, snapshot) {
   const type = String(source || '').toLowerCase();
-  if (type === 'google' || type === 'googleads' || type === 'gads') {
-    return { google: buildGoogleDiagnostics(snapshot) };
-  }
-  if (type === 'ga' || type === 'ga4' || type === 'google-analytics') {
-    return { ga4: buildGa4Diagnostics(snapshot) };
-  }
-  if (type === 'meta' || type === 'metaads' || type === 'facebook') {
-    return { meta: buildMetaDiagnostics(snapshot) };
-  }
+  if (type === 'google' || type === 'googleads' || type === 'gads') return { google: buildGoogleDiagnostics(snapshot) };
+  if (type === 'ga' || type === 'ga4' || type === 'google-analytics' || type === 'analytics') return { ga4: buildGa4Diagnostics(snapshot) };
+  if (type === 'meta' || type === 'metaads' || type === 'facebook') return { meta: buildMetaDiagnostics(snapshot) };
   return {};
 }
 
-
-function tinySnapshot(inputSnapshot, { maxChars = 60_000 } = {}) {
+/**
+ * ✅ Snapshot compacto pero “inteligente”:
+ * - Mantiene tu compatibilidad
+ * - Incluye señales nuevas de GA4 (daily, sourceMedium, topEvents) si existen
+ */
+function tinySnapshot(inputSnapshot, { maxChars = 70_000 } = {}) {
   try {
     const clone = JSON.parse(JSON.stringify(inputSnapshot || {}));
 
-    // byCampaign reducido
+    // --- Ads: byCampaign reducido (Google/Meta) ---
     if (Array.isArray(clone.byCampaign)) {
       const rawList = clone.byCampaign.map(c => {
         const statusNorm = normStatus(
@@ -380,10 +396,6 @@ function tinySnapshot(inputSnapshot, { maxChars = 60_000 } = {}) {
       const paused  = rawList.filter(c => c.status === 'paused');
       const unknown = rawList.filter(c => c.status === 'unknown');
 
-      const ordered = active.length > 0
-        ? [...active, ...paused, ...unknown]
-        : rawList;
-
       clone.byCampaignMeta = {
         total:   rawList.length,
         active:  active.length,
@@ -391,19 +403,88 @@ function tinySnapshot(inputSnapshot, { maxChars = 60_000 } = {}) {
         unknown: unknown.length
       };
 
+      const ordered = active.length > 0 ? [...active, ...paused, ...unknown] : rawList;
       clone.byCampaign = ordered.slice(0, 60);
     }
 
-    // channels reducido (GA4)
+    // --- GA4: channels reducido (y con engagedSessions si existe) ---
     if (Array.isArray(clone.channels)) {
       clone.channels = clone.channels.slice(0, 60).map(ch => ({
-
         channel:     ch.channel,
         users:       toNum(ch.users),
         sessions:    toNum(ch.sessions),
         conversions: toNum(ch.conversions),
         revenue:     toNum(ch.revenue),
+        engagedSessions: toNum(ch.engagedSessions),
+        engagementRate: toNum(ch.engagementRate),
+        newUsers: toNum(ch.newUsers),
       }));
+    }
+
+    // --- GA4: devices reducido ---
+    if (Array.isArray(clone.devices)) {
+      clone.devices = clone.devices.slice(0, 15).map(d => ({
+        device: d.device,
+        users: toNum(d.users),
+        sessions: toNum(d.sessions),
+        conversions: toNum(d.conversions),
+        revenue: toNum(d.revenue),
+        engagedSessions: toNum(d.engagedSessions),
+        engagementRate: toNum(d.engagementRate),
+      }));
+    }
+
+    // --- GA4: landingPages reducido ---
+    if (Array.isArray(clone.landingPages)) {
+      clone.landingPages = clone.landingPages
+        .slice(0, 80)
+        .map(lp => ({
+          page: lp.page,
+          sessions: toNum(lp.sessions),
+          conversions: toNum(lp.conversions),
+          revenue: toNum(lp.revenue),
+          engagedSessions: toNum(lp.engagedSessions),
+          engagementRate: toNum(lp.engagementRate),
+        }));
+    }
+
+    // --- GA4: daily trend (si existe) ---
+    if (Array.isArray(clone.daily)) {
+      clone.daily = clone.daily
+        .slice(-45)
+        .map(x => ({
+          date: x.date,
+          sessions: toNum(x.sessions),
+          conversions: toNum(x.conversions),
+          revenue: toNum(x.revenue),
+          engagedSessions: toNum(x.engagedSessions),
+        }));
+    }
+
+    // --- GA4: source/medium (si existe) ---
+    if (Array.isArray(clone.sourceMedium)) {
+      clone.sourceMedium = clone.sourceMedium
+        .slice(0, 80)
+        .map(x => ({
+          source: x.source,
+          medium: x.medium,
+          sessions: toNum(x.sessions),
+          conversions: toNum(x.conversions),
+          revenue: toNum(x.revenue),
+          engagedSessions: toNum(x.engagedSessions),
+          engagementRate: toNum(x.engagementRate),
+        }));
+    }
+
+    // --- GA4: top events (si existe) ---
+    if (Array.isArray(clone.topEvents)) {
+      clone.topEvents = clone.topEvents
+        .slice(0, 80)
+        .map(e => ({
+          event: e.event,
+          eventCount: toNum(e.eventCount),
+          conversions: toNum(e.conversions),
+        }));
     }
 
     // byProperty reducido (GA4 multi-property)
@@ -412,10 +493,12 @@ function tinySnapshot(inputSnapshot, { maxChars = 60_000 } = {}) {
         property:     p.property,
         propertyName: p.propertyName,
         accountName:  p.accountName,
-        users:       toNum(p.users),
-        sessions:    toNum(p.sessions),
-        conversions: toNum(p.conversions),
-        revenue:     toNum(p.revenue),
+        // soporta tanto tu v2 como v3 (kpis)
+        users:       toNum(p.users ?? p?.kpis?.users),
+        sessions:    toNum(p.sessions ?? p?.kpis?.sessions),
+        conversions: toNum(p.conversions ?? p?.kpis?.conversions),
+        revenue:     toNum(p.revenue ?? p?.kpis?.revenue),
+        engagementRate: toNum(p?.kpis?.engagementRate),
       }));
     }
 
@@ -425,6 +508,16 @@ function tinySnapshot(inputSnapshot, { maxChars = 60_000 } = {}) {
         id:           p.id,
         accountName:  p.accountName,
         propertyName: p.propertyName
+      }));
+    }
+
+    // accounts reducido (Ads)
+    if (Array.isArray(clone.accounts)) {
+      clone.accounts = clone.accounts.slice(0, 6).map(a => ({
+        id: String(a.id ?? ''),
+        name: a.name ?? null,
+        currency: a.currency ?? null,
+        timezone_name: a.timezone_name ?? null
       }));
     }
 
@@ -480,71 +573,41 @@ function buildHistoryContext({ type, previousAudit, trend }) {
   }
 
   const trendTxt = compactTrend(type, trend);
-  if (trendTxt) {
-    parts.push(`- Comparativa numérica clave (actual vs anterior):\n${trendTxt}`);
-  }
+  if (trendTxt) parts.push(`- Comparativa numérica clave (actual vs anterior):\n${trendTxt}`);
 
-  if (!parts.length) return '';
-  return parts.join('\n');
+  return parts.length ? parts.join('\n') : '';
 }
 
 /* ----------------------------- prompts ----------------------------- */
 const SYSTEM_ADS = (platform) => `
 Eres un consultor senior de performance marketing especializado en ${platform}.
-Tu rol es auditar campañas con mentalidad de negocio: priorizas rentabilidad (ROAS), eficiencia (CPA/CPC) y volumen de conversiones por encima de métricas de vanidad.
-Estilo: extremadamente claro y profesional, sin frases de relleno ni explicaciones obvias.
+Auditas con mentalidad de negocio: priorizas rentabilidad (ROAS), eficiencia (CPA/CPC) y volumen de conversiones.
 
-Objetivo principal:
-- Detectar y priorizar los 3–5 problemas y oportunidades de mayor impacto en resultados.
-- Ayudar al anunciante a tomar decisiones concretas sobre presupuesto, pujas, segmentación y creatividades.
-
-Instrucciones generales:
-- Analiza primero las campañas ACTIVAS; las pausadas o finalizadas solo sirven como contexto histórico.
-- No te limites a describir métricas: explica brevemente qué implican para el negocio (pérdida de ventas, coste desperdiciado, oportunidades de escalado, etc.).
-- Utiliza siempre números específicos del snapshot (gasto, impresiones, CTR, conversiones, ROAS, CPA, etc.) en la evidencia de cada issue.
-- Si el snapshot incluye un objeto "diagnostics", úsalo como radar inicial para focalizarte en:
-  - campañas con CPA alto o ROAS bajo,
-  - campañas/adsets con CTR muy bajo,
-  - gasto significativo sin conversiones,
-  - problemas de estructura (muchas campañas pequeñas con poco volumen).
-- Evita repetir la misma idea en varios issues: agrupa hallazgos similares en un solo issue fuerte y bien justificado.
-
-Formato de salida:
-- "summary": síntesis ejecutiva (máximo 3–5 frases) pensada para un director de marketing.
-- Cada elemento de "issues" combina:
-  - evidencia numérica concreta, y
-  - recomendaciones tácticas muy accionables (2–4 frases).
-- Tono siempre en español neutro, directo y profesional.
-- Devuelve exclusivamente JSON válido, sin texto adicional antes o después.
-- Nunca inventes campañas, métricas ni estructuras que no existan en el snapshot.
+Reglas:
+- Prioriza campañas ACTIVAS (status=active). Pausadas solo como contexto.
+- Cada issue debe contener evidencia numérica concreta extraída del snapshot (gasto, impresiones, CTR, conversiones, ROAS, CPA...).
+- Si existe "diagnostics", úsalo como radar para elegir los hallazgos de mayor impacto (CPA alto, CTR bajo, gasto sin conversiones, estructura débil).
+- Evita duplicados: agrupa hallazgos similares en un solo issue fuerte.
+- Tono: español neutro, directo, sin relleno.
+- Devuelve exclusivamente JSON válido (response_format json_object). No agregues texto fuera del JSON.
+- Nunca inventes campañas o métricas.
 `.trim();
 
 const SYSTEM_GA = `
 Eres un consultor senior de analítica digital especializado en Google Analytics 4 (GA4).
-Tu rol es traducir datos en decisiones de negocio: qué canales, páginas y dispositivos están impulsando o frenando resultados.
+Tu rol es convertir datos en decisiones accionables de negocio.
 
-Estilo:
-- Ejecutivo, claro y directo.
-- Sin jerga innecesaria y sin texto de relleno.
-- Siempre orientado a responder "¿qué está pasando?" y "¿qué deberíamos hacer?".
+Qué debes buscar (prioriza 3–5 hallazgos):
+- Canales con mucho volumen pero baja conversión (ineficiencia / tráfico de baja calidad).
+- Landing pages con sesiones altas y conversion rate bajo (fricción o mismatch de intención).
+- Brechas fuertes por dispositivo (UX / velocidad / checkout).
+- Señales de tracking roto o mal configurado (sesiones altas con 0 conversiones, eventos clave ausentes, caídas fuertes en tendencia).
+- Si existen "daily", "sourceMedium" o "topEvents", úsalos para detectar causales y no quedarte en lo superficial.
 
-Objetivo:
-- Identificar los 3–5 hallazgos más importantes sobre:
-  - rendimiento de canales,
-  - calidad y comportamiento del tráfico,
-  - páginas de aterrizaje,
-  - diferencias relevantes entre dispositivos.
-- Responder a preguntas como:
-  - ¿dónde se está perdiendo negocio?,
-  - ¿qué canal/página/dispositivo es la mejor palanca de crecimiento?,
-  - ¿qué experimentos o correcciones deberían priorizarse?
-
-Formato de salida:
-- "summary": síntesis ejecutiva (3–5 frases) que un director pueda leer en menos de un minuto.
-- Cada "issue" debe incluir evidencia numérica muy concreta + 2–4 recomendaciones accionables (cambios, pruebas A/B, ajustes de canal, etc.).
-- Tono en español neutro, directo y profesional.
-- Devuelve exclusivamente JSON válido, sin texto adicional antes o después.
-- Nunca inventes métricas, canales ni segmentos que no existan en el snapshot.
+Reglas:
+- Evidencia numérica concreta del snapshot (máx 2–3 frases por evidence).
+- Recomendaciones accionables: 2–4 pasos específicos (experimentos A/B, corrección de eventos, UTMs, mapeo de conversiones, mejora de landing, etc.).
+- Devuelve exclusivamente JSON válido. No inventes métricas ni segmentos inexistentes.
 `.trim();
 
 const SCHEMA_ADS = `
@@ -575,7 +638,7 @@ const SCHEMA_GA = `
     "evidence": string,
     "recommendation": string,
     "estimatedImpact": "alto"|"medio"|"bajo",
-    "segmentRef": { "type": "channel", "name": string },
+    "segmentRef": { "type": "channel"|"device"|"landing"|"sourceMedium"|"event"|"general", "name": string },
     "accountRef": { "name": string, "property": string },
     "metrics": object,
     "links": [{ "label": string, "url": string }]
@@ -586,30 +649,21 @@ const SCHEMA_GA = `
 function makeUserPrompt({ snapshotStr, historyStr, maxFindings, minFindings, isAnalytics }) {
   const adsExtras = `
 - Cada issue DEBE incluir:
-  - accountRef con { id, name } representando la cuenta publicitaria.
-  - campaignRef con { id, name } representando la campaña (o conjunto de anuncios más relevante).
-  - metrics con un pequeño objeto que resuma las métricas clave que cites en evidence (por ejemplo: { "spend": número, "conversions": número, "roas": número, "cpa": número }).
-- Usa el campo "status" de las campañas (active/paused/unknown) para priorizar: céntrate en lo que hoy está gastando dinero.
-- Utiliza, cuando existan, los bloques de "diagnostics" (por ejemplo: worstCpaCampaigns, lowCtrCampaigns, highSpendNoConvAdsets, limitedLearning, structureIssues) como candidatos prioritarios para construir issues de alto impacto.
-- La severidad ("severity") debe reflejar el riesgo/impacto real para el negocio:
-  - "alta" para problemas que puedan destruir ROAS, disparar CPA o quemar presupuesto de forma significativa.
-  - "media" para oportunidades relevantes pero no críticas.
-  - "baja" para ajustes finos o mejoras marginales.
-- El campo "area" clasifica el origen principal del problema: elige la categoría más representativa (por ejemplo, "budget" si el principal problema es la asignación de inversión, "bidding" si es estrategia de puja, "creative" si es calidad de anuncios, etc.).
-  `.trim();
+  - accountRef { id, name } (cuenta publicitaria).
+  - campaignRef { id, name } (campaña más relevante).
+  - metrics (objeto pequeño con las métricas citadas).
+- Usa status=active para priorizar.
+- Usa diagnostics como shortlist de candidatos.
+`.trim();
 
   const gaExtras = `
 - Cada issue DEBE incluir:
-  - accountRef con { name, property } para indicar la propiedad de GA4 analizada.
-  - segmentRef con el canal o segmento principal afectado (por ejemplo "Organic Search", "Paid Social", "Direct", "Mobile", etc.).
-  - metrics con un pequeño objeto que resuma las métricas clave citadas en evidence (por ejemplo: { "sessions": número, "conversions": número, "convRate": número, "revenue": número }).
-- Usa los bloques de "diagnostics.ga4" cuando existan, en especial:
-  - lowConvChannels para detectar canales con mucho tráfico pero poca conversión.
-  - badLandingPages para identificar páginas de destino problemáticas.
-  - deviceGaps para resaltar diferencias fuertes entre dispositivos.
-- La severidad ("severity") debe reflejar el impacto potencial en ingresos, leads o conversiones.
-- El campo "area" clasifica si el problema es de configuración (setup/tracking), calidad de tráfico (performance), experiencia en página (creative/landing) o de asignación de presupuesto/canales (budget/performance).
-  `.trim();
+  - accountRef { name, property } (propiedad GA4).
+  - segmentRef (tipo + nombre): channel/device/landing/sourceMedium/event.
+  - metrics (objeto pequeño con métricas citadas).
+- Usa diagnostics.ga4 si existe (lowConvChannels, badLandingPages, deviceGaps, trackingFlags).
+- Si daily/sourceMedium/topEvents existen, úsalos para explicar el “por qué” y proponer acciones concretas.
+`.trim();
 
   const historyBlock = historyStr
     ? `
@@ -621,23 +675,17 @@ ${historyStr}
   return `
 CONSIGNA GENERAL
 - Devuelve JSON válido EXACTAMENTE con la forma: { "summary": string, "issues": Issue[] }.
-- Genera entre ${minFindings} y ${maxFindings} issues, priorizando SIEMPRE entre 3 y 5 issues de mayor impacto cuando haya datos suficientes.
-- Si los datos son muy limitados (casi sin impresiones/sesiones ni conversions), puedes devolver solo 1–2 issues muy sólidos.
-- Si en el snapshot existen campañas/canales con gasto, impresiones o sesiones significativas, NO está permitido devolver una lista vacía de issues: debes generar al menos ${minFindings} issues.
-- Idioma: español neutro, directo y claro, como un consultor senior hablando con un CMO.
-- Escribe en párrafos cortos (2–4 frases por issue como máximo) y evita texto redundante.
-- Prohibido inventar métricas, campañas, canales o propiedades que no estén en el snapshot.
-- El snapshot puede incluir un objeto "diagnostics" con análisis previos
-  (peores campañas por CPA, CTR bajo, landings débiles, gaps entre dispositivos, etc.).
-  Úsalo como punto de partida para priorizar hallazgos y no ignores esa información.
+- Genera entre ${minFindings} y ${maxFindings} issues.
+- Si hay volumen relevante (sesiones/gasto), NO puedes devolver issues vacíos.
+- Idioma: español neutro, directo, estilo consultor senior.
+- Prohibido inventar métricas, campañas, canales o propiedades.
 
 REQUISITOS POR ISSUE
-- Cada "issue" DEBE incluir:
-  ${isAnalytics ? gaExtras : adsExtras}
-  - "evidence": un texto muy concreto con las métricas clave (máximo 2–3 frases).
-  - "recommendation": 2–4 pasos accionables y específicos, no genéricos ("mejorar creativos" a secas no es suficiente).
-  - "estimatedImpact": "alto" | "medio" | "bajo", coherente con la intensidad del problema y el volumen afectado.
-- Ordena los issues de mayor a menor impacto percibido.
+${isAnalytics ? gaExtras : adsExtras}
+- evidence: métricas concretas (máx 2–3 frases).
+- recommendation: 2–4 pasos accionables y específicos.
+- estimatedImpact coherente (alto/medio/bajo).
+- Ordena los issues de mayor a menor impacto.
 
 ${historyBlock ? historyBlock + '\n' : ''}
 
@@ -675,7 +723,6 @@ async function chatJSON({ system, user, model = DEFAULT_MODEL, retries = 1 }) {
       lastErr = e;
       const code = e?.status || e?.response?.status;
       console.error('[LLM:ERROR] Intento falló', code, e?.message, e?.response?.data || e?.response?.body || '');
-      // solo reintento en 429/5xx
       if ((code === 429 || (code >= 500 && code < 600)) && i < retries) {
         await new Promise(r => setTimeout(r, 700 * (i + 1)));
         continue;
@@ -684,6 +731,73 @@ async function chatJSON({ system, user, model = DEFAULT_MODEL, retries = 1 }) {
     }
   }
   throw lastErr || new Error('openai_failed');
+}
+
+/* ---------------- refs hydration (NO inventa, solo usa snapshot) ---------------- */
+function pickAdsAccount(snapshot) {
+  const accounts = Array.isArray(snapshot?.accounts) ? snapshot.accounts : [];
+  if (accounts[0]?.id) return { id: String(accounts[0].id), name: String(accounts[0].name || '') };
+  return null;
+}
+
+function pickAdsCampaign(snapshot) {
+  const byCampaign = Array.isArray(snapshot?.byCampaign) ? snapshot.byCampaign : [];
+  if (byCampaign[0]?.id) return { id: String(byCampaign[0].id), name: String(byCampaign[0].name || '') };
+  return null;
+}
+
+function pickGAProperty(snapshot) {
+  // Prefer: snapshot.property, luego properties[0], luego byProperty[0]
+  const prop =
+    (snapshot?.property ? String(snapshot.property) : '') ||
+    (Array.isArray(snapshot?.properties) && snapshot.properties[0]?.id ? String(snapshot.properties[0].id) : '') ||
+    (Array.isArray(snapshot?.byProperty) && snapshot.byProperty[0]?.property ? String(snapshot.byProperty[0].property) : '');
+
+  const name =
+    (snapshot?.propertyName ? String(snapshot.propertyName) : '') ||
+    (Array.isArray(snapshot?.properties) && snapshot.properties[0]?.propertyName ? String(snapshot.properties[0].propertyName) : '') ||
+    (Array.isArray(snapshot?.byProperty) && snapshot.byProperty[0]?.propertyName ? String(snapshot.byProperty[0].propertyName) : '');
+
+  if (!prop && !name) return null;
+  return { property: prop || '', name: name || '' };
+}
+
+function hydrateIssueRefs({ issue, type, snapshot }) {
+  const analytics = isGA(type);
+
+  if (!analytics) {
+    if (!issue.accountRef) {
+      const a = pickAdsAccount(snapshot);
+      if (a) issue.accountRef = a;
+    }
+    if (!issue.campaignRef) {
+      const c = pickAdsCampaign(snapshot);
+      if (c) issue.campaignRef = c;
+    }
+    return issue;
+  }
+
+  // GA4
+  if (!issue.accountRef) {
+    const p = pickGAProperty(snapshot);
+    if (p) issue.accountRef = { name: p.name || '', property: p.property || '' };
+  } else {
+    // asegurar shape
+    issue.accountRef = {
+      name: String(issue.accountRef.name || ''),
+      property: String(issue.accountRef.property || ''),
+    };
+  }
+
+  if (!issue.segmentRef) {
+    issue.segmentRef = { type: 'general', name: 'General' };
+  } else {
+    issue.segmentRef = {
+      type: String(issue.segmentRef.type || 'general'),
+      name: String(issue.segmentRef.name || 'General'),
+    };
+  }
+  return issue;
 }
 
 /* ----------------------------- entry point ---------------------------- */
@@ -700,9 +814,13 @@ module.exports = async function generateAudit({
   const analytics = isGA(t);
 
   const haveAdsData = Array.isArray(inputSnapshot?.byCampaign) && inputSnapshot.byCampaign.length > 0;
-  const haveGAData  =
+
+  // GA: ahora consideramos también daily/sourceMedium/topEvents como “data real”
+  const haveGAData =
     (Array.isArray(inputSnapshot?.channels)   && inputSnapshot.channels.length   > 0) ||
-    (Array.isArray(inputSnapshot?.byProperty) && inputSnapshot.byProperty.length > 0);
+    (Array.isArray(inputSnapshot?.byProperty) && inputSnapshot.byProperty.length > 0) ||
+    (Array.isArray(inputSnapshot?.daily)      && inputSnapshot.daily.length      > 0) ||
+    (Array.isArray(inputSnapshot?.sourceMedium) && inputSnapshot.sourceMedium.length > 0);
 
   const haveData = analytics ? haveGAData : haveAdsData;
 
@@ -726,6 +844,9 @@ module.exports = async function generateAudit({
       hasByCampaign: !!inputSnapshot?.byCampaign?.length,
       hasChannels: !!inputSnapshot?.channels?.length,
       hasByProperty: !!inputSnapshot?.byProperty?.length,
+      hasDaily: !!inputSnapshot?.daily?.length,
+      hasSourceMedium: !!inputSnapshot?.sourceMedium?.length,
+      hasTopEvents: !!inputSnapshot?.topEvents?.length,
       hasHistory: !!historyStr,
     });
     console.log('[LLM:SNAPSHOT]', tinySnapshot(snapshotForLLM, { maxChars: 2000 }));
@@ -746,7 +867,7 @@ module.exports = async function generateAudit({
   try {
     parsed = await chatJSON({ system, user: userPrompt, model });
   } catch (e) {
-    // Importante: no rompemos el flujo aunque la IA falle; devolvemos sin issues.
+    // no rompemos el flujo
     const code = e?.status || e?.response?.status;
     console.error('[LLM:ERROR] Falló definitivamente', code, e?.message);
   }
@@ -757,20 +878,29 @@ module.exports = async function generateAudit({
   if (parsed && typeof parsed === 'object') {
     summary = typeof parsed.summary === 'string' ? parsed.summary : '';
     issues = Array.isArray(parsed.issues) ? parsed.issues : [];
-    issues = issues.map((it, i) => ({
-      id: it.id || `ai-${type}-${Date.now()}-${i}`,
-      title: String(it.title || 'Hallazgo'),
-      area: areaNorm(it.area),
-      severity: sevNorm(it.severity),
-      evidence: String(it.evidence || ''),
-      recommendation: String(it.recommendation || ''),
-      estimatedImpact: impactNorm(it.estimatedImpact),
-      accountRef: it.accountRef || null,
-      campaignRef: it.campaignRef,
-      segmentRef: it.segmentRef,
-      metrics: (it.metrics && typeof it.metrics === 'object') ? it.metrics : {},
-      links: Array.isArray(it.links) ? it.links : []
-    }));
+    issues = issues
+      .filter(it => it && typeof it === 'object')
+      .map((it, i) => {
+        const base = {
+          id: it.id || `ai-${type}-${Date.now()}-${i}`,
+          title: String(it.title || 'Hallazgo'),
+          area: areaNorm(it.area),
+          severity: sevNorm(it.severity),
+          evidence: String(it.evidence || ''),
+          recommendation: String(it.recommendation || ''),
+          estimatedImpact: impactNorm(it.estimatedImpact),
+          accountRef: it.accountRef || null,
+          campaignRef: it.campaignRef,
+          segmentRef: it.segmentRef,
+          metrics: (it.metrics && typeof it.metrics === 'object') ? it.metrics : {},
+          links: Array.isArray(it.links) ? it.links : []
+        };
+
+        // ✅ Hidrata refs solo si existen en snapshot (NO inventa)
+        return hydrateIssueRefs({ issue: base, type, snapshot: inputSnapshot });
+      })
+      // saneo: descartar issues vacíos
+      .filter(it => (it.title && (it.evidence || it.recommendation)));
   }
 
   if (process.env.DEBUG_AUDIT === 'true') {

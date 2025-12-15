@@ -147,6 +147,59 @@ function intersect(aSet, ids) {
   return out;
 }
 
+/* ====================== Objective (derivado) ====================== */
+/**
+ * Google Ads API no da un "goal" perfecto como UI en todos los casos.
+ * Derivamos un objective estable con señales:
+ *  - channelType / channelSubType
+ *  - biddingStrategyType
+ *
+ * OJO: esto NO cambia tus KPIs, solo añade contexto para la IA.
+ */
+function deriveGoogleCampaignObjective({ channelType, channelSubType, biddingStrategyType }) {
+  const ct  = String(channelType || '').toUpperCase();
+  const cst = String(channelSubType || '').toUpperCase();
+  const bst = String(biddingStrategyType || '').toUpperCase();
+
+  // 1) PMax / Shopping típicamente orientado a ventas (cuando hay ecommerce)
+  if (ct === 'PERFORMANCE_MAX' || cst.includes('SHOPPING') || ct === 'SHOPPING') {
+    return 'SALES';
+  }
+
+  // 2) Bidding orientado a valor → ventas
+  if (bst.includes('MAXIMIZE_CONVERSION_VALUE') || bst.includes('TARGET_ROAS')) {
+    return 'SALES';
+  }
+
+  // 3) Bidding orientado a conversiones → leads (o ventas si ecommerce; sin señal extra lo marcamos LEADS)
+  if (bst.includes('MAXIMIZE_CONVERSIONS') || bst.includes('TARGET_CPA')) {
+    return 'LEADS';
+  }
+
+  // 4) Tráfico
+  if (bst.includes('MAXIMIZE_CLICKS')) {
+    return 'TRAFFIC';
+  }
+
+  // 5) Awareness / Reach
+  if (bst.includes('TARGET_IMPRESSION_SHARE') || bst.includes('TARGET_CPM') || bst.includes('MANUAL_CPM')) {
+    return 'AWARENESS';
+  }
+
+  // 6) Video views (señal por canal o estrategia CPV)
+  if (ct === 'VIDEO' || bst.includes('MANUAL_CPV') || bst.includes('TARGET_CPV')) {
+    return 'VIDEO_VIEWS';
+  }
+
+  // 7) Display por defecto suele ser awareness si no hay estrategia de conv
+  if (ct === 'DISPLAY') {
+    return 'AWARENESS';
+  }
+
+  // 8) Search / otros: si no hay señal, dejamos OTHER
+  return 'OTHER';
+}
+
 /* ====================== GAQL por campañas ====================== */
 
 /**
@@ -170,6 +223,9 @@ async function accumulateCampaignBreakdowns({
       campaign.id,
       campaign.name,
       campaign.status,
+      campaign.advertising_channel_type,
+      campaign.advertising_channel_sub_type,
+      campaign.bidding_strategy_type,
       segments.date,
       segments.device,
       segments.ad_network_type,
@@ -209,6 +265,29 @@ async function accumulateCampaignBreakdowns({
 
     if (!id) continue;
 
+    // Campos extra (robusto ante diferentes shapes)
+    const channelType =
+      camp.advertisingChannelType ||
+      camp.advertising_channel_type ||
+      camp.advertisingChannelTypeEnum ||
+      null;
+
+    const channelSubType =
+      camp.advertisingChannelSubType ||
+      camp.advertising_channel_sub_type ||
+      null;
+
+    const biddingStrategyType =
+      camp.biddingStrategyType ||
+      camp.bidding_strategy_type ||
+      null;
+
+    const objective = deriveGoogleCampaignObjective({
+      channelType,
+      channelSubType,
+      biddingStrategyType,
+    });
+
     const impressions = Number(met.impressions || 0);
     const clicks      = Number(met.clicks || 0);
     const costMicros  = met.costMicros ?? met.cost_micros ?? 0;
@@ -227,9 +306,22 @@ async function accumulateCampaignBreakdowns({
       c = {
         account_id: cid,
         accountId: cid,
+
+        // compat / naming
         id,
         name,
+        campaign_id: id,
+        campaignId: id,
+        campaignName: name,
+
         status,
+
+        // contexto extra
+        channelType: channelType ? String(channelType) : null,
+        channelSubType: channelSubType ? String(channelSubType) : null,
+        biddingStrategyType: biddingStrategyType ? String(biddingStrategyType) : null,
+        objective,
+
         impressions: 0,
         clicks: 0,
         cost: 0,
@@ -254,7 +346,15 @@ async function accumulateCampaignBreakdowns({
         campaign_id: id,
         campaignId: id,
         campaignName: name,
+
         device,
+
+        // contexto extra
+        channelType: channelType ? String(channelType) : null,
+        channelSubType: channelSubType ? String(channelSubType) : null,
+        biddingStrategyType: biddingStrategyType ? String(biddingStrategyType) : null,
+        objective,
+
         impressions: 0,
         clicks: 0,
         cost: 0,
@@ -279,7 +379,15 @@ async function accumulateCampaignBreakdowns({
         campaign_id: id,
         campaignId: id,
         campaignName: name,
+
         network,
+
+        // contexto extra
+        channelType: channelType ? String(channelType) : null,
+        channelSubType: channelSubType ? String(channelSubType) : null,
+        biddingStrategyType: biddingStrategyType ? String(biddingStrategyType) : null,
+        objective,
+
         impressions: 0,
         clicks: 0,
         cost: 0,
@@ -753,7 +861,7 @@ async function collectGoogle(userId, opts = {}) {
     defaultCustomerId: gaDoc.defaultCustomerId ? normId(gaDoc.defaultCustomerId) : null,
     accounts,
     targets: { cpaHigh: 15 },
-    version: 'gadsCollector@fetchInsights-campaigns-no-mcc',
+    version: 'gadsCollector@fetchInsights-campaigns+objective',
   };
 }
 

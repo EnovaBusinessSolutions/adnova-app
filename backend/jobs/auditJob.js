@@ -58,7 +58,6 @@ const normGoogle = (s='') => String(s).trim().replace(/^customers\//,'').replace
 const normGA4 = (s='') => {
   const raw = String(s || '').trim();
   const digits = raw.replace(/^properties\//, '').replace(/[^\d]/g, '');
-  // preferimos dígitos si existen
   return digits || raw.replace(/^properties\//, '').trim();
 };
 const ga4ToApiName = (id='') => {
@@ -237,30 +236,36 @@ function filterGA4Snapshot(snapshot, selectedPropertyId) {
 
   const out = { ...snapshot };
 
-  // si el snapshot trae "gaProperties" o "properties"
   if (Array.isArray(out.gaProperties)) out.gaProperties = out.gaProperties.filter(matchPropId);
   if (Array.isArray(out.properties))   out.properties   = out.properties.filter(matchPropId);
 
-  // si trae "byProperty"
   if (Array.isArray(out.byProperty)) {
     out.byProperty = out.byProperty.filter(matchPropId);
-    // si solo queda 1, y trae aggregate por propiedad, intenta fijarlo
-    const one = out.byProperty[0];
-    if (one && one.aggregate && !out.aggregate) out.aggregate = one.aggregate;
-  }
 
-  // si trae un "propertyId" plano
-  if (out.propertyId || out.property_id || out.property) {
-    const pid = normGA4(out.propertyId || out.property_id || out.property);
-    if (pid !== wanted) {
-      // lo anulamos para no confundir
-      delete out.propertyId;
-      delete out.property_id;
-      delete out.property;
+    // ✅ MEJORA: si queda 1 property, fijamos aggregate a esa property (para que LLM/UI no use el global)
+    if (out.byProperty.length === 1) {
+      const one = out.byProperty[0];
+      const users       = Number(one?.users ?? one?.kpis?.users ?? 0);
+      const sessions    = Number(one?.sessions ?? one?.kpis?.sessions ?? 0);
+      const conversions = Number(one?.conversions ?? one?.kpis?.conversions ?? 0);
+      const revenue     = Number(one?.revenue ?? one?.kpis?.revenue ?? 0);
+      out.aggregate = { users, sessions, conversions, revenue };
+      out.property = one?.property || out.property || ga4ToApiName(wanted) || wanted;
+      out.propertyName = one?.propertyName || out.propertyName || '';
+      out.accountName = one?.accountName || out.accountName || '';
     }
   }
 
-  // marcar explícitamente cuál se auditó
+  if (out.propertyId || out.property_id || out.property) {
+    const pid = normGA4(out.propertyId || out.property_id || out.property);
+    if (pid !== wanted) {
+      delete out.propertyId;
+      delete out.property_id;
+      // out.property lo mantenemos si ya lo set arriba; si no, se limpia:
+      if (!out.property || normGA4(out.property) !== wanted) delete out.property;
+    }
+  }
+
   out.selectedPropertyId = ga4ToApiName(wanted) || wanted;
   return out;
 }
@@ -474,14 +479,10 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     if (t === 'google') {
       raw = await collectGoogle(userId);
 
-      // Si el collector pide selección pero YA hay selección (o está por guardarse),
-      // evitamos falso "Sin permisos" por condición de carrera.
       if (raw?.requiredSelection && String(raw?.reason || '').startsWith('SELECTION_REQUIRED')) {
-        // si no hay selección aún, damos chance corto en onboarding
         if (!selGoogle.length) {
           const waited = await waitForSelectionIfOnboarding({ userId, type: 'google', source });
           if (waited) {
-            // re-leemos selección tras esperar
             const conn2 = waited.conn;
             const user2 = waited.user;
             const sel2 = (
@@ -489,13 +490,11 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
             ).filter(Boolean).slice(0, 1);
 
             if (sel2.length) {
-              // retry collector ya con selección persistida (si el collector la usa internamente)
               raw = await collectGoogle(userId);
             }
           }
         }
 
-        // si aún no hay selección, sí guardamos issue de selección requerida
         if (!selGoogle.length) {
           const issue = buildSelectionRequiredIssue('google', raw);
           await Audit.create({
@@ -529,7 +528,6 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
         if (effectiveSel.length > 0) {
           snapshot = filterSnapshot('google', raw, effectiveSel);
         } else {
-          // mismatch: guardamos doc de setup claro
           const available = Array.from(snapshotIds);
           const issue = buildSelectionMismatchIssue({
             type: 'google',
@@ -555,7 +553,6 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       } else {
         snapshot = raw;
 
-        // fallback defensivo (solo si llega con >1 y no hay selección)
         if (!selGoogle.length && total > 1) {
           const picked = autoPickIds('google', raw, MAX_SELECT_PER_TYPE);
           snapshot = filterSnapshot('google', raw, picked);
@@ -660,12 +657,32 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     if (t === 'ga4') {
       if (!collectGA4) throw new Error('GA4_COLLECTOR_NOT_AVAILABLE');
 
-      raw = await collectGA4(userId);
+      // ✅ MEJORA: si ya hay selección (1), forzamos el collector a esa property (menos costo/latencia y menos ruido)
+      if (selGA4.length) {
+        const forced = ga4ToApiName(selGA4[0]) || selGA4[0];
+        raw = await collectGA4(userId, { property_id: forced });
+      } else {
+        raw = await collectGA4(userId);
+      }
 
       if (raw?.requiredSelection && String(raw?.reason || '').startsWith('SELECTION_REQUIRED')) {
         if (!selGA4.length) {
           const waited = await waitForSelectionIfOnboarding({ userId, type: 'ga4', source });
-          if (waited) raw = await collectGA4(userId);
+          if (waited) {
+            const conn2 = waited.conn;
+            const user2 = waited.user;
+
+            const userSel = Array.isArray(user2?.selectedGAProperties) ? user2.selectedGAProperties.map(normGA4) : [];
+            const connSel = conn2.google.selectedPropertyIds || [];
+            const eff = (connSel.length ? connSel : userSel).slice(0, 1);
+
+            if (eff.length) {
+              const forced = ga4ToApiName(eff[0]) || eff[0];
+              raw = await collectGA4(userId, { property_id: forced });
+            } else {
+              raw = await collectGA4(userId);
+            }
+          }
         }
 
         if (!selGA4.length) {
@@ -688,17 +705,14 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
         }
       }
 
-      // snapshot base
       snapshot = raw;
 
-      // ✅ APLICAR SELECCIÓN GA4 (1)
+      // ✅ APLICAR SELECCIÓN GA4 (1) (defensivo; aunque ya la forzamos arriba)
       if (selGA4.length) {
-        const wanted = selGA4[0]; // normalizado
+        const wanted = selGA4[0];
         const filtered = filterGA4Snapshot(snapshot, wanted);
 
-        // validación de que “sí existe” la property en el snapshot
         const avail = new Set();
-
         const pushAvail = (x) => {
           const n = normGA4(x);
           if (n) avail.add(n);
@@ -708,9 +722,8 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
         (snapshot?.gaProperties || []).forEach((p) => pushAvail(p?.propertyId || p?.property_id || p?.name || p?.id));
         (snapshot?.properties || []).forEach((p) => pushAvail(p?.propertyId || p?.property_id || p?.name || p?.id));
-        (snapshot?.byProperty || []).forEach((p) => pushAvail(p?.propertyId || p?.property_id || p?.name || p?.id));
+        (snapshot?.byProperty || []).forEach((p) => pushAvail(p?.propertyId || p?.property_id || p?.name || p?.id || p?.property));
 
-        // Si el snapshot no trae listas, aún así dejamos pasar (algunos collectors retornan aggregate directo)
         if (avail.size) {
           if (!avail.has(normGA4(wanted))) {
             const issue = buildSelectionMismatchIssue({
@@ -759,9 +772,13 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     // ¿Tenemos datos reales tras el filtrado?
     const hasAdsData = Array.isArray(snapshot.byCampaign) && snapshot.byCampaign.length > 0;
 
+    // ✅ MEJORA: GA4 “hay data” considera también daily/sourceMedium/topEvents
     const hasGAData =
       (Array.isArray(snapshot.channels)   && snapshot.channels.length   > 0) ||
       (Array.isArray(snapshot.byProperty) && snapshot.byProperty.length > 0) ||
+      (Array.isArray(snapshot.daily)      && snapshot.daily.length      > 0) ||
+      (Array.isArray(snapshot.sourceMedium) && snapshot.sourceMedium.length > 0) ||
+      (Array.isArray(snapshot.topEvents)  && snapshot.topEvents.length  > 0) ||
       (snapshot.aggregate && (
         Number(snapshot.aggregate.users || 0)       > 0 ||
         Number(snapshot.aggregate.sessions || 0)    > 0 ||
