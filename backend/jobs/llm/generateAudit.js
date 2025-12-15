@@ -53,12 +53,66 @@ function dedupeIssues(issues = []) {
   const seen = new Set();
   const out = [];
   for (const it of issues || []) {
-    const key = `${(it.title || '').trim().toLowerCase()}::${it.accountRef?.id || it.accountRef?.property || ''}::${it.campaignRef?.id || ''}::${it.segmentRef?.type || ''}::${it.segmentRef?.name || ''}`;
+    const key =
+      `${(it.title || '').trim().toLowerCase()}::` +
+      `${it.accountRef?.id || it.accountRef?.property || ''}::` +
+      `${it.campaignRef?.id || ''}::` +
+      `${it.segmentRef?.type || ''}::${it.segmentRef?.name || ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(it);
   }
   return out;
+}
+
+/* ---------------------- Emojis (controlados y profesionales) ---------- */
+const AREA_EMOJI = {
+  setup: '🧩',
+  performance: '📈',
+  creative: '🎨',
+  tracking: '🎯',
+  budget: '💰',
+  bidding: '🤖'
+};
+
+const SEV_EMOJI = {
+  alta: '🚨',
+  media: '⚠️',
+  baja: '✅'
+};
+
+function startsWithEmoji(str = '') {
+  const s = String(str || '').trim();
+  if (!s) return false;
+  try {
+    // Node 18+ soporta unicode property escapes
+    return /^\p{Extended_Pictographic}/u.test(s);
+  } catch {
+    // fallback simple (no perfecto, pero seguro)
+    const c = s.codePointAt(0) || 0;
+    return c > 0x1F000;
+  }
+}
+
+function applyEmojiToTitle(issue) {
+  if (!issue || !issue.title) return issue;
+  const title = String(issue.title || '').trim();
+  if (!title) return issue;
+  if (startsWithEmoji(title)) return issue;
+
+  // 1 emoji máximo por título:
+  // - alta => 🚨
+  // - media/baja => emoji por área
+  const sev = sevNorm(issue.severity);
+  const area = areaNorm(issue.area);
+
+  const prefix =
+    sev === 'alta'
+      ? SEV_EMOJI.alta
+      : (AREA_EMOJI[area] || '📌');
+
+  issue.title = `${prefix} ${title}`.slice(0, 120);
+  return issue;
 }
 
 /* ---------------------- DIAGNOSTICS (pre-análisis) ------------------- */
@@ -89,6 +143,7 @@ function buildGoogleDiagnostics(snapshot = {}) {
       accountId: String(c.account_id ?? ''),
       campaignId: String(c.id ?? ''),
       campaignName: String(c.name ?? ''),
+      status: normStatus(c.status || c.state || c.servingStatus || c.effectiveStatus),
       cpa: c._cpa,
       conversions: c._conv,
       cost: c._cost,
@@ -111,6 +166,7 @@ function buildGoogleDiagnostics(snapshot = {}) {
       accountId: String(c.account_id ?? ''),
       campaignId: String(c.id ?? ''),
       campaignName: String(c.name ?? ''),
+      status: normStatus(c.status || c.state || c.servingStatus || c.effectiveStatus),
       impressions: c._impr,
       clicks: c._clicks,
       ctr: c._ctr,
@@ -130,6 +186,7 @@ function buildGoogleDiagnostics(snapshot = {}) {
       accountId: String(c.account_id ?? ''),
       campaignId: String(c.id ?? ''),
       campaignName: String(c.name ?? ''),
+      status: normStatus(c.status || c.state || c.servingStatus || c.effectiveStatus),
       impressions: c._impr,
       clicks: c._clicks,
       conversions: c._conv,
@@ -145,6 +202,49 @@ function buildGoogleDiagnostics(snapshot = {}) {
       smallCampaigns.length / Math.max(byCampaign.length, 1) > 0.6,
   };
 
+  // ✅ nuevas señales: “ganadoras” activas/pausadas (oportunidad)
+  const withRoas = byCampaign
+    .map(c => {
+      const cost = safeNum(c?.kpis?.cost ?? c?.kpis?.spend);
+      const val  = safeNum(c?.kpis?.conv_value ?? c?.kpis?.purchase_value);
+      const conv = safeNum(c?.kpis?.conversions);
+      const roas = safeDiv(val, cost);
+      const status = normStatus(c.status || c.state || c.servingStatus || c.effectiveStatus);
+      return { ...c, _cost: cost, _val: val, _conv: conv, _roas: roas, _status: status };
+    })
+    .filter(x => x._cost > 0 || x._conv > 0 || x._val > 0);
+
+  const activeWinners = [...withRoas]
+    .filter(x => x._status === 'active' && x._cost > 0 && x._val > 0)
+    .sort((a, b) => b._roas - a._roas)
+    .slice(0, 5)
+    .map(c => ({
+      accountId: String(c.account_id ?? ''),
+      campaignId: String(c.id ?? ''),
+      campaignName: String(c.name ?? ''),
+      roas: c._roas,
+      cost: c._cost,
+      conv_value: c._val,
+      conversions: c._conv,
+    }));
+
+  const pausedWinners = [...withRoas]
+    .filter(x => x._status === 'paused' && (x._val > 0 || x._conv > 0))
+    .sort((a, b) => (b._roas || 0) - (a._roas || 0))
+    .slice(0, 5)
+    .map(c => ({
+      accountId: String(c.account_id ?? ''),
+      campaignId: String(c.id ?? ''),
+      campaignName: String(c.name ?? ''),
+      roas: c._roas,
+      cost: c._cost,
+      conv_value: c._val,
+      conversions: c._conv,
+    }));
+
+  const activeCount = byCampaign.filter(c => normStatus(c.status || c.state || c.servingStatus || c.effectiveStatus) === 'active').length;
+  const pausedCount = byCampaign.filter(c => normStatus(c.status || c.state || c.servingStatus || c.effectiveStatus) === 'paused').length;
+
   return {
     kpis: {
       impressions: globalImpr,
@@ -153,10 +253,13 @@ function buildGoogleDiagnostics(snapshot = {}) {
       ctr: globalCtr,
       cr: globalCr,
     },
+    counts: { activeCount, pausedCount, totalCampaigns: byCampaign.length },
     worstCpaCampaigns,
     lowCtrCampaigns,
     limitedLearning,
     structureIssues,
+    activeWinners,
+    pausedWinners
   };
 }
 
@@ -170,7 +273,6 @@ function buildGa4Diagnostics(snapshot = {}) {
   const totalConv     = safeNum(aggregate.conversions);
   const globalCr      = safeDiv(totalConv, totalSessions);
 
-  // Señales extra (si tu collector ya las trae)
   const daily = Array.isArray(snapshot.daily) ? snapshot.daily : [];
   const sourceMedium = Array.isArray(snapshot.sourceMedium) ? snapshot.sourceMedium : [];
   const topEvents = Array.isArray(snapshot.topEvents) ? snapshot.topEvents : [];
@@ -231,7 +333,30 @@ function buildGa4Diagnostics(snapshot = {}) {
     if (diff > 0.01) deviceGaps = { bestDevice, worstDevice, diff };
   }
 
-  // Señal de posible tracking roto (no determinista, solo “bandera”)
+  // ✅ oportunidades GA4 (ganadores)
+  const bestChannels = channels
+    .map(ch => {
+      const sessions = safeNum(ch.sessions);
+      const conv     = safeNum(ch.conversions);
+      const cr       = safeDiv(conv, sessions);
+      return { channel: ch.channel, sessions, conversions: conv, convRate: cr, revenue: safeNum(ch.revenue) };
+    })
+    .filter(x => x.sessions > 300)
+    .sort((a, b) => (b.convRate - a.convRate) || (b.conversions - a.conversions))
+    .slice(0, 5);
+
+  const bestLandingPages = landings
+    .map(lp => {
+      const sessions = safeNum(lp.sessions);
+      const conv     = safeNum(lp.conversions);
+      const cr       = safeDiv(conv, sessions);
+      return { page: lp.page, sessions, conversions: conv, convRate: cr, revenue: safeNum(lp.revenue) };
+    })
+    .filter(x => x.sessions > 200)
+    .sort((a, b) => (b.convRate - a.convRate) || (b.conversions - a.conversions))
+    .slice(0, 5);
+
+  // tracking flags
   const sessionsLargeNoConv = totalSessions >= 500 && totalConv === 0;
   const hasPurchaseLikeEvent = topEvents.some(e => String(e.event || '').toLowerCase().includes('purchase'));
   const hasLeadLikeEvent = topEvents.some(e => {
@@ -239,7 +364,6 @@ function buildGa4Diagnostics(snapshot = {}) {
     return n.includes('generate_lead') || n.includes('lead') || n.includes('form');
   });
 
-  // caída fuerte vs últimos días (si hay daily)
   let last7 = null;
   if (daily.length >= 10) {
     const tail = daily.slice(-7);
@@ -250,6 +374,25 @@ function buildGa4Diagnostics(snapshot = {}) {
     const drop = s1 > 0 ? (s2 - s1) / s1 : 0;
     last7 = { prevSessions: s1, lastSessions: s2, dropPct: drop };
   }
+
+  // source/medium oportunidades (si existe)
+  const bestSourceMedium = sourceMedium
+    .map(x => {
+      const sessions = safeNum(x.sessions);
+      const conv = safeNum(x.conversions);
+      const cr = safeDiv(conv, sessions);
+      return {
+        source: x.source,
+        medium: x.medium,
+        sessions,
+        conversions: conv,
+        convRate: cr,
+        revenue: safeNum(x.revenue)
+      };
+    })
+    .filter(x => x.sessions > 200)
+    .sort((a, b) => (b.convRate - a.convRate) || (b.conversions - a.conversions))
+    .slice(0, 5);
 
   return {
     aggregate: {
@@ -262,6 +405,9 @@ function buildGa4Diagnostics(snapshot = {}) {
     lowConvChannels,
     badLandingPages,
     deviceGaps,
+    bestChannels,
+    bestLandingPages,
+    bestSourceMedium,
     trackingFlags: {
       sessionsLargeNoConv,
       hasPurchaseLikeEvent,
@@ -282,13 +428,17 @@ function buildMetaDiagnostics(snapshot = {}) {
   const globalCtr    = safeDiv(totalClicks, totalImpr);
   const globalCr     = safeDiv(totalConv, totalClicks);
 
-  const mapped = byCampaign.map(c => ({
-    ...c,
-    _spend: safeNum(c?.kpis?.spend ?? c?.kpis?.cost),
-    _conv:  safeNum(c?.kpis?.conversions),
-    _clicks: safeNum(c?.kpis?.clicks),
-    _impr: safeNum(c?.kpis?.impressions),
-  }));
+  const mapped = byCampaign.map(c => {
+    const spend = safeNum(c?.kpis?.spend ?? c?.kpis?.cost);
+    const conv  = safeNum(c?.kpis?.conversions);
+    const val   = safeNum(c?.kpis?.purchase_value ?? c?.kpis?.conv_value);
+    const impr  = safeNum(c?.kpis?.impressions);
+    const clicks= safeNum(c?.kpis?.clicks);
+    const status = normStatus(c.status || c.state || c.servingStatus || c.effectiveStatus);
+    const roas = safeDiv(val, spend);
+    const cpa  = safeDiv(spend, conv);
+    return { ...c, _spend: spend, _conv: conv, _val: val, _impr: impr, _clicks: clicks, _status: status, _roas: roas, _cpa: cpa };
+  });
 
   const highSpendNoConvAdsets = mapped
     .filter(c => c._spend > 100 && c._conv === 0)
@@ -298,6 +448,7 @@ function buildMetaDiagnostics(snapshot = {}) {
       accountId: String(c.account_id ?? ''),
       campaignId: String(c.id ?? ''),
       campaignName: String(c.name ?? ''),
+      status: c._status,
       spend: c._spend,
       impressions: c._impr,
       clicks: c._clicks,
@@ -315,10 +466,44 @@ function buildMetaDiagnostics(snapshot = {}) {
       accountId: String(c.account_id ?? ''),
       campaignId: String(c.id ?? ''),
       campaignName: String(c.name ?? ''),
+      status: c._status,
       impressions: c._impr,
       clicks: c._clicks,
       ctr: c._ctr,
     }));
+
+  const activeWinners = [...mapped]
+    .filter(c => c._status === 'active' && c._spend > 0 && (c._val > 0 || c._conv > 0))
+    .sort((a, b) => (b._roas - a._roas) || (b._conv - a._conv))
+    .slice(0, 5)
+    .map(c => ({
+      accountId: String(c.account_id ?? ''),
+      campaignId: String(c.id ?? ''),
+      campaignName: String(c.name ?? ''),
+      roas: c._roas,
+      spend: c._spend,
+      conv_value: c._val,
+      conversions: c._conv,
+      cpa: c._cpa
+    }));
+
+  const pausedWinners = [...mapped]
+    .filter(c => c._status === 'paused' && (c._val > 0 || c._conv > 0))
+    .sort((a, b) => (b._roas - a._roas) || (b._conv - a._conv))
+    .slice(0, 5)
+    .map(c => ({
+      accountId: String(c.account_id ?? ''),
+      campaignId: String(c.id ?? ''),
+      campaignName: String(c.name ?? ''),
+      roas: c._roas,
+      spend: c._spend,
+      conv_value: c._val,
+      conversions: c._conv,
+      cpa: c._cpa
+    }));
+
+  const activeCount = mapped.filter(x => x._status === 'active').length;
+  const pausedCount = mapped.filter(x => x._status === 'paused').length;
 
   return {
     kpis: {
@@ -329,8 +514,11 @@ function buildMetaDiagnostics(snapshot = {}) {
       ctr: globalCtr,
       cr: globalCr,
     },
+    counts: { activeCount, pausedCount, totalCampaigns: byCampaign.length },
     highSpendNoConvAdsets,
     lowCtrAdsets,
+    activeWinners,
+    pausedWinners
   };
 }
 
@@ -342,24 +530,15 @@ function buildDiagnostics(source, snapshot) {
   return {};
 }
 
-/**
- * ✅ Snapshot compacto pero “inteligente”:
- * - Mantiene tu compatibilidad
- * - Incluye señales nuevas de GA4 (daily, sourceMedium, topEvents) si existen
- */
+/* ---------------- snapshot compacto (compatible + señales extra) ------ */
 function tinySnapshot(inputSnapshot, { maxChars = 70_000 } = {}) {
   try {
     const clone = JSON.parse(JSON.stringify(inputSnapshot || {}));
 
-    // --- Ads: byCampaign reducido (Google/Meta) ---
     if (Array.isArray(clone.byCampaign)) {
       const rawList = clone.byCampaign.map(c => {
         const statusNorm = normStatus(
-          c.status ||
-          c.state ||
-          c.servingStatus ||
-          c.serving_status ||
-          c.effectiveStatus
+          c.status || c.state || c.servingStatus || c.serving_status || c.effectiveStatus
         );
 
         return {
@@ -407,7 +586,6 @@ function tinySnapshot(inputSnapshot, { maxChars = 70_000 } = {}) {
       clone.byCampaign = ordered.slice(0, 60);
     }
 
-    // --- GA4: channels reducido (y con engagedSessions si existe) ---
     if (Array.isArray(clone.channels)) {
       clone.channels = clone.channels.slice(0, 60).map(ch => ({
         channel:     ch.channel,
@@ -421,7 +599,6 @@ function tinySnapshot(inputSnapshot, { maxChars = 70_000 } = {}) {
       }));
     }
 
-    // --- GA4: devices reducido ---
     if (Array.isArray(clone.devices)) {
       clone.devices = clone.devices.slice(0, 15).map(d => ({
         device: d.device,
@@ -434,7 +611,6 @@ function tinySnapshot(inputSnapshot, { maxChars = 70_000 } = {}) {
       }));
     }
 
-    // --- GA4: landingPages reducido ---
     if (Array.isArray(clone.landingPages)) {
       clone.landingPages = clone.landingPages
         .slice(0, 80)
@@ -448,7 +624,6 @@ function tinySnapshot(inputSnapshot, { maxChars = 70_000 } = {}) {
         }));
     }
 
-    // --- GA4: daily trend (si existe) ---
     if (Array.isArray(clone.daily)) {
       clone.daily = clone.daily
         .slice(-45)
@@ -461,7 +636,6 @@ function tinySnapshot(inputSnapshot, { maxChars = 70_000 } = {}) {
         }));
     }
 
-    // --- GA4: source/medium (si existe) ---
     if (Array.isArray(clone.sourceMedium)) {
       clone.sourceMedium = clone.sourceMedium
         .slice(0, 80)
@@ -476,7 +650,6 @@ function tinySnapshot(inputSnapshot, { maxChars = 70_000 } = {}) {
         }));
     }
 
-    // --- GA4: top events (si existe) ---
     if (Array.isArray(clone.topEvents)) {
       clone.topEvents = clone.topEvents
         .slice(0, 80)
@@ -487,13 +660,11 @@ function tinySnapshot(inputSnapshot, { maxChars = 70_000 } = {}) {
         }));
     }
 
-    // byProperty reducido (GA4 multi-property)
     if (Array.isArray(clone.byProperty)) {
       clone.byProperty = clone.byProperty.slice(0, 10).map(p => ({
         property:     p.property,
         propertyName: p.propertyName,
         accountName:  p.accountName,
-        // soporta tanto tu v2 como v3 (kpis)
         users:       toNum(p.users ?? p?.kpis?.users),
         sessions:    toNum(p.sessions ?? p?.kpis?.sessions),
         conversions: toNum(p.conversions ?? p?.kpis?.conversions),
@@ -502,7 +673,6 @@ function tinySnapshot(inputSnapshot, { maxChars = 70_000 } = {}) {
       }));
     }
 
-    // properties reducido
     if (Array.isArray(clone.properties)) {
       clone.properties = clone.properties.slice(0, 10).map(p => ({
         id:           p.id,
@@ -511,7 +681,6 @@ function tinySnapshot(inputSnapshot, { maxChars = 70_000 } = {}) {
       }));
     }
 
-    // accounts reducido (Ads)
     if (Array.isArray(clone.accounts)) {
       clone.accounts = clone.accounts.slice(0, 6).map(a => ({
         id: String(a.id ?? ''),
@@ -581,14 +750,27 @@ function buildHistoryContext({ type, previousAudit, trend }) {
 /* ----------------------------- prompts ----------------------------- */
 const SYSTEM_ADS = (platform) => `
 Eres un consultor senior de performance marketing especializado en ${platform}.
-Auditas con mentalidad de negocio: priorizas rentabilidad (ROAS), eficiencia (CPA/CPC) y volumen de conversiones.
+Auditas con mentalidad de negocio: priorizas ROAS, CPA/CPC y volumen de conversiones.
 
-Reglas:
-- Prioriza campañas ACTIVAS (status=active). Pausadas solo como contexto.
-- Cada issue debe contener evidencia numérica concreta extraída del snapshot (gasto, impresiones, CTR, conversiones, ROAS, CPA...).
-- Si existe "diagnostics", úsalo como radar para elegir los hallazgos de mayor impacto (CPA alto, CTR bajo, gasto sin conversiones, estructura débil).
-- Evita duplicados: agrupa hallazgos similares en un solo issue fuerte.
-- Tono: español neutro, directo, sin relleno.
+REGLAS DE PRIORIZACIÓN (muy importante):
+- Si existen campañas ACTIVAS (status=active), entonces:
+  - 80% de los issues deben basarse en campañas ACTIVAS con impacto material (gasto/impresiones/conversiones).
+  - Puedes incluir como máximo 1 issue sobre campañas PAUSADAS solo si es una oportunidad clara (reactivar una ganadora, rescatar un setup útil, o comparar contra una activa).
+- Si NO hay campañas activas, entonces sí puedes usar PAUSADAS como base principal (y debes explicarlo).
+- Prioriza siempre lo “relevante”: campañas con gasto significativo, o que expliquen la mayoría del rendimiento (bueno o malo).
+
+Cómo detectar “oportunidades” (además de problemas):
+- Escalado: campañas activas con ROAS alto / CPA bajo / buen volumen → propón cómo escalar sin romper eficiencia.
+- Reactivación: campañas pausadas con conversiones y/o ROAS fuerte → propone reactivación controlada y validación.
+- Recorte: gasto alto sin conversiones, CTR bajo con volumen, aprendizaje limitado.
+
+Uso de datos:
+- Cada issue debe incluir evidencia numérica concreta del snapshot (gasto, impresiones, CTR, conversiones, ROAS, CPA...).
+- Si existe "diagnostics", úsalo como radar (worstCpa, lowCtr, highSpendNoConv, limitedLearning, structureIssues, activeWinners, pausedWinners).
+
+Formato y estilo:
+- Tono: español neutro, directo, profesional, sin relleno.
+- Emojis: usa 1 emoji al inicio del title como máximo (ej: "📈", "🎯", "💰", "🚨"). No uses emojis en evidence/recommendation.
 - Devuelve exclusivamente JSON válido (response_format json_object). No agregues texto fuera del JSON.
 - Nunca inventes campañas o métricas.
 `.trim();
@@ -597,16 +779,25 @@ const SYSTEM_GA = `
 Eres un consultor senior de analítica digital especializado en Google Analytics 4 (GA4).
 Tu rol es convertir datos en decisiones accionables de negocio.
 
-Qué debes buscar (prioriza 3–5 hallazgos):
-- Canales con mucho volumen pero baja conversión (ineficiencia / tráfico de baja calidad).
-- Landing pages con sesiones altas y conversion rate bajo (fricción o mismatch de intención).
-- Brechas fuertes por dispositivo (UX / velocidad / checkout).
-- Señales de tracking roto o mal configurado (sesiones altas con 0 conversiones, eventos clave ausentes, caídas fuertes en tendencia).
-- Si existen "daily", "sourceMedium" o "topEvents", úsalos para detectar causales y no quedarte en lo superficial.
+Qué debes producir (muy importante):
+- Genera 3–5 issues priorizados por impacto.
+- Debes incluir al menos 1 issue de OPORTUNIDAD (palanca de crecimiento) si el snapshot tiene volumen suficiente.
 
-Reglas:
-- Evidencia numérica concreta del snapshot (máx 2–3 frases por evidence).
-- Recomendaciones accionables: 2–4 pasos específicos (experimentos A/B, corrección de eventos, UTMs, mapeo de conversiones, mejora de landing, etc.).
+Qué debes buscar (prioriza con evidencia):
+- Ineficiencias: canales con mucho volumen y baja conversión.
+- Fricción: landing pages con sesiones altas y conversion rate bajo.
+- Brechas: diferencias fuertes por dispositivo.
+- Tracking: señales de medición rota o incompleta (sesiones altas con 0 conversiones, eventos clave ausentes, caída fuerte en tendencia).
+- Oportunidades: mejores canales/landings/source-medium (convRate alta o mejor revenue) → cómo escalar y qué testear.
+
+Uso de fuentes:
+- Si existe "diagnostics.ga4", úsalo (lowConvChannels, badLandingPages, deviceGaps, trackingFlags, bestChannels, bestLandingPages, bestSourceMedium).
+- Si daily/sourceMedium/topEvents existen, úsalos para explicar el “por qué” y proponer acciones concretas.
+
+Formato y estilo:
+- Evidencia numérica concreta (máx 2–3 frases en evidence).
+- Recomendación: 2–4 pasos específicos (experimentos A/B, UTMs, eventos, mapeo de conversiones, mejoras de landing, etc.).
+- Emojis: 1 emoji al inicio del title como máximo. No uses emojis en evidence/recommendation.
 - Devuelve exclusivamente JSON válido. No inventes métricas ni segmentos inexistentes.
 `.trim();
 
@@ -652,17 +843,20 @@ function makeUserPrompt({ snapshotStr, historyStr, maxFindings, minFindings, isA
   - accountRef { id, name } (cuenta publicitaria).
   - campaignRef { id, name } (campaña más relevante).
   - metrics (objeto pequeño con las métricas citadas).
-- Usa status=active para priorizar.
+- Reglas de relevancia:
+  - Prioriza campañas activas y con volumen material.
+  - Permite 1 issue de reactivación (pausada) solo si hay evidencia clara (conversiones/ROAS/CPA).
 - Usa diagnostics como shortlist de candidatos.
 `.trim();
 
   const gaExtras = `
 - Cada issue DEBE incluir:
   - accountRef { name, property } (propiedad GA4).
-  - segmentRef (tipo + nombre): channel/device/landing/sourceMedium/event.
+  - segmentRef (tipo + nombre): channel/device/landing/sourceMedium/event/general.
   - metrics (objeto pequeño con métricas citadas).
-- Usa diagnostics.ga4 si existe (lowConvChannels, badLandingPages, deviceGaps, trackingFlags).
-- Si daily/sourceMedium/topEvents existen, úsalos para explicar el “por qué” y proponer acciones concretas.
+- Debes incluir al menos 1 issue de oportunidad si hay volumen suficiente.
+- Usa diagnostics.ga4 (bestChannels/bestLandingPages/bestSourceMedium) para oportunidades.
+- Si daily/sourceMedium/topEvents existen, úsalos para explicar causales.
 `.trim();
 
   const historyBlock = historyStr
@@ -678,6 +872,7 @@ CONSIGNA GENERAL
 - Genera entre ${minFindings} y ${maxFindings} issues.
 - Si hay volumen relevante (sesiones/gasto), NO puedes devolver issues vacíos.
 - Idioma: español neutro, directo, estilo consultor senior.
+- Emojis: máximo 1 emoji al inicio de cada title. No uses emojis en evidence/recommendation.
 - Prohibido inventar métricas, campañas, canales o propiedades.
 
 REQUISITOS POR ISSUE
@@ -733,7 +928,7 @@ async function chatJSON({ system, user, model = DEFAULT_MODEL, retries = 1 }) {
   throw lastErr || new Error('openai_failed');
 }
 
-/* ---------------- refs hydration (NO inventa, solo usa snapshot) ---------------- */
+/* ---------------- refs hydration (NO inventa, solo usa snapshot) -------- */
 function pickAdsAccount(snapshot) {
   const accounts = Array.isArray(snapshot?.accounts) ? snapshot.accounts : [];
   if (accounts[0]?.id) return { id: String(accounts[0].id), name: String(accounts[0].name || '') };
@@ -747,7 +942,6 @@ function pickAdsCampaign(snapshot) {
 }
 
 function pickGAProperty(snapshot) {
-  // Prefer: snapshot.property, luego properties[0], luego byProperty[0]
   const prop =
     (snapshot?.property ? String(snapshot.property) : '') ||
     (Array.isArray(snapshot?.properties) && snapshot.properties[0]?.id ? String(snapshot.properties[0].id) : '') ||
@@ -777,12 +971,10 @@ function hydrateIssueRefs({ issue, type, snapshot }) {
     return issue;
   }
 
-  // GA4
   if (!issue.accountRef) {
     const p = pickGAProperty(snapshot);
     if (p) issue.accountRef = { name: p.name || '', property: p.property || '' };
   } else {
-    // asegurar shape
     issue.accountRef = {
       name: String(issue.accountRef.name || ''),
       property: String(issue.accountRef.property || ''),
@@ -815,12 +1007,12 @@ module.exports = async function generateAudit({
 
   const haveAdsData = Array.isArray(inputSnapshot?.byCampaign) && inputSnapshot.byCampaign.length > 0;
 
-  // GA: ahora consideramos también daily/sourceMedium/topEvents como “data real”
   const haveGAData =
     (Array.isArray(inputSnapshot?.channels)   && inputSnapshot.channels.length   > 0) ||
     (Array.isArray(inputSnapshot?.byProperty) && inputSnapshot.byProperty.length > 0) ||
     (Array.isArray(inputSnapshot?.daily)      && inputSnapshot.daily.length      > 0) ||
-    (Array.isArray(inputSnapshot?.sourceMedium) && inputSnapshot.sourceMedium.length > 0);
+    (Array.isArray(inputSnapshot?.sourceMedium) && inputSnapshot.sourceMedium.length > 0) ||
+    (Array.isArray(inputSnapshot?.topEvents)  && inputSnapshot.topEvents.length  > 0);
 
   const haveData = analytics ? haveGAData : haveAdsData;
 
@@ -830,7 +1022,6 @@ module.exports = async function generateAudit({
 
   const system = analytics ? SYSTEM_GA : SYSTEM_ADS(platformLabel);
 
-  // snapshot enviado al LLM (ya reducido + diagnostics)
   const snapshotForLLM = {
     ...(inputSnapshot || {}),
     diagnostics: buildDiagnostics(type, inputSnapshot || {})
@@ -867,7 +1058,6 @@ module.exports = async function generateAudit({
   try {
     parsed = await chatJSON({ system, user: userPrompt, model });
   } catch (e) {
-    // no rompemos el flujo
     const code = e?.status || e?.response?.status;
     console.error('[LLM:ERROR] Falló definitivamente', code, e?.message);
   }
@@ -878,6 +1068,7 @@ module.exports = async function generateAudit({
   if (parsed && typeof parsed === 'object') {
     summary = typeof parsed.summary === 'string' ? parsed.summary : '';
     issues = Array.isArray(parsed.issues) ? parsed.issues : [];
+
     issues = issues
       .filter(it => it && typeof it === 'object')
       .map((it, i) => {
@@ -896,10 +1087,11 @@ module.exports = async function generateAudit({
           links: Array.isArray(it.links) ? it.links : []
         };
 
-        // ✅ Hidrata refs solo si existen en snapshot (NO inventa)
-        return hydrateIssueRefs({ issue: base, type, snapshot: inputSnapshot });
+        const hydrated = hydrateIssueRefs({ issue: base, type, snapshot: inputSnapshot });
+
+        // ✅ Emoji garantizado (controlado)
+        return applyEmojiToTitle(hydrated);
       })
-      // saneo: descartar issues vacíos
       .filter(it => (it.title && (it.evidence || it.recommendation)));
   }
 
@@ -913,12 +1105,10 @@ module.exports = async function generateAudit({
     }
   }
 
-  // Si no hay datos y tampoco issues, no fingimos auditoría.
   if (!haveData && (!issues || issues.length === 0)) {
     return { summary: '', issues: [] };
   }
 
-  // Limpieza final: dedupe + cap
   issues = dedupeIssues(issues);
   issues = cap(issues, maxFindings);
 
