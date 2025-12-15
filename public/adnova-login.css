@@ -18,8 +18,9 @@ html, body {
   min-height: 100vh;
   min-width: 100vw;
 
-  /* el fondo global ya vive en theme.css */
-  background: transparent;
+  /* ✅ FIX: NO TRANSPARENT (rompía el theme y se veía blanco) */
+  background: inherit;
+  background-color: var(--ad-black); /* fallback */
   color: var(--ad-ice);
 
   display: flex;
