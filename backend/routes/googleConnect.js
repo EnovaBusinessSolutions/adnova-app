@@ -11,6 +11,9 @@ const { discoverAndEnrich, selfTest } = require('../services/googleAdsService');
 const router = express.Router();
 
 const User = require('../models/User');
+const Audit = require('../models/Audit');
+
+const { deleteAuditsForUserSources } = require('../services/auditCleanup');
 
 /* =========================================================
  *  Modelo GoogleAccount (fallback si no existe el archivo)
@@ -107,8 +110,6 @@ function requireSession(req, res, next) {
 function oauth() {
   const redirectUri = GOOGLE_REDIRECT_URI || GOOGLE_CONNECT_CALLBACK_URL;
   if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !redirectUri) {
-    // No tiramos error duro; devolvemos client igual para no reventar runtime,
-    // pero logueamos para diagnóstico.
     console.warn('[googleConnect] Missing GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI');
   }
   return new OAuth2Client({
@@ -116,6 +117,49 @@ function oauth() {
     clientSecret: GOOGLE_CLIENT_SECRET,
     redirectUri,
   });
+}
+
+/**
+ * ✅ Blindaje anti open-redirect:
+ * solo permitimos returnTo relativo dentro de rutas conocidas.
+ */
+function appendQuery(url, key, value) {
+  try {
+    const u = new URL(url, 'http://local');
+    u.searchParams.set(key, value);
+    return u.pathname + (u.search ? u.search : '') + (u.hash ? u.hash : '');
+  } catch {
+    if (url.includes('?')) return `${url}&${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+    return `${url}?${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+  }
+}
+
+function sanitizeReturnTo(raw) {
+  const val = String(raw || '').trim();
+  if (!val) return '';
+
+  // bloquear protocolo / saltos de línea
+  if (/^https?:\/\//i.test(val)) return '';
+  if (val.includes('\n') || val.includes('\r')) return '';
+
+  // solo rutas relativas
+  if (!val.startsWith('/')) return '';
+
+  // allowlist mínima (amplía si lo necesitas)
+  const allowed = [
+    '/dashboard/settings',
+    '/dashboard',
+    '/onboarding',
+  ];
+  const ok = allowed.some(prefix => val.startsWith(prefix));
+  if (!ok) return '';
+
+  // forzar tab integrations si viene a settings sin tab
+  if (val.startsWith('/dashboard/settings')) {
+    return appendQuery(val, 'tab', 'integrations');
+  }
+
+  return val;
 }
 
 /**
@@ -190,7 +234,6 @@ function filterSelectedPropsByAvailable(selectedPropIds, availableSet) {
 async function fetchGA4Properties(oauthClient) {
   const admin = google.analyticsadmin({ version: 'v1beta', auth: oauthClient });
 
-  // ✅ Método robusto (si falla accounts.list + properties.list, intentamos properties.search)
   // 1) Intento legacy: accounts.list -> properties.list
   try {
     const props = [];
@@ -258,9 +301,12 @@ async function fetchGA4Properties(oauthClient) {
  * =======================================================*/
 function buildAuthUrl(req, returnTo) {
   const client = oauth();
+
+  const safeReturnTo = sanitizeReturnTo(returnTo) || '/onboarding?google=connected';
+
   const state = JSON.stringify({
     uid: String(req.user._id),
-    returnTo,
+    returnTo: safeReturnTo,
   });
 
   return client.generateAuthUrl({
@@ -362,7 +408,7 @@ async function googleCallbackHandler(req, res) {
     // ============================
     if (hasAdwordsScope(ga.scope) && ga.refreshToken) {
       try {
-        const enriched = await discoverAndEnrich(ga); // multi-usuario (usa refreshToken)
+        const enriched = await discoverAndEnrich(ga);
 
         const customers = enriched.map((c) => ({
           id: normId(c.id),
@@ -389,7 +435,7 @@ async function googleCallbackHandler(req, res) {
 
         if (defaultCustomerId) ga.defaultCustomerId = normId(defaultCustomerId);
 
-        // ✅ (Fix) NO borres selección si el usuario ya eligió antes.
+        // ✅ NO borres selección si el usuario ya eligió antes.
         const available = new Set(customers.map((c) => normId(c.id)).filter(Boolean));
         const adsCount = customers.length;
 
@@ -397,7 +443,6 @@ async function googleCallbackHandler(req, res) {
           const onlyId = normId(customers[0].id);
           ga.selectedCustomerIds = [onlyId];
 
-          // espejo en User (legacy/compat UI)
           await User.updateOne(
             { _id: req.user._id },
             {
@@ -409,10 +454,10 @@ async function googleCallbackHandler(req, res) {
           );
         } else if (adsCount > 1) {
           const kept = filterSelectedByAvailable(ga.selectedCustomerIds, available);
-          ga.selectedCustomerIds = kept; // si está vacío, queda vacío => forzará selector
+          ga.selectedCustomerIds = kept; // si vacío => selector
         }
 
-        // (Opcional) si hay selección, asegúrate que default caiga dentro
+        // default dentro de selección si hay
         if (Array.isArray(ga.selectedCustomerIds) && ga.selectedCustomerIds.length) {
           const d = normId(ga.defaultCustomerId || '');
           if (!d || !ga.selectedCustomerIds.includes(d)) {
@@ -425,7 +470,6 @@ async function googleCallbackHandler(req, res) {
         ga.updatedAt = new Date();
         await ga.save();
 
-        // selftest opcional
         try {
           const st = await selfTest(ga);
           console.log('[googleConnect] Google Ads selfTest:', st);
@@ -453,7 +497,6 @@ async function googleCallbackHandler(req, res) {
       try {
         const propsRaw = await fetchGA4Properties(client);
 
-        // normaliza + dedupe
         const map = new Map();
         for (const p of Array.isArray(propsRaw) ? propsRaw : []) {
           const pid = normPropertyId(p?.propertyId || p?.name || '');
@@ -472,7 +515,6 @@ async function googleCallbackHandler(req, res) {
 
           const availableProps = new Set(props.map((p) => p.propertyId));
 
-          // defaultPropertyId: siempre debe ser válido
           const currDefault = normPropertyId(ga.defaultPropertyId);
           if (!currDefault || !availableProps.has(currDefault)) {
             ga.defaultPropertyId = props[0].propertyId;
@@ -480,14 +522,12 @@ async function googleCallbackHandler(req, res) {
             ga.defaultPropertyId = currDefault;
           }
 
-          // ✅ (Fix) No borres selección si ya existía; valida contra disponibles.
           if (props.length === 1) {
             const onlyPid = props[0].propertyId;
             ga.selectedPropertyIds = [onlyPid];
-            ga.selectedGaPropertyId = onlyPid; // legacy mirror
+            ga.selectedGaPropertyId = onlyPid;
             ga.defaultPropertyId = onlyPid;
 
-            // espejo en User (legacy + preferences)
             await User.updateOne(
               { _id: req.user._id },
               {
@@ -498,10 +538,8 @@ async function googleCallbackHandler(req, res) {
               }
             );
           } else if (props.length > 1) {
-            // Canonical primero
             let kept = filterSelectedPropsByAvailable(ga.selectedPropertyIds, availableProps);
 
-            // Si no hay canonical, intenta legacy
             if (!kept.length) {
               const legacy = normPropertyId(ga.selectedGaPropertyId);
               if (legacy && availableProps.has(legacy)) kept = [legacy];
@@ -509,14 +547,12 @@ async function googleCallbackHandler(req, res) {
 
             ga.selectedPropertyIds = kept;
 
-            // Mantén legacy alineado (si hay selección)
             if (kept.length) {
               ga.selectedGaPropertyId = kept[0];
               if (!ga.defaultPropertyId || !kept.includes(normPropertyId(ga.defaultPropertyId))) {
                 ga.defaultPropertyId = kept[0];
               }
             } else {
-              // si no hay selección, no forces legacy (para que el sistema pida selector)
               ga.selectedGaPropertyId = null;
             }
           }
@@ -534,7 +570,7 @@ async function googleCallbackHandler(req, res) {
       $set: { googleConnected: true },
     });
 
-    // Objetivo por defecto (ventas) si no existe
+    // Objetivo por defecto si no existe
     const [uObj, gaObj] = await Promise.all([
       User.findById(req.user._id).select('googleObjective').lean(),
       GoogleAccount.findOne(q).select('objective').lean(),
@@ -553,7 +589,7 @@ async function googleCallbackHandler(req, res) {
       ]);
     }
 
-    // ========== Selector? (más preciso) ==========
+    // ========== Selector? ==========
     const freshGa = await GoogleAccount.findOne(q)
       .select('customers gaProperties selectedCustomerIds selectedPropertyIds selectedGaPropertyId')
       .lean();
@@ -578,13 +614,14 @@ async function googleCallbackHandler(req, res) {
       (adsCount > 1 && selAds.length === 0) ||
       (gaCount > 1 && gaEffectiveSel.length === 0);
 
-    // ReturnTo desde state
+    // ReturnTo desde state (sanitizado)
     let returnTo = '/onboarding?google=connected';
     if (req.query.state) {
       try {
         const s = JSON.parse(req.query.state);
         if (s && typeof s.returnTo === 'string' && s.returnTo.trim()) {
-          returnTo = s.returnTo;
+          const safe = sanitizeReturnTo(s.returnTo);
+          if (safe) returnTo = safe;
         }
       } catch {
         // ignore
@@ -601,10 +638,36 @@ async function googleCallbackHandler(req, res) {
   }
 }
 
-// Rutas de callback (mantengo las 3 que ya tenías)
+// Rutas de callback
 router.get('/callback', requireSession, googleCallbackHandler);
 router.get('/connect/callback', requireSession, googleCallbackHandler);
 router.get('/ads/callback', requireSession, googleCallbackHandler);
+
+/* =========================
+ * ✅ PREVIEW (auditorías a borrar)
+ * GET /auth/google/disconnect/preview
+ * ========================= */
+router.get('/disconnect/preview', requireSession, async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
+
+    const googleAdsCount = await Audit.countDocuments({ userId, type: 'google' });
+    const ga4Count = await Audit.countDocuments({ userId, type: { $in: ['ga4', 'ga'] } });
+
+    return res.json({
+      ok: true,
+      auditsToDelete: googleAdsCount + ga4Count,
+      breakdown: {
+        googleAds: googleAdsCount,
+        ga4: ga4Count,
+      },
+    });
+  } catch (e) {
+    console.error('[googleConnect] disconnect preview error:', e);
+    return res.status(500).json({ ok: false, error: 'PREVIEW_ERROR' });
+  }
+});
 
 /* =========================
  * Estado de conexión
@@ -638,12 +701,10 @@ router.get('/status', requireSession, async (req, res) => {
     const adsScopeOk = hasAdwordsScope(scopesArr);
     const gaScopeOk = hasGaScope(scopesArr);
 
-    // ✅ Selección Ads
     const selectedCustomerIds = Array.isArray(ga?.selectedCustomerIds)
       ? ga.selectedCustomerIds.map(normId).filter(Boolean)
       : [];
 
-    // ✅ Selección GA4 (effective: canonical > legacy)
     const canonicalProps = Array.isArray(ga?.selectedPropertyIds)
       ? ga.selectedPropertyIds.map(normPropertyId).filter(Boolean)
       : [];
@@ -654,7 +715,6 @@ router.get('/status', requireSession, async (req, res) => {
       gaProperties.map((p) => normPropertyId(p?.propertyId || p?.name)).filter(Boolean)
     );
 
-    // Filtra selección a propiedades disponibles (evita estados “fantasma”)
     let selectedPropertyIds = canonicalProps.filter((pid) => gaAvailableSet.has(pid));
     if (!selectedPropertyIds.length && legacySelectedGaPropertyId && gaAvailableSet.has(legacySelectedGaPropertyId)) {
       selectedPropertyIds = [legacySelectedGaPropertyId];
@@ -666,7 +726,6 @@ router.get('/status', requireSession, async (req, res) => {
         ? defaultPropertyId
         : (gaProperties[0]?.propertyId ? normPropertyId(gaProperties[0].propertyId) : null);
 
-    // ✅ Flags útiles para UI / Integraciones
     const requiredSelectionAds = customers.length > 1 && selectedCustomerIds.length === 0;
     const requiredSelectionGa4 = gaProperties.length > 1 && selectedPropertyIds.length === 0;
 
@@ -691,9 +750,9 @@ router.get('/status', requireSession, async (req, res) => {
       gaProperties,
       defaultPropertyId: defaultPropertyIdSafe,
       selectedPropertyIds,
-      selectedGaPropertyId: legacySelectedGaPropertyId, // legacy para compat
+      selectedGaPropertyId: legacySelectedGaPropertyId,
 
-      // UI hints (opcional pero útil)
+      // UI hints
       requiredSelectionAds,
       requiredSelectionGa4,
 
@@ -709,7 +768,7 @@ router.get('/status', requireSession, async (req, res) => {
 });
 
 /* =========================
- * Guardar objetivo (ventas / alcance / leads)
+ * Guardar objetivo
  * ========================= */
 router.post('/objective', requireSession, express.json(), async (req, res) => {
   try {
@@ -733,7 +792,7 @@ router.post('/objective', requireSession, express.json(), async (req, res) => {
 });
 
 /* =========================
- * Listar cuentas Ads (selector / Integraciones)
+ * Listar cuentas Ads
  * ========================= */
 router.get('/accounts', requireSession, async (req, res) => {
   try {
@@ -815,12 +874,10 @@ router.get('/accounts', requireSession, async (req, res) => {
         fullGa.lastAdsDiscoveryError = null;
         fullGa.lastAdsDiscoveryLog = null;
 
-        // ✅ Mantener selección si sigue siendo válida
         const avail = new Set(customers.map((c) => normId(c.id)).filter(Boolean));
         const kept = filterSelectedByAvailable(fullGa.selectedCustomerIds, avail);
         fullGa.selectedCustomerIds = kept;
 
-        // default dentro de selección (si hay)
         if (kept.length) {
           const d = normId(fullGa.defaultCustomerId || '');
           if (!d || !kept.includes(d)) fullGa.defaultCustomerId = kept[0];
@@ -866,8 +923,8 @@ router.get('/accounts', requireSession, async (req, res) => {
 });
 
 /* =========================
- * ✅ Guardar selección Ads (Integraciones / onboarding)
- * Body: { customerIds: ["123", "customers/123", ...] }
+ * ✅ Guardar selección Ads
+ * Body: { customerIds: [...] } o { accountIds: [...] }
  * ========================= */
 router.post('/accounts/selection', requireSession, express.json(), async (req, res) => {
   try {
@@ -896,7 +953,6 @@ router.post('/accounts/selection', requireSession, express.json(), async (req, r
       return res.status(400).json({ ok: false, error: 'NO_VALID_CUSTOMERS' });
     }
 
-    // default dentro de selección
     let nextDefault = doc.defaultCustomerId ? normId(doc.defaultCustomerId) : '';
     if (!nextDefault || !selected.includes(nextDefault)) nextDefault = selected[0];
 
@@ -905,7 +961,6 @@ router.post('/accounts/selection', requireSession, express.json(), async (req, r
       { $set: { selectedCustomerIds: selected, defaultCustomerId: nextDefault, updatedAt: new Date() } }
     );
 
-    // espejo en User
     await User.updateOne(
       { _id: req.user._id },
       {
@@ -924,7 +979,7 @@ router.post('/accounts/selection', requireSession, express.json(), async (req, r
 });
 
 /* =========================
- * Guardar defaultCustomerId (legacy, se mantiene)
+ * Guardar defaultCustomerId (legacy)
  * ========================= */
 router.post('/default-customer', requireSession, express.json(), async (req, res) => {
   try {
@@ -966,10 +1021,8 @@ router.post('/default-property', requireSession, express.json(), async (req, res
 });
 
 /* =========================
- * ✅ (Opcional) Guardar selección GA4 también desde aquí
+ * ✅ (Opcional) Guardar selección GA4 aquí también
  * Body: { propertyIds: ["properties/123","123"] }
- * Nota: tu canonical sigue siendo /api/google/analytics/selection,
- * pero esto ayuda si tu UI de Integraciones pega a /auth/google/...
  * ========================= */
 router.post('/ga4/selection', requireSession, express.json(), async (req, res) => {
   try {
@@ -1036,6 +1089,12 @@ router.post('/ga4/selection', requireSession, express.json(), async (req, res) =
 router.post('/disconnect', requireSession, express.json(), async (req, res) => {
   try {
     const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
+    const userId = req.user._id;
+
+    // Conteo antes (para calcular deletedCount real aunque auditCleanup use keys distintas)
+    const beforeGoogle = await Audit.countDocuments({ userId, type: 'google' });
+    const beforeGA4 = await Audit.countDocuments({ userId, type: { $in: ['ga4', 'ga'] } });
+    const beforeTotal = beforeGoogle + beforeGA4;
 
     // Traemos tokens (select:false) para poder revocar best-effort
     const ga = await GoogleAccount.findOne(q).select('+refreshToken +accessToken').lean();
@@ -1084,7 +1143,7 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
     // 3) Limpiar User (flags + selecciones)
     // ⚠️ NO tocamos googleObjective para no borrar preferencias del usuario.
     await User.updateOne(
-      { _id: req.user._id },
+      { _id: userId },
       {
         $set: {
           googleConnected: false,
@@ -1100,11 +1159,47 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
       }
     );
 
+    // 4) ✅ BORRAR AUDITORÍAS (ALINEADO A Audit.js)
+    let auditsDeleteOk = true;
+    let auditsDeleteError = null;
+
+    // Primero intentamos tu servicio (best-effort)
+    try {
+      // Si tu auditCleanup ya lo ajustaste a types, esto funcionará.
+      // Si usa "keys" internas, igual no rompe, y abajo hacemos fallback por type.
+      await deleteAuditsForUserSources(userId, ['google', 'ga4', 'ga']);
+    } catch (e) {
+      auditsDeleteOk = false;
+      auditsDeleteError = e?.message || 'AUDIT_DELETE_FAILED';
+      console.warn('[googleConnect] auditCleanup failed (best-effort):', auditsDeleteError);
+    }
+
+    // Fallback: aseguramos borrado por type (sin depender del helper)
+    // (esto deja el sistema realmente E2E con tu Audit.js)
+    try {
+      await Audit.deleteMany({ userId, type: { $in: ['google', 'ga4', 'ga'] } });
+    } catch (e) {
+      auditsDeleteOk = false;
+      auditsDeleteError = auditsDeleteError || (e?.message || 'AUDIT_DELETE_FALLBACK_FAILED');
+      console.warn('[googleConnect] audit delete fallback failed:', e?.message || e);
+    }
+
+    // Conteo después para deletedCount real
+    const afterGoogle = await Audit.countDocuments({ userId, type: 'google' });
+    const afterGA4 = await Audit.countDocuments({ userId, type: { $in: ['ga4', 'ga'] } });
+    const afterTotal = afterGoogle + afterGA4;
+
+    const auditsDeleted = Math.max(0, beforeTotal - afterTotal);
+
     return res.json({
       ok: true,
       disconnected: true,
       revokeAttempted: revoke.attempted,
       revokeOk: revoke.ok,
+
+      auditsDeleted,
+      auditsDeleteOk,
+      auditsDeleteError,
     });
   } catch (err) {
     console.error('[googleConnect] disconnect error:', err?.response?.data || err?.message || err);

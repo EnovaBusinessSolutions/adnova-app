@@ -6,7 +6,14 @@ const axios   = require('axios');
 const crypto  = require('crypto');
 const router  = express.Router();
 
-const User = require('../models/User');
+const User  = require('../models/User');
+const Audit = require('../models/Audit');
+
+// ✅ Auditorías: cleanup al desconectar (best-effort)
+const {
+  deleteAuditsForUserSources,
+  countAuditsForUserSources,
+} = require('../services/auditCleanup');
 
 let MetaAccount = null;
 try { MetaAccount = require('../models/MetaAccount'); } catch (_) {}
@@ -38,8 +45,15 @@ const DEFAULT_META_OBJECTIVE = 'ventas';
 /* =========================
  * Helpers
  * ========================= */
-function makeAppSecretProof(accessToken) {
-  return crypto.createHmac('sha256', APP_SECRET).update(accessToken).digest('hex');
+function safeAppSecretProof(accessToken) {
+  // appsecret_proof es recomendado pero no obligatorio
+  if (!accessToken) return null;
+  if (!APP_SECRET) return null;
+  try {
+    return crypto.createHmac('sha256', APP_SECRET).update(accessToken).digest('hex');
+  } catch {
+    return null;
+  }
 }
 
 async function exchangeCodeForToken(code) {
@@ -92,7 +106,6 @@ const uniq = (arr) => Array.from(new Set((Array.isArray(arr) ? arr : []).filter(
 
 function appendQuery(url, key, value) {
   try {
-    // solo para paths relativos
     const u = new URL(url, 'http://local');
     u.searchParams.set(key, value);
     return u.pathname + (u.search ? u.search : '') + (u.hash ? u.hash : '');
@@ -105,20 +118,15 @@ function appendQuery(url, key, value) {
 /**
  * ✅ Blindaje anti open-redirect:
  * Solo permitimos returnTo relativo y dentro del SAAS.
- * Ajustamos además a Settings/Integraciones si viene desde ahí.
  */
 function sanitizeReturnTo(raw) {
   const val = String(raw || '').trim();
   if (!val) return '';
 
-  // bloquear intentos con protocolo
   if (/^https?:\/\//i.test(val)) return '';
   if (val.includes('\n') || val.includes('\r')) return '';
-
-  // solo rutas relativas
   if (!val.startsWith('/')) return '';
 
-  // allowlist mínima (puedes ampliar si quieres)
   const allowed = [
     '/dashboard/settings',
     '/dashboard',
@@ -127,7 +135,6 @@ function sanitizeReturnTo(raw) {
   const ok = allowed.some(prefix => val.startsWith(prefix));
   if (!ok) return '';
 
-  // Si viene a settings sin tab, forzamos tab=integrations
   if (val.startsWith('/dashboard/settings')) {
     return appendQuery(val, 'tab', 'integrations');
   }
@@ -137,21 +144,17 @@ function sanitizeReturnTo(raw) {
 
 /**
  * ✅ Revocar permisos de Meta (best-effort)
- * - DELETE /me/permissions invalida permisos y token para esta app.
- * - si falla, NO bloquea la desconexión local.
  */
 async function revokeMetaPermissionsBestEffort(accessToken) {
   if (!accessToken) return { attempted: false, ok: true };
 
   try {
-    const proof = makeAppSecretProof(accessToken);
+    const proof = safeAppSecretProof(accessToken);
 
-    // Graph: DELETE /me/permissions
-    // Respuesta típica: { success: true }
     await axios.delete(`${FB_GRAPH}/me/permissions`, {
       params: {
         access_token: accessToken,
-        appsecret_proof: proof
+        ...(proof ? { appsecret_proof: proof } : {})
       },
       timeout: 15000
     });
@@ -169,10 +172,15 @@ async function revokeMetaPermissionsBestEffort(accessToken) {
 router.get('/login', (req, res) => {
   if (!req.isAuthenticated?.() || !req.user?._id) return res.redirect('/login');
 
+  // Validación suave de ENV (para no crashear)
+  if (!APP_ID || !APP_SECRET || !REDIRECT_URI) {
+    console.warn('[meta] Missing FACEBOOK_APP_ID/SECRET/REDIRECT_URI');
+    return res.redirect('/onboarding?meta=error&reason=missing_env');
+  }
+
   const state = crypto.randomBytes(20).toString('hex');
   req.session.fb_state = state;
 
-  // ✅ Guardar returnTo en session para usarlo en callback
   const returnTo = sanitizeReturnTo(req.query.returnTo);
   if (returnTo) req.session.fb_returnTo = returnTo;
   else delete req.session.fb_returnTo;
@@ -209,6 +217,11 @@ router.get('/callback', async (req, res) => {
     let accessToken = t1.access_token;
     let expiresAt   = t1.expires_in ? new Date(Date.now() + t1.expires_in * 1000) : null;
 
+    if (!accessToken) {
+      delete req.session.fb_returnTo;
+      return res.redirect('/onboarding?meta=error&reason=no_token');
+    }
+
     // 2) upgrade to long-lived (best effort)
     try {
       const t2 = await toLongLivedToken(accessToken);
@@ -217,24 +230,25 @@ router.get('/callback', async (req, res) => {
         if (t2.expires_in) expiresAt = new Date(Date.now() + t2.expires_in * 1000);
       }
     } catch (e) {
-      console.warn('Meta long-lived exchange falló:', e?.response?.data || e.message);
+      console.warn('[meta] long-lived exchange falló:', e?.response?.data || e.message);
     }
 
     // 3) debug token validity
     const dbg = await debugToken(accessToken);
     if (String(dbg?.app_id) !== String(APP_ID) || dbg?.is_valid !== true) {
       delete req.session.fb_returnTo;
-      return res.redirect('/onboarding?meta=error');
+      return res.redirect('/onboarding?meta=error&reason=invalid_token');
     }
 
     // 4) basic profile
     let fbUserId = null, email = null, name = null;
     try {
+      const proof = safeAppSecretProof(accessToken);
       const me = await axios.get(`${FB_GRAPH}/me`, {
         params: {
           fields: 'id,name,email',
           access_token: accessToken,
-          appsecret_proof: makeAppSecretProof(accessToken)
+          ...(proof ? { appsecret_proof: proof } : {})
         },
         timeout: 15000
       });
@@ -246,12 +260,12 @@ router.get('/callback', async (req, res) => {
     // 5) ad accounts
     let adAccounts = [];
     try {
-      const proof = makeAppSecretProof(accessToken);
+      const proof = safeAppSecretProof(accessToken);
       const ads = await axios.get(`${FB_GRAPH}/me/adaccounts`, {
         params: {
           fields: 'account_id,name,currency,configured_status,timezone_name',
           access_token: accessToken,
-          appsecret_proof: proof,
+          ...(proof ? { appsecret_proof: proof } : {}),
           limit: 100
         },
         timeout: 15000
@@ -266,15 +280,19 @@ router.get('/callback', async (req, res) => {
         timezone_name: a.timezone_name || null
       }));
     } catch (e) {
-      console.warn('No se pudieron leer adaccounts:', e?.response?.data || e.message);
+      console.warn('[meta] No se pudieron leer adaccounts:', e?.response?.data || e.message);
     }
 
     // 6) granted scopes
     let grantedScopes = [];
     try {
-      const proof = makeAppSecretProof(accessToken);
+      const proof = safeAppSecretProof(accessToken);
       const perms = await axios.get(`${FB_GRAPH}/me/permissions`, {
-        params: { access_token: accessToken, appsecret_proof: proof, limit: 200 },
+        params: {
+          access_token: accessToken,
+          ...(proof ? { appsecret_proof: proof } : {}),
+          limit: 200
+        },
         timeout: 15000
       });
       grantedScopes = (perms.data?.data || [])
@@ -282,7 +300,7 @@ router.get('/callback', async (req, res) => {
         .map(p => String(p.permission));
       grantedScopes = uniq(grantedScopes);
     } catch (e) {
-      console.warn('No se pudieron leer /me/permissions:', e?.response?.data || e.message);
+      console.warn('[meta] No se pudieron leer /me/permissions:', e?.response?.data || e.message);
     }
 
     const userId = req.user._id;
@@ -297,19 +315,11 @@ router.get('/callback', async (req, res) => {
     });
 
     // ✅ Nuevo criterio de selector con UX MAX_SELECT=1:
-    // Si hay más de 1 cuenta disponible, forzamos selector y dejamos selección vacía.
     const allDigits = adAccounts.map(a => normActId(a.account_id)).filter(Boolean);
     const availableCount = allDigits.length;
     const shouldForceSelector = availableCount > MAX_SELECT;
 
-    // selección canónica:
-    // - si solo 1 => autoseleccionamos
-    // - si >1 => vacío (UI selecciona)
     const selectedDigits = shouldForceSelector ? [] : uniq(allDigits).slice(0, MAX_SELECT);
-
-    // default canónico:
-    // - si solo 1 => ese
-    // - si >1 => null
     const defaultAccountId = shouldForceSelector ? null : (selectedDigits[0] || null);
 
     if (MetaAccount) {
@@ -376,8 +386,6 @@ router.get('/callback', async (req, res) => {
     }
 
     // ✅ 9) redirect final E2E:
-    // - Si viene returnTo (Settings/Integraciones), lo usamos SIEMPRE.
-    // - Si no viene, dejamos tu lógica histórica de onboarding/dashboard.
     let destino = '';
     const sessionReturnTo = sanitizeReturnTo(req.session.fb_returnTo);
     delete req.session.fb_returnTo;
@@ -385,11 +393,9 @@ router.get('/callback', async (req, res) => {
     if (sessionReturnTo) {
       destino = sessionReturnTo;
 
-      // si hay >1 ad account => selector=1 para que Settings abra modal automático
       if (shouldForceSelector) {
         destino = appendQuery(destino, 'selector', '1');
       }
-      // opcional: status param para UI/analytics
       destino = appendQuery(destino, 'meta', 'ok');
     } else {
       destino = req.user.onboardingComplete
@@ -405,6 +411,152 @@ router.get('/callback', async (req, res) => {
     console.error('❌ Meta callback error:', err?.response?.data || err.message);
     delete req.session.fb_returnTo;
     return res.redirect('/onboarding?meta=error');
+  }
+});
+
+/* =========================
+ * ✅ ACCOUNTS (para selector / integraciones)
+ * GET /auth/meta/accounts
+ * ========================= */
+router.get('/accounts', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    if (!MetaAccount) {
+      // fallback legacy
+      const u = await User.findById(userId).lean();
+      const selected = Array.isArray(u?.selectedMetaAccounts)
+        ? u.selectedMetaAccounts.map(normActId).filter(Boolean).slice(0, MAX_SELECT)
+        : [];
+      const def = u?.metaDefaultAccountId ? normActId(u.metaDefaultAccountId) : (selected[0] || null);
+
+      return res.json({
+        ok: true,
+        accounts: [],
+        selectedAccountIds: selected,
+        defaultAccountId: def || null,
+        selectionRequired: false,
+      });
+    }
+
+    const doc = await MetaAccount
+      .findOne({ $or: [{ userId }, { user: userId }] })
+      .select('ad_accounts adAccounts defaultAccountId selectedAccountIds')
+      .lean();
+
+    const raw = doc?.ad_accounts || doc?.adAccounts || [];
+    const accounts = raw.map((a) => ({
+      id: toActId(a?.account_id || a?.accountId || a?.id),
+      account_id: normActId(a?.account_id || a?.accountId || a?.id),
+      name: a?.name || '',
+      currency: a?.currency || null,
+      configured_status: a?.configured_status || a?.configuredStatus || null,
+      timezone_name: a?.timezone_name || a?.timezoneName || null,
+    }));
+
+    const available = new Set(accounts.map(a => normActId(a.account_id)).filter(Boolean));
+
+    let selectedAccountIds = Array.isArray(doc?.selectedAccountIds)
+      ? doc.selectedAccountIds.map(normActId).filter(Boolean)
+      : [];
+
+    selectedAccountIds = selectedAccountIds.filter(id => available.has(id)).slice(0, MAX_SELECT);
+
+    const defaultAccountId =
+      doc?.defaultAccountId && available.has(normActId(doc.defaultAccountId))
+        ? normActId(doc.defaultAccountId)
+        : (selectedAccountIds[0] || (accounts[0]?.account_id || null));
+
+    const selectionRequired = accounts.length > MAX_SELECT && selectedAccountIds.length === 0;
+
+    return res.json({
+      ok: true,
+      accounts,
+      selectedAccountIds,
+      defaultAccountId: defaultAccountId || null,
+      selectionRequired,
+    });
+  } catch (e) {
+    console.error('[meta] accounts error:', e);
+    return res.status(500).json({ ok: false, error: 'ACCOUNTS_ERROR' });
+  }
+});
+
+/* =========================
+ * ✅ SAVE SELECTION (MAX_SELECT=1)
+ * POST /auth/meta/accounts/selection
+ * Body: { accountIds: ["act_123","123"] } o { accountId: "..." }
+ * ========================= */
+router.post('/accounts/selection', requireAuth, express.json(), async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const accountIdsRaw =
+      req.body?.accountIds ||
+      req.body?.accounts ||
+      (req.body?.accountId ? [req.body.accountId] : null);
+
+    if (!Array.isArray(accountIdsRaw)) {
+      return res.status(400).json({ ok: false, error: 'accountIds[] requerido' });
+    }
+
+    const wanted = uniq(accountIdsRaw.map(normActId)).filter(Boolean).slice(0, MAX_SELECT);
+    if (!wanted.length) {
+      return res.status(400).json({ ok: false, error: 'NO_VALID_ACCOUNTS' });
+    }
+
+    if (!MetaAccount) {
+      await User.updateOne(
+        { _id: userId },
+        {
+          $set: {
+            metaDefaultAccountId: wanted[0],
+            selectedMetaAccounts: wanted.map(toActId),
+          },
+        }
+      );
+      return res.json({ ok: true, selectedAccountIds: wanted, defaultAccountId: wanted[0] });
+    }
+
+    const doc = await MetaAccount
+      .findOne({ $or: [{ userId }, { user: userId }] })
+      .select('_id ad_accounts adAccounts')
+      .lean();
+
+    if (!doc) return res.status(404).json({ ok: false, error: 'NO_METAACCOUNT' });
+
+    const raw = doc?.ad_accounts || doc?.adAccounts || [];
+    const available = new Set(raw.map(a => normActId(a?.account_id || a?.accountId || a?.id)).filter(Boolean));
+
+    const selected = wanted.filter(id => available.has(id)).slice(0, MAX_SELECT);
+    if (!selected.length) {
+      return res.status(400).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
+    }
+
+    await MetaAccount.updateOne(
+      { _id: doc._id },
+      {
+        $set: {
+          selectedAccountIds: selected,
+          defaultAccountId: selected[0],
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    await User.updateOne(
+      { _id: userId },
+      {
+        $set: {
+          selectedMetaAccounts: selected.map(toActId),
+        },
+      }
+    );
+
+    return res.json({ ok: true, selectedAccountIds: selected, defaultAccountId: selected[0] });
+  } catch (e) {
+    console.error('[meta] accounts/selection error:', e);
+    return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
   }
 });
 
@@ -455,7 +607,6 @@ router.get('/status', requireAuth, async (req, res) => {
       hasAdsRead,
       hasAdsMgmt,
       selectedAccountIds: Array.isArray(doc?.selectedAccountIds) ? doc.selectedAccountIds : [],
-      // ✅ ahora selector requerido si hay >1 y no hay selección explícita
       selectionRequired: accounts.length > MAX_SELECT && (!doc?.selectedAccountIds || doc.selectedAccountIds.length === 0),
     });
   } catch (e) {
@@ -516,12 +667,51 @@ router.post('/default-account', requireAuth, express.json(), async (req, res) =>
 });
 
 /* =========================
+ * ✅ Preview para modal: cuántas auditorías se eliminarán
+ * GET /auth/meta/disconnect/preview
+ * (alineado a Audit.js => type:'meta')
+ * ========================= */
+router.get('/disconnect/preview', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // Preferimos conteo real por type (E2E con tu Audit.js)
+    let count = 0;
+    try {
+      count = await Audit.countDocuments({ userId, type: 'meta' });
+    } catch {
+      count = 0;
+    }
+
+    // Best-effort: si tu helper existe y está alineado, puede enriquecer
+    try {
+      const c = await countAuditsForUserSources(userId, ['meta']);
+      if (typeof c?.count === 'number') count = c.count;
+    } catch {}
+
+    return res.json({
+      ok: true,
+      auditsToDelete: count,
+      breakdown: { meta: count },
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'PREVIEW_ERROR' });
+  }
+});
+
+/* =========================
  * ✅ DISCONNECT META (Ads)
  * POST /auth/meta/disconnect
+ * - Revoca permisos (best-effort)
+ * - Limpia tokens/selecciones
+ * - ✅ Elimina auditorías Meta (E2E con Audit.js)
  * ========================= */
 router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
   try {
     const userId = req.user._id;
+
+    // Conteo antes (para deleted real)
+    const before = await Audit.countDocuments({ userId, type: 'meta' }).catch(() => 0);
 
     // 1) Obtener token (best-effort) para revocar permisos
     let accessToken = null;
@@ -574,7 +764,7 @@ router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
             // permisos
             scopes: [],
 
-            // identidad (opcional, pero recomendable al “desconectar”)
+            // identidad (opcional)
             fb_user_id: null,
             email: null,
             name: null,
@@ -605,11 +795,40 @@ router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
       }
     );
 
+    // 5) ✅ Eliminar auditorías de Meta (E2E con Audit.js)
+    let auditsDeleteOk = true;
+    let auditsDeleteError = null;
+
+    // Best-effort: tu helper
+    try {
+      await deleteAuditsForUserSources(userId, ['meta']);
+    } catch (e) {
+      auditsDeleteOk = false;
+      auditsDeleteError = e?.message || 'AUDIT_DELETE_FAILED';
+      console.warn('[meta] audit cleanup failed (best-effort):', auditsDeleteError);
+    }
+
+    // Fallback: borrado real por type
+    try {
+      await Audit.deleteMany({ userId, type: 'meta' });
+    } catch (e) {
+      auditsDeleteOk = false;
+      auditsDeleteError = auditsDeleteError || (e?.message || 'AUDIT_DELETE_FALLBACK_FAILED');
+      console.warn('[meta] audit delete fallback failed:', e?.message || e);
+    }
+
+    const after = await Audit.countDocuments({ userId, type: 'meta' }).catch(() => 0);
+    const auditsDeleted = Math.max(0, before - after);
+
     return res.json({
       ok: true,
       disconnected: true,
       revokeAttempted: revoke.attempted,
       revokeOk: revoke.ok,
+
+      auditsDeleted,
+      auditsDeleteOk,
+      auditsDeleteError,
     });
   } catch (err) {
     console.error('[meta] disconnect error:', err?.response?.data || err?.message || err);
