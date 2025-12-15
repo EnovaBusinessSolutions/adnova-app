@@ -1,35 +1,52 @@
+@import url("/theme.css");
+
+/* =========================
+   Reset
+   ========================= */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
-  border-color: hsla(265, 50%, 35%, 1);
+  border-color: rgba(202, 138, 229, 0.22);
 }
 
-body, html {
-  font-family: 'Inter', sans-serif;
+/* =========================
+   Base
+   ========================= */
+html, body {
+  font-family: var(--font-sans);
   min-height: 100vh;
   min-width: 100vw;
-  background: #0a0a12;   
-  color: #F4F2FF;
+
+  /* el fondo global ya vive en theme.css */
+  background: transparent;
+  color: var(--ad-ice);
+
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-body {
-  overflow: hidden;
-}
+body { overflow: hidden; }
 
+/* =========================
+   Card
+   ========================= */
 .login-container {
   width: 100%;
   max-width: 28rem;
-  background: rgba(10, 10, 20, 0.93);
+
+  background: var(--card);
   border-radius: 1rem;
-  box-shadow: 0 8px 40px 0 rgba(85, 34, 145, 0.20);
+  box-shadow: var(--shadow-soft);
+
   padding: 2.5rem 2rem 2rem 2rem;
-  border: 1px solid #23143A;
+  border: 1px solid var(--stroke);
 }
 
+/* =========================
+   Header
+   ========================= */
 .header {
   text-align: center;
   margin-bottom: 1.5rem;
@@ -37,134 +54,157 @@ body {
 
 .header h1 {
   font-size: 2.1rem;
-  font-weight: 800;
-  color: #D1A5FF;
+  font-weight: 900;
+  color: var(--ad-primary);
   letter-spacing: -1px;
 }
 
 .header p {
   font-size: 1rem;
-  color: #C5B8E6;
+  color: rgba(225, 216, 243, 0.72);
 }
 
 .subtitle {
   font-size: 1.15rem;
-  font-weight: 600;
-  color: #F4F2FF;
+  font-weight: 800;
+  color: var(--ad-ice);
   text-align: center;
   margin-bottom: 1.5rem;
 }
 
-.form {
-  margin-bottom: 1.5rem;
-}
+/* =========================
+   Form
+   ========================= */
+.form { margin-bottom: 1.5rem; }
 
-.form-group {
-  margin-bottom: 1.1rem;
-}
+.form-group { margin-bottom: 1.1rem; }
 
 .form-label {
   display: block;
   font-size: 0.93rem;
-  color: #EEE0FF;
+  color: rgba(225, 216, 243, 0.92);
   margin-bottom: 0.25rem;
-  font-weight: 500;
+  font-weight: 700;
   letter-spacing: 0.01em;
 }
 
 .form-input {
   width: 100%;
-  border-radius: 0.5rem;
-  background: rgba(40, 17, 60, 0.95);
-  color: #F4F2FF;
+  border-radius: 0.75rem;
+
+  background: rgba(62, 40, 111, 0.22);
+  color: var(--ad-ice);
+
   padding: 0.58rem 1rem;
-  border: 1.5px solid #382058;
+  border: 1px solid var(--stroke);
   outline: none;
+
   font-size: 1rem;
-  transition: border 0.2s, box-shadow 0.2s;
+  transition: border 0.2s, box-shadow 0.2s, background 0.2s;
 }
 
 .form-input:focus {
-  border: 1.5px solid #A96BFF;
-  box-shadow: 0 0 0 2px #A96BFF44;
+  border: 1px solid rgba(202, 138, 229, 0.55);
+  box-shadow: 0 0 0 3px rgba(202, 138, 229, 0.12);
+  background: rgba(62, 40, 111, 0.30);
 }
 
+/* =========================
+   Buttons
+   ========================= */
 .btn {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
+
   width: 100%;
-  padding: 0.6rem 1rem;
-  border-radius: 0.5rem;
+  padding: 0.65rem 1rem;
+  border-radius: 0.75rem;
+
   font-size: 1.05rem;
-  font-weight: 600;
+  font-weight: 900;
+
   cursor: pointer;
   transition: all 0.17s;
   border: none;
   letter-spacing: 0.01em;
+
+  font-family: var(--font-sans);
 }
 
 .btn-primary {
-  background: linear-gradient(90deg, #A96BFF 0%, #9333ea 100%);
-  color: white;
-  box-shadow: 0 4px 16px 0 #9333ea20;
+  background: linear-gradient(90deg, var(--ad-primary) 0%, var(--ad-deep) 100%);
+  color: #0b0614;
+  box-shadow: 0 10px 30px rgba(202, 138, 229, 0.16);
 }
 
 .btn-primary:hover {
-  opacity: 1;
-  filter: brightness(1.11);
-  box-shadow: 0 6px 22px 0 #9333ea44;
+  filter: brightness(1.06);
+  box-shadow: 0 14px 38px rgba(202, 138, 229, 0.22);
 }
 
 .btn-outline {
-  background: rgba(30, 10, 40, 0.92);
-  color: #F4F2FF;
-  border: 1.5px solid #382058;
+  background: rgba(0, 0, 0, 0.35);
+  color: var(--ad-ice);
+  border: 1px solid var(--stroke);
+
   font-size: 1.05rem;
-  font-weight: 600;
+  font-weight: 900;
   gap: 10px;
-  border-radius: 0.5rem;
+  border-radius: 0.75rem;
 }
 
 .btn-outline:hover {
-  background: #22122F;
-  color: #A96BFF;
-  border-color: #A96BFF;
+  background: rgba(62, 40, 111, 0.40);
+  color: var(--ad-primary);
+  border-color: rgba(202, 138, 229, 0.35);
 }
 
 .btn-secondary {
-  background: #241d36;
-  color: #E3D6FF;
-  border: none;
-  font-weight: 600;
-  border-radius: 0.5rem;
-  transition: background 0.3s;
+  background: rgba(62, 40, 111, 0.30);
+  color: var(--ad-ice);
+  border: 1px solid var(--stroke);
+  font-weight: 900;
+  border-radius: 0.75rem;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
 }
 
 .btn-secondary:hover {
-  background: #382058;
-  color: #A96BFF;
+  background: rgba(202, 138, 229, 0.10);
+  color: var(--ad-primary);
+  border-color: rgba(202, 138, 229, 0.35);
 }
 
+/* =========================
+   Divider
+   ========================= */
 .divider {
   position: relative;
   text-align: center;
   margin: 1.6rem 0;
-  border-top: 1.5px solid #382058;
+  border-top: 1px solid var(--stroke);
 }
 
 .divider-text {
   position: relative;
   top: -0.88rem;
-  background: rgba(10, 10, 20, 0.93);
-  padding: 0 0.7rem;
+
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(202, 138, 229, 0.12);
+
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+
   font-size: 0.79rem;
-  color: #C5B8E6;
+  color: rgba(225, 216, 243, 0.72);
   text-transform: uppercase;
   letter-spacing: 0.09em;
 }
 
+/* =========================
+   Social + misc
+   ========================= */
 .social-buttons {
   display: flex;
   flex-direction: column;
@@ -175,26 +215,27 @@ body {
 
 .text-center { text-align: center; }
 .text-sm { font-size: 0.93rem; }
-.text-muted { color: #C5B8E6; }
+.text-muted { color: rgba(225, 216, 243, 0.72); }
 
 .link,
 .forgot-password .recovery-link {
-  color: #A96BFF;
+  color: var(--ad-primary);
   text-decoration: none;
-  font-weight: 600;
+  font-weight: 900;
   transition: color 0.18s;
 }
 
 .link:hover,
 .forgot-password .recovery-link:hover {
-  color: #E2CBFF;
+  color: rgba(225, 216, 243, 0.95);
   text-decoration: underline;
 }
 
 .forgot-password {
   margin-top: 1.5rem;
-  color: #A0A0B6;
+  color: rgba(225, 216, 243, 0.65);
   font-size: 1rem;
+
   width: 100%;
   display: flex;
   justify-content: center;
@@ -223,28 +264,29 @@ body {
   margin-right: 0.22rem;
 }
 
-/* ====== Password eye — versión clonada de register.css ====== */
+/* ====== Password eye (se mantiene) ====== */
 .form-input-wrapper {
   position: relative;
   width: 100%;
 }
 
-/* deja espacio para el botón del ojo */
 .form-input-wrapper .form-input {
   padding-right: 2.5rem;
 }
 
-/* Botón del ojo */
 .toggle-password {
   position: absolute;
   right: 10px;
   top: 50%;
   transform: translateY(-50%);
+
   border: none;
   background: none;
   cursor: pointer;
+
   width: 2.2rem;
   height: 2.2rem;
+
   display: flex;
   align-items: center;
   justify-content: center;
@@ -252,23 +294,20 @@ body {
   z-index: 2;
 }
 
-/* Icono base (ojo abierto) */
 .eye-icon {
   width: 22px;
   height: 22px;
   display: block;
   background: url('data:image/svg+xml;utf8,<svg fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><ellipse cx="12" cy="12" rx="7" ry="5"/><circle cx="12" cy="12" r="2.5"/></svg>') center/contain no-repeat;
-  opacity: 0.5;
+  opacity: 0.58;
   transition: opacity 0.2s;
 }
 
-/* Estado ojo tachado (oculto) */
 .toggle-password.eye-visible .eye-icon {
   background: url('data:image/svg+xml;utf8,<svg fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><ellipse cx="12" cy="12" rx="7" ry="5"/><circle cx="12" cy="12" r="2.5"/><line x1="4" y1="20" x2="20" y2="4" stroke="white" stroke-width="2"/></svg>') center/contain no-repeat;
-  opacity: 0.85;
+  opacity: 0.9;
 }
 
-/* ====== OVERRIDE ESTRICTO OJO LOGIN (igual a register.css) ====== */
 .login-container .form-input-wrapper { position: relative; }
 .login-container .form-input-wrapper .form-input { padding-right: 2.6rem !important; }
 
@@ -298,16 +337,13 @@ body {
   transition: opacity .2s ease;
 }
 
-/* Cuando está en modo “oculto” (slash) */
 .login-container .form-input-wrapper .toggle-password.eye-visible .eye-icon {
   background: url('data:image/svg+xml;utf8,<svg fill="none" stroke="white" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><ellipse cx="12" cy="12" rx="7" ry="5"/><circle cx="12" cy="12" r="2.5"/><line x1="4" y1="20" x2="20" y2="4" stroke="white" stroke-width="2"/></svg>') center/contain no-repeat !important;
   opacity: 0.9;
 }
 
-/* Efecto hover suave */
 .login-container .form-input-wrapper .toggle-password:hover .eye-icon { opacity: .95; }
 
-/* Anula cualquier versión previa basada en mask-image */
 .login-container .form-input-wrapper .toggle-password .eye-icon {
   -webkit-mask-image: none !important;
           mask-image: none !important;
