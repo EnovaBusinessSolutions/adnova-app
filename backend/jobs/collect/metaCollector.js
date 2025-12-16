@@ -146,6 +146,31 @@ function normalizeMetaObjective(raw) {
   return 'OTHER';
 }
 
+/* =========================
+   Click metric (alinear con Ads Manager)
+   =========================
+   link = "Clics en el enlace" (inline_link_clicks) ✅ (tu caso)
+   all  = "Clics (todos)" (clicks)
+*/
+const META_CLICK_METRIC = String(process.env.META_CLICK_METRIC || 'link').toLowerCase();
+
+function pickClicks(x) {
+  const all = toNum(x?.clicks);
+  const hasLink = x?.inline_link_clicks != null && x?.inline_link_clicks !== '';
+  const link = hasLink ? toNum(x?.inline_link_clicks) : null;
+
+  const chosen =
+    META_CLICK_METRIC === 'all'
+      ? all
+      : (hasLink ? link : all);
+
+  return {
+    clicks: toNum(chosen),
+    clicks_all: all,
+    clicks_link: (link == null ? null : toNum(link)),
+  };
+}
+
 async function fetchJSON(url, { retries = 1 } = {}) {
   let lastErr = null;
   for (let i = 0; i <= retries; i++) {
@@ -515,7 +540,13 @@ async function collectMeta(userId, opts = {}) {
           impressions: 0,
           reach: 0,
           frequency: 0,
+
+          // ✅ clicks canónico (por defecto: inline_link_clicks)
           clicks: 0,
+
+          // ✅ debug: clicks “todos”
+          clicks_all: 0,
+
           cpm: 0,
           cpc: 0,
           ctr: 0,
@@ -529,12 +560,19 @@ async function collectMeta(userId, opts = {}) {
       };
 
       const k = cur.kpis;
+
       k.spend       += toNum(x.spend);
       k.impressions += toNum(x.impressions);
       k.reach       += toNum(x.reach);
-      k.clicks      += toNum(x.clicks);
-      k.unique_clicks      += toNum(x.unique_clicks);
+
+      // ✅ clicks alineados a Ads Manager (Clics en el enlace por defecto)
+      const cx = pickClicks(x);
+      k.clicks     += cx.clicks;
+      k.clicks_all += cx.clicks_all;
+
+      // guardamos también inline_link_clicks tal cual viene (útil para auditar)
       k.inline_link_clicks += toNum(x.inline_link_clicks);
+      k.unique_clicks      += toNum(x.unique_clicks);
 
       if (purchases != null)      k.purchases      += purchases;
       if (purchase_value != null) k.purchase_value += purchase_value;
@@ -589,7 +627,8 @@ async function collectMeta(userId, opts = {}) {
             spend: 0,
             impressions: 0,
             reach: 0,
-            clicks: 0,
+            clicks: 0,      // ✅ canónico (link por defecto)
+            clicks_all: 0,  // ✅ debug
             cpm: 0,
             cpc: 0,
             ctr: 0,
@@ -598,11 +637,15 @@ async function collectMeta(userId, opts = {}) {
             roas: 0,
           },
         };
+
         const k = cur.kpis;
         k.spend       += toNum(x.spend);
         k.impressions += toNum(x.impressions);
         k.reach       += toNum(x.reach);
-        k.clicks      += toNum(x.clicks);
+
+        const cx = pickClicks(x);
+        k.clicks     += cx.clicks;
+        k.clicks_all += cx.clicks_all;
 
         if (purchases != null)      k.purchases      += purchases;
         if (purchase_value != null) k.purchase_value += purchase_value;
@@ -647,7 +690,8 @@ async function collectMeta(userId, opts = {}) {
             spend: 0,
             impressions: 0,
             reach: 0,
-            clicks: 0,
+            clicks: 0,      // ✅ canónico (link por defecto)
+            clicks_all: 0,  // ✅ debug
             cpm: 0,
             cpc: 0,
             ctr: 0,
@@ -656,11 +700,15 @@ async function collectMeta(userId, opts = {}) {
             roas: 0,
           },
         };
+
         const k = cur.kpis;
         k.spend       += toNum(x.spend);
         k.impressions += toNum(x.impressions);
         k.reach       += toNum(x.reach);
-        k.clicks      += toNum(x.clicks);
+
+        const cx = pickClicks(x);
+        k.clicks     += cx.clicks;
+        k.clicks_all += cx.clicks_all;
 
         if (purchases != null)      k.purchases      += purchases;
         if (purchase_value != null) k.purchase_value += purchase_value;
@@ -697,7 +745,13 @@ async function collectMeta(userId, opts = {}) {
           impressions: v.kpis.impressions,
           reach: v.kpis.reach,
           frequency: v.kpis.frequency,
+
+          // ✅ clicks alineados a Ads Manager (link por defecto)
           clicks: v.kpis.clicks,
+
+          // ✅ debug: clicks todos
+          clicks_all: v.kpis.clicks_all,
+
           cpm: v.kpis.cpm,
           cpc: v.kpis.cpc,
           ctr: v.kpis.ctr,
@@ -748,7 +802,7 @@ async function collectMeta(userId, opts = {}) {
     (a, c) => {
       const k = c.kpis || {};
       a.impr += k.impressions || 0;
-      a.clk  += k.clicks || 0;
+      a.clk  += k.clicks || 0;      // ✅ clicks canónico
       a.cost += k.spend || 0;
       a.pur  += k.purchases || 0;
       a.val  += k.purchase_value || 0;
@@ -770,7 +824,7 @@ async function collectMeta(userId, opts = {}) {
     const k = c.kpis || {};
     const agg = byAccountAgg.get(id) || { impr: 0, clk: 0, cost: 0, pur: 0, val: 0 };
     agg.impr += k.impressions || 0;
-    agg.clk  += k.clicks || 0;
+    agg.clk  += k.clicks || 0;     // ✅ clicks canónico
     agg.cost += k.spend || 0;
     agg.pur  += k.purchases || 0;
     agg.val  += k.purchase_value || 0;
@@ -787,7 +841,7 @@ async function collectMeta(userId, opts = {}) {
       timezone_name: accountTzMap.get(id) || null,
       kpis: {
         impressions: agg.impr,
-        clicks: agg.clk,
+        clicks: agg.clk,           // ✅ clicks canónico
         cost: agg.cost,
         purchases: agg.pur,
         purchase_value: agg.val,
@@ -804,7 +858,7 @@ async function collectMeta(userId, opts = {}) {
     timeRange: strict30 ? strictRange : { from: minStart, to: maxStop },
     kpis: {
       impressions: G.impr,
-      clicks: G.clk,
+      clicks: G.clk,              // ✅ clicks canónico
       cost: G.cost,
       purchases: G.pur,
       purchase_value: G.val,
@@ -816,7 +870,7 @@ async function collectMeta(userId, opts = {}) {
     byCampaignPlacement,
     accountIds,
     accounts,
-    version: 'metaCollector@strict30d+no-doublecount-purchase-v4',
+    version: `metaCollector@strict30d+no-doublecount-purchase-v5(clicks=${META_CLICK_METRIC})`,
   };
 }
 
