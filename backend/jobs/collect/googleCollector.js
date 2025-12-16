@@ -95,7 +95,7 @@ const microsToCurrency = (micros) => round2(Number(micros || 0) / 1_000_000);
 /* Mantengo por compat (no usar para sumar por filas) */
 const microsToUnit = (v) => {
   const n = Number(v || 0);
-  return Math.round((n / 1_000_000) * 100) / 100;
+  return round2(n / 1_000_000);
 };
 
 /**
@@ -977,4 +977,3 @@ async function collectGoogle(userId, opts = {}) {
 }
 
 module.exports = { collectGoogle };
-
