@@ -244,6 +244,10 @@ function deriveGoogleCampaignObjective({ channelType, channelSubType, biddingStr
 /**
  * Acumula métricas por campaña / device / network en los Map globales
  * usando el mismo accessToken y rango (since/until) REAL.
+ *
+ * ✅ FIX CRÍTICO:
+ * - cost se acumula en micros (enteros) para evitar drift de centavos
+ * - conversion a moneda se hace al final
  */
 async function accumulateCampaignBreakdowns({
   accessToken,
@@ -326,8 +330,9 @@ async function accumulateCampaignBreakdowns({
     const impressions = Number(met.impressions || 0);
     const clicks = Number(met.clicks || 0);
 
+    // ✅ acumular EN MICROS (entero)
     const costMicros = met.costMicros ?? met.cost_micros ?? 0;
-    const cost = microsToUnit(costMicros);
+    const costMicrosNum = Number(costMicros || 0);
 
     const conversions = Number(met.conversions || 0);
     const conv_value = Number(met.conversionsValue ?? met.conversions_value ?? 0);
@@ -359,7 +364,7 @@ async function accumulateCampaignBreakdowns({
 
         impressions: 0,
         clicks: 0,
-        cost: 0,
+        cost_micros: 0, // ✅
         conversions: 0,
         conv_value: 0,
       };
@@ -368,7 +373,7 @@ async function accumulateCampaignBreakdowns({
 
     c.impressions += impressions;
     c.clicks += clicks;
-    c.cost += cost;
+    c.cost_micros += costMicrosNum; // ✅
     c.conversions += conversions;
     c.conv_value += conv_value;
 
@@ -394,7 +399,7 @@ async function accumulateCampaignBreakdowns({
 
         impressions: 0,
         clicks: 0,
-        cost: 0,
+        cost_micros: 0, // ✅
         conversions: 0,
         conv_value: 0,
       };
@@ -403,7 +408,7 @@ async function accumulateCampaignBreakdowns({
 
     d.impressions += impressions;
     d.clicks += clicks;
-    d.cost += cost;
+    d.cost_micros += costMicrosNum; // ✅
     d.conversions += conversions;
     d.conv_value += conv_value;
 
@@ -429,7 +434,7 @@ async function accumulateCampaignBreakdowns({
 
         impressions: 0,
         clicks: 0,
-        cost: 0,
+        cost_micros: 0, // ✅
         conversions: 0,
         conv_value: 0,
       };
@@ -438,7 +443,7 @@ async function accumulateCampaignBreakdowns({
 
     n.impressions += impressions;
     n.clicks += clicks;
-    n.cost += cost;
+    n.cost_micros += costMicrosNum; // ✅
     n.conversions += conversions;
     n.conv_value += conv_value;
   }
@@ -892,18 +897,47 @@ async function collectGoogle(userId, opts = {}) {
 
   // Pasar los mapas de campañas a arrays ordenados
   const byCampaign = Array.from(byCampaignMap.values())
-    .map((c) => ({
-      ...c,
-      ctr: safeDiv(c.clicks, c.impressions) * 100,
-      cpc: safeDiv(c.cost, c.clicks),
-      cpa: safeDiv(c.cost, c.conversions),
-      roas: safeDiv(c.conv_value, c.cost),
-    }))
+    .map((c) => {
+      const cost = microsToCurrency(c.cost_micros);
+      return {
+        ...c,
+        cost, // ✅ moneda final, redondeada UNA sola vez
+        ctr: safeDiv(c.clicks, c.impressions) * 100,
+        cpc: safeDiv(cost, c.clicks),
+        cpa: safeDiv(cost, c.conversions),
+        roas: safeDiv(c.conv_value, cost),
+      };
+    })
     .sort((a, b) => b.impressions - a.impressions)
     .slice(0, 50);
 
-  const byCampaignDevice = Array.from(byCampaignDeviceMap.values()).sort((a, b) => b.impressions - a.impressions);
-  const byCampaignNetwork = Array.from(byCampaignNetworkMap.values()).sort((a, b) => b.impressions - a.impressions);
+  const byCampaignDevice = Array.from(byCampaignDeviceMap.values())
+    .map((d) => {
+      const cost = microsToCurrency(d.cost_micros);
+      return {
+        ...d,
+        cost,
+        ctr: safeDiv(d.clicks, d.impressions) * 100,
+        cpc: safeDiv(cost, d.clicks),
+        cpa: safeDiv(cost, d.conversions),
+        roas: safeDiv(d.conv_value, cost),
+      };
+    })
+    .sort((a, b) => b.impressions - a.impressions);
+
+  const byCampaignNetwork = Array.from(byCampaignNetworkMap.values())
+    .map((n) => {
+      const cost = microsToCurrency(n.cost_micros);
+      return {
+        ...n,
+        cost,
+        ctr: safeDiv(n.clicks, n.impressions) * 100,
+        cpc: safeDiv(cost, n.clicks),
+        cpa: safeDiv(cost, n.conversions),
+        roas: safeDiv(n.conv_value, cost),
+      };
+    })
+    .sort((a, b) => b.impressions - a.impressions);
 
   return {
     notAuthorized: false,
@@ -938,7 +972,7 @@ async function collectGoogle(userId, opts = {}) {
     accounts,
 
     targets: { cpaHigh: 15 },
-    version: 'gadsCollector@range-strict30d-tz+fetchInsights-sourcetruth',
+    version: 'gadsCollector@costMicros-accum+uiRemovedExcluded+range-strict30d-tz',
   };
 }
 
