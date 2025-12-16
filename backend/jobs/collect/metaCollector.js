@@ -71,22 +71,47 @@ function pickDefaultAccountId(acc) {
   return '';
 }
 
-/* ---------------- rango fijo 30 días (estricto) ---------------- */
+/* ---------------- rango fijo 30 días (timezone-aware) ---------------- */
 /**
- * Por defecto: últimos 30 días completos (hasta AYER).
- * Esto reduce discrepancias por “hoy parcial”.
+ * Ads Manager calcula el rango en la timezone del ad account.
+ * Esto evita incoherencias de fechas por UTC y también permite incluir "hoy".
  */
-function getStrictLast30dRange() {
-  const end = new Date();
-  end.setUTCDate(end.getUTCDate() - 1); // ayer
-  end.setUTCHours(0, 0, 0, 0);
+function ymdInTimeZone(date, timeZone) {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timeZone || 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    return fmt.format(date); // YYYY-MM-DD
+  } catch {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  }
+}
 
-  const start = new Date(end);
-  start.setUTCDate(start.getUTCDate() - 29); // total 30 días contando end
-  start.setUTCHours(0, 0, 0, 0);
+function addDaysYMD(ymd, deltaDays) {
+  const [yy, mm, dd] = String(ymd).split('-').map(Number);
+  const base = new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1, 0, 0, 0));
+  base.setUTCDate(base.getUTCDate() + Number(deltaDays || 0));
+  return base.toISOString().slice(0, 10);
+}
 
-  const fmt = (d) => d.toISOString().slice(0, 10);
-  return { since: fmt(start), until: fmt(end) };
+/**
+ * Por defecto: últimos 30 días "tipo Ads Manager".
+ * - includeToday=true => hasta HOY
+ * - includeToday=false => hasta AYER (evita "hoy parcial")
+ */
+function getStrictLast30dRangeForTZ(timeZone, includeToday) {
+  const todayYMD = ymdInTimeZone(new Date(), timeZone || 'UTC');
+  const end = includeToday ? todayYMD : addDaysYMD(todayYMD, -1);
+  const start = addDaysYMD(end, -29);
+  return { since: start, until: end };
 }
 
 /**
@@ -212,14 +237,8 @@ async function pageAllInsights(baseUrl) {
 }
 
 /* ---------------- compras/valor SIN doble conteo ---------------- */
-/**
- * Meta suele traer múltiples action_type que representan “compras” (purchase, omni_purchase,
- * offsite_conversion.fb_pixel_purchase, etc.). Si los sumas, te da x2/x3.
- *
- * Aquí elegimos UNO canónico por prioridad (para empatar con Ads Manager).
- */
 const PURCHASE_ACTION_PRIORITY = [
-  'offsite_conversion.fb_pixel_purchase', // “Compras en el sitio web” típicamente
+  'offsite_conversion.fb_pixel_purchase', // “Compras en el sitio web”
   'omni_purchase',
   'purchase',
 ];
@@ -312,12 +331,17 @@ async function fetchAllCampaignMeta(actId, token) {
 
 async function collectMeta(userId, opts = {}) {
   const {
-    account_id,               // opcional: forzar una sola cuenta
-    date_preset = 'last_30d', // legacy compat (se ignora por defecto si strict30)
-    level = 'campaign',       // campaign|adset|ad
-    fields: userFields,       // opcional override
-    since, until,             // si defines since/until, se usa SOLO si strict30=false
-    strict30 = true           // ✅ por defecto: SIEMPRE últimos 30 días fijos
+    account_id,
+    date_preset = 'last_30d',
+    level = 'campaign',
+    fields: userFields,
+    since, until,
+    strict30 = true,
+
+    // ✅ para alinear con Ads Manager:
+    // - puedes mandar include_today desde quien llame collectMeta
+    // - o controlar por env META_INCLUDE_TODAY=true|false
+    include_today = (String(process.env.META_INCLUDE_TODAY || 'true').toLowerCase() === 'true')
   } = opts;
 
   // Carga MetaAccount (tokens) y User (selección)
@@ -404,19 +428,18 @@ async function collectMeta(userId, opts = {}) {
   ];
   const fields = Array.isArray(userFields) && userFields.length ? userFields : baseFields;
 
-  // Rango fijo 30 días (estricto por defecto)
-  const strictRange = getStrictLast30dRange();
-
   // Construye URL con presets/rangos
-  const mkUrl = (actId, preset, extra = {}) => {
+  const mkUrl = (actId, preset, strictRangeObj, extra = {}) => {
     const qp = new URLSearchParams();
 
-    if (strict30) {
-      qp.set('time_range', JSON.stringify(strictRange));
-    } else if (since && until) {
+    if (strict30 && strictRangeObj) {
+      qp.set('time_range', JSON.stringify(strictRangeObj));
+    } else if (!strict30 && since && until) {
       qp.set('time_range', JSON.stringify({ since, until }));
-    } else if (preset) {
+    } else if (!strict30 && preset) {
       qp.set('date_preset', preset);
+    } else if (strict30 && !strictRangeObj) {
+      qp.set('date_preset', 'last_30d');
     }
 
     qp.set('level', level);
@@ -473,6 +496,11 @@ async function collectMeta(userId, opts = {}) {
     accountNameMap.set(actId, acct.name || meta.accountName || null);
     accountTzMap.set(actId, meta.timezone_name);
 
+    // ✅ strictRange alineado a Ads Manager (timezone de la cuenta)
+    const strictRange = strict30
+      ? getStrictLast30dRangeForTZ(meta.timezone_name || 'UTC', !!include_today)
+      : null;
+
     // metadatos de campañas (status, objetivo, budgets, etc.)
     let campMeta = new Map();
     try {
@@ -486,7 +514,7 @@ async function collectMeta(userId, opts = {}) {
     const presetTried = strict30 ? null : (date_preset || 'last_30d');
 
     try {
-      data = await pageAllInsights(mkUrl(actId, presetTried));
+      data = await pageAllInsights(mkUrl(actId, presetTried, strictRange));
     } catch (e) {
       const code = e?._meta?.code;
       const subcode = e?._meta?.error_subcode;
@@ -494,9 +522,6 @@ async function collectMeta(userId, opts = {}) {
       const reason = isAuth ? 'TOKEN_INVALID_OR_EXPIRED' : (e?.message || 'Meta insights failed');
       return { notAuthorized: true, reason, byCampaign: [], accountIds };
     }
-
-    // ✅ NO auto-expandimos rango si strict30=true
-    // (si está vacío, se queda vacío y listo)
 
     const byCampAgg = new Map();
 
@@ -590,22 +615,27 @@ async function collectMeta(userId, opts = {}) {
       k.cpc  = k.clicks ? (k.spend / k.clicks) : 0;
       k.ctr  = k.impressions ? (k.clicks / k.impressions) * 100 : 0;
 
-      // ✅ ROAS consistente con lo que realmente usamos (value/spend)
+      // ✅ ROAS consistente (value/spend)
       k.roas = (k.purchase_value && k.spend) ? safeDiv(k.purchase_value, k.spend) : 0;
 
       byCampAgg.set(key, cur);
     }
 
-    // insights por dispositivo
+    // ---------------------------
+    // ✅ insights por DISPOSITIVO (ALINEADO A ADS MANAGER)
+    // Ads Manager “Dispositivo: Smartphone Android, iPhone…” = breakdown impression_device
+    // ---------------------------
     const byCampDeviceAgg = new Map();
     try {
       const devData = await pageAllInsights(
-        mkUrl(actId, presetTried, { breakdowns: 'device_platform' })
+        mkUrl(actId, presetTried, strictRange, { breakdowns: 'impression_device' })
       );
+
       for (const x of devData) {
         const campIdNorm = normAct(x.campaign_id || '');
         if (!campIdNorm) continue;
-        const device = x.device_platform || null;
+
+        const device = x.impression_device || null;
         if (!device) continue;
 
         const metaInfo = campMeta.get(campIdNorm) || {};
@@ -657,13 +687,77 @@ async function collectMeta(userId, opts = {}) {
 
         byCampDeviceAgg.set(dupKey, cur);
       }
-    } catch {}
+    } catch (e) {
+      // fallback: si la cuenta no permite impression_device (raro), cae a device_platform
+      try {
+        const devData = await pageAllInsights(
+          mkUrl(actId, presetTried, strictRange, { breakdowns: 'device_platform' })
+        );
+
+        for (const x of devData) {
+          const campIdNorm = normAct(x.campaign_id || '');
+          if (!campIdNorm) continue;
+
+          const device = x.device_platform || null;
+          if (!device) continue;
+
+          const metaInfo = campMeta.get(campIdNorm) || {};
+          const rawObjective = x.objective || metaInfo.objective || null;
+          const objective_norm = metaInfo.objective_norm || normalizeMetaObjective(rawObjective);
+          const campaignName = x.campaign_name || metaInfo.name || null;
+
+          const { purchases, purchase_value } = extractPurchaseMetrics(x);
+
+          const dupKey = `${campIdNorm}::${device}`;
+          const cur = byCampDeviceAgg.get(dupKey) || {
+            account_id: actId,
+            campaign_id: campIdNorm,
+            campaignName,
+            objective: rawObjective,
+            objective_norm,
+            device,
+            kpis: {
+              spend: 0,
+              impressions: 0,
+              reach: 0,
+              clicks: 0,
+              clicks_all: 0,
+              cpm: 0,
+              cpc: 0,
+              ctr: 0,
+              purchases: 0,
+              purchase_value: 0,
+              roas: 0,
+            },
+          };
+
+          const k = cur.kpis;
+          k.spend       += toNum(x.spend);
+          k.impressions += toNum(x.impressions);
+          k.reach       += toNum(x.reach);
+
+          const cx = pickClicks(x);
+          k.clicks     += cx.clicks;
+          k.clicks_all += cx.clicks_all;
+
+          if (purchases != null)      k.purchases      += purchases;
+          if (purchase_value != null) k.purchase_value += purchase_value;
+
+          k.cpm  = k.impressions ? (k.spend / k.impressions) * 1000 : 0;
+          k.cpc  = k.clicks ? (k.spend / k.clicks) : 0;
+          k.ctr  = k.impressions ? (k.clicks / k.impressions) * 100 : 0;
+          k.roas = (k.purchase_value && k.spend) ? safeDiv(k.purchase_value, k.spend) : 0;
+
+          byCampDeviceAgg.set(dupKey, cur);
+        }
+      } catch {}
+    }
 
     // insights por plataforma (Facebook / Instagram / Audience Network…)
     const byCampPlacementAgg = new Map();
     try {
       const plData = await pageAllInsights(
-        mkUrl(actId, presetTried, { breakdowns: 'publisher_platform' })
+        mkUrl(actId, presetTried, strictRange, { breakdowns: 'publisher_platform' })
       );
       for (const x of plData) {
         const campIdNorm = normAct(x.campaign_id || '');
@@ -851,11 +945,15 @@ async function collectMeta(userId, opts = {}) {
     };
   });
 
+  // timeRange (para mostrarlo coherente): basado en la timezone de la primera cuenta
+  const firstTz = accountIds.length ? (accountTzMap.get(accountIds[0]) || 'UTC') : 'UTC';
+  const strictRangeOut = strict30 ? getStrictLast30dRangeForTZ(firstTz, !!include_today) : null;
+
   return {
     notAuthorized: false,
     defaultAccountId: pickDefaultAccountId(acc) || null,
     currency: unifiedCurrency,
-    timeRange: strict30 ? strictRange : { from: minStart, to: maxStop },
+    timeRange: strict30 ? strictRangeOut : { from: minStart, to: maxStop },
     kpis: {
       impressions: G.impr,
       clicks: G.clk,              // ✅ clicks canónico
@@ -870,7 +968,7 @@ async function collectMeta(userId, opts = {}) {
     byCampaignPlacement,
     accountIds,
     accounts,
-    version: `metaCollector@strict30d+no-doublecount-purchase-v5(clicks=${META_CLICK_METRIC})`,
+    version: `metaCollector@strict30d+tz+impression_device-v6(clicks=${META_CLICK_METRIC},include_today=${!!include_today})`,
   };
 }
 
