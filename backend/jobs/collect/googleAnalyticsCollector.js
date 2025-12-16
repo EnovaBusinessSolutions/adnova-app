@@ -94,6 +94,8 @@ async function ensureAccessToken(accDoc) {
   client.setCredentials({ refresh_token: accDoc.refreshToken });
 
   try {
+    // Nota: refreshAccessToken está deprecado en algunas versiones,
+    // pero sigue funcionando en muchos entornos. Lo mantenemos por compat.
     const { credentials } = await client.refreshAccessToken();
     const token = credentials?.access_token || null;
 
@@ -173,10 +175,19 @@ async function ga4RunReport({ token, property, body }) {
 }
 
 /** '30daysAgo' / 'yesterday' → GA4 acepta estos literales tal cual */
-function resolveDateRange({ start = '30daysAgo', end = 'yesterday' }) {
+function resolveDateRange({ start, end, include_today } = {}) {
+  // ✅ para alinear con UI cuando “incluye hoy”:
+  // - include_today=true => end=today; start=29daysAgo (30 días inclusive)
+  // - include_today=false => end=yesterday; start=30daysAgo (30 días inclusive)
+  let s = start;
+  let e = end;
+
+  if (!s) s = include_today ? '29daysAgo' : '30daysAgo';
+  if (!e) e = include_today ? 'today' : 'yesterday';
+
   const abs = /^\d{4}-\d{2}-\d{2}$/;
-  const isAbs = abs.test(String(start)) && abs.test(String(end));
-  return isAbs ? { start, end } : { start, end };
+  const isAbs = abs.test(String(s)) && abs.test(String(e));
+  return isAbs ? { start: s, end: e } : { start: s, end: e };
 }
 
 /* -------- selección de propiedades (CANÓNICA + compat) -------- */
@@ -202,7 +213,7 @@ function listAvailableProperties(acc) {
  * 6) si available > MAX_BY_RULE -> requiredSelection
  */
 async function resolvePropertiesForAudit({ userId, accDoc, forcedPropertyId }) {
-  let available = listAvailableProperties(accDoc);
+  const available = listAvailableProperties(accDoc);
   const byId = new Map(available.map(a => [a.id, a]));
 
   // 1) override del caller (forzar una sola)
@@ -274,7 +285,7 @@ async function resolvePropertiesForAudit({ userId, accDoc, forcedPropertyId }) {
 /* ---------------- collector ---------------- */
 async function collectGA4(
   userId,
-  { property_id, start = '30daysAgo', end = 'yesterday' } = {}
+  { property_id, start, end, include_today = false } = {}
 ) {
   // 1) Cargar cuenta con tokens y scopes
   const acc = await GoogleAccount
@@ -338,11 +349,29 @@ async function collectGA4(
     console.log('[ga4Collector] -> auditing GA4 properties:', propertiesToAudit.map(p => p.id));
   }
 
-  const dateRange = resolveDateRange({ start, end });
+  const dateRange = resolveDateRange({ start, end, include_today });
 
   /* ========= Reportes (base + enriquecidos para IA) ========= */
 
-  // 1) Canales (channel grouping)
+  // IMPORTANTE:
+  // ✅ Para KPIs “reales” (especialmente totalUsers/newUsers) NO se deben sumar filas de breakdown.
+  // Usamos metricAggregations:['TOTAL'] para leer el total oficial que coincide con GA UI.
+
+  // 0) Totales sin dimensiones (fallback si GA no entrega "totals" en el breakdown)
+  const totalsOnlyBody = {
+    dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
+    metrics: [
+      { name: 'totalUsers' },
+      { name: 'sessions' },
+      { name: 'conversions' },
+      { name: 'purchaseRevenue' },
+      { name: 'newUsers' },
+      { name: 'engagedSessions' },
+    ],
+    limit: '1',
+  };
+
+  // 1) Canales (channel grouping) + TOTAL para KPIs correctos
   const channelsBody = {
     dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
     dimensions: [{ name: 'sessionDefaultChannelGroup' }],
@@ -354,6 +383,7 @@ async function collectGA4(
       { name: 'newUsers' },
       { name: 'engagedSessions' },
     ],
+    metricAggregations: ['TOTAL'], // ✅ clave para evitar discrepancias de usuarios
     limit: '1000',
   };
 
@@ -384,7 +414,7 @@ async function collectGA4(
     limit: '5000',
   };
 
-  // 4) Tendencia diaria (para detectar caídas/picos y estacionalidad)
+  // 4) Tendencia diaria
   const dailyBody = {
     dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
     dimensions: [{ name: 'date' }],
@@ -398,7 +428,7 @@ async function collectGA4(
     limit: '400',
   };
 
-  // 5) Source / Medium (calidad de adquisición)
+  // 5) Source / Medium
   const sourceMediumBody = {
     dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
     dimensions: [{ name: 'sessionSource' }, { name: 'sessionMedium' }],
@@ -411,7 +441,7 @@ async function collectGA4(
     limit: '5000',
   };
 
-  // 6) Top eventos (para IA: qué está ocurriendo en el sitio)
+  // 6) Top eventos
   const topEventsBody = {
     dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
     dimensions: [{ name: 'eventName' }],
@@ -447,7 +477,7 @@ async function collectGA4(
     const accountName  = meta.accountName || meta.account || prop.accountName || '';
     const propertyName = meta.displayName || prop.displayName || '';
 
-    // ---- canales ----
+    // ---- canales (breakdown) ----
     let jChannels;
     try {
       jChannels = await runReportWithRetry(property, channelsBody);
@@ -492,28 +522,43 @@ async function collectGA4(
       engagedSessions: toNum(rw.metricValues?.[5]?.value),
     }));
 
+    // ✅ KPIs reales (TOTAL oficial) para evitar sobreconteo de usuarios/newUsers
+    let totals = jChannels?.totals?.[0]?.metricValues || null;
+
+    // Fallback robusto: si no vino totals por cualquier razón, pedimos totales sin dimensiones
+    if (!totals || !Array.isArray(totals) || totals.length < 6) {
+      try {
+        const jTotals = await runReportWithRetry(property, totalsOnlyBody);
+        const row0 = Array.isArray(jTotals?.rows) ? jTotals.rows[0] : null;
+        totals = row0?.metricValues || totals;
+      } catch (_) {
+        // si falla el fallback, dejamos totals como esté (o null)
+      }
+    }
+
     const propAgg = {
-      users: 0, sessions: 0, conversions: 0, revenue: 0,
-      newUsers: 0, engagedSessions: 0,
+      users: toNum(totals?.[0]?.value),
+      sessions: toNum(totals?.[1]?.value),
+      conversions: toNum(totals?.[2]?.value),
+      revenue: toNum(totals?.[3]?.value),
+      newUsers: toNum(totals?.[4]?.value),
+      engagedSessions: toNum(totals?.[5]?.value),
     };
 
+    // Actualizar agregados globales (por propiedad)
+    aggregate.users += propAgg.users || 0;
+    aggregate.sessions += propAgg.sessions || 0;
+    aggregate.conversions += propAgg.conversions || 0;
+    aggregate.revenue += propAgg.revenue || 0;
+    aggregate.newUsers += propAgg.newUsers || 0;
+    aggregate.engagedSessions += propAgg.engagedSessions || 0;
+
+    // Map global de canales (breakdown; aquí sí se suman filas por canal)
     for (const c of channels) {
-      propAgg.users += c.users || 0;
-      propAgg.sessions += c.sessions || 0;
-      propAgg.conversions += c.conversions || 0;
-      propAgg.revenue += c.revenue || 0;
-      propAgg.newUsers += c.newUsers || 0;
-      propAgg.engagedSessions += c.engagedSessions || 0;
-
-      aggregate.users += c.users || 0;
-      aggregate.sessions += c.sessions || 0;
-      aggregate.conversions += c.conversions || 0;
-      aggregate.revenue += c.revenue || 0;
-      aggregate.newUsers += c.newUsers || 0;
-      aggregate.engagedSessions += c.engagedSessions || 0;
-
       const key = c.channel || '(other)';
-      const g = globalChannelsMap.get(key) || { users: 0, sessions: 0, conversions: 0, revenue: 0, newUsers: 0, engagedSessions: 0 };
+      const g = globalChannelsMap.get(key) || {
+        users: 0, sessions: 0, conversions: 0, revenue: 0, newUsers: 0, engagedSessions: 0
+      };
       g.users += c.users || 0;
       g.sessions += c.sessions || 0;
       g.conversions += c.conversions || 0;
@@ -736,7 +781,7 @@ async function collectGA4(
   landingGlobal.sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
   landingGlobal = landingGlobal.slice(0, 100);
 
-  let dailyGlobal = Array.from(globalDailyMap.entries())
+  const dailyGlobal = Array.from(globalDailyMap.entries())
     .map(([date, m]) => ({ date, ...m }))
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
@@ -784,7 +829,7 @@ async function collectGA4(
       byProperty,
       aggregate,
       properties,
-      version: 'ga4Collector@canonical-selection+rich-v3',
+      version: 'ga4Collector@canonical-selection+totals-v4',
     };
   }
 
@@ -803,7 +848,7 @@ async function collectGA4(
     byProperty,
     aggregate,
     properties,
-    version: 'ga4Collector@canonical-selection+rich-v3',
+    version: 'ga4Collector@canonical-selection+totals-v4',
   };
 }
 
