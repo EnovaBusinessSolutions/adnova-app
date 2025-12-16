@@ -333,3 +333,8 @@ body {
   mask-image: none !important;
   background-color: transparent !important;
 }
+
+/* ✅ SOLO el "Adray" del título en ULM Grotesk */
+.header h1{
+  font-family: "Ulm Grotesk", "UlmGrotesk", "Ulm-Grotesk", 'Inter', sans-serif !important;
+}
