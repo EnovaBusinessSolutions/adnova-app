@@ -1,3 +1,12 @@
+/* ✅ Cargar Ulm Grotesk SOLO para el título "Adray" */
+@font-face {
+  font-family: "UlmGrotesk";
+  src: url("/fonts/UlmGrotesk-Bold.otf") format("opentype");
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -41,6 +50,12 @@ body {
   font-weight: 800;
   color: #D1A5FF;
   letter-spacing: -1px;
+}
+
+/* ✅ SOLO el "Adray" del título en ULM Grotesk (sin tocar lo demás) */
+.header h1{
+  font-family: "UlmGrotesk", "Ulm Grotesk", "UlmGrotesk-Bold", "Inter", sans-serif !important;
+  font-weight: 800;
 }
 
 .header p {
@@ -332,9 +347,4 @@ body {
   -webkit-mask-image: none !important;
   mask-image: none !important;
   background-color: transparent !important;
-}
-
-/* ✅ SOLO el "Adray" del título en ULM Grotesk */
-.header h1{
-  font-family: "Ulm Grotesk", "UlmGrotesk", "Ulm-Grotesk", 'Inter', sans-serif !important;
 }
