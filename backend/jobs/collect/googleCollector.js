@@ -65,13 +65,46 @@ try {
 
 const normId   = (s = '') => String(s).replace(/^customers\//, '').replace(/[^\d]/g, '').trim();
 const safeDiv  = (n, d) => (Number(d || 0) ? Number(n || 0) / Number(d || 0) : 0);
+
 const microsToUnit = (v) => {
   const n = Number(v || 0);
   return Math.round((n / 1_000_000) * 100) / 100;
 };
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const daysAgoISO = (n) => { const d = new Date(); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10); };
+/**
+ * Formatea YYYY-MM-DD en una zona horaria (evita “adelantarse” por UTC en Render)
+ */
+function isoInTZ(date, timeZone) {
+  try {
+    // en-CA => YYYY-MM-DD
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: timeZone || 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  } catch {
+    return new Date(date).toISOString().slice(0, 10);
+  }
+}
+
+/**
+ * Rango estricto 30 días completos: termina AYER (en TZ del customer) y empieza 29 días antes.
+ * Esto empata con “últimos 30 días” sin incluir hoy (parcial).
+ */
+function getStrictLast30dRangeTZ(timeZone) {
+  const now = new Date();
+
+  // AYER (restamos 24h y luego formateamos en TZ)
+  const end = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  const endISO = isoInTZ(end, timeZone);
+
+  // START = end - 29 días (para total 30 días incluyendo end)
+  const start = new Date(end.getTime() - 29 * 24 * 60 * 60 * 1000);
+  const startISO = isoInTZ(start, timeZone);
+
+  return { since: startISO, until: endISO };
+}
 
 function oauth() {
   return new OAuth2Client({
@@ -97,6 +130,8 @@ async function ensureAccessToken(gaDoc) {
   });
 
   try {
+    // Nota: refreshAccessToken está deprecated en algunas versiones,
+    // pero lo dejamos porque ya lo tienes así y funciona en tu stack.
     const { credentials } = await client.refreshAccessToken();
     const token = credentials?.access_token || null;
     if (token) {
@@ -137,7 +172,7 @@ async function getCustomer(accessToken, cid) {
     resourceName: data?.resourceName || `customers/${cid}`,
     descriptiveName: data?.descriptiveName || null,
     currencyCode: data?.currencyCode || 'USD',
-    timeZone: data?.timeZone || null,
+    timeZone: data?.timeZone || null, // importante para rango
   };
 }
 
@@ -153,50 +188,19 @@ function intersect(aSet, ids) {
  * Derivamos un objective estable con señales:
  *  - channelType / channelSubType
  *  - biddingStrategyType
- *
- * OJO: esto NO cambia tus KPIs, solo añade contexto para la IA.
  */
 function deriveGoogleCampaignObjective({ channelType, channelSubType, biddingStrategyType }) {
   const ct  = String(channelType || '').toUpperCase();
   const cst = String(channelSubType || '').toUpperCase();
   const bst = String(biddingStrategyType || '').toUpperCase();
 
-  // 1) PMax / Shopping típicamente orientado a ventas (cuando hay ecommerce)
-  if (ct === 'PERFORMANCE_MAX' || cst.includes('SHOPPING') || ct === 'SHOPPING') {
-    return 'SALES';
-  }
-
-  // 2) Bidding orientado a valor → ventas
-  if (bst.includes('MAXIMIZE_CONVERSION_VALUE') || bst.includes('TARGET_ROAS')) {
-    return 'SALES';
-  }
-
-  // 3) Bidding orientado a conversiones → leads (o ventas si ecommerce; sin señal extra lo marcamos LEADS)
-  if (bst.includes('MAXIMIZE_CONVERSIONS') || bst.includes('TARGET_CPA')) {
-    return 'LEADS';
-  }
-
-  // 4) Tráfico
-  if (bst.includes('MAXIMIZE_CLICKS')) {
-    return 'TRAFFIC';
-  }
-
-  // 5) Awareness / Reach
-  if (bst.includes('TARGET_IMPRESSION_SHARE') || bst.includes('TARGET_CPM') || bst.includes('MANUAL_CPM')) {
-    return 'AWARENESS';
-  }
-
-  // 6) Video views (señal por canal o estrategia CPV)
-  if (ct === 'VIDEO' || bst.includes('MANUAL_CPV') || bst.includes('TARGET_CPV')) {
-    return 'VIDEO_VIEWS';
-  }
-
-  // 7) Display por defecto suele ser awareness si no hay estrategia de conv
-  if (ct === 'DISPLAY') {
-    return 'AWARENESS';
-  }
-
-  // 8) Search / otros: si no hay señal, dejamos OTHER
+  if (ct === 'PERFORMANCE_MAX' || cst.includes('SHOPPING') || ct === 'SHOPPING') return 'SALES';
+  if (bst.includes('MAXIMIZE_CONVERSION_VALUE') || bst.includes('TARGET_ROAS')) return 'SALES';
+  if (bst.includes('MAXIMIZE_CONVERSIONS') || bst.includes('TARGET_CPA')) return 'LEADS';
+  if (bst.includes('MAXIMIZE_CLICKS')) return 'TRAFFIC';
+  if (bst.includes('TARGET_IMPRESSION_SHARE') || bst.includes('TARGET_CPM') || bst.includes('MANUAL_CPM')) return 'AWARENESS';
+  if (ct === 'VIDEO' || bst.includes('MANUAL_CPV') || bst.includes('TARGET_CPV')) return 'VIDEO_VIEWS';
+  if (ct === 'DISPLAY') return 'AWARENESS';
   return 'OTHER';
 }
 
@@ -204,7 +208,7 @@ function deriveGoogleCampaignObjective({ channelType, channelSubType, biddingStr
 
 /**
  * Acumula métricas por campaña / device / network en los Map globales
- * usando el mismo accessToken y rango (since/until) que usa el panel.
+ * usando el mismo accessToken y rango (since/until) REAL.
  */
 async function accumulateCampaignBreakdowns({
   accessToken,
@@ -262,10 +266,8 @@ async function accumulateCampaignBreakdowns({
     const id     = normId(camp.id);
     const name   = camp.name || `Campaña ${id || '?'}`;
     const status = camp.status || 'UNSPECIFIED';
-
     if (!id) continue;
 
-    // Campos extra (robusto ante diferentes shapes)
     const channelType =
       camp.advertisingChannelType ||
       camp.advertising_channel_type ||
@@ -302,12 +304,10 @@ async function accumulateCampaignBreakdowns({
     const keyC = `${cid}|${id}`;
     let c = byCampaignMap.get(keyC);
     if (!c) {
-      // 👇 IMPORTANTE: usar account_id (y opcionalmente accountId para compat)
       c = {
         account_id: cid,
         accountId: cid,
 
-        // compat / naming
         id,
         name,
         campaign_id: id,
@@ -316,7 +316,6 @@ async function accumulateCampaignBreakdowns({
 
         status,
 
-        // contexto extra
         channelType: channelType ? String(channelType) : null,
         channelSubType: channelSubType ? String(channelSubType) : null,
         biddingStrategyType: biddingStrategyType ? String(biddingStrategyType) : null,
@@ -349,7 +348,6 @@ async function accumulateCampaignBreakdowns({
 
         device,
 
-        // contexto extra
         channelType: channelType ? String(channelType) : null,
         channelSubType: channelSubType ? String(channelSubType) : null,
         biddingStrategyType: biddingStrategyType ? String(biddingStrategyType) : null,
@@ -382,7 +380,6 @@ async function accumulateCampaignBreakdowns({
 
         network,
 
-        // contexto extra
         channelType: channelType ? String(channelType) : null,
         channelSubType: channelSubType ? String(channelSubType) : null,
         biddingStrategyType: biddingStrategyType ? String(biddingStrategyType) : null,
@@ -588,19 +585,19 @@ async function collectGoogle(userId, opts = {}) {
 
   /* ====================== Acumuladores globales ====================== */
 
-  const untilGlobal = todayISO();
-
   let G = { impr: 0, clk: 0, cost: 0, conv: 0, val: 0, allConv: 0, allVal: 0 };
   const seriesMap = new Map(); // date -> agg
 
   let currency = 'USD';
   let timeZone = null;
-  let lastSinceUsed = null;
+
+  // rango REAL (source of truth) → lo vamos a sacar del payload del helper del panel
+  let globalSince = null;
+  let globalUntil = null;
 
   const accountsMeta = new Map(); // id -> { name, currencyCode, timeZone }
   const byAccountAgg = new Map(); // id -> agg kpis
 
-  // Nuevos acumuladores globales de campañas
   const byCampaignMap        = new Map();
   const byCampaignDeviceMap  = new Map();
   const byCampaignNetworkMap = new Map();
@@ -608,7 +605,7 @@ async function collectGoogle(userId, opts = {}) {
   /* ====================== Loop por cuenta (fetchInsights) ====================== */
 
   for (const customerId of idsToAudit) {
-    // 1) Metadata básica del customer
+    // 1) Metadata básica del customer (para tz + moneda)
     try {
       const cInfo = await getCustomer(accessToken, customerId);
       accountsMeta.set(customerId, {
@@ -636,7 +633,7 @@ async function collectGoogle(userId, opts = {}) {
         customerId,
         datePreset: 'last_30d',
         range: null,
-        includeToday: false,
+        includeToday: false,     // ✅ NO hoy
         objective: 'ventas',
         compareMode: null,
       });
@@ -685,6 +682,27 @@ async function collectGoogle(userId, opts = {}) {
       continue;
     }
 
+    // 2.a) Range REAL del helper (esto es lo que ve el panel)
+    //     Priorizamos payload.range.{since,until}. Si no viene, lo derivamos por TZ.
+    const tzForThis = accountsMeta.get(customerId)?.timeZone || timeZone || 'UTC';
+    const strictFallback = getStrictLast30dRangeTZ(tzForThis);
+
+    const sinceThis =
+      payload?.range?.since ||
+      payload?.timeRange?.from ||
+      payload?.dateRange?.from ||
+      strictFallback.since;
+
+    const untilThis =
+      payload?.range?.until ||
+      payload?.timeRange?.to ||
+      payload?.dateRange?.to ||
+      strictFallback.until;
+
+    // global min/max (en teoría deben ser iguales entre cuentas, pero lo hacemos robusto)
+    if (!globalSince || sinceThis < globalSince) globalSince = sinceThis;
+    if (!globalUntil || untilThis > globalUntil) globalUntil = untilThis;
+
     const k = payload.kpis || {};
 
     const impr = Number(k.impressions || 0);
@@ -709,6 +727,11 @@ async function collectGoogle(userId, opts = {}) {
     for (const p of seriesArr) {
       const d = p.date || p.day || p.segment_date || p['segments.date'];
       if (!d) continue;
+
+      // Opcional: filtrar por rango real para evitar “colas” si el helper trae más
+      if (sinceThis && d < sinceThis) continue;
+      if (untilThis && d > untilThis) continue;
+
       const cur = seriesMap.get(d) || {
         impressions: 0,
         clicks: 0,
@@ -728,13 +751,6 @@ async function collectGoogle(userId, opts = {}) {
       seriesMap.set(d, cur);
     }
 
-    const sinceThis = payload?.range?.since
-      || payload?.timeRange?.from
-      || payload?.dateRange?.from
-      || daysAgoISO(30);
-
-    lastSinceUsed = sinceThis;
-
     // KPI agregados por cuenta
     const accAgg = {
       impressions: impr,
@@ -751,17 +767,18 @@ async function collectGoogle(userId, opts = {}) {
       logger.info('[gadsCollector] account payload para auditoría', {
         customerId,
         kpis: accAgg,
-        timeRange: payload.timeRange || payload.range || payload.dateRange || null,
+        usedRange: { since: sinceThis, until: untilThis },
+        rawRange: payload.range || payload.timeRange || payload.dateRange || null,
       });
     }
 
-    // 3) Cargar breakdowns de campañas para ESTA cuenta con el mismo rango
+    // 3) Cargar breakdowns de campañas con el MISMO rango REAL
     try {
       await accumulateCampaignBreakdowns({
         accessToken,
         customerId,
         since: sinceThis,
-        until: payload?.range?.until || payload?.timeRange?.to || untilGlobal,
+        until: untilThis,
         byCampaignMap,
         byCampaignDeviceMap,
         byCampaignNetworkMap,
@@ -774,13 +791,17 @@ async function collectGoogle(userId, opts = {}) {
     }
   }
 
+  // Si por algún motivo no logramos rango global, lo derivamos por TZ general (robusto)
+  if (!globalSince || !globalUntil) {
+    const fallback = getStrictLast30dRangeTZ(timeZone || 'UTC');
+    globalSince = globalSince || fallback.since;
+    globalUntil = globalUntil || fallback.until;
+  }
+
   // Serie final ordenada
   const series = Array.from(seriesMap.keys())
     .sort()
     .map((d) => ({ date: d, ...seriesMap.get(d) }));
-
-  const sinceGlobal = lastSinceUsed || daysAgoISO(30);
-  const untilGlobalFinal = todayISO();
 
   // Construir listado de cuentas con KPIs por cuenta
   const accounts = idsToAudit.map((cid) => {
@@ -838,7 +859,8 @@ async function collectGoogle(userId, opts = {}) {
     notAuthorized: false,
     currency,
     timeZone,
-    timeRange: { from: sinceGlobal, to: untilGlobalFinal },
+    // ✅ RANGO REAL (no todayISO), alineado a lo que ve Ads Manager/UI
+    timeRange: { from: globalSince, to: globalUntil },
     kpis: {
       impressions: G.impr,
       clicks: G.clk,
@@ -861,7 +883,7 @@ async function collectGoogle(userId, opts = {}) {
     defaultCustomerId: gaDoc.defaultCustomerId ? normId(gaDoc.defaultCustomerId) : null,
     accounts,
     targets: { cpaHigh: 15 },
-    version: 'gadsCollector@fetchInsights-campaigns+objective',
+    version: 'gadsCollector@range-strict30d-tz+fetchInsights-sourcetruth',
   };
 }
 
