@@ -115,6 +115,96 @@ function applyEmojiToTitle(issue) {
   return issue;
 }
 
+/* ---------------------- UI FORMAT (bullets / numerado) ---------------- */
+function hasBullets(s = '') {
+  const t = String(s || '');
+  return t.includes('•') || /^\s*[-*]\s+/m.test(t);
+}
+
+function hasNumberedSteps(s = '') {
+  const t = String(s || '');
+  return /^\s*(1\)|1\.|1️⃣)\s+/m.test(t) || t.includes('\n1)');
+}
+
+function splitToShortBullets(text, max = 6) {
+  const raw = String(text || '')
+    .replace(/\s+/g, ' ')
+    .split(/(?:\.\s+|\n+)/)
+    .map(x => x.trim())
+    .filter(Boolean);
+
+  const out = [];
+  for (const part of raw) {
+    if (!part) continue;
+    out.push(part);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+function ensureEvidenceBullets(evidence, { maxBullets = 6 } = {}) {
+  const t = String(evidence || '').trim();
+  if (!t) return '';
+
+  // Si ya viene bien formateado, lo respetamos
+  if (t.includes('Resumen de desempeño') && hasBullets(t)) return t;
+
+  const bullets = hasBullets(t) ? null : splitToShortBullets(t, maxBullets);
+
+  const lines = [];
+  lines.push(`Motivo: ${bullets?.[0] ? bullets[0] : t.slice(0, 140)}`);
+  lines.push('');
+  lines.push('Resumen de desempeño');
+
+  const rest = bullets ? bullets.slice(1) : splitToShortBullets(t, maxBullets);
+  const picked = (rest.length ? rest : splitToShortBullets(t, maxBullets)).slice(0, maxBullets);
+
+  for (const b of picked) lines.push(`• ${b}`);
+
+  // Si quedó sin bullets por algún caso raro, al menos uno
+  if (!lines.some(l => l.startsWith('• '))) lines.push(`• ${t}`);
+
+  return lines.join('\n').trim();
+}
+
+function ensureRecommendationNumbered(rec, { maxSteps = 3, maxBulletsPerStep = 2 } = {}) {
+  const t = String(rec || '').trim();
+  if (!t) return '';
+
+  // Si ya viene numerado, lo respetamos
+  if (t.includes('Recomendaciones accionables') && hasNumberedSteps(t)) return t;
+
+  // Intento: separar en “acciones” cortas
+  const parts = splitToShortBullets(t, maxSteps * 2);
+
+  const lines = [];
+  lines.push('Recomendaciones accionables');
+
+  const steps = parts.length ? parts.slice(0, maxSteps) : [t.slice(0, 160)];
+  steps.forEach((s, i) => {
+    const title = String(s).slice(0, 90);
+    lines.push(`${i + 1}) ${title}`);
+
+    // bullets por paso (si hay más frases, intenta 1-2 bullets)
+    const bullets = splitToShortBullets(s, maxBulletsPerStep);
+    const picked = bullets.length > 1 ? bullets.slice(0, maxBulletsPerStep) : [];
+    for (const b of picked) lines.push(`   • ${b}`);
+  });
+
+  return lines.join('\n').trim();
+}
+
+function ensureSummaryBullets(summary) {
+  const t = String(summary || '').trim();
+  if (!t) return '';
+  if (/^\s*•\s+/m.test(t)) return t;
+
+  const bullets = splitToShortBullets(t, 3);
+  if (!bullets.length) return `• ${t.slice(0, 160)}`;
+
+  return bullets.map(b => `• ${b}`).join('\n').trim();
+}
+
 /* ---------------------- DIAGNOSTICS (pre-análisis) ------------------- */
 
 function buildGoogleDiagnostics(snapshot = {}) {
@@ -768,11 +858,27 @@ Uso de datos:
 - Cada issue debe incluir evidencia numérica concreta del snapshot (gasto, impresiones, CTR, conversiones, ROAS, CPA...).
 - Si existe "diagnostics", úsalo como radar (worstCpa, lowCtr, highSpendNoConv, limitedLearning, structureIssues, activeWinners, pausedWinners).
 
-Formato y estilo:
-- Tono: español neutro, directo, profesional, sin relleno.
-- Emojis: usa 1 emoji al inicio del title como máximo (ej: "📈", "🎯", "💰", "🚨"). No uses emojis en evidence/recommendation.
+Formato y estilo (UI-friendly):
+- Español neutro, directo, profesional, sin relleno.
+- Emojis: SOLO 1 emoji al inicio del title. No uses emojis dentro de evidence/recommendation.
+- summary: máximo 3 líneas y SIEMPRE en bullets, cada línea inicia con "• ".
+- evidence: SIEMPRE multilinea con bullets. Estructura obligatoria:
+  Motivo: <1 línea>
+  Resumen de desempeño
+  • <bullet 1>
+  • <bullet 2>
+  • <bullet 3>
+  (máximo 6 bullets en total)
+- recommendation: SIEMPRE multilinea y numerada (1) (2) (3). Estructura obligatoria:
+  Recomendaciones accionables
+  1) <título corto>
+     • <bullet>
+     • <bullet>
+  2) <título corto>
+     • <bullet>
+  (máximo 3 pasos, máximo 2 bullets por paso)
+- No inventes campañas/métricas. Si un dato no existe, omítelo.
 - Devuelve exclusivamente JSON válido (response_format json_object). No agregues texto fuera del JSON.
-- Nunca inventes campañas o métricas.
 `.trim();
 
 const SYSTEM_GA = `
@@ -794,11 +900,27 @@ Uso de fuentes:
 - Si existe "diagnostics.ga4", úsalo (lowConvChannels, badLandingPages, deviceGaps, trackingFlags, bestChannels, bestLandingPages, bestSourceMedium).
 - Si daily/sourceMedium/topEvents existen, úsalos para explicar el “por qué” y proponer acciones concretas.
 
-Formato y estilo:
-- Evidencia numérica concreta (máx 2–3 frases en evidence).
-- Recomendación: 2–4 pasos específicos (experimentos A/B, UTMs, eventos, mapeo de conversiones, mejoras de landing, etc.).
-- Emojis: 1 emoji al inicio del title como máximo. No uses emojis en evidence/recommendation.
-- Devuelve exclusivamente JSON válido. No inventes métricas ni segmentos inexistentes.
+Formato y estilo (UI-friendly):
+- Español neutro, directo, profesional, sin relleno.
+- Emojis: SOLO 1 emoji al inicio del title. No uses emojis dentro de evidence/recommendation.
+- summary: máximo 3 líneas y SIEMPRE en bullets, cada línea inicia con "• ".
+- evidence: SIEMPRE multilinea con bullets. Estructura obligatoria:
+  Motivo: <1 línea>
+  Resumen de desempeño
+  • <bullet 1>
+  • <bullet 2>
+  • <bullet 3>
+  (máximo 6 bullets en total)
+- recommendation: SIEMPRE multilinea y numerada (1) (2) (3). Estructura obligatoria:
+  Recomendaciones accionables
+  1) <título corto>
+     • <bullet>
+     • <bullet>
+  2) <título corto>
+     • <bullet>
+  (máximo 3 pasos, máximo 2 bullets por paso)
+- Evidencia numérica concreta. No inventes métricas ni segmentos inexistentes.
+- Devuelve exclusivamente JSON válido. No agregues texto fuera del JSON.
 `.trim();
 
 const SCHEMA_ADS = `
@@ -877,8 +999,8 @@ CONSIGNA GENERAL
 
 REQUISITOS POR ISSUE
 ${isAnalytics ? gaExtras : adsExtras}
-- evidence: métricas concretas (máx 2–3 frases).
-- recommendation: 2–4 pasos accionables y específicos.
+- evidence: usa el formato UI-friendly (Motivo + Resumen de desempeño con bullets).
+- recommendation: usa el formato UI-friendly (Recomendaciones accionables con pasos 1) 2) 3)).
 - estimatedImpact coherente (alto/medio/bajo).
 - Ordena los issues de mayor a menor impacto.
 
@@ -1066,7 +1188,7 @@ module.exports = async function generateAudit({
   let summary = '';
 
   if (parsed && typeof parsed === 'object') {
-    summary = typeof parsed.summary === 'string' ? parsed.summary : '';
+    summary = typeof parsed.summary === 'string' ? ensureSummaryBullets(parsed.summary) : '';
     issues = Array.isArray(parsed.issues) ? parsed.issues : [];
 
     issues = issues
@@ -1077,8 +1199,11 @@ module.exports = async function generateAudit({
           title: String(it.title || 'Hallazgo'),
           area: areaNorm(it.area),
           severity: sevNorm(it.severity),
-          evidence: String(it.evidence || ''),
-          recommendation: String(it.recommendation || ''),
+
+          // ✅ UI-friendly garantizado (aunque el LLM responda en párrafo)
+          evidence: ensureEvidenceBullets(String(it.evidence || '')),
+          recommendation: ensureRecommendationNumbered(String(it.recommendation || '')),
+
           estimatedImpact: impactNorm(it.estimatedImpact),
           accountRef: it.accountRef || null,
           campaignRef: it.campaignRef,
