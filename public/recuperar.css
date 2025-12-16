@@ -1,70 +1,35 @@
-@import url("/theme.css");
-
-html, body { height: 100%; }
-
 body {
-  /* ✅ FIX anti-fondo-blanco:
-     NO usamos transparent como definitivo; heredamos el fondo global (theme.css)
-     y dejamos fallback sólido por si algo falla. */
-  background: inherit;
-  background-color: var(--ad-black);
-
-  color: var(--ad-ice);
-  font-family: var(--font-sans);
-
+  background: #0a0a12;
+  color: #F4F2FF;
+  font-family: 'Inter', Arial, sans-serif;
   margin: 0;
   min-height: 100vh;
-
   display: flex;
   align-items: center;
   justify-content: center;
-
-  padding: 24px;
 }
 
-/* Card */
 .card {
-  background: var(--card);
+  background: rgba(16, 14, 26, 0.98);
   border-radius: 22px;
-  box-shadow: var(--shadow-soft);
-
+  box-shadow: 0 0 32px 0 #a96bff2d;
   padding: 2.7rem 2.2rem 2.2rem 2.2rem;
   width: 100%;
   max-width: 410px;
-
   display: flex;
   flex-direction: column;
   align-items: stretch;
-
-  border: 1px solid var(--stroke);
-  position: relative;
-  overflow: hidden;
-}
-
-/* Glow sutil */
-.card::before{
-  content:"";
-  position:absolute;
-  inset:-2px;
-  pointer-events:none;
-  background:
-    radial-gradient(260px 160px at 50% 0%, rgba(202,138,229,.20), transparent 70%),
-    radial-gradient(240px 140px at 100% 20%, rgba(62,40,111,.20), transparent 70%);
-  mix-blend-mode: screen;
+  border: 1.2px solid #23143A;
 }
 
 h1 {
   text-align: center;
   margin-bottom: 2.1rem;
   margin-top: 0;
-
   font-size: 2rem;
-  font-weight: 900;
-  color: var(--ad-primary);
+  font-weight: 800;
+  color: #A96BFF;
   letter-spacing: -1px;
-
-  position: relative;
-  z-index: 1;
 }
 
 form {
@@ -72,8 +37,6 @@ form {
   flex-direction: column;
   gap: 1.15rem;
   width: 100%;
-  position: relative;
-  z-index: 1;
 }
 
 .input-block,
@@ -87,62 +50,41 @@ form {
 input[type="email"] {
   width: 100%;
   box-sizing: border-box;
-
   padding: 0.9rem 1.1rem;
-  border: 1px solid var(--stroke);
+  border: 1.5px solid #382058;
   border-radius: 12px;
-
-  background: rgba(62,40,111,.22);
-  color: var(--ad-ice);
-
+  background: rgba(40, 17, 60, 0.95);
+  color: #F4F2FF;
   font-size: 1.07rem;
   outline: none;
-
-  transition: border 0.18s, box-shadow 0.17s, background 0.18s;
-  font-family: var(--font-sans);
+  transition: border 0.18s, box-shadow 0.17s;
 }
 
 input[type="email"]:focus {
-  border-color: rgba(202,138,229,.55);
-  box-shadow: 0 0 0 3px rgba(202,138,229,.12);
-  background: rgba(62,40,111,.30);
+  border-color: #A96BFF;
+  box-shadow: 0 0 0 2px #A96BFF44;
 }
 
 .btn-primary {
   width: 100%;
   box-sizing: border-box;
-
   padding: 0.9rem 0;
-  background: linear-gradient(90deg, var(--ad-primary) 0%, var(--ad-deep) 100%);
-  color: #0b0614;
-
+  background: linear-gradient(90deg, #A96BFF 0%, #9333ea 100%);
+  color: #fff;
   font-size: 1.1rem;
-  font-weight: 900;
-
+  font-weight: 700;
   border: none;
   border-radius: 12px;
-
-  box-shadow: 0 10px 30px rgba(202,138,229,.16);
+  box-shadow: 0 2px 8px #A96BFF20;
   cursor: pointer;
-
-  transition: filter 0.18s, box-shadow 0.18s, transform 0.08s;
+  transition: background 0.18s, box-shadow 0.18s;
   margin-top: 0.2rem;
   letter-spacing: 0.01em;
-
-  font-family: var(--font-sans);
 }
-
-.btn-primary:hover {
-  filter: brightness(1.05);
-  box-shadow: 0 14px 38px rgba(202,138,229,.22);
-}
-
-.btn-primary:active { transform: translateY(1px); }
 
 .btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  box-shadow: none;
 }
 
 .message {
@@ -150,53 +92,51 @@ input[type="email"]:focus {
   margin-top: 0.3rem;
   text-align: center;
   min-height: 1.2em;
-  color: rgba(225,216,243,.72);
-  font-weight: 700;
-  position: relative;
-  z-index: 1;
+  color: #B6A7E8;
+  font-weight: 500;
 }
 
-.message.error { color: #ff4d4f; }
-.message.success { color: #2ee59d; }
+.message.error {
+  color: #FF4D4F;
+}
+
+.message.success {
+  color: #2EE59D;
+}
 
 .back-login {
-  color: var(--ad-primary);
+  color: #A96BFF;
   text-decoration: underline;
   font-size: 1.03rem;
   cursor: pointer;
-
   margin-top: 1.5rem;
   display: block;
   text-align: center;
-
-  font-weight: 900;
-  transition: color 0.18s, text-decoration-color 0.18s;
-
-  position: relative;
-  z-index: 1;
+  font-weight: 600;
+  transition: color 0.18s;
 }
 
 .back-login:hover {
-  color: var(--ad-ice);
+  color: #fff;
   text-decoration: underline wavy;
 }
 
 @media (max-width: 500px) {
   .card {
-    padding: 1.2rem 0.7rem 1.2rem 0.7rem;
+    padding: 1.2rem 0.5rem 1.2rem 0.5rem;
     max-width: 98vw;
   }
-  h1 { font-size: 1.45rem; }
+
+  h1 {
+    font-size: 1.45rem;
+  }
 }
 
 .recovery-instructions {
-  color: rgba(225,216,243,.82);
+  color: #C7B7F9;
   text-align: center;
   margin: 0 0 1.3rem 0;
   font-size: 1.09rem;
   line-height: 1.5;
-  font-weight: 700;
-
-  position: relative;
-  z-index: 1;
+  font-weight: 400;
 }

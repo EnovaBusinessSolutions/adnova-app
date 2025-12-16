@@ -1,53 +1,24 @@
-@import url("/theme.css");
-
-html, body { height: 100%; }
-
 body {
   min-height: 100vh;
   margin: 0;
-
-  /* ✅ FIX anti-fondo-blanco:
-     no dejamos transparent como definitivo; heredamos el fondo global del theme
-     y ponemos fallback sólido por si algo falla/carga tarde */
-  background: inherit;
-  background-color: var(--ad-black);
-
+  background: #0a0a12;
   display: flex;
   align-items: center;
   justify-content: center;
-
-  font-family: var(--font-sans);
-  color: var(--ad-ice);
-  padding: 24px;
+  font-family: 'Inter', sans-serif;
+  color: #F4F2FF;
 }
 
 .confirmation-card {
-  background: var(--card);
+  background: rgba(16, 14, 26, 0.98);
   border-radius: 22px;
-  box-shadow: var(--shadow-soft);
-
+  box-shadow: 0 0 32px 0 #a96bff33;
   padding: 2.8rem 2.2rem 2.3rem 2.2rem;
-  border: 1px solid var(--stroke);
-
+  border: 1.2px solid #23143A;
   max-width: 410px;
   width: 100%;
   text-align: center;
-  color: var(--ad-ice);
-
-  position: relative;
-  overflow: hidden;
-}
-
-/* Glow sutil ADRAY (sin exagerar) */
-.confirmation-card::before {
-  content: "";
-  position: absolute;
-  inset: -2px;
-  pointer-events: none;
-  background:
-    radial-gradient(260px 160px at 50% 0%, rgba(202,138,229,.22), transparent 70%),
-    radial-gradient(240px 140px at 100% 20%, rgba(62,40,111,.22), transparent 70%);
-  mix-blend-mode: screen;
+  color: #F4F2FF;
 }
 
 .confirmation-icon {
@@ -55,8 +26,6 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  position: relative;
-  z-index: 1;
 }
 
 .confirmation-icon svg {
@@ -65,43 +34,40 @@ body {
   height: 56px;
 }
 
-/* Tipografía */
 h1 {
   font-size: 2rem;
-  font-weight: 900;
+  font-weight: 800;
   margin-bottom: 1.2rem;
-  color: var(--ad-primary);
+  color: #A96BFF;
   letter-spacing: -1px;
-  position: relative;
-  z-index: 1;
 }
 
 p {
   font-size: 1.05rem;
-  font-weight: 700;
+  font-weight: 500;
   margin-bottom: 0;
-  color: var(--ad-ice);
+  color: #fff;
   line-height: 1.56;
-  position: relative;
-  z-index: 1;
 }
 
 .secondary-text {
   font-size: 0.98rem;
-  color: rgba(225,216,243,.72);
+  color: #B6A7E8;
   display: block;
   margin-top: 1.15em;
-  font-weight: 700;
-  position: relative;
-  z-index: 1;
+  font-weight: 500;
 }
 
 @media (max-width: 600px) {
   .confirmation-card {
-    padding: 2.1rem 0.9rem 1.6rem 0.9rem;
+    padding: 2.1rem 0.7rem 1.6rem 0.7rem;
     max-width: 98vw;
   }
-  h1 { font-size: 1.45rem; }
+
+  h1 {
+    font-size: 1.45rem;
+  }
+
   .confirmation-icon svg {
     width: 38px;
     height: 38px;
