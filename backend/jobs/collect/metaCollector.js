@@ -74,7 +74,7 @@ function pickDefaultAccountId(acc) {
 /* ---------------- rango fijo 30 días (timezone-aware) ---------------- */
 /**
  * Ads Manager calcula el rango en la timezone del ad account.
- * Esto evita incoherencias de fechas por UTC y también permite incluir "hoy".
+ * Esto evita incoherencias de fechas por UTC.
  */
 function ymdInTimeZone(date, timeZone) {
   try {
@@ -103,9 +103,9 @@ function addDaysYMD(ymd, deltaDays) {
 }
 
 /**
- * Por defecto: últimos 30 días "tipo Ads Manager".
- * - includeToday=true => hasta HOY
- * - includeToday=false => hasta AYER (evita "hoy parcial")
+ * Últimos 30 días completos:
+ * - includeToday=true  => hasta HOY (parcial)
+ * - includeToday=false => hasta AYER (✅ recomendado para alinear con Google Ads)
  */
 function getStrictLast30dRangeForTZ(timeZone, includeToday) {
   const todayYMD = ymdInTimeZone(new Date(), timeZone || 'UTC');
@@ -174,7 +174,7 @@ function normalizeMetaObjective(raw) {
 /* =========================
    Click metric (alinear con Ads Manager)
    =========================
-   link = "Clics en el enlace" (inline_link_clicks) ✅ (tu caso)
+   link = "Clics en el enlace" (inline_link_clicks) ✅
    all  = "Clics (todos)" (clicks)
 */
 const META_CLICK_METRIC = String(process.env.META_CLICK_METRIC || 'link').toLowerCase();
@@ -338,10 +338,17 @@ async function collectMeta(userId, opts = {}) {
     since, until,
     strict30 = true,
 
-    // ✅ para alinear con Ads Manager:
-    // - puedes mandar include_today desde quien llame collectMeta
-    // - o controlar por env META_INCLUDE_TODAY=true|false
-    include_today = (String(process.env.META_INCLUDE_TODAY || 'true').toLowerCase() === 'true')
+    /**
+     * ✅ CAMBIO CLAVE:
+     * Por defecto ahora es FALSE para alinear con Google Ads (termina AYER).
+     * - Si quieres incluir HOY en un dashboard, manda opts.include_today=true
+     * - O setea META_INCLUDE_TODAY=true (no recomendado para auditorías)
+     */
+    include_today = (
+      opts.include_today !== undefined
+        ? !!opts.include_today
+        : (String(process.env.META_INCLUDE_TODAY || 'false').toLowerCase() === 'true')
+    )
   } = opts;
 
   // Carga MetaAccount (tokens) y User (selección)
@@ -433,6 +440,7 @@ async function collectMeta(userId, opts = {}) {
     const qp = new URLSearchParams();
 
     if (strict30 && strictRangeObj) {
+      // Meta Graph requiere {since, until}
       qp.set('time_range', JSON.stringify(strictRangeObj));
     } else if (!strict30 && since && until) {
       qp.set('time_range', JSON.stringify({ since, until }));
@@ -496,7 +504,7 @@ async function collectMeta(userId, opts = {}) {
     accountNameMap.set(actId, acct.name || meta.accountName || null);
     accountTzMap.set(actId, meta.timezone_name);
 
-    // ✅ strictRange alineado a Ads Manager (timezone de la cuenta)
+    // ✅ strictRange alineado a Google Ads: termina AYER por defecto
     const strictRange = strict30
       ? getStrictLast30dRangeForTZ(meta.timezone_name || 'UTC', !!include_today)
       : null;
@@ -590,12 +598,10 @@ async function collectMeta(userId, opts = {}) {
       k.impressions += toNum(x.impressions);
       k.reach       += toNum(x.reach);
 
-      // ✅ clicks alineados a Ads Manager (Clics en el enlace por defecto)
       const cx = pickClicks(x);
       k.clicks     += cx.clicks;
       k.clicks_all += cx.clicks_all;
 
-      // guardamos también inline_link_clicks tal cual viene (útil para auditar)
       k.inline_link_clicks += toNum(x.inline_link_clicks);
       k.unique_clicks      += toNum(x.unique_clicks);
 
@@ -614,17 +620,12 @@ async function collectMeta(userId, opts = {}) {
       k.cpm  = k.impressions ? (k.spend / k.impressions) * 1000 : 0;
       k.cpc  = k.clicks ? (k.spend / k.clicks) : 0;
       k.ctr  = k.impressions ? (k.clicks / k.impressions) * 100 : 0;
-
-      // ✅ ROAS consistente (value/spend)
       k.roas = (k.purchase_value && k.spend) ? safeDiv(k.purchase_value, k.spend) : 0;
 
       byCampAgg.set(key, cur);
     }
 
-    // ---------------------------
-    // ✅ insights por DISPOSITIVO (ALINEADO A ADS MANAGER)
-    // Ads Manager “Dispositivo: Smartphone Android, iPhone…” = breakdown impression_device
-    // ---------------------------
+    // --------- DISPOSITIVO ----------
     const byCampDeviceAgg = new Map();
     try {
       const devData = await pageAllInsights(
@@ -657,8 +658,8 @@ async function collectMeta(userId, opts = {}) {
             spend: 0,
             impressions: 0,
             reach: 0,
-            clicks: 0,      // ✅ canónico (link por defecto)
-            clicks_all: 0,  // ✅ debug
+            clicks: 0,
+            clicks_all: 0,
             cpm: 0,
             cpc: 0,
             ctr: 0,
@@ -688,7 +689,7 @@ async function collectMeta(userId, opts = {}) {
         byCampDeviceAgg.set(dupKey, cur);
       }
     } catch (e) {
-      // fallback: si la cuenta no permite impression_device (raro), cae a device_platform
+      // fallback a device_platform
       try {
         const devData = await pageAllInsights(
           mkUrl(actId, presetTried, strictRange, { breakdowns: 'device_platform' })
@@ -753,7 +754,7 @@ async function collectMeta(userId, opts = {}) {
       } catch {}
     }
 
-    // insights por plataforma (Facebook / Instagram / Audience Network…)
+    // --------- PLACEMENTS ----------
     const byCampPlacementAgg = new Map();
     try {
       const plData = await pageAllInsights(
@@ -784,8 +785,8 @@ async function collectMeta(userId, opts = {}) {
             spend: 0,
             impressions: 0,
             reach: 0,
-            clicks: 0,      // ✅ canónico (link por defecto)
-            clicks_all: 0,  // ✅ debug
+            clicks: 0,
+            clicks_all: 0,
             cpm: 0,
             cpc: 0,
             ctr: 0,
@@ -816,7 +817,7 @@ async function collectMeta(userId, opts = {}) {
       }
     } catch {}
 
-    // volcamos campañas agregadas de la cuenta a byCampaign
+    // volcamos campañas agregadas
     for (const [, v] of byCampAgg.entries()) {
       byCampaign.push({
         account_id: v.account_id,
@@ -834,27 +835,7 @@ async function collectMeta(userId, opts = {}) {
         bid_strategy: v.bid_strategy,
         budget: v.budget,
         special_ad_category: v.special_ad_category,
-        kpis: {
-          spend: v.kpis.spend,
-          impressions: v.kpis.impressions,
-          reach: v.kpis.reach,
-          frequency: v.kpis.frequency,
-
-          // ✅ clicks alineados a Ads Manager (link por defecto)
-          clicks: v.kpis.clicks,
-
-          // ✅ debug: clicks todos
-          clicks_all: v.kpis.clicks_all,
-
-          cpm: v.kpis.cpm,
-          cpc: v.kpis.cpc,
-          ctr: v.kpis.ctr,
-          unique_clicks: v.kpis.unique_clicks,
-          inline_link_clicks: v.kpis.inline_link_clicks,
-          purchases: v.kpis.purchases,
-          purchase_value: v.kpis.purchase_value,
-          roas: v.kpis.roas,
-        },
+        kpis: v.kpis,
         period: v.period,
         accountMeta: {
           name: accountNameMap.get(actId) || null,
@@ -891,12 +872,12 @@ async function collectMeta(userId, opts = {}) {
     }
   } // fin loop cuentas
 
-  // KPIs globales (todas las cuentas / campañas)
+  // KPIs globales
   const G = byCampaign.reduce(
     (a, c) => {
       const k = c.kpis || {};
       a.impr += k.impressions || 0;
-      a.clk  += k.clicks || 0;      // ✅ clicks canónico
+      a.clk  += k.clicks || 0;
       a.cost += k.spend || 0;
       a.pur  += k.purchases || 0;
       a.val  += k.purchase_value || 0;
@@ -918,14 +899,13 @@ async function collectMeta(userId, opts = {}) {
     const k = c.kpis || {};
     const agg = byAccountAgg.get(id) || { impr: 0, clk: 0, cost: 0, pur: 0, val: 0 };
     agg.impr += k.impressions || 0;
-    agg.clk  += k.clicks || 0;     // ✅ clicks canónico
+    agg.clk  += k.clicks || 0;
     agg.cost += k.spend || 0;
     agg.pur  += k.purchases || 0;
     agg.val  += k.purchase_value || 0;
     byAccountAgg.set(id, agg);
   }
 
-  // arreglo de cuentas para UI/LLM (con KPIs)
   const accounts = accountIds.map(id => {
     const agg = byAccountAgg.get(id) || { impr: 0, clk: 0, cost: 0, pur: 0, val: 0 };
     return {
@@ -935,7 +915,7 @@ async function collectMeta(userId, opts = {}) {
       timezone_name: accountTzMap.get(id) || null,
       kpis: {
         impressions: agg.impr,
-        clicks: agg.clk,           // ✅ clicks canónico
+        clicks: agg.clk,
         cost: agg.cost,
         purchases: agg.pur,
         purchase_value: agg.val,
@@ -945,18 +925,24 @@ async function collectMeta(userId, opts = {}) {
     };
   });
 
-  // timeRange (para mostrarlo coherente): basado en la timezone de la primera cuenta
+  // ✅ timeRange final estandarizado como Google: {from,to}
   const firstTz = accountIds.length ? (accountTzMap.get(accountIds[0]) || 'UTC') : 'UTC';
   const strictRangeOut = strict30 ? getStrictLast30dRangeForTZ(firstTz, !!include_today) : null;
+
+  const from = strict30 ? strictRangeOut.since : minStart;
+  const to   = strict30 ? strictRangeOut.until : maxStop;
 
   return {
     notAuthorized: false,
     defaultAccountId: pickDefaultAccountId(acc) || null,
     currency: unifiedCurrency,
-    timeRange: strict30 ? strictRangeOut : { from: minStart, to: maxStop },
+
+    // ✅ canonical + compat
+    timeRange: { from, to, since: from, until: to },
+
     kpis: {
       impressions: G.impr,
-      clicks: G.clk,              // ✅ clicks canónico
+      clicks: G.clk,
       cost: G.cost,
       purchases: G.pur,
       purchase_value: G.val,
