@@ -7,15 +7,34 @@
 
   <link rel="stylesheet" href="/onboarding.css" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+
+  <!-- ✅ Override SOLO para este botón -->
+  <style>
+    /* Igualar tamaño del botón Atrás con el CTA */
+    #back-btn-2.btn-secondary{
+      padding: 0.75rem 2.1rem;     /* igual que .btn-continue */
+      font-size: 1.07rem;          /* igual que .btn-continue */
+      border-radius: 7px;          /* match visual */
+      min-height: 44px;
+      line-height: 1;
+    }
+
+    /* En mobile, que se vea pro cuando se apilan */
+    @media (max-width: 600px){
+      #back-btn-2.btn-secondary{
+        width: 100%;
+      }
+    }
+  </style>
 </head>
 
 <body data-page="onboarding" data-user-id="USER_ID_REAL">
-  
+
   <span id="shopifyConnectedFlag"  style="display:none">SHOPIFY_CONNECTED_FLAG</span>
   <span id="googleConnectedFlag"   style="display:none">GOOGLE_CONNECTED_FLAG</span>
 
   <div class="onboarding-container" id="onboarding">
-    
+
     <aside class="sidebar">
       <div class="logo">
         <h1>Adray<span class="emoji"></span></h1>
@@ -56,19 +75,19 @@
       </div>
     </aside>
 
-    
+
     <main class="main-content">
-      
+
       <section id="step1-content" class="content-panel hidden" aria-hidden="true" data-step-content="1">
         <h2>Conecta tus cuentas</h2>
         <p class="panel-description">Conecta al menos una plataforma (Shopify, Google o Meta) para continuar.</p>
-        
+
         <div class="bottom-actions">
           <button class="btn-secondary" id="go-to-step2">Ir al paso 2</button>
         </div>
       </section>
 
-      
+
       <section id="step2-content" class="content-panel" aria-hidden="false" data-step-content="2">
         <h2>Revisar permisos</h2>
         <p class="panel-description">
