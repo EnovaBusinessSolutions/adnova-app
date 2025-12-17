@@ -194,15 +194,53 @@ function ensureRecommendationNumbered(rec, { maxSteps = 3, maxBulletsPerStep = 2
   return lines.join('\n').trim();
 }
 
-function ensureSummaryBullets(summary) {
-  const t = String(summary || '').trim();
-  if (!t) return '';
-  if (/^\s*•\s+/m.test(t)) return t;
+/**
+ * ✅ Summary ahora debe ser un párrafo (sin bullets, sin listas)
+ * - Convierte bullets/numeración en frases y las une en 2–3 oraciones.
+ * - Compacta whitespace y recorta longitud.
+ */
+function ensureSummaryParagraph(summary, { maxChars = 420 } = {}) {
+  const t0 = String(summary || '').trim();
+  if (!t0) return '';
 
-  const bullets = splitToShortBullets(t, 3);
-  if (!bullets.length) return `• ${t.slice(0, 160)}`;
+  // Normaliza saltos/espacios
+  let t = t0.replace(/\r/g, '').trim();
 
-  return bullets.map(b => `• ${b}`).join('\n').trim();
+  // Si viene con bullets o líneas, las convertimos a frases
+  const lines = t
+    .split('\n')
+    .map(x => x.trim())
+    .filter(Boolean)
+    .map(x => x
+      // quita bullets tipo "• ", "- ", "* "
+      .replace(/^\s*[•\-*]\s+/g, '')
+      // quita numeración tipo "1) ", "1. ", "1️⃣ "
+      .replace(/^\s*(\d+[\)\.]|\d️⃣)\s+/g, '')
+      .trim()
+    )
+    .filter(Boolean);
+
+  // Si solo hay una línea y no trae bullets, úsala
+  let parts = lines.length ? lines : [t];
+
+  // Si la primera línea es demasiado larga, intenta partirla “suave”
+  if (parts.length === 1 && parts[0].length > 260) {
+    const soft = parts[0].split(/;\s+|\.\s+|,\s+/).map(s => s.trim()).filter(Boolean);
+    if (soft.length >= 2) parts = soft.slice(0, 3);
+  }
+
+  // Une en párrafo tipo ejecutivo: 2–3 frases
+  let paragraph = parts.slice(0, 3).join('. ');
+  paragraph = paragraph
+    .replace(/\s+/g, ' ')
+    .replace(/\.\.+/g, '.')
+    .trim();
+
+  if (paragraph && !/[.!?]$/.test(paragraph)) paragraph += '.';
+
+  if (paragraph.length > maxChars) paragraph = paragraph.slice(0, maxChars).replace(/\s+\S*$/, '') + '…';
+
+  return paragraph;
 }
 
 /* ---------------------- DIAGNOSTICS (pre-análisis) ------------------- */
@@ -861,7 +899,7 @@ Uso de datos:
 Formato y estilo (UI-friendly):
 - Español neutro, directo, profesional, sin relleno.
 - Emojis: SOLO 1 emoji al inicio del title. No uses emojis dentro de evidence/recommendation.
-- summary: máximo 3 líneas y SIEMPRE en bullets, cada línea inicia con "• ".
+- summary: SIEMPRE en formato "Resumen ejecutivo" (2–3 frases), SIN bullets, SIN listas, SIN numeración, SIN saltos de línea.
 - evidence: SIEMPRE multilinea con bullets. Estructura obligatoria:
   Motivo: <1 línea>
   Resumen de desempeño
@@ -903,7 +941,7 @@ Uso de fuentes:
 Formato y estilo (UI-friendly):
 - Español neutro, directo, profesional, sin relleno.
 - Emojis: SOLO 1 emoji al inicio del title. No uses emojis dentro de evidence/recommendation.
-- summary: máximo 3 líneas y SIEMPRE en bullets, cada línea inicia con "• ".
+- summary: SIEMPRE en formato "Resumen ejecutivo" (2–3 frases), SIN bullets, SIN listas, SIN numeración, SIN saltos de línea.
 - evidence: SIEMPRE multilinea con bullets. Estructura obligatoria:
   Motivo: <1 línea>
   Resumen de desempeño
@@ -996,6 +1034,7 @@ CONSIGNA GENERAL
 - Idioma: español neutro, directo, estilo consultor senior.
 - Emojis: máximo 1 emoji al inicio de cada title. No uses emojis en evidence/recommendation.
 - Prohibido inventar métricas, campañas, canales o propiedades.
+- summary: debe ser un resumen ejecutivo en 2–3 frases, sin bullets/listas/numeración.
 
 REQUISITOS POR ISSUE
 ${isAnalytics ? gaExtras : adsExtras}
@@ -1188,7 +1227,11 @@ module.exports = async function generateAudit({
   let summary = '';
 
   if (parsed && typeof parsed === 'object') {
-    summary = typeof parsed.summary === 'string' ? ensureSummaryBullets(parsed.summary) : '';
+    // ✅ Summary ahora en párrafo ejecutivo (sin bullets)
+    summary = typeof parsed.summary === 'string'
+      ? ensureSummaryParagraph(parsed.summary)
+      : '';
+
     issues = Array.isArray(parsed.issues) ? parsed.issues : [];
 
     issues = issues
