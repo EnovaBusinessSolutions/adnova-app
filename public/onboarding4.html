@@ -4,16 +4,59 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Onboarding - Adray</title>
+
+  <!-- CSS principal -->
   <link rel="stylesheet" href="onboarding.css" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
+
+  <!-- ✅ Scroll oscuro (mismo look que tu CSS) SOLO para esta página -->
+  <style>
+    html, body { height: 100%; }
+    body { overflow: hidden; } /* evita scroll global/whitespace */
+
+    /* El panel derecho es el que scrollea */
+    body[data-page="onboarding4"] .content-panel{
+      overflow-y: auto;
+      overflow-x: hidden;
+      height: 100%;
+    }
+
+    /* Firefox */
+    body[data-page="onboarding4"] .content-panel{
+      scrollbar-width: thin;
+      scrollbar-color: #2d2340 #05040a; /* thumb | track */
+    }
+
+    /* WebKit (Chrome/Edge/Brave/Safari) */
+    body[data-page="onboarding4"] .content-panel::-webkit-scrollbar{ width: 10px; }
+    body[data-page="onboarding4"] .content-panel::-webkit-scrollbar-track{ background:#05040a; }
+    body[data-page="onboarding4"] .content-panel::-webkit-scrollbar-thumb{
+      background:#2d2340;
+      border-radius:999px;
+      border:2px solid #05040a;
+    }
+    body[data-page="onboarding4"] .content-panel::-webkit-scrollbar-thumb:hover{ background:#4b3c75; }
+
+    /* ✅ Si tu CSS centra todo, en pantallas bajas evita que “corte” contenido */
+    @media (max-height: 760px){
+      body[data-page="onboarding4"] .content-panel{
+        justify-content: flex-start;
+      }
+      body[data-page="onboarding4"] .ready-content{
+        padding-bottom: 28px;
+      }
+    }
+  </style>
 </head>
+
 <body data-page="onboarding4">
   <div class="onboarding-container">
-    
+
     <div class="sidebar">
       <div class="logo">
         <h1>Adray<span class="emoji"></span></h1>
       </div>
+
       <div class="steps">
         <div class="step" data-step="1">
           <div class="step-indicator"><span class="step-number">1</span></div>
@@ -22,6 +65,7 @@
             <p>Agrega tu tienda y cuentas de marketing</p>
           </div>
         </div>
+
         <div class="step" data-step="2">
           <div class="step-indicator"><span class="step-number">2</span></div>
           <div class="step-text">
@@ -29,6 +73,7 @@
             <p>Verifica y acepta los permisos requeridos</p>
           </div>
         </div>
+
         <div class="step" data-step="3">
           <div class="step-indicator"><span class="step-number">3</span></div>
           <div class="step-text">
@@ -36,6 +81,7 @@
             <p>Analizaremos los datos de tu tienda</p>
           </div>
         </div>
+
         <div class="step active" data-step="4">
           <div class="step-indicator"><span class="step-number">4</span></div>
           <div class="step-text">
@@ -45,46 +91,65 @@
         </div>
       </div>
     </div>
-    
-    <main class="content-panel">
-      <div class="ready-content">
-        <h2>¡Listo para comenzar!</h2>
-        <p class="panel-description">
-          Tu cuenta de Adray está completamente configurada y lista para usar.
-        </p>
-        <div class="success-message">
-          <h3>🎉 ¡Configuración completada!</h3>
-          <p>Tus cuentas ya están conectadas y todo está preparado para el análisis y la optimización.</p>
-        </div>
-        <div class="features-summary">
-          <div class="feature-item">
-            <span class="feature-icon">📊</span>
-            <div class="feature-text">
-              <h3>Dashboard</h3>
-              <p>Consulta el rendimiento general de tus campañas y plataformas de marketing.</p>
+
+    <!-- ✅ IMPORTANTE: usamos main-content para respetar tu layout + scroll correcto -->
+    <div class="main-content">
+      <main class="content-panel">
+        <div class="ready-content">
+          <h2>¡Listo para comenzar!</h2>
+
+          <p class="panel-description">
+            Tu cuenta de Adray está completamente configurada y lista para usar.
+          </p>
+
+          <div class="success-message">
+            <h3>🎉 ¡Configuración completada!</h3>
+            <p>
+              Tus cuentas ya están conectadas y todo está preparado para el análisis y la optimización.
+            </p>
+          </div>
+
+          <div class="features-summary">
+            <div class="feature-item">
+              <span class="feature-icon">📊</span>
+              <div class="feature-text">
+                <h3>Dashboard</h3>
+                <p>Consulta el rendimiento general de tus campañas y plataformas de marketing.</p>
+              </div>
+            </div>
+
+            <div class="feature-item">
+              <span class="feature-icon">📝</span>
+              <div class="feature-text">
+                <h3>Auditorías inteligentes</h3>
+                <p>Revisa el informe detallado generado por la IA</p>
+              </div>
+            </div>
+
+            <div class="feature-item">
+              <span class="feature-icon">🎯</span>
+              <div class="feature-text">
+                <h3>Verificador de seguimiento</h3>
+                <p>Comprueba que tus píxeles y conversiones estén correctamente instalados y enviando eventos.</p>
+              </div>
             </div>
           </div>
-          <div class="feature-item">
-            <span class="feature-icon">📝</span>
-            <div class="feature-text">
-              <h3>Auditorías inteligentes</h3>
-              <p>Revisa el informe detallado generado por la IA</p>
-            </div>
-          </div>
-          <div class="feature-item">
-            <span class="feature-icon">🎯</span>
-            <div class="feature-text">
-              <h3>Verificador de seguimiento</h3>
-              <p>Comprueba que tus píxeles y conversiones estén correctamente instalados y enviando eventos.</p>
-            </div>
+
+          <div class="bottom-actions">
+            <button
+              class="btn-gradient go-to-dashboard-final"
+              id="go-to-dashboard-final"
+              type="button"
+            >
+              Comenzar
+            </button>
           </div>
         </div>
-        <div class="bottom-actions">
-          <button class="btn-gradient go-to-dashboard-final" id="go-to-dashboard-final">Comenzar</button>
-        </div>
-      </div>
-    </main>
+      </main>
+    </div>
+
   </div>
+
   <script src="js/onboarding4.js"></script>
 </body>
 </html>
