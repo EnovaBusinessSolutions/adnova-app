@@ -19,6 +19,41 @@ document.addEventListener('DOMContentLoaded', async () => {
   const hostFromQuery = qs.get('host'); // compat (no se usa)
 
   // -------------------------------------------------
+  // PIXELS (SAFE) — NO ROMPE FLUJO
+  // -------------------------------------------------
+  const px = {
+    gtag: (...args) => { try { window.gtag?.(...args); } catch {} },
+    fbq:  (...args) => { try { window.fbq?.(...args); } catch {} },
+    clarityEvent: (name) => { try { window.clarity?.('event', name); } catch {} },
+    once: (key, fn) => {
+      try {
+        if (sessionStorage.getItem(key) === '1') return;
+        fn?.();
+        sessionStorage.setItem(key, '1');
+      } catch {}
+    },
+    leadOnce: (source = 'unknown') => {
+      px.once('px_lead_tracked', () => {
+        // GA4 (evento recomendado)
+        px.gtag('event', 'generate_lead', { source });
+
+        // Meta Pixel (evento estándar)
+        px.fbq('track', 'Lead');
+
+        // Clarity
+        px.clarityEvent('lead');
+      });
+    }
+  };
+
+  // Onboarding Step 1 "begin" (una vez por sesión)
+  px.once('px_onboarding_step1_begin', () => {
+    px.gtag('event', 'tutorial_begin', { step: 1, page: 'onboarding' });
+    px.fbq('trackCustom', 'OnboardingBegin', { step: 1 });
+    px.clarityEvent('onboarding_begin');
+  });
+
+  // -------------------------------------------------
   // DOM
   // -------------------------------------------------
   const connectShopifyBtn = document.getElementById('connect-shopify-btn');
@@ -192,6 +227,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       habilitarContinue();
       if (domainStep) domainStep.classList.add('step--hidden');
       dispatchAccountsSelectionSaved('shopify-connected');
+
+      // ✅ Tracking (safe)
+      px.once('px_shopify_connected', () => {
+        px.gtag('event', 'connect_platform', { platform: 'shopify' });
+        px.fbq('trackCustom', 'ConnectShopifySuccess');
+        px.clarityEvent('connect_shopify_success');
+      });
+      px.leadOnce('shopify');
+
       return;
     }
 
@@ -205,6 +249,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       habilitarContinue();
       if (domainStep) domainStep.classList.add('step--hidden');
       dispatchAccountsSelectionSaved('shopify-connected');
+
+      // ✅ Tracking (safe)
+      px.once('px_shopify_connected', () => {
+        px.gtag('event', 'connect_platform', { platform: 'shopify' });
+        px.fbq('trackCustom', 'ConnectShopifySuccess');
+        px.clarityEvent('connect_shopify_success');
+      });
+      px.leadOnce('shopify');
     } catch (err) {
       console.error('Error obteniendo shop/accessToken:', err);
     }
@@ -213,6 +265,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (flagShopify?.textContent.trim() === 'true') await pintarShopifyConectado();
 
   connectShopifyBtn?.addEventListener('click', () => {
+    // ✅ Tracking (safe) — intento de conexión
+    px.gtag('event', 'connect_platform_click', { platform: 'shopify' });
+    px.fbq('trackCustom', 'ConnectShopifyClick');
+    px.clarityEvent('connect_shopify_click');
+
     if (domainStep) domainStep.classList.remove('step--hidden');
 
     const prefill =
@@ -264,6 +321,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (objective) sessionStorage.setItem('metaObjective', objective);
     habilitarContinue();
     dispatchAccountsSelectionSaved('meta-connected');
+
+    // ✅ Tracking (safe)
+    px.once('px_meta_connected', () => {
+      px.gtag('event', 'connect_platform', { platform: 'meta' });
+      px.fbq('trackCustom', 'ConnectMetaSuccess');
+      px.clarityEvent('connect_meta_success');
+    });
+    px.leadOnce('meta');
   };
 
   async function fetchMetaStatus() {
@@ -298,6 +363,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   connectMetaBtn?.addEventListener('click', () => {
+    // ✅ Tracking (safe) — intento de conexión
+    px.gtag('event', 'connect_platform_click', { platform: 'meta' });
+    px.fbq('trackCustom', 'ConnectMetaClick');
+    px.clarityEvent('connect_meta_click');
+
     localStorage.setItem('meta_connecting', '1');
     disableBtnWhileConnecting(connectMetaBtn);
     if (connectMetaBtn.tagName !== 'A') window.location.href = '/auth/meta/login';
@@ -313,6 +383,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       if (!r?.ok) throw new Error(r?.error || 'No se pudo guardar el objetivo');
       hide(metaObjectiveStep);
+
+      // ✅ Tracking (safe)
+      px.gtag('event', 'select_objective', { platform: 'meta', objective: selected });
+      px.fbq('trackCustom', 'SelectObjectiveMeta', { objective: selected });
+      px.clarityEvent('select_objective_meta');
+
       markMetaConnected(selected);
     } catch (e) {
       console.error(e);
@@ -344,6 +420,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (objective) sessionStorage.setItem('googleObjective', objective);
     habilitarContinue();
     dispatchAccountsSelectionSaved('google-connected');
+
+    // ✅ Tracking (safe)
+    px.once('px_google_connected', () => {
+      px.gtag('event', 'connect_platform', { platform: 'google' });
+      px.fbq('trackCustom', 'ConnectGoogleSuccess');
+      px.clarityEvent('connect_google_success');
+    });
+    px.leadOnce('google');
   };
 
   function ackGoogleAdsSelection({ reqId, ok, error, ids }) {
@@ -500,6 +584,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       // ✅ Persistido: ACK al modal
       ackGoogleAdsSelection({ reqId, ok: true, error: null, ids });
 
+      // ✅ Tracking (safe) — selección guardada
+      px.gtag('event', 'google_ads_account_selected', { count: ids.length });
+      px.fbq('trackCustom', 'GoogleAdsAccountSelected', { count: ids.length });
+      px.clarityEvent('google_ads_account_selected');
+
       // ✅ Aviso global: “selección guardada” (SIN duplicar)
       dispatchAccountsSelectionSaved('google-selection-persisted');
 
@@ -568,6 +657,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   connectGoogleBtn?.addEventListener('click', () => {
+    // ✅ Tracking (safe) — intento de conexión
+    px.gtag('event', 'connect_platform_click', { platform: 'google' });
+    px.fbq('trackCustom', 'ConnectGoogleClick');
+    px.clarityEvent('connect_google_click');
+
     localStorage.setItem('google_connecting', '1');
     disableBtnWhileConnecting(connectGoogleBtn);
     window.location.href = '/auth/google/connect';
@@ -585,6 +679,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       hide(googleObjectiveStep);
       sessionStorage.setItem('googleObjective', selected);
+
+      // ✅ Tracking (safe)
+      px.gtag('event', 'select_objective', { platform: 'google', objective: selected });
+      px.fbq('trackCustom', 'SelectObjectiveGoogle', { objective: selected });
+      px.clarityEvent('select_objective_google');
 
       await ensureGoogleAccountsUI();
     } catch (e) {
@@ -710,6 +809,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       alert('⚠️ Conecta al menos una plataforma (Shopify, Google o Meta) para continuar.');
       return;
     }
+
+    // ✅ Tracking (safe) — Step1 completo
+    px.gtag('event', 'onboarding_step_complete', { step: 1, page: 'onboarding' });
+    px.fbq('trackCustom', 'OnboardingStepComplete', { step: 1 });
+    px.clarityEvent('onboarding_step1_complete');
+
+    // Si aún no se marcó Lead por conexión, lo marcamos aquí
+    px.leadOnce('continue_step1');
+
     window.location.href = '/onboarding2.html#step=2';
   });
 

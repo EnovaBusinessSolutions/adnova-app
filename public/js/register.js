@@ -21,9 +21,24 @@ document.addEventListener('DOMContentLoaded', () => {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ email, password })
       });
+
       const data = await res.json();
 
       if (data.success) {
+        // ✅ TRACKING: registro completado (sin enviar PII)
+        try {
+          // GA4 (evento recomendado)
+          window.gtag?.('event', 'sign_up', { method: 'email' });
+
+          // Meta Pixel (evento estándar)
+          window.fbq?.('track', 'CompleteRegistration');
+
+          // Clarity (evento custom)
+          window.clarity?.('event', 'complete_registration');
+        } catch (_) {
+          // no-op: nunca bloqueamos el flujo por tracking
+        }
+
         showMessage('Cuenta creada con éxito. Redirigiendo…', true);
         setTimeout(() => (window.location.href = '/confirmation.html'), 1500);
       } else {
@@ -40,17 +55,17 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   document.querySelectorAll('.toggle-password').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    const targetId = btn.dataset.target;
-    const input = document.getElementById(targetId);
-    const visible = input.type === 'text';
+    btn.addEventListener('click', () => {
+      const targetId = btn.dataset.target;
+      const input = document.getElementById(targetId);
+      const visible = input.type === 'text';
 
-    input.type = visible ? 'password' : 'text';
+      input.type = visible ? 'password' : 'text';
 
-    btn.classList.toggle('eye-visible', !visible);
-    btn.classList.toggle('eye-hidden', visible);
+      btn.classList.toggle('eye-visible', !visible);
+      btn.classList.toggle('eye-hidden', visible);
 
-    input.classList.add('form-input');
+      input.classList.add('form-input');
+    });
   });
-});
 });
