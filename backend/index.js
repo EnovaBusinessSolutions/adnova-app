@@ -63,6 +63,11 @@ const PORT = process.env.PORT || 3000;
 app.disable('x-powered-by');
 app.use(
   helmet({
+    // IMPORTANTE para apps embebidas de Shopify
+    frameguard: false,
+    contentSecurityPolicy: false,
+
+    // esto lo puedes dejar
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   })
 );
@@ -157,7 +162,14 @@ app.use(express.urlencoded({ extended: true }));
 /* =========================
  * CSP público
  * ========================= */
-app.use(publicCSP);
+app.use((req, res, next) => {
+  // Shopify embedded / connector NO debe heredar el CSP público
+  if (req.path.startsWith('/connector') || req.path.startsWith('/apps/')) {
+    return next();
+  }
+  return publicCSP(req, res, next);
+});
+
 
 /* robots.txt simple */
 app.get('/robots.txt', (_req, res) => {
@@ -925,7 +937,29 @@ app.use(express.static(path.join(__dirname, '../public')));
  * Embebido Shopify
  * ========================= */
 
-// Entrada desde el Admin de Shopify (/apps/tu-app...)
+function topLevelRedirect(res, url) {
+  return res
+    .status(200)
+    .type('html')
+    .send(`<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>Redirecting…</title></head>
+  <body>
+    <script>
+      (function() {
+        var url = ${JSON.stringify(url)};
+        try {
+          if (window.top) window.top.location.href = url;
+          else window.location.href = url;
+        } catch (e) {
+          window.location.href = url;
+        }
+      })();
+    </script>
+  </body>
+</html>`);
+}
+
 app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
   const { shop, host } = req.query;
 
@@ -937,8 +971,9 @@ app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
   redirectUrl.searchParams.set('shop', shop);
   if (host) redirectUrl.searchParams.set('host', host);
 
-  return res.redirect(redirectUrl.toString());
+  return topLevelRedirect(res, redirectUrl.toString());
 });
+
 
 /* =========================
  * OAuth Google (login simple)

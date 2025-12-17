@@ -4,73 +4,56 @@ const helmet = require('helmet');
 /**
  * CSP pública (landing, bookcall, agendar, dashboard, etc.)
  */
-const publicCSP = helmet({
+const publicCSPHelmet = helmet({
   contentSecurityPolicy: {
     useDefaults: true,
     directives: {
       defaultSrc: ["'self'"],
 
-      // JS
-      scriptSrc: [
-        "'self'",
-        "https://assets.calendly.com",   // widget en /agendar
-      ],
+      scriptSrc: ["'self'", "https://assets.calendly.com"],
 
-      // CSS
       styleSrc: [
         "'self'",
-        "'unsafe-inline'",               // estilos inline / Tailwind preflight
+        "'unsafe-inline'",
         "https://fonts.googleapis.com",
         "https://assets.calendly.com",
       ],
 
-      // Fuentes
-      fontSrc: [
-        "'self'",
-        "data:",
-        "https://fonts.gstatic.com",
-      ],
+      fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
 
-      // AJAX/fetch
       connectSrc: ["'self'"],
 
-      // Imágenes
-      imgSrc: [
-        "'self'",
-        "data:",
-        "https:",
-        "https://upload.wikimedia.org",
-        "https://img.icons8.com",
-      ],
+      imgSrc: ["'self'", "data:", "https:", "https://upload.wikimedia.org", "https://img.icons8.com"],
 
-      // iframes (Calendly)
-      frameSrc: [
-        "'self'",
-        "https://calendly.com",
-        "https://assets.calendly.com",
-      ],
+      frameSrc: ["'self'", "https://calendly.com", "https://assets.calendly.com"],
 
+      // ⚠️ OJO: esto rompe Shopify si se aplica en /connector
       frameAncestors: ["'self'"],
     },
   },
 });
 
 /**
+ * IMPORTANTE:
+ * - NO aplicar publicCSP en rutas embebidas (/connector y /apps/*)
+ * - Porque publicCSP mete X-Frame-Options SAMEORIGIN y frame-ancestors 'self'
+ */
+function publicCSP(req, res, next) {
+  const p = req.path || '';
+  if (p.startsWith('/connector') || p.startsWith('/apps/')) return next();
+  return publicCSPHelmet(req, res, next);
+}
+
+/**
  * CSP para la app embebida de Shopify
  */
 const shopifyCSP = helmet({
-  // Muy importante: NO poner X-Frame-Options
-  frameguard: false,
+  frameguard: false, // no X-Frame-Options aquí
   contentSecurityPolicy: {
     useDefaults: true,
     directives: {
-      // Solo Shopify puede embeber esta app
-      frameAncestors: [
-        "https://admin.shopify.com",
-        "https://*.myshopify.com",
-      ],
+      frameAncestors: ["https://admin.shopify.com", "https://*.myshopify.com"],
 
-      // JS: nuestra app + App Bridge
       scriptSrc: [
         "'self'",
         "'unsafe-inline'",
@@ -79,7 +62,6 @@ const shopifyCSP = helmet({
         "https://cdn.shopifycdn.net",
       ],
 
-      // Fetch / XHR
       connectSrc: [
         "'self'",
         "https://*.myshopify.com",
@@ -88,26 +70,10 @@ const shopifyCSP = helmet({
         "https://cdn.shopifycdn.net",
       ],
 
-      // Imágenes
-      imgSrc: [
-        "'self'",
-        "data:",
-        "https:",
-        "https://upload.wikimedia.org",
-        "https://img.icons8.com",
-      ],
+      imgSrc: ["'self'", "data:", "https:", "https://upload.wikimedia.org", "https://img.icons8.com"],
 
-      // Estilos y fuentes (por si usas Google Fonts en la interfaz embebida)
-      styleSrc: [
-        "'self'",
-        "'unsafe-inline'",
-        "https://fonts.googleapis.com",
-      ],
-      fontSrc: [
-        "'self'",
-        "data:",
-        "https://fonts.gstatic.com",
-      ],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
     },
   },
 });

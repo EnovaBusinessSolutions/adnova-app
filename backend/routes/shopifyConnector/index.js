@@ -14,7 +14,7 @@ const {
   SHOPIFY_REDIRECT_URI
 } = process.env;
 
-// Fallback sensato para redirect_uri (debe coincidir con tu configuración en Shopify)
+// Fallback sensato para redirect_uri (DEBE coincidir 100% con el Partners Dashboard)
 const REDIRECT_URI =
   SHOPIFY_REDIRECT_URI || 'https://adray.ai/connector/auth/callback';
 
@@ -45,9 +45,12 @@ function buildAuthorizeUrl(shop, state) {
     `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
     `&state=${encodeURIComponent(state)}`;
 
+  // Recomendado: grant_options[]=per-user (no rompe nada; solo mejora el flujo)
+  const grant = `&grant_options[]=per-user`;
+
   return SHOPIFY_SCOPES
-    ? `${base}&scope=${encodeURIComponent(SHOPIFY_SCOPES)}`
-    : base;
+    ? `${base}&scope=${encodeURIComponent(SHOPIFY_SCOPES)}${grant}`
+    : `${base}${grant}`;
 }
 
 function isValidHmac(query) {
@@ -65,13 +68,38 @@ function isValidHmac(query) {
     .digest('hex');
 
   try {
-    return crypto.timingSafeEqual(
-      Buffer.from(digest, 'utf-8'),
-      Buffer.from(hmac, 'utf-8')
-    );
+    // Shopify manda hmac en hex. Comparamos en hex (más correcto que utf-8).
+    const a = Buffer.from(digest, 'hex');
+    const b = Buffer.from(String(hmac), 'hex');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
   } catch {
     return false;
   }
+}
+
+// Para evitar redirecciones dentro del iframe (mejor para revisión)
+function topLevelRedirect(res, url) {
+  return res
+    .status(200)
+    .type('html')
+    .send(`<!doctype html>
+<html>
+  <head><meta charset="utf-8"><title>Redirecting…</title></head>
+  <body>
+    <script>
+      (function() {
+        var url = ${JSON.stringify(url)};
+        try {
+          if (window.top) window.top.location.href = url;
+          else window.location.href = url;
+        } catch (e) {
+          window.location.href = url;
+        }
+      })();
+    </script>
+  </body>
+</html>`);
 }
 
 // =============================
@@ -82,9 +110,11 @@ router.use((req, res, next) => {
 
   const url = req.originalUrl || '';
   const allow =
+    url === '/connector' ||
+    url === '/connector/' ||
     url.startsWith('/connector/auth/callback') ||
     url.startsWith('/connector/webhooks') ||
-    url.startsWith('/connector/interface') || // interface se revalida abajo
+    url.startsWith('/connector/interface') ||
     url.startsWith('/connector/healthz');
 
   if (allow) return next();
@@ -107,7 +137,20 @@ router.use((req, res, next) => {
     shop,
     path: req.originalUrl
   });
-  return res.redirect(302, authorizeUrl);
+
+  // Mejor que 302 dentro del iframe
+  return topLevelRedirect(res, authorizeUrl);
+});
+
+// Root -> manda a interface (por si Shopify abre /connector)
+router.get('/', (req, res) => {
+  const shop = extractShop(req);
+  const host = req.query.host ? String(req.query.host) : '';
+  const url =
+    '/connector/interface' +
+    (shop ? `?shop=${encodeURIComponent(shop)}` : '') +
+    (shop && host ? `&host=${encodeURIComponent(host)}` : (!shop && host ? `?host=${encodeURIComponent(host)}` : ''));
+  return res.redirect(302, url);
 });
 
 // Webhooks (ya estaba)
@@ -148,9 +191,11 @@ router.get('/auth/callback', async (req, res) => {
       { upsert: true }
     );
 
-    const host = req.query.host || '';
-    const uiUrl = `/apps/${SHOPIFY_API_KEY}/connector/interface` +
-      `?shop=${encodeURIComponent(shop)}` +
+    const host = req.query.host ? String(req.query.host) : '';
+
+    // ✅ IMPORTANTE: NO redirigir a /apps/... (eso te genera el loop)
+    const uiUrl =
+      `/connector/interface?shop=${encodeURIComponent(shop)}` +
       (host ? `&host=${encodeURIComponent(host)}` : '');
 
     console.log('[SHOPIFY_CONNECTOR][AUTH_OK]', { shop });
@@ -183,7 +228,10 @@ router.get('/interface', async (req, res) => {
     if (!conn?.accessToken) {
       console.log('[SHOPIFY_CONNECTOR][NO_TOKEN] Reforzando OAuth para', shop);
       const state = crypto.randomBytes(16).toString('hex');
-      return res.redirect(302, buildAuthorizeUrl(shop, state));
+      const authorizeUrl = buildAuthorizeUrl(shop, state);
+
+      // Mejor para embedded apps
+      return topLevelRedirect(res, authorizeUrl);
     }
 
     return res.sendFile(
