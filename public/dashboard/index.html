@@ -1,31 +1,96 @@
-
 <!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ADNOVA AI - Dashboard de Marketing</title>
-    <meta name="description" content="Dashboard de Marketing Unificado - Tu Agencia de Marketing Potenciada por IA" />
+    <meta
+      name="description"
+      content="Dashboard de Marketing Unificado - Tu Agencia de Marketing Potenciada por IA"
+    />
     <meta name="author" content="ADNOVA AI" />
 
     <meta property="og:title" content="ADNOVA AI - Dashboard de Marketing" />
-    <meta property="og:description" content="Dashboard de Marketing Unificado - Tu Agencia de Marketing Potenciada por IA" />
+    <meta
+      property="og:description"
+      content="Dashboard de Marketing Unificado - Tu Agencia de Marketing Potenciada por IA"
+    />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
+    <meta
+      property="og:image"
+      content="https://lovable.dev/opengraph-image-p98pqg.png"
+    />
 
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:site" content="@adnova_ai" />
-    <meta name="twitter:image" content="https://lovable.dev/opengraph-image-p98pqg.png" />
-    
+    <meta
+      name="twitter:image"
+      content="https://lovable.dev/opengraph-image-p98pqg.png"
+    />
+
+    <!-- =========================
+         PIXELES (DASHBOARD SPA)
+         ========================= -->
+
+    <!-- 1) GA4 (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-7FR1P31TK3"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){ dataLayer.push(arguments); }
+      gtag("js", new Date());
+
+      // IMPORTANTE (SPA): evita page_view automático.
+      // Tus pageviews los manda usePixelsPageViews() en cada cambio de ruta.
+      gtag("config", "G-7FR1P31TK3", { send_page_view: false });
+    </script>
+
+    <!-- 2) Meta Pixel -->
+    <script>
+      !(function(f,b,e,v,n,t,s){
+        if(f.fbq) return; n=f.fbq=function(){ n.callMethod ?
+          n.callMethod.apply(n,arguments) : n.queue.push(arguments) };
+        if(!f._fbq) f._fbq=n; n.push=n; n.loaded=!0; n.version="2.0";
+        n.queue=[]; t=b.createElement(e); t.async=!0;
+        t.src=v; s=b.getElementsByTagName(e)[0];
+        s.parentNode.insertBefore(t,s);
+      })(window, document, "script", "https://connect.facebook.net/en_US/fbevents.js");
+
+      fbq("init", "822068647105181");
+      // NOTA (SPA): NO hacemos fbq('track','PageView') aquí
+      // porque lo haces en usePixelsPageViews() al cargar y al cambiar de ruta.
+    </script>
+
+    <!-- 3) Microsoft Clarity -->
+    <script>
+      (function(c,l,a,r,i,t,y){
+          c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+          t=l.createElement(r); t.async=1; t.src="https://www.clarity.ms/tag/"+i;
+          y=l.getElementsByTagName(r)[0]; y.parentNode.insertBefore(t,y);
+      })(window, document, "clarity", "script", "ugeg5ymvp5");
+    </script>
+
     <!-- Inter Font -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
     <script type="module" crossorigin src="/dashboard/assets/index-CVX8FA1G.js"></script>
     <link rel="stylesheet" crossorigin href="/dashboard/assets/index-BpDrG8Wg.css">
   </head>
 
   <body>
+    <!-- Meta Pixel noscript (recomendado) -->
+    <noscript>
+      <img
+        height="1"
+        width="1"
+        style="display:none"
+        src="https://www.facebook.com/tr?id=822068647105181&ev=PageView&noscript=1"
+      />
+    </noscript>
+
     <div id="root"></div>
   </body>
 </html>
