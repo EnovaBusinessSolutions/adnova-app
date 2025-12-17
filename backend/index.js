@@ -486,11 +486,23 @@ app.use('/api/meta', metaTable);
 // Shopify
 const verifyShopifyToken = require('../middlewares/verifyShopifyToken'); // (por ahora no usado)
 
+// ✅ SERVIR assets del conector ANTES del router
+const CONNECTOR_PUBLIC = path.join(__dirname, '../public/connector');
+
 // Aplica el CSP de Shopify a todo lo que cuelgue de /connector
-app.use('/connector', shopifyCSP, connector);
+app.use(
+  '/connector',
+  shopifyCSP,
+  express.static(CONNECTOR_PUBLIC, {
+    index: false,          // IMPORTANTÍSIMO: NO servir interface.html como index estático
+    maxAge: '1h',
+  }),
+  connector               // aquí queda tu router dinámico (sirve interface.html con API key)
+);
 
 app.use('/api/shopify', shopifyRoutes);
 app.use('/api', mockShopify);
+
 
 /* =========================
  * Páginas públicas y flujo de app
