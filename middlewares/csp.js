@@ -5,6 +5,9 @@ const helmet = require('helmet');
 
 /**
  * CSP pública (landing, bookcall, dashboard público, etc.)
+ * ✅ Permite Calendly + GA4/GTM + Meta Pixel + Microsoft Clarity
+ * ⚠️ Nota: como estás insertando scripts inline (gtag/fbq/clarity),
+ *          aquí usamos 'unsafe-inline' SOLO en páginas públicas.
  */
 const publicCSPHelmet = helmet({
   contentSecurityPolicy: {
@@ -12,8 +15,24 @@ const publicCSPHelmet = helmet({
     directives: {
       defaultSrc: ["'self'"],
 
-      scriptSrc: ["'self'", "https://assets.calendly.com"],
-      scriptSrcElem: ["'self'", "https://assets.calendly.com"],
+      // ✅ Scripts permitidos (Calendly + Google + Meta + Clarity)
+      // ⚠️ 'unsafe-inline' necesario porque tienes <script> inline en tus HTML
+      scriptSrc: [
+        "'self'",
+        "'unsafe-inline'",
+        "https://assets.calendly.com",
+        "https://www.googletagmanager.com",
+        "https://connect.facebook.net",
+        "https://www.clarity.ms",
+      ],
+      scriptSrcElem: [
+        "'self'",
+        "'unsafe-inline'",
+        "https://assets.calendly.com",
+        "https://www.googletagmanager.com",
+        "https://connect.facebook.net",
+        "https://www.clarity.ms",
+      ],
 
       styleSrc: [
         "'self'",
@@ -24,7 +43,24 @@ const publicCSPHelmet = helmet({
 
       fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
 
-      connectSrc: ["'self'"],
+      // ✅ Aquí estaba el bloqueo: connect-src solo 'self'
+      //    Agregamos endpoints necesarios para GA4/Meta/Clarity + (compat Calendly)
+      connectSrc: [
+        "'self'",
+        "https://assets.calendly.com",
+        "https://calendly.com",
+        "https://api.calendly.com",
+
+        "https://www.googletagmanager.com",
+        "https://www.google-analytics.com",
+        "https://region1.google-analytics.com",
+        "https://stats.g.doubleclick.net",
+
+        "https://connect.facebook.net",
+        "https://www.facebook.com",
+
+        "https://www.clarity.ms",
+      ],
 
       imgSrc: [
         "'self'",
@@ -32,6 +68,10 @@ const publicCSPHelmet = helmet({
         "https:",
         "https://upload.wikimedia.org",
         "https://img.icons8.com",
+        // (https: ya cubre los beacons de GA/Meta, lo dejamos explícito por claridad)
+        "https://www.facebook.com",
+        "https://www.google-analytics.com",
+        "https://region1.google-analytics.com",
       ],
 
       frameSrc: ["'self'", "https://calendly.com", "https://assets.calendly.com"],
