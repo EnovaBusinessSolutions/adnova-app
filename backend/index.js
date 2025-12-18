@@ -48,7 +48,6 @@ const billingRoutes = require('./routes/billing');
 const connector = require('./routes/shopifyConnector');
 const webhookRoutes = require('./routes/shopifyConnector/webhooks');
 const auditsRoutes = require('./routes/audits');
-const csp = require("./../middlewares/csp");
 
 // Meta
 const metaInsightsRoutes = require('./routes/metaInsights');
@@ -232,7 +231,7 @@ app.use(express.urlencoded({ extended: true }));
  * ========================= */
 app.use(publicCSP);
 app.use(shopifyCSP);
-app.use(csp);
+
 
 
 
