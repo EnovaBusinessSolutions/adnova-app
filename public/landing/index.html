@@ -4,22 +4,101 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Marketing Agency - Automated Shopify Marketing</title>
-    <meta name="description" content="Your AI-powered marketing agency for Shopify stores. Automate audits, campaigns, and execution with advanced AI technology." />
+    <meta
+      name="description"
+      content="Your AI-powered marketing agency for Shopify stores. Automate audits, campaigns, and execution with advanced AI technology."
+    />
     <meta name="author" content="AI Marketing" />
 
     <meta property="og:title" content="AI Marketing Agency - Automated Shopify Marketing" />
-    <meta property="og:description" content="Your AI-powered marketing agency for Shopify stores. Automate audits, campaigns, and execution with advanced AI technology." />
+    <meta
+      property="og:description"
+      content="Your AI-powered marketing agency for Shopify stores. Automate audits, campaigns, and execution with advanced AI technology."
+    />
     <meta property="og:type" content="website" />
-    <meta property="og:image" content="https://imgs.search.brave.com/iEztT-1Awnu8Kmq1pb7wwIbhKvIadMEPRMY1lLDUpAE/rs:fit:860:0:0:0/g:ce/aHR0cHM6Ly9pbWcu/ZnJlZXBpay5jb20v/dmVjdG9yLXByZW1p/dW0vZm9uZG8tdGVj/bm9sb2dpYS1kaWdp/dGFsLWZ1dHVyaXN0/YS1sdXpfMTAwOTU2/LTY0LmpwZz9zZW10/PWFpc19oeWJyaWQm/dz03NDA" />
+    <meta
+      property="og:image"
+      content="https://imgs.search.brave.com/iEztT-1Awnu8Kmq1pb7wwIbhKvIadMEPRMY1lLDUpAE/rs:fit:860:0:0:0/g:ce/aHR0cHM6Ly9pbWcu/ZnJlZXBpay5jb20v/dmVjdG9yLXByZW1p/dW0vZm9uZG8tdGVj/bm9sb2dpYS1kaWdp/dGFsLWZ1dHVyaXN0/YS1sdXpfMTAwOTU2/LTY0LmpwZz9zZW10/PWFpc19oeWJyaWQm/dz03NDA"
+    />
 
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:site" content="@lovable_dev" />
-    <meta name="twitter:image" content="https://imgs.search.brave.com/iEztT-1Awnu8Kmq1pb7wwIbhKvIadMEPRMY1lLDUpAE/rs:fit:860:0:0:0/g:ce/aHR0cHM6Ly9pbWcu/ZnJlZXBpay5jb20v/dmVjdG9yLXByZW1p/dW0vZm9uZG8tdGVj/bm9sb2dpYS1kaWdp/dGFsLWZ1dHVyaXN0/YS1sdXpfMTAwOTU2/LTY0LmpwZz9zZW10/PWFpc19oeWJyaWQm/dz03NDA" />
+    <meta
+      name="twitter:image"
+      content="https://imgs.search.brave.com/iEztT-1Awnu8Kmq1pb7wwIbhKvIadMEPRMY1lLDUpAE/rs:fit:860:0:0:0/g:ce/aHR0cHM6Ly9pbWcu/ZnJlZXBpay5jb20v/dmVjdG9yLXByZW1p/dW0vZm9uZG8tdGVj/bm9sb2dpYS1kaWdp/dGFsLWZ1dHVyaXN0/YS1sdXpfMTAwOTU2/LTY0LmpwZz9zZW10/PWFpc19oeWJyaWQm/dz03NDA"
+    />
+
+    <!-- ======================= TRACKING / PIXELS ======================= -->
+
+    <!-- GA4 -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-7FR1P31TK3"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag() {
+        window.dataLayer.push(arguments);
+      }
+      gtag("js", new Date());
+
+      // Landing (MPA): sí mandamos page_view aquí
+      gtag("config", "G-7FR1P31TK3");
+    </script>
+
+    <!-- Meta Pixel -->
+    <script>
+      !(function (f, b, e, v, n, t, s) {
+        if (f.fbq) return;
+        n = f.fbq = function () {
+          n.callMethod ? n.callMethod.apply(n, arguments) : n.queue.push(arguments);
+        };
+        if (!f._fbq) f._fbq = n;
+        n.push = n;
+        n.loaded = !0;
+        n.version = "2.0";
+        n.queue = [];
+        t = b.createElement(e);
+        t.async = !0;
+        t.src = v;
+        s = b.getElementsByTagName(e)[0];
+        s.parentNode.insertBefore(t, s);
+      })(window, document, "script", "https://connect.facebook.net/en_US/fbevents.js");
+
+      fbq("init", "822068647105181");
+      fbq("track", "PageView");
+    </script>
+
+    <!-- Microsoft Clarity -->
+    <script>
+      (function (c, l, a, r, i, t, y) {
+        c[a] =
+          c[a] ||
+          function () {
+            (c[a].q = c[a].q || []).push(arguments);
+          };
+        t = l.createElement(r);
+        t.async = 1;
+        t.src = "https://www.clarity.ms/tag/" + i;
+        y = l.getElementsByTagName(r)[0];
+        y.parentNode.insertBefore(t, y);
+      })(window, document, "clarity", "script", "ugge5ymvp5");
+    </script>
+
+    <!-- ================================================================ -->
     <script type="module" crossorigin src="/assets/index-B6KVAG9M.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-BykZ-jm7.css">
   </head>
 
   <body>
+    <!-- Meta Pixel (noscript) -->
+    <noscript>
+      <img
+        height="1"
+        width="1"
+        style="display: none"
+        src="https://www.facebook.com/tr?id=822068647105181&ev=PageView&noscript=1"
+        alt=""
+      />
+    </noscript>
+
     <div id="root"></div>
   </body>
 </html>
