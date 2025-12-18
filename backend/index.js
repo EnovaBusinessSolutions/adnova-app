@@ -1009,18 +1009,21 @@ app.use('/assets', express.static(path.join(__dirname, '../public/bookcall/asset
 app.use(express.static(path.join(__dirname, '../public')));
 
 
+// ✅ Embedded entry: Shopify Admin abre /apps/<handle>
+// Aquí NO rompas iframe. Solo manda al conector embebido con shop+host.
 app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
-  const { shop, host } = req.query;
+  const shop = String(req.query.shop || '').trim();
+  const host = String(req.query.host || '').trim();
 
   if (!shop) {
-    return res.status(400).send("Falta el parámetro 'shop'");
+    return res.status(400).type('text/plain').send('Missing shop');
   }
 
-  const redirectUrl = new URL('/connector', APP_URL);
-  redirectUrl.searchParams.set('shop', shop);
-  if (host) redirectUrl.searchParams.set('host', host);
+  const target = new URL('/connector/interface', APP_URL);
+  target.searchParams.set('shop', shop);
+  if (host) target.searchParams.set('host', host);
 
-  return topLevelRedirect(res, redirectUrl.toString());
+  return res.redirect(302, target.toString());
 });
 
 
