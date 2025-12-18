@@ -137,20 +137,70 @@ function sessionGuard(req, res, next) {
   return res.status(401).json({ error: 'No hay sesión' });
 }
 
-
 function isIframeRequest(req) {
   const dest = (req.get('sec-fetch-dest') || '').toLowerCase();
-  // Shopify embedded suele venir como iframe. También a veces trae embedded=1.
   return dest === 'iframe' || req.query.embedded === '1';
 }
 
-app.get(['/connector/auth', '/connector/auth/callback'], shopifyCSP, (req, res, next) => {
+// ✅ Debe estar ANTES de cualquier uso
+function topLevelRedirect(res, url, label = 'Continuar con Shopify') {
+  return res
+    .status(200)
+    .type('html')
+    .send(`<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Continuar</title>
+  <style>
+    :root{color-scheme:dark}
+    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b1020;color:#fff;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
+    .card{width:min(720px,92vw);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:22px;box-shadow:0 18px 45px rgba(0,0,0,.55)}
+    .btn{display:inline-flex;justify-content:center;align-items:center;border:0;border-radius:14px;padding:12px 16px;font-weight:800;font-size:14px;cursor:pointer;color:#fff;
+      background:linear-gradient(90deg,rgba(124,58,237,1),rgba(59,130,246,1));min-width:220px}
+    .muted{opacity:.75;font-size:12px;line-height:1.5;margin-top:10px}
+    code{font-size:12px;opacity:.9}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2 style="margin:0 0 8px 0;">${label}</h2>
+    <div class="muted">
+      Shopify requiere abrir esta página <b>fuera del iframe</b>. Da clic para continuar.
+      <br/>Si no avanza, desactiva Brave Shields / AdBlock para <code>admin.shopify.com</code> y <code>adray.ai</code> en esta prueba.
+    </div>
+    <div style="margin-top:14px;">
+      <button class="btn" id="go">Continuar</button>
+    </div>
+    <div class="muted" style="margin-top:10px;">
+      <a href="${url}" target="_top" rel="noopener noreferrer" style="color:#9ecbff;">Abrir manualmente</a>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      var url = ${JSON.stringify(url)};
+      document.getElementById('go').addEventListener('click', function(){
+        try { window.top.location.href = url; }
+        catch(e){ window.location.href = url; }
+      });
+    })();
+  </script>
+</body>
+</html>`);
+}
+
+// Si NO usas /connector/auth realmente, puedes borrar este bloque completo.
+// Si SÍ existe, déjalo así:
+app.get(['/connector/auth', '/connector/auth/callback'], (req, res, next) => {
   if (isIframeRequest(req)) {
     const url = new URL(req.originalUrl, APP_URL);
     return topLevelRedirect(res, url.toString());
   }
   return next();
 });
+
 
 /* =========================
  * Parsers especiales (antes de JSON global)
@@ -177,15 +227,11 @@ app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 /* =========================
- * CSP público
+ * CSP (orden importante)
  * ========================= */
-app.use((req, res, next) => {
-  // Shopify embedded / connector NO debe heredar el CSP público
-  if (req.path.startsWith('/connector') || req.path.startsWith('/apps/')) {
-    return next();
-  }
-  return publicCSP(req, res, next);
-});
+app.use(publicCSP);
+app.use(shopifyCSP);
+
 
 
 /* robots.txt simple */
@@ -509,13 +555,13 @@ const CONNECTOR_PUBLIC = path.join(__dirname, '../public/connector');
 // Aplica el CSP de Shopify a todo lo que cuelgue de /connector
 app.use(
   '/connector',
-  shopifyCSP,
   express.static(CONNECTOR_PUBLIC, {
-    index: false,          // IMPORTANTÍSIMO: NO servir interface.html como index estático
+    index: false,
     maxAge: '1h',
   }),
-  connector               // aquí queda tu router dinámico (sirve interface.html con API key)
+  connector
 );
+
 
 app.use('/api/shopify', shopifyRoutes);
 app.use('/api', mockShopify);
@@ -962,32 +1008,6 @@ app.use('/assets', express.static(path.join(__dirname, '../public/plans/assets')
 app.use('/assets', express.static(path.join(__dirname, '../public/bookcall/assets')));
 app.use(express.static(path.join(__dirname, '../public')));
 
-/* =========================
- * Embebido Shopify
- * ========================= */
-
-function topLevelRedirect(res, url) {
-  return res
-    .status(200)
-    .type('html')
-    .send(`<!doctype html>
-<html>
-  <head><meta charset="utf-8"><title>Redirecting…</title></head>
-  <body>
-    <script>
-      (function() {
-        var url = ${JSON.stringify(url)};
-        try {
-          if (window.top) window.top.location.href = url;
-          else window.location.href = url;
-        } catch (e) {
-          window.location.href = url;
-        }
-      })();
-    </script>
-  </body>
-</html>`);
-}
 
 app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
   const { shop, host } = req.query;

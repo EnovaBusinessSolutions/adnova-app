@@ -31,38 +31,65 @@
 
   function getMeta(name) {
     const el = document.querySelector(`meta[name="${name}"]`);
-    return el ? el.getAttribute('content') : '';
-  }
-
-  function topNavigate(url) {
-    // romper iframe (necesita interacción del usuario para algunos navegadores)
-    try {
-      if (window.top) window.top.location.href = url;
-      else window.location.href = url;
-    } catch (e) {
-      window.location.href = url;
-    }
+    return el ? (el.getAttribute('content') || '') : '';
   }
 
   function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
   }
 
-  async function waitForAppBridge(timeoutMs = 8000) {
+  function isIframe() {
+    try {
+      return window.top && window.top !== window.self;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  async function waitForBridge(timeoutMs = 8000) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      if (window['app-bridge'] && window['app-bridge'].default) return true;
+      const AB = window['app-bridge'];
+      const ABU = window['app-bridge-utils'];
+      if (AB && AB.default && AB.actions && ABU && typeof ABU.getSessionToken === 'function') {
+        return true;
+      }
       await sleep(50);
     }
     return false;
   }
 
-  async function getSessionToken(app) {
-    // Preferido (más simple). Si no existe, lanzamos error.
+  async function getToken(app) {
+    const ABU = window['app-bridge-utils'];
+    if (ABU && typeof ABU.getSessionToken === 'function') {
+      return await ABU.getSessionToken(app);
+    }
+    // fallback (por si utils no carga por alguna razón)
     if (app && typeof app.idToken === 'function') {
       return await app.idToken();
     }
-    throw new Error('App Bridge no expuso app.idToken().');
+    throw new Error('No existe getSessionToken(app). Revisa que cargaste app-bridge-utils.js.');
+  }
+
+  function redirectRemote(app, url) {
+    try {
+      const AB = window['app-bridge'];
+      const Redirect = AB.actions.Redirect;
+      const redirect = Redirect.create(app);
+      redirect.dispatch(Redirect.Action.REMOTE, url);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function topNavigate(url) {
+    try {
+      if (window.top) window.top.location.href = url;
+      else window.location.href = url;
+    } catch (e) {
+      window.location.href = url;
+    }
   }
 
   async function boot() {
@@ -73,8 +100,8 @@
     const shop = (p.get('shop') || '').trim();
     const host = (p.get('host') || '').trim();
 
-    kvShop.textContent = shop || '—';
-    kvHost.textContent = host || '—';
+    if (kvShop) kvShop.textContent = shop || '—';
+    if (kvHost) kvHost.textContent = host || '—';
 
     if (!shop) {
       setStatus('Falta shop');
@@ -85,27 +112,30 @@
     }
 
     if (!host) {
-      // En admin.shopify.com el host es crítico para App Bridge.
       setStatus('Falta host');
       showError(
-        'Missing "host".\n\nEsto normalmente significa que no entraste desde el Admin de Shopify (embedded).\nReinstala/abre la app desde Shopify Admin para que Shopify agregue ?host=...'
+        'Missing "host".\n\nEsto normalmente significa que no entraste desde el Admin de Shopify (embedded).\nAbre la app desde Shopify Admin para que Shopify agregue ?host=...'
       );
       return;
     }
 
     const apiKey = (getMeta('shopify-api-key') || '').trim();
-    if (!apiKey) {
+    if (!apiKey || apiKey.includes('{{')) {
       setStatus('Falta API key');
-      showError('Missing meta shopify-api-key. Revisa interface.html o el backend que lo inyecta.');
+      showError(
+        'Missing meta shopify-api-key.\n\nSi estás usando placeholders, asegúrate que /connector/interface los inyecta antes de responder.'
+      );
       return;
     }
 
     setStatus('Cargando App Bridge…');
 
-    const ok = await waitForAppBridge();
+    const ok = await waitForBridge();
     if (!ok) {
       setStatus('Error App Bridge');
-      showError('App Bridge no cargó. Revisa CSP (shopifyCSP) y el script de Shopify.');
+      showError(
+        'App Bridge o app-bridge-utils no cargó.\n\nRevisa que interface.html incluya:\n- https://cdn.shopify.com/shopifycloud/app-bridge.js\n- https://cdn.shopify.com/shopifycloud/app-bridge-utils.js\n\nY revisa CSP (shopifyCSP).'
+      );
       return;
     }
 
@@ -114,11 +144,8 @@
       const AppBridge = window['app-bridge'];
       const createApp = AppBridge.default;
 
-      app = createApp({
-        apiKey,
-        host,
-        forceRedirect: true, // Shopify recomienda forzar redirección top-level cuando aplica
-      });
+      // ✅ NO forceRedirect aquí (evitamos auto-saltos “grises”)
+      app = createApp({ apiKey, host });
     } catch (e) {
       setStatus('Error init');
       showError('No se pudo inicializar App Bridge.\n' + (e?.message || e));
@@ -127,12 +154,12 @@
 
     setStatus('Generando Session Token…');
 
-    // Reintentos: a veces el primer intento falla justo al cargar en embedded
     let token = null;
     let lastErr = null;
-    for (let i = 0; i < 4; i++) {
+
+    for (let i = 0; i < 5; i++) {
       try {
-        token = await getSessionToken(app);
+        token = await getToken(app);
         if (token) break;
       } catch (e) {
         lastErr = e;
@@ -157,19 +184,30 @@
     sessionStorage.setItem('shopifyConnected', 'true');
 
     setStatus('Listo ✅');
-    btnGo.disabled = false;
+    if (btnGo) btnGo.disabled = false;
 
-    btnGo.addEventListener('click', () => {
-      // Enviar a onboarding SAAS (fuera de iframe)
-      const base = (getMeta('app-url') || window.location.origin).replace(/\/$/, '');
-      const url = `${base}/onboarding?from=shopify&shop=${encodeURIComponent(shop)}`;
-      topNavigate(url);
-    });
+    if (btnGo) {
+      btnGo.addEventListener('click', () => {
+        // ✅ URL final SAAS
+        const base = (getMeta('app-url') || window.location.origin).replace(/\/$/, '');
+        const url = `${base}/onboarding?from=shopify&shop=${encodeURIComponent(shop)}`;
+
+        // ✅ Primero intenta Redirect REMOTE (más confiable dentro de iframe)
+        const used = redirectRemote(app, url);
+
+        // fallback por si algo bloquea actions (raro)
+        if (!used) topNavigate(url);
+      });
+    }
+
+    // UX: si está embebido, avisar que el botón hará el escape
+    if (isIframe()) {
+      // opcional, no hace nada visual si no quieres
+    }
   }
 
-  btnReload?.addEventListener('click', () => window.location.reload());
+  if (btnReload) btnReload.addEventListener('click', () => window.location.reload());
 
-  // arranque
   boot().catch((e) => {
     setStatus('Error');
     showError(e?.stack || e?.message || String(e));

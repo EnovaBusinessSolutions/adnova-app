@@ -5,10 +5,13 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ADRAY Connector</title>
 
-  <!-- REQUIRED por Shopify App Bridge -->
-  <!-- Recomendado: que backend lo inyecte. Si lo dejas fijo también funciona. -->
-  <meta name="shopify-api-key" content="168d118e58d5e1bd2bd787957e136f2b" />
-  <meta name="app-url" content="https://adray.ai" />
+  <!-- Shopify App Bridge requiere esta meta.
+       ✅ Deja placeholder para que el backend la inyecte al servir /connector/interface -->
+  <meta name="shopify-api-key" content="{{SHOPIFY_API_KEY}}" />
+  <meta name="app-url" content="{{APP_URL}}" />
+
+  <!-- Opcional: mejora comportamiento dentro de iframe -->
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
 
   <style>
     :root { color-scheme: dark; }
@@ -117,6 +120,22 @@
 
   <!-- Shopify App Bridge oficial (SIN version) -->
   <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+  <script src="https://cdn.shopify.com/shopifycloud/app-bridge-utils.js"></script>
+
+  <!-- Pre-check rápido (UI) antes de tu script -->
+  <script>
+    (function () {
+      try {
+        var sp = new URLSearchParams(location.search);
+        var shop = sp.get('shop') || '';
+        var host = sp.get('host') || '';
+        var pill = document.getElementById('statusPill');
+        var err = document.getElementById('errBox');
+
+        // (estos ids existen en el body; si aún no, no pasa nada)
+      } catch (e) {}
+    })();
+  </script>
 
   <!-- Lógica E2E del conector -->
   <script src="/connector/interface.connector.js" defer></script>

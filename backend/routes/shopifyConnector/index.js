@@ -58,6 +58,11 @@ function getHostParam(req) {
   return req.query.host ? String(req.query.host) : '';
 }
 
+function isIframeRequest(req) {
+  const dest = (req.get('sec-fetch-dest') || '').toLowerCase();
+  return dest === 'iframe' || req.query.embedded === '1';
+}
+
 /**
  * ✅ STATE robusto sin depender de cookies:
  * - Empaquetamos {shop,host,ts,nonce} en payload
@@ -85,7 +90,7 @@ function makeStateToken({ shop, host }) {
     .createHmac('sha256', SHOPIFY_API_SECRET || '')
     .update(payload)
     .digest('hex')
-    .slice(0, 32); // corto para no inflar el state
+    .slice(0, 32);
 
   return `${b64urlEncode(payload)}.${sig}`;
 }
@@ -132,7 +137,7 @@ function readStateToken(token) {
   return { shop, host: host || '' };
 }
 
-// (Opcional) guardamos también en session “best effort”, pero no dependemos de esto
+// (Opcional) guardamos también en session “best effort”, pero NO dependemos de esto
 function pushState(req, { shop, host }) {
   const state = makeStateToken({ shop, host });
 
@@ -221,14 +226,11 @@ function isValidHmacFromRaw(req) {
   }
 }
 
-function isIframeRequest(req) {
-  const dest = (req.get('sec-fetch-dest') || '').toLowerCase();
-  return dest === 'iframe' || req.query.embedded === '1';
-}
-
-// Para evitar redirecciones dentro del iframe (mejor para Shopify Admin moderno)
-// ✅ Usa App Bridge Redirect (REMOTE) cuando hay host/apiKey
-function topLevelRedirect(req, res, url) {
+/**
+ * ✅ SALIDA TOP-LEVEL (CLICK ONLY)
+ * - NO auto-redirect (evita “pantalla gris”/bloqueos)
+ */
+function topLevelRedirect(res, url, label = 'Continuar con Shopify') {
   return res
     .status(200)
     .type('html')
@@ -237,49 +239,45 @@ function topLevelRedirect(req, res, url) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Continuar…</title>
+  <title>Continuar</title>
   <style>
-    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0f19;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
-    .card{width:min(520px,92vw);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:22px}
-    .btn{width:100%;border:0;border-radius:12px;padding:14px 16px;font-weight:800;cursor:pointer;
+    :root{color-scheme:dark}
+    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0f19;color:#fff;
+      font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    .card{width:min(560px,92vw);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);
+      border-radius:16px;padding:22px;box-shadow:0 18px 45px rgba(0,0,0,.55)}
+    .btn{width:100%;border:0;border-radius:14px;padding:14px 16px;font-weight:800;cursor:pointer;
       background:linear-gradient(90deg,#7c3aed,#3b82f6);color:#fff;font-size:15px}
-    .muted{opacity:.8;font-size:13px;line-height:1.45;margin-top:10px}
+    .muted{opacity:.78;font-size:12.5px;line-height:1.5;margin-top:10px}
+    a{color:#9ecbff}
+    code{font-size:12px;opacity:.9}
   </style>
 </head>
 <body>
   <div class="card">
-    <h3 style="margin:0 0 8px">Continuar con Shopify</h3>
-    <p class="muted" style="margin:0 0 14px">
-      Shopify requiere abrir esta página fuera del iframe. Da clic para continuar.
-    </p>
+    <h2 style="margin:0 0 8px 0;">${label}</h2>
+    <div class="muted" style="margin:0 0 14px 0;">
+      Shopify requiere abrir esta página <b>fuera del iframe</b>. Da clic para continuar.
+      <br/>Si no avanza, desactiva Brave Shields / AdBlock para <code>admin.shopify.com</code> y <code>${BASE_URL.replace(/^https?:\/\//,'')}</code> en esta prueba.
+    </div>
     <button class="btn" id="go">Continuar</button>
-    <p class="muted" style="margin:12px 0 0">Si no avanza, desactiva Brave Shields / AdBlock solo para esta prueba.</p>
+    <div class="muted" style="margin-top:10px;">
+      <a href="${url}" target="_top" rel="noopener noreferrer">Abrir manualmente</a>
+    </div>
   </div>
 
   <script>
-    (function () {
+    (function(){
       var url = ${JSON.stringify(url)};
-
-      function go() {
-        try {
-          if (window.top) window.top.location.href = url;
-          else window.location.href = url;
-        } catch (e) {
-          window.location.href = url;
-        }
-      }
-
-      document.getElementById('go').addEventListener('click', go);
-
-      // Intento automático (puede ser bloqueado, pero no estorba)
-      try { setTimeout(go, 600); } catch (e) {}
+      document.getElementById('go').addEventListener('click', function(){
+        try { window.top.location.href = url; }
+        catch(e){ window.location.href = url; }
+      });
     })();
   </script>
 </body>
 </html>`);
 }
-
-
 
 /* =============================
  * Guard genérico (solo GET/HEAD)
@@ -311,7 +309,9 @@ router.use((req, res, next) => {
   const authorizeUrl = buildAuthorizeUrl(shop, state);
 
   console.log('[SHOPIFY_CONNECTOR][OAUTH_REDIRECT][GUARD]', { shop, path: req.originalUrl });
-  return topLevelRedirect(req, res, authorizeUrl);
+
+  if (isIframeRequest(req)) return topLevelRedirect(res, authorizeUrl, 'Continuar con Shopify');
+  return res.redirect(302, authorizeUrl);
 });
 
 /* =============================
@@ -345,8 +345,8 @@ router.get('/auth', (req, res) => {
 
   console.log('[SHOPIFY_CONNECTOR][AUTH_START]', { shop });
 
-  // SIEMPRE escape (si vienes desde admin, vienes embebido)
-  return topLevelRedirect(req, res, authorizeUrl);
+  if (isIframeRequest(req)) return topLevelRedirect(res, authorizeUrl, 'Continuar con Shopify');
+  return res.redirect(302, authorizeUrl);
 });
 
 /* =============================
@@ -410,16 +410,18 @@ router.get('/auth/callback', async (req, res) => {
     );
 
     // ✅ volvemos a tu UI
-    const uiUrl =
+    const uiPath =
       `/connector/interface?shop=${encodeURIComponent(normalizedShop)}` +
       (host ? `&host=${encodeURIComponent(host)}` : '');
 
+    const uiAbs = `${BASE_URL}${uiPath}`;
+
     console.log('[SHOPIFY_CONNECTOR][AUTH_OK]', { shop: normalizedShop });
 
-    // Si el callback cae embebido, igual escapamos (más consistente)
-    if (isIframeRequest(req)) return topLevelRedirect(res, `${BASE_URL}${uiUrl}`);
+    // Si el callback cae embebido, escapamos con click
+    if (isIframeRequest(req)) return topLevelRedirect(res, uiAbs, 'Abrir Adray en Shopify');
 
-    return res.redirect(302, uiUrl);
+    return res.redirect(302, uiPath);
   } catch (err) {
     console.error('[SHOPIFY_CONNECTOR] ❌ Token exchange failed:', err.response?.data || err?.message || err);
     return res.status(502).type('text/plain').send('Token exchange failed.');
@@ -445,7 +447,9 @@ router.get('/interface', async (req, res) => {
       console.log('[SHOPIFY_CONNECTOR][NO_TOKEN] Reforzando OAuth para', shop);
       const state = pushState(req, { shop, host });
       const authorizeUrl = buildAuthorizeUrl(shop, state);
-      return topLevelRedirect(req, res, authorizeUrl);
+
+      if (isIframeRequest(req)) return topLevelRedirect(res, authorizeUrl, 'Conectar Shopify');
+      return res.redirect(302, authorizeUrl);
     }
 
     return res.sendFile(path.join(__dirname, '../../../public/connector/interface.html'));
