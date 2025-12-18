@@ -229,55 +229,56 @@ function isIframeRequest(req) {
 // Para evitar redirecciones dentro del iframe (mejor para Shopify Admin moderno)
 // ✅ Usa App Bridge Redirect (REMOTE) cuando hay host/apiKey
 function topLevelRedirect(req, res, url) {
-  const host = req.query?.host ? String(req.query.host) : '';
-  const apiKey = SHOPIFY_API_KEY || '';
-
   return res
     .status(200)
     .type('html')
     .send(`<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8">
-    <title>Redirecting…</title>
-  </head>
-  <body>
-    <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
-    <script>
-      (function () {
-        var url = ${JSON.stringify(url)};
-        var host = ${JSON.stringify(host)};
-        var apiKey = ${JSON.stringify(apiKey)};
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Continuar…</title>
+  <style>
+    body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0f19;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    .card{width:min(520px,92vw);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:22px}
+    .btn{width:100%;border:0;border-radius:12px;padding:14px 16px;font-weight:800;cursor:pointer;
+      background:linear-gradient(90deg,#7c3aed,#3b82f6);color:#fff;font-size:15px}
+    .muted{opacity:.8;font-size:13px;line-height:1.45;margin-top:10px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3 style="margin:0 0 8px">Continuar con Shopify</h3>
+    <p class="muted" style="margin:0 0 14px">
+      Shopify requiere abrir esta página fuera del iframe. Da clic para continuar.
+    </p>
+    <button class="btn" id="go">Continuar</button>
+    <p class="muted" style="margin:12px 0 0">Si no avanza, desactiva Brave Shields / AdBlock solo para esta prueba.</p>
+  </div>
 
-        function hardRedirect() {
-          try {
-            if (window.top) window.top.location.href = url;
-            else window.location.href = url;
-          } catch (e) {
-            // OJO: este fallback puede quedarse en iframe, pero ya intentamos App Bridge primero
-            window.location.href = url;
-          }
-        }
+  <script>
+    (function () {
+      var url = ${JSON.stringify(url)};
 
+      function go() {
         try {
-          if (host && apiKey && window['app-bridge']) {
-            var AppBridge = window['app-bridge'];
-            var createApp = AppBridge.default;
-            var Redirect = AppBridge.actions.Redirect;
+          if (window.top) window.top.location.href = url;
+          else window.location.href = url;
+        } catch (e) {
+          window.location.href = url;
+        }
+      }
 
-            var app = createApp({ apiKey: apiKey, host: host, forceRedirect: true });
-            var redirect = Redirect.create(app);
-            redirect.dispatch(Redirect.Action.REMOTE, url);
-            return;
-          }
-        } catch (e) {}
+      document.getElementById('go').addEventListener('click', go);
 
-        hardRedirect();
-      })();
-    </script>
-  </body>
+      // Intento automático (puede ser bloqueado, pero no estorba)
+      try { setTimeout(go, 600); } catch (e) {}
+    })();
+  </script>
+</body>
 </html>`);
 }
+
 
 
 /* =============================
