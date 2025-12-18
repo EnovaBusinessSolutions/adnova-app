@@ -226,8 +226,12 @@ function isIframeRequest(req) {
   return dest === 'iframe' || req.query.embedded === '1';
 }
 
-// ✅ Escape del iframe (evita accounts.shopify.com bloqueado)
-function topLevelRedirect(res, url) {
+// Para evitar redirecciones dentro del iframe (mejor para Shopify Admin moderno)
+// ✅ Usa App Bridge Redirect (REMOTE) cuando hay host/apiKey
+function topLevelRedirect(req, res, url) {
+  const host = req.query?.host ? String(req.query.host) : '';
+  const apiKey = SHOPIFY_API_KEY || '';
+
   return res
     .status(200)
     .type('html')
@@ -236,26 +240,45 @@ function topLevelRedirect(res, url) {
   <head>
     <meta charset="utf-8">
     <title>Redirecting…</title>
-    <meta name="referrer" content="origin-when-cross-origin">
   </head>
   <body>
+    <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
     <script>
-      (function() {
+      (function () {
         var url = ${JSON.stringify(url)};
-        try {
-          if (window.top) window.top.location.href = url;
-          else window.location.href = url;
-        } catch (e) {
-          window.location.href = url;
+        var host = ${JSON.stringify(host)};
+        var apiKey = ${JSON.stringify(apiKey)};
+
+        function hardRedirect() {
+          try {
+            if (window.top) window.top.location.href = url;
+            else window.location.href = url;
+          } catch (e) {
+            // OJO: este fallback puede quedarse en iframe, pero ya intentamos App Bridge primero
+            window.location.href = url;
+          }
         }
+
+        try {
+          if (host && apiKey && window['app-bridge']) {
+            var AppBridge = window['app-bridge'];
+            var createApp = AppBridge.default;
+            var Redirect = AppBridge.actions.Redirect;
+
+            var app = createApp({ apiKey: apiKey, host: host, forceRedirect: true });
+            var redirect = Redirect.create(app);
+            redirect.dispatch(Redirect.Action.REMOTE, url);
+            return;
+          }
+        } catch (e) {}
+
+        hardRedirect();
       })();
     </script>
-    <noscript>
-      <a href="${String(url).replace(/"/g, '&quot;')}">Continuar</a>
-    </noscript>
   </body>
 </html>`);
 }
+
 
 /* =============================
  * Guard genérico (solo GET/HEAD)
@@ -287,7 +310,7 @@ router.use((req, res, next) => {
   const authorizeUrl = buildAuthorizeUrl(shop, state);
 
   console.log('[SHOPIFY_CONNECTOR][OAUTH_REDIRECT][GUARD]', { shop, path: req.originalUrl });
-  return topLevelRedirect(res, authorizeUrl);
+  return topLevelRedirect(req, res, authorizeUrl);
 });
 
 /* =============================
@@ -322,7 +345,7 @@ router.get('/auth', (req, res) => {
   console.log('[SHOPIFY_CONNECTOR][AUTH_START]', { shop });
 
   // SIEMPRE escape (si vienes desde admin, vienes embebido)
-  return topLevelRedirect(res, authorizeUrl);
+  return topLevelRedirect(req, res, authorizeUrl);
 });
 
 /* =============================
@@ -421,7 +444,7 @@ router.get('/interface', async (req, res) => {
       console.log('[SHOPIFY_CONNECTOR][NO_TOKEN] Reforzando OAuth para', shop);
       const state = pushState(req, { shop, host });
       const authorizeUrl = buildAuthorizeUrl(shop, state);
-      return topLevelRedirect(res, authorizeUrl);
+      return topLevelRedirect(req, res, authorizeUrl);
     }
 
     return res.sendFile(path.join(__dirname, '../../../public/connector/interface.html'));
