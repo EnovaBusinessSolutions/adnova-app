@@ -1,3 +1,5 @@
+'use strict';
+
 // routes/shopifyConnector/index.js
 const express = require('express');
 const axios   = require('axios');
@@ -8,23 +10,28 @@ const router  = express.Router();
 const ShopConnections = require('../../models/ShopConnections');
 
 const {
+  APP_URL,
   SHOPIFY_API_KEY,
   SHOPIFY_API_SECRET,
   SHOPIFY_SCOPES,
-  SHOPIFY_REDIRECT_URI
+  SHOPIFY_REDIRECT_URI,
+  SHOPIFY_GRANT_PER_USER, // opcional: "true" para tokens por usuario (online)
 } = process.env;
 
-// Fallback sensato para redirect_uri (DEBE coincidir 100% con el Partners Dashboard)
-const REDIRECT_URI =
-  SHOPIFY_REDIRECT_URI || 'https://adray.ai/connector/auth/callback';
+// Base URL pública (canónica)
+const BASE_URL = (APP_URL || 'https://adray.ai').replace(/\/$/, '');
 
-// --- Pequeña verificación de entorno (evitamos crashes raros) ---
+// Redirect URI (DEBE coincidir 100% con Shopify Partners)
+const REDIRECT_URI = SHOPIFY_REDIRECT_URI || `${BASE_URL}/connector/auth/callback`;
+
+// --- Pequeña verificación de entorno ---
 if (!SHOPIFY_API_KEY || !SHOPIFY_API_SECRET) {
   console.warn(
-    '[SHOPIFY_CONNECTOR] ⚠️ Falta SHOPIFY_API_KEY o SHOPIFY_API_SECRET en env. ' +
-    'El flujo OAuth fallará hasta que se configure correctamente.'
+    '[SHOPIFY_CONNECTOR] ⚠️ Falta SHOPIFY_API_KEY o SHOPIFY_API_SECRET en env. El flujo OAuth fallará.'
   );
 }
+
+/* ---------------- helpers ---------------- */
 
 function extractShop(req) {
   let { shop } = req.query || {};
@@ -38,6 +45,39 @@ function extractShop(req) {
   return shop;
 }
 
+// Guarda state + host en sesión para validar callback y preservar host
+function pushState(req, { shop, host }) {
+  const state = crypto.randomBytes(16).toString('hex');
+
+  if (!req.session) {
+    // Sin sesión no podemos validar state -> mejor log + continuar "best effort"
+    console.warn('[SHOPIFY_CONNECTOR] ⚠️ req.session no existe. Revisa express-session en backend/index.js');
+    return state;
+  }
+
+  req.session.shopifyOAuth = req.session.shopifyOAuth || {};
+  req.session.shopifyOAuth[state] = {
+    shop,
+    host: host || '',
+    ts: Date.now(),
+  };
+
+  // Limpieza simple (evita crecer infinito)
+  const TTL = 10 * 60 * 1000; // 10 min
+  for (const [k, v] of Object.entries(req.session.shopifyOAuth)) {
+    if (!v?.ts || (Date.now() - v.ts) > TTL) delete req.session.shopifyOAuth[k];
+  }
+
+  return state;
+}
+
+function popState(req, state) {
+  if (!req.session?.shopifyOAuth) return null;
+  const data = req.session.shopifyOAuth[state] || null;
+  delete req.session.shopifyOAuth[state];
+  return data;
+}
+
 function buildAuthorizeUrl(shop, state) {
   const base =
     `https://${shop}/admin/oauth/authorize` +
@@ -45,22 +85,50 @@ function buildAuthorizeUrl(shop, state) {
     `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
     `&state=${encodeURIComponent(state)}`;
 
-  // Recomendado: grant_options[]=per-user (no rompe nada; solo mejora el flujo)
-  const grant = `&grant_options[]=per-user`;
+  const scope = SHOPIFY_SCOPES
+    ? `&scope=${encodeURIComponent(SHOPIFY_SCOPES)}`
+    : '';
 
-  return SHOPIFY_SCOPES
-    ? `${base}&scope=${encodeURIComponent(SHOPIFY_SCOPES)}${grant}`
-    : `${base}${grant}`;
+  // ✅ OJO: per-user (online token) expira; offline token NO expira (más estable para “conector”)
+  const grant = (String(SHOPIFY_GRANT_PER_USER || '').toLowerCase() === 'true')
+    ? `&grant_options[]=per-user`
+    : '';
+
+  return `${base}${scope}${grant}`;
 }
 
-function isValidHmac(query) {
-  const { hmac, ...rest } = query;
+/**
+ * Validación HMAC robusta:
+ * - Usa el querystring crudo (encoded) para evitar fallos con host/base64.
+ * - Remueve hmac y signature.
+ * - Ordena por key.
+ */
+function isValidHmacFromRaw(req) {
+  const raw = (req.originalUrl.split('?')[1] || '').trim();
+  if (!raw) return false;
+
+  const parts = raw.split('&').filter(Boolean);
+
+  let hmac = '';
+  const filtered = [];
+
+  for (const p of parts) {
+    const idx = p.indexOf('=');
+    const k = idx >= 0 ? p.slice(0, idx) : p;
+    const v = idx >= 0 ? p.slice(idx + 1) : '';
+
+    if (k === 'hmac') {
+      hmac = v;
+      continue;
+    }
+    if (k === 'signature') continue;
+    filtered.push({ k, p });
+  }
+
   if (!hmac) return false;
 
-  const message = Object.keys(rest)
-    .sort()
-    .map((k) => `${k}=${Array.isArray(rest[k]) ? rest[k].join(',') : rest[k]}`)
-    .join('&');
+  filtered.sort((a, b) => a.k.localeCompare(b.k));
+  const message = filtered.map((x) => x.p).join('&');
 
   const digest = crypto
     .createHmac('sha256', SHOPIFY_API_SECRET)
@@ -68,7 +136,6 @@ function isValidHmac(query) {
     .digest('hex');
 
   try {
-    // Shopify manda hmac en hex. Comparamos en hex (más correcto que utf-8).
     const a = Buffer.from(digest, 'hex');
     const b = Buffer.from(String(hmac), 'hex');
     if (a.length !== b.length) return false;
@@ -78,7 +145,7 @@ function isValidHmac(query) {
   }
 }
 
-// Para evitar redirecciones dentro del iframe (mejor para revisión)
+// Para evitar redirecciones dentro del iframe
 function topLevelRedirect(res, url) {
   return res
     .status(200)
@@ -102,9 +169,9 @@ function topLevelRedirect(res, url) {
 </html>`);
 }
 
-// =============================
-// Guard genérico: fuerza OAuth
-// =============================
+/* =============================
+ * Guard genérico (solo GET/HEAD)
+ * ============================= */
 router.use((req, res, next) => {
   if (!['GET', 'HEAD'].includes(req.method)) return next();
 
@@ -112,7 +179,7 @@ router.use((req, res, next) => {
   const allow =
     url === '/connector' ||
     url === '/connector/' ||
-    url.startsWith('/connector/auth/callback') ||
+    url.startsWith('/connector/auth') ||          // ✅ ahora sí incluimos /auth y /auth/callback
     url.startsWith('/connector/webhooks') ||
     url.startsWith('/connector/interface') ||
     url.startsWith('/connector/healthz');
@@ -130,45 +197,78 @@ router.use((req, res, next) => {
       );
   }
 
-  const state = crypto.randomBytes(16).toString('hex');
+  const host = req.query.host ? String(req.query.host) : '';
+  const state = pushState(req, { shop, host });
   const authorizeUrl = buildAuthorizeUrl(shop, state);
 
-  console.log('[SHOPIFY_CONNECTOR][OAUTH_REDIRECT]', {
-    shop,
-    path: req.originalUrl
-  });
-
-  // Mejor que 302 dentro del iframe
+  console.log('[SHOPIFY_CONNECTOR][OAUTH_REDIRECT][GUARD]', { shop, path: req.originalUrl });
   return topLevelRedirect(res, authorizeUrl);
 });
 
-// Root -> manda a interface (por si Shopify abre /connector)
+/* =============================
+ * Root -> manda a interface
+ * ============================= */
 router.get('/', (req, res) => {
   const shop = extractShop(req);
   const host = req.query.host ? String(req.query.host) : '';
+
   const url =
     '/connector/interface' +
     (shop ? `?shop=${encodeURIComponent(shop)}` : '') +
     (shop && host ? `&host=${encodeURIComponent(host)}` : (!shop && host ? `?host=${encodeURIComponent(host)}` : ''));
+
   return res.redirect(302, url);
 });
 
-// Webhooks (ya estaba)
+// Webhooks
 router.use('/webhooks', require('./webhooks'));
 
-// =============================
-// Callback OAuth
-// =============================
+/* =============================
+ * ✅ Auth explícito
+ * ============================= */
+router.get('/auth', (req, res) => {
+  const shop = extractShop(req);
+  if (!shop) {
+    return res.status(400).type('text/plain').send('Missing "shop".');
+  }
+
+  const host = req.query.host ? String(req.query.host) : '';
+  const state = pushState(req, { shop, host });
+  const authorizeUrl = buildAuthorizeUrl(shop, state);
+
+  console.log('[SHOPIFY_CONNECTOR][AUTH_START]', { shop });
+  return topLevelRedirect(res, authorizeUrl);
+});
+
+/* =============================
+ * Callback OAuth
+ * ============================= */
 router.get('/auth/callback', async (req, res) => {
-  const { shop, code } = req.query;
+  const { shop, code, state } = req.query;
+
   if (!shop || !code) {
     return res.status(400).type('text/plain').send('Missing "shop" or "code".');
   }
 
-  if (!isValidHmac(req.query)) {
-    console.warn('⚠️  Invalid HMAC on /auth/callback', { shop });
+  // ✅ HMAC robusto (raw query)
+  if (!isValidHmacFromRaw(req)) {
+    console.warn('[SHOPIFY_CONNECTOR] ⚠️ Invalid HMAC on /auth/callback', { shop });
     return res.status(400).type('text/plain').send('Invalid HMAC.');
   }
+
+  // ✅ Validar state y recuperar host original
+  let saved = null;
+  if (state) saved = popState(req, String(state));
+  if (state && !saved) {
+    console.warn('[SHOPIFY_CONNECTOR] ⚠️ state inválido/expirado', { shop });
+    return res.status(400).type('text/plain').send('Invalid state.');
+  }
+  if (saved?.shop && saved.shop !== shop) {
+    console.warn('[SHOPIFY_CONNECTOR] ⚠️ state/shop mismatch', { shop, savedShop: saved.shop });
+    return res.status(400).type('text/plain').send('Invalid state/shop.');
+  }
+
+  const host = (req.query.host ? String(req.query.host) : (saved?.host || ''));
 
   try {
     const { data } = await axios.post(
@@ -186,14 +286,13 @@ router.get('/auth/callback', async (req, res) => {
       {
         shop,
         accessToken: data.access_token,
-        installedAt: Date.now(),
+        scope: data.scope || null,
+        installedAt: new Date(),
       },
-      { upsert: true }
+      { upsert: true, new: true }
     );
 
-    const host = req.query.host ? String(req.query.host) : '';
-
-    // ✅ IMPORTANTE: NO redirigir a /apps/... (eso te genera el loop)
+    // ✅ Evita loops: volvemos a /connector/interface (tu UI embebida)
     const uiUrl =
       `/connector/interface?shop=${encodeURIComponent(shop)}` +
       (host ? `&host=${encodeURIComponent(host)}` : '');
@@ -201,36 +300,30 @@ router.get('/auth/callback', async (req, res) => {
     console.log('[SHOPIFY_CONNECTOR][AUTH_OK]', { shop });
     return res.redirect(302, uiUrl);
   } catch (err) {
-    console.error('❌ Error exchanging token:', err.response?.data || err);
-    return res
-      .status(502)
-      .type('text/plain')
-      .send('Token exchange failed.');
+    console.error('[SHOPIFY_CONNECTOR] ❌ Token exchange failed:', err.response?.data || err?.message || err);
+    return res.status(502).type('text/plain').send('Token exchange failed.');
   }
 });
 
-// =============================
-// Vista embebida: Interface
-// =============================
+/* =============================
+ * Vista embebida: Interface
+ * ============================= */
 router.get('/interface', async (req, res) => {
   const shop = extractShop(req);
   if (!shop) {
     console.warn('[SHOPIFY_CONNECTOR] /interface sin "shop"');
-    return res
-      .status(400)
-      .type('text/plain')
-      .send('Missing "shop". Open from Shopify Admin.');
+    return res.status(400).type('text/plain').send('Missing "shop". Open from Shopify Admin.');
   }
 
+  const host = req.query.host ? String(req.query.host) : '';
+
   try {
-    const conn = await ShopConnections.findOne({ shop });
+    const conn = await ShopConnections.findOne({ shop }).lean();
 
     if (!conn?.accessToken) {
       console.log('[SHOPIFY_CONNECTOR][NO_TOKEN] Reforzando OAuth para', shop);
-      const state = crypto.randomBytes(16).toString('hex');
+      const state = pushState(req, { shop, host });
       const authorizeUrl = buildAuthorizeUrl(shop, state);
-
-      // Mejor para embedded apps
       return topLevelRedirect(res, authorizeUrl);
     }
 
@@ -239,10 +332,7 @@ router.get('/interface', async (req, res) => {
     );
   } catch (e) {
     console.error('[SHOPIFY_CONNECTOR][INTERFACE_ERROR]', e);
-    return res
-      .status(500)
-      .type('text/plain')
-      .send('Internal error loading interface.');
+    return res.status(500).type('text/plain').send('Internal error loading interface.');
   }
 });
 

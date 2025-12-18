@@ -56,6 +56,9 @@ const metaTable = require('./routes/metaTable');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
+
+
 
 /* =========================
  * Seguridad y performance
@@ -134,12 +137,26 @@ function sessionGuard(req, res, next) {
   return res.status(401).json({ error: 'No hay sesión' });
 }
 
+
+function isIframeRequest(req) {
+  const dest = (req.get('sec-fetch-dest') || '').toLowerCase();
+  // Shopify embedded suele venir como iframe. También a veces trae embedded=1.
+  return dest === 'iframe' || req.query.embedded === '1';
+}
+
+app.get(['/connector/auth', '/connector/auth/callback'], shopifyCSP, (req, res, next) => {
+  if (isIframeRequest(req)) {
+    const url = new URL(req.originalUrl, APP_URL);
+    return topLevelRedirect(res, url.toString());
+  }
+  return next();
+});
+
 /* =========================
  * Parsers especiales (antes de JSON global)
  * ========================= */
 // 1) Webhooks Shopify (raw)
-app.use(
-  '/connector/webhooks',
+app.use('/connector/webhooks',
   express.raw({ type: 'application/json' }),
   webhookRoutes
 );
@@ -979,7 +996,7 @@ app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
     return res.status(400).send("Falta el parámetro 'shop'");
   }
 
-  const redirectUrl = new URL('/connector', `https://${req.headers.host}`);
+  const redirectUrl = new URL('/connector', APP_URL);
   redirectUrl.searchParams.set('shop', shop);
   if (host) redirectUrl.searchParams.set('host', host);
 

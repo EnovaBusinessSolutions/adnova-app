@@ -6,7 +6,9 @@
   <title>ADRAY Connector</title>
 
   <!-- REQUIRED por Shopify App Bridge -->
+  <!-- Recomendado: que backend lo inyecte. Si lo dejas fijo también funciona. -->
   <meta name="shopify-api-key" content="168d118e58d5e1bd2bd787957e136f2b" />
+  <meta name="app-url" content="https://adray.ai" />
 
   <style>
     :root { color-scheme: dark; }
@@ -116,10 +118,7 @@
   <!-- Shopify App Bridge oficial (SIN version) -->
   <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
 
-  <!-- Tu bundle actual (COMENTADO para probar sin él) -->
-  <!-- <script src="/connector/interface.bundle.js" defer></script> -->
-
-  <!-- Lógica E2E del conector (NUEVO, pequeño y estable) -->
+  <!-- Lógica E2E del conector -->
   <script src="/connector/interface.connector.js" defer></script>
 </head>
 
@@ -143,12 +142,12 @@
 
     <div class="actions">
       <button class="ghost" id="btnReload" type="button">Recargar</button>
-      <button id="btnGo" type="button">Ir a ADRAY AI</button>
+      <button id="btnGo" type="button" disabled>Ir a ADRAY AI</button>
     </div>
 
     <div class="hint">
-      Este conector obtiene un <b>Session Token</b> con App Bridge, lo guarda en <b>sessionStorage</b>
-      y te redirige a <b>/onboarding</b> (misma pestaña). No expone el token en la URL.
+      Este conector obtiene un <b>Session Token</b> (JWT) con App Bridge, lo guarda en <b>sessionStorage</b>
+      y te redirige a <b>/onboarding</b> (rompiendo el iframe). No expone el token en la URL.
     </div>
 
     <div class="err" id="errBox"></div>

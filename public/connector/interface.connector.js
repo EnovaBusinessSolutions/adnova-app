@@ -1,164 +1,177 @@
+// public/connector/interface.connector.js
 (function () {
   const $ = (id) => document.getElementById(id);
 
-  const pill = $("statusPill");
-  const errBox = $("errBox");
-  const kvShop = $("kvShop");
-  const kvHost = $("kvHost");
-  const btnGo = $("btnGo");
-  const btnReload = $("btnReload");
+  const statusPill = $('statusPill');
+  const kvShop = $('kvShop');
+  const kvHost = $('kvHost');
+  const errBox = $('errBox');
+  const btnReload = $('btnReload');
+  const btnGo = $('btnGo');
 
   function setStatus(txt) {
-    if (pill) pill.textContent = txt;
+    if (statusPill) statusPill.textContent = txt;
   }
 
-  function showErr(e) {
+  function showError(msg) {
     if (!errBox) return;
-    errBox.style.display = "block";
-    errBox.textContent =
-      typeof e === "string"
-        ? e
-        : (e && (e.stack || e.message))
-          ? (e.stack || e.message)
-          : String(e);
+    errBox.style.display = 'block';
+    errBox.textContent = msg;
   }
 
-  function hideErr() {
+  function hideError() {
     if (!errBox) return;
-    errBox.style.display = "none";
-    errBox.textContent = "";
+    errBox.style.display = 'none';
+    errBox.textContent = '';
   }
 
-  function getApiKey() {
-    const meta = document.querySelector('meta[name="shopify-api-key"]');
-    const key = meta && meta.content ? meta.content.trim() : "";
-    return key;
+  function qs() {
+    return new URLSearchParams(window.location.search);
   }
 
-  function getParams() {
-    const qs = new URL(location.href).searchParams;
-    const shop = (qs.get("shop") || "").trim();
-    const host = (qs.get("host") || "").trim();
-    return { shop, host };
+  function getMeta(name) {
+    const el = document.querySelector(`meta[name="${name}"]`);
+    return el ? el.getAttribute('content') : '';
   }
 
-  function waitForAppBridge(timeoutMs = 12000) {
-    return new Promise((resolve, reject) => {
-      const started = Date.now();
-      (function tick() {
-        // UMD global: window['app-bridge']
-        const AB = window["app-bridge"];
-        if (AB && typeof AB.createApp === "function" && AB.actions) return resolve(AB);
-        if (Date.now() - started > timeoutMs) return reject(new Error("App Bridge no se cargó a tiempo."));
-        requestAnimationFrame(tick);
-      })();
-    });
+  function topNavigate(url) {
+    // romper iframe (necesita interacción del usuario para algunos navegadores)
+    try {
+      if (window.top) window.top.location.href = url;
+      else window.location.href = url;
+    } catch (e) {
+      window.location.href = url;
+    }
   }
 
-  async function init() {
-    setStatus("Validando parámetros…");
+  function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
 
-    const { shop, host } = getParams();
-    if (kvShop) kvShop.textContent = shop || "—";
-    if (kvHost) kvHost.textContent = host || "—";
+  async function waitForAppBridge(timeoutMs = 8000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      if (window['app-bridge'] && window['app-bridge'].default) return true;
+      await sleep(50);
+    }
+    return false;
+  }
 
-    if (!shop || !host) {
-      setStatus("Faltan parámetros");
-      throw new Error(
-        "Faltan query params requeridos.\n\nSe requiere: ?shop=...&host=...\n\nTip: abre esta vista desde Shopify Admin, no directo."
+  async function getSessionToken(app) {
+    // Preferido (más simple). Si no existe, lanzamos error.
+    if (app && typeof app.idToken === 'function') {
+      return await app.idToken();
+    }
+    throw new Error('App Bridge no expuso app.idToken().');
+  }
+
+  async function boot() {
+    hideError();
+    setStatus('Leyendo parámetros…');
+
+    const p = qs();
+    const shop = (p.get('shop') || '').trim();
+    const host = (p.get('host') || '').trim();
+
+    kvShop.textContent = shop || '—';
+    kvHost.textContent = host || '—';
+
+    if (!shop) {
+      setStatus('Falta shop');
+      showError(
+        'Missing "shop".\n\nAbre esta pantalla desde el Admin de Shopify (Apps) o instala la app desde el App Store.'
       );
+      return;
     }
 
-    const apiKey = getApiKey();
-    if (!apiKey || apiKey === "SHOPIFY_API_KEY") {
-      setStatus("Falta API Key");
-      throw new Error(
-        'No se encontró una API Key válida en <meta name="shopify-api-key" ...>.\n\nAsegúrate de renderizarla desde backend.'
+    if (!host) {
+      // En admin.shopify.com el host es crítico para App Bridge.
+      setStatus('Falta host');
+      showError(
+        'Missing "host".\n\nEsto normalmente significa que no entraste desde el Admin de Shopify (embedded).\nReinstala/abre la app desde Shopify Admin para que Shopify agregue ?host=...'
       );
+      return;
     }
 
-    setStatus("Cargando App Bridge…");
-    const AB = await waitForAppBridge();
+    const apiKey = (getMeta('shopify-api-key') || '').trim();
+    if (!apiKey) {
+      setStatus('Falta API key');
+      showError('Missing meta shopify-api-key. Revisa interface.html o el backend que lo inyecta.');
+      return;
+    }
 
-    setStatus("Inicializando…");
-    const app = AB.createApp({
-      apiKey,
-      host,
-      forceRedirect: true
-    });
+    setStatus('Cargando App Bridge…');
 
-    const { SessionToken, Redirect } = AB.actions;
+    const ok = await waitForAppBridge();
+    if (!ok) {
+      setStatus('Error App Bridge');
+      showError('App Bridge no cargó. Revisa CSP (shopifyCSP) y el script de Shopify.');
+      return;
+    }
 
-    async function getSessionTokenOnce() {
-      return new Promise((resolve, reject) => {
-        let unsub = null;
+    let app;
+    try {
+      const AppBridge = window['app-bridge'];
+      const createApp = AppBridge.default;
 
-        const timer = setTimeout(() => {
-          try { unsub && unsub(); } catch (_) {}
-          reject(new Error("Timeout obteniendo session token."));
-        }, 12000);
-
-        try {
-          unsub = app.subscribe(SessionToken.Action.RESPOND, (payload) => {
-            clearTimeout(timer);
-            try { unsub && unsub(); } catch (_) {}
-
-            const token = payload && payload.sessionToken;
-            if (!token) return reject(new Error("Shopify respondió sin sessionToken."));
-            resolve(token);
-          });
-
-          app.dispatch(SessionToken.request());
-        } catch (err) {
-          clearTimeout(timer);
-          try { unsub && unsub(); } catch (_) {}
-          reject(err);
-        }
+      app = createApp({
+        apiKey,
+        host,
+        forceRedirect: true, // Shopify recomienda forzar redirección top-level cuando aplica
       });
+    } catch (e) {
+      setStatus('Error init');
+      showError('No se pudo inicializar App Bridge.\n' + (e?.message || e));
+      return;
     }
 
-    btnReload?.addEventListener("click", () => location.reload());
+    setStatus('Generando Session Token…');
 
-    btnGo?.addEventListener("click", async () => {
-      hideErr();
-      btnGo.disabled = true;
-      setStatus("Generando session token…");
-
+    // Reintentos: a veces el primer intento falla justo al cargar en embedded
+    let token = null;
+    let lastErr = null;
+    for (let i = 0; i < 4; i++) {
       try {
-        const token = await getSessionTokenOnce();
-
-        // Guardar para que /onboarding lo lea (sin exponer en URL)
-        sessionStorage.setItem("shopifyConnected", "true");
-        sessionStorage.setItem("shopifyShop", shop);
-        sessionStorage.setItem("shopifyHost", host);
-        sessionStorage.setItem("sessionToken", token);
-
-        setStatus("Listo. Redirigiendo…");
-
-        // Importante: salir del iframe (top-level) usando App Bridge
-        const redirect = Redirect.create(app);
-        redirect.dispatch(Redirect.Action.REMOTE, "/onboarding");
+        token = await getSessionToken(app);
+        if (token) break;
       } catch (e) {
-        setStatus("Error");
-        showErr(e);
-        btnGo.disabled = false;
+        lastErr = e;
+        await sleep(250 + i * 250);
       }
+    }
+
+    if (!token) {
+      setStatus('Token falló');
+      showError(
+        'No se pudo obtener Session Token.\n' +
+          (lastErr?.message || String(lastErr || '')) +
+          '\n\nTip: confirma que abriste la app desde Shopify Admin (embedded) y que viene ?host=...'
+      );
+      return;
+    }
+
+    // Guardar en sessionStorage (NO URL)
+    sessionStorage.setItem('shopifySessionToken', token);
+    sessionStorage.setItem('shopifyShop', shop);
+    sessionStorage.setItem('shopifyHost', host);
+    sessionStorage.setItem('shopifyConnected', 'true');
+
+    setStatus('Listo ✅');
+    btnGo.disabled = false;
+
+    btnGo.addEventListener('click', () => {
+      // Enviar a onboarding SAAS (fuera de iframe)
+      const base = (getMeta('app-url') || window.location.origin).replace(/\/$/, '');
+      const url = `${base}/onboarding?from=shopify&shop=${encodeURIComponent(shop)}`;
+      topNavigate(url);
     });
-
-    setStatus("Listo");
   }
 
-  function boot() {
-    init().catch((e) => {
-      setStatus("Error");
-      showErr(e);
-      if (btnGo) btnGo.disabled = false;
-    });
-  }
+  btnReload?.addEventListener('click', () => window.location.reload());
 
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", boot);
-  } else {
-    boot();
-  }
+  // arranque
+  boot().catch((e) => {
+    setStatus('Error');
+    showError(e?.stack || e?.message || String(e));
+  });
 })();
