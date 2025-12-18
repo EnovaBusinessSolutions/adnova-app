@@ -329,8 +329,6 @@ router.get('/', (req, res) => {
   return res.redirect(302, url);
 });
 
-// Webhooks
-router.use('/webhooks', require('./webhooks'));
 
 /* =============================
  * ✅ Auth explícito
