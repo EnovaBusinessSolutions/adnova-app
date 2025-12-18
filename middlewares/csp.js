@@ -3,6 +3,19 @@
 
 const helmet = require('helmet');
 
+const isProd = process.env.NODE_ENV === 'production';
+
+// Helpers para DEV (no afecta prod)
+const devConnect = isProd
+  ? []
+  : [
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+      'ws://localhost:5173',
+      'ws://127.0.0.1:5173',
+    ];
+
 /**
  * CSP pública (landing, bookcall, dashboard público, etc.)
  * ✅ Permite Calendly + GA4/GTM + Meta Pixel + Microsoft Clarity
@@ -15,8 +28,14 @@ const publicCSPHelmet = helmet({
     directives: {
       defaultSrc: ["'self'"],
 
-      // ✅ Scripts permitidos (Calendly + Google + Meta + Clarity)
-      // ⚠️ 'unsafe-inline' necesario porque tienes <script> inline en tus HTML
+      /**
+       * SCRIPTS
+       * - GA4/GTM: googletagmanager.com
+       * - Meta: connect.facebook.net
+       * - Clarity: scripts.clarity.ms (IMPORTANTE)
+       * - Calendly: assets.calendly.com
+       * ⚠️ 'unsafe-inline' por scripts inline (gtag/fbq/clarity)
+       */
       scriptSrc: [
         "'self'",
         "'unsafe-inline'",
@@ -24,6 +43,7 @@ const publicCSPHelmet = helmet({
         "https://www.googletagmanager.com",
         "https://connect.facebook.net",
         "https://www.clarity.ms",
+        "https://scripts.clarity.ms",
       ],
       scriptSrcElem: [
         "'self'",
@@ -32,6 +52,7 @@ const publicCSPHelmet = helmet({
         "https://www.googletagmanager.com",
         "https://connect.facebook.net",
         "https://www.clarity.ms",
+        "https://scripts.clarity.ms",
       ],
 
       styleSrc: [
@@ -43,35 +64,52 @@ const publicCSPHelmet = helmet({
 
       fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
 
-      // ✅ Aquí estaba el bloqueo: connect-src solo 'self'
-      //    Agregamos endpoints necesarios para GA4/Meta/Clarity + (compat Calendly)
+      /**
+       * CONNECT
+       * - GA4/Measurement: google-analytics.com (incluye subdominios regionales)
+       * - Meta: facebook.com
+       * - Clarity: c.clarity.ms (collector real)
+       * - Calendly: calendly.com / api.calendly.com
+       */
       connectSrc: [
         "'self'",
+        ...devConnect,
+
         "https://assets.calendly.com",
         "https://calendly.com",
         "https://api.calendly.com",
 
-        "https://www.googletagmanager.com",
+        // GA4
         "https://www.google-analytics.com",
-        "https://region1.google-analytics.com",
+        "https://analytics.google.com",
+        "https://*.google-analytics.com",
         "https://stats.g.doubleclick.net",
 
-        "https://connect.facebook.net",
+        // Meta
         "https://www.facebook.com",
+        "https://connect.facebook.net",
 
+        // Clarity
         "https://www.clarity.ms",
+        "https://c.clarity.ms",
       ],
 
+      /**
+       * IMAGES (beacons)
+       * - Meta Pixel usa www.facebook.com/tr
+       * - GA4 a veces usa pixels/collect en google-analytics.com / g.doubleclick
+       */
       imgSrc: [
         "'self'",
         "data:",
         "https:",
         "https://upload.wikimedia.org",
         "https://img.icons8.com",
-        // (https: ya cubre los beacons de GA/Meta, lo dejamos explícito por claridad)
+
         "https://www.facebook.com",
         "https://www.google-analytics.com",
-        "https://region1.google-analytics.com",
+        "https://*.google-analytics.com",
+        "https://stats.g.doubleclick.net",
       ],
 
       frameSrc: ["'self'", "https://calendly.com", "https://assets.calendly.com"],
@@ -136,7 +174,7 @@ const shopifyCSPHelmet = helmet({
         "https://img.icons8.com",
       ],
 
-      // ✅ Requests dentro del Admin / telemetría Shopify (a veces bloqueada por extensiones)
+      // ✅ Requests dentro del Admin / telemetría Shopify
       connectSrc: [
         "'self'",
         "https://*.myshopify.com",
@@ -146,16 +184,13 @@ const shopifyCSPHelmet = helmet({
         "https://monorail-edge.shopifysvc.com",
       ],
 
-      // No intentes “embeber” accounts.shopify.com (igual te lo va a bloquear Shopify)
       frameSrc: ["'self'", "https://admin.shopify.com", "https://*.myshopify.com"],
-
       formAction: ["'self'"],
     },
   },
 });
 
 function shopifyCSP(req, res, next) {
-  // Solo aplica donde toca (evita sorpresas)
   const p = req.path || '';
   if (p.startsWith('/connector') || p.startsWith('/apps/')) {
     return shopifyCSPHelmet(req, res, next);
