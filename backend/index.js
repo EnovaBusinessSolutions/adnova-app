@@ -205,11 +205,12 @@ app.get(['/connector/auth', '/connector/auth/callback'], (req, res, next) => {
 /* =========================
  * Parsers especiales (antes de JSON global)
  * ========================= */
-// 1) Webhooks Shopify (raw)
-app.use('/connector/webhooks',
-  express.raw({ type: 'application/json' }),
+app.use(
+  '/connector/webhooks',
+  express.raw({ type: '*/*' }),
   webhookRoutes
 );
+
 
 // 2) Stripe: RAW **solo** en /api/stripe/webhook; JSON normal para el resto
 app.use('/api/stripe', (req, res, next) => {
