@@ -1,36 +1,37 @@
-// backend/routes/shopifyConnector/webhooks.js
 'use strict';
 
+// routes/shopifyConnector/webhooks.js
 const express = require('express');
 const crypto = require('crypto');
 
 const router = express.Router();
-const SECRET = process.env.SHOPIFY_API_SECRET;
+
+const SECRET = process.env.SHOPIFY_API_SECRET || '';
 
 function validHmac(req) {
+  const hmacHeader = String(req.get('X-Shopify-Hmac-Sha256') || '').trim();
+  if (!SECRET || !hmacHeader) return false;
+
+  // req.body DEBE ser Buffer (porque en backend/index.js usas express.raw)
+  const rawBody = req.body;
+  if (!Buffer.isBuffer(rawBody)) return false;
+
+  const computed = crypto
+    .createHmac('sha256', SECRET)
+    .update(rawBody)
+    .digest(); // Buffer
+
+  const received = Buffer.from(hmacHeader, 'base64');
+
+  if (received.length !== computed.length) return false;
+  return crypto.timingSafeEqual(received, computed);
+}
+
+function parseJson(buf) {
   try {
-    if (!SECRET) return false;
-
-    const hmacHeader = String(req.get('X-Shopify-Hmac-Sha256') || '');
-    if (!hmacHeader) return false;
-
-    // req.body DEBE ser Buffer (lo parsea index.js con express.raw)
-    const body = req.body;
-    if (!Buffer.isBuffer(body)) return false;
-
-    const digest = crypto
-      .createHmac('sha256', SECRET)
-      .update(body)
-      .digest('base64');
-
-    const a = Buffer.from(digest, 'base64');
-    const b = Buffer.from(hmacHeader, 'base64');
-    if (a.length !== b.length) return false;
-
-    return crypto.timingSafeEqual(a, b);
-  } catch (e) {
-    console.error('[WEBHOOK] validHmac error:', e?.message || e);
-    return false;
+    return JSON.parse(Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf || ''));
+  } catch {
+    return null;
   }
 }
 
@@ -45,23 +46,20 @@ TOPICS.forEach((topic) => {
     const ok = validHmac(req);
 
     if (!ok) {
-      console.warn('[WEBHOOK] ❌ HMAC inválido', {
+      console.warn('[WEBHOOK][HMAC_FAIL]', {
         topic,
-        contentType: req.get('content-type'),
-        hasBodyBuffer: Buffer.isBuffer(req.body),
-        bodyLen: Buffer.isBuffer(req.body) ? req.body.length : null,
+        hasSecret: !!SECRET,
         hasHeader: !!req.get('X-Shopify-Hmac-Sha256'),
+        bodyIsBuffer: Buffer.isBuffer(req.body),
+        bodyLen: Buffer.isBuffer(req.body) ? req.body.length : null,
       });
       return res.status(401).send('Invalid HMAC');
     }
 
-    // Parse best-effort (no afecta HMAC)
-    let payload = null;
-    try {
-      payload = JSON.parse(req.body.toString('utf8'));
-    } catch (_) {}
+    const payload = parseJson(req.body);
+    console.log('[WEBHOOK][OK]', { topic, shop: req.get('X-Shopify-Shop-Domain'), payload: payload || '(no-json)' });
 
-    console.log('[WEBHOOK] ✅ OK', { topic, shop: req.get('X-Shopify-Shop-Domain') || null });
+    // Shopify solo necesita 200 OK rápido
     return res.status(200).send('OK');
   });
 });
