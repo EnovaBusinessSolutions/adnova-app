@@ -5,29 +5,43 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Onboarding - Adray</title>
 
-  <!-- CSS principal -->
-  <link rel="stylesheet" href="onboarding.css" />
+  <!-- CSS principal (ruta absoluta para NO fallar según dónde abras la página) -->
+  <link rel="stylesheet" href="/onboarding.css" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
 
-  <!-- ✅ Scroll oscuro (mismo look que tu CSS) SOLO para esta página -->
+  <!-- ✅ Fixes de viewport/scroll SOLO para onboarding4 -->
   <style>
     html, body { height: 100%; }
-    body { overflow: hidden; } /* evita scroll global/whitespace */
 
-    /* El panel derecho es el que scrollea */
+    /* Evita scroll global/whitespace */
+    body[data-page="onboarding4"]{
+      overflow: hidden;
+      /* iOS safe area (si aplica) */
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    /* El contenedor usa viewport moderno en móviles */
+    body[data-page="onboarding4"] .onboarding-container{
+      min-height: 100vh;
+      min-height: 100svh; /* safari */
+      min-height: 100dvh; /* chrome moderno */
+    }
+
+    /* El panel derecho scrollea */
     body[data-page="onboarding4"] .content-panel{
       overflow-y: auto;
       overflow-x: hidden;
       height: 100%;
+      -webkit-overflow-scrolling: touch;
     }
 
     /* Firefox */
     body[data-page="onboarding4"] .content-panel{
       scrollbar-width: thin;
-      scrollbar-color: #2d2340 #05040a; /* thumb | track */
+      scrollbar-color: #2d2340 #05040a;
     }
 
-    /* WebKit (Chrome/Edge/Brave/Safari) */
+    /* WebKit */
     body[data-page="onboarding4"] .content-panel::-webkit-scrollbar{ width: 10px; }
     body[data-page="onboarding4"] .content-panel::-webkit-scrollbar-track{ background:#05040a; }
     body[data-page="onboarding4"] .content-panel::-webkit-scrollbar-thumb{
@@ -37,13 +51,23 @@
     }
     body[data-page="onboarding4"] .content-panel::-webkit-scrollbar-thumb:hover{ background:#4b3c75; }
 
-    /* ✅ Si tu CSS centra todo, en pantallas bajas evita que “corte” contenido */
+    /* En pantallas bajitas, evita que “corte” contenido */
     @media (max-height: 760px){
       body[data-page="onboarding4"] .content-panel{
         justify-content: flex-start;
       }
       body[data-page="onboarding4"] .ready-content{
         padding-bottom: 28px;
+      }
+    }
+
+    /* Micro-mejora móvil: que el CTA no quede pegado */
+    @media (max-width: 600px){
+      body[data-page="onboarding4"] .bottom-actions{
+        padding-bottom: 8px;
+      }
+      #go-to-dashboard-final{
+        width: 100%;
       }
     }
   </style>
@@ -56,7 +80,6 @@
     window.dataLayer = window.dataLayer || [];
     function gtag(){dataLayer.push(arguments);}
     gtag('js', new Date());
-    // En HTML clásico (no SPA) sí dejamos el page_view automático
     gtag('config', 'G-7FR1P31TK3');
   </script>
 
@@ -73,18 +96,15 @@
     fbq('init', '822068647105181');
     fbq('track', 'PageView');
   </script>
-  <!-- End Meta Pixel Code -->
 
   <!-- Microsoft Clarity -->
   <script type="text/javascript">
     (function(c,l,a,r,i,t,y){
-      c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
-      t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
-      y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+      c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)}
+      t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i
+      y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y)
     })(window, document, "clarity", "script", "ugeg5ymvp5");
   </script>
-
-  <!-- =============================================================== -->
 </head>
 
 <body data-page="onboarding4">
@@ -96,12 +116,12 @@
 
   <div class="onboarding-container">
 
-    <div class="sidebar">
+    <aside class="sidebar" aria-label="Progreso de onboarding">
       <div class="logo">
         <h1>Adray<span class="emoji"></span></h1>
       </div>
 
-      <div class="steps">
+      <nav class="steps">
         <div class="step" data-step="1">
           <div class="step-indicator"><span class="step-number">1</span></div>
           <div class="step-text">
@@ -126,27 +146,26 @@
           </div>
         </div>
 
-        <div class="step active" data-step="4">
+        <div class="step active" data-step="4" aria-current="step">
           <div class="step-indicator"><span class="step-number">4</span></div>
           <div class="step-text">
             <h3>Dashboard</h3>
             <p>Consulta los resultados de optimización</p>
           </div>
         </div>
-      </div>
-    </div>
+      </nav>
+    </aside>
 
-    <!-- ✅ IMPORTANTE: usamos main-content para respetar tu layout + scroll correcto -->
     <div class="main-content">
-      <main class="content-panel">
-        <div class="ready-content">
+      <main class="content-panel" role="main">
+        <div class="ready-content" id="ready-content">
           <h2>¡Listo para comenzar!</h2>
 
           <p class="panel-description">
             Tu cuenta de Adray está completamente configurada y lista para usar.
           </p>
 
-          <div class="success-message">
+          <div class="success-message" aria-live="polite">
             <h3>🎉 ¡Configuración completada!</h3>
             <p>
               Tus cuentas ya están conectadas y todo está preparado para el análisis y la optimización.
@@ -166,7 +185,7 @@
               <span class="feature-icon">📝</span>
               <div class="feature-text">
                 <h3>Auditorías inteligentes</h3>
-                <p>Revisa el informe detallado generado por la IA</p>
+                <p>Revisa el informe detallado generado por la IA.</p>
               </div>
             </div>
 
@@ -174,7 +193,7 @@
               <span class="feature-icon">🎯</span>
               <div class="feature-text">
                 <h3>Verificador de seguimiento</h3>
-                <p>Comprueba que tus píxeles y conversiones estén correctamente instalados y enviando eventos.</p>
+                <p>Comprueba que tus píxeles y conversiones estén enviando eventos correctamente.</p>
               </div>
             </div>
           </div>
@@ -184,6 +203,7 @@
               class="btn-gradient go-to-dashboard-final"
               id="go-to-dashboard-final"
               type="button"
+              data-next="dashboard"
             >
               Comenzar
             </button>
@@ -194,6 +214,7 @@
 
   </div>
 
-  <script src="js/onboarding4.js"></script>
+  <!-- JS (ruta absoluta + defer para asegurar DOM listo) -->
+  <script src="/js/onboarding4.js" defer></script>
 </body>
 </html>

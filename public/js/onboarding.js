@@ -90,6 +90,94 @@ document.addEventListener('DOMContentLoaded', async () => {
   const gaStatusBox     = document.getElementById('ga-ads-status');
   const gaAccountsMount = document.getElementById('ga-ads-accounts');
 
+  // -------------------------------------------------
+  // UX: Step UI + Mobile Progress (sin tocar lógica)
+  // -------------------------------------------------
+  const STEP_TOTAL = 4;
+  const CURRENT_STEP = 1; // este archivo es para onboarding.html (step 1)
+
+  function ensureMobileProgressUI() {
+    try {
+      // Si ya existe, no duplicamos
+      if (document.getElementById('adnova-mobile-progress')) return;
+
+      const main = document.querySelector('.main-content');
+      if (!main) return;
+
+      // Insertar al top del panel derecho
+      const wrap = document.createElement('div');
+      wrap.id = 'adnova-mobile-progress';
+      wrap.setAttribute('aria-hidden', 'false');
+      wrap.innerHTML = `
+        <div class="amp-row">
+          <div class="amp-left">
+            <span class="amp-step">Paso ${CURRENT_STEP} de ${STEP_TOTAL}</span>
+            <span class="amp-sub">Onboarding</span>
+          </div>
+          <div class="amp-right">
+            <span class="amp-mini" id="amp-mini-state">Conecta al menos una cuenta</span>
+          </div>
+        </div>
+        <div class="amp-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round((CURRENT_STEP / STEP_TOTAL) * 100)}">
+          <div class="amp-fill" id="amp-fill" style="width:${Math.round((CURRENT_STEP / STEP_TOTAL) * 100)}%"></div>
+        </div>
+      `;
+
+      // Lo ponemos antes del primer panel visible
+      main.insertBefore(wrap, main.firstChild);
+
+      // CSS inline (safe) para no depender de onboarding.css si cambia
+      if (!document.getElementById('adnova-mobile-progress-style')) {
+        const st = document.createElement('style');
+        st.id = 'adnova-mobile-progress-style';
+        st.textContent = `
+          #adnova-mobile-progress{display:none;margin:-6px 0 14px 0}
+          #adnova-mobile-progress .amp-row{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin-bottom:10px}
+          #adnova-mobile-progress .amp-step{display:block;font-weight:800;color:#e9ddff;font-size:1.05rem;letter-spacing:.2px}
+          #adnova-mobile-progress .amp-sub{display:block;color:#b6a7e8;font-size:.85rem;margin-top:2px}
+          #adnova-mobile-progress .amp-mini{color:#b6a7e8;font-size:.82rem;opacity:.9;text-align:right;display:block;max-width:170px}
+          #adnova-mobile-progress .amp-bar{height:8px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}
+          #adnova-mobile-progress .amp-fill{height:100%;background:linear-gradient(90deg,#A96BFF 0%,#9333ea 100%);border-radius:999px;transition:width .25s ease}
+          @media (max-width: 600px){
+            #adnova-mobile-progress{display:block}
+          }
+        `;
+        document.head.appendChild(st);
+      }
+    } catch {}
+  }
+
+  function setMobileMiniState(text) {
+    try {
+      const el = document.getElementById('amp-mini-state');
+      if (el) el.textContent = text || '';
+    } catch {}
+  }
+
+  function syncSidebarSteps({ step = CURRENT_STEP, completed = false } = {}) {
+    try {
+      const nodes = document.querySelectorAll('.steps .step[data-step]');
+      if (!nodes?.length) return;
+
+      nodes.forEach((n) => {
+        const s = Number(n.getAttribute('data-step') || 0);
+        n.classList.toggle('active', s === step);
+        // "completed" solo marcamos el paso actual si ya cumplió condición de avance
+        // (en step1: cuando ya puede continuar)
+        if (completed) {
+          n.classList.toggle('completed', s < step || (s === step && step === 1));
+        } else {
+          // conservador: no tocamos completed de pasos futuros
+          if (s === 1) n.classList.remove('completed');
+        }
+      });
+    } catch {}
+  }
+
+  // Inicializar UI de progreso
+  ensureMobileProgressUI();
+  syncSidebarSteps({ step: CURRENT_STEP, completed: false });
+
   // --- GUARD ANTI-DUPLICADO PARA ensureGoogleAccountsUI ---
   let GA_ENSURE_INFLIGHT = null;
 
@@ -140,6 +228,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     gaStatusBox.innerHTML = html || '';
     if (html) show(gaStatusBox);
     else hide(gaStatusBox);
+
+    // UX: si hay status importante en móvil, llevamos el scroll a él
+    try {
+      if (html && window.matchMedia?.('(max-width: 600px)')?.matches) {
+        gaStatusBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    } catch {}
   };
 
   const openGoogleCloseMeta = () => { show(googleObjectiveStep); hide(metaObjectiveStep); };
@@ -169,6 +264,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     continueBtn.classList.toggle('btn-continue--enabled',  anyConnected);
     continueBtn.style.pointerEvents = anyConnected ? 'auto' : 'none';
     continueBtn.style.opacity       = anyConnected ? '1'    : '0.6';
+
+    // UX: mini estado en móvil
+    setMobileMiniState(anyConnected ? 'Listo para continuar' : 'Conecta al menos una cuenta');
+
+    // UX: marcar step1 “listo” (sin cambiar navegación)
+    syncSidebarSteps({ step: CURRENT_STEP, completed: anyConnected });
   }
 
   // -------------------------------------------------
@@ -801,7 +902,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // -------------------------------------------------
-  // Continuar → siguiente paso
+  // Continuar → siguiente paso (anti doble click + feedback)
   // -------------------------------------------------
   continueBtn?.addEventListener('click', () => {
     const { anyConnected } = getConnectivityState();
@@ -809,6 +910,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       alert('⚠️ Conecta al menos una plataforma (Shopify, Google o Meta) para continuar.');
       return;
     }
+
+    // Anti double-click (safe)
+    if (continueBtn.dataset.busy === '1') return;
+    continueBtn.dataset.busy = '1';
+    try {
+      continueBtn.style.opacity = '0.9';
+      continueBtn.textContent = 'Continuando…';
+      continueBtn.disabled = true;
+      continueBtn.style.pointerEvents = 'none';
+    } catch {}
 
     // ✅ Tracking (safe) — Step1 completo
     px.gtag('event', 'onboarding_step_complete', { step: 1, page: 'onboarding' });

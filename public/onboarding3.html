@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <title>Onboarding - ADNOVA AI</title>
+  <title>Onboarding 3 - Adray</title>
 
   <!-- CSS principal -->
   <link rel="stylesheet" href="/onboarding.css" />
@@ -15,6 +15,37 @@
   <!-- Evita cachés agresivos durante el flujo -->
   <meta http-equiv="Cache-Control" content="no-store" />
 
+  <!-- Pequeños ajustes SOLO para esta vista (no rompen PC) -->
+  <style>
+    /* Evita que el botón quede “muy abajo” en móviles pequeños */
+    @media (max-width: 600px){
+      .bottom-actions {
+        margin-top: 1.25rem;
+      }
+    }
+
+    /* Mejor tap targets en móvil */
+    #btn-continue {
+      min-height: 44px;
+    }
+
+    /* Badge base (si JS lo usa) */
+    .badge[data-badge]{
+      margin-left: 10px;
+      font-size: .78rem;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid rgba(169,107,255,.22);
+      color: rgba(244,242,255,.85);
+      background: rgba(169,107,255,.08);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      line-height: 1;
+      vertical-align: middle;
+    }
+  </style>
+
   <!-- ===================== PIXELES / TRACKING ===================== -->
 
   <!-- Google tag (gtag.js) - GA4 -->
@@ -23,7 +54,6 @@
     window.dataLayer = window.dataLayer || [];
     function gtag(){dataLayer.push(arguments);}
     gtag('js', new Date());
-    // En HTML clásico (no SPA) sí dejamos el page_view automático
     gtag('config', 'G-7FR1P31TK3');
   </script>
 
@@ -40,14 +70,13 @@
     fbq('init', '822068647105181');
     fbq('track', 'PageView');
   </script>
-  <!-- End Meta Pixel Code -->
 
   <!-- Microsoft Clarity -->
   <script type="text/javascript">
     (function(c,l,a,r,i,t,y){
-      c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
-      t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
-      y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+      c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)}
+      t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i
+      y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y)
     })(window, document, "clarity", "script", "ugeg5ymvp5");
   </script>
 
@@ -68,8 +97,8 @@
         <h1>Adray<span class="emoji"></span></h1>
       </div>
 
-      <nav class="steps">
-        <div class="step" data-step="1" aria-current="false">
+      <nav class="steps" aria-label="Pasos">
+        <div class="step completed" data-step="1" aria-current="false">
           <div class="step-indicator"><span class="step-number">1</span></div>
           <div class="step-text">
             <h3>Conecta tus cuentas</h3>
@@ -77,7 +106,7 @@
           </div>
         </div>
 
-        <div class="step" data-step="2" aria-current="false">
+        <div class="step completed" data-step="2" aria-current="false">
           <div class="step-indicator"><span class="step-number">2</span></div>
           <div class="step-text">
             <h3>Revisar permisos</h3>
@@ -114,12 +143,10 @@
 
         <div class="analysis-hint" role="status" aria-live="polite">
           <span class="analysis-hint-icon">!</span>
-          <span class="analysis-hint-text">
-            Este proceso puede tardar unos minutos.
-          </span>
+          <span class="analysis-hint-text">Este proceso puede tardar unos minutos.</span>
         </div>
 
-        <div class="analysis-progress">
+        <div class="analysis-progress" aria-label="Progreso de análisis">
           <div class="progress-container">
             <div
               class="progress-bar"
@@ -127,17 +154,16 @@
               aria-valuemin="0"
               aria-valuemax="100"
               aria-valuenow="0"
+              aria-label="Barra de progreso del análisis"
             >
-              <!-- Barra real controlada por JS -->
               <div id="progress-bar" class="progress-indicator" style="width: 0%"></div>
             </div>
             <p class="progress-text" id="progress-text">Preparando análisis…</p>
           </div>
 
-          <!-- Lista controlada por JS: se marcan estados (running/done/skipped/error) -->
-          <ul id="analysis-list" class="analysis-steps">
+          <ul id="analysis-list" class="analysis-steps" aria-label="Etapas del análisis">
             <li id="step-googleads" class="analysis-step">
-              <div class="analysis-step-icon">○</div>
+              <div class="analysis-step-icon" aria-hidden="true">○</div>
               <div class="analysis-step-text">
                 Google Ads
                 <span class="badge" data-badge></span>
@@ -145,7 +171,7 @@
             </li>
 
             <li id="step-meta" class="analysis-step">
-              <div class="analysis-step-icon">○</div>
+              <div class="analysis-step-icon" aria-hidden="true">○</div>
               <div class="analysis-step-text">
                 Meta Ads
                 <span class="badge" data-badge></span>
@@ -153,7 +179,7 @@
             </li>
 
             <li id="step-shopify" class="analysis-step">
-              <div class="analysis-step-icon">○</div>
+              <div class="analysis-step-icon" aria-hidden="true">○</div>
               <div class="analysis-step-text">
                 Shopify
                 <span class="badge" data-badge></span>
@@ -161,7 +187,7 @@
             </li>
 
             <li id="step-ga4" class="analysis-step">
-              <div class="analysis-step-icon">○</div>
+              <div class="analysis-step-icon" aria-hidden="true">○</div>
               <div class="analysis-step-text">
                 Google Analytics
                 <span class="badge" data-badge></span>

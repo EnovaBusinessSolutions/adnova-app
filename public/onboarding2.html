@@ -8,20 +8,93 @@
   <link rel="stylesheet" href="/onboarding.css" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
 
-  <!-- ✅ Override SOLO para este botón -->
+  <!-- ✅ Overrides SOLO para esta vista (mobile impecable, sin tocar tu lógica) -->
   <style>
     /* Igualar tamaño del botón Atrás con el CTA */
     #back-btn-2.btn-secondary{
-      padding: 0.75rem 2.1rem;     /* igual que .btn-continue */
-      font-size: 1.07rem;          /* igual que .btn-continue */
-      border-radius: 7px;          /* match visual */
+      padding: 0.75rem 2.1rem;
+      font-size: 1.07rem;
+      border-radius: 7px;
       min-height: 44px;
       line-height: 1;
     }
 
-    /* En mobile, que se vea pro cuando se apilan */
+    /* ---------------- Mobile progress (Paso 2/4) ---------------- */
+    #adnova-mobile-progress{display:none;margin:2px 0 14px 0}
+    #adnova-mobile-progress .amp-row{display:flex;align-items:flex-end;justify-content:space-between;gap:10px;margin-bottom:10px}
+    #adnova-mobile-progress .amp-step{display:block;font-weight:800;color:#e9ddff;font-size:1.05rem;letter-spacing:.2px}
+    #adnova-mobile-progress .amp-sub{display:block;color:#b6a7e8;font-size:.85rem;margin-top:2px}
+    #adnova-mobile-progress .amp-mini{color:#b6a7e8;font-size:.82rem;opacity:.9;text-align:right;display:block;max-width:190px}
+    #adnova-mobile-progress .amp-bar{height:8px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}
+    #adnova-mobile-progress .amp-fill{height:100%;background:linear-gradient(90deg,#A96BFF 0%,#9333ea 100%);border-radius:999px;transition:width .25s ease}
+
+    /* ---------------- Mobile: layout impecable ---------------- */
     @media (max-width: 600px){
-      #back-btn-2.btn-secondary{
+      /* Container full-screen real en iPhone */
+      .onboarding-container{
+        height: 100dvh;
+        max-height: none;
+        margin: 0;
+        border-radius: 0;
+      }
+
+      /* Sidebar compacto (no se come el contenido) */
+      .sidebar{
+        padding: 14px 16px;
+      }
+      .sidebar .steps{
+        display: none; /* usamos el progreso móvil arriba */
+      }
+      .logo{
+        margin-bottom: 0 !important;
+      }
+
+      /* Header progreso visible */
+      #adnova-mobile-progress{display:block}
+
+      /* Main content más cómodo */
+      .main-content{
+        padding: 16px !important;
+      }
+
+      /* Permisos más compactos */
+      .permissions-list{
+        gap: 12px;
+      }
+      .permission-item{
+        padding: 14px !important;
+      }
+      .permission-icon{
+        width: 28px;
+        height: 28px;
+        font-size: .9rem;
+      }
+      .permission-text h3{
+        font-size: .98rem;
+      }
+      .permission-text p{
+        font-size: .9rem;
+      }
+
+      /* Bottom actions sticky (CTA siempre visible) */
+      .bottom-actions{
+        position: sticky;
+        bottom: 0;
+        padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
+        margin-top: 18px;
+        background: linear-gradient(
+          180deg,
+          rgba(10,10,18,0) 0%,
+          rgba(10,10,18,.78) 30%,
+          rgba(10,10,18,.92) 100%
+        );
+        backdrop-filter: blur(8px);
+        z-index: 5;
+      }
+
+      /* Cuando se apilan, que se vea pro */
+      #back-btn-2.btn-secondary,
+      #continue-btn-2.btn-continue{
         width: 100%;
       }
     }
@@ -35,7 +108,6 @@
     window.dataLayer = window.dataLayer || [];
     function gtag(){dataLayer.push(arguments);}
     gtag('js', new Date());
-    // En HTML clásico (no SPA) sí dejamos el page_view automático
     gtag('config', 'G-7FR1P31TK3');
   </script>
 
@@ -57,7 +129,7 @@
   <!-- Microsoft Clarity -->
   <script type="text/javascript">
     (function(c,l,a,r,i,t,y){
-      c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+      c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)}
       t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
       y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
     })(window, document, "clarity", "script", "ugeg5ymvp5");
@@ -84,7 +156,8 @@
       </div>
 
       <div class="steps">
-        <div class="step" data-step="1">
+        <!-- ✅ step 1 marcado como completado (solo visual, no toca lógica) -->
+        <div class="step completed" data-step="1">
           <div class="step-indicator"><span class="step-number">1</span></div>
           <div class="step-text">
             <h3>Conecta tus cuentas</h3>
@@ -118,8 +191,23 @@
       </div>
     </aside>
 
-
     <main class="main-content">
+
+      <!-- ✅ Progreso en móvil (Paso 2/4) -->
+      <div id="adnova-mobile-progress" aria-hidden="false">
+        <div class="amp-row">
+          <div class="amp-left">
+            <span class="amp-step">Paso 2 de 4</span>
+            <span class="amp-sub">Revisar permisos</span>
+          </div>
+          <div class="amp-right">
+            <span class="amp-mini">Autoriza los accesos para continuar</span>
+          </div>
+        </div>
+        <div class="amp-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50">
+          <div class="amp-fill" style="width:50%"></div>
+        </div>
+      </div>
 
       <section id="step1-content" class="content-panel hidden" aria-hidden="true" data-step-content="1">
         <h2>Conecta tus cuentas</h2>
@@ -129,7 +217,6 @@
           <button class="btn-secondary" id="go-to-step2">Ir al paso 2</button>
         </div>
       </section>
-
 
       <section id="step2-content" class="content-panel" aria-hidden="false" data-step-content="2">
         <h2>Revisar permisos</h2>
@@ -168,6 +255,7 @@
           <button class="btn-continue" id="continue-btn-2">Autorizar accesos</button>
         </div>
       </section>
+
     </main>
   </div>
 

@@ -13,23 +13,31 @@
   box-sizing: border-box;
 }
 
+/* ================== BASE LAYOUT (FIX MOBILE) ================== */
+html,
+body {
+  height: 100%;
+}
+
 body {
   font-family: 'Inter', sans-serif;
   background: #0a0a12;
   color: #F4F2FF;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+
+  /* ✅ IMPORTANTE:
+     Quitamos el flex-centro porque en móvil rompe el scroll + sticky CTA.
+     Ahora el layout es tipo "app shell". */
+  display: block;
+  overflow: hidden; /* el scroll lo maneja main-content */
 }
 
+/* Contenedor principal */
 .onboarding-container {
   display: flex;
-  width: 100%;
-  max-width: 1200px;
+  width: min(1200px, calc(100% - 2rem));
   height: 90vh;
   max-height: 800px;
-  margin: 2rem;
+  margin: 1rem auto;
   background: rgba(16, 14, 26, 0.98);
   border-radius: 18px;
   box-shadow: 0 8px 40px 0 rgba(85, 34, 145, 0.20);
@@ -37,6 +45,7 @@ body {
   position: relative;
 }
 
+/* Sidebar */
 .sidebar {
   width: 320px;
   background: rgba(15, 15, 25, 1);
@@ -139,13 +148,34 @@ body {
   font-size: 1.2rem;
 }
 
+/* ================== MAIN CONTENT (SCROLL + STYLE) ================== */
 .main-content {
   flex: 1;
   padding: 2.5rem;
-  overflow-y: auto;
+  overflow-y: auto; /* ✅ aquí scrollea */
   background: none;
   position: relative;
   z-index: 2;
+
+  /* Firefox scrollbar */
+  scrollbar-width: thin;
+  scrollbar-color: #3b2a5a #05040a;
+}
+
+/* WebKit scrollbar (Safari/Chrome) */
+.main-content::-webkit-scrollbar {
+  width: 10px;
+}
+.main-content::-webkit-scrollbar-track {
+  background: #05040a;
+}
+.main-content::-webkit-scrollbar-thumb {
+  background: #2d2340;
+  border-radius: 999px;
+  border: 2px solid #05040a;
+}
+.main-content::-webkit-scrollbar-thumb:hover {
+  background: #4b3c75;
 }
 
 .hidden {
@@ -183,6 +213,7 @@ body {
   margin-bottom: 2rem;
 }
 
+/* Cards */
 .connection-cards {
   display: flex;
   flex-direction: column;
@@ -279,6 +310,7 @@ body {
   border: none;
 }
 
+/* Bottom actions (desktop) */
 .bottom-actions {
   display: flex;
   justify-content: flex-end;
@@ -310,6 +342,7 @@ body {
   cursor: not-allowed;
 }
 
+/* Secondary generic */
 .btn-secondary {
   background: #241d36;
   color: #E3D6FF;
@@ -324,6 +357,7 @@ body {
   color: #A96BFF;
 }
 
+/* =================== FLOW SECTIONS (keep) =================== */
 .permissions-list {
   display: flex;
   flex-direction: column;
@@ -363,13 +397,9 @@ body {
   color: #C5B8E6;
 }
 
-.analysis-progress {
-  margin-top: 2rem;
-}
+.analysis-progress { margin-top: 2rem; }
 
-.progress-container {
-  margin-bottom: 2rem;
-}
+.progress-container { margin-bottom: 2rem; }
 
 .progress-bar {
   height: 8px;
@@ -434,134 +464,7 @@ body {
   color: #fff;
 }
 
-.success-message {
-  text-align: center;
-  margin: 3rem 0;
-}
-
-.success-icon {
-  width: 80px;
-  height: 80px;
-  background: linear-gradient(90deg, #A96BFF 0%, #9333ea 100%);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 2.5rem;
-  margin: 0 auto 1.5rem;
-  color: #fff;
-}
-
-.success-message h3 {
-  font-size: 1.5rem;
-  font-weight: 700;
-  margin-bottom: 0.75rem;
-  color: #A96BFF;
-}
-
-.success-message p {
-  font-size: 1rem;
-  color: #B6A7E8;
-  max-width: 500px;
-  margin: 0 auto;
-}
-
-.features-summary {
-  display: flex;
-  justify-content: center;
-  gap: 1.5rem;
-  margin: 2rem 0;
-}
-
-.feature-item {
-  flex: 1;
-  background: rgba(169, 107, 255, 0.09);
-  border-radius: 9px;
-  padding: 1.5rem;
-  text-align: center;
-}
-
-.feature-icon {
-  font-size: 2rem;
-  margin-bottom: 1rem;
-  color: #A96BFF;
-}
-
-.feature-text h3 {
-  font-size: 1rem;
-  font-weight: 700;
-  margin-bottom: 0.5rem;
-  color: #F4F2FF;
-}
-
-.feature-text p {
-  font-size: 0.91rem;
-  color: #C5B8E6;
-}
-
-@media (max-width: 900px) {
-  .onboarding-container {
-    flex-direction: column;
-    height: auto;
-    max-height: none;
-    margin: 1rem;
-  }
-
-  .sidebar {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1.5px solid #23143A;
-    padding: 1.5rem;
-  }
-
-  .logo {
-    margin-bottom: 1.5rem;
-  }
-
-  .steps {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 1rem;
-  }
-
-  .step::after {
-    display: none;
-  }
-
-  .main-content {
-    padding: 1.5rem;
-    height: auto;
-  }
-
-  .features-summary {
-    flex-direction: column;
-  }
-}
-
-@media (max-width: 600px) {
-  .steps {
-    grid-template-columns: 1fr;
-  }
-
-  .connection-card {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1rem;
-  }
-
-  .connection-card .btn-connect {
-    width: 100%;
-  }
-
-  .bottom-actions {
-    flex-direction: column;
-  }
-
-  .bottom-actions button {
-    width: 100%;
-  }
-}
-
+/* Ready / onboarding4 keep */
 body[data-page="onboarding4"] .content-panel {
   max-width: 700px;
   min-width: 360px;
@@ -581,251 +484,24 @@ body[data-page="onboarding4"] .ready-content {
   align-items: center;
 }
 
-.main-content {
-  display: flex;
-  position: relative;
-  z-index: 2;
-}
-
-.content-panel {
-  flex: 1;
-  min-width: 0;
-  min-height: 100%;
-}
-
-/* ================= Coming Soon — Shopify (solo CSS) ================= */
-/* El wrapper mantiene el botón alineado a la derecha dentro del .connection-card */
+/* =================== Shopify tooltip alignment =================== */
 .connection-card .btn-tooltip-wrapper {
   position: relative;
-  display: inline-block;
-  margin-left: auto; /* empuja el wrapper/botón a la derecha */
+  display: inline-flex;
+  margin-left: auto;
   flex: 0 0 auto;
 }
 
-/* Estado visual de "bloqueado" y bloqueo real del click sin JS */
-.btn-tooltip-wrapper.coming-soon .btn-connect {
-  pointer-events: none; /* <- desactiva el click */
-  cursor: not-allowed;
-  opacity: 0.9;
-  background: #1A1622 !important;
-  border: 1px solid #2C2530 !important;
-  color: #9A8CA8 !important;
-  box-shadow: none !important;
+/* Mantén ancho consistente */
+.connection-card .btn-tooltip-wrapper .btn-connect,
+.connection-card > .btn-connect {
+  min-width: 160px;
+  text-align: center;
 }
 
-/* Evita que el hover "normal" del botón cambie estilos cuando está bloqueado */
-.btn-tooltip-wrapper.coming-soon .btn-connect:hover {
-  background: #1A1622 !important;
-  color: #9A8CA8 !important;
-  border-color: #2C2530 !important;
-}
+.btn-connect.connected { min-width: 160px; }
 
-/* Burbuja con look Adnova */
-.btn-tooltip {
-  position: absolute;
-  top: 50%;
-  right: 100%;
-  transform: translate(-12px, -50%);
-  min-width: 220px;
-  max-width: 280px;
-  padding: 10px 12px;
-  background: #0B0B0D;
-  border: 1px solid #2C2530;
-  border-radius: 12px;
-  box-shadow: 0 0 20px rgba(181, 92, 255, 0.15);
-  color: #E5D3FF;
-  z-index: 30;
-  pointer-events: none; /* no interfiere con el mouse */
-  opacity: 0;
-  visibility: hidden;
-  transition: opacity .15s ease, visibility .15s ease, transform .15s ease;
-  text-align: left;
-}
-
-.btn-tooltip-title {
-  font-size: 12.5px;
-  font-weight: 700;
-  color: #E5D3FF;
-  margin-bottom: 2px;
-}
-
-.btn-tooltip-desc {
-  font-size: 11px;
-  color: #9A8CA8;
-}
-
-/* Flechita lateral hacia el botón */
-.btn-tooltip::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  right: -6px;
-  transform: translateY(-50%);
-  border: 6px solid transparent;
-  border-left-color: #2C2530; /* borde */
-}
-
-.btn-tooltip::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  right: -5px;
-  transform: translateY(-50%);
-  border: 5px solid transparent;
-  border-left-color: #0B0B0D; /* fondo */
-}
-
-/* Mostrar tooltip al pasar el cursor o al enfocar con teclado */
-.btn-tooltip-wrapper:hover .btn-tooltip,
-.btn-tooltip-wrapper:focus-within .btn-tooltip {
-  opacity: 1;
-  visibility: visible;
-  transform: translate(-8px, -50%);
-}
-
-/* Responsive: si la tarjeta queda pegada al borde, sube la burbuja y céntrala */
-@media (max-width: 640px) {
-  .btn-tooltip {
-    top: auto;
-    bottom: 110%;
-    right: 50%;
-    transform: translate(50%, 0);
-  }
-
-  .btn-tooltip::after,
-  .btn-tooltip::before {
-    display: none;
-  }
-}
-
-/* ==== Account Select Modal (ASM) ==== */
-#account-select-modal.hidden {
-  display: none !important;
-}
-
-#account-select-modal {
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-}
-
-#account-select-modal .asm-overlay {
-  position: absolute;
-  inset: 0;
-  background: rgba(0,0,0,.55);
-  backdrop-filter: blur(2px);
-}
-
-#account-select-modal .asm-panel {
-  position: relative;
-  margin: 0 auto;
-  width: 100%;
-  max-width: 1120px;
-  border: 1px solid #26273b;
-  background: #0f1017;
-  border-radius: 16px;
-  padding: 22px 22px 16px;
-  box-shadow: 0 14px 60px rgba(0,0,0,.45);
-  top: 18px;
-}
-
-.asm-title {
-  color: #e9e9f2;
-  font-weight: 800;
-  font-size: 22px;
-  margin: 0 0 6px;
-}
-
-.asm-sub {
-  color: #a9aac7;
-  margin: 0 0 14px;
-}
-
-.asm-error {
-  color: #ff7b7b;
-  margin: 6px 0 8px;
-  display: none;
-}
-
-.asm-error.show {
-  display: block;
-}
-
-.asm-section-title {
-  color: #e9e9f2;
-  font-weight: 700;
-  margin: 12px 0 8px;
-}
-
-.asm-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 8px;
-  max-height: 240px;
-  overflow: auto;
-  padding-right: 4px;
-}
-
-.asm-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: #11131c;
-  border: 1px solid #2b2d44;
-  color: #e9e9f2;
-  cursor: pointer;
-  user-select: none;
-  transition: .15s background, .15s border-color;
-}
-
-.asm-chip:hover {
-  background: #141729;
-  border-color: #35385a;
-}
-
-.asm-chip input {
-  accent-color: #8a5cff;
-}
-
-.asm-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.asm-btn {
-  border: 0;
-  border-radius: 12px;
-  padding: 10px 16px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.asm-btn-primary {
-  background: #7b5cff;
-  color: white;
-}
-
-.asm-btn-primary[disabled] {
-  opacity: .6;
-  cursor: not-allowed;
-}
-
-.analysis-step.is-current {
-  outline: 1px solid rgba(177,82,224,.35);
-  background: rgba(177,82,224,.06);
-  border-radius: 10px;
-}
-
-.analysis-step.is-current .analysis-step-text {
-  color: #b152e0;
-  font-weight: 600;
-}
-
-/* ================================ Modal de selección de cuentas — Adnova/ai ================================ */
+/* =================== ASM MODAL (DEDUP — keep ONLY ONE) =================== */
 :root {
   --bg-elev: hsl(260 20% 10% / .85);
   --bg-card: hsl(260 25% 8% / .75);
@@ -835,16 +511,11 @@ body[data-page="onboarding4"] .ready-content {
   --txt-dim: hsl(260 10% 78%);
   --brand: #9a5bff;
   --brand-2: #7e4aed;
-  --ok: #1f9d67;
-  --warn: #f59e0b;
   --err: #ef4444;
   --shadow: 0 15px 50px hsl(260 60% 2% / .6);
 }
 
-/* Estado oculto lo controla tu JS con .hidden */
-#account-select-modal.hidden {
-  display: none;
-}
+#account-select-modal.hidden { display: none; }
 
 #account-select-modal {
   position: fixed;
@@ -877,7 +548,6 @@ body[data-page="onboarding4"] .ready-content {
   overflow: hidden;
 }
 
-/* Borde sutil reactivo */
 #account-select-modal .asm-panel::before {
   content: "";
   position: absolute;
@@ -889,7 +559,6 @@ body[data-page="onboarding4"] .ready-content {
   mix-blend-mode: screen;
 }
 
-/* Header */
 #account-select-modal .asm-title {
   font-size: 1.35rem;
   font-weight: 700;
@@ -907,7 +576,6 @@ body[data-page="onboarding4"] .ready-content {
   font-weight: 600;
 }
 
-/* Secciones */
 #account-select-modal .asm-section-title {
   margin: 18px 2px 10px;
   font-weight: 600;
@@ -926,26 +594,22 @@ body[data-page="onboarding4"] .ready-content {
   border-radius: 999px;
 }
 
-/* Lista tipo grid */
 #account-select-modal .asm-list {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-height: 280px;
+  overflow: auto;
+  padding-right: 4px;
 }
 
 @media (max-width: 900px) {
-  #account-select-modal .asm-list {
-    grid-template-columns: repeat(2, 1fr);
-  }
+  #account-select-modal .asm-list { grid-template-columns: repeat(2, 1fr); }
 }
-
 @media (max-width: 560px) {
-  #account-select-modal .asm-list {
-    grid-template-columns: 1fr;
-  }
+  #account-select-modal .asm-list { grid-template-columns: 1fr; }
 }
 
-/* Chips (labels) */
 #account-select-modal .asm-chip {
   display: flex;
   align-items: center;
@@ -975,7 +639,6 @@ body[data-page="onboarding4"] .ready-content {
   cursor: not-allowed;
 }
 
-/* Checkbox moderno */
 #account-select-modal .asm-chip input[type="checkbox"] {
   appearance: none;
   -webkit-appearance: none;
@@ -1009,7 +672,6 @@ body[data-page="onboarding4"] .ready-content {
   transform: scale(1);
 }
 
-/* Hint + errores */
 #account-select-modal #asm-hint {
   margin: 8px 2px 0;
   font-size: .92rem;
@@ -1023,7 +685,6 @@ body[data-page="onboarding4"] .ready-content {
   display: none;
 }
 
-/* Footer */
 #account-select-modal .asm-footer {
   display: flex;
   justify-content: flex-end;
@@ -1043,9 +704,7 @@ body[data-page="onboarding4"] .ready-content {
   transition: transform .06s ease, opacity .2s;
 }
 
-#account-select-modal .asm-btn:active {
-  transform: translateY(1px);
-}
+#account-select-modal .asm-btn:active { transform: translateY(1px); }
 
 #account-select-modal .asm-btn-primary {
   background: linear-gradient(180deg, var(--brand), var(--brand-2));
@@ -1053,132 +712,66 @@ body[data-page="onboarding4"] .ready-content {
   box-shadow: 0 8px 28px hsl(265 90% 60% / .25);
 }
 
-#account-select-modal .asm-btn-primary--disabled,
 #account-select-modal .asm-btn-primary:disabled {
   opacity: .55;
   cursor: not-allowed;
   box-shadow: none;
 }
 
-/* Animaciones */
 @keyframes asmPop {
   from { transform: translateY(6px) scale(.98); opacity: .0; }
   to { transform: none; opacity: 1; }
 }
-
 @keyframes asmFade {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
-/* === Alineación y dimensiones consistentes de las 3 tarjetas === */
-.connection-cards .connection-card {
-  display: flex;
-  align-items: center; /* centra verticalmente */
-  justify-content: space-between; /* contenido izq | botón der */
-  gap: 24px;
-  padding: 20px 24px; /* padding homogéneo */
-  min-height: 112px; /* misma altura visual */
-  box-sizing: border-box;
-}
-
-/* La columna izquierda crece; evita que el texto empuje al botón */
-.connection-card .connection-details {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-/* Botón siempre a la derecha y centrado verticalmente */
-.connection-card > .btn-connect,
-.connection-card > .btn-tooltip-wrapper {
-  margin-left: auto; /* empuja a la derecha */
-  flex: 0 0 auto;
-  align-self: center; /* centra en eje vertical */
-}
-
-/* Si hay wrapper con tooltip (Shopify), normalizamos también el botón dentro */
-.connection-card .btn-tooltip-wrapper .btn-connect {
-  align-self: center;
-  min-width: 160px; /* ancho mínimo homogéneo para los tres */
-  text-align: center;
-}
-
-/* Y si el botón está sin wrapper (Google/Meta), el mismo ancho mínimo */
-.connection-card > .btn-connect {
-  min-width: 160px;
-  text-align: center;
-}
-
-/* Pequeños ajustes para que badges/último párrafo no alarguen la tarjeta */
-.connection-card .connection-info p:last-child {
-  margin-bottom: 0;
-}
-
-.connection-card .required-badge,
-.connection-card .optional-badge {
-  line-height: 1;
-}
-
-/* Cuando el botón está "connected", conserva ancho y alineación */
-.btn-connect.connected {
-  min-width: 160px;
-  align-self: center;
-}
-
-/* En móvil seguimos tu patrón de apilar, pero respetando gutters */
-@media (max-width: 600px) {
-  .connection-cards .connection-card {
-    gap: 16px;
-    padding: 16px;
-    min-height: 0; /* que fluya en columna */
+/* =================== RESPONSIVE =================== */
+@media (max-width: 900px) {
+  .onboarding-container {
+    width: calc(100% - 2rem);
+    height: auto;
+    max-height: none;
+    margin: 1rem auto;
+    border-radius: 16px;
   }
 
-  .connection-card > .btn-connect,
+  .main-content {
+    padding: 1.2rem;
+    height: auto;
+  }
+}
+
+@media (max-width: 600px) {
+  /* En móvil el body sigue sin scroll; main-content scrollea y además onboarding.html ya tiene CTA fixed */
+  .onboarding-container {
+    width: 100%;
+    margin: 0;
+    height: 100vh; /* ✅ ocupa pantalla completa */
+    max-height: none;
+    border-radius: 0;
+  }
+
+  .connection-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  .connection-card .btn-connect,
   .connection-card .btn-tooltip-wrapper {
+    width: 100%;
     margin-left: 0;
+  }
+
+  .bottom-actions {
+    flex-direction: column;
+  }
+
+  .bottom-actions button {
     width: 100%;
   }
-}
-
-/* 1) El body ya no hace scroll general */
-html,
-body {
-  height: 100%;
-}
-
-body {
-  overflow: hidden; /* evita la barra blanca del navegador */
-}
-
-/* 2) El panel derecho será el que scrollea */
-.main-content {
-  overflow-y: auto;
-}
-
-/* 3) Scrollbar oscuro SOLO dentro del panel derecho */
-/* Firefox */
-.main-content {
-  scrollbar-width: thin;
-  scrollbar-color: #3b2a5a #05040a; /* thumb | track */
-}
-
-/* WebKit (Chrome, Edge, Brave, Safari…) */
-.main-content::-webkit-scrollbar {
-  width: 10px;
-}
-
-.main-content::-webkit-scrollbar-track {
-  background: #05040a; /* riel oscuro */
-}
-
-.main-content::-webkit-scrollbar-thumb {
-  background: #2d2340; /* thumb morado oscuro */
-  border-radius: 999px;
-  border: 2px solid #05040a;
-}
-
-.main-content::-webkit-scrollbar-thumb:hover {
-  background: #4b3c75; /* hover un poco más claro */
 }
 
 /* Aviso sutil bajo el título del análisis */
@@ -1195,7 +788,6 @@ body {
   border: 1px solid rgba(181, 92, 255, 0.5);
 }
 
-/* Icono circular, sin amarillo feo 😅 */
 .analysis-hint-icon {
   width: 18px;
   height: 18px;
@@ -1209,7 +801,6 @@ body {
   background: radial-gradient(circle at 30% 30%, #A96BFF, #b55cff);
 }
 
-/* Texto más pequeño y ligero */
 .analysis-hint-text {
   font-size: 0.78rem;
   opacity: 0.92;

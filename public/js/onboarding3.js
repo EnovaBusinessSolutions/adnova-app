@@ -1,15 +1,49 @@
 // public/js/onboarding3.js
 (function () {
   const ENDPOINTS = {
-    status:   "/api/onboarding/status",  // GET
-    start:    "/api/audits/start",       // POST { types:[...], source:'onboarding' }
-    progress: "/api/audits/progress",    // GET ?jobId=...
+    status:   "/api/onboarding/status",   // GET
+    start:    "/api/audits/start",        // POST { types:[...], source:'onboarding' }
+    progress: "/api/audits/progress",     // GET ?jobId=...
     latest:   "/api/audits/latest?type=all",
   };
 
   // =======================
+  // Pixels (SAFE)
+  // =======================
+  const px = {
+    gtag: (...args) => { try { window.gtag?.(...args); } catch {} },
+    fbq:  (...args) => { try { window.fbq?.(...args); } catch {} },
+    clarityEvent: (name) => { try { window.clarity?.("event", name); } catch {} },
+    once: (key, fn) => {
+      try {
+        if (sessionStorage.getItem(key) === "1") return;
+        fn?.();
+        sessionStorage.setItem(key, "1");
+      } catch {}
+    },
+  };
+
+  // Step3 begin (una vez por sesión)
+  px.once("px_onboarding_step3_begin", () => {
+    px.gtag("event", "tutorial_progress", { step: 3, page: "onboarding3" });
+    px.fbq("trackCustom", "OnboardingProgress", { step: 3 });
+    px.clarityEvent("onboarding_step3_begin");
+  });
+
+  // =======================
   // Helpers HTTP
   // =======================
+  function mergeDataShape(json) {
+    // Soporta: payload plano, {ok:true,data:{...}}, {data:{...}} etc.
+    if (!json || typeof json !== "object") return json;
+    const d = json.data;
+    if (d && typeof d === "object" && !Array.isArray(d)) {
+      // merge: preserva ok/error arriba, y trae campos dentro de data
+      return { ...json, ...d };
+    }
+    return json;
+  }
+
   async function getJSON(url) {
     const r = await fetch(url, {
       credentials: "include",
@@ -17,7 +51,7 @@
     });
     let j = {};
     try { j = await r.json(); } catch {}
-    return j;
+    return mergeDataShape(j);
   }
 
   async function postJSON(url, body) {
@@ -34,13 +68,15 @@
     let j = {};
     try { j = await r.json(); } catch {}
 
-    if (!r.ok || j?.ok === false) {
-      const msg = j?.error || `HTTP_${r.status}`;
+    const merged = mergeDataShape(j);
+
+    if (!r.ok || merged?.ok === false) {
+      const msg = merged?.error || j?.error || `HTTP_${r.status}`;
       const e = new Error(msg);
-      e.detail = j;
+      e.detail = merged;
       throw e;
     }
-    return j;
+    return merged;
   }
 
   // =======================
@@ -58,6 +94,7 @@
 
   function setRowState(row, state = "idle", suffixOverride) {
     if (!row) return;
+
     row.classList.remove("active", "completed", "opacity-50", "is-current", "error");
 
     const suffix =
@@ -123,6 +160,28 @@
     };
   }
 
+  function setContinueCTA(btn, mode) {
+    if (!btn) return;
+
+    // mode: "dashboard" | "select" | "back"
+    if (mode === "select") {
+      btn.disabled = false;
+      btn.textContent = "Volver a seleccionar";
+      btn.dataset.cta = "select";
+      return;
+    }
+    if (mode === "back") {
+      btn.disabled = false;
+      btn.textContent = "Volver";
+      btn.dataset.cta = "back";
+      return;
+    }
+    // default dashboard
+    btn.disabled = false;
+    btn.textContent = "Continuar";
+    btn.dataset.cta = "dashboard";
+  }
+
   // =======================
   // Refresco desde Mongo (visual final)
   // =======================
@@ -130,16 +189,24 @@
     try {
       const resp = await getJSON(ENDPOINTS.latest);
 
-      const dict = resp?.data && !Array.isArray(resp.data) ? resp.data : {};
-      const list = Array.isArray(resp?.items)
-        ? resp.items
-        : Array.isArray(resp?.data)
-        ? resp.data
-        : [];
+      // Puede venir como:
+      // - { ok:true, data:{ google:..., meta:..., ga4:... } }
+      // - { ok:true, items:[...] }
+      // - { data:[...] }
+      const dict =
+        resp && resp.data && !Array.isArray(resp.data) ? resp.data :
+        resp && !Array.isArray(resp) && typeof resp === "object" && !Array.isArray(resp.items) ? resp :
+        {};
+
+      const list =
+        Array.isArray(resp?.items) ? resp.items :
+        Array.isArray(resp?.data) ? resp.data :
+        Array.isArray(resp) ? resp :
+        [];
 
       const pick = (t) =>
-        dict[t] ||
-        list.find((x) => String(x?.type).toLowerCase() === t) ||
+        dict?.[t] ||
+        list.find((x) => String(x?.type || "").toLowerCase() === t) ||
         null;
 
       const g  = pick("google");
@@ -157,7 +224,6 @@
           return;
         }
 
-        // 👇 si el backend guardó el issue “selection_required_*”
         const hasSelectionRequired =
           Array.isArray(doc?.issues) &&
           doc.issues.some((x) => String(x?.id || "").startsWith("selection_required_"));
@@ -192,10 +258,11 @@
   async function run() {
     const $ = (sel) => document.querySelector(sel);
 
-    // DOM (ya con DOM listo)
+    // DOM
     const progressBar  = $("#progress-bar");
     const progressText = $("#progress-text");
     const btnContinue  = $("#btn-continue");
+    const progressWrap = document.querySelector(".progress-bar");
 
     const rows = {
       google:  $("#step-googleads"),
@@ -205,56 +272,82 @@
     };
 
     const setBar = (pct) => {
-      if (progressBar) progressBar.style.width = clamp(pct, 0, 100) + "%";
+      const p = clamp(Number(pct) || 0, 0, 100);
+      if (progressBar) progressBar.style.width = p + "%";
+      if (progressWrap) progressWrap.setAttribute("aria-valuenow", String(p));
     };
+
     const setText = (t) => {
       if (progressText) progressText.textContent = t;
     };
 
-    // Navigation (asegurar listener)
+    // CTA click (lo decidimos según el estado final)
     btnContinue?.addEventListener("click", () => {
+      const mode = btnContinue?.dataset?.cta || "dashboard";
+      if (mode === "select") {
+        window.location.href = "/onboarding.html#step=1";
+        return;
+      }
+      if (mode === "back") {
+        window.location.href = "/onboarding2.html#step=2";
+        return;
+      }
       window.location.href = "/onboarding4.html";
     });
 
     let cyclerStop = null;
     let pollTimer = null;
 
+    // Limpieza al salir
+    const cleanup = () => {
+      try { if (pollTimer) clearInterval(pollTimer); } catch {}
+      try { cyclerStop?.(); } catch {}
+      pollTimer = null;
+      cyclerStop = null;
+    };
+    window.addEventListener("beforeunload", cleanup);
+
     try {
       if (btnContinue) btnContinue.disabled = true;
+      if (btnContinue) btnContinue.textContent = "Procesando…";
       setBar(0);
       setText("Preparando análisis…");
       cyclerStop = startCycler(progressText, setText);
 
       // 1) Estado de conexiones
       const st = await getJSON(ENDPOINTS.status);
-      const status = st?.status || {};
+      const status = st?.status || st || {};
 
+      // Normalizamos detección para no depender de un solo shape
       const isConnected = {
-        google:  !!status.googleAds?.connected || !!status.google?.connected,
-        meta:    !!status.meta?.connected,
-        shopify: !!status.shopify?.connected,
-        ga4:     !!status.ga4?.connected,
+        google:  !!status?.googleAds?.connected || !!status?.google?.connected,
+        meta:    !!status?.meta?.connected,
+        shopify: !!status?.shopify?.connected,
+        ga4:     !!status?.ga4?.connected,
       };
 
-      // 2) Detectar “selection required”
+      // 2) Detectar “selection required” robusto
+      const ga4Count =
+        Number(status?.ga4?.propertiesCount || status?.ga4?.count || 0);
+
+      const ga4Selected =
+        (Array.isArray(status?.ga4?.selectedPropertyIds) && status.ga4.selectedPropertyIds.length > 0) ||
+        !!String(status?.ga4?.defaultPropertyId || "").trim();
+
       const needsSelection = {
-        google: !!status.googleAds?.requiredSelection,
-        meta:   !!status.meta?.requiredSelection,
-        // ga4: el endpoint actual no lo expone; inferimos:
-        ga4:
-          !!status.ga4?.connected &&
-          (Number(status.ga4?.propertiesCount || 0) > 3) &&
-          !String(status.ga4?.defaultPropertyId || "").trim(),
+        google: !!status?.googleAds?.requiredSelection,
+        meta:   !!status?.meta?.requiredSelection,
+        // GA4: si hay más de 1 propiedad y no hay selección
+        ga4: !!isConnected.ga4 && (ga4Count > 1) && !ga4Selected,
       };
 
       // 3) Pintar estado inicial de filas
-      // Shopify (solo visual)
+      // Shopify: como está “Próximamente”, lo comunicamos mejor si no está conectado
       if (rows.shopify) {
         if (isConnected.shopify) setRowState(rows.shopify, "done", "Conectado");
-        else setRowState(rows.shopify, "skipped");
+        else setRowState(rows.shopify, "skipped", "Próximamente");
       }
 
-      // Google / Meta / GA4
       if (rows.google) {
         if (!isConnected.google) setRowState(rows.google, "skipped");
         else if (needsSelection.google) setRowState(rows.google, "error", "Selecciona 1 cuenta");
@@ -283,24 +376,37 @@
       if (!types.length) {
         await refreshAuditStatusFromDB(rows, isConnected);
         setBar(100);
-        if (cyclerStop) cyclerStop();
+        cyclerStop?.();
 
-        if (
+        const anySelectionRequired =
           (isConnected.google && needsSelection.google) ||
           (isConnected.meta && needsSelection.meta) ||
-          (isConnected.ga4 && needsSelection.ga4)
-        ) {
+          (isConnected.ga4 && needsSelection.ga4);
+
+        if (anySelectionRequired) {
           setText("Falta seleccionar cuentas/propiedades para continuar.");
+          setContinueCTA(btnContinue, "select");
         } else {
           setText("No hay fuentes conectadas para auditar.");
+          setContinueCTA(btnContinue, "back");
         }
 
-        if (btnContinue) btnContinue.disabled = false;
+        // Tracking (safe) — análisis omitido
+        px.gtag("event", "onboarding_analysis_skipped", { reason: anySelectionRequired ? "selection_required" : "no_sources" });
+        px.fbq("trackCustom", "OnboardingAnalysisSkipped", { reason: anySelectionRequired ? "selection_required" : "no_sources" });
+        px.clarityEvent("onboarding_analysis_skipped");
+
         return;
       }
 
       // 5) Arrancar job real (backend)
       setBar(10);
+
+      // Tracking (safe) — comienza job
+      px.gtag("event", "onboarding_analysis_start", { types: types.join(",") });
+      px.fbq("trackCustom", "OnboardingAnalysisStart", { types });
+      px.clarityEvent("onboarding_analysis_start");
+
       const startResp = await postJSON(ENDPOINTS.start, {
         types,
         source: "onboarding",
@@ -311,90 +417,89 @@
 
       // 6) Poll progreso
       const pollOnce = async () => {
-        const pr = await getJSON(`${ENDPOINTS.progress}?jobId=${encodeURIComponent(jobId)}`);
-        if (!pr?.ok) throw new Error(pr?.error || "PROGRESS_ERROR");
+        const prRaw = await getJSON(`${ENDPOINTS.progress}?jobId=${encodeURIComponent(jobId)}`);
+        const pr = mergeDataShape(prRaw);
+
+        if (pr?.ok === false) throw new Error(pr?.error || "PROGRESS_ERROR");
 
         // Barra
-        const pct = typeof pr.percent === "number" ? pr.percent : 50;
-        setBar(clamp(pct, 0, 100));
+        const pct = Number(pr?.percent);
+        setBar(Number.isFinite(pct) ? pct : 55);
 
         // Estados por item
-        const items = pr.items || {};
-        Object.keys(items).forEach((t) => {
-          const it = items[t];
-          const row = rows[t];
-          if (!row) return;
+        const items = pr?.items || pr?.progress || {};
+        if (items && typeof items === "object") {
+          Object.keys(items).forEach((t) => {
+            const it = items[t];
+            const row = rows[t];
+            if (!row) return;
 
-          if (it.status === "pending" || it.status === "running") {
-            setRowState(row, "running");
-            return;
-          }
-          if (it.status === "done") {
-            if (it.ok) setRowState(row, "done");
-            else setRowState(row, "error", "Advertencia");
-          }
-        });
+            const stt = String(it?.status || "").toLowerCase();
+            if (stt === "pending" || stt === "running") {
+              setRowState(row, "running");
+              return;
+            }
+            if (stt === "done" || stt === "finished") {
+              if (it?.ok === false) setRowState(row, "error", it?.error ? "Advertencia" : "Atención");
+              else setRowState(row, "done");
+            }
+          });
+        }
 
         // Termina
-        if (pr.finished) {
-          clearInterval(pollTimer);
-          pollTimer = null;
+        if (pr?.finished || pr?.done) {
+          cleanup();
 
-          // Estado final desde DB (la “verdad”)
+          // Estado final desde DB
           await refreshAuditStatusFromDB(rows, isConnected);
 
           setBar(100);
-          if (cyclerStop) cyclerStop();
+          setText("¡Análisis completado!");
+          setContinueCTA(btnContinue, "dashboard");
 
-          // Mensaje final
-          const completed = types.filter((t) => rows[t]?.classList.contains("completed")).length;
-          if (completed === types.length) setText("¡Análisis completado!");
-          else setText("Análisis finalizado (con advertencias).");
-
-          // Snapshot en sessionStorage (opcional)
+          // Snapshot opcional
           try {
             const latest = await getJSON(ENDPOINTS.latest);
             sessionStorage.setItem("auditLatest", JSON.stringify(latest || {}));
           } catch {}
 
-          if (btnContinue) btnContinue.disabled = false;
+          // Tracking (safe) — listo
+          px.gtag("event", "onboarding_analysis_complete", { types: types.join(",") });
+          px.fbq("trackCustom", "OnboardingAnalysisComplete", { types });
+          px.clarityEvent("onboarding_analysis_complete");
         }
       };
 
-      // poll rápido
+      // poll inicial + intervalo
       await pollOnce();
+
       pollTimer = setInterval(() => {
         pollOnce().catch((e) => {
           console.warn("progress poll error", e);
+          // si falla 1 vez, no matamos todo el flow
         });
       }, 1100);
 
     } catch (e) {
       console.error("ONBOARDING3_INIT_ERROR", e);
+      cleanup();
 
       // fail-safe UI
-      if (pollTimer) clearInterval(pollTimer);
-      if (cyclerStop) cyclerStop();
+      setText("Error iniciando el análisis");
+      setBar(100);
 
-      const $ = (sel) => document.querySelector(sel);
-      const progressBar  = $("#progress-bar");
-      const progressText = $("#progress-text");
-      const btnContinue  = $("#btn-continue");
+      // Google / Meta / GA4 -> error (Shopify lo dejamos como está)
+      if (rows.google) setRowState(rows.google, "error");
+      if (rows.meta)   setRowState(rows.meta, "error");
+      if (rows.ga4)    setRowState(rows.ga4, "error");
 
-      if (progressText) progressText.textContent = "Error iniciando el análisis";
-      if (progressBar)  progressBar.style.width = "100%";
+      // CTA para volver y no perder al usuario
+      setContinueCTA(btnContinue, "back");
 
-      // no reventar Shopify visual si existe
-      ["google", "meta", "ga4"].forEach((k) => {
-        const row = document.querySelector(
-          k === "google" ? "#step-googleads" :
-          k === "meta"   ? "#step-meta" :
-          "#step-ga4"
-        );
-        if (row) setRowState(row, "error");
-      });
-
-      if (btnContinue) btnContinue.disabled = false;
+      // Tracking (safe)
+      px.gtag("event", "onboarding_analysis_error", { error: String(e?.message || "unknown") });
+      px.fbq("trackCustom", "OnboardingAnalysisError", { error: String(e?.message || "unknown") });
+      px.clarityEvent("onboarding_analysis_error");
     }
   }
 

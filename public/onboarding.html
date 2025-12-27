@@ -55,9 +55,7 @@
       border:1px solid rgba(168,85,247,0.7);
       box-shadow:0 0 0 1px rgba(88,28,135,0.3);
     }
-    .btn-connect--disabled:hover{
-      background:#2f204a;
-    }
+    .btn-connect--disabled:hover{ background:#2f204a; }
 
     .btn-tooltip{
       position:absolute;
@@ -81,20 +79,89 @@
       transition:opacity .18s ease, transform .18s ease;
       white-space:normal;
     }
-    .btn-tooltip-title{
-      display:block;
-      font-weight:600;
-      margin-bottom:2px;
-    }
-    .btn-tooltip-text{
-      display:block;
-      font-size:0.86rem;
-      opacity:0.85;
-    }
+    .btn-tooltip-title{ display:block; font-weight:600; margin-bottom:2px; }
+    .btn-tooltip-text{ display:block; font-size:0.86rem; opacity:0.85; }
     .btn-tooltip-wrapper:hover .btn-tooltip{
       opacity:1;
       transform:translateY(0) scale(1);
     }
+
+    /* ================= MOBILE UX CRÍTICO =================
+       1) Header móvil con progreso
+       2) CTA "Continuar" fijo abajo con safe-area
+       3) Evitar que el contenido quede tapado por el CTA
+    */
+    .mobile-header{
+      display:none;
+      position:sticky;
+      top:0;
+      z-index:50;
+      padding:14px 14px 10px 14px;
+      background: rgba(10,10,18,0.82);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(168,85,247,0.18);
+    }
+    .mobile-header .mh-top{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+    }
+    .mobile-header .mh-brand{
+      font-weight:800;
+      letter-spacing:-0.02em;
+      color:#d1a5ff;
+      font-size:18px;
+    }
+    .mobile-header .mh-step{
+      font-size:12px;
+      opacity:.86;
+      white-space:nowrap;
+    }
+    .mobile-header .mh-progress{
+      margin-top:10px;
+      height:8px;
+      border-radius:999px;
+      background: rgba(255,255,255,0.08);
+      overflow:hidden;
+    }
+    .mobile-header .mh-progress > div{
+      height:100%;
+      width:25%; /* Paso 1 (luego lo actualizamos con JS/CSS si quieres) */
+      border-radius:999px;
+      background: linear-gradient(90deg, #A96BFF 0%, #9333ea 100%);
+    }
+
+    /* Footer CTA fijo solo en móvil */
+    .bottom-actions{
+      margin-top: 18px;
+    }
+
+    @media (max-width: 900px){
+      .sidebar{ display:none; }
+      .mobile-header{ display:block; }
+      /* espacio para el CTA fijo */
+      .main-content{ padding-bottom: 120px; }
+      .bottom-actions{
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 60;
+        padding: 14px 14px calc(14px + env(safe-area-inset-bottom)) 14px;
+        background: rgba(10,10,18,0.88);
+        backdrop-filter: blur(12px);
+        border-top: 1px solid rgba(168,85,247,0.18);
+      }
+      #continue-btn{
+        width: 100%;
+        min-height: 52px;
+        border-radius: 14px;
+        font-size: 18px;
+      }
+    }
+
+    /* (mantengo tus estilos inline de google/meta obj tal cual porque tu JS ya los usa) */
   </style>
 
   <!-- ===================== PIXELES / TRACKING ===================== -->
@@ -105,7 +172,6 @@
     window.dataLayer = window.dataLayer || [];
     function gtag(){dataLayer.push(arguments);}
     gtag('js', new Date());
-    // En HTML clásico (no SPA) sí dejamos el page_view automático
     gtag('config', 'G-7FR1P31TK3');
   </script>
 
@@ -122,7 +188,6 @@
     fbq('init', '822068647105181');
     fbq('track', 'PageView');
   </script>
-  <!-- End Meta Pixel Code -->
 
   <!-- Microsoft Clarity -->
   <script type="text/javascript">
@@ -132,12 +197,9 @@
       y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
     })(window, document, "clarity", "script", "ugeg5ymvp5");
   </script>
-
-  <!-- =============================================================== -->
 </head>
 
 <body data-page="onboarding" data-user-id="USER_ID_REAL">
-  <!-- Meta Pixel (noscript) -->
   <noscript>
     <img height="1" width="1" style="display:none"
       src="https://www.facebook.com/tr?id=822068647105181&ev=PageView&noscript=1" />
@@ -147,6 +209,18 @@
   <span id="googleConnectedFlag"   style="display:none">GOOGLE_CONNECTED_FLAG</span>
 
   <div class="onboarding-container">
+
+    <!-- ✅ HEADER MÓVIL (no rompe nada) -->
+    <div class="mobile-header" aria-label="Progreso del onboarding">
+      <div class="mh-top">
+        <div class="mh-brand">Adray</div>
+        <div class="mh-step">Paso <strong>1</strong> de <strong>4</strong></div>
+      </div>
+      <div class="mh-progress" aria-hidden="true">
+        <div></div>
+      </div>
+    </div>
+
     <div class="sidebar">
       <div class="logo">
         <h1>Adray<span class="emoji"></span></h1>
@@ -201,7 +275,7 @@
               <div class="connection-info">
                 <h3>Tienda de Shopify</h3>
                 <p>Conecta tu tienda para optimizar el marketing</p>
-                <span class="required-badge">Proximamente</span>
+                <span class="required-badge">Próximamente</span>
               </div>
             </div>
 
@@ -355,6 +429,7 @@
           </div>
         </div>
 
+        <!-- ✅ CTA fijo abajo en móvil (mismo ID que tu JS usa) -->
         <div class="bottom-actions">
           <button id="continue-btn" class="btn-continue btn-continue--disabled" disabled>Continuar</button>
         </div>
@@ -368,7 +443,7 @@
     <div class="asm-panel">
       <h2 id="asm-title" class="asm-title">Selecciona tu cuenta</h2>
       <p class="asm-sub">
-        Elige con qué cuentas quieres trabajar en Adnova AI.
+        Elige con qué cuentas quieres trabajar en Adray.
         <strong>Puedes seleccionar 1 cuenta de Google Ads y 1 propiedad de Google Analytics, máximo 1 por cada una.</strong>
       </p>
 
