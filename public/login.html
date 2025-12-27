@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Adray - IA para Marketing</title>
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -13,17 +13,38 @@
   <style>
     /* ===== Footer existente ===== */
     .adnova-footer {
-      width: 100vw; position: fixed; left: 0; bottom: 0; text-align: center;
-      padding: 1rem 0 .7rem 0; background: transparent; font-size: 1rem;
-      color: #b5b5c5; z-index: 20; letter-spacing:.01em; backdrop-filter: blur(.5px);
+      width: 100vw;
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      text-align: center;
+      padding: 1rem 0 .7rem 0;
+      background: transparent;
+      font-size: 1rem;
+      color: #b5b5c5;
+      z-index: 20;
+      letter-spacing: .01em;
+      backdrop-filter: blur(.5px);
       user-select: none;
     }
-    .adnova-footer a { color: #fff !important; text-decoration: underline; font-weight: 500; margin: 0 8px; transition: color .2s; }
+    .adnova-footer a {
+      color: #fff !important;
+      text-decoration: underline;
+      font-weight: 500;
+      margin: 0 8px;
+      transition: color .2s;
+    }
     .adnova-footer a:hover { color: #fff !important; }
-    @media (max-width:600px){ .adnova-footer{font-size:.98rem;padding:.8rem 0 .6rem 0} .login-container{margin-bottom:3rem} }
-    body { padding-bottom: 3rem; }
 
-    /* ===== Botón Google existente (sin cambios) ===== */
+    @media (max-width:600px){
+      .adnova-footer{font-size:.98rem;padding:.8rem 0 .6rem 0}
+      .login-container{margin-bottom:3rem}
+    }
+
+    /* ✅ IMPORTANTÍSIMO: safe-area iPhone + footer fijo (sin romper scroll) */
+    body { padding-bottom: calc(3rem + env(safe-area-inset-bottom)); }
+
+    /* ===== Botón Google existente (sin cambios funcionales) ===== */
     .gsi-material-button{-moz-user-select:none;-webkit-user-select:none;-ms-user-select:none;-webkit-appearance:none;background-color:#131314;border:1px solid #747775;border-radius:20px;box-sizing:border-box;color:#e3e3e3;cursor:pointer;font-family:'Roboto',arial,sans-serif;font-size:14px;height:40px;letter-spacing:.25px;outline:none;overflow:hidden;padding:0 12px;position:relative;text-align:center;transition:background-color .218s,border-color .218s,box-shadow .218s;vertical-align:middle;white-space:nowrap;width:auto;max-width:400px;min-width:min-content;border-color:#8e918f}
     .gsi-material-button .gsi-material-button-icon{height:20px;margin-right:12px;min-width:20px;width:20px}
     .gsi-material-button .gsi-material-button-content-wrapper{align-items:center;display:flex;flex-direction:row;flex-wrap:nowrap;height:100%;justify-content:space-between;position:relative;width:100%}
@@ -38,31 +59,9 @@
     .gsi-material-button:not(:disabled):hover .gsi-material-button-state{background-color:white;opacity:8%}
     .social-buttons{display:flex;justify-content:center;align-items:center;margin:.8rem 0 .4rem 0}
 
-    /* ====== OJO (igual comportamiento que en register) ====== */
-    .form-input-wrapper { position: relative; }
-    .toggle-password {
-      position: absolute; top: 50%; right: 10px; transform: translateY(-50%);
-      width: 32px; height: 32px; border: 0; background: transparent; cursor: pointer;
-      border-radius: 8px; display: grid; place-items: center;
-    }
-    .toggle-password:focus-visible { outline: 2px solid #b152e0; }
-    .toggle-password .eye-icon {
-      width: 18px; height: 18px; background: #bfb6ff; opacity: .9;
-      mask-size: cover; -webkit-mask-size: cover; mask-repeat: no-repeat; -webkit-mask-repeat: no-repeat;
-      mask-position: center; -webkit-mask-position: center;
-      transition: opacity .18s ease;
-    }
-    /* ojo cerrado */
-    .toggle-password.eye-hidden .eye-icon {
-      mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="white" viewBox="0 0 24 24"><path d="M3.53 2.47 2.47 3.53 5.14 6.2A12.2 12.2 0 0 0 1.5 12c1.73 4.33 6 7.5 10.5 7.5 2.15 0 4.15-.65 5.84-1.76l3.63 3.63 1.06-1.06L3.53 2.47ZM12 6.5c1.66 0 3 1.34 3 3 0 .44-.1.86-.27 1.24l1.56 1.56c.44-.83.71-1.78.71-2.8 0-3.04-2.46-5.5-5.5-5.5-.99 0-1.92.26-2.73.72l1.57 1.57c.37-.17.78-.29 1.16-.29Zm0 11c-3.9 0-7.27-2.5-8.89-6C4.73 8.99 8.1 6.5 12 6.5c.67 0 1.33.08 1.96.23l1.4 1.4A9.3 9.3 0 0 1 12 7.5c-3.31 0-6 2.69-6 6 0 .66.11 1.29.31 1.88l1.5 1.5A8.4 8.4 0 0 1 12 17.5Z"/></svg>');
-      -webkit-mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="white" viewBox="0 0 24 24"><path d="M3.53 2.47 2.47 3.53 5.14 6.2A12.2 12.2 0 0 0 1.5 12c1.73 4.33 6 7.5 10.5 7.5 2.15 0 4.15-.65 5.84-1.76l3.63 3.63 1.06-1.06L3.53 2.47ZM12 6.5c1.66 0 3 1.34 3 3 0 .44-.1.86-.27 1.24l1.56 1.56c.44-.83.71-1.78.71-2.8 0-3.04-2.46-5.5-5.5-5.5-.99 0-1.92.26-2.73.72l1.57 1.57c.37-.17.78-.29 1.16-.29Zm0 11c-3.9 0-7.27-2.5-8.89-6C4.73 8.99 8.1 6.5 12 6.5c.67 0 1.33.08 1.96.23l1.4 1.4A9.3 9.3 0 0 1 12 7.5c-3.31 0-6 2.69-6 6 0 .66.11 1.29.31 1.88l1.5 1.5A8.4 8.4 0 0 1 12 17.5Z"/></svg>');
-    }
-    /* ojo abierto */
-    .toggle-password.eye-visible .eye-icon {
-      mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="white" viewBox="0 0 24 24"><path d="M12 5c-5 0-9.27 3.11-10.98 7.5C2.73 16.89 7 20 12 20s9.27-3.11 10.98-7.5C21.27 8.11 17 5 12 5zm0 12c-2.48 0-4.5-2.02-4.5-4.5S9.52 8 12 8s4.5 2.02 4.5 4.5S14.48 17 12 17zm0-7.5A3 3 0 1 0 15 12a3 3 0 0 0-3-2.5z"/></svg>');
-      -webkit-mask-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="white" viewBox="0 0 24 24"><path d="M12 5c-5 0-9.27 3.11-10.98 7.5C2.73 16.89 7 20 12 20s9.27-3.11 10.98-7.5C21.27 8.11 17 5 12 5zm0 12c-2.48 0-4.5-2.02-4.5-4.5S9.52 8 12 8s4.5 2.02 4.5 4.5S14.48 17 12 17zm0-7.5A3 3 0 1 0 15 12a3 3 0 0 0-3-2.5z"/></svg>');
-    }
-    .social-buttons { margin-bottom: .25rem; }
+    /* ✅ Eliminamos CSS duplicado del “ojo” aquí.
+       El ojo ya está definido y controlado en adnova-login.css
+       (evita conflictos y desalineaciones). */
   </style>
 
   <!-- ===================== PIXELES / TRACKING ===================== -->
@@ -88,7 +87,6 @@
     window.dataLayer = window.dataLayer || [];
     function gtag(){dataLayer.push(arguments);}
     gtag('js', new Date());
-    // En HTML clásico (no SPA) sí dejamos el page_view automático
     gtag('config', 'G-7FR1P31TK3');
   </script>
 
@@ -175,7 +173,6 @@
         <div class="gsi-material-button-state"></div>
         <div class="gsi-material-button-content-wrapper">
           <div class="gsi-material-button-icon">
-            <!-- SVG oficial de Google -->
             <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
               <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
               <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
@@ -194,6 +191,7 @@
       <a href="recuperar.html" class="recovery-link">Recupérala aquí</a>
     </p>
   </div>
+
   <script src="js/login.js" defer></script>
 </body>
 </html>

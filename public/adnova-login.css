@@ -14,22 +14,36 @@
   border-color: hsla(265, 50%, 35%, 1);
 }
 
-body,
-html {
+/* ==============================
+   ✅ FIX E2E: SCROLL MOBILE + LAYOUT
+   - Antes: flex + overflow hidden (rompía scroll)
+   - Ahora: grid centrado + body scrolleable
+   ============================== */
+html,
+body {
   font-family: 'Inter', sans-serif;
-  min-height: 100vh;
-  min-width: 100vw;
   background: #0a0a12;
   color: #F4F2FF;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+
+  min-height: 100dvh;     /* iOS moderno */
+  min-width: 100%;
+  margin: 0;
+
+  display: grid;
+  place-items: center;
+
+  overflow-x: hidden;
 }
 
 body {
-  overflow: hidden;
+  overflow-y: auto;                       /* ✅ permite scroll */
+  -webkit-overflow-scrolling: touch;      /* scroll suave iOS */
+  padding: 24px 0;                        /* aire arriba/abajo */
 }
 
+/* ==============================
+   CARD
+   ============================== */
 .login-container {
   width: 100%;
   max-width: 28rem;
@@ -38,6 +52,10 @@ body {
   box-shadow: 0 8px 40px 0 rgba(85, 34, 145, 0.20);
   padding: 2.5rem 2rem 2rem 2rem;
   border: 1px solid #23143A;
+
+  /* ✅ evita overflow en móviles: si crece, el body hace scroll */
+  max-height: calc(100dvh - 48px);
+  overflow: visible;
 }
 
 .header {
@@ -236,6 +254,14 @@ body {
   .login-container {
     margin: 1rem;
     padding: 1.5rem 1rem 1.2rem 1rem;
+
+    /* mantiene el límite de alto con padding global */
+    max-height: calc(100dvh - 48px);
+  }
+
+  /* Si el teclado ocupa espacio, mantener respiro */
+  body {
+    padding: 16px 0;
   }
 }
 
@@ -348,3 +374,22 @@ body {
   mask-image: none !important;
   background-color: transparent !important;
 }
+
+/* ==============================
+   ✅ Scrollbar theme (morado Adray)
+   Nota: iOS usa scrollbar overlay y puede ignorar colores.
+   ============================== */
+:root{
+  --scroll-thumb: rgba(169, 107, 255, .85);
+  --scroll-track: rgba(255, 255, 255, .06);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) var(--scroll-track);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--scroll-track); border-radius: 999px; }
+::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(209, 165, 255, .95); }
