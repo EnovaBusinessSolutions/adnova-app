@@ -805,3 +805,133 @@ body[data-page="onboarding4"] .ready-content {
   font-size: 0.78rem;
   opacity: 0.92;
 }
+
+/* =========================================================
+   MOBILE FIX E2E — iOS Safari + “Request Desktop Site”
+   No afecta PC porque SOLO aplica en <=1024px o pointer coarse
+   ========================================================= */
+@media (max-width: 1024px), (pointer: coarse) {
+  /* El body en desktop estaba centrando; en móvil queremos ocupar toda la pantalla */
+  body {
+    align-items: stretch;
+    justify-content: flex-start;
+    overflow: hidden; /* mantenemos sin scroll global */
+  }
+
+  .onboarding-container {
+    flex-direction: column;
+    width: 100%;
+    height: 100dvh;     /* iOS moderno */
+    height: 100vh;      /* fallback */
+    max-height: none;
+    margin: 0;          /* <-- clave: elimina “chueco”/centrado */
+    border-radius: 0;   /* look full-screen en móvil */
+  }
+
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1.5px solid #23143A;
+    padding: 16px 16px 12px;
+  }
+
+  /* Grid de pasos más compacto y pro */
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .step {
+    padding: 10px;
+  }
+
+  .step-text h3 {
+    font-size: 0.98rem;
+  }
+
+  .step-text p {
+    font-size: 0.82rem;
+  }
+
+  /* El panel derecho es el que scrollea */
+  .main-content {
+    flex: 1 1 auto;
+    padding: 16px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+
+  /* Cards: en móvil van en columna y full width */
+  .connection-cards {
+    gap: 14px;
+    margin-top: 14px;
+  }
+
+  .connection-cards .connection-card {
+    min-height: 0;
+    padding: 14px;
+    gap: 14px;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .connection-details {
+    width: 100%;
+  }
+
+  /* Botones full width (quitamos min-widths de desktop) */
+  .connection-card > .btn-connect,
+  .connection-card > .btn-tooltip-wrapper {
+    width: 100%;
+    margin-left: 0;
+    align-self: stretch;
+  }
+
+  .connection-card .btn-tooltip-wrapper .btn-connect,
+  .connection-card > .btn-connect {
+    width: 100%;
+    min-width: 0 !important;
+  }
+
+  /* Overrides específicos de tus cards con estilos inline (#google-card / #meta-card) */
+  #google-card,
+  #meta-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #google-card #connect-google-btn,
+  #meta-card #connect-meta-btn {
+    width: 100%;
+    margin-left: 0 !important;
+  }
+
+  /* CTA inferior: sticky para que nunca se “corte” */
+  .bottom-actions {
+    position: sticky;
+    bottom: 0;
+    padding-top: 12px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    background: linear-gradient(
+      to bottom,
+      rgba(16, 14, 26, 0),
+      rgba(16, 14, 26, 0.98) 30%
+    );
+  }
+
+  .bottom-actions button,
+  .btn-continue,
+  .btn-gradient,
+  .btn-secondary {
+    width: 100%;
+  }
+}
+
+/* Extra: iPhones muy chicos (ej. 320px) */
+@media (max-width: 360px) {
+  .content-panel h2 { font-size: 1.55rem; }
+  .panel-description { font-size: 0.98rem; }
+  .logo h1 { font-size: 1.6rem; }
+}
