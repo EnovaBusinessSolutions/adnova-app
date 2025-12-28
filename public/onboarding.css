@@ -7,28 +7,19 @@
   font-display: swap;
 }
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
-/* ================== BASE LAYOUT (FIX MOBILE) ================== */
-html,
-body {
-  height: 100%;
-}
+/* ================== BASE (DESKTOP FIRST) ================== */
+html, body { height: 100%; }
 
 body {
-  font-family: 'Inter', sans-serif;
+  font-family: "Inter", sans-serif;
   background: #0a0a12;
   color: #F4F2FF;
 
-  /* ✅ IMPORTANTE:
-     Quitamos el flex-centro porque en móvil rompe el scroll + sticky CTA.
-     Ahora el layout es tipo "app shell". */
+  /* Desktop: usamos “app shell” con scroll interno */
   display: block;
-  overflow: hidden; /* el scroll lo maneja main-content */
+  overflow: hidden; /* el scroll lo maneja main-content en desktop */
 }
 
 /* Contenedor principal */
@@ -55,9 +46,7 @@ body {
   border-right: 1.5px solid #23143A;
 }
 
-.logo {
-  margin-bottom: 3rem;
-}
+.logo { margin-bottom: 3rem; }
 
 .logo h1 {
   font-size: 1.85rem;
@@ -66,14 +55,10 @@ body {
   letter-spacing: -1px;
   display: inline-flex;
   align-items: center;
-
-  /* ✅ SOLO "Adray" en ULM Grotesk */
-  font-family: "UlmGrotesk", "Ulm Grotesk", "UlmGrotesk-Bold", "Inter", sans-serif !important;
+  font-family: "UlmGrotesk","Ulm Grotesk","UlmGrotesk-Bold","Inter",sans-serif !important;
 }
 
-.emoji {
-  margin-left: 0.5rem;
-}
+.emoji { margin-left: .5rem; }
 
 .steps {
   display: flex;
@@ -87,12 +72,12 @@ body {
   padding: 1rem;
   border-radius: 9px;
   position: relative;
-  transition: all 0.3s ease;
+  transition: all .3s ease;
   background: transparent;
 }
 
 .step::after {
-  content: '';
+  content: "";
   position: absolute;
   left: 22px;
   top: 100%;
@@ -101,9 +86,7 @@ body {
   background: #382058;
 }
 
-.step:last-child::after {
-  display: none;
-}
+.step:last-child::after { display: none; }
 
 .step-indicator {
   width: 36px;
@@ -116,25 +99,23 @@ body {
   flex-shrink: 0;
   font-weight: 700;
   color: #A96BFF;
-  transition: all 0.3s ease;
+  transition: all .3s ease;
   font-size: 1.1rem;
 }
 
 .step-text h3 {
   font-size: 1.08rem;
-  margin-bottom: 0.22rem;
+  margin-bottom: .22rem;
   font-weight: 700;
   color: #F4F2FF;
 }
 
 .step-text p {
-  font-size: 0.91rem;
+  font-size: .91rem;
   color: #B6A7E8;
 }
 
-.step.active {
-  background: rgba(169, 107, 255, 0.10);
-}
+.step.active { background: rgba(169, 107, 255, 0.10); }
 
 .step.active .step-indicator,
 .step.completed .step-indicator {
@@ -143,48 +124,35 @@ body {
 }
 
 .step.completed .step-indicator::after {
-  content: '✓';
+  content: "✓";
   color: #fff;
   font-size: 1.2rem;
 }
 
-/* ================== MAIN CONTENT (SCROLL + STYLE) ================== */
+/* ================== MAIN CONTENT (DESKTOP SCROLL) ================== */
 .main-content {
   flex: 1;
   padding: 2.5rem;
-  overflow-y: auto; /* ✅ aquí scrollea */
+  overflow-y: auto; /* ✅ aquí scrollea en desktop */
   background: none;
   position: relative;
   z-index: 2;
 
-  /* Firefox scrollbar */
   scrollbar-width: thin;
   scrollbar-color: #3b2a5a #05040a;
 }
 
-/* WebKit scrollbar (Safari/Chrome) */
-.main-content::-webkit-scrollbar {
-  width: 10px;
-}
-.main-content::-webkit-scrollbar-track {
-  background: #05040a;
-}
+.main-content::-webkit-scrollbar { width: 10px; }
+.main-content::-webkit-scrollbar-track { background: #05040a; }
 .main-content::-webkit-scrollbar-thumb {
   background: #2d2340;
   border-radius: 999px;
   border: 2px solid #05040a;
 }
-.main-content::-webkit-scrollbar-thumb:hover {
-  background: #4b3c75;
-}
+.main-content::-webkit-scrollbar-thumb:hover { background: #4b3c75; }
 
-.hidden {
-  display: none !important;
-}
-
-.content-panel.hidden {
-  display: none !important;
-}
+.hidden { display: none !important; }
+.content-panel.hidden { display: none !important; }
 
 .content-panel {
   height: 100%;
@@ -203,7 +171,7 @@ body {
 .content-panel h2 {
   font-size: 1.9rem;
   font-weight: 800;
-  margin-bottom: 0.85rem;
+  margin-bottom: .85rem;
   color: #A96BFF;
 }
 
@@ -294,7 +262,7 @@ body {
   border-radius: 7px;
   cursor: pointer;
   transition: all 0.17s;
-  font-family: 'Inter', sans-serif;
+  font-family: "Inter", sans-serif;
   font-size: 1rem;
 }
 
@@ -310,7 +278,7 @@ body {
   border: none;
 }
 
-/* Bottom actions (desktop) */
+/* Bottom actions */
 .bottom-actions {
   display: flex;
   justify-content: flex-end;
@@ -328,21 +296,15 @@ body {
   border-radius: 7px;
   cursor: pointer;
   transition: opacity 0.17s;
-  font-family: 'Inter', sans-serif;
+  font-family: "Inter", sans-serif;
   font-size: 1.07rem;
 }
 
 .btn-continue:hover,
-.btn-gradient:hover {
-  opacity: 0.93;
-}
+.btn-gradient:hover { opacity: 0.93; }
 
-.btn-continue:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
+.btn-continue:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Secondary generic */
 .btn-secondary {
   background: #241d36;
   color: #E3D6FF;
@@ -357,13 +319,8 @@ body {
   color: #A96BFF;
 }
 
-/* =================== FLOW SECTIONS (keep) =================== */
-.permissions-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  margin-top: 2rem;
-}
+/* =================== Step 2 (permissions) =================== */
+.permissions-list { display: flex; flex-direction: column; gap: 1rem; margin-top: 2rem; }
 
 .permission-item {
   display: flex;
@@ -392,13 +349,10 @@ body {
   color: #F4F2FF;
 }
 
-.permission-text p {
-  font-size: 0.91rem;
-  color: #C5B8E6;
-}
+.permission-text p { font-size: 0.91rem; color: #C5B8E6; }
 
+/* =================== Step 3 (analysis) =================== */
 .analysis-progress { margin-top: 2rem; }
-
 .progress-container { margin-bottom: 2rem; }
 
 .progress-bar {
@@ -416,22 +370,11 @@ body {
   transition: width 0.5s ease;
 }
 
-.progress-text {
-  font-size: 0.91rem;
-  color: #B6A7E8;
-}
+.progress-text { font-size: 0.91rem; color: #B6A7E8; }
 
-.analysis-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
+.analysis-steps { display: flex; flex-direction: column; gap: 1rem; }
 
-.analysis-step {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
+.analysis-step { display: flex; align-items: center; gap: 1rem; }
 
 .analysis-step-icon {
   width: 28px;
@@ -445,26 +388,46 @@ body {
   color: #A96BFF;
 }
 
-.analysis-step.active .analysis-step-icon {
-  background: #22122F;
-  color: #fff;
-}
+.analysis-step.active .analysis-step-icon { background: #22122F; color: #fff; }
 
 .analysis-step.completed .analysis-step-icon {
   background: linear-gradient(90deg, #A96BFF 0%, #9333ea 100%);
   color: #fff;
 }
 
-.analysis-step-text {
-  font-size: 0.91rem;
-  color: #B6A7E8;
+.analysis-step-text { font-size: 0.91rem; color: #B6A7E8; }
+.analysis-step.completed .analysis-step-text { color: #fff; }
+
+/* Aviso sutil (step 3) */
+.analysis-hint {
+  margin: 14px 0 22px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: #e4d8ff;
+  border: 1px solid rgba(181, 92, 255, 0.5);
 }
 
-.analysis-step.completed .analysis-step-text {
-  color: #fff;
+.analysis-hint-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #f9efff;
+  background: radial-gradient(circle at 30% 30%, #A96BFF, #b55cff);
 }
 
-/* Ready / onboarding4 keep */
+.analysis-hint-text { font-size: 0.78rem; opacity: 0.92; }
+
+/* =================== Step 4 (ready) =================== */
 body[data-page="onboarding4"] .content-panel {
   max-width: 700px;
   min-width: 360px;
@@ -484,7 +447,7 @@ body[data-page="onboarding4"] .ready-content {
   align-items: center;
 }
 
-/* =================== Shopify tooltip alignment =================== */
+/* =================== Tooltip wrapper (Shopify) =================== */
 .connection-card .btn-tooltip-wrapper {
   position: relative;
   display: inline-flex;
@@ -492,16 +455,13 @@ body[data-page="onboarding4"] .ready-content {
   flex: 0 0 auto;
 }
 
-/* Mantén ancho consistente */
 .connection-card .btn-tooltip-wrapper .btn-connect,
 .connection-card > .btn-connect {
   min-width: 160px;
   text-align: center;
 }
 
-.btn-connect.connected { min-width: 160px; }
-
-/* =================== ASM MODAL (DEDUP — keep ONLY ONE) =================== */
+/* =================== ASM MODAL =================== */
 :root {
   --bg-elev: hsl(260 20% 10% / .85);
   --bg-card: hsl(260 25% 8% / .75);
@@ -554,8 +514,9 @@ body[data-page="onboarding4"] .ready-content {
   inset: 0;
   pointer-events: none;
   border-radius: 18px;
-  background: radial-gradient(200px 120px at 8% -10%, hsl(265 100% 70% / .18), transparent 70%),
-              radial-gradient(200px 120px at 100% 0%, hsl(280 100% 63% / .12), transparent 70%);
+  background:
+    radial-gradient(200px 120px at 8% -10%, hsl(265 100% 70% / .18), transparent 70%),
+    radial-gradient(200px 120px at 100% 0%, hsl(280 100% 63% / .12), transparent 70%);
   mix-blend-mode: screen;
 }
 
@@ -569,11 +530,6 @@ body[data-page="onboarding4"] .ready-content {
 #account-select-modal .asm-sub {
   margin: 0 2px 14px;
   color: var(--txt-dim);
-}
-
-#account-select-modal .asm-sub strong {
-  color: var(--txt);
-  font-weight: 600;
 }
 
 #account-select-modal .asm-section-title {
@@ -603,12 +559,8 @@ body[data-page="onboarding4"] .ready-content {
   padding-right: 4px;
 }
 
-@media (max-width: 900px) {
-  #account-select-modal .asm-list { grid-template-columns: repeat(2, 1fr); }
-}
-@media (max-width: 560px) {
-  #account-select-modal .asm-list { grid-template-columns: 1fr; }
-}
+@media (max-width: 900px) { #account-select-modal .asm-list { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { #account-select-modal .asm-list { grid-template-columns: 1fr; } }
 
 #account-select-modal .asm-chip {
   display: flex;
@@ -632,11 +584,6 @@ body[data-page="onboarding4"] .ready-content {
   background: linear-gradient(180deg, hsl(265 50% 18% / .55), hsl(265 55% 14% / .55));
   border-color: hsl(265 100% 70% / .55);
   box-shadow: inset 0 0 0 1px hsl(265 100% 70% / .18);
-}
-
-#account-select-modal .asm-chip:has(input:disabled) {
-  opacity: .55;
-  cursor: not-allowed;
 }
 
 #account-select-modal .asm-chip input[type="checkbox"] {
@@ -668,22 +615,7 @@ body[data-page="onboarding4"] .ready-content {
   box-shadow: 0 0 0 3px hsl(265 100% 70% / .10);
 }
 
-#account-select-modal .asm-chip input[type="checkbox"]:checked::after {
-  transform: scale(1);
-}
-
-#account-select-modal #asm-hint {
-  margin: 8px 2px 0;
-  font-size: .92rem;
-  color: var(--txt-dim);
-}
-
-#account-select-modal .asm-error {
-  margin: 8px 2px 0;
-  font-size: .92rem;
-  color: var(--err);
-  display: none;
-}
+#account-select-modal .asm-chip input[type="checkbox"]:checked::after { transform: scale(1); }
 
 #account-select-modal .asm-footer {
   display: flex;
@@ -703,7 +635,6 @@ body[data-page="onboarding4"] .ready-content {
   cursor: pointer;
   transition: transform .06s ease, opacity .2s;
 }
-
 #account-select-modal .asm-btn:active { transform: translateY(1px); }
 
 #account-select-modal .asm-btn-primary {
@@ -711,307 +642,137 @@ body[data-page="onboarding4"] .ready-content {
   color: white;
   box-shadow: 0 8px 28px hsl(265 90% 60% / .25);
 }
+#account-select-modal .asm-btn-primary:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
 
-#account-select-modal .asm-btn-primary:disabled {
-  opacity: .55;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-
-@keyframes asmPop {
-  from { transform: translateY(6px) scale(.98); opacity: .0; }
-  to { transform: none; opacity: 1; }
-}
-@keyframes asmFade {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-/* =================== RESPONSIVE =================== */
-@media (max-width: 900px) {
-  .onboarding-container {
-    width: calc(100% - 2rem);
-    height: auto;
-    max-height: none;
-    margin: 1rem auto;
-    border-radius: 16px;
-  }
-
-  .main-content {
-    padding: 1.2rem;
-    height: auto;
-  }
-}
-
-@media (max-width: 600px) {
-  /* En móvil el body sigue sin scroll; main-content scrollea y además onboarding.html ya tiene CTA fixed */
-  .onboarding-container {
-    width: 100%;
-    margin: 0;
-    height: 100vh; /* ✅ ocupa pantalla completa */
-    max-height: none;
-    border-radius: 0;
-  }
-
-  .connection-card {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1rem;
-  }
-
-  .connection-card .btn-connect,
-  .connection-card .btn-tooltip-wrapper {
-    width: 100%;
-    margin-left: 0;
-  }
-
-  .bottom-actions {
-    flex-direction: column;
-  }
-
-  .bottom-actions button {
-    width: 100%;
-  }
-}
-
-/* Aviso sutil bajo el título del análisis */
-.analysis-hint {
-  margin: 14px 0 22px;
-  padding: 8px 14px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.78rem;
-  line-height: 1.4;
-  color: #e4d8ff;
-  border: 1px solid rgba(181, 92, 255, 0.5);
-}
-
-.analysis-hint-icon {
-  width: 18px;
-  height: 18px;
-  border-radius: 999px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.75rem;
-  font-weight: 700;
-  color: #f9efff;
-  background: radial-gradient(circle at 30% 30%, #A96BFF, #b55cff);
-}
-
-.analysis-hint-text {
-  font-size: 0.78rem;
-  opacity: 0.92;
-}
+@keyframes asmPop { from { transform: translateY(6px) scale(.98); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes asmFade { from { opacity: 0; } to { opacity: 1; } }
 
 /* =========================================================
-   MOBILE FIX E2E — iOS Safari + “Request Desktop Site”
-   No afecta PC porque SOLO aplica en <=1024px o pointer coarse
+   ✅ MOBILE E2E (iOS Safari)
+   - Sin duplicados
+   - Scroll natural (body)
+   - Sidebar OFF (evita duplicar mobile-header)
+   - Botones full width
+   - Bottom-actions NO tapa CTAs
    ========================================================= */
 @media (max-width: 1024px), (pointer: coarse) {
-  /* El body en desktop estaba centrando; en móvil queremos ocupar toda la pantalla */
-  body {
-    align-items: stretch;
-    justify-content: flex-start;
-    overflow: hidden; /* mantenemos sin scroll global */
-  }
-
-  .onboarding-container {
-    flex-direction: column;
-    width: 100%;
-    height: 100dvh;     /* iOS moderno */
-    height: 100vh;      /* fallback */
-    max-height: none;
-    margin: 0;          /* <-- clave: elimina “chueco”/centrado */
-    border-radius: 0;   /* look full-screen en móvil */
-  }
-
-  .sidebar {
-    width: 100%;
-    border-right: none;
-    border-bottom: 1.5px solid #23143A;
-    padding: 16px 16px 12px;
-  }
-
-  /* Grid de pasos más compacto y pro */
-  .steps {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-  }
-
-  .step {
-    padding: 10px;
-  }
-
-  .step-text h3 {
-    font-size: 0.98rem;
-  }
-
-  .step-text p {
-    font-size: 0.82rem;
-  }
-
-  /* El panel derecho es el que scrollea */
-  .main-content {
-    flex: 1 1 auto;
-    padding: 16px;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: calc(16px + env(safe-area-inset-bottom));
-  }
-
-  /* Cards: en móvil van en columna y full width */
-  .connection-cards {
-    gap: 14px;
-    margin-top: 14px;
-  }
-
-  .connection-cards .connection-card {
-    min-height: 0;
-    padding: 14px;
-    gap: 14px;
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .connection-details {
-    width: 100%;
-  }
-
-  /* Botones full width (quitamos min-widths de desktop) */
-  .connection-card > .btn-connect,
-  .connection-card > .btn-tooltip-wrapper {
-    width: 100%;
-    margin-left: 0;
-    align-self: stretch;
-  }
-
-  .connection-card .btn-tooltip-wrapper .btn-connect,
-  .connection-card > .btn-connect {
-    width: 100%;
-    min-width: 0 !important;
-  }
-
-  /* Overrides específicos de tus cards con estilos inline (#google-card / #meta-card) */
-  #google-card,
-  #meta-card {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  #google-card #connect-google-btn,
-  #meta-card #connect-meta-btn {
-    width: 100%;
-    margin-left: 0 !important;
-  }
-
-  /* CTA inferior: sticky para que nunca se “corte” */
-  .bottom-actions {
-    position: sticky;
-    bottom: 0;
-    padding-top: 12px;
-    padding-bottom: calc(12px + env(safe-area-inset-bottom));
-    background: linear-gradient(
-      to bottom,
-      rgba(16, 14, 26, 0),
-      rgba(16, 14, 26, 0.98) 30%
-    );
-  }
-
-  .bottom-actions button,
-  .btn-continue,
-  .btn-gradient,
-  .btn-secondary {
-    width: 100%;
-  }
-}
-
-/* Extra: iPhones muy chicos (ej. 320px) */
-@media (max-width: 360px) {
-  .content-panel h2 { font-size: 1.55rem; }
-  .panel-description { font-size: 0.98rem; }
-  .logo h1 { font-size: 1.6rem; }
-}
-
-/* =========================================================
-   MOBILE HOTFIX — Onboarding (Step 1)
-   - Evita layout chueco (2 columnas en iPhone)
-   - Evita botón "Continuar" tapando CTAs
-   - Deja scroll natural en móvil
-   ========================================================= */
-
-@media (max-width: 900px) {
   html, body {
     height: auto !important;
     overflow-x: hidden !important;
   }
 
-  /* En móvil, scroll natural (evita contenedores internos raros) */
   body {
-    overflow-y: auto !important;
+    overflow-y: auto !important;   /* ✅ scroll real en móvil */
+    overflow-x: hidden !important;
   }
 
-  /* Fuerza 1 columna sí o sí */
   .onboarding-container {
+    flex-direction: column !important;
     width: 100% !important;
     max-width: none !important;
     margin: 0 !important;
     border-radius: 0 !important;
 
-    display: flex !important;
-    flex-direction: column !important;
-    min-height: 100vh !important;
+    height: auto !important;
+    min-height: 100dvh !important;
+    max-height: none !important;
   }
 
-  .sidebar {
-    width: 100% !important;
-    max-width: none !important;
-    border-right: none !important;
-    border-bottom: 1px solid rgba(255,255,255,0.08) !important;
-
-    /* Mantén arriba y compacto (no “media pantalla” a la izquierda) */
-    position: relative !important;
-  }
+  /* ✅ elimina duplicado de steps/barra: el header móvil manda */
+  .sidebar { display: none !important; }
 
   .main-content {
-    width: 100% !important;
-    max-width: none !important;
-    overflow: visible !important;
+    padding: 16px !important;
+    overflow: visible !important;  /* ✅ evita “no hay scroll” por contenedor */
+    height: auto !important;
   }
 
-  /* Evita panel con height fija que provoca overlays */
   .content-panel {
     height: auto !important;
     min-height: 0 !important;
   }
 
-  /* IMPORTANTÍSIMO: que el botón NO sea fixed/sticky y no tape CTAs */
+  .connection-cards {
+    flex: 0 0 auto !important;
+    gap: 14px !important;
+    margin-top: 14px !important;
+  }
+
+  .connection-card {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 14px !important;
+    padding: 14px !important;
+  }
+
+  .connection-details { width: 100% !important; }
+
+  /* Botones siempre full width */
+  .connection-card > .btn-connect,
+  .connection-card .btn-tooltip-wrapper {
+    width: 100% !important;
+    margin-left: 0 !important;
+    align-self: stretch !important;
+  }
+
+  .connection-card .btn-tooltip-wrapper .btn-connect,
+  .connection-card > .btn-connect {
+    min-width: 0 !important;
+    width: 100% !important;
+  }
+
+  /* Ajuste tooltip para no salirse del viewport */
+  .connection-card .btn-tooltip {
+    left: 0;
+    right: auto;
+    width: min(340px, 92vw);
+  }
+
+  /* Overrides para tus cards con estilos inline */
+  #google-card,
+  #meta-card {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  #google-card #connect-google-btn,
+  #meta-card  #connect-meta-btn {
+    width: 100% !important;
+    margin-left: 0 !important;
+  }
+
+  /* ✅ Botón continuar: NO fixed/sticky (no tapa Facebook/Meta) */
   .bottom-actions {
     position: static !important;
     inset: auto !important;
-    width: 100% !important;
-
-    /* espacio real para el "safe area" del iPhone */
-    padding-bottom: calc(16px + env(safe-area-inset-bottom)) !important;
+    background: none !important;
+    border: 0 !important;
+    padding: 0 !important;
     margin-top: 16px !important;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom)) !important;
   }
 
-  /* Botones 100% ancho en móvil (pro) */
-  .bottom-actions .btn-continue,
-  .bottom-actions .btn-gradient,
-  .bottom-actions .btn-secondary {
+  .btn-continue,
+  .btn-gradient,
+  .btn-secondary {
     width: 100% !important;
+    min-height: 52px !important;
+    border-radius: 14px !important;
+    font-size: 18px !important;
   }
 
-  /* Si tienes cards, que no se encimen */
-  .platform-card,
-  .integration-card,
-  .card,
-  .connection-card {
-    width: 100% !important;
-    max-width: none !important;
+  /* Onboarding4: evita min-width que causa overflow horizontal */
+  body[data-page="onboarding4"] .content-panel {
+    min-width: 0 !important;
+    padding: 0 16px !important;
+    height: auto !important;
+    justify-content: flex-start !important;
   }
+}
+
+/* Extra: iPhones muy chicos */
+@media (max-width: 360px) {
+  .content-panel h2 { font-size: 1.55rem; }
+  .panel-description { font-size: 0.98rem; }
+  .logo h1 { font-size: 1.6rem; }
 }
