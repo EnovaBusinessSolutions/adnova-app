@@ -935,3 +935,83 @@ body[data-page="onboarding4"] .ready-content {
   .panel-description { font-size: 0.98rem; }
   .logo h1 { font-size: 1.6rem; }
 }
+
+/* =========================================================
+   MOBILE HOTFIX — Onboarding (Step 1)
+   - Evita layout chueco (2 columnas en iPhone)
+   - Evita botón "Continuar" tapando CTAs
+   - Deja scroll natural en móvil
+   ========================================================= */
+
+@media (max-width: 900px) {
+  html, body {
+    height: auto !important;
+    overflow-x: hidden !important;
+  }
+
+  /* En móvil, scroll natural (evita contenedores internos raros) */
+  body {
+    overflow-y: auto !important;
+  }
+
+  /* Fuerza 1 columna sí o sí */
+  .onboarding-container {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+
+    display: flex !important;
+    flex-direction: column !important;
+    min-height: 100vh !important;
+  }
+
+  .sidebar {
+    width: 100% !important;
+    max-width: none !important;
+    border-right: none !important;
+    border-bottom: 1px solid rgba(255,255,255,0.08) !important;
+
+    /* Mantén arriba y compacto (no “media pantalla” a la izquierda) */
+    position: relative !important;
+  }
+
+  .main-content {
+    width: 100% !important;
+    max-width: none !important;
+    overflow: visible !important;
+  }
+
+  /* Evita panel con height fija que provoca overlays */
+  .content-panel {
+    height: auto !important;
+    min-height: 0 !important;
+  }
+
+  /* IMPORTANTÍSIMO: que el botón NO sea fixed/sticky y no tape CTAs */
+  .bottom-actions {
+    position: static !important;
+    inset: auto !important;
+    width: 100% !important;
+
+    /* espacio real para el "safe area" del iPhone */
+    padding-bottom: calc(16px + env(safe-area-inset-bottom)) !important;
+    margin-top: 16px !important;
+  }
+
+  /* Botones 100% ancho en móvil (pro) */
+  .bottom-actions .btn-continue,
+  .bottom-actions .btn-gradient,
+  .bottom-actions .btn-secondary {
+    width: 100% !important;
+  }
+
+  /* Si tienes cards, que no se encimen */
+  .platform-card,
+  .integration-card,
+  .card,
+  .connection-card {
+    width: 100% !important;
+    max-width: none !important;
+  }
+}

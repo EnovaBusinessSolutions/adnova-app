@@ -86,86 +86,53 @@
       transform:translateY(0) scale(1);
     }
 
-    /* ================= MOBILE UX CRÍTICO =================
-       1) Header móvil con progreso
-       2) CTA "Continuar" fijo abajo con safe-area
-       3) Evitar que el contenido quede tapado por el CTA
+    /* ================= MOBILE: limpio, sin duplicar header, sin CTA fijo =================
+       - Sidebar se vuelve "header" compacto (1 solo progreso)
+       - CTA "Continuar" NO tapa botones (flujo normal)
     */
-    .mobile-header{
-      display:none;
-      position:sticky;
-      top:0;
-      z-index:50;
-      padding:14px 14px 10px 14px;
-      background: rgba(10,10,18,0.82);
-      backdrop-filter: blur(10px);
-      border-bottom: 1px solid rgba(168,85,247,0.18);
-    }
-    .mobile-header .mh-top{
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:12px;
-    }
-    .mobile-header .mh-brand{
-      font-weight:800;
-      letter-spacing:-0.02em;
-      color:#d1a5ff;
-      font-size:18px;
-    }
-    .mobile-header .mh-step{
-      font-size:12px;
-      opacity:.86;
-      white-space:nowrap;
-    }
-    .mobile-header .mh-progress{
-      margin-top:10px;
-      height:8px;
-      border-radius:999px;
-      background: rgba(255,255,255,0.08);
-      overflow:hidden;
-    }
-    .mobile-header .mh-progress > div{
-      height:100%;
-      width:25%; /* Paso 1 (luego lo actualizamos con JS/CSS si quieres) */
-      border-radius:999px;
-      background: linear-gradient(90deg, #A96BFF 0%, #9333ea 100%);
-    }
-
-    /* Footer CTA fijo solo en móvil */
-    .bottom-actions{
-      margin-top: 18px;
-    }
-
     @media (max-width: 900px){
-      .sidebar{ display:none; }
-      .mobile-header{ display:block; }
-      /* espacio para el CTA fijo */
-      .main-content{ padding-bottom: 120px; }
-      .bottom-actions{
-        position: fixed;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        z-index: 60;
-        padding: 14px 14px calc(14px + env(safe-area-inset-bottom)) 14px;
-        background: rgba(10,10,18,0.88);
-        backdrop-filter: blur(12px);
-        border-top: 1px solid rgba(168,85,247,0.18);
+      /* Compactar sidebar (no lo ocultamos; evitamos duplicar progreso) */
+      .sidebar{
+        width:100% !important;
+        border-right:none !important;
+        border-bottom: 1px solid rgba(168,85,247,0.18) !important;
+        padding: 14px 14px 10px 14px !important;
       }
+
+      /* Mostrar solo el paso activo (reduce altura brutal en móvil) */
+      .sidebar .steps .step{ display:none !important; }
+      .sidebar .steps .step.active{ display:flex !important; }
+
+      /* Ocultar descripción larga en móvil */
+      .sidebar .step-text p{ display:none !important; }
+
+      /* Ajustes generales de contenido */
+      .main-content{
+        padding: 14px !important;
+      }
+
+      /* Cards y botones full width */
+      .connection-cards { gap: 16px; }
+      .btn-connect,
       #continue-btn{
-        width: 100%;
-        min-height: 52px;
-        border-radius: 14px;
-        font-size: 18px;
+        width: 100% !important;
+      }
+
+      /* CTA abajo en flujo normal (NO fixed) */
+      .bottom-actions{
+        position: static !important;
+        margin-top: 18px !important;
+        padding-bottom: calc(16px + env(safe-area-inset-bottom)) !important;
+      }
+
+      /* Un poco más de aire al final para que Safari no corte */
+      #step1-content{
+        padding-bottom: calc(20px + env(safe-area-inset-bottom)) !important;
       }
     }
-
-    /* (mantengo tus estilos inline de google/meta obj tal cual porque tu JS ya los usa) */
   </style>
 
   <!-- ===================== PIXELES / TRACKING ===================== -->
-
   <!-- Google tag (gtag.js) - GA4 -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-7FR1P31TK3"></script>
   <script>
@@ -210,17 +177,7 @@
 
   <div class="onboarding-container">
 
-    <!-- ✅ HEADER MÓVIL (no rompe nada) -->
-    <div class="mobile-header" aria-label="Progreso del onboarding">
-      <div class="mh-top">
-        <div class="mh-brand">Adray</div>
-        <div class="mh-step">Paso <strong>1</strong> de <strong>4</strong></div>
-      </div>
-      <div class="mh-progress" aria-hidden="true">
-        <div></div>
-      </div>
-    </div>
-
+    <!-- ✅ Sidebar (en móvil se vuelve header compacto; NO duplicamos progreso) -->
     <div class="sidebar">
       <div class="logo">
         <h1>Adray<span class="emoji"></span></h1>
@@ -300,7 +257,7 @@
             </div>
           </div>
 
-          <!-- Paso de dominio Shopify (mantiene estructura, pero el botón está bloqueado) -->
+          <!-- Paso de dominio Shopify (mantiene estructura, aunque el botón esté bloqueado) -->
           <div id="shopify-domain-step" class="shop-step step--hidden">
             <label for="shop-domain-input">Escribe el dominio de tu tienda:</label>
             <div class="shop-input-row">
@@ -429,7 +386,7 @@
           </div>
         </div>
 
-        <!-- ✅ CTA fijo abajo en móvil (mismo ID que tu JS usa) -->
+        <!-- ✅ CTA: en flujo normal (NO fixed) -->
         <div class="bottom-actions">
           <button id="continue-btn" class="btn-continue btn-continue--disabled" disabled>Continuar</button>
         </div>
