@@ -167,22 +167,79 @@ function ensureEvidenceBullets(evidence, { maxBullets = 6 } = {}) {
   return lines.join('\n').trim();
 }
 
-function ensureRecommendationNumbered(rec, { maxSteps = 3, maxBulletsPerStep = 2 } = {}) {
-  const t = String(rec || '').trim();
+/* ---------- Quitar headers duplicados + Negritas “estratégicas” -------- */
+function stripRecommendationHeading(text = '') {
+  const t = String(text || '').replace(/\r/g, '').trim();
   if (!t) return '';
 
-  // Si ya viene numerado, lo respetamos
-  if (t.includes('Recomendaciones accionables') && hasNumberedSteps(t)) return t;
+  const lines = t.split('\n').map(x => x.trimEnd());
+
+  // 1) "Recomendaciones accionables" (con o sin :)
+  if (lines[0] && /^\s*recomendaciones?\s+accionables\s*:?\s*$/i.test(lines[0])) {
+    return lines.slice(1).join('\n').trim();
+  }
+
+  // 2) "Recomendación:" / "Recomendaciones:" (con o sin :)
+  if (lines[0] && /^\s*recomendaciones?\s*:?\s*$/i.test(lines[0])) {
+    return lines.slice(1).join('\n').trim();
+  }
+
+  return t;
+}
+
+function applyStrategicBold(text = '') {
+  let t = String(text || '').trim();
+  if (!t) return '';
+
+  // 1) Negrita a títulos de pasos: "1) Título" => "1) **Título**"
+  t = t.replace(/(^\s*\d+\)\s*)(.+)$/gm, (_, p1, p2) => {
+    const title = String(p2).trim();
+    if (!title) return `${p1}${title}`;
+    if (/^\*\*.*\*\*$/.test(title)) return `${p1}${title}`; // ya bold
+    return `${p1}**${title}**`;
+  });
+
+  // 2) Negritas a KPIs/palabras clave (controlado)
+  const keywords = [
+    'ROAS', 'CPA', 'CPC', 'CTR', 'CR', 'CVR',
+    'conversiones', 'ingresos', 'presupuesto', 'valor', 'margen'
+  ];
+
+  for (const kw of keywords) {
+    const re = new RegExp(`\\b(${kw})\\b`, 'gi');
+    t = t.replace(re, (m) => {
+      // evita re-negritar dentro de **...**
+      if (m.includes('**')) return m;
+      return `**${m}**`;
+    });
+  }
+
+  // 3) Negritas a porcentajes (incluye rangos tipo 10–15%)
+  t = t.replace(/(\d+(?:\.\d+)?\s*(?:–|-)\s*\d+(?:\.\d+)?\s*%|\d+(?:\.\d+)?%)/g, '**$1**');
+
+  // 4) Negritas a rangos de días típicos
+  t = t.replace(/(\d+\s*(?:–|-)\s*\d+\s*d[ií]as|\d+\s*d[ií]as)/gi, '**$1**');
+
+  return t;
+}
+
+function ensureRecommendationNumbered(rec, { maxSteps = 3, maxBulletsPerStep = 2 } = {}) {
+  let t = String(rec || '').replace(/\r/g, '').trim();
+  if (!t) return '';
+
+  // ✅ limpia encabezados duplicados si el modelo los manda
+  t = stripRecommendationHeading(t);
+
+  // Si ya viene numerado, lo respetamos (pero SIN encabezado)
+  if (hasNumberedSteps(t)) return t;
 
   // Intento: separar en “acciones” cortas
   const parts = splitToShortBullets(t, maxSteps * 2);
 
   const lines = [];
-  lines.push('Recomendaciones accionables');
-
   const steps = parts.length ? parts.slice(0, maxSteps) : [t.slice(0, 160)];
   steps.forEach((s, i) => {
-    const title = String(s).slice(0, 90);
+    const title = String(s).slice(0, 90).trim();
     lines.push(`${i + 1}) ${title}`);
 
     // bullets por paso (si hay más frases, intenta 1-2 bullets)
@@ -238,7 +295,9 @@ function ensureSummaryParagraph(summary, { maxChars = 420 } = {}) {
 
   if (paragraph && !/[.!?]$/.test(paragraph)) paragraph += '.';
 
-  if (paragraph.length > maxChars) paragraph = paragraph.slice(0, maxChars).replace(/\s+\S*$/, '') + '…';
+  if (paragraph.length > maxChars) {
+    paragraph = paragraph.slice(0, maxChars).replace(/\s+\S*$/, '') + '…';
+  }
 
   return paragraph;
 }
@@ -907,8 +966,10 @@ Formato y estilo (UI-friendly):
   • <bullet 2>
   • <bullet 3>
   (máximo 6 bullets en total)
-- recommendation: SIEMPRE multilinea y numerada (1) (2) (3). Estructura obligatoria:
-  Recomendaciones accionables
+- recommendation: SIEMPRE multilinea y numerada (1) (2) (3).
+  IMPORTANTE: NO escribas "Recomendaciones accionables" ni "Recomendación:" (la UI ya lo muestra).
+  Puedes usar **negritas** (markdown) de forma moderada para resaltar KPIs o el título de cada paso.
+  Estructura obligatoria (sin encabezado):
   1) <título corto>
      • <bullet>
      • <bullet>
@@ -949,8 +1010,10 @@ Formato y estilo (UI-friendly):
   • <bullet 2>
   • <bullet 3>
   (máximo 6 bullets en total)
-- recommendation: SIEMPRE multilinea y numerada (1) (2) (3). Estructura obligatoria:
-  Recomendaciones accionables
+- recommendation: SIEMPRE multilinea y numerada (1) (2) (3).
+  IMPORTANTE: NO escribas "Recomendaciones accionables" ni "Recomendación:" (la UI ya lo muestra).
+  Puedes usar **negritas** (markdown) de forma moderada para resaltar KPIs o el título de cada paso.
+  Estructura obligatoria (sin encabezado):
   1) <título corto>
      • <bullet>
      • <bullet>
@@ -1035,11 +1098,12 @@ CONSIGNA GENERAL
 - Emojis: máximo 1 emoji al inicio de cada title. No uses emojis en evidence/recommendation.
 - Prohibido inventar métricas, campañas, canales o propiedades.
 - summary: debe ser un resumen ejecutivo en 2–3 frases, sin bullets/listas/numeración.
+- recommendation: NO incluyas el encabezado "Recomendaciones accionables" (la UI ya lo muestra). Puedes usar **negritas** moderadas.
 
 REQUISITOS POR ISSUE
 ${isAnalytics ? gaExtras : adsExtras}
 - evidence: usa el formato UI-friendly (Motivo + Resumen de desempeño con bullets).
-- recommendation: usa el formato UI-friendly (Recomendaciones accionables con pasos 1) 2) 3)).
+- recommendation: usa el formato UI-friendly con pasos 1) 2) 3) (sin encabezado).
 - estimatedImpact coherente (alto/medio/bajo).
 - Ordena los issues de mayor a menor impacto.
 
@@ -1227,7 +1291,7 @@ module.exports = async function generateAudit({
   let summary = '';
 
   if (parsed && typeof parsed === 'object') {
-    // ✅ Summary ahora en párrafo ejecutivo (sin bullets)
+    // ✅ Summary en párrafo ejecutivo (sin bullets)
     summary = typeof parsed.summary === 'string'
       ? ensureSummaryParagraph(parsed.summary)
       : '';
@@ -1245,7 +1309,11 @@ module.exports = async function generateAudit({
 
           // ✅ UI-friendly garantizado (aunque el LLM responda en párrafo)
           evidence: ensureEvidenceBullets(String(it.evidence || '')),
-          recommendation: ensureRecommendationNumbered(String(it.recommendation || '')),
+
+          // ✅ sin encabezados duplicados + con negritas estratégicas
+          recommendation: applyStrategicBold(
+            ensureRecommendationNumbered(String(it.recommendation || ''))
+          ),
 
           estimatedImpact: impactNorm(it.estimatedImpact),
           accountRef: it.accountRef || null,
