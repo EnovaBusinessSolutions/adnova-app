@@ -59,18 +59,18 @@
     .gsi-material-button:not(:disabled):hover .gsi-material-button-state{background-color:white;opacity:8%}
     .social-buttons{display:flex;justify-content:center;align-items:center;margin:.8rem 0 .4rem 0}
 
-    /* ✅ Banner inline de mensajes (verified=1 / errores) */
+    /* ✅ Mensaje sutil (correo verificado / errores) — estilo “pill” discreto */
     #login-msg{
       display:none;
-      margin: 12px 0 0;
+      margin: 10px 0 0;
       padding: 10px 12px;
-      border-radius: 10px;
+      border-radius: 12px;
+      font-size: 12.5px;
+      line-height: 16px;
+      text-align: center;
       border: 1px solid rgba(178,134,224,.25);
       background: rgba(178,134,224,.10);
-      color: #b286e0ff;
-      font-size: 13px;
-      line-height: 18px;
-      text-align: left;
+      color: rgba(234,228,242,.92);
     }
 
     /* ✅ Eliminamos CSS duplicado del “ojo” aquí.
@@ -157,9 +157,6 @@
 
     <h2 class="subtitle">Bienvenido de nuevo</h2>
 
-    <!-- ✅ NUEVO: aquí se mostrará el banner "Correo verificado" y errores sin alerts -->
-    <p id="login-msg" class="success-message" aria-live="polite"></p>
-
     <form class="form" id="loginForm" novalidate>
       <div class="form-group">
         <label class="form-label" for="email">Correo electrónico</label>
@@ -203,6 +200,9 @@
         </div>
       </button>
     </div>
+
+    <!-- ✅ Mensaje sutil hasta abajo (correo verificado / errores) -->
+    <p id="login-msg" class="login-msg" aria-live="polite"></p>
 
     <p class="forgot-password">¿Olvidaste tu contraseña?
       <a href="recuperar.html" class="recovery-link">Recupérala aquí</a>

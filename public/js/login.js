@@ -4,26 +4,61 @@ document.addEventListener('DOMContentLoaded', () => {
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-  const MSG_BOX =
-    $('#login-msg') || $('#msg') || $('.login-msg') || $('.success-message');
+  // ✅ Asegura SIEMPRE un contenedor sutil abajo (no banner arriba)
+  function ensureMsgBox() {
+    let box =
+      document.getElementById('login-msg') ||
+      $('#login-msg') ||
+      $('#msg') ||
+      $('.login-msg') ||
+      $('.success-message');
+
+    if (box) return box;
+
+    const container = $('.login-container') || document.body;
+    box = document.createElement('div');
+    box.id = 'login-msg';
+    box.className = 'login-msg';
+    box.setAttribute('aria-live', 'polite');
+    box.style.display = 'none';
+
+    // Intenta insertarlo arriba del "¿Olvidaste...?"
+    const anchor = container.querySelector('.forgot-password');
+    if (anchor && anchor.parentElement) {
+      anchor.parentElement.insertBefore(box, anchor);
+    } else {
+      container.appendChild(box);
+    }
+    return box;
+  }
 
   function showInlineMessage(text, ok = false) {
-    if (MSG_BOX) {
-      MSG_BOX.textContent = text;
-      MSG_BOX.style.display = 'block';
-      MSG_BOX.style.marginTop = '12px';
-      MSG_BOX.style.fontSize = '13px';
-      MSG_BOX.style.lineHeight = '18px';
-      MSG_BOX.style.color = ok ? '#b286e0ff' : '#f87171';
-      return;
-    }
-    alert(text);
+    const box = ensureMsgBox();
+    box.textContent = text;
+    box.style.display = 'block';
+
+    // ✅ Estilo sutil (pill) – éxito/error
+    box.style.marginTop = '12px';
+    box.style.fontSize = '12.5px';
+    box.style.lineHeight = '16px';
+    box.style.textAlign = 'center';
+    box.style.padding = '10px 12px';
+    box.style.borderRadius = '12px';
+    box.style.background = ok ? 'rgba(178,134,224,.10)' : 'rgba(248,113,113,.10)';
+    box.style.border = ok ? '1px solid rgba(178,134,224,.25)' : '1px solid rgba(248,113,113,.25)';
+    box.style.color = ok ? 'rgba(234,228,242,.92)' : 'rgba(248,113,113,.95)';
   }
 
   function hideInlineMessage() {
-    if (!MSG_BOX) return;
-    MSG_BOX.textContent = '';
-    MSG_BOX.style.display = 'none';
+    const box =
+      document.getElementById('login-msg') ||
+      $('#login-msg') ||
+      $('#msg') ||
+      $('.login-msg') ||
+      $('.success-message');
+    if (!box) return;
+    box.textContent = '';
+    box.style.display = 'none';
   }
 
   function setSubmitting(isSubmitting, button, originalText) {
@@ -37,21 +72,32 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // ---------------- banner: verified=1 (sin duplicar banners) ----------------
-  try {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('verified') === '1') {
+  // ---------------- verified=1 (✅ sutil abajo + limpia URL) ----------------
+  (function handleVerifiedNotice() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('verified') !== '1') return;
+
       showInlineMessage('✅ Correo verificado. Ya puedes iniciar sesión.', true);
+
+      // Auto-ocultar (súper sutil)
+      setTimeout(() => {
+        // Solo ocultamos si el usuario no ha disparado un error después
+        const box = document.getElementById('login-msg');
+        if (box && box.textContent.includes('Correo verificado')) {
+          hideInlineMessage();
+        }
+      }, 6500);
 
       // Limpia la URL para que no se quede pegado el verified=1
       params.delete('verified');
       const qs = params.toString();
       const clean = window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash;
       window.history.replaceState({}, document.title, clean);
+    } catch (_) {
+      /* noop */
     }
-  } catch (_) {
-    /* noop */
-  }
+  })();
 
   // ---------------- DOM refs (robusto) ----------------
   const form =
@@ -187,7 +233,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const { res, data } = await postLogin(endpoint, email, password);
         lastStatus = res.status;
 
-        // Si es 404/405, probamos el siguiente endpoint (esto arregla el E2E aunque cambie la ruta del backend)
+        // Si es 404/405, probamos el siguiente endpoint
         if (res.status === 404 || res.status === 405) {
           console.warn(`[login.js] ${endpoint} -> HTTP ${res.status}. Probando siguiente endpoint…`);
           continue;
@@ -205,13 +251,13 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
 
-        // Algunos backends responden 200 sin JSON (o con payload distinto) pero sí setean cookie:
+        // Algunos backends responden 200 sin JSON pero sí setean cookie:
         if (res.ok && !data) {
           await waitForSessionAndRedirect();
           return;
         }
 
-        // Fallo real (401/403/400 etc) => mostramos y paramos (no tiene sentido seguir probando endpoints)
+        // Fallo real (401/403/400 etc)
         const msg =
           (data && (data.message || data.error)) ||
           (res.status === 401 ? 'Correo o contraseña incorrectos.' : `No se pudo iniciar sesión (HTTP ${res.status}).`);
@@ -273,8 +319,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (user) {
-      if (user._id)   sessionStorage.setItem('userId', user._id);
-      if (user.shop)  sessionStorage.setItem('shop', user.shop);
+      if (user._id) sessionStorage.setItem('userId', user._id);
+      if (user.shop) sessionStorage.setItem('shop', user.shop);
       if (user.email) sessionStorage.setItem('email', user.email);
 
       const redirectUrl = user.onboardingComplete ? '/dashboard' : '/onboarding';
