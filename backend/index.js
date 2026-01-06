@@ -760,6 +760,54 @@ app.get('/api/auth/verify-email', async (req, res) => {
   }
 });
 
+/* =========================
+ * ✅ LOGIN (email/pass) — E2E
+ * - Crea sesión (req.login)
+ * - Bloquea si email no está verificado
+ * - Responde { success:true, redirect }
+ * ========================= */
+app.post(['/api/login', '/api/auth/login', '/login'], async (req, res, next) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+
+    if (!email || !password) {
+      return res.status(400).json({ success: false, message: 'Ingresa tu correo y contraseña.' });
+    }
+
+    // Importante: aseguramos traer password aunque tu schema tenga select:false
+    const user = await User.findOne({ email }).select('+password +emailVerified');
+
+    if (!user || !user.password) {
+      return res.status(401).json({ success: false, message: 'Correo o contraseña incorrectos.' });
+    }
+
+    // ✅ Bloquear login si no verificó correo
+    if (user.emailVerified === false) {
+      return res.status(403).json({
+        success: false,
+        message: 'Tu correo aún no está verificado. Revisa tu bandeja de entrada.',
+      });
+    }
+
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok) {
+      return res.status(401).json({ success: false, message: 'Correo o contraseña incorrectos.' });
+    }
+
+    // ✅ Crear sesión con Passport (usa serializeUser/deserializeUser de ./auth)
+    req.login(user, (err) => {
+      if (err) return next(err);
+
+      const redirect = user.onboardingComplete ? '/dashboard' : '/onboarding';
+      return res.json({ success: true, redirect });
+    });
+  } catch (err) {
+    console.error('❌ /api/login error:', err);
+    return res.status(500).json({ success: false, message: 'Error del servidor' });
+  }
+});
+
 
 /* =========================
  * Utilidades de sesión / perfil
