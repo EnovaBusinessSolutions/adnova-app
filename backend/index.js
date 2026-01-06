@@ -920,14 +920,42 @@ app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
  * OAuth Google (login simple)
  * ========================= */
 app.get('/auth/google/login', passport.authenticate('google', { scope: ['profile', 'email'] }));
-app.get(
-  '/auth/google/login/callback',
-  passport.authenticate('google', { failureRedirect: '/' }),
-  (req, res) => {
-    const destino = req.user.onboardingComplete ? '/dashboard' : '/onboarding';
-    res.redirect(destino);
-  }
-);
+app.get('/auth/google/login/callback', (req, res, next) => {
+  passport.authenticate('google', { failureRedirect: '/login' }, async (err, user, info) => {
+    try {
+      if (err) return next(err);
+      if (!user) return res.redirect('/login');
+
+      // ✅ IMPORTANTE: como usamos custom callback, debemos hacer login manual
+      req.logIn(user, async (loginErr) => {
+        if (loginErr) return next(loginErr);
+
+        // ✅ Enviar email SOLO si fue creación nueva por Google
+        const isNewGoogleUser =
+          (info && (info.isNewUser === true || info.newUser === true)) ||
+          user?._isNewUser === true;
+
+        if (isNewGoogleUser) {
+          // Fire & forget para NO frenar la redirección
+          Promise.resolve()
+            .then(() =>
+              sendWelcomeEmail({
+                toEmail: user.email,
+                name: user.name || user.email?.split('@')?.[0] || 'Usuario',
+              })
+            )
+            .catch((e) => console.error('✉️  Welcome email (Google) falló:', e?.message || e));
+        }
+
+        const destino = user.onboardingComplete ? '/dashboard' : '/onboarding';
+        return res.redirect(destino);
+      });
+    } catch (e) {
+      return next(e);
+    }
+  })(req, res, next);
+});
+
 
 /* =========================
  * Debug / Diagnóstico
