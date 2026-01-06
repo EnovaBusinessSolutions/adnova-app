@@ -1,22 +1,29 @@
 /* public/js/login.js */
 document.addEventListener('DOMContentLoaded', () => {
-  // -------- helpers --------
-  const $  = (sel, root = document) => root.querySelector(sel);
+  // ---------------- helpers ----------------
+  const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
+  const MSG_BOX =
+    $('#login-msg') || $('#msg') || $('.login-msg') || $('.success-message');
+
   function showInlineMessage(text, ok = false) {
-    // Si existe un contenedor de mensaje, úsalo. Si no, fallback a alert.
-    const box = $('#login-msg') || $('#msg') || $('.login-msg') || $('.success-message');
-    if (box) {
-      box.textContent = text;
-      box.style.display = 'block';
-      box.style.marginTop = '12px';
-      box.style.fontSize = '13px';
-      box.style.lineHeight = '18px';
-      box.style.color = ok ? '#b286e0ff' : '#f87171';
+    if (MSG_BOX) {
+      MSG_BOX.textContent = text;
+      MSG_BOX.style.display = 'block';
+      MSG_BOX.style.marginTop = '12px';
+      MSG_BOX.style.fontSize = '13px';
+      MSG_BOX.style.lineHeight = '18px';
+      MSG_BOX.style.color = ok ? '#b286e0ff' : '#f87171';
       return;
     }
     alert(text);
+  }
+
+  function hideInlineMessage() {
+    if (!MSG_BOX) return;
+    MSG_BOX.textContent = '';
+    MSG_BOX.style.display = 'none';
   }
 
   function setSubmitting(isSubmitting, button, originalText) {
@@ -30,39 +37,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // -------- banner: verified=1 --------
+  // ---------------- banner: verified=1 (sin duplicar banners) ----------------
   try {
     const params = new URLSearchParams(window.location.search);
     if (params.get('verified') === '1') {
-      // Inserta un banner simple arriba del formulario (si existe contenedor)
-      const container = $('.login-container') || $('main') || document.body;
-      const banner = document.createElement('div');
-      banner.style.maxWidth = '520px';
-      banner.style.margin = '0 auto 14px auto';
-      banner.style.padding = '12px 14px';
-      banner.style.borderRadius = '12px';
-      banner.style.background = 'rgba(178,134,224,.12)';
-      banner.style.border = '1px solid rgba(178,134,224,.35)';
-      banner.style.color = '#EAE4F2';
-      banner.style.fontSize = '13px';
-      banner.style.lineHeight = '18px';
-      banner.innerHTML = '✅ <b>Correo verificado</b>. Ya puedes iniciar sesión.';
-      // Intenta insertarlo arriba del form si existe
-      const formCandidate =
-        document.getElementById('loginForm') ||
-        document.getElementById('login-form') ||
-        $('form');
-      if (formCandidate && formCandidate.parentElement) {
-        formCandidate.parentElement.insertBefore(banner, formCandidate);
-      } else {
-        container.prepend(banner);
-      }
+      showInlineMessage('✅ Correo verificado. Ya puedes iniciar sesión.', true);
+
+      // Limpia la URL para que no se quede pegado el verified=1
+      params.delete('verified');
+      const qs = params.toString();
+      const clean = window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash;
+      window.history.replaceState({}, document.title, clean);
     }
   } catch (_) {
     /* noop */
   }
 
-  // -------- DOM refs (robusto) --------
+  // ---------------- DOM refs (robusto) ----------------
   const form =
     document.getElementById('loginForm') ||
     document.getElementById('login-form') ||
@@ -85,7 +76,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Mostrar/ocultar contraseña
   $$('.toggle-password').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const targetId = btn.dataset.target;
+      const targetId = btn.dataset.target || 'password';
       const input = document.getElementById(targetId) || $(`#${CSS.escape(targetId)}`);
       if (!input) return;
 
@@ -102,17 +93,16 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Si no hay form, avisamos en consola (esto explicaría el submit nativo / GET)
   if (!form) {
-    console.error('[login.js] No se encontró el formulario de login. Revisa el id (loginForm/login-form) o el HTML.');
+    console.error('[login.js] No se encontró el formulario. Revisa que exista #loginForm.');
     return;
   }
 
-  // Blindaje por si el submit nativo se ejecuta
+  // Evita submit nativo por si falla JS (y evita GET accidentales)
   try {
-    form.setAttribute('method', 'post');
-    form.setAttribute('action', '/api/login');
     form.setAttribute('novalidate', 'novalidate');
+    // OJO: NO seteamos action/method aquí para no mandar a un endpoint incorrecto en fallback.
+    // El login lo controla 100% JS.
   } catch (_) {
     /* noop */
   }
@@ -122,20 +112,62 @@ document.addEventListener('DOMContentLoaded', () => {
     const el = document.getElementById('email') || $('[name="email"]') || $('#correo');
     return (el?.value || '').trim().toLowerCase();
   };
+
   const getPassword = () => {
     const el = document.getElementById('password') || $('[name="password"]') || $('#contrasena');
     return el?.value ?? '';
   };
 
-  const submitButton = form.querySelector('button[type="submit"]') || $('button[type="submit"]', form);
+  const submitButton =
+    form.querySelector('button[type="submit"]') ||
+    $('button[type="submit"]', form);
+
   const originalText = submitButton?.innerText || 'Iniciar sesión';
+
+  // ✅ Fallback inteligente por si el backend no tiene /api/login (según tus logs 404)
+  // Orden: primero lo que usa tu frontend hoy, luego alternativas comunes.
+  const LOGIN_ENDPOINTS = [
+    '/api/login',
+    '/login',
+    '/api/auth/login',
+  ];
 
   let inFlight = false;
 
+  async function postLogin(endpoint, email, password) {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      cache: 'no-store',
+      body: JSON.stringify({ email, password }),
+    });
+
+    let data = null;
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    if (ct.includes('application/json')) {
+      try { data = await res.json(); } catch { data = null; }
+    } else {
+      // si responde HTML u otra cosa, igual queremos avanzar a verificar sesión
+      try { await res.text(); } catch { /* noop */ }
+    }
+
+    return { res, data };
+  }
+
+  function isSuccessPayload(data) {
+    if (!data) return false;
+    return data.success === true || data.ok === true || data.authenticated === true;
+  }
+
   async function doLogin(e) {
-    if (e) e.preventDefault();
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (inFlight) return;
     inFlight = true;
+    hideInlineMessage();
 
     const email = getEmail();
     const password = getPassword();
@@ -149,45 +181,51 @@ document.addEventListener('DOMContentLoaded', () => {
     setSubmitting(true, submitButton, originalText);
 
     try {
-      const res = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        cache: 'no-store',
-        body: JSON.stringify({ email, password }),
-      });
+      let lastStatus = null;
 
-      let data = {};
-      try { data = await res.json(); } catch { /* no JSON */ }
+      for (const endpoint of LOGIN_ENDPOINTS) {
+        const { res, data } = await postLogin(endpoint, email, password);
+        lastStatus = res.status;
 
-      // ✅ Mensajes claros según status
-      if (res.status === 404) {
-        console.error('[login.js] 404 en /api/login. Esto suele indicar método/ruta mal montada o que el submit nativo está corriendo.');
-        showInlineMessage('⚠️ No se encontró el endpoint de login (404). Revisa el despliegue o el método de la petición.', false);
-        return;
-      }
-      if (res.status === 405) {
-        showInlineMessage('⚠️ Método no permitido. El login debe enviarse por POST.', false);
-        return;
-      }
+        // Si es 404/405, probamos el siguiente endpoint (esto arregla el E2E aunque cambie la ruta del backend)
+        if (res.status === 404 || res.status === 405) {
+          console.warn(`[login.js] ${endpoint} -> HTTP ${res.status}. Probando siguiente endpoint…`);
+          continue;
+        }
 
-      if (res.ok && data.success) {
-        // ✅ Usa redirect del backend si viene
-        if (data.redirect) {
+        // Si el backend devuelve redirect explícito
+        if (data && data.redirect) {
           window.location.href = data.redirect;
           return;
         }
-        // Fallback: espera sesión y redirige
-        await waitForSessionAndRedirect();
+
+        // Éxito directo
+        if (res.ok && isSuccessPayload(data)) {
+          await waitForSessionAndRedirect();
+          return;
+        }
+
+        // Algunos backends responden 200 sin JSON (o con payload distinto) pero sí setean cookie:
+        if (res.ok && !data) {
+          await waitForSessionAndRedirect();
+          return;
+        }
+
+        // Fallo real (401/403/400 etc) => mostramos y paramos (no tiene sentido seguir probando endpoints)
+        const msg =
+          (data && (data.message || data.error)) ||
+          (res.status === 401 ? 'Correo o contraseña incorrectos.' : `No se pudo iniciar sesión (HTTP ${res.status}).`);
+
+        showInlineMessage(msg, false);
         return;
       }
 
-      // 401/403 suelen ser credenciales o bloqueo
-      const msg = data.message || (res.status === 401
-        ? 'Correo o contraseña incorrectos.'
-        : `No se pudo iniciar sesión (HTTP ${res.status}).`);
-
-      showInlineMessage(msg, false);
+      // Si llegamos aquí, todos los endpoints dieron 404/405
+      console.error('[login.js] Ningún endpoint de login respondió. Revisa backend (rutas) y deploy.');
+      showInlineMessage(
+        `⚠️ No se encontró el endpoint de login. El servidor respondió ${lastStatus ?? '—'}. Revisa backend/rutas.`,
+        false
+      );
     } catch (err) {
       console.error('[login.js] Login error:', err);
       showInlineMessage('❌ Error al conectar con el servidor.', false);
@@ -197,15 +235,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Intercepta submit
-  form.addEventListener('submit', doLogin);
+  // Intercepta submit (captura + bubbling para blindaje total)
+  form.addEventListener('submit', doLogin, true);
+  form.addEventListener('submit', doLogin, false);
 
-  // Y también intercepta click del botón (blindaje extra)
+  // Blindaje extra: click del botón
   if (submitButton) {
-    submitButton.addEventListener('click', (e) => {
-      // si por algo el submit no se engancha, aquí lo forzamos
-      doLogin(e);
-    });
+    submitButton.addEventListener('click', (e) => doLogin(e));
   }
 
   // Espera a que la sesión esté lista y redirige según onboarding
@@ -213,20 +249,26 @@ document.addEventListener('DOMContentLoaded', () => {
     let attempts = 0;
     let user = null;
 
-    while (attempts < 10) {
+    while (attempts < 12) {
       try {
-        const resUser = await fetch('/api/session', { credentials: 'include', cache: 'no-store' });
+        const resUser = await fetch('/api/session', {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+
         if (resUser.ok) {
           const sessionData = await resUser.json();
-          if (sessionData.authenticated) {
-            user = sessionData.user;
+
+          if (sessionData && (sessionData.authenticated || sessionData.ok)) {
+            user = sessionData.user || sessionData.data?.user || sessionData.data || null;
             break;
           }
         }
       } catch {
-        // noop
+        /* noop */
       }
-      await new Promise(r => setTimeout(r, 250));
+
+      await new Promise((r) => setTimeout(r, 250));
       attempts++;
     }
 
@@ -237,17 +279,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const redirectUrl = user.onboardingComplete ? '/dashboard' : '/onboarding';
       window.location.href = redirectUrl;
-    } else {
-      showInlineMessage('⚠️ No se pudo establecer sesión. Intenta iniciar sesión de nuevo.', false);
+      return;
     }
+
+    showInlineMessage('⚠️ Iniciaste sesión, pero no se pudo confirmar la sesión en /api/session. Intenta de nuevo.', false);
   }
 
-  // Sync ojo al cargar (mejor dentro del DOMContentLoaded)
+  // Sync ojo al cargar
   (function syncEyeOnLoad() {
     const input = document.getElementById('password');
     const btn = document.querySelector('.toggle-password[data-target="password"]');
     if (!input || !btn) return;
-    const isHidden = (input.type === 'password');
+    const isHidden = input.type === 'password';
     btn.classList.toggle('eye-visible', isHidden);
     btn.classList.toggle('eye-hidden', !isHidden);
   })();
