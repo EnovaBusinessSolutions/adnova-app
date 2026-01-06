@@ -39,6 +39,11 @@ function normalizeArray(arr, normFn) {
   return Array.from(out);
 }
 
+function normName(v = '') {
+  // ✅ normaliza whitespace (sin “poner” mayúsculas forzadas)
+  return String(v || '').replace(/\s+/g, ' ').trim();
+}
+
 /* ---------------- sub-schema de suscripción (Stripe) ---------------- */
 const subscriptionSchema = new mongoose.Schema(
   {
@@ -63,6 +68,9 @@ const subscriptionSchema = new mongoose.Schema(
 /* ---------------- schema principal ---------------- */
 const userSchema = new mongoose.Schema(
   {
+    // ✅ NUEVO: nombre (para emails personalizados)
+    name: { type: String, trim: true, default: '', set: normName },
+
     email: {
       type: String,
       required: true,
@@ -74,6 +82,12 @@ const userSchema = new mongoose.Schema(
     password: { type: String },
 
     onboardingComplete: { type: Boolean, default: false },
+
+    // ✅ NUEVO: verificación de correo
+    // - emailVerified undefined en usuarios legacy => NO bloquea login si tú lo manejas así
+    emailVerified: { type: Boolean, default: false, index: true },
+    verifyEmailTokenHash: { type: String, index: true },
+    verifyEmailExpires: { type: Date, index: true },
 
     // Shopify
     shop: { type: String },
@@ -179,8 +193,15 @@ const userSchema = new mongoose.Schema(
 /* ---------------- índices útiles ---------------- */
 userSchema.index({ plan: 1 });
 
+// Opcional extra (útil si quieres limpiar tokens expirados)
+userSchema.index({ verifyEmailExpires: 1 }, { sparse: true });
+
 /* ---------------- hooks ---------------- */
 userSchema.pre('save', function (next) {
+  if (this.isModified('name')) {
+    this.name = normName(this.name);
+  }
+
   if (this.isModified('selectedMetaAccounts')) {
     this.selectedMetaAccounts = normalizeArray(this.selectedMetaAccounts, normMetaId);
   }

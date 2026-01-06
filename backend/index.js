@@ -16,7 +16,8 @@ const compression = require('compression');
 require('./auth');
 
 const User = require('./models/User');
-const { sendWelcomeEmail, sendResetPasswordEmail } = require('./services/emailService');
+const { sendVerifyEmail, sendWelcomeEmail, sendResetPasswordEmail } = require('./services/emailService');
+
 
 /* =========================
  * Modelos para Integraciones (Disconnect)
@@ -632,28 +633,50 @@ app.post('/api/complete-onboarding', async (req, res) => {
   }
 });
 
+// =========================
+// Email verification helpers
+// =========================
+const VERIFY_TTL_HOURS = Number(process.env.VERIFY_EMAIL_TTL_HOURS || 24);
+
+function makeVerifyToken() {
+  return crypto.randomBytes(32).toString('hex'); // token que viaja por email
+}
+
+function hashToken(token) {
+  return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+
 /* =========================
  * Auth básica (email/pass)
  * ========================= */
 
 app.post('/api/register', async (req, res) => {
   try {
-    let { email, password } = req.body || {};
-    if (!email || !password) {
-      return res
-        .status(400)
-        .json({ success: false, message: 'Correo y contraseña son requeridos' });
+    let { name, email, password } = req.body || {};
+
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Nombre, correo y contraseña son requeridos',
+      });
     }
 
+    name = String(name).trim();
     email = String(email).trim().toLowerCase();
+
+    if (name.length < 2 || name.length > 60) {
+      return res.status(400).json({
+        success: false,
+        message: 'El nombre debe tener entre 2 y 60 caracteres',
+      });
+    }
 
     const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRe.test(email)) {
-      return res
-        .status(400)
-        .json({ success: false, message: 'Correo inválido' });
+      return res.status(400).json({ success: false, message: 'Correo inválido' });
     }
-    if (password.length < 8) {
+    if (String(password).length < 8) {
       return res.status(400).json({
         success: false,
         message: 'La contraseña debe tener al menos 8 caracteres',
@@ -662,133 +685,81 @@ app.post('/api/register', async (req, res) => {
 
     const exists = await User.findOne({ email });
     if (exists) {
-      return res
-        .status(409)
-        .json({ success: false, message: 'El email ya está registrado' });
+      return res.status(409).json({ success: false, message: 'El email ya está registrado' });
     }
 
     const hashed = await bcrypt.hash(password, 10);
-    const user = await User.create({ email, password: hashed });
 
+    // ✅ Genera token verificación (guardamos hash en DB)
+    const verifyToken = makeVerifyToken();
+    const verifyTokenHash = hashToken(verifyToken);
+    const verifyExpires = new Date(Date.now() + VERIFY_TTL_HOURS * 60 * 60 * 1000);
+
+    // ✅ Crea usuario con verificación pendiente
+    const user = await User.create({
+      name,
+      email,
+      password: hashed,
+
+      // Si tu schema no tenía estos campos, igual te recomiendo agregarlos al modelo User.
+      // Si tu schema es strict y no los tiene, NO se guardarán (te lo indico abajo).
+      emailVerified: false,
+      verifyEmailTokenHash: verifyTokenHash,
+      verifyEmailExpires: verifyExpires,
+    });
+
+    // ✅ Enviar correo de verificación (NO bloquea el registro si falla)
     try {
-      await sendWelcomeEmail(email);
+      await sendVerifyEmail({ toEmail: user.email, token: verifyToken, name: user.name });
     } catch (mailErr) {
-      console.error('✉️  Email bienvenida falló (registro OK):', mailErr?.message || mailErr);
+      console.error('✉️  Email verificación falló (registro OK):', mailErr?.message || mailErr);
     }
 
     return res.status(201).json({
       success: true,
-      message: 'Usuario registrado',
+      message: 'Usuario registrado. Revisa tu correo para verificar tu cuenta.',
       confirmUrl: `/confirmation.html?email=${encodeURIComponent(user.email)}`,
     });
   } catch (err) {
     if (err && err.code === 11000) {
-      return res
-        .status(409)
-        .json({ success: false, message: 'El email ya está registrado' });
+      return res.status(409).json({ success: false, message: 'El email ya está registrado' });
     }
     console.error('❌ Error al registrar usuario:', err);
-    return res
-      .status(500)
-      .json({ success: false, message: 'Error interno al registrar' });
+    return res.status(500).json({ success: false, message: 'Error interno al registrar' });
   }
 });
 
-app.post('/api/forgot-password', async (req, res) => {
-  const { email } = req.body;
-  if (!email)
-    return res
-      .status(400)
-      .json({ success: false, message: 'Correo requerido' });
-
+app.get('/api/auth/verify-email', async (req, res) => {
   try {
-    const user = await User.findOne({ email });
-    if (!user) return res.json({ success: true });
+    const token = String(req.query.token || '').trim();
+    if (!token) return res.status(400).send('Token faltante');
 
-    const token = crypto.randomBytes(32).toString('hex');
-    const expira = new Date(Date.now() + 60 * 60 * 1000);
+    const tokenHash = hashToken(token);
 
-    user.resetPasswordToken = token;
-    user.resetPasswordExpires = expira;
-    await user.save();
-
-    const resetUrl = `https://adray.ai/reset-password.html?token=${token}`;
-
-    try {
-      await sendResetPasswordEmail(user.email, resetUrl);
-    } catch (mailErr) {
-      console.error('✉️  Email reset falló:', mailErr?.message || mailErr);
-    }
-
-    return res.json({ success: true });
-  } catch (err) {
-    console.error('❌ forgot-password:', err);
-    res.status(500).json({ success: false, message: 'Error de servidor' });
-  }
-});
-
-app.post('/api/reset-password', async (req, res) => {
-  const { token, password } = req.body;
-  if (!token || !password) {
-    return res
-      .status(400)
-      .json({ success: false, message: 'Datos incompletos' });
-  }
-  try {
     const user = await User.findOne({
-      resetPasswordToken: token,
-      resetPasswordExpires: { $gt: new Date() },
+      verifyEmailTokenHash: tokenHash,
+      verifyEmailExpires: { $gt: new Date() },
     });
-    if (!user)
+
+    if (!user) {
       return res
         .status(400)
-        .json({ success: false, message: 'Token inválido o expirado' });
-    user.password = await bcrypt.hash(password, 10);
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpires = undefined;
+        .send('El enlace de verificación es inválido o expiró. Solicita uno nuevo.');
+    }
+
+    user.emailVerified = true;
+    user.verifyEmailTokenHash = undefined;
+    user.verifyEmailExpires = undefined;
     await user.save();
-    res.json({ success: true });
+
+    // ✅ Redirección a una página bonita (elige una)
+    return res.redirect(302, '/login?verified=1');
   } catch (err) {
-    console.error('❌ reset-password:', err);
-    res.status(500).json({ success: false, message: 'Error de servidor' });
+    console.error('❌ verify-email:', err);
+    return res.status(500).send('Error al verificar el correo');
   }
 });
 
-app.post('/api/login', async (req, res, next) => {
-  const { email, password } = req.body || {};
-  if (!email || !password) {
-    return res
-      .status(400)
-      .json({ success: false, message: 'Correo y contraseña son requeridos' });
-  }
-  try {
-    const user = await User.findOne({ email });
-    if (!user)
-      return res
-        .status(401)
-        .json({ success: false, message: 'Usuario no encontrado' });
-
-    const match = await bcrypt.compare(password, user.password);
-    if (!match)
-      return res
-        .status(401)
-        .json({ success: false, message: 'Contraseña incorrecta' });
-
-    req.login(user, (err) => {
-      if (err) return next(err);
-      req.session.userId = user._id;
-      if (user.onboardingComplete && user.shopifyConnected) {
-        return res.status(200).json({ success: true, redirect: '/dashboard' });
-      }
-      return res
-        .status(200)
-        .json({ success: true, redirect: '/onboarding' });
-    });
-  } catch (err) {
-    console.error('❌ Error al hacer login:', err);
-    res.status(500).json({ success: false, message: 'Error del servidor' });
-  }
-});
 
 /* =========================
  * Utilidades de sesión / perfil
