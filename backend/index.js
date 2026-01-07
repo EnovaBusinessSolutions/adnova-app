@@ -13,7 +13,8 @@ const crypto = require('crypto');
 const helmet = require('helmet');
 const compression = require('compression');
 
-require('./auth');
+const auth = require('./auth'); // inicializa passport + exports helpers
+const { consumeGoogleWelcomeFlagAndSend } = auth;
 
 const User = require('./models/User');
 const { sendVerifyEmail, sendWelcomeEmail, sendResetPasswordEmail } = require('./services/emailService');
@@ -917,44 +918,43 @@ app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
 
 
 /* =========================
- * OAuth Google (login simple)
+ * OAuth Google (login simple) — E2E
+ * - Si el usuario es NUEVO por Google -> envía welcome email justo antes de ir a onboarding
+ * - Usa bandera en sesión (req.session.googleWelcome) creada en backend/auth.js
  * ========================= */
-app.get('/auth/google/login', passport.authenticate('google', { scope: ['profile', 'email'] }));
-app.get('/auth/google/login/callback', (req, res, next) => {
-  passport.authenticate('google', { failureRedirect: '/login' }, async (err, user, info) => {
+app.get(
+  '/auth/google/login',
+  passport.authenticate('google', {
+    scope: ['profile', 'email'],
+    prompt: 'select_account', // opcional (UX)
+  })
+);
+
+app.get(
+  '/auth/google/login/callback',
+  passport.authenticate('google', { failureRedirect: '/login' }),
+  async (req, res, next) => {
     try {
-      if (err) return next(err);
-      if (!user) return res.redirect('/login');
+      // ✅ Aquí ya existe req.user y req.session
+      // ✅ Enviar welcome si aplica (solo usuario nuevo)
+      const result = await consumeGoogleWelcomeFlagAndSend(req);
 
-      // ✅ IMPORTANTE: como usamos custom callback, debemos hacer login manual
-      req.logIn(user, async (loginErr) => {
-        if (loginErr) return next(loginErr);
+      // Log corto para Render (te ayuda a confirmar)
+      if (result?.sent) {
+        console.log('[google-callback] Welcome enviado ✅');
+      } else {
+        console.log('[google-callback] Welcome no enviado:', result?.reason || 'no-reason');
+      }
 
-        // ✅ Enviar email SOLO si fue creación nueva por Google
-        const isNewGoogleUser =
-          (info && (info.isNewUser === true || info.newUser === true)) ||
-          user?._isNewUser === true;
-
-        if (isNewGoogleUser) {
-          // Fire & forget para NO frenar la redirección
-          Promise.resolve()
-            .then(() =>
-              sendWelcomeEmail({
-                toEmail: user.email,
-                name: user.name || user.email?.split('@')?.[0] || 'Usuario',
-              })
-            )
-            .catch((e) => console.error('✉️  Welcome email (Google) falló:', e?.message || e));
-        }
-
-        const destino = user.onboardingComplete ? '/dashboard' : '/onboarding';
-        return res.redirect(destino);
-      });
+      const destino = req.user?.onboardingComplete ? '/dashboard' : '/onboarding';
+      return res.redirect(destino);
     } catch (e) {
+      console.error('[google-callback] error:', e?.message || e);
       return next(e);
     }
-  })(req, res, next);
-});
+  }
+);
+
 
 
 /* =========================
