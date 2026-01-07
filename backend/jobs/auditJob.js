@@ -6,6 +6,12 @@ const mongoose = require('mongoose');
 const Audit = require('../models/Audit');
 const User  = require('../models/User');
 
+// ✅ Mailer (para enviar "Auditoría lista")
+const { sendMail, HAS_SMTP } = require('../services/mailer');
+
+const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
+const DEBUG_EMAIL = process.env.DEBUG_EMAIL === 'true';
+
 // Preferir selección desde los conectores
 let MetaAccount, GoogleAccount, ShopConnections;
 try { MetaAccount = require('../models/MetaAccount'); } catch {
@@ -242,7 +248,7 @@ function filterGA4Snapshot(snapshot, selectedPropertyId) {
   if (Array.isArray(out.byProperty)) {
     out.byProperty = out.byProperty.filter(matchPropId);
 
-    // ✅ MEJORA: si queda 1 property, fijamos aggregate a esa property (para que LLM/UI no use el global)
+    // ✅ MEJORA: si queda 1 property, fijamos aggregate a esa property
     if (out.byProperty.length === 1) {
       const one = out.byProperty[0];
       const users       = Number(one?.users ?? one?.kpis?.users ?? 0);
@@ -261,7 +267,6 @@ function filterGA4Snapshot(snapshot, selectedPropertyId) {
     if (pid !== wanted) {
       delete out.propertyId;
       delete out.property_id;
-      // out.property lo mantenemos si ya lo set arriba; si no, se limpia:
       if (!out.property || normGA4(out.property) !== wanted) delete out.property;
     }
   }
@@ -419,6 +424,131 @@ function buildSelectionMismatchIssue({ type, selected, available = [] }) {
     recommendation: 'En Ajustes → Conexiones vuelve a seleccionar 1 cuenta / 1 propiedad. Si no aparece, reconecta la integración con el usuario correcto.',
     estimatedImpact: 'alto',
   };
+}
+
+/* =========================
+   ✅ NUEVO: NOTIFICACIÓN EMAIL
+   ========================= */
+function pickUserName(u = {}) {
+  const raw =
+    u.name ||
+    u.fullName ||
+    u.firstName ||
+    u.nombre ||
+    u.businessName ||
+    u.companyName ||
+    '';
+
+  const n = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (n) return n;
+
+  const email = String(u.email || '').trim();
+  if (!email) return 'Usuario';
+
+  const local = email.split('@')[0] || 'Usuario';
+  const pretty = local.replace(/[._-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return pretty ? pretty.charAt(0).toUpperCase() + pretty.slice(1) : 'Usuario';
+}
+
+function buildAuditReadyCopy({ name }) {
+  const loginUrl = `${APP_URL}/login`;
+
+  const subject = process.env.AUDIT_READY_EMAIL_SUBJECT || '¡Tienes una auditoría disponible!';
+  const text =
+    `Hola ${name},\n\n` +
+    `Tu auditoría está lista. Adray analizó tus cuentas y preparó un reporte con puntos clave para mejorar tu rendimiento.\n\n` +
+    `Consulta en tu panel de Adray. Dando clic aquí: ${loginUrl}\n\n` +
+    `— Equipo Adray\n` +
+    `Soporte: support@adray.ai`;
+
+  const html =
+    `<p>Hola <strong>${String(name).replaceAll('<','&lt;').replaceAll('>','&gt;')}</strong>,</p>` +
+    `<p>Tu auditoría está lista. Adray analizó tus cuentas y preparó un reporte con puntos clave para mejorar tu rendimiento.</p>` +
+    `<p>Consulta en tu panel de Adray. Dando clic aquí: <a href="${loginUrl}">${loginUrl}</a></p>` +
+    `<p>— Equipo Adray<br/>Soporte: <a href="mailto:support@adray.ai">support@adray.ai</a></p>`;
+
+  return { subject, text, html, loginUrl };
+}
+
+async function markAuditEmailAttempt(auditId) {
+  // strict:false para que no truene aunque tu schema aún no tenga notifications
+  await Audit.updateOne(
+    { _id: auditId },
+    {
+      $inc: { 'notifications.auditReadyEmailAttempts': 1 },
+    },
+    { strict: false }
+  );
+}
+
+async function markAuditEmailSuccess({ auditId, to, messageId }) {
+  await Audit.updateOne(
+    { _id: auditId },
+    {
+      $set: {
+        'notifications.auditReadyEmailSentAt': new Date(),
+        'notifications.auditReadyEmailTo': to,
+        'notifications.auditReadyEmailMessageId': messageId || '',
+        'notifications.auditReadyEmailLastError': '',
+      },
+    },
+    { strict: false }
+  );
+}
+
+async function markAuditEmailFail({ auditId, to, error }) {
+  await Audit.updateOne(
+    { _id: auditId },
+    {
+      $set: {
+        'notifications.auditReadyEmailTo': to || '',
+        'notifications.auditReadyEmailLastError': String(error?.message || error || 'EMAIL_FAILED'),
+      },
+    },
+    { strict: false }
+  );
+}
+
+async function maybeSendAuditReadyEmail({ userId, auditId }) {
+  if (!HAS_SMTP) return;
+
+  const user = await User.findById(userId)
+    .select('email name fullName firstName nombre businessName companyName')
+    .lean();
+
+  const to = String(user?.email || '').trim().toLowerCase();
+  if (!to) return;
+
+  // si ya fue notificada, no reenviar (por si hay reintentos externos)
+  const fresh = await Audit.findById(auditId)
+    .select('notifications.auditReadyEmailSentAt')
+    .lean();
+
+  if (fresh?.notifications?.auditReadyEmailSentAt) return;
+
+  const name = pickUserName(user);
+
+  await markAuditEmailAttempt(auditId);
+
+  try {
+    const { subject, text, html } = buildAuditReadyCopy({ name });
+
+    const info = await sendMail({
+      to,
+      subject,
+      text,
+      html,
+    });
+
+    if (DEBUG_EMAIL) {
+      console.log('[auditJob] audit-ready email sent:', { to, messageId: info?.messageId, auditId });
+    }
+
+    await markAuditEmailSuccess({ auditId, to, messageId: info?.messageId });
+  } catch (err) {
+    console.error('[auditJob] audit-ready email error:', err?.message || err);
+    await markAuditEmailFail({ auditId, to, error: err });
+  }
 }
 
 /* ---------- MAIN ---------- */
@@ -657,7 +787,6 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     if (t === 'ga4') {
       if (!collectGA4) throw new Error('GA4_COLLECTOR_NOT_AVAILABLE');
 
-      // ✅ MEJORA: si ya hay selección (1), forzamos el collector a esa property (menos costo/latencia y menos ruido)
       if (selGA4.length) {
         const forced = ga4ToApiName(selGA4[0]) || selGA4[0];
         raw = await collectGA4(userId, { property_id: forced });
@@ -707,7 +836,6 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
       snapshot = raw;
 
-      // ✅ APLICAR SELECCIÓN GA4 (1) (defensivo; aunque ya la forzamos arriba)
       if (selGA4.length) {
         const wanted = selGA4[0];
         const filtered = filterGA4Snapshot(snapshot, wanted);
@@ -792,6 +920,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
     let auditJson = { summary: '', issues: [] };
 
+    // ✅ Solo si hay data real => generamos con IA
     if (!noData) {
       auditJson = await generateAudit({
         type: t,
@@ -837,7 +966,15 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       trendSummary: trend || null,
     };
 
-    await Audit.create(auditDoc);
+    // ✅ Guardar auditoría
+    const created = await Audit.create(auditDoc);
+
+    // ✅ NUEVO: mandar correo SOLO cuando IA generó auditoría (evita noData)
+    if (!noData && created?._id) {
+      // No bloquear el flujo por email: si falla, se registra en notifications.*
+      await maybeSendAuditReadyEmail({ userId, auditId: created._id });
+    }
+
     return true;
 
   } catch (e) {

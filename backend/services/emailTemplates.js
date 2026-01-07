@@ -304,8 +304,59 @@ function resetPasswordEmail({
   });
 }
 
+function auditReadyEmail({
+  name,
+  brand = 'Adray',
+  supportEmail = 'support@adray.ai',
+  loginUrl = 'https://adray.ai/login',
+} = {}) {
+  const displayName = safeName(name, '');
+  const safeLoginUrl = escapeHtml(safeUrl(loginUrl));
+
+  const contentHtml = `
+    <div style="padding-top:26px;">
+      <div class="h1" style="margin:0 0 12px;font-size:26px;color:#EDEBFF;font-weight:900;letter-spacing:-.02em">
+        Auditoría lista
+      </div>
+
+      <p style="margin:0 0 12px;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Hola <strong style="color:#FFFFFF">${escapeHtml(displayName)}</strong>,
+      </p>
+
+      <p style="margin:0 0 18px;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Tu auditoría está lista. Adray analizó tus cuentas y preparó un reporte con puntos clave para mejorar tu rendimiento.
+      </p>
+
+      <p style="margin:0 0 8px;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Consulta en tu panel de Adray:
+      </p>
+
+      <p style="margin:0 0 16px;font-size:14px;line-height:22px;">
+        <a href="${safeLoginUrl}" style="color:#9AA4FF;text-decoration:underline;">
+          ${safeLoginUrl}
+        </a>
+      </p>
+
+      <p style="margin:18px 0 0;font-size:13px;line-height:20px;color:#BDB2C9;">
+        — Equipo ${escapeHtml(brand)}
+      </p>
+
+      <p style="margin:10px 0 0;font-size:12px;line-height:18px;color:#9b90aa;">
+        Soporte: <a href="mailto:${escapeHtml(supportEmail)}" style="color:#9b90aa;text-decoration:underline">${escapeHtml(supportEmail)}</a>
+      </p>
+    </div>
+  `;
+
+  return wrapEmail({
+    title: '¡Tienes una auditoría disponible!',
+    preheader: 'Tu auditoría está lista. Entra a tu panel para revisarla.',
+    contentHtml,
+  });
+}
+
 module.exports = {
   welcomeEmail,
   resetPasswordEmail,
   verifyEmail,
+  auditReadyEmail,
 };

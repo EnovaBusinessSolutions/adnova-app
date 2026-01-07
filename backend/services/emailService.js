@@ -2,7 +2,14 @@
 'use strict';
 
 const { sendMail, verify, HAS_SMTP, FROM } = require('./mailer');
-const { welcomeEmail, resetPasswordEmail, verifyEmail } = require('./emailTemplates');
+
+// ✅ IMPORTANTE: ya que editaste emailTemplates.js, aquí debemos importar también auditReadyEmail
+const {
+  welcomeEmail,
+  resetPasswordEmail,
+  verifyEmail,
+  auditReadyEmail,
+} = require('./emailTemplates');
 
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
 const DEBUG_EMAIL = process.env.DEBUG_EMAIL === 'true';
@@ -94,7 +101,7 @@ async function sendVerifyEmail({ toEmail, token, name } = {}) {
 /**
  * ✅ Bienvenida (Google login / post-verify / etc.)
  *
- * Firma E2E NUEVA:
+ * Firma E2E:
  *   sendWelcomeEmail({ toEmail, name })
  *
  * Retro-compat:
@@ -126,13 +133,11 @@ async function sendWelcomeEmail(input) {
       to,
       subject: `¡Bienvenido a Adray, ${finalName}!`,
       text:
-        `¡Bienvenido a Adray, ${finalName}!\n` +
-        `\n` +
+        `¡Bienvenido a Adray, ${finalName}!\n\n` +
         `¡Felicidades, ${finalName}! 🎉\n` +
         `Te has registrado exitosamente en Adray, tu Inteligencia Artificial experta en Marketing.\n` +
         `Ya puedes iniciar sesión y comenzar a optimizar tus campañas.\n` +
-        `¡No olvides conectar tu onboarding!\n` +
-        `\n` +
+        `¡No olvides conectar tu onboarding!\n\n` +
         `— Equipo Adray\n` +
         `Soporte: support@adray.ai`,
       html,
@@ -147,9 +152,55 @@ async function sendWelcomeEmail(input) {
 }
 
 /**
+ * ✅ NUEVO: Email "Tu auditoría está lista"
+ * Firma:
+ *   sendAuditReadyEmail({ toEmail, name })
+ */
+async function sendAuditReadyEmail({ toEmail, name } = {}) {
+  if (!HAS_SMTP) {
+    if (DEBUG_EMAIL) console.warn('[emailService] SMTP no configurado. Omitiendo audit-ready.');
+    return fail('SMTP_NOT_CONFIGURED', { skipped: true });
+  }
+
+  const to = normEmail(toEmail);
+  if (!to) return fail('MISSING_TO_EMAIL');
+
+  const finalName = safeName(name, to);
+  const loginUrl = `${APP_URL}/login`;
+
+  try {
+    const html = auditReadyEmail({
+      name: finalName,
+      brand: 'Adray',
+      supportEmail: 'support@adray.ai',
+      loginUrl,
+    });
+
+    const info = await sendMail({
+      to,
+      subject: '¡Tienes una auditoría disponible!',
+      text:
+        `Auditoría lista:\n\n` +
+        `Hola ${finalName},\n\n` +
+        `Tu auditoría está lista. Adray analizó tus cuentas y preparó un reporte con puntos clave para mejorar tu rendimiento.\n\n` +
+        `Consulta en tu panel de Adray: ${loginUrl}\n\n` +
+        `— Equipo Adray\n` +
+        `Soporte: support@adray.ai`,
+      html,
+    });
+
+    if (DEBUG_EMAIL) console.log('[emailService] audit-ready sent:', { to, messageId: info?.messageId });
+    return ok({ to, messageId: info?.messageId, response: info?.response });
+  } catch (err) {
+    console.error('[emailService] sendAuditReadyEmail error:', err?.message || err);
+    return fail(err, { to });
+  }
+}
+
+/**
  * Reset password
  *
- * Firma NUEVA recomendada:
+ * Firma recomendada:
  *   sendResetPasswordEmail({ toEmail, resetUrl, name })
  *
  * Retro-compat:
@@ -248,6 +299,7 @@ async function sendTestEmail() {
 module.exports = {
   sendVerifyEmail,
   sendWelcomeEmail,
+  sendAuditReadyEmail, // ✅ NUEVO
   sendResetPasswordEmail,
   verifySMTP,
   sendTestEmail,

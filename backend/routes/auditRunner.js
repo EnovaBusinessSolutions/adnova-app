@@ -244,7 +244,7 @@ async function detectReadySources(userId) {
 async function fetchLatestAuditSummary(userId, type) {
   const doc = await Audit.findOne({ userId, type })
     .sort({ generatedAt: -1 })
-    .select('_id type generatedAt summary issues origin')
+    .select('_id type generatedAt summary issues origin notifications')
     .lean();
   if (!doc) return null;
   return {
@@ -254,12 +254,51 @@ async function fetchLatestAuditSummary(userId, type) {
     summary: doc.summary,
     issuesCount: Array.isArray(doc.issues) ? doc.issues.length : 0,
     origin: doc.origin || null,
+    // ✅ útil para debug E2E email
+    notifiedAt: doc?.notifications?.auditReadyEmailSentAt || null,
   };
+}
+
+async function fetchLatestAuditsByTypes(userId, types = []) {
+  const wanted = (types || []).map((t) => normalizeType(t)).filter(Boolean);
+  if (!wanted.length) return {};
+
+  const docs = await Audit.find({ userId, type: { $in: wanted } })
+    .sort({ generatedAt: -1 })
+    .limit(50)
+    .select('_id type generatedAt summary issues origin notifications')
+    .lean();
+
+  const out = {};
+  for (const d of docs) {
+    const t = String(d.type || '').toLowerCase();
+    if (!out[t]) {
+      out[t] = {
+        id: String(d._id),
+        type: t,
+        generatedAt: d.generatedAt,
+        summary: d.summary,
+        issuesCount: Array.isArray(d.issues) ? d.issues.length : 0,
+        origin: d.origin || null,
+        notifiedAt: d?.notifications?.auditReadyEmailSentAt || null,
+      };
+    }
+  }
+  return out;
 }
 
 /* ============== job map (in-memory) ============== */
 const jobs = new Map();
 const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+/* ✅ idempotencia básica: evitar doble click que dispare dos jobs */
+const LAST_START = new Map(); // userId -> { at:number, key:string }
+const START_DEDUP_MS = Number(process.env.AUDIT_START_DEDUP_MS || 12_000);
+
+function buildStartKey({ userId, source, types }) {
+  const t = (types || []).slice().sort().join(',');
+  return `${String(userId)}|${String(source || '')}|${t}`;
+}
 
 /* ===========================================================
  * POST /api/audits/:type/run
@@ -282,7 +321,6 @@ router.post('/:type/run', requireAuth, express.json(), async (req, res) => {
     }
 
     if (st.requiredSelection) {
-      // ✅ importantísimo: no correr auditoría hasta que haya selección persistida
       return res.status(409).json({
         ok: false,
         error: 'SELECTION_REQUIRED',
@@ -319,14 +357,16 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
 
     // 2) Qué pidió el frontend
     const rawTypes = Array.isArray(req.body?.types)
-      ? req.body.types.map((t) => normalizeType(String(t))).filter((t) => ['meta','google','shopify','ga4'].includes(t))
+      ? req.body.types
+          .map((t) => normalizeType(String(t)))
+          .filter((t) => ['meta','google','shopify','ga4'].includes(t))
       : null;
 
     let types = [];
     const skippedByConnection = { ...skipped };
 
     if (req.body?.types === 'auto' || !rawTypes) {
-      // Modo auto: SOLO los ready (evita carreras / selection_required)
+      // Modo auto: SOLO los ready
       types = [...typesReady];
     } else {
       // Intersección: lo pedido vs lo que está listo
@@ -337,7 +377,6 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
     }
 
     if (!types.length) {
-      // Si hay selection required, lo devolvemos tal cual para que el front abra el modal
       return res.status(400).json({
         ok: false,
         error: 'NO_TYPES_READY',
@@ -353,14 +392,34 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
       });
     }
 
+    // ✅ idempotencia (anti doble-click)
+    const key = buildStartKey({ userId: req.user._id, source, types });
+    const prev = LAST_START.get(String(req.user._id));
+    const now = Date.now();
+
+    if (prev && prev.key === key && (now - prev.at) < START_DEDUP_MS) {
+      return res.json({
+        ok: true,
+        deduped: true,
+        jobId: prev.jobId,
+        types,
+        source,
+        skippedByConnection,
+      });
+    }
+
     const jobId = newId();
+    LAST_START.set(String(req.user._id), { at: now, key, jobId });
+
     const stateJob = {
       id: jobId,
       userId: req.user._id,
       startedAt: Date.now(),
       source,
       items: {},
+      types: [...types],
     };
+
     for (const t of types) {
       stateJob.items[t] = {
         status: 'pending',
@@ -393,6 +452,7 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
           stateJob.items[t].error = e?.message || String(e);
         }
       }
+      stateJob.finishedAt = Date.now();
     });
   } catch (e) {
     console.error('audits/start error:', e);
@@ -409,15 +469,16 @@ router.get('/progress', requireAuth, async (req, res) => {
   if (!s) return res.status(404).json({ ok: false, error: 'JOB_NOT_FOUND' });
 
   const items = s.items;
-  const total = Object.keys(items).length;
+  const total = Object.keys(items).length || 1;
   const done = Object.values(items).filter((x) => x.status === 'done').length;
 
   let percent = Math.round((done / total) * 90);
 
+  let latestAudits = null;
+
   if (done === total) {
     percent = 95;
 
-    // ✅ Ventana más amplia para evitar “97% pegado” por latencia de DB / Render
     const query = {
       userId: s.userId,
       generatedAt: { $gte: new Date(s.startedAt - 10 * 60 * 1000) }, // -10 min
@@ -430,7 +491,12 @@ router.get('/progress', requireAuth, async (req, res) => {
     const have = new Set((docs || []).map((d) => d.type));
     const allPersisted = Object.keys(items).every((t) => have.has(t));
     percent = allPersisted ? 100 : 97;
-    if (allPersisted) s.finishedAt = Date.now();
+
+    if (allPersisted) {
+      s.finishedAt = Date.now();
+      // ✅ traer resumen final para el front
+      latestAudits = await fetchLatestAuditsByTypes(s.userId, Object.keys(items));
+    }
   }
 
   res.json({
@@ -440,12 +506,12 @@ router.get('/progress', requireAuth, async (req, res) => {
     items,
     percent,
     finished: percent >= 100,
+    latestAudits, // ✅ null hasta 100%
   });
 });
 
 /* ===========================================================
  * GET /api/audits/latest?type=all|google|meta|ga4|shopify&origin=onboarding|panel
- * Devuelve la última auditoría por tipo para el usuario actual.
  * =========================================================*/
 router.get('/latest', requireAuth, async (req, res) => {
   try {
@@ -457,7 +523,6 @@ router.get('/latest', requireAuth, async (req, res) => {
         ? ['google', 'meta', 'ga4', 'shopify']
         : [typeQ];
 
-    // Validación básica
     const allowed = new Set(['google', 'meta', 'ga4', 'shopify', 'all']);
     if (!allowed.has(typeQ)) {
       return res.status(400).json({ ok: false, error: 'INVALID_TYPE' });
@@ -469,22 +534,21 @@ router.get('/latest', requireAuth, async (req, res) => {
     };
     if (originQ) query.origin = originQ;
 
-    // Traemos varias y nos quedamos con la primera por tipo (la más reciente)
     const docs = await Audit.find(query)
       .sort({ generatedAt: -1 })
       .limit(50)
-      .select('type generatedAt summary issues inputSnapshot origin')
+      .select('type generatedAt summary issues inputSnapshot origin notifications')
       .lean();
 
     const data = {};
     for (const d of docs) {
       const t = String(d.type || '').toLowerCase();
-      if (!data[t]) data[t] = d; // primera = más reciente por el sort desc
+      if (!data[t]) data[t] = d;
     }
 
     return res.json({
       ok: true,
-      data,  // { google: {...}, meta: {...}, ga4: {...}, shopify: {...} }
+      data,
       items: Object.values(data),
     });
   } catch (e) {
@@ -492,6 +556,5 @@ router.get('/latest', requireAuth, async (req, res) => {
     return res.status(500).json({ ok: false, error: 'LATEST_ERROR' });
   }
 });
-
 
 module.exports = router;
