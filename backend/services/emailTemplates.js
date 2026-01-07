@@ -189,63 +189,57 @@ function verifyEmail({
  * - Retrocompatible: si solo mandas loginUrl, no se rompe.
  */
 function welcomeEmail({
-  loginUrl = 'https://adray.ai/login',
   name,
   email,
   brand = 'Adray',
-  supportEmail = 'contact@adray.ai',
+  supportEmail = 'support@adray.ai',
 } = {}) {
-  const url = safeUrl(loginUrl);
-  const safeLoginUrl = escapeHtml(url);
   const displayName = safeName(name, email);
 
   const contentHtml = `
-    <div style="padding-top:34px;">
-      <h1 class="h1" style="margin:0 0 14px;font-size:28px;color:#EDEBFF;font-weight:900;letter-spacing:-.02em">
-        ¡Bienvenido a ${escapeHtml(brand)}!
-      </h1>
+    <div style="padding-top:28px;">
+      <div class="h1" style="margin:0 0 14px;font-size:26px;color:#EDEBFF;font-weight:900;letter-spacing:-.02em">
+        ¡Bienvenido a ${escapeHtml(brand)}, ${escapeHtml(displayName)}!
+      </div>
 
       <p style="margin:0 0 10px;font-size:15px;line-height:23px;color:#EAE4F2;">
-        Hola <strong style="color:#FFFFFF">${escapeHtml(displayName)}</strong>,
+        ¡Felicidades, <strong style="color:#FFFFFF">${escapeHtml(displayName)}</strong>! 🎉
+      </p>
+
+      <p style="margin:0 0 10px;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Te has registrado exitosamente en <strong style="color:#FFFFFF">${escapeHtml(
+          brand
+        )}</strong>, tu Inteligencia Artificial experta en Marketing.
+      </p>
+
+      <p style="margin:0 0 10px;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Ya puedes iniciar sesión y comenzar a optimizar tus campañas.
       </p>
 
       <p style="margin:0 0 18px;font-size:15px;line-height:23px;color:#EAE4F2;">
-        Tu cuenta se creó correctamente. Ya puedes conectar Google, Meta y comenzar a generar auditorías con IA.
+        ¡No olvides conectar tu onboarding!
       </p>
 
-      <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:14px auto 10px;">
-        <tr><td>
-          <a href="${safeLoginUrl}" class="btn"
-            style="background:linear-gradient(90deg,#B55CFF,#9D5BFF);
-                   border-radius:12px;
-                   padding:13px 18px;
-                   font-size:14px;
-                   font-weight:900;
-                   color:#0b0b0d;
-                   text-decoration:none;
-                   display:inline-block;">
-            Entrar a ${escapeHtml(brand)}
-          </a>
-        </td></tr>
-      </table>
-
-      <p style="margin:18px 0 0;font-size:12px;line-height:19px;color:#BDB2C9;">
-        Si no solicitaste esta cuenta, ignora este correo.
+      <p style="margin:0 0 6px;font-size:13px;line-height:20px;color:#BDB2C9;">
+        — Equipo Adray
       </p>
 
-      <p style="margin:10px 0 0;font-size:12px;line-height:18px;color:#9b90aa;">
-        Soporte: <a href="mailto:${escapeHtml(supportEmail)}" style="color:#9b90aa;text-decoration:underline">${escapeHtml(supportEmail)}</a>
+      <p style="margin:0;font-size:13px;line-height:20px;color:#BDB2C9;">
+        Soporte: <a href="mailto:${escapeHtml(
+          supportEmail
+        )}" style="color:#BDB2C9;text-decoration:underline">${escapeHtml(supportEmail)}</a>
       </p>
     </div>
   `;
 
   return wrapEmail({
-    title: `Bienvenido a ${brand}`,
-    preheader: `Tu cuenta se creó con éxito. Entra para comenzar.`,
+    title: `¡Bienvenido a ${brand}!`,
+    preheader: `Te registraste exitosamente en ${brand}.`,
     contentHtml,
     badgeText: 'Bienvenida',
   });
 }
+
 
 /**
  * ✅ Reset password

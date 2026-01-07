@@ -28,8 +28,14 @@ function normEmail(v) {
 function safeName(v, fallbackEmail) {
   const n = String(v || '').replace(/\s+/g, ' ').trim();
   if (n) return n;
+
   const e = normEmail(fallbackEmail);
-  return e ? e.split('@')[0] : 'Usuario';
+  if (!e) return 'Usuario';
+
+  const local = e.split('@')[0] || 'Usuario';
+  // “jose.meija-dom” -> “Jose mejiadom”
+  const pretty = local.replace(/[._-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return pretty ? pretty.charAt(0).toUpperCase() + pretty.slice(1) : 'Usuario';
 }
 
 /**
@@ -65,7 +71,7 @@ async function sendVerifyEmail({ toEmail, token, name } = {}) {
       verifyUrl,
       name: safeName(name, to),
       email: to,
-      supportEmail: FROM || 'contact@adray.ai',
+      supportEmail: 'support@adray.ai',
       privacyUrl: `${APP_URL}/politica.html`,
       brand: 'Adray',
     });
@@ -94,23 +100,14 @@ async function sendVerifyEmail({ toEmail, token, name } = {}) {
  * Retro-compat:
  *   sendWelcomeEmail('email@dominio.com')
  */
-async function sendWelcomeEmail(arg1, arg2) {
+async function sendWelcomeEmail(input) {
   if (!HAS_SMTP) {
     if (DEBUG_EMAIL) console.warn('[emailService] SMTP no configurado. Omitiendo welcome.');
     return fail('SMTP_NOT_CONFIGURED', { skipped: true });
   }
 
-  // ✅ Soporta: sendWelcomeEmail({toEmail,name})  y  sendWelcomeEmail(toEmail, name)
-  let toEmail = '';
-  let name = '';
-
-  if (typeof arg1 === 'object' && arg1) {
-    toEmail = arg1.toEmail;
-    name = arg1.name;
-  } else {
-    toEmail = arg1;
-    name = arg2;
-  }
+  const toEmail = typeof input === 'string' ? input : input?.toEmail;
+  const name = typeof input === 'string' ? undefined : input?.name;
 
   const to = normEmail(toEmail);
   if (!to) return fail('MISSING_TO_EMAIL');
@@ -118,22 +115,26 @@ async function sendWelcomeEmail(arg1, arg2) {
   const finalName = safeName(name, to);
 
   try {
-    const loginUrl = `${APP_URL}/login`;
-
-    // Nota: aunque tu template no use name, no pasa nada.
-    // Si lo usas, ya queda listo.
     const html = welcomeEmail({
-      loginUrl,
       name: finalName,
       email: to,
-      supportEmail: FROM || 'contact@adray.ai',
       brand: 'Adray',
+      supportEmail: 'support@adray.ai',
     });
 
     const info = await sendMail({
       to,
-      subject: 'Bienvenido a Adray',
-      text: `Hola ${finalName}. Tu cuenta se creó con éxito. Inicia sesión: ${loginUrl}`,
+      subject: `¡Bienvenido a Adray, ${finalName}!`,
+      text:
+        `¡Bienvenido a Adray, ${finalName}!\n` +
+        `\n` +
+        `¡Felicidades, ${finalName}! 🎉\n` +
+        `Te has registrado exitosamente en Adray, tu Inteligencia Artificial experta en Marketing.\n` +
+        `Ya puedes iniciar sesión y comenzar a optimizar tus campañas.\n` +
+        `¡No olvides conectar tu onboarding!\n` +
+        `\n` +
+        `— Equipo Adray\n` +
+        `Soporte: support@adray.ai`,
       html,
     });
 
@@ -186,7 +187,7 @@ async function sendResetPasswordEmail(arg1, arg2, arg3) {
       name: finalName,
       email: to,
       brand: 'Adray',
-      supportEmail: FROM || 'contact@adray.ai',
+      supportEmail: 'support@adray.ai',
     });
 
     const info = await sendMail({
