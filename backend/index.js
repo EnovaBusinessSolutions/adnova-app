@@ -13,8 +13,7 @@ const crypto = require('crypto');
 const helmet = require('helmet');
 const compression = require('compression');
 
-const auth = require('./auth'); // inicializa passport + exports helpers
-const { consumeGoogleWelcomeFlagAndSend } = auth;
+require('./auth'); // inicializa passport (estrategia Google + serialize/deserialize)
 
 const User = require('./models/User');
 const { sendVerifyEmail, sendWelcomeEmail, sendResetPasswordEmail } = require('./services/emailService');
@@ -918,42 +917,80 @@ app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
 
 
 /* =========================
- * OAuth Google (login simple) — E2E
- * - Si el usuario es NUEVO por Google -> envía welcome email justo antes de ir a onboarding
- * - Usa bandera en sesión (req.session.googleWelcome) creada en backend/auth.js
+ * OAuth Google (login simple) — E2E (WELCOME REAL)
+ * - Envía welcome SOLO si el usuario se creó en Mongo en este login
+ * - Nunca depende de flags de sesión
+ * - Marca welcomeEmailSent=true en DB para no duplicar
  * ========================= */
 app.get(
   '/auth/google/login',
   passport.authenticate('google', {
     scope: ['profile', 'email'],
-    prompt: 'select_account', // opcional (UX)
+    prompt: 'select_account', // opcional
   })
 );
 
-app.get(
-  '/auth/google/login/callback',
-  passport.authenticate('google', { failureRedirect: '/login' }),
-  async (req, res, next) => {
+app.get('/auth/google/login/callback', (req, res, next) => {
+  passport.authenticate('google', { failureRedirect: '/login' }, async (err, user, info) => {
     try {
-      // ✅ Aquí ya existe req.user y req.session
-      // ✅ Enviar welcome si aplica (solo usuario nuevo)
-      const result = await consumeGoogleWelcomeFlagAndSend(req);
+      if (err) return next(err);
+      if (!user) return res.redirect('/login');
 
-      // Log corto para Render (te ayuda a confirmar)
-      if (result?.sent) {
-        console.log('[google-callback] Welcome enviado ✅');
-      } else {
-        console.log('[google-callback] Welcome no enviado:', result?.reason || 'no-reason');
-      }
+      // Como usamos custom callback, hacemos login manual:
+      req.logIn(user, async (loginErr) => {
+        if (loginErr) return next(loginErr);
 
-      const destino = req.user?.onboardingComplete ? '/dashboard' : '/onboarding';
-      return res.redirect(destino);
+        // ✅ SOLO si es usuario nuevo (creado en este login)
+        const isNew = info?.isNewUser === true || user?._isNewUser === true;
+
+        if (isNew) {
+          try {
+            // Leemos desde DB para decidir si ya se envió (evita duplicados)
+            const u = await User.findById(user._id)
+              .select('email name welcomeEmailSent')
+              .lean();
+
+            const toEmail = String(u?.email || '').trim().toLowerCase();
+            const name =
+              String(u?.name || '').trim() ||
+              (toEmail ? toEmail.split('@')[0] : '') ||
+              'Usuario';
+
+            if (!toEmail) {
+              console.warn('[google-callback] Welcome NO enviado: missing email');
+            } else if (u?.welcomeEmailSent === true) {
+              console.log('[google-callback] Welcome NO enviado: already-sent');
+            } else {
+              // Fire & forget: NO bloquea la redirección
+              Promise.resolve()
+                .then(() => sendWelcomeEmail({ toEmail, name }))
+                .then(() =>
+                  User.updateOne(
+                    { _id: user._id },
+                    { $set: { welcomeEmailSent: true, welcomeEmailSentAt: new Date() } }
+                  )
+                )
+                .then(() => console.log('[google-callback] Welcome enviado ✅', toEmail))
+                .catch((e) =>
+                  console.error('[google-callback] Welcome falló:', e?.message || e)
+                );
+            }
+          } catch (e) {
+            console.error('[google-callback] Error preparando welcome:', e?.message || e);
+          }
+        } else {
+          console.log('[google-callback] Welcome NO enviado: not-new-user');
+        }
+
+        const destino = user.onboardingComplete ? '/dashboard' : '/onboarding';
+        return res.redirect(destino);
+      });
     } catch (e) {
-      console.error('[google-callback] error:', e?.message || e);
       return next(e);
     }
-  }
-);
+  })(req, res, next);
+});
+
 
 
 

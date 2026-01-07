@@ -21,9 +21,19 @@ function fail(error, extra = {}) {
   };
 }
 
+function normEmail(v) {
+  return String(v || '').trim().toLowerCase();
+}
+
+function safeName(v, fallbackEmail) {
+  const n = String(v || '').replace(/\s+/g, ' ').trim();
+  if (n) return n;
+  const e = normEmail(fallbackEmail);
+  return e ? e.split('@')[0] : 'Usuario';
+}
+
 /**
- * ✅ NUEVO: Enlace de verificación (centralizado)
- * - Si ya tienes un endpoint específico, sólo cambia VERIFY_PATH.
+ * ✅ Enlace de verificación (centralizado)
  */
 const VERIFY_PATH = process.env.VERIFY_EMAIL_PATH || '/api/auth/verify-email';
 
@@ -34,8 +44,8 @@ function buildVerifyUrl(token) {
 }
 
 /**
- * ✅ NUEVO: Correo de verificación (NO bienvenida)
- * Se usa cuando el usuario crea cuenta.
+ * ✅ Correo de verificación (registro)
+ * Firma: sendVerifyEmail({ toEmail, token, name })
  */
 async function sendVerifyEmail({ toEmail, token, name } = {}) {
   if (!HAS_SMTP) {
@@ -43,7 +53,8 @@ async function sendVerifyEmail({ toEmail, token, name } = {}) {
     return fail('SMTP_NOT_CONFIGURED', { skipped: true });
   }
 
-  if (!toEmail) return fail('MISSING_TO_EMAIL');
+  const to = normEmail(toEmail);
+  if (!to) return fail('MISSING_TO_EMAIL');
   if (!token) return fail('MISSING_VERIFY_TOKEN');
 
   const verifyUrl = buildVerifyUrl(token);
@@ -52,92 +63,155 @@ async function sendVerifyEmail({ toEmail, token, name } = {}) {
   try {
     const html = verifyEmail({
       verifyUrl,
-      name,
-      email: toEmail,
+      name: safeName(name, to),
+      email: to,
       supportEmail: FROM || 'contact@adray.ai',
-      privacyUrl: 'https://adray.ai/politica.html',
+      privacyUrl: `${APP_URL}/politica.html`,
       brand: 'Adray',
     });
 
     const info = await sendMail({
-      to: toEmail,
+      to,
       subject: 'Verifica tu correo · Adray',
       text: `Confirma tu correo para activar tu cuenta: ${verifyUrl}`,
       html,
     });
 
-    if (DEBUG_EMAIL) console.log('[emailService] verify sent:', { to: toEmail, messageId: info?.messageId });
-    return ok({ to: toEmail, messageId: info?.messageId, response: info?.response, verifyUrl });
+    if (DEBUG_EMAIL) console.log('[emailService] verify sent:', { to, messageId: info?.messageId });
+    return ok({ to, messageId: info?.messageId, response: info?.response, verifyUrl });
   } catch (err) {
     console.error('[emailService] sendVerifyEmail error:', err?.message || err);
-    // Importante: no “truena” el registro, solo reporta falla
-    return fail(err, { to: toEmail });
+    return fail(err, { to });
   }
 }
 
 /**
- * (Legacy / opcional)
- * Si aún quieres mandar un correo de bienvenida DESPUÉS de verificar, se queda.
+ * ✅ Bienvenida (Google login / post-verify / etc.)
+ *
+ * Firma E2E NUEVA:
+ *   sendWelcomeEmail({ toEmail, name })
+ *
+ * Retro-compat:
+ *   sendWelcomeEmail('email@dominio.com')
  */
-async function sendWelcomeEmail(toEmail) {
+async function sendWelcomeEmail(arg1, arg2) {
   if (!HAS_SMTP) {
     if (DEBUG_EMAIL) console.warn('[emailService] SMTP no configurado. Omitiendo welcome.');
     return fail('SMTP_NOT_CONFIGURED', { skipped: true });
   }
 
+  // ✅ Soporta: sendWelcomeEmail({toEmail,name})  y  sendWelcomeEmail(toEmail, name)
+  let toEmail = '';
+  let name = '';
+
+  if (typeof arg1 === 'object' && arg1) {
+    toEmail = arg1.toEmail;
+    name = arg1.name;
+  } else {
+    toEmail = arg1;
+    name = arg2;
+  }
+
+  const to = normEmail(toEmail);
+  if (!to) return fail('MISSING_TO_EMAIL');
+
+  const finalName = safeName(name, to);
+
   try {
     const loginUrl = `${APP_URL}/login`;
-    const html = welcomeEmail({ loginUrl });
+
+    // Nota: aunque tu template no use name, no pasa nada.
+    // Si lo usas, ya queda listo.
+    const html = welcomeEmail({
+      loginUrl,
+      name: finalName,
+      email: to,
+      supportEmail: FROM || 'contact@adray.ai',
+      brand: 'Adray',
+    });
 
     const info = await sendMail({
-      to: toEmail,
+      to,
       subject: 'Bienvenido a Adray',
-      text: `Tu cuenta se creó con éxito. Inicia sesión: ${loginUrl}`,
+      text: `Hola ${finalName}. Tu cuenta se creó con éxito. Inicia sesión: ${loginUrl}`,
       html,
     });
 
-    if (DEBUG_EMAIL) console.log('[emailService] welcome sent:', { to: toEmail, messageId: info?.messageId });
-    return ok({ to: toEmail, messageId: info?.messageId, response: info?.response });
+    if (DEBUG_EMAIL) console.log('[emailService] welcome sent:', { to, messageId: info?.messageId });
+    return ok({ to, messageId: info?.messageId, response: info?.response });
   } catch (err) {
     console.error('[emailService] sendWelcomeEmail error:', err?.message || err);
-    return fail(err, { to: toEmail });
+    return fail(err, { to });
   }
 }
 
-async function sendResetPasswordEmail(toEmail, resetUrl) {
+/**
+ * Reset password
+ *
+ * Firma NUEVA recomendada:
+ *   sendResetPasswordEmail({ toEmail, resetUrl, name })
+ *
+ * Retro-compat:
+ *   sendResetPasswordEmail(toEmail, resetUrl)
+ */
+async function sendResetPasswordEmail(arg1, arg2, arg3) {
   if (!HAS_SMTP) {
     if (DEBUG_EMAIL) console.warn('[emailService] SMTP no configurado. Omitiendo reset.');
     return fail('SMTP_NOT_CONFIGURED', { skipped: true });
   }
 
+  let toEmail = '';
+  let resetUrl = '';
+  let name = '';
+
+  if (typeof arg1 === 'object' && arg1) {
+    toEmail = arg1.toEmail;
+    resetUrl = arg1.resetUrl;
+    name = arg1.name;
+  } else {
+    toEmail = arg1;
+    resetUrl = arg2;
+    name = arg3;
+  }
+
+  const to = normEmail(toEmail);
+  if (!to) return fail('MISSING_TO_EMAIL');
+  if (!resetUrl) return fail('MISSING_RESET_URL');
+
+  const finalName = safeName(name, to);
+
   try {
-    const html = resetPasswordEmail({ resetUrl });
+    const html = resetPasswordEmail({
+      resetUrl,
+      name: finalName,
+      email: to,
+      brand: 'Adray',
+      supportEmail: FROM || 'contact@adray.ai',
+    });
 
     const info = await sendMail({
-      to: toEmail,
+      to,
       subject: 'Restablece tu contraseña · Adray',
-      text: `Para restablecer tu contraseña visita: ${resetUrl}`,
+      text: `Hola ${finalName}. Para restablecer tu contraseña visita: ${resetUrl}`,
       html,
     });
 
-    if (DEBUG_EMAIL) console.log('[emailService] reset sent:', { to: toEmail, messageId: info?.messageId });
-    return ok({ to: toEmail, messageId: info?.messageId, response: info?.response });
+    if (DEBUG_EMAIL) console.log('[emailService] reset sent:', { to, messageId: info?.messageId });
+    return ok({ to, messageId: info?.messageId, response: info?.response });
   } catch (err) {
     console.error('[emailService] sendResetPasswordEmail error:', err?.message || err);
-    return fail(err, { to: toEmail });
+    return fail(err, { to });
   }
 }
 
 /**
  * Para endpoints /__mail/*
- * verify() viene desde mailer.js (transporter.verify()).
  */
 async function verifySMTP() {
   if (!HAS_SMTP) return fail('SMTP_NOT_CONFIGURED', { skipped: true });
 
   try {
     const out = await verify();
-    // verify() a veces regresa true/obj; normalizamos
     return ok({ verified: true, result: out });
   } catch (err) {
     console.error('[emailService] verifySMTP error:', err?.message || err);
@@ -171,15 +245,10 @@ async function sendTestEmail() {
 }
 
 module.exports = {
-  // ✅ nuevo
   sendVerifyEmail,
-
-  // existentes
   sendWelcomeEmail,
   sendResetPasswordEmail,
   verifySMTP,
   sendTestEmail,
-
-  // util interno (por si lo ocupas en debug)
   buildVerifyUrl,
 };

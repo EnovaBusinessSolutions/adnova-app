@@ -1,11 +1,10 @@
 // backend/auth.js
+'use strict';
+
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 
 const User = require('./models/User');
-
-// Email service
-const { sendWelcomeEmail } = require('./services/emailService');
 
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
 
@@ -17,7 +16,7 @@ const DEFAULT_GOOGLE_LOGIN_CALLBACK = `${APP_URL}/auth/google/login/callback`;
 // GOOGLE_LOGIN_CALLBACK_URL=https://adray.ai/auth/google/login/callback
 const GOOGLE_LOGIN_CALLBACK_URL =
   process.env.GOOGLE_LOGIN_CALLBACK_URL ||
-  process.env.GOOGLE_CALLBACK_URL || // por compatibilidad si ya la tienes
+  process.env.GOOGLE_CALLBACK_URL || // compat si ya la tienes
   DEFAULT_GOOGLE_LOGIN_CALLBACK;
 
 passport.use(
@@ -26,29 +25,22 @@ passport.use(
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       callbackURL: GOOGLE_LOGIN_CALLBACK_URL,
-
-      // ✅ para poder setear flags en req.session dentro del strategy
       passReqToCallback: true,
     },
     async (req, accessToken, refreshToken, profile, done) => {
       try {
         // ✅ Email robusto
         const email =
-          (profile && profile.emails && profile.emails[0] && profile.emails[0].value
-            ? String(profile.emails[0].value)
-            : '') || '';
-
+          (profile?.emails?.[0]?.value ? String(profile.emails[0].value) : '') || '';
         const normalizedEmail = email.trim().toLowerCase();
 
         // ✅ Nombre robusto
         const name =
-          (profile && profile.displayName ? String(profile.displayName) : '') ||
-          (profile && profile.name && profile.name.givenName
-            ? String(profile.name.givenName)
-            : '') ||
+          (profile?.displayName ? String(profile.displayName) : '') ||
+          (profile?.name?.givenName ? String(profile.name.givenName) : '') ||
           'Usuario';
 
-        // Si no hay email, NO intentes enviar welcome ni crear usuario (evita "No recipients defined")
+        // Si no hay email, no podemos crear usuario ni enviar correo
         if (!normalizedEmail) {
           console.error('[auth.js][google] Google profile sin email. Profile:', {
             id: profile?.id,
@@ -64,47 +56,63 @@ passport.use(
         if (!user) {
           isNewUser = true;
 
+          // ✅ Usuario nuevo por Google
           user = await User.create({
             googleId: profile.id,
             name,
             email: normalizedEmail,
 
-            // ✅ si tu schema lo soporta:
+            // Google ya viene verificado por Google (no tiene sentido bloquearlo)
             emailVerified: true,
 
-            // Evita guardar password vacío si tu lógica no lo necesita
+            // Si tu login email/pass usa "password", dejarlo vacío está OK
+            // (o puedes omitirlo, pero lo dejamos por compat con tu código)
             password: '',
 
             onboardingComplete: false,
+
+            // ✅ CLAVE E2E: control del welcome
+            welcomeEmailSent: false,
+            welcomeEmailSentAt: null,
           });
 
           console.log('🆕 Usuario de Google creado en MongoDB:', normalizedEmail);
         } else {
-          // Si existía pero no tenía googleId/emailVerified, lo actualizamos suavemente
+          // ✅ Usuario existente
           const patch = {};
+
           if (!user.googleId) patch.googleId = profile.id;
           if (user.emailVerified === false) patch.emailVerified = true;
           if (!user.name && name) patch.name = name;
 
+          /**
+           * 🔥 MUY IMPORTANTE:
+           * Para usuarios ya existentes (legacy) NO queremos que se dispare welcome “retroactivo”.
+           * Si el campo no existe en Mongo (undefined), lo marcamos como ya enviado.
+           */
+          if (typeof user.welcomeEmailSent === 'undefined') {
+            patch.welcomeEmailSent = true;
+            patch.welcomeEmailSentAt = new Date();
+          }
+
           if (Object.keys(patch).length) {
             await User.updateOne({ _id: user._id }, { $set: patch });
+            // mantenemos el objeto user "actual" en memoria
+            user = await User.findById(user._id);
           }
 
           console.log('✅ Usuario de Google ya registrado:', normalizedEmail);
         }
 
-        // ✅ Bandera para enviar welcome justo en el callback route (entre Google → onboarding)
-        // La idea es: index.js (callback) lee esto, manda email, borra flag y redirige.
-        if (req?.session) {
-          req.session.googleWelcome = {
-            shouldSend: isNewUser === true,
-            toEmail: normalizedEmail,
-            name,
-            ts: Date.now(),
-          };
-        }
+        // ✅ Extra: bandera “transiente” por si la quieres leer en index.js
+        user._isNewUser = isNewUser;
 
-        return done(null, user);
+        /**
+         * ✅ ESTE es el cambio clave:
+         * Mandamos "info.isNewUser" como 3er argumento de done()
+         * para que tu callback route en index.js lo reciba.
+         */
+        return done(null, user, { isNewUser });
       } catch (err) {
         console.error('❌ Error al autenticar con Google:', err);
         return done(err, null);
@@ -131,30 +139,4 @@ passport.deserializeUser(async (id, done) => {
 module.exports.ensureAuthenticated = (req, res, next) => {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).send('Necesitas iniciar sesión');
-};
-
-// ✅ Helper opcional para usar en index.js callback
-// (si ya lo implementaste allá, puedes ignorarlo)
-module.exports.consumeGoogleWelcomeFlagAndSend = async (req) => {
-  try {
-    const flag = req?.session?.googleWelcome;
-    if (!flag || !flag.shouldSend) return { sent: false, reason: 'no-flag' };
-
-    const toEmail = String(flag.toEmail || '').trim();
-    const name = String(flag.name || 'Usuario').trim();
-
-    // Evita el error "No recipients defined"
-    if (!toEmail) return { sent: false, reason: 'missing-toEmail' };
-
-    await sendWelcomeEmail({ toEmail, name });
-
-    // Limpia flag para no duplicar
-    req.session.googleWelcome = { shouldSend: false };
-
-    console.log('✅ Welcome email enviado a:', toEmail);
-    return { sent: true };
-  } catch (e) {
-    console.error('❌ Welcome email (Google) falló:', e?.message || e);
-    return { sent: false, reason: 'send-failed' };
-  }
 };

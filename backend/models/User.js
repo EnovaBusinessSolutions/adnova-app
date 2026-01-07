@@ -68,7 +68,7 @@ const subscriptionSchema = new mongoose.Schema(
 /* ---------------- schema principal ---------------- */
 const userSchema = new mongoose.Schema(
   {
-    // ✅ NUEVO: nombre (para emails personalizados)
+    // ✅ nombre (para emails personalizados)
     name: { type: String, trim: true, default: '', set: normName },
 
     email: {
@@ -81,10 +81,16 @@ const userSchema = new mongoose.Schema(
     },
     password: { type: String },
 
+    // ✅ Vinculación con Google Login (para no depender solo del email)
+    googleId: { type: String, index: true, sparse: true },
+
+    // ✅ Welcome email “1 sola vez” (clave para E2E)
+    welcomeEmailSent: { type: Boolean, default: false, index: true },
+    welcomeEmailSentAt: { type: Date, default: null },
+
     onboardingComplete: { type: Boolean, default: false },
 
-    // ✅ NUEVO: verificación de correo
-    // - emailVerified undefined en usuarios legacy => NO bloquea login si tú lo manejas así
+    // ✅ verificación de correo (email/pass)
     emailVerified: { type: Boolean, default: false, index: true },
     verifyEmailTokenHash: { type: String, index: true },
     verifyEmailExpires: { type: Date, index: true },
@@ -101,7 +107,7 @@ const userSchema = new mongoose.Schema(
     googleRefreshToken: { type: String },
     googleConnected: { type: Boolean, default: false },
 
-    // ✅ Objetivo (lo usas en /api/session y lo setean rutas)
+    // ✅ Objetivo Google (lo usas en /api/session y lo setean rutas)
     googleObjective: {
       type: String,
       enum: ['ventas', 'alcance', 'leads'],
@@ -112,13 +118,13 @@ const userSchema = new mongoose.Schema(
     metaConnected: { type: Boolean, default: false },
     metaAccessToken: { type: String },
 
-    // ✅ Datos meta “legacy” que tu código puede setear/leer
+    // ✅ Datos meta “legacy”
     metaFbUserId: { type: String },
     metaTokenExpiresAt: { type: Date },
     metaDefaultAccountId: { type: String, set: normMetaId },
     metaScopes: { type: [String], default: [], set: normScopes },
 
-    // ✅ Objetivo meta (lo usas en /api/session y lo setean rutas)
+    // ✅ Objetivo meta
     metaObjective: {
       type: String,
       enum: ['ventas', 'alcance', 'leads'],
@@ -126,7 +132,6 @@ const userSchema = new mongoose.Schema(
     },
 
     // === Selección de cuentas (UI / retrocompat) ===
-    // Nota: aquí guardamos SIN "act_" ni "customers/" para consistencia.
     selectedMetaAccounts: {
       type: [String],
       default: [],
@@ -163,8 +168,7 @@ const userSchema = new mongoose.Schema(
       },
     },
 
-    // (LEGACY opcional) por si tuvieras código viejo leyendo esto
-    // ⚠️ Nombre alineado con onboardingStatus.js → selectedGAProperties
+    // (LEGACY) seleccionado GA4
     selectedGAProperties: {
       type: [String],
       default: [],
@@ -195,6 +199,9 @@ userSchema.index({ plan: 1 });
 
 // Opcional extra (útil si quieres limpiar tokens expirados)
 userSchema.index({ verifyEmailExpires: 1 }, { sparse: true });
+
+// ✅ Opcional: si quieres consultar rápido pendientes de welcome
+userSchema.index({ welcomeEmailSent: 1, createdAt: -1 });
 
 /* ---------------- hooks ---------------- */
 userSchema.pre('save', function (next) {
@@ -256,7 +263,7 @@ userSchema.statics.setGaAuditProperties = async function (userId, propertyIds = 
   return normalized;
 };
 
-// ✅ NUEVO: mantener GA4 E2E sin romper legacy (guarda en ambos)
+// ✅ mantener GA4 E2E sin romper legacy (guarda en ambos)
 userSchema.statics.setSelectedGA4Properties = async function (userId, propertyIds = []) {
   const normalized = normalizeArray(propertyIds, normGaPropertyId);
   await this.updateOne(

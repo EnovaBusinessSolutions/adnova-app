@@ -15,21 +15,25 @@ function safeName(name, fallbackEmail) {
   if (clean.length >= 2) return clean;
 
   const guess = String(fallbackEmail || '').split('@')[0] || 'hola';
-  // Capitaliza primera letra si viene tipo "jose.meji..."
   return guess.charAt(0).toUpperCase() + guess.slice(1);
 }
 
 function safeUrl(url = '') {
   const s = String(url || '').trim();
-  // Evita undefined/null o links vacíos que rompan el template
   if (!s) return '#';
   return s;
 }
 
-function wrapEmail({ title, preheader, contentHtml, footerHtml }) {
+/**
+ * ✅ Wrapper base (Adray)
+ * - Ahora permite "badgeText" (tipo: Bienvenida / Verificación / Recuperación)
+ * - Baja sutilmente el “glow” para que no se vea tan agresivo.
+ */
+function wrapEmail({ title, preheader, contentHtml, footerHtml, badgeText }) {
   const year = new Date().getFullYear();
   const safeTitle = escapeHtml(title);
   const safePreheader = escapeHtml(preheader || '');
+  const badge = escapeHtml(badgeText || 'Notificación');
 
   return `<!doctype html>
 <html lang="es">
@@ -58,18 +62,20 @@ function wrapEmail({ title, preheader, contentHtml, footerHtml }) {
     <tr>
       <td align="center" style="padding:46px 10px;">
         <table role="presentation" cellpadding="0" cellspacing="0" width="560" class="card"
-          style="max-width:560px;background:#151026;border-radius:16px;box-shadow:0 0 22px rgba(109,61,252,.28);border:1px solid rgba(255,255,255,.10);overflow:hidden;">
+          style="max-width:560px;background:#151026;border-radius:16px;
+          box-shadow:0 0 16px rgba(109,61,252,.18);
+          border:1px solid rgba(255,255,255,.10);overflow:hidden;">
 
-          <!-- top bar (sutil, tipo “notificación”) -->
+          <!-- top bar -->
           <tr>
             <td style="padding:16px 22px;background:#110c22;border-bottom:1px solid rgba(255,255,255,.08);">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
                 <tr>
-                  <td style="font-size:12px;letter-spacing:.22em;font-weight:800;color:#EDEBFF;">
+                  <td style="font-size:12px;letter-spacing:.22em;font-weight:900;color:#EDEBFF;">
                     ADRAY
                   </td>
-                  <td align="right" style="font-size:12px;color:rgba(255,255,255,.55);">
-                    Notificación de seguridad
+                  <td align="right" style="font-size:12px;color:rgba(255,255,255,.58);">
+                    ${badge}
                   </td>
                 </tr>
               </table>
@@ -99,8 +105,7 @@ function wrapEmail({ title, preheader, contentHtml, footerHtml }) {
 }
 
 /**
- * ✅ NUEVO: Correo de verificación (NO bienvenida)
- * Mantiene el mismo “wrap” y estética Adray.
+ * ✅ Correo de verificación
  */
 function verifyEmail({
   verifyUrl,
@@ -133,7 +138,7 @@ function verifyEmail({
           <a href="${safeVerifyUrl}" class="btn"
             style="background:linear-gradient(90deg,#B55CFF,#9D5BFF);
                    border-radius:999px;
-                   padding:14px 22px;
+                   padding:13px 20px;
                    font-size:14px;
                    font-weight:900;
                    color:#0b0b0d;
@@ -174,86 +179,139 @@ function verifyEmail({
     preheader: `Confirma tu correo para activar tu cuenta en ${brand}.`,
     contentHtml,
     footerHtml: footer,
+    badgeText: 'Verificación',
   });
 }
 
-function welcomeEmail({ loginUrl = 'https://adray.ai/login' } = {}) {
+/**
+ * ✅ Bienvenida
+ * - Ahora acepta name/email/brand/supportEmail (E2E)
+ * - Retrocompatible: si solo mandas loginUrl, no se rompe.
+ */
+function welcomeEmail({
+  loginUrl = 'https://adray.ai/login',
+  name,
+  email,
+  brand = 'Adray',
+  supportEmail = 'contact@adray.ai',
+} = {}) {
   const url = safeUrl(loginUrl);
   const safeLoginUrl = escapeHtml(url);
+  const displayName = safeName(name, email);
 
   const contentHtml = `
     <div style="padding-top:34px;">
-      <h1 class="h1" style="margin:0 0 18px;font-size:28px;color:#B55CFF;font-weight:800;letter-spacing:-.02em">¡Bienvenido a Adray!</h1>
-      <p style="margin:0 0 16px;font-size:16px;line-height:24px;color:#EAE4F2;">
-        Tu cuenta se creó con éxito.
-      </p>
-      <p style="margin:0 0 26px;font-size:16px;line-height:24px;color:#EAE4F2;">
-        Inicia sesión para conectar tus cuentas y generar auditorías con IA.
+      <h1 class="h1" style="margin:0 0 14px;font-size:28px;color:#EDEBFF;font-weight:900;letter-spacing:-.02em">
+        ¡Bienvenido a ${escapeHtml(brand)}!
+      </h1>
+
+      <p style="margin:0 0 10px;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Hola <strong style="color:#FFFFFF">${escapeHtml(displayName)}</strong>,
       </p>
 
-      <table role="presentation" cellpadding="0" cellspacing="0" align="center">
+      <p style="margin:0 0 18px;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Tu cuenta se creó correctamente. Ya puedes conectar Google, Meta y comenzar a generar auditorías con IA.
+      </p>
+
+      <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:14px auto 10px;">
         <tr><td>
           <a href="${safeLoginUrl}" class="btn"
-            style="background:linear-gradient(90deg,#B55CFF,#9D5BFF);border-radius:10px;padding:14px 26px;font-size:16px;font-weight:800;color:#0b0b0d;text-decoration:none;display:inline-block;">
-            Iniciar sesión
+            style="background:linear-gradient(90deg,#B55CFF,#9D5BFF);
+                   border-radius:12px;
+                   padding:13px 18px;
+                   font-size:14px;
+                   font-weight:900;
+                   color:#0b0b0d;
+                   text-decoration:none;
+                   display:inline-block;">
+            Entrar a ${escapeHtml(brand)}
           </a>
         </td></tr>
       </table>
 
-      <p style="margin:26px 0 0;font-size:13px;line-height:20px;color:#BDB2C9;">
-        Si no solicitaste esta cuenta, puedes ignorar este correo.
+      <p style="margin:18px 0 0;font-size:12px;line-height:19px;color:#BDB2C9;">
+        Si no solicitaste esta cuenta, ignora este correo.
+      </p>
+
+      <p style="margin:10px 0 0;font-size:12px;line-height:18px;color:#9b90aa;">
+        Soporte: <a href="mailto:${escapeHtml(supportEmail)}" style="color:#9b90aa;text-decoration:underline">${escapeHtml(supportEmail)}</a>
       </p>
     </div>
   `;
 
   return wrapEmail({
-    title: 'Bienvenido a Adray',
-    preheader: 'Tu cuenta se creó con éxito. Inicia sesión para comenzar.',
+    title: `Bienvenido a ${brand}`,
+    preheader: `Tu cuenta se creó con éxito. Entra para comenzar.`,
     contentHtml,
+    badgeText: 'Bienvenida',
   });
 }
 
-function resetPasswordEmail({ resetUrl } = {}) {
+/**
+ * ✅ Reset password
+ * - Acepta name/email/brand/supportEmail (sin romper llamadas viejas)
+ */
+function resetPasswordEmail({
+  resetUrl,
+  name,
+  email,
+  brand = 'Adray',
+  supportEmail = 'contact@adray.ai',
+} = {}) {
   const url = safeUrl(resetUrl);
   const safeResetUrl = escapeHtml(url);
+  const displayName = safeName(name, email);
 
   const contentHtml = `
     <div style="padding-top:34px;">
-      <h1 class="h1" style="margin:0 0 18px;font-size:26px;color:#B55CFF;font-weight:800;letter-spacing:-.02em">Restablecer contraseña</h1>
-      <p style="margin:0 0 16px;font-size:16px;line-height:24px;color:#EAE4F2;">
-        Recibimos una solicitud para restablecer tu contraseña.
-      </p>
-      <p style="margin:0 0 26px;font-size:16px;line-height:24px;color:#EAE4F2;">
-        Da clic en el botón para crear una nueva.
+      <h1 class="h1" style="margin:0 0 14px;font-size:26px;color:#EDEBFF;font-weight:900;letter-spacing:-.02em">
+        Restablecer contraseña
+      </h1>
+
+      <p style="margin:0 0 10px;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Hola <strong style="color:#FFFFFF">${escapeHtml(displayName)}</strong>,
       </p>
 
-      <table role="presentation" cellpadding="0" cellspacing="0" align="center">
+      <p style="margin:0 0 18px;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Recibimos una solicitud para restablecer tu contraseña en ${escapeHtml(brand)}.
+      </p>
+
+      <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:14px auto 10px;">
         <tr><td>
           <a href="${safeResetUrl}" class="btn"
-            style="background:linear-gradient(90deg,#B55CFF,#9D5BFF);border-radius:10px;padding:14px 26px;font-size:16px;font-weight:800;color:#0b0b0d;text-decoration:none;display:inline-block;">
+            style="background:linear-gradient(90deg,#B55CFF,#9D5BFF);
+                   border-radius:12px;
+                   padding:13px 18px;
+                   font-size:14px;
+                   font-weight:900;
+                   color:#0b0b0d;
+                   text-decoration:none;
+                   display:inline-block;">
             Restablecer contraseña
           </a>
         </td></tr>
       </table>
 
-      <p style="margin:26px 0 0;font-size:13px;line-height:20px;color:#BDB2C9;">
+      <p style="margin:18px 0 0;font-size:12px;line-height:19px;color:#BDB2C9;">
         Si no solicitaste este cambio, ignora este correo. Este enlace expira en 1 hora.
+      </p>
+
+      <p style="margin:10px 0 0;font-size:12px;line-height:18px;color:#9b90aa;">
+        Soporte: <a href="mailto:${escapeHtml(supportEmail)}" style="color:#9b90aa;text-decoration:underline">${escapeHtml(supportEmail)}</a>
       </p>
     </div>
   `;
 
   return wrapEmail({
-    title: 'Restablecer contraseña',
-    preheader: 'Enlace para restablecer tu contraseña (expira en 1 hora).',
+    title: `Restablecer contraseña · ${brand}`,
+    preheader: `Enlace para restablecer tu contraseña (expira en 1 hora).`,
     contentHtml,
+    badgeText: 'Recuperación',
   });
 }
 
 module.exports = {
-  // existentes (NO romper)
   welcomeEmail,
   resetPasswordEmail,
-
-  // ✅ nuevo (verificación)
   verifyEmail,
 };
