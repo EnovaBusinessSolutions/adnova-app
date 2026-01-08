@@ -3,7 +3,6 @@
 
 const { sendMail, verify, HAS_SMTP, FROM } = require('./mailer');
 
-// ✅ IMPORTANTE: ya que editaste emailTemplates.js, aquí debemos importar también auditReadyEmail
 const {
   welcomeEmail,
   resetPasswordEmail,
@@ -15,7 +14,9 @@ const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
 const DEBUG_EMAIL = process.env.DEBUG_EMAIL === 'true';
 
 /**
- * Normaliza respuestas para que /__mail y los callers tengan un shape consistente
+ * =========================
+ * Normalizadores / helpers
+ * =========================
  */
 function ok(payload = {}) {
   return { ok: true, ...payload };
@@ -40,13 +41,42 @@ function safeName(v, fallbackEmail) {
   if (!e) return 'Usuario';
 
   const local = e.split('@')[0] || 'Usuario';
-  // “jose.meija-dom” -> “Jose mejiadom”
   const pretty = local.replace(/[._-]+/g, ' ').replace(/\s+/g, ' ').trim();
   return pretty ? pretty.charAt(0).toUpperCase() + pretty.slice(1) : 'Usuario';
 }
 
 /**
- * ✅ Enlace de verificación (centralizado)
+ * =========================
+ * Dedupe (anti-spam) in-memory
+ * =========================
+ * Nota: Esto evita duplicados por triggers repetidos dentro del MISMO proceso.
+ * Para dedupe 100% a nivel cluster/replicas, luego lo hacemos persistente en Mongo.
+ */
+const _dedupe = new Map(); // key -> expiresAt (ms)
+const DEDUPE_TTL_MS = Number(process.env.EMAIL_DEDUPE_TTL_MS || 10 * 60 * 1000); // 10 min
+
+function _gcDedupe(now = Date.now()) {
+  for (const [k, exp] of _dedupe.entries()) {
+    if (exp <= now) _dedupe.delete(k);
+  }
+}
+
+function shouldSendOnce(key, ttlMs = DEDUPE_TTL_MS) {
+  if (!key) return true;
+  const now = Date.now();
+  _gcDedupe(now);
+
+  const exp = _dedupe.get(key);
+  if (exp && exp > now) return false;
+
+  _dedupe.set(key, now + ttlMs);
+  return true;
+}
+
+/**
+ * =========================
+ * Verify Email URL
+ * =========================
  */
 const VERIFY_PATH = process.env.VERIFY_EMAIL_PATH || '/api/auth/verify-email';
 
@@ -57,8 +87,9 @@ function buildVerifyUrl(token) {
 }
 
 /**
- * ✅ Correo de verificación (registro)
- * Firma: sendVerifyEmail({ toEmail, token, name })
+ * =========================
+ * Send: Verify Email
+ * =========================
  */
 async function sendVerifyEmail({ toEmail, token, name } = {}) {
   if (!HAS_SMTP) {
@@ -99,11 +130,11 @@ async function sendVerifyEmail({ toEmail, token, name } = {}) {
 }
 
 /**
- * ✅ Bienvenida (Google login / post-verify / etc.)
- *
+ * =========================
+ * Send: Welcome
+ * =========================
  * Firma E2E:
  *   sendWelcomeEmail({ toEmail, name })
- *
  * Retro-compat:
  *   sendWelcomeEmail('email@dominio.com')
  */
@@ -152,11 +183,17 @@ async function sendWelcomeEmail(input) {
 }
 
 /**
- * ✅ NUEVO: Email "Tu auditoría está lista"
- * Firma:
- *   sendAuditReadyEmail({ toEmail, name })
+ * =========================
+ * Send: Audit Ready (Panel / Onboarding)
+ * =========================
+ * ✅ Firma E2E:
+ *   sendAuditReadyEmail({ toEmail, name, origin, jobId, dedupeKey })
+ *
+ * - origin: 'onboarding' | 'panel'
+ * - jobId:  id del job de auditoría (si existe)
+ * - dedupeKey: si quieres controlar el anti-duplicado manualmente
  */
-async function sendAuditReadyEmail({ toEmail, name } = {}) {
+async function sendAuditReadyEmail({ toEmail, name, origin = 'panel', jobId, dedupeKey } = {}) {
   if (!HAS_SMTP) {
     if (DEBUG_EMAIL) console.warn('[emailService] SMTP no configurado. Omitiendo audit-ready.');
     return fail('SMTP_NOT_CONFIGURED', { skipped: true });
@@ -168,9 +205,20 @@ async function sendAuditReadyEmail({ toEmail, name } = {}) {
   const finalName = safeName(name, to);
   const loginUrl = `${APP_URL}/login`;
 
+  // ✅ Anti-duplicado: 1 correo por job/origen (especialmente onboarding)
+  const key =
+    String(dedupeKey || '').trim() ||
+    `audit_ready:${to}:${String(origin || 'panel').toLowerCase()}:${String(jobId || 'nojob')}`;
+
+  if (!shouldSendOnce(key)) {
+    if (DEBUG_EMAIL) console.log('[emailService] audit-ready skipped by dedupe:', { to, key });
+    return ok({ to, skipped: true, reason: 'DEDUPED', dedupeKey: key });
+  }
+
   try {
     const html = auditReadyEmail({
       name: finalName,
+      email: to,
       brand: 'Adray',
       supportEmail: 'support@adray.ai',
       loginUrl,
@@ -183,26 +231,26 @@ async function sendAuditReadyEmail({ toEmail, name } = {}) {
         `Auditoría lista:\n\n` +
         `Hola ${finalName},\n\n` +
         `Tu auditoría está lista. Adray analizó tus cuentas y preparó un reporte con puntos clave para mejorar tu rendimiento.\n\n` +
-        `Consulta en tu panel de Adray: ${loginUrl}\n\n` +
+        `Consulta en tu panel de Adray. Dando clic aquí: ${loginUrl}\n\n` +
         `— Equipo Adray\n` +
         `Soporte: support@adray.ai`,
       html,
     });
 
-    if (DEBUG_EMAIL) console.log('[emailService] audit-ready sent:', { to, messageId: info?.messageId });
-    return ok({ to, messageId: info?.messageId, response: info?.response });
+    if (DEBUG_EMAIL) console.log('[emailService] audit-ready sent:', { to, messageId: info?.messageId, key });
+    return ok({ to, messageId: info?.messageId, response: info?.response, dedupeKey: key });
   } catch (err) {
     console.error('[emailService] sendAuditReadyEmail error:', err?.message || err);
-    return fail(err, { to });
+    return fail(err, { to, dedupeKey: key });
   }
 }
 
 /**
- * Reset password
- *
- * Firma recomendada:
+ * =========================
+ * Send: Reset Password
+ * =========================
+ * Firma:
  *   sendResetPasswordEmail({ toEmail, resetUrl, name })
- *
  * Retro-compat:
  *   sendResetPasswordEmail(toEmail, resetUrl)
  */
@@ -257,7 +305,9 @@ async function sendResetPasswordEmail(arg1, arg2, arg3) {
 }
 
 /**
- * Para endpoints /__mail/*
+ * =========================
+ * /__mail helpers
+ * =========================
  */
 async function verifySMTP() {
   if (!HAS_SMTP) return fail('SMTP_NOT_CONFIGURED', { skipped: true });
@@ -271,10 +321,6 @@ async function verifySMTP() {
   }
 }
 
-/**
- * Email de prueba (por default se manda a SMTP_USER)
- * Puedes override con SMTP_TEST_TO en Render.
- */
 async function sendTestEmail() {
   if (!HAS_SMTP) return fail('SMTP_NOT_CONFIGURED', { skipped: true });
 
@@ -299,7 +345,7 @@ async function sendTestEmail() {
 module.exports = {
   sendVerifyEmail,
   sendWelcomeEmail,
-  sendAuditReadyEmail, // ✅ NUEVO
+  sendAuditReadyEmail, // ✅ con dedupeKey/jobId/origin
   sendResetPasswordEmail,
   verifySMTP,
   sendTestEmail,

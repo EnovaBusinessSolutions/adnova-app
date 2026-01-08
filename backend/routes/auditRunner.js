@@ -8,6 +8,15 @@ const router = express.Router();
 const { runAuditFor } = require('../jobs/auditJob');
 const Audit = require('../models/Audit');
 
+// ✅ NUEVO: email service (para mandar 1 correo al final del onboarding)
+let sendAuditReadyEmail = null;
+try {
+  ({ sendAuditReadyEmail } = require('../services/emailService'));
+} catch (e) {
+  // si por alguna razón no existe, no tronamos el runner
+  sendAuditReadyEmail = null;
+}
+
 // ★ (opcional, para futuros usos de límites / usos por usuario)
 let User = null;
 try {
@@ -148,7 +157,7 @@ async function getSourcesState(userId) {
       .select('shop access_token accessToken')
       .lean(),
     User
-      ? User.findById(userId).select('selectedMetaAccounts selectedGoogleAccounts selectedGAProperties').lean()
+      ? User.findById(userId).select('selectedMetaAccounts selectedGoogleAccounts selectedGAProperties email name displayName').lean()
       : Promise.resolve(null),
   ]);
 
@@ -292,12 +301,56 @@ const jobs = new Map();
 const newId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
 /* ✅ idempotencia básica: evitar doble click que dispare dos jobs */
-const LAST_START = new Map(); // userId -> { at:number, key:string }
+const LAST_START = new Map(); // userId -> { at:number, key:string, jobId:string }
 const START_DEDUP_MS = Number(process.env.AUDIT_START_DEDUP_MS || 12_000);
 
 function buildStartKey({ userId, source, types }) {
   const t = (types || []).slice().sort().join(',');
   return `${String(userId)}|${String(source || '')}|${t}`;
+}
+
+/* ✅ helpers: obtener receptor del email desde req/user */
+function getRecipientFromReq(req, fallbackUserDoc) {
+  const email =
+    String(req?.user?.email || req?.user?.emails?.[0]?.value || fallbackUserDoc?.email || '').trim();
+  const name =
+    String(
+      req?.user?.name ||
+      req?.user?.displayName ||
+      fallbackUserDoc?.name ||
+      fallbackUserDoc?.displayName ||
+      ''
+    ).trim();
+
+  return { email, name };
+}
+
+/* ✅ helper: marca notificación en auditorías recientes del job (debug E2E) */
+async function markAuditEmailNotified({ userId, types, source, startedAt, jobId }) {
+  try {
+    const query = {
+      userId,
+      generatedAt: { $gte: new Date(startedAt - 10 * 60 * 1000) },
+      type: { $in: types || [] },
+    };
+    if (source) query.origin = source;
+
+    const now = new Date();
+    await Audit.updateMany(
+      query,
+      {
+        $set: {
+          'notifications.auditReadyEmailSentAt': now,
+          'notifications.auditReadyEmailJobId': String(jobId || ''),
+          'notifications.auditReadyEmailOrigin': String(source || ''),
+        },
+      },
+      { strict: false } // ✅ guarda aunque el schema aún no defina notifications
+    );
+  } catch (e) {
+    // no tronamos el flujo si esto falla
+    console.warn('[auditRunner] markAuditEmailNotified failed:', e?.message || e);
+  }
 }
 
 /* ===========================================================
@@ -418,6 +471,11 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
       source,
       items: {},
       types: [...types],
+
+      // ✅ NUEVO: estado del correo onboarding
+      auditReadyEmailSent: false,
+      auditReadyEmailSentAt: null,
+      auditReadyEmailError: null,
     };
 
     for (const t of types) {
@@ -494,8 +552,61 @@ router.get('/progress', requireAuth, async (req, res) => {
 
     if (allPersisted) {
       s.finishedAt = Date.now();
-      // ✅ traer resumen final para el front
       latestAudits = await fetchLatestAuditsByTypes(s.userId, Object.keys(items));
+
+      // ✅✅✅ AQUÍ ES DONDE MANDAMOS 1 SOLO CORREO (SOLO ONBOARDING)
+      const isOnboarding = String(s.source || '').toLowerCase() === 'onboarding';
+
+      // Evita duplicados aunque el front llame 20 veces /progress
+      if (
+        isOnboarding &&
+        !s.auditReadyEmailSent &&
+        typeof sendAuditReadyEmail === 'function'
+      ) {
+        try {
+          // Intentamos obtener email/nombre
+          let userDoc = null;
+          if (User) {
+            userDoc = await User.findById(s.userId).select('email name displayName').lean();
+          }
+          const { email, name } = getRecipientFromReq(req, userDoc);
+
+          if (email) {
+            const dedupeKey = `onboarding_audit_ready:${String(email).toLowerCase()}:${jobId}`;
+
+            const result = await sendAuditReadyEmail({
+              toEmail: email,
+              name: name || '',
+              origin: 'onboarding',
+              jobId,
+              dedupeKey,
+            });
+
+            s.auditReadyEmailSent = true;
+            s.auditReadyEmailSentAt = Date.now();
+            s.auditReadyEmailError = result?.ok ? null : (result?.error || 'EMAIL_FAILED');
+
+            // ✅ marca notificación en audits del job (debug)
+            await markAuditEmailNotified({
+              userId: s.userId,
+              types: Object.keys(items),
+              source: s.source,
+              startedAt: s.startedAt,
+              jobId,
+            });
+          } else {
+            s.auditReadyEmailSent = true; // evita loops
+            s.auditReadyEmailSentAt = Date.now();
+            s.auditReadyEmailError = 'MISSING_USER_EMAIL';
+          }
+        } catch (e) {
+          // No rompemos el endpoint de progress; solo registramos
+          s.auditReadyEmailSent = true; // evita loops
+          s.auditReadyEmailSentAt = Date.now();
+          s.auditReadyEmailError = e?.message || String(e);
+          console.warn('[auditRunner] onboarding audit-ready email failed:', e?.message || e);
+        }
+      }
     }
   }
 
@@ -506,7 +617,14 @@ router.get('/progress', requireAuth, async (req, res) => {
     items,
     percent,
     finished: percent >= 100,
-    latestAudits, // ✅ null hasta 100%
+    latestAudits,
+
+    // ✅ útil para QA/debug (no afecta UI)
+    email: {
+      auditReadyEmailSent: !!s.auditReadyEmailSent,
+      auditReadyEmailSentAt: s.auditReadyEmailSentAt || null,
+      auditReadyEmailError: s.auditReadyEmailError || null,
+    },
   });
 });
 

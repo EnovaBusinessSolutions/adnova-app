@@ -14,8 +14,10 @@ function safeName(name, fallbackEmail) {
   const clean = String(name || '').trim();
   if (clean.length >= 2) return clean;
 
-  const guess = String(fallbackEmail || '').split('@')[0] || 'hola';
-  return guess.charAt(0).toUpperCase() + guess.slice(1);
+  const guess = String(fallbackEmail || '').split('@')[0] || 'Usuario';
+  const pretty = guess.replace(/[._-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const out = pretty ? pretty.charAt(0).toUpperCase() + pretty.slice(1) : 'Usuario';
+  return out;
 }
 
 function safeUrl(url = '') {
@@ -26,8 +28,7 @@ function safeUrl(url = '') {
 
 /**
  * ✅ Wrapper base (Adray)
- * - Ahora permite "badgeText" (tipo: Bienvenida / Verificación / Recuperación)
- * - Baja sutilmente el “glow” para que no se vea tan agresivo.
+ * - Permite badgeText
  */
 function wrapEmail({ title, preheader, contentHtml, footerHtml, badgeText }) {
   const year = new Date().getFullYear();
@@ -112,7 +113,7 @@ function verifyEmail({
   name,
   email,
   brand = 'Adray',
-  supportEmail = 'contact@adray.ai',
+  supportEmail = 'support@adray.ai',
   privacyUrl = 'https://adray.ai/politica.html',
 } = {}) {
   const url = safeUrl(verifyUrl);
@@ -184,9 +185,7 @@ function verifyEmail({
 }
 
 /**
- * ✅ Bienvenida
- * - Ahora acepta name/email/brand/supportEmail (E2E)
- * - Retrocompatible: si solo mandas loginUrl, no se rompe.
+ * ✅ Bienvenida (E2E)
  */
 function welcomeEmail({
   name,
@@ -207,9 +206,7 @@ function welcomeEmail({
       </p>
 
       <p style="margin:0 0 10px;font-size:15px;line-height:23px;color:#EAE4F2;">
-        Te has registrado exitosamente en <strong style="color:#FFFFFF">${escapeHtml(
-          brand
-        )}</strong>, tu Inteligencia Artificial experta en Marketing.
+        Te has registrado exitosamente en <strong style="color:#FFFFFF">${escapeHtml(brand)}</strong>, tu Inteligencia Artificial experta en Marketing.
       </p>
 
       <p style="margin:0 0 10px;font-size:15px;line-height:23px;color:#EAE4F2;">
@@ -225,9 +222,7 @@ function welcomeEmail({
       </p>
 
       <p style="margin:0;font-size:13px;line-height:20px;color:#BDB2C9;">
-        Soporte: <a href="mailto:${escapeHtml(
-          supportEmail
-        )}" style="color:#BDB2C9;text-decoration:underline">${escapeHtml(supportEmail)}</a>
+        Soporte: <a href="mailto:${escapeHtml(supportEmail)}" style="color:#BDB2C9;text-decoration:underline">${escapeHtml(supportEmail)}</a>
       </p>
     </div>
   `;
@@ -240,17 +235,15 @@ function welcomeEmail({
   });
 }
 
-
 /**
- * ✅ Reset password
- * - Acepta name/email/brand/supportEmail (sin romper llamadas viejas)
+ * ✅ Reset password (E2E / retrocompatible)
  */
 function resetPasswordEmail({
   resetUrl,
   name,
   email,
   brand = 'Adray',
-  supportEmail = 'contact@adray.ai',
+  supportEmail = 'support@adray.ai',
 } = {}) {
   const url = safeUrl(resetUrl);
   const safeResetUrl = escapeHtml(url);
@@ -304,38 +297,44 @@ function resetPasswordEmail({
   });
 }
 
+/**
+ * ✅ Auditoría lista (BONITA + COPY exacto)
+ * Firma recomendada:
+ *   auditReadyEmail({ name, email, loginUrl, brand, supportEmail })
+ */
 function auditReadyEmail({
   name,
+  email,
   brand = 'Adray',
   supportEmail = 'support@adray.ai',
   loginUrl = 'https://adray.ai/login',
 } = {}) {
-  const displayName = safeName(name, '');
+  const displayName = safeName(name, email);
   const safeLoginUrl = escapeHtml(safeUrl(loginUrl));
 
   const contentHtml = `
     <div style="padding-top:26px;">
       <div class="h1" style="margin:0 0 12px;font-size:26px;color:#EDEBFF;font-weight:900;letter-spacing:-.02em">
-        Auditoría lista
+        ¡Tienes una auditoría disponible!
       </div>
 
       <p style="margin:0 0 12px;font-size:15px;line-height:23px;color:#EAE4F2;">
         Hola <strong style="color:#FFFFFF">${escapeHtml(displayName)}</strong>,
       </p>
 
-      <p style="margin:0 0 18px;font-size:15px;line-height:23px;color:#EAE4F2;">
-        Tu auditoría está lista. Adray analizó tus cuentas y preparó un reporte con puntos clave para mejorar tu rendimiento.
+      <p style="margin:0 0 14px;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Tu auditoría está lista. ${escapeHtml(brand)} analizó tus cuentas y preparó un reporte con puntos clave para mejorar tu rendimiento.
       </p>
 
-      <p style="margin:0 0 8px;font-size:15px;line-height:23px;color:#EAE4F2;">
-        Consulta en tu panel de Adray:
+      <p style="margin:0 0 10px;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Consulta en tu panel de ${escapeHtml(brand)}. Dando clic aquí:
       </p>
 
-      <p style="margin:0 0 16px;font-size:14px;line-height:22px;">
-        <a href="${safeLoginUrl}" style="color:#9AA4FF;text-decoration:underline;">
+      <div style="margin:0 0 14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:12px;word-break:break-all;">
+        <a href="${safeLoginUrl}" style="color:#9AA4FF;text-decoration:underline;font-size:12px;line-height:18px;">
           ${safeLoginUrl}
         </a>
-      </p>
+      </div>
 
       <p style="margin:18px 0 0;font-size:13px;line-height:20px;color:#BDB2C9;">
         — Equipo ${escapeHtml(brand)}
@@ -351,6 +350,7 @@ function auditReadyEmail({
     title: '¡Tienes una auditoría disponible!',
     preheader: 'Tu auditoría está lista. Entra a tu panel para revisarla.',
     contentHtml,
+    badgeText: 'Auditoría',
   });
 }
 

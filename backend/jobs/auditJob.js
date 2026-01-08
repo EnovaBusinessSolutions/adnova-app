@@ -6,8 +6,16 @@ const mongoose = require('mongoose');
 const Audit = require('../models/Audit');
 const User  = require('../models/User');
 
-// ✅ Mailer (para enviar "Auditoría lista")
-const { sendMail, HAS_SMTP } = require('../services/mailer');
+// ✅ Enviar correo usando templates bonitos (emailTemplates.js)
+let sendAuditReadyEmail = null;
+try {
+  ({ sendAuditReadyEmail } = require('../services/emailService'));
+} catch (_) {
+  sendAuditReadyEmail = null;
+}
+
+// Mantengo HAS_SMTP por compat (aunque emailService ya lo valida internamente)
+const { HAS_SMTP } = require('../services/mailer');
 
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
 const DEBUG_EMAIL = process.env.DEBUG_EMAIL === 'true';
@@ -427,8 +435,12 @@ function buildSelectionMismatchIssue({ type, selected, available = [] }) {
 }
 
 /* =========================
-   ✅ NUEVO: NOTIFICACIÓN EMAIL
+   ✅ EMAIL: SOLO FUERA DE ONBOARDING
    ========================= */
+function isOnboarding(source) {
+  return String(source || '').toLowerCase() === 'onboarding';
+}
+
 function pickUserName(u = {}) {
   const raw =
     u.name ||
@@ -437,6 +449,7 @@ function pickUserName(u = {}) {
     u.nombre ||
     u.businessName ||
     u.companyName ||
+    u.displayName ||
     '';
 
   const n = String(raw || '').replace(/\s+/g, ' ').trim();
@@ -450,33 +463,10 @@ function pickUserName(u = {}) {
   return pretty ? pretty.charAt(0).toUpperCase() + pretty.slice(1) : 'Usuario';
 }
 
-function buildAuditReadyCopy({ name }) {
-  const loginUrl = `${APP_URL}/login`;
-
-  const subject = process.env.AUDIT_READY_EMAIL_SUBJECT || '¡Tienes una auditoría disponible!';
-  const text =
-    `Hola ${name},\n\n` +
-    `Tu auditoría está lista. Adray analizó tus cuentas y preparó un reporte con puntos clave para mejorar tu rendimiento.\n\n` +
-    `Consulta en tu panel de Adray. Dando clic aquí: ${loginUrl}\n\n` +
-    `— Equipo Adray\n` +
-    `Soporte: support@adray.ai`;
-
-  const html =
-    `<p>Hola <strong>${String(name).replaceAll('<','&lt;').replaceAll('>','&gt;')}</strong>,</p>` +
-    `<p>Tu auditoría está lista. Adray analizó tus cuentas y preparó un reporte con puntos clave para mejorar tu rendimiento.</p>` +
-    `<p>Consulta en tu panel de Adray. Dando clic aquí: <a href="${loginUrl}">${loginUrl}</a></p>` +
-    `<p>— Equipo Adray<br/>Soporte: <a href="mailto:support@adray.ai">support@adray.ai</a></p>`;
-
-  return { subject, text, html, loginUrl };
-}
-
 async function markAuditEmailAttempt(auditId) {
-  // strict:false para que no truene aunque tu schema aún no tenga notifications
   await Audit.updateOne(
     { _id: auditId },
-    {
-      $inc: { 'notifications.auditReadyEmailAttempts': 1 },
-    },
+    { $inc: { 'notifications.auditReadyEmailAttempts': 1 } },
     { strict: false }
   );
 }
@@ -509,17 +499,25 @@ async function markAuditEmailFail({ auditId, to, error }) {
   );
 }
 
-async function maybeSendAuditReadyEmail({ userId, auditId }) {
+/**
+ * ✅ Envía "Auditoría lista" SOLO cuando:
+ * - NO es onboarding (porque onboarding manda 1 correo global al 100% en auditRunner)
+ * - Hay SMTP
+ * - No se ha enviado antes para esa auditoría
+ */
+async function maybeSendAuditReadyEmail({ userId, auditId, source }) {
+  if (isOnboarding(source)) return; // ✅ CLAVE: evita 3 correos en onboarding
   if (!HAS_SMTP) return;
+  if (typeof sendAuditReadyEmail !== 'function') return;
 
   const user = await User.findById(userId)
-    .select('email name fullName firstName nombre businessName companyName')
+    .select('email name fullName firstName nombre businessName companyName displayName')
     .lean();
 
   const to = String(user?.email || '').trim().toLowerCase();
   if (!to) return;
 
-  // si ya fue notificada, no reenviar (por si hay reintentos externos)
+  // si ya fue notificada, no reenviar (por si hay reintentos)
   const fresh = await Audit.findById(auditId)
     .select('notifications.auditReadyEmailSentAt')
     .lean();
@@ -531,20 +529,22 @@ async function maybeSendAuditReadyEmail({ userId, auditId }) {
   await markAuditEmailAttempt(auditId);
 
   try {
-    const { subject, text, html } = buildAuditReadyCopy({ name });
-
-    const info = await sendMail({
-      to,
-      subject,
-      text,
-      html,
+    const out = await sendAuditReadyEmail({
+      toEmail: to,
+      name,
+      brand: 'Adray',
+      loginUrl: `${APP_URL}/login`,
     });
 
     if (DEBUG_EMAIL) {
-      console.log('[auditJob] audit-ready email sent:', { to, messageId: info?.messageId, auditId });
+      console.log('[auditJob] audit-ready email sent:', { ok: out?.ok, to, auditId, messageId: out?.messageId });
     }
 
-    await markAuditEmailSuccess({ auditId, to, messageId: info?.messageId });
+    if (out?.ok) {
+      await markAuditEmailSuccess({ auditId, to, messageId: out?.messageId });
+    } else {
+      await markAuditEmailFail({ auditId, to, error: out?.error || 'EMAIL_FAILED' });
+    }
   } catch (err) {
     console.error('[auditJob] audit-ready email error:', err?.message || err);
     await markAuditEmailFail({ auditId, to, error: err });
@@ -969,10 +969,11 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     // ✅ Guardar auditoría
     const created = await Audit.create(auditDoc);
 
-    // ✅ NUEVO: mandar correo SOLO cuando IA generó auditoría (evita noData)
+    // ✅ EMAIL:
+    // - NO se envía si noData
+    // - NO se envía si source=onboarding (porque onboarding manda 1 solo email global al 100% en auditRunner)
     if (!noData && created?._id) {
-      // No bloquear el flujo por email: si falla, se registra en notifications.*
-      await maybeSendAuditReadyEmail({ userId, auditId: created._id });
+      await maybeSendAuditReadyEmail({ userId, auditId: created._id, source });
     }
 
     return true;
