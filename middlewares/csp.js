@@ -17,8 +17,41 @@ const devConnect = isProd
     ];
 
 /**
+ * =========================
+ * ✅ INTERCOM allowlists
+ * =========================
+ * Intercom carga un script desde widget.intercom.io
+ * y assets desde js.intercomcdn.com / static.intercomassets.com.
+ * También abre websockets nexus-websocket-*.intercom.io.
+ */
+const intercomScript = [
+  'https://widget.intercom.io',
+  'https://js.intercomcdn.com',
+];
+
+const intercomConnect = [
+  'https://widget.intercom.io',
+  'https://api-iam.intercom.io',
+  'https://api.intercom.io',
+
+  // websockets (realtime messenger)
+  'wss://nexus-websocket-a.intercom.io',
+  'wss://nexus-websocket-b.intercom.io',
+  'wss://nexus-websocket-c.intercom.io',
+];
+
+const intercomImg = [
+  'https://static.intercomassets.com',
+  'https://downloads.intercomcdn.com',
+];
+
+const intercomFrame = [
+  'https://widget.intercom.io',
+];
+
+/**
  * CSP pública (landing, bookcall, dashboard público, etc.)
- * ✅ Permite Calendly + GA4/GTM + Meta Pixel + Microsoft Clarity
+ * ✅ Permite Calendly + GA4/GTM + Meta Pixel + Microsoft Clarity + Intercom
  * ⚠️ Nota: como estás insertando scripts inline (gtag/fbq/clarity),
  *          aquí usamos 'unsafe-inline' SOLO en páginas públicas.
  */
@@ -32,8 +65,9 @@ const publicCSPHelmet = helmet({
        * SCRIPTS
        * - GA4/GTM: googletagmanager.com
        * - Meta: connect.facebook.net
-       * - Clarity: scripts.clarity.ms (IMPORTANTE)
+       * - Clarity: scripts.clarity.ms
        * - Calendly: assets.calendly.com
+       * - Intercom: widget.intercom.io + js.intercomcdn.com
        * ⚠️ 'unsafe-inline' por scripts inline (gtag/fbq/clarity)
        */
       scriptSrc: [
@@ -44,6 +78,7 @@ const publicCSPHelmet = helmet({
         "https://connect.facebook.net",
         "https://www.clarity.ms",
         "https://scripts.clarity.ms",
+        ...intercomScript,
       ],
       scriptSrcElem: [
         "'self'",
@@ -53,6 +88,7 @@ const publicCSPHelmet = helmet({
         "https://connect.facebook.net",
         "https://www.clarity.ms",
         "https://scripts.clarity.ms",
+        ...intercomScript,
       ],
 
       styleSrc: [
@@ -66,10 +102,11 @@ const publicCSPHelmet = helmet({
 
       /**
        * CONNECT
-       * - GA4/Measurement: google-analytics.com (incluye subdominios regionales)
+       * - GA4/Measurement: google-analytics.com
        * - Meta: facebook.com
-       * - Clarity: c.clarity.ms (collector real)
+       * - Clarity: c.clarity.ms
        * - Calendly: calendly.com / api.calendly.com
+       * - Intercom: widget/api + websockets
        */
       connectSrc: [
         "'self'",
@@ -92,12 +129,16 @@ const publicCSPHelmet = helmet({
         // Clarity
         "https://www.clarity.ms",
         "https://c.clarity.ms",
+
+        // Intercom
+        ...intercomConnect,
       ],
 
       /**
-       * IMAGES (beacons)
+       * IMAGES (beacons / assets)
        * - Meta Pixel usa www.facebook.com/tr
-       * - GA4 a veces usa pixels/collect en google-analytics.com / g.doubleclick
+       * - GA4 usa collect/pixels
+       * - Intercom usa static.intercomassets.com
        */
       imgSrc: [
         "'self'",
@@ -110,9 +151,18 @@ const publicCSPHelmet = helmet({
         "https://www.google-analytics.com",
         "https://*.google-analytics.com",
         "https://stats.g.doubleclick.net",
+
+        // Intercom assets
+        ...intercomImg,
       ],
 
-      frameSrc: ["'self'", "https://calendly.com", "https://assets.calendly.com"],
+      // Calendly + Intercom (por si abre algo embebido)
+      frameSrc: [
+        "'self'",
+        "https://calendly.com",
+        "https://assets.calendly.com",
+        ...intercomFrame,
+      ],
 
       // ⚠️ SOLO para páginas públicas, NO para Shopify
       frameAncestors: ["'self'"],
