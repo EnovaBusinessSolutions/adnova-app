@@ -646,6 +646,42 @@ function hashToken(token) {
   return crypto.createHash('sha256').update(String(token)).digest('hex');
 }
 
+// =========================
+// Intercom helpers (E2E)
+// =========================
+const INTERCOM_APP_ID = process.env.INTERCOM_APP_ID || 'sqexnuzh';
+const INTERCOM_IDENTITY_SECRET = process.env.INTERCOM_IDENTITY_SECRET || '';
+
+function toUnixSeconds(d) {
+  const t = d ? new Date(d).getTime() : Date.now();
+  return Math.floor(t / 1000);
+}
+
+function intercomUserHash(userId) {
+  try {
+    if (!INTERCOM_IDENTITY_SECRET) return null;
+    return crypto
+      .createHmac('sha256', INTERCOM_IDENTITY_SECRET)
+      .update(String(userId))
+      .digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+function buildIntercomPayload(u) {
+  if (!u) return null;
+  const user_id = String(u._id);
+  return {
+    app_id: INTERCOM_APP_ID,
+    user_id,
+    email: u.email || null,
+    name: u.name || null,
+    created_at: toUnixSeconds(u.createdAt),
+    user_hash: intercomUserHash(user_id), // null si no hay secret
+  };
+}
+
 
 /* =========================
  * Auth básica (email/pass)
@@ -816,69 +852,86 @@ app.get('/api/session', async (req, res) => {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
     return res.status(401).json({ authenticated: false });
   }
+
   try {
-    const u = await User.findById(req.user._id).lean();
+    const u = await User.findById(req.user._id)
+      .select('name email shop onboardingComplete googleConnected metaConnected shopifyConnected googleObjective metaObjective plan subscription createdAt')
+      .lean();
+
     if (!u) return res.status(401).json({ authenticated: false });
+
     return res.json({
       authenticated: true,
       user: {
         _id: u._id,
+        name: u.name || null,
         email: u.email,
         shop: u.shop,
-        onboardingComplete: u.onboardingComplete,
+        onboardingComplete: !!u.onboardingComplete,
+
         googleConnected: !!u.googleConnected,
         metaConnected: !!u.metaConnected,
         shopifyConnected: !!u.shopifyConnected,
+
         googleObjective: u.googleObjective || null,
         metaObjective: u.metaObjective || null,
+
+        // ✅ extras útiles (no rompen)
+        createdAt: u.createdAt || null,
+        plan: u.plan || 'gratis',
+        subscription: u.subscription || null,
       },
+
+      // ✅ Intercom listo para "boot identified user"
+      intercom: buildIntercomPayload(u),
     });
-  } catch {
+  } catch (e) {
+    console.error('/api/session error:', e);
     return res.status(401).json({ authenticated: false });
   }
 });
+
 
 app.get('/api/saas/ping', sessionGuard, (req, res) => {
   res.json({ ok: true, user: req.user?.email });
 });
 app.use('/api/saas/shopify', sessionGuard, require('./routes/shopifyMatch'));
 
-// Alias simple para /api/me (lo usa /plans/success y /plans)
+// ✅ /api/me (canónico) — lo usa dashboard + plans
 app.get('/api/me', async (req, res) => {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
     return res.status(401).json({ authenticated: false });
   }
 
   try {
-    const u = await User.findById(req.user._id).lean();
-    if (!u) {
-      return res.status(401).json({ authenticated: false });
-    }
+    // Traemos solo lo necesario (más ligero y estable)
+    const u = await User.findById(req.user._id)
+      .select('name email plan subscription createdAt onboardingComplete')
+      .lean();
 
-    const {
-      password,
-      resetPasswordToken,
-      resetPasswordExpires,
-      ...safeUser
-    } = u;
+    if (!u) return res.status(401).json({ authenticated: false });
 
     return res.json({
       authenticated: true,
       user: {
-        _id: safeUser._id,
-        email: safeUser.email,
+        _id: u._id,
+        name: u.name || null,
+        email: u.email,
+        onboardingComplete: !!u.onboardingComplete,
+        createdAt: u.createdAt || null,
       },
-      plan: safeUser.plan || 'gratis',
-      subscription: safeUser.subscription || null,
+      plan: u.plan || 'gratis',
+      subscription: u.subscription || null,
+
+      // ✅ Intercom (safe): si no hay secret, user_hash = null (no truena)
+      intercom: buildIntercomPayload(u),
     });
   } catch (e) {
     console.error('/api/me error', e);
-    return res.status(500).json({
-      authenticated: false,
-      error: 'internal',
-    });
+    return res.status(500).json({ authenticated: false, error: 'internal' });
   }
 });
+
 
 /* =========================
  * Otras APIs internas

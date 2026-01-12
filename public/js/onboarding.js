@@ -1,3 +1,4 @@
+
 // public/js/onboarding.js
 import { apiFetch } from './apiFetch.saas.js';
 
@@ -17,6 +18,67 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Parámetros potenciales de Shopify embebido
   const shopFromQuery = qs.get('shop');
   const hostFromQuery = qs.get('host'); // compat (no se usa)
+
+  // -------------------------------------------------
+  // ✅ INTERCOM (E2E: boot anónimo + boot identificado con /api/session)
+  // -------------------------------------------------
+  const INTERCOM_APP_ID = 'sqexnuzh';
+
+  const ic = {
+    call: (...args) => {
+      try {
+        if (typeof window.Intercom === 'function') window.Intercom(...args);
+      } catch {}
+    },
+    shutdown: () => ic.call('shutdown'),
+    bootAnonymous: () => {
+      // boot mínimo para visitantes (landing/onboarding)
+      ic.call('boot', { app_id: INTERCOM_APP_ID });
+    },
+    bootIdentified: (user) => {
+      // IMPORTANT: created_at debe ser UNIX (segundos)
+      const createdAtMs = user?.createdAt ? Date.parse(user.createdAt) : null;
+      const created_at = createdAtMs ? Math.floor(createdAtMs / 1000) : undefined;
+
+      const name =
+        user?.name ||
+        user?.fullName ||
+        user?.nombre ||
+        user?.displayName ||
+        (user?.firstName && user?.lastName ? `${user.firstName} ${user.lastName}` : undefined);
+
+      const payload = {
+        app_id: INTERCOM_APP_ID,
+        user_id: user?._id ? String(user._id) : undefined,
+        email: user?.email || undefined,
+        name: name || undefined,
+        created_at,
+
+        // custom attributes útiles (opcionales, no rompen)
+        user_plan: user?.plan || user?.subscriptionPlan || undefined,
+        is_onboarding: true,
+      };
+
+      // limpiamos undefined para que Intercom no reciba basura
+      Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
+
+      // reset fuerte para evitar “mezclar” usuario anterior
+      ic.shutdown();
+      ic.call('boot', payload);
+    },
+    update: (data = {}) => {
+      const payload = { app_id: INTERCOM_APP_ID, ...data };
+      ic.call('update', payload);
+    },
+    track: (eventName, meta = {}) => {
+      try {
+        ic.call('trackEvent', eventName, meta);
+      } catch {}
+    }
+  };
+
+  // Boot anónimo temprano (así el messenger existe desde el inicio)
+  ic.bootAnonymous();
 
   // -------------------------------------------------
   // PIXELS (SAFE) — NO ROMPE FLUJO
@@ -51,6 +113,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     px.gtag('event', 'tutorial_begin', { step: 1, page: 'onboarding' });
     px.fbq('trackCustom', 'OnboardingBegin', { step: 1 });
     px.clarityEvent('onboarding_begin');
+
+    // ✅ Intercom tracking
+    ic.track('onboarding_step_begin', { step: 1, page: 'onboarding' });
   });
 
   // -------------------------------------------------
@@ -337,6 +402,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       px.leadOnce('shopify');
 
+      // ✅ Intercom
+      ic.track('connect_platform', { platform: 'shopify', ok: true });
+
       return;
     }
 
@@ -358,8 +426,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         px.clarityEvent('connect_shopify_success');
       });
       px.leadOnce('shopify');
+
+      // ✅ Intercom
+      ic.track('connect_platform', { platform: 'shopify', ok: true });
     } catch (err) {
       console.error('Error obteniendo shop/accessToken:', err);
+      ic.track('connect_platform', { platform: 'shopify', ok: false });
     }
   };
 
@@ -370,6 +442,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     px.gtag('event', 'connect_platform_click', { platform: 'shopify' });
     px.fbq('trackCustom', 'ConnectShopifyClick');
     px.clarityEvent('connect_shopify_click');
+
+    // ✅ Intercom
+    ic.track('connect_platform_click', { platform: 'shopify' });
 
     if (domainStep) domainStep.classList.remove('step--hidden');
 
@@ -430,6 +505,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       px.clarityEvent('connect_meta_success');
     });
     px.leadOnce('meta');
+
+    // ✅ Intercom
+    ic.track('connect_platform', { platform: 'meta', ok: true });
   };
 
   async function fetchMetaStatus() {
@@ -469,6 +547,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     px.fbq('trackCustom', 'ConnectMetaClick');
     px.clarityEvent('connect_meta_click');
 
+    // ✅ Intercom
+    ic.track('connect_platform_click', { platform: 'meta' });
+
     localStorage.setItem('meta_connecting', '1');
     disableBtnWhileConnecting(connectMetaBtn);
     if (connectMetaBtn.tagName !== 'A') window.location.href = '/auth/meta/login';
@@ -489,6 +570,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       px.gtag('event', 'select_objective', { platform: 'meta', objective: selected });
       px.fbq('trackCustom', 'SelectObjectiveMeta', { objective: selected });
       px.clarityEvent('select_objective_meta');
+
+      // ✅ Intercom
+      ic.track('select_objective', { platform: 'meta', objective: selected });
 
       markMetaConnected(selected);
     } catch (e) {
@@ -529,6 +613,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       px.clarityEvent('connect_google_success');
     });
     px.leadOnce('google');
+
+    // ✅ Intercom
+    ic.track('connect_platform', { platform: 'google', ok: true });
   };
 
   function ackGoogleAdsSelection({ reqId, ok, error, ids }) {
@@ -690,6 +777,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       px.fbq('trackCustom', 'GoogleAdsAccountSelected', { count: ids.length });
       px.clarityEvent('google_ads_account_selected');
 
+      // ✅ Intercom
+      ic.track('google_ads_account_selected', { count: ids.length });
+
       // ✅ Aviso global: “selección guardada” (SIN duplicar)
       dispatchAccountsSelectionSaved('google-selection-persisted');
 
@@ -763,6 +853,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     px.fbq('trackCustom', 'ConnectGoogleClick');
     px.clarityEvent('connect_google_click');
 
+    // ✅ Intercom
+    ic.track('connect_platform_click', { platform: 'google' });
+
     localStorage.setItem('google_connecting', '1');
     disableBtnWhileConnecting(connectGoogleBtn);
     window.location.href = '/auth/google/connect';
@@ -785,6 +878,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       px.gtag('event', 'select_objective', { platform: 'google', objective: selected });
       px.fbq('trackCustom', 'SelectObjectiveGoogle', { objective: selected });
       px.clarityEvent('select_objective_google');
+
+      // ✅ Intercom
+      ic.track('select_objective', { platform: 'google', objective: selected });
 
       await ensureGoogleAccountsUI();
     } catch (e) {
@@ -810,14 +906,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // -------------------------------------------------
-  // Sesión (demo GA) + limpieza de estado si cambia usuario
+  // ✅ Sesión + Identificación Intercom + limpieza si cambia usuario
   // -------------------------------------------------
   try {
     const prevUserId = sessionStorage.getItem('userId');
     const sess = await apiFetch('/api/session');
+
     if (sess?.authenticated && sess?.user) {
       const currentId = String(sess.user._id);
 
+      // Si cambia usuario → limpiar storages + reset Intercom
       if (prevUserId && prevUserId !== currentId) {
         [
           'shopifyConnected',
@@ -828,10 +926,20 @@ document.addEventListener('DOMContentLoaded', async () => {
           'metaObjective',
           'googleObjective'
         ].forEach((k) => sessionStorage.removeItem(k));
+
+        // ✅ Intercom reset fuerte
+        ic.shutdown();
+        ic.bootAnonymous();
       }
 
       sessionStorage.setItem('userId',  currentId);
       sessionStorage.setItem('email',   sess.user.email);
+
+      // ✅ Intercom: boot identificado (E2E)
+      ic.bootIdentified(sess.user);
+
+      // (Opcional) Actualiza estado del onboarding como atributo
+      ic.update({ last_seen_page: 'onboarding_step_1' });
 
       if (sess.user.googleConnected) {
         gaPanel?.classList?.remove('hidden');
@@ -839,9 +947,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else {
         gaPanel?.classList?.add('hidden');
       }
+    } else {
+      // Si no hay sesión, nos aseguramos de quedar en modo anónimo
+      ic.shutdown();
+      ic.bootAnonymous();
     }
   } catch (err) {
     console.warn('No se pudo obtener /api/session:', err);
+    // En caso de error, dejamos Intercom anónimo
+    ic.shutdown();
+    ic.bootAnonymous();
   }
 
   // Ping de salud (silencioso)
@@ -925,6 +1040,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     px.gtag('event', 'onboarding_step_complete', { step: 1, page: 'onboarding' });
     px.fbq('trackCustom', 'OnboardingStepComplete', { step: 1 });
     px.clarityEvent('onboarding_step1_complete');
+
+    // ✅ Intercom
+    ic.track('onboarding_step_complete', { step: 1, page: 'onboarding' });
+    ic.update({ last_seen_page: 'onboarding_step_2' });
 
     // Si aún no se marcó Lead por conexión, lo marcamos aquí
     px.leadOnce('continue_step1');
