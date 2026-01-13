@@ -53,9 +53,10 @@ const intercomFrame = ['https://widget.intercom.io'];
  * - renderiza un iframe (frame-src)
  * - puede hacer requests (connect-src)
  */
-const turnstileScript = ['https://challenges.cloudflare.com'];
-const turnstileFrame  = ['https://challenges.cloudflare.com'];
-const turnstileConnect = ['https://challenges.cloudflare.com'];
+const turnstileScript  = ['https://challenges.cloudflare.com'];
+const turnstileFrame   = ['https://challenges.cloudflare.com', 'https://*.cloudflare.com'];
+const turnstileConnect = ['https://challenges.cloudflare.com', 'https://*.cloudflare.com'];
+
 
 /**
  * CSP pública (landing, login, register, onboarding, dashboard, etc.)
