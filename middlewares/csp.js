@@ -45,9 +45,7 @@ const intercomImg = [
   'https://downloads.intercomcdn.com',
 ];
 
-const intercomFrame = [
-  'https://widget.intercom.io',
-];
+const intercomFrame = ['https://widget.intercom.io'];
 
 /**
  * CSP pública (landing, bookcall, dashboard público, etc.)
@@ -63,72 +61,72 @@ const publicCSPHelmet = helmet({
 
       /**
        * SCRIPTS
-       * - GA4/GTM: googletagmanager.com
-       * - Meta: connect.facebook.net
-       * - Clarity: scripts.clarity.ms
-       * - Calendly: assets.calendly.com
-       * - Intercom: widget.intercom.io + js.intercomcdn.com
-       * ⚠️ 'unsafe-inline' por scripts inline (gtag/fbq/clarity)
        */
       scriptSrc: [
         "'self'",
         "'unsafe-inline'",
-        "https://assets.calendly.com",
-        "https://www.googletagmanager.com",
-        "https://connect.facebook.net",
-        "https://www.clarity.ms",
-        "https://scripts.clarity.ms",
+        'https://assets.calendly.com',
+        'https://www.googletagmanager.com',
+        'https://connect.facebook.net',
+        'https://www.clarity.ms',
+        'https://scripts.clarity.ms',
         ...intercomScript,
       ],
       scriptSrcElem: [
         "'self'",
         "'unsafe-inline'",
-        "https://assets.calendly.com",
-        "https://www.googletagmanager.com",
-        "https://connect.facebook.net",
-        "https://www.clarity.ms",
-        "https://scripts.clarity.ms",
+        'https://assets.calendly.com',
+        'https://www.googletagmanager.com',
+        'https://connect.facebook.net',
+        'https://www.clarity.ms',
+        'https://scripts.clarity.ms',
         ...intercomScript,
       ],
 
       styleSrc: [
         "'self'",
         "'unsafe-inline'",
-        "https://fonts.googleapis.com",
-        "https://assets.calendly.com",
+        'https://fonts.googleapis.com',
+        'https://assets.calendly.com',
       ],
 
-      fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
+      fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
 
       /**
        * CONNECT
-       * - GA4/Measurement: google-analytics.com
-       * - Meta: facebook.com
-       * - Clarity: c.clarity.ms
-       * - Calendly: calendly.com / api.calendly.com
-       * - Intercom: widget/api + websockets
+       * ✅ FIX: Tag Assistant / GTM Preview usa google.com/ccm/collect
+       * ✅ Ads/Conversiones: googleadservices / doubleclick / googlesyndication
        */
       connectSrc: [
         "'self'",
         ...devConnect,
 
-        "https://assets.calendly.com",
-        "https://calendly.com",
-        "https://api.calendly.com",
+        'https://assets.calendly.com',
+        'https://calendly.com',
+        'https://api.calendly.com',
 
-        // GA4
-        "https://www.google-analytics.com",
-        "https://analytics.google.com",
-        "https://*.google-analytics.com",
-        "https://stats.g.doubleclick.net",
+        // GA4 / GTM
+        'https://www.google-analytics.com',
+        'https://analytics.google.com',
+        'https://*.google-analytics.com',
+        'https://stats.g.doubleclick.net',
+
+        // ✅ FIX (Tag Assistant / GTM Preview)
+        'https://www.google.com',
+        'https://google.com',
+
+        // ✅ recomendado para Google Ads / conversiones
+        'https://www.googleadservices.com',
+        'https://googleads.g.doubleclick.net',
+        'https://pagead2.googlesyndication.com',
 
         // Meta
-        "https://www.facebook.com",
-        "https://connect.facebook.net",
+        'https://www.facebook.com',
+        'https://connect.facebook.net',
 
         // Clarity
-        "https://www.clarity.ms",
-        "https://c.clarity.ms",
+        'https://www.clarity.ms',
+        'https://c.clarity.ms',
 
         // Intercom
         ...intercomConnect,
@@ -136,21 +134,18 @@ const publicCSPHelmet = helmet({
 
       /**
        * IMAGES (beacons / assets)
-       * - Meta Pixel usa www.facebook.com/tr
-       * - GA4 usa collect/pixels
-       * - Intercom usa static.intercomassets.com
        */
       imgSrc: [
         "'self'",
-        "data:",
-        "https:",
-        "https://upload.wikimedia.org",
-        "https://img.icons8.com",
+        'data:',
+        'https:',
+        'https://upload.wikimedia.org',
+        'https://img.icons8.com',
 
-        "https://www.facebook.com",
-        "https://www.google-analytics.com",
-        "https://*.google-analytics.com",
-        "https://stats.g.doubleclick.net",
+        'https://www.facebook.com',
+        'https://www.google-analytics.com',
+        'https://*.google-analytics.com',
+        'https://stats.g.doubleclick.net',
 
         // Intercom assets
         ...intercomImg,
@@ -159,8 +154,8 @@ const publicCSPHelmet = helmet({
       // Calendly + Intercom (por si abre algo embebido)
       frameSrc: [
         "'self'",
-        "https://calendly.com",
-        "https://assets.calendly.com",
+        'https://calendly.com',
+        'https://assets.calendly.com',
         ...intercomFrame,
       ],
 
@@ -195,46 +190,46 @@ const shopifyCSPHelmet = helmet({
       objectSrc: ["'none'"],
 
       // ✅ Shopify Admin puede embeber tu app
-      frameAncestors: ["https://admin.shopify.com", "https://*.myshopify.com"],
+      frameAncestors: ['https://admin.shopify.com', 'https://*.myshopify.com'],
 
       // ✅ App Bridge
       scriptSrc: [
         "'self'",
         "'unsafe-inline'",
         "'unsafe-eval'",
-        "https://cdn.shopify.com",
-        "https://cdn.shopifycdn.net",
+        'https://cdn.shopify.com',
+        'https://cdn.shopifycdn.net',
       ],
       scriptSrcElem: [
         "'self'",
         "'unsafe-inline'",
         "'unsafe-eval'",
-        "https://cdn.shopify.com",
-        "https://cdn.shopifycdn.net",
+        'https://cdn.shopify.com',
+        'https://cdn.shopifycdn.net',
       ],
 
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
 
       imgSrc: [
         "'self'",
-        "data:",
-        "https:",
-        "https://upload.wikimedia.org",
-        "https://img.icons8.com",
+        'data:',
+        'https:',
+        'https://upload.wikimedia.org',
+        'https://img.icons8.com',
       ],
 
       // ✅ Requests dentro del Admin / telemetría Shopify
       connectSrc: [
         "'self'",
-        "https://*.myshopify.com",
-        "https://admin.shopify.com",
-        "https://cdn.shopify.com",
-        "https://cdn.shopifycdn.net",
-        "https://monorail-edge.shopifysvc.com",
+        'https://*.myshopify.com',
+        'https://admin.shopify.com',
+        'https://cdn.shopify.com',
+        'https://cdn.shopifycdn.net',
+        'https://monorail-edge.shopifysvc.com',
       ],
 
-      frameSrc: ["'self'", "https://admin.shopify.com", "https://*.myshopify.com"],
+      frameSrc: ["'self'", 'https://admin.shopify.com', 'https://*.myshopify.com'],
       formAction: ["'self'"],
     },
   },
