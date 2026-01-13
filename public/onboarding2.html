@@ -8,6 +8,70 @@
   <link rel="stylesheet" href="/onboarding.css" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" />
 
+  <!-- ===================== INTERCOM (E2E) ===================== -->
+  <!-- ✅ App ID fijo (puedes cambiarlo por placeholder si lo inyectas desde backend) -->
+  <meta name="intercom-app-id" content="sqexnuzh" />
+
+  <script>
+    (function () {
+      var APP_ID = (document.querySelector('meta[name="intercom-app-id"]') || {}).content;
+
+      if (!APP_ID) {
+        console.warn('[Intercom] Missing intercom app id meta tag');
+        return;
+      }
+
+      // Base settings (visitor mode). Si luego en dashboard haces "secure mode" se hace update/boot con user_hash.
+      window.intercomSettings = window.intercomSettings || {};
+      window.intercomSettings.app_id = APP_ID;
+
+      (function () {
+        var w = window;
+        var ic = w.Intercom;
+        if (typeof ic === "function") {
+          ic("reattach_activator");
+          ic("update", w.intercomSettings);
+        } else {
+          var d = document;
+          var i = function () { i.c(arguments); };
+          i.q = [];
+          i.c = function (args) { i.q.push(args); };
+          w.Intercom = i;
+
+          var l = function () {
+            var s = d.createElement("script");
+            s.type = "text/javascript";
+            s.async = true;
+            s.src = "https://widget.intercom.io/widget/" + APP_ID;
+            var x = d.getElementsByTagName("script")[0];
+            x.parentNode.insertBefore(s, x);
+          };
+
+          if (document.readyState === "complete") l();
+          else if (w.attachEvent) w.attachEvent("onload", l);
+          else w.addEventListener("load", l, false);
+        }
+      })();
+
+      // ✅ Marcar vista del onboarding (no rompe nada si Intercom aún no terminó de cargar)
+      window.addEventListener('load', function () {
+        try {
+          if (typeof window.Intercom === 'function') {
+            window.Intercom('update', {
+              app_id: APP_ID,
+              custom_launcher_selector: null,
+              page: 'onboarding_step_2',
+            });
+
+            // Evento opcional (si no lo quieres, bórralo)
+            try { window.Intercom('trackEvent', 'onboarding_step_view', { step: 2 }); } catch (_) {}
+          }
+        } catch (_) {}
+      });
+    })();
+  </script>
+  <!-- =========================================================== -->
+
   <!-- ✅ Overrides SOLO para esta vista (mobile impecable, sin tocar tu lógica) -->
   <style>
     /* Igualar tamaño del botón Atrás con el CTA */
@@ -156,7 +220,6 @@
       </div>
 
       <div class="steps">
-        <!-- ✅ step 1 marcado como completado (solo visual, no toca lógica) -->
         <div class="step completed" data-step="1">
           <div class="step-indicator"><span class="step-number">1</span></div>
           <div class="step-text">
@@ -193,7 +256,6 @@
 
     <main class="main-content">
 
-      <!-- ✅ Progreso en móvil (Paso 2/4) -->
       <div id="adnova-mobile-progress" aria-hidden="false">
         <div class="amp-row">
           <div class="amp-left">
@@ -258,6 +320,13 @@
 
     </main>
   </div>
+
+  <!-- ✅ Opcional: al navegar entre steps, evita duplicados del widget -->
+  <script>
+    window.addEventListener('beforeunload', function () {
+      try { if (typeof window.Intercom === 'function') window.Intercom('shutdown'); } catch (_) {}
+    });
+  </script>
 
   <script type="module" src="/js/onboarding2.js"></script>
 </body>

@@ -15,6 +15,9 @@
   <!-- Evita cachés agresivos durante el flujo -->
   <meta http-equiv="Cache-Control" content="no-store" />
 
+  <!-- ✅ Intercom App ID (CSP-friendly) -->
+  <meta name="intercom-app-id" content="sqexnuzh" />
+
   <!-- Pequeños ajustes SOLO para esta vista (no rompen PC) -->
   <style>
     /* Evita que el botón quede “muy abajo” en móviles pequeños */
@@ -80,10 +83,62 @@
     })(window, document, "clarity", "script", "ugeg5ymvp5");
   </script>
 
+  <!-- ===================== INTERCOM (VISITORS + USER MODE) ===================== -->
+  <script>
+    (function () {
+      var w = window;
+      var APP_ID = (document.querySelector('meta[name="intercom-app-id"]') || {}).content || "sqexnuzh";
+
+      // Si ya tienes user_id real, reemplaza USER_ID_REAL en backend al renderizar HTML
+      var userId = document.body && document.body.getAttribute("data-user-id");
+      if (!userId || userId === "USER_ID_REAL") userId = null;
+
+      w.intercomSettings = {
+        app_id: APP_ID,
+        // Metadata útil para automatizaciones
+        page: "onboarding_step_3",
+        step: 3,
+        custom_attributes: {
+          onboarding_step: 3,
+          onboarding_page: "onboarding_step_3"
+        },
+        ...(userId ? { user_id: String(userId) } : {})
+      };
+
+      var ic = w.Intercom;
+      if (typeof ic === "function") {
+        ic("reattach_activator");
+        ic("update", w.intercomSettings);
+      } else {
+        var d = document;
+        var i = function () { i.c(arguments); };
+        i.q = [];
+        i.c = function (args) { i.q.push(args); };
+        w.Intercom = i;
+
+        var l = function () {
+          var s = d.createElement("script");
+          s.type = "text/javascript";
+          s.async = true;
+          s.src = "https://widget.intercom.io/widget/" + APP_ID;
+          var x = d.getElementsByTagName("script")[0];
+          x.parentNode.insertBefore(s, x);
+        };
+
+        if (d.readyState === "complete") {
+          l();
+        } else if (w.attachEvent) {
+          w.attachEvent("onload", l);
+        } else {
+          w.addEventListener("load", l, false);
+        }
+      }
+    })();
+  </script>
   <!-- =============================================================== -->
 </head>
 
-<body data-page="onboarding3">
+<body data-page="onboarding3" data-user-id="USER_ID_REAL">
   <!-- Meta Pixel (noscript) -->
   <noscript>
     <img height="1" width="1" style="display:none"
@@ -205,6 +260,28 @@
 
   <!-- JS -->
   <script src="/js/onboarding3.js" defer></script>
+
+  <!-- ✅ Anti-duplicado: si el usuario navega con links, cerramos Intercom antes -->
+  <script>
+    (function () {
+      function safeShutdown() {
+        try {
+          if (typeof window.Intercom === "function") window.Intercom("shutdown");
+        } catch {}
+      }
+
+      // cuando el navegador vaya a salir de la página
+      window.addEventListener("beforeunload", safeShutdown);
+
+      // si hay links internos (por si en el futuro agregas)
+      document.addEventListener("click", function (e) {
+        var a = e.target && e.target.closest ? e.target.closest("a") : null;
+        if (!a) return;
+        // si navega fuera o a otra ruta
+        safeShutdown();
+      }, true);
+    })();
+  </script>
 
   <noscript>Por favor activa JavaScript para continuar.</noscript>
 </body>

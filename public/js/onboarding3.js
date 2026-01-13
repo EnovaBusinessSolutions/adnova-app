@@ -8,12 +8,38 @@
   };
 
   // =======================
-  // Pixels (SAFE)
+  // Pixels + Intercom (SAFE)
   // =======================
   const px = {
     gtag: (...args) => { try { window.gtag?.(...args); } catch {} },
     fbq:  (...args) => { try { window.fbq?.(...args); } catch {} },
     clarityEvent: (name) => { try { window.clarity?.("event", name); } catch {} },
+
+    intercom: (...args) => { try { if (typeof window.Intercom === "function") window.Intercom(...args); } catch {} },
+
+    // Evento “Intercom trackEvent” compatible
+    intercomEvent: (name, meta) => {
+      try {
+        if (typeof window.Intercom !== "function") return;
+
+        // update settings útil para rules/segments
+        const patch = {
+          page: "onboarding_step_3",
+          step: 3,
+          custom_attributes: {
+            onboarding_step: 3,
+            onboarding_page: "onboarding_step_3",
+            ...(meta && typeof meta === "object" ? meta : {})
+          }
+        };
+
+        window.Intercom("update", patch);
+
+        // trackEvent oficial
+        if (name) window.Intercom("trackEvent", String(name), meta && typeof meta === "object" ? meta : {});
+      } catch {}
+    },
+
     once: (key, fn) => {
       try {
         if (sessionStorage.getItem(key) === "1") return;
@@ -28,6 +54,9 @@
     px.gtag("event", "tutorial_progress", { step: 3, page: "onboarding3" });
     px.fbq("trackCustom", "OnboardingProgress", { step: 3 });
     px.clarityEvent("onboarding_step3_begin");
+
+    // Intercom (SAFE)
+    px.intercomEvent("onboarding_step_begin", { step: 3, page: "onboarding3" });
   });
 
   // =======================
@@ -189,10 +218,6 @@
     try {
       const resp = await getJSON(ENDPOINTS.latest);
 
-      // Puede venir como:
-      // - { ok:true, data:{ google:..., meta:..., ga4:... } }
-      // - { ok:true, items:[...] }
-      // - { data:[...] }
       const dict =
         resp && resp.data && !Array.isArray(resp.data) ? resp.data :
         resp && !Array.isArray(resp) && typeof resp === "object" && !Array.isArray(resp.items) ? resp :
@@ -284,14 +309,23 @@
     // CTA click (lo decidimos según el estado final)
     btnContinue?.addEventListener("click", () => {
       const mode = btnContinue?.dataset?.cta || "dashboard";
+
+      // Intercom: track click
+      px.intercomEvent("onboarding_step3_cta_click", { mode });
+
       if (mode === "select") {
+        try { if (typeof window.Intercom === "function") window.Intercom("shutdown"); } catch {}
         window.location.href = "/onboarding.html#step=1";
         return;
       }
       if (mode === "back") {
+        try { if (typeof window.Intercom === "function") window.Intercom("shutdown"); } catch {}
         window.location.href = "/onboarding2.html#step=2";
         return;
       }
+
+      // dashboard / step4
+      try { if (typeof window.Intercom === "function") window.Intercom("shutdown"); } catch {}
       window.location.href = "/onboarding4.html";
     });
 
@@ -304,10 +338,22 @@
       try { cyclerStop?.(); } catch {}
       pollTimer = null;
       cyclerStop = null;
+
+      // Intercom (safe)
+      try {
+        if (typeof window.Intercom === "function") window.Intercom("shutdown");
+      } catch {}
     };
     window.addEventListener("beforeunload", cleanup);
 
     try {
+      // Intercom update: page context (safe)
+      px.intercom("update", {
+        page: "onboarding_step_3",
+        step: 3,
+        custom_attributes: { onboarding_step: 3, onboarding_page: "onboarding_step_3" }
+      });
+
       if (btnContinue) btnContinue.disabled = true;
       if (btnContinue) btnContinue.textContent = "Procesando…";
       setBar(0);
@@ -342,7 +388,6 @@
       };
 
       // 3) Pintar estado inicial de filas
-      // Shopify: como está “Próximamente”, lo comunicamos mejor si no está conectado
       if (rows.shopify) {
         if (isConnected.shopify) setRowState(rows.shopify, "done", "Conectado");
         else setRowState(rows.shopify, "skipped", "Próximamente");
@@ -365,6 +410,17 @@
         else if (needsSelection.ga4) setRowState(rows.ga4, "error", "Selecciona 1 propiedad");
         else setRowState(rows.ga4, "running");
       }
+
+      // Intercom: contexto de conexiones
+      px.intercomEvent("onboarding_step3_connections", {
+        google_connected: !!isConnected.google,
+        meta_connected: !!isConnected.meta,
+        ga4_connected: !!isConnected.ga4,
+        shopify_connected: !!isConnected.shopify,
+        google_selection_required: !!needsSelection.google,
+        meta_selection_required: !!needsSelection.meta,
+        ga4_selection_required: !!needsSelection.ga4,
+      });
 
       // 4) Definir qué se audita (solo conectadas y sin “selection required”)
       const types = [];
@@ -396,6 +452,12 @@
         px.fbq("trackCustom", "OnboardingAnalysisSkipped", { reason: anySelectionRequired ? "selection_required" : "no_sources" });
         px.clarityEvent("onboarding_analysis_skipped");
 
+        // Intercom
+        px.intercomEvent("onboarding_analysis_skipped", {
+          reason: anySelectionRequired ? "selection_required" : "no_sources",
+          types_attempted: types
+        });
+
         return;
       }
 
@@ -407,6 +469,9 @@
       px.fbq("trackCustom", "OnboardingAnalysisStart", { types });
       px.clarityEvent("onboarding_analysis_start");
 
+      // Intercom
+      px.intercomEvent("onboarding_analysis_start", { types });
+
       const startResp = await postJSON(ENDPOINTS.start, {
         types,
         source: "onboarding",
@@ -414,6 +479,9 @@
 
       const jobId = startResp?.jobId;
       if (!jobId) throw new Error("NO_JOB_ID");
+
+      // Intercom: guardar jobId
+      px.intercom("update", { custom_attributes: { audit_job_id: String(jobId) } });
 
       // 6) Poll progreso
       const pollOnce = async () => {
@@ -467,6 +535,9 @@
           px.gtag("event", "onboarding_analysis_complete", { types: types.join(",") });
           px.fbq("trackCustom", "OnboardingAnalysisComplete", { types });
           px.clarityEvent("onboarding_analysis_complete");
+
+          // Intercom
+          px.intercomEvent("onboarding_analysis_complete", { types, jobId });
         }
       };
 
@@ -482,13 +553,27 @@
 
     } catch (e) {
       console.error("ONBOARDING3_INIT_ERROR", e);
-      cleanup();
+      try { cyclerStop?.(); } catch {}
+      try { if (pollTimer) clearInterval(pollTimer); } catch {}
+      pollTimer = null;
 
       // fail-safe UI
-      setText("Error iniciando el análisis");
-      setBar(100);
+      const $ = (sel) => document.querySelector(sel);
+      const progressText = $("#progress-text");
+      const btnContinue  = $("#btn-continue");
+
+      if (progressText) progressText.textContent = "Error iniciando el análisis";
+      const progressBar  = $("#progress-bar");
+      const progressWrap = document.querySelector(".progress-bar");
+      if (progressBar) progressBar.style.width = "100%";
+      if (progressWrap) progressWrap.setAttribute("aria-valuenow", "100");
 
       // Google / Meta / GA4 -> error (Shopify lo dejamos como está)
+      const rows = {
+        google:  $("#step-googleads"),
+        meta:    $("#step-meta"),
+        ga4:     $("#step-ga4"),
+      };
       if (rows.google) setRowState(rows.google, "error");
       if (rows.meta)   setRowState(rows.meta, "error");
       if (rows.ga4)    setRowState(rows.ga4, "error");
@@ -500,6 +585,9 @@
       px.gtag("event", "onboarding_analysis_error", { error: String(e?.message || "unknown") });
       px.fbq("trackCustom", "OnboardingAnalysisError", { error: String(e?.message || "unknown") });
       px.clarityEvent("onboarding_analysis_error");
+
+      // Intercom
+      px.intercomEvent("onboarding_analysis_error", { error: String(e?.message || "unknown") });
     }
   }
 

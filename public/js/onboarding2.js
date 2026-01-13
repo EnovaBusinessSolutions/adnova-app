@@ -21,6 +21,70 @@ function hideEl(el) {
   el.style.zIndex = '';
 }
 
+/* ===================== INTERCOM (SAFE) ===================== */
+const ic = {
+  has: () => typeof window.Intercom === 'function',
+  safe: (fn) => { try { fn?.(); } catch {} },
+  appId: () => {
+    try {
+      return (document.querySelector('meta[name="intercom-app-id"]') || {}).content || '';
+    } catch {
+      return '';
+    }
+  },
+  getUserId: () => {
+    try {
+      const v = document.body?.getAttribute('data-user-id') || '';
+      // Evita mandar placeholder
+      if (!v || v === 'USER_ID_REAL') return null;
+      return String(v);
+    } catch {
+      return null;
+    }
+  },
+  updateStep: (stepNumber, pageName) => {
+    ic.safe(() => {
+      if (!ic.has()) return;
+
+      const APP_ID = ic.appId();
+      const userId = ic.getUserId();
+
+      const payload = {
+        ...(APP_ID ? { app_id: APP_ID } : {}),
+        page: pageName,
+        step: stepNumber,
+        // Campos “custom” (Intercom los acepta como metadata)
+        custom_attributes: {
+          onboarding_step: stepNumber,
+          onboarding_page: pageName,
+        },
+      };
+
+      // Si ya tienes user_id real en el HTML, lo pasamos; si no, queda como visitor
+      if (userId) payload.user_id = userId;
+
+      window.Intercom('update', payload);
+
+      // Evento opcional (si en tu workspace lo usas para automatizaciones)
+      try {
+        window.Intercom('trackEvent', 'onboarding_step_view', { step: stepNumber, page: pageName });
+      } catch {}
+    });
+  },
+  track: (name, meta) => {
+    ic.safe(() => {
+      if (!ic.has()) return;
+      try { window.Intercom('trackEvent', name, meta || {}); } catch {}
+    });
+  },
+  shutdown: () => {
+    ic.safe(() => {
+      if (!ic.has()) return;
+      try { window.Intercom('shutdown'); } catch {}
+    });
+  },
+};
+
 document.addEventListener('DOMContentLoaded', () => {
   const $root = document.getElementById('onboarding') || document;
 
@@ -51,6 +115,10 @@ document.addEventListener('DOMContentLoaded', () => {
     px.fbq('trackCustom', 'OnboardingStepBegin', { step: 2 });
     px.clarityEvent('onboarding_step2_begin');
   });
+
+  /* ===================== INTERCOM: step view ===================== */
+  // (No usamos "once" aquí porque update debe correr por cada carga real de la página)
+  ic.updateStep(2, 'onboarding_step_2');
 
   /* ===================== STEPS UI ===================== */
   // Limpia estados
@@ -89,6 +157,9 @@ document.addEventListener('DOMContentLoaded', () => {
     hideEl(s1);
     showEl(s2);
     if (location.hash !== '#step=2') location.hash = '#step=2';
+
+    // Intercom: asegurar contexto step 2 (por si el usuario cayó con hash raro)
+    ic.updateStep(2, 'onboarding_step_2');
   });
 
   /* ===================== NAV ===================== */
@@ -99,6 +170,12 @@ document.addEventListener('DOMContentLoaded', () => {
     px.gtag('event', 'onboarding_back', { from_step: 2, to_step: 1, page: 'onboarding2' });
     px.fbq('trackCustom', 'OnboardingBack', { from_step: 2, to_step: 1 });
     px.clarityEvent('onboarding_back_2_to_1');
+
+    // Intercom event
+    ic.track('onboarding_back', { from_step: 2, to_step: 1, page: 'onboarding_step_2' });
+
+    // Evita duplicados al cambiar de página
+    ic.shutdown();
 
     window.location.href = '/onboarding.html#step=1';
   });
@@ -123,6 +200,12 @@ document.addEventListener('DOMContentLoaded', () => {
     px.fbq('trackCustom', 'OnboardingStepComplete', { step: 2 });
     px.clarityEvent('onboarding_step2_complete');
 
+    // Intercom: completar step 2 + evento
+    ic.track('onboarding_step_complete', { step: 2, page: 'onboarding_step_2' });
+
+    // Evita duplicados al cambiar de página
+    ic.shutdown();
+
     // Navegación
     window.location.href = '/onboarding3.html';
 
@@ -133,8 +216,16 @@ document.addEventListener('DOMContentLoaded', () => {
           inflight = false;
           continueBtn2.disabled = false;
           continueBtn2.textContent = old;
+
+          // Re-hidrata Intercom si el usuario se quedó aquí
+          ic.updateStep(2, 'onboarding_step_2');
         }
       } catch {}
     }, 4500);
+  });
+
+  // Extra safety: si cierran la pestaña o cambian de URL
+  window.addEventListener('beforeunload', () => {
+    ic.shutdown();
   });
 });

@@ -27,6 +27,64 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   // -----------------------------
+  // Intercom (SAFE) — E2E step 4
+  // -----------------------------
+  const intercom = {
+    has: () => typeof window.Intercom === 'function',
+    update: (extra = {}) => {
+      try {
+        if (!intercom.has()) return false;
+
+        const userId = document.body?.dataset?.userId || null;
+
+        // OJO: esto NO autentica. Solo añade contexto a Intercom.
+        // Si ya tienes identity verification en backend (/api/session) eso es aparte.
+        const payload = {
+          ...(window.intercomSettings || {}),
+          app_id: window.intercomSettings?.app_id || 'sqexnuzh',
+          user_id: userId || undefined,
+          page: 'onboarding_step_4',
+          step: 4,
+          custom_attributes: {
+            ...(window.intercomSettings?.custom_attributes || {}),
+            onboarding_step: 4,
+            onboarding_page: 'onboarding_step_4',
+          },
+          ...extra,
+        };
+
+        window.Intercom('update', payload);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    track: (eventName, meta = {}) => {
+      try {
+        if (!intercom.has()) return false;
+        window.Intercom('trackEvent', String(eventName), meta || {});
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    once: (key, fn) => px.once(`ic_${key}`, fn),
+  };
+
+  // Al entrar al Step 4 (una vez por sesión)
+  intercom.once('onboarding4_enter', () => {
+    // refresca datos/contexto
+    intercom.update({ last_seen_step: 4 });
+
+    // evento de entrada
+    intercom.track('onboarding_step_view', {
+      step: 4,
+      page: 'onboarding4',
+      ts: Date.now(),
+    });
+  });
+
+  // -----------------------------
   // Helpers
   // -----------------------------
   const DASHBOARD_URL = '/dashboard';
@@ -67,6 +125,13 @@ document.addEventListener('DOMContentLoaded', () => {
     px.gtag('event', 'onboarding_finish_click', { step: 4 });
     px.fbq('trackCustom', 'OnboardingFinishClick', { step: 4 });
     px.clarityEvent('onboarding_finish_click');
+
+    // ✅ Intercom — click
+    intercom.track('onboarding_finish_click', {
+      step: 4,
+      page: 'onboarding4',
+      ts: Date.now(),
+    });
 
     setBtnLoading(true);
 
@@ -113,24 +178,48 @@ document.addEventListener('DOMContentLoaded', () => {
         px.clarityEvent('onboarding_complete');
       });
 
+      // ✅ Intercom — onboarding completado
+      intercom.once('onboarding_complete', () => {
+        intercom.update({ onboarding_complete: true, last_seen_step: 4 });
+        intercom.track('onboarding_complete', {
+          step: 4,
+          page: 'onboarding4',
+          ok: true,
+          ts: Date.now(),
+        });
+      });
+
       // Fallback: si no se marcó Lead antes, lo marcamos aquí
       px.leadOnce('onboarding4_complete');
 
     } catch (err) {
-      // Solo mostramos alerta si fue un error “real” distinto a NO_AUTH/404 silencioso
       if (String(err?.message) === 'NO_AUTH') {
-        // Si no hay auth, lo más correcto es mandar a login
         console.warn('[onboarding4] Sesión no válida. Redirigiendo a login.');
+
+        // ✅ Intercom — sesión inválida (si alcanzó a cargar)
+        intercom.track('onboarding_complete_failed', {
+          step: 4,
+          page: 'onboarding4',
+          reason: 'no_auth',
+          ts: Date.now(),
+        });
       } else {
         console.warn('[onboarding4] Error marcando onboarding como completo:', err);
-        // No frenamos al usuario; solo re-habilitamos si NO vamos a redirigir
-        // (pero aquí sí redirigimos igual, así que no alertamos).
+
+        // ✅ Intercom — error genérico
+        intercom.track('onboarding_complete_failed', {
+          step: 4,
+          page: 'onboarding4',
+          reason: 'unknown_error',
+          message: String(err?.message || 'unknown'),
+          ts: Date.now(),
+        });
       }
     } finally {
       // E2E: siempre avanzamos
       go(shouldRedirectTo);
-      // no tiene caso re-habilitar porque ya redirigimos,
-      // pero por seguridad si algo bloquea la navegación:
+
+      // safety fallback si algo bloquea navegación
       setTimeout(() => {
         inflight = false;
         setBtnLoading(false);
