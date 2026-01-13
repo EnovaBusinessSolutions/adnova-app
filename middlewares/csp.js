@@ -45,8 +45,21 @@ const intercomImg = [
 const intercomFrame = ['https://widget.intercom.io'];
 
 /**
+ * =========================
+ * ✅ Cloudflare Turnstile allowlists
+ * =========================
+ * Turnstile:
+ * - carga script desde challenges.cloudflare.com
+ * - renderiza un iframe (frame-src)
+ * - puede hacer requests (connect-src)
+ */
+const turnstileScript = ['https://challenges.cloudflare.com'];
+const turnstileFrame  = ['https://challenges.cloudflare.com'];
+const turnstileConnect = ['https://challenges.cloudflare.com'];
+
+/**
  * CSP pública (landing, login, register, onboarding, dashboard, etc.)
- * ✅ Permite Calendly + GA4/GTM + Google Ads + Meta Pixel + Clarity + Intercom + Tag Assistant Preview
+ * ✅ Permite Calendly + GA4/GTM + Google Ads + Meta Pixel + Clarity + Intercom + Tag Assistant Preview + Turnstile
  * ⚠️ Nota: como insertas scripts inline (gtag/fbq/clarity),
  *          aquí usamos 'unsafe-inline' SOLO en páginas públicas.
  */
@@ -58,16 +71,13 @@ const publicCSPHelmet = helmet({
 
       /**
        * SCRIPTS
-       * - GTM/GA: googletagmanager.com + google.com (tag assistant)
-       * - Ads: googleadservices / doubleclick / googlesyndication
-       * - Meta: connect.facebook.net
-       * - Clarity: clarity.ms
-       * - Calendly: assets.calendly.com
-       * - Intercom: widget.intercom.io + js.intercomcdn.com
        */
       scriptSrc: [
         "'self'",
         "'unsafe-inline'",
+
+        // ✅ Turnstile
+        ...turnstileScript,
 
         // Calendly
         'https://assets.calendly.com',
@@ -97,6 +107,9 @@ const publicCSPHelmet = helmet({
       scriptSrcElem: [
         "'self'",
         "'unsafe-inline'",
+
+        // ✅ Turnstile
+        ...turnstileScript,
 
         // Calendly
         'https://assets.calendly.com',
@@ -135,12 +148,13 @@ const publicCSPHelmet = helmet({
 
       /**
        * CONNECT (fetch/xhr/beacons)
-       * ✅ FIX: Tag Assistant / GTM Preview usa https://www.google.com/ccm/collect
-       * ✅ Ads/Conversiones: googleadservices / doubleclick / googlesyndication
        */
       connectSrc: [
         "'self'",
         ...devConnect,
+
+        // ✅ Turnstile
+        ...turnstileConnect,
 
         // Calendly
         'https://assets.calendly.com',
@@ -153,7 +167,7 @@ const publicCSPHelmet = helmet({
         'https://*.google-analytics.com',
         'https://stats.g.doubleclick.net',
 
-        // ✅ Tag Assistant / Preview (ccm/collect vive en www.google.com)
+        // ✅ Tag Assistant / Preview
         'https://www.google.com',
         'https://google.com',
         'https://tagassistant.google.com',
@@ -164,7 +178,7 @@ const publicCSPHelmet = helmet({
         'https://pagead2.googlesyndication.com',
         'https://*.doubleclick.net',
 
-        // (Opcional pero útil si GTM dispara gateways)
+        // (Opcional)
         'https://*.conversionsapigateway.com',
         'https://*.a.run.app',
 
@@ -208,9 +222,14 @@ const publicCSPHelmet = helmet({
       /**
        * FRAMES
        * ✅ Tag Assistant / GTM Preview usa iframes
+       * ✅ Turnstile usa iframe
        */
       frameSrc: [
         "'self'",
+
+        // ✅ Turnstile
+        ...turnstileFrame,
+
         'https://calendly.com',
         'https://assets.calendly.com',
 
@@ -241,8 +260,6 @@ function publicCSP(req, res, next) {
 
 /**
  * CSP para la app embebida de Shopify (/connector y /apps/*)
- * - Debe permitir iframe en Shopify Admin
- * - Debe permitir cargar App Bridge desde cdn.shopify.com
  */
 const shopifyCSPHelmet = helmet({
   frameguard: false, // ✅ NO X-Frame-Options aquí

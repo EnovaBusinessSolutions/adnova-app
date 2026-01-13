@@ -18,6 +18,11 @@ require('./auth'); // inicializa passport (estrategia Google + serialize/deseria
 const User = require('./models/User');
 const { sendVerifyEmail, sendWelcomeEmail, sendResetPasswordEmail } = require('./services/emailService');
 
+// ✅ Turnstile
+const requireTurnstileAlways = require('./middlewares/requireTurnstileAlways');
+const { verifyTurnstile } = require('./services/turnstile');
+
+
 
 /* =========================
  * Modelos para Integraciones (Disconnect)
@@ -682,12 +687,69 @@ function buildIntercomPayload(u) {
   };
 }
 
+/* =========================
+ * Turnstile Risk Store (Login)
+ * - En memoria (simple y suficiente)
+ * - Llave: IP + email
+ * - Ventana: 15 min
+ * - Umbral: 3 fallos => requiere captcha
+ * ========================= */
+const LOGIN_RISK_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_RISK_MAX_FAILS = Number(process.env.LOGIN_RISK_MAX_FAILS || 3);
+
+// key -> { fails, expiresAt }
+const loginRiskStore = new Map();
+
+function getClientIp(req) {
+  const xf = (req.headers['x-forwarded-for'] || '').toString();
+  const ip = (xf.split(',')[0] || req.ip || '').trim();
+  return ip || 'unknown';
+}
+
+function riskKey(req, email) {
+  return `${getClientIp(req)}::${String(email || '').toLowerCase().trim()}`;
+}
+
+function riskGet(req, email) {
+  const key = riskKey(req, email);
+  const v = loginRiskStore.get(key);
+  if (v && v.expiresAt <= Date.now()) {
+    loginRiskStore.delete(key);
+    return { fails: 0, requiresCaptcha: false };
+  }
+  const fails = v?.fails || 0;
+  return { fails, requiresCaptcha: fails >= LOGIN_RISK_MAX_FAILS };
+}
+
+function riskFail(req, email) {
+  const key = riskKey(req, email);
+  const now = Date.now();
+  const prev = loginRiskStore.get(key);
+
+  // si expiró, reinicia
+  if (prev && prev.expiresAt <= now) {
+    loginRiskStore.delete(key);
+  }
+
+  const current = loginRiskStore.get(key);
+  const fails = (current?.fails || 0) + 1;
+
+  loginRiskStore.set(key, { fails, expiresAt: now + LOGIN_RISK_WINDOW_MS });
+
+  return { fails, requiresCaptcha: fails >= LOGIN_RISK_MAX_FAILS };
+}
+
+function riskClear(req, email) {
+  loginRiskStore.delete(riskKey(req, email));
+}
+
 
 /* =========================
  * Auth básica (email/pass)
  * ========================= */
 
-app.post('/api/register', async (req, res) => {
+app.post('/api/register', requireTurnstileAlways, async (req, res) => {
+
   try {
     let { name, email, password } = req.body || {};
 
@@ -797,10 +859,72 @@ app.get('/api/auth/verify-email', async (req, res) => {
 });
 
 /* =========================
- * ✅ LOGIN (email/pass) — E2E
- * - Crea sesión (req.login)
- * - Bloquea si email no está verificado
- * - Responde { success:true, redirect }
+ * ✅ FORGOT PASSWORD (E2E)
+ * - Turnstile ALWAYS
+ * - Respuesta “segura” (no revela si existe el correo)
+ * ========================= */
+const RESET_TTL_MINUTES = Number(process.env.RESET_PASSWORD_TTL_MINUTES || 30);
+
+function makeResetToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+app.post('/api/forgot-password', requireTurnstileAlways, async (req, res) => {
+  try {
+    const email = String(req.body?.email || '').trim().toLowerCase();
+
+    // Siempre responde OK (anti-enumeración)
+    const safeOk = () => res.json({ ok: true });
+
+    if (!email) return safeOk();
+
+    const user = await User.findOne({ email }).select('_id email name emailVerified').lean();
+
+    // Si no existe o no verificado, igual ok (sin revelar)
+    if (!user) return safeOk();
+    if (user.emailVerified === false) return safeOk();
+
+    const resetToken = makeResetToken();
+    const resetTokenHash = hashToken(resetToken);
+    const resetExpires = new Date(Date.now() + RESET_TTL_MINUTES * 60 * 1000);
+
+    // Guardamos hash+expira (si tu schema es strict y no tiene campos, agrégalos al User model)
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          resetPasswordTokenHash: resetTokenHash,
+          resetPasswordExpires: resetExpires,
+        },
+      }
+    );
+
+    // Enviar email (no bloquea)
+    try {
+      await sendResetPasswordEmail({
+        toEmail: user.email,
+        name: user.name || (user.email ? user.email.split('@')[0] : 'Usuario'),
+        token: resetToken,
+      });
+    } catch (mailErr) {
+      console.error('✉️ Reset email falló (forgot OK):', mailErr?.message || mailErr);
+    }
+
+    return safeOk();
+  } catch (e) {
+    console.error('❌ /api/forgot-password:', e);
+    // Igual safe OK para no dar señales
+    return res.json({ ok: true });
+  }
+});
+
+
+/* =========================
+ * ✅ LOGIN (email/pass) — E2E + Risk-based Turnstile
+ * - 1-2 fallos: normal
+ * - >=3 fallos (IP+email, 15min): requiere captcha
+ * - si requiere captcha y falla/missing => 400 + requiresCaptcha:true
+ * - si credenciales fallan => 401 + requiresCaptcha (según contador)
  * ========================= */
 app.post(['/api/login', '/api/auth/login', '/login'], async (req, res, next) => {
   try {
@@ -811,25 +935,60 @@ app.post(['/api/login', '/api/auth/login', '/login'], async (req, res, next) => 
       return res.status(400).json({ success: false, message: 'Ingresa tu correo y contraseña.' });
     }
 
+    // ✅ Si ya hay riesgo, exigir Turnstile
+    const risk = riskGet(req, email);
+    if (risk.requiresCaptcha) {
+      const token =
+        String(req.body?.turnstileToken || '').trim() ||
+        String(req.body?.['cf-turnstile-response'] || '').trim() ||
+        String(req.headers?.['x-turnstile-token'] || '').trim();
+
+      const { ok, data } = await verifyTurnstile(token, getClientIp(req));
+      if (!ok) {
+        return res.status(400).json({
+          success: false,
+          ok: false,
+          requiresCaptcha: true,
+          code: 'TURNSTILE_REQUIRED_OR_FAILED',
+          errorCodes: data?.['error-codes'] || [],
+          message: 'Verificación requerida. Completa el captcha para continuar.',
+        });
+      }
+    }
+
     // Importante: aseguramos traer password aunque tu schema tenga select:false
     const user = await User.findOne({ email }).select('+password +emailVerified');
 
     if (!user || !user.password) {
-      return res.status(401).json({ success: false, message: 'Correo o contraseña incorrectos.' });
+      const rr = riskFail(req, email);
+      return res.status(401).json({
+        success: false,
+        message: 'Correo o contraseña incorrectos.',
+        requiresCaptcha: rr.requiresCaptcha,
+      });
     }
 
     // ✅ Bloquear login si no verificó correo
     if (user.emailVerified === false) {
+      // No aumenta risk (esto no es bot de password), pero puedes cambiarlo si quieres.
       return res.status(403).json({
         success: false,
         message: 'Tu correo aún no está verificado. Revisa tu bandeja de entrada.',
       });
     }
 
-    const ok = await bcrypt.compare(password, user.password);
-    if (!ok) {
-      return res.status(401).json({ success: false, message: 'Correo o contraseña incorrectos.' });
+    const okPass = await bcrypt.compare(password, user.password);
+    if (!okPass) {
+      const rr = riskFail(req, email);
+      return res.status(401).json({
+        success: false,
+        message: 'Correo o contraseña incorrectos.',
+        requiresCaptcha: rr.requiresCaptcha,
+      });
     }
+
+    // ✅ Éxito: limpiar riesgo
+    riskClear(req, email);
 
     // ✅ Crear sesión con Passport (usa serializeUser/deserializeUser de ./auth)
     req.login(user, (err) => {
@@ -843,6 +1002,7 @@ app.post(['/api/login', '/api/auth/login', '/login'], async (req, res, next) => 
     return res.status(500).json({ success: false, message: 'Error del servidor' });
   }
 });
+
 
 
 /* =========================

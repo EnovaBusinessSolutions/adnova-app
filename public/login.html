@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Adray - IA para Marketing</title>
 
+  <!-- ✅ Turnstile: site key para login.js (risk-based) -->
+  <meta name="turnstile-site-key" content="TURNSTILE_SITE_KEY_AQUI" />
+  <!-- ✅ Turnstile script (CSP ya permitido) -->
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
@@ -67,14 +72,26 @@
       font-size: 12px;
       line-height: 16px;
       font-weight: 500;
-      opacity: .72;            /* sutil */
-      color: #EAE4F2;          /* neutro */
+      opacity: .72;
+      color: #EAE4F2;
       user-select: none;
     }
-
-    /* Si es error, login.js le pone color rojo. Aquí solo mejoramos sutilmente */
     @media (max-width: 600px){
       #login-msg{ margin-top: 8px; font-size: 11.5px; opacity: .70; }
+    }
+
+    /* ✅ Turnstile (risk-based) container: se muestra solo cuando backend lo pide */
+    #turnstile-wrap{
+      display:none;              /* lo controla login.js */
+      margin-top: 12px;
+      margin-bottom: 6px;
+      justify-content: center;
+      align-items: center;
+      width: 100%;
+    }
+    /* Turnstile widget centrado sin romper layout */
+    #turnstile-wrap > div{
+      transform-origin: top center;
     }
   </style>
 
@@ -172,6 +189,9 @@
           </button>
         </div>
       </div>
+
+      <!-- ✅ Turnstile (risk-based): se muestra SOLO si backend dice requiresCaptcha:true -->
+      <div id="turnstile-wrap"></div>
 
       <button type="submit" class="btn btn-primary">Iniciar sesión</button>
     </form>

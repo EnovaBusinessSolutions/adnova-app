@@ -52,6 +52,19 @@
     </script>
 
     <!-- =============================================================== -->
+
+    <!-- ✅ Cloudflare Turnstile (Captcha) -->
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+
+    <style>
+      /* ✅ solo para que el captcha no se vea pegado (puedes moverlo a register.css) */
+      .turnstile-wrap {
+        margin-top: 14px;
+        margin-bottom: 10px;
+        display: flex;
+        justify-content: center;
+      }
+    </style>
   </head>
 
   <body data-page="register">
@@ -103,6 +116,15 @@
               <span class="eye-icon"></span>
             </button>
           </div>
+        </div>
+
+        <!-- ✅ Turnstile Widget (SIEMPRE en registro) -->
+        <div class="turnstile-wrap">
+          <div
+            class="cf-turnstile"
+            data-sitekey="REEMPLAZA_CON_TU_SITE_KEY"
+            data-theme="auto"
+          ></div>
         </div>
 
         <button type="submit" class="btn btn-primary">Registrarse</button>

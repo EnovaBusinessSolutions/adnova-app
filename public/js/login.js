@@ -4,7 +4,154 @@ document.addEventListener('DOMContentLoaded', () => {
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-  // ✅ Asegura SIEMPRE un contenedor sutil abajo (no banner arriba)
+  // ---------- Turnstile (risk-based) ----------
+  function getTurnstileSiteKey() {
+    // 1) <meta name="turnstile-site-key" content="...">
+    const meta = document.querySelector('meta[name="turnstile-site-key"]');
+    const metaKey = (meta?.getAttribute('content') || '').trim();
+    if (metaKey) return metaKey;
+
+    // 2) <body data-turnstile-sitekey="...">
+    const bodyKey = (document.body?.dataset?.turnstileSitekey || '').trim();
+    if (bodyKey) return bodyKey;
+
+    // 3) global (si lo inyectaste)
+    const globalKey = (window.TURNSTILE_SITE_KEY || '').trim();
+    if (globalKey) return globalKey;
+
+    return '';
+  }
+
+  function ensureTurnstileScriptLoaded() {
+    return new Promise((resolve, reject) => {
+      try {
+        // Si ya existe turnstile, listo
+        if (window.turnstile && typeof window.turnstile.render === 'function') return resolve();
+
+        // Si el script ya está en el DOM, esperamos a que cargue
+        const existing = document.querySelector('script[src*="challenges.cloudflare.com/turnstile/v0/api.js"]');
+        if (existing) {
+          // Puede tardar un poco en exponer window.turnstile
+          let tries = 0;
+          const t = setInterval(() => {
+            tries++;
+            if (window.turnstile && typeof window.turnstile.render === 'function') {
+              clearInterval(t);
+              resolve();
+            }
+            if (tries > 40) { // ~4s
+              clearInterval(t);
+              reject(new Error('Turnstile script no expuso window.turnstile a tiempo.'));
+            }
+          }, 100);
+          return;
+        }
+
+        // Insertamos script lazy
+        const s = document.createElement('script');
+        s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+        s.async = true;
+        s.defer = true;
+        s.onload = () => resolve();
+        s.onerror = () => reject(new Error('No se pudo cargar Turnstile.'));
+        document.head.appendChild(s);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  function getTurnstileToken() {
+    const el = document.querySelector('input[name="cf-turnstile-response"]');
+    return (el?.value || '').trim();
+  }
+
+  function resetTurnstile() {
+    try { window.turnstile?.reset?.(); } catch (_) {}
+  }
+
+  // Crea contenedor sutil debajo del form (solo se muestra cuando haga falta)
+  function ensureCaptchaBox() {
+    let box = document.getElementById('turnstile-wrap');
+    if (box) return box;
+
+    const container = $('.login-container') || document.body;
+    const form = document.getElementById('loginForm') || document.getElementById('login-form') || $('form');
+
+    box = document.createElement('div');
+    box.id = 'turnstile-wrap';
+    box.style.display = 'none';
+    box.style.marginTop = '12px';
+    box.style.marginBottom = '8px';
+    box.style.justifyContent = 'center';
+    box.style.alignItems = 'center';
+
+    // Insertar antes del botón submit si se puede
+    const submitBtn = form?.querySelector('button[type="submit"]');
+    if (form && submitBtn && submitBtn.parentElement) {
+      submitBtn.parentElement.insertBefore(box, submitBtn);
+    } else if (form) {
+      form.appendChild(box);
+    } else {
+      container.appendChild(box);
+    }
+
+    return box;
+  }
+
+  async function showCaptcha() {
+    const siteKey = getTurnstileSiteKey();
+    if (!siteKey) {
+      showInlineMessage('⚠️ Falta configurar el Site Key de Turnstile en login.html.', false);
+      return;
+    }
+
+    const wrap = ensureCaptchaBox();
+    wrap.style.display = 'flex';
+
+    // Si ya tiene widget, no re-render
+    if (wrap.dataset.rendered === '1') return;
+
+    // Placeholder del widget
+    const slot = document.createElement('div');
+    slot.id = 'cf-turnstile-slot';
+    slot.className = 'cf-turnstile';
+    wrap.appendChild(slot);
+
+    try {
+      await ensureTurnstileScriptLoaded();
+
+      // render programático (más control)
+      window.turnstile.render('#cf-turnstile-slot', {
+        sitekey: siteKey,
+        theme: 'auto',
+        callback: () => {
+          // cuando el usuario completa, ocultamos mensajes de “falta captcha”
+          // (no mostramos nada, solo dejamos listo el token)
+        },
+        'expired-callback': () => {
+          resetTurnstile();
+        },
+        'error-callback': () => {
+          resetTurnstile();
+        },
+      });
+
+      wrap.dataset.rendered = '1';
+    } catch (err) {
+      console.error('[login.js] Turnstile render error:', err);
+      showInlineMessage('No se pudo cargar la verificación de seguridad. Intenta recargar la página.', false);
+    }
+  }
+
+  function hideCaptcha() {
+    const wrap = document.getElementById('turnstile-wrap');
+    if (!wrap) return;
+    // No lo destruimos, solo lo escondemos para que quede “listo” si vuelve a pedirlo
+    wrap.style.display = 'none';
+  }
+
+  // ---------------- msg box ----------------
   function ensureMsgBox() {
     let box =
       document.getElementById('login-msg') ||
@@ -22,7 +169,6 @@ document.addEventListener('DOMContentLoaded', () => {
     box.setAttribute('aria-live', 'polite');
     box.style.display = 'none';
 
-    // Intenta insertarlo arriba del "¿Olvidaste...?"
     const anchor = container.querySelector('.forgot-password');
     if (anchor && anchor.parentElement) {
       anchor.parentElement.insertBefore(box, anchor);
@@ -37,7 +183,6 @@ document.addEventListener('DOMContentLoaded', () => {
     box.textContent = text;
     box.style.display = 'block';
 
-    // ✅ Estilo sutil (pill) – éxito/error
     box.style.marginTop = '12px';
     box.style.fontSize = '12.5px';
     box.style.lineHeight = '16px';
@@ -72,7 +217,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // ---------------- verified=1 (✅ sutil abajo + limpia URL) ----------------
+  // ---------------- verified=1 notice ----------------
   (function handleVerifiedNotice() {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -80,26 +225,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
       showInlineMessage('✅ Correo verificado. Ya puedes iniciar sesión.', true);
 
-      // Auto-ocultar (súper sutil)
       setTimeout(() => {
-        // Solo ocultamos si el usuario no ha disparado un error después
         const box = document.getElementById('login-msg');
         if (box && box.textContent.includes('Correo verificado')) {
           hideInlineMessage();
         }
       }, 6500);
 
-      // Limpia la URL para que no se quede pegado el verified=1
       params.delete('verified');
       const qs = params.toString();
       const clean = window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash;
       window.history.replaceState({}, document.title, clean);
-    } catch (_) {
-      /* noop */
-    }
+    } catch (_) {}
   })();
 
-  // ---------------- DOM refs (robusto) ----------------
+  // ---------------- DOM refs ----------------
   const form =
     document.getElementById('loginForm') ||
     document.getElementById('login-form') ||
@@ -115,7 +255,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('googleBtn') ||
     $('#google');
 
-  // Navegación secundaria
   if (registerBtn) registerBtn.addEventListener('click', () => (window.location.href = '/register.html'));
   if (googleBtn) googleBtn.addEventListener('click', () => (window.location.href = '/auth/google/login'));
 
@@ -135,7 +274,7 @@ document.addEventListener('DOMContentLoaded', () => {
       input.classList.add('form-input');
       input.focus({ preventScroll: true });
       const len = input.value.length;
-      try { input.setSelectionRange(len, len); } catch { /* noop */ }
+      try { input.setSelectionRange(len, len); } catch {}
     });
   });
 
@@ -144,16 +283,10 @@ document.addEventListener('DOMContentLoaded', () => {
     return;
   }
 
-  // Evita submit nativo por si falla JS (y evita GET accidentales)
   try {
     form.setAttribute('novalidate', 'novalidate');
-    // OJO: NO seteamos action/method aquí para no mandar a un endpoint incorrecto en fallback.
-    // El login lo controla 100% JS.
-  } catch (_) {
-    /* noop */
-  }
+  } catch (_) {}
 
-  // Captura inputs (robusto: id o name)
   const getEmail = () => {
     const el = document.getElementById('email') || $('[name="email"]') || $('#correo');
     return (el?.value || '').trim().toLowerCase();
@@ -170,8 +303,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const originalText = submitButton?.innerText || 'Iniciar sesión';
 
-  // ✅ Fallback inteligente por si el backend no tiene /api/login (según tus logs 404)
-  // Orden: primero lo que usa tu frontend hoy, luego alternativas comunes.
   const LOGIN_ENDPOINTS = [
     '/api/login',
     '/login',
@@ -180,13 +311,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let inFlight = false;
 
-  async function postLogin(endpoint, email, password) {
+  async function postLogin(endpoint, email, password, turnstileToken) {
+    const payload = { email, password };
+
+    // ✅ Solo enviar token si existe (risk-based)
+    if (turnstileToken) payload.turnstileToken = turnstileToken;
+
     const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       cache: 'no-store',
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify(payload),
     });
 
     let data = null;
@@ -194,8 +330,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (ct.includes('application/json')) {
       try { data = await res.json(); } catch { data = null; }
     } else {
-      // si responde HTML u otra cosa, igual queremos avanzar a verificar sesión
-      try { await res.text(); } catch { /* noop */ }
+      try { await res.text(); } catch {}
     }
 
     return { res, data };
@@ -204,6 +339,21 @@ document.addEventListener('DOMContentLoaded', () => {
   function isSuccessPayload(data) {
     if (!data) return false;
     return data.success === true || data.ok === true || data.authenticated === true;
+  }
+
+  function backendWantsCaptcha(res, data) {
+    // ✅ Señales típicas que pondremos desde backend
+    if (data?.requiresCaptcha === true) return true;
+    if (data?.code === 'TURNSTILE_REQUIRED_OR_FAILED') return true;
+    if (data?.code === 'TURNSTILE_FAILED') return true;
+
+    // A veces backend manda errorCodes
+    if (Array.isArray(data?.errorCodes) && data.errorCodes.length > 0) return true;
+
+    // En algunos casos podría responder 429 (rate limit) y pedir captcha
+    if (res?.status === 429 && data?.requiresCaptcha) return true;
+
+    return false;
   }
 
   async function doLogin(e) {
@@ -229,35 +379,46 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       let lastStatus = null;
 
+      // Si el captcha está visible, intentamos mandar token
+      const hasCaptchaVisible = document.getElementById('turnstile-wrap')?.style?.display !== 'none';
+      const tokenIfAny = hasCaptchaVisible ? getTurnstileToken() : '';
+
       for (const endpoint of LOGIN_ENDPOINTS) {
-        const { res, data } = await postLogin(endpoint, email, password);
+        const { res, data } = await postLogin(endpoint, email, password, tokenIfAny || undefined);
         lastStatus = res.status;
 
-        // Si es 404/405, probamos el siguiente endpoint
         if (res.status === 404 || res.status === 405) {
           console.warn(`[login.js] ${endpoint} -> HTTP ${res.status}. Probando siguiente endpoint…`);
           continue;
         }
 
-        // Si el backend devuelve redirect explícito
         if (data && data.redirect) {
+          hideCaptcha();
           window.location.href = data.redirect;
           return;
         }
 
-        // Éxito directo
         if (res.ok && isSuccessPayload(data)) {
+          hideCaptcha();
           await waitForSessionAndRedirect();
           return;
         }
 
-        // Algunos backends responden 200 sin JSON pero sí setean cookie:
         if (res.ok && !data) {
+          hideCaptcha();
           await waitForSessionAndRedirect();
           return;
         }
 
-        // Fallo real (401/403/400 etc)
+        // ✅ Si backend pide captcha, lo mostramos y salimos (reintento manual)
+        if (backendWantsCaptcha(res, data)) {
+          await showCaptcha();
+          resetTurnstile(); // en caso de token consumido/expirado
+          showInlineMessage('Verificación requerida. Completa el captcha para continuar.', false);
+          return;
+        }
+
+        // Fallo real
         const msg =
           (data && (data.message || data.error)) ||
           (res.status === 401 ? 'Correo o contraseña incorrectos.' : `No se pudo iniciar sesión (HTTP ${res.status}).`);
@@ -266,7 +427,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      // Si llegamos aquí, todos los endpoints dieron 404/405
       console.error('[login.js] Ningún endpoint de login respondió. Revisa backend (rutas) y deploy.');
       showInlineMessage(
         `⚠️ No se encontró el endpoint de login. El servidor respondió ${lastStatus ?? '—'}. Revisa backend/rutas.`,
@@ -281,16 +441,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Intercepta submit (captura + bubbling para blindaje total)
   form.addEventListener('submit', doLogin, true);
   form.addEventListener('submit', doLogin, false);
 
-  // Blindaje extra: click del botón
   if (submitButton) {
     submitButton.addEventListener('click', (e) => doLogin(e));
   }
 
-  // Espera a que la sesión esté lista y redirige según onboarding
   async function waitForSessionAndRedirect() {
     let attempts = 0;
     let user = null;
@@ -310,9 +467,7 @@ document.addEventListener('DOMContentLoaded', () => {
             break;
           }
         }
-      } catch {
-        /* noop */
-      }
+      } catch {}
 
       await new Promise((r) => setTimeout(r, 250));
       attempts++;
@@ -331,7 +486,6 @@ document.addEventListener('DOMContentLoaded', () => {
     showInlineMessage('⚠️ Iniciaste sesión, pero no se pudo confirmar la sesión en /api/session. Intenta de nuevo.', false);
   }
 
-  // Sync ojo al cargar
   (function syncEyeOnLoad() {
     const input = document.getElementById('password');
     const btn = document.querySelector('.toggle-password[data-target="password"]');

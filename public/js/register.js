@@ -5,6 +5,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (!form) return;
 
+  // ✅ helper: leer token actual de Turnstile
+  function getTurnstileToken() {
+    const el = document.querySelector('input[name="cf-turnstile-response"]');
+    return (el?.value || '').trim();
+  }
+
+  // ✅ helper: reset del widget si existe
+  function resetTurnstile() {
+    try {
+      // Turnstile expone window.turnstile.reset() cuando el script ya cargó
+      window.turnstile?.reset?.();
+    } catch (_) {}
+  }
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
 
@@ -30,13 +44,20 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    // ✅ Turnstile obligatorio en registro
+    const turnstileToken = getTurnstileToken();
+    if (!turnstileToken) {
+      showMessage('Por favor completa la verificación de seguridad.', false);
+      return;
+    }
+
     try {
       showMessage('Creando cuenta…', true);
 
       const res = await fetch('/api/register', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ name, email, password }),
+        body:    JSON.stringify({ name, email, password, turnstileToken }),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -62,9 +83,18 @@ document.addEventListener('DOMContentLoaded', () => {
         // ✅ Mensaje coherente con el nuevo flujo (verificación de correo)
         showMessage('Cuenta creada. Revisa tu correo para verificar tu cuenta…', true);
 
-        // Si tu confirmation.html es “verifica tu correo”, perfecto.
         setTimeout(() => (window.location.href = '/confirmation.html'), 1500);
         return;
+      }
+
+      // ✅ Si falló turnstile o expira, reseteamos para que pueda reintentar
+      const isTurnstileFail =
+        data?.code === 'TURNSTILE_FAILED' ||
+        data?.code === 'TURNSTILE_REQUIRED_OR_FAILED' ||
+        (Array.isArray(data?.errorCodes) && data.errorCodes.length > 0);
+
+      if (isTurnstileFail) {
+        resetTurnstile();
       }
 
       // Si el backend manda errores estilo {message} o {error}

@@ -4,7 +4,21 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Recuperar contraseña - Adray</title>
+
   <link rel="stylesheet" href="recuperar.css" />
+
+  <!-- ✅ Cloudflare Turnstile -->
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+
+  <style>
+    /* ✅ para que no se vea encimado (puedes moverlo a recuperar.css) */
+    .turnstile-wrap {
+      margin-top: 14px;
+      margin-bottom: 10px;
+      display: flex;
+      justify-content: center;
+    }
+  </style>
 </head>
 <body>
   <div class="card">
@@ -12,17 +26,31 @@
     <p class="recovery-instructions">
       Ingresa el correo electrónico asociado a tu cuenta y te enviaremos un enlace para restablecer tu contraseña
     </p>
+
     <form id="recoverForm" autocomplete="off">
       <div class="input-block">
         <input type="email" id="email" placeholder="Correo electrónico" required />
       </div>
+
+      <!-- ✅ Turnstile Widget (SIEMPRE en recuperar) -->
+      <div class="turnstile-wrap">
+        <div
+          class="cf-turnstile"
+          data-sitekey="REEMPLAZA_CON_TU_SITE_KEY"
+          data-theme="auto"
+        ></div>
+      </div>
+
       <div class="button-block">
         <button class="btn-primary" type="submit" id="submitBtn">Enviar enlace de recuperación</button>
       </div>
+
       <div class="message" id="message"></div>
     </form>
+
     <a href="/login" class="back-login">← Volver al inicio de sesión</a>
   </div>
+
   <script src="/js/recover.js"></script>
 </body>
 </html>
