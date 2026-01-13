@@ -20,9 +20,6 @@ const devConnect = isProd
  * =========================
  * ✅ INTERCOM allowlists
  * =========================
- * Intercom carga un script desde widget.intercom.io
- * y assets desde js.intercomcdn.com / static.intercomassets.com.
- * También abre websockets nexus-websocket-*.intercom.io.
  */
 const intercomScript = [
   'https://widget.intercom.io',
@@ -48,9 +45,9 @@ const intercomImg = [
 const intercomFrame = ['https://widget.intercom.io'];
 
 /**
- * CSP pública (landing, bookcall, dashboard público, etc.)
- * ✅ Permite Calendly + GA4/GTM + Meta Pixel + Microsoft Clarity + Intercom
- * ⚠️ Nota: como estás insertando scripts inline (gtag/fbq/clarity),
+ * CSP pública (landing, login, register, onboarding, dashboard, etc.)
+ * ✅ Permite Calendly + GA4/GTM + Google Ads + Meta Pixel + Clarity + Intercom + Tag Assistant Preview
+ * ⚠️ Nota: como insertas scripts inline (gtag/fbq/clarity),
  *          aquí usamos 'unsafe-inline' SOLO en páginas públicas.
  */
 const publicCSPHelmet = helmet({
@@ -61,25 +58,69 @@ const publicCSPHelmet = helmet({
 
       /**
        * SCRIPTS
+       * - GTM/GA: googletagmanager.com + google.com (tag assistant)
+       * - Ads: googleadservices / doubleclick / googlesyndication
+       * - Meta: connect.facebook.net
+       * - Clarity: clarity.ms
+       * - Calendly: assets.calendly.com
+       * - Intercom: widget.intercom.io + js.intercomcdn.com
        */
       scriptSrc: [
         "'self'",
         "'unsafe-inline'",
+
+        // Calendly
         'https://assets.calendly.com',
+
+        // GTM / GA
         'https://www.googletagmanager.com',
+        'https://tagassistant.google.com',
+        'https://www.google.com',
+
+        // Google Ads / DoubleClick
+        'https://www.googleadservices.com',
+        'https://googleads.g.doubleclick.net',
+        'https://pagead2.googlesyndication.com',
+        'https://www.google.com/pagead',
+        'https://*.doubleclick.net',
+
+        // Meta
         'https://connect.facebook.net',
+
+        // Clarity
         'https://www.clarity.ms',
         'https://scripts.clarity.ms',
+
+        // Intercom
         ...intercomScript,
       ],
       scriptSrcElem: [
         "'self'",
         "'unsafe-inline'",
+
+        // Calendly
         'https://assets.calendly.com',
+
+        // GTM / GA
         'https://www.googletagmanager.com',
+        'https://tagassistant.google.com',
+        'https://www.google.com',
+
+        // Google Ads / DoubleClick
+        'https://www.googleadservices.com',
+        'https://googleads.g.doubleclick.net',
+        'https://pagead2.googlesyndication.com',
+        'https://www.google.com/pagead',
+        'https://*.doubleclick.net',
+
+        // Meta
         'https://connect.facebook.net',
+
+        // Clarity
         'https://www.clarity.ms',
         'https://scripts.clarity.ms',
+
+        // Intercom
         ...intercomScript,
       ],
 
@@ -93,32 +134,39 @@ const publicCSPHelmet = helmet({
       fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
 
       /**
-       * CONNECT
-       * ✅ FIX: Tag Assistant / GTM Preview usa google.com/ccm/collect
+       * CONNECT (fetch/xhr/beacons)
+       * ✅ FIX: Tag Assistant / GTM Preview usa https://www.google.com/ccm/collect
        * ✅ Ads/Conversiones: googleadservices / doubleclick / googlesyndication
        */
       connectSrc: [
         "'self'",
         ...devConnect,
 
+        // Calendly
         'https://assets.calendly.com',
         'https://calendly.com',
         'https://api.calendly.com',
 
-        // GA4 / GTM
+        // GA4 / Measurement
         'https://www.google-analytics.com',
         'https://analytics.google.com',
         'https://*.google-analytics.com',
         'https://stats.g.doubleclick.net',
 
-        // ✅ FIX (Tag Assistant / GTM Preview)
+        // ✅ Tag Assistant / Preview (ccm/collect vive en www.google.com)
         'https://www.google.com',
         'https://google.com',
+        'https://tagassistant.google.com',
 
-        // ✅ recomendado para Google Ads / conversiones
+        // ✅ Google Ads / conversion endpoints
         'https://www.googleadservices.com',
         'https://googleads.g.doubleclick.net',
         'https://pagead2.googlesyndication.com',
+        'https://*.doubleclick.net',
+
+        // (Opcional pero útil si GTM dispara gateways)
+        'https://*.conversionsapigateway.com',
+        'https://*.a.run.app',
 
         // Meta
         'https://www.facebook.com',
@@ -142,20 +190,36 @@ const publicCSPHelmet = helmet({
         'https://upload.wikimedia.org',
         'https://img.icons8.com',
 
+        // Meta Pixel beacons
         'https://www.facebook.com',
+
+        // GA / Ads pixels
         'https://www.google-analytics.com',
         'https://*.google-analytics.com',
         'https://stats.g.doubleclick.net',
+        'https://*.doubleclick.net',
+        'https://www.googleadservices.com',
+        'https://googleads.g.doubleclick.net',
 
         // Intercom assets
         ...intercomImg,
       ],
 
-      // Calendly + Intercom (por si abre algo embebido)
+      /**
+       * FRAMES
+       * ✅ Tag Assistant / GTM Preview usa iframes
+       */
       frameSrc: [
         "'self'",
         'https://calendly.com',
         'https://assets.calendly.com',
+
+        // ✅ GTM/Tag Assistant Preview
+        'https://www.googletagmanager.com',
+        'https://tagassistant.google.com',
+        'https://*.google.com',
+
+        // Intercom
         ...intercomFrame,
       ],
 
