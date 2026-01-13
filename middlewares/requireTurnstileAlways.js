@@ -1,6 +1,6 @@
 'use strict';
 
-const { verifyTurnstile } = require('../services/turnstile');
+const { verifyTurnstile } = require('../backend/services/turnstile');
 
 module.exports = async function requireTurnstileAlways(req, res, next) {
   const token =
