@@ -49,7 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Insertamos script lazy
         const s = document.createElement('script');
-        s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+        s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
         s.async = true;
         s.defer = true;
         s.onload = () => resolve();
@@ -66,9 +66,6 @@ document.addEventListener('DOMContentLoaded', () => {
     return (el?.value || '').trim();
   }
 
-  function resetTurnstile() {
-    try { window.turnstile?.reset?.(); } catch (_) {}
-  }
 
   // Crea contenedor sutil debajo del form (solo se muestra cuando haga falta)
   function ensureCaptchaBox() {
@@ -99,50 +96,53 @@ document.addEventListener('DOMContentLoaded', () => {
     return box;
   }
 
-  async function showCaptcha() {
-    const siteKey = getTurnstileSiteKey();
-    if (!siteKey) {
-      showInlineMessage('⚠️ Falta configurar el Site Key de Turnstile en login.html.', false);
-      return;
-    }
+  let TS_WIDGET_ID = null;
 
-    const wrap = ensureCaptchaBox();
-    wrap.style.display = 'flex';
-
-    // Si ya tiene widget, no re-render
-    if (wrap.dataset.rendered === '1') return;
-
-    // Placeholder del widget
-    const slot = document.createElement('div');
-    slot.id = 'cf-turnstile-slot';
-    slot.className = 'cf-turnstile';
-    wrap.appendChild(slot);
-
-    try {
-      await ensureTurnstileScriptLoaded();
-
-      // render programático (más control)
-      window.turnstile.render('#cf-turnstile-slot', {
-        sitekey: siteKey,
-        theme: 'auto',
-        callback: () => {
-          // cuando el usuario completa, ocultamos mensajes de “falta captcha”
-          // (no mostramos nada, solo dejamos listo el token)
-        },
-        'expired-callback': () => {
-          resetTurnstile();
-        },
-        'error-callback': () => {
-          resetTurnstile();
-        },
-      });
-
-      wrap.dataset.rendered = '1';
-    } catch (err) {
-      console.error('[login.js] Turnstile render error:', err);
-      showInlineMessage('No se pudo cargar la verificación de seguridad. Intenta recargar la página.', false);
-    }
+async function showCaptcha() {
+  const siteKey = getTurnstileSiteKey();
+  if (!siteKey) {
+    showInlineMessage('⚠️ Falta configurar el Site Key de Turnstile en login.html.', false);
+    return;
   }
+
+  const wrap = ensureCaptchaBox();
+  wrap.style.display = 'flex';
+
+  // limpia todo (evita renders duplicados)
+  wrap.innerHTML = '';
+
+  const slot = document.createElement('div');
+  slot.id = 'cf-turnstile-slot';
+  // ⚠️ NO pongas className = "cf-turnstile"
+  wrap.appendChild(slot);
+
+  try {
+    await ensureTurnstileScriptLoaded();
+
+    TS_WIDGET_ID = window.turnstile.render(slot, {
+      sitekey: siteKey,
+      size: 'normal',          // ✅ esto elimina el 400020
+      theme: 'auto',
+      appearance: 'always',
+      callback: () => {},
+      'expired-callback': () => { try { window.turnstile.reset(TS_WIDGET_ID); } catch {} },
+      'error-callback': () =>  { try { window.turnstile.reset(TS_WIDGET_ID); } catch {} },
+    });
+
+    wrap.dataset.rendered = '1';
+  } catch (err) {
+    console.error('[login.js] Turnstile render error:', err);
+    showInlineMessage('No se pudo cargar la verificación de seguridad. Recarga la página.', false);
+  }
+}
+
+function resetTurnstile() {
+  try {
+    if (TS_WIDGET_ID != null) window.turnstile?.reset?.(TS_WIDGET_ID);
+    else window.turnstile?.reset?.();
+  } catch (_) {}
+}
+
 
   function hideCaptcha() {
     const wrap = document.getElementById('turnstile-wrap');
@@ -412,11 +412,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // ✅ Si backend pide captcha, lo mostramos y salimos (reintento manual)
         if (backendWantsCaptcha(res, data)) {
-          await showCaptcha();
-          resetTurnstile(); // en caso de token consumido/expirado
-          showInlineMessage('Verificación requerida. Completa el captcha para continuar.', false);
-          return;
+        await showCaptcha();
+        showInlineMessage('Verificación requerida. Completa el captcha para continuar.', false);
+        return;
         }
+
 
         // Fallo real
         const msg =
@@ -441,12 +441,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  form.addEventListener('submit', doLogin, true);
   form.addEventListener('submit', doLogin, false);
 
-  if (submitButton) {
-    submitButton.addEventListener('click', (e) => doLogin(e));
-  }
+
 
   async function waitForSessionAndRedirect() {
     let attempts = 0;

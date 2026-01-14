@@ -6,9 +6,23 @@
   <title>Adray - IA para Marketing</title>
 
   <!-- ✅ Turnstile: site key para login.js (risk-based) -->
-  <meta name="turnstile-site-key" content="0x4AAAAAAACMTeww3wWo3pbxn" />
-  <!-- ✅ Turnstile script (CSP ya permitido) -->
-  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
+<meta name="turnstile-site-key" content="0x4AAAAAAACMTeww3wWo3pbxn" />
+
+<script>
+  window.__turnstileReady = false;
+  window.onTurnstileLoad = function () {
+    window.__turnstileReady = true;
+  };
+</script>
+
+<script
+  id="cf-turnstile-script"
+  src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onTurnstileLoad"
+  async
+  defer
+></script>
+
+
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
