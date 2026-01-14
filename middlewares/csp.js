@@ -57,7 +57,6 @@ const turnstileScript  = ['https://challenges.cloudflare.com'];
 const turnstileFrame   = ['https://challenges.cloudflare.com', 'https://*.cloudflare.com'];
 const turnstileConnect = ['https://challenges.cloudflare.com', 'https://*.cloudflare.com'];
 
-
 /**
  * CSP pública (landing, login, register, onboarding, dashboard, etc.)
  * ✅ Permite Calendly + GA4/GTM + Google Ads + Meta Pixel + Clarity + Intercom + Tag Assistant Preview + Turnstile
@@ -187,9 +186,11 @@ const publicCSPHelmet = helmet({
         'https://www.facebook.com',
         'https://connect.facebook.net',
 
-        // Clarity
+        // ✅ Clarity (FIX REAL)
         'https://www.clarity.ms',
         'https://c.clarity.ms',
+        'https://o.clarity.ms',     // ✅ ESTE ERA EL QUE FALTABA (collect)
+        'https://*.clarity.ms',     // ✅ blindaje para subdominios futuros
 
         // Intercom
         ...intercomConnect,
@@ -215,6 +216,9 @@ const publicCSPHelmet = helmet({
         'https://*.doubleclick.net',
         'https://www.googleadservices.com',
         'https://googleads.g.doubleclick.net',
+
+        // ✅ Clarity assets/beacons (por si usa subdominio)
+        'https://*.clarity.ms',
 
         // Intercom assets
         ...intercomImg,
