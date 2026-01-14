@@ -23,7 +23,6 @@
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
-      // En HTML clásico (no SPA) sí dejamos el page_view automático
       gtag('config', 'G-7FR1P31TK3');
     </script>
 
@@ -53,16 +52,21 @@
 
     <!-- =============================================================== -->
 
-    <!-- ✅ Cloudflare Turnstile (Captcha) -->
-    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <!-- ✅ Turnstile (EXPLÍCITO, igual que login) -->
+    <meta name="turnstile-site-key" content="0x4AAAAAAACMTeww3wWo3pbxn" />
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 
     <style>
-      /* ✅ solo para que el captcha no se vea pegado (puedes moverlo a register.css) */
-      .turnstile-wrap {
+      /* ✅ solo para que no se vea pegado (puedes moverlo a register.css) */
+      #turnstile-wrap {
         margin-top: 14px;
         margin-bottom: 10px;
         display: flex;
         justify-content: center;
+        width: 100%;
+      }
+      #turnstile-wrap > div {
+        transform-origin: top center;
       }
     </style>
   </head>
@@ -79,8 +83,8 @@
         <h1>Crear cuenta</h1>
       </div>
 
-      <form id="register-form" class="form">
-        <!-- ✅ NUEVO: NOMBRE -->
+      <form id="register-form" class="form" novalidate>
+        <!-- ✅ NOMBRE -->
         <div class="form-group">
           <label for="name" class="form-label">Nombre:</label>
           <input
@@ -118,13 +122,9 @@
           </div>
         </div>
 
-        <!-- ✅ Turnstile Widget (SIEMPRE en registro) -->
-        <div class="turnstile-wrap">
-          <div
-            class="cf-turnstile"
-            data-sitekey="REEMPLAZA_CON_TU_SITE_KEY"
-            data-theme="auto"
-          ></div>
+        <!-- ✅ Turnstile slot (EXPLÍCITO) -->
+        <div id="turnstile-wrap">
+          <div id="cf-turnstile-slot"></div>
         </div>
 
         <button type="submit" class="btn btn-primary">Registrarse</button>
