@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Registro - Adray</title>
 
+    <!-- ✅ Turnstile: site key para register.js -->
+    <meta name="turnstile-site-key" content="0x4AAAAAACMV4omG2rQgADlG" />
+    <!-- ✅ Turnstile (EXPLICIT) -->
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -16,8 +21,6 @@
     <link rel="stylesheet" href="register.css" />
 
     <!-- ===================== PIXELES / TRACKING ===================== -->
-
-    <!-- Google tag (gtag.js) - GA4 -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-7FR1P31TK3"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
@@ -26,7 +29,6 @@
       gtag('config', 'G-7FR1P31TK3');
     </script>
 
-    <!-- Meta Pixel Code -->
     <script>
       !function(f,b,e,v,n,t,s)
       {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
@@ -39,9 +41,7 @@
       fbq('init', '822068647105181');
       fbq('track', 'PageView');
     </script>
-    <!-- End Meta Pixel Code -->
 
-    <!-- Microsoft Clarity -->
     <script type="text/javascript">
       (function(c,l,a,r,i,t,y){
         c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
@@ -49,30 +49,20 @@
         y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
       })(window, document, "clarity", "script", "ugeg5ymvp5");
     </script>
-
     <!-- =============================================================== -->
 
-    <!-- ✅ Turnstile (EXPLÍCITO, igual que login) -->
-    <meta name="turnstile-site-key" content="0x4AAAAAACMV4omG2rQgADlG" />
-    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
-
     <style>
-      /* ✅ solo para que no se vea pegado (puedes moverlo a register.css) */
-      #turnstile-wrap {
+      #turnstile-wrap{
         margin-top: 14px;
         margin-bottom: 10px;
         display: flex;
         justify-content: center;
         width: 100%;
       }
-      #turnstile-wrap > div {
-        transform-origin: top center;
-      }
     </style>
   </head>
 
   <body data-page="register">
-    <!-- Meta Pixel (noscript) -->
     <noscript>
       <img height="1" width="1" style="display:none"
         src="https://www.facebook.com/tr?id=822068647105181&ev=PageView&noscript=1" />
@@ -83,18 +73,10 @@
         <h1>Crear cuenta</h1>
       </div>
 
-      <form id="register-form" class="form" novalidate>
-        <!-- ✅ NOMBRE -->
+      <form id="register-form" class="form">
         <div class="form-group">
           <label for="name" class="form-label">Nombre:</label>
-          <input
-            type="text"
-            id="name"
-            class="form-input"
-            autocomplete="name"
-            placeholder="Tu nombre"
-            required
-          />
+          <input type="text" id="name" class="form-input" autocomplete="name" placeholder="Tu nombre" required />
         </div>
 
         <div class="form-group">
@@ -122,7 +104,7 @@
           </div>
         </div>
 
-        <!-- ✅ Turnstile slot (EXPLÍCITO) -->
+        <!-- ✅ Turnstile SLOT (explicit) -->
         <div id="turnstile-wrap">
           <div id="cf-turnstile-slot"></div>
         </div>
