@@ -7,19 +7,25 @@
 
   <link rel="stylesheet" href="recuperar.css" />
 
-  <!-- ✅ Cloudflare Turnstile -->
-  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <!-- ✅ Turnstile: site key para recover.js -->
+  <meta name="turnstile-site-key" content="0x4AAAAAAACMTeww3wWo3pbxn" />
+
+  <!-- ✅ Turnstile (EXPLÍCITO) -->
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 
   <style>
-    /* ✅ para que no se vea encimado (puedes moverlo a recuperar.css) */
-    .turnstile-wrap {
+    /* Contenedor del widget */
+    #turnstile-wrap{
       margin-top: 14px;
       margin-bottom: 10px;
       display: flex;
       justify-content: center;
+      width: 100%;
     }
+    #turnstile-wrap > div { transform-origin: top center; }
   </style>
 </head>
+
 <body>
   <div class="card">
     <h1>Recupera tu cuenta</h1>
@@ -32,13 +38,10 @@
         <input type="email" id="email" placeholder="Correo electrónico" required />
       </div>
 
-      <!-- ✅ Turnstile Widget (SIEMPRE en recuperar) -->
-      <div class="turnstile-wrap">
-        <div
-          class="cf-turnstile"
-          data-sitekey="REEMPLAZA_CON_TU_SITE_KEY"
-          data-theme="auto"
-        ></div>
+      <!-- ✅ Turnstile (SIEMPRE) -->
+      <div id="turnstile-wrap">
+        <!-- Slot vacío: lo renderiza recover.js -->
+        <div id="cf-turnstile-slot"></div>
       </div>
 
       <div class="button-block">
@@ -51,6 +54,6 @@
     <a href="/login" class="back-login">← Volver al inicio de sesión</a>
   </div>
 
-  <script src="/js/recover.js"></script>
+  <script src="/js/recover.js" defer></script>
 </body>
 </html>

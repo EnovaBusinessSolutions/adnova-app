@@ -1,25 +1,93 @@
 // public/js/recover.js
 document.addEventListener('DOMContentLoaded', () => {
-  const form   = document.querySelector('#recoverForm');
-  const emailI = document.querySelector('#email');
+  const form   = document.getElementById('recoverForm');
+  const emailI = document.getElementById('email');
 
   if (!form) return;
 
-  // ✅ helper: leer token actual de Turnstile
+  // ---------------- Turnstile (EXPLÍCITO) ----------------
+  const meta = document.querySelector('meta[name="turnstile-site-key"]');
+  const SITE_KEY = (meta?.getAttribute('content') || '').trim();
+
+  let TS_WIDGET_ID = null;
+
   function getTurnstileToken() {
     const el = document.querySelector('input[name="cf-turnstile-response"]');
     return (el?.value || '').trim();
   }
 
-  // ✅ helper: reset del widget si existe
   function resetTurnstile() {
-    try { window.turnstile?.reset?.(); } catch (_) {}
+    try {
+      if (TS_WIDGET_ID != null) window.turnstile?.reset?.(TS_WIDGET_ID);
+      else window.turnstile?.reset?.();
+    } catch (_) {}
   }
 
+  function ensureTurnstileReady() {
+    return new Promise((resolve, reject) => {
+      try {
+        if (window.turnstile && typeof window.turnstile.render === 'function') return resolve();
+
+        const existing = document.querySelector('script[src*="challenges.cloudflare.com/turnstile/v0/api.js"]');
+        if (!existing) return reject(new Error('No se encontró el script de Turnstile.'));
+
+        let tries = 0;
+        const t = setInterval(() => {
+          tries++;
+          if (window.turnstile && typeof window.turnstile.render === 'function') {
+            clearInterval(t);
+            resolve();
+          }
+          if (tries > 80) { // ~8s
+            clearInterval(t);
+            reject(new Error('Turnstile no expuso window.turnstile a tiempo.'));
+          }
+        }, 100);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  async function renderTurnstile() {
+    if (!SITE_KEY) {
+      alert('⚠️ Falta configurar el site key de Turnstile en recuperar.html');
+      return;
+    }
+
+    const slot = document.getElementById('cf-turnstile-slot');
+    if (!slot) {
+      console.error('[recover.js] No existe #cf-turnstile-slot en el HTML.');
+      return;
+    }
+
+    // evita dobles renders
+    slot.innerHTML = '';
+
+    await ensureTurnstileReady();
+
+    TS_WIDGET_ID = window.turnstile.render(slot, {
+      sitekey: SITE_KEY,
+      size: 'normal',        // ✅ clave para evitar 400020
+      theme: 'auto',
+      appearance: 'always',
+      callback: () => {},
+      'expired-callback': () => resetTurnstile(),
+      'error-callback': () => resetTurnstile(),
+    });
+  }
+
+  // Render al cargar
+  renderTurnstile().catch((err) => {
+    console.error('[recover.js] Turnstile render error:', err);
+    alert('No se pudo cargar la verificación de seguridad. Recarga la página.');
+  });
+
+  // ---------------- submit ----------------
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    const email = (emailI?.value || '').trim();
+    const email = (emailI?.value || '').trim().toLowerCase();
     if (!email) {
       alert('Ingresa tu correo.');
       return;
@@ -36,6 +104,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await fetch('/api/forgot-password', {
         method : 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        cache: 'no-store',
         body   : JSON.stringify({ email, turnstileToken }),
       });
 
