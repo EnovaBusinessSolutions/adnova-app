@@ -15,54 +15,109 @@ function safeTrim(v) {
   return (v == null ? '' : String(v)).trim();
 }
 
-const SMTP_HOST = safeTrim(process.env.SMTP_HOST || 'smtp.gmail.com');
+function makeRefId() {
+  return crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+}
 
-// ✅ default recomendado: 587 (STARTTLS). Si quieres 465, pon SMTP_PORT=465.
-const SMTP_PORT_RAW = safeTrim(process.env.SMTP_PORT || '587');
-const SMTP_PORT = Number.parseInt(SMTP_PORT_RAW, 10);
-const PORT = Number.isFinite(SMTP_PORT) ? SMTP_PORT : 587;
+/**
+ * =========================
+ * Config loader por remitente
+ * =========================
+ * - default => SMTP_*
+ * - cesar   => SMTP_CESAR_*
+ */
+function loadSmtpConfig(prefix = 'SMTP') {
+  const host = safeTrim(process.env[`${prefix}_HOST`] || process.env.SMTP_HOST || 'smtp.gmail.com');
 
-const SMTP_USER = safeTrim(process.env.SMTP_USER);
-const SMTP_PASS = safeTrim(process.env.SMTP_PASS);
+  const portRaw = safeTrim(process.env[`${prefix}_PORT`] || process.env.SMTP_PORT || '587');
+  const portNum = Number.parseInt(portRaw, 10);
+  const port = Number.isFinite(portNum) ? portNum : 587;
 
-// From (si no, cae al user)
-const FROM = safeTrim(process.env.SMTP_FROM || SMTP_USER);
+  const user = safeTrim(process.env[`${prefix}_USER`]);
+  const pass = safeTrim(process.env[`${prefix}_PASS`]);
 
-// Nombre visible
-const FROM_NAME = safeTrim(process.env.SMTP_FROM_NAME || 'Adray');
+  // From (si no, cae al user)
+  const from = safeTrim(process.env[`${prefix}_FROM`] || user);
 
-// Debug nodemailer (solo durante QA)
-const SMTP_DEBUG = toBool(process.env.SMTP_DEBUG || process.env.NODEMAILER_DEBUG);
+  // Nombre visible
+  const fromName = safeTrim(process.env[`${prefix}_FROM_NAME`] || 'Adray');
 
-// Permite forzar secure si quieres (opcional). Si no, se infiere por puerto.
-const SMTP_SECURE_ENV = safeTrim(process.env.SMTP_SECURE);
-const SMTP_SECURE =
-  SMTP_SECURE_ENV ? toBool(SMTP_SECURE_ENV) : PORT === 465;
+  // Debug nodemailer (solo durante QA)
+  const debug = toBool(process.env[`${prefix}_DEBUG`] || process.env.SMTP_DEBUG || process.env.NODEMAILER_DEBUG);
 
-// ✅ Detecta si realmente hay SMTP
-const HAS_SMTP = !!(SMTP_HOST && PORT && SMTP_USER && SMTP_PASS && FROM);
+  // Permite forzar secure si quieres (opcional). Si no, se infiere por puerto.
+  const secureEnv = safeTrim(process.env[`${prefix}_SECURE`]);
+  const secure = secureEnv ? toBool(secureEnv) : port === 465;
 
-let transporter = null;
+  const has = !!(host && port && user && pass && from);
 
-function logConfigOnce() {
-  // No imprimas PASS
+  return {
+    prefix,
+    host,
+    port,
+    user,
+    pass,
+    from,
+    fromName,
+    debug,
+    secure,
+    has,
+  };
+}
+
+// ✅ Configs
+const CFG_DEFAULT = loadSmtpConfig('SMTP');
+const CFG_CESAR = loadSmtpConfig('SMTP_CESAR');
+
+// ✅ Backward-compatible exports (lo que ya usas hoy)
+const HAS_SMTP = CFG_DEFAULT.has;
+const FROM = CFG_DEFAULT.from;
+
+// ✅ New (para que emailService pueda validar si César está listo)
+const HAS_SMTP_CESAR = CFG_CESAR.has;
+const FROM_CESAR = CFG_CESAR.from;
+const FROM_NAME_CESAR = CFG_CESAR.fromName;
+
+// Transporters cache por key (default/cesar)
+const transporters = new Map(); // key -> { transporter, logged }
+
+/**
+ * Log config SOLO 1 vez por transporter (sin pass).
+ */
+function logConfigOnce(cfg, key) {
+  const entry = transporters.get(key);
+  if (entry?.logged) return;
+  if (entry) entry.logged = true;
+
   console.log(
-    `[mailer] SMTP config => host=${SMTP_HOST} port=${PORT} secure=${SMTP_SECURE} user=${SMTP_USER || '∅'} from=${FROM || '∅'} debug=${SMTP_DEBUG}`
+    `[mailer] ${cfg.prefix} => host=${cfg.host} port=${cfg.port} secure=${cfg.secure} user=${cfg.user || '∅'} from=${cfg.from || '∅'} debug=${cfg.debug}`
   );
 }
 
-function getTransporter() {
-  if (!HAS_SMTP) return null;
-  if (transporter) return transporter;
+function getConfigByKey(fromKey = 'default') {
+  const k = String(fromKey || 'default').toLowerCase();
+  if (k === 'cesar') return CFG_CESAR;
+  return CFG_DEFAULT;
+}
 
-  logConfigOnce();
+function getTransporter(fromKey = 'default') {
+  const key = String(fromKey || 'default').toLowerCase();
+  const cfg = getConfigByKey(key);
 
-  transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: PORT,
-    secure: SMTP_SECURE, // 465 true, 587 false
+  if (!cfg.has) return null;
 
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
+  if (transporters.has(key) && transporters.get(key)?.transporter) {
+    return transporters.get(key).transporter;
+  }
+
+  const entry = { transporter: null, logged: false };
+  transporters.set(key, entry);
+
+  entry.transporter = nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.secure, // 465 true, 587 false
+    auth: { user: cfg.user, pass: cfg.pass },
 
     // Pool estable
     pool: true,
@@ -70,53 +125,109 @@ function getTransporter() {
     maxMessages: 50,
 
     // En 587 fuerza STARTTLS
-    requireTLS: !SMTP_SECURE,
+    requireTLS: !cfg.secure,
 
     tls: {
       rejectUnauthorized: true,
-      servername: SMTP_HOST,
+      servername: cfg.host,
       minVersion: 'TLSv1.2',
     },
 
     // Debug opcional
-    logger: SMTP_DEBUG,
-    debug: SMTP_DEBUG,
+    logger: cfg.debug,
+    debug: cfg.debug,
 
     connectionTimeout: 20_000,
     greetingTimeout: 20_000,
     socketTimeout: 30_000,
   });
 
-  return transporter;
+  logConfigOnce(cfg, key);
+
+  return entry.transporter;
 }
 
-function makeRefId() {
-  // Node 16+ tiene crypto.randomUUID; si no, fallback
-  return crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+/**
+ * Formatea un "from" con fallback seguro.
+ * - Si te pasan algo como: 'César · Adray AI <cesar@adray.ai>' lo respeta.
+ * - Si te pasan solo 'cesar@adray.ai', lo envuelve con FROM_NAME del cfg.
+ */
+function normalizeFrom(fromOverride, cfg) {
+  const raw = safeTrim(fromOverride);
+  if (!raw) return `"${cfg.fromName}" <${cfg.from}>`;
+
+  // Si ya viene en formato "Nombre <correo>"
+  if (raw.includes('<') && raw.includes('>')) return raw;
+
+  // Si viene sólo un correo
+  return `"${cfg.fromName}" <${raw}>`;
 }
 
-async function sendMail({ to, subject, text, html, headers = {} }) {
-  const tx = getTransporter();
+/**
+ * ✅ E2E multi-remitente:
+ * sendMail({
+ *   fromKey: 'default' | 'cesar',
+ *   from, replyTo, to, subject, text, html,
+ *   cc, bcc, attachments, headers
+ * })
+ */
+async function sendMail({
+  to,
+  subject,
+  text,
+  html,
+
+  // ✅ para elegir credenciales (nuevo)
+  fromKey = 'default',
+
+  // ✅ overrides opcionales
+  from,
+  replyTo,
+  cc,
+  bcc,
+  attachments,
+
+  headers = {},
+} = {}) {
+  const key = String(fromKey || 'default').toLowerCase();
+  const cfg = getConfigByKey(key);
+  const tx = getTransporter(key);
 
   if (!tx) {
-    console.warn('[mailer] SMTP no configurado (sendMail omitido). Revisa SMTP_* en env.');
-    return { ok: false, skipped: true, code: 'SMTP_NOT_CONFIGURED' };
+    console.warn(`[mailer] SMTP no configurado para fromKey="${key}". Revisa env ${cfg.prefix}_*`);
+    return { ok: false, skipped: true, code: 'SMTP_NOT_CONFIGURED', fromKey: key };
   }
+
+  const finalFrom = normalizeFrom(from, cfg);
+  const finalReplyTo = safeTrim(replyTo) || cfg.from;
 
   try {
     const info = await tx.sendMail({
-      from: `"${FROM_NAME}" <${FROM}>`,
+      from: finalFrom,
       to,
       subject,
       text,
       html,
-      replyTo: FROM,
+      replyTo: finalReplyTo,
+
+      // opcionales
+      cc: cc || undefined,
+      bcc: bcc || undefined,
+      attachments: attachments || undefined,
+
       headers: { 'X-Entity-Ref-ID': makeRefId(), ...headers },
     });
 
-    return { ok: true, messageId: info?.messageId || null };
+    return {
+      ok: true,
+      messageId: info?.messageId || null,
+      response: info?.response || null,
+      accepted: info?.accepted || null,
+      rejected: info?.rejected || null,
+      envelope: info?.envelope || null,
+      fromKey: key,
+    };
   } catch (err) {
-    // ✅ devuelve error útil sin reventar la app
     const safe = {
       ok: false,
       code: err?.code || 'SMTP_SEND_FAILED',
@@ -124,16 +235,23 @@ async function sendMail({ to, subject, text, html, headers = {} }) {
       responseCode: err?.responseCode,
       response: err?.response,
       message: err?.message,
+      fromKey: key,
     };
     console.error('[mailer] sendMail ERROR:', safe);
     return safe;
   }
 }
 
-async function verify() {
-  const tx = getTransporter();
+/**
+ * Verifica transporter por remitente
+ */
+async function verify(fromKey = 'default') {
+  const key = String(fromKey || 'default').toLowerCase();
+  const cfg = getConfigByKey(key);
+  const tx = getTransporter(key);
+
   if (!tx) {
-    return { ok: false, verified: false, code: 'SMTP_NOT_CONFIGURED' };
+    return { ok: false, verified: false, code: 'SMTP_NOT_CONFIGURED', fromKey: key };
   }
 
   try {
@@ -141,11 +259,12 @@ async function verify() {
     return {
       ok: true,
       verified: true,
-      host: SMTP_HOST,
-      port: PORT,
-      secure: SMTP_SECURE,
-      user: SMTP_USER,
-      from: FROM,
+      host: cfg.host,
+      port: cfg.port,
+      secure: cfg.secure,
+      user: cfg.user,
+      from: cfg.from,
+      fromKey: key,
     };
   } catch (err) {
     const safe = {
@@ -155,6 +274,7 @@ async function verify() {
       responseCode: err?.responseCode,
       response: err?.response,
       message: err?.message,
+      fromKey: key,
     };
     console.error('[mailer] verify ERROR:', safe);
     return safe;
@@ -162,8 +282,14 @@ async function verify() {
 }
 
 module.exports = {
+  // Backward compatible
   HAS_SMTP,
   FROM,
   sendMail,
   verify,
+
+  // New
+  HAS_SMTP_CESAR,
+  FROM_CESAR,
+  FROM_NAME_CESAR,
 };

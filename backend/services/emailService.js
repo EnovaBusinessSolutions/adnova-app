@@ -8,6 +8,7 @@ const {
   resetPasswordEmail,
   verifyEmail,
   auditReadyEmail,
+  dailyFollowupCallEmail, // ✅ NUEVO
 } = require('./emailTemplates');
 
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
@@ -49,8 +50,8 @@ function safeName(v, fallbackEmail) {
  * =========================
  * Dedupe (anti-spam) in-memory
  * =========================
- * Nota: Esto evita duplicados por triggers repetidos dentro del MISMO proceso.
- * Para dedupe 100% a nivel cluster/replicas, luego lo hacemos persistente en Mongo.
+ * Nota: Evita duplicados en el MISMO proceso.
+ * Para dedupe 100% en cluster/replicas, luego lo hacemos persistente en Mongo.
  */
 const _dedupe = new Map(); // key -> expiresAt (ms)
 const DEDUPE_TTL_MS = Number(process.env.EMAIL_DEDUPE_TTL_MS || 10 * 60 * 1000); // 10 min
@@ -84,6 +85,21 @@ function buildVerifyUrl(token) {
   const t = String(token || '').trim();
   if (!t) return null;
   return `${APP_URL}${VERIFY_PATH}?token=${encodeURIComponent(t)}`;
+}
+
+/**
+ * =========================
+ * Reset Password URL (E2E)
+ * =========================
+ * Permite token → URL
+ * Ej: /reset-password?token=...
+ */
+const RESET_PASSWORD_PATH = process.env.RESET_PASSWORD_PATH || '/reset-password';
+
+function buildResetPasswordUrl(token) {
+  const t = String(token || '').trim();
+  if (!t) return null;
+  return `${APP_URL}${RESET_PASSWORD_PATH}?token=${encodeURIComponent(t)}`;
 }
 
 /**
@@ -188,10 +204,6 @@ async function sendWelcomeEmail(input) {
  * =========================
  * ✅ Firma E2E:
  *   sendAuditReadyEmail({ toEmail, name, origin, jobId, dedupeKey })
- *
- * - origin: 'onboarding' | 'panel'
- * - jobId:  id del job de auditoría (si existe)
- * - dedupeKey: si quieres controlar el anti-duplicado manualmente
  */
 async function sendAuditReadyEmail({ toEmail, name, origin = 'panel', jobId, dedupeKey } = {}) {
   if (!HAS_SMTP) {
@@ -205,7 +217,6 @@ async function sendAuditReadyEmail({ toEmail, name, origin = 'panel', jobId, ded
   const finalName = safeName(name, to);
   const loginUrl = `${APP_URL}/login`;
 
-  // ✅ Anti-duplicado: 1 correo por job/origen (especialmente onboarding)
   const key =
     String(dedupeKey || '').trim() ||
     `audit_ready:${to}:${String(origin || 'panel').toLowerCase()}:${String(jobId || 'nojob')}`;
@@ -231,7 +242,7 @@ async function sendAuditReadyEmail({ toEmail, name, origin = 'panel', jobId, ded
         `Auditoría lista:\n\n` +
         `Hola ${finalName},\n\n` +
         `Tu auditoría está lista. Adray analizó tus cuentas y preparó un reporte con puntos clave para mejorar tu rendimiento.\n\n` +
-        `Consulta en tu panel de Adray. Dando clic aquí: ${loginUrl}\n\n` +
+        `Consulta en tu panel de Adray: ${loginUrl}\n\n` +
         `— Equipo Adray\n` +
         `Soporte: support@adray.ai`,
       html,
@@ -247,12 +258,105 @@ async function sendAuditReadyEmail({ toEmail, name, origin = 'panel', jobId, ded
 
 /**
  * =========================
- * Send: Reset Password
+ * ✅ NUEVO: Send Daily Followup Call (César)
  * =========================
- * Firma:
+ */
+const CESAR_FROM = process.env.CESAR_FROM || 'César · Adray AI <cesar@adray.ai>';
+const CESAR_REPLY_TO = process.env.CESAR_REPLY_TO || 'cesar@adray.ai';
+const CESAR_CALENDLY_URL = process.env.CESAR_CALENDLY_URL || 'https://calendly.com/adrayai/adray-calendario';
+
+// ttl 26h para evitar duplicado diario por reinicios/retries del mismo proceso
+const DAILY_DEDUPE_TTL_MS = Number(process.env.DAILY_EMAIL_DEDUPE_TTL_MS || 26 * 60 * 60 * 1000);
+
+function todayKey(date = new Date()) {
+  // YYYY-MM-DD (UTC) — suficiente para dedupe diario
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+async function sendDailyFollowupCallEmail({
+  toEmail,
+  name,
+  operatorName = 'César',
+  calendlyUrl,
+  dedupeKey,
+  dateKey,
+} = {}) {
+  if (!HAS_SMTP) {
+    if (DEBUG_EMAIL) console.warn('[emailService] SMTP no configurado. Omitiendo daily-followup.');
+    return fail('SMTP_NOT_CONFIGURED', { skipped: true });
+  }
+
+  const to = normEmail(toEmail);
+  if (!to) return fail('MISSING_TO_EMAIL');
+
+  const finalName = safeName(name, to);
+
+  const day = String(dateKey || '').trim() || todayKey(new Date());
+  const key = String(dedupeKey || '').trim() || `daily_followup_call:${to}:${day}`;
+
+  if (!shouldSendOnce(key, DAILY_DEDUPE_TTL_MS)) {
+    if (DEBUG_EMAIL) console.log('[emailService] daily-followup skipped by dedupe:', { to, key });
+    return ok({ to, skipped: true, reason: 'DEDUPED', dedupeKey: key });
+  }
+
+  const url = String(calendlyUrl || CESAR_CALENDLY_URL).trim() || CESAR_CALENDLY_URL;
+
+  try {
+    const html = dailyFollowupCallEmail({
+      name: finalName,
+      email: to,
+      operatorName,
+      calendlyUrl: url,
+      brand: 'Adray AI',
+      websiteUrl: 'https://adray.ai',
+      supportEmail: 'support@adray.ai',
+    });
+
+    const info = await sendMail({
+      from: CESAR_FROM,
+      replyTo: CESAR_REPLY_TO,
+
+      to,
+      subject: '¿Agendamos una llamada rápida para revisar tu cuenta?',
+      text:
+        `Hola ${finalName}\n\n` +
+        `Soy ${operatorName}, del equipo de Adray AI.\n` +
+        `Quería invitarte a una llamada rápida de 10 minutos para ayudarte a revisar tu configuración y resultados.\n\n` +
+        `Agenda aquí: ${url}\n\n` +
+        `Saludos,\n${operatorName}\nAdray AI\nhttps://adray.ai`,
+      html,
+    });
+
+    if (DEBUG_EMAIL) {
+      console.log('[emailService] daily-followup sent:', {
+        to,
+        from: CESAR_FROM,
+        messageId: info?.messageId,
+        key,
+      });
+    }
+
+    return ok({ to, messageId: info?.messageId, response: info?.response, dedupeKey: key });
+  } catch (err) {
+    console.error('[emailService] sendDailyFollowupCallEmail error:', err?.message || err);
+    return fail(err, { to, dedupeKey: key });
+  }
+}
+
+/**
+ * =========================
+ * Send: Reset Password (E2E + retrocompatible)
+ * =========================
+ * Firma moderna:
  *   sendResetPasswordEmail({ toEmail, resetUrl, name })
- * Retro-compat:
- *   sendResetPasswordEmail(toEmail, resetUrl)
+ *
+ * ✅ Compat adicional:
+ *   sendResetPasswordEmail({ toEmail, token, name })  -> construye resetUrl
+ * Retro (viejo):
+ *   sendResetPasswordEmail(toEmail, resetUrl, name)
  */
 async function sendResetPasswordEmail(arg1, arg2, arg3) {
   if (!HAS_SMTP) {
@@ -262,11 +366,13 @@ async function sendResetPasswordEmail(arg1, arg2, arg3) {
 
   let toEmail = '';
   let resetUrl = '';
+  let token = '';
   let name = '';
 
   if (typeof arg1 === 'object' && arg1) {
     toEmail = arg1.toEmail;
     resetUrl = arg1.resetUrl;
+    token = arg1.token; // ✅ soporte token
     name = arg1.name;
   } else {
     toEmail = arg1;
@@ -276,6 +382,12 @@ async function sendResetPasswordEmail(arg1, arg2, arg3) {
 
   const to = normEmail(toEmail);
   if (!to) return fail('MISSING_TO_EMAIL');
+
+  // ✅ si no viene resetUrl pero viene token, lo armamos
+  if (!resetUrl && token) {
+    resetUrl = buildResetPasswordUrl(token);
+  }
+
   if (!resetUrl) return fail('MISSING_RESET_URL');
 
   const finalName = safeName(name, to);
@@ -297,7 +409,7 @@ async function sendResetPasswordEmail(arg1, arg2, arg3) {
     });
 
     if (DEBUG_EMAIL) console.log('[emailService] reset sent:', { to, messageId: info?.messageId });
-    return ok({ to, messageId: info?.messageId, response: info?.response });
+    return ok({ to, messageId: info?.messageId, response: info?.response, resetUrl });
   } catch (err) {
     console.error('[emailService] sendResetPasswordEmail error:', err?.message || err);
     return fail(err, { to });
@@ -345,9 +457,11 @@ async function sendTestEmail() {
 module.exports = {
   sendVerifyEmail,
   sendWelcomeEmail,
-  sendAuditReadyEmail, // ✅ con dedupeKey/jobId/origin
+  sendAuditReadyEmail,
+  sendDailyFollowupCallEmail, // ✅ NUEVO (César)
   sendResetPasswordEmail,
   verifySMTP,
   sendTestEmail,
   buildVerifyUrl,
+  buildResetPasswordUrl, // ✅ útil para debug
 };

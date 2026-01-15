@@ -65,6 +65,10 @@ const app = express();
 // ✅ Debug de correo (ya usa mailer.js/emailService.js)
 app.use('/__mail', require('./routes/mailDebug'));
 
+// ✅ Cron emails (protegido por CRON_KEY)
+app.use('/api/cron', require('./routes/cronEmails'));
+
+
 const PORT = process.env.PORT || 3000;
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
 

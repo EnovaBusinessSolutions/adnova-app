@@ -299,8 +299,6 @@ function resetPasswordEmail({
 
 /**
  * ✅ Auditoría lista (BONITA + COPY exacto)
- * Firma recomendada:
- *   auditReadyEmail({ name, email, loginUrl, brand, supportEmail })
  */
 function auditReadyEmail({
   name,
@@ -326,8 +324,24 @@ function auditReadyEmail({
         Tu auditoría está lista. ${escapeHtml(brand)} analizó tus cuentas y preparó un reporte con puntos clave para mejorar tu rendimiento.
       </p>
 
-      <p style="margin:0 0 10px;font-size:15px;line-height:23px;color:#EAE4F2;">
-        Consulta en tu panel de ${escapeHtml(brand)}. Dando clic aquí:
+      <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:14px auto 10px;">
+        <tr><td align="center">
+          <a href="${safeLoginUrl}" class="btn"
+            style="background:linear-gradient(90deg,#B55CFF,#9D5BFF);
+                   border-radius:999px;
+                   padding:13px 20px;
+                   font-size:14px;
+                   font-weight:900;
+                   color:#0b0b0d;
+                   text-decoration:none;
+                   display:inline-block;">
+            Ver mi auditoría
+          </a>
+        </td></tr>
+      </table>
+
+      <p style="margin:10px 0 10px;font-size:12px;line-height:19px;color:#BDB2C9;">
+        Si el botón no funciona, copia y pega este enlace:
       </p>
 
       <div style="margin:0 0 14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:12px;word-break:break-all;">
@@ -354,9 +368,120 @@ function auditReadyEmail({
   });
 }
 
+/**
+ * ✅ NUEVO: Follow-up diario (correo de llamada rápida)
+ * Copy basado en tu captura (+ un pequeño "si ya agendaste, ignora").
+ */
+function dailyFollowupCallEmail({
+  name,
+  email,
+  operatorName = 'César',
+  brand = 'Adray AI',
+  supportEmail = 'support@adray.ai',
+  calendlyUrl = 'https://calendly.com/adrayai/adray-calendario',
+  websiteUrl = 'https://adray.ai',
+} = {}) {
+  const displayName = safeName(name, email);
+
+  const safeCalendly = escapeHtml(safeUrl(calendlyUrl));
+  const safeWebsite = escapeHtml(safeUrl(websiteUrl));
+  const safeOperator = escapeHtml(operatorName);
+  const safeBrand = escapeHtml(brand);
+
+  const contentHtml = `
+    <div style="padding-top:26px;">
+      <div class="h1" style="margin:0 0 12px;font-size:26px;color:#EDEBFF;font-weight:900;letter-spacing:-.02em">
+        ¿Agendamos una llamada rápida para revisar tu cuenta?
+      </div>
+
+      <p style="margin:0 0 12px;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Hola <strong style="color:#FFFFFF">${escapeHtml(displayName)}</strong>,
+      </p>
+
+      <p style="margin:0 0 14px;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Soy <strong style="color:#FFFFFF">${safeOperator}</strong>, del equipo de <strong style="color:#FFFFFF">${safeBrand}</strong> 👋<br/>
+        Antes que nada, ¡bienvenido!
+      </p>
+
+      <p style="margin:0 0 12px;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Quería invitarte a una llamada rápida de <strong style="color:#FFFFFF">10 minutos</strong> para ayudarte a:
+      </p>
+
+      <div style="margin:0 0 14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:14px 14px 10px;">
+        <ul style="margin:0;padding:0 0 0 18px;color:#EAE4F2;font-size:14px;line-height:22px;">
+          <li style="margin:0 0 8px;">Revisar que tu configuración esté correcta</li>
+          <li style="margin:0 0 8px;">Asegurarnos de que todo esté funcionando como debe</li>
+          <li style="margin:0 0 8px;">Mostrarte cómo sacarle el máximo provecho al dashboard</li>
+          <li style="margin:0 0 8px;">Revisar contigo los resultados de tu auditoría inicial</li>
+          <li style="margin:0 0 8px;">Ayudarte a obtener valor real de ${safeBrand} desde el inicio</li>
+        </ul>
+      </div>
+
+      <p style="margin:0 0 14px;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Si te parece bien, puedes agendarla aquí en el horario que mejor te funcione:
+      </p>
+
+      <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:14px auto 10px;">
+        <tr><td align="center">
+          <a href="${safeCalendly}" class="btn"
+            style="background:linear-gradient(90deg,#B55CFF,#9D5BFF);
+                   border-radius:999px;
+                   padding:13px 20px;
+                   font-size:14px;
+                   font-weight:900;
+                   color:#0b0b0d;
+                   text-decoration:none;
+                   display:inline-block;">
+            Agendar llamada (10 min)
+          </a>
+        </td></tr>
+      </table>
+
+      <p style="margin:10px 0 10px;font-size:12px;line-height:19px;color:#BDB2C9;">
+        Si el botón no funciona, copia y pega este enlace:
+      </p>
+
+      <div style="margin:0 0 14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:12px;word-break:break-all;">
+        <a href="${safeCalendly}" style="color:#9AA4FF;text-decoration:underline;font-size:12px;line-height:18px;">
+          ${safeCalendly}
+        </a>
+      </div>
+
+      <p style="margin:14px 0 0;font-size:15px;line-height:23px;color:#EAE4F2;">
+        Quedo atento y con gusto te ayudo.
+      </p>
+
+      <p style="margin:10px 0 0;font-size:12px;line-height:18px;color:#9b90aa;">
+        Si ya agendaste tu llamada, puedes ignorar este correo.
+      </p>
+
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.08);">
+        <p style="margin:0;font-size:13px;line-height:20px;color:#BDB2C9;">
+          Saludos,<br/>
+          <strong style="color:#FFFFFF">${safeOperator}</strong><br/>
+          Account Manager | ${safeBrand}<br/>
+          <a href="${safeWebsite}" style="color:#9AA4FF;text-decoration:underline">${safeWebsite}</a>
+        </p>
+
+        <p style="margin:10px 0 0;font-size:12px;line-height:18px;color:#9b90aa;">
+          Soporte: <a href="mailto:${escapeHtml(supportEmail)}" style="color:#9b90aa;text-decoration:underline">${escapeHtml(supportEmail)}</a>
+        </p>
+      </div>
+    </div>
+  `;
+
+  return wrapEmail({
+    title: '¿Agendamos una llamada rápida para revisar tu cuenta?',
+    preheader: 'Agenda una llamada rápida de 10 min para revisar configuración y auditoría inicial.',
+    contentHtml,
+    badgeText: 'Seguimiento',
+  });
+}
+
 module.exports = {
   welcomeEmail,
   resetPasswordEmail,
   verifyEmail,
   auditReadyEmail,
+  dailyFollowupCallEmail, // ✅ NUEVO
 };

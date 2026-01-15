@@ -48,18 +48,38 @@ const intercomFrame = ['https://widget.intercom.io'];
  * =========================
  * ✅ Cloudflare Turnstile allowlists
  * =========================
- * Turnstile:
- * - carga script desde challenges.cloudflare.com
- * - renderiza un iframe (frame-src)
- * - puede hacer requests (connect-src)
  */
 const turnstileScript  = ['https://challenges.cloudflare.com'];
 const turnstileFrame   = ['https://challenges.cloudflare.com', 'https://*.cloudflare.com'];
 const turnstileConnect = ['https://challenges.cloudflare.com', 'https://*.cloudflare.com'];
 
 /**
+ * =========================
+ * ✅ Tag Assistant (Extensión) - ContentSquare
+ * =========================
+ * Tag Assistant a veces inyecta un script desde:
+ * - https://t.contentsquare.net/uxa/...
+ * Si tu CSP lo bloquea, Tag Assistant marca “CSP bloquea scripts de Google”
+ * aunque tus tags sí estén funcionando.
+ */
+const tagAssistantExtraScript = [
+  'https://t.contentsquare.net',
+  'https://*.contentsquare.net',
+];
+const tagAssistantExtraConnect = [
+  'https://t.contentsquare.net',
+  'https://*.contentsquare.net',
+];
+const tagAssistantExtraImg = [
+  'https://t.contentsquare.net',
+  'https://*.contentsquare.net',
+];
+
+/**
  * CSP pública (landing, login, register, onboarding, dashboard, etc.)
  * ✅ Permite Calendly + GA4/GTM + Google Ads + Meta Pixel + Clarity + Intercom + Tag Assistant Preview + Turnstile
+ * ✅ + Fix Tag Assistant Extension (ContentSquare)
+ *
  * ⚠️ Nota: como insertas scripts inline (gtag/fbq/clarity),
  *          aquí usamos 'unsafe-inline' SOLO en páginas públicas.
  */
@@ -101,6 +121,9 @@ const publicCSPHelmet = helmet({
         'https://www.clarity.ms',
         'https://scripts.clarity.ms',
 
+        // ✅ Tag Assistant Extension (ContentSquare)
+        ...tagAssistantExtraScript,
+
         // Intercom
         ...intercomScript,
       ],
@@ -132,6 +155,9 @@ const publicCSPHelmet = helmet({
         // Clarity
         'https://www.clarity.ms',
         'https://scripts.clarity.ms',
+
+        // ✅ Tag Assistant Extension (ContentSquare)
+        ...tagAssistantExtraScript,
 
         // Intercom
         ...intercomScript,
@@ -186,11 +212,14 @@ const publicCSPHelmet = helmet({
         'https://www.facebook.com',
         'https://connect.facebook.net',
 
-        // ✅ Clarity (FIX REAL)
+        // ✅ Clarity
         'https://www.clarity.ms',
         'https://c.clarity.ms',
-        'https://o.clarity.ms',     // ✅ ESTE ERA EL QUE FALTABA (collect)
-        'https://*.clarity.ms',     // ✅ blindaje para subdominios futuros
+        'https://o.clarity.ms',
+        'https://*.clarity.ms',
+
+        // ✅ Tag Assistant Extension (ContentSquare)
+        ...tagAssistantExtraConnect,
 
         // Intercom
         ...intercomConnect,
@@ -217,8 +246,11 @@ const publicCSPHelmet = helmet({
         'https://www.googleadservices.com',
         'https://googleads.g.doubleclick.net',
 
-        // ✅ Clarity assets/beacons (por si usa subdominio)
+        // ✅ Clarity assets/beacons
         'https://*.clarity.ms',
+
+        // ✅ Tag Assistant Extension (ContentSquare)
+        ...tagAssistantExtraImg,
 
         // Intercom assets
         ...intercomImg,
@@ -226,8 +258,6 @@ const publicCSPHelmet = helmet({
 
       /**
        * FRAMES
-       * ✅ Tag Assistant / GTM Preview usa iframes
-       * ✅ Turnstile usa iframe
        */
       frameSrc: [
         "'self'",
