@@ -450,7 +450,17 @@ router.get('/interface', async (req, res) => {
       return res.redirect(302, authorizeUrl);
     }
 
-    return res.sendFile(path.join(__dirname, '../../../public/connector/interface.html'));
+    // Leer el HTML y reemplazar los placeholders
+    const fs = require('fs');
+    const interfacePath = path.join(__dirname, '../../../public/connector/interface.html');
+    let html = fs.readFileSync(interfacePath, 'utf8');
+    
+    // Reemplazar placeholders con valores reales
+    html = html.replace(/\{\{SHOPIFY_API_KEY\}\}/g, SHOPIFY_API_KEY || '');
+    html = html.replace(/\{\{APP_URL\}\}/g, BASE_URL || '');
+    
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(html);
   } catch (e) {
     console.error('[SHOPIFY_CONNECTOR][INTERFACE_ERROR]', e);
     return res.status(500).type('text/plain').send('Internal error loading interface.');
