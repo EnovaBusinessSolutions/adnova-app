@@ -38,29 +38,36 @@ function validHmac(req) {
     .update(rawBody)
     .digest('base64'); // base64 string para comparar directamente
 
-  // Comparación segura usando timingSafeEqual con buffers
-  const computedBuf = Buffer.from(computed, 'utf8');
-  const receivedBuf = Buffer.from(hmacHeader, 'utf8');
-
-  // Debug logging (sin mostrar el secret completo)
+  // Debug logging completo
   console.log('[WEBHOOK][DEBUG]', {
     secretLength: secret.length,
     secretPrefix: secret.substring(0, 4) + '...',
-    hmacHeader: hmacHeader.substring(0, 20) + '...',
-    computedHmac: computed.substring(0, 20) + '...',
+    hmacHeader: hmacHeader,
+    computedHmac: computed,
     bodyLength: rawBody.length,
-    bodyPreview: rawBody.toString('utf8').substring(0, 50),
+    bodyFull: rawBody.toString('utf8'),
+    match: hmacHeader === computed
   });
 
-  if (computedBuf.length !== receivedBuf.length) {
-    console.warn('[WEBHOOK] HMAC length mismatch:', {
-      computed: computedBuf.length,
-      received: receivedBuf.length
-    });
+  // Comparación directa de strings base64 (más simple y correcta)
+  if (hmacHeader === computed) {
+    return true;
+  }
+
+  // Fallback: comparación segura con timingSafeEqual
+  try {
+    const computedBuf = Buffer.from(computed, 'base64');
+    const receivedBuf = Buffer.from(hmacHeader, 'base64');
+    
+    if (computedBuf.length !== receivedBuf.length) {
+      return false;
+    }
+    
+    return crypto.timingSafeEqual(computedBuf, receivedBuf);
+  } catch (e) {
+    console.error('[WEBHOOK] Error in HMAC comparison:', e.message);
     return false;
   }
-  
-  return crypto.timingSafeEqual(computedBuf, receivedBuf);
 }
 
 function parseJson(buf) {
