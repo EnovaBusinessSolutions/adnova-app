@@ -6,25 +6,61 @@ const crypto = require('crypto');
 
 const router = express.Router();
 
-const SECRET = process.env.SHOPIFY_API_SECRET || '';
+// Shopify usa SHOPIFY_API_SECRET para firmar webhooks
+// En algunas configuraciones también puede estar en SHOPIFY_CLIENT_SECRET
+function getShopifySecret() {
+  return process.env.SHOPIFY_API_SECRET || process.env.SHOPIFY_CLIENT_SECRET || '';
+}
 
 function validHmac(req) {
+  const secret = getShopifySecret();
   const hmacHeader = String(req.get('X-Shopify-Hmac-Sha256') || '').trim();
-  if (!SECRET || !hmacHeader) return false;
+  
+  if (!secret) {
+    console.error('[WEBHOOK] No secret configured (SHOPIFY_API_SECRET or SHOPIFY_CLIENT_SECRET)');
+    return false;
+  }
+  
+  if (!hmacHeader) {
+    console.error('[WEBHOOK] No HMAC header received');
+    return false;
+  }
 
   // req.body DEBE ser Buffer (porque en backend/index.js usas express.raw)
   const rawBody = req.body;
-  if (!Buffer.isBuffer(rawBody)) return false;
+  if (!Buffer.isBuffer(rawBody)) {
+    console.error('[WEBHOOK] Body is not a Buffer');
+    return false;
+  }
 
   const computed = crypto
-    .createHmac('sha256', SECRET)
+    .createHmac('sha256', secret)
     .update(rawBody)
-    .digest(); // Buffer
+    .digest('base64'); // base64 string para comparar directamente
 
-  const received = Buffer.from(hmacHeader, 'base64');
+  // Comparación segura usando timingSafeEqual con buffers
+  const computedBuf = Buffer.from(computed, 'utf8');
+  const receivedBuf = Buffer.from(hmacHeader, 'utf8');
 
-  if (received.length !== computed.length) return false;
-  return crypto.timingSafeEqual(received, computed);
+  // Debug logging (sin mostrar el secret completo)
+  console.log('[WEBHOOK][DEBUG]', {
+    secretLength: secret.length,
+    secretPrefix: secret.substring(0, 4) + '...',
+    hmacHeader: hmacHeader.substring(0, 20) + '...',
+    computedHmac: computed.substring(0, 20) + '...',
+    bodyLength: rawBody.length,
+    bodyPreview: rawBody.toString('utf8').substring(0, 50),
+  });
+
+  if (computedBuf.length !== receivedBuf.length) {
+    console.warn('[WEBHOOK] HMAC length mismatch:', {
+      computed: computedBuf.length,
+      received: receivedBuf.length
+    });
+    return false;
+  }
+  
+  return crypto.timingSafeEqual(computedBuf, receivedBuf);
 }
 
 function parseJson(buf) {
@@ -48,7 +84,7 @@ TOPICS.forEach((topic) => {
     if (!ok) {
       console.warn('[WEBHOOK][HMAC_FAIL]', {
         topic,
-        hasSecret: !!SECRET,
+        hasSecret: !!getShopifySecret(),
         hasHeader: !!req.get('X-Shopify-Hmac-Sha256'),
         bodyIsBuffer: Buffer.isBuffer(req.body),
         bodyLen: Buffer.isBuffer(req.body) ? req.body.length : null,
