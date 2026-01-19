@@ -10,15 +10,19 @@ handle = "adnova-ai-connector-1"
 api_version = "2025-10"
 
   [[webhooks.subscriptions]]
-  uri = "/webhooks/customers/data_request"
+  topics = [ "app/uninstalled" ]
+  uri = "https://adray.ai/connector/webhooks/app/uninstalled"
+
+  [[webhooks.subscriptions]]
+  uri = "https://adray.ai/connector/webhooks/customers/data_request"
   compliance_topics = [ "customers/data_request" ]
 
   [[webhooks.subscriptions]]
-  uri = "/webhooks/customers/redact"
+  uri = "https://adray.ai/connector/webhooks/customers/redact"
   compliance_topics = [ "customers/redact" ]
 
   [[webhooks.subscriptions]]
-  uri = "/webhooks/shop/redact"
+  uri = "https://adray.ai/connector/webhooks/shop/redact"
   compliance_topics = [ "shop/redact" ]
 
 [access_scopes]

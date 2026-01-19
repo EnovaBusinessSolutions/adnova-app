@@ -82,7 +82,40 @@ const TOPICS = [
   'shop/redact',
   'customers/redact',
   'customers/data_request',
+  'app/uninstalled',  // Este se dispara inmediatamente al desinstalar
 ];
+
+// Endpoint de verificación para probar HMAC manualmente
+// POST /connector/webhooks/verify-hmac
+// Body: cualquier JSON
+// Header: X-Test-Hmac con el HMAC esperado
+router.post('/verify-hmac', (req, res) => {
+  const secret = getShopifySecret();
+  const rawBody = req.body;
+  
+  if (!Buffer.isBuffer(rawBody)) {
+    return res.status(400).json({ error: 'Body must be raw buffer' });
+  }
+  
+  const computed = crypto
+    .createHmac('sha256', secret)
+    .update(rawBody)
+    .digest('base64');
+  
+  // Mostrar info de debug (sin exponer el secret completo)
+  const info = {
+    secretLength: secret.length,
+    secretFirst4: secret.substring(0, 4),
+    secretLast4: secret.substring(secret.length - 4),
+    bodyLength: rawBody.length,
+    bodyPreview: rawBody.toString('utf8').substring(0, 100),
+    computedHmac: computed,
+    message: 'Compare this computedHmac with what Shopify sends in X-Shopify-Hmac-Sha256'
+  };
+  
+  console.log('[WEBHOOK][VERIFY-HMAC]', info);
+  return res.json(info);
+});
 
 TOPICS.forEach((topic) => {
   router.post(`/${topic}`, (req, res) => {
