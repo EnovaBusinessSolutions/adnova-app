@@ -1,11 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "lib": ["ES2020"],
+    "lib": ["ES2020", "DOM"],
     "module": "CommonJS",
     "moduleResolution": "Node",
-    "rootDir": "./backend/pixel-auditor",
-    "outDir": "./backend/pixel-auditor-dist",
+    "rootDir": "pixel-auditor",
+    "outDir": "dist-pixel-auditor",
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
@@ -13,5 +13,6 @@
     "types": ["node"],
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["backend/pixel-auditor/**/*.ts"]
+  "include": ["pixel-auditor/**/*.ts"],
+  "exclude": ["dist-pixel-auditor", "node_modules"]
 }
