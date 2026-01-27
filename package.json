@@ -36,6 +36,8 @@
     "stripe": "^19.1.0"
   },
   "devDependencies": {
-    "@shopify/app-bridge": "^3.7.10"
+    "@shopify/app-bridge": "^3.7.10",
+    "@types/node": "^25.0.10",
+    "typescript": "^5.9.3"
   }
 }

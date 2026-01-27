@@ -54,6 +54,7 @@ const billingRoutes = require('./routes/billing');
 const connector = require('./routes/shopifyConnector');
 const webhookRoutes = require('./routes/shopifyConnector/webhooks');
 const auditsRoutes = require('./routes/audits');
+const pixelAuditor = require('./routes/pixelAuditor');
 
 // Meta
 const metaInsightsRoutes = require('./routes/metaInsights');
@@ -224,6 +225,7 @@ app.use(
   webhookRoutes
 );
 
+app.use('/api', pixelAuditor);
 
 // 2) Stripe: RAW **solo** en /api/stripe/webhook; JSON normal para el resto
 app.use('/api/stripe', (req, res, next) => {
