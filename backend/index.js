@@ -215,6 +215,11 @@ app.get(['/connector/auth', '/connector/auth/callback'], (req, res, next) => {
   return next();
 });
 
+// Parsers globales
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+
 
 /* =========================
  * Parsers especiales (antes de JSON global)
@@ -238,9 +243,6 @@ app.use('/api/stripe', (req, res, next) => {
 // Router de Stripe (ya con sesión/passport disponibles)
 app.use('/api/stripe', stripeRouter);
 
-// Parsers globales
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true }));
 
 /* =========================
  * CSP (orden importante)
