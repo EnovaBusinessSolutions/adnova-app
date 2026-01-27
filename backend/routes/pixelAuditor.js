@@ -2,76 +2,49 @@
 "use strict";
 
 const express = require("express");
+const path = require("path");
+const fs = require("fs");
+
 const router = express.Router();
 
-function normalizeUrl(input) {
-  const raw = String(input || "").trim();
-  if (!raw) return "";
-  if (/^https?:\/\//i.test(raw)) return raw;
-  return `https://${raw}`;
+function loadRunPixelAudit() {
+  // ✅ Rutas reales (ya confirmadas en Render Shell)
+  const candidates = [
+    path.join(__dirname, "..", "dist-pixel-auditor", "engine.js"),
+    path.join(__dirname, "..", "dist-pixel-auditor", "pixel-auditor", "engine.js"),
+  ];
+
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      const mod = require(p);
+      if (typeof mod?.runPixelAudit === "function") return mod.runPixelAudit;
+    }
+  }
+
+  // Debug ultra claro en logs
+  throw new Error(
+    `PIXEL_ENGINE_NOT_FOUND. Busqué: ${candidates.join(" | ")}`
+  );
 }
-
-let runPixelAudit;
-
-function loadEngine() {
-  // ✅ Producción (Render): compilado por tsc
-  try {
-    const mod = require("../pixel-auditor-dist/engine");
-    if (mod?.runPixelAudit) return mod.runPixelAudit;
-  } catch (_) {}
-
-  // ✅ Fallback (solo si estás corriendo TS en dev)
-  try {
-    const mod = require("../pixel-auditor/engine");
-    if (mod?.runPixelAudit) return mod.runPixelAudit;
-  } catch (_) {}
-
-  return null;
-}
-
-runPixelAudit = loadEngine();
 
 router.post("/auditor", async (req, res) => {
   try {
-    if (!runPixelAudit) {
-      return res.status(500).json({
-        ok: false,
-        error: "PIXEL_AUDITOR_ENGINE_NOT_FOUND",
-        message:
-          "No se encontró el engine del Pixel Auditor. Asegura que el build generó backend/pixel-auditor-dist/engine.js y que Render corre el comando de build.",
-      });
-    }
-
     const { url, includeDetails } = req.body || {};
-    const safeUrl = normalizeUrl(url);
 
-    if (!safeUrl) {
-      return res.status(400).json({ ok: false, error: "URL_REQUIRED", message: "URL requerida" });
+    if (!url || typeof url !== "string") {
+      return res.status(400).json({ ok: false, error: "URL requerida" });
     }
 
-    // validación básica (evita inputs basura)
-    let u;
-    try {
-      u = new URL(safeUrl);
-      if (!u.hostname) throw new Error("no-host");
-    } catch {
-      return res.status(400).json({
-        ok: false,
-        error: "URL_INVALID",
-        message: "Pon una URL válida. Ej: https://tusitio.com",
-      });
-    }
-
-    const result = await runPixelAudit(safeUrl, !!includeDetails);
+    const runPixelAudit = loadRunPixelAudit();
+    const result = await runPixelAudit(url, !!includeDetails);
 
     return res.json({ ok: true, data: result });
   } catch (err) {
     console.error("[PIXEL_AUDITOR_ERROR]", err);
-
     return res.status(500).json({
       ok: false,
-      error: "PIXEL_AUDITOR_FAILED",
-      message: "No se pudo ejecutar la auditoría",
+      error: "No se pudo ejecutar la auditoría",
+      details: String(err?.message || err),
     });
   }
 });
