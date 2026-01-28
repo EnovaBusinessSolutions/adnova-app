@@ -2,7 +2,7 @@ services:
   - type: web
     name: adnova-ai
     env: node
-    buildCommand: npm install
+    buildCommand: npm install --legacy-peer-deps
     startCommand: node backend/index.js
     envVars:
       - key: NODE_VERSION
