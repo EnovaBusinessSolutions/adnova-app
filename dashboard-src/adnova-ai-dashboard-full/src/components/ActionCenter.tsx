@@ -1,4 +1,4 @@
-// dashboard-src/src/components/ActionCenter.tsx
+//  dashboard-src/src/components/ActionCenter.tsx
 import {
   Sparkles,
   Rocket,
