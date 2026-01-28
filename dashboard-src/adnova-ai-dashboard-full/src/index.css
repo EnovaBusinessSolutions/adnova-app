@@ -1,0 +1,216 @@
+/* Import Inter font from Google Fonts - MUST be first */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ✅ ULM GROTESK (desde /public/fonts) */
+@font-face {
+  font-family: "Ulm Grotesk";
+  src: url("/fonts/UlmGrotesk-Bold.otf") format("opentype");
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ✅ Clase utilitaria para usar SOLO donde quieras (ej. "Adray" del Sidebar) */
+.font-ulm {
+  font-family: "Ulm Grotesk", Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here.
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    --background: 222 15% 4%;
+    --foreground: 278 35% 90%;
+
+    --card: 260 15% 8%;
+    --card-foreground: 278 35% 90%;
+
+    --popover: 260 15% 8%;
+    --popover-foreground: 278 35% 90%;
+
+    --primary: 267 84% 67%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 260 15% 15%;
+    --secondary-foreground: 278 35% 90%;
+
+    --muted: 260 15% 15%;
+    --muted-foreground: 273 10% 65%;
+
+    --accent: 260 15% 15%;
+    --accent-foreground: 278 35% 90%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 267 15% 18%;
+    --input: 267 15% 18%;
+    --ring: 267 84% 67%;
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 260 15% 15%;
+    --sidebar-foreground: 273 10% 65%;
+    --sidebar-primary: 267 84% 67%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 267 15% 18%;
+    --sidebar-accent-foreground: 278 35% 90%;
+    --sidebar-border: 267 15% 18%;
+    --sidebar-ring: 267 84% 67%;
+  }
+
+  .dark {
+    --background: 222 15% 4%;
+    --foreground: 278 35% 90%;
+
+    --card: 260 15% 8%;
+    --card-foreground: 278 35% 90%;
+
+    --popover: 260 15% 8%;
+    --popover-foreground: 278 35% 90%;
+
+    --primary: 267 84% 67%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 260 15% 15%;
+    --secondary-foreground: 278 35% 90%;
+
+    --muted: 260 15% 15%;
+    --muted-foreground: 273 10% 65%;
+
+    --accent: 260 15% 15%;
+    --accent-foreground: 278 35% 90%;
+
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 267 15% 18%;
+    --input: 267 15% 18%;
+    --ring: 267 84% 67%;
+    --sidebar-background: 260 15% 15%;
+    --sidebar-foreground: 273 10% 65%;
+    --sidebar-primary: 267 84% 67%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 267 15% 18%;
+    --sidebar-accent-foreground: 278 35% 90%;
+    --sidebar-border: 267 15% 18%;
+    --sidebar-ring: 267 84% 67%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground font-['Inter'];
+  }
+}
+
+/* Custom animations for the dashboard */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(181, 92, 255, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(181, 92, 255, 0.5);
+  }
+}
+
+@keyframes sparkle {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.6s ease-out forwards;
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.8s ease-out forwards;
+}
+
+.animate-glow-pulse {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+.animate-sparkle {
+  animation: sparkle 1.5s ease-in-out infinite;
+}
+
+/* Gradient text utilities */
+.gradient-text {
+  background: linear-gradient(135deg, #B55CFF 0%, #9D5BFF 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0B0B0D;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2C2530;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #B55CFF;
+}
+
+/* Glassmorphism effect */
+.glass-effect {
+  background: rgba(21, 18, 26, 0.8);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(44, 37, 48, 0.3);
+}
+
+/* Neon glow effect */
+.neon-glow {
+  box-shadow: 0 0 20px rgba(181, 92, 255, 0.3);
+}
+
+.neon-glow:hover {
+  box-shadow: 0 0 30px rgba(181, 92, 255, 0.5);
+}
