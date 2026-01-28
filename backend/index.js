@@ -563,6 +563,10 @@ app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);
 app.use('/api/meta/accounts', sessionGuard, metaAccountsRoutes);
 app.use('/api/meta', metaTable);
 
+// Creative Intelligence (Meta Creative Decision Engine)
+const creativeIntelligenceRoutes = require('./routes/creativeIntelligence');
+app.use('/api/creative-intelligence', sessionGuard, creativeIntelligenceRoutes);
+
 // Shopify
 const verifyShopifyToken = require('../middlewares/verifyShopifyToken'); // (por ahora no usado)
 
