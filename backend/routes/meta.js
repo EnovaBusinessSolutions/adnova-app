@@ -561,6 +561,167 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
 });
 
 /* =========================
+ * ✅ RESYNC AD ACCOUNTS (incluye Business Managers)
+ * POST /auth/meta/accounts/resync
+ * ========================= */
+router.post('/accounts/resync', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    if (!MetaAccount) {
+      return res.status(400).json({ ok: false, error: 'META_MODEL_UNAVAILABLE' });
+    }
+
+    const doc = await MetaAccount
+      .findOne({ $or: [{ userId }, { user: userId }] })
+      .select('+longLivedToken +longlivedToken +access_token +token')
+      .lean();
+
+    if (!doc) {
+      return res.status(404).json({ ok: false, error: 'META_NOT_CONNECTED' });
+    }
+
+    const accessToken = doc.longLivedToken || doc.longlivedToken || doc.access_token || doc.token;
+    if (!accessToken) {
+      return res.status(401).json({ ok: false, error: 'NO_ACCESS_TOKEN' });
+    }
+
+    const proof = safeAppSecretProof(accessToken);
+    const proofParams = proof ? { appsecret_proof: proof } : {};
+
+    // 1) Get personal ad accounts (me/adaccounts)
+    let personalAccounts = [];
+    try {
+      const resp = await axios.get(`${FB_GRAPH}/me/adaccounts`, {
+        params: {
+          fields: 'account_id,name,currency,configured_status,timezone_name',
+          access_token: accessToken,
+          ...proofParams,
+          limit: 200
+        },
+        timeout: 15000
+      });
+      personalAccounts = resp.data?.data || [];
+    } catch (e) {
+      console.warn('[meta resync] Error fetching personal ad accounts:', e?.response?.data || e.message);
+    }
+
+    // 2) Get Business Managers the user has access to
+    let businessManagers = [];
+    try {
+      const resp = await axios.get(`${FB_GRAPH}/me/businesses`, {
+        params: {
+          fields: 'id,name',
+          access_token: accessToken,
+          ...proofParams,
+          limit: 50
+        },
+        timeout: 15000
+      });
+      businessManagers = resp.data?.data || [];
+    } catch (e) {
+      console.warn('[meta resync] Error fetching businesses:', e?.response?.data || e.message);
+    }
+
+    // 3) For each Business Manager, get their ad accounts
+    let businessAccounts = [];
+    for (const bm of businessManagers) {
+      try {
+        const resp = await axios.get(`${FB_GRAPH}/${bm.id}/owned_ad_accounts`, {
+          params: {
+            fields: 'account_id,name,currency,configured_status,timezone_name',
+            access_token: accessToken,
+            ...proofParams,
+            limit: 200
+          },
+          timeout: 15000
+        });
+        const accounts = (resp.data?.data || []).map(a => ({
+          ...a,
+          business_name: bm.name,
+          business_id: bm.id
+        }));
+        businessAccounts.push(...accounts);
+      } catch (e) {
+        console.warn(`[meta resync] Error fetching accounts for business ${bm.id}:`, e?.response?.data?.error?.message || e.message);
+      }
+
+      // Also try client_ad_accounts (accounts shared with the business)
+      try {
+        const resp = await axios.get(`${FB_GRAPH}/${bm.id}/client_ad_accounts`, {
+          params: {
+            fields: 'account_id,name,currency,configured_status,timezone_name',
+            access_token: accessToken,
+            ...proofParams,
+            limit: 200
+          },
+          timeout: 15000
+        });
+        const accounts = (resp.data?.data || []).map(a => ({
+          ...a,
+          business_name: bm.name + ' (client)',
+          business_id: bm.id
+        }));
+        businessAccounts.push(...accounts);
+      } catch (e) {
+        // client_ad_accounts may not exist for all businesses
+      }
+    }
+
+    // 4) Merge and dedupe all accounts
+    const allAccounts = [...personalAccounts, ...businessAccounts];
+    const seenIds = new Set();
+    const uniqueAccounts = [];
+
+    for (const a of allAccounts) {
+      const accId = normActId(a.account_id);
+      if (!accId || seenIds.has(accId)) continue;
+      seenIds.add(accId);
+
+      uniqueAccounts.push({
+        id: toActId(accId),
+        account_id: accId,
+        name: a.name || (a.business_name ? `${a.business_name} - ${accId}` : accId),
+        currency: a.currency || null,
+        configured_status: a.configured_status || null,
+        timezone_name: a.timezone_name || null,
+        business_name: a.business_name || null,
+        business_id: a.business_id || null
+      });
+    }
+
+    // 5) Update MetaAccount document
+    await MetaAccount.updateOne(
+      { $or: [{ userId }, { user: userId }] },
+      {
+        $set: {
+          ad_accounts: uniqueAccounts,
+          adAccounts: uniqueAccounts,
+          updatedAt: new Date()
+        }
+      }
+    );
+
+    console.log(`[meta resync] User ${userId}: Found ${uniqueAccounts.length} accounts (${personalAccounts.length} personal, ${businessAccounts.length} from ${businessManagers.length} businesses)`);
+
+    return res.json({
+      ok: true,
+      accounts: uniqueAccounts,
+      stats: {
+        total: uniqueAccounts.length,
+        personal: personalAccounts.length,
+        fromBusinesses: businessAccounts.length,
+        businessManagersScanned: businessManagers.length
+      }
+    });
+
+  } catch (e) {
+    console.error('[meta resync] Error:', e);
+    return res.status(500).json({ ok: false, error: 'RESYNC_ERROR', detail: e.message });
+  }
+});
+
+/* =========================
  * STATUS (legacy)
  * ========================= */
 router.get('/status', requireAuth, async (req, res) => {

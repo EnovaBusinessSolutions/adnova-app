@@ -6,11 +6,22 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy;
 
 const User = require('./models/User');
 
+// Detectar si estamos en desarrollo local
+const IS_DEV = process.env.NODE_ENV !== 'production' && (
+  !process.env.APP_URL || 
+  process.env.APP_URL.includes('localhost') ||
+  process.env.DEV_MODE === 'true'
+);
+
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
+
+// En desarrollo, usar localhost:3000 para el callback
+const DEV_URL = 'http://localhost:3000';
+const EFFECTIVE_URL = IS_DEV ? DEV_URL : APP_URL;
 
 // IMPORTANTE: debe coincidir con tu ruta real en backend/index.js:
 // app.get('/auth/google/login/callback', ...)
-const DEFAULT_GOOGLE_LOGIN_CALLBACK = `${APP_URL}/auth/google/login/callback`;
+const DEFAULT_GOOGLE_LOGIN_CALLBACK = `${EFFECTIVE_URL}/auth/google/login/callback`;
 
 // Puedes usar esta env si quieres controlarlo desde Render:
 // GOOGLE_LOGIN_CALLBACK_URL=https://adray.ai/auth/google/login/callback
@@ -18,6 +29,9 @@ const GOOGLE_LOGIN_CALLBACK_URL =
   process.env.GOOGLE_LOGIN_CALLBACK_URL ||
   process.env.GOOGLE_CALLBACK_URL || // compat si ya la tienes
   DEFAULT_GOOGLE_LOGIN_CALLBACK;
+
+// Log para debug
+console.log(`[auth.js] IS_DEV=${IS_DEV}, Callback URL: ${GOOGLE_LOGIN_CALLBACK_URL}`);
 
 passport.use(
   new GoogleStrategy(
