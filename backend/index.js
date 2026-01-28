@@ -136,6 +136,49 @@ app.use(
 app.use(passport.initialize());
 app.use(passport.session());
 
+/* =========================
+ * 🔧 DEV AUTO-LOGIN (solo localhost)
+ * Permite probar sin Google OAuth
+ * ========================= */
+if (process.env.NODE_ENV !== 'production') {
+  app.get('/dev/auto-login', async (req, res, next) => {
+    try {
+      const email = req.query.email || process.env.DEV_AUTO_LOGIN_EMAIL;
+      
+      if (!email) {
+        return res.status(400).json({
+          error: 'Especifica ?email=tu@email.com o configura DEV_AUTO_LOGIN_EMAIL en .env',
+          ejemplo: '/dev/auto-login?email=jose@adray.ai'
+        });
+      }
+      
+      const user = await User.findOne({ email: email.toLowerCase().trim() });
+      
+      if (!user) {
+        return res.status(404).json({ 
+          error: `Usuario no encontrado: ${email}`,
+          hint: 'Asegúrate de usar un email que exista en la base de datos'
+        });
+      }
+      
+      req.login(user, (err) => {
+        if (err) return next(err);
+        
+        console.log(`[DEV] Auto-login exitoso: ${email}`);
+        
+        // Redirigir al dashboard del frontend en desarrollo
+        const redirectTo = req.query.redirect || 'http://localhost:8080/creative-intelligence';
+        return res.redirect(redirectTo);
+      });
+    } catch (err) {
+      console.error('[DEV] Auto-login error:', err);
+      return res.status(500).json({ error: 'Error en auto-login' });
+    }
+  });
+  
+  console.log('🔧 [DEV] Auto-login habilitado: GET /dev/auto-login?email=tu@email.com');
+}
+
 function ensureAuthenticated(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.redirect('/login');
