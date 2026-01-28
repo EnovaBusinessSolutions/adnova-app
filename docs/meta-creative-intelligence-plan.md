@@ -3,15 +3,33 @@
 > **Fecha:** 2026-01-27  
 > **Autor:** Copilot (Senior Full-Stack Engineer)  
 > **Branch:** `feature/meta-creative-intelligence`  
-> **Estado:** 📝 PENDIENTE DE AUTORIZACIÓN  
+> **Estado:** ✅ RESPUESTAS RECIBIDAS - LISTO PARA IMPLEMENTAR  
+
+---
+
+## Decisiones de José (2026-01-27)
+
+| # | Pregunta | Decisión |
+|---|----------|----------|
+| 1 | ¿Integración React o Vanilla JS? | **React** - Nueva pestaña "Creativos" dentro del módulo Meta Ads existente |
+| 2 | ¿Objetivo global o por campaña? | **Global por defecto**, con override opcional por creativo |
+| 3 | Threshold mínimo de datos | **Aprobado** (1000 imp, 7 días) |
+| 4 | Tracking de recomendaciones | **Sí** - Checkboxes para marcar implementadas |
+| 5 | Ads Library API | **NO para MVP** - Solo API existente, Ads Library después |
+| 6 | Estrategia de refresh | **Botón manual** - No carga automática constante |
+| 7 | Restricciones de plan | **Ninguna** - Módulo completo para usuarios de pago |
+| 8 | Integración con Audit.js | **Separado** - Modelo independiente |
+| 9 | Market Signals | **Después del MVP** |
+| 10 | Timeline | **MVP HOY** - Todo en < 4 semanas |
 
 ---
 
 ## Índice
 
 1. [Resumen Ejecutivo](#1-resumen-ejecutivo)
-2. [Alcance Funcional MVP (v1)](#2-alcance-funcional-mvp-v1)
-3. [Inventario de Componentes / Reutilización](#3-inventario-de-componentes--reutilización)
+2. [MVP HOY - Alcance Reducido](#2-mvp-hoy---alcance-reducido)
+3. [Alcance Funcional Completo (v1)](#3-alcance-funcional-completo-v1)
+4. [Inventario de Componentes / Reutilización](#4-inventario-de-componentes--reutilización)
 4. [Diseño de Datos](#4-diseño-de-datos)
 5. [Diseño de Obtención de Datos](#5-diseño-de-obtención-de-datos)
 6. [Definición del Creative Score v1](#6-definición-del-creative-score-v1)
@@ -40,7 +58,131 @@ El **Meta Creative Intelligence Module** es un motor de decisión para creativos
 
 ---
 
-## 2. Alcance Funcional MVP (v1)
+## 2. MVP HOY - Alcance Reducido
+
+> ⚡ **Fecha límite: 2026-01-27 (HOY)**
+
+### 2.1 Qué INCLUYE el MVP
+
+| Componente | Descripción |
+|------------|-------------|
+| **Backend API completo** | Endpoints para listar creativos con scores y recomendaciones |
+| **Modelo CreativeSnapshot** | Persistencia de datos de creativos |
+| **Score Engine v1** | Cálculo de Creative Score (Value + Risk, SIN Alignment) |
+| **Recomendaciones v1** | Reglas básicas de recomendación |
+| **Tracking de recomendaciones** | Checkboxes para marcar como implementadas |
+| **Refresh manual** | Endpoint para forzar recálculo |
+
+### 2.2 Qué NO INCLUYE el MVP (Post-MVP)
+
+- ❌ Integración con Ads Library API (Alignment Score = neutral)
+- ❌ UI React (se documenta estructura para integración)
+- ❌ Historial de scores (solo snapshot actual)
+- ❌ Comparación antes/después
+
+### 2.3 Endpoints MVP
+
+```
+GET  /api/meta/creative-intelligence          → Lista creativos + scores
+GET  /api/meta/creative-intelligence/:adId    → Detalle de un creativo
+GET  /api/meta/creative-intelligence/summary  → KPIs agregados
+POST /api/meta/creative-intelligence/refresh  → Fuerza recálculo
+POST /api/meta/creative-intelligence/:adId/objective   → Override objetivo
+PATCH /api/meta/creative-intelligence/recommendations/:id → Marcar recomendación
+```
+
+### 2.4 Estructura de Respuesta (para React)
+
+```typescript
+// GET /api/meta/creative-intelligence
+interface CreativeIntelligenceResponse {
+  ok: boolean;
+  creatives: Creative[];
+  summary: Summary;
+  globalObjective: 'ventas' | 'leads' | 'awareness';
+  lastRefresh: string; // ISO date
+}
+
+interface Creative {
+  adId: string;
+  adName: string;
+  campaignId: string;
+  campaignName: string;
+  adsetId: string;
+  adsetName: string;
+  
+  // Assets
+  creative: {
+    type: 'IMAGE' | 'VIDEO' | 'CAROUSEL';
+    thumbnailUrl: string | null;
+    title: string;
+    body: string;
+    callToAction: string;
+  };
+  
+  // Status
+  effectiveStatus: string;
+  
+  // Metrics (30d)
+  metrics: {
+    spend: number;
+    impressions: number;
+    clicks: number;
+    ctr: number;
+    frequency: number;
+    purchases: number;
+    purchaseValue: number; // revenue
+    roas: number;
+    cpa: number;
+    revenueShare: number; // % del total
+  };
+  
+  // Score
+  score: {
+    total: number; // 0-100
+    valueScore: number;
+    riskScore: number;
+    alignmentScore: number; // 50 para MVP (neutral)
+    classification: 'PROTECT' | 'OPTIMIZE' | 'PREPARE_REPLACE' | 'REPLACE';
+  };
+  
+  // Objective (global o override)
+  objective: 'ventas' | 'leads' | 'awareness';
+  objectiveOverride: boolean; // true si es custom
+  
+  // Recomendaciones
+  recommendations: Recommendation[];
+}
+
+interface Recommendation {
+  id: string;
+  type: string;
+  title: string;
+  whatToDo: string;
+  why: string;
+  urgency: 'critical' | 'high' | 'medium' | 'low';
+  expectedScoreImpact: number | null;
+  implemented: boolean;
+  implementedAt: string | null;
+}
+
+interface Summary {
+  totalCreatives: number;
+  protectedRevenue: number;
+  atRiskRevenue: number;
+  avgScore: number;
+  byClassification: {
+    PROTECT: number;
+    OPTIMIZE: number;
+    PREPARE_REPLACE: number;
+    REPLACE: number;
+  };
+}
+```
+
+---
+
+## 3. Alcance Funcional Completo (v1)
 
 ### 2.1 Pantallas / Vistas
 
@@ -1688,56 +1830,25 @@ const mockAdsListResponse = {
 
 ## 13. Preguntas para José (Bloqueantes)
 
-> ⚠️ **Estas preguntas deben responderse ANTES de comenzar implementación**
-
-### Sobre Producto / UX
-
-1. **¿El módulo CI se integra dentro del dashboard React existente o es una sección Vanilla JS separada?**
-   - Si es dentro de React, necesito entender el patrón de integración
-   - Si es separado (como onboarding), procedo con Vanilla JS como se describe
-
-2. **¿El selector de objetivo (ventas/leads/awareness) debe ser global (usuario) o por campaña?**
-   - Actualmente existe `metaObjective` en User y MetaAccount
-   - El score podría variar si se respeta objetivo de campaña vs usuario
-
-3. **¿Cuál es el threshold mínimo de datos para calcular score?**
-   - Propongo: mínimo 1000 impressions y 7 días de datos
-   - ¿Algún criterio diferente?
-
-4. **¿Las recomendaciones deben ser solo visuales o el usuario puede marcarlas como "implementada" / "descartada"?**
-   - Si es solo visual, simplifico el modelo
-   - Si hay tracking de estado, necesito UI adicional
-
-### Sobre Datos / Técnico
-
-5. **¿Tenemos acceso real a Ads Library API o debo mockear señales de mercado para MVP?**
-   - La API tiene restricciones de acceso
-   - Si no tenemos acceso, Alignment Score será neutral (50)
-
-6. **¿Existe algún cron job o queue system para tareas en background?**
-   - Para calcular scores en batch (no on-demand)
-   - Para actualizar market signals 1x/día
-
-7. **¿Hay restricción de plan para este módulo?**
-   - ¿Solo planes pagos? ¿Límite de creativos analizados por plan?
-
-8. **¿Debo integrar con el sistema de auditorías existente (`Audit.js`) o es completamente separado?**
-   - Podría ser un nuevo `type: 'meta-creative'` en Audit
-   - O modelo completamente separado como propongo
-
-### Sobre Prioridad / Alcance
-
-9. **¿El MVP requiere Market Signals (Ads Library) o puede lanzarse sin ello?**
-   - Propongo lanzar sin Ads Library y agregarlo después
-   - Alignment Score sería neutral hasta entonces
-
-10. **¿Hay fecha objetivo para MVP?**
-    - Estimación actual: ~3 semanas de desarrollo
-    - ¿Hay urgencia que requiera recortar alcance?
+> ✅ **TODAS LAS PREGUNTAS RESPONDIDAS - Ver sección "Decisiones de José" al inicio**
 
 ---
 
-## Anexo: Archivos del Repositorio Inspeccionados
+## 14. Log de Implementación
+
+### 2026-01-27 - MVP Day
+
+| Hora | Tarea | Estado |
+|------|-------|--------|
+| -- | Backend: Modelo CreativeSnapshot | ⏳ |
+| -- | Backend: Score Engine | ⏳ |
+| -- | Backend: Endpoints API | ⏳ |
+| -- | Backend: Recomendaciones | ⏳ |
+| -- | Testing manual | ⏳ |
+
+---
+
+**🚀 LISTO PARA IMPLEMENTAR - Esperando "AUTORIZO" de José**
 
 ```
 # Conector Meta
