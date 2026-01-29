@@ -13,7 +13,6 @@ import {
   AlertTriangle,
   Compass,
   Infinity,
-  Sparkles,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
@@ -38,57 +37,13 @@ type NavItem = {
 const START_PATH = "/";
 const PIXEL_PATH = "/pixel-checker";
 
-/** Badge PRO para Creative Intelligence */
-function ProBadge({ isOpen }: { isOpen: boolean }) {
-  const GOLD = "#F59E0B";
-  const GOLD_SOFT = "rgba(245,158,11,0.18)";
-
-  if (!isOpen) {
-    return (
-      <span className="ml-0 inline-flex items-center">
-        <span
-          className="inline-flex h-4 w-4 items-center justify-center rounded text-[8px] font-bold"
-          style={{
-            background: `linear-gradient(135deg, ${GOLD} 0%, #FCD34D 100%)`,
-            color: "#1A1622",
-            boxShadow: `0 0 8px ${GOLD_SOFT}`,
-          }}
-        >
-          P
-        </span>
-      </span>
-    );
-  }
-
-  return (
-    <span className="ml-auto inline-flex items-center">
-      <span
-        className="rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wide"
-        style={{
-          background: `linear-gradient(135deg, ${GOLD} 0%, #FCD34D 100%)`,
-          color: "#1A1622",
-          boxShadow: `0 0 12px ${GOLD_SOFT}`,
-        }}
-      >
-        PRO
-      </span>
-    </span>
-  );
-}
-
 const PRIMARY: NavItem[] = [
   { icon: <Compass className="h-5 w-5" />, label: "Empieza aquí", path: START_PATH },
 
   // ✅ Meta Ads: icono tipo "∞"
   { icon: <Infinity className="h-5 w-5" />, label: "Meta Ads", path: "/meta-ads" },
 
-  // ✅ Creative Intelligence (PRO)
-  {
-    icon: <Sparkles className="h-5 w-5" />,
-    label: "Creative Intelligence",
-    path: "/creative-intelligence",
-    badge: ProBadge,
-  },
+  // ❌ Creative Intelligence removido
 
   { icon: <Search className="h-5 w-5" />, label: "Google Ads", path: "/google-ads" },
   { icon: <BarChart3 className="h-5 w-5" />, label: "Google Analytics", path: "/google-analytics" },
@@ -264,8 +219,6 @@ function NavRow({
       : "text-[#9A8CA8] group-hover:text-[#E5D3FF]",
   ].join(" ");
 
-  // ✅ QUITAMOS truncate para que NO se recorte “Auditor de Píxeles”
-  // Permitimos wrap si llegara a faltar espacio por badges.
   const labelClass = [
     "ml-3 text-sm font-medium",
     "flex-1 min-w-0",
@@ -283,17 +236,10 @@ function NavRow({
       {isOpen ? <span className={labelClass}>{item.label}</span> : null}
 
       {/* ✅ Badges */}
-      {isStart ? (
-        <StartBadge isOpen={isOpen} />
-      ) : isPixel ? (
-        <NewBadge isOpen={isOpen} />
-      ) : item.badge ? (
-        item.badge({ isOpen })
-      ) : null}
+      {isStart ? <StartBadge isOpen={isOpen} /> : isPixel ? <NewBadge isOpen={isOpen} /> : item.badge ? item.badge({ isOpen }) : null}
     </>
   );
 
-  // ✅ “glow/emphasize” igual para Empieza aquí y Auditor de Píxeles cuando NO están activos
   const emphasizeRow = (isStart || isPixel) && !active;
 
   if (item.path === LOGOUT_PATH) {
@@ -428,11 +374,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
             className="relative z-20 rounded-lg p-2 hover:bg-[#2C2530] transition-colors"
             aria-label="Toggle sidebar"
           >
-            {isOpen ? (
-              <ChevronLeft className="h-4 w-4 text-[#9A8CA8]" />
-            ) : (
-              <ChevronRight className="h-4 w-4 text-[#9A8CA8]" />
-            )}
+            {isOpen ? <ChevronLeft className="h-4 w-4 text-[#9A8CA8]" /> : <ChevronRight className="h-4 w-4 text-[#9A8CA8]" />}
           </button>
         </div>
       </div>
