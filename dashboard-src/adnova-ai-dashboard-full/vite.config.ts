@@ -1,4 +1,4 @@
-// dashboard-src/vite.config.ts
+// dashboard-src/adnova-ai-dashboard-full/vite.config.ts
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
