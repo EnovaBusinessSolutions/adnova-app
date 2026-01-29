@@ -336,7 +336,7 @@ app.get('/api/public-config', (_req, res) => {
 /* =========================
  * Static / dashboard
  * ========================= */
-const DASHBOARD_DIST = path.join(__dirname, '../dashboard-src/dist');
+const DASHBOARD_DIST = path.join(__dirname, '../dashboard-src/adnova-ai-dashboard-full/dist');
 const LEGACY_DASH = path.join(__dirname, '../public/dashboard');
 const HAS_DASHBOARD_DIST = fs.existsSync(path.join(DASHBOARD_DIST, 'index.html'));
 
