@@ -66,7 +66,6 @@ document.addEventListener('DOMContentLoaded', () => {
     return (el?.value || '').trim();
   }
 
-
   // Crea contenedor sutil debajo del form (solo se muestra cuando haga falta)
   function ensureCaptchaBox() {
     let box = document.getElementById('turnstile-wrap');
@@ -98,51 +97,50 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let TS_WIDGET_ID = null;
 
-async function showCaptcha() {
-  const siteKey = getTurnstileSiteKey();
-  if (!siteKey) {
-    showInlineMessage('⚠️ Falta configurar el Site Key de Turnstile en login.html.', false);
-    return;
+  async function showCaptcha() {
+    const siteKey = getTurnstileSiteKey();
+    if (!siteKey) {
+      showInlineMessage('⚠️ Falta configurar el Site Key de Turnstile en login.html.', false);
+      return;
+    }
+
+    const wrap = ensureCaptchaBox();
+    wrap.style.display = 'flex';
+
+    // limpia todo (evita renders duplicados)
+    wrap.innerHTML = '';
+
+    const slot = document.createElement('div');
+    slot.id = 'cf-turnstile-slot';
+    // ⚠️ NO pongas className = "cf-turnstile"
+    wrap.appendChild(slot);
+
+    try {
+      await ensureTurnstileScriptLoaded();
+
+      TS_WIDGET_ID = window.turnstile.render(slot, {
+        sitekey: siteKey,
+        size: 'normal',          // ✅ esto elimina el 400020
+        theme: 'auto',
+        appearance: 'always',
+        callback: () => {},
+        'expired-callback': () => { try { window.turnstile.reset(TS_WIDGET_ID); } catch {} },
+        'error-callback': () =>  { try { window.turnstile.reset(TS_WIDGET_ID); } catch {} },
+      });
+
+      wrap.dataset.rendered = '1';
+    } catch (err) {
+      console.error('[login.js] Turnstile render error:', err);
+      showInlineMessage('No se pudo cargar la verificación de seguridad. Recarga la página.', false);
+    }
   }
 
-  const wrap = ensureCaptchaBox();
-  wrap.style.display = 'flex';
-
-  // limpia todo (evita renders duplicados)
-  wrap.innerHTML = '';
-
-  const slot = document.createElement('div');
-  slot.id = 'cf-turnstile-slot';
-  // ⚠️ NO pongas className = "cf-turnstile"
-  wrap.appendChild(slot);
-
-  try {
-    await ensureTurnstileScriptLoaded();
-
-    TS_WIDGET_ID = window.turnstile.render(slot, {
-      sitekey: siteKey,
-      size: 'normal',          // ✅ esto elimina el 400020
-      theme: 'auto',
-      appearance: 'always',
-      callback: () => {},
-      'expired-callback': () => { try { window.turnstile.reset(TS_WIDGET_ID); } catch {} },
-      'error-callback': () =>  { try { window.turnstile.reset(TS_WIDGET_ID); } catch {} },
-    });
-
-    wrap.dataset.rendered = '1';
-  } catch (err) {
-    console.error('[login.js] Turnstile render error:', err);
-    showInlineMessage('No se pudo cargar la verificación de seguridad. Recarga la página.', false);
+  function resetTurnstile() {
+    try {
+      if (TS_WIDGET_ID != null) window.turnstile?.reset?.(TS_WIDGET_ID);
+      else window.turnstile?.reset?.();
+    } catch (_) {}
   }
-}
-
-function resetTurnstile() {
-  try {
-    if (TS_WIDGET_ID != null) window.turnstile?.reset?.(TS_WIDGET_ID);
-    else window.turnstile?.reset?.();
-  } catch (_) {}
-}
-
 
   function hideCaptcha() {
     const wrap = document.getElementById('turnstile-wrap');
@@ -392,9 +390,15 @@ function resetTurnstile() {
           continue;
         }
 
+        // ✅ Si backend manda redirect, pero aún envía onboarding, lo forzamos a dashboard
         if (data && data.redirect) {
           hideCaptcha();
-          window.location.href = data.redirect;
+          const redir = String(data.redirect || '');
+          if (redir.includes('/onboarding')) {
+            window.location.href = '/dashboard/';
+          } else {
+            window.location.href = redir;
+          }
           return;
         }
 
@@ -412,11 +416,10 @@ function resetTurnstile() {
 
         // ✅ Si backend pide captcha, lo mostramos y salimos (reintento manual)
         if (backendWantsCaptcha(res, data)) {
-        await showCaptcha();
-        showInlineMessage('Verificación requerida. Completa el captcha para continuar.', false);
-        return;
+          await showCaptcha();
+          showInlineMessage('Verificación requerida. Completa el captcha para continuar.', false);
+          return;
         }
-
 
         // Fallo real
         const msg =
@@ -442,8 +445,6 @@ function resetTurnstile() {
   }
 
   form.addEventListener('submit', doLogin, false);
-
-
 
   async function waitForSessionAndRedirect() {
     let attempts = 0;
@@ -475,8 +476,8 @@ function resetTurnstile() {
       if (user.shop) sessionStorage.setItem('shop', user.shop);
       if (user.email) sessionStorage.setItem('email', user.email);
 
-      const redirectUrl = user.onboardingComplete ? '/dashboard' : '/onboarding';
-      window.location.href = redirectUrl;
+      // ✅ Siempre ir al dashboard (sin onboarding)
+      window.location.href = '/dashboard/';
       return;
     }
 
