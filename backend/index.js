@@ -168,8 +168,8 @@ if (process.env.NODE_ENV !== 'production') {
         
         console.log(`[DEV] Auto-login exitoso: ${email}`);
         
-        // Redirigir al dashboard del frontend en desarrollo
-        const redirectTo = req.query.redirect || 'http://localhost:8080/creative-intelligence';
+        // Redirigir al dashboard
+        const redirectTo = req.query.redirect || '/dashboard/creative-intelligence';
         return res.redirect(redirectTo);
       });
     } catch (err) {
@@ -336,7 +336,7 @@ app.get('/api/public-config', (_req, res) => {
 /* =========================
  * Static / dashboard
  * ========================= */
-const DASHBOARD_DIST = path.join(__dirname, '../dashboard-src/adnova-ai-dashboard-full/dist');
+const DASHBOARD_DIST = path.join(__dirname, '../dashboard-src/dist');
 const LEGACY_DASH = path.join(__dirname, '../public/dashboard');
 const HAS_DASHBOARD_DIST = fs.existsSync(path.join(DASHBOARD_DIST, 'index.html'));
 
@@ -352,14 +352,14 @@ if (HAS_DASHBOARD_DIST) {
   app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
     res.sendFile(path.join(DASHBOARD_DIST, 'index.html'));
   });
-  console.log('✅ Dashboard servido desde: dashboard-src/adnova-ai-dashboard-full/dist');
+  console.log('✅ Dashboard servido desde: dashboard-src/dist');
 } else {
   app.use('/assets', express.static(path.join(LEGACY_DASH, 'assets')));
   app.use('/dashboard', ensureAuthenticated, express.static(LEGACY_DASH));
   app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
     res.sendFile(path.join(LEGACY_DASH, 'index.html'));
   });
-  console.warn('⚠️ dashboard-src/adnova-ai-dashboard-full/dist no encontrado. Usando fallback /public/dashboard');
+  console.warn('⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard');
 }
 
 app.use('/api/bookcall', require('./routes/bookcall'));

@@ -1,9 +1,6 @@
 [submodule "saas-landing"]
 	path = saas-landing
 	url = https://github.com/EnovaBusinessSolutions/landingpagesaas-html.git
-[submodule "dashboard-src"]
-	path = dashboard-src
-	url = https://github.com/EnovaBusinessSolutions/adnova-ai-dashboard-full.git
 [submodule "support-src"]
 	path = support-src
 	url = https://github.com/EnovaBusinessSolutions/adnova-ai-support
@@ -13,4 +10,8 @@
 [submodule "bookcall-src"]
 	path = bookcall-src
 	url = https://github.com/EnovaBusinessSolutions/bookcall-adnova.git
+	branch = main
+[submodule "dashboard-src"]
+	path = dashboard-src
+	url = https://github.com/EnovaBusinessSolutions/adnova-ai-dashboard-full.git
 	branch = main
