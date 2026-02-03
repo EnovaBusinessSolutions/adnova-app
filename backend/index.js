@@ -22,8 +22,6 @@ const { sendVerifyEmail, sendWelcomeEmail, sendResetPasswordEmail } = require('.
 const requireTurnstileAlways = require('./middlewares/requireTurnstileAlways');
 const { verifyTurnstile } = require('./services/turnstile');
 
-
-
 /* =========================
  * Modelos para Integraciones (Disconnect)
  * (cargan con fallback para NO romper si cambia el schema)
@@ -32,7 +30,6 @@ let MetaAccount, GoogleAccount, ShopConnections;
 try { MetaAccount = require('./models/MetaAccount'); } catch (_) { MetaAccount = null; }
 try { GoogleAccount = require('./models/GoogleAccount'); } catch (_) { GoogleAccount = null; }
 try { ShopConnections = require('./models/ShopConnections'); } catch (_) { ShopConnections = null; }
-
 
 // Routers
 const googleConnect = require('./routes/googleConnect');
@@ -69,10 +66,8 @@ app.use('/__mail', require('./routes/mailDebug'));
 // ✅ Cron emails (protegido por CRON_KEY)
 app.use('/api/cron', require('./routes/cronEmails'));
 
-
 const PORT = process.env.PORT || 3000;
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
-
 
 /* =========================
  * Seguridad y performance
@@ -219,8 +214,6 @@ app.get(['/connector/auth', '/connector/auth/callback'], (req, res, next) => {
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-
-
 /* =========================
  * Parsers especiales (antes de JSON global)
  * ========================= */
@@ -243,13 +236,11 @@ app.use('/api/stripe', (req, res, next) => {
 // Router de Stripe (ya con sesión/passport disponibles)
 app.use('/api/stripe', stripeRouter);
 
-
 /* =========================
  * CSP (orden importante)
  * ========================= */
 app.use(publicCSP);
 app.use(shopifyCSP);
-
 
 /* robots.txt simple */
 app.get('/robots.txt', (_req, res) => {
@@ -421,7 +412,6 @@ app.post('/api/integrations/google/disconnect', sessionGuard, (req, res) =>
   res.redirect(307, '/api/integrations/disconnect/google')
 );
 
-
 // META — desconectar
 app.post('/api/integrations/disconnect/meta', sessionGuard, async (req, res) => {
   try {
@@ -490,7 +480,6 @@ app.post('/api/integrations/meta/disconnect', sessionGuard, (req, res) =>
   res.redirect(307, '/api/integrations/disconnect/meta')
 );
 
-
 // SHOPIFY — desconectar
 app.post('/api/integrations/disconnect/shopify', sessionGuard, async (req, res) => {
   try {
@@ -536,7 +525,6 @@ app.post('/api/integrations/shopify/disconnect', sessionGuard, (req, res) =>
   res.redirect(307, '/api/integrations/disconnect/shopify')
 );
 
-
 // ✅ Auditorías
 app.use('/api/audits', sessionGuard, auditRunnerRoutes);
 app.use('/api/audits', sessionGuard, auditsRoutes);
@@ -552,7 +540,6 @@ app.post('/api/dashboard/audit', sessionGuard, (req, res) => {
   // 307 = mantiene método y body (POST + JSON)
   return res.redirect(307, '/api/audits/start');
 });
-
 
 // Stripe / Facturapi / Billing
 app.use('/api/facturapi', require('./routes/facturapi'));
@@ -579,10 +566,8 @@ app.use(
   connector
 );
 
-
 app.use('/api/shopify', shopifyRoutes);
 app.use('/api', mockShopify);
-
 
 /* =========================
  * Páginas públicas y flujo de app
@@ -750,7 +735,6 @@ function riskFail(req, email) {
 function riskClear(req, email) {
   loginRiskStore.delete(riskKey(req, email));
 }
-
 
 /* =========================
  * Auth básica (email/pass)
@@ -926,7 +910,6 @@ app.post('/api/forgot-password', requireTurnstileAlways, async (req, res) => {
   }
 });
 
-
 /* =========================
  * ✅ LOGIN (email/pass) — E2E + Risk-based Turnstile
  * - 1-2 fallos: normal
@@ -1011,8 +994,6 @@ app.post(['/api/login', '/api/auth/login', '/login'], async (req, res, next) => 
   }
 });
 
-
-
 /* =========================
  * Utilidades de sesión / perfil
  * ========================= */
@@ -1059,6 +1040,55 @@ app.get('/api/session', async (req, res) => {
   }
 });
 
+/* =========================
+ * ✅ /api/auth/me (CANÓNICO) + aliases (A PRUEBA DE BALAS)
+ * - Esto evita el 404 que te está bloqueando el botón en GenerateAudit
+ * - Devuelve { ok:true, data:{...} } para que el front use (json.data ?? json)
+ * - Incluye compat: authenticated, user, plan, subscription, intercom
+ * ========================= */
+async function sendAuthMe(req, res) {
+  if (!req.isAuthenticated || !req.isAuthenticated()) {
+    return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+  }
+
+  try {
+    const u = await User.findById(req.user._id)
+      .select('name email plan subscription createdAt onboardingComplete')
+      .lean();
+
+    if (!u) return res.status(401).json({ ok: false, error: 'UNAUTHENTICATED' });
+
+    const data = {
+      _id: String(u._id),
+      id: String(u._id), // alias útil
+      email: u.email || null,
+      name: u.name || null,
+      onboardingComplete: !!u.onboardingComplete,
+      plan: u.plan || 'gratis',
+      createdAt: u.createdAt || null,
+    };
+
+    return res.json({
+      ok: true,
+      data,
+      user: data, // compat para consumidores viejos
+      authenticated: true,
+      plan: u.plan || 'gratis',
+      subscription: u.subscription || null,
+      intercom: buildIntercomPayload(u),
+    });
+  } catch (e) {
+    console.error('[api/auth/me] error:', e);
+    return res.status(500).json({ ok: false, error: 'ME_FAILED' });
+  }
+}
+
+// ✅ Endpoint que tu front está llamando
+app.get('/api/auth/me', sendAuthMe);
+
+// ✅ Aliases blindados (por si alguna pantalla/branch usa otros paths)
+app.get('/api/users/me', sendAuthMe);
+app.get('/api/user/me', sendAuthMe);
 
 app.get('/api/saas/ping', sessionGuard, (req, res) => {
   res.json({ ok: true, user: req.user?.email });
@@ -1079,7 +1109,19 @@ app.get('/api/me', async (req, res) => {
 
     if (!u) return res.status(401).json({ authenticated: false });
 
+    const data = {
+      _id: String(u._id),
+      id: String(u._id),
+      email: u.email || null,
+      name: u.name || null,
+      onboardingComplete: !!u.onboardingComplete,
+      plan: u.plan || 'gratis',
+      createdAt: u.createdAt || null,
+    };
+
     return res.json({
+      ok: true,          // ✅ nuevo (no rompe)
+      data,              // ✅ soporta json.data ?? json
       authenticated: true,
       user: {
         _id: u._id,
@@ -1100,7 +1142,6 @@ app.get('/api/me', async (req, res) => {
   }
 });
 
-
 /* =========================
  * Otras APIs internas
  * ========================= */
@@ -1118,7 +1159,6 @@ app.use('/assets', express.static(path.join(__dirname, '../public/plans/assets')
 app.use('/assets', express.static(path.join(__dirname, '../public/bookcall/assets')));
 app.use(express.static(path.join(__dirname, '../public')));
 
-
 // ✅ Embedded entry: Shopify Admin abre /apps/<handle>
 // Aquí NO rompas iframe. Solo manda al conector embebido con shop+host.
 app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
@@ -1135,7 +1175,6 @@ app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
 
   return res.redirect(302, target.toString());
 });
-
 
 /* =========================
  * OAuth Google (login simple) — E2E (WELCOME REAL)
@@ -1211,9 +1250,6 @@ app.get('/auth/google/login/callback', (req, res, next) => {
     }
   })(req, res, next);
 });
-
-
-
 
 /* =========================
  * Debug / Diagnóstico
