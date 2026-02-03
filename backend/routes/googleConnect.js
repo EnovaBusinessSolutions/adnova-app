@@ -145,11 +145,10 @@ function sanitizeReturnTo(raw) {
   // solo rutas relativas
   if (!val.startsWith('/')) return '';
 
-  // allowlist mínima (amplía si lo necesitas)
+  // ✅ allowlist mínima (onboarding eliminado del flujo de login)
   const allowed = [
     '/dashboard/settings',
     '/dashboard',
-    '/onboarding',
   ];
   const ok = allowed.some(prefix => val.startsWith(prefix));
   if (!ok) return '';
@@ -302,7 +301,8 @@ async function fetchGA4Properties(oauthClient) {
 function buildAuthUrl(req, returnTo) {
   const client = oauth();
 
-  const safeReturnTo = sanitizeReturnTo(returnTo) || '/onboarding?google=connected';
+  // ✅ Default: dashboard (onboarding eliminado del login)
+  const safeReturnTo = sanitizeReturnTo(returnTo) || '/dashboard/';
 
   const state = JSON.stringify({
     uid: String(req.user._id),
@@ -329,13 +329,14 @@ async function startConnect(req, res) {
     const returnTo =
       typeof req.query.returnTo === 'string' && req.query.returnTo.trim()
         ? req.query.returnTo
-        : '/onboarding?google=connected';
+        : '/dashboard/';
 
     const url = buildAuthUrl(req, returnTo);
     return res.redirect(url);
   } catch (err) {
     console.error('[googleConnect] connect error:', err);
-    return res.redirect('/onboarding?google=error&reason=connect_build');
+    // ✅ Si falla construir URL, no mandar a onboarding
+    return res.redirect('/dashboard/?google=error&reason=connect_build');
   }
 }
 
@@ -350,12 +351,12 @@ router.get('/ads', requireSession, startConnect);
 async function googleCallbackHandler(req, res) {
   try {
     if (req.query.error) {
-      return res.redirect(`/onboarding?google=error&reason=${encodeURIComponent(req.query.error)}`);
+      return res.redirect(`/dashboard/?google=error&reason=${encodeURIComponent(req.query.error)}`);
     }
 
     const code = req.query.code;
     if (!code) {
-      return res.redirect('/onboarding?google=error&reason=no_code');
+      return res.redirect('/dashboard/?google=error&reason=no_code');
     }
 
     const client = oauth();
@@ -368,7 +369,7 @@ async function googleCallbackHandler(req, res) {
     const grantedScopes = normalizeScopes(tokens.scope || []);
 
     if (!accessToken) {
-      return res.redirect('/onboarding?google=error&reason=no_access_token');
+      return res.redirect('/dashboard/?google=error&reason=no_access_token');
     }
 
     // Perfil básico de Google (email)
@@ -615,7 +616,7 @@ async function googleCallbackHandler(req, res) {
       (gaCount > 1 && gaEffectiveSel.length === 0);
 
     // ReturnTo desde state (sanitizado)
-    let returnTo = '/onboarding?google=connected';
+    let returnTo = '/dashboard/';
     if (req.query.state) {
       try {
         const s = JSON.parse(req.query.state);
@@ -628,13 +629,14 @@ async function googleCallbackHandler(req, res) {
       }
     }
 
+    // ✅ Mantener hint para UI (no rompe nada)
     const sep = returnTo.includes('?') ? '&' : '?';
     returnTo = `${returnTo}${sep}selector=${needsSelector ? '1' : '0'}`;
 
     return res.redirect(returnTo);
   } catch (err) {
     console.error('[googleConnect] callback error:', err?.response?.data || err.message || err);
-    return res.redirect('/onboarding?google=error&reason=callback_exception');
+    return res.redirect('/dashboard/?google=error&reason=callback_exception');
   }
 }
 
@@ -824,7 +826,8 @@ router.get('/accounts', requireSession, async (req, res) => {
         ok: false,
         error: 'ADS_SCOPE_MISSING',
         message: 'Necesitamos permiso de Google Ads para listar tus cuentas.',
-        connectUrl: '/auth/google/connect?returnTo=/onboarding?google=connected',
+        // ✅ ya no enviamos a onboarding
+        connectUrl: '/auth/google/connect?returnTo=/dashboard/settings?tab=integrations',
       });
     }
 
@@ -1165,8 +1168,6 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
 
     // Primero intentamos tu servicio (best-effort)
     try {
-      // Si tu auditCleanup ya lo ajustaste a types, esto funcionará.
-      // Si usa "keys" internas, igual no rompe, y abajo hacemos fallback por type.
       await deleteAuditsForUserSources(userId, ['google', 'ga4', 'ga']);
     } catch (e) {
       auditsDeleteOk = false;
@@ -1174,8 +1175,7 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
       console.warn('[googleConnect] auditCleanup failed (best-effort):', auditsDeleteError);
     }
 
-    // Fallback: aseguramos borrado por type (sin depender del helper)
-    // (esto deja el sistema realmente E2E con tu Audit.js)
+    // Fallback: aseguramos borrado por type
     try {
       await Audit.deleteMany({ userId, type: { $in: ['google', 'ga4', 'ga'] } });
     } catch (e) {
