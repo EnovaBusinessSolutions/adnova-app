@@ -69,7 +69,7 @@ passport.use(
             // (o puedes omitirlo, pero lo dejamos por compat con tu código)
             password: '',
 
-            onboardingComplete: false,
+            onboardingComplete: true,
 
             // ✅ CLAVE E2E: control del welcome
             welcomeEmailSent: false,
