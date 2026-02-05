@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.runPixelAudit = runPixelAudit;
 
-// backend/pixel-auditor/engine.ts
+// backend/pixel-auditor/engine.ts (build JS)
 const fetchPage_1 = require("./lib/crawler/fetchPage");
 const extractScripts_1 = require("./lib/crawler/extractScripts");
 const ga4_1 = require("./lib/auditor/ga4");
@@ -36,7 +36,6 @@ function normalizeIssues(list) {
 }
 
 function computeTrackingHealth({ ga4, gtm, metaPixel, googleAds, issues }) {
-  // ✅ Intentar usar score del detector si existe (futuro)
   const candidate =
     ga4?.healthScore ??
     ga4?.score ??
@@ -49,7 +48,6 @@ function computeTrackingHealth({ ga4, gtm, metaPixel, googleAds, issues }) {
     return clamp(Number(candidate), 0, 100);
   }
 
-  // Fallback estilo German: base por instalaciones + penalizaciones por issues
   const hasGA4 =
     !!ga4?.detected || (Array.isArray(ga4?.ids) && ga4.ids.length > 0) || !!ga4?.measurementId;
   const hasMeta =
@@ -61,29 +59,44 @@ function computeTrackingHealth({ ga4, gtm, metaPixel, googleAds, issues }) {
 
   let score = 100;
 
-  // Core
   if (!hasGA4) score -= 25;
   if (!hasMeta) score -= 25;
 
-  // Soft
   if (!hasGTM) score -= 10;
   if (!hasGAds) score -= 10;
 
-  // Penalizar por issues (pero sin destruir el score)
   const iss = Array.isArray(issues) ? issues : [];
   let penalty = 0;
   iss.forEach((it) => {
     penalty += severityWeight(it?.severity);
   });
 
-  // cap penalty
   penalty = clamp(penalty, 0, 40);
   score -= penalty;
 
   return clamp(score, 0, 100);
 }
 
+function guessBlocked(htmlSnippet) {
+  const s = String(htmlSnippet || "").toLowerCase();
+  if (!s) return null;
+
+  // Señales típicas de bloqueo/challenge/CDN
+  if (s.includes("access denied")) return "access_denied";
+  if (s.includes("request blocked")) return "request_blocked";
+  if (s.includes("forbidden")) return "forbidden";
+  if (s.includes("captcha")) return "captcha";
+  if (s.includes("cloudflare") && (s.includes("challenge") || s.includes("attention required"))) return "cloudflare_challenge";
+  if (s.includes("akamai") && (s.includes("reference #") || s.includes("access denied"))) return "akamai_block";
+  if (s.includes("incident id") && s.includes("imperva")) return "imperva_block";
+  if (s.includes("bot") && s.includes("detected")) return "bot_detected";
+
+  return null;
+}
+
 async function runPixelAudit(url, includeDetails = false) {
+  const startedAt = Date.now();
+
   // 1) Descargar HTML + metadatos
   const page = await (0, fetchPage_1.fetchPage)(url);
 
@@ -95,63 +108,49 @@ async function runPixelAudit(url, includeDetails = false) {
     .filter((s) => typeof s?.src === "string" && s.src.length > 0)
     .map((s) => ({ src: s.src, content: s.content }));
 
-  // ✅ 4) Descargar scripts externos relevantes SIEMPRE
+  // 4) Descargar scripts externos relevantes SIEMPRE
   let externalScripts = [];
   try {
     const siteUrl = page.finalUrl || url;
     externalScripts = await (0, extractScripts_1.fetchRelevantExternalScripts)(scriptsWithSrc, siteUrl);
-  } catch (e) {
+  } catch {
     externalScripts = [];
   }
 
-  // ✅ 5) Unir contenido descargado al script original para que detectores vean "content"
-  // Problema real: allScripts trae s.src a veces RELATIVA (/assets/app.js o assets/app.js)
-  // pero externalScripts trae ABSOLUTA (https://dominio.com/assets/app.js)
-  // => si comparas "===" no matchea y pierdes contenido/eventos/issues.
+  // 5) Merge robusto (relativo vs absoluto) + normaliza src
   const siteUrlForResolve = page.finalUrl || url;
 
   function resolveSrcToAbs(src) {
     try {
       if (!src) return "";
-      // //cdn...  => https://cdn...
       if (src.startsWith("//")) return "https:" + src;
-      // http(s)...
       if (/^https?:\/\//i.test(src)) return src;
-      // ✅ relativo => resolver contra la URL FINAL completa (incluye path)
-      // Esto cubre: "/assets/x.js" y "assets/x.js"
-      return new URL(src, siteUrlForResolve).href;
+      return new URL(src, siteUrlForResolve).href; // cubre "/x.js" y "x.js"
     } catch {
       return String(src || "");
     }
   }
 
-  // índice rápido por src absoluta
   const externalByAbsSrc = new Map();
   (Array.isArray(externalScripts) ? externalScripts : []).forEach((es) => {
     const key = resolveSrcToAbs(es?.src);
     if (key) externalByAbsSrc.set(key, es);
   });
 
-  // ✅ scriptsForDetection SIEMPRE normaliza src a absoluto
   const scriptsForDetection = (Array.isArray(allScripts) ? allScripts : []).map((s) => {
     if (!s || !s.src) return s;
-
     const abs = resolveSrcToAbs(s.src);
     const hit = externalByAbsSrc.get(abs);
 
     if (hit) {
       return {
         ...s,
-        // normaliza src a absoluto para consistencia
         src: abs,
-        // conserva flags del crawler (excludeFromEvents) si vienen
         excludeFromEvents: hit.excludeFromEvents ?? s.excludeFromEvents,
-        // pega el contenido descargado
         content: hit.content || s.content,
       };
     }
 
-    // aunque no haya hit, deja src normalizado
     return { ...s, src: abs };
   });
 
@@ -179,9 +178,9 @@ async function runPixelAudit(url, includeDetails = false) {
   // 8) Eventos
   const events = (0, events_1.extractEvents)(page, scriptsForDetection);
   const duplicateEvents = (0, events_1.findDuplicateEvents)(events);
-  const eventAnalysis = (0, events_1.validateEventParameters)(events); // ✅ ahora devuelve issues listos
+  const eventAnalysis = (0, events_1.validateEventParameters)(events);
 
-  // ✅ 9) Consolidar issues (como German)
+  // 9) Consolidar issues
   const issues = [
     ...normalizeIssues(ga4?.issues),
     ...normalizeIssues(gtm?.issues),
@@ -190,7 +189,7 @@ async function runPixelAudit(url, includeDetails = false) {
     ...normalizeIssues(eventAnalysis),
   ];
 
-  // ✅ 10) Summary real
+  // 10) Summary real
   const trackingHealthScore = computeTrackingHealth({
     ga4,
     gtm,
@@ -200,24 +199,19 @@ async function runPixelAudit(url, includeDetails = false) {
   });
 
   const recommendations = [];
-  // si detectores generan recs en el futuro, aquí se agregan
-  // por ahora lo dejamos vacío: la ruta /pixelAuditor.js ya arma recomendaciones base
 
-  // 11) Construir respuesta (shape estable)
+  // 11) Construir respuesta
   const result = {
     status: "ok",
-    url, // ✅ NO uses page.url (no existe en PageContent)
+    url,
     ga4,
     gtm,
     metaPixel,
     googleAds,
-
     merchantCenter: { detected: false, ids: [], errors: [] },
     shopify,
-
     events,
-    issues, // ✅ SIEMPRE presente
-
+    issues,
     summary: {
       trackingHealthScore,
       issuesCount: issues.length,
@@ -226,21 +220,42 @@ async function runPixelAudit(url, includeDetails = false) {
     },
   };
 
-  // 12) Extras en modo detallado (debug)
-  if (includeDetails) {
-    result.externalScripts = externalScripts;
-    result.duplicates = duplicateEvents;
-    result.analysis = eventAnalysis;
+  // ✅ Debug SIEMPRE (clave para saber por qué sale todo en 0)
+  const htmlLength =
+  Number(page?.htmlLength ?? (page?.html ? page.html.length : 0)) || 0;
 
-    // ✅ Debug mínimo para confirmar externos
-    result._debug = {
-      finalUrl: page.finalUrl || null,
-      scriptsTotal: Array.isArray(allScripts) ? allScripts.length : 0,
+const htmlSnippet = String(
+  (page?.htmlSnippet ?? (page?.html ? page.html.slice(0, 600) : "")) || ""
+);
+
+const blockedHint = guessBlocked(htmlSnippet);
+
+  result._debug = {
+    tookMs: Date.now() - startedAt,
+    finalUrl: page?.finalUrl || null,
+    httpStatus: page?.status ?? null,
+    statusText: page?.statusText ?? null,
+    contentType: page?.contentType ?? null,
+    htmlLength,
+    htmlSnippet,
+    blockedHint,
+    scripts: {
+      inlineCount: Array.isArray(page?.scripts?.inline) ? page.scripts.inline.length : null,
+      externalCount: Array.isArray(page?.scripts?.external) ? page.scripts.external.length : null,
+      allScripts: Array.isArray(allScripts) ? allScripts.length : 0,
+      scriptsWithSrc: Array.isArray(scriptsWithSrc) ? scriptsWithSrc.length : 0,
       externalFetched: Array.isArray(externalScripts) ? externalScripts.length : 0,
       externalsWithContent: Array.isArray(externalScripts)
         ? externalScripts.filter((x) => x && x.content && x.content.length > 0).length
         : 0,
-    };
+    },
+  };
+
+  // Extras extendidos solo en includeDetails
+  if (includeDetails) {
+    result.externalScripts = externalScripts;
+    result.duplicates = duplicateEvents;
+    result.analysis = eventAnalysis;
   }
 
   return result;
