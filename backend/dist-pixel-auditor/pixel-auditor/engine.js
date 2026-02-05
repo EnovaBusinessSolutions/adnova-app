@@ -37,34 +37,31 @@ function normalizeIssues(list) {
 
 function computeTrackingHealth({ ga4, gtm, metaPixel, googleAds, issues }) {
   const candidate =
-    ga4?.healthScore ??
-    ga4?.score ??
-    metaPixel?.healthScore ??
-    metaPixel?.score ??
-    googleAds?.healthScore ??
-    googleAds?.score;
+    (ga4 && (ga4.healthScore ?? ga4.score)) ??
+    (metaPixel && (metaPixel.healthScore ?? metaPixel.score)) ??
+    (googleAds && (googleAds.healthScore ?? googleAds.score));
 
   if (Number.isFinite(Number(candidate))) {
     return clamp(Number(candidate), 0, 100);
   }
 
   const hasGA4 =
-    !!ga4?.detected ||
-    (Array.isArray(ga4?.ids) && ga4.ids.length > 0) ||
-    !!ga4?.measurementId;
+    !!(ga4 && ga4.detected) ||
+    (Array.isArray(ga4 && ga4.ids) && (ga4.ids || []).length > 0) ||
+    !!(ga4 && ga4.measurementId);
 
   const hasMeta =
-    !!metaPixel?.detected ||
-    (Array.isArray(metaPixel?.ids) && metaPixel.ids.length > 0);
+    !!(metaPixel && metaPixel.detected) ||
+    (Array.isArray(metaPixel && metaPixel.ids) && (metaPixel.ids || []).length > 0);
 
   const hasGTM =
-    !!gtm?.detected ||
-    (Array.isArray(gtm?.ids) && gtm.ids.length > 0) ||
-    !!gtm?.containerId;
+    !!(gtm && gtm.detected) ||
+    (Array.isArray(gtm && gtm.ids) && (gtm.ids || []).length > 0) ||
+    !!(gtm && gtm.containerId);
 
   const hasGAds =
-    !!googleAds?.detected ||
-    (Array.isArray(googleAds?.ids) && googleAds.ids.length > 0);
+    !!(googleAds && googleAds.detected) ||
+    (Array.isArray(googleAds && googleAds.ids) && (googleAds.ids || []).length > 0);
 
   let score = 100;
 
@@ -77,7 +74,7 @@ function computeTrackingHealth({ ga4, gtm, metaPixel, googleAds, issues }) {
   const iss = Array.isArray(issues) ? issues : [];
   let penalty = 0;
   iss.forEach((it) => {
-    penalty += severityWeight(it?.severity);
+    penalty += severityWeight(it && it.severity);
   });
 
   penalty = clamp(penalty, 0, 40);
@@ -94,26 +91,51 @@ function guessBlocked(htmlSnippet) {
   if (s.includes("request blocked")) return "request_blocked";
   if (s.includes("forbidden")) return "forbidden";
   if (s.includes("captcha")) return "captcha";
-
-  if (s.includes("cloudflare") && (s.includes("challenge") || s.includes("attention required")))
+  if (s.includes("cloudflare") && (s.includes("challenge") || s.includes("attention required"))) {
     return "cloudflare_challenge";
-
-  if (s.includes("akamai") && (s.includes("reference #") || s.includes("access denied")))
+  }
+  if (s.includes("akamai") && (s.includes("reference #") || s.includes("access denied"))) {
     return "akamai_block";
-
-  if (s.includes("imperva") && (s.includes("incident id") || s.includes("access denied")))
-    return "imperva_block";
-
-  if (s.includes("incapsula") && (s.includes("incident id") || s.includes("request unsuccessful")))
-    return "incapsula_block";
-
+  }
+  if (s.includes("incident id") && s.includes("imperva")) return "imperva_block";
   if (s.includes("bot") && s.includes("detected")) return "bot_detected";
 
-  // hints genéricos que salen mucho
-  if (s.includes("checking your browser")) return "challenge_checking_browser";
-  if (s.includes("enable javascript")) return "challenge_enable_js";
-
   return null;
+}
+
+// ✅ Clave estilo German: extraer IDs GTM (GTM-XXXXXXX) desde HTML + scripts inline
+function extractGtmIdsFromText(text) {
+  const out = new Set();
+  const s = String(text || "");
+  if (!s) return [];
+  const re = /\bGTM-[A-Z0-9]+\b/gi;
+  let m;
+  while ((m = re.exec(s)) !== null) {
+    if (m[0]) out.add(m[0].toUpperCase());
+  }
+  return Array.from(out);
+}
+
+function extractGtmIdsFromScripts(page, scripts) {
+  const ids = new Set();
+
+  // HTML completo
+  extractGtmIdsFromText(page && page.html).forEach((x) => ids.add(x));
+
+  // snippet si existiera
+  extractGtmIdsFromText(page && page.htmlSnippet).forEach((x) => ids.add(x));
+
+  // inline scripts (content)
+  (Array.isArray(scripts) ? scripts : []).forEach((sc) => {
+    if (sc && typeof sc.content === "string") {
+      extractGtmIdsFromText(sc.content).forEach((x) => ids.add(x));
+    }
+    if (sc && typeof sc.src === "string") {
+      extractGtmIdsFromText(sc.src).forEach((x) => ids.add(x));
+    }
+  });
+
+  return Array.from(ids);
 }
 
 async function runPixelAudit(url, includeDetails = false) {
@@ -125,16 +147,32 @@ async function runPixelAudit(url, includeDetails = false) {
   // 2) Extraer scripts (internos + externos)
   const allScripts = (0, extractScripts_1.getAllScripts)(page);
 
-  // 3) Preparar lista de scripts externos (src) para descargar contenido relevante
+  // 3) scripts externos detectados en el HTML
   const scriptsWithSrc = (Array.isArray(allScripts) ? allScripts : [])
-    .filter((s) => typeof s?.src === "string" && s.src.length > 0)
+    .filter((s) => typeof (s && s.src) === "string" && s.src.length > 0)
     .map((s) => ({ src: s.src, content: s.content }));
 
-  // 4) Descargar scripts externos relevantes (primera pasada)
+  // ✅ 3.1) EXTRA: inyectar scripts de GTM aunque no estén como <script src="...">
+  const gtmIds = extractGtmIdsFromScripts(page, allScripts);
+  const injectedGtmScripts = gtmIds.map((id) => ({
+    src: `https://www.googletagmanager.com/gtm.js?id=${id}`,
+  }));
+
+  // 3.2) Combinar + deduplicar por src (case-insensitive)
+  const combinedExternal = [...scriptsWithSrc, ...injectedGtmScripts];
+  const uniqueBySrc = Array.from(
+    new Map(
+      combinedExternal
+        .filter((x) => x && typeof x.src === "string" && x.src.trim())
+        .map((x) => [String(x.src).toLowerCase(), x])
+    ).values()
+  );
+
+  // 4) Descargar scripts externos relevantes (incluye GTM inyectados)
   let externalScripts = [];
   try {
     const siteUrl = page.finalUrl || url;
-    externalScripts = await (0, extractScripts_1.fetchRelevantExternalScripts)(scriptsWithSrc, siteUrl);
+    externalScripts = await (0, extractScripts_1.fetchRelevantExternalScripts)(uniqueBySrc, siteUrl);
   } catch {
     externalScripts = [];
   }
@@ -145,48 +183,34 @@ async function runPixelAudit(url, includeDetails = false) {
   function resolveSrcToAbs(src) {
     try {
       if (!src) return "";
-      if (src.startsWith("//")) return "https:" + src;
-      if (/^https?:\/\//i.test(src)) return src;
-      return new URL(src, siteUrlForResolve).href; // cubre "/x.js" y "x.js"
+      const s = String(src);
+      if (s.startsWith("//")) return "https:" + s;
+      if (/^https?:\/\//i.test(s)) return s;
+      return new URL(s, siteUrlForResolve).href;
     } catch {
       return String(src || "");
     }
   }
 
-  // === FALLBACK DE EMERGENCIA ===
-  // Si el filtro "relevant" no bajó nada, pero sí hay scripts externos,
-  // bajamos un "top N" (sin romper performance) para no quedarnos ciegos.
-  try {
-    const hasAnySrc = Array.isArray(scriptsWithSrc) && scriptsWithSrc.length > 0;
-    const fetchedNone = !Array.isArray(externalScripts) || externalScripts.length === 0;
-
-    if (hasAnySrc && fetchedNone) {
-      const siteUrl = page.finalUrl || url;
-      const maxFallback = 18;
-
-      // elegimos los primeros N (muchas veces bundles principales están ahí)
-      const top = scriptsWithSrc.slice(0, maxFallback).map((x) => ({
-        src: resolveSrcToAbs(x.src),
-        content: x.content,
-      }));
-
-      // si existe helper en extractScripts para bajar, úsalo; si no, usa fetchExternalScript directo
-      // Nota: fetchExternalScript vive en fetchPage.js, pero aquí no lo importamos para no cambiar imports.
-      // Entonces: reusamos fetchRelevantExternalScripts con una lista ya "recortada" (mejor que nada).
-      externalScripts = await (0, extractScripts_1.fetchRelevantExternalScripts)(top, siteUrl);
-    }
-  } catch {
-    // si falla el fallback no pasa nada; seguimos con lo que haya
-  }
-
   const externalByAbsSrc = new Map();
   (Array.isArray(externalScripts) ? externalScripts : []).forEach((es) => {
-    const key = resolveSrcToAbs(es?.src);
+    const key = resolveSrcToAbs(es && es.src);
     if (key) externalByAbsSrc.set(key, es);
   });
 
-  const scriptsForDetection = (Array.isArray(allScripts) ? allScripts : []).map((s) => {
+  // ✅ Importante: también metemos los GTM inyectados en scriptsForDetection (aunque no estuvieran en allScripts)
+  const injectedAsDetectionScripts = (Array.isArray(externalScripts) ? externalScripts : [])
+    .filter((x) => x && typeof x.src === "string" && x.src.includes("googletagmanager.com/gtm.js"))
+    .map((x) => ({
+      type: "external",
+      src: resolveSrcToAbs(x.src),
+      content: x.content || "",
+      excludeFromEvents: x.excludeFromEvents,
+    }));
+
+  const scriptsForDetectionBase = (Array.isArray(allScripts) ? allScripts : []).map((s) => {
     if (!s || !s.src) return s;
+
     const abs = resolveSrcToAbs(s.src);
     const hit = externalByAbsSrc.get(abs);
 
@@ -194,13 +218,25 @@ async function runPixelAudit(url, includeDetails = false) {
       return {
         ...s,
         src: abs,
-        excludeFromEvents: hit.excludeFromEvents ?? s.excludeFromEvents,
-        content: hit.content || s.content,
+        excludeFromEvents: (hit.excludeFromEvents ?? s.excludeFromEvents),
+        content: (hit.content || s.content),
       };
     }
 
     return { ...s, src: abs };
   });
+
+  // Dedup final scriptsForDetection por src
+  const scriptsForDetection = Array.from(
+    new Map(
+      [...scriptsForDetectionBase, ...injectedAsDetectionScripts]
+        .filter(Boolean)
+        .map((sc) => {
+          const key = sc && sc.src ? String(sc.src).toLowerCase() : `inline:${Math.random()}`;
+          return [key, sc];
+        })
+    ).values()
+  );
 
   // 6) Detectores principales
   const ga4 = (0, ga4_1.detectGA4)(page, scriptsForDetection);
@@ -214,7 +250,7 @@ async function runPixelAudit(url, includeDetails = false) {
     !!shopifySignals.hasWebPixelsManager ||
     !!shopifySignals.hasMonorailTracking ||
     !!shopifySignals.hasTrekkieTracking ||
-    (shopifySignals.shopifyAppsDetected?.length ?? 0) > 0;
+    ((shopifySignals.shopifyAppsDetected && shopifySignals.shopifyAppsDetected.length) || 0) > 0;
 
   const shopify = {
     ...shopifySignals,
@@ -230,14 +266,14 @@ async function runPixelAudit(url, includeDetails = false) {
 
   // 9) Consolidar issues
   const issues = [
-    ...normalizeIssues(ga4?.issues),
-    ...normalizeIssues(gtm?.issues),
-    ...normalizeIssues(metaPixel?.issues),
-    ...normalizeIssues(googleAds?.issues),
+    ...normalizeIssues(ga4 && ga4.issues),
+    ...normalizeIssues(gtm && gtm.issues),
+    ...normalizeIssues(metaPixel && metaPixel.issues),
+    ...normalizeIssues(googleAds && googleAds.issues),
     ...normalizeIssues(eventAnalysis),
   ];
 
-  // 10) Summary real
+  // 10) Score
   const trackingHealthScore = computeTrackingHealth({
     ga4,
     gtm,
@@ -248,7 +284,7 @@ async function runPixelAudit(url, includeDetails = false) {
 
   const recommendations = [];
 
-  // 11) Construir respuesta
+  // 11) Respuesta base
   const result = {
     status: "ok",
     url,
@@ -268,33 +304,37 @@ async function runPixelAudit(url, includeDetails = false) {
     },
   };
 
-  // ✅ Debug SIEMPRE (clave para saber por qué sale todo en 0)
-  const htmlLength = Number(page?.htmlLength ?? (page?.html ? page.html.length : 0)) || 0;
+  // ✅ Debug SIEMPRE
+  const htmlLength =
+    Number((page && page.htmlLength) ?? ((page && page.html) ? page.html.length : 0)) || 0;
 
   const htmlSnippet = String(
-    (page?.htmlSnippet ?? (page?.html ? page.html.slice(0, 600) : "")) || ""
+    ((page && page.htmlSnippet) ?? ((page && page.html) ? page.html.slice(0, 600) : "")) || ""
   );
 
   const blockedHint = guessBlocked(htmlSnippet);
 
   result._debug = {
     tookMs: Date.now() - startedAt,
-    finalUrl: page?.finalUrl || null,
-    httpStatus: page?.status ?? null,
-    statusText: page?.statusText ?? null,
-    contentType: page?.contentType ?? null,
+    finalUrl: (page && page.finalUrl) || null,
+    httpStatus: (page && page.status) ?? null,
+    statusText: (page && page.statusText) ?? null,
+    contentType: (page && page.contentType) ?? null,
     htmlLength,
     htmlSnippet,
     blockedHint,
+    gtmIdsDetected: gtmIds,
     scripts: {
-      inlineCount: Array.isArray(page?.scripts?.inline) ? page.scripts.inline.length : null,
-      externalCount: Array.isArray(page?.scripts?.external) ? page.scripts.external.length : null,
+      inlineCount: (page && page.scripts && Array.isArray(page.scripts.inline)) ? page.scripts.inline.length : null,
+      externalCount: (page && page.scripts && Array.isArray(page.scripts.external)) ? page.scripts.external.length : null,
       allScripts: Array.isArray(allScripts) ? allScripts.length : 0,
       scriptsWithSrc: Array.isArray(scriptsWithSrc) ? scriptsWithSrc.length : 0,
+      injectedGtmScripts: injectedGtmScripts.length,
       externalFetched: Array.isArray(externalScripts) ? externalScripts.length : 0,
       externalsWithContent: Array.isArray(externalScripts)
         ? externalScripts.filter((x) => x && x.content && x.content.length > 0).length
         : 0,
+      detectionScripts: Array.isArray(scriptsForDetection) ? scriptsForDetection.length : 0,
     },
   };
 
