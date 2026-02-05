@@ -21,7 +21,7 @@ function getAllScripts(pageContent) {
   const allScripts = [];
 
   // Agregar scripts inline
-  pageContent.scripts.inline.forEach((content, index) => {
+  (pageContent?.scripts?.inline || []).forEach((content, index) => {
     allScripts.push({
       type: "inline",
       content,
@@ -30,16 +30,71 @@ function getAllScripts(pageContent) {
   });
 
   // Agregar scripts externos (solo la referencia, sin descargar aún)
-  pageContent.scripts.external.forEach((script, index) => {
+  (pageContent?.scripts?.external || []).forEach((script, index) => {
     allScripts.push({
       type: "external",
-      content: script.content || "",
-      src: script.src,
-      line: pageContent.scripts.inline.length + index + 1,
+      content: (script && script.content) || "",
+      src: script && script.src,
+      line: (pageContent?.scripts?.inline || []).length + index + 1,
     });
   });
 
   return allScripts;
+}
+
+/* =========================
+ * Helpers de normalización
+ * ========================= */
+
+function safeUrlString(u, fallback) {
+  const s = String(u || "").trim();
+  return s ? s : fallback;
+}
+
+function toAbsUrl(src, baseUrl) {
+  const s = String(src || "").trim();
+  if (!s) return "";
+  try {
+    // //cdn... => https://cdn...
+    if (s.startsWith("//")) return "https:" + s;
+    // absolute
+    if (/^https?:\/\//i.test(s)) return s;
+    // relative
+    return new URL(s, baseUrl).toString();
+  } catch {
+    return "";
+  }
+}
+
+function getBaseDomain(hostname) {
+  const h = String(hostname || "").toLowerCase().replace(/^www\./, "");
+  const parts = h.split(".").filter(Boolean);
+  if (parts.length < 2) return h;
+  return parts.slice(-2).join(".");
+}
+
+function isSameSiteHost(scriptHost, siteHost, siteBaseDomain, siteOrigin) {
+  const sh = String(scriptHost || "").toLowerCase();
+  const dh = String(siteHost || "").toLowerCase();
+  const bd = String(siteBaseDomain || "").toLowerCase();
+
+  if (!sh) return false;
+
+  // 1) mismo host exacto
+  if (dh && sh === dh) return true;
+
+  // 2) termina con el baseDomain (más estable que includes)
+  if (bd && (sh === bd || sh.endsWith("." + bd))) return true;
+
+  // 3) fallback: si coincide con origin (por si el host se resuelve igual)
+  if (siteOrigin) {
+    try {
+      const so = new URL(siteOrigin);
+      if (so.hostname && so.hostname.toLowerCase() === sh) return true;
+    } catch {}
+  }
+
+  return false;
 }
 
 /**
@@ -52,7 +107,7 @@ async function fetchRelevantExternalScripts(externalScripts, siteUrl) {
   const relevantScripts = [];
 
   // ✅ fallback seguro para resolver URLs relativas
-  const safeSiteUrl = typeof siteUrl === "string" && siteUrl.trim() ? siteUrl.trim() : "https://example.com/";
+  const safeSiteUrl = safeUrlString(siteUrl, "https://example.com/");
 
   // Obtener info del sitio
   let siteOrigin = "";
@@ -63,9 +118,8 @@ async function fetchRelevantExternalScripts(externalScripts, siteUrl) {
     const u = new URL(safeSiteUrl);
     siteOrigin = u.origin;
     siteDomain = u.hostname;
-    const parts = siteDomain.replace("www.", "").split(".");
-    siteBaseDomain = parts.slice(-2).join(".");
-  } catch (e) {
+    siteBaseDomain = getBaseDomain(siteDomain);
+  } catch {
     // se queda con strings vacíos
   }
 
@@ -86,63 +140,74 @@ async function fetchRelevantExternalScripts(externalScripts, siteUrl) {
     "intercom.io",
     "crisp.chat",
     "tawk.to",
-  ];
+  ].map((x) => String(x).toLowerCase());
 
+  // ✅ tracking scripts que SIEMPRE descargamos aunque sean terceros
+  const trackingAllowlist = [
+    "googletagmanager.com", // GTM
+    "gtm.js",
+    "gtag/js",
+  ].map((x) => String(x).toLowerCase());
+
+  // 1) Normalizar + deduplicar por src absoluto (case-insensitive)
+  const dedup = new Map();
+  (externalScripts || []).forEach((script) => {
+    const rawSrc = script && script.src;
+    const abs = toAbsUrl(rawSrc, safeSiteUrl);
+    if (!abs) return;
+    const key = abs.toLowerCase();
+    if (!dedup.has(key)) {
+      dedup.set(key, { src: abs });
+    }
+  });
+
+  const uniqueExternalScripts = Array.from(dedup.values());
+
+  // 2) Descargar en paralelo (manteniendo reglas)
   await Promise.all(
-    (externalScripts || []).map(async (script) => {
+    uniqueExternalScripts.map(async (script) => {
       if (!script || !script.src) return;
 
-      // ✅ resolver URLs relativas de forma robusta
-      let fullScriptUrl = "";
-      try {
-        fullScriptUrl = new URL(script.src, safeSiteUrl).toString();
-      } catch (e) {
-        // si no se puede resolver, skip
-        return;
-      }
-
+      const fullScriptUrl = script.src;
       const fullLower = fullScriptUrl.toLowerCase();
 
       // Verificar si es un script de terceros a excluir de eventos
       const isExcludedFromEvents = excludeFromEventAnalysis.some((pattern) =>
-        fullLower.includes(String(pattern).toLowerCase())
+        fullLower.includes(pattern)
       );
 
-      // Verificar si es del mismo dominio/sitio
+      // Verificar host vs mismo sitio
       let isSameSite = false;
       try {
         const scriptUrl = new URL(fullScriptUrl);
-        const scriptDomain = scriptUrl.hostname;
-        isSameSite = !!(siteBaseDomain && scriptDomain.includes(siteBaseDomain));
-      } catch (e) {}
+        isSameSite = isSameSiteHost(
+          scriptUrl.hostname,
+          siteDomain,
+          siteBaseDomain,
+          siteOrigin
+        );
+      } catch {}
 
-      // Scripts de tracking importantes (descárgalos aunque sean de terceros)
-      const isGtmOrTracking =
-        fullLower.includes("googletagmanager.com") ||
-        fullLower.includes("gtag/js") ||
-        fullLower.includes("gtm.js");
+      // tracking allowlist (siempre)
+      const isTrackingScript = trackingAllowlist.some((p) => fullLower.includes(p));
 
-      // Descargar TODOS los scripts del mismo sitio (para encontrar eventos)
-      // y también los scripts de tracking
-      if (isSameSite || isGtmOrTracking) {
-        try {
-          const content = await (0, fetchPage_1.fetchExternalScript)(fullScriptUrl);
+      // ✅ regla final de descarga
+      if (!isSameSite && !isTrackingScript) return;
 
-          if (content) {
-            // Si es GTM/Tracking, NO excluirlo de eventos (queremos analizar el contenedor)
-            // Pero si está en lista de exclusión y NO es tracking, sí excluirlo
-            const shouldExclude = isExcludedFromEvents && !isGtmOrTracking;
+      try {
+        const content = await (0, fetchPage_1.fetchExternalScript)(fullScriptUrl);
+        if (!content) return;
 
-            relevantScripts.push({
-              src: fullScriptUrl,
-              content,
-              excludeFromEvents: shouldExclude,
-            });
-          }
-        } catch (error) {
-          // no truena auditor
-          // console.error(`Failed to fetch ${fullScriptUrl}`);
-        }
+        // ✅ Si es GTM/Tracking, NO excluirlo de eventos (queremos analizar el contenedor)
+        const shouldExclude = isExcludedFromEvents && !isTrackingScript;
+
+        relevantScripts.push({
+          src: fullScriptUrl,
+          content,
+          excludeFromEvents: shouldExclude,
+        });
+      } catch {
+        // no truena auditor
       }
     })
   );
@@ -158,8 +223,8 @@ async function fetchRelevantExternalScripts(externalScripts, siteUrl) {
  */
 function searchInScripts(scripts, pattern) {
   const results = [];
-  scripts.forEach((script) => {
-    if (!script.content) return;
+  (scripts || []).forEach((script) => {
+    if (!script || !script.content) return;
     const matches = script.content.match(pattern);
     if (matches) {
       matches.forEach((match, index) => {
@@ -173,16 +238,15 @@ function searchInScripts(scripts, pattern) {
 /**
  * Extrae todas las ocurrencias de un patrón con grupos de captura
  * @param text - Texto donde buscar
- * @param pattern - Patrón regex con flags 'g'
+ * @param pattern - Patrón regex (se fuerza 'gi' por estabilidad)
  * @returns Array de matches con grupos de captura
  */
 function extractAllMatches(text, pattern) {
   const matches = [];
   let match;
 
-  // Asegurar que el patrón tiene flag 'g'
   const globalPattern = new RegExp(pattern.source, "gi");
-  while ((match = globalPattern.exec(text)) !== null) {
+  while ((match = globalPattern.exec(String(text || ""))) !== null) {
     matches.push(match);
   }
   return matches;
@@ -197,25 +261,27 @@ function extractGtmIds(scripts) {
   const gtmIds = new Set();
 
   const patterns = [
-    /['"](GTM-[A-Z0-9]+)['"]/gi, // "GTM-XXXX"
-    /id=(GTM-[A-Z0-9]+)/gi, // id=GTM-XXXX
-    /gtm\.js\?id=(GTM-[A-Z0-9]+)/gi, // gtm.js?id=GTM-XXXX
+    /['"](GTM-[A-Z0-9]+)['"]/gi,
+    /id=(GTM-[A-Z0-9]+)/gi,
+    /gtm\.js\?id=(GTM-[A-Z0-9]+)/gi,
   ];
 
-  scripts.forEach((script) => {
-    if (!script.content) return;
+  (scripts || []).forEach((script) => {
+    if (!script) return;
 
     // Si es un script externo de GTM, intentar sacar el ID de la URL src
     if (script.type === "external" && script.src) {
-      const urlMatch = /id=(GTM-[A-Z0-9]+)/i.exec(script.src);
-      if (urlMatch) gtmIds.add(urlMatch[1]);
+      const urlMatch = /id=(GTM-[A-Z0-9]+)/i.exec(String(script.src));
+      if (urlMatch && urlMatch[1]) gtmIds.add(String(urlMatch[1]).toUpperCase());
     }
 
-    // Buscar en el contenido
+    const content = String(script.content || "");
+    if (!content) return;
+
     patterns.forEach((pattern) => {
-      const matches = extractAllMatches(script.content, pattern);
+      const matches = extractAllMatches(content, pattern);
       matches.forEach((m) => {
-        if (m[1]) gtmIds.add(m[1]);
+        if (m && m[1]) gtmIds.add(String(m[1]).toUpperCase());
       });
     });
   });
