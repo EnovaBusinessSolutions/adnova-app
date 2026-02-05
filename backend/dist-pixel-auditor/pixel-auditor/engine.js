@@ -49,13 +49,22 @@ function computeTrackingHealth({ ga4, gtm, metaPixel, googleAds, issues }) {
   }
 
   const hasGA4 =
-    !!ga4?.detected || (Array.isArray(ga4?.ids) && ga4.ids.length > 0) || !!ga4?.measurementId;
+    !!ga4?.detected ||
+    (Array.isArray(ga4?.ids) && ga4.ids.length > 0) ||
+    !!ga4?.measurementId;
+
   const hasMeta =
-    !!metaPixel?.detected || (Array.isArray(metaPixel?.ids) && metaPixel.ids.length > 0);
+    !!metaPixel?.detected ||
+    (Array.isArray(metaPixel?.ids) && metaPixel.ids.length > 0);
+
   const hasGTM =
-    !!gtm?.detected || (Array.isArray(gtm?.ids) && gtm.ids.length > 0) || !!gtm?.containerId;
+    !!gtm?.detected ||
+    (Array.isArray(gtm?.ids) && gtm.ids.length > 0) ||
+    !!gtm?.containerId;
+
   const hasGAds =
-    !!googleAds?.detected || (Array.isArray(googleAds?.ids) && googleAds.ids.length > 0);
+    !!googleAds?.detected ||
+    (Array.isArray(googleAds?.ids) && googleAds.ids.length > 0);
 
   let score = 100;
 
@@ -81,15 +90,28 @@ function guessBlocked(htmlSnippet) {
   const s = String(htmlSnippet || "").toLowerCase();
   if (!s) return null;
 
-  // Señales típicas de bloqueo/challenge/CDN
   if (s.includes("access denied")) return "access_denied";
   if (s.includes("request blocked")) return "request_blocked";
   if (s.includes("forbidden")) return "forbidden";
   if (s.includes("captcha")) return "captcha";
-  if (s.includes("cloudflare") && (s.includes("challenge") || s.includes("attention required"))) return "cloudflare_challenge";
-  if (s.includes("akamai") && (s.includes("reference #") || s.includes("access denied"))) return "akamai_block";
-  if (s.includes("incident id") && s.includes("imperva")) return "imperva_block";
+
+  if (s.includes("cloudflare") && (s.includes("challenge") || s.includes("attention required")))
+    return "cloudflare_challenge";
+
+  if (s.includes("akamai") && (s.includes("reference #") || s.includes("access denied")))
+    return "akamai_block";
+
+  if (s.includes("imperva") && (s.includes("incident id") || s.includes("access denied")))
+    return "imperva_block";
+
+  if (s.includes("incapsula") && (s.includes("incident id") || s.includes("request unsuccessful")))
+    return "incapsula_block";
+
   if (s.includes("bot") && s.includes("detected")) return "bot_detected";
+
+  // hints genéricos que salen mucho
+  if (s.includes("checking your browser")) return "challenge_checking_browser";
+  if (s.includes("enable javascript")) return "challenge_enable_js";
 
   return null;
 }
@@ -108,7 +130,7 @@ async function runPixelAudit(url, includeDetails = false) {
     .filter((s) => typeof s?.src === "string" && s.src.length > 0)
     .map((s) => ({ src: s.src, content: s.content }));
 
-  // 4) Descargar scripts externos relevantes SIEMPRE
+  // 4) Descargar scripts externos relevantes (primera pasada)
   let externalScripts = [];
   try {
     const siteUrl = page.finalUrl || url;
@@ -129,6 +151,32 @@ async function runPixelAudit(url, includeDetails = false) {
     } catch {
       return String(src || "");
     }
+  }
+
+  // === FALLBACK DE EMERGENCIA ===
+  // Si el filtro "relevant" no bajó nada, pero sí hay scripts externos,
+  // bajamos un "top N" (sin romper performance) para no quedarnos ciegos.
+  try {
+    const hasAnySrc = Array.isArray(scriptsWithSrc) && scriptsWithSrc.length > 0;
+    const fetchedNone = !Array.isArray(externalScripts) || externalScripts.length === 0;
+
+    if (hasAnySrc && fetchedNone) {
+      const siteUrl = page.finalUrl || url;
+      const maxFallback = 18;
+
+      // elegimos los primeros N (muchas veces bundles principales están ahí)
+      const top = scriptsWithSrc.slice(0, maxFallback).map((x) => ({
+        src: resolveSrcToAbs(x.src),
+        content: x.content,
+      }));
+
+      // si existe helper en extractScripts para bajar, úsalo; si no, usa fetchExternalScript directo
+      // Nota: fetchExternalScript vive en fetchPage.js, pero aquí no lo importamos para no cambiar imports.
+      // Entonces: reusamos fetchRelevantExternalScripts con una lista ya "recortada" (mejor que nada).
+      externalScripts = await (0, extractScripts_1.fetchRelevantExternalScripts)(top, siteUrl);
+    }
+  } catch {
+    // si falla el fallback no pasa nada; seguimos con lo que haya
   }
 
   const externalByAbsSrc = new Map();
@@ -221,14 +269,13 @@ async function runPixelAudit(url, includeDetails = false) {
   };
 
   // ✅ Debug SIEMPRE (clave para saber por qué sale todo en 0)
-  const htmlLength =
-  Number(page?.htmlLength ?? (page?.html ? page.html.length : 0)) || 0;
+  const htmlLength = Number(page?.htmlLength ?? (page?.html ? page.html.length : 0)) || 0;
 
-const htmlSnippet = String(
-  (page?.htmlSnippet ?? (page?.html ? page.html.slice(0, 600) : "")) || ""
-);
+  const htmlSnippet = String(
+    (page?.htmlSnippet ?? (page?.html ? page.html.slice(0, 600) : "")) || ""
+  );
 
-const blockedHint = guessBlocked(htmlSnippet);
+  const blockedHint = guessBlocked(htmlSnippet);
 
   result._debug = {
     tookMs: Date.now() - startedAt,
