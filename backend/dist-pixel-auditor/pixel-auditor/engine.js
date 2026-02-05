@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.runPixelAudit = runPixelAudit;
+
 // backend/pixel-auditor/engine.ts
 const fetchPage_1 = require("./lib/crawler/fetchPage");
 const extractScripts_1 = require("./lib/crawler/extractScripts");
@@ -90,24 +91,21 @@ async function runPixelAudit(url, includeDetails = false) {
   const allScripts = (0, extractScripts_1.getAllScripts)(page);
 
   // 3) Preparar lista de scripts externos (src) para descargar contenido relevante
-  const scriptsWithSrc = allScripts
-    .filter((s) => typeof s.src === "string" && s.src.length > 0)
+  const scriptsWithSrc = (Array.isArray(allScripts) ? allScripts : [])
+    .filter((s) => typeof s?.src === "string" && s.src.length > 0)
     .map((s) => ({ src: s.src, content: s.content }));
 
   // ✅ 4) Descargar scripts externos relevantes SIEMPRE
   let externalScripts = [];
   try {
     const siteUrl = page.finalUrl || url;
-    externalScripts = await (0, extractScripts_1.fetchRelevantExternalScripts)(
-      scriptsWithSrc,
-      siteUrl
-    );
+    externalScripts = await (0, extractScripts_1.fetchRelevantExternalScripts)(scriptsWithSrc, siteUrl);
   } catch (e) {
     externalScripts = [];
   }
 
-    // ✅ 5) Unir contenido descargado al script original para que detectores vean "content"
-  // Problema real: allScripts trae s.src a veces RELATIVA (/assets/app.js)
+  // ✅ 5) Unir contenido descargado al script original para que detectores vean "content"
+  // Problema real: allScripts trae s.src a veces RELATIVA (/assets/app.js o assets/app.js)
   // pero externalScripts trae ABSOLUTA (https://dominio.com/assets/app.js)
   // => si comparas "===" no matchea y pierdes contenido/eventos/issues.
   const siteUrlForResolve = page.finalUrl || url;
@@ -119,9 +117,9 @@ async function runPixelAudit(url, includeDetails = false) {
       if (src.startsWith("//")) return "https:" + src;
       // http(s)...
       if (/^https?:\/\//i.test(src)) return src;
-      // relativo => resolver contra siteUrl
-      const base = new URL(siteUrlForResolve);
-      return new URL(src, base.origin).toString();
+      // ✅ relativo => resolver contra la URL FINAL completa (incluye path)
+      // Esto cubre: "/assets/x.js" y "assets/x.js"
+      return new URL(src, siteUrlForResolve).href;
     } catch {
       return String(src || "");
     }
@@ -134,21 +132,28 @@ async function runPixelAudit(url, includeDetails = false) {
     if (key) externalByAbsSrc.set(key, es);
   });
 
-  const scriptsForDetection =
-    Array.isArray(externalScripts) && externalScripts.length
-      ? allScripts.map((s) => {
-          if (!s || !s.src) return s;
+  // ✅ scriptsForDetection SIEMPRE normaliza src a absoluto
+  const scriptsForDetection = (Array.isArray(allScripts) ? allScripts : []).map((s) => {
+    if (!s || !s.src) return s;
 
-          const abs = resolveSrcToAbs(s.src);
-          const hit = externalByAbsSrc.get(abs);
+    const abs = resolveSrcToAbs(s.src);
+    const hit = externalByAbsSrc.get(abs);
 
-          // ✅ IMPORTANTE: conservar flags (excludeFromEvents) y cualquier extra futuro del crawler
-          return hit
-            ? { ...s, ...hit, content: hit.content || s.content }
-            : s;
-        })
-      : allScripts;
+    if (hit) {
+      return {
+        ...s,
+        // normaliza src a absoluto para consistencia
+        src: abs,
+        // conserva flags del crawler (excludeFromEvents) si vienen
+        excludeFromEvents: hit.excludeFromEvents ?? s.excludeFromEvents,
+        // pega el contenido descargado
+        content: hit.content || s.content,
+      };
+    }
 
+    // aunque no haya hit, deja src normalizado
+    return { ...s, src: abs };
+  });
 
   // 6) Detectores principales
   const ga4 = (0, ga4_1.detectGA4)(page, scriptsForDetection);
@@ -226,6 +231,16 @@ async function runPixelAudit(url, includeDetails = false) {
     result.externalScripts = externalScripts;
     result.duplicates = duplicateEvents;
     result.analysis = eventAnalysis;
+
+    // ✅ Debug mínimo para confirmar externos
+    result._debug = {
+      finalUrl: page.finalUrl || null,
+      scriptsTotal: Array.isArray(allScripts) ? allScripts.length : 0,
+      externalFetched: Array.isArray(externalScripts) ? externalScripts.length : 0,
+      externalsWithContent: Array.isArray(externalScripts)
+        ? externalScripts.filter((x) => x && x.content && x.content.length > 0).length
+        : 0,
+    };
   }
 
   return result;
