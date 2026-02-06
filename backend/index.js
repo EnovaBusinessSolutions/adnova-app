@@ -3,7 +3,8 @@ require("dotenv").config();
 
 const express = require("express");
 const session = require("express-session");
-const MongoStore = require("connect-mongo"); // ✅ NEW
+const ConnectMongo = require("connect-mongo"); // ✅ NEW (Node 22 safe)
+const MongoStore = ConnectMongo?.default ?? ConnectMongo; // ✅ NEW
 const passport = require("passport");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -144,13 +145,14 @@ app.use(
     resave: false,
     saveUninitialized: false,
 
-    // ✅ NEW: store de Mongo para no usar MemoryStore en prod
-    // Nota: esto NO hace persistente la cookie; solo hace estable el backend.
     store: MongoStore.create({
-      mongoUrl: process.env.MONGO_URI,
-      collectionName: "sessions",
-      ttl: 60 * 60 * 24 * 7, // 7 días (server-side)
-    }),
+  mongoUrl: process.env.MONGO_URI,
+  collectionName: "sessions",
+  ttl: 60 * 60 * 24 * 7, // 7 días server-side
+  // opcional pero recomendado:
+  autoRemove: "native",
+}),
+
 
     cookie: {
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
