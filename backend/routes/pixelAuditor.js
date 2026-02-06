@@ -4,13 +4,10 @@
 const express = require("express");
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 
 const router = express.Router();
 
-/**
- * Lee el body aunque llegue como Buffer (caso express.raw),
- * string, o ya como objeto (express.json).
- */
 function readBody(req) {
   const b = req.body;
   if (!b) return {};
@@ -36,7 +33,6 @@ function readBody(req) {
 }
 
 function loadRunPixelAudit() {
-  // ✅ Rutas reales (confirmadas en Render Shell)
   const candidates = [
     path.join(__dirname, "..", "dist-pixel-auditor", "engine.js"),
     path.join(__dirname, "..", "dist-pixel-auditor", "pixel-auditor", "engine.js"),
@@ -44,9 +40,15 @@ function loadRunPixelAudit() {
 
   for (const p of candidates) {
     if (fs.existsSync(p)) {
-      // OJO: require cache. En dev, si reinicias server no hay problema.
+      // ✅ evita cache en dev / hot reload
+      try {
+        delete require.cache[require.resolve(p)];
+      } catch {}
+
       const mod = require(p);
-      if (typeof mod?.runPixelAudit === "function") return mod.runPixelAudit;
+      if (typeof mod?.runPixelAudit === "function") {
+        return { runPixelAudit: mod.runPixelAudit, enginePath: p };
+      }
     }
   }
 
@@ -62,7 +64,6 @@ function uniq(arr) {
 }
 
 function toIdList(v) {
-  // acepta string | number | array | object con ids
   if (!v) return [];
   if (Array.isArray(v)) return uniq(v.map(String));
   if (typeof v === "string" || typeof v === "number") return [String(v)];
@@ -76,7 +77,6 @@ function toIdList(v) {
 }
 
 function pickCoverage(result) {
-  // engine podría usar coverage / platforms / tracking / detected / summary.coverage
   return (
     result?.coverage ||
     result?.platforms ||
@@ -91,20 +91,14 @@ function isTruthy(v) {
   return v === true || v === "true" || v === 1 || v === "1";
 }
 
-/**
- * Intenta inferir "presencia" aunque no haya IDs.
- * Esto es necesario para parecerse a German:
- * - ejemplo: Meta script cargado pero sin init => instalado=true, ids=[], issues>0
- */
 function detectPresence(raw) {
   if (!raw) return false;
 
   if (typeof raw === "boolean") return raw;
-  if (typeof raw === "string") return raw.trim().length > 0; // por si viene "G-XXXX" etc.
+  if (typeof raw === "string") return raw.trim().length > 0;
   if (typeof raw === "number") return true;
 
   if (typeof raw === "object") {
-    // llaves comunes en auditores
     if (isTruthy(raw.installed)) return true;
     if (isTruthy(raw.detected)) return true;
     if (isTruthy(raw.present)) return true;
@@ -112,14 +106,11 @@ function detectPresence(raw) {
     if (isTruthy(raw.hasTag)) return true;
     if (isTruthy(raw.hasScript)) return true;
 
-    // si trae arrays/ids aunque sea vacío a veces significa presencia
     if (Array.isArray(raw.ids) && raw.ids.length > 0) return true;
 
-    // heurística: algunos detectores guardan url del script
     if (typeof raw.src === "string" && raw.src) return true;
     if (typeof raw.scriptUrl === "string" && raw.scriptUrl) return true;
 
-    // si trae "errors/issues" puede ser porque detectó algo mal implementado
     if (Array.isArray(raw.issues) && raw.issues.length > 0) return true;
     if (Array.isArray(raw.errors) && raw.errors.length > 0) return true;
   }
@@ -130,7 +121,6 @@ function detectPresence(raw) {
 function normalizeTracking(result) {
   const cov = pickCoverage(result);
 
-  // Intentamos reconocer llaves comunes del engine
   const ga4Raw =
     cov.ga4 ||
     cov.GA4 ||
@@ -175,7 +165,6 @@ function normalizeTracking(result) {
   const gadsIds = toIdList(gadsRaw);
   const metaIds = toIdList(metaRaw);
 
-  // ✅ installed debe considerar presencia aunque no haya IDs
   const ga4Installed = ga4Ids.length > 0 || detectPresence(ga4Raw);
   const gtmInstalled = gtmIds.length > 0 || detectPresence(gtmRaw);
   const gadsInstalled = gadsIds.length > 0 || detectPresence(gadsRaw);
@@ -189,9 +178,6 @@ function normalizeTracking(result) {
   ];
 }
 
-/**
- * Usa score real del engine si viene; si no, fallback simple.
- */
 function computeHealth(tracking, rawResult) {
   const engineScore =
     rawResult?.healthScore ??
@@ -202,11 +188,10 @@ function computeHealth(tracking, rawResult) {
 
   if (Number.isFinite(Number(engineScore))) {
     const s = Math.max(0, Math.min(100, Number(engineScore)));
-    const label = s >= 80 ? "Bueno" : s >= 60 ? "Regular" : "Crítico";
+    const label = s >= 90 ? "Excelente" : s >= 70 ? "Bueno" : s >= 50 ? "Regular" : "Crítico";
     return { healthScore: s, healthLabel: label, usedEngineScore: true };
   }
 
-  // fallback “simple”
   const hasGA4 = tracking.find((x) => x.key === "ga4")?.installed;
   const hasMeta = tracking.find((x) => x.key === "meta")?.installed;
 
@@ -215,7 +200,7 @@ function computeHealth(tracking, rawResult) {
   if (!hasMeta) score -= 25;
 
   score = Math.max(0, Math.min(100, score));
-  const healthLabel = score >= 80 ? "Bueno" : score >= 60 ? "Regular" : "Crítico";
+  const healthLabel = score >= 90 ? "Excelente" : score >= 70 ? "Bueno" : score >= 50 ? "Regular" : "Crítico";
   return { healthScore: score, healthLabel, usedEngineScore: false };
 }
 
@@ -223,37 +208,16 @@ function buildRecommendations(tracking, issues) {
   const map = Object.fromEntries(tracking.map((t) => [t.key, t]));
   const recs = [];
 
-  // recomendaciones base por instalación
-  if (!map.ga4?.installed) {
-    recs.push(
-      "Google Analytics 4 no está instalado. Instálalo para medir visitas, comportamiento y conversiones."
-    );
-  }
-  if (!map.gtm?.installed) {
-    recs.push(
-      "Considera implementar Google Tag Manager para administrar etiquetas sin tocar el código en cada cambio."
-    );
-  }
-  if (!map.gads?.installed) {
-    recs.push(
-      "Si haces campañas en Google Ads, instala la etiqueta/conversiones para medir rendimiento y remarketing."
-    );
-  }
-  if (!map.meta?.installed) {
-    recs.push(
-      "Meta Pixel no está instalado. Instálalo para remarketing y medición de conversiones en Meta Ads."
-    );
-  }
+  if (!map.ga4?.installed) recs.push("Google Analytics 4 no está instalado. Instálalo para medir visitas, comportamiento y conversiones.");
+  if (!map.gtm?.installed) recs.push("Considera implementar Google Tag Manager para administrar etiquetas sin tocar el código en cada cambio.");
+  if (!map.gads?.installed) recs.push("Si haces campañas en Google Ads, instala la etiqueta/conversiones para medir rendimiento y remarketing.");
+  if (!map.meta?.installed) recs.push("Meta Pixel no está instalado. Instálalo para remarketing y medición de conversiones en Meta Ads.");
 
-  // ✅ si el engine manda recomendaciones, úsalas también
   const fromIssues =
     Array.isArray(issues) && issues.length
-      ? issues
-          .map((x) => (typeof x === "string" ? x : x?.message || x?.title || ""))
-          .filter(Boolean)
+      ? issues.map((x) => (typeof x === "string" ? x : x?.message || x?.title || "")).filter(Boolean)
       : [];
 
-  // no spamear: solo añade si hay algo útil y diferente
   fromIssues.slice(0, 3).forEach((m) => {
     if (!recs.some((r) => r.toLowerCase() === String(m).toLowerCase())) recs.push(String(m));
   });
@@ -265,31 +229,29 @@ function normalizeArray(x) {
   if (!x) return [];
   if (Array.isArray(x)) return x;
   if (typeof x === "object") {
-    // casos: { items: [] } o { list: [] }
     if (Array.isArray(x.items)) return x.items;
     if (Array.isArray(x.list)) return x.list;
   }
   return [];
 }
 
+function pickBestArray(...cands) {
+  const arrays = cands.map(normalizeArray);
+  const nonEmpty = arrays.find((a) => Array.isArray(a) && a.length > 0);
+  if (nonEmpty) return nonEmpty;
+  return arrays[0] || [];
+}
+
 function normalizePixelAuditResult(rawResult, auditedUrl, includeDetails) {
   const tracking = normalizeTracking(rawResult);
 
-  // ✅ issues/events completos (para UI como German)
-  const issues =
-    normalizeArray(rawResult?.issues) ||
-    normalizeArray(rawResult?.summary?.issues) ||
-    [];
-
-  const events =
-    normalizeArray(rawResult?.events) ||
-    normalizeArray(rawResult?.summary?.events) ||
-    [];
+  const issues = pickBestArray(rawResult?.issues, rawResult?.summary?.issues);
+  const events = pickBestArray(rawResult?.events, rawResult?.summary?.events);
 
   const { healthScore, healthLabel } = computeHealth(tracking, rawResult);
 
   const issuesCount =
-    (Array.isArray(issues) && issues.length) ||
+    (Array.isArray(issues) ? issues.length : 0) ||
     rawResult?.summary?.issuesCount ||
     rawResult?.issuesCount ||
     rawResult?.summary?.issuesFound ||
@@ -302,16 +264,9 @@ function normalizePixelAuditResult(rawResult, auditedUrl, includeDetails) {
     (Array.isArray(events) ? events.length : 0) ||
     0;
 
-  // ✅ si engine trae recomendaciones, úsalo; si no, genera
-  const engineRecs =
-    normalizeArray(rawResult?.recommendations) ||
-    normalizeArray(rawResult?.summary?.recommendations) ||
-    [];
+  const engineRecs = pickBestArray(rawResult?.recommendations, rawResult?.summary?.recommendations);
 
-  const recommendations =
-    (engineRecs && engineRecs.length)
-      ? engineRecs
-      : buildRecommendations(tracking, issues);
+  const recommendations = engineRecs && engineRecs.length ? engineRecs : buildRecommendations(tracking, issues);
 
   const normalized = {
     auditedUrl: rawResult?.url || rawResult?.auditedUrl || auditedUrl,
@@ -321,20 +276,26 @@ function normalizePixelAuditResult(rawResult, auditedUrl, includeDetails) {
     recommendations,
     issuesCount,
     eventsCount,
-
-    // ✅ NUEVO: listas completas
     issues,
     events,
   };
 
-  if (includeDetails) normalized.raw = rawResult; // opcional debug
+  if (includeDetails) normalized.raw = rawResult;
   return normalized;
 }
 
-/* =========================
- * Endpoint
- * ========================= */
+async function runAuditCompat(runPixelAudit, input) {
+  try {
+    return await runPixelAudit(input);
+  } catch (e) {
+    if (input?.url) return await runPixelAudit(input.url, input.includeDetails);
+    throw e;
+  }
+}
+
 router.post("/auditor", async (req, res) => {
+  const traceId = crypto.randomBytes(6).toString("hex");
+
   try {
     const body = readBody(req);
 
@@ -343,24 +304,67 @@ router.post("/auditor", async (req, res) => {
       (typeof req.query.url === "string" && req.query.url.trim()) ||
       "";
 
-    const includeDetails = !!(body.includeDetails ?? body.include_details);
+    const html = (typeof body.html === "string" && body.html.trim()) || "";
 
-    if (!url) {
-      return res.status(400).json({ ok: false, error: "URL requerida" });
+    // ✅ Guard de seguridad: evita payloads enormes
+    if (html && html.length > 2_000_000) {
+      return res.status(413).json({ ok: false, error: "HTML demasiado grande" });
     }
 
-    const runPixelAudit = loadRunPixelAudit();
-    const rawResult = await runPixelAudit(url, includeDetails);
+    // ✅ includeDetails default TRUE, soporta "false"/"0"
+    const rawInc = (body.includeDetails ?? body.include_details);
+    const includeDetails =
+      rawInc === false || rawInc === "false" || rawInc === 0 || rawInc === "0" ? false : true;
 
-    const data = normalizePixelAuditResult(rawResult, url, includeDetails);
+    if (!url && !html) {
+      return res.status(400).json({ ok: false, error: "URL o HTML requerido" });
+    }
+
+    if (url) {
+      try {
+        new URL(url);
+      } catch {
+        return res.status(400).json({ ok: false, error: "URL inválida (incluye http/https)" });
+      }
+    }
+
+    const auditedUrlForUi =
+      url || body.auditedUrl || body.audited_url || "HTML proporcionado";
+
+    const { runPixelAudit, enginePath } = loadRunPixelAudit();
+
+    console.log(`[pixel-auditor:${traceId}] start`, {
+      hasUrl: !!url,
+      hasHtml: !!html,
+      includeDetails,
+      enginePath,
+    });
+
+    const rawResult = await runAuditCompat(runPixelAudit, {
+      url: url || undefined,
+      html: html || undefined,
+      includeDetails,
+      traceId,
+    });
+
+    console.log(`[pixel-auditor:${traceId}] raw keys`, rawResult ? Object.keys(rawResult) : null);
+
+    const data = normalizePixelAuditResult(rawResult, auditedUrlForUi, includeDetails);
+
+    console.log(`[pixel-auditor:${traceId}] done`, {
+      score: data.healthScore,
+      issuesCount: data.issuesCount,
+      eventsCount: data.eventsCount,
+    });
 
     return res.json({ ok: true, data });
   } catch (err) {
-    console.error("[PIXEL_AUDITOR_ERROR]", err);
+    console.error(`[PIXEL_AUDITOR_ERROR:${traceId}]`, err);
     return res.status(500).json({
       ok: false,
       error: "No se pudo ejecutar la auditoría",
       details: String(err?.message || err),
+      traceId,
     });
   }
 });

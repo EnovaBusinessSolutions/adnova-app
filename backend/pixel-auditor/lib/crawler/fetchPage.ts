@@ -3,56 +3,82 @@
  * Módulo para descargar y procesar páginas web
  */
 
-import { PageContent } from '../../type/AuditResult';
+import { PageContent } from "../../type/AuditResult";
+
+type FetchPageOptions = {
+  /**
+   * Fallback: HTML manual pegado por el usuario (Ctrl+U -> copiar/pegar).
+   * Si viene, NO se hace fetch a la URL: se usa este HTML como fuente de verdad.
+   */
+  html?: string;
+
+  /**
+   * Opcional, para logs en servidor (Render).
+   */
+  traceId?: string;
+
+  /**
+   * Timeout para HTML principal (ms). Default 20000.
+   */
+  timeoutMs?: number;
+};
 
 /**
  * Descarga una página web y retorna el HTML completo
- * @param url - URL de la página a auditar
- * @returns Contenido HTML de la página
+ * Soporta modo fallback HTML manual (estilo German)
+ *
+ * @param url - URL de la página a auditar (puede ser "manual-html-input" si viene html)
+ * @param opts - Opciones (html manual, traceId, timeout)
  */
-export async function fetchPage(url: string): Promise<PageContent> {
+export async function fetchPage(url: string, opts?: FetchPageOptions): Promise<PageContent> {
+  const htmlManual = typeof opts?.html === "string" ? opts!.html!.trim() : "";
+  const timeoutMs = Number.isFinite(opts?.timeoutMs as any) ? Number(opts!.timeoutMs) : 20000;
+
+  // ✅ Modo HTML manual (fallback): no hacemos fetch
+  if (htmlManual) {
+    const scripts = extractScriptsFromHTML(htmlManual);
+    return { html: htmlManual, scripts };
+  }
+
   try {
-    // Validar URL
+    // Validar URL (solo si vamos a fetchear)
     const validUrl = new URL(url);
-    
-    // Descargar página con timeout de 20 segundos
+
+    // Descargar página con timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
-    
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
     const response = await fetch(validUrl.href, {
       signal: controller.signal,
       headers: {
-        'User-Agent': 'Pixel-Auditor-AI/1.0 (Digital Analytics Crawler)',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
+        // ✅ UA más "browser-like" (mejora acceso en sitios que bloquean crawlers obvios)
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
       },
-      redirect: 'follow',
+      redirect: "follow",
     });
-    
+
     clearTimeout(timeoutId);
-    
+
     if (!response.ok) {
-      throw new Error(`HTTP Error: ${response.status} ${response.statusText}`);
+      // Mensaje útil tipo German para fallback HTML
+      throw new Error(`HTTP ${response.status}: No se pudo acceder. Usa el modo HTML manual.`);
     }
-    
+
     const html = await response.text();
-    
+
     // Extraer scripts inline y externos
     const scripts = extractScriptsFromHTML(html);
-    
-    return {
-      html,
-      scripts,
-    };
-    
-  } catch (error) {
-    if (error instanceof Error) {
-      if (error.name === 'AbortError') {
-        throw new Error('Request timeout: La página tardó más de 20 segundos en responder');
-      }
-      throw new Error(`Error fetching page: ${error.message}`);
+
+    return { html, scripts };
+  } catch (error: any) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Timeout: La página tardó más de ${Math.round(timeoutMs / 1000)}s. Usa el modo HTML manual.`);
     }
-    throw new Error('Unknown error fetching page');
+    const msg = error instanceof Error ? error.message : "Unknown error fetching page";
+    throw new Error(msg);
   }
 }
 
@@ -61,35 +87,30 @@ export async function fetchPage(url: string): Promise<PageContent> {
  * @param html - Contenido HTML de la página
  * @returns Objeto con scripts inline y externos
  */
-function extractScriptsFromHTML(html: string): PageContent['scripts'] {
-  const scripts: PageContent['scripts'] = {
+export function extractScriptsFromHTML(html: string): PageContent["scripts"] {
+  const scripts: PageContent["scripts"] = {
     inline: [],
     external: [],
   };
-  
+
   // RegEx para extraer tags <script>
-  // Captura tanto scripts inline como externos
   const scriptRegex = /<script([^>]*)>([\s\S]*?)<\/script>/gi;
-  let match;
-  
+  let match: RegExpExecArray | null;
+
   while ((match = scriptRegex.exec(html)) !== null) {
-    const attributes = match[1];
-    const content = match[2];
-    
+    const attributes = match[1] || "";
+    const content = match[2] || "";
+
     // Buscar atributo src
     const srcMatch = /src=["']([^"']+)["']/i.exec(attributes);
-    
-    if (srcMatch) {
-      // Script externo
-      scripts.external.push({
-        src: srcMatch[1],
-      });
+
+    if (srcMatch?.[1]) {
+      scripts.external.push({ src: srcMatch[1] });
     } else if (content.trim()) {
-      // Script inline
       scripts.inline.push(content);
     }
   }
-  
+
   return scripts;
 }
 
@@ -101,25 +122,25 @@ function extractScriptsFromHTML(html: string): PageContent['scripts'] {
 export async function fetchExternalScript(scriptUrl: string): Promise<string | null> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-    
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
     const response = await fetch(scriptUrl, {
       signal: controller.signal,
       headers: {
-        'User-Agent': 'Pixel-Auditor-AI/1.0',
+        // ✅ UA coherente con fetchPage
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "*/*",
       },
+      redirect: "follow",
     });
-    
+
     clearTimeout(timeoutId);
-    
-    if (!response.ok) {
-      return null;
-    }
-    
+
+    if (!response.ok) return null;
+
     return await response.text();
-    
-  } catch (error) {
-    // Si falla, simplemente retornamos null
+  } catch {
     return null;
   }
 }
