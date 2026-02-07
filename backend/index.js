@@ -321,31 +321,84 @@ const DASHBOARD_DIST = path.join(__dirname, "../dashboard-src/dist");
 const LEGACY_DASH = path.join(__dirname, "../public/dashboard");
 const HAS_DASHBOARD_DIST = fs.existsSync(path.join(DASHBOARD_DIST, "index.html"));
 
-if (HAS_DASHBOARD_DIST) {
+const DASH_DEBUG = process.env.DASH_DEBUG === "1";
+
+function logDash(req, label, extra) {
+  if (!DASH_DEBUG) return;
+  const ua = String(req.headers["user-agent"] || "").slice(0, 120);
+  const ref = String(req.headers["referer"] || "").slice(0, 160);
+  const msg =
+    `[${label}] ${new Date().toISOString()} ` +
+    `${req.method} ${req.originalUrl} ` +
+    `ua="${ua}" ref="${ref}"` +
+    (extra ? ` ${extra}` : "");
+  console.log(msg);
+}
+
+function isStartHit(req) {
+  // Detecta /dashboard/<algo>/start ó /dashboard/start
+  // Nota: req.path aquí es relativo al mount de "/dashboard" si lo montas con app.use("/dashboard", ...)
+  const p = String(req.path || req.originalUrl || "");
+  return p.endsWith("/start") || p.includes("/start?");
+}
+
+function serveDashboardSPA({ app, rootDir, label }) {
+  // 1) Logs a cualquier request del dashboard (antes de static)
+  app.use("/dashboard", ensureAuthenticated, (req, _res, next) => {
+    // Log general (light)
+    logDash(req, "DASH_REQ");
+
+    // Log específico /start
+    if (isStartHit(req)) {
+      logDash(req, "START_HIT");
+    }
+
+    return next();
+  });
+
+  // 2) Assets
   app.use(
     "/assets",
-    express.static(path.join(DASHBOARD_DIST, "assets"), {
+    express.static(path.join(rootDir, "assets"), {
       immutable: true,
       maxAge: "1y",
     })
   );
-  app.use("/dashboard", ensureAuthenticated, express.static(DASHBOARD_DIST));
-  app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
-    res.sendFile(path.join(DASHBOARD_DIST, "index.html"));
+
+  // 3) Static del dashboard
+  app.use("/dashboard", ensureAuthenticated, express.static(rootDir));
+
+  // 4) Fallback SPA (IMPORTANTE: aquí se sirve index.html para rutas como /dashboard/meta-ads/start)
+  app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (req, res) => {
+    if (isStartHit(req)) {
+      logDash(req, "START_FALLBACK", `-> index.html (${label})`);
+    } else {
+      logDash(req, "DASH_FALLBACK", `-> index.html (${label})`);
+    }
+    return res.sendFile(path.join(rootDir, "index.html"));
   });
-  console.log("✅ Dashboard servido desde submódulo: dashboard-src/dist");
+
+  console.log(`✅ Dashboard servido desde: ${label}`);
+}
+
+if (HAS_DASHBOARD_DIST) {
+  serveDashboardSPA({
+    app,
+    rootDir: DASHBOARD_DIST,
+    label: "dashboard-src/dist",
+  });
 } else {
-  app.use("/assets", express.static(path.join(LEGACY_DASH, "assets")));
-  app.use("/dashboard", ensureAuthenticated, express.static(LEGACY_DASH));
-  app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
-    res.sendFile(path.join(LEGACY_DASH, "index.html"));
+  serveDashboardSPA({
+    app,
+    rootDir: LEGACY_DASH,
+    label: "public/dashboard (fallback)",
   });
+
   console.warn(
     "⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard"
   );
 }
 
-app.use("/api/bookcall", require("./routes/bookcall"));
 
 /* =========================
  * Rutas de autenticación e integraciones
