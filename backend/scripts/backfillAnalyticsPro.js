@@ -1,6 +1,9 @@
 "use strict";
 
-require("dotenv").config();
+// ✅ Cargar .env desde la RAÍZ del repo (tu caso)
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, "..", "..", ".env") });
+
 const mongoose = require("mongoose");
 
 const User = require("../models/User");
@@ -40,12 +43,19 @@ async function upsertEvent({ name, userId, ts, source, dedupeKey, props }) {
 }
 
 async function run() {
-  if (!process.env.MONGO_URI) {
-    console.error("Missing MONGO_URI");
+  // ✅ Aceptar ambos nombres comunes
+  const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
+
+  if (!MONGO_URI) {
+    console.error("Missing MONGO_URI / MONGODB_URI");
+    console.error("Tip: tu .env está en la raíz del proyecto. Este script ya lo carga desde root.");
     process.exit(1);
   }
 
-  await mongoose.connect(process.env.MONGO_URI);
+  await mongoose.connect(MONGO_URI, {
+    serverSelectionTimeoutMS: 15000,
+  });
+
   console.log("[backfill-pro] connected");
 
   const counters = Object.create(null);
