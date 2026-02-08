@@ -76,7 +76,7 @@ function parseAllowlistEmails(envVal) {
     .filter(Boolean);
 }
 
-// ObjectId -> fecha aproximada (si createdAt no existe)
+// ObjectId -> fecha aproximada (si createdAt/ts no existe)
 function objectIdToDate(oid) {
   try {
     const ts = String(oid).slice(0, 8);
@@ -123,10 +123,8 @@ function requireInternalAdmin(req, res, next) {
 
     const tokenOk = token && envToken && safeTokenEquals(token, envToken);
 
-    // ✅ Token válido = acceso directo (modo interno)
     if (tokenOk) return next();
 
-    // ✅ Sin token -> exigir sesión
     const authed = !!(req.isAuthenticated && req.isAuthenticated());
     if (!authed || !req.user) {
       return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
@@ -148,8 +146,42 @@ function requireInternalAdmin(req, res, next) {
 }
 
 /* =========================
+ * ✅ Fecha canónica (robusta)
+ * =========================
+ * effectiveDate = ts || createdAt || objectIdToDate(_id)
+ * - Para queries/aggregations: usamos "ts" como prioridad y fallback a createdAt
+ * - Para response de items: si no viene, calculamos por _id
+ */
+function buildDateMatch(from, to) {
+  // IMPORTANT:
+  // - Preferimos ts. Si no existe ts, algunos docs podrían tener createdAt.
+  // - Mongo no puede usar un "fallback" directo con match simple,
+  //   así que hacemos $or: [ {ts:range}, {ts:{$exists:false}, createdAt:range} ]
+  if (!from && !to) return null;
+
+  const tsRange = {};
+  if (from) tsRange.$gte = from;
+  if (to) tsRange.$lte = to;
+
+  const caRange = {};
+  if (from) caRange.$gte = from;
+  if (to) caRange.$lte = to;
+
+  return {
+    $or: [
+      { ts: tsRange },
+      { ts: { $exists: false }, createdAt: caRange },
+      { ts: null, createdAt: caRange },
+    ],
+  };
+}
+
+function resolveEffectiveDate(doc) {
+  return doc?.ts || doc?.createdAt || objectIdToDate(doc?._id) || null;
+}
+
+/* =========================
  * ✅ GET /api/admin/analytics/health
- * (tu front lo usa para validar token)
  * ========================= */
 router.get("/health", requireInternalAdmin, async (_req, res) => {
   try {
@@ -178,18 +210,17 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
     from = norm.from;
     to = norm.to;
 
-    const match = {};
-    if (from || to) {
-      match.createdAt = {};
-      if (from) match.createdAt.$gte = from;
-      if (to) match.createdAt.$lte = to;
-    }
+    const dateMatch = buildDateMatch(from, to);
+    const match = dateMatch ? { ...dateMatch } : {};
 
     const now = new Date();
     const d24 = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const d7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    const [totals, topNames, last24h, last7d] = await Promise.all([
+    const match24 = buildDateMatch(d24, null) || {};
+    const match7 = buildDateMatch(d7, null) || {};
+
+    const [totals, topNames, last24h, last7d, signups] = await Promise.all([
       AnalyticsEvent.aggregate([
         { $match: match },
         {
@@ -208,8 +239,11 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
         { $limit: 10 },
         { $project: { _id: 0, name: "$_id", count: 1 } },
       ]),
-      AnalyticsEvent.countDocuments({ createdAt: { $gte: d24 } }).catch(() => 0),
-      AnalyticsEvent.countDocuments({ createdAt: { $gte: d7 } }).catch(() => 0),
+      AnalyticsEvent.countDocuments(match24).catch(() => 0),
+      AnalyticsEvent.countDocuments(match7).catch(() => 0),
+      AnalyticsEvent.countDocuments({ ...(dateMatch ? dateMatch : {}), name: "user_signed_up" }).catch(
+        () => 0
+      ),
     ]);
 
     const data = {
@@ -221,6 +255,7 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
       topEvents: topNames || [],
       last24hEvents: last24h || 0,
       last7dEvents: last7d || 0,
+      signups: signups || 0,
     };
 
     return res.json({ ok: true, data });
@@ -239,6 +274,7 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
     const name = String(req.query.name || "").trim();
     const qtext = String(req.query.q || "").trim();
     const userId = String(req.query.userId || "").trim();
+
     let from = parseDateMaybe(req.query.from);
     let to = parseDateMaybe(req.query.to);
     const norm = normalizeRange(from, to);
@@ -254,11 +290,8 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
     const uid = toObjectIdMaybe(userId);
     if (uid) q.userId = uid;
 
-    if (from || to) {
-      q.createdAt = {};
-      if (from) q.createdAt.$gte = from;
-      if (to) q.createdAt.$lte = to;
-    }
+    const dateMatch = buildDateMatch(from, to);
+    if (dateMatch) Object.assign(q, dateMatch);
 
     // paginación por _id (desc)
     if (cursor) {
@@ -266,19 +299,19 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
       if (cid) q._id = { $lt: cid };
     }
 
-    // Búsqueda simple (no perfecta, pero útil para soporte)
-    // Nota: si quieres “full text” luego, se indexa.
+    // Búsqueda simple
     if (qtext) {
+      const safe = qtext.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       q.$or = [
-        { name: new RegExp(qtext.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") },
-        { dedupeKey: new RegExp(qtext.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") },
+        { name: new RegExp(safe, "i") },
+        { dedupeKey: new RegExp(safe, "i") },
       ];
     }
 
     const docs = await AnalyticsEvent.find(q)
       .sort({ _id: -1 })
       .limit(limit)
-      .select("name userId createdAt props dedupeKey")
+      .select("name userId ts createdAt props dedupeKey")
       .lean();
 
     const nextCursor = docs.length ? String(docs[docs.length - 1]._id) : null;
@@ -290,7 +323,7 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
           id: String(d._id),
           name: d.name,
           userId: d.userId ? String(d.userId) : null,
-          createdAt: d.createdAt || objectIdToDate(d._id) || null,
+          createdAt: resolveEffectiveDate(d),
           props: d.props || {},
           dedupeKey: d.dedupeKey || null,
         })),
@@ -312,6 +345,7 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
   try {
     const name = String(req.query.name || "").trim();
     const groupBy = String(req.query.groupBy || "day").trim().toLowerCase();
+
     let from = parseDateMaybe(req.query.from);
     let to = parseDateMaybe(req.query.to);
     const norm = normalizeRange(from, to);
@@ -323,28 +357,30 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
       return res.status(400).json({ ok: false, error: "INVALID_GROUPBY" });
     }
 
+    const dateMatch = buildDateMatch(from, to);
     const match = { name };
-    if (from || to) {
-      match.createdAt = {};
-      if (from) match.createdAt.$gte = from;
-      if (to) match.createdAt.$lte = to;
-    }
+    if (dateMatch) Object.assign(match, dateMatch);
+
+    // effectiveDate expr: ts || createdAt || _id-date (best-effort)
+    // Nota: _id-date no es trivial en aggregation sin $function, así que
+    // nos quedamos con ts||createdAt para series. Si falta, caerá fuera.
+    const effectiveDateExpr = { $ifNull: ["$ts", "$createdAt"] };
 
     let groupId = null;
     if (groupBy === "day") {
-      groupId = { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } };
+      groupId = { $dateToString: { format: "%Y-%m-%d", date: effectiveDateExpr } };
     } else if (groupBy === "month") {
-      groupId = { $dateToString: { format: "%Y-%m", date: "$createdAt" } };
+      groupId = { $dateToString: { format: "%Y-%m", date: effectiveDateExpr } };
     } else {
       groupId = {
         $concat: [
-          { $toString: { $isoWeekYear: "$createdAt" } },
+          { $toString: { $isoWeekYear: effectiveDateExpr } },
           "-W",
           {
             $cond: [
-              { $lt: [{ $isoWeek: "$createdAt" }, 10] },
-              { $concat: ["0", { $toString: { $isoWeek: "$createdAt" } }] },
-              { $toString: { $isoWeek: "$createdAt" } },
+              { $lt: [{ $isoWeek: effectiveDateExpr }, 10] },
+              { $concat: ["0", { $toString: { $isoWeek: effectiveDateExpr } }] },
+              { $toString: { $isoWeek: effectiveDateExpr } },
             ],
           },
         ],
@@ -353,6 +389,8 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
 
     const rows = await AnalyticsEvent.aggregate([
       { $match: match },
+      // filtramos docs sin fecha usable para series
+      { $match: { $expr: { $ne: [effectiveDateExpr, null] } } },
       {
         $group: {
           _id: groupId,
@@ -402,21 +440,28 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
     const stepsRaw = String(req.query.steps || "").trim();
     const steps = stepsRaw
       ? stepsRaw.split(",").map((s) => s.trim()).filter(Boolean)
-      : ["signed_up", "google_connected", "meta_connected", "audit_requested", "audit_completed", "pixel_audit_completed"];
+      : [
+          "signed_up",
+          "google_connected",
+          "meta_connected",
+          "audit_requested",
+          "audit_completed",
+          "pixel_audit_completed",
+        ];
 
+    const dateMatch = buildDateMatch(from, to);
     const match = { name: { $in: steps } };
-    if (from || to) {
-      match.createdAt = {};
-      if (from) match.createdAt.$gte = from;
-      if (to) match.createdAt.$lte = to;
-    }
+    if (dateMatch) Object.assign(match, dateMatch);
+
+    const effectiveDateExpr = { $ifNull: ["$ts", "$createdAt"] };
 
     const firsts = await AnalyticsEvent.aggregate([
       { $match: match },
+      { $match: { $expr: { $ne: [effectiveDateExpr, null] } } },
       {
         $group: {
           _id: { userId: "$userId", name: "$name" },
-          firstAt: { $min: "$createdAt" },
+          firstAt: { $min: effectiveDateExpr },
         },
       },
       {
