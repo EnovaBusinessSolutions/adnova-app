@@ -1,12 +1,14 @@
-// backend/routes/adminAnalytics.js
 "use strict";
 
 const express = require("express");
 const mongoose = require("mongoose");
+const crypto = require("crypto");
 
 const router = express.Router();
 
-// ====== Models (robustos) ======
+/* =========================
+ * Models (robustos)
+ * ========================= */
 let AnalyticsEvent = null;
 try {
   AnalyticsEvent = require("../models/AnalyticsEvent");
@@ -14,10 +16,7 @@ try {
   const { Schema, model } = mongoose;
   AnalyticsEvent =
     mongoose.models.AnalyticsEvent ||
-    model(
-      "AnalyticsEvent",
-      new Schema({}, { strict: false, collection: "analyticsevents" })
-    );
+    model("AnalyticsEvent", new Schema({}, { strict: false, collection: "analyticsevents" }));
 }
 
 let User = null;
@@ -27,11 +26,20 @@ try {
   User = null;
 }
 
-// ====== Helpers ======
+/* =========================
+ * Helpers
+ * ========================= */
 function parseDateMaybe(v) {
   if (!v) return null;
   const d = new Date(String(v));
   return isNaN(d.getTime()) ? null : d;
+}
+
+function normalizeRange(from, to) {
+  if (from && to && from.getTime() > to.getTime()) {
+    return { from: to, to: from, swapped: true };
+  }
+  return { from, to, swapped: false };
 }
 
 function clampInt(n, min, max, fallback) {
@@ -50,11 +58,7 @@ function toObjectIdMaybe(v) {
 }
 
 function getEmailFromReq(req) {
-  return String(
-    req?.user?.email ||
-      req?.user?.emails?.[0]?.value ||
-      ""
-  )
+  return String(req?.user?.email || req?.user?.emails?.[0]?.value || "")
     .trim()
     .toLowerCase();
 }
@@ -72,30 +76,57 @@ function parseAllowlistEmails(envVal) {
     .filter(Boolean);
 }
 
+// ObjectId -> fecha aproximada (si createdAt no existe)
+function objectIdToDate(oid) {
+  try {
+    const ts = String(oid).slice(0, 8);
+    const ms = Number.parseInt(ts, 16) * 1000;
+    if (!Number.isFinite(ms)) return null;
+    const d = new Date(ms);
+    return isNaN(d.getTime()) ? null : d;
+  } catch {
+    return null;
+  }
+}
+
+function safeTokenEquals(a, b) {
+  try {
+    const aa = Buffer.from(String(a || ""), "utf8");
+    const bb = Buffer.from(String(b || ""), "utf8");
+    if (!aa.length || !bb.length) return false;
+    if (aa.length !== bb.length) return false;
+    return crypto.timingSafeEqual(aa, bb);
+  } catch {
+    return false;
+  }
+}
+
 /**
- * ✅ Middleware de acceso interno (NO rompe nada productivo)
+ * ✅ Middleware de acceso interno (Opción B)
  *
  * Permite si:
- * - usuario autenticado + role interno: admin|internal|staff
- * - usuario autenticado + email en allowlist ENV
- * - token interno via header x-internal-admin-token (para paneles internos)
+ * - token interno via header x-internal-admin-token (o query ?token=)
+ * - (fallback) usuario autenticado + role interno: admin|internal|staff
+ * - (fallback) usuario autenticado + email en allowlist ENV
  *
- * ENV sugeridas:
- * - INTERNAL_ADMIN_EMAILS="a@adray.ai,b@adray.ai"
+ * ENV:
  * - INTERNAL_ADMIN_TOKEN="un_token_largo"
+ * - INTERNAL_ADMIN_EMAILS="a@adray.ai,b@adray.ai"
  */
 function requireInternalAdmin(req, res, next) {
   try {
-    const token = String(req.headers["x-internal-admin-token"] || "").trim();
-    const tokenOk =
-      token &&
-      process.env.INTERNAL_ADMIN_TOKEN &&
-      token === String(process.env.INTERNAL_ADMIN_TOKEN).trim();
+    const token =
+      String(req.headers["x-internal-admin-token"] || "").trim() ||
+      String(req.query.token || "").trim();
 
-    // Si viene token interno válido, dejamos pasar sin sesión (útil para panel interno server-to-server)
+    const envToken = String(process.env.INTERNAL_ADMIN_TOKEN || "").trim();
+
+    const tokenOk = token && envToken && safeTokenEquals(token, envToken);
+
+    // ✅ Token válido = acceso directo (modo interno)
     if (tokenOk) return next();
 
-    // Si no hay token, exigimos sesión
+    // ✅ Sin token -> exigir sesión
     const authed = !!(req.isAuthenticated && req.isAuthenticated());
     if (!authed || !req.user) {
       return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
@@ -111,22 +142,109 @@ function requireInternalAdmin(req, res, next) {
     if (email && allowEmails.includes(email)) return next();
 
     return res.status(403).json({ ok: false, error: "FORBIDDEN" });
-  } catch (e) {
+  } catch {
     return res.status(403).json({ ok: false, error: "FORBIDDEN" });
   }
 }
 
-// ===========================================================
-// GET /api/admin/analytics/events?name=&userId=&from=&to=&limit=&cursor=
-// Lista paginada (log) ordenada por createdAt desc.
-// cursor = _id del último item (para paginar)
-// ===========================================================
+/* =========================
+ * ✅ GET /api/admin/analytics/health
+ * (tu front lo usa para validar token)
+ * ========================= */
+router.get("/health", requireInternalAdmin, async (_req, res) => {
+  try {
+    const data = {
+      ok: true,
+      env: process.env.NODE_ENV || "development",
+      version: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || null,
+      db: mongoose.connection?.readyState === 1 ? "connected" : "not_connected",
+      ts: new Date().toISOString(),
+    };
+    return res.json({ ok: true, data });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: "HEALTH_ERROR" });
+  }
+});
+
+/* =========================
+ * ✅ GET /api/admin/analytics/summary?from=&to=
+ * KPIs rápidos para arrancar el panel “wow”
+ * ========================= */
+router.get("/summary", requireInternalAdmin, async (req, res) => {
+  try {
+    let from = parseDateMaybe(req.query.from);
+    let to = parseDateMaybe(req.query.to);
+    const norm = normalizeRange(from, to);
+    from = norm.from;
+    to = norm.to;
+
+    const match = {};
+    if (from || to) {
+      match.createdAt = {};
+      if (from) match.createdAt.$gte = from;
+      if (to) match.createdAt.$lte = to;
+    }
+
+    const now = new Date();
+    const d24 = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const d7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const [totals, topNames, last24h, last7d] = await Promise.all([
+      AnalyticsEvent.aggregate([
+        { $match: match },
+        {
+          $group: {
+            _id: null,
+            events: { $sum: 1 },
+            users: { $addToSet: "$userId" },
+          },
+        },
+        { $project: { _id: 0, events: 1, uniqueUsers: { $size: "$users" } } },
+      ]),
+      AnalyticsEvent.aggregate([
+        { $match: match },
+        { $group: { _id: "$name", count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 },
+        { $project: { _id: 0, name: "$_id", count: 1 } },
+      ]),
+      AnalyticsEvent.countDocuments({ createdAt: { $gte: d24 } }).catch(() => 0),
+      AnalyticsEvent.countDocuments({ createdAt: { $gte: d7 } }).catch(() => 0),
+    ]);
+
+    const data = {
+      from: from ? from.toISOString() : null,
+      to: to ? to.toISOString() : null,
+      swapped: norm.swapped || false,
+      events: totals?.[0]?.events || 0,
+      uniqueUsers: totals?.[0]?.uniqueUsers || 0,
+      topEvents: topNames || [],
+      last24hEvents: last24h || 0,
+      last7dEvents: last7d || 0,
+    };
+
+    return res.json({ ok: true, data });
+  } catch (e) {
+    console.error("[adminAnalytics] /summary error:", e);
+    return res.status(500).json({ ok: false, error: "SUMMARY_ERROR" });
+  }
+});
+
+/* =========================
+ * GET /api/admin/analytics/events?name=&userId=&from=&to=&limit=&cursor=
+ * + opcional q= (busca simple)
+ * ========================= */
 router.get("/events", requireInternalAdmin, async (req, res) => {
   try {
     const name = String(req.query.name || "").trim();
+    const qtext = String(req.query.q || "").trim();
     const userId = String(req.query.userId || "").trim();
-    const from = parseDateMaybe(req.query.from);
-    const to = parseDateMaybe(req.query.to);
+    let from = parseDateMaybe(req.query.from);
+    let to = parseDateMaybe(req.query.to);
+    const norm = normalizeRange(from, to);
+    from = norm.from;
+    to = norm.to;
+
     const limit = clampInt(req.query.limit, 1, 200, 50);
     const cursor = String(req.query.cursor || "").trim();
 
@@ -148,8 +266,17 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
       if (cid) q._id = { $lt: cid };
     }
 
+    // Búsqueda simple (no perfecta, pero útil para soporte)
+    // Nota: si quieres “full text” luego, se indexa.
+    if (qtext) {
+      q.$or = [
+        { name: new RegExp(qtext.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") },
+        { dedupeKey: new RegExp(qtext.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i") },
+      ];
+    }
+
     const docs = await AnalyticsEvent.find(q)
-      .sort({ _id: -1 }) // _id correlaciona con tiempo (y es más estable que createdAt)
+      .sort({ _id: -1 })
       .limit(limit)
       .select("name userId createdAt props dedupeKey")
       .lean();
@@ -158,16 +285,19 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
 
     return res.json({
       ok: true,
-      items: docs.map((d) => ({
-        id: String(d._id),
-        name: d.name,
-        userId: d.userId ? String(d.userId) : null,
-        createdAt: d.createdAt || null,
-        props: d.props || {},
-        dedupeKey: d.dedupeKey || null,
-      })),
-      nextCursor,
-      count: docs.length,
+      data: {
+        items: docs.map((d) => ({
+          id: String(d._id),
+          name: d.name,
+          userId: d.userId ? String(d.userId) : null,
+          createdAt: d.createdAt || objectIdToDate(d._id) || null,
+          props: d.props || {},
+          dedupeKey: d.dedupeKey || null,
+        })),
+        nextCursor,
+        count: docs.length,
+        swapped: norm.swapped || false,
+      },
     });
   } catch (e) {
     console.error("[adminAnalytics] /events error:", e);
@@ -175,20 +305,20 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
   }
 });
 
-// ===========================================================
-// GET /api/admin/analytics/series?name=&from=&to=&groupBy=day|week|month
-// Serie temporal para marketing (conteo de eventos por periodo)
-// ===========================================================
+/* =========================
+ * GET /api/admin/analytics/series?name=&from=&to=&groupBy=day|week|month
+ * ========================= */
 router.get("/series", requireInternalAdmin, async (req, res) => {
   try {
     const name = String(req.query.name || "").trim();
     const groupBy = String(req.query.groupBy || "day").trim().toLowerCase();
-    const from = parseDateMaybe(req.query.from);
-    const to = parseDateMaybe(req.query.to);
+    let from = parseDateMaybe(req.query.from);
+    let to = parseDateMaybe(req.query.to);
+    const norm = normalizeRange(from, to);
+    from = norm.from;
+    to = norm.to;
 
-    if (!name) {
-      return res.status(400).json({ ok: false, error: "NAME_REQUIRED" });
-    }
+    if (!name) return res.status(400).json({ ok: false, error: "NAME_REQUIRED" });
     if (!["day", "week", "month"].includes(groupBy)) {
       return res.status(400).json({ ok: false, error: "INVALID_GROUPBY" });
     }
@@ -200,19 +330,12 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
       if (to) match.createdAt.$lte = to;
     }
 
-    // Usamos formatos compatibles (sin depender de $dateTrunc)
     let groupId = null;
-
     if (groupBy === "day") {
-      groupId = {
-        $dateToString: { format: "%Y-%m-%d", date: "$createdAt" },
-      };
+      groupId = { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } };
     } else if (groupBy === "month") {
-      groupId = {
-        $dateToString: { format: "%Y-%m", date: "$createdAt" },
-      };
+      groupId = { $dateToString: { format: "%Y-%m", date: "$createdAt" } };
     } else {
-      // week (ISO): YYYY-Www
       groupId = {
         $concat: [
           { $toString: { $isoWeekYear: "$createdAt" } },
@@ -234,7 +357,6 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
         $group: {
           _id: groupId,
           count: { $sum: 1 },
-          // usuarios únicos opcional (útil)
           users: { $addToSet: "$userId" },
         },
       },
@@ -251,11 +373,14 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
 
     return res.json({
       ok: true,
-      name,
-      groupBy,
-      from: from ? from.toISOString() : null,
-      to: to ? to.toISOString() : null,
-      points: rows,
+      data: {
+        name,
+        groupBy,
+        from: from ? from.toISOString() : null,
+        to: to ? to.toISOString() : null,
+        swapped: norm.swapped || false,
+        points: rows,
+      },
     });
   } catch (e) {
     console.error("[adminAnalytics] /series error:", e);
@@ -263,31 +388,22 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
   }
 });
 
-// ===========================================================
-// GET /api/admin/analytics/funnel?from=&to=&steps=
-// steps: CSV opcional, default:
-// signed_up,google_connected,meta_connected,audit_requested,audit_completed,pixel_audit_completed
-//
-// Devuelve conteos por paso (usuarios únicos que alcanzaron ese paso)
-// ===========================================================
+/* =========================
+ * GET /api/admin/analytics/funnel?from=&to=&steps=
+ * ========================= */
 router.get("/funnel", requireInternalAdmin, async (req, res) => {
   try {
-    const from = parseDateMaybe(req.query.from);
-    const to = parseDateMaybe(req.query.to);
+    let from = parseDateMaybe(req.query.from);
+    let to = parseDateMaybe(req.query.to);
+    const norm = normalizeRange(from, to);
+    from = norm.from;
+    to = norm.to;
 
     const stepsRaw = String(req.query.steps || "").trim();
     const steps = stepsRaw
       ? stepsRaw.split(",").map((s) => s.trim()).filter(Boolean)
-      : [
-          "signed_up",
-          "google_connected",
-          "meta_connected",
-          "audit_requested",
-          "audit_completed",
-          "pixel_audit_completed",
-        ];
+      : ["signed_up", "google_connected", "meta_connected", "audit_requested", "audit_completed", "pixel_audit_completed"];
 
-    // match por rango + nombres
     const match = { name: { $in: steps } };
     if (from || to) {
       match.createdAt = {};
@@ -295,7 +411,6 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
       if (to) match.createdAt.$lte = to;
     }
 
-    // 1) evento más temprano por (userId, name)
     const firsts = await AnalyticsEvent.aggregate([
       { $match: match },
       {
@@ -312,23 +427,14 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
       },
     ]);
 
-    // 2) conteos por step (usuarios únicos que lo tienen)
     const counts = Object.fromEntries(steps.map((s) => [s, 0]));
     for (const u of firsts) {
       const names = Array.isArray(u.names) ? u.names : [];
-      for (const s of steps) {
-        if (names.includes(s)) counts[s] += 1;
-      }
+      for (const s of steps) if (names.includes(s)) counts[s] += 1;
     }
 
-    // 3) armamos funnel “ordenado”
-    const funnel = steps.map((s, idx) => ({
-      step: s,
-      index: idx,
-      users: counts[s] || 0,
-    }));
+    const funnel = steps.map((s, idx) => ({ step: s, index: idx, users: counts[s] || 0 }));
 
-    // 4) drop-off aproximado (entre pasos consecutivos)
     for (let i = 1; i < funnel.length; i++) {
       const prev = funnel[i - 1].users || 0;
       const curr = funnel[i].users || 0;
@@ -336,7 +442,6 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
       funnel[i].conversionFromPrev = prev > 0 ? Number((curr / prev).toFixed(4)) : null;
     }
 
-    // signed_up baseline
     if (funnel.length) {
       funnel[0].dropFromPrev = null;
       funnel[0].conversionFromPrev = null;
@@ -344,11 +449,14 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
 
     return res.json({
       ok: true,
-      from: from ? from.toISOString() : null,
-      to: to ? to.toISOString() : null,
-      steps,
-      totalUsersInWindow: firsts.length,
-      funnel,
+      data: {
+        from: from ? from.toISOString() : null,
+        to: to ? to.toISOString() : null,
+        swapped: norm.swapped || false,
+        steps,
+        totalUsersInWindow: firsts.length,
+        funnel,
+      },
     });
   } catch (e) {
     console.error("[adminAnalytics] /funnel error:", e);
