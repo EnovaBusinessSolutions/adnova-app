@@ -24,6 +24,9 @@ const {
   sendResetPasswordEmail,
 } = require("./services/emailService");
 
+// ✅ NEW: Analytics Events (no rompe si falla)
+const { trackEvent } = require("./services/trackEvent");
+
 // ✅ Turnstile
 const requireTurnstileAlways = require("./middlewares/requireTurnstileAlways");
 const { verifyTurnstile } = require("./services/turnstile");
@@ -70,6 +73,15 @@ const connector = require("./routes/shopifyConnector");
 const webhookRoutes = require("./routes/shopifyConnector/webhooks");
 const auditsRoutes = require("./routes/audits");
 const pixelAuditor = require("./routes/pixelAuditor");
+
+// ✅ NEW: events router
+const eventsRoutes = require("./routes/events");
+
+const adminAnalyticsRoutes = require("./routes/adminAnalytics");
+
+
+
+
 
 // Meta
 const metaInsightsRoutes = require("./routes/metaInsights");
@@ -146,13 +158,12 @@ app.use(
     saveUninitialized: false,
 
     store: MongoStore.create({
-  mongoUrl: process.env.MONGO_URI,
-  collectionName: "sessions",
-  ttl: 60 * 60 * 24 * 7, // 7 días server-side
-  // opcional pero recomendado:
-  autoRemove: "native",
-}),
-
+      mongoUrl: process.env.MONGO_URI,
+      collectionName: "sessions",
+      ttl: 60 * 60 * 24 * 7, // 7 días server-side
+      // opcional pero recomendado:
+      autoRemove: "native",
+    }),
 
     cookie: {
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
@@ -398,7 +409,6 @@ if (HAS_DASHBOARD_DIST) {
     "⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard"
   );
 }
-
 
 /* =========================
  * Rutas de autenticación e integraciones
@@ -892,12 +902,20 @@ app.post("/api/register", requireTurnstileAlways, async (req, res) => {
       email,
       password: hashed,
 
-      // Si tu schema no tenía estos campos, igual te recomiendo agregarlos al modelo User.
-      // Si tu schema es strict y no los tiene, NO se guardarán (te lo indico abajo).
       emailVerified: false,
       verifyEmailTokenHash: verifyTokenHash,
       verifyEmailExpires: verifyExpires,
     });
+
+    // ✅ NEW: Track signup (NO rompe si falla)
+    try {
+      await trackEvent({
+        name: "user_signed_up",
+        userId: user._id,
+        dedupeKey: `user_signed_up:${user._id}`,
+        props: { method: "email" },
+      });
+    } catch {}
 
     // ✅ Enviar correo de verificación (NO bloquea el registro si falla)
     try {
@@ -996,7 +1014,7 @@ app.post("/api/forgot-password", requireTurnstileAlways, async (req, res) => {
     const resetTokenHash = hashToken(resetToken);
     const resetExpires = new Date(Date.now() + RESET_TTL_MINUTES * 60 * 1000);
 
-    // Guardamos hash+expira (si tu schema es strict y no tiene campos, agrégalos al User model)
+    // Guardamos hash+expira
     await User.updateOne(
       { _id: user._id },
       {
@@ -1262,6 +1280,12 @@ app.get("/api/me", async (req, res) => {
  * ========================= */
 app.use("/api", userRoutes);
 
+// ✅ NEW: events endpoint (/api/events) (requiere sesión)
+app.use("/api", eventsRoutes);
+
+// ✅ NEW: admin analytics (panel interno)
+app.use("/api/admin/analytics", adminAnalyticsRoutes);
+
 app.use("/api/secure", verifySessionToken, secureRoutes);
 app.use("/api/dashboard", dashboardRoute);
 app.use("/api/shopConnection", require("./routes/shopConnection"));
@@ -1318,6 +1342,16 @@ app.get("/auth/google/login/callback", (req, res, next) => {
           const isNew = info?.isNewUser === true || user?._isNewUser === true;
 
           if (isNew) {
+            // ✅ NEW: Track signup por Google (NO rompe si falla)
+            try {
+              await trackEvent({
+                name: "user_signed_up",
+                userId: user._id,
+                dedupeKey: `user_signed_up:${user._id}`,
+                props: { method: "google" },
+              });
+            } catch {}
+
             try {
               // Leemos desde DB para decidir si ya se envió (evita duplicados)
               const u = await User.findById(user._id)

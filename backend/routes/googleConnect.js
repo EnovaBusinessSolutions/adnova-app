@@ -15,6 +15,16 @@ const Audit = require('../models/Audit');
 
 const { deleteAuditsForUserSources } = require('../services/auditCleanup');
 
+/* =========================
+ * ✅ NEW: Analytics Events (no rompe si falta/si falla)
+ * ========================= */
+let trackEvent = null;
+try {
+  ({ trackEvent } = require('../services/trackEvent'));
+} catch (_) {
+  trackEvent = null;
+}
+
 /* =========================================================
  *  Modelo GoogleAccount (fallback si no existe el archivo)
  * =======================================================*/
@@ -227,6 +237,41 @@ function filterSelectedPropsByAvailable(selectedPropIds, availableSet) {
   return sel.map(normPropertyId).filter(Boolean).filter((pid) => availableSet.has(pid));
 }
 
+/* =========================
+ * ✅ NEW: helper para emitir eventos sin romper flujo
+ * ========================= */
+function emitEventBestEffort(req, name, props = {}, opts = {}) {
+  if (!trackEvent) return;
+  const userId = req?.user?._id;
+  if (!userId) return;
+
+  const ip =
+    String(req.headers['x-forwarded-for'] || '')
+      .split(',')[0]
+      .trim() ||
+    req.ip ||
+    null;
+
+  const ua = String(req.headers['user-agent'] || '').slice(0, 240) || null;
+
+  const payload = {
+    name,
+    userId,
+    props: {
+      ...props,
+      route: req.originalUrl || null,
+      ip,
+      ua,
+    },
+  };
+
+  if (opts.dedupeKey) payload.dedupeKey = opts.dedupeKey;
+
+  Promise.resolve()
+    .then(() => trackEvent(payload))
+    .catch(() => {});
+}
+
 /* =========================================================
  *  Google Analytics Admin — listar GA4 properties
  * =======================================================*/
@@ -331,10 +376,15 @@ async function startConnect(req, res) {
         ? req.query.returnTo
         : '/dashboard/';
 
+    // ✅ Event: usuario inició el connect (dedupe por sesión/ruta)
+    emitEventBestEffort(req, 'google_connect_started', { returnTo: sanitizeReturnTo(returnTo) || '/dashboard/' });
+
     const url = buildAuthUrl(req, returnTo);
     return res.redirect(url);
   } catch (err) {
     console.error('[googleConnect] connect error:', err);
+    emitEventBestEffort(req, 'google_connect_failed', { stage: 'build_auth_url', error: String(err?.message || err) });
+
     // ✅ Si falla construir URL, no mandar a onboarding
     return res.redirect('/dashboard/?google=error&reason=connect_build');
   }
@@ -351,11 +401,13 @@ router.get('/ads', requireSession, startConnect);
 async function googleCallbackHandler(req, res) {
   try {
     if (req.query.error) {
+      emitEventBestEffort(req, 'google_connect_failed', { stage: 'oauth_error', error: String(req.query.error) });
       return res.redirect(`/dashboard/?google=error&reason=${encodeURIComponent(req.query.error)}`);
     }
 
     const code = req.query.code;
     if (!code) {
+      emitEventBestEffort(req, 'google_connect_failed', { stage: 'missing_code' });
       return res.redirect('/dashboard/?google=error&reason=no_code');
     }
 
@@ -369,6 +421,7 @@ async function googleCallbackHandler(req, res) {
     const grantedScopes = normalizeScopes(tokens.scope || []);
 
     if (!accessToken) {
+      emitEventBestEffort(req, 'google_connect_failed', { stage: 'missing_access_token' });
       return res.redirect('/dashboard/?google=error&reason=no_access_token');
     }
 
@@ -403,6 +456,15 @@ async function googleCallbackHandler(req, res) {
 
     ga.updatedAt = new Date();
     await ga.save();
+
+    // ✅ Event: connect completado (tokens guardados)
+    emitEventBestEffort(req, 'google_connect_completed', {
+      hasRefreshToken: !!ga.refreshToken,
+      hasAccessToken: !!ga.accessToken,
+      scopesCount: Array.isArray(ga.scope) ? ga.scope.length : 0,
+      adsScopeOk: hasAdwordsScope(ga.scope),
+      gaScopeOk: hasGaScope(ga.scope),
+    });
 
     // ============================
     // 1) Descubrir cuentas de Ads
@@ -453,6 +515,12 @@ async function googleCallbackHandler(req, res) {
               },
             }
           );
+
+          // ✅ Event: selección automática Ads
+          emitEventBestEffort(req, 'google_ads_selection_autoset', {
+            selectedCustomerIds: [onlyId],
+            reason: 'single_account',
+          });
         } else if (adsCount > 1) {
           const kept = filterSelectedByAvailable(ga.selectedCustomerIds, available);
           ga.selectedCustomerIds = kept; // si vacío => selector
@@ -471,6 +539,14 @@ async function googleCallbackHandler(req, res) {
         ga.updatedAt = new Date();
         await ga.save();
 
+        // ✅ Event: discovery Ads
+        emitEventBestEffort(req, 'google_ads_discovered', {
+          customersCount: customers.length,
+          adAccountsCount: ad_accounts.length,
+          selectedCount: Array.isArray(ga.selectedCustomerIds) ? ga.selectedCustomerIds.length : 0,
+          hasDefaultCustomerId: !!ga.defaultCustomerId,
+        });
+
         try {
           const st = await selfTest(ga);
           console.log('[googleConnect] Google Ads selfTest:', st);
@@ -483,11 +559,16 @@ async function googleCallbackHandler(req, res) {
         ga.lastAdsDiscoveryError = String(reason).slice(0, 4000);
         ga.updatedAt = new Date();
         await ga.save();
+
+        emitEventBestEffort(req, 'google_ads_discovery_failed', {
+          error: String(e?.message || e),
+        });
       }
     } else {
       if (!hasAdwordsScope(ga.scope)) {
         ga.lastAdsDiscoveryError = 'ADS_SCOPE_MISSING';
         await ga.save();
+        emitEventBestEffort(req, 'google_ads_scope_missing', { scopes: ga.scope || [] });
       }
     }
 
@@ -538,6 +619,12 @@ async function googleCallbackHandler(req, res) {
                 },
               }
             );
+
+            // ✅ Event: selección automática GA4
+            emitEventBestEffort(req, 'ga4_selection_autoset', {
+              selectedPropertyIds: [onlyPid],
+              reason: 'single_property',
+            });
           } else if (props.length > 1) {
             let kept = filterSelectedPropsByAvailable(ga.selectedPropertyIds, availableProps);
 
@@ -560,9 +647,21 @@ async function googleCallbackHandler(req, res) {
 
           ga.updatedAt = new Date();
           await ga.save();
+
+          // ✅ Event: properties GA4 descubiertas
+          emitEventBestEffort(req, 'ga4_properties_discovered', {
+            propertiesCount: props.length,
+            selectedCount: Array.isArray(ga.selectedPropertyIds) ? ga.selectedPropertyIds.length : 0,
+            hasDefaultPropertyId: !!ga.defaultPropertyId,
+          });
         }
       } catch (e) {
         console.warn('⚠️ GA4 properties listing failed:', e?.response?.data || e.message);
+        emitEventBestEffort(req, 'ga4_properties_discovery_failed', { error: String(e?.message || e) });
+      }
+    } else {
+      if (!hasGaScope(ga.scope)) {
+        emitEventBestEffort(req, 'ga4_scope_missing', { scopes: ga.scope || [] });
       }
     }
 
@@ -633,9 +732,20 @@ async function googleCallbackHandler(req, res) {
     const sep = returnTo.includes('?') ? '&' : '?';
     returnTo = `${returnTo}${sep}selector=${needsSelector ? '1' : '0'}`;
 
+    // ✅ Event: resultado final del connect (sirve para embudo interno)
+    emitEventBestEffort(req, 'google_connect_result', {
+      needsSelector,
+      adsCount,
+      ga4Count: gaCount,
+      selectedAdsCount: selAds.length,
+      selectedGa4Count: gaEffectiveSel.length,
+      returnTo,
+    });
+
     return res.redirect(returnTo);
   } catch (err) {
     console.error('[googleConnect] callback error:', err?.response?.data || err.message || err);
+    emitEventBestEffort(req, 'google_connect_failed', { stage: 'callback_exception', error: String(err?.message || err) });
     return res.redirect('/dashboard/?google=error&reason=callback_exception');
   }
 }
@@ -785,6 +895,9 @@ router.post('/objective', requireSession, express.json(), async (req, res) => {
       { $set: { objective: val, updatedAt: new Date() } },
       { upsert: true }
     );
+
+    // ✅ Event: objetivo Google guardado
+    emitEventBestEffort(req, 'google_objective_saved', { objective: val });
 
     res.json({ ok: true });
   } catch (err) {
@@ -974,6 +1087,13 @@ router.post('/accounts/selection', requireSession, express.json(), async (req, r
       }
     );
 
+    // ✅ Event: selección Ads guardada
+    emitEventBestEffort(req, 'google_ads_selection_saved', {
+      selectedCount: selected.length,
+      selectedCustomerIds: selected,
+      defaultCustomerId: nextDefault,
+    });
+
     return res.json({ ok: true, selectedCustomerIds: selected, defaultCustomerId: nextDefault });
   } catch (e) {
     console.error('[googleConnect] accounts/selection error:', e);
@@ -995,6 +1115,8 @@ router.post('/default-customer', requireSession, express.json(), async (req, res
       { upsert: true }
     );
 
+    emitEventBestEffort(req, 'google_ads_default_customer_saved', { defaultCustomerId: cid });
+
     res.json({ ok: true, defaultCustomerId: cid });
   } catch (err) {
     console.error('[googleConnect] default-customer error:', err);
@@ -1015,6 +1137,8 @@ router.post('/default-property', requireSession, express.json(), async (req, res
       { $set: { defaultPropertyId: pid, updatedAt: new Date() } },
       { upsert: true }
     );
+
+    emitEventBestEffort(req, 'ga4_default_property_saved', { defaultPropertyId: pid });
 
     res.json({ ok: true, defaultPropertyId: pid });
   } catch (err) {
@@ -1077,6 +1201,13 @@ router.post('/ga4/selection', requireSession, express.json(), async (req, res) =
         },
       }
     );
+
+    // ✅ Event: selección GA4 guardada
+    emitEventBestEffort(req, 'ga4_selection_saved', {
+      selectedCount: selected.length,
+      selectedPropertyIds: selected,
+      defaultPropertyId: nextDefault,
+    });
 
     return res.json({ ok: true, selectedPropertyIds: selected, defaultPropertyId: nextDefault });
   } catch (e) {
@@ -1191,6 +1322,15 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
 
     const auditsDeleted = Math.max(0, beforeTotal - afterTotal);
 
+    // ✅ Event: desconectó Google
+    emitEventBestEffort(req, 'google_disconnected', {
+      revokeAttempted: revoke.attempted,
+      revokeOk: revoke.ok,
+      auditsDeleted,
+      auditsDeleteOk,
+      auditsDeleteError,
+    });
+
     return res.json({
       ok: true,
       disconnected: true,
@@ -1203,6 +1343,7 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
     });
   } catch (err) {
     console.error('[googleConnect] disconnect error:', err?.response?.data || err?.message || err);
+    emitEventBestEffort(req, 'google_disconnect_failed', { error: String(err?.message || err) });
     return res.status(500).json({ ok: false, error: 'DISCONNECT_ERROR' });
   }
 });

@@ -6,6 +6,14 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy;
 
 const User = require('./models/User');
 
+// ✅ NEW: Analytics Events (no rompe si falta/si falla)
+let trackEvent = null;
+try {
+  ({ trackEvent } = require('./services/trackEvent'));
+} catch (_) {
+  trackEvent = null;
+}
+
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
 
 // IMPORTANTE: debe coincidir con tu ruta real en backend/index.js:
@@ -66,9 +74,10 @@ passport.use(
             emailVerified: true,
 
             // Si tu login email/pass usa "password", dejarlo vacío está OK
-            // (o puedes omitirlo, pero lo dejamos por compat con tu código)
             password: '',
 
+            // ✅ Mantengo esto TAL CUAL para NO romper tu flujo actual:
+            // (tu index.js redirige a /dashboard si onboardingComplete=true)
             onboardingComplete: true,
 
             // ✅ CLAVE E2E: control del welcome
@@ -77,6 +86,20 @@ passport.use(
           });
 
           console.log('🆕 Usuario de Google creado en MongoDB:', normalizedEmail);
+
+          // ✅ Track signup (dedupe por usuario)
+          if (trackEvent) {
+            Promise.resolve()
+              .then(() =>
+                trackEvent({
+                  name: 'user_signed_up',
+                  userId: user._id,
+                  dedupeKey: `user_signed_up:${user._id}`,
+                  props: { method: 'google' },
+                })
+              )
+              .catch(() => {});
+          }
         } else {
           // ✅ Usuario existente
           const patch = {};
@@ -97,19 +120,37 @@ passport.use(
 
           if (Object.keys(patch).length) {
             await User.updateOne({ _id: user._id }, { $set: patch });
-            // mantenemos el objeto user "actual" en memoria
             user = await User.findById(user._id);
           }
 
           console.log('✅ Usuario de Google ya registrado:', normalizedEmail);
         }
 
+        // ✅ Track login (sin romper; dedupe por día para no inflar)
+        if (trackEvent && user?._id) {
+          const day = new Date();
+          const y = day.getUTCFullYear();
+          const m = String(day.getUTCMonth() + 1).padStart(2, '0');
+          const d = String(day.getUTCDate()).padStart(2, '0');
+          const ymd = `${y}-${m}-${d}`;
+
+          Promise.resolve()
+            .then(() =>
+              trackEvent({
+                name: 'user_logged_in',
+                userId: user._id,
+                dedupeKey: `user_logged_in:${user._id}:${ymd}`,
+                props: { method: 'google' },
+              })
+            )
+            .catch(() => {});
+        }
+
         // ✅ Extra: bandera “transiente” por si la quieres leer en index.js
         user._isNewUser = isNewUser;
 
         /**
-         * ✅ ESTE es el cambio clave:
-         * Mandamos "info.isNewUser" como 3er argumento de done()
+         * ✅ Mandamos "info.isNewUser" como 3er argumento de done()
          * para que tu callback route en index.js lo reciba.
          */
         return done(null, user, { isNewUser });

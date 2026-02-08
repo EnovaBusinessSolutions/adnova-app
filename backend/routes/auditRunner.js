@@ -1,4 +1,3 @@
-// backend/routes/auditRunner.js
 'use strict';
 
 const express = require('express');
@@ -15,6 +14,14 @@ try {
 } catch (e) {
   // si por alguna razón no existe, no tronamos el runner
   sendAuditReadyEmail = null;
+}
+
+// ✅ NUEVO: analytics tracker (NO rompe si falla / no existe)
+let trackEvent = null;
+try {
+  ({ trackEvent } = require('../services/trackEvent'));
+} catch {
+  trackEvent = null;
 }
 
 // ★ (opcional, para futuros usos de límites / usos por usuario)
@@ -54,6 +61,17 @@ try {
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
+}
+
+/* ============== analytics helpers (best-effort) ============== */
+async function emitEventSafe({ name, userId, dedupeKey, props }) {
+  try {
+    if (typeof trackEvent !== 'function') return null;
+    return await trackEvent({ name, userId, dedupeKey, props });
+  } catch {
+    // NO romper el flujo productivo por analytics
+    return null;
+  }
 }
 
 /* ============== helpers ============== */
@@ -384,7 +402,37 @@ router.post('/:type/run', requireAuth, express.json(), async (req, res) => {
       });
     }
 
-    const ok = await runAuditFor({ userId: req.user._id, type, source });
+    // ✅ analytics: audit_requested (single)
+    const singleRunId = newId();
+    await emitEventSafe({
+      name: 'audit_requested',
+      userId: req.user._id,
+      dedupeKey: `audit_requested:${String(req.user._id)}:single:${singleRunId}:${type}`,
+      props: { mode: 'single', type, source },
+    });
+
+    const t0 = Date.now();
+    let ok = false;
+    let errMsg = null;
+
+    try {
+      ok = !!(await runAuditFor({ userId: req.user._id, type, source }));
+    } catch (e) {
+      ok = false;
+      errMsg = e?.message || String(e);
+      throw e;
+    } finally {
+      const durationMs = Date.now() - t0;
+
+      // ✅ analytics: audit_completed (single)
+      await emitEventSafe({
+        name: 'audit_completed',
+        userId: req.user._id,
+        dedupeKey: `audit_completed:${String(req.user._id)}:single:${singleRunId}:${type}`,
+        props: { mode: 'single', type, source, ok, durationMs, error: errMsg },
+      });
+    }
+
     const latest = await fetchLatestAuditSummary(req.user._id, type);
 
     return res.json({ ok: !!ok, type, source, latestAudit: latest });
@@ -489,6 +537,26 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
 
     jobs.set(jobId, stateJob);
 
+    // ✅ analytics: audit_requested (job)
+    await emitEventSafe({
+      name: 'audit_requested',
+      userId: req.user._id,
+      dedupeKey: `audit_requested:${String(req.user._id)}:${jobId}`,
+      props: {
+        mode: 'job',
+        jobId,
+        source,
+        types,
+        skippedByConnection,
+        state: {
+          meta: state?.meta,
+          google: state?.google,
+          ga4: state?.ga4,
+          shopify: state?.shopify,
+        },
+      },
+    });
+
     res.json({
       ok: true,
       jobId,
@@ -499,18 +567,56 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
 
     setImmediate(async () => {
       for (const t of types) {
+        const t0 = Date.now();
         stateJob.items[t].status = 'running';
+
+        let ok = false;
+        let errMsg = null;
+
         try {
-          const ok = await runAuditFor({ userId: req.user._id, type: t, source });
+          ok = !!(await runAuditFor({ userId: req.user._id, type: t, source }));
           stateJob.items[t].status = 'done';
-          stateJob.items[t].ok = !!ok;
+          stateJob.items[t].ok = ok;
         } catch (e) {
+          errMsg = e?.message || String(e);
           stateJob.items[t].status = 'done';
           stateJob.items[t].ok = false;
-          stateJob.items[t].error = e?.message || String(e);
+          stateJob.items[t].error = errMsg;
         }
+
+        const durationMs = Date.now() - t0;
+
+        // ✅ analytics: audit_completed (por tipo)
+        await emitEventSafe({
+          name: 'audit_completed',
+          userId: req.user._id,
+          dedupeKey: `audit_completed:${String(req.user._id)}:${jobId}:${t}`,
+          props: {
+            mode: 'job',
+            jobId,
+            type: t,
+            source,
+            ok,
+            durationMs,
+            error: errMsg,
+          },
+        });
       }
+
       stateJob.finishedAt = Date.now();
+
+      // ✅ analytics: job terminado (no depende de persistencia)
+      await emitEventSafe({
+        name: 'audit_job_completed',
+        userId: req.user._id,
+        dedupeKey: `audit_job_completed:${String(req.user._id)}:${jobId}`,
+        props: {
+          jobId,
+          source,
+          types,
+          durationMs: (stateJob.finishedAt || Date.now()) - (stateJob.startedAt || Date.now()),
+        },
+      });
     });
   } catch (e) {
     console.error('audits/start error:', e);

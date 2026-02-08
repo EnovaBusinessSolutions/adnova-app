@@ -1,4 +1,3 @@
-// backend/routes/pixelAuditor.js
 "use strict";
 
 const express = require("express");
@@ -8,6 +7,29 @@ const crypto = require("crypto");
 
 const router = express.Router();
 
+/* ===========================================================
+ * ✅ NUEVO: analytics tracker (NO rompe si falla / no existe)
+ * =========================================================== */
+let trackEvent = null;
+try {
+  ({ trackEvent } = require("../services/trackEvent"));
+} catch {
+  trackEvent = null;
+}
+
+async function emitEventSafe({ name, userId, dedupeKey, props }) {
+  try {
+    if (typeof trackEvent !== "function") return null;
+    return await trackEvent({ name, userId, dedupeKey, props });
+  } catch {
+    // NO romper el flujo productivo por analytics
+    return null;
+  }
+}
+
+/* =========================
+ * Body reader robusto
+ * ========================= */
 function readBody(req) {
   const b = req.body;
   if (!b) return {};
@@ -30,6 +52,20 @@ function readBody(req) {
 
   if (typeof b === "object") return b;
   return {};
+}
+
+/* =========================
+ * Auth helper (NO rompe si no hay sesión)
+ * ========================= */
+function getUserIdFromReq(req) {
+  // Preferimos passport sessions
+  const id =
+    req?.user?._id ||
+    req?.user?.id ||
+    req?.userId ||
+    null;
+
+  return id ? String(id) : null;
 }
 
 function loadRunPixelAudit() {
@@ -293,8 +329,15 @@ async function runAuditCompat(runPixelAudit, input) {
   }
 }
 
+/* ===========================================================
+ * POST /api/auditor
+ * =========================================================*/
 router.post("/auditor", async (req, res) => {
   const traceId = crypto.randomBytes(6).toString("hex");
+  const t0 = Date.now();
+
+  // ✅ userId si existe sesión; si no, dejamos null (no rompe)
+  const userId = getUserIdFromReq(req);
 
   try {
     const body = readBody(req);
@@ -331,6 +374,21 @@ router.post("/auditor", async (req, res) => {
     const auditedUrlForUi =
       url || body.auditedUrl || body.audited_url || "HTML proporcionado";
 
+    // ✅ (opcional) evento de "requested"
+    // - dedupe por traceId para evitar duplicados en retries
+    await emitEventSafe({
+      name: "pixel_audit_requested",
+      userId,
+      dedupeKey: `pixel_audit_requested:${String(userId || "anon")}:${traceId}`,
+      props: {
+        traceId,
+        hasUrl: !!url,
+        hasHtml: !!html,
+        includeDetails,
+        auditedUrl: auditedUrlForUi,
+      },
+    });
+
     const { runPixelAudit, enginePath } = loadRunPixelAudit();
 
     console.log(`[pixel-auditor:${traceId}] start`, {
@@ -357,8 +415,65 @@ router.post("/auditor", async (req, res) => {
       eventsCount: data.eventsCount,
     });
 
+    const durationMs = Date.now() - t0;
+
+    // ✅✅✅ evento principal (lo que necesita tu panel interno)
+    // - dedupe por traceId
+    // - props pensados para series y funnels
+    await emitEventSafe({
+      name: "pixel_audit_completed",
+      userId,
+      dedupeKey: `pixel_audit_completed:${String(userId || "anon")}:${traceId}`,
+      props: {
+        traceId,
+        auditedUrl: data.auditedUrl,
+        source: String(body.source || req.query.source || "panel"),
+        durationMs,
+
+        // métricas top-level para analítica
+        healthScore: data.healthScore,
+        healthLabel: data.healthLabel,
+        issuesCount: data.issuesCount,
+        eventsCount: data.eventsCount,
+
+        // señal de instalación (para segmentación)
+        installed: {
+          ga4: !!data.tracking?.find((x) => x.key === "ga4")?.installed,
+          gtm: !!data.tracking?.find((x) => x.key === "gtm")?.installed,
+          gads: !!data.tracking?.find((x) => x.key === "gads")?.installed,
+          meta: !!data.tracking?.find((x) => x.key === "meta")?.installed,
+        },
+
+        // ids detectados (útiles, pero no pesados)
+        ids: {
+          ga4: data.tracking?.find((x) => x.key === "ga4")?.ids || [],
+          gtm: data.tracking?.find((x) => x.key === "gtm")?.ids || [],
+          gads: data.tracking?.find((x) => x.key === "gads")?.ids || [],
+          meta: data.tracking?.find((x) => x.key === "meta")?.ids || [],
+        },
+
+        // para debug controlado
+        includeDetails: !!includeDetails,
+        engine: { path: enginePath },
+      },
+    });
+
     return res.json({ ok: true, data });
   } catch (err) {
+    const durationMs = Date.now() - t0;
+
+    // ✅ evento de error (NO rompe, pero ayuda muchísimo en el panel interno)
+    await emitEventSafe({
+      name: "pixel_audit_failed",
+      userId,
+      dedupeKey: `pixel_audit_failed:${String(userId || "anon")}:${traceId}`,
+      props: {
+        traceId,
+        durationMs,
+        error: String(err?.message || err),
+      },
+    });
+
     console.error(`[PIXEL_AUDITOR_ERROR:${traceId}]`, err);
     return res.status(500).json({
       ok: false,
