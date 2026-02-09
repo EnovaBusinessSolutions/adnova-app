@@ -120,7 +120,7 @@ function safeTokenEquals(a, b) {
 }
 
 /**
- * ✅ Middleware de acceso interno (Opción B)
+ * ✅ Middleware de acceso interno
  */
 function requireInternalAdmin(req, res, next) {
   try {
@@ -195,136 +195,261 @@ function toISO(v) {
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-function ymd(d) {
-  const dt = d instanceof Date ? d : new Date(d);
-  if (isNaN(dt.getTime())) return null;
-  const yyyy = String(dt.getFullYear());
-  const mm = String(dt.getMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+/* ---------------------- */
+/* User field resolvers    */
+/* ---------------------- */
+function resolveUserRegisteredAt(u) {
+  return (
+    u?.createdAt ||
+    u?.created_at ||
+    u?.signupAt ||
+    u?.signup_at ||
+    objectIdToDate(u?._id) ||
+    null
+  );
 }
 
-/* =========================
- * ✅ Fetch helpers (Meta / GA4 / Google Ads)
- * ========================= */
-async function safeFetchJson(url, init) {
-  const r = await fetch(url, init);
-  const text = await r.text().catch(() => "");
-  let json = {};
-  try {
-    json = text ? JSON.parse(text) : {};
-  } catch {
-    json = { raw: text };
-  }
-  if (!r.ok) {
-    const err = new Error(`HTTP_${r.status}`);
-    err.status = r.status;
-    err.payload = json;
-    throw err;
-  }
-  return json;
+function resolveUserLastLoginAt(u) {
+  return (
+    u?.lastLoginAt ||
+    u?.last_login_at ||
+    u?.lastLogin ||
+    u?.last_login ||
+    u?.lastSignInAt ||
+    u?.last_sign_in_at ||
+    null
+  );
 }
 
-async function fetchMetaSpend30d({ accessToken, actId }) {
-  if (!accessToken || !actId) return null;
-
-  const now = new Date();
-  const until = ymd(now);
-  const since = ymd(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000));
-  if (!since || !until) return null;
-
-  const base = "https://graph.facebook.com/v20.0";
-  const time_range = encodeURIComponent(JSON.stringify({ since, until }));
-  const url =
-    `${base}/act_${encodeURIComponent(actId)}/insights` +
-    `?fields=spend&level=account&time_range=${time_range}&limit=1&access_token=${encodeURIComponent(
-      accessToken
-    )}`;
-
-  const json = await safeFetchJson(url, { method: "GET" });
-  const spendStr = json?.data?.[0]?.spend ?? null;
-  const spend = Number(spendStr);
-  return Number.isFinite(spend) ? spend : null;
+function resolveUserName(u) {
+  return pickFirstTruthy(
+    u?.name,
+    u?.fullName,
+    u?.full_name,
+    u?.displayName,
+    u?.display_name,
+    u?.profile?.name
+  );
 }
 
-async function fetchGa4Sessions30d({ accessToken, propertyId }) {
-  if (!accessToken || !propertyId) return null;
+function resolveUserEmail(u) {
+  return pickFirstTruthy(u?.email, u?.emails?.[0]?.value, u?.profile?.email);
+}
 
-  const pid = String(propertyId).trim().replace(/^properties\//, "");
-  if (!pid) return null;
-
-  const now = new Date();
-  const endDate = ymd(now);
-  const startDate = ymd(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000));
-  if (!startDate || !endDate) return null;
-
-  const url = `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(
-    pid
-  )}:runReport`;
-
-  const body = {
-    dateRanges: [{ startDate, endDate }],
-    metrics: [{ name: "sessions" }],
-  };
-
-  const json = await safeFetchJson(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  const v = json?.rows?.[0]?.metricValues?.[0]?.value ?? null;
+/* ---------------------- */
+/* Metrics best-effort     */
+/* ---------------------- */
+function numMaybe(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 }
 
-async function fetchGoogleAdsSpend30d({
-  accessToken,
-  customerId,
-  developerToken,
-  loginCustomerId,
-}) {
-  if (!accessToken || !customerId || !developerToken) return null;
-
-  const cid = String(customerId).trim();
-  if (!cid) return null;
-
-  const url = `https://googleads.googleapis.com/v16/customers/${encodeURIComponent(
-    cid
-  )}/googleAds:search`;
-
-  const query =
-    "SELECT segments.date, metrics.cost_micros " +
-    "FROM customer " +
-    "WHERE segments.date DURING LAST_30_DAYS";
-
-  const headers = {
-    Authorization: `Bearer ${accessToken}`,
-    "Content-Type": "application/json",
-    "developer-token": developerToken,
-  };
-  if (loginCustomerId) headers["login-customer-id"] = String(loginCustomerId);
-
-  const json = await safeFetchJson(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ query, page_size: 10000 }),
-  });
-
-  const results = Array.isArray(json?.results) ? json.results : [];
-  let sumMicros = 0;
-  for (const row of results) {
-    const micros = Number(
-      row?.metrics?.costMicros ?? row?.metrics?.cost_micros ?? 0
-    );
-    if (Number.isFinite(micros)) sumMicros += micros;
+function dig(obj, paths) {
+  for (const p of paths) {
+    try {
+      const parts = String(p).split(".");
+      let cur = obj;
+      for (const key of parts) {
+        if (!cur) break;
+        cur = cur[key];
+      }
+      if (cur !== undefined && cur !== null) return cur;
+    } catch {}
   }
+  return null;
+}
 
-  const spend = sumMicros / 1_000_000;
-  return Number.isFinite(spend) ? spend : null;
+/**
+ * Intenta leer “spend/cost 30d” desde documentos cacheados,
+ * SIN llamar APIs externas.
+ */
+function resolveGoogleSpend30dFromDoc(gd) {
+  if (!gd) return null;
+
+  // números directos
+  const direct = dig(gd, [
+    "googleSpend30d",
+    "spend30d",
+    "cost30d",
+    "kpis.spend30d",
+    "kpis.cost30d",
+    "summary.spend30d",
+    "summary.cost30d",
+    "overview.spend30d",
+    "overview.cost30d",
+    "overview.cost",
+    "overview.spend",
+    "last30d.spend",
+    "last30d.cost",
+    "last30Days.spend",
+    "last30Days.cost",
+  ]);
+  const n = numMaybe(direct);
+  if (n !== null) return n;
+
+  // micros (Google Ads suele traer cost_micros)
+  const micros = dig(gd, [
+    "overview.cost_micros",
+    "overview.costMicros",
+    "last30d.cost_micros",
+    "last30Days.cost_micros",
+  ]);
+  const m = numMaybe(micros);
+  if (m !== null) return Math.round(m / 1_000_000);
+
+  return null;
+}
+
+function resolveGaSessions30dFromDoc(gd) {
+  if (!gd) return null;
+
+  const direct = dig(gd, [
+    "ga4Sessions30d",
+    "gaSessions30d",
+    "sessions30d",
+    "ga4.sessions30d",
+    "ga4.kpis.sessions30d",
+    "ga4.summary.sessions30d",
+    "ga4.overview.sessions",
+    "ga4.overview.sessions30d",
+    "gaOverview.sessions",
+    "gaOverview.sessions30d",
+    "overviewGA4.sessions",
+    "overviewGA4.sessions30d",
+  ]);
+  const n = numMaybe(direct);
+  return n !== null ? Math.round(n) : null;
+}
+
+function resolveMetaSpend30dFromDoc(md) {
+  if (!md) return null;
+
+  const direct = dig(md, [
+    "metaSpend30d",
+    "spend30d",
+    "kpis.spend30d",
+    "summary.spend30d",
+    "overview.spend30d",
+    "overview.spend",
+    "last30d.spend",
+    "last30Days.spend",
+  ]);
+  const n = numMaybe(direct);
+  return n !== null ? n : null;
+}
+
+/* ---------------------- */
+/* Selections (canonical)  */
+/* ---------------------- */
+function splitIdNameDisplay(display) {
+  const s = String(display || "").trim();
+  if (!s) return { id: null, name: null, display: null };
+
+  // "123 (Name)" o "act_123 (Name)"
+  const m = s.match(/^(.+?)\s*\((.+)\)\s*$/);
+  if (m) {
+    return { id: String(m[1]).trim(), name: String(m[2]).trim(), display: s };
+  }
+  return { id: s, name: null, display: s };
+}
+
+function resolveMetaSelected(md, u) {
+  const selectedId =
+    pickFirstTruthy(
+      md?.selectedAccountIds?.[0],
+      md?.defaultAccountId,
+      md?.ad_accounts?.[0]?.id,
+      md?.adAccounts?.[0]?.id
+    ) || null;
+
+  const fallbackFromUser =
+    pickFirstTruthy(
+      u?.selectedMetaAccounts?.[0],
+      u?.preferences?.meta?.auditAccountIds?.[0]
+    ) || null;
+
+  const id = selectedId || fallbackFromUser;
+  if (!id) return { id: null, name: null, display: null };
+
+  const list =
+    (Array.isArray(md?.ad_accounts) && md.ad_accounts.length
+      ? md.ad_accounts
+      : null) ||
+    (Array.isArray(md?.adAccounts) && md.adAccounts.length
+      ? md.adAccounts
+      : null) ||
+    [];
+
+  const found = list.find(
+    (a) => String(a?.id || a?.account_id || "").trim() === String(id).trim()
+  );
+
+  const name = pickFirstTruthy(
+    found?.name,
+    found?.account_name,
+    md?.name,
+    md?.email
+  );
+
+  const display = name ? `${id} (${name})` : String(id);
+  const parts = splitIdNameDisplay(display);
+  return { id: String(id), name: name ? String(name) : parts.name, display };
+}
+
+function resolveGoogleAdsSelected(gd, u) {
+  const selectedId =
+    pickFirstTruthy(
+      gd?.selectedCustomerIds?.[0],
+      gd?.defaultCustomerId,
+      gd?.ad_accounts?.[0]?.id,
+      gd?.customers?.[0]?.id
+    ) || null;
+
+  const fallbackFromUser =
+    pickFirstTruthy(
+      u?.selectedGoogleAccounts?.[0],
+      u?.preferences?.googleAds?.auditAccountIds?.[0]
+    ) || null;
+
+  const id = selectedId || fallbackFromUser;
+  if (!id) return { id: null, name: null, display: null };
+
+  const adAcc = Array.isArray(gd?.ad_accounts) ? gd.ad_accounts : [];
+  const custs = Array.isArray(gd?.customers) ? gd.customers : [];
+
+  const foundAd = adAcc.find((a) => String(a?.id || "").trim() === String(id).trim());
+  const foundCu = custs.find((c) => String(c?.id || "").trim() === String(id).trim());
+
+  const name = pickFirstTruthy(foundAd?.name, foundCu?.descriptiveName, foundCu?.descriptive_name);
+  const display = name ? `${id} (${name})` : String(id);
+  return { id: String(id), name: name ? String(name) : null, display };
+}
+
+function resolveGA4Selected(gd, u) {
+  const selectedId =
+    pickFirstTruthy(
+      gd?.selectedPropertyIds?.[0],
+      gd?.defaultPropertyId,
+      gd?.gaProperties?.[0]?.propertyId
+    ) || null;
+
+  const fallbackFromUser =
+    pickFirstTruthy(
+      u?.preferences?.googleAnalytics?.auditPropertyIds?.[0],
+      u?.selectedGAProperties?.[0]
+    ) || null;
+
+  const id = selectedId || fallbackFromUser;
+  if (!id) return { id: null, name: null, display: null };
+
+  const props = Array.isArray(gd?.gaProperties) ? gd.gaProperties : [];
+  const found = props.find(
+    (p) => String(p?.propertyId || "").trim() === String(id).trim()
+  );
+
+  const name = pickFirstTruthy(found?.displayName);
+  const display = name ? `${id} (${name})` : String(id);
+  return { id: String(id), name: name ? String(name) : null, display };
 }
 
 /* =========================
@@ -413,8 +538,7 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
 });
 
 /* =========================
- * GET /api/admin/analytics/events?name=&userId=&from=&to=&limit=&cursor=
- * + opcional q= (busca simple)
+ * GET /api/admin/analytics/events
  * ========================= */
 router.get("/events", requireInternalAdmin, async (req, res) => {
   try {
@@ -440,11 +564,13 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
     const dateMatch = buildDateMatch(from, to);
     if (dateMatch) Object.assign(q, dateMatch);
 
+    // paginación por _id (desc)
     if (cursor) {
       const cid = toObjectIdMaybe(cursor);
       if (cid) q._id = { $lt: cid };
     }
 
+    // Búsqueda simple
     if (qtext) {
       const safe = qtext.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       q.$or = [
@@ -485,151 +611,8 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
 
 /* =========================
  * ✅ GET /api/admin/analytics/users?from=&to=&limit=&cursor=&q=
- * Tabla tipo CRM
+ * Tabla tipo CRM: métricas por usuario (NO eventos)
  * ========================= */
-
-function resolveUserRegisteredAt(u) {
-  return (
-    u?.createdAt ||
-    u?.created_at ||
-    u?.signupAt ||
-    u?.signup_at ||
-    objectIdToDate(u?._id) ||
-    null
-  );
-}
-
-function resolveUserName(u) {
-  return pickFirstTruthy(
-    u?.name,
-    u?.fullName,
-    u?.full_name,
-    u?.displayName,
-    u?.display_name,
-    u?.profile?.name
-  );
-}
-
-function resolveUserEmail(u) {
-  return pickFirstTruthy(u?.email, u?.emails?.[0]?.value, u?.profile?.email);
-}
-
-function pickMetaSelected(metaDoc) {
-  if (!metaDoc) return { id: null, name: null, token: null };
-
-  const id =
-    pickFirstTruthy(
-      metaDoc?.selectedAccountIds?.[0],
-      metaDoc?.defaultAccountId
-    ) || null;
-
-  const list = Array.isArray(metaDoc?.ad_accounts)
-    ? metaDoc.ad_accounts
-    : Array.isArray(metaDoc?.adAccounts)
-    ? metaDoc.adAccounts
-    : [];
-
-  const hit = id
-    ? list.find((a) => String(a?.id || "").trim() === String(id).trim())
-    : null;
-
-  const name = pickFirstTruthy(hit?.name, hit?.account_name) || null;
-
-  const token =
-    metaDoc?.longLivedToken ||
-    metaDoc?.longlivedToken ||
-    metaDoc?.access_token ||
-    metaDoc?.accessToken ||
-    metaDoc?.token ||
-    null;
-
-  return { id, name, token };
-}
-
-function pickGoogleAdsSelected(googleDoc) {
-  if (!googleDoc)
-    return { id: null, name: null, accessToken: null, loginCustomerId: null };
-
-  const id =
-    pickFirstTruthy(
-      googleDoc?.selectedCustomerIds?.[0],
-      googleDoc?.defaultCustomerId
-    ) || null;
-
-  const list = Array.isArray(googleDoc?.ad_accounts) ? googleDoc.ad_accounts : [];
-  const hit = id
-    ? list.find((a) => String(a?.id || "").trim() === String(id).trim())
-    : null;
-  const name = pickFirstTruthy(hit?.name) || null;
-
-  const accessToken = googleDoc?.accessToken || null;
-  const loginCustomerId =
-    pickFirstTruthy(googleDoc?.loginCustomerId, googleDoc?.managerCustomerId) ||
-    null;
-
-  return { id, name, accessToken, loginCustomerId };
-}
-
-function pickGA4Selected(googleDoc) {
-  if (!googleDoc) return { id: null, name: null };
-
-  const id =
-    pickFirstTruthy(
-      googleDoc?.selectedPropertyIds?.[0],
-      googleDoc?.defaultPropertyId,
-      googleDoc?.selectedGaPropertyId
-    ) || null;
-
-  const props = Array.isArray(googleDoc?.gaProperties) ? googleDoc.gaProperties : [];
-  const hit = id
-    ? props.find((p) => String(p?.propertyId || "").trim() === String(id).trim())
-    : null;
-
-  const name = pickFirstTruthy(hit?.displayName) || null;
-
-  return { id, name };
-}
-
-async function getLastActivityMap(userIds, from, to) {
-  const match = { userId: { $in: userIds } };
-  const dateMatch = buildDateMatch(from, to);
-  if (dateMatch) Object.assign(match, dateMatch);
-
-  const effectiveDateExpr = { $ifNull: ["$ts", "$createdAt"] };
-
-  const rows = await AnalyticsEvent.aggregate([
-    { $match: match },
-    { $match: { $expr: { $ne: [effectiveDateExpr, null] } } },
-    { $group: { _id: "$userId", lastAt: { $max: effectiveDateExpr } } },
-  ]).catch(() => []);
-
-  const map = new Map();
-  for (const r of rows) {
-    if (!r?._id) continue;
-    map.set(String(r._id), r.lastAt ? new Date(r.lastAt) : null);
-  }
-  return map;
-}
-
-async function runWithLimit(list, limit, worker) {
-  const out = new Array(list.length);
-  let i = 0;
-
-  const runners = new Array(Math.min(limit, list.length)).fill(0).map(async () => {
-    while (i < list.length) {
-      const idx = i++;
-      try {
-        out[idx] = await worker(list[idx], idx);
-      } catch {
-        out[idx] = null;
-      }
-    }
-  });
-
-  await Promise.all(runners);
-  return out;
-}
-
 router.get("/users", requireInternalAdmin, async (req, res) => {
   try {
     if (!User) {
@@ -647,11 +630,14 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     to = norm.to;
 
     const q = {};
+
+    // paginación por _id (desc)
     if (cursor) {
       const cid = toObjectIdMaybe(cursor);
       if (cid) q._id = { $lt: cid };
     }
 
+    // Búsqueda simple (email/name/_id)
     if (qtext) {
       const safe = qtext.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const or = [
@@ -660,11 +646,14 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
         { fullName: new RegExp(safe, "i") },
         { displayName: new RegExp(safe, "i") },
       ];
+
       const oid = toObjectIdMaybe(qtext);
       if (oid) or.push({ _id: oid });
+
       q.$or = or;
     }
 
+    // Filtro por rango de registro (best-effort con createdAt si existe)
     if (from || to) {
       const range = {};
       if (from) range.$gte = from;
@@ -675,13 +664,17 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     const users = await User.find(q)
       .sort({ _id: -1 })
       .limit(limit)
-      .select("_id name fullName displayName email emails createdAt updatedAt profile")
+      .select(
+        "_id name fullName displayName email emails createdAt updatedAt " +
+          "lastLoginAt lastLogin last_sign_in_at last_login_at profile " +
+          "selectedMetaAccounts selectedGoogleAccounts selectedGAProperties preferences"
+      )
       .lean();
 
     const nextCursor = users.length ? String(users[users.length - 1]._id) : null;
     const userIds = users.map((u) => u._id);
 
-    // related docs
+    // Batch load related docs (best-effort)
     const googleByUser = new Map();
     if (GoogleAccount && userIds.length) {
       const googleDocs = await GoogleAccount.find({
@@ -692,14 +685,16 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
         ],
       })
         .select(
-          "_id userId owner user " +
-            "selectedCustomerIds defaultCustomerId loginCustomerId managerCustomerId " +
-            "ad_accounts " +
+          "_id userId owner user email " +
+            "selectedCustomerIds defaultCustomerId " +
+            "ad_accounts customers " +
             "gaProperties defaultPropertyId selectedPropertyIds selectedGaPropertyId " +
-            "+accessToken +refreshToken"
+            // caches opcionales (si existen)
+            "overview summary kpis ga4 gaOverview ga4Overview last30d last30Days"
         )
         .lean()
         .catch(() => []);
+
       for (const gd of googleDocs) {
         const uid = gd?.userId || gd?.owner || gd?.user || null;
         if (!uid) continue;
@@ -717,12 +712,15 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
         ],
       })
         .select(
-          "_id userId owner user " +
-            "selectedAccountIds defaultAccountId ad_accounts adAccounts " +
-            "+access_token +token +longlivedToken +accessToken +longLivedToken"
+          "_id userId owner user email name " +
+            "selectedAccountIds defaultAccountId " +
+            "ad_accounts adAccounts " +
+            // caches opcionales (si existen)
+            "overview summary kpis last30d last30Days"
         )
         .lean()
         .catch(() => []);
+
       for (const md of metaDocs) {
         const uid = md?.userId || md?.owner || md?.user || null;
         if (!uid) continue;
@@ -730,78 +728,93 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
       }
     }
 
-    // lastLoginAt best-effort via AnalyticsEvent (última actividad)
-    const lastActivityMap = await getLastActivityMap(userIds, from, to);
+    /**
+     * ✅ Última actividad por usuario (fallback real para lastLoginAt)
+     * Tomamos MAX(ts||createdAt) de AnalyticsEvent.
+     */
+    const lastActivityByUser = new Map();
+    if (userIds.length) {
+      const rows = await AnalyticsEvent.aggregate([
+        { $match: { userId: { $in: userIds } } },
+        {
+          $group: {
+            _id: "$userId",
+            lastAt: { $max: { $ifNull: ["$ts", "$createdAt"] } },
+          },
+        },
+      ]).catch(() => []);
 
-    const devToken = String(process.env.GOOGLE_ADS_DEVELOPER_TOKEN || "").trim() || null;
-
-    const computed = await runWithLimit(users, 5, async (u) => {
-      const uid = String(u._id);
-      const gd = googleByUser.get(uid) || null;
-      const md = metaByUser.get(uid) || null;
-
-      const metaSel = pickMetaSelected(md);
-      const googleSel = pickGoogleAdsSelected(gd);
-      const gaSel = pickGA4Selected(gd);
-
-      const [metaSpend30d, googleSpend30d, ga4Sessions30d] = await Promise.all([
-        fetchMetaSpend30d({ accessToken: metaSel.token, actId: metaSel.id }).catch(() => null),
-        fetchGoogleAdsSpend30d({
-          accessToken: googleSel.accessToken,
-          customerId: googleSel.id,
-          developerToken: devToken,
-          loginCustomerId: googleSel.loginCustomerId,
-        }).catch(() => null),
-        fetchGa4Sessions30d({
-          accessToken: googleSel.accessToken,
-          propertyId: gaSel.id,
-        }).catch(() => null),
-      ]);
-
-      return { uid, metaSel, googleSel, gaSel, metaSpend30d, googleSpend30d, ga4Sessions30d };
-    });
-
-    const computedByUser = new Map();
-    for (const c of computed) {
-      if (!c?.uid) continue;
-      computedByUser.set(String(c.uid), c);
+      for (const r of rows) {
+        if (!r?._id) continue;
+        lastActivityByUser.set(String(r._id), r.lastAt || null);
+      }
     }
 
     const items = users.map((u) => {
       const uid = String(u._id);
-      const c = computedByUser.get(uid) || {};
+      const gd = googleByUser.get(uid) || null;
+      const md = metaByUser.get(uid) || null;
+
       const registeredAt = resolveUserRegisteredAt(u);
-      const lastLoginAt = lastActivityMap.get(uid) || null;
+
+      // last login: user field OR last activity fallback
+      const lastLoginPrimary = resolveUserLastLoginAt(u);
+      const lastActivity = lastActivityByUser.get(uid) || null;
+      const lastLoginAt = lastLoginPrimary || lastActivity || null;
+
+      // selections canonical
+      const metaSel = resolveMetaSelected(md, u);
+      const gadsSel = resolveGoogleAdsSelected(gd, u);
+      const ga4Sel = resolveGA4Selected(gd, u);
+
+      // metrics (best-effort sin APIs)
+      const metaSpend30d =
+        resolveMetaSpend30dFromDoc(md);
+
+      const googleSpend30d =
+        resolveGoogleSpend30dFromDoc(gd);
+
+      const gaSessions30d =
+        resolveGaSessions30dFromDoc(gd);
 
       return {
-        // ✅ lo que el hook pickRow soporta:
         userId: uid,
         name: resolveUserName(u),
         email: resolveUserEmail(u),
 
-        // ✅ IMPORTANT: front tabla usa createdAt
+        // ✅ campos canónicos que el hook ya entiende
         createdAt: toISO(registeredAt),
         lastLoginAt: toISO(lastLoginAt),
 
-        // ✅ Meta (id + name separados)
-        metaAccountId: c?.metaSel?.id || null,
-        metaAccountName: c?.metaSel?.name || null,
-        metaSpend30d: c?.metaSpend30d ?? null,
+        metaAccountId: metaSel.id,
+        metaAccountName: metaSel.name,
+        metaSpend30d: metaSpend30d,
 
-        // ✅ Google Ads
-        googleAdsCustomerId: c?.googleSel?.id || null,
-        googleAdsAccountName: c?.googleSel?.name || null,
-        googleSpend30d: c?.googleSpend30d ?? null,
+        googleAdsCustomerId: gadsSel.id,
+        googleAdsAccountName: gadsSel.name,
+        googleSpend30d: googleSpend30d,
 
-        // ✅ GA4 (id + name separados)
-        ga4PropertyId: c?.gaSel?.id || null,
-        ga4PropertyName: c?.gaSel?.name || null,
-        ga4Sessions30d: c?.ga4Sessions30d ?? null,
+        ga4PropertyId: ga4Sel.id,
+        ga4PropertyName: ga4Sel.name,
+        ga4Sessions30d: gaSessions30d,
 
-        // raw opcional para debug
+        // ✅ compat legacy (por si algún front viejo usa estas llaves)
+        registeredAt: toISO(registeredAt),
+        metaAccountSelected: metaSel.display,
+        googleAdsAccount: gadsSel.display,
+        ga4Account: ga4Sel.display,
+        gaSessions30d: gaSessions30d,
+
+        // debug opcional
         raw: {
-          registeredAt: toISO(registeredAt),
-          lastLoginAt: toISO(lastLoginAt),
+          user: {
+            _id: uid,
+            email: resolveUserEmail(u),
+            name: resolveUserName(u),
+          },
+          meta: md ? { _id: String(md._id) } : null,
+          google: gd ? { _id: String(gd._id) } : null,
+          lastActivityAt: toISO(lastActivity),
         },
       };
     });
@@ -822,7 +835,7 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
 });
 
 /* =========================
- * GET /api/admin/analytics/series?name=&from=&to=&groupBy=day|week|month
+ * GET /api/admin/analytics/series
  * ========================= */
 router.get("/series", requireInternalAdmin, async (req, res) => {
   try {
@@ -906,7 +919,7 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
 });
 
 /* =========================
- * GET /api/admin/analytics/funnel?from=&to=&steps=
+ * GET /api/admin/analytics/funnel
  * ========================= */
 router.get("/funnel", requireInternalAdmin, async (req, res) => {
   try {
