@@ -138,7 +138,6 @@ function requireInternalAdmin(req, res, next) {
       String(req.query.token || "").trim();
 
     const envToken = String(process.env.INTERNAL_ADMIN_TOKEN || "").trim();
-
     const tokenOk = token && envToken && safeTokenEquals(token, envToken);
 
     if (tokenOk) return next();
@@ -171,10 +170,6 @@ function requireInternalAdmin(req, res, next) {
  * - Para response de items: si no viene, calculamos por _id
  */
 function buildDateMatch(from, to) {
-  // IMPORTANT:
-  // - Preferimos ts. Si no existe ts, algunos docs podrían tener createdAt.
-  // - Mongo no puede usar un "fallback" directo con match simple,
-  //   así que hacemos $or: [ {ts:range}, {ts:{$exists:false}, createdAt:range} ]
   if (!from && !to) return null;
 
   const tsRange = {};
@@ -211,7 +206,7 @@ router.get("/health", requireInternalAdmin, async (_req, res) => {
       ts: new Date().toISOString(),
     };
     return res.json({ ok: true, data });
-  } catch (e) {
+  } catch (_e) {
     return res.status(500).json({ ok: false, error: "HEALTH_ERROR" });
   }
 });
@@ -321,7 +316,10 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
     // Búsqueda simple
     if (qtext) {
       const safe = qtext.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      q.$or = [{ name: new RegExp(safe, "i") }, { dedupeKey: new RegExp(safe, "i") }];
+      q.$or = [
+        { name: new RegExp(safe, "i") },
+        { dedupeKey: new RegExp(safe, "i") },
+      ];
     }
 
     const docs = await AnalyticsEvent.find(q)
@@ -415,78 +413,100 @@ function resolveUserEmail(u) {
   return pickFirstTruthy(u?.email, u?.emails?.[0]?.value, u?.profile?.email);
 }
 
-// best-effort: selections (Meta/Google/GA4)
-function resolveMetaSelected(metaDoc) {
-  if (!metaDoc) return null;
-
-  const selected =
+/* ---------------------- */
+/* Selecciones (canónicas) */
+/* ---------------------- */
+function resolveMetaSelected(metaDoc, userDoc) {
+  const selectedId =
     pickFirstTruthy(
-      metaDoc?.selectedAccountId,
-      metaDoc?.selectedAdAccountId,
-      metaDoc?.selectedAdAccountIds?.[0],
       metaDoc?.selectedAccountIds?.[0],
-      metaDoc?.adAccountId,
-      metaDoc?.accountId
+      metaDoc?.defaultAccountId,
+      metaDoc?.ad_accounts?.[0]?.id,
+      metaDoc?.adAccounts?.[0]?.id
     ) || null;
 
-  const selectedName =
+  const fallbackFromUser =
     pickFirstTruthy(
-      metaDoc?.selectedAccountName,
-      metaDoc?.selectedAdAccountName,
-      metaDoc?.accountName,
-      metaDoc?.name
+      userDoc?.selectedMetaAccounts?.[0],
+      userDoc?.preferences?.meta?.auditAccountIds?.[0]
     ) || null;
 
-  if (selected && selectedName) return `${selected} (${selectedName})`;
-  return selectedName || selected || null;
+  const id = selectedId || fallbackFromUser;
+  if (!id) return null;
+
+  const list =
+    (Array.isArray(metaDoc?.ad_accounts) && metaDoc.ad_accounts.length
+      ? metaDoc.ad_accounts
+      : null) ||
+    (Array.isArray(metaDoc?.adAccounts) && metaDoc.adAccounts.length
+      ? metaDoc.adAccounts
+      : null) ||
+    [];
+
+  const found = list.find(
+    (a) => String(a?.id || a?.account_id || "").trim() === String(id).trim()
+  );
+  const name = pickFirstTruthy(found?.name, found?.account_name, metaDoc?.name, metaDoc?.email);
+
+  if (name) return `${id} (${name})`;
+  return String(id);
 }
 
-function resolveGoogleAdsSelected(googleDoc) {
-  if (!googleDoc) return null;
-
-  const selected =
+function resolveGoogleAdsSelected(googleDoc, userDoc) {
+  const selectedId =
     pickFirstTruthy(
-      googleDoc?.selectedCustomerId,
-      googleDoc?.selectedAccountId,
       googleDoc?.selectedCustomerIds?.[0],
-      googleDoc?.selectedAccountIds?.[0],
-      googleDoc?.customerId,
-      googleDoc?.accountId
+      googleDoc?.defaultCustomerId,
+      googleDoc?.ad_accounts?.[0]?.id,
+      googleDoc?.customers?.[0]?.id
     ) || null;
 
-  const selectedName =
+  const fallbackFromUser =
     pickFirstTruthy(
-      googleDoc?.selectedCustomerName,
-      googleDoc?.selectedAccountName,
-      googleDoc?.customerName,
-      googleDoc?.name
+      userDoc?.selectedGoogleAccounts?.[0],
+      userDoc?.preferences?.googleAds?.auditAccountIds?.[0]
     ) || null;
 
-  if (selected && selectedName) return `${selected} (${selectedName})`;
-  return selectedName || selected || null;
+  const id = selectedId || fallbackFromUser;
+  if (!id) return null;
+
+  const adAcc = Array.isArray(googleDoc?.ad_accounts) ? googleDoc.ad_accounts : [];
+  const custs = Array.isArray(googleDoc?.customers) ? googleDoc.customers : [];
+
+  const foundAd = adAcc.find((a) => String(a?.id || "").trim() === String(id).trim());
+  const foundCu = custs.find((c) => String(c?.id || "").trim() === String(id).trim());
+
+  const name = pickFirstTruthy(foundAd?.name, foundCu?.descriptiveName, foundCu?.descriptive_name);
+
+  if (name) return `${id} (${name})`;
+  return String(id);
 }
 
-function resolveGA4Selected(googleDoc) {
-  if (!googleDoc) return null;
-
-  const selected =
+function resolveGA4Selected(googleDoc, userDoc) {
+  const selectedId =
     pickFirstTruthy(
-      googleDoc?.defaultPropertyId,
-      googleDoc?.selectedPropertyId,
       googleDoc?.selectedPropertyIds?.[0],
-      googleDoc?.ga4PropertyId,
-      googleDoc?.propertyId
+      googleDoc?.defaultPropertyId,
+      googleDoc?.gaProperties?.[0]?.propertyId
     ) || null;
 
-  const selectedName =
+  const fallbackFromUser =
     pickFirstTruthy(
-      googleDoc?.defaultPropertyName,
-      googleDoc?.selectedPropertyName,
-      googleDoc?.ga4PropertyName
+      userDoc?.preferences?.googleAnalytics?.auditPropertyIds?.[0],
+      userDoc?.selectedGAProperties?.[0]
     ) || null;
 
-  if (selected && selectedName) return `${selected} (${selectedName})`;
-  return selectedName || selected || null;
+  const id = selectedId || fallbackFromUser;
+  if (!id) return null;
+
+  const props = Array.isArray(googleDoc?.gaProperties) ? googleDoc.gaProperties : [];
+  const found = props.find(
+    (p) => String(p?.propertyId || "").trim() === String(id).trim()
+  );
+  const name = pickFirstTruthy(found?.displayName);
+
+  if (name) return `${id} (${name})`;
+  return String(id);
 }
 
 router.get("/users", requireInternalAdmin, async (req, res) => {
@@ -541,22 +561,30 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
       .sort({ _id: -1 })
       .limit(limit)
       .select(
-        "_id name fullName displayName email emails createdAt updatedAt lastLoginAt lastLogin last_sign_in_at last_login_at profile"
+        "_id name fullName displayName email emails createdAt updatedAt " +
+          "lastLoginAt lastLogin last_sign_in_at last_login_at profile " +
+          "selectedMetaAccounts selectedGoogleAccounts selectedGAProperties preferences"
       )
       .lean();
 
     const nextCursor = users.length ? String(users[users.length - 1]._id) : null;
-
     const userIds = users.map((u) => u._id);
 
     // Batch load related docs (best-effort)
     const googleByUser = new Map();
     if (GoogleAccount && userIds.length) {
       const googleDocs = await GoogleAccount.find({
-        $or: [{ userId: { $in: userIds } }, { owner: { $in: userIds } }, { user: { $in: userIds } }],
+        $or: [
+          { userId: { $in: userIds } },
+          { owner: { $in: userIds } },
+          { user: { $in: userIds } },
+        ],
       })
         .select(
-          "_id userId owner user selectedCustomerId selectedCustomerIds selectedAccountId selectedAccountIds selectedCustomerName selectedAccountName customerId accountId name defaultPropertyId selectedPropertyId selectedPropertyIds defaultPropertyName selectedPropertyName ga4PropertyId ga4PropertyName"
+          "_id userId owner user email " +
+            "selectedCustomerIds defaultCustomerId " +
+            "ad_accounts customers " +
+            "gaProperties defaultPropertyId selectedPropertyIds selectedGaPropertyId"
         )
         .lean()
         .catch(() => []);
@@ -571,10 +599,16 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     const metaByUser = new Map();
     if (MetaAccount && userIds.length) {
       const metaDocs = await MetaAccount.find({
-        $or: [{ userId: { $in: userIds } }, { owner: { $in: userIds } }, { user: { $in: userIds } }],
+        $or: [
+          { userId: { $in: userIds } },
+          { owner: { $in: userIds } },
+          { user: { $in: userIds } },
+        ],
       })
         .select(
-          "_id userId owner user selectedAccountId selectedAccountIds selectedAdAccountId selectedAdAccountIds selectedAccountName selectedAdAccountName accountId adAccountId accountName name"
+          "_id userId owner user email name " +
+            "selectedAccountIds defaultAccountId " +
+            "ad_accounts adAccounts"
         )
         .lean()
         .catch(() => []);
@@ -602,14 +636,14 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
         registeredAt: toISO(registeredAt),
         lastLoginAt: toISO(lastLoginAt),
 
-        metaAccountSelected: resolveMetaSelected(md),
-        metaSpend30d: null, // <- se calcula después
+        metaAccountSelected: resolveMetaSelected(md, u),
+        metaSpend30d: null, // <- siguiente fase (API real / eventos)
 
-        googleAdsAccount: resolveGoogleAdsSelected(gd),
-        googleSpend30d: null, // <- se calcula después
+        googleAdsAccount: resolveGoogleAdsSelected(gd, u),
+        googleSpend30d: null, // <- siguiente fase
 
-        ga4Account: resolveGA4Selected(gd),
-        gaSessions30d: null, // <- se calcula después
+        ga4Account: resolveGA4Selected(gd, u),
+        gaSessions30d: null, // <- siguiente fase
       };
     });
 
@@ -651,9 +685,6 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
     const match = { name };
     if (dateMatch) Object.assign(match, dateMatch);
 
-    // effectiveDate expr: ts || createdAt
-    // Nota: _id-date no es trivial en aggregation sin $function, así que
-    // nos quedamos con ts||createdAt para series. Si falta, caerá fuera.
     const effectiveDateExpr = { $ifNull: ["$ts", "$createdAt"] };
 
     let groupId = null;
@@ -679,7 +710,6 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
 
     const rows = await AnalyticsEvent.aggregate([
       { $match: match },
-      // filtramos docs sin fecha usable para series
       { $match: { $expr: { $ne: [effectiveDateExpr, null] } } },
       {
         $group: {
@@ -771,7 +801,11 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
       for (const s of steps) if (names.includes(s)) counts[s] += 1;
     }
 
-    const funnel = steps.map((s, idx) => ({ step: s, index: idx, users: counts[s] || 0 }));
+    const funnel = steps.map((s, idx) => ({
+      step: s,
+      index: idx,
+      users: counts[s] || 0,
+    }));
 
     for (let i = 1; i < funnel.length; i++) {
       const prev = funnel[i - 1].users || 0;
