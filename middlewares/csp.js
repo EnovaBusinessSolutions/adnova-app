@@ -57,10 +57,6 @@ const turnstileConnect = ['https://challenges.cloudflare.com', 'https://*.cloudf
  * =========================
  * ✅ Tag Assistant (Extensión) - ContentSquare
  * =========================
- * Tag Assistant a veces inyecta un script desde:
- * - https://t.contentsquare.net/uxa/...
- * Si tu CSP lo bloquea, Tag Assistant marca “CSP bloquea scripts de Google”
- * aunque tus tags sí estén funcionando.
  */
 const tagAssistantExtraScript = [
   'https://t.contentsquare.net',
@@ -73,6 +69,32 @@ const tagAssistantExtraConnect = [
 const tagAssistantExtraImg = [
   'https://t.contentsquare.net',
   'https://*.contentsquare.net',
+];
+
+/**
+ * ✅ NEW: Google extra domains (Tag Assistant + GTM/GA4 variants)
+ * - gstatic: recursos usados por Google/Tag Assistant
+ * - ssl.google-analytics.com: variante legacy aún usada por algunas validaciones
+ * - region*.google-analytics.com: endpoints regionales de GA4
+ * - *.analytics.google.com: UI/preview/auxiliar
+ */
+const googleScriptExtra = [
+  'https://www.gstatic.com', // ✅ NEW
+];
+
+const googleConnectExtra = [
+  'https://www.googletagmanager.com',     // ✅ NEW (beacons/preview)
+  'https://www.google-analytics.com',     // ✅ NEW (ya lo tienes pero lo dejamos explícito)
+  'https://ssl.google-analytics.com',     // ✅ NEW
+  'https://region1.google-analytics.com', // ✅ NEW
+  'https://region1.analytics.google.com', // ✅ NEW
+  'https://*.analytics.google.com',       // ✅ NEW
+  'https://*.google-analytics.com',       // ✅ NEW (refuerzo)
+];
+
+const googleImgExtra = [
+  'https://ssl.google-analytics.com',     // ✅ NEW
+  'https://region1.google-analytics.com', // ✅ NEW
 ];
 
 /**
@@ -106,6 +128,8 @@ const publicCSPHelmet = helmet({
         'https://www.googletagmanager.com',
         'https://tagassistant.google.com',
         'https://www.google.com',
+        'https://www.google-analytics.com', // ✅ NEW (ayuda a Tag Assistant)
+        ...googleScriptExtra,               // ✅ NEW
 
         // Google Ads / DoubleClick
         'https://www.googleadservices.com',
@@ -141,6 +165,8 @@ const publicCSPHelmet = helmet({
         'https://www.googletagmanager.com',
         'https://tagassistant.google.com',
         'https://www.google.com',
+        'https://www.google-analytics.com', // ✅ NEW
+        ...googleScriptExtra,               // ✅ NEW
 
         // Google Ads / DoubleClick
         'https://www.googleadservices.com',
@@ -192,6 +218,9 @@ const publicCSPHelmet = helmet({
         'https://analytics.google.com',
         'https://*.google-analytics.com',
         'https://stats.g.doubleclick.net',
+
+        // ✅ NEW (refuerzo / endpoints reales de GA4 + Tag Assistant)
+        ...googleConnectExtra,
 
         // ✅ Tag Assistant / Preview
         'https://www.google.com',
@@ -245,6 +274,9 @@ const publicCSPHelmet = helmet({
         'https://*.doubleclick.net',
         'https://www.googleadservices.com',
         'https://googleads.g.doubleclick.net',
+
+        // ✅ NEW (variantes)
+        ...googleImgExtra,
 
         // ✅ Clarity assets/beacons
         'https://*.clarity.ms',
