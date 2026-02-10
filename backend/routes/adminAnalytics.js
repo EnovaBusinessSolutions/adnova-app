@@ -60,9 +60,27 @@ try {
 /* =========================
  * Helpers
  * ========================= */
-function parseDateMaybe(v) {
+
+// ✅ Detecta YYYY-MM-DD (sin hora)
+function isYmdOnly(v) {
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.trim());
+}
+
+// ✅ from: si viene YYYY-MM-DD => inicio de día UTC
+function parseDateMaybeStart(v) {
   if (!v) return null;
-  const d = new Date(String(v));
+  const s = String(v).trim();
+  if (isYmdOnly(s)) return new Date(`${s}T00:00:00.000Z`);
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// ✅ to: si viene YYYY-MM-DD => fin de día UTC (inclusivo)
+function parseDateMaybeEnd(v) {
+  if (!v) return null;
+  const s = String(v).trim();
+  if (isYmdOnly(s)) return new Date(`${s}T23:59:59.999Z`);
+  const d = new Date(s);
   return isNaN(d.getTime()) ? null : d;
 }
 
@@ -243,11 +261,9 @@ async function getFreshGoogleAccessToken(googleDoc) {
       access_token: accessToken || undefined,
     });
 
-    // Intenta obtener token fresco
     const t = await client.getAccessToken().catch(() => null);
     const token = t?.token || null;
 
-    // Best-effort: persistimos accessToken si el modelo está disponible
     if (token && GoogleAccount && googleDoc?._id) {
       GoogleAccount.updateOne(
         { _id: googleDoc._id },
@@ -348,12 +364,22 @@ async function fetchGa4Sessions30d({ accessToken, propertyId }) {
 }
 
 /* =========================
- * ✅ Legacy (direct) Google Ads spend helper (lo dejamos como fallback)
+ * ✅ Legacy (direct) Google Ads spend helper (fallback)
  * ========================= */
 function resolveGoogleDeveloperToken() {
   return (
     String(process.env.GOOGLE_DEVELOPER_TOKEN || "").trim() ||
     String(process.env.GOOGLE_ADS_DEVELOPER_TOKEN || "").trim() ||
+    ""
+  );
+}
+
+function resolveLoginCustomerId(googleDoc) {
+  return (
+    String(process.env.GOOGLE_LOGIN_CUSTOMER_ID || "").trim() ||
+    String(process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || "").trim() ||
+    String(googleDoc?.loginCustomerId || "").trim() ||
+    String(googleDoc?.managerCustomerId || "").trim() ||
     ""
   );
 }
@@ -366,7 +392,7 @@ async function fetchGoogleAdsSpend30d({
 }) {
   if (!accessToken || !customerId || !developerToken) return null;
 
-  const cid = String(customerId).trim();
+  const cid = String(customerId).replace(/[^\d]/g, "").trim();
   if (!cid) return null;
 
   const url = `https://googleads.googleapis.com/v16/customers/${encodeURIComponent(
@@ -408,7 +434,7 @@ async function fetchGoogleAdsSpend30d({
  * ✅ NEW: Google Ads spend 30D usando el MISMO motor del panel (Ads.fetchInsights)
  * ========================= */
 async function fetchGoogleAdsSpend30dViaInsights({ accessToken, customerId }) {
-  if (!Ads) return null; // si por alguna razón no existe el service
+  if (!Ads) return null;
   if (!accessToken || !customerId) return null;
 
   const cid = String(customerId || "").replace(/[^\d]/g, "").trim();
@@ -451,8 +477,8 @@ router.get("/health", requireInternalAdmin, async (_req, res) => {
  * ========================= */
 router.get("/summary", requireInternalAdmin, async (req, res) => {
   try {
-    let from = parseDateMaybe(req.query.from);
-    let to = parseDateMaybe(req.query.to);
+    let from = parseDateMaybeStart(req.query.from);
+    let to = parseDateMaybeEnd(req.query.to);
     const norm = normalizeRange(from, to);
     from = norm.from;
     to = norm.to;
@@ -523,8 +549,8 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
     const qtext = String(req.query.q || "").trim();
     const userId = String(req.query.userId || "").trim();
 
-    let from = parseDateMaybe(req.query.from);
-    let to = parseDateMaybe(req.query.to);
+    let from = parseDateMaybeStart(req.query.from);
+    let to = parseDateMaybeEnd(req.query.to);
     const norm = normalizeRange(from, to);
     from = norm.from;
     to = norm.to;
@@ -750,8 +776,9 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     const limit = clampInt(req.query.limit, 1, 200, 50);
     const cursor = String(req.query.cursor || "").trim();
 
-    let from = parseDateMaybe(req.query.from);
-    let to = parseDateMaybe(req.query.to);
+    // ✅ FIX: from/to inclusivos si vienen YYYY-MM-DD
+    let from = parseDateMaybeStart(req.query.from);
+    let to = parseDateMaybeEnd(req.query.to);
     const norm = normalizeRange(from, to);
     from = norm.from;
     to = norm.to;
@@ -843,7 +870,7 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     // ✅ lastLoginAt best-effort via AnalyticsEvent (última actividad global)
     const lastActivityMap = await getLastActivityMap(userIds);
 
-    // ✅ token correcto (por si usamos fallback legacy)
+    // ✅ token correcto (Render: GOOGLE_DEVELOPER_TOKEN)
     const devToken = resolveGoogleDeveloperToken() || null;
 
     const computed = await runWithLimit(users, 5, async (u) => {
@@ -855,11 +882,11 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
       const googleSel = pickGoogleAdsSelected(gd);
       const gaSel = pickGA4Selected(gd);
 
-      // ✅ Access token fresco (sirve para Ads y GA4)
       const freshGoogleToken = await getFreshGoogleAccessToken(gd).catch(() => null);
       const tokenForGoogle = freshGoogleToken || googleSel.accessToken || null;
 
-      // ✅ Google Ads Spend 30D: mismo motor del panel (Ads.fetchInsights)
+      const loginCid = resolveLoginCustomerId(gd);
+
       const googleSpendPromise = (async () => {
         // 1) Vía Insights (preferido)
         const viaInsights = await fetchGoogleAdsSpend30dViaInsights({
@@ -869,21 +896,19 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
 
         if (viaInsights != null) return viaInsights;
 
-        // 2) Fallback legacy (direct API) por si algo raro con el service
+        // 2) Fallback legacy (direct API)
         const legacy = await fetchGoogleAdsSpend30d({
           accessToken: tokenForGoogle,
           customerId: googleSel.id,
           developerToken: devToken,
-          loginCustomerId: googleSel.loginCustomerId,
+          loginCustomerId: loginCid || googleSel.loginCustomerId,
         }).catch(() => null);
 
         return legacy;
       })();
 
       const [metaSpend30d, googleSpend30d, ga4Sessions30d] = await Promise.all([
-        fetchMetaSpend30d({ accessToken: metaSel.token, actId: metaSel.id }).catch(
-          () => null
-        ),
+        fetchMetaSpend30d({ accessToken: metaSel.token, actId: metaSel.id }).catch(() => null),
         googleSpendPromise,
         fetchGa4Sessions30d({
           accessToken: tokenForGoogle,
@@ -933,11 +958,6 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
         ga4PropertyId: c?.gaSel?.id || null,
         ga4PropertyName: c?.gaSel?.name || null,
         ga4Sessions30d: c?.ga4Sessions30d ?? null,
-
-        raw: {
-          registeredAt: toISO(registeredAt),
-          lastLoginAt: toISO(lastLoginAt),
-        },
       };
     });
 
@@ -964,8 +984,8 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
     const name = String(req.query.name || "").trim();
     const groupBy = String(req.query.groupBy || "day").trim().toLowerCase();
 
-    let from = parseDateMaybe(req.query.from);
-    let to = parseDateMaybe(req.query.to);
+    let from = parseDateMaybeStart(req.query.from);
+    let to = parseDateMaybeEnd(req.query.to);
     const norm = normalizeRange(from, to);
     from = norm.from;
     to = norm.to;
@@ -1045,8 +1065,8 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
  * ========================= */
 router.get("/funnel", requireInternalAdmin, async (req, res) => {
   try {
-    let from = parseDateMaybe(req.query.from);
-    let to = parseDateMaybe(req.query.to);
+    let from = parseDateMaybeStart(req.query.from);
+    let to = parseDateMaybeEnd(req.query.to);
     const norm = normalizeRange(from, to);
     from = norm.from;
     to = norm.to;
