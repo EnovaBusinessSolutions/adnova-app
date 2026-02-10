@@ -48,6 +48,16 @@ try {
 }
 
 /* =========================
+ * ✅ Google Ads service (MISMO motor que el panel)
+ * ========================= */
+let Ads = null;
+try {
+  Ads = require("../services/googleAdsService");
+} catch {
+  Ads = null;
+}
+
+/* =========================
  * Helpers
  * ========================= */
 function parseDateMaybe(v) {
@@ -337,6 +347,17 @@ async function fetchGa4Sessions30d({ accessToken, propertyId }) {
   return Number.isFinite(n) ? n : null;
 }
 
+/* =========================
+ * ✅ Legacy (direct) Google Ads spend helper (lo dejamos como fallback)
+ * ========================= */
+function resolveGoogleDeveloperToken() {
+  return (
+    String(process.env.GOOGLE_DEVELOPER_TOKEN || "").trim() ||
+    String(process.env.GOOGLE_ADS_DEVELOPER_TOKEN || "").trim() ||
+    ""
+  );
+}
+
 async function fetchGoogleAdsSpend30d({
   accessToken,
   customerId,
@@ -348,7 +369,6 @@ async function fetchGoogleAdsSpend30d({
   const cid = String(customerId).trim();
   if (!cid) return null;
 
-  // ✅ Usa v16 como tenías (si luego quieres v18 lo hacemos)
   const url = `https://googleads.googleapis.com/v16/customers/${encodeURIComponent(
     cid
   )}/googleAds:search`;
@@ -382,6 +402,30 @@ async function fetchGoogleAdsSpend30d({
 
   const spend = sumMicros / 1_000_000;
   return Number.isFinite(spend) ? spend : null;
+}
+
+/* =========================
+ * ✅ NEW: Google Ads spend 30D usando el MISMO motor del panel (Ads.fetchInsights)
+ * ========================= */
+async function fetchGoogleAdsSpend30dViaInsights({ accessToken, customerId }) {
+  if (!Ads) return null; // si por alguna razón no existe el service
+  if (!accessToken || !customerId) return null;
+
+  const cid = String(customerId || "").replace(/[^\d]/g, "").trim();
+  if (!cid) return null;
+
+  const payload = await Ads.fetchInsights({
+    accessToken,
+    customerId: cid,
+    datePreset: "last_30d",
+    includeToday: false,
+    objective: "ventas",
+    range: null,
+    compareMode: null,
+  });
+
+  const cost = payload?.kpis?.cost;
+  return typeof cost === "number" && Number.isFinite(cost) ? cost : null;
 }
 
 /* =========================
@@ -575,10 +619,8 @@ function pickMetaSelected(metaDoc) {
   if (!metaDoc) return { id: null, name: null, token: null };
 
   const id =
-    pickFirstTruthy(
-      metaDoc?.selectedAccountIds?.[0],
-      metaDoc?.defaultAccountId
-    ) || null;
+    pickFirstTruthy(metaDoc?.selectedAccountIds?.[0], metaDoc?.defaultAccountId) ||
+    null;
 
   const list = Array.isArray(metaDoc?.ad_accounts)
     ? metaDoc.ad_accounts
@@ -699,7 +741,9 @@ async function runWithLimit(list, limit, worker) {
 router.get("/users", requireInternalAdmin, async (req, res) => {
   try {
     if (!User) {
-      return res.status(500).json({ ok: false, error: "USER_MODEL_NOT_AVAILABLE" });
+      return res
+        .status(500)
+        .json({ ok: false, error: "USER_MODEL_NOT_AVAILABLE" });
     }
 
     const qtext = String(req.query.q || "").trim();
@@ -799,7 +843,8 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     // ✅ lastLoginAt best-effort via AnalyticsEvent (última actividad global)
     const lastActivityMap = await getLastActivityMap(userIds);
 
-    const devToken = String(process.env.GOOGLE_ADS_DEVELOPER_TOKEN || "").trim() || null;
+    // ✅ token correcto (por si usamos fallback legacy)
+    const devToken = resolveGoogleDeveloperToken() || null;
 
     const computed = await runWithLimit(users, 5, async (u) => {
       const uid = String(u._id);
@@ -812,22 +857,49 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
 
       // ✅ Access token fresco (sirve para Ads y GA4)
       const freshGoogleToken = await getFreshGoogleAccessToken(gd).catch(() => null);
+      const tokenForGoogle = freshGoogleToken || googleSel.accessToken || null;
 
-      const [metaSpend30d, googleSpend30d, ga4Sessions30d] = await Promise.all([
-        fetchMetaSpend30d({ accessToken: metaSel.token, actId: metaSel.id }).catch(() => null),
-        fetchGoogleAdsSpend30d({
-          accessToken: freshGoogleToken || googleSel.accessToken,
+      // ✅ Google Ads Spend 30D: mismo motor del panel (Ads.fetchInsights)
+      const googleSpendPromise = (async () => {
+        // 1) Vía Insights (preferido)
+        const viaInsights = await fetchGoogleAdsSpend30dViaInsights({
+          accessToken: tokenForGoogle,
+          customerId: googleSel.id,
+        }).catch(() => null);
+
+        if (viaInsights != null) return viaInsights;
+
+        // 2) Fallback legacy (direct API) por si algo raro con el service
+        const legacy = await fetchGoogleAdsSpend30d({
+          accessToken: tokenForGoogle,
           customerId: googleSel.id,
           developerToken: devToken,
           loginCustomerId: googleSel.loginCustomerId,
-        }).catch(() => null),
+        }).catch(() => null);
+
+        return legacy;
+      })();
+
+      const [metaSpend30d, googleSpend30d, ga4Sessions30d] = await Promise.all([
+        fetchMetaSpend30d({ accessToken: metaSel.token, actId: metaSel.id }).catch(
+          () => null
+        ),
+        googleSpendPromise,
         fetchGa4Sessions30d({
-          accessToken: freshGoogleToken || googleSel.accessToken,
+          accessToken: tokenForGoogle,
           propertyId: gaSel.id,
         }).catch(() => null),
       ]);
 
-      return { uid, metaSel, googleSel, gaSel, metaSpend30d, googleSpend30d, ga4Sessions30d };
+      return {
+        uid,
+        metaSel,
+        googleSel,
+        gaSel,
+        metaSpend30d,
+        googleSpend30d,
+        ga4Sessions30d,
+      };
     });
 
     const computedByUser = new Map();
