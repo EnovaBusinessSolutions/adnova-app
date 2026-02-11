@@ -59,6 +59,101 @@ try {
 
 const generateAudit = require('./llm/generateAudit');
 
+/* =========================================================
+ * ✅ ANALYTICS E2E (audit_requested / audit_completed)
+ * ========================================================= */
+
+let trackEvent = null;
+try {
+  ({ trackEvent } = require('../services/trackEvent'));
+} catch {
+  trackEvent = null;
+}
+
+let AnalyticsEvent = null;
+try {
+  AnalyticsEvent = require('../models/AnalyticsEvent');
+} catch (e) {
+  try {
+    const { Schema, model } = mongoose;
+    AnalyticsEvent =
+      mongoose.models.AnalyticsEvent ||
+      model('AnalyticsEvent', new Schema({}, { strict: false, collection: 'analyticsevents' }));
+  } catch {
+    AnalyticsEvent = null;
+  }
+}
+
+function toObjectIdMaybe(v) {
+  if (!v) return null;
+  try {
+    return new mongoose.Types.ObjectId(String(v));
+  } catch {
+    return null;
+  }
+}
+
+function newRunId() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+async function saveAnalyticsEventFallback({ name, userId, dedupeKey, props, source }) {
+  try {
+    if (!AnalyticsEvent || typeof AnalyticsEvent.findOneAndUpdate !== 'function') return null;
+
+    const uidObj = toObjectIdMaybe(userId);
+    const now = new Date();
+
+    const doc = {
+      name: String(name || '').trim(),
+      userId: uidObj || null,     // ✅ igual a tu schema
+      ts: now,
+      source: String(source || 'server'),
+      props: props && typeof props === 'object' ? props : {},
+      dedupeKey: dedupeKey ? String(dedupeKey) : undefined,
+    };
+
+    if (doc.dedupeKey) {
+      const created = await AnalyticsEvent.findOneAndUpdate(
+        { dedupeKey: doc.dedupeKey, userId: doc.userId, name: doc.name },
+        { $setOnInsert: doc },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+
+      return created?.toObject?.() || created || null;
+    }
+
+    const created = await AnalyticsEvent.create(doc);
+    return created?.toObject?.() || created || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ✅ FIX: si trackEvent existe pero "skipped/ignored" o no guardó, hacemos fallback a Mongo
+ */
+async function emitEventSafe({ name, userId, dedupeKey, props, source }) {
+  let result = null;
+
+  try {
+    if (typeof trackEvent === 'function') {
+      result = await trackEvent({ name, userId, dedupeKey, props, source });
+    }
+  } catch {
+    result = null;
+  }
+
+  const ok = !!(result && (result.ok === true || result.saved === true));
+  const skipped = !!(result && (result.skipped === true || result.ignored === true));
+
+  if (!ok || skipped) {
+    return await saveAnalyticsEventFallback({ name, userId, dedupeKey, props, source });
+  }
+
+  return result;
+}
+
 /* ---------- normalizadores ---------- */
 const normMeta   = (s='') => String(s).trim().replace(/^act_/, '');
 const normGoogle = (s='') => String(s).trim().replace(/^customers\//,'').replace(/-/g,'').replace(/[^\d]/g,'');
@@ -256,7 +351,6 @@ function filterGA4Snapshot(snapshot, selectedPropertyId) {
   if (Array.isArray(out.byProperty)) {
     out.byProperty = out.byProperty.filter(matchPropId);
 
-    // ✅ MEJORA: si queda 1 property, fijamos aggregate a esa property
     if (out.byProperty.length === 1) {
       const one = out.byProperty[0];
       const users       = Number(one?.users ?? one?.kpis?.users ?? 0);
@@ -338,7 +432,6 @@ async function detectConnections(userId) {
       selectedIds: Array.isArray(google?.selectedCustomerIds) ? google.selectedCustomerIds.map(normGoogle) : [],
       defaultId: google?.defaultCustomerId ? normGoogle(google.defaultCustomerId) : null,
 
-      // 👇 GA4 selections
       selectedPropertyIds: Array.isArray(google?.selectedPropertyIds) ? google.selectedPropertyIds.map(normGA4) : [],
       defaultPropertyId: google?.defaultPropertyId ? normGA4(google.defaultPropertyId) : null,
     },
@@ -501,12 +594,12 @@ async function markAuditEmailFail({ auditId, to, error }) {
 
 /**
  * ✅ Envía "Auditoría lista" SOLO cuando:
- * - NO es onboarding (porque onboarding manda 1 correo global al 100% en auditRunner)
+ * - NO es onboarding
  * - Hay SMTP
  * - No se ha enviado antes para esa auditoría
  */
 async function maybeSendAuditReadyEmail({ userId, auditId, source }) {
-  if (isOnboarding(source)) return; // ✅ CLAVE: evita 3 correos en onboarding
+  if (isOnboarding(source)) return;
   if (!HAS_SMTP) return;
   if (typeof sendAuditReadyEmail !== 'function') return;
 
@@ -517,7 +610,6 @@ async function maybeSendAuditReadyEmail({ userId, auditId, source }) {
   const to = String(user?.email || '').trim().toLowerCase();
   if (!to) return;
 
-  // si ya fue notificada, no reenviar (por si hay reintentos)
   const fresh = await Audit.findById(auditId)
     .select('notifications.auditReadyEmailSentAt')
     .lean();
@@ -556,6 +648,19 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
   let t = String(type || '').toLowerCase();
   if (t === 'ga') t = 'ga4';
 
+  // ✅ ID único por ejecución (para dedupe de requested/completed)
+  const runId = newRunId();
+  const startedAt = Date.now();
+
+  // ✅ analytics: requested (SIEMPRE, aunque falle después)
+  await emitEventSafe({
+    name: 'audit_requested',
+    userId,
+    dedupeKey: `audit_requested:${String(userId)}:${runId}:${t}:${String(source || 'manual')}`,
+    props: { runId, type: t, source, where: 'auditJob' },
+    source: 'server',
+  });
+
   try {
     const user = await User.findById(userId)
       .select('selectedGoogleAccounts selectedMetaAccounts selectedGAProperties plan planSlug')
@@ -575,9 +680,7 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     if (t === 'ga4'     && !connections.google.connected)  throw new Error('SOURCE_NOT_CONNECTED_GA4');
     if (t === 'shopify' && !connections.shopify.connected) throw new Error('SOURCE_NOT_CONNECTED_SHOPIFY');
 
-    // Selección efectiva (1) — PRIORIDAD:
-    // 1) conector (MetaAccount/GoogleAccount)
-    // 2) User legacy/compat (selectedMetaAccounts/selectedGoogleAccounts/selectedGAProperties)
+    // Selección efectiva (1)
     const selMetaAll = (
       connections.meta.selectedIds.length
         ? connections.meta.selectedIds
@@ -596,7 +699,6 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
         : (Array.isArray(user?.selectedGAProperties) ? user.selectedGAProperties : [])
     ).map(normGA4).filter(Boolean);
 
-    // aplicamos el límite de UX: 1 por tipo
     const selMeta   = selMetaAll.slice(0, MAX_SELECT_PER_TYPE);
     const selGoogle = selGoogleAll.slice(0, MAX_SELECT_PER_TYPE);
     const selGA4    = selGA4All.slice(0, MAX_SELECT_PER_TYPE);
@@ -641,6 +743,16 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
             inputSnapshot: raw,
             version: 'audits@1.3.0-selection-1',
           });
+
+          // ✅ analytics: completed (ok=true pero blocked por selección)
+          await emitEventSafe({
+            name: 'audit_completed',
+            userId,
+            dedupeKey: `audit_completed:${String(userId)}:${runId}:${t}:${String(source || 'manual')}`,
+            props: { runId, type: t, source, ok: true, blocked: 'SELECTION_REQUIRED', durationMs: Date.now() - startedAt },
+            source: 'server',
+          });
+
           return true;
         }
       }
@@ -678,6 +790,15 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
             inputSnapshot: raw,
             version: 'audits@1.3.0-mismatch',
           });
+
+          await emitEventSafe({
+            name: 'audit_completed',
+            userId,
+            dedupeKey: `audit_completed:${String(userId)}:${runId}:${t}:${String(source || 'manual')}`,
+            props: { runId, type: t, source, ok: true, blocked: 'SELECTION_MISMATCH', durationMs: Date.now() - startedAt },
+            source: 'server',
+          });
+
           return true;
         }
       } else {
@@ -725,6 +846,15 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
             inputSnapshot: raw,
             version: 'audits@1.3.0-selection-1',
           });
+
+          await emitEventSafe({
+            name: 'audit_completed',
+            userId,
+            dedupeKey: `audit_completed:${String(userId)}:${runId}:${t}:${String(source || 'manual')}`,
+            props: { runId, type: t, source, ok: true, blocked: 'SELECTION_REQUIRED', durationMs: Date.now() - startedAt },
+            source: 'server',
+          });
+
           return true;
         }
       }
@@ -762,6 +892,15 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
             inputSnapshot: raw,
             version: 'audits@1.3.0-mismatch',
           });
+
+          await emitEventSafe({
+            name: 'audit_completed',
+            userId,
+            dedupeKey: `audit_completed:${String(userId)}:${runId}:${t}:${String(source || 'manual')}`,
+            props: { runId, type: t, source, ok: true, blocked: 'SELECTION_MISMATCH', durationMs: Date.now() - startedAt },
+            source: 'server',
+          });
+
           return true;
         }
       } else {
@@ -830,6 +969,15 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
             inputSnapshot: raw,
             version: 'audits@1.3.0-selection-1',
           });
+
+          await emitEventSafe({
+            name: 'audit_completed',
+            userId,
+            dedupeKey: `audit_completed:${String(userId)}:${runId}:${t}:${String(source || 'manual')}`,
+            props: { runId, type: t, source, ok: true, blocked: 'SELECTION_REQUIRED', durationMs: Date.now() - startedAt },
+            source: 'server',
+          });
+
           return true;
         }
       }
@@ -873,6 +1021,15 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
               inputSnapshot: raw,
               version: 'audits@1.3.0-mismatch',
             });
+
+            await emitEventSafe({
+              name: 'audit_completed',
+              userId,
+              dedupeKey: `audit_completed:${String(userId)}:${runId}:${t}:${String(source || 'manual')}`,
+              props: { runId, type: t, source, ok: true, blocked: 'SELECTION_MISMATCH', durationMs: Date.now() - startedAt },
+              source: 'server',
+            });
+
             return true;
           }
         }
@@ -897,10 +1054,8 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
     const previousSnapshot = previousAudit?.inputSnapshot || null;
     const trend = buildTrend(t, snapshot, previousSnapshot);
 
-    // ¿Tenemos datos reales tras el filtrado?
     const hasAdsData = Array.isArray(snapshot.byCampaign) && snapshot.byCampaign.length > 0;
 
-    // ✅ MEJORA: GA4 “hay data” considera también daily/sourceMedium/topEvents
     const hasGAData =
       (Array.isArray(snapshot.channels)   && snapshot.channels.length   > 0) ||
       (Array.isArray(snapshot.byProperty) && snapshot.byProperty.length > 0) ||
@@ -920,7 +1075,6 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
 
     let auditJson = { summary: '', issues: [] };
 
-    // ✅ Solo si hay data real => generamos con IA
     if (!noData) {
       auditJson = await generateAudit({
         type: t,
@@ -966,15 +1120,29 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       trendSummary: trend || null,
     };
 
-    // ✅ Guardar auditoría
     const created = await Audit.create(auditDoc);
 
-    // ✅ EMAIL:
-    // - NO se envía si noData
-    // - NO se envía si source=onboarding (porque onboarding manda 1 solo email global al 100% en auditRunner)
     if (!noData && created?._id) {
       await maybeSendAuditReadyEmail({ userId, auditId: created._id, source });
     }
+
+    // ✅ analytics: completed (ok=true)
+    await emitEventSafe({
+      name: 'audit_completed',
+      userId,
+      dedupeKey: `audit_completed:${String(userId)}:${runId}:${t}:${String(source || 'manual')}`,
+      props: {
+        runId,
+        type: t,
+        source,
+        ok: true,
+        noData: !!noData,
+        durationMs: Date.now() - startedAt,
+        auditId: created?._id ? String(created._id) : null,
+        where: 'auditJob',
+      },
+      source: 'server',
+    });
 
     return true;
 
@@ -999,6 +1167,24 @@ async function runAuditFor({ userId, type, source = 'manual' }) {
       inputSnapshot: {},
       version: 'audits@1.3.0-error',
     });
+
+    // ✅ analytics: completed (ok=false)
+    await emitEventSafe({
+      name: 'audit_completed',
+      userId,
+      dedupeKey: `audit_completed:${String(userId)}:${runId}:${t}:${String(source || 'manual')}`,
+      props: {
+        runId,
+        type: t,
+        source,
+        ok: false,
+        durationMs: Date.now() - startedAt,
+        error: String(e?.message || e || ''),
+        where: 'auditJob',
+      },
+      source: 'server',
+    });
+
     return false;
   }
 }
