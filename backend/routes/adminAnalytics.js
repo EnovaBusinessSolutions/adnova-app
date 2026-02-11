@@ -1102,10 +1102,7 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
 
 /* =========================
  * GET /api/admin/analytics/funnel?from=&to=&steps=
- * ✅ FIX E2E:
- *  - Primer paso ya NO sale “—” (Conv=100%, Drop=0)
- *  - Default vuelve a incluir pixel_audit_completed
- *  - Compat: signed_up -> user_signed_up
+ * ✅ FIX REAL: soporta grupos/aliases para auditorías IA.
  * ========================= */
 router.get("/funnel", requireInternalAdmin, async (req, res) => {
   try {
@@ -1115,14 +1112,37 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
     from = norm.from;
     to = norm.to;
 
-    const STEP_ALIASES = {
-      signed_up: "user_signed_up",
-      signup: "user_signed_up",
+    // ✅ Cada stepKey puede mapear a varios event names reales en DB
+    const STEP_GROUPS = {
+      user_signed_up: ["user_signed_up", "signed_up", "signup", "user_created"],
+
+      google_connected: ["google_connected"],
+      meta_connected: ["meta_connected"],
+
+      // ✅ Auditoría IA (aquí está el fix)
+      audit_requested: [
+        "audit_requested",
+        "audit_started",
+        "audit_run_requested",
+        "first_audit_started",
+        "generate_audit_clicked",
+        "ai_audit_requested",
+      ],
+      audit_completed: [
+        "audit_completed",
+        "audit_done",
+        "audit_ready",
+        "audit_generated",
+        "ai_audit_completed",
+        "audit_created",
+      ],
+
+      pixel_audit_completed: [
+        "pixel_audit_completed",
+        "pixel_auditor_completed",
+        "pixel_audit_done",
+      ],
     };
-    function normalizeStepName(s) {
-      const k = String(s || "").trim();
-      return STEP_ALIASES[k] || k;
-    }
 
     const stepsRaw = String(req.query.steps || "").trim();
 
@@ -1135,20 +1155,23 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
       "pixel_audit_completed",
     ];
 
-    const steps = stepsRaw
-      ? stepsRaw
-          .split(",")
-          .map((s) => normalizeStepName(s))
-          .filter(Boolean)
+    const stepKeys = stepsRaw
+      ? stepsRaw.split(",").map((s) => String(s || "").trim()).filter(Boolean)
       : DEFAULT_STEPS;
 
+    const expandedNamesByStep = new Map(); // stepKey -> [names]
+    for (const k of stepKeys) expandedNamesByStep.set(k, STEP_GROUPS[k] || [k]);
+
+    const allNames = Array.from(expandedNamesByStep.values()).flat();
+
     const dateMatch = buildDateMatch(from, to);
-    const match = { name: { $in: steps } };
+    const match = { name: { $in: allNames } };
     if (dateMatch) Object.assign(match, dateMatch);
 
     const effectiveDateExpr = { $ifNull: ["$ts", "$createdAt"] };
 
-    const firsts = await AnalyticsEvent.aggregate([
+    // users únicos por evento (primera ocurrencia)
+    const rows = await AnalyticsEvent.aggregate([
       { $match: match },
       { $match: { $expr: { $ne: [effectiveDateExpr, null] } } },
       {
@@ -1165,30 +1188,33 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
       },
     ]);
 
-    const counts = Object.fromEntries(steps.map((s) => [s, 0]));
-    for (const u of firsts) {
+    const counts = Object.fromEntries(stepKeys.map((k) => [k, 0]));
+
+    for (const u of rows) {
       const names = Array.isArray(u.names) ? u.names : [];
-      for (const s of steps) if (names.includes(s)) counts[s] += 1;
+      for (const stepKey of stepKeys) {
+        const bucket = expandedNamesByStep.get(stepKey) || [stepKey];
+        if (bucket.some((nm) => names.includes(nm))) counts[stepKey] += 1;
+      }
     }
 
-    const funnel = steps.map((s, idx) => ({
-      step: s,
+    const funnel = stepKeys.map((k, idx) => ({
+      step: k,
       index: idx,
-      users: counts[s] || 0,
+      users: counts[k] || 0,
     }));
 
-    for (let i = 1; i < funnel.length; i++) {
+    // ✅ conv/drop para todos; paso 1 ya no muestra “—”
+    for (let i = 0; i < funnel.length; i++) {
+      if (i === 0) {
+        funnel[i].dropFromPrev = 0;
+        funnel[i].conversionFromPrev = 1;
+        continue;
+      }
       const prev = funnel[i - 1].users || 0;
       const curr = funnel[i].users || 0;
       funnel[i].dropFromPrev = Math.max(0, prev - curr);
-      funnel[i].conversionFromPrev =
-        prev > 0 ? Number((curr / prev).toFixed(4)) : 0;
-    }
-
-    // ✅ Paso 1 con métricas reales (para que NO salga “—”)
-    if (funnel.length) {
-      funnel[0].dropFromPrev = 0;
-      funnel[0].conversionFromPrev = 1;
+      funnel[i].conversionFromPrev = prev > 0 ? Number((curr / prev).toFixed(4)) : 0;
     }
 
     return res.json({
@@ -1197,8 +1223,8 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
         from: from ? from.toISOString() : null,
         to: to ? to.toISOString() : null,
         swapped: norm.swapped || false,
-        steps,
-        totalUsersInWindow: firsts.length,
+        steps: stepKeys,
+        totalUsersInWindow: rows.length,
         funnel,
       },
     });
@@ -1207,5 +1233,6 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
     return res.status(500).json({ ok: false, error: "FUNNEL_ERROR" });
   }
 });
+
 
 module.exports = router;

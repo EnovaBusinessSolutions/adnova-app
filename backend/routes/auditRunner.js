@@ -1,3 +1,4 @@
+// backend/routes/auditRunner.js
 'use strict';
 
 const express = require('express');
@@ -78,6 +79,16 @@ function requireAuth(req, res, next) {
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
+/* ============== helpers base ============== */
+function toObjectIdMaybe(v) {
+  if (!v) return null;
+  try {
+    return new mongoose.Types.ObjectId(String(v));
+  } catch {
+    return null;
+  }
+}
+
 /* ============== analytics helpers (best-effort + fallback) ============== */
 
 // fallback directo a Mongo con upsert por dedupeKey
@@ -85,13 +96,19 @@ async function saveAnalyticsEventFallback({ name, userId, dedupeKey, props }) {
   try {
     if (!AnalyticsEvent || typeof AnalyticsEvent.findOneAndUpdate !== 'function') return null;
 
-    const uid = userId ? String(userId) : null;
+    const uidStr = userId ? String(userId) : null;
+    const uidObj = toObjectIdMaybe(uidStr);
     const now = new Date();
 
     const doc = {
       name: String(name || '').trim(),
-      userId: uid, // mantenemos string para queries simples
-      uid: uid,    // compat por si algún código usa uid
+
+      // ✅ IMPORTANTE:
+      // guardamos userId como ObjectId si se puede (consistencia en agregaciones),
+      // y también guardamos uid (string) para compat/queries simples
+      userId: uidObj || uidStr,
+      uid: uidStr,
+
       props: props && typeof props === 'object' ? props : {},
       meta: props && typeof props === 'object' ? props : {},
       dedupeKey: dedupeKey ? String(dedupeKey) : null,
@@ -99,13 +116,15 @@ async function saveAnalyticsEventFallback({ name, userId, dedupeKey, props }) {
       createdAt: now,
     };
 
-    // Si hay dedupeKey, hacemos upsert por dedupeKey+userId+name para idempotencia
+    // Si hay dedupeKey, hacemos upsert por dedupeKey+uid+name (idempotencia sin depender del tipo de userId)
     if (doc.dedupeKey) {
-      return await AnalyticsEvent.findOneAndUpdate(
-        { dedupeKey: doc.dedupeKey, userId: doc.userId, name: doc.name },
-        { $setOnInsert: doc },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-      ).lean?.() || null;
+      const created =
+        (await AnalyticsEvent.findOneAndUpdate(
+          { dedupeKey: doc.dedupeKey, uid: doc.uid, name: doc.name },
+          { $setOnInsert: doc },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        ).lean?.()) || null;
+      return created;
     }
 
     // sin dedupeKey: insert simple
@@ -422,7 +441,6 @@ async function markAuditEmailNotified({ userId, types, source, startedAt, jobId 
       { strict: false } // ✅ guarda aunque el schema aún no defina notifications
     );
   } catch (e) {
-    // no tronamos el flujo si esto falla
     console.warn('[auditRunner] markAuditEmailNotified failed:', e?.message || e);
   }
 }
@@ -580,6 +598,11 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
       auditReadyEmailSent: false,
       auditReadyEmailSentAt: null,
       auditReadyEmailError: null,
+
+      // ✅ NUEVO: para activar el “bloque 5” EXACTO cuando ya está lista (persistida)
+      auditReadyEventSent: false,
+      auditReadyEventSentAt: null,
+      auditReadyEventError: null,
     };
 
     for (const t of types) {
@@ -655,6 +678,7 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
             ok,
             durationMs,
             error: errMsg,
+            stage: 'job_finished',
           },
         });
       }
@@ -715,6 +739,34 @@ router.get('/progress', requireAuth, async (req, res) => {
     if (allPersisted) {
       s.finishedAt = Date.now();
       latestAudits = await fetchLatestAuditsByTypes(s.userId, Object.keys(items));
+
+      // ✅✅✅ EVENTO “LISTA” EXACTO CUANDO EL UI DEBERÍA DECIR “AUDITORÍA GENERADA”
+      // Evita duplicados aunque el front llame /progress muchas veces
+      if (!s.auditReadyEventSent) {
+        try {
+          await emitEventSafe({
+            name: 'audit_completed',
+            userId: s.userId,
+            dedupeKey: `audit_completed:ready:${String(s.userId)}:${jobId}`,
+            props: {
+              mode: 'job',
+              jobId,
+              source: s.source || null,
+              types: Object.keys(items),
+              stage: 'ready', // 👈 ESTE ES EL IMPORTANTE PARA TU BLOQUE 5
+              percent: 100,
+            },
+          });
+
+          s.auditReadyEventSent = true;
+          s.auditReadyEventSentAt = Date.now();
+          s.auditReadyEventError = null;
+        } catch (e) {
+          s.auditReadyEventSent = true; // evita loops
+          s.auditReadyEventSentAt = Date.now();
+          s.auditReadyEventError = e?.message || String(e);
+        }
+      }
 
       // ✅✅✅ AQUÍ ES DONDE MANDAMOS 1 SOLO CORREO (SOLO ONBOARDING)
       const isOnboarding = String(s.source || '').toLowerCase() === 'onboarding';
@@ -786,6 +838,13 @@ router.get('/progress', requireAuth, async (req, res) => {
       auditReadyEmailSent: !!s.auditReadyEmailSent,
       auditReadyEmailSentAt: s.auditReadyEmailSentAt || null,
       auditReadyEmailError: s.auditReadyEmailError || null,
+    },
+
+    // ✅ útil para QA/debug de BLOQUE 5
+    analytics: {
+      auditReadyEventSent: !!s.auditReadyEventSent,
+      auditReadyEventSentAt: s.auditReadyEventSentAt || null,
+      auditReadyEventError: s.auditReadyEventError || null,
     },
   });
 });
