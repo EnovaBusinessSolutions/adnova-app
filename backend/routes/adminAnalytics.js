@@ -121,7 +121,9 @@ function getEmailFromReq(req) {
 }
 
 function getRoleFromReq(req) {
-  return String(req?.user?.role || req?.user?.kind || req?.user?.accountType || "")
+  return String(
+    req?.user?.role || req?.user?.kind || req?.user?.accountType || ""
+  )
     .trim()
     .toLowerCase();
 }
@@ -257,7 +259,8 @@ function oauthClient() {
 
 // Devuelve access token fresco usando refresh token (sin romper si falla).
 async function getFreshGoogleAccessToken(googleDoc) {
-  const refreshToken = googleDoc?.refreshToken || googleDoc?.refresh_token || null;
+  const refreshToken =
+    googleDoc?.refreshToken || googleDoc?.refresh_token || null;
   const accessToken = googleDoc?.accessToken || googleDoc?.access_token || null;
 
   if (!refreshToken) return accessToken || null;
@@ -582,7 +585,10 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
 
     if (qtext) {
       const safe = qtext.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      q.$or = [{ name: new RegExp(safe, "i") }, { dedupeKey: new RegExp(safe, "i") }];
+      q.$or = [
+        { name: new RegExp(safe, "i") },
+        { dedupeKey: new RegExp(safe, "i") },
+      ];
     }
 
     const docs = await AnalyticsEvent.find(q)
@@ -649,7 +655,11 @@ function resolveUserEmail(u) {
 function pickMetaSelected(metaDoc) {
   if (!metaDoc) return { id: null, name: null, token: null };
 
-  const id = pickFirstTruthy(metaDoc?.selectedAccountIds?.[0], metaDoc?.defaultAccountId) || null;
+  const id =
+    pickFirstTruthy(
+      metaDoc?.selectedAccountIds?.[0],
+      metaDoc?.defaultAccountId
+    ) || null;
 
   const list = Array.isArray(metaDoc?.ad_accounts)
     ? metaDoc.ad_accounts
@@ -657,7 +667,9 @@ function pickMetaSelected(metaDoc) {
     ? metaDoc.adAccounts
     : [];
 
-  const hit = id ? list.find((a) => String(a?.id || "").trim() === String(id).trim()) : null;
+  const hit = id
+    ? list.find((a) => String(a?.id || "").trim() === String(id).trim())
+    : null;
 
   const name = pickFirstTruthy(hit?.name, hit?.account_name) || null;
 
@@ -682,17 +694,28 @@ function pickGoogleAdsSelected(googleDoc) {
       refreshToken: null,
     };
 
-  const id = pickFirstTruthy(googleDoc?.selectedCustomerIds?.[0], googleDoc?.defaultCustomerId) || null;
+  const id =
+    pickFirstTruthy(
+      googleDoc?.selectedCustomerIds?.[0],
+      googleDoc?.defaultCustomerId
+    ) || null;
 
-  const list = Array.isArray(googleDoc?.ad_accounts) ? googleDoc.ad_accounts : [];
-  const hit = id ? list.find((a) => String(a?.id || "").trim() === String(id).trim()) : null;
+  const list = Array.isArray(googleDoc?.ad_accounts)
+    ? googleDoc.ad_accounts
+    : [];
+  const hit = id
+    ? list.find((a) => String(a?.id || "").trim() === String(id).trim())
+    : null;
 
   const name = pickFirstTruthy(hit?.name) || null;
 
   const accessToken = googleDoc?.accessToken || null;
-  const refreshToken = googleDoc?.refreshToken || googleDoc?.refresh_token || null;
+  const refreshToken =
+    googleDoc?.refreshToken || googleDoc?.refresh_token || null;
 
-  const loginCustomerId = pickFirstTruthy(googleDoc?.loginCustomerId, googleDoc?.managerCustomerId) || null;
+  const loginCustomerId =
+    pickFirstTruthy(googleDoc?.loginCustomerId, googleDoc?.managerCustomerId) ||
+    null;
 
   return { id, name, accessToken, refreshToken, loginCustomerId };
 }
@@ -709,8 +732,14 @@ function pickGA4Selected(googleDoc) {
 
   const id = rawId ? toPropertyResource(rawId) : null;
 
-  const props = Array.isArray(googleDoc?.gaProperties) ? googleDoc.gaProperties : [];
-  const hit = id ? props.find((p) => String(p?.propertyId || "").trim() === String(id).trim()) : null;
+  const props = Array.isArray(googleDoc?.gaProperties)
+    ? googleDoc.gaProperties
+    : [];
+  const hit = id
+    ? props.find(
+        (p) => String(p?.propertyId || "").trim() === String(id).trim()
+      )
+    : null;
 
   const name = pickFirstTruthy(hit?.displayName) || null;
 
@@ -740,16 +769,18 @@ async function runWithLimit(list, limit, worker) {
   const out = new Array(list.length);
   let i = 0;
 
-  const runners = new Array(Math.min(limit, list.length)).fill(0).map(async () => {
-    while (i < list.length) {
-      const idx = i++;
-      try {
-        out[idx] = await worker(list[idx], idx);
-      } catch {
-        out[idx] = null;
+  const runners = new Array(Math.min(limit, list.length))
+    .fill(0)
+    .map(async () => {
+      while (i < list.length) {
+        const idx = i++;
+        try {
+          out[idx] = await worker(list[idx], idx);
+        } catch {
+          out[idx] = null;
+        }
       }
-    }
-  });
+    });
 
   await Promise.all(runners);
   return out;
@@ -758,7 +789,9 @@ async function runWithLimit(list, limit, worker) {
 router.get("/users", requireInternalAdmin, async (req, res) => {
   try {
     if (!User) {
-      return res.status(500).json({ ok: false, error: "USER_MODEL_NOT_AVAILABLE" });
+      return res
+        .status(500)
+        .json({ ok: false, error: "USER_MODEL_NOT_AVAILABLE" });
     }
 
     const qtext = String(req.query.q || "").trim();
@@ -801,7 +834,9 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     const users = await User.find(q)
       .sort({ _id: -1 })
       .limit(limit)
-      .select("_id name fullName displayName email emails createdAt updatedAt profile")
+      .select(
+        "_id name fullName displayName email emails createdAt updatedAt profile"
+      )
       .lean();
 
     const nextCursor = users.length ? String(users[users.length - 1]._id) : null;
@@ -811,7 +846,11 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     const googleByUser = new Map();
     if (GoogleAccount && userIds.length) {
       const googleDocs = await GoogleAccount.find({
-        $or: [{ userId: { $in: userIds } }, { owner: { $in: userIds } }, { user: { $in: userIds } }],
+        $or: [
+          { userId: { $in: userIds } },
+          { owner: { $in: userIds } },
+          { user: { $in: userIds } },
+        ],
       })
         .select(
           "_id userId owner user " +
@@ -832,7 +871,11 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     const metaByUser = new Map();
     if (MetaAccount && userIds.length) {
       const metaDocs = await MetaAccount.find({
-        $or: [{ userId: { $in: userIds } }, { owner: { $in: userIds } }, { user: { $in: userIds } }],
+        $or: [
+          { userId: { $in: userIds } },
+          { owner: { $in: userIds } },
+          { user: { $in: userIds } },
+        ],
       })
         .select(
           "_id userId owner user " +
@@ -863,7 +906,9 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
       const googleSel = pickGoogleAdsSelected(gd);
       const gaSel = pickGA4Selected(gd);
 
-      const freshGoogleToken = await getFreshGoogleAccessToken(gd).catch(() => null);
+      const freshGoogleToken = await getFreshGoogleAccessToken(gd).catch(
+        () => null
+      );
       const tokenForGoogle = freshGoogleToken || googleSel.accessToken || null;
 
       const loginCid = resolveLoginCustomerId(gd);
@@ -889,12 +934,26 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
       })();
 
       const [metaSpend30d, googleSpend30d, ga4Sessions30d] = await Promise.all([
-        fetchMetaSpend30d({ accessToken: metaSel.token, actId: metaSel.id }).catch(() => null),
+        fetchMetaSpend30d({
+          accessToken: metaSel.token,
+          actId: metaSel.id,
+        }).catch(() => null),
         googleSpendPromise,
-        fetchGa4Sessions30d({ accessToken: tokenForGoogle, propertyId: gaSel.id }).catch(() => null),
+        fetchGa4Sessions30d({
+          accessToken: tokenForGoogle,
+          propertyId: gaSel.id,
+        }).catch(() => null),
       ]);
 
-      return { uid, metaSel, googleSel, gaSel, metaSpend30d, googleSpend30d, ga4Sessions30d };
+      return {
+        uid,
+        metaSel,
+        googleSel,
+        gaSel,
+        metaSpend30d,
+        googleSpend30d,
+        ga4Sessions30d,
+      };
     });
 
     const computedByUser = new Map();
@@ -991,7 +1050,6 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
     let groupId = null;
 
     if (groupBy === "hour") {
-      // Bucket por hora (UTC). Ej: "2026-02-11 13:00"
       groupId = {
         $dateToString: { format: "%Y-%m-%d %H:00", date: effectiveDateExpr },
       };
@@ -1000,7 +1058,6 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
     } else if (groupBy === "month") {
       groupId = { $dateToString: { format: "%Y-%m", date: effectiveDateExpr } };
     } else {
-      // week (ISO week)
       groupId = {
         $concat: [
           { $toString: { $isoWeekYear: effectiveDateExpr } },
@@ -1045,8 +1102,10 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
 
 /* =========================
  * GET /api/admin/analytics/funnel?from=&to=&steps=
- * ✅ FIX E2E: usa user_signed_up (real) y elimina pixel por default.
- * ✅ Compat: si el front manda signed_up -> se normaliza a user_signed_up.
+ * ✅ FIX E2E:
+ *  - Primer paso ya NO sale “—” (Conv=100%, Drop=0)
+ *  - Default vuelve a incluir pixel_audit_completed
+ *  - Compat: signed_up -> user_signed_up
  * ========================= */
 router.get("/funnel", requireInternalAdmin, async (req, res) => {
   try {
@@ -1056,7 +1115,6 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
     from = norm.from;
     to = norm.to;
 
-    // ✅ Alias / compat (para no romper si el front manda nombres viejos)
     const STEP_ALIASES = {
       signed_up: "user_signed_up",
       signup: "user_signed_up",
@@ -1068,13 +1126,13 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
 
     const stepsRaw = String(req.query.steps || "").trim();
 
-    // ✅ Default: SOLO lo que te interesa (auditorías), sin pixel
     const DEFAULT_STEPS = [
       "user_signed_up",
       "google_connected",
       "meta_connected",
       "audit_requested",
       "audit_completed",
+      "pixel_audit_completed",
     ];
 
     const steps = stepsRaw
@@ -1123,12 +1181,14 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
       const prev = funnel[i - 1].users || 0;
       const curr = funnel[i].users || 0;
       funnel[i].dropFromPrev = Math.max(0, prev - curr);
-      funnel[i].conversionFromPrev = prev > 0 ? Number((curr / prev).toFixed(4)) : null;
+      funnel[i].conversionFromPrev =
+        prev > 0 ? Number((curr / prev).toFixed(4)) : 0;
     }
 
+    // ✅ Paso 1 con métricas reales (para que NO salga “—”)
     if (funnel.length) {
-      funnel[0].dropFromPrev = null;
-      funnel[0].conversionFromPrev = null;
+      funnel[0].dropFromPrev = 0;
+      funnel[0].conversionFromPrev = 1;
     }
 
     return res.json({
