@@ -24,6 +24,21 @@ try {
   trackEvent = null;
 }
 
+// ✅ NUEVO: AnalyticsEvent (fallback directo a Mongo si trackEvent no existe/falla)
+let AnalyticsEvent = null;
+try {
+  AnalyticsEvent = require('../models/AnalyticsEvent');
+} catch (e) {
+  try {
+    const { Schema, model } = mongoose;
+    AnalyticsEvent =
+      mongoose.models.AnalyticsEvent ||
+      model('AnalyticsEvent', new Schema({}, { strict: false, collection: 'analyticsevents' }));
+  } catch {
+    AnalyticsEvent = null;
+  }
+}
+
 // ★ (opcional, para futuros usos de límites / usos por usuario)
 let User = null;
 try {
@@ -63,15 +78,56 @@ function requireAuth(req, res, next) {
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-/* ============== analytics helpers (best-effort) ============== */
-async function emitEventSafe({ name, userId, dedupeKey, props }) {
+/* ============== analytics helpers (best-effort + fallback) ============== */
+
+// fallback directo a Mongo con upsert por dedupeKey
+async function saveAnalyticsEventFallback({ name, userId, dedupeKey, props }) {
   try {
-    if (typeof trackEvent !== 'function') return null;
-    return await trackEvent({ name, userId, dedupeKey, props });
+    if (!AnalyticsEvent || typeof AnalyticsEvent.findOneAndUpdate !== 'function') return null;
+
+    const uid = userId ? String(userId) : null;
+    const now = new Date();
+
+    const doc = {
+      name: String(name || '').trim(),
+      userId: uid, // mantenemos string para queries simples
+      uid: uid,    // compat por si algún código usa uid
+      props: props && typeof props === 'object' ? props : {},
+      meta: props && typeof props === 'object' ? props : {},
+      dedupeKey: dedupeKey ? String(dedupeKey) : null,
+      ts: now,
+      createdAt: now,
+    };
+
+    // Si hay dedupeKey, hacemos upsert por dedupeKey+userId+name para idempotencia
+    if (doc.dedupeKey) {
+      return await AnalyticsEvent.findOneAndUpdate(
+        { dedupeKey: doc.dedupeKey, userId: doc.userId, name: doc.name },
+        { $setOnInsert: doc },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      ).lean?.() || null;
+    }
+
+    // sin dedupeKey: insert simple
+    const created = await AnalyticsEvent.create(doc);
+    return created || null;
   } catch {
-    // NO romper el flujo productivo por analytics
     return null;
   }
+}
+
+async function emitEventSafe({ name, userId, dedupeKey, props }) {
+  // 1) Intentar tracker oficial
+  try {
+    if (typeof trackEvent === 'function') {
+      return await trackEvent({ name, userId, dedupeKey, props });
+    }
+  } catch {
+    // NO romper el flujo productivo por analytics
+  }
+
+  // 2) Fallback directo a Mongo (si existe el modelo)
+  return await saveAnalyticsEventFallback({ name, userId, dedupeKey, props });
 }
 
 /* ============== helpers ============== */
