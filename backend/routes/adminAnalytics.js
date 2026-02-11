@@ -582,10 +582,7 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
 
     if (qtext) {
       const safe = qtext.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      q.$or = [
-        { name: new RegExp(safe, "i") },
-        { dedupeKey: new RegExp(safe, "i") },
-      ];
+      q.$or = [{ name: new RegExp(safe, "i") }, { dedupeKey: new RegExp(safe, "i") }];
     }
 
     const docs = await AnalyticsEvent.find(q)
@@ -652,9 +649,7 @@ function resolveUserEmail(u) {
 function pickMetaSelected(metaDoc) {
   if (!metaDoc) return { id: null, name: null, token: null };
 
-  const id =
-    pickFirstTruthy(metaDoc?.selectedAccountIds?.[0], metaDoc?.defaultAccountId) ||
-    null;
+  const id = pickFirstTruthy(metaDoc?.selectedAccountIds?.[0], metaDoc?.defaultAccountId) || null;
 
   const list = Array.isArray(metaDoc?.ad_accounts)
     ? metaDoc.ad_accounts
@@ -662,9 +657,7 @@ function pickMetaSelected(metaDoc) {
     ? metaDoc.adAccounts
     : [];
 
-  const hit = id
-    ? list.find((a) => String(a?.id || "").trim() === String(id).trim())
-    : null;
+  const hit = id ? list.find((a) => String(a?.id || "").trim() === String(id).trim()) : null;
 
   const name = pickFirstTruthy(hit?.name, hit?.account_name) || null;
 
@@ -689,25 +682,17 @@ function pickGoogleAdsSelected(googleDoc) {
       refreshToken: null,
     };
 
-  const id =
-    pickFirstTruthy(
-      googleDoc?.selectedCustomerIds?.[0],
-      googleDoc?.defaultCustomerId
-    ) || null;
+  const id = pickFirstTruthy(googleDoc?.selectedCustomerIds?.[0], googleDoc?.defaultCustomerId) || null;
 
   const list = Array.isArray(googleDoc?.ad_accounts) ? googleDoc.ad_accounts : [];
-  const hit = id
-    ? list.find((a) => String(a?.id || "").trim() === String(id).trim())
-    : null;
+  const hit = id ? list.find((a) => String(a?.id || "").trim() === String(id).trim()) : null;
 
   const name = pickFirstTruthy(hit?.name) || null;
 
   const accessToken = googleDoc?.accessToken || null;
   const refreshToken = googleDoc?.refreshToken || googleDoc?.refresh_token || null;
 
-  const loginCustomerId =
-    pickFirstTruthy(googleDoc?.loginCustomerId, googleDoc?.managerCustomerId) ||
-    null;
+  const loginCustomerId = pickFirstTruthy(googleDoc?.loginCustomerId, googleDoc?.managerCustomerId) || null;
 
   return { id, name, accessToken, refreshToken, loginCustomerId };
 }
@@ -725,9 +710,7 @@ function pickGA4Selected(googleDoc) {
   const id = rawId ? toPropertyResource(rawId) : null;
 
   const props = Array.isArray(googleDoc?.gaProperties) ? googleDoc.gaProperties : [];
-  const hit = id
-    ? props.find((p) => String(p?.propertyId || "").trim() === String(id).trim())
-    : null;
+  const hit = id ? props.find((p) => String(p?.propertyId || "").trim() === String(id).trim()) : null;
 
   const name = pickFirstTruthy(hit?.displayName) || null;
 
@@ -775,9 +758,7 @@ async function runWithLimit(list, limit, worker) {
 router.get("/users", requireInternalAdmin, async (req, res) => {
   try {
     if (!User) {
-      return res
-        .status(500)
-        .json({ ok: false, error: "USER_MODEL_NOT_AVAILABLE" });
+      return res.status(500).json({ ok: false, error: "USER_MODEL_NOT_AVAILABLE" });
     }
 
     const qtext = String(req.query.q || "").trim();
@@ -830,11 +811,7 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     const googleByUser = new Map();
     if (GoogleAccount && userIds.length) {
       const googleDocs = await GoogleAccount.find({
-        $or: [
-          { userId: { $in: userIds } },
-          { owner: { $in: userIds } },
-          { user: { $in: userIds } },
-        ],
+        $or: [{ userId: { $in: userIds } }, { owner: { $in: userIds } }, { user: { $in: userIds } }],
       })
         .select(
           "_id userId owner user " +
@@ -855,11 +832,7 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     const metaByUser = new Map();
     if (MetaAccount && userIds.length) {
       const metaDocs = await MetaAccount.find({
-        $or: [
-          { userId: { $in: userIds } },
-          { owner: { $in: userIds } },
-          { user: { $in: userIds } },
-        ],
+        $or: [{ userId: { $in: userIds } }, { owner: { $in: userIds } }, { user: { $in: userIds } }],
       })
         .select(
           "_id userId owner user " +
@@ -918,21 +891,10 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
       const [metaSpend30d, googleSpend30d, ga4Sessions30d] = await Promise.all([
         fetchMetaSpend30d({ accessToken: metaSel.token, actId: metaSel.id }).catch(() => null),
         googleSpendPromise,
-        fetchGa4Sessions30d({
-          accessToken: tokenForGoogle,
-          propertyId: gaSel.id,
-        }).catch(() => null),
+        fetchGa4Sessions30d({ accessToken: tokenForGoogle, propertyId: gaSel.id }).catch(() => null),
       ]);
 
-      return {
-        uid,
-        metaSel,
-        googleSel,
-        gaSel,
-        metaSpend30d,
-        googleSpend30d,
-        ga4Sessions30d,
-      };
+      return { uid, metaSel, googleSel, gaSel, metaSpend30d, googleSpend30d, ga4Sessions30d };
     });
 
     const computedByUser = new Map();
@@ -1034,13 +996,9 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
         $dateToString: { format: "%Y-%m-%d %H:00", date: effectiveDateExpr },
       };
     } else if (groupBy === "day") {
-      groupId = {
-        $dateToString: { format: "%Y-%m-%d", date: effectiveDateExpr },
-      };
+      groupId = { $dateToString: { format: "%Y-%m-%d", date: effectiveDateExpr } };
     } else if (groupBy === "month") {
-      groupId = {
-        $dateToString: { format: "%Y-%m", date: effectiveDateExpr },
-      };
+      groupId = { $dateToString: { format: "%Y-%m", date: effectiveDateExpr } };
     } else {
       // week (ISO week)
       groupId = {
@@ -1061,22 +1019,9 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
     const rows = await AnalyticsEvent.aggregate([
       { $match: match },
       { $match: { $expr: { $ne: [effectiveDateExpr, null] } } },
-      {
-        $group: {
-          _id: groupId,
-          count: { $sum: 1 },
-          users: { $addToSet: "$userId" },
-        },
-      },
+      { $group: { _id: groupId, count: { $sum: 1 }, users: { $addToSet: "$userId" } } },
       { $sort: { _id: 1 } },
-      {
-        $project: {
-          _id: 0,
-          bucket: "$_id",
-          count: 1,
-          uniqueUsers: { $size: "$users" },
-        },
-      },
+      { $project: { _id: 0, bucket: "$_id", count: 1, uniqueUsers: { $size: "$users" } } },
     ]);
 
     return res.json({
@@ -1100,6 +1045,8 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
 
 /* =========================
  * GET /api/admin/analytics/funnel?from=&to=&steps=
+ * ✅ FIX E2E: usa user_signed_up (real) y elimina pixel por default.
+ * ✅ Compat: si el front manda signed_up -> se normaliza a user_signed_up.
  * ========================= */
 router.get("/funnel", requireInternalAdmin, async (req, res) => {
   try {
@@ -1109,20 +1056,33 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
     from = norm.from;
     to = norm.to;
 
+    // ✅ Alias / compat (para no romper si el front manda nombres viejos)
+    const STEP_ALIASES = {
+      signed_up: "user_signed_up",
+      signup: "user_signed_up",
+    };
+    function normalizeStepName(s) {
+      const k = String(s || "").trim();
+      return STEP_ALIASES[k] || k;
+    }
+
     const stepsRaw = String(req.query.steps || "").trim();
+
+    // ✅ Default: SOLO lo que te interesa (auditorías), sin pixel
+    const DEFAULT_STEPS = [
+      "user_signed_up",
+      "google_connected",
+      "meta_connected",
+      "audit_requested",
+      "audit_completed",
+    ];
+
     const steps = stepsRaw
       ? stepsRaw
           .split(",")
-          .map((s) => s.trim())
+          .map((s) => normalizeStepName(s))
           .filter(Boolean)
-      : [
-          "signed_up",
-          "google_connected",
-          "meta_connected",
-          "audit_requested",
-          "audit_completed",
-          "pixel_audit_completed",
-        ];
+      : DEFAULT_STEPS;
 
     const dateMatch = buildDateMatch(from, to);
     const match = { name: { $in: steps } };
