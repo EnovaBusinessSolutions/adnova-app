@@ -84,6 +84,14 @@ function parseDateMaybeEnd(v) {
   return isNaN(d.getTime()) ? null : d;
 }
 
+// ✅ NUEVO: fecha exacta (NO fuerza inicio/fin de día) para rangos tipo “HOY 24h”
+function parseDateExact(v) {
+  if (!v) return null;
+  const s = String(v).trim();
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function normalizeRange(from, to) {
   if (from && to && from.getTime() > to.getTime()) {
     return { from: to, to: from, swapped: true };
@@ -977,13 +985,23 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
 });
 
 /* =========================
- * GET /api/admin/analytics/series?name=&from=&to=&groupBy=day|week|month
+ * GET /api/admin/analytics/series
+ *  - Legacy: ?name=&from=&to=&groupBy=day|week|month
+ *  - Nuevo (HOY 24h): ?name=&groupBy=hour&fromTs=&toTs=
  * ========================= */
 router.get("/series", requireInternalAdmin, async (req, res) => {
   try {
     const name = String(req.query.name || "").trim();
     const groupBy = String(req.query.groupBy || "day").trim().toLowerCase();
 
+    // ✅ NUEVO: timestamps exactos (para HOY 24h)
+    let fromTs = parseDateExact(req.query.fromTs);
+    let toTs = parseDateExact(req.query.toTs);
+    const normTs = normalizeRange(fromTs, toTs);
+    fromTs = normTs.from;
+    toTs = normTs.to;
+
+    // ✅ Legacy (from/to por día)
     let from = parseDateMaybeStart(req.query.from);
     let to = parseDateMaybeEnd(req.query.to);
     const norm = normalizeRange(from, to);
@@ -991,22 +1009,40 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
     to = norm.to;
 
     if (!name) return res.status(400).json({ ok: false, error: "NAME_REQUIRED" });
-    if (!["day", "week", "month"].includes(groupBy)) {
+
+    // ✅ Permitimos hour sin romper day/week/month
+    if (!["hour", "day", "week", "month"].includes(groupBy)) {
       return res.status(400).json({ ok: false, error: "INVALID_GROUPBY" });
     }
 
-    const dateMatch = buildDateMatch(from, to);
+    // ✅ Si vienen fromTs/toTs, tienen prioridad (rango real 24h)
+    const effectiveFrom = fromTs || from || null;
+    const effectiveTo = toTs || to || null;
+    const effectiveNorm = normalizeRange(effectiveFrom, effectiveTo);
+
+    const dateMatch = buildDateMatch(effectiveNorm.from, effectiveNorm.to);
     const match = { name };
     if (dateMatch) Object.assign(match, dateMatch);
 
     const effectiveDateExpr = { $ifNull: ["$ts", "$createdAt"] };
 
     let groupId = null;
-    if (groupBy === "day") {
-      groupId = { $dateToString: { format: "%Y-%m-%d", date: effectiveDateExpr } };
+
+    if (groupBy === "hour") {
+      // Bucket por hora (UTC). Ej: "2026-02-11 13:00"
+      groupId = {
+        $dateToString: { format: "%Y-%m-%d %H:00", date: effectiveDateExpr },
+      };
+    } else if (groupBy === "day") {
+      groupId = {
+        $dateToString: { format: "%Y-%m-%d", date: effectiveDateExpr },
+      };
     } else if (groupBy === "month") {
-      groupId = { $dateToString: { format: "%Y-%m", date: effectiveDateExpr } };
+      groupId = {
+        $dateToString: { format: "%Y-%m", date: effectiveDateExpr },
+      };
     } else {
+      // week (ISO week)
       groupId = {
         $concat: [
           { $toString: { $isoWeekYear: effectiveDateExpr } },
@@ -1048,9 +1084,11 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
       data: {
         name,
         groupBy,
-        from: from ? from.toISOString() : null,
-        to: to ? to.toISOString() : null,
-        swapped: norm.swapped || false,
+        from: effectiveNorm.from ? effectiveNorm.from.toISOString() : null,
+        to: effectiveNorm.to ? effectiveNorm.to.toISOString() : null,
+        fromTs: fromTs ? fromTs.toISOString() : null,
+        toTs: toTs ? toTs.toISOString() : null,
+        swapped: norm.swapped || normTs.swapped || false,
         points: rows,
       },
     });
