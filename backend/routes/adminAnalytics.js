@@ -84,7 +84,7 @@ function parseDateMaybeEnd(v) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-// ✅ NUEVO: fecha exacta (NO fuerza inicio/fin de día) para rangos tipo “HOY 24h”
+// ✅ NUEVO: fecha exacta (NO fuerza inicio/fin de día) para rangos tipo “HOY 24h” o “NOW”
 function parseDateExact(v) {
   if (!v) return null;
   const s = String(v).trim();
@@ -243,6 +243,37 @@ function ymd(d) {
   const mm = String(dt.getMonth() + 1).padStart(2, "0");
   const dd = String(dt.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
+}
+
+/* =========================
+ * ✅ NEW: Rango canónico (soporta fromTs/toTs para tiempo real)
+ * ========================= */
+function getEffectiveRange(req) {
+  // ✅ Preferir timestamps exactos si vienen (tiempo real)
+  let fromTs = parseDateExact(req.query.fromTs);
+  let toTs = parseDateExact(req.query.toTs);
+  const normTs = normalizeRange(fromTs, toTs);
+  fromTs = normTs.from;
+  toTs = normTs.to;
+
+  // ✅ Fallback legacy (YYYY-MM-DD)
+  let from = parseDateMaybeStart(req.query.from);
+  let to = parseDateMaybeEnd(req.query.to);
+  const norm = normalizeRange(from, to);
+  from = norm.from;
+  to = norm.to;
+
+  const effectiveFrom = fromTs || from || null;
+  const effectiveTo = toTs || to || null;
+  const effectiveNorm = normalizeRange(effectiveFrom, effectiveTo);
+
+  return {
+    from: effectiveNorm.from,
+    to: effectiveNorm.to,
+    fromTs: fromTs ? fromTs.toISOString() : null,
+    toTs: toTs ? toTs.toISOString() : null,
+    swapped: !!(norm.swapped || normTs.swapped),
+  };
 }
 
 /* =========================
@@ -484,17 +515,13 @@ router.get("/health", requireInternalAdmin, async (_req, res) => {
 });
 
 /* =========================
- * ✅ GET /api/admin/analytics/summary?from=&to=
+ * ✅ GET /api/admin/analytics/summary?from=&to=&fromTs=&toTs=
  * ========================= */
 router.get("/summary", requireInternalAdmin, async (req, res) => {
   try {
-    let from = parseDateMaybeStart(req.query.from);
-    let to = parseDateMaybeEnd(req.query.to);
-    const norm = normalizeRange(from, to);
-    from = norm.from;
-    to = norm.to;
+    const range = getEffectiveRange(req);
 
-    const dateMatch = buildDateMatch(from, to);
+    const dateMatch = buildDateMatch(range.from, range.to);
     const match = dateMatch ? { ...dateMatch } : {};
 
     const now = new Date();
@@ -532,9 +559,11 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
     ]);
 
     const data = {
-      from: from ? from.toISOString() : null,
-      to: to ? to.toISOString() : null,
-      swapped: norm.swapped || false,
+      from: range.from ? range.from.toISOString() : null,
+      to: range.to ? range.to.toISOString() : null,
+      fromTs: range.fromTs,
+      toTs: range.toTs,
+      swapped: range.swapped || false,
       events: totals?.[0]?.events || 0,
       uniqueUsers: totals?.[0]?.uniqueUsers || 0,
       topEvents: topNames || [],
@@ -551,7 +580,7 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
 });
 
 /* =========================
- * GET /api/admin/analytics/events?name=&userId=&from=&to=&limit=&cursor=
+ * GET /api/admin/analytics/events?name=&userId=&from=&to=&fromTs=&toTs=&limit=&cursor=
  * + opcional q= (busca simple)
  * ========================= */
 router.get("/events", requireInternalAdmin, async (req, res) => {
@@ -560,11 +589,7 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
     const qtext = String(req.query.q || "").trim();
     const userId = String(req.query.userId || "").trim();
 
-    let from = parseDateMaybeStart(req.query.from);
-    let to = parseDateMaybeEnd(req.query.to);
-    const norm = normalizeRange(from, to);
-    from = norm.from;
-    to = norm.to;
+    const range = getEffectiveRange(req);
 
     const limit = clampInt(req.query.limit, 1, 200, 50);
     const cursor = String(req.query.cursor || "").trim();
@@ -575,7 +600,7 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
     const uid = toObjectIdMaybe(userId);
     if (uid) q.userId = uid;
 
-    const dateMatch = buildDateMatch(from, to);
+    const dateMatch = buildDateMatch(range.from, range.to);
     if (dateMatch) Object.assign(q, dateMatch);
 
     if (cursor) {
@@ -612,7 +637,11 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
         })),
         nextCursor,
         count: docs.length,
-        swapped: norm.swapped || false,
+        swapped: range.swapped || false,
+        from: range.from ? range.from.toISOString() : null,
+        to: range.to ? range.to.toISOString() : null,
+        fromTs: range.fromTs,
+        toTs: range.toTs,
       },
     });
   } catch (e) {
@@ -798,7 +827,7 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     const limit = clampInt(req.query.limit, 1, 200, 50);
     const cursor = String(req.query.cursor || "").trim();
 
-    // ✅ FIX: from/to inclusivos si vienen YYYY-MM-DD
+    // ✅ Mantener legacy from/to para filtro de usuarios (createdAt)
     let from = parseDateMaybeStart(req.query.from);
     let to = parseDateMaybeEnd(req.query.to);
     const norm = normalizeRange(from, to);
@@ -1029,14 +1058,15 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
     from = norm.from;
     to = norm.to;
 
-    if (!name) return res.status(400).json({ ok: false, error: "NAME_REQUIRED" });
+    if (!name)
+      return res.status(400).json({ ok: false, error: "NAME_REQUIRED" });
 
     // ✅ Permitimos hour sin romper day/week/month
     if (!["hour", "day", "week", "month"].includes(groupBy)) {
       return res.status(400).json({ ok: false, error: "INVALID_GROUPBY" });
     }
 
-    // ✅ Si vienen fromTs/toTs, tienen prioridad (rango real 24h)
+    // ✅ Si vienen fromTs/toTs, tienen prioridad (rango real)
     const effectiveFrom = fromTs || from || null;
     const effectiveTo = toTs || to || null;
     const effectiveNorm = normalizeRange(effectiveFrom, effectiveTo);
@@ -1054,7 +1084,9 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
         $dateToString: { format: "%Y-%m-%d %H:00", date: effectiveDateExpr },
       };
     } else if (groupBy === "day") {
-      groupId = { $dateToString: { format: "%Y-%m-%d", date: effectiveDateExpr } };
+      groupId = {
+        $dateToString: { format: "%Y-%m-%d", date: effectiveDateExpr },
+      };
     } else if (groupBy === "month") {
       groupId = { $dateToString: { format: "%Y-%m", date: effectiveDateExpr } };
     } else {
@@ -1065,7 +1097,9 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
           {
             $cond: [
               { $lt: [{ $isoWeek: effectiveDateExpr }, 10] },
-              { $concat: ["0", { $toString: { $isoWeek: effectiveDateExpr } }] },
+              {
+                $concat: ["0", { $toString: { $isoWeek: effectiveDateExpr } }],
+              },
               { $toString: { $isoWeek: effectiveDateExpr } },
             ],
           },
@@ -1076,9 +1110,22 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
     const rows = await AnalyticsEvent.aggregate([
       { $match: match },
       { $match: { $expr: { $ne: [effectiveDateExpr, null] } } },
-      { $group: { _id: groupId, count: { $sum: 1 }, users: { $addToSet: "$userId" } } },
+      {
+        $group: {
+          _id: groupId,
+          count: { $sum: 1 },
+          users: { $addToSet: "$userId" },
+        },
+      },
       { $sort: { _id: 1 } },
-      { $project: { _id: 0, bucket: "$_id", count: 1, uniqueUsers: { $size: "$users" } } },
+      {
+        $project: {
+          _id: 0,
+          bucket: "$_id",
+          count: 1,
+          uniqueUsers: { $size: "$users" },
+        },
+      },
     ]);
 
     return res.json({
@@ -1101,16 +1148,12 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
 });
 
 /* =========================
- * GET /api/admin/analytics/funnel?from=&to=&steps=
+ * GET /api/admin/analytics/funnel?from=&to=&fromTs=&toTs=&steps=
  * ✅ FIX REAL: soporta grupos/aliases para auditorías IA.
  * ========================= */
 router.get("/funnel", requireInternalAdmin, async (req, res) => {
   try {
-    let from = parseDateMaybeStart(req.query.from);
-    let to = parseDateMaybeEnd(req.query.to);
-    const norm = normalizeRange(from, to);
-    from = norm.from;
-    to = norm.to;
+    const range = getEffectiveRange(req);
 
     // ✅ Cada stepKey puede mapear a varios event names reales en DB
     const STEP_GROUPS = {
@@ -1119,7 +1162,7 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
       google_connected: ["google_connected"],
       meta_connected: ["meta_connected"],
 
-      // ✅ Auditoría IA (aquí está el fix)
+      // ✅ Auditoría IA
       audit_requested: [
         "audit_requested",
         "audit_started",
@@ -1156,7 +1199,10 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
     ];
 
     const stepKeys = stepsRaw
-      ? stepsRaw.split(",").map((s) => String(s || "").trim()).filter(Boolean)
+      ? stepsRaw
+          .split(",")
+          .map((s) => String(s || "").trim())
+          .filter(Boolean)
       : DEFAULT_STEPS;
 
     const expandedNamesByStep = new Map(); // stepKey -> [names]
@@ -1164,7 +1210,7 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
 
     const allNames = Array.from(expandedNamesByStep.values()).flat();
 
-    const dateMatch = buildDateMatch(from, to);
+    const dateMatch = buildDateMatch(range.from, range.to);
     const match = { name: { $in: allNames } };
     if (dateMatch) Object.assign(match, dateMatch);
 
@@ -1204,7 +1250,7 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
       users: counts[k] || 0,
     }));
 
-    // ✅ conv/drop para todos; paso 1 ya no muestra “—”
+    // ✅ conv/drop para todos
     for (let i = 0; i < funnel.length; i++) {
       if (i === 0) {
         funnel[i].dropFromPrev = 0;
@@ -1220,9 +1266,11 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
     return res.json({
       ok: true,
       data: {
-        from: from ? from.toISOString() : null,
-        to: to ? to.toISOString() : null,
-        swapped: norm.swapped || false,
+        from: range.from ? range.from.toISOString() : null,
+        to: range.to ? range.to.toISOString() : null,
+        fromTs: range.fromTs,
+        toTs: range.toTs,
+        swapped: range.swapped || false,
         steps: stepKeys,
         totalUsersInWindow: rows.length,
         funnel,
@@ -1233,6 +1281,5 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
     return res.status(500).json({ ok: false, error: "FUNNEL_ERROR" });
   }
 });
-
 
 module.exports = router;
