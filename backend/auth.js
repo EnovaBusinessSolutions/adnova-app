@@ -27,6 +27,33 @@ const GOOGLE_LOGIN_CALLBACK_URL =
   process.env.GOOGLE_CALLBACK_URL || // compat si ya la tienes
   DEFAULT_GOOGLE_LOGIN_CALLBACK;
 
+/**
+ * Helpers
+ */
+function getUtcYmd(date = new Date()) {
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function safeIp(req) {
+  try {
+    const xf = req?.headers?.['x-forwarded-for'];
+    if (typeof xf === 'string' && xf.trim()) return xf.split(',')[0].trim();
+    if (Array.isArray(xf) && xf.length) return String(xf[0]).trim();
+  } catch {}
+  return (req?.ip ? String(req.ip) : '') || '';
+}
+
+function safeUa(req) {
+  try {
+    return (req?.headers?.['user-agent'] ? String(req.headers['user-agent']) : '') || '';
+  } catch {
+    return '';
+  }
+}
+
 passport.use(
   new GoogleStrategy(
     {
@@ -96,6 +123,7 @@ passport.use(
                   userId: user._id,
                   dedupeKey: `user_signed_up:${user._id}`,
                   props: { method: 'google' },
+                  ts: new Date(),
                 })
               )
               .catch(() => {});
@@ -126,21 +154,70 @@ passport.use(
           console.log('✅ Usuario de Google ya registrado:', normalizedEmail);
         }
 
-        // ✅ Track login (sin romper; dedupe por día para no inflar)
+        /**
+         * ==========================================================
+         * ✅ TRACK LOGIN (2 capas)
+         *   A) RAW: cada inicio de sesión (métrica real de "logins")
+         *   B) STATE: dedupe por día, pero actualiza hora + count (live)
+         * ==========================================================
+         */
         if (trackEvent && user?._id) {
-          const day = new Date();
-          const y = day.getUTCFullYear();
-          const m = String(day.getUTCMonth() + 1).padStart(2, '0');
-          const d = String(day.getUTCDate()).padStart(2, '0');
-          const ymd = `${y}-${m}-${d}`;
+          const now = new Date();
+          const ymd = getUtcYmd(now);
+
+          const sessionId =
+            (req && req.sessionID ? String(req.sessionID) : '') || null;
+
+          const ip = safeIp(req) || null;
+          const ua = safeUa(req) || null;
+
+          // A) ✅ RAW (1 evento por login) -> para “cuántos logins por día”
+          // dedupeKey único por sesión/instante para no colisionar.
+          // Nota: si tu trackEvent no requiere dedupeKey, igual está OK mandarlo.
+          const rawDedupe =
+            `user_login:${user._id}:${now.getTime()}:${Math.random().toString(16).slice(2)}`;
 
           Promise.resolve()
             .then(() =>
               trackEvent({
-                name: 'user_logged_in',
+                name: 'user_login', // 👈 evento RAW nuevo
+                userId: user._id,
+                dedupeKey: rawDedupe,
+                props: {
+                  method: 'google',
+                  source: 'app',
+                  sessionId,
+                  ip,
+                  ua,
+                },
+                ts: now,
+              })
+            )
+            .catch(() => {});
+
+          // B) ✅ STATE (1 doc por usuario por día) -> “último login” + live refresh
+          // Mantiene tu dedupeKey actual pero ahora mandamos:
+          // - ts: last login at
+          // - inc: { count: 1 } para contar logins del día sin duplicar docs
+          // - props.lastLoginAt para UI/CRM si lo quieres directo
+          Promise.resolve()
+            .then(() =>
+              trackEvent({
+                name: 'user_logged_in', // 👈 evento STATE (el que ya tienes)
                 userId: user._id,
                 dedupeKey: `user_logged_in:${user._id}:${ymd}`,
-                props: { method: 'google' },
+                props: {
+                  method: 'google',
+                  source: 'app',
+                  sessionId,
+                  ip,
+                  ua,
+                  ymd,
+                  lastLoginAt: now.toISOString(),
+                },
+                ts: now,                 // 👈 queremos que este se vaya actualizando
+                inc: { count: 1 },       // 👈 contador diario (requiere soporte en trackEvent)
+                setOnInsert: { firstTs: now }, // 👈 primer login del día (requiere soporte)
               })
             )
             .catch(() => {});

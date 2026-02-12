@@ -18,8 +18,49 @@ function safeObj(v) {
   }
 }
 
-// ✅ Firma flexible: acepta userId/userid, dedupeKey/dedupekey, etc.
-async function trackEvent({ name, userId, userid, sessionId, source = "app", dedupeKey, dedupekey, props }) {
+function safeDate(v) {
+  if (!v) return null;
+  const d = v instanceof Date ? v : new Date(v);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}
+
+/**
+ * Construye updates seguros para props:
+ * - No intentamos reemplazar todo props (para no pisar datos)
+ * - Hacemos set por clave: props.key = value
+ */
+function buildPropsSet(props) {
+  const p = safeObj(props);
+  const out = {};
+  for (const [k, val] of Object.entries(p)) {
+    const key = safeStr(k, 80).trim();
+    if (!key) continue;
+
+    // Mongo no permite keys con '.' o que empiecen con '$'
+    if (key.includes(".") || key.startsWith("$")) continue;
+
+    // No dejamos strings gigantes
+    if (typeof val === "string") out[`props.${key}`] = safeStr(val, 5000);
+    else out[`props.${key}`] = val;
+  }
+  return out;
+}
+
+// ✅ Firma flexible + extensible: soporta ts/inc/setOnInsert
+async function trackEvent({
+  name,
+  userId,
+  userid,
+  sessionId,
+  source = "app",
+  dedupeKey,
+  dedupekey,
+  props,
+  ts,               // ✅ opcional: timestamp canónico (ej. last login)
+  inc,              // ✅ opcional: { count: 1 }
+  setOnInsert,      // ✅ opcional: { firstTs: now }
+}) {
   try {
     const eventName = safeStr(name, 80).trim();
     if (!eventName) return null;
@@ -27,27 +68,66 @@ async function trackEvent({ name, userId, userid, sessionId, source = "app", ded
     const uid = userId || userid || null;
     const dk = dedupeKey || dedupekey || null;
 
-    const doc = {
+    const now = new Date();
+    const tsFinal = safeDate(ts) || now;
+
+    const baseDoc = {
       name: eventName,
-      props: safeObj(props),
       source: safeStr(source, 40) || "app",
-      ts: new Date(), // ✅ fecha canónica para filtros 7/30/90
+      ts: tsFinal, // ✅ fecha canónica: para filtros 7/30/90 y "último login"
+      props: safeObj(props),
     };
 
-    if (uid) doc.userId = uid;
-    if (sessionId) doc.sessionId = safeStr(sessionId, 120);
-    if (dk) doc.dedupeKey = safeStr(dk, 200);
+    if (uid) baseDoc.userId = uid;
+    if (sessionId) baseDoc.sessionId = safeStr(sessionId, 120);
+    if (dk) baseDoc.dedupeKey = safeStr(dk, 200);
 
-    // ✅ idempotente si hay dedupeKey
-    if (doc.dedupeKey) {
-      return await AnalyticsEvent.findOneAndUpdate(
-        { name: doc.name, userId: doc.userId, dedupeKey: doc.dedupeKey },
-        { $setOnInsert: doc },
-        { upsert: true, new: true }
-      );
+    // Si NO hay dedupeKey -> crea siempre (RAW events)
+    if (!baseDoc.dedupeKey) {
+      return await AnalyticsEvent.create(baseDoc);
     }
 
-    return await AnalyticsEvent.create(doc);
+    // ✅ Con dedupeKey -> upsert, PERO:
+    // - si ya existía, actualizamos ts (last activity) y hacemos merge de props
+    // - si mandas inc, incrementa contadores
+    // - si mandas setOnInsert, se setea solo cuando se crea por primera vez
+    const filter = { name: baseDoc.name, userId: baseDoc.userId, dedupeKey: baseDoc.dedupeKey };
+
+    const propsSet = buildPropsSet(props);
+
+    const update = {
+      $setOnInsert: {
+        ...baseDoc,
+        ...(safeObj(setOnInsert) || {}),
+        createdAt: now,
+      },
+      $set: {
+        ts: tsFinal,
+        updatedAt: now,
+        // guardamos también source/sessionId por si cambian
+        source: baseDoc.source,
+        ...(baseDoc.sessionId ? { sessionId: baseDoc.sessionId } : {}),
+        ...(Object.keys(propsSet).length ? propsSet : {}),
+      },
+    };
+
+    // ✅ Incrementos opcionales (ej. { count: 1 })
+    const incObj = safeObj(inc);
+    if (incObj && Object.keys(incObj).length) {
+      // Sanitizar keys del $inc
+      const incSafe = {};
+      for (const [k, v] of Object.entries(incObj)) {
+        const key = safeStr(k, 80).trim();
+        if (!key) continue;
+        if (key.includes(".") || key.startsWith("$")) continue;
+        const num = Number(v);
+        if (!Number.isFinite(num)) continue;
+        incSafe[key] = num;
+      }
+      if (Object.keys(incSafe).length) update.$inc = incSafe;
+    }
+
+    return await AnalyticsEvent.findOneAndUpdate(filter, update, { upsert: true, new: true });
   } catch {
     // no rompas el flujo por analítica
     return null;

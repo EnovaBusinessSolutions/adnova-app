@@ -531,32 +531,63 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
     const match24 = buildDateMatch(d24, null) || {};
     const match7 = buildDateMatch(d7, null) || {};
 
-    const [totals, topNames, last24h, last7d, signups] = await Promise.all([
-      AnalyticsEvent.aggregate([
-        { $match: match },
-        {
-          $group: {
-            _id: null,
-            events: { $sum: 1 },
-            users: { $addToSet: "$userId" },
+    const [totals, topNames, last24h, last7d, signups, loginsAgg] =
+      await Promise.all([
+        // ✅ Totales: si el doc trae "count" (STATE) suma count, si no existe suma 1 (RAW)
+        AnalyticsEvent.aggregate([
+          { $match: match },
+          {
+            $group: {
+              _id: null,
+              events: { $sum: { $ifNull: ["$count", 1] } },
+              users: { $addToSet: "$userId" },
+            },
           },
-        },
-        { $project: { _id: 0, events: 1, uniqueUsers: { $size: "$users" } } },
-      ]),
-      AnalyticsEvent.aggregate([
-        { $match: match },
-        { $group: { _id: "$name", count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-        { $limit: 10 },
-        { $project: { _id: 0, name: "$_id", count: 1 } },
-      ]),
-      AnalyticsEvent.countDocuments(match24).catch(() => 0),
-      AnalyticsEvent.countDocuments(match7).catch(() => 0),
-      AnalyticsEvent.countDocuments({
-        ...(dateMatch ? dateMatch : {}),
-        name: "user_signed_up",
-      }).catch(() => 0),
-    ]);
+          { $project: { _id: 0, events: 1, uniqueUsers: { $size: "$users" } } },
+        ]),
+
+        // ✅ Top events: suma count si existe, si no = 1
+        AnalyticsEvent.aggregate([
+          { $match: match },
+          {
+            $group: {
+              _id: "$name",
+              count: { $sum: { $ifNull: ["$count", 1] } },
+            },
+          },
+          { $sort: { count: -1 } },
+          { $limit: 10 },
+          { $project: { _id: 0, name: "$_id", count: 1 } },
+        ]),
+
+        AnalyticsEvent.countDocuments(match24).catch(() => 0),
+        AnalyticsEvent.countDocuments(match7).catch(() => 0),
+
+        AnalyticsEvent.countDocuments({
+          ...(dateMatch ? dateMatch : {}),
+          name: "user_signed_up",
+        }).catch(() => 0),
+
+        // ✅ NUEVO: logins reales (RAW) + usuarios únicos que loguearon en el rango
+        AnalyticsEvent.aggregate([
+          {
+            $match: {
+              ...(match || {}),
+              name: "user_login",
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              logins: { $sum: 1 },
+              users: { $addToSet: "$userId" },
+            },
+          },
+          {
+            $project: { _id: 0, logins: 1, loginsUniqueUsers: { $size: "$users" } },
+          },
+        ]).catch(() => []),
+      ]);
 
     const data = {
       from: range.from ? range.from.toISOString() : null,
@@ -564,12 +595,18 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
       fromTs: range.fromTs,
       toTs: range.toTs,
       swapped: range.swapped || false,
+
       events: totals?.[0]?.events || 0,
       uniqueUsers: totals?.[0]?.uniqueUsers || 0,
       topEvents: topNames || [],
+
       last24hEvents: last24h || 0,
       last7dEvents: last7d || 0,
       signups: signups || 0,
+
+      // ✅ métricas nuevas de login
+      logins: loginsAgg?.[0]?.logins || 0,
+      loginsUniqueUsers: loginsAgg?.[0]?.loginsUniqueUsers || 0,
     };
 
     return res.json({ ok: true, data });
@@ -619,7 +656,7 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
     const docs = await AnalyticsEvent.find(q)
       .sort({ _id: -1 })
       .limit(limit)
-      .select("name userId ts createdAt props dedupeKey")
+      .select("name userId ts createdAt updatedAt props dedupeKey count")
       .lean();
 
     const nextCursor = docs.length ? String(docs[docs.length - 1]._id) : null;
@@ -632,6 +669,8 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
           name: d.name,
           userId: d.userId ? String(d.userId) : null,
           createdAt: resolveEffectiveDate(d),
+          updatedAt: d.updatedAt || null,
+          count: typeof d.count === "number" ? d.count : null,
           props: d.props || {},
           dedupeKey: d.dedupeKey || null,
         })),
@@ -1113,7 +1152,8 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
       {
         $group: {
           _id: groupId,
-          count: { $sum: 1 },
+          // ✅ suma count si existe (STATE), si no existe vale 1 (RAW)
+          count: { $sum: { $ifNull: ["$count", 1] } },
           users: { $addToSet: "$userId" },
         },
       },
