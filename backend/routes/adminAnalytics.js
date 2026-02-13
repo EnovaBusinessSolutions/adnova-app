@@ -84,7 +84,7 @@ function parseDateMaybeEnd(v) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-// ✅ NUEVO: fecha exacta (NO fuerza inicio/fin de día) para rangos tipo “HOY 24h” o “NOW”
+// ✅ fecha exacta (NO fuerza inicio/fin) (compat)
 function parseDateExact(v) {
   if (!v) return null;
   const s = String(v).trim();
@@ -239,41 +239,104 @@ function toISO(v) {
 function ymd(d) {
   const dt = d instanceof Date ? d : new Date(d);
   if (isNaN(dt.getTime())) return null;
-  const yyyy = String(dt.getFullYear());
-  const mm = String(dt.getMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getDate()).padStart(2, "0");
+  const yyyy = String(dt.getUTCFullYear());
+  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getUTCDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
 
 /* =========================
- * ✅ NEW: Rango canónico (soporta fromTs/toTs para tiempo real)
- * ========================= */
+ * ✅ CIERRE DIARIO (cutoffDay)
+ * =========================
+ * El front manda cutoffDay=YYYY-MM-DD.
+ * Para “se actualiza a medianoche”, interpretamos:
+ * - cutoffEnd = (inicio de cutoffDay UTC) - 1ms
+ *   => es el fin del día anterior completo.
+ *
+ * Ejemplo:
+ * - cutoffDay=2026-02-13 => cutoffEnd=2026-02-12 23:59:59.999Z
+ * Durante el día 13, el tablero queda congelado al cierre del 12.
+ * A medianoche (cuando cutoffDay cambie a 14), se actualizará al cierre del 13.
+ */
+function parseCutoffDayToCutoffEnd(req) {
+  const cutoffDay = String(req.query.cutoffDay || "").trim();
+  if (!isYmdOnly(cutoffDay)) return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
+
+  const start = new Date(`${cutoffDay}T00:00:00.000Z`);
+  if (isNaN(start.getTime())) return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
+
+  const cutoffEnd = new Date(start.getTime() - 1); // fin del día anterior
+  const cutoffEffectiveDay = ymd(cutoffEnd); // YYYY-MM-DD del día realmente cubierto
+
+  return { cutoffDay, cutoffEnd, cutoffEffectiveDay };
+}
+
+function applyCutoffToRange(req, range) {
+  const { cutoffDay, cutoffEnd, cutoffEffectiveDay } = parseCutoffDayToCutoffEnd(req);
+  if (!cutoffEnd) {
+    return { ...range, cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
+  }
+
+  let from = range.from || null;
+  let to = range.to || null;
+
+  // Si el usuario pide "to" posterior al corte, lo clamp.
+  if (to && to.getTime() > cutoffEnd.getTime()) to = cutoffEnd;
+
+  // Si no mandó "to", también lo fijamos al corte (congelado).
+  if (!to) to = cutoffEnd;
+
+  // Normalizar por si acaso
+  const norm = normalizeRange(from, to);
+
+  return {
+    ...range,
+    from: norm.from,
+    to: norm.to,
+    swapped: !!(range.swapped || norm.swapped),
+    cutoffDay,
+    cutoffEnd,
+    cutoffEffectiveDay,
+  };
+}
+
+/* =========================
+ * ✅ Rango canónico (compat)
+ * =========================
+ * - Ya NO priorizamos "fromTs/toTs" (solo compat).
+ * - El panel interno ahora usa from/to + cutoffDay.
+ */
 function getEffectiveRange(req) {
-  // ✅ Preferir timestamps exactos si vienen (tiempo real)
+  // compat (no prioridad)
   let fromTs = parseDateExact(req.query.fromTs);
   let toTs = parseDateExact(req.query.toTs);
   const normTs = normalizeRange(fromTs, toTs);
   fromTs = normTs.from;
   toTs = normTs.to;
 
-  // ✅ Fallback legacy (YYYY-MM-DD)
+  // canonical (día)
   let from = parseDateMaybeStart(req.query.from);
   let to = parseDateMaybeEnd(req.query.to);
   const norm = normalizeRange(from, to);
   from = norm.from;
   to = norm.to;
 
-  const effectiveFrom = fromTs || from || null;
-  const effectiveTo = toTs || to || null;
+  // elegimos from/to (día) como fuente principal
+  const effectiveFrom = from || fromTs || null;
+  const effectiveTo = to || toTs || null;
+
   const effectiveNorm = normalizeRange(effectiveFrom, effectiveTo);
 
-  return {
+  const base = {
     from: effectiveNorm.from,
     to: effectiveNorm.to,
     fromTs: fromTs ? fromTs.toISOString() : null,
     toTs: toTs ? toTs.toISOString() : null,
-    swapped: !!(norm.swapped || normTs.swapped),
+    swapped: !!(norm.swapped || normTs.swapped || effectiveNorm.swapped),
   };
+
+  // ✅ aplicar cierre diario
+  return applyCutoffToRange(req, base);
 }
 
 /* =========================
@@ -497,6 +560,11 @@ async function fetchGoogleAdsSpend30dViaInsights({ accessToken, customerId }) {
 }
 
 /* =========================
+ * ✅ Login aliases (evitar ceros)
+ * ========================= */
+const LOGIN_EVENT_ALIASES = ["user_logged_in", "user_login", "login"];
+
+/* =========================
  * ✅ GET /api/admin/analytics/health
  * ========================= */
 router.get("/health", requireInternalAdmin, async (_req, res) => {
@@ -515,7 +583,7 @@ router.get("/health", requireInternalAdmin, async (_req, res) => {
 });
 
 /* =========================
- * ✅ GET /api/admin/analytics/summary?from=&to=&fromTs=&toTs=
+ * ✅ GET /api/admin/analytics/summary?from=&to=&cutoffDay=
  * ========================= */
 router.get("/summary", requireInternalAdmin, async (req, res) => {
   try {
@@ -524,12 +592,14 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
     const dateMatch = buildDateMatch(range.from, range.to);
     const match = dateMatch ? { ...dateMatch } : {};
 
-    const now = new Date();
-    const d24 = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const d7 = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    // ✅ Para "últimas 24h / últimos 7d" usamos el "cierre" si existe, no el now real.
+    const baseNow = range?.cutoffEnd ? new Date(range.cutoffEnd.getTime()) : new Date();
 
-    const match24 = buildDateMatch(d24, null) || {};
-    const match7 = buildDateMatch(d7, null) || {};
+    const d24From = new Date(baseNow.getTime() - 24 * 60 * 60 * 1000);
+    const d7From = new Date(baseNow.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const match24 = buildDateMatch(d24From, baseNow) || {};
+    const match7 = buildDateMatch(d7From, baseNow) || {};
 
     const [totals, topNames, last24h, last7d, signups, loginsAgg] =
       await Promise.all([
@@ -560,6 +630,7 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
           { $project: { _id: 0, name: "$_id", count: 1 } },
         ]),
 
+        // ✅ Conteos estables (con cierre si aplica)
         AnalyticsEvent.countDocuments(match24).catch(() => 0),
         AnalyticsEvent.countDocuments(match7).catch(() => 0),
 
@@ -568,12 +639,12 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
           name: "user_signed_up",
         }).catch(() => 0),
 
-        // ✅ NUEVO: logins reales (RAW) + usuarios únicos que loguearon en el rango
+        // ✅ Logins reales + usuarios únicos que loguearon en el rango
         AnalyticsEvent.aggregate([
           {
             $match: {
               ...(match || {}),
-              name: "user_login",
+              name: { $in: LOGIN_EVENT_ALIASES },
             },
           },
           {
@@ -592,9 +663,16 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
     const data = {
       from: range.from ? range.from.toISOString() : null,
       to: range.to ? range.to.toISOString() : null,
+
+      // compat
       fromTs: range.fromTs,
       toTs: range.toTs,
       swapped: range.swapped || false,
+
+      // ✅ cierre diario
+      cutoffDay: range.cutoffDay || null,
+      cutoffEnd: range.cutoffEnd ? range.cutoffEnd.toISOString() : null,
+      cutoffEffectiveDay: range.cutoffEffectiveDay || null,
 
       events: totals?.[0]?.events || 0,
       uniqueUsers: totals?.[0]?.uniqueUsers || 0,
@@ -604,7 +682,7 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
       last7dEvents: last7d || 0,
       signups: signups || 0,
 
-      // ✅ métricas nuevas de login
+      // ✅ métricas de login (nombres que el front ya soporta)
       logins: loginsAgg?.[0]?.logins || 0,
       loginsUniqueUsers: loginsAgg?.[0]?.loginsUniqueUsers || 0,
     };
@@ -617,8 +695,7 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
 });
 
 /* =========================
- * GET /api/admin/analytics/events?name=&userId=&from=&to=&fromTs=&toTs=&limit=&cursor=
- * + opcional q= (busca simple)
+ * GET /api/admin/analytics/events?name=&userId=&from=&to=&limit=&cursor=&q=&cutoffDay=
  * ========================= */
 router.get("/events", requireInternalAdmin, async (req, res) => {
   try {
@@ -679,8 +756,11 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
         swapped: range.swapped || false,
         from: range.from ? range.from.toISOString() : null,
         to: range.to ? range.to.toISOString() : null,
-        fromTs: range.fromTs,
-        toTs: range.toTs,
+
+        // ✅ cierre diario
+        cutoffDay: range.cutoffDay || null,
+        cutoffEnd: range.cutoffEnd ? range.cutoffEnd.toISOString() : null,
+        cutoffEffectiveDay: range.cutoffEffectiveDay || null,
       },
     });
   } catch (e) {
@@ -692,6 +772,8 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
 /* =========================
  * ✅ GET /api/admin/analytics/users?from=&to=&limit=&cursor=&q=
  * Tabla tipo CRM
+ * (Esta tabla NO usa cutoffDay porque filtra usuarios por createdAt del usuario,
+ *  no por eventos. Aun así, si quieres, podemos aplicarlo después.)
  * ========================= */
 
 function resolveUserRegisteredAt(u) {
@@ -1075,42 +1157,25 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
 
 /* =========================
  * GET /api/admin/analytics/series
- *  - Legacy: ?name=&from=&to=&groupBy=day|week|month
- *  - Nuevo (HOY 24h): ?name=&groupBy=hour&fromTs=&toTs=
+ *  - Canon: ?name=&from=&to=&groupBy=day|week|month&cutoffDay=
+ *  - Compat: acepta fromTs/toTs pero no es prioridad
  * ========================= */
 router.get("/series", requireInternalAdmin, async (req, res) => {
   try {
     const name = String(req.query.name || "").trim();
     const groupBy = String(req.query.groupBy || "day").trim().toLowerCase();
 
-    // ✅ NUEVO: timestamps exactos (para HOY 24h)
-    let fromTs = parseDateExact(req.query.fromTs);
-    let toTs = parseDateExact(req.query.toTs);
-    const normTs = normalizeRange(fromTs, toTs);
-    fromTs = normTs.from;
-    toTs = normTs.to;
-
-    // ✅ Legacy (from/to por día)
-    let from = parseDateMaybeStart(req.query.from);
-    let to = parseDateMaybeEnd(req.query.to);
-    const norm = normalizeRange(from, to);
-    from = norm.from;
-    to = norm.to;
-
     if (!name)
       return res.status(400).json({ ok: false, error: "NAME_REQUIRED" });
 
-    // ✅ Permitimos hour sin romper day/week/month
-    if (!["hour", "day", "week", "month"].includes(groupBy)) {
+    // ✅ Ya NO soportamos hour (el panel ya no lo usa)
+    if (!["day", "week", "month"].includes(groupBy)) {
       return res.status(400).json({ ok: false, error: "INVALID_GROUPBY" });
     }
 
-    // ✅ Si vienen fromTs/toTs, tienen prioridad (rango real)
-    const effectiveFrom = fromTs || from || null;
-    const effectiveTo = toTs || to || null;
-    const effectiveNorm = normalizeRange(effectiveFrom, effectiveTo);
+    const range = getEffectiveRange(req);
 
-    const dateMatch = buildDateMatch(effectiveNorm.from, effectiveNorm.to);
+    const dateMatch = buildDateMatch(range.from, range.to);
     const match = { name };
     if (dateMatch) Object.assign(match, dateMatch);
 
@@ -1118,17 +1183,14 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
 
     let groupId = null;
 
-    if (groupBy === "hour") {
-      groupId = {
-        $dateToString: { format: "%Y-%m-%d %H:00", date: effectiveDateExpr },
-      };
-    } else if (groupBy === "day") {
+    if (groupBy === "day") {
       groupId = {
         $dateToString: { format: "%Y-%m-%d", date: effectiveDateExpr },
       };
     } else if (groupBy === "month") {
       groupId = { $dateToString: { format: "%Y-%m", date: effectiveDateExpr } };
     } else {
+      // week
       groupId = {
         $concat: [
           { $toString: { $isoWeekYear: effectiveDateExpr } },
@@ -1173,11 +1235,19 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
       data: {
         name,
         groupBy,
-        from: effectiveNorm.from ? effectiveNorm.from.toISOString() : null,
-        to: effectiveNorm.to ? effectiveNorm.to.toISOString() : null,
-        fromTs: fromTs ? fromTs.toISOString() : null,
-        toTs: toTs ? toTs.toISOString() : null,
-        swapped: norm.swapped || normTs.swapped || false,
+        from: range.from ? range.from.toISOString() : null,
+        to: range.to ? range.to.toISOString() : null,
+
+        // compat
+        fromTs: range.fromTs,
+        toTs: range.toTs,
+        swapped: range.swapped || false,
+
+        // ✅ cierre diario
+        cutoffDay: range.cutoffDay || null,
+        cutoffEnd: range.cutoffEnd ? range.cutoffEnd.toISOString() : null,
+        cutoffEffectiveDay: range.cutoffEffectiveDay || null,
+
         points: rows,
       },
     });
@@ -1188,8 +1258,7 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
 });
 
 /* =========================
- * GET /api/admin/analytics/funnel?from=&to=&fromTs=&toTs=&steps=
- * ✅ FIX REAL: soporta grupos/aliases para auditorías IA.
+ * GET /api/admin/analytics/funnel?from=&to=&cutoffDay=&steps=
  * ========================= */
 router.get("/funnel", requireInternalAdmin, async (req, res) => {
   try {
@@ -1308,9 +1377,17 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
       data: {
         from: range.from ? range.from.toISOString() : null,
         to: range.to ? range.to.toISOString() : null,
+
+        // compat
         fromTs: range.fromTs,
         toTs: range.toTs,
         swapped: range.swapped || false,
+
+        // ✅ cierre diario
+        cutoffDay: range.cutoffDay || null,
+        cutoffEnd: range.cutoffEnd ? range.cutoffEnd.toISOString() : null,
+        cutoffEffectiveDay: range.cutoffEffectiveDay || null,
+
         steps: stepKeys,
         totalUsersInWindow: rows.length,
         funnel,
