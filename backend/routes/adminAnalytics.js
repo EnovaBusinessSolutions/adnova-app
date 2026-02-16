@@ -304,6 +304,32 @@ function toISO(v) {
   return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+async function getMinMaxInRange(match) {
+  try {
+    const effectiveDateExpr = { $ifNull: ["$ts", "$createdAt"] };
+
+    const rows = await AnalyticsEvent.aggregate([
+      { $match: match || {} },
+      { $match: { $expr: { $ne: [effectiveDateExpr, null] } } },
+      {
+        $group: {
+          _id: null,
+          minAt: { $min: effectiveDateExpr },
+          maxAt: { $max: effectiveDateExpr },
+          docs: { $sum: 1 },
+          events: { $sum: { $ifNull: ["$count", 1] } },
+        },
+      },
+      { $project: { _id: 0, minAt: 1, maxAt: 1, docs: 1, events: 1 } },
+    ]).catch(() => []);
+
+    return rows?.[0] || { minAt: null, maxAt: null, docs: 0, events: 0 };
+  } catch {
+    return { minAt: null, maxAt: null, docs: 0, events: 0 };
+  }
+}
+
+
 function ymd(d) {
   const dt = d instanceof Date ? d : new Date(d);
   if (isNaN(dt.getTime())) return null;
@@ -646,6 +672,9 @@ router.get("/health", requireInternalAdmin, async (_req, res) => {
       version: process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || null,
       db: mongoose.connection?.readyState === 1 ? "connected" : "not_connected",
       ts: new Date().toISOString(),
+      analyticsTz: ANALYTICS_TZ,
+      analyticsCollection: AnalyticsEvent?.collection?.name || null,
+
     };
     return res.json({ ok: true, data });
   } catch (_e) {
@@ -656,7 +685,7 @@ router.get("/health", requireInternalAdmin, async (_req, res) => {
 /* =========================
  * ✅ GET /api/admin/analytics/summary?from=&to=&cutoffDay=
  * ========================= */
-router.get("/summary", requireInternalAdmin, async (req, res) => {
+router.get("/summary", requireInternalAdmin, async (req, res) => {  
   try {
     const range = getEffectiveRange(req);
 
@@ -742,7 +771,7 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
       ]);
 
     const data = {
-      from: range.from ? range.from.toISOString() : null,
+      from: range.from ? range.from.toISOString() : null,  
       to: range.to ? range.to.toISOString() : null,
 
       // compat
@@ -768,6 +797,24 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
       loginsUniqueUsers: loginsAgg?.[0]?.loginsUniqueUsers || 0,
     };
 
+        const dbg = await getMinMaxInRange(match);
+
+    data.debug = {
+      analyticsTz: ANALYTICS_TZ,
+      analyticsCollection: AnalyticsEvent?.collection?.name || null,
+
+      effectiveFrom: range.from ? range.from.toISOString() : null,
+      effectiveTo: range.to ? range.to.toISOString() : null,
+
+      cutoffDay: range.cutoffDay || null,
+      cutoffEnd: range.cutoffEnd ? range.cutoffEnd.toISOString() : null,
+      swapped: !!range.swapped,
+
+      minAt: dbg.minAt ? new Date(dbg.minAt).toISOString() : null,
+      maxAt: dbg.maxAt ? new Date(dbg.maxAt).toISOString() : null,
+      docsMatched: dbg.docs || 0,
+      eventsMatched: dbg.events || 0,
+    };
     return res.json({ ok: true, data });
   } catch (e) {
     console.error("[adminAnalytics] /summary error:", e);
