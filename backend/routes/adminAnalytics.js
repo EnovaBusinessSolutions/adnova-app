@@ -19,10 +19,7 @@ try {
   const { Schema, model } = mongoose;
   AnalyticsEvent =
     mongoose.models.AnalyticsEvent ||
-    model(
-      "AnalyticsEvent",
-      new Schema({}, { strict: false, collection: "analyticsevents" })
-    );
+    model("AnalyticsEvent", new Schema({}, { strict: false, collection: "analyticsevents" }));
 }
 
 let User = null;
@@ -67,6 +64,35 @@ const ANALYTICS_TZ = String(process.env.ANALYTICS_TZ || "America/Mexico_City");
 // ✅ Detecta YYYY-MM-DD (sin hora)
 function isYmdOnly(v) {
   return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.trim());
+}
+
+/**
+ * ✅ YYYY-MM-DD basado en un timezone real (NO UTC)
+ * Evita off-by-one cuando el server está en UTC.
+ */
+function tzYmd(date, tz) {
+  try {
+    const d = date instanceof Date ? date : new Date(date);
+    if (isNaN(d.getTime())) return null;
+    const dtf = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    // en-CA => YYYY-MM-DD
+    return dtf.format(d);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ✅ ymd canónico para integraciones (Meta/GA4/Ads)
+ * Lo hacemos consistente con el TZ de analítica.
+ */
+function ymd(d) {
+  return tzYmd(d, ANALYTICS_TZ);
 }
 
 // Convierte YYYY-MM-DD a Date UTC equivalente a inicio/fin de ese día en ANALYTICS_TZ
@@ -119,7 +145,7 @@ function zonedDayBoundaryToUtc(ymdStr, kind /* "start" | "end" */) {
     return Math.round((asIfUtc - realUtc) / 60000);
   }
 
-  // Ajuste iterativo (2 pasos suele bastar)
+  // Ajuste iterativo (2-3 pasos suele bastar)
   for (let i = 0; i < 3; i++) {
     const offMin = tzOffsetMinutesAt(guess);
     const targetUtcMs = Date.UTC(Y, M - 1, D, h, m, s, ms) - offMin * 60000;
@@ -189,9 +215,7 @@ function getEmailFromReq(req) {
 }
 
 function getRoleFromReq(req) {
-  return String(
-    req?.user?.role || req?.user?.kind || req?.user?.accountType || ""
-  )
+  return String(req?.user?.role || req?.user?.kind || req?.user?.accountType || "")
     .trim()
     .toLowerCase();
 }
@@ -329,31 +353,31 @@ async function getMinMaxInRange(match) {
   }
 }
 
-
-function ymd(d) {
-  const dt = d instanceof Date ? d : new Date(d);
-  if (isNaN(dt.getTime())) return null;
-  const yyyy = String(dt.getUTCFullYear());
-  const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(dt.getUTCDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
 /* =========================
  * ✅ CIERRE DIARIO (cutoffDay)
  * =========================
- * El front manda cutoffDay=YYYY-MM-DD (día LOCAL de analítica).
+ * El front puede mandar cutoffDay=YYYY-MM-DD (día LOCAL de analítica).
  *
- * ✅ FIX CRÍTICO:
- * Antes se convertía con "...Z" (UTC) y eso cortaba el día a las 18:00 CDMX,
- * dejando FUERA eventos nocturnos (ej. 11:18pm local).
- *
- * Ahora:
- * - cutoffEnd = fin de cutoffDay en ANALYTICS_TZ, convertido a UTC real.
- *   (DST-safe, mismo motor que parseDateMaybeEnd)
+ * ✅ FIXES:
+ * - Si NO viene cutoffDay => usamos AYER (último día completo) en ANALYTICS_TZ.
+ * - Si cutoffEnd cae en el FUTURO => se clampa a NOW (evita desfases durante el día).
  */
 function parseCutoffDayToCutoffEnd(req) {
-  const cutoffDay = String(req.query.cutoffDay || "").trim();
+  let cutoffDay = String(req.query.cutoffDay || "").trim();
+
+  // ✅ FIX B: si no viene cutoffDay, default = AYER en TZ canónico
+  if (!isYmdOnly(cutoffDay)) {
+    const now = new Date();
+    const todayTz = tzYmd(now, ANALYTICS_TZ);
+    const todayStartUtc = todayTz ? zonedDayBoundaryToUtc(todayTz, "start") : null;
+    const yesterdayStartUtc = todayStartUtc
+      ? new Date(todayStartUtc.getTime() - 24 * 60 * 60 * 1000)
+      : new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+    const yDay = tzYmd(yesterdayStartUtc, ANALYTICS_TZ);
+    cutoffDay = yDay && isYmdOnly(yDay) ? yDay : "";
+  }
+
   if (!isYmdOnly(cutoffDay)) {
     return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
   }
@@ -377,13 +401,17 @@ function applyCutoffToRange(req, range) {
   let from = range.from || null;
   let to = range.to || null;
 
-  // Si el usuario pide "to" posterior al corte, lo clamp.
-  if (to && to.getTime() > cutoffEnd.getTime()) to = cutoffEnd;
+  // ✅ FIX A: si cutoffEnd está en el futuro (cutoffDay=HOY en pleno día),
+  // clampleamos el corte a NOW para no “correr” los KPIs.
+  const now = new Date();
+  const effectiveCutoffEnd = cutoffEnd.getTime() > now.getTime() ? now : cutoffEnd;
 
-  // Si no mandó "to", también lo fijamos al corte (congelado).
-  if (!to) to = cutoffEnd;
+  // Clamp "to"
+  if (to && to.getTime() > effectiveCutoffEnd.getTime()) to = effectiveCutoffEnd;
 
-  // Normalizar por si acaso
+  // Si no mandó "to", también lo fijamos al corte efectivo.
+  if (!to) to = effectiveCutoffEnd;
+
   const norm = normalizeRange(from, to);
 
   return {
@@ -392,7 +420,7 @@ function applyCutoffToRange(req, range) {
     to: norm.to,
     swapped: !!(range.swapped || norm.swapped),
     cutoffDay,
-    cutoffEnd,
+    cutoffEnd: effectiveCutoffEnd,
     cutoffEffectiveDay,
   };
 }
@@ -401,7 +429,7 @@ function applyCutoffToRange(req, range) {
  * ✅ Rango canónico (compat)
  * =========================
  * - Ya NO priorizamos "fromTs/toTs" (solo compat).
- * - El panel interno ahora usa from/to + cutoffDay.
+ * - El panel interno usa from/to + cutoffDay (opcional).
  */
 function getEffectiveRange(req) {
   // compat (no prioridad)
@@ -418,7 +446,7 @@ function getEffectiveRange(req) {
   from = norm.from;
   to = norm.to;
 
-  // elegimos from/to (día) como fuente principal
+  // elegimos from/to como fuente principal
   const effectiveFrom = from || fromTs || null;
   const effectiveTo = to || toTs || null;
 
@@ -443,15 +471,13 @@ function oauthClient() {
   return new OAuth2Client({
     clientId: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    redirectUri:
-      process.env.GOOGLE_REDIRECT_URI || process.env.GOOGLE_CONNECT_CALLBACK_URL,
+    redirectUri: process.env.GOOGLE_REDIRECT_URI || process.env.GOOGLE_CONNECT_CALLBACK_URL,
   });
 }
 
 // Devuelve access token fresco usando refresh token (sin romper si falla).
 async function getFreshGoogleAccessToken(googleDoc) {
-  const refreshToken =
-    googleDoc?.refreshToken || googleDoc?.refresh_token || null;
+  const refreshToken = googleDoc?.refreshToken || googleDoc?.refresh_token || null;
   const accessToken = googleDoc?.accessToken || googleDoc?.access_token || null;
 
   if (!refreshToken) return accessToken || null;
@@ -622,9 +648,7 @@ async function fetchGoogleAdsSpend30d({
   const results = Array.isArray(json?.results) ? json.results : [];
   let sumMicros = 0;
   for (const row of results) {
-    const micros = Number(
-      row?.metrics?.costMicros ?? row?.metrics?.cost_micros ?? 0
-    );
+    const micros = Number(row?.metrics?.costMicros ?? row?.metrics?.cost_micros ?? 0);
     if (Number.isFinite(micros)) sumMicros += micros;
   }
 
@@ -674,7 +698,6 @@ router.get("/health", requireInternalAdmin, async (_req, res) => {
       ts: new Date().toISOString(),
       analyticsTz: ANALYTICS_TZ,
       analyticsCollection: AnalyticsEvent?.collection?.name || null,
-
     };
     return res.json({ ok: true, data });
   } catch (_e) {
@@ -685,17 +708,16 @@ router.get("/health", requireInternalAdmin, async (_req, res) => {
 /* =========================
  * ✅ GET /api/admin/analytics/summary?from=&to=&cutoffDay=
  * ========================= */
-router.get("/summary", requireInternalAdmin, async (req, res) => {  
+router.get("/summary", requireInternalAdmin, async (req, res) => {
   try {
     const range = getEffectiveRange(req);
 
     const dateMatch = buildDateMatch(range.from, range.to);
     const match = dateMatch ? { ...dateMatch } : {};
 
-    // ✅ Para "últimas 24h / últimos 7d" usamos el "cierre" si existe, no el now real.
-    const baseNow = range?.cutoffEnd
-      ? new Date(range.cutoffEnd.getTime())
-      : new Date();
+    // ✅ baseNow:
+    // Si hay cutoffEnd, usamos ese "ancla" (ya clamped a NOW si estaba en el futuro).
+    const baseNow = range?.cutoffEnd ? new Date(range.cutoffEnd.getTime()) : new Date();
 
     const d24From = new Date(baseNow.getTime() - 24 * 60 * 60 * 1000);
     const d7From = new Date(baseNow.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -715,20 +737,13 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
               users: { $addToSet: "$userId" },
             },
           },
-          {
-            $project: { _id: 0, events: 1, uniqueUsers: { $size: "$users" } },
-          },
+          { $project: { _id: 0, events: 1, uniqueUsers: { $size: "$users" } } },
         ]),
 
         // ✅ Top events: suma count si existe, si no = 1
         AnalyticsEvent.aggregate([
           { $match: match },
-          {
-            $group: {
-              _id: "$name",
-              count: { $sum: { $ifNull: ["$count", 1] } },
-            },
-          },
+          { $group: { _id: "$name", count: { $sum: { $ifNull: ["$count", 1] } } } },
           { $sort: { count: -1 } },
           { $limit: 10 },
           { $project: { _id: 0, name: "$_id", count: 1 } },
@@ -744,8 +759,6 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
         }).catch(() => 0),
 
         // ✅ Logins reales + usuarios únicos que loguearon en el rango
-        // - Si el evento es "RAW", no trae count => suma 1
-        // - Si el evento es "STATE" (dedupe), trae count => suma count
         AnalyticsEvent.aggregate([
           {
             $match: {
@@ -756,22 +769,16 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
           {
             $group: {
               _id: null,
-              logins: { $sum: { $ifNull: ["$count", 1] } }, // ✅ FIX
+              logins: { $sum: { $ifNull: ["$count", 1] } },
               users: { $addToSet: "$userId" },
             },
           },
-          {
-            $project: {
-              _id: 0,
-              logins: 1,
-              loginsUniqueUsers: { $size: "$users" },
-            },
-          },
+          { $project: { _id: 0, logins: 1, loginsUniqueUsers: { $size: "$users" } } },
         ]).catch(() => []),
       ]);
 
     const data = {
-      from: range.from ? range.from.toISOString() : null,  
+      from: range.from ? range.from.toISOString() : null,
       to: range.to ? range.to.toISOString() : null,
 
       // compat
@@ -797,7 +804,7 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
       loginsUniqueUsers: loginsAgg?.[0]?.loginsUniqueUsers || 0,
     };
 
-        const dbg = await getMinMaxInRange(match);
+    const dbg = await getMinMaxInRange(match);
 
     data.debug = {
       analyticsTz: ANALYTICS_TZ,
@@ -815,6 +822,7 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
       docsMatched: dbg.docs || 0,
       eventsMatched: dbg.events || 0,
     };
+
     return res.json({ ok: true, data });
   } catch (e) {
     console.error("[adminAnalytics] /summary error:", e);
@@ -900,8 +908,6 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
 /* =========================
  * ✅ GET /api/admin/analytics/users?from=&to=&limit=&cursor=&q=
  * Tabla tipo CRM
- * (Esta tabla NO usa cutoffDay porque filtra usuarios por createdAt del usuario,
- *  no por eventos. Aun así, si quieres, podemos aplicarlo después.)
  * ========================= */
 
 function resolveUserRegisteredAt(u) {
@@ -933,9 +939,7 @@ function resolveUserEmail(u) {
 function pickMetaSelected(metaDoc) {
   if (!metaDoc) return { id: null, name: null, token: null };
 
-  const id =
-    pickFirstTruthy(metaDoc?.selectedAccountIds?.[0], metaDoc?.defaultAccountId) ||
-    null;
+  const id = pickFirstTruthy(metaDoc?.selectedAccountIds?.[0], metaDoc?.defaultAccountId) || null;
 
   const list = Array.isArray(metaDoc?.ad_accounts)
     ? metaDoc.ad_accounts
@@ -943,10 +947,7 @@ function pickMetaSelected(metaDoc) {
     ? metaDoc.adAccounts
     : [];
 
-  const hit = id
-    ? list.find((a) => String(a?.id || "").trim() === String(id).trim())
-    : null;
-
+  const hit = id ? list.find((a) => String(a?.id || "").trim() === String(id).trim()) : null;
   const name = pickFirstTruthy(hit?.name, hit?.account_name) || null;
 
   const token =
@@ -970,25 +971,17 @@ function pickGoogleAdsSelected(googleDoc) {
       refreshToken: null,
     };
 
-  const id =
-    pickFirstTruthy(
-      googleDoc?.selectedCustomerIds?.[0],
-      googleDoc?.defaultCustomerId
-    ) || null;
+  const id = pickFirstTruthy(googleDoc?.selectedCustomerIds?.[0], googleDoc?.defaultCustomerId) || null;
 
   const list = Array.isArray(googleDoc?.ad_accounts) ? googleDoc.ad_accounts : [];
-  const hit = id
-    ? list.find((a) => String(a?.id || "").trim() === String(id).trim())
-    : null;
+  const hit = id ? list.find((a) => String(a?.id || "").trim() === String(id).trim()) : null;
 
   const name = pickFirstTruthy(hit?.name) || null;
 
   const accessToken = googleDoc?.accessToken || null;
   const refreshToken = googleDoc?.refreshToken || googleDoc?.refresh_token || null;
 
-  const loginCustomerId =
-    pickFirstTruthy(googleDoc?.loginCustomerId, googleDoc?.managerCustomerId) ||
-    null;
+  const loginCustomerId = pickFirstTruthy(googleDoc?.loginCustomerId, googleDoc?.managerCustomerId) || null;
 
   return { id, name, accessToken, refreshToken, loginCustomerId };
 }
@@ -1013,25 +1006,6 @@ function pickGA4Selected(googleDoc) {
   const name = pickFirstTruthy(hit?.displayName) || null;
 
   return { id, name };
-}
-
-// ✅ Última actividad REAL (sin limitar por from/to del filtro)
-async function getLastActivityMap(userIds) {
-  const match = { userId: { $in: userIds } };
-  const effectiveDateExpr = { $ifNull: ["$ts", "$createdAt"] };
-
-  const rows = await AnalyticsEvent.aggregate([
-    { $match: match },
-    { $match: { $expr: { $ne: [effectiveDateExpr, null] } } },
-    { $group: { _id: "$userId", lastAt: { $max: effectiveDateExpr } } },
-  ]).catch(() => []);
-
-  const map = new Map();
-  for (const r of rows) {
-    if (!r?._id) continue;
-    map.set(String(r._id), r.lastAt ? new Date(r.lastAt) : null);
-  }
-  return map;
 }
 
 // ✅ Último LOGIN REAL por usuario (solo eventos login)
@@ -1080,16 +1054,14 @@ async function runWithLimit(list, limit, worker) {
 router.get("/users", requireInternalAdmin, async (req, res) => {
   try {
     if (!User) {
-      return res
-        .status(500)
-        .json({ ok: false, error: "USER_MODEL_NOT_AVAILABLE" });
+      return res.status(500).json({ ok: false, error: "USER_MODEL_NOT_AVAILABLE" });
     }
 
     const qtext = String(req.query.q || "").trim();
     const limit = clampInt(req.query.limit, 1, 200, 50);
     const cursor = String(req.query.cursor || "").trim();
 
-    // ✅ Mantener legacy from/to para filtro de usuarios (createdAt)
+    // ✅ Mantener from/to para filtro de usuarios (createdAt)
     let from = parseDateMaybeStart(req.query.from);
     let to = parseDateMaybeEnd(req.query.to);
     const norm = normalizeRange(from, to);
@@ -1135,11 +1107,7 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     const googleByUser = new Map();
     if (GoogleAccount && userIds.length) {
       const googleDocs = await GoogleAccount.find({
-        $or: [
-          { userId: { $in: userIds } },
-          { owner: { $in: userIds } },
-          { user: { $in: userIds } },
-        ],
+        $or: [{ userId: { $in: userIds } }, { owner: { $in: userIds } }, { user: { $in: userIds } }],
       })
         .select(
           "_id userId owner user " +
@@ -1160,11 +1128,7 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     const metaByUser = new Map();
     if (MetaAccount && userIds.length) {
       const metaDocs = await MetaAccount.find({
-        $or: [
-          { userId: { $in: userIds } },
-          { owner: { $in: userIds } },
-          { user: { $in: userIds } },
-        ],
+        $or: [{ userId: { $in: userIds } }, { owner: { $in: userIds } }, { user: { $in: userIds } }],
       })
         .select(
           "_id userId owner user " +
@@ -1221,13 +1185,9 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
       })();
 
       const [metaSpend30d, googleSpend30d, ga4Sessions30d] = await Promise.all([
-        fetchMetaSpend30d({ accessToken: metaSel.token, actId: metaSel.id }).catch(
-          () => null
-        ),
+        fetchMetaSpend30d({ accessToken: metaSel.token, actId: metaSel.id }).catch(() => null),
         googleSpendPromise,
-        fetchGa4Sessions30d({ accessToken: tokenForGoogle, propertyId: gaSel.id }).catch(
-          () => null
-        ),
+        fetchGa4Sessions30d({ accessToken: tokenForGoogle, propertyId: gaSel.id }).catch(() => null),
       ]);
 
       return {
@@ -1418,11 +1378,7 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
         "ai_audit_completed",
         "audit_created",
       ],
-      pixel_audit_completed: [
-        "pixel_audit_completed",
-        "pixel_auditor_completed",
-        "pixel_audit_done",
-      ],
+      pixel_audit_completed: ["pixel_audit_completed", "pixel_auditor_completed", "pixel_audit_done"],
     };
 
     const stepsRaw = String(req.query.steps || "").trim();
