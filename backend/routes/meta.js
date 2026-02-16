@@ -10,7 +10,7 @@ const User  = require('../models/User');
 const Audit = require('../models/Audit');
 
 // ✅ Analytics events (Internal Admin / DB analytics)
-const { trackEvent } = require('../services/trackEvents');
+const { trackEvent } = require('../services/trackEvent');
 
 // ✅ Auditorías: cleanup al desconectar (best-effort)
 const {
