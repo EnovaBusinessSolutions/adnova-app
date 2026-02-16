@@ -920,10 +920,11 @@ app.post("/api/register", requireTurnstileAlways, async (req, res) => {
     // ✅ Enviar correo de verificación (NO bloquea el registro si falla)
     try {
       await sendVerifyEmail({
-        toEmail: user.email,
-        token: verifyToken,
-        name: user.name,
-      });
+  userId: user._id,
+  toEmail: user.email,
+  token: verifyToken,
+  name: user.name,
+});
     } catch (mailErr) {
       console.error(
         "✉️  Email verificación falló (registro OK):",
@@ -973,6 +974,16 @@ app.get("/api/auth/verify-email", async (req, res) => {
     user.verifyEmailTokenHash = undefined;
     user.verifyEmailExpires = undefined;
     await user.save();
+
+    try {
+  await trackEvent({
+    name: "email_verified",
+    userId: user._id,
+    dedupeKey: `email_verified:${user._id}`,
+    ts: new Date(),
+    props: { method: "email_link" },
+  });
+} catch {}
 
     // ✅ Redirección a una página bonita (elige una)
     return res.redirect(302, "/login?verified=1");
@@ -1028,10 +1039,11 @@ app.post("/api/forgot-password", requireTurnstileAlways, async (req, res) => {
     // Enviar email (no bloquea)
     try {
       await sendResetPasswordEmail({
-        toEmail: user.email,
-        name: user.name || (user.email ? user.email.split("@")[0] : "Usuario"),
-        token: resetToken,
-      });
+  userId: user._id,
+  toEmail: user.email,
+  name: user.name || (user.email ? user.email.split("@")[0] : "Usuario"),
+  token: resetToken,
+});
     } catch (mailErr) {
       console.error(
         "✉️ Reset email falló (forgot OK):",
@@ -1392,7 +1404,7 @@ try {
               } else {
                 // Fire & forget: NO bloquea la redirección
                 Promise.resolve()
-                  .then(() => sendWelcomeEmail({ toEmail, name }))
+                  .then(() => sendWelcomeEmail({ userId: user._id, toEmail, name }))
                   .then(() =>
                     User.updateOne(
                       { _id: user._id },
