@@ -58,8 +58,76 @@ try {
 }
 
 /* =========================
- * Helpers
+ * Helpers  
  * ========================= */
+
+// ✅ Timezone canónico para analítica (para cortes y buckets)
+const ANALYTICS_TZ = String(process.env.ANALYTICS_TZ || "America/Mexico_City");
+
+// Convierte YYYY-MM-DD a Date UTC equivalente a inicio/fin de ese día en ANALYTICS_TZ
+// Sin libs externas, usando Intl + offset calculado (DST safe).
+function zonedDayBoundaryToUtc(ymdStr, kind /* "start" | "end" */) {
+  if (!isYmdOnly(ymdStr)) return null;
+
+  // Queremos "YYYY-MM-DD 00:00:00.000" o "23:59:59.999" en el TZ,
+  // y convertirlo a UTC real.
+  const [Y, M, D] = ymdStr.split("-").map((x) => Number(x));
+  if (!Y || !M || !D) return null;
+
+  const h = kind === "end" ? 23 : 0;
+  const m = kind === "end" ? 59 : 0;
+  const s = kind === "end" ? 59 : 0;
+  const ms = kind === "end" ? 999 : 0;
+
+  // Arrancamos con un guess en UTC (misma fecha/hora), y ajustamos por offset real del TZ
+  let guess = new Date(Date.UTC(Y, M - 1, D, h, m, s, ms));
+  if (isNaN(guess.getTime())) return null;
+
+  // Calcula offset del TZ en ese instante: offset = (horaTZ - horaUTC)
+  function tzOffsetMinutesAt(dateUtc) {
+    const dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: ANALYTICS_TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+
+    const parts = dtf.formatToParts(dateUtc);
+    const get = (t) => Number(parts.find((p) => p.type === t)?.value || "0");
+
+    const y = get("year");
+    const mo = get("month");
+    const da = get("day");
+    const ho = get("hour");
+    const mi = get("minute");
+    const se = get("second");
+
+    // “Lo que el TZ cree que es” en UTC, para comparar
+    const asIfUtc = Date.UTC(y, mo - 1, da, ho, mi, se, 0);
+    const realUtc = dateUtc.getTime();
+
+    // Si asIfUtc > realUtc => TZ va adelante (offset positivo)
+    return Math.round((asIfUtc - realUtc) / 60000);
+  }
+
+  // Ajuste iterativo (2 pasos suele bastar)
+  for (let i = 0; i < 3; i++) {
+    const offMin = tzOffsetMinutesAt(guess);
+    const targetUtcMs = Date.UTC(Y, M - 1, D, h, m, s, ms) - offMin * 60000;
+    const next = new Date(targetUtcMs);
+    if (Math.abs(next.getTime() - guess.getTime()) < 1000) {
+      guess = next;
+      break;
+    }
+    guess = next;
+  }
+
+  return guess;
+}
 
 // ✅ Detecta YYYY-MM-DD (sin hora)
 function isYmdOnly(v) {
@@ -70,19 +138,21 @@ function isYmdOnly(v) {
 function parseDateMaybeStart(v) {
   if (!v) return null;
   const s = String(v).trim();
-  if (isYmdOnly(s)) return new Date(`${s}T00:00:00.000Z`);
+  if (isYmdOnly(s)) return zonedDayBoundaryToUtc(s, "start");
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d;
 }
+
 
 // ✅ to: si viene YYYY-MM-DD => fin de día UTC (inclusivo)
 function parseDateMaybeEnd(v) {
   if (!v) return null;
   const s = String(v).trim();
-  if (isYmdOnly(s)) return new Date(`${s}T23:59:59.999Z`);
+  if (isYmdOnly(s)) return zonedDayBoundaryToUtc(s, "end");
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d;
 }
+
 
 // ✅ fecha exacta (NO fuerza inicio/fin) (compat)
 function parseDateExact(v) {
@@ -262,11 +332,12 @@ function parseCutoffDayToCutoffEnd(req) {
   const cutoffDay = String(req.query.cutoffDay || "").trim();
   if (!isYmdOnly(cutoffDay)) return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
 
-  const start = new Date(`${cutoffDay}T00:00:00.000Z`);
-  if (isNaN(start.getTime())) return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
+ const start = zonedDayBoundaryToUtc(cutoffDay, "start");
+if (!start || isNaN(start.getTime())) return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
 
-  const cutoffEnd = new Date(start.getTime() - 1); // fin del día anterior
-  const cutoffEffectiveDay = ymd(cutoffEnd); // YYYY-MM-DD del día realmente cubierto
+const cutoffEnd = new Date(start.getTime() - 1);
+const cutoffEffectiveDay = ymd(cutoffEnd);
+
 
   return { cutoffDay, cutoffEnd, cutoffEffectiveDay };
 }
@@ -1211,29 +1282,36 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
     let groupId = null;
 
     if (groupBy === "day") {
-      groupId = {
-        $dateToString: { format: "%Y-%m-%d", date: effectiveDateExpr },
-      };
-    } else if (groupBy === "month") {
-      groupId = { $dateToString: { format: "%Y-%m", date: effectiveDateExpr } };
-    } else {
-      // week
-      groupId = {
-        $concat: [
-          { $toString: { $isoWeekYear: effectiveDateExpr } },
-          "-W",
-          {
-            $cond: [
-              { $lt: [{ $isoWeek: effectiveDateExpr }, 10] },
-              {
-                $concat: ["0", { $toString: { $isoWeek: effectiveDateExpr } }],
-              },
-              { $toString: { $isoWeek: effectiveDateExpr } },
-            ],
-          },
-        ],
-      };
-    }
+  groupId = {
+    $dateToString: {
+      format: "%Y-%m-%d",
+      date: effectiveDateExpr,
+      timezone: ANALYTICS_TZ,
+    },
+  };
+} else if (groupBy === "month") {
+  groupId = {
+    $dateToString: {
+      format: "%Y-%m",
+      date: effectiveDateExpr,
+      timezone: ANALYTICS_TZ,
+    },
+  };
+} else {
+  // week: usamos dateTrunc a semana en TZ y luego formateamos la fecha de inicio de semana
+  // (esto evita que ISO week cambie por UTC)
+  const weekStart = {
+    $dateTrunc: { date: effectiveDateExpr, unit: "week", timezone: ANALYTICS_TZ },
+  };
+  groupId = {
+    $dateToString: {
+      format: "%Y-%m-%d",
+      date: weekStart,
+      timezone: ANALYTICS_TZ,
+    },
+  };
+}
+
 
     const rows = await AnalyticsEvent.aggregate([
       { $match: match },

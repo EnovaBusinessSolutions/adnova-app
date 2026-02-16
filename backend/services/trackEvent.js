@@ -1,5 +1,6 @@
 "use strict";
 
+const mongoose = require("mongoose");
 const AnalyticsEvent = require("../models/AnalyticsEvent");
 
 function safeStr(v, max = 200) {
@@ -23,6 +24,18 @@ function safeDate(v) {
   const d = v instanceof Date ? v : new Date(v);
   if (Number.isNaN(d.getTime())) return null;
   return d;
+}
+
+function toObjectIdMaybe(v) {
+  if (!v) return null;
+  try {
+    const s = String(v).trim();
+    if (!s) return null;
+    if (!mongoose.Types.ObjectId.isValid(s)) return null;
+    return new mongoose.Types.ObjectId(s);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -57,15 +70,16 @@ async function trackEvent({
   dedupeKey,
   dedupekey,
   props,
-  ts,               // ✅ opcional: timestamp canónico (ej. last login)
-  inc,              // ✅ opcional: { count: 1 }
-  setOnInsert,      // ✅ opcional: { firstTs: now }
+  ts, // ✅ opcional: timestamp canónico (ej. last login)
+  inc, // ✅ opcional: { count: 1 }
+  setOnInsert, // ✅ opcional: { firstTs: now }
 }) {
   try {
     const eventName = safeStr(name, 80).trim();
     if (!eventName) return null;
 
-    const uid = userId || userid || null;
+    const uidRaw = userId || userid || null;
+    const uid = toObjectIdMaybe(uidRaw); // ✅ cast seguro (evita perder eventos por cast inválido)
     const dk = dedupeKey || dedupekey || null;
 
     const now = new Date();
@@ -76,14 +90,21 @@ async function trackEvent({
       source: safeStr(source, 40) || "app",
       ts: tsFinal, // ✅ fecha canónica: para filtros 7/30/90 y "último login"
       props: safeObj(props),
+      createdAt: now,
+      updatedAt: now,
     };
 
     if (uid) baseDoc.userId = uid;
     if (sessionId) baseDoc.sessionId = safeStr(sessionId, 120);
     if (dk) baseDoc.dedupeKey = safeStr(dk, 200);
 
-    // Si NO hay dedupeKey -> crea siempre (RAW events)
+    // ✅ Si NO hay dedupeKey -> crea siempre (RAW events)
     if (!baseDoc.dedupeKey) {
+      return await AnalyticsEvent.create(baseDoc);
+    }
+
+    // 🔥 FIX: si hay dedupeKey pero NO hay userId válido, NO dedupes (evita colisiones / casts raros)
+    if (!baseDoc.userId) {
       return await AnalyticsEvent.create(baseDoc);
     }
 
@@ -91,7 +112,11 @@ async function trackEvent({
     // - si ya existía, actualizamos ts (last activity) y hacemos merge de props
     // - si mandas inc, incrementa contadores
     // - si mandas setOnInsert, se setea solo cuando se crea por primera vez
-    const filter = { name: baseDoc.name, userId: baseDoc.userId, dedupeKey: baseDoc.dedupeKey };
+    const filter = {
+      name: baseDoc.name,
+      userId: baseDoc.userId,
+      dedupeKey: baseDoc.dedupeKey,
+    };
 
     const propsSet = buildPropsSet(props);
 
@@ -127,9 +152,21 @@ async function trackEvent({
       if (Object.keys(incSafe).length) update.$inc = incSafe;
     }
 
-    return await AnalyticsEvent.findOneAndUpdate(filter, update, { upsert: true, new: true });
-  } catch {
-    // no rompas el flujo por analítica
+    return await AnalyticsEvent.findOneAndUpdate(filter, update, {
+      upsert: true,
+      new: true,
+    });
+  } catch (e) {
+    // ✅ No rompas el flujo por analítica, pero permite debug opcional
+    if (process.env.ANALYTICS_DEBUG === "1") {
+      console.error("[trackEvent] error:", e?.message || e, {
+        name,
+        userId,
+        userid,
+        dedupeKey,
+        dedupekey,
+      });
+    }
     return null;
   }
 }
