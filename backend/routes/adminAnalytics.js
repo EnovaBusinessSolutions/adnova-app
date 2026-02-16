@@ -330,15 +330,17 @@ function ymd(d) {
  */
 function parseCutoffDayToCutoffEnd(req) {
   const cutoffDay = String(req.query.cutoffDay || "").trim();
-  if (!isYmdOnly(cutoffDay)) return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
+  if (!isYmdOnly(cutoffDay)) {
+    return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
+  }
 
- const start = zonedDayBoundaryToUtc(cutoffDay, "start");
-if (!start || isNaN(start.getTime())) return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
+  // ✅ Interpretación: cutoffDay ES el día cubierto (incluye el día completo)
+  const cutoffEnd = new Date(`${cutoffDay}T23:59:59.999Z`);
+  if (isNaN(cutoffEnd.getTime())) {
+    return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
+  }
 
-const cutoffEnd = new Date(start.getTime() - 1);
-const cutoffEffectiveDay = ymd(cutoffEnd);
-
-
+  const cutoffEffectiveDay = cutoffDay;
   return { cutoffDay, cutoffEnd, cutoffEffectiveDay };
 }
 
