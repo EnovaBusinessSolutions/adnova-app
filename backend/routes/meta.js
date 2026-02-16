@@ -123,7 +123,6 @@ function appendQuery(url, key, value) {
 /**
  * ✅ Blindaje anti open-redirect:
  * Solo permitimos returnTo relativo y dentro del dashboard/settings.
- * (Onboarding ya no es parte del flujo principal)
  */
 function sanitizeReturnTo(raw) {
   const val = String(raw || '').trim();
@@ -145,6 +144,19 @@ function sanitizeReturnTo(raw) {
   }
 
   return val;
+}
+
+/**
+ * ✅ Flow key para dedupe idempotente por sesión/flujo
+ * - Evita que "meta_connected:<user>" mate el tracking para siempre.
+ * - Idempotente dentro de una sesión: si Meta redirige 2 veces, no duplica.
+ */
+function getFlowKey(req) {
+  const sid = req?.sessionID || req?.session?.id || null;
+  if (sid) return String(sid);
+  // fallback si por alguna razón no hay sessionID
+  const tmp = crypto.randomBytes(12).toString('hex');
+  return `nosession_${tmp}`;
 }
 
 /**
@@ -180,7 +192,6 @@ router.get('/login', (req, res) => {
   // Validación suave de ENV (para no crashear)
   if (!APP_ID || !APP_SECRET || !REDIRECT_URI) {
     console.warn('[meta] Missing FACEBOOK_APP_ID/SECRET/REDIRECT_URI');
-    // ✅ sin onboarding
     const dest = appendQuery(DEFAULT_RETURN_TO, 'meta', 'error');
     return res.redirect(appendQuery(dest, 'reason', 'missing_env'));
   }
@@ -214,7 +225,6 @@ router.get('/callback', async (req, res) => {
     delete req.session.fb_state;
     delete req.session.fb_returnTo;
 
-    // ✅ sin onboarding
     const dest0 = appendQuery(DEFAULT_RETURN_TO, 'meta', 'fail');
     return res.redirect(appendQuery(dest0, 'reason', 'bad_state'));
   }
@@ -317,7 +327,7 @@ router.get('/callback', async (req, res) => {
 
     const userId = req.user._id;
 
-    // 7) actualiza User (no romper)
+    // 7) actualiza User
     await User.findByIdAndUpdate(userId, {
       $set: {
         metaConnected: true,
@@ -326,7 +336,7 @@ router.get('/callback', async (req, res) => {
       }
     });
 
-    // ✅ Nuevo criterio de selector con UX MAX_SELECT=1:
+    // ✅ UX selector con MAX_SELECT=1
     const allDigits = adAccounts.map(a => normActId(a.account_id)).filter(Boolean);
     const availableCount = allDigits.length;
     const shouldForceSelector = availableCount > MAX_SELECT;
@@ -398,15 +408,18 @@ router.get('/callback', async (req, res) => {
     }
 
     // ✅ 8) TRACK: meta_connected (E2E Internal Analytics)
-    // Nota: dedupe por usuario para que el "último" actualice ts y props.
+    // FIX: dedupeKey por sesión/flow (no por usuario fijo)
     try {
+      const flowKey = getFlowKey(req);
       await trackEvent({
         name: 'meta_connected',
         userId,
         source: 'app',
-        dedupeKey: `meta_connected:${String(userId)}`,
+        dedupeKey: `meta_connected:${String(userId)}:${flowKey}`,
         ts: new Date(),
         props: {
+          flowKey,
+          sessionId: req.sessionID || null,
           fbUserId: fbUserId || null,
           accountsCount: Array.isArray(adAccounts) ? adAccounts.length : 0,
           scopesCount: Array.isArray(grantedScopes) ? grantedScopes.length : 0,
@@ -416,13 +429,12 @@ router.get('/callback', async (req, res) => {
         },
       });
     } catch (e) {
-      // best-effort: no romper callback
       if (process.env.ANALYTICS_DEBUG === '1') {
         console.warn('[meta] track meta_connected failed:', e?.message || e);
       }
     }
 
-    // ✅ 9) redirect final E2E (sin onboarding):
+    // ✅ 9) redirect final
     let destino = '';
     const sessionReturnTo = sanitizeReturnTo(req.session.fb_returnTo);
     delete req.session.fb_returnTo;
@@ -542,7 +554,6 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
       return res.status(400).json({ ok: false, error: 'NO_VALID_ACCOUNTS' });
     }
 
-    // Para track
     let finalSelected = wanted;
 
     if (!MetaAccount) {
@@ -556,15 +567,18 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
         }
       );
 
-      // ✅ TRACK: meta_ads_selected (E2E Internal Analytics)
+      // ✅ TRACK: meta_ads_selected (FIX dedupeKey por flow)
       try {
+        const flowKey = getFlowKey(req);
         await trackEvent({
           name: 'meta_ads_selected',
           userId,
           source: 'app',
-          dedupeKey: `meta_ads_selected:${String(userId)}`,
+          dedupeKey: `meta_ads_selected:${String(userId)}:${flowKey}`,
           ts: new Date(),
           props: {
+            flowKey,
+            sessionId: req.sessionID || null,
             selectedAccountId: wanted[0],
             selectedAccountIds: wanted,
           },
@@ -615,15 +629,18 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
       }
     );
 
-    // ✅ TRACK: meta_ads_selected (E2E Internal Analytics)
+    // ✅ TRACK: meta_ads_selected (FIX dedupeKey por flow)
     try {
+      const flowKey = getFlowKey(req);
       await trackEvent({
         name: 'meta_ads_selected',
         userId,
         source: 'app',
-        dedupeKey: `meta_ads_selected:${String(userId)}`,
+        dedupeKey: `meta_ads_selected:${String(userId)}:${flowKey}`,
         ts: new Date(),
         props: {
+          flowKey,
+          sessionId: req.sessionID || null,
           selectedAccountId: selected[0],
           selectedAccountIds: selected,
         },
@@ -709,7 +726,6 @@ router.post('/default-account', requireAuth, express.json(), async (req, res) =>
       const doc = await MetaAccount
         .findOne({ $or: [{ userId: req.user._id }, { user: req.user._id }] })
         .select('ad_accounts adAccounts selectedAccountIds defaultAccountId')
-        .remember
         .lean();
 
       const raw = doc?.ad_accounts || doc?.adAccounts || [];
@@ -879,15 +895,18 @@ router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
     const after = await Audit.countDocuments({ userId, type: 'meta' }).catch(() => 0);
     const auditsDeleted = Math.max(0, before - after);
 
-    // ✅ TRACK: meta_disconnected (E2E Internal Analytics)
+    // ✅ TRACK: meta_disconnected (FIX dedupeKey por flow)
     try {
+      const flowKey = getFlowKey(req);
       await trackEvent({
         name: 'meta_disconnected',
         userId,
         source: 'app',
-        dedupeKey: `meta_disconnected:${String(userId)}`,
+        dedupeKey: `meta_disconnected:${String(userId)}:${flowKey}`,
         ts: new Date(),
         props: {
+          flowKey,
+          sessionId: req.sessionID || null,
           revokeAttempted: !!revoke?.attempted,
           revokeOk: !!revoke?.ok,
           auditsDeleted,
