@@ -1,3 +1,4 @@
+// backend/routes/adminAnalytics.js
 "use strict";
 
 const express = require("express");
@@ -60,6 +61,13 @@ try {
 
 // ✅ Timezone canónico para analítica (para cortes y buckets)
 const ANALYTICS_TZ = String(process.env.ANALYTICS_TZ || "America/Mexico_City");
+
+// ✅ includeToday: permite “realtime” (incluye el día en curso).
+// Si includeToday=1 y NO mandas cutoffDay => el backend usa HOY (clamp a NOW).
+function isTruthyFlag(v) {
+  const s = String(v || "").trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes" || s === "y" || s === "on";
+}
 
 // ✅ Detecta YYYY-MM-DD (sin hora)
 function isYmdOnly(v) {
@@ -356,54 +364,73 @@ async function getMinMaxInRange(match) {
 /* =========================
  * ✅ CIERRE DIARIO (cutoffDay)
  * =========================
- * El front puede mandar cutoffDay=YYYY-MM-DD (día LOCAL de analítica).
+ * - Por default (includeToday=0): usamos AYER en ANALYTICS_TZ (último día completo).
+ * - Realtime (includeToday=1): usamos HOY y clampleamos a NOW.
  *
- * ✅ FIXES:
- * - Si NO viene cutoffDay => usamos AYER (último día completo) en ANALYTICS_TZ.
- * - Si cutoffEnd cae en el FUTURO => se clampa a NOW (evita desfases durante el día).
+ * Front puede mandar cutoffDay=YYYY-MM-DD (día local ANALYTICS_TZ).
  */
 function parseCutoffDayToCutoffEnd(req) {
+  const includeToday = isTruthyFlag(req.query.includeToday || req.query.realtime);
+
   let cutoffDay = String(req.query.cutoffDay || "").trim();
 
-  // ✅ FIX B: si no viene cutoffDay, default = AYER en TZ canónico
+  // ✅ Default automático si no viene cutoffDay
   if (!isYmdOnly(cutoffDay)) {
     const now = new Date();
     const todayTz = tzYmd(now, ANALYTICS_TZ);
-    const todayStartUtc = todayTz ? zonedDayBoundaryToUtc(todayTz, "start") : null;
-    const yesterdayStartUtc = todayStartUtc
-      ? new Date(todayStartUtc.getTime() - 24 * 60 * 60 * 1000)
-      : new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
-    const yDay = tzYmd(yesterdayStartUtc, ANALYTICS_TZ);
-    cutoffDay = yDay && isYmdOnly(yDay) ? yDay : "";
+    if (includeToday) {
+      // Realtime: HOY (se clampea a NOW en applyCutoffToRange)
+      cutoffDay = todayTz && isYmdOnly(todayTz) ? todayTz : "";
+    } else {
+      // Stable: AYER (último día completo)
+      const todayStartUtc = todayTz ? zonedDayBoundaryToUtc(todayTz, "start") : null;
+      const yesterdayStartUtc = todayStartUtc
+        ? new Date(todayStartUtc.getTime() - 24 * 60 * 60 * 1000)
+        : new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+      const yDay = tzYmd(yesterdayStartUtc, ANALYTICS_TZ);
+      cutoffDay = yDay && isYmdOnly(yDay) ? yDay : "";
+    }
   }
 
   if (!isYmdOnly(cutoffDay)) {
-    return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
+    return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null, includeToday };
   }
 
-  // ✅ Fin del día en el TZ canónico (no UTC fijo)
   const cutoffEnd = zonedDayBoundaryToUtc(cutoffDay, "end");
   if (!cutoffEnd || isNaN(cutoffEnd.getTime())) {
-    return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
+    return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null, includeToday };
   }
 
-  const cutoffEffectiveDay = cutoffDay;
-  return { cutoffDay, cutoffEnd, cutoffEffectiveDay };
+  return {
+    cutoffDay,
+    cutoffEnd,
+    cutoffEffectiveDay: cutoffDay,
+    includeToday,
+  };
 }
 
 function applyCutoffToRange(req, range) {
-  const { cutoffDay, cutoffEnd, cutoffEffectiveDay } = parseCutoffDayToCutoffEnd(req);
+  const { cutoffDay, cutoffEnd, cutoffEffectiveDay, includeToday } =
+    parseCutoffDayToCutoffEnd(req);
+
   if (!cutoffEnd) {
-    return { ...range, cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
+    return {
+      ...range,
+      cutoffDay: null,
+      cutoffEnd: null,
+      cutoffEffectiveDay: null,
+      includeToday: !!includeToday,
+    };
   }
 
   let from = range.from || null;
   let to = range.to || null;
 
-  // ✅ FIX A: si cutoffEnd está en el futuro (cutoffDay=HOY en pleno día),
-  // clampleamos el corte a NOW para no “correr” los KPIs.
   const now = new Date();
+
+  // ✅ Si cutoffEnd cae en el FUTURO => clamp a NOW
   const effectiveCutoffEnd = cutoffEnd.getTime() > now.getTime() ? now : cutoffEnd;
 
   // Clamp "to"
@@ -422,15 +449,13 @@ function applyCutoffToRange(req, range) {
     cutoffDay,
     cutoffEnd: effectiveCutoffEnd,
     cutoffEffectiveDay,
+    includeToday: !!includeToday,
   };
 }
 
 /* =========================
  * ✅ Rango canónico (compat)
- * =========================
- * - Ya NO priorizamos "fromTs/toTs" (solo compat).
- * - El panel interno usa from/to + cutoffDay (opcional).
- */
+ * ========================= */
 function getEffectiveRange(req) {
   // compat (no prioridad)
   let fromTs = parseDateExact(req.query.fromTs);
@@ -446,7 +471,6 @@ function getEffectiveRange(req) {
   from = norm.from;
   to = norm.to;
 
-  // elegimos from/to como fuente principal
   const effectiveFrom = from || fromTs || null;
   const effectiveTo = to || toTs || null;
 
@@ -460,7 +484,6 @@ function getEffectiveRange(req) {
     swapped: !!(norm.swapped || normTs.swapped || effectiveNorm.swapped),
   };
 
-  // ✅ aplicar cierre diario
   return applyCutoffToRange(req, base);
 }
 
@@ -475,7 +498,6 @@ function oauthClient() {
   });
 }
 
-// Devuelve access token fresco usando refresh token (sin romper si falla).
 async function getFreshGoogleAccessToken(googleDoc) {
   const refreshToken = googleDoc?.refreshToken || googleDoc?.refresh_token || null;
   const accessToken = googleDoc?.accessToken || googleDoc?.access_token || null;
@@ -706,7 +728,7 @@ router.get("/health", requireInternalAdmin, async (_req, res) => {
 });
 
 /* =========================
- * ✅ GET /api/admin/analytics/summary?from=&to=&cutoffDay=
+ * ✅ GET /api/admin/analytics/summary?from=&to=&cutoffDay=&includeToday=
  * ========================= */
 router.get("/summary", requireInternalAdmin, async (req, res) => {
   try {
@@ -715,8 +737,7 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
     const dateMatch = buildDateMatch(range.from, range.to);
     const match = dateMatch ? { ...dateMatch } : {};
 
-    // ✅ baseNow:
-    // Si hay cutoffEnd, usamos ese "ancla" (ya clamped a NOW si estaba en el futuro).
+    // ✅ baseNow: si hay cutoffEnd, usamos ese “ancla”
     const baseNow = range?.cutoffEnd ? new Date(range.cutoffEnd.getTime()) : new Date();
 
     const d24From = new Date(baseNow.getTime() - 24 * 60 * 60 * 1000);
@@ -727,7 +748,6 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
 
     const [totals, topNames, last24h, last7d, signups, loginsAgg] =
       await Promise.all([
-        // ✅ Totales: si el doc trae "count" (STATE) suma count, si no existe suma 1 (RAW)
         AnalyticsEvent.aggregate([
           { $match: match },
           {
@@ -740,7 +760,6 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
           { $project: { _id: 0, events: 1, uniqueUsers: { $size: "$users" } } },
         ]),
 
-        // ✅ Top events: suma count si existe, si no = 1
         AnalyticsEvent.aggregate([
           { $match: match },
           { $group: { _id: "$name", count: { $sum: { $ifNull: ["$count", 1] } } } },
@@ -749,7 +768,6 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
           { $project: { _id: 0, name: "$_id", count: 1 } },
         ]),
 
-        // ✅ Conteos estables (con cierre si aplica)
         AnalyticsEvent.countDocuments(match24).catch(() => 0),
         AnalyticsEvent.countDocuments(match7).catch(() => 0),
 
@@ -758,7 +776,6 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
           name: "user_signed_up",
         }).catch(() => 0),
 
-        // ✅ Logins reales + usuarios únicos que loguearon en el rango
         AnalyticsEvent.aggregate([
           {
             $match: {
@@ -777,6 +794,8 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
         ]).catch(() => []),
       ]);
 
+    const dbg = await getMinMaxInRange(match);
+
     const data = {
       from: range.from ? range.from.toISOString() : null,
       to: range.to ? range.to.toISOString() : null,
@@ -786,7 +805,8 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
       toTs: range.toTs,
       swapped: range.swapped || false,
 
-      // ✅ cierre diario
+      // ✅ cierre diario + realtime
+      includeToday: !!range.includeToday,
       cutoffDay: range.cutoffDay || null,
       cutoffEnd: range.cutoffEnd ? range.cutoffEnd.toISOString() : null,
       cutoffEffectiveDay: range.cutoffEffectiveDay || null,
@@ -799,28 +819,26 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
       last7dEvents: last7d || 0,
       signups: signups || 0,
 
-      // ✅ métricas de login (nombres que el front ya soporta)
       logins: loginsAgg?.[0]?.logins || 0,
       loginsUniqueUsers: loginsAgg?.[0]?.loginsUniqueUsers || 0,
-    };
 
-    const dbg = await getMinMaxInRange(match);
+      debug: {
+        analyticsTz: ANALYTICS_TZ,
+        analyticsCollection: AnalyticsEvent?.collection?.name || null,
 
-    data.debug = {
-      analyticsTz: ANALYTICS_TZ,
-      analyticsCollection: AnalyticsEvent?.collection?.name || null,
+        effectiveFrom: range.from ? range.from.toISOString() : null,
+        effectiveTo: range.to ? range.to.toISOString() : null,
 
-      effectiveFrom: range.from ? range.from.toISOString() : null,
-      effectiveTo: range.to ? range.to.toISOString() : null,
+        includeToday: !!range.includeToday,
+        cutoffDay: range.cutoffDay || null,
+        cutoffEnd: range.cutoffEnd ? range.cutoffEnd.toISOString() : null,
+        swapped: !!range.swapped,
 
-      cutoffDay: range.cutoffDay || null,
-      cutoffEnd: range.cutoffEnd ? range.cutoffEnd.toISOString() : null,
-      swapped: !!range.swapped,
-
-      minAt: dbg.minAt ? new Date(dbg.minAt).toISOString() : null,
-      maxAt: dbg.maxAt ? new Date(dbg.maxAt).toISOString() : null,
-      docsMatched: dbg.docs || 0,
-      eventsMatched: dbg.events || 0,
+        minAt: dbg.minAt ? new Date(dbg.minAt).toISOString() : null,
+        maxAt: dbg.maxAt ? new Date(dbg.maxAt).toISOString() : null,
+        docsMatched: dbg.docs || 0,
+        eventsMatched: dbg.events || 0,
+      },
     };
 
     return res.json({ ok: true, data });
@@ -831,7 +849,7 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
 });
 
 /* =========================
- * GET /api/admin/analytics/events?name=&userId=&from=&to=&limit=&cursor=&q=&cutoffDay=
+ * GET /api/admin/analytics/events?name=&userId=&from=&to=&limit=&cursor=&q=&cutoffDay=&includeToday=
  * ========================= */
 router.get("/events", requireInternalAdmin, async (req, res) => {
   try {
@@ -860,10 +878,7 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
 
     if (qtext) {
       const safe = qtext.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      q.$or = [
-        { name: new RegExp(safe, "i") },
-        { dedupeKey: new RegExp(safe, "i") },
-      ];
+      q.$or = [{ name: new RegExp(safe, "i") }, { dedupeKey: new RegExp(safe, "i") }];
     }
 
     const docs = await AnalyticsEvent.find(q)
@@ -893,7 +908,8 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
         from: range.from ? range.from.toISOString() : null,
         to: range.to ? range.to.toISOString() : null,
 
-        // ✅ cierre diario
+        // ✅ cierre diario + realtime
+        includeToday: !!range.includeToday,
         cutoffDay: range.cutoffDay || null,
         cutoffEnd: range.cutoffEnd ? range.cutoffEnd.toISOString() : null,
         cutoffEffectiveDay: range.cutoffEffectiveDay || null,
@@ -911,29 +927,19 @@ router.get("/events", requireInternalAdmin, async (req, res) => {
  * ========================= */
 
 function resolveUserRegisteredAt(u) {
-  return (
-    u?.createdAt ||
-    u?.created_at ||
-    u?.signupAt ||
-    u?.signup_at ||
-    objectIdToDate(u?._id) ||
-    null
-  );
+  return u?.createdAt || u?.created_at || u?.signupAt || u?.signup_at || objectIdToDate(u?._id) || null;
 }
 
 function resolveUserName(u) {
-  return pickFirstTruthy(
-    u?.name,
-    u?.fullName,
-    u?.full_name,
-    u?.displayName,
-    u?.display_name,
-    u?.profile?.name
-  );
+  return pickFirstTruthy(u?.name, u?.fullName, u?.full_name, u?.displayName, u?.display_name, u?.profile?.name);
 }
 
 function resolveUserEmail(u) {
   return pickFirstTruthy(u?.email, u?.emails?.[0]?.value, u?.profile?.email);
+}
+
+function normActId(s = "") {
+  return String(s || "").replace(/^act_/, "").trim();
 }
 
 function pickMetaSelected(metaDoc) {
@@ -947,7 +953,14 @@ function pickMetaSelected(metaDoc) {
     ? metaDoc.adAccounts
     : [];
 
-  const hit = id ? list.find((a) => String(a?.id || "").trim() === String(id).trim()) : null;
+  // ✅ FIX: comparar por account_id (digits) o id "act_"
+  const hit = id
+    ? list.find((a) => {
+        const aid = normActId(a?.account_id || a?.accountId || a?.id);
+        return aid && aid === normActId(id);
+      })
+    : null;
+
   const name = pickFirstTruthy(hit?.name, hit?.account_name) || null;
 
   const token =
@@ -962,14 +975,9 @@ function pickMetaSelected(metaDoc) {
 }
 
 function pickGoogleAdsSelected(googleDoc) {
-  if (!googleDoc)
-    return {
-      id: null,
-      name: null,
-      accessToken: null,
-      loginCustomerId: null,
-      refreshToken: null,
-    };
+  if (!googleDoc) {
+    return { id: null, name: null, accessToken: null, loginCustomerId: null, refreshToken: null };
+  }
 
   const id = pickFirstTruthy(googleDoc?.selectedCustomerIds?.[0], googleDoc?.defaultCustomerId) || null;
 
@@ -999,16 +1007,13 @@ function pickGA4Selected(googleDoc) {
   const id = rawId ? toPropertyResource(rawId) : null;
 
   const props = Array.isArray(googleDoc?.gaProperties) ? googleDoc.gaProperties : [];
-  const hit = id
-    ? props.find((p) => String(p?.propertyId || "").trim() === String(id).trim())
-    : null;
+  const hit = id ? props.find((p) => String(p?.propertyId || "").trim() === String(id).trim()) : null;
 
   const name = pickFirstTruthy(hit?.displayName) || null;
 
   return { id, name };
 }
 
-// ✅ Último LOGIN REAL por usuario (solo eventos login)
 async function getLastLoginMap(userIds) {
   const match = {
     userId: { $in: userIds },
@@ -1061,7 +1066,6 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     const limit = clampInt(req.query.limit, 1, 200, 50);
     const cursor = String(req.query.cursor || "").trim();
 
-    // ✅ Mantener from/to para filtro de usuarios (createdAt)
     let from = parseDateMaybeStart(req.query.from);
     let to = parseDateMaybeEnd(req.query.to);
     const norm = normalizeRange(from, to);
@@ -1103,7 +1107,6 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     const nextCursor = users.length ? String(users[users.length - 1]._id) : null;
     const userIds = users.map((u) => u._id);
 
-    // related docs
     const googleByUser = new Map();
     if (GoogleAccount && userIds.length) {
       const googleDocs = await GoogleAccount.find({
@@ -1114,7 +1117,7 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
             "selectedCustomerIds defaultCustomerId loginCustomerId managerCustomerId " +
             "ad_accounts " +
             "gaProperties defaultPropertyId selectedPropertyIds selectedGaPropertyId " +
-            "+accessToken +refreshToken"
+            "+accessToken +refreshToken +refresh_token"
         )
         .lean()
         .catch(() => []);
@@ -1133,7 +1136,7 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
         .select(
           "_id userId owner user " +
             "selectedAccountIds defaultAccountId ad_accounts adAccounts " +
-            "+access_token +token +longlivedToken +accessToken +longLivedToken"
+            "+access_token +token +longlivedToken +accessToken +longLivedToken +longLivedToken"
         )
         .lean()
         .catch(() => []);
@@ -1144,10 +1147,8 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
       }
     }
 
-    // ✅ lastLoginAt best-effort via AnalyticsEvent
     const lastLoginMap = await getLastLoginMap(userIds);
 
-    // ✅ token correcto (Render: GOOGLE_DEVELOPER_TOKEN)
     const devToken = resolveGoogleDeveloperToken() || null;
 
     const computed = await runWithLimit(users, 5, async (u) => {
@@ -1165,15 +1166,12 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
       const loginCid = resolveLoginCustomerId(gd);
 
       const googleSpendPromise = (async () => {
-        // 1) Vía Insights (preferido)
         const viaInsights = await fetchGoogleAdsSpend30dViaInsights({
           accessToken: tokenForGoogle,
           customerId: googleSel.id,
         }).catch(() => null);
-
         if (viaInsights != null) return viaInsights;
 
-        // 2) Fallback legacy (direct API)
         const legacy = await fetchGoogleAdsSpend30d({
           accessToken: tokenForGoogle,
           customerId: googleSel.id,
@@ -1251,7 +1249,7 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
 });
 
 /* =========================
- * GET /api/admin/analytics/series
+ * GET /api/admin/analytics/series?name=&groupBy=&from=&to=&cutoffDay=&includeToday=
  * ========================= */
 router.get("/series", requireInternalAdmin, async (req, res) => {
   try {
@@ -1291,9 +1289,7 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
         },
       };
     } else {
-      const weekStart = {
-        $dateTrunc: { date: effectiveDateExpr, unit: "week", timezone: ANALYTICS_TZ },
-      };
+      const weekStart = { $dateTrunc: { date: effectiveDateExpr, unit: "week", timezone: ANALYTICS_TZ } };
       groupId = {
         $dateToString: {
           format: "%Y-%m-%d",
@@ -1337,7 +1333,8 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
         toTs: range.toTs,
         swapped: range.swapped || false,
 
-        // ✅ cierre diario
+        // ✅ cierre diario + realtime
+        includeToday: !!range.includeToday,
         cutoffDay: range.cutoffDay || null,
         cutoffEnd: range.cutoffEnd ? range.cutoffEnd.toISOString() : null,
         cutoffEffectiveDay: range.cutoffEffectiveDay || null,
@@ -1352,7 +1349,7 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
 });
 
 /* =========================
- * GET /api/admin/analytics/funnel
+ * GET /api/admin/analytics/funnel?from=&to=&steps=&cutoffDay=&includeToday=
  * ========================= */
 router.get("/funnel", requireInternalAdmin, async (req, res) => {
   try {
@@ -1393,10 +1390,7 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
     ];
 
     const stepKeys = stepsRaw
-      ? stepsRaw
-          .split(",")
-          .map((s) => String(s || "").trim())
-          .filter(Boolean)
+      ? stepsRaw.split(",").map((s) => String(s || "").trim()).filter(Boolean)
       : DEFAULT_STEPS;
 
     const expandedNamesByStep = new Map();
@@ -1413,18 +1407,8 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
     const rows = await AnalyticsEvent.aggregate([
       { $match: match },
       { $match: { $expr: { $ne: [effectiveDateExpr, null] } } },
-      {
-        $group: {
-          _id: { userId: "$userId", name: "$name" },
-          firstAt: { $min: effectiveDateExpr },
-        },
-      },
-      {
-        $group: {
-          _id: "$_id.userId",
-          names: { $addToSet: "$_id.name" },
-        },
-      },
+      { $group: { _id: { userId: "$userId", name: "$name" }, firstAt: { $min: effectiveDateExpr } } },
+      { $group: { _id: "$_id.userId", names: { $addToSet: "$_id.name" } } },
     ]);
 
     const counts = Object.fromEntries(stepKeys.map((k) => [k, 0]));
@@ -1437,11 +1421,7 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
       }
     }
 
-    const funnel = stepKeys.map((k, idx) => ({
-      step: k,
-      index: idx,
-      users: counts[k] || 0,
-    }));
+    const funnel = stepKeys.map((k, idx) => ({ step: k, index: idx, users: counts[k] || 0 }));
 
     for (let i = 0; i < funnel.length; i++) {
       if (i === 0) {
@@ -1466,7 +1446,8 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
         toTs: range.toTs,
         swapped: range.swapped || false,
 
-        // ✅ cierre diario
+        // ✅ cierre diario + realtime
+        includeToday: !!range.includeToday,
         cutoffDay: range.cutoffDay || null,
         cutoffEnd: range.cutoffEnd ? range.cutoffEnd.toISOString() : null,
         cutoffEffectiveDay: range.cutoffEffectiveDay || null,

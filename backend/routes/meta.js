@@ -9,6 +9,9 @@ const router  = express.Router();
 const User  = require('../models/User');
 const Audit = require('../models/Audit');
 
+// ✅ Analytics events (Internal Admin / DB analytics)
+const { trackEvent } = require('../services/trackEvents');
+
 // ✅ Auditorías: cleanup al desconectar (best-effort)
 const {
   deleteAuditsForUserSources,
@@ -394,6 +397,31 @@ router.get('/callback', async (req, res) => {
       });
     }
 
+    // ✅ 8) TRACK: meta_connected (E2E Internal Analytics)
+    // Nota: dedupe por usuario para que el "último" actualice ts y props.
+    try {
+      await trackEvent({
+        name: 'meta_connected',
+        userId,
+        source: 'app',
+        dedupeKey: `meta_connected:${String(userId)}`,
+        ts: new Date(),
+        props: {
+          fbUserId: fbUserId || null,
+          accountsCount: Array.isArray(adAccounts) ? adAccounts.length : 0,
+          scopesCount: Array.isArray(grantedScopes) ? grantedScopes.length : 0,
+          forcedSelector: !!shouldForceSelector,
+          selectedAccountIds: Array.isArray(selectedDigits) ? selectedDigits : [],
+          defaultAccountId: defaultAccountId || null,
+        },
+      });
+    } catch (e) {
+      // best-effort: no romper callback
+      if (process.env.ANALYTICS_DEBUG === '1') {
+        console.warn('[meta] track meta_connected failed:', e?.message || e);
+      }
+    }
+
     // ✅ 9) redirect final E2E (sin onboarding):
     let destino = '';
     const sessionReturnTo = sanitizeReturnTo(req.session.fb_returnTo);
@@ -514,6 +542,9 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
       return res.status(400).json({ ok: false, error: 'NO_VALID_ACCOUNTS' });
     }
 
+    // Para track
+    let finalSelected = wanted;
+
     if (!MetaAccount) {
       await User.updateOne(
         { _id: userId },
@@ -524,6 +555,26 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
           },
         }
       );
+
+      // ✅ TRACK: meta_ads_selected (E2E Internal Analytics)
+      try {
+        await trackEvent({
+          name: 'meta_ads_selected',
+          userId,
+          source: 'app',
+          dedupeKey: `meta_ads_selected:${String(userId)}`,
+          ts: new Date(),
+          props: {
+            selectedAccountId: wanted[0],
+            selectedAccountIds: wanted,
+          },
+        });
+      } catch (e) {
+        if (process.env.ANALYTICS_DEBUG === '1') {
+          console.warn('[meta] track meta_ads_selected failed (no MetaAccount):', e?.message || e);
+        }
+      }
+
       return res.json({ ok: true, selectedAccountIds: wanted, defaultAccountId: wanted[0] });
     }
 
@@ -541,6 +592,8 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
     if (!selected.length) {
       return res.status(400).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
     }
+
+    finalSelected = selected;
 
     await MetaAccount.updateOne(
       { _id: doc._id },
@@ -562,7 +615,26 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
       }
     );
 
-    return res.json({ ok: true, selectedAccountIds: selected, defaultAccountId: selected[0] });
+    // ✅ TRACK: meta_ads_selected (E2E Internal Analytics)
+    try {
+      await trackEvent({
+        name: 'meta_ads_selected',
+        userId,
+        source: 'app',
+        dedupeKey: `meta_ads_selected:${String(userId)}`,
+        ts: new Date(),
+        props: {
+          selectedAccountId: selected[0],
+          selectedAccountIds: selected,
+        },
+      });
+    } catch (e) {
+      if (process.env.ANALYTICS_DEBUG === '1') {
+        console.warn('[meta] track meta_ads_selected failed:', e?.message || e);
+      }
+    }
+
+    return res.json({ ok: true, selectedAccountIds: finalSelected, defaultAccountId: finalSelected[0] });
   } catch (e) {
     console.error('[meta] accounts/selection error:', e);
     return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
@@ -637,6 +709,7 @@ router.post('/default-account', requireAuth, express.json(), async (req, res) =>
       const doc = await MetaAccount
         .findOne({ $or: [{ userId: req.user._id }, { user: req.user._id }] })
         .select('ad_accounts adAccounts selectedAccountIds defaultAccountId')
+        .remember
         .lean();
 
       const raw = doc?.ad_accounts || doc?.adAccounts || [];
@@ -805,6 +878,27 @@ router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
 
     const after = await Audit.countDocuments({ userId, type: 'meta' }).catch(() => 0);
     const auditsDeleted = Math.max(0, before - after);
+
+    // ✅ TRACK: meta_disconnected (E2E Internal Analytics)
+    try {
+      await trackEvent({
+        name: 'meta_disconnected',
+        userId,
+        source: 'app',
+        dedupeKey: `meta_disconnected:${String(userId)}`,
+        ts: new Date(),
+        props: {
+          revokeAttempted: !!revoke?.attempted,
+          revokeOk: !!revoke?.ok,
+          auditsDeleted,
+          auditsDeleteOk,
+        },
+      });
+    } catch (e) {
+      if (process.env.ANALYTICS_DEBUG === '1') {
+        console.warn('[meta] track meta_disconnected failed:', e?.message || e);
+      }
+    }
 
     return res.json({
       ok: true,
