@@ -640,24 +640,27 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
         }).catch(() => 0),
 
         // ✅ Logins reales + usuarios únicos que loguearon en el rango
-        AnalyticsEvent.aggregate([
-          {
-            $match: {
-              ...(match || {}),
-              name: { $in: LOGIN_EVENT_ALIASES },
-            },
-          },
-          {
-            $group: {
-              _id: null,
-              logins: { $sum: 1 },
-              users: { $addToSet: "$userId" },
-            },
-          },
-          {
-            $project: { _id: 0, logins: 1, loginsUniqueUsers: { $size: "$users" } },
-          },
-        ]).catch(() => []),
+// - Si el evento es "RAW", no trae count => suma 1
+// - Si el evento es "STATE" (dedupe), trae count => suma count
+AnalyticsEvent.aggregate([
+  {
+    $match: {
+      ...(match || {}),
+      name: { $in: LOGIN_EVENT_ALIASES },
+    },
+  },
+  {
+    $group: {
+      _id: null,
+      logins: { $sum: { $ifNull: ["$count", 1] } }, // ✅ FIX
+      users: { $addToSet: "$userId" },
+    },
+  },
+  {
+    $project: { _id: 0, logins: 1, loginsUniqueUsers: { $size: "$users" } },
+  },
+]).catch(() => []),
+
       ]);
 
     const data = {
@@ -915,6 +918,30 @@ async function getLastActivityMap(userIds) {
   return map;
 }
 
+// ✅ Último LOGIN REAL por usuario (solo eventos login)
+// (mejor que "última actividad" para tabla tipo CRM)
+async function getLastLoginMap(userIds) {
+  const match = {
+    userId: { $in: userIds },
+    name: { $in: LOGIN_EVENT_ALIASES },
+  };
+  const effectiveDateExpr = { $ifNull: ["$ts", "$createdAt"] };
+
+  const rows = await AnalyticsEvent.aggregate([
+    { $match: match },
+    { $match: { $expr: { $ne: [effectiveDateExpr, null] } } },
+    { $group: { _id: "$userId", lastAt: { $max: effectiveDateExpr } } },
+  ]).catch(() => []);
+
+  const map = new Map();
+  for (const r of rows) {
+    if (!r?._id) continue;
+    map.set(String(r._id), r.lastAt ? new Date(r.lastAt) : null);
+  }
+  return map;
+}
+
+
 async function runWithLimit(list, limit, worker) {
   const out = new Array(list.length);
   let i = 0;
@@ -1042,7 +1069,7 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     }
 
     // ✅ lastLoginAt best-effort via AnalyticsEvent (última actividad global)
-    const lastActivityMap = await getLastActivityMap(userIds);
+    const lastLoginMap = await getLastLoginMap(userIds);
 
     // ✅ token correcto (Render: GOOGLE_DEVELOPER_TOKEN)
     const devToken = resolveGoogleDeveloperToken() || null;
@@ -1116,7 +1143,7 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
       const uid = String(u._id);
       const c = computedByUser.get(uid) || {};
       const registeredAt = resolveUserRegisteredAt(u);
-      const lastLoginAt = lastActivityMap.get(uid) || null;
+      const lastLoginAt = lastLoginMap.get(uid) || null;
 
       return {
         userId: uid,

@@ -6,7 +6,7 @@ const GoogleStrategy = require('passport-google-oauth20').Strategy;
 
 const User = require('./models/User');
 
-// ✅ NEW: Analytics Events (no rompe si falta/si falla)
+// ✅ Analytics Events (best-effort: no rompe si falta / si falla)
 let trackEvent = null;
 try {
   ({ trackEvent } = require('./services/trackEvent'));
@@ -97,7 +97,7 @@ passport.use(
             name,
             email: normalizedEmail,
 
-            // Google ya viene verificado por Google (no tiene sentido bloquearlo)
+            // Google ya viene verificado por Google
             emailVerified: true,
 
             // Si tu login email/pass usa "password", dejarlo vacío está OK
@@ -115,7 +115,9 @@ passport.use(
           console.log('🆕 Usuario de Google creado en MongoDB:', normalizedEmail);
 
           // ✅ Track signup (dedupe por usuario)
-          if (trackEvent) {
+          if (trackEvent && user?._id) {
+            const now = new Date();
+
             Promise.resolve()
               .then(() =>
                 trackEvent({
@@ -123,7 +125,20 @@ passport.use(
                   userId: user._id,
                   dedupeKey: `user_signed_up:${user._id}`,
                   props: { method: 'google' },
-                  ts: new Date(),
+                  ts: now,
+                })
+              )
+              .catch(() => {});
+
+            // ✅ Track email verified (Google signup => verificado)
+            Promise.resolve()
+              .then(() =>
+                trackEvent({
+                  name: 'email_verified',
+                  userId: user._id,
+                  dedupeKey: `email_verified:${user._id}`,
+                  props: { method: 'google', reason: 'google_oauth' },
+                  ts: now,
                 })
               )
               .catch(() => {});
@@ -131,6 +146,7 @@ passport.use(
         } else {
           // ✅ Usuario existente
           const patch = {};
+          const shouldTrackEmailVerified = user.emailVerified === false;
 
           if (!user.googleId) patch.googleId = profile.id;
           if (user.emailVerified === false) patch.emailVerified = true;
@@ -152,6 +168,22 @@ passport.use(
           }
 
           console.log('✅ Usuario de Google ya registrado:', normalizedEmail);
+
+          // ✅ Si venía sin verificar y ahora quedó verificado por Google, trackearlo (dedupe)
+          if (trackEvent && shouldTrackEmailVerified && user?._id) {
+            const now = new Date();
+            Promise.resolve()
+              .then(() =>
+                trackEvent({
+                  name: 'email_verified',
+                  userId: user._id,
+                  dedupeKey: `email_verified:${user._id}`,
+                  props: { method: 'google', reason: 'google_oauth_existing_user' },
+                  ts: now,
+                })
+              )
+              .catch(() => {});
+          }
         }
 
         /**
@@ -171,18 +203,13 @@ passport.use(
           const ip = safeIp(req) || null;
           const ua = safeUa(req) || null;
 
-          // A) ✅ RAW (1 evento por login) -> para “cuántos logins por día”
-          // dedupeKey único por sesión/instante para no colisionar.
-          // Nota: si tu trackEvent no requiere dedupeKey, igual está OK mandarlo.
-          const rawDedupe =
-            `user_login:${user._id}:${now.getTime()}:${Math.random().toString(16).slice(2)}`;
-
+          // A) ✅ RAW (1 evento por login) -> para “cuántos logins reales”
+          // Importante: SIN dedupeKey => siempre crea un doc nuevo (más simple y correcto).
           Promise.resolve()
             .then(() =>
               trackEvent({
-                name: 'user_login', // 👈 evento RAW nuevo
+                name: 'user_login', // 👈 alias soportado en tu panel (user_login/login)
                 userId: user._id,
-                dedupeKey: rawDedupe,
                 props: {
                   method: 'google',
                   source: 'app',
@@ -195,15 +222,11 @@ passport.use(
             )
             .catch(() => {});
 
-          // B) ✅ STATE (1 doc por usuario por día) -> “último login” + live refresh
-          // Mantiene tu dedupeKey actual pero ahora mandamos:
-          // - ts: last login at
-          // - inc: { count: 1 } para contar logins del día sin duplicar docs
-          // - props.lastLoginAt para UI/CRM si lo quieres directo
+          // B) ✅ STATE (1 doc por usuario por día) -> “último login” + contador diario
           Promise.resolve()
             .then(() =>
               trackEvent({
-                name: 'user_logged_in', // 👈 evento STATE (el que ya tienes)
+                name: 'user_logged_in', // 👈 evento STATE principal
                 userId: user._id,
                 dedupeKey: `user_logged_in:${user._id}:${ymd}`,
                 props: {
@@ -215,9 +238,9 @@ passport.use(
                   ymd,
                   lastLoginAt: now.toISOString(),
                 },
-                ts: now,                 // 👈 queremos que este se vaya actualizando
-                inc: { count: 1 },       // 👈 contador diario (requiere soporte en trackEvent)
-                setOnInsert: { firstTs: now }, // 👈 primer login del día (requiere soporte)
+                ts: now, // ✅ se actualiza en cada login
+                inc: { count: 1 }, // ✅ contador diario
+                setOnInsert: { firstTs: now }, // ✅ primer login del día
               })
             )
             .catch(() => {});

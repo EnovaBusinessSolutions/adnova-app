@@ -1116,12 +1116,22 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
     riskClear(req, email);
 
     // ✅ Crear sesión con Passport (usa serializeUser/deserializeUser de ./auth)
-    req.login(user, (err) => {
-      if (err) return next(err);
+    req.login(user, async (err) => {
+  if (err) return next(err);
 
-      const redirect = user.onboardingComplete ? "/dashboard" : "/onboarding";
-      return res.json({ success: true, redirect });
+  // ✅ NEW: Track login real (RAW). No rompe si falla.
+  try {
+    await trackEvent({
+      name: "user_logged_in",
+      userId: user._id,
+      ts: new Date(),
+      props: { method: "email" },
     });
+  } catch {}
+
+  const redirect = user.onboardingComplete ? "/dashboard" : "/onboarding";
+  return res.json({ success: true, redirect });
+});
   } catch (err) {
     console.error("❌ /api/login error:", err);
     return res.status(500).json({ success: false, message: "Error del servidor" });
@@ -1338,6 +1348,17 @@ app.get("/auth/google/login/callback", (req, res, next) => {
         req.logIn(user, async (loginErr) => {
           if (loginErr) return next(loginErr);
 
+          // ✅ NEW: Track login real (RAW). No rompe si falla.
+try {
+  await trackEvent({
+    name: "user_logged_in",
+    userId: user._id,
+    ts: new Date(),
+    props: { method: "google" },
+  });
+} catch {}
+
+
           // ✅ SOLO si es usuario nuevo (creado en este login)
           const isNew = info?.isNewUser === true || user?._isNewUser === true;
 
@@ -1445,10 +1466,20 @@ function destroySessionAndReply(req, res, { redirectTo } = {}) {
 }
 
 app.post("/api/logout", (req, res, next) => {
-  req.logout?.((err) => {
-    if (err) return next(err);
-    destroySessionAndReply(req, res);
-  });
+  req.logout?.(async (err) => {
+  if (err) return next(err);
+
+  // ✅ NEW: Track logout (best-effort)
+  try {
+    await trackEvent({
+      name: "user_logged_out",
+      userId: req.user?._id,
+      ts: new Date(),
+    });
+  } catch {}
+
+  destroySessionAndReply(req, res);
+});
 });
 
 app.get("/logout", (req, res, next) => {
