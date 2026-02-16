@@ -58,11 +58,16 @@ try {
 }
 
 /* =========================
- * Helpers  
+ * Helpers
  * ========================= */
 
 // ✅ Timezone canónico para analítica (para cortes y buckets)
 const ANALYTICS_TZ = String(process.env.ANALYTICS_TZ || "America/Mexico_City");
+
+// ✅ Detecta YYYY-MM-DD (sin hora)
+function isYmdOnly(v) {
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.trim());
+}
 
 // Convierte YYYY-MM-DD a Date UTC equivalente a inicio/fin de ese día en ANALYTICS_TZ
 // Sin libs externas, usando Intl + offset calculado (DST safe).
@@ -129,12 +134,7 @@ function zonedDayBoundaryToUtc(ymdStr, kind /* "start" | "end" */) {
   return guess;
 }
 
-// ✅ Detecta YYYY-MM-DD (sin hora)
-function isYmdOnly(v) {
-  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.trim());
-}
-
-// ✅ from: si viene YYYY-MM-DD => inicio de día UTC
+// ✅ from: si viene YYYY-MM-DD => inicio de día (en ANALYTICS_TZ) convertido a UTC
 function parseDateMaybeStart(v) {
   if (!v) return null;
   const s = String(v).trim();
@@ -143,8 +143,7 @@ function parseDateMaybeStart(v) {
   return isNaN(d.getTime()) ? null : d;
 }
 
-
-// ✅ to: si viene YYYY-MM-DD => fin de día UTC (inclusivo)
+// ✅ to: si viene YYYY-MM-DD => fin de día (en ANALYTICS_TZ) convertido a UTC (inclusivo)
 function parseDateMaybeEnd(v) {
   if (!v) return null;
   const s = String(v).trim();
@@ -152,7 +151,6 @@ function parseDateMaybeEnd(v) {
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d;
 }
-
 
 // ✅ fecha exacta (NO fuerza inicio/fin) (compat)
 function parseDateExact(v) {
@@ -318,15 +316,15 @@ function ymd(d) {
 /* =========================
  * ✅ CIERRE DIARIO (cutoffDay)
  * =========================
- * El front manda cutoffDay=YYYY-MM-DD.
- * Para “se actualiza a medianoche”, interpretamos:
- * - cutoffEnd = (inicio de cutoffDay UTC) - 1ms
- *   => es el fin del día anterior completo.
+ * El front manda cutoffDay=YYYY-MM-DD (día LOCAL de analítica).
  *
- * Ejemplo:
- * - cutoffDay=2026-02-13 => cutoffEnd=2026-02-12 23:59:59.999Z
- * Durante el día 13, el tablero queda congelado al cierre del 12.
- * A medianoche (cuando cutoffDay cambie a 14), se actualizará al cierre del 13.
+ * ✅ FIX CRÍTICO:
+ * Antes se convertía con "...Z" (UTC) y eso cortaba el día a las 18:00 CDMX,
+ * dejando FUERA eventos nocturnos (ej. 11:18pm local).
+ *
+ * Ahora:
+ * - cutoffEnd = fin de cutoffDay en ANALYTICS_TZ, convertido a UTC real.
+ *   (DST-safe, mismo motor que parseDateMaybeEnd)
  */
 function parseCutoffDayToCutoffEnd(req) {
   const cutoffDay = String(req.query.cutoffDay || "").trim();
@@ -334,9 +332,9 @@ function parseCutoffDayToCutoffEnd(req) {
     return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
   }
 
-  // ✅ Interpretación: cutoffDay ES el día cubierto (incluye el día completo)
-  const cutoffEnd = new Date(`${cutoffDay}T23:59:59.999Z`);
-  if (isNaN(cutoffEnd.getTime())) {
+  // ✅ Fin del día en el TZ canónico (no UTC fijo)
+  const cutoffEnd = zonedDayBoundaryToUtc(cutoffDay, "end");
+  if (!cutoffEnd || isNaN(cutoffEnd.getTime())) {
     return { cutoffDay: null, cutoffEnd: null, cutoffEffectiveDay: null };
   }
 
@@ -666,7 +664,9 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
     const match = dateMatch ? { ...dateMatch } : {};
 
     // ✅ Para "últimas 24h / últimos 7d" usamos el "cierre" si existe, no el now real.
-    const baseNow = range?.cutoffEnd ? new Date(range.cutoffEnd.getTime()) : new Date();
+    const baseNow = range?.cutoffEnd
+      ? new Date(range.cutoffEnd.getTime())
+      : new Date();
 
     const d24From = new Date(baseNow.getTime() - 24 * 60 * 60 * 1000);
     const d7From = new Date(baseNow.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -686,7 +686,9 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
               users: { $addToSet: "$userId" },
             },
           },
-          { $project: { _id: 0, events: 1, uniqueUsers: { $size: "$users" } } },
+          {
+            $project: { _id: 0, events: 1, uniqueUsers: { $size: "$users" } },
+          },
         ]),
 
         // ✅ Top events: suma count si existe, si no = 1
@@ -713,27 +715,30 @@ router.get("/summary", requireInternalAdmin, async (req, res) => {
         }).catch(() => 0),
 
         // ✅ Logins reales + usuarios únicos que loguearon en el rango
-// - Si el evento es "RAW", no trae count => suma 1
-// - Si el evento es "STATE" (dedupe), trae count => suma count
-AnalyticsEvent.aggregate([
-  {
-    $match: {
-      ...(match || {}),
-      name: { $in: LOGIN_EVENT_ALIASES },
-    },
-  },
-  {
-    $group: {
-      _id: null,
-      logins: { $sum: { $ifNull: ["$count", 1] } }, // ✅ FIX
-      users: { $addToSet: "$userId" },
-    },
-  },
-  {
-    $project: { _id: 0, logins: 1, loginsUniqueUsers: { $size: "$users" } },
-  },
-]).catch(() => []),
-
+        // - Si el evento es "RAW", no trae count => suma 1
+        // - Si el evento es "STATE" (dedupe), trae count => suma count
+        AnalyticsEvent.aggregate([
+          {
+            $match: {
+              ...(match || {}),
+              name: { $in: LOGIN_EVENT_ALIASES },
+            },
+          },
+          {
+            $group: {
+              _id: null,
+              logins: { $sum: { $ifNull: ["$count", 1] } }, // ✅ FIX
+              users: { $addToSet: "$userId" },
+            },
+          },
+          {
+            $project: {
+              _id: 0,
+              logins: 1,
+              loginsUniqueUsers: { $size: "$users" },
+            },
+          },
+        ]).catch(() => []),
       ]);
 
     const data = {
@@ -882,10 +887,8 @@ function pickMetaSelected(metaDoc) {
   if (!metaDoc) return { id: null, name: null, token: null };
 
   const id =
-    pickFirstTruthy(
-      metaDoc?.selectedAccountIds?.[0],
-      metaDoc?.defaultAccountId
-    ) || null;
+    pickFirstTruthy(metaDoc?.selectedAccountIds?.[0], metaDoc?.defaultAccountId) ||
+    null;
 
   const list = Array.isArray(metaDoc?.ad_accounts)
     ? metaDoc.ad_accounts
@@ -926,9 +929,7 @@ function pickGoogleAdsSelected(googleDoc) {
       googleDoc?.defaultCustomerId
     ) || null;
 
-  const list = Array.isArray(googleDoc?.ad_accounts)
-    ? googleDoc.ad_accounts
-    : [];
+  const list = Array.isArray(googleDoc?.ad_accounts) ? googleDoc.ad_accounts : [];
   const hit = id
     ? list.find((a) => String(a?.id || "").trim() === String(id).trim())
     : null;
@@ -936,8 +937,7 @@ function pickGoogleAdsSelected(googleDoc) {
   const name = pickFirstTruthy(hit?.name) || null;
 
   const accessToken = googleDoc?.accessToken || null;
-  const refreshToken =
-    googleDoc?.refreshToken || googleDoc?.refresh_token || null;
+  const refreshToken = googleDoc?.refreshToken || googleDoc?.refresh_token || null;
 
   const loginCustomerId =
     pickFirstTruthy(googleDoc?.loginCustomerId, googleDoc?.managerCustomerId) ||
@@ -958,13 +958,9 @@ function pickGA4Selected(googleDoc) {
 
   const id = rawId ? toPropertyResource(rawId) : null;
 
-  const props = Array.isArray(googleDoc?.gaProperties)
-    ? googleDoc.gaProperties
-    : [];
+  const props = Array.isArray(googleDoc?.gaProperties) ? googleDoc.gaProperties : [];
   const hit = id
-    ? props.find(
-        (p) => String(p?.propertyId || "").trim() === String(id).trim()
-      )
+    ? props.find((p) => String(p?.propertyId || "").trim() === String(id).trim())
     : null;
 
   const name = pickFirstTruthy(hit?.displayName) || null;
@@ -992,7 +988,6 @@ async function getLastActivityMap(userIds) {
 }
 
 // ✅ Último LOGIN REAL por usuario (solo eventos login)
-// (mejor que "última actividad" para tabla tipo CRM)
 async function getLastLoginMap(userIds) {
   const match = {
     userId: { $in: userIds },
@@ -1013,7 +1008,6 @@ async function getLastLoginMap(userIds) {
   }
   return map;
 }
-
 
 async function runWithLimit(list, limit, worker) {
   const out = new Array(list.length);
@@ -1084,9 +1078,7 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
     const users = await User.find(q)
       .sort({ _id: -1 })
       .limit(limit)
-      .select(
-        "_id name fullName displayName email emails createdAt updatedAt profile"
-      )
+      .select("_id name fullName displayName email emails createdAt updatedAt profile")
       .lean();
 
     const nextCursor = users.length ? String(users[users.length - 1]._id) : null;
@@ -1141,7 +1133,7 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
       }
     }
 
-    // ✅ lastLoginAt best-effort via AnalyticsEvent (última actividad global)
+    // ✅ lastLoginAt best-effort via AnalyticsEvent
     const lastLoginMap = await getLastLoginMap(userIds);
 
     // ✅ token correcto (Render: GOOGLE_DEVELOPER_TOKEN)
@@ -1156,9 +1148,7 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
       const googleSel = pickGoogleAdsSelected(gd);
       const gaSel = pickGA4Selected(gd);
 
-      const freshGoogleToken = await getFreshGoogleAccessToken(gd).catch(
-        () => null
-      );
+      const freshGoogleToken = await getFreshGoogleAccessToken(gd).catch(() => null);
       const tokenForGoogle = freshGoogleToken || googleSel.accessToken || null;
 
       const loginCid = resolveLoginCustomerId(gd);
@@ -1184,15 +1174,13 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
       })();
 
       const [metaSpend30d, googleSpend30d, ga4Sessions30d] = await Promise.all([
-        fetchMetaSpend30d({
-          accessToken: metaSel.token,
-          actId: metaSel.id,
-        }).catch(() => null),
+        fetchMetaSpend30d({ accessToken: metaSel.token, actId: metaSel.id }).catch(
+          () => null
+        ),
         googleSpendPromise,
-        fetchGa4Sessions30d({
-          accessToken: tokenForGoogle,
-          propertyId: gaSel.id,
-        }).catch(() => null),
+        fetchGa4Sessions30d({ accessToken: tokenForGoogle, propertyId: gaSel.id }).catch(
+          () => null
+        ),
       ]);
 
       return {
@@ -1257,18 +1245,14 @@ router.get("/users", requireInternalAdmin, async (req, res) => {
 
 /* =========================
  * GET /api/admin/analytics/series
- *  - Canon: ?name=&from=&to=&groupBy=day|week|month&cutoffDay=
- *  - Compat: acepta fromTs/toTs pero no es prioridad
  * ========================= */
 router.get("/series", requireInternalAdmin, async (req, res) => {
   try {
     const name = String(req.query.name || "").trim();
     const groupBy = String(req.query.groupBy || "day").trim().toLowerCase();
 
-    if (!name)
-      return res.status(400).json({ ok: false, error: "NAME_REQUIRED" });
+    if (!name) return res.status(400).json({ ok: false, error: "NAME_REQUIRED" });
 
-    // ✅ Ya NO soportamos hour (el panel ya no lo usa)
     if (!["day", "week", "month"].includes(groupBy)) {
       return res.status(400).json({ ok: false, error: "INVALID_GROUPBY" });
     }
@@ -1284,36 +1268,33 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
     let groupId = null;
 
     if (groupBy === "day") {
-  groupId = {
-    $dateToString: {
-      format: "%Y-%m-%d",
-      date: effectiveDateExpr,
-      timezone: ANALYTICS_TZ,
-    },
-  };
-} else if (groupBy === "month") {
-  groupId = {
-    $dateToString: {
-      format: "%Y-%m",
-      date: effectiveDateExpr,
-      timezone: ANALYTICS_TZ,
-    },
-  };
-} else {
-  // week: usamos dateTrunc a semana en TZ y luego formateamos la fecha de inicio de semana
-  // (esto evita que ISO week cambie por UTC)
-  const weekStart = {
-    $dateTrunc: { date: effectiveDateExpr, unit: "week", timezone: ANALYTICS_TZ },
-  };
-  groupId = {
-    $dateToString: {
-      format: "%Y-%m-%d",
-      date: weekStart,
-      timezone: ANALYTICS_TZ,
-    },
-  };
-}
-
+      groupId = {
+        $dateToString: {
+          format: "%Y-%m-%d",
+          date: effectiveDateExpr,
+          timezone: ANALYTICS_TZ,
+        },
+      };
+    } else if (groupBy === "month") {
+      groupId = {
+        $dateToString: {
+          format: "%Y-%m",
+          date: effectiveDateExpr,
+          timezone: ANALYTICS_TZ,
+        },
+      };
+    } else {
+      const weekStart = {
+        $dateTrunc: { date: effectiveDateExpr, unit: "week", timezone: ANALYTICS_TZ },
+      };
+      groupId = {
+        $dateToString: {
+          format: "%Y-%m-%d",
+          date: weekStart,
+          timezone: ANALYTICS_TZ,
+        },
+      };
+    }
 
     const rows = await AnalyticsEvent.aggregate([
       { $match: match },
@@ -1321,7 +1302,6 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
       {
         $group: {
           _id: groupId,
-          // ✅ suma count si existe (STATE), si no existe vale 1 (RAW)
           count: { $sum: { $ifNull: ["$count", 1] } },
           users: { $addToSet: "$userId" },
         },
@@ -1365,20 +1345,16 @@ router.get("/series", requireInternalAdmin, async (req, res) => {
 });
 
 /* =========================
- * GET /api/admin/analytics/funnel?from=&to=&cutoffDay=&steps=
+ * GET /api/admin/analytics/funnel
  * ========================= */
 router.get("/funnel", requireInternalAdmin, async (req, res) => {
   try {
     const range = getEffectiveRange(req);
 
-    // ✅ Cada stepKey puede mapear a varios event names reales en DB
     const STEP_GROUPS = {
       user_signed_up: ["user_signed_up", "signed_up", "signup", "user_created"],
-
       google_connected: ["google_connected"],
       meta_connected: ["meta_connected"],
-
-      // ✅ Auditoría IA
       audit_requested: [
         "audit_requested",
         "audit_started",
@@ -1395,7 +1371,6 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
         "ai_audit_completed",
         "audit_created",
       ],
-
       pixel_audit_completed: [
         "pixel_audit_completed",
         "pixel_auditor_completed",
@@ -1421,7 +1396,7 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
           .filter(Boolean)
       : DEFAULT_STEPS;
 
-    const expandedNamesByStep = new Map(); // stepKey -> [names]
+    const expandedNamesByStep = new Map();
     for (const k of stepKeys) expandedNamesByStep.set(k, STEP_GROUPS[k] || [k]);
 
     const allNames = Array.from(expandedNamesByStep.values()).flat();
@@ -1432,7 +1407,6 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
 
     const effectiveDateExpr = { $ifNull: ["$ts", "$createdAt"] };
 
-    // users únicos por evento (primera ocurrencia)
     const rows = await AnalyticsEvent.aggregate([
       { $match: match },
       { $match: { $expr: { $ne: [effectiveDateExpr, null] } } },
@@ -1466,7 +1440,6 @@ router.get("/funnel", requireInternalAdmin, async (req, res) => {
       users: counts[k] || 0,
     }));
 
-    // ✅ conv/drop para todos
     for (let i = 0; i < funnel.length; i++) {
       if (i === 0) {
         funnel[i].dropFromPrev = 0;
