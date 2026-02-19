@@ -277,28 +277,28 @@ function pickGa4Tokens(gaDoc) {
 }
 
 function resolveGoogleOAuthEnv() {
-  // Preferimos GA4 envs (tu objetivo es botón GA4 separado)
+  // ✅ Este router es SOLO GA4 (Analytics). NO usar Ads envs.
   const clientId =
     process.env.GOOGLE_GA4_CLIENT_ID ||
     process.env.GOOGLE_CLIENT_ID ||
-    process.env.GOOGLE_ADS_CLIENT_ID ||
     '';
 
   const clientSecret =
     process.env.GOOGLE_GA4_CLIENT_SECRET ||
     process.env.GOOGLE_CLIENT_SECRET ||
-    process.env.GOOGLE_ADS_CLIENT_SECRET ||
     '';
 
   return { clientId, clientSecret };
 }
 
+
 async function getOAuthClientForUser(userId) {
   const ga = await GoogleAccount
     .findOne({ $or: [{ user: userId }, { userId }] })
-    // seleccionamos TODO lo necesario (GA4 + legacy)
-    .select('+ga4RefreshToken +ga4AccessToken +refreshToken +accessToken')
+    // ✅ Traemos GA4 plano + legacy + nested compat
+    .select('+ga4RefreshToken +ga4AccessToken +refreshToken +accessToken ga4 ga4Scope scope')
     .lean();
+
 
   const { refreshToken, accessToken } = pickGa4Tokens(ga);
 
@@ -515,9 +515,23 @@ router.get('/properties', requireSession, async (req, res) => {
         doc = await GoogleAccount.findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] }).lean();
         defaultPropertyId = toPropertyResource(doc?.defaultPropertyId) || (properties?.[0]?.propertyId || null);
       } catch (e) {
-        const msg = e.message === 'NO_REFRESH_TOKEN' ? 'NO_REFRESH_TOKEN' : 'SYNC_FAILED';
-        return res.status(401).json({ ok: false, error: msg });
-      }
+  const isNoRefresh = e?.code === 'NO_REFRESH_TOKEN' || e?.message === 'NO_REFRESH_TOKEN';
+  const status = isNoRefresh ? 401 : 500;
+
+  console.error('GA /properties SYNC_FAILED full:', e?.response?.data || e);
+
+  return res.status(status).json({
+    ok: false,
+    error: isNoRefresh ? 'NO_REFRESH_TOKEN' : 'SYNC_FAILED',
+    details: String(
+      e?.response?.data?.error_description ||
+      e?.response?.data?.error?.message ||
+      e?.response?.data?.error ||
+      e?.message ||
+      e
+    ),
+  });
+}
     }
 
     const userDoc = await getUserDoc(req.user._id);
