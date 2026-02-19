@@ -199,9 +199,16 @@ router.get("/auth/google/ga4/callback", async (req, res) => {
 
     return res.redirect(`${baseUrl(req)}${redirectPath}`);
   } catch (err) {
-    console.error("GA4 OAuth callback error:", err?.message || err);
-    return res.status(500).send("GA4 OAuth failed");
-  }
+  console.error("GA4 OAuth callback error:", err?.response?.data || err);
+
+  const msg =
+    err?.response?.data?.error_description ||
+    err?.response?.data?.error ||
+    err?.message ||
+    "Unknown error";
+
+  return res.status(500).type("text/plain").send(`GA4 OAuth failed: ${msg}`);
+}
 });
 
 module.exports = router;
