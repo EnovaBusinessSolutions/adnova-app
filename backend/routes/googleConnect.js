@@ -317,27 +317,34 @@ async function fetchGA4Properties(oauthClient) {
     // ignore y cae al fallback
   }
 
-  // 2) Fallback moderno: properties.search
+    // 2) Fallback compatible: accountSummaries.list -> propertySummaries
   const out = [];
   let pageToken;
+
   do {
-    const resp = await admin.properties.search({
-      requestBody: { query: '' },
-      pageToken,
+    const resp = await admin.accountSummaries.list({
       pageSize: 200,
+      pageToken,
     });
-    (resp.data.properties || []).forEach((p) => {
-      out.push({
-        propertyId: p.name,
-        displayName: p.displayName || p.name,
-        timeZone: p.timeZone || null,
-        currencyCode: p.currencyCode || null,
-      });
-    });
-    pageToken = resp.data.nextPageToken || undefined;
+
+    const summaries = resp?.data?.accountSummaries || [];
+    for (const s of summaries) {
+      const props = Array.isArray(s?.propertySummaries) ? s.propertySummaries : [];
+      for (const p of props) {
+        out.push({
+          propertyId: p.property, // "properties/123"
+          displayName: p.displayName || p.property,
+          timeZone: null,
+          currencyCode: null,
+        });
+      }
+    }
+
+    pageToken = resp?.data?.nextPageToken || undefined;
   } while (pageToken);
 
   return out;
+
 }
 
 /* =========================================================

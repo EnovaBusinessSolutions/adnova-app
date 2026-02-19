@@ -447,25 +447,36 @@ async function resyncAndPersistProperties(userId) {
   const auth = await getOAuthClientForUser(userId);
   const admin = google.analyticsadmin({ version: 'v1beta', auth });
 
-  let out = [];
+  const out = [];
   let pageToken;
+
+  // ✅ Método compatible y estable: accountSummaries.list -> propertySummaries
   do {
-    const resp = await admin.properties.search({
-      requestBody: { query: '' },
-      pageToken,
+    const resp = await admin.accountSummaries.list({
       pageSize: 200,
+      pageToken,
     });
-    (resp.data.properties || []).forEach((p) => {
-      out.push({
-        propertyId: p.name,
-        displayName: p.displayName || p.name,
-        timeZone: p.timeZone || null,
-        currencyCode: p.currencyCode || null,
-      });
-    });
-    pageToken = resp.data.nextPageToken || undefined;
+
+    const summaries = resp?.data?.accountSummaries || [];
+    for (const s of summaries) {
+      const props = Array.isArray(s?.propertySummaries) ? s.propertySummaries : [];
+      for (const p of props) {
+        // p.property => "properties/123"
+        // p.displayName => nombre de la property
+        out.push({
+          propertyId: p.property,
+          displayName: p.displayName || p.property,
+          // accountSummaries NO siempre incluye timeZone/currencyCode, las dejamos null
+          timeZone: null,
+          currencyCode: null,
+        });
+      }
+    }
+
+    pageToken = resp?.data?.nextPageToken || undefined;
   } while (pageToken);
 
+  // ✅ de-dup
   const map = new Map();
   for (const p of out) map.set(p.propertyId, p);
   const properties = Array.from(map.values());
@@ -496,6 +507,7 @@ async function resyncAndPersistProperties(userId) {
 
   return properties;
 }
+
 
 /* ======================= RUTAS ======================= */
 
