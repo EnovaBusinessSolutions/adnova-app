@@ -227,6 +227,33 @@ const hasAdwordsScope = (scopes = []) =>
 const hasGaScope = (scopes = []) =>
   Array.isArray(scopes) && scopes.some((s) => String(s).includes('/auth/analytics.readonly'));
 
+/* =========================
+ * ✅ NEW: Productos (Ads vs GA4)
+ * ========================= */
+const PRODUCT_ADS = 'ads';
+const PRODUCT_GA4 = 'ga4';
+
+function getProductFromReq(req) {
+  const p = String(req.query.product || '').trim().toLowerCase();
+  if (p === PRODUCT_ADS) return PRODUCT_ADS;
+  if (p === PRODUCT_GA4) return PRODUCT_GA4;
+  return null; // null => legacy: ambos
+}
+
+function scopesForProduct(product) {
+  const base = [
+    'openid',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
+  ];
+
+  if (product === PRODUCT_ADS) return [...base, ADS_SCOPE];
+  if (product === PRODUCT_GA4) return [...base, GA_SCOPE];
+
+  // legacy: ambos
+  return [...base, GA_SCOPE, ADS_SCOPE];
+}
+
 function filterSelectedByAvailable(selectedIds, availableSet) {
   const sel = Array.isArray(selectedIds) ? selectedIds : [];
   return sel.map(normId).filter(Boolean).filter((id) => availableSet.has(id));
@@ -317,7 +344,7 @@ async function fetchGA4Properties(oauthClient) {
     // ignore y cae al fallback
   }
 
-    // 2) Fallback compatible: accountSummaries.list -> propertySummaries
+  // 2) Fallback compatible: accountSummaries.list -> propertySummaries
   const out = [];
   let pageToken;
 
@@ -344,13 +371,12 @@ async function fetchGA4Properties(oauthClient) {
   } while (pageToken);
 
   return out;
-
 }
 
 /* =========================================================
- *  Iniciar OAuth (Ads + GA) — estilo Master Metrics
+ *  Iniciar OAuth (Ads / GA4 / ambos) — estilo Master Metrics
  * =======================================================*/
-function buildAuthUrl(req, returnTo) {
+function buildAuthUrl(req, returnTo, product) {
   const client = oauth();
 
   // ✅ Default: dashboard (onboarding eliminado del login)
@@ -359,19 +385,14 @@ function buildAuthUrl(req, returnTo) {
   const state = JSON.stringify({
     uid: String(req.user._id),
     returnTo: safeReturnTo,
+    product: product || null, // ✅ clave para callback
   });
 
   return client.generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent',
     include_granted_scopes: true,
-    scope: [
-      'openid',
-      'https://www.googleapis.com/auth/userinfo.email',
-      'https://www.googleapis.com/auth/userinfo.profile',
-      GA_SCOPE,
-      ADS_SCOPE,
-    ],
+    scope: scopesForProduct(product),
     state,
   });
 }
@@ -383,24 +404,42 @@ async function startConnect(req, res) {
         ? req.query.returnTo
         : '/dashboard/';
 
-    // ✅ Event: usuario inició el connect (dedupe por sesión/ruta)
-    emitEventBestEffort(req, 'google_connect_started', { returnTo: sanitizeReturnTo(returnTo) || '/dashboard/' });
+    const product = getProductFromReq(req); // ✅ ads | ga4 | null(legacy)
 
-    const url = buildAuthUrl(req, returnTo);
+    // ✅ Event: usuario inició el connect (dedupe por sesión/ruta)
+    emitEventBestEffort(req, 'google_connect_started', {
+      returnTo: sanitizeReturnTo(returnTo) || '/dashboard/',
+      product: product || 'both',
+    });
+
+    const url = buildAuthUrl(req, returnTo, product);
     return res.redirect(url);
   } catch (err) {
     console.error('[googleConnect] connect error:', err);
-    emitEventBestEffort(req, 'google_connect_failed', { stage: 'build_auth_url', error: String(err?.message || err) });
+    emitEventBestEffort(req, 'google_connect_failed', {
+      stage: 'build_auth_url',
+      error: String(err?.message || err),
+    });
 
     // ✅ Si falla construir URL, no mandar a onboarding
     return res.redirect('/dashboard/?google=error&reason=connect_build');
   }
 }
 
-// Rutas para iniciar OAuth
+// Rutas para iniciar OAuth (legacy: ambos)
 router.get('/connect', requireSession, startConnect);
-// alias más explícito
+// alias legacy (existente): mantenemos para no romper nada
 router.get('/ads', requireSession, startConnect);
+
+// ✅ NUEVAS rutas explícitas por producto (para 2 botones en el front)
+router.get('/connect/ads', requireSession, (req, res) => {
+  req.query.product = PRODUCT_ADS;
+  return startConnect(req, res);
+});
+router.get('/connect/ga4', requireSession, (req, res) => {
+  req.query.product = PRODUCT_GA4;
+  return startConnect(req, res);
+});
 
 /* =========================================================
  *  Callback compartido (connect / ads)
@@ -474,9 +513,34 @@ async function googleCallbackHandler(req, res) {
     });
 
     // ============================
-    // 1) Descubrir cuentas de Ads
+    // ✅ Resolver "product" desde state
     // ============================
-    if (hasAdwordsScope(ga.scope) && ga.refreshToken) {
+    let returnTo = '/dashboard/';
+    let productFromState = null;
+
+    if (req.query.state) {
+      try {
+        const s = JSON.parse(req.query.state);
+        if (s && typeof s.returnTo === 'string' && s.returnTo.trim()) {
+          const safe = sanitizeReturnTo(s.returnTo);
+          if (safe) returnTo = safe;
+        }
+        if (s && typeof s.product === 'string') {
+          const p = String(s.product).toLowerCase();
+          if (p === PRODUCT_ADS || p === PRODUCT_GA4) productFromState = p;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const shouldDoAds = !productFromState || productFromState === PRODUCT_ADS;
+    const shouldDoGa4 = !productFromState || productFromState === PRODUCT_GA4;
+
+    // ============================
+    // 1) Descubrir cuentas de Ads (solo si aplica)
+    // ============================
+    if (shouldDoAds && hasAdwordsScope(ga.scope) && ga.refreshToken) {
       try {
         const enriched = await discoverAndEnrich(ga);
 
@@ -572,7 +636,7 @@ async function googleCallbackHandler(req, res) {
         });
       }
     } else {
-      if (!hasAdwordsScope(ga.scope)) {
+      if (shouldDoAds && !hasAdwordsScope(ga.scope)) {
         ga.lastAdsDiscoveryError = 'ADS_SCOPE_MISSING';
         await ga.save();
         emitEventBestEffort(req, 'google_ads_scope_missing', { scopes: ga.scope || [] });
@@ -580,9 +644,9 @@ async function googleCallbackHandler(req, res) {
     }
 
     // ============================
-    // 2) Listar properties GA4
+    // 2) Listar properties GA4 (solo si aplica)
     // ============================
-    if (hasGaScope(ga.scope) && ga.refreshToken) {
+    if (shouldDoGa4 && hasGaScope(ga.scope) && ga.refreshToken) {
       try {
         const propsRaw = await fetchGA4Properties(client);
 
@@ -667,7 +731,7 @@ async function googleCallbackHandler(req, res) {
         emitEventBestEffort(req, 'ga4_properties_discovery_failed', { error: String(e?.message || e) });
       }
     } else {
-      if (!hasGaScope(ga.scope)) {
+      if (shouldDoGa4 && !hasGaScope(ga.scope)) {
         emitEventBestEffort(req, 'ga4_scope_missing', { scopes: ga.scope || [] });
       }
     }
@@ -718,30 +782,19 @@ async function googleCallbackHandler(req, res) {
     const gaEffectiveSel = selGa.length ? selGa : legacyGa ? [legacyGa] : [];
 
     const needsSelector =
-      (adsCount > 1 && selAds.length === 0) ||
-      (gaCount > 1 && gaEffectiveSel.length === 0);
-
-    // ReturnTo desde state (sanitizado)
-    let returnTo = '/dashboard/';
-    if (req.query.state) {
-      try {
-        const s = JSON.parse(req.query.state);
-        if (s && typeof s.returnTo === 'string' && s.returnTo.trim()) {
-          const safe = sanitizeReturnTo(s.returnTo);
-          if (safe) returnTo = safe;
-        }
-      } catch {
-        // ignore
-      }
-    }
+      (shouldDoAds && adsCount > 1 && selAds.length === 0) ||
+      (shouldDoGa4 && gaCount > 1 && gaEffectiveSel.length === 0);
 
     // ✅ Mantener hint para UI (no rompe nada)
     const sep = returnTo.includes('?') ? '&' : '?';
-    returnTo = `${returnTo}${sep}selector=${needsSelector ? '1' : '0'}`;
+    returnTo =
+      `${returnTo}${sep}selector=${needsSelector ? '1' : '0'}` +
+      (productFromState ? `&product=${encodeURIComponent(productFromState)}` : '');
 
     // ✅ Event: resultado final del connect (sirve para embudo interno)
     emitEventBestEffort(req, 'google_connect_result', {
       needsSelector,
+      product: productFromState || 'both',
       adsCount,
       ga4Count: gaCount,
       selectedAdsCount: selAds.length,
@@ -752,7 +805,10 @@ async function googleCallbackHandler(req, res) {
     return res.redirect(returnTo);
   } catch (err) {
     console.error('[googleConnect] callback error:', err?.response?.data || err.message || err);
-    emitEventBestEffort(req, 'google_connect_failed', { stage: 'callback_exception', error: String(err?.message || err) });
+    emitEventBestEffort(req, 'google_connect_failed', {
+      stage: 'callback_exception',
+      error: String(err?.message || err),
+    });
     return res.redirect('/dashboard/?google=error&reason=callback_exception');
   }
 }
@@ -947,7 +1003,7 @@ router.get('/accounts', requireSession, async (req, res) => {
         error: 'ADS_SCOPE_MISSING',
         message: 'Necesitamos permiso de Google Ads para listar tus cuentas.',
         // ✅ ya no enviamos a onboarding
-        connectUrl: '/auth/google/connect?returnTo=/dashboard/settings?tab=integrations',
+        connectUrl: '/auth/google/connect?returnTo=/dashboard/settings?tab=integrations&product=ads',
       });
     }
 
@@ -997,7 +1053,7 @@ router.get('/accounts', requireSession, async (req, res) => {
         fullGa.lastAdsDiscoveryError = null;
         fullGa.lastAdsDiscoveryLog = null;
 
-        const avail = new Set(customers.map((c) => normId(c.id)).filter(Boolean));
+        const avail = new Set(customers.map((c) => normId(c?.id)).filter(Boolean));
         const kept = filterSelectedByAvailable(fullGa.selectedCustomerIds, avail);
         fullGa.selectedCustomerIds = kept;
 
