@@ -97,11 +97,19 @@ const GoogleAccountSchema = new Schema(
     // ✅ email del perfil (lo setea googleConnect.js)
     email: { type: String, index: true },
 
-    // tokens
+    // tokens (GENERAL) — hoy lo usa Ads (y legacy)
     accessToken:  { type: String, select: false },
     refreshToken: { type: String, select: false },
     scope:        { type: [String], default: [], set: normScopes },
     expiresAt:    { type: Date },
+
+    // ✅ NUEVO: tokens GA4 SEPARADOS (para botón GA4)
+    // (aditivo: no afecta el flujo actual de Ads)
+    ga4AccessToken:  { type: String, select: false },
+    ga4RefreshToken: { type: String, select: false },
+    ga4Scope:        { type: [String], default: [], set: normScopes },
+    ga4ExpiresAt:    { type: Date },
+    ga4ConnectedAt:  { type: Date },
 
     // Google Ads
     managerCustomerId: { type: String, set: (v) => normCustomerId(v) }, // opcional
@@ -152,6 +160,8 @@ const GoogleAccountSchema = new Schema(
       transform(_doc, ret) {
         delete ret.accessToken;
         delete ret.refreshToken;
+        delete ret.ga4AccessToken;
+        delete ret.ga4RefreshToken;
         return ret;
       }
     },
@@ -159,6 +169,8 @@ const GoogleAccountSchema = new Schema(
       transform(_doc, ret) {
         delete ret.accessToken;
         delete ret.refreshToken;
+        delete ret.ga4AccessToken;
+        delete ret.ga4RefreshToken;
         return ret;
       }
     }

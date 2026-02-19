@@ -66,7 +66,7 @@ try {
 /** =========================
  * Config
  * ========================= */
-const STATE_TTL_MS = 15 * 60 * 1000; // 15 min (ajustable)
+const STATE_TTL_MS = 15 * 60 * 1000; // 15 min
 const GA4_SCOPES = [
   "openid",
   "email",
@@ -97,12 +97,11 @@ router.get("/auth/google/ga4/start", async (req, res) => {
     ts: Date.now(),
   };
 
-  // Guarda nonce en sesión para validar (si existe sesión)
   if (req.session) req.session.ga4OauthStateNonce = state.nonce;
 
   const url = oauth.generateAuthUrl({
     access_type: "offline",
-    prompt: "consent", // importante para refresh_token
+    prompt: "consent", // importante para refresh_token (aunque Google a veces no lo manda si ya existía)
     include_granted_scopes: true,
     scope: GA4_SCOPES,
     state: Buffer.from(JSON.stringify(state)).toString("base64url"),
@@ -121,12 +120,11 @@ router.get("/auth/google/ga4/callback", async (req, res) => {
 
   if (!code) return res.status(400).send("Missing code");
 
-  // Validar state básico
   const userIdFromState = stateObj?.userId ? String(stateObj.userId) : null;
   const userId = userIdFromState || getUserIdFromReq(req);
   if (!userId) return res.status(401).send("Not authenticated");
 
-  // Validar expiración state (si venía)
+  // Expiración state
   if (stateObj?.ts && typeof stateObj.ts === "number") {
     const age = Date.now() - stateObj.ts;
     if (age > STATE_TTL_MS) {
@@ -134,7 +132,7 @@ router.get("/auth/google/ga4/callback", async (req, res) => {
     }
   }
 
-  // Validación nonce contra sesión
+  // Validación nonce
   if (req.session && stateObj?.nonce && req.session.ga4OauthStateNonce) {
     if (String(stateObj.nonce) !== String(req.session.ga4OauthStateNonce)) {
       return res.status(400).send("Invalid OAuth state");
@@ -159,37 +157,35 @@ router.get("/auth/google/ga4/callback", async (req, res) => {
         .send("GoogleAccount model not found. Fix require path.");
     }
 
-    // ✅ Guardado robusto:
-    // - Guardamos en "ga4.*" (si tu schema lo permite)
-    // - Y además guardamos campos planos ga4AccessToken/ga4RefreshToken...
-    //   para que NO dependas de schema estricto.
+    // ✅ Guardar SOLO en campos planos (tu schema es estricto)
+    // Nota: refresh_token puede venir undefined -> NO lo borres si ya existía
     const patch = {
-      // nested (si el schema lo acepta)
-      "ga4.accessToken": tokens.access_token || null,
-      ...(tokens.refresh_token ? { "ga4.refreshToken": tokens.refresh_token } : {}),
-      "ga4.expiresAt": tokens.expiry_date ? new Date(tokens.expiry_date) : null,
-      "ga4.scope": tokens.scope || null,
-      "ga4.connectedAt": now,
-
-      // flat (ultra-compatible)
       ga4AccessToken: tokens.access_token || null,
       ...(tokens.refresh_token ? { ga4RefreshToken: tokens.refresh_token } : {}),
       ga4ExpiresAt: tokens.expiry_date ? new Date(tokens.expiry_date) : null,
       ga4Scope: tokens.scope || null,
       ga4ConnectedAt: now,
-
       updatedAt: now,
     };
 
-    // Query multi-campo por compat
+    // Query robusta (solo campos existentes en schema)
     const query = {
-      $or: [{ owner: userId }, { userId }, { user: userId }],
+      $or: [{ user: userId }, { userId: userId }],
     };
 
+    // ✅ setOnInsert SIN owner (no existe en tu schema)
+    // y seteamos ambos user/userId para que sea 1 doc por usuario
     await GoogleAccount.findOneAndUpdate(
       query,
-      { $set: patch, $setOnInsert: { owner: userId, userId, createdAt: now } },
-      { upsert: true, new: true }
+      {
+        $set: patch,
+        $setOnInsert: {
+          user: userId,
+          userId: userId,
+          createdAt: now,
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
     const redirectPath =
@@ -199,16 +195,16 @@ router.get("/auth/google/ga4/callback", async (req, res) => {
 
     return res.redirect(`${baseUrl(req)}${redirectPath}`);
   } catch (err) {
-  console.error("GA4 OAuth callback error:", err?.response?.data || err);
+    console.error("[ga4-auth] callback error:", err?.response?.data || err);
 
-  const msg =
-    err?.response?.data?.error_description ||
-    err?.response?.data?.error ||
-    err?.message ||
-    "Unknown error";
+    const msg =
+      err?.response?.data?.error_description ||
+      err?.response?.data?.error ||
+      err?.message ||
+      "Unknown error";
 
-  return res.status(500).type("text/plain").send(`GA4 OAuth failed: ${msg}`);
-}
+    return res.status(500).type("text/plain").send(`GA4 OAuth failed: ${msg}`);
+  }
 });
 
 module.exports = router;
