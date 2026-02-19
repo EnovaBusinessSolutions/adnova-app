@@ -391,12 +391,12 @@ function buildAuthUrl(req, returnTo, product) {
   });
 
   return client.generateAuthUrl({
-    access_type: 'offline',
-    prompt: 'consent',
-    include_granted_scopes: true,
-    scope: scopesForProduct(product),
-    state,
-  });
+  access_type: 'offline',
+  prompt: 'consent',
+  include_granted_scopes: false, // ✅ separación estricta por producto
+  scope: scopesForProduct(product),
+  state,
+});
 }
 
 async function startConnect(req, res) {
@@ -435,8 +435,17 @@ async function startConnect(req, res) {
 // legacy
 router.get('/connect', requireSession, startConnect);
 
-// alias legacy que ya existía
-router.get('/ads', requireSession, startConnect);
+// ✅ alias legacy (solo Ads)
+router.get('/ads', requireSession, (req, res) => {
+  req.query.product = PRODUCT_ADS;
+  return startConnect(req, res);
+});
+
+// ✅ alias legacy (solo GA4) por si alguien lo usa
+router.get('/ga', requireSession, (req, res) => {
+  req.query.product = PRODUCT_GA4;
+  return startConnect(req, res);
+});
 
 // ✅ nuevas rutas (estas son las que debe usar Settings.tsx)
 router.get('/ads/connect', requireSession, (req, res) => {
