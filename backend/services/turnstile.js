@@ -1,9 +1,23 @@
 'use strict';
 
 const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET_KEY;
+const TURNSTILE_BYPASS = /^(1|true|yes|on)$/i.test(String(process.env.TURNSTILE_BYPASS || '').trim());
 
 async function verifyTurnstile(token, remoteip) {
-  if (!TURNSTILE_SECRET) throw new Error('TURNSTILE_SECRET_KEY no configurada');
+  if (TURNSTILE_BYPASS) {
+    return {
+      ok: true,
+      data: { success: true, bypass: true },
+    };
+  }
+
+  if (!TURNSTILE_SECRET) {
+    return {
+      ok: false,
+      data: { 'error-codes': ['missing-input-secret'] },
+    };
+  }
+
   if (!token) return { ok: false, data: { 'error-codes': ['missing-input-response'] } };
 
   const body = new URLSearchParams();
