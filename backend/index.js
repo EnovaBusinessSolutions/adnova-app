@@ -196,6 +196,23 @@ function sessionGuard(req, res, next) {
   return res.status(401).json({ error: 'No hay sesión' });
 }
 
+  const API_SESSION_BYPASS = [
+    /^\/api\/stripe\/webhook\/?$/i,
+    /^\/api\/auth\/verify-email\/?$/i,
+    /^\/api\/public-config\/?$/i,
+    /^\/api\/register\/?$/i,
+    /^\/api\/login\/?$/i,
+    /^\/api\/auth\/login\/?$/i,
+    /^\/api\/forgot-password\/?$/i,
+    /^\/api\/bookcall(?:\/.*)?$/i,
+    /^\/api\/cron(?:\/.*)?$/i,
+    /^\/api\/logout\/?$/i,
+  ];
+
+  function shouldBypassApiSessionToken(pathname) {
+    return API_SESSION_BYPASS.some((rule) => rule.test(pathname));
+  }
+
 function isIframeRequest(req) {
   const dest = (req.get('sec-fetch-dest') || '').toLowerCase();
   return dest === 'iframe' || req.query.embedded === '1';
@@ -274,6 +291,12 @@ app.use(
   express.raw({ type: '*/*' }),
   webhookRoutes
 );
+
+  app.use('/api', (req, res, next) => {
+    const apiPath = `/api${req.path || ''}`;
+    if (shouldBypassApiSessionToken(apiPath)) return next();
+    return verifySessionToken(req, res, next);
+  });
 
 app.use('/api', pixelAuditor);
 
@@ -609,7 +632,15 @@ app.use('/api/meta/accounts', sessionGuard, metaAccountsRoutes);
 app.use('/api/meta', metaTable);
 
 // Creative Intelligence (Meta Creative Decision Engine)
-const creativeIntelligenceRoutes = require('./routes/creativeIntelligence');
+let creativeIntelligenceRoutes;
+try {
+  creativeIntelligenceRoutes = require('./routes/creativeIntelligence');
+} catch (_err) {
+  creativeIntelligenceRoutes = express.Router();
+  creativeIntelligenceRoutes.use((_req, res) => {
+    res.status(503).json({ error: 'creative intelligence module unavailable' });
+  });
+}
 app.use('/api/creative-intelligence', sessionGuard, creativeIntelligenceRoutes);
 
 // Shopify
@@ -1155,7 +1186,7 @@ app.get('/api/me', async (req, res) => {
  * ========================= */
 app.use('/api', userRoutes);
 
-app.use('/api/secure', verifySessionToken, secureRoutes);
+app.use('/api/secure', secureRoutes);
 app.use('/api/dashboard', dashboardRoute);
 app.use('/api/shopConnection', require('./routes/shopConnection'));
 app.use('/api', subscribeRouter);

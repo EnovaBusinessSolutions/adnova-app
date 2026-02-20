@@ -9,12 +9,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   const _googleParam = (qs.get('google') || '').toLowerCase();
   const _hasGoogleParam = ['connected', 'ok', 'error', 'fail'].includes(_googleParam);
 
-  // -------------------------------------------------
-  // Session token (embebido Shopify -> SAAS)
-  // -------------------------------------------------
-  const sessionToken = qs.get('sessionToken');
-  if (sessionToken) sessionStorage.setItem('sessionToken', sessionToken);
-
   // Parámetros potenciales de Shopify embebido
   const shopFromQuery = qs.get('shop');
   const hostFromQuery = qs.get('host'); // compat (no se usa)

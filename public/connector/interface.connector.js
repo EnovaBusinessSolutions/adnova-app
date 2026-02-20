@@ -161,7 +161,6 @@
       return;
     }
 
-    sessionStorage.setItem('shopifySessionToken', token);
     sessionStorage.setItem('shopifyShop', shop);
     sessionStorage.setItem('shopifyHost', host);
     sessionStorage.setItem('shopifyConnected', 'true');
