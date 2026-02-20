@@ -79,7 +79,6 @@ try {
       selectedGaPropertyId: { type: String },
 
       // ✅ NEW: flags explícitos de conexión por producto
-      // (para que “Conectar GA4” no marque Ads como conectado y viceversa)
       connectedAds: { type: Boolean, default: false },
       connectedGa4: { type: Boolean, default: false },
 
@@ -103,16 +102,29 @@ try {
 }
 
 /* =========================
- * ENV
+ * ENV (Ads + GA4 separados)
  * ========================= */
 const {
+  // Ads (legacy / default)
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
   GOOGLE_REDIRECT_URI,          // preferido
   GOOGLE_CONNECT_CALLBACK_URL,  // fallback legacy
+
+  // GA4 (nuevo)
+  GOOGLE_GA4_CLIENT_ID,
+  GOOGLE_GA4_CLIENT_SECRET,
+  GOOGLE_GA4_REDIRECT_URI,
+  GOOGLE_GA4_CALLBACK_URL, // fallback opcional si lo usas así en Render
 } = process.env;
 
 const DEFAULT_GOOGLE_OBJECTIVE = 'ventas';
+
+/* =========================
+ * ✅ Productos (Ads vs GA4)
+ * ========================= */
+const PRODUCT_ADS = 'ads';
+const PRODUCT_GA4 = 'ga4';
 
 /* =========================
  * Helpers
@@ -122,14 +134,41 @@ function requireSession(req, res, next) {
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-function oauth() {
-  const redirectUri = GOOGLE_REDIRECT_URI || GOOGLE_CONNECT_CALLBACK_URL;
-  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !redirectUri) {
-    console.warn('[googleConnect] Missing GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI');
+/**
+ * ✅ OAuth client por producto (Ads vs GA4)
+ * - Ads usa GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI
+ * - GA4 usa GOOGLE_GA4_CLIENT_ID/SECRET/REDIRECT_URI
+ *
+ * Nota: puedes usar el MISMO redirect URI para ambos clients (recomendado),
+ * pero si usas distintos, asegúrate de registrarlos en Google Cloud Console.
+ */
+function oauthForProduct(product) {
+  // Ads (default)
+  let clientId = GOOGLE_CLIENT_ID;
+  let clientSecret = GOOGLE_CLIENT_SECRET;
+  let redirectUri = GOOGLE_REDIRECT_URI || GOOGLE_CONNECT_CALLBACK_URL;
+
+  // GA4
+  if (product === PRODUCT_GA4) {
+    clientId = GOOGLE_GA4_CLIENT_ID || clientId;
+    clientSecret = GOOGLE_GA4_CLIENT_SECRET || clientSecret;
+    redirectUri = GOOGLE_GA4_REDIRECT_URI || GOOGLE_GA4_CALLBACK_URL || redirectUri;
   }
+
+  if (!clientId || !clientSecret || !redirectUri) {
+    console.warn('[googleConnect] Missing OAuth env vars for product:', product, {
+      hasAdsClient: !!GOOGLE_CLIENT_ID,
+      hasAdsSecret: !!GOOGLE_CLIENT_SECRET,
+      hasAdsRedirect: !!(GOOGLE_REDIRECT_URI || GOOGLE_CONNECT_CALLBACK_URL),
+      hasGa4Client: !!GOOGLE_GA4_CLIENT_ID,
+      hasGa4Secret: !!GOOGLE_GA4_CLIENT_SECRET,
+      hasGa4Redirect: !!(GOOGLE_GA4_REDIRECT_URI || GOOGLE_GA4_CALLBACK_URL),
+    });
+  }
+
   return new OAuth2Client({
-    clientId: GOOGLE_CLIENT_ID,
-    clientSecret: GOOGLE_CLIENT_SECRET,
+    clientId,
+    clientSecret,
     redirectUri,
   });
 }
@@ -178,22 +217,33 @@ function sanitizeReturnTo(raw) {
 
 /**
  * ✅ Revocar token en Google (best-effort)
+ * - Intentamos con Ads client y con GA4 client por si el token está ligado al otro client_id.
  */
 async function revokeGoogleTokenBestEffort({ refreshToken, accessToken }) {
   const token = refreshToken || accessToken;
   if (!token) return { attempted: false, ok: true };
 
-  try {
-    const client = oauth();
-    await client.revokeToken(token);
-    return { attempted: true, ok: true };
-  } catch (e) {
-    console.warn(
-      '[googleConnect] revokeToken failed (best-effort):',
-      e?.response?.data || e?.message || e
-    );
-    return { attempted: true, ok: false };
+  const attempts = [
+    { product: PRODUCT_ADS, client: oauthForProduct(PRODUCT_ADS) },
+    { product: PRODUCT_GA4, client: oauthForProduct(PRODUCT_GA4) },
+  ];
+
+  let lastErr = null;
+  for (const a of attempts) {
+    try {
+      await a.client.revokeToken(token);
+      return { attempted: true, ok: true, via: a.product };
+    } catch (e) {
+      lastErr = e;
+      // seguimos intentando con el otro client
+    }
   }
+
+  console.warn(
+    '[googleConnect] revokeToken failed (best-effort):',
+    lastErr?.response?.data || lastErr?.message || lastErr
+  );
+  return { attempted: true, ok: false };
 }
 
 const normCustomerId = (s = '') =>
@@ -230,11 +280,8 @@ const hasGaScope = (scopes = []) =>
   Array.isArray(scopes) && scopes.some((s) => String(s).includes('/auth/analytics.readonly'));
 
 /* =========================
- * ✅ Productos (Ads vs GA4)
+ * Productos (Ads vs GA4)
  * ========================= */
-const PRODUCT_ADS = 'ads';
-const PRODUCT_GA4 = 'ga4';
-
 function getProductFromReq(req) {
   const p = String(req.query.product || '').trim().toLowerCase();
   if (p === PRODUCT_ADS) return PRODUCT_ADS;
@@ -379,7 +426,7 @@ async function fetchGA4Properties(oauthClient) {
  *  Iniciar OAuth (Ads / GA4 / ambos) — estilo Master Metrics
  * =======================================================*/
 function buildAuthUrl(req, returnTo, product) {
-  const client = oauth();
+  const client = oauthForProduct(product);
 
   // ✅ Default: dashboard (onboarding eliminado del login)
   const safeReturnTo = sanitizeReturnTo(returnTo) || '/dashboard/';
@@ -391,12 +438,12 @@ function buildAuthUrl(req, returnTo, product) {
   });
 
   return client.generateAuthUrl({
-  access_type: 'offline',
-  prompt: 'consent',
-  include_granted_scopes: false, // ✅ separación estricta por producto
-  scope: scopesForProduct(product),
-  state,
-});
+    access_type: 'offline',
+    prompt: 'consent',
+    include_granted_scopes: false, // ✅ separación estricta por producto
+    scope: scopesForProduct(product),
+    state,
+  });
 }
 
 async function startConnect(req, res) {
@@ -473,7 +520,10 @@ router.get('/connect/ga4', requireSession, (req, res) => {
 async function googleCallbackHandler(req, res) {
   try {
     if (req.query.error) {
-      emitEventBestEffort(req, 'google_connect_failed', { stage: 'oauth_error', error: String(req.query.error) });
+      emitEventBestEffort(req, 'google_connect_failed', {
+        stage: 'oauth_error',
+        error: String(req.query.error),
+      });
       return res.redirect(`/dashboard/?google=error&reason=${encodeURIComponent(req.query.error)}`);
     }
 
@@ -483,7 +533,31 @@ async function googleCallbackHandler(req, res) {
       return res.redirect('/dashboard/?google=error&reason=no_code');
     }
 
-    const client = oauth();
+    // ============================
+    // ✅ Resolver "product" desde state ANTES de pedir tokens
+    // ============================
+    let returnTo = '/dashboard/';
+    let productFromState = null;
+
+    if (req.query.state) {
+      try {
+        const s = JSON.parse(req.query.state);
+        if (s && typeof s.returnTo === 'string' && s.returnTo.trim()) {
+          const safe = sanitizeReturnTo(s.returnTo);
+          if (safe) returnTo = safe;
+        }
+        if (s && typeof s.product === 'string') {
+          const p = String(s.product).toLowerCase();
+          if (p === PRODUCT_ADS || p === PRODUCT_GA4) productFromState = p;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    // ✅ client correcto (Ads o GA4) para canjear el code
+    const client = oauthForProduct(productFromState || null);
+
     const { tokens } = await client.getToken(code);
     client.setCredentials(tokens);
 
@@ -512,28 +586,6 @@ async function googleCallbackHandler(req, res) {
 
     ga.email = profile.email || ga.email || null;
 
-    // ============================
-    // ✅ Resolver "product" desde state (ANTES de decidir flags)
-    // ============================
-    let returnTo = '/dashboard/';
-    let productFromState = null;
-
-    if (req.query.state) {
-      try {
-        const s = JSON.parse(req.query.state);
-        if (s && typeof s.returnTo === 'string' && s.returnTo.trim()) {
-          const safe = sanitizeReturnTo(s.returnTo);
-          if (safe) returnTo = safe;
-        }
-        if (s && typeof s.product === 'string') {
-          const p = String(s.product).toLowerCase();
-          if (p === PRODUCT_ADS || p === PRODUCT_GA4) productFromState = p;
-        }
-      } catch {
-        // ignore
-      }
-    }
-
     // Tokens
     if (refreshToken) {
       ga.refreshToken = refreshToken;
@@ -548,9 +600,7 @@ async function googleCallbackHandler(req, res) {
     const existingScopes = Array.isArray(ga.scope) ? ga.scope : [];
     ga.scope = normalizeScopes([...existingScopes, ...grantedScopes]);
 
-    // ✅ flags explícitos por producto (para evitar “se conectó Ads sin querer”)
-    // - si viene productFromState: solo marcamos ese producto como “conectado”
-    // - si es legacy (null): marcamos ambos según scopes actuales
+    // ✅ flags explícitos por producto
     if (productFromState === PRODUCT_ADS) {
       ga.connectedAds = true;
     } else if (productFromState === PRODUCT_GA4) {
@@ -1418,6 +1468,7 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
     emitEventBestEffort(req, 'google_disconnected', {
       revokeAttempted: revoke.attempted,
       revokeOk: revoke.ok,
+      revokeVia: revoke.via || null,
       auditsDeleted,
       auditsDeleteOk,
       auditsDeleteError,
@@ -1428,6 +1479,7 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
       disconnected: true,
       revokeAttempted: revoke.attempted,
       revokeOk: revoke.ok,
+      revokeVia: revoke.via || null,
 
       auditsDeleted,
       auditsDeleteOk,
