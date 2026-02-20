@@ -1,9 +1,9 @@
 # Shopify App URL switching (staging <-> production)
 
-This project now has two dedicated Shopify CLI config files:
+This project now has two Shopify CLI config files:
 
 - `shopify.app.staging.toml`
-- `shopify.app.production.toml`
+- `shopify.app.toml` (production/default)
 
 ## Why this helps
 - No manual URL edits in Partner Dashboard for each test cycle.
