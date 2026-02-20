@@ -72,6 +72,22 @@ app.use('/api/cron', require('./routes/cronEmails'));
 
 const PORT = process.env.PORT || 3000;
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
+const APP_ORIGIN = (() => {
+  try {
+    return new URL(APP_URL).origin;
+  } catch {
+    return null;
+  }
+})();
+const RENDER_EXTERNAL_ORIGIN = (() => {
+  const raw = String(process.env.RENDER_EXTERNAL_URL || '').trim();
+  if (!raw) return null;
+  try {
+    return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).origin;
+  } catch {
+    return null;
+  }
+})();
 
 
 /* =========================
@@ -95,6 +111,7 @@ app.use(compression());
  * ========================= */
 const ALLOWED_ORIGINS = [
   'https://adray.ai',
+  'https://adray-app-staging-german.onrender.com',
   'https://admin.shopify.com',
   /^https?:\/\/[^/]+\.myshopify\.com$/i,
   'http://localhost:3000',
@@ -102,7 +119,9 @@ const ALLOWED_ORIGINS = [
   'http://127.0.0.1:5173',
   'http://localhost:8080',
   'http://127.0.0.1:8080',
-];
+  APP_ORIGIN,
+  RENDER_EXTERNAL_ORIGIN,
+].filter(Boolean);
 
 app.use(
   cors({
