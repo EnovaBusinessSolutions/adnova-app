@@ -61,13 +61,11 @@ document.addEventListener('DOMContentLoaded', () => {
   async function renderTurnstile() {
     const siteKey = getTurnstileSiteKey();
     if (!siteKey) {
-      showMessage('⚠️ Falta configurar el Site Key de Turnstile.', false);
       return;
     }
 
     const slot = document.getElementById('cf-turnstile-slot');
     if (!slot) {
-      showMessage('⚠️ No se encontró el contenedor del captcha (#cf-turnstile-slot).', false);
       return;
     }
 
@@ -91,7 +89,6 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     } catch (err) {
       console.error('[register.js] Turnstile render error:', err);
-      showMessage('No se pudo cargar la verificación de seguridad. Recarga la página.', false);
     }
   }
 

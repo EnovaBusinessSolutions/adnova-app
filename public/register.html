@@ -5,10 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Registro - Adray</title>
 
-    <!-- ✅ Turnstile: site key para register.js -->
-    <meta name="turnstile-site-key" content="0x4AAAAAACMV4omG2rQgADlG" />
-    <!-- ✅ Turnstile (EXPLICIT) -->
-    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -51,15 +47,6 @@
     </script>
     <!-- =============================================================== -->
 
-    <style>
-      #turnstile-wrap{
-        margin-top: 14px;
-        margin-bottom: 10px;
-        display: flex;
-        justify-content: center;
-        width: 100%;
-      }
-    </style>
   </head>
 
   <body data-page="register">
@@ -102,11 +89,6 @@
               <span class="eye-icon"></span>
             </button>
           </div>
-        </div>
-
-        <!-- ✅ Turnstile SLOT (explicit) -->
-        <div id="turnstile-wrap">
-          <div id="cf-turnstile-slot"></div>
         </div>
 
         <button type="submit" class="btn btn-primary">Registrarse</button>
