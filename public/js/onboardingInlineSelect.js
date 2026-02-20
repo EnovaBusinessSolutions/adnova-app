@@ -1,4 +1,3 @@
-// public/js/onboardingInlineSelect.js
 'use strict';
 
 /* =========================================================
@@ -73,8 +72,7 @@ const ASM = {
     googleGa: false,
   },
 
-  // required blocks (si vienes de OAuth, Settings lo decide y lo manda)
-  // si required=true y no eliges, no deja guardar
+  // required blocks
   required: {
     meta: false,
     googleAds: false,
@@ -195,6 +193,202 @@ function _updateLimitUI(kind) {
 }
 
 /* =========================================================
+ * ✅ FIX CRÍTICO: Inyectar modal + estilos si NO existe
+ * (en Dashboard/React no existe HTML estático)
+ * =======================================================*/
+function _ensureModalSkeleton() {
+  if (_el('account-select-modal')) return;
+
+  // Styles
+  if (!document.getElementById('asm-styles')) {
+    const style = document.createElement('style');
+    style.id = 'asm-styles';
+    style.textContent = `
+      #account-select-modal.hidden { display:none !important; }
+      #account-select-modal {
+        position: fixed; inset: 0; z-index: 99999;
+        display: none;
+      }
+      #account-select-modal .asm-backdrop{
+        position: absolute; inset:0;
+        background: rgba(0,0,0,.65);
+        backdrop-filter: blur(6px);
+      }
+      #account-select-modal .asm-panel{
+        position: relative;
+        width: min(860px, calc(100vw - 28px));
+        max-height: calc(100vh - 28px);
+        margin: 14px auto;
+        border: 1px solid rgba(255,255,255,.10);
+        background: rgba(10,10,14,.92);
+        color: #e5e7eb;
+        border-radius: 16px;
+        box-shadow: 0 24px 80px rgba(0,0,0,.55);
+        overflow: hidden;
+        display:flex; flex-direction:column;
+      }
+      #account-select-modal .asm-head{
+        padding: 14px 16px;
+        display:flex; align-items:center; justify-content:space-between;
+        border-bottom: 1px solid rgba(255,255,255,.08);
+      }
+      #account-select-modal .asm-title{
+        font-weight: 700;
+        font-size: 14px;
+        letter-spacing: .2px;
+        display:flex; gap:8px; align-items:center;
+      }
+      #account-select-modal .asm-x{
+        appearance:none; border:0; background: transparent;
+        color:#cbd5e1; cursor:pointer;
+        padding: 8px 10px; border-radius: 10px;
+      }
+      #account-select-modal .asm-x:hover{
+        background: rgba(255,255,255,.06);
+      }
+      #account-select-modal .asm-body{
+        padding: 14px 16px;
+        overflow:auto;
+      }
+      #account-select-modal .asm-sub{
+        color:#a1a1aa;
+        font-size: 12px;
+        margin-top: 4px;
+      }
+      #account-select-modal .asm-section{
+        margin-top: 14px;
+      }
+      #account-select-modal .asm-section h4{
+        margin: 0 0 8px 0;
+        font-size: 13px;
+        font-weight: 700;
+      }
+      #account-select-modal .asm-list{
+        display:flex; flex-wrap:wrap; gap:10px;
+      }
+      #account-select-modal .asm-chip{
+        display:flex; align-items:center; gap:10px;
+        padding: 10px 12px;
+        border: 1px solid rgba(255,255,255,.10);
+        border-radius: 12px;
+        cursor: pointer;
+        background: rgba(255,255,255,.03);
+        user-select:none;
+        min-width: 220px;
+      }
+      #account-select-modal .asm-chip:hover{
+        background: rgba(255,255,255,.06);
+      }
+      #account-select-modal .asm-chip input{
+        transform: scale(1.1);
+      }
+      #account-select-modal .asm-meta{
+        font-size: 11px; color:#94a3b8; margin-top: 4px;
+      }
+      #account-select-modal .asm-footer{
+        padding: 12px 16px;
+        display:flex; gap:10px; justify-content:flex-end; align-items:center;
+        border-top: 1px solid rgba(255,255,255,.08);
+      }
+      #account-select-modal .asm-err{
+        color:#ef4444;
+        font-size: 12px;
+        margin-top: 10px;
+        display:none;
+      }
+      .asm-btn{
+        appearance:none; border:1px solid rgba(255,255,255,.14);
+        background: rgba(255,255,255,.06);
+        color:#e5e7eb;
+        padding: 10px 12px;
+        border-radius: 12px;
+        cursor:pointer;
+        font-weight: 600;
+        font-size: 13px;
+      }
+      .asm-btn:hover{ background: rgba(255,255,255,.10); }
+      .asm-btn-primary{
+        background: #7c3aed;
+        border-color: transparent;
+        color:#fff;
+      }
+      .asm-btn-primary:hover{ background: #6d28d9; }
+      .asm-btn-primary--disabled{
+        opacity:.55;
+        cursor:not-allowed;
+      }
+      .asm-count{
+        margin-left: 8px;
+        color:#94a3b8;
+        font-weight: 600;
+        font-size: 12px;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  // HTML
+  const modal = document.createElement('div');
+  modal.id = 'account-select-modal';
+  modal.className = 'hidden';
+  modal.innerHTML = `
+    <div class="asm-backdrop" id="asm-backdrop"></div>
+    <div class="asm-panel" role="dialog" aria-modal="true">
+      <div class="asm-head">
+        <div>
+          <div class="asm-title">⚙️ Seleccionar cuentas</div>
+          <div class="asm-sub">Selecciona hasta ${MAX_SELECT} cuenta por tipo.</div>
+        </div>
+        <button class="asm-x" id="asm-close" aria-label="Cerrar">✕</button>
+      </div>
+
+      <div class="asm-body">
+        <div id="asm-error" class="asm-err"></div>
+
+        <div id="asm-meta-title" class="asm-section hidden">
+          <h4>Meta Ads <span class="asm-count" id="asm-meta-count">0/${MAX_SELECT}</span></h4>
+          <div class="asm-list" id="asm-meta-list"></div>
+        </div>
+
+        <div id="asm-google-ads-title" class="asm-section hidden">
+          <h4>Google Ads <span class="asm-count" id="asm-google-ads-count">0/${MAX_SELECT}</span></h4>
+          <div class="asm-list" id="asm-google-ads-list"></div>
+        </div>
+
+        <div id="asm-google-ga-title" class="asm-section hidden">
+          <h4>Google Analytics (GA4) <span class="asm-count" id="asm-google-ga-count">0/${MAX_SELECT}</span></h4>
+          <div class="asm-list" id="asm-google-ga-list"></div>
+        </div>
+      </div>
+
+      <div class="asm-footer">
+        <button class="asm-btn" id="asm-cancel">Cancelar</button>
+        <button class="asm-btn asm-btn-primary" id="asm-save">Guardar selección</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  // close behaviors
+  const close = () => _hide(modal);
+  const b = _el('asm-backdrop');
+  const x = _el('asm-close');
+  const c = _el('asm-cancel');
+  if (b) b.addEventListener('click', close);
+  if (x) x.addEventListener('click', close);
+  if (c) c.addEventListener('click', close);
+
+  // ESC
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const m = _el('account-select-modal');
+      if (m && m.style.display !== 'none') _hide(m);
+    }
+  });
+}
+
+/* =========================================================
  * Google Ads selection ACK (se queda igual)
  * =======================================================*/
 function _newReqId() {
@@ -242,9 +436,6 @@ async function _saveGoogleAdsSelection(ids, { timeoutMs = 12000 } = {}) {
  * Loaders (solo settings)
  * =======================================================*/
 async function _loadMeta() {
-  // Preferimos canónico
-  // - /auth/meta/accounts (nuevo)
-  // - fallback legacy /api/meta/accounts
   let v = null;
   try {
     v = await _json('/auth/meta/accounts');
@@ -268,7 +459,6 @@ async function _loadMeta() {
 
   ASM.data.meta = list;
 
-  // Prefill: si backend manda selected/default
   const selected =
     Array.isArray(v?.selectedAccountIds) ? v.selectedAccountIds :
     Array.isArray(v?.selected) ? v.selected :
@@ -281,7 +471,6 @@ async function _loadMeta() {
 
   const count = ASM.data.meta.length;
 
-  // Visible: si only=meta o all; y si showAll o count>1
   const allow = (ASM.only === 'all' || ASM.only === 'meta');
   ASM.visible.meta = allow && (ASM.showAll ? count > 0 : count > 1);
 }
@@ -456,7 +645,6 @@ function _renderLists() {
     _hide(gGaList);
   }
 
-  // Si no hay nada visible, muestra hint claro
   if (!ASM.visible.meta && !ASM.visible.googleAds && !ASM.visible.googleGa) {
     _hint('No hay cuentas suficientes para seleccionar (o solo existe 1 cuenta por tipo).', 'info');
   }
@@ -465,6 +653,7 @@ function _renderLists() {
 }
 
 async function _openModal() {
+  _ensureModalSkeleton(); // ✅ FIX
   _renderLists();
   _show(_el('account-select-modal'));
 
@@ -501,13 +690,11 @@ async function _openModal() {
       if (ASM.visible.googleGa) {
         const all = Array.from(ASM.sel.googleGa).filter(Boolean);
 
-        // preferimos "properties/xxx" si existe
         let chosen =
           all.find((x) => String(x).includes('properties/')) ||
           all[0] ||
           null;
 
-        // si chosen es solo dígitos y tenemos en data algo raw, lo convertimos al raw si hay match
         if (chosen && String(chosen).match(/^\d+$/)) {
           const match = (ASM.data.googleGa || []).find((p) => {
             const raw = String(p.propertyId || p.property_id || p.name || '').trim();
@@ -540,7 +727,6 @@ async function _openModal() {
 
       _hide(_el('account-select-modal'));
 
-      // Evento único para Settings
       window.dispatchEvent(
         new CustomEvent('adnova:accounts-selection-saved', {
           detail: {
@@ -577,11 +763,6 @@ async function _openModal() {
  * Public API: openAccountSelectModal (solo Settings)
  * =======================================================*/
 async function openAccountSelectModal(opts = {}) {
-  // opts:
-  // - only: 'all' | 'meta' | 'googleAds' | 'googleGa'
-  // - force: boolean (refresca sí o sí)
-  // - showAll: boolean (mostrar selector aunque haya 1 cuenta)
-  // - required: {meta, googleAds, googleGa} (para bloquear guardado si falta)
   const only = (opts.only || 'all');
   const force = opts.force !== false;
   const showAll = !!opts.showAll;
@@ -596,7 +777,6 @@ async function openAccountSelectModal(opts = {}) {
   ASM.required.googleAds = !!required.googleAds;
   ASM.required.googleGa = !!required.googleGa;
 
-  // reset
   ASM.sel.meta.clear();
   ASM.sel.googleAds.clear();
   ASM.sel.googleGa.clear();
@@ -607,13 +787,11 @@ async function openAccountSelectModal(opts = {}) {
 
   const tasks = [];
 
-  // Cargamos solo lo necesario
   if (only === 'all' || only === 'meta') tasks.push(_loadMeta().catch(console.error));
   if (only === 'all' || only === 'googleAds' || only === 'googleGa') tasks.push(_loadGoogle().catch(console.error));
 
   await Promise.allSettled(tasks);
 
-  // Si no hay nada visible, no abras modal (pero notifica)
   const mustOpen = ASM.visible.meta || ASM.visible.googleAds || ASM.visible.googleGa;
 
   if (!mustOpen) {
@@ -645,7 +823,79 @@ window.addEventListener('adnova:open-account-select', (ev) => {
 });
 
 /* =========================================================
- * ✅ Removido: auto-open por OAuth / DOMContentLoaded
- * - Ya no hay onboarding.
- * - Settings controla cuándo se abre.
+ * ✅ FIX: Auto-open “fallback” al regresar de OAuth
+ * - Solo en /settings
+ * - Solo si QS indica meta/google ok o selector=1
+ * - Settings puede fallar, pero el motor NO
  * =======================================================*/
+function _getQS() {
+  try {
+    return new URLSearchParams(window.location.search || '');
+  } catch {
+    return new URLSearchParams();
+  }
+}
+
+function _inferAutoOpenFromQS() {
+  const qs = _getQS();
+
+  const selector = qs.get('selector') === '1';
+
+  const metaOk = qs.get('meta') === 'ok';
+  const googleOk = qs.get('google') === 'ok';
+  const ga4Ok = qs.get('ga4') === 'ok'; // compat
+  const gadsOk = qs.get('gads') === 'ok'; // compat
+  const adsOk = qs.get('ads') === 'ok'; // compat
+
+  const any = selector || metaOk || googleOk || ga4Ok || gadsOk || adsOk;
+  if (!any) return null;
+
+  // only por producto
+  const product = (qs.get('product') || '').toLowerCase(); // ads|ga4
+  let only = 'all';
+
+  if (metaOk) only = 'meta';
+  else if (googleOk || ga4Ok || gadsOk || adsOk) {
+    if (product === 'ads' || gadsOk || adsOk) only = 'googleAds';
+    else if (product === 'ga4' || ga4Ok) only = 'googleGa';
+    else only = 'all';
+  }
+
+  // required fuerte al volver de OAuth: si venimos “forzando selector”,
+  // bloqueamos guardar si no elige
+  const required = {
+    meta: only === 'meta',
+    googleAds: only === 'googleAds',
+    googleGa: only === 'googleGa',
+  };
+
+  return { only, required };
+}
+
+function _isSettingsRoute() {
+  try {
+    const p = window.location.pathname || '';
+    // cubre /dashboard/settings y /settings en dev
+    return p.endsWith('/settings') || p.includes('/settings');
+  } catch {
+    return false;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    if (!_isSettingsRoute()) return;
+
+    const info = _inferAutoOpenFromQS();
+    if (!info) return;
+
+    openAccountSelectModal({
+      only: info.only,
+      force: true,
+      showAll: false,
+      required: info.required,
+    }).catch(console.error);
+  } catch (e) {
+    console.error('ASM auto-open error', e);
+  }
+});
