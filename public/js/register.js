@@ -113,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (_) {}
   }
 
-  // Render inmediato (registro SIEMPRE requiere captcha)
+  // Render inmediato (si falla, backend decide si captcha es obligatorio)
   renderTurnstile();
 
   // ---------------- submit ----------------
@@ -131,10 +131,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (password !== confirm) return showMessage('Las contraseñas no coinciden.', false);
 
     const turnstileToken = getTurnstileToken();
-    if (!turnstileToken) {
-      showMessage('Por favor completa la verificación de seguridad.', false);
-      return;
-    }
 
     try {
       showMessage('Creando cuenta…', true);
@@ -142,7 +138,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await fetch('/api/register', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ name, email, password, turnstileToken }),
+        body:    JSON.stringify({
+          name,
+          email,
+          password,
+          ...(turnstileToken ? { turnstileToken } : {}),
+        }),
       });
 
       const data = await res.json().catch(() => ({}));
