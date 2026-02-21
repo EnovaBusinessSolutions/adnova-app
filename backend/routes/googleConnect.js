@@ -283,10 +283,24 @@ const hasGaScope = (scopes = []) =>
  * Productos (Ads vs GA4)
  * ========================= */
 function getProductFromReq(req) {
-  const p = String(req.query.product || '').trim().toLowerCase();
-  if (p === PRODUCT_ADS) return PRODUCT_ADS;
-  if (p === PRODUCT_GA4) return PRODUCT_GA4;
-  return null; // null => legacy: ambos
+  // 1) query param explícito
+  const q = String(req.query.product || '').trim().toLowerCase();
+  if (q === PRODUCT_ADS) return PRODUCT_ADS;
+  if (q === PRODUCT_GA4) return PRODUCT_GA4;
+
+  // 2) inferir por ruta (blindaje anti-rewrite/alias)
+  const path = String(req.path || '').toLowerCase();
+  const full = String(req.originalUrl || '').toLowerCase();
+
+  if (path.includes('/ga') || full.includes('/ga/connect') || full.includes('/connect/ga4')) return PRODUCT_GA4;
+  if (path.includes('/ads') || full.includes('/ads/connect') || full.includes('/connect/ads')) return PRODUCT_ADS;
+
+  // 3) fallback seguro: si no sabemos, NO mezclar (elige GA4 solo si el returnTo/product sugieren ga4)
+  const rt = String(req.query.returnTo || '').toLowerCase();
+  if (rt.includes('product=ga4') || rt.includes('ga4')) return PRODUCT_GA4;
+  if (rt.includes('product=ads') || rt.includes('google-ads') || rt.includes('gads')) return PRODUCT_ADS;
+
+  return null; // legacy only si de verdad quieres mantenerlo
 }
 
 function scopesForProduct(product) {
@@ -587,43 +601,56 @@ async function googleCallbackHandler(req, res) {
     ga.email = profile.email || ga.email || null;
 
     // Tokens
-    if (refreshToken) {
-      ga.refreshToken = refreshToken;
-    } else if (!ga.refreshToken && tokens.refresh_token) {
-      ga.refreshToken = tokens.refresh_token;
-    }
+    if (productFromState === PRODUCT_GA4) {
+  // ✅ Guardar en GA4 separado
+  if (refreshToken) ga.ga4RefreshToken = refreshToken;
+  else if (!ga.ga4RefreshToken && tokens.refresh_token) ga.ga4RefreshToken = tokens.refresh_token;
 
-    ga.accessToken = accessToken;
-    ga.expiresAt = expiresAt;
+  ga.ga4AccessToken = accessToken;
+  ga.ga4ExpiresAt = expiresAt;
 
-    // Scopes acumulados (NO rompe, pero conectividad la controlamos con flags)
-    const existingScopes = Array.isArray(ga.scope) ? ga.scope : [];
-    ga.scope = normalizeScopes([...existingScopes, ...grantedScopes]);
+  const existing = Array.isArray(ga.ga4Scope) ? ga.ga4Scope : [];
+  ga.ga4Scope = normalizeScopes([...existing, ...grantedScopes]);
 
-    // ✅ flags explícitos por producto
-    if (productFromState === PRODUCT_ADS) {
-      ga.connectedAds = true;
-    } else if (productFromState === PRODUCT_GA4) {
-      ga.connectedGa4 = true;
-    } else {
-      // legacy: best-effort por scope
-      ga.connectedAds = !!hasAdwordsScope(ga.scope);
-      ga.connectedGa4 = !!hasGaScope(ga.scope);
-    }
+  ga.connectedGa4 = true;
+} else {
+  // ✅ Ads (default)
+  if (refreshToken) ga.refreshToken = refreshToken;
+  else if (!ga.refreshToken && tokens.refresh_token) ga.refreshToken = tokens.refresh_token;
+
+  ga.accessToken = accessToken;
+  ga.expiresAt = expiresAt;
+
+  const existing = Array.isArray(ga.scope) ? ga.scope : [];
+  ga.scope = normalizeScopes([...existing, ...grantedScopes]);
+
+  ga.connectedAds = true;
+}
 
     ga.updatedAt = new Date();
     await ga.save();
 
-    emitEventBestEffort(req, 'google_connect_completed', {
-      hasRefreshToken: !!ga.refreshToken,
-      hasAccessToken: !!ga.accessToken,
-      scopesCount: Array.isArray(ga.scope) ? ga.scope.length : 0,
-      adsScopeOk: hasAdwordsScope(ga.scope),
-      gaScopeOk: hasGaScope(ga.scope),
-      product: productFromState || 'both',
-      connectedAds: !!ga.connectedAds,
-      connectedGa4: !!ga.connectedGa4,
-    });
+    const adsScopesNow = Array.isArray(ga.scope) ? ga.scope : [];
+const ga4ScopesNow = Array.isArray(ga.ga4Scope) ? ga.ga4Scope : [];
+
+emitEventBestEffort(req, 'google_connect_completed', {
+  product: productFromState || 'both',
+
+  // tokens por producto
+  hasAdsRefreshToken: !!ga.refreshToken,
+  hasAdsAccessToken: !!ga.accessToken,
+  hasGa4RefreshToken: !!ga.ga4RefreshToken,
+  hasGa4AccessToken: !!ga.ga4AccessToken,
+
+  // scopes por producto
+  adsScopesCount: adsScopesNow.length,
+  ga4ScopesCount: ga4ScopesNow.length,
+  adsScopeOk: hasAdwordsScope(adsScopesNow),
+  ga4ScopeOk: hasGaScope(ga4ScopesNow),
+
+  connectedAds: !!ga.connectedAds,
+  connectedGa4: !!ga.connectedGa4,
+});
 
     const shouldDoAds = productFromState === PRODUCT_ADS || (!productFromState);
     const shouldDoGa4 = productFromState === PRODUCT_GA4 || (!productFromState);
@@ -733,7 +760,10 @@ async function googleCallbackHandler(req, res) {
     // ============================
     // 2) Listar properties GA4 (solo si aplica)
     // ============================
-    if (shouldDoGa4 && hasGaScope(ga.scope) && ga.refreshToken) {
+     const ga4Scopes = Array.isArray(ga.ga4Scope) ? ga.ga4Scope : [];
+     const ga4HasScope = hasGaScope(ga4Scopes) || hasGaScope(ga.scope);
+     const ga4HasRefresh = !!(ga.ga4RefreshToken || ga.refreshToken);
+     if (shouldDoGa4 && ga4HasScope && ga4HasRefresh) {
       try {
         const propsRaw = await fetchGA4Properties(client);
 
@@ -938,15 +968,16 @@ router.get('/status', requireSession, async (req, res) => {
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
       .select(
-        '+refreshToken +accessToken objective defaultCustomerId ' +
-        'customers ad_accounts scope gaProperties defaultPropertyId ' +
-        'lastAdsDiscoveryError lastAdsDiscoveryLog expiresAt ' +
-        'selectedCustomerIds selectedGaPropertyId selectedPropertyIds ' +
-        'connectedAds connectedGa4'
-      )
+  '+refreshToken +accessToken +ga4RefreshToken +ga4AccessToken ' +
+  'objective defaultCustomerId ' +
+  'customers ad_accounts scope ga4Scope gaProperties defaultPropertyId ' +
+  'lastAdsDiscoveryError lastAdsDiscoveryLog expiresAt ga4ExpiresAt ' +
+  'selectedCustomerIds selectedGaPropertyId selectedPropertyIds ' +
+  'connectedAds connectedGa4'
+)
       .lean();
 
-    const hasTokens = !!(ga?.refreshToken || ga?.accessToken);
+    const hasTokens = !!(ga?.refreshToken || ga?.accessToken || ga?.ga4RefreshToken || ga?.ga4AccessToken);
     const customers = Array.isArray(ga?.customers) ? ga.customers : [];
     const adAccounts = Array.isArray(ga?.ad_accounts) ? ga.ad_accounts : [];
     const gaProperties = Array.isArray(ga?.gaProperties) ? ga.gaProperties : [];
@@ -957,8 +988,10 @@ router.get('/status', requireSession, async (req, res) => {
     const defaultCustomerId = previous || firstEnabledId || fallbackDefault;
 
     const scopesArr = Array.isArray(ga?.scope) ? ga.scope : [];
+    const ga4ScopesArr = Array.isArray(ga?.ga4Scope) ? ga.ga4Scope : [];
+    const gaScopeOk = hasGaScope(ga4ScopesArr) || hasGaScope(scopesArr);
     const adsScopeOk = hasAdwordsScope(scopesArr);
-    const gaScopeOk = hasGaScope(scopesArr);
+    
 
     // ✅ Flags explícitos por producto (si no existen aún, fallback a scope)
     const connectedAds = typeof ga?.connectedAds === 'boolean' ? ga.connectedAds : !!adsScopeOk;
@@ -1381,10 +1414,12 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
     const beforeGA4 = await Audit.countDocuments({ userId, type: { $in: ['ga4', 'ga'] } });
     const beforeTotal = beforeGoogle + beforeGA4;
 
-    const ga = await GoogleAccount.findOne(q).select('+refreshToken +accessToken').lean();
+    const ga = await GoogleAccount.findOne(q)
+  .select('+refreshToken +accessToken +ga4RefreshToken +ga4AccessToken')
+  .lean();
 
-    const refreshToken = ga?.refreshToken || null;
-    const accessToken  = ga?.accessToken || null;
+const refreshToken = ga?.refreshToken || ga?.ga4RefreshToken || null;
+const accessToken  = ga?.accessToken  || ga?.ga4AccessToken  || null;
 
     const revoke = await revokeGoogleTokenBestEffort({ refreshToken, accessToken });
 
@@ -1393,10 +1428,17 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
       {
         $set: {
           accessToken: null,
-          refreshToken: null,
-          expiresAt: null,
+refreshToken: null,
+expiresAt: null,
 
-          scope: [],
+scope: [],
+
+// ✅ GA4 tokens/scopes también
+ga4AccessToken: null,
+ga4RefreshToken: null,
+ga4ExpiresAt: null,
+ga4Scope: [],
+ga4ConnectedAt: null,
 
           // Ads
           customers: [],
