@@ -591,8 +591,28 @@ async function googleCallbackHandler(req, res) {
 
     const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
     let ga = await GoogleAccount.findOne(q).select(
-      '+refreshToken scope selectedCustomerIds selectedPropertyIds selectedGaPropertyId'
-    );
+  [
+    '+refreshToken',
+    '+accessToken',
+    '+scope',
+
+    // ✅ GA4 tokens/scopes separados (si tu modelo los tiene select:false)
+    '+ga4RefreshToken',
+    '+ga4AccessToken',
+    '+ga4Scope',
+
+    'selectedCustomerIds',
+    'selectedPropertyIds',
+    'selectedGaPropertyId',
+    'defaultCustomerId',
+    'defaultPropertyId',
+    'customers',
+    'ad_accounts',
+    'gaProperties',
+    'connectedAds',
+    'connectedGa4',
+  ].join(' ')
+);
 
     if (!ga) {
       ga = new GoogleAccount({ user: req.user._id, userId: req.user._id });
@@ -900,22 +920,35 @@ emitEventBestEffort(req, 'google_connect_completed', {
       (shouldDoAds && adsCount > 1 && selAds.length === 0) ||
       (shouldDoGa4 && gaCount > 1 && gaEffectiveSel.length === 0);
 
-    const sep = returnTo.includes('?') ? '&' : '?';
-    returnTo =
-      `${returnTo}${sep}selector=${needsSelector ? '1' : '0'}` +
-      (productFromState ? `&product=${encodeURIComponent(productFromState)}` : '');
+    // ✅ Siempre marcamos que venimos de OAuth Google
+// (Settings.tsx usa esto para auto-abrir el selector/motor)
+returnTo = appendQuery(returnTo, 'google', 'ok');
 
-    emitEventBestEffort(req, 'google_connect_result', {
-      needsSelector,
-      product: productFromState || 'both',
-      adsCount,
-      ga4Count: gaCount,
-      selectedAdsCount: selAds.length,
-      selectedGa4Count: gaEffectiveSel.length,
-      returnTo,
-    });
+// ✅ Tab fijo si cae en settings
+// (sanitizeReturnTo ya lo intenta, pero esto blinda)
+if (String(returnTo).startsWith('/dashboard/settings')) {
+  returnTo = appendQuery(returnTo, 'tab', 'integrations');
+}
 
-    return res.redirect(returnTo);
+// ✅ Selector calculado (solo si hace falta)
+returnTo = appendQuery(returnTo, 'selector', needsSelector ? '1' : '0');
+
+// ✅ Producto para que el front abra el modal solo del producto conectado
+if (productFromState) {
+  returnTo = appendQuery(returnTo, 'product', String(productFromState));
+}
+
+emitEventBestEffort(req, 'google_connect_result', {
+  needsSelector,
+  product: productFromState || 'both',
+  adsCount,
+  ga4Count: gaCount,
+  selectedAdsCount: selAds.length,
+  selectedGa4Count: gaEffectiveSel.length,
+  returnTo,
+});
+
+return res.redirect(returnTo);
   } catch (err) {
     console.error('[googleConnect] callback error:', err?.response?.data || err.message || err);
     emitEventBestEffort(req, 'google_connect_failed', {
@@ -930,6 +963,8 @@ emitEventBestEffort(req, 'google_connect_completed', {
 router.get('/callback', requireSession, googleCallbackHandler);
 router.get('/connect/callback', requireSession, googleCallbackHandler);
 router.get('/ads/callback', requireSession, googleCallbackHandler);
+router.get('/ga/callback', requireSession, googleCallbackHandler);
+router.get('/ga4/callback', requireSession, googleCallbackHandler);
 
 /* =========================
  * ✅ PREVIEW (auditorías a borrar)

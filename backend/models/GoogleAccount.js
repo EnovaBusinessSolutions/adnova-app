@@ -14,14 +14,14 @@ const normIdArr = (arr) =>
     new Set((Array.isArray(arr) ? arr : []).map(normCustomerId).filter(Boolean))
   );
 
-// scopes pueden venir separados por espacios o comas
+// ✅ scopes pueden venir separados por espacios o comas (normalizamos + lowercase)
 const normScopes = (v) => {
   if (!v) return [];
   const arr = Array.isArray(v) ? v : String(v).split(/[,\s]+/);
   return Array.from(
     new Set(
       arr
-        .map((x) => String(x || '').trim())
+        .map((x) => String(x || '').trim().toLowerCase())
         .filter(Boolean)
     )
   );
@@ -392,6 +392,14 @@ GoogleAccountSchema.pre('save', function (next) {
     );
 
     this.selectedCustomerIds = available.size ? norm.filter((id) => available.has(id)) : norm;
+
+    // ✅ Asegura defaultCustomerId dentro de selectedCustomerIds (si hay selección)
+    if (this.selectedCustomerIds.length) {
+      const d = this.defaultCustomerId ? normCustomerId(this.defaultCustomerId) : '';
+      if (!d || !this.selectedCustomerIds.includes(d)) {
+        this.defaultCustomerId = this.selectedCustomerIds[0];
+      }
+    }
   }
 
   // ---------- selección GA4: mantener consistencia ----------
@@ -405,6 +413,14 @@ GoogleAccountSchema.pre('save', function (next) {
     );
 
     this.selectedPropertyIds = available.size ? norm.filter((pid) => available.has(pid)) : norm;
+
+    // ✅ Asegura defaultPropertyId dentro de selectedPropertyIds (si hay selección)
+    if (this.selectedPropertyIds.length) {
+      const d = this.defaultPropertyId ? normPropertyId(this.defaultPropertyId) : '';
+      if (!d || !this.selectedPropertyIds.includes(d)) {
+        this.defaultPropertyId = this.selectedPropertyIds[0];
+      }
+    }
   } else {
     this.selectedPropertyIds = [];
   }
@@ -417,6 +433,19 @@ GoogleAccountSchema.pre('save', function (next) {
   if (this.selectedPropertyIds?.length && !this.selectedGaPropertyId) {
     this.selectedGaPropertyId = this.selectedPropertyIds[0];
   }
+
+  // ✅ Best-effort: si hay tokens + scopes, reflejar conectividad por producto
+  // (no pisa true; solo evita falsos "Conectar" si ya hay conexión real)
+  try {
+    const adsScopes = Array.isArray(this.scope) ? this.scope : [];
+    const ga4Scopes = Array.isArray(this.ga4Scope) ? this.ga4Scope : [];
+
+    const hasAds = !!(this.refreshToken || this.accessToken) && adsScopes.includes(ADS_SCOPE);
+    const hasGa4 = !!(this.ga4RefreshToken || this.ga4AccessToken) && ga4Scopes.includes(GA_READ);
+
+    if (!this.connectedAds && hasAds) this.connectedAds = true;
+    if (!this.connectedGa4 && hasGa4) this.connectedGa4 = true;
+  } catch {}
 
   next();
 });
