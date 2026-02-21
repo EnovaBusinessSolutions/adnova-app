@@ -1,18 +1,10 @@
 'use strict';
 
-(function () {
-  // ✅ Guard anti doble carga
-  if (window.__ADNOVA_ASM_LOADED__) return;
-  window.__ADNOVA_ASM_LOADED__ = true;
-
-  /* TODO: pega aquí TODO tu código actual del archivo,
-     incluyendo const MAX_SELECT, ASM, listeners, etc. */
-})();
-
 /**
  * =========================================================
- * ✅ Guard anti doble-carga (FIX de: MAX_SELECT already declared)
+ * ✅ Guard anti doble-carga (E2E)
  * - Si el script se inyecta 2 veces, no vuelve a ejecutar nada.
+ * - IMPORTANTE: este guard debe existir UNA SOLA VEZ.
  * =========================================================
  */
 (function () {
@@ -98,6 +90,9 @@
       googleAds: false,
       googleGa: false,
     },
+
+    // helper runtime
+    _isGoogleGaChecked: null,
   };
 
   /* =========================================================
@@ -208,7 +203,10 @@
       if (kind === 'googleGa') {
         const anySelected = ASM.sel.googleGa.size > 0;
         if (!anySelected) ch.disabled = false;
-        else ch.disabled = !ASM._isGoogleGaChecked?.(ch.value);
+        else {
+          const fn = ASM._isGoogleGaChecked;
+          ch.disabled = typeof fn === 'function' ? !fn(ch.value) : true;
+        }
         return;
       }
 
@@ -449,7 +447,9 @@
 
     // Prefill GA4 (✅ SOLO 1 RAW)
     ASM.sel.googleGa.clear();
-    const selGA4Raw = Array.isArray(st.selectedPropertyIds) ? st.selectedPropertyIds.map((x) => String(x || '').trim()) : [];
+    const selGA4Raw = Array.isArray(st.selectedPropertyIds)
+      ? st.selectedPropertyIds.map((x) => String(x || '').trim())
+      : [];
     const defGA4Raw = st.defaultPropertyId ? String(st.defaultPropertyId).trim() : '';
     const chosenRaw = selGA4Raw[0] || defGA4Raw;
     if (chosenRaw) ASM.sel.googleGa.add(chosenRaw);
@@ -826,5 +826,4 @@
       console.error('ASM auto-open error', e);
     }
   });
-
 })();
