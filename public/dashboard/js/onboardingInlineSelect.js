@@ -1,5 +1,14 @@
 'use strict';
 
+(function () {
+  // ✅ Guard anti doble carga
+  if (window.__ADNOVA_ASM_LOADED__) return;
+  window.__ADNOVA_ASM_LOADED__ = true;
+
+  /* TODO: pega aquí TODO tu código actual del archivo,
+     incluyendo const MAX_SELECT, ASM, listeners, etc. */
+})();
+
 /**
  * =========================================================
  * ✅ Guard anti doble-carga (FIX de: MAX_SELECT already declared)
