@@ -45,12 +45,21 @@ const MAX_SELECT = 1;
 
 // --- normalizers ---
 const normActId = (s = '') => String(s || '').trim().replace(/^act_/, '');
-const normGaId  = (s = '') => String(s || '').trim().replace(/^customers\//, '').replace(/[^\d]/g, '');
+
+// Google Ads customers siempre dígitos
+const normGaId = (s = '') =>
+  String(s || '')
+    .trim()
+    .replace(/^customers\//, '')
+    .replace(/[^\d]/g, '');
+
+// ✅ GA4 CANÓNICO: siempre "properties/<digits>"
 const normGA4Id = (s = '') => {
   const raw = String(s || '').trim();
   if (!raw) return '';
+  // acepta "properties/123" o "123" o cualquier cosa con dígitos
   const digits = raw.replace(/^properties\//, '').replace(/[^\d]/g, '');
-  return digits || raw.replace(/^properties\//, '').trim();
+  return digits ? `properties/${digits}` : '';
 };
 
 function uniq(arr = []) {
@@ -67,48 +76,61 @@ function hasAnyMetaToken(metaDoc) {
   );
 }
 
-function hasGoogleOAuth(gaDoc) {
+/**
+ * ✅ Separación OAuth por producto (alineado al modelo GoogleAccount.js)
+ * - ADS: accessToken/refreshToken + scope
+ * - GA4: ga4AccessToken/ga4RefreshToken + ga4Scope
+ */
+function hasGoogleOAuthAds(gaDoc) {
   return !!(gaDoc?.refreshToken || gaDoc?.accessToken);
+}
+function hasGoogleOAuthGa4(gaDoc) {
+  return !!(gaDoc?.ga4RefreshToken || gaDoc?.ga4AccessToken);
 }
 
 function normalizeScopes(raw) {
   if (!raw) return [];
   const arr = Array.isArray(raw) ? raw : String(raw).split(/[,\s]+/);
-  return uniq(arr.map(s => String(s || '').trim()).filter(Boolean));
+  // tu modelo ya normaliza a lowercase, pero aquí soportamos cualquier case
+  return uniq(arr.map((s) => String(s || '').trim().toLowerCase()).filter(Boolean));
 }
 
 function hasAdwordsScope(scopes = []) {
   const s = normalizeScopes(scopes);
-  return s.some(x => String(x).includes('/auth/adwords'));
+  return s.some((x) => x.includes('/auth/adwords'));
 }
 
 function hasGAReadScope(scopes = []) {
   const s = normalizeScopes(scopes);
-  return s.some(x => String(x).includes('/auth/analytics.readonly'));
+  return s.some((x) => x.includes('/auth/analytics.readonly'));
 }
 
 // --- availability builders ---
 function metaAvailableIds(metaDoc) {
-  const list = Array.isArray(metaDoc?.ad_accounts) ? metaDoc.ad_accounts
-            : Array.isArray(metaDoc?.adAccounts)  ? metaDoc.adAccounts
-            : [];
-  return uniq(list.map(a => normActId(a?.id || a?.account_id || '')).filter(Boolean));
+  const list = Array.isArray(metaDoc?.ad_accounts)
+    ? metaDoc.ad_accounts
+    : Array.isArray(metaDoc?.adAccounts)
+      ? metaDoc.adAccounts
+      : [];
+  return uniq(list.map((a) => normActId(a?.id || a?.account_id || '')).filter(Boolean));
 }
 
 function googleAvailableIds(gaDoc) {
   const fromAd = (Array.isArray(gaDoc?.ad_accounts) ? gaDoc.ad_accounts : [])
-    .map(a => normGaId(a?.id))
+    .map((a) => normGaId(a?.id))
     .filter(Boolean);
+
   const fromCu = (Array.isArray(gaDoc?.customers) ? gaDoc.customers : [])
-    .map(c => normGaId(c?.id))
+    .map((c) => normGaId(c?.id))
     .filter(Boolean);
+
   return uniq([...fromAd, ...fromCu]);
 }
 
 function ga4AvailableIds(gaDoc) {
   const props = Array.isArray(gaDoc?.gaProperties) ? gaDoc.gaProperties : [];
   const ids = props
-    .map(p => normGA4Id(p?.propertyId || p?.property_id || p?.name || ''))
+    .map((p) => normGA4Id(p?.propertyId || p?.property_id || p?.name || ''))
     .filter(Boolean);
   return uniq(ids);
 }
@@ -140,7 +162,7 @@ function selectedGoogleFromDocOrUser(gaDoc, user) {
 }
 
 /**
- * ✅ Selección GA4 (fix crítico):
+ * ✅ Selección GA4 (alineado al modelo):
  * - Preferimos GoogleAccount.selectedPropertyIds (nuevo)
  * - Fallback: GoogleAccount.selectedGaPropertyId (legacy)
  * - Fallback: user.selectedGAProperties (legacy)
@@ -164,7 +186,6 @@ function selectedGA4FromDocOrUser(gaDoc, user) {
 
 /**
  * connected vs requiredSelection:
- * - connected = hay OAuth válido (y scope, si aplica)
  * - requiredSelection = hay > MAX_SELECT disponibles y NO hay selección
  */
 function requiredSelectionByUX(availableCount, selectedCount) {
@@ -191,12 +212,40 @@ router.get('/', requireAuth, async (req, res) => {
       MetaAccount.findOne({ $or: [{ user: uid }, { userId: uid }] })
         .select('_id ad_accounts adAccounts access_token token accessToken longLivedToken longlivedToken selectedAccountIds defaultAccountId')
         .lean(),
+
       GoogleAccount.findOne({ $or: [{ user: uid }, { userId: uid }] })
-        .select('_id refreshToken accessToken scope ad_accounts customers gaProperties selectedCustomerIds defaultCustomerId selectedPropertyIds selectedGaPropertyId defaultPropertyId')
+        .select(
+          [
+            '_id',
+            // ADS tokens + scopes
+            'refreshToken',
+            'accessToken',
+            'scope',
+            // GA4 tokens + scopes (CRÍTICO)
+            'ga4RefreshToken',
+            'ga4AccessToken',
+            'ga4Scope',
+            // flags (fallback suave)
+            'connectedAds',
+            'connectedGa4',
+            // discovery data
+            'ad_accounts',
+            'customers',
+            'gaProperties',
+            // selections/defaults
+            'selectedCustomerIds',
+            'defaultCustomerId',
+            'selectedPropertyIds',
+            'selectedGaPropertyId',
+            'defaultPropertyId',
+          ].join(' ')
+        )
         .lean(),
+
       ShopConnections.findOne({ $or: [{ user: uid }, { userId: uid }] })
         .select('_id shop accessToken access_token')
         .lean(),
+
       // ✅ legacy selections + legacy token (Meta) para compat y para “disconnect” sin falsos positivos
       User.findById(uid)
         .select('_id metaConnected googleConnected shopifyConnected metaAccessToken selectedMetaAccounts selectedGoogleAccounts selectedGAProperties')
@@ -225,13 +274,13 @@ router.get('/', requireAuth, async (req, res) => {
         : (metaSelectedEff[0] || null);
 
     // ===== GOOGLE ADS =====
-    const googleOAuth = !!(gaDoc && hasGoogleOAuth(gaDoc));
-    const scopesArr = normalizeScopes(gaDoc?.scope || []);
-    const adsScopeOk = hasAdwordsScope(scopesArr);
-    const gaScopeOk  = hasGAReadScope(scopesArr);
+    const adsOAuth = !!(gaDoc && hasGoogleOAuthAds(gaDoc));
+    const adsScopesArr = normalizeScopes(gaDoc?.scope || []);
+    const adsScopeOk = hasAdwordsScope(adsScopesArr);
 
-    // Ads conectado = OAuth + adwords scope
-    const googleAdsConnected = !!(googleOAuth && adsScopeOk);
+    // Ads conectado = OAuth Ads + scope
+    // fallback suave a connectedAds (pero sin inventar conexión si no hay OAuth)
+    const googleAdsConnected = !!((adsOAuth && adsScopeOk) || (adsOAuth && gaDoc?.connectedAds));
 
     const gAvailIds = gaDoc ? googleAvailableIds(gaDoc) : [];
     const gSelectedRaw = selectedGoogleFromDocOrUser(gaDoc || {}, user);
@@ -246,8 +295,13 @@ router.get('/', requireAuth, async (req, res) => {
         : (gSelectedEff[0] || null);
 
     // ===== GA4 =====
-    // GA4 conectado = OAuth + analytics.readonly scope
-    const ga4Connected = !!(googleOAuth && gaScopeOk);
+    const ga4OAuth = !!(gaDoc && hasGoogleOAuthGa4(gaDoc));
+    const ga4ScopesArr = normalizeScopes(gaDoc?.ga4Scope || []);
+    const gaScopeOk = hasGAReadScope(ga4ScopesArr);
+
+    // GA4 conectado = OAuth GA4 + scope
+    // fallback suave a connectedGa4 (pero sin inventar conexión si no hay OAuth)
+    const ga4Connected = !!((ga4OAuth && gaScopeOk) || (ga4OAuth && gaDoc?.connectedGa4));
 
     const ga4AvailIds = gaDoc ? ga4AvailableIds(gaDoc) : [];
 
@@ -267,8 +321,6 @@ router.get('/', requireAuth, async (req, res) => {
         : (ga4SelectedEff[0] || null);
 
     // ===== SHOPIFY =====
-    // ✅ connected robusto: si hay token real, conectado.
-    // fallback suave: user.shopifyConnected (legacy)
     const shopifyConnected = !!(
       (shopDoc && shopDoc.shop && (shopDoc.accessToken || shopDoc.access_token)) ||
       user?.shopifyConnected
@@ -287,6 +339,7 @@ router.get('/', requireAuth, async (req, res) => {
         count: metaAvailIds.length,
         maxSelect: MAX_SELECT,
       },
+
       googleAds: {
         connected: googleAdsConnected,
         availableCount: gAvailIds.length,
@@ -297,6 +350,7 @@ router.get('/', requireAuth, async (req, res) => {
         maxSelect: MAX_SELECT,
         adsScopeOk,
       },
+
       ga4: {
         connected: ga4Connected,
         propertiesCount: ga4AvailIds.length,
@@ -310,6 +364,7 @@ router.get('/', requireAuth, async (req, res) => {
         maxSelect: MAX_SELECT,
         gaScopeOk,
       },
+
       shopify: {
         connected: shopifyConnected,
       },
@@ -317,9 +372,9 @@ router.get('/', requireAuth, async (req, res) => {
 
     // === LEGACY: onboarding3.js ===
     // "google.connected" históricamente se usaba como “google ok”
-    // mantenemos: conectado si Ads o GA4 están conectados (por OAuth)
+    // mantenemos: conectado si Ads o GA4 están conectados (por OAuth real)
     status.google = {
-      connected: !!(googleOAuth && (adsScopeOk || gaScopeOk)),
+      connected: !!((adsOAuth && adsScopeOk) || (ga4OAuth && gaScopeOk) || (adsOAuth && gaDoc?.connectedAds) || (ga4OAuth && gaDoc?.connectedGa4)),
       count: status.ga4.count,
     };
 
