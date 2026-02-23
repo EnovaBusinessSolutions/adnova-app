@@ -1,3 +1,5 @@
+//dashboard-src/public/js/onboardingInlineSelect.js
+
 'use strict';
 
 /**
@@ -100,11 +102,11 @@
    * =======================================================*/
   const _el = (id) => document.getElementById(id);
   const _show = (el) => {
-    if (el) {
-      el.classList.remove('hidden');
-      el.style.display = '';
-    }
-  };
+  if (el) {
+    el.classList.remove('hidden');
+    el.style.display = 'block'; // ✅ fuerza visible aunque haya estilos previos
+  }
+};
   const _hide = (el) => {
     if (el) {
       el.classList.add('hidden');
@@ -234,7 +236,7 @@
       style.id = 'asm-styles';
       style.textContent = `
         #account-select-modal.hidden { display:none !important; }
-        #account-select-modal { position: fixed; inset: 0; z-index: 99999; display: none; }
+        #account-select-modal { position: fixed; inset: 0; z-index: 99999; display: block; }
         #account-select-modal .asm-backdrop{ position: absolute; inset:0; background: rgba(0,0,0,.65); backdrop-filter: blur(6px); }
         #account-select-modal .asm-panel{
           position: relative;
@@ -755,6 +757,16 @@
       required: d.required || {},
     }).catch(console.error);
   });
+
+  window.addEventListener('adray:open-account-select', (ev) => {
+  const d = ev?.detail || {};
+  openAccountSelectModal({
+    only: d.only || 'all',
+    force: d.force !== false,
+    showAll: !!d.showAll,
+    required: d.required || {},
+  }).catch(console.error);
+});
 
   /* =========================================================
    * Auto-open al regresar de OAuth
