@@ -1,5 +1,4 @@
 //dashboard-src/public/js/onboardingInlineSelect.js
-
 'use strict';
 
 /**
@@ -102,11 +101,11 @@
    * =======================================================*/
   const _el = (id) => document.getElementById(id);
   const _show = (el) => {
-  if (el) {
-    el.classList.remove('hidden');
-    el.style.display = 'block'; // ✅ fuerza visible aunque haya estilos previos
-  }
-};
+    if (el) {
+      el.classList.remove('hidden');
+      el.style.display = 'block'; // ✅ fuerza visible aunque haya estilos previos
+    }
+  };
   const _hide = (el) => {
     if (el) {
       el.classList.add('hidden');
@@ -339,50 +338,6 @@
         if (m && m.style.display !== 'none') _hide(m);
       }
     });
-  }
-
-  /* =========================================================
-   * Google Ads selection ACK (igual)
-   * =======================================================*/
-  function _newReqId() {
-    return `asm_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-  }
-  function _waitForAck(eventName, reqId, timeoutMs = 12000) {
-    return new Promise((resolve, reject) => {
-      let done = false;
-
-      const t = setTimeout(() => {
-        if (done) return;
-        done = true;
-        window.removeEventListener(eventName, onAck);
-        reject(new Error('GOOGLE_ADS_SELECTION_ACK_TIMEOUT'));
-      }, timeoutMs);
-
-      function onAck(ev) {
-        const d = ev?.detail || {};
-        if (!d || d.reqId !== reqId) return;
-        if (done) return;
-        done = true;
-        clearTimeout(t);
-        window.removeEventListener(eventName, onAck);
-
-        if (d.ok === false) reject(new Error(d.error || 'GOOGLE_ADS_SELECTION_FAILED'));
-        else resolve(d);
-      }
-
-      window.addEventListener(eventName, onAck);
-    });
-  }
-  async function _saveGoogleAdsSelection(ids, { timeoutMs = 12000 } = {}) {
-    const reqId = _newReqId();
-
-    window.dispatchEvent(
-      new CustomEvent('googleAccountsSelected', {
-        detail: { accountIds: ids, reqId, source: 'settings' },
-      })
-    );
-
-    await _waitForAck('adnova:google-ads-selection-saved', reqId, timeoutMs);
   }
 
   /* =========================================================
@@ -656,10 +611,12 @@
           }
         }
 
-        // Google Ads (ACK)
+        // ✅ Google Ads (POST canónico, sin ACK)
         if (ASM.visible.googleAds) {
           const ids = Array.from(ASM.sel.googleAds).slice(0, MAX_SELECT);
-          if (ids.length) tasks.push(_saveGoogleAdsSelection(ids));
+          if (ids.length) {
+            tasks.push(_post('/auth/google/accounts/selection', { customerIds: ids }));
+          }
         }
 
         await Promise.all(tasks);
@@ -677,15 +634,24 @@
             },
           })
         );
+        window.dispatchEvent(
+          new CustomEvent('adray:accounts-selection-saved', {
+            detail: {
+              meta: Array.from(ASM.sel.meta).slice(0, 1),
+              googleAds: Array.from(ASM.sel.googleAds).slice(0, 1),
+              ga4: Array.from(ASM.sel.googleGa).slice(0, 1), // ✅ RAW
+              mode: 'settings',
+              only: ASM.only,
+            },
+          })
+        );
       } catch (e) {
         console.error('save selection error', e);
 
         const box = _el('asm-error');
         if (box) {
-          box.textContent =
-            e?.message === 'GOOGLE_ADS_SELECTION_ACK_TIMEOUT'
-              ? 'No pudimos confirmar el guardado de tu cuenta de Google Ads. Intenta de nuevo.'
-              : 'Ocurrió un error guardando tu selección. Intenta de nuevo.';
+          // mensaje unificado (ya no hay ACK timeout)
+          box.textContent = 'Ocurrió un error guardando tu selección. Intenta de nuevo.';
           _show(box);
         }
         _hint('', 'info');
@@ -736,6 +702,11 @@
           detail: { only, showAll, required: ASM.required },
         })
       );
+      window.dispatchEvent(
+        new CustomEvent('adray:accounts-selection-not-needed', {
+          detail: { only, showAll, required: ASM.required },
+        })
+      );
       return;
     }
 
@@ -759,14 +730,14 @@
   });
 
   window.addEventListener('adray:open-account-select', (ev) => {
-  const d = ev?.detail || {};
-  openAccountSelectModal({
-    only: d.only || 'all',
-    force: d.force !== false,
-    showAll: !!d.showAll,
-    required: d.required || {},
-  }).catch(console.error);
-});
+    const d = ev?.detail || {};
+    openAccountSelectModal({
+      only: d.only || 'all',
+      force: d.force !== false,
+      showAll: !!d.showAll,
+      required: d.required || {},
+    }).catch(console.error);
+  });
 
   /* =========================================================
    * Auto-open al regresar de OAuth
