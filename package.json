@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node backend/index.js",
     "build:dashboard": "npm --prefix dashboard-src ci && npm --prefix dashboard-src run build",
-    "build": "npm run build:dashboard"
+    "build": "npm run build:dashboard",
+    "test:shopify-session": "node scripts/shopify-session-smoke.js"
   },
   "dependencies": {
     "@google-analytics/data": "^5.2.0",
@@ -28,6 +29,7 @@
     "googleapis": "^153.0.0",
     "helmet": "^8.1.0",
     "ioredis": "^5.6.1",
+    "jsonwebtoken": "^9.0.3",
     "mongoose": "^8.15.0",
     "nodemailer": "^7.0.5",
     "openai": "^5.22.0",

@@ -50,26 +50,36 @@
   async function waitForAppBridge(timeoutMs = 8000) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      if (window['app-bridge'] && window['app-bridge'].default) return true;
+      const hasModern = !!(window.shopify && typeof window.shopify.idToken === 'function');
+      const hasLegacy = !!(window['app-bridge'] && window['app-bridge'].default);
+      if (hasModern || hasLegacy) return true;
       await sleep(50);
     }
     return false;
   }
 
-  async function tryGetSessionToken(app) {
-    // 1) Si existe idToken() (algunas variantes)
-    if (app && typeof app.idToken === 'function') {
-      return await app.idToken();
-    }
+  function createLegacyApp(apiKey, host) {
+    const AppBridge = window['app-bridge'];
+    if (!AppBridge || typeof AppBridge.default !== 'function') return null;
+    const createApp = AppBridge.default;
+    return createApp({ apiKey, host, forceRedirect: window.top !== window.self });
+  }
 
-    // 2) Si agregas app-bridge-utils (opcional), úsalo:
+  async function tryGetSessionToken(apiKey, host) {
+    // 1) Modern Shopify API (recommended)
+    if (window.shopify && typeof window.shopify.idToken === 'function') {
+      return await window.shopify.idToken();
+    }
+    // 2) Legacy app-bridge + idToken
+    const app = createLegacyApp(apiKey, host);
+    if (app && typeof app.idToken === 'function') return await app.idToken();
+    // 3) Legacy app-bridge-utils
     const utils = window['app-bridge-utils'];
-    if (utils && typeof utils.getSessionToken === 'function') {
+    if (app && utils && typeof utils.getSessionToken === 'function') {
       return await utils.getSessionToken(app);
     }
-
     throw new Error(
-      'No se pudo obtener Session Token. Falta app.idToken() y no está cargado app-bridge-utils (getSessionToken).'
+      'No se pudo obtener Session Token. No existe window.shopify.idToken() ni fallback legacy de App Bridge.'
     );
   }
 
@@ -118,24 +128,6 @@
       return;
     }
 
-    let app;
-    try {
-      const AppBridge = window['app-bridge'];
-      const createApp = AppBridge.default;
-
-      const inIframe = (window.top !== window.self);
-
-      app = createApp({
-        apiKey,
-        host,
-        forceRedirect: !inIframe, // ✅ solo si se abre fuera del iframe
-      });
-    } catch (e) {
-      setStatus('Error init');
-      showError('No se pudo inicializar App Bridge.\n' + (e?.message || e));
-      return;
-    }
-
     setStatus('Generando Session Token…');
 
     let token = null;
@@ -143,7 +135,7 @@
 
     for (let i = 0; i < 4; i++) {
       try {
-        token = await tryGetSessionToken(app);
+        token = await tryGetSessionToken(apiKey, host);
         if (token) break;
       } catch (e) {
         lastErr = e;
