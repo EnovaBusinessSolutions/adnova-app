@@ -153,7 +153,17 @@
       return;
     }
 
-    sessionStorage.setItem('shopifySessionToken', token);
+    // ✅ Verify session token with backend (required by Shopify review)
+    setStatus('Verificando sesión…');
+    try {
+      await fetch('/api/secure/ping', {
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'include',
+      });
+    } catch (e) {
+      // network error — allow continue anyway
+    }
+
     sessionStorage.setItem('shopifyShop', shop);
     sessionStorage.setItem('shopifyHost', host);
     sessionStorage.setItem('shopifyConnected', 'true');
