@@ -16,6 +16,43 @@ const DEBUG_EMAIL = process.env.DEBUG_EMAIL === 'true';
 
 /**
  * =========================
+ * ✅ Analytics: trackEvent (safe)
+ * =========================
+ * Trackea eventos de correo SOLO si existe el servicio y SOLO con userId.
+ */
+let trackEvent = null;
+try {
+  trackEvent = require('./trackEvent')?.trackEvent;
+} catch (_) {
+  trackEvent = null;
+}
+
+async function trackEmailEventSafe({
+  name,
+  userId,
+  dedupeKey,
+  props,
+}) {
+  try {
+    if (!trackEvent) return;
+    if (!userId) return;
+
+    await trackEvent({
+      name,
+      userId,
+      dedupeKey,
+      props: props || {},
+    });
+  } catch (e) {
+    // NO rompemos email flow por analytics
+    if (DEBUG_EMAIL) {
+      console.warn('[emailService] trackEvent failed (ignored):', e?.message || e);
+    }
+  }
+}
+
+/**
+ * =========================
  * Normalizadores / helpers
  * =========================
  */
@@ -106,8 +143,10 @@ function buildResetPasswordUrl(token) {
  * =========================
  * Send: Verify Email
  * =========================
+ * ✅ Firma E2E (nuevo):
+ *   sendVerifyEmail({ userId, toEmail, token, name })
  */
-async function sendVerifyEmail({ toEmail, token, name } = {}) {
+async function sendVerifyEmail({ userId, toEmail, token, name } = {}) {
   if (!HAS_SMTP) {
     if (DEBUG_EMAIL) console.warn('[emailService] SMTP no configurado. Omitiendo verifyEmail.');
     return fail('SMTP_NOT_CONFIGURED', { skipped: true });
@@ -119,6 +158,8 @@ async function sendVerifyEmail({ toEmail, token, name } = {}) {
 
   const verifyUrl = buildVerifyUrl(token);
   if (!verifyUrl) return fail('INVALID_VERIFY_URL');
+
+  const subject = 'Verifica tu correo · Adray';
 
   try {
     const html = verifyEmail({
@@ -132,12 +173,26 @@ async function sendVerifyEmail({ toEmail, token, name } = {}) {
 
     const info = await sendMail({
       to,
-      subject: 'Verifica tu correo · Adray',
+      subject,
       text: `Confirma tu correo para activar tu cuenta: ${verifyUrl}`,
       html,
     });
 
     if (DEBUG_EMAIL) console.log('[emailService] verify sent:', { to, messageId: info?.messageId });
+
+    // ✅ Track SOLO si se envió OK
+    await trackEmailEventSafe({
+      name: 'verify_email_sent',
+      userId,
+      dedupeKey: userId ? `verify_email_sent:${String(userId)}` : undefined,
+      props: {
+        toEmail: to,
+        template: 'verify_email',
+        subject,
+        messageId: info?.messageId || null,
+      },
+    });
+
     return ok({ to, messageId: info?.messageId, response: info?.response, verifyUrl });
   } catch (err) {
     console.error('[emailService] sendVerifyEmail error:', err?.message || err);
@@ -150,7 +205,7 @@ async function sendVerifyEmail({ toEmail, token, name } = {}) {
  * Send: Welcome
  * =========================
  * Firma E2E:
- *   sendWelcomeEmail({ toEmail, name })
+ *   sendWelcomeEmail({ userId, toEmail, name })
  * Retro-compat:
  *   sendWelcomeEmail('email@dominio.com')
  */
@@ -160,13 +215,17 @@ async function sendWelcomeEmail(input) {
     return fail('SMTP_NOT_CONFIGURED', { skipped: true });
   }
 
-  const toEmail = typeof input === 'string' ? input : input?.toEmail;
-  const name = typeof input === 'string' ? undefined : input?.name;
+  const isString = typeof input === 'string';
+  const userId = isString ? undefined : input?.userId;
+
+  const toEmail = isString ? input : input?.toEmail;
+  const name = isString ? undefined : input?.name;
 
   const to = normEmail(toEmail);
   if (!to) return fail('MISSING_TO_EMAIL');
 
   const finalName = safeName(name, to);
+  const subject = `¡Bienvenido a Adray, ${finalName}!`;
 
   try {
     const html = welcomeEmail({
@@ -178,7 +237,7 @@ async function sendWelcomeEmail(input) {
 
     const info = await sendMail({
       to,
-      subject: `¡Bienvenido a Adray, ${finalName}!`,
+      subject,
       text:
         `¡Bienvenido a Adray, ${finalName}!\n\n` +
         `¡Felicidades, ${finalName}! 🎉\n` +
@@ -191,6 +250,20 @@ async function sendWelcomeEmail(input) {
     });
 
     if (DEBUG_EMAIL) console.log('[emailService] welcome sent:', { to, messageId: info?.messageId });
+
+    // ✅ Track SOLO si se envió OK
+    await trackEmailEventSafe({
+      name: 'welcome_email_sent',
+      userId,
+      dedupeKey: userId ? `welcome_email_sent:${String(userId)}` : undefined,
+      props: {
+        toEmail: to,
+        template: 'welcome_email',
+        subject,
+        messageId: info?.messageId || null,
+      },
+    });
+
     return ok({ to, messageId: info?.messageId, response: info?.response });
   } catch (err) {
     console.error('[emailService] sendWelcomeEmail error:', err?.message || err);
@@ -203,9 +276,9 @@ async function sendWelcomeEmail(input) {
  * Send: Audit Ready (Panel / Onboarding)
  * =========================
  * ✅ Firma E2E:
- *   sendAuditReadyEmail({ toEmail, name, origin, jobId, dedupeKey })
+ *   sendAuditReadyEmail({ userId, toEmail, name, origin, jobId, dedupeKey })
  */
-async function sendAuditReadyEmail({ toEmail, name, origin = 'panel', jobId, dedupeKey } = {}) {
+async function sendAuditReadyEmail({ userId, toEmail, name, origin = 'panel', jobId, dedupeKey } = {}) {
   if (!HAS_SMTP) {
     if (DEBUG_EMAIL) console.warn('[emailService] SMTP no configurado. Omitiendo audit-ready.');
     return fail('SMTP_NOT_CONFIGURED', { skipped: true });
@@ -223,8 +296,14 @@ async function sendAuditReadyEmail({ toEmail, name, origin = 'panel', jobId, ded
 
   if (!shouldSendOnce(key)) {
     if (DEBUG_EMAIL) console.log('[emailService] audit-ready skipped by dedupe:', { to, key });
+
+    // (Opcional) track de "skipped" — lo dejamos apagado por default
+    // para no contaminar KPIs. Si lo quieres, lo prendemos.
+
     return ok({ to, skipped: true, reason: 'DEDUPED', dedupeKey: key });
   }
+
+  const subject = '¡Tienes una auditoría disponible!';
 
   try {
     const html = auditReadyEmail({
@@ -237,7 +316,7 @@ async function sendAuditReadyEmail({ toEmail, name, origin = 'panel', jobId, ded
 
     const info = await sendMail({
       to,
-      subject: '¡Tienes una auditoría disponible!',
+      subject,
       text:
         `Auditoría lista:\n\n` +
         `Hola ${finalName},\n\n` +
@@ -249,6 +328,23 @@ async function sendAuditReadyEmail({ toEmail, name, origin = 'panel', jobId, ded
     });
 
     if (DEBUG_EMAIL) console.log('[emailService] audit-ready sent:', { to, messageId: info?.messageId, key });
+
+    // ✅ Track SOLO si se envió OK
+    await trackEmailEventSafe({
+      name: 'audit_ready_email_sent',
+      userId,
+      dedupeKey: userId ? `audit_ready_email_sent:${String(userId)}:${String(jobId || 'nojob')}` : undefined,
+      props: {
+        toEmail: to,
+        template: 'audit_ready_email',
+        subject,
+        messageId: info?.messageId || null,
+        origin: String(origin || 'panel'),
+        jobId: jobId || null,
+        dedupeKey: key,
+      },
+    });
+
     return ok({ to, messageId: info?.messageId, response: info?.response, dedupeKey: key });
   } catch (err) {
     console.error('[emailService] sendAuditReadyEmail error:', err?.message || err);
@@ -277,6 +373,7 @@ function todayKey(date = new Date()) {
 }
 
 async function sendDailyFollowupCallEmail({
+  userId,
   toEmail,
   name,
   operatorName = 'César',
@@ -303,6 +400,7 @@ async function sendDailyFollowupCallEmail({
   }
 
   const url = String(calendlyUrl || CESAR_CALENDLY_URL).trim() || CESAR_CALENDLY_URL;
+  const subject = '¿Agendamos una llamada rápida para revisar tu cuenta?';
 
   try {
     const html = dailyFollowupCallEmail({
@@ -320,7 +418,7 @@ async function sendDailyFollowupCallEmail({
       replyTo: CESAR_REPLY_TO,
 
       to,
-      subject: '¿Agendamos una llamada rápida para revisar tu cuenta?',
+      subject,
       text:
         `Hola ${finalName}\n\n` +
         `Soy ${operatorName}, del equipo de Adray AI.\n` +
@@ -339,6 +437,23 @@ async function sendDailyFollowupCallEmail({
       });
     }
 
+    // ✅ Track SOLO si se envió OK
+    await trackEmailEventSafe({
+      name: 'daily_followup_call_email_sent',
+      userId,
+      dedupeKey: userId ? `daily_followup_call_email_sent:${String(userId)}:${day}` : undefined,
+      props: {
+        toEmail: to,
+        template: 'daily_followup_call_email',
+        subject,
+        messageId: info?.messageId || null,
+        operatorName,
+        calendlyUrl: url,
+        dateKey: day,
+        dedupeKey: key,
+      },
+    });
+
     return ok({ to, messageId: info?.messageId, response: info?.response, dedupeKey: key });
   } catch (err) {
     console.error('[emailService] sendDailyFollowupCallEmail error:', err?.message || err);
@@ -351,10 +466,10 @@ async function sendDailyFollowupCallEmail({
  * Send: Reset Password (E2E + retrocompatible)
  * =========================
  * Firma moderna:
- *   sendResetPasswordEmail({ toEmail, resetUrl, name })
+ *   sendResetPasswordEmail({ userId, toEmail, resetUrl, name })
  *
  * ✅ Compat adicional:
- *   sendResetPasswordEmail({ toEmail, token, name })  -> construye resetUrl
+ *   sendResetPasswordEmail({ userId, toEmail, token, name })  -> construye resetUrl
  * Retro (viejo):
  *   sendResetPasswordEmail(toEmail, resetUrl, name)
  */
@@ -364,12 +479,14 @@ async function sendResetPasswordEmail(arg1, arg2, arg3) {
     return fail('SMTP_NOT_CONFIGURED', { skipped: true });
   }
 
+  let userId = undefined;
   let toEmail = '';
   let resetUrl = '';
   let token = '';
   let name = '';
 
   if (typeof arg1 === 'object' && arg1) {
+    userId = arg1.userId;
     toEmail = arg1.toEmail;
     resetUrl = arg1.resetUrl;
     token = arg1.token; // ✅ soporte token
@@ -391,6 +508,7 @@ async function sendResetPasswordEmail(arg1, arg2, arg3) {
   if (!resetUrl) return fail('MISSING_RESET_URL');
 
   const finalName = safeName(name, to);
+  const subject = 'Restablece tu contraseña · Adray';
 
   try {
     const html = resetPasswordEmail({
@@ -403,12 +521,26 @@ async function sendResetPasswordEmail(arg1, arg2, arg3) {
 
     const info = await sendMail({
       to,
-      subject: 'Restablece tu contraseña · Adray',
+      subject,
       text: `Hola ${finalName}. Para restablecer tu contraseña visita: ${resetUrl}`,
       html,
     });
 
     if (DEBUG_EMAIL) console.log('[emailService] reset sent:', { to, messageId: info?.messageId });
+
+    // ✅ Track SOLO si se envió OK
+    await trackEmailEventSafe({
+      name: 'reset_password_email_sent',
+      userId,
+      dedupeKey: userId ? `reset_password_email_sent:${String(userId)}` : undefined,
+      props: {
+        toEmail: to,
+        template: 'reset_password_email',
+        subject,
+        messageId: info?.messageId || null,
+      },
+    });
+
     return ok({ to, messageId: info?.messageId, response: info?.response, resetUrl });
   } catch (err) {
     console.error('[emailService] sendResetPasswordEmail error:', err?.message || err);

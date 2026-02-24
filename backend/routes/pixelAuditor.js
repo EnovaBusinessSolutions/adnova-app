@@ -1,16 +1,35 @@
-// backend/routes/pixelAuditor.js
 "use strict";
 
 const express = require("express");
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 
 const router = express.Router();
 
-/**
- * Lee el body aunque llegue como Buffer (caso express.raw),
- * string, o ya como objeto (express.json).
- */
+/* ===========================================================
+ * ✅ NUEVO: analytics tracker (NO rompe si falla / no existe)
+ * =========================================================== */
+let trackEvent = null;
+try {
+  ({ trackEvent } = require("../services/trackEvent"));
+} catch {
+  trackEvent = null;
+}
+
+async function emitEventSafe({ name, userId, dedupeKey, props }) {
+  try {
+    if (typeof trackEvent !== "function") return null;
+    return await trackEvent({ name, userId, dedupeKey, props });
+  } catch {
+    // NO romper el flujo productivo por analytics
+    return null;
+  }
+}
+
+/* =========================
+ * Body reader robusto
+ * ========================= */
 function readBody(req) {
   const b = req.body;
   if (!b) return {};
@@ -35,8 +54,21 @@ function readBody(req) {
   return {};
 }
 
+/* =========================
+ * Auth helper (NO rompe si no hay sesión)
+ * ========================= */
+function getUserIdFromReq(req) {
+  // Preferimos passport sessions
+  const id =
+    req?.user?._id ||
+    req?.user?.id ||
+    req?.userId ||
+    null;
+
+  return id ? String(id) : null;
+}
+
 function loadRunPixelAudit() {
-  // ✅ Rutas reales (confirmadas en Render Shell)
   const candidates = [
     path.join(__dirname, "..", "dist-pixel-auditor", "engine.js"),
     path.join(__dirname, "..", "dist-pixel-auditor", "pixel-auditor", "engine.js"),
@@ -44,8 +76,15 @@ function loadRunPixelAudit() {
 
   for (const p of candidates) {
     if (fs.existsSync(p)) {
+      // ✅ evita cache en dev / hot reload
+      try {
+        delete require.cache[require.resolve(p)];
+      } catch {}
+
       const mod = require(p);
-      if (typeof mod?.runPixelAudit === "function") return mod.runPixelAudit;
+      if (typeof mod?.runPixelAudit === "function") {
+        return { runPixelAudit: mod.runPixelAudit, enginePath: p };
+      }
     }
   }
 
@@ -53,7 +92,7 @@ function loadRunPixelAudit() {
 }
 
 /* =========================
- * Normalización (clave para UI simple)
+ * Normalización (clave para UI)
  * ========================= */
 
 function uniq(arr) {
@@ -61,12 +100,10 @@ function uniq(arr) {
 }
 
 function toIdList(v) {
-  // acepta string | number | array | object con ids
   if (!v) return [];
   if (Array.isArray(v)) return uniq(v.map(String));
   if (typeof v === "string" || typeof v === "number") return [String(v)];
   if (typeof v === "object") {
-    // casos típicos: { ids: [...] } o { id: "..." }
     if (Array.isArray(v.ids)) return uniq(v.ids.map(String));
     if (v.id != null) return [String(v.id)];
     if (v.pixelId != null) return [String(v.pixelId)];
@@ -76,7 +113,6 @@ function toIdList(v) {
 }
 
 function pickCoverage(result) {
-  // engine podría usar coverage / platforms / tracking / detected / summary.coverage
   return (
     result?.coverage ||
     result?.platforms ||
@@ -87,10 +123,40 @@ function pickCoverage(result) {
   );
 }
 
+function isTruthy(v) {
+  return v === true || v === "true" || v === 1 || v === "1";
+}
+
+function detectPresence(raw) {
+  if (!raw) return false;
+
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "string") return raw.trim().length > 0;
+  if (typeof raw === "number") return true;
+
+  if (typeof raw === "object") {
+    if (isTruthy(raw.installed)) return true;
+    if (isTruthy(raw.detected)) return true;
+    if (isTruthy(raw.present)) return true;
+    if (isTruthy(raw.found)) return true;
+    if (isTruthy(raw.hasTag)) return true;
+    if (isTruthy(raw.hasScript)) return true;
+
+    if (Array.isArray(raw.ids) && raw.ids.length > 0) return true;
+
+    if (typeof raw.src === "string" && raw.src) return true;
+    if (typeof raw.scriptUrl === "string" && raw.scriptUrl) return true;
+
+    if (Array.isArray(raw.issues) && raw.issues.length > 0) return true;
+    if (Array.isArray(raw.errors) && raw.errors.length > 0) return true;
+  }
+
+  return false;
+}
+
 function normalizeTracking(result) {
   const cov = pickCoverage(result);
 
-  // Intentamos reconocer llaves comunes del engine
   const ga4Raw =
     cov.ga4 ||
     cov.GA4 ||
@@ -135,125 +201,144 @@ function normalizeTracking(result) {
   const gadsIds = toIdList(gadsRaw);
   const metaIds = toIdList(metaRaw);
 
-  const tracking = [
-    {
-      key: "ga4",
-      label: "Google Analytics 4",
-      installed: ga4Ids.length > 0,
-      ids: ga4Ids,
-    },
-    {
-      key: "gtm",
-      label: "Google Tag Manager",
-      installed: gtmIds.length > 0,
-      ids: gtmIds,
-    },
-    {
-      key: "gads",
-      label: "Google Ads",
-      installed: gadsIds.length > 0,
-      ids: gadsIds,
-    },
-    {
-      key: "meta",
-      label: "Meta Pixel",
-      installed: metaIds.length > 0,
-      ids: metaIds,
-    },
-  ];
+  const ga4Installed = ga4Ids.length > 0 || detectPresence(ga4Raw);
+  const gtmInstalled = gtmIds.length > 0 || detectPresence(gtmRaw);
+  const gadsInstalled = gadsIds.length > 0 || detectPresence(gadsRaw);
+  const metaInstalled = metaIds.length > 0 || detectPresence(metaRaw);
 
-  return tracking;
+  return [
+    { key: "ga4", label: "Google Analytics 4", installed: !!ga4Installed, ids: ga4Ids },
+    { key: "gtm", label: "Google Tag Manager", installed: !!gtmInstalled, ids: gtmIds },
+    { key: "gads", label: "Google Ads", installed: !!gadsInstalled, ids: gadsIds },
+    { key: "meta", label: "Meta Pixel", installed: !!metaInstalled, ids: metaIds },
+  ];
 }
 
-function computeHealth(tracking) {
-  // ✅ Para parecerse al tool “simple”:
-  // - GA4 es lo más importante
-  // - Meta Pixel también es core para ecommerce/leads
-  // - GTM/GAds se recomiendan, pero NO penalizan fuerte
+function computeHealth(tracking, rawResult) {
+  const engineScore =
+    rawResult?.healthScore ??
+    rawResult?.score ??
+    rawResult?.trackingHealthScore ??
+    rawResult?.summary?.trackingHealthScore ??
+    rawResult?.summary?.healthScore;
+
+  if (Number.isFinite(Number(engineScore))) {
+    const s = Math.max(0, Math.min(100, Number(engineScore)));
+    const label = s >= 90 ? "Excelente" : s >= 70 ? "Bueno" : s >= 50 ? "Regular" : "Crítico";
+    return { healthScore: s, healthLabel: label, usedEngineScore: true };
+  }
+
   const hasGA4 = tracking.find((x) => x.key === "ga4")?.installed;
   const hasMeta = tracking.find((x) => x.key === "meta")?.installed;
 
   let score = 100;
-
-  // Penalizaciones principales
-  if (!hasGA4) score -= 25; // si falta GA4: típicamente baja a 75
+  if (!hasGA4) score -= 25;
   if (!hasMeta) score -= 25;
 
-  // Clamp
   score = Math.max(0, Math.min(100, score));
-
-  const healthLabel = score >= 80 ? "Bueno" : score >= 60 ? "Regular" : "Crítico";
-  return { healthScore: score, healthLabel };
+  const healthLabel = score >= 90 ? "Excelente" : score >= 70 ? "Bueno" : score >= 50 ? "Regular" : "Crítico";
+  return { healthScore: score, healthLabel, usedEngineScore: false };
 }
 
-function buildRecommendations(tracking) {
+function buildRecommendations(tracking, issues) {
   const map = Object.fromEntries(tracking.map((t) => [t.key, t]));
-
   const recs = [];
 
-  if (!map.ga4?.installed) {
-    recs.push(
-      "Google Analytics 4 no está instalado. Instálalo para medir visitas, comportamiento y conversiones."
-    );
-  }
+  if (!map.ga4?.installed) recs.push("Google Analytics 4 no está instalado. Instálalo para medir visitas, comportamiento y conversiones.");
+  if (!map.gtm?.installed) recs.push("Considera implementar Google Tag Manager para administrar etiquetas sin tocar el código en cada cambio.");
+  if (!map.gads?.installed) recs.push("Si haces campañas en Google Ads, instala la etiqueta/conversiones para medir rendimiento y remarketing.");
+  if (!map.meta?.installed) recs.push("Meta Pixel no está instalado. Instálalo para remarketing y medición de conversiones en Meta Ads.");
 
-  if (!map.gtm?.installed) {
-    recs.push(
-      "Considera implementar Google Tag Manager para administrar etiquetas sin tocar el código en cada cambio."
-    );
-  }
+  const fromIssues =
+    Array.isArray(issues) && issues.length
+      ? issues.map((x) => (typeof x === "string" ? x : x?.message || x?.title || "")).filter(Boolean)
+      : [];
 
-  if (!map.gads?.installed) {
-    recs.push(
-      "Si haces campañas en Google Ads, instala la etiqueta/conversiones para medir rendimiento y remarketing."
-    );
-  }
-
-  if (!map.meta?.installed) {
-    recs.push(
-      "Meta Pixel no está instalado. Instálalo para remarketing y medición de conversiones en Meta Ads."
-    );
-  }
+  fromIssues.slice(0, 3).forEach((m) => {
+    if (!recs.some((r) => r.toLowerCase() === String(m).toLowerCase())) recs.push(String(m));
+  });
 
   return recs;
 }
 
+function normalizeArray(x) {
+  if (!x) return [];
+  if (Array.isArray(x)) return x;
+  if (typeof x === "object") {
+    if (Array.isArray(x.items)) return x.items;
+    if (Array.isArray(x.list)) return x.list;
+  }
+  return [];
+}
+
+function pickBestArray(...cands) {
+  const arrays = cands.map(normalizeArray);
+  const nonEmpty = arrays.find((a) => Array.isArray(a) && a.length > 0);
+  if (nonEmpty) return nonEmpty;
+  return arrays[0] || [];
+}
+
 function normalizePixelAuditResult(rawResult, auditedUrl, includeDetails) {
   const tracking = normalizeTracking(rawResult);
-  const { healthScore, healthLabel } = computeHealth(tracking);
+
+  const issues = pickBestArray(rawResult?.issues, rawResult?.summary?.issues);
+  const events = pickBestArray(rawResult?.events, rawResult?.summary?.events);
+
+  const { healthScore, healthLabel } = computeHealth(tracking, rawResult);
 
   const issuesCount =
-    (Array.isArray(rawResult?.issues) && rawResult.issues.length) ||
+    (Array.isArray(issues) ? issues.length : 0) ||
     rawResult?.summary?.issuesCount ||
     rawResult?.issuesCount ||
+    rawResult?.summary?.issuesFound ||
+    rawResult?.summary?.issues_found ||
     0;
 
   const eventsCount =
     rawResult?.eventsCount ||
     rawResult?.summary?.eventsCount ||
-    (Array.isArray(rawResult?.events) ? rawResult.events.length : 0) ||
+    (Array.isArray(events) ? events.length : 0) ||
     0;
 
-  const recommendations = buildRecommendations(tracking);
+  const engineRecs = pickBestArray(rawResult?.recommendations, rawResult?.summary?.recommendations);
+
+  const recommendations = engineRecs && engineRecs.length ? engineRecs : buildRecommendations(tracking, issues);
 
   const normalized = {
     auditedUrl: rawResult?.url || rawResult?.auditedUrl || auditedUrl,
     healthScore,
     healthLabel,
-    tracking, // <- lo que vas a pintar como cards (GA4/GTM/GAds/Meta)
+    tracking,
     recommendations,
     issuesCount,
     eventsCount,
+    issues,
+    events,
   };
 
-  if (includeDetails) normalized.raw = rawResult; // opcional para debug / “modo detallado”
+  if (includeDetails) normalized.raw = rawResult;
   return normalized;
 }
 
-/* =========================
- * Endpoint
- * ========================= */
+async function runAuditCompat(runPixelAudit, input) {
+  try {
+    return await runPixelAudit(input);
+  } catch (e) {
+    if (input?.url) return await runPixelAudit(input.url, input.includeDetails);
+    throw e;
+  }
+}
+
+/* ===========================================================
+ * POST /api/auditor
+ * =========================================================*/
 router.post("/auditor", async (req, res) => {
+  const traceId = crypto.randomBytes(6).toString("hex");
+  const t0 = Date.now();
+
+  // ✅ userId si existe sesión; si no, dejamos null (no rompe)
+  const userId = getUserIdFromReq(req);
+
   try {
     const body = readBody(req);
 
@@ -262,25 +347,139 @@ router.post("/auditor", async (req, res) => {
       (typeof req.query.url === "string" && req.query.url.trim()) ||
       "";
 
-    const includeDetails = !!(body.includeDetails ?? body.include_details);
+    const html = (typeof body.html === "string" && body.html.trim()) || "";
 
-    if (!url) {
-      return res.status(400).json({ ok: false, error: "URL requerida" });
+    // ✅ Guard de seguridad: evita payloads enormes
+    if (html && html.length > 2_000_000) {
+      return res.status(413).json({ ok: false, error: "HTML demasiado grande" });
     }
 
-    const runPixelAudit = loadRunPixelAudit();
-    const rawResult = await runPixelAudit(url, includeDetails);
+    // ✅ includeDetails default TRUE, soporta "false"/"0"
+    const rawInc = (body.includeDetails ?? body.include_details);
+    const includeDetails =
+      rawInc === false || rawInc === "false" || rawInc === 0 || rawInc === "0" ? false : true;
 
-    // ✅ Siempre responde con shape estable
-    const data = normalizePixelAuditResult(rawResult, url, includeDetails);
+    if (!url && !html) {
+      return res.status(400).json({ ok: false, error: "URL o HTML requerido" });
+    }
+
+    if (url) {
+      try {
+        new URL(url);
+      } catch {
+        return res.status(400).json({ ok: false, error: "URL inválida (incluye http/https)" });
+      }
+    }
+
+    const auditedUrlForUi =
+      url || body.auditedUrl || body.audited_url || "HTML proporcionado";
+
+    // ✅ (opcional) evento de "requested"
+    // - dedupe por traceId para evitar duplicados en retries
+    await emitEventSafe({
+      name: "pixel_audit_requested",
+      userId,
+      dedupeKey: `pixel_audit_requested:${String(userId || "anon")}:${traceId}`,
+      props: {
+        traceId,
+        hasUrl: !!url,
+        hasHtml: !!html,
+        includeDetails,
+        auditedUrl: auditedUrlForUi,
+      },
+    });
+
+    const { runPixelAudit, enginePath } = loadRunPixelAudit();
+
+    console.log(`[pixel-auditor:${traceId}] start`, {
+      hasUrl: !!url,
+      hasHtml: !!html,
+      includeDetails,
+      enginePath,
+    });
+
+    const rawResult = await runAuditCompat(runPixelAudit, {
+      url: url || undefined,
+      html: html || undefined,
+      includeDetails,
+      traceId,
+    });
+
+    console.log(`[pixel-auditor:${traceId}] raw keys`, rawResult ? Object.keys(rawResult) : null);
+
+    const data = normalizePixelAuditResult(rawResult, auditedUrlForUi, includeDetails);
+
+    console.log(`[pixel-auditor:${traceId}] done`, {
+      score: data.healthScore,
+      issuesCount: data.issuesCount,
+      eventsCount: data.eventsCount,
+    });
+
+    const durationMs = Date.now() - t0;
+
+    // ✅✅✅ evento principal (lo que necesita tu panel interno)
+    // - dedupe por traceId
+    // - props pensados para series y funnels
+    await emitEventSafe({
+      name: "pixel_audit_completed",
+      userId,
+      dedupeKey: `pixel_audit_completed:${String(userId || "anon")}:${traceId}`,
+      props: {
+        traceId,
+        auditedUrl: data.auditedUrl,
+        source: String(body.source || req.query.source || "panel"),
+        durationMs,
+
+        // métricas top-level para analítica
+        healthScore: data.healthScore,
+        healthLabel: data.healthLabel,
+        issuesCount: data.issuesCount,
+        eventsCount: data.eventsCount,
+
+        // señal de instalación (para segmentación)
+        installed: {
+          ga4: !!data.tracking?.find((x) => x.key === "ga4")?.installed,
+          gtm: !!data.tracking?.find((x) => x.key === "gtm")?.installed,
+          gads: !!data.tracking?.find((x) => x.key === "gads")?.installed,
+          meta: !!data.tracking?.find((x) => x.key === "meta")?.installed,
+        },
+
+        // ids detectados (útiles, pero no pesados)
+        ids: {
+          ga4: data.tracking?.find((x) => x.key === "ga4")?.ids || [],
+          gtm: data.tracking?.find((x) => x.key === "gtm")?.ids || [],
+          gads: data.tracking?.find((x) => x.key === "gads")?.ids || [],
+          meta: data.tracking?.find((x) => x.key === "meta")?.ids || [],
+        },
+
+        // para debug controlado
+        includeDetails: !!includeDetails,
+        engine: { path: enginePath },
+      },
+    });
 
     return res.json({ ok: true, data });
   } catch (err) {
-    console.error("[PIXEL_AUDITOR_ERROR]", err);
+    const durationMs = Date.now() - t0;
+
+    // ✅ evento de error (NO rompe, pero ayuda muchísimo en el panel interno)
+    await emitEventSafe({
+      name: "pixel_audit_failed",
+      userId,
+      dedupeKey: `pixel_audit_failed:${String(userId || "anon")}:${traceId}`,
+      props: {
+        traceId,
+        durationMs,
+        error: String(err?.message || err),
+      },
+    });
+
+    console.error(`[PIXEL_AUDITOR_ERROR:${traceId}]`, err);
     return res.status(500).json({
       ok: false,
       error: "No se pudo ejecutar la auditoría",
       details: String(err?.message || err),
+      traceId,
     });
   }
 });

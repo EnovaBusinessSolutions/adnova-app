@@ -17,6 +17,29 @@ try {
   sendAuditReadyEmail = null;
 }
 
+// ✅ NUEVO: analytics tracker (NO rompe si falla / no existe)
+let trackEvent = null;
+try {
+  ({ trackEvent } = require('../services/trackEvent'));
+} catch {
+  trackEvent = null;
+}
+
+// ✅ NUEVO: AnalyticsEvent (fallback directo a Mongo si trackEvent no existe/falla)
+let AnalyticsEvent = null;
+try {
+  AnalyticsEvent = require('../models/AnalyticsEvent');
+} catch (e) {
+  try {
+    const { Schema, model } = mongoose;
+    AnalyticsEvent =
+      mongoose.models.AnalyticsEvent ||
+      model('AnalyticsEvent', new Schema({}, { strict: false, collection: 'analyticsevents' }));
+  } catch {
+    AnalyticsEvent = null;
+  }
+}
+
 // ★ (opcional, para futuros usos de límites / usos por usuario)
 let User = null;
 try {
@@ -56,6 +79,82 @@ function requireAuth(req, res, next) {
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
+/* ============== helpers base ============== */
+function toObjectIdMaybe(v) {
+  if (!v) return null;
+  try {
+    return new mongoose.Types.ObjectId(String(v));
+  } catch {
+    return null;
+  }
+}
+
+/* ============== analytics helpers (best-effort + fallback) ============== */
+
+// fallback directo a Mongo con upsert por dedupeKey
+async function saveAnalyticsEventFallback({ name, userId, dedupeKey, props, source }) {
+  try {
+    if (!AnalyticsEvent || typeof AnalyticsEvent.findOneAndUpdate !== 'function') return null;
+
+    const uidObj = toObjectIdMaybe(userId);
+    const now = new Date();
+
+    const doc = {
+      name: String(name || '').trim(),
+      userId: uidObj || null, // ✅ igual que tu schema real
+      ts: now,
+      source: String(source || 'server'),
+      props: props && typeof props === 'object' ? props : {},
+      dedupeKey: dedupeKey ? String(dedupeKey) : undefined,
+    };
+
+    // Si hay dedupeKey, hacemos upsert por dedupeKey+userId+name (idempotencia)
+    if (doc.dedupeKey) {
+      const created = await AnalyticsEvent.findOneAndUpdate(
+        { dedupeKey: doc.dedupeKey, userId: doc.userId, name: doc.name },
+        { $setOnInsert: doc },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+
+      return created?.toObject?.() || created || null;
+    }
+
+    // sin dedupeKey: insert simple
+    const created = await AnalyticsEvent.create(doc);
+    return created?.toObject?.() || created || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ✅ FIX CLAVE:
+ * - Antes: si trackEvent NO tronaba, ya no había fallback
+ * - Ahora: si trackEvent "skipped/ignored" o no guardó → fallback a Mongo
+ */
+async function emitEventSafe({ name, userId, dedupeKey, props, source }) {
+  let result = null;
+
+  // 1) Intentar tracker oficial
+  try {
+    if (typeof trackEvent === 'function') {
+      result = await trackEvent({ name, userId, dedupeKey, props, source });
+    }
+  } catch {
+    result = null;
+  }
+
+  // trackEvent puede “ignorar” sin tirar error.
+  const ok = !!(result && (result.ok === true || result.saved === true));
+  const skipped = !!(result && (result.skipped === true || result.ignored === true));
+
+  if (!ok || skipped) {
+    return await saveAnalyticsEventFallback({ name, userId, dedupeKey, props, source });
+  }
+
+  return result;
+}
+
 /* ============== helpers ============== */
 const MAX_SELECT = 1;
 
@@ -68,7 +167,7 @@ const normalizeType = (t) => {
 const isValidType = (t) => VALID_TYPES.has(String(t));
 
 const normActId = (s = '') => String(s).trim().replace(/^act_/, '');
-const normGaId  = (s = '') => String(s).trim().replace(/^customers\//, '').replace(/[^\d]/g, '');
+const normGaId = (s = '') => String(s).trim().replace(/^customers\//, '').replace(/[^\d]/g, '');
 const normGA4Id = (s = '') => {
   const raw = String(s || '').trim();
   const digits = raw.replace(/^properties\//, '').replace(/[^\d]/g, '');
@@ -78,58 +177,80 @@ const normGA4Id = (s = '') => {
 const uniq = (arr = []) => [...new Set((arr || []).filter(Boolean))];
 
 function hasAnyMetaToken(metaDoc) {
-  return !!(metaDoc?.access_token || metaDoc?.token || metaDoc?.accessToken || metaDoc?.longLivedToken || metaDoc?.longlivedToken);
+  return !!(
+    metaDoc?.access_token ||
+    metaDoc?.token ||
+    metaDoc?.accessToken ||
+    metaDoc?.longLivedToken ||
+    metaDoc?.longlivedToken
+  );
 }
 function hasGoogleOAuth(gaDoc) {
   return !!(gaDoc?.refreshToken || gaDoc?.accessToken);
 }
 
 function metaAvailableIds(metaDoc) {
-  const list = Array.isArray(metaDoc?.ad_accounts) ? metaDoc.ad_accounts
-            : Array.isArray(metaDoc?.adAccounts)  ? metaDoc.adAccounts
-            : [];
-  return uniq(list.map(a => normActId(a?.id || a?.account_id || '')).filter(Boolean));
+  const list = Array.isArray(metaDoc?.ad_accounts)
+    ? metaDoc.ad_accounts
+    : Array.isArray(metaDoc?.adAccounts)
+      ? metaDoc.adAccounts
+      : [];
+  return uniq(list.map((a) => normActId(a?.id || a?.account_id || '')).filter(Boolean));
 }
 
 function googleAdsAvailableIds(gaDoc) {
   const fromAd = (Array.isArray(gaDoc?.ad_accounts) ? gaDoc.ad_accounts : [])
-    .map(a => normGaId(a?.id))
+    .map((a) => normGaId(a?.id))
     .filter(Boolean);
   const fromCu = (Array.isArray(gaDoc?.customers) ? gaDoc.customers : [])
-    .map(c => normGaId(c?.id))
+    .map((c) => normGaId(c?.id))
     .filter(Boolean);
   return uniq([...fromAd, ...fromCu]);
 }
 
 function ga4AvailableIds(gaDoc) {
   const props = Array.isArray(gaDoc?.gaProperties) ? gaDoc.gaProperties : [];
-  const ids = props.map(p => normGA4Id(p?.propertyId || p?.property_id || p?.name || '')).filter(Boolean);
+  const ids = props
+    .map((p) => normGA4Id(p?.propertyId || p?.property_id || p?.name || ''))
+    .filter(Boolean);
   return uniq(ids);
 }
 
 // Selecciones (doc > legacy user)
 function selectedMetaIds(metaDoc, userDoc) {
-  const fromDoc = Array.isArray(metaDoc?.selectedAccountIds) ? metaDoc.selectedAccountIds.map(normActId) : [];
+  const fromDoc = Array.isArray(metaDoc?.selectedAccountIds)
+    ? metaDoc.selectedAccountIds.map(normActId)
+    : [];
   if (fromDoc.length) return uniq(fromDoc).slice(0, MAX_SELECT);
-  const legacy = Array.isArray(userDoc?.selectedMetaAccounts) ? userDoc.selectedMetaAccounts.map(normActId) : [];
+  const legacy = Array.isArray(userDoc?.selectedMetaAccounts)
+    ? userDoc.selectedMetaAccounts.map(normActId)
+    : [];
   return uniq(legacy).slice(0, MAX_SELECT);
 }
 
 function selectedGoogleAdsIds(gaDoc, userDoc) {
-  const fromDoc = Array.isArray(gaDoc?.selectedCustomerIds) ? gaDoc.selectedCustomerIds.map(normGaId) : [];
+  const fromDoc = Array.isArray(gaDoc?.selectedCustomerIds)
+    ? gaDoc.selectedCustomerIds.map(normGaId)
+    : [];
   if (fromDoc.length) return uniq(fromDoc).slice(0, MAX_SELECT);
-  const legacy = Array.isArray(userDoc?.selectedGoogleAccounts) ? userDoc.selectedGoogleAccounts.map(normGaId) : [];
+  const legacy = Array.isArray(userDoc?.selectedGoogleAccounts)
+    ? userDoc.selectedGoogleAccounts.map(normGaId)
+    : [];
   return uniq(legacy).slice(0, MAX_SELECT);
 }
 
 function selectedGA4Ids(gaDoc, userDoc) {
-  const fromDoc = Array.isArray(gaDoc?.selectedPropertyIds) ? gaDoc.selectedPropertyIds.map(normGA4Id) : [];
+  const fromDoc = Array.isArray(gaDoc?.selectedPropertyIds)
+    ? gaDoc.selectedPropertyIds.map(normGA4Id)
+    : [];
   if (fromDoc.length) return uniq(fromDoc).slice(0, MAX_SELECT);
 
   const def = gaDoc?.defaultPropertyId ? normGA4Id(gaDoc.defaultPropertyId) : '';
   if (def) return [def];
 
-  const legacy = Array.isArray(userDoc?.selectedGAProperties) ? userDoc.selectedGAProperties.map(normGA4Id) : [];
+  const legacy = Array.isArray(userDoc?.selectedGAProperties)
+    ? userDoc.selectedGAProperties.map(normGA4Id)
+    : [];
   return uniq(legacy).slice(0, MAX_SELECT);
 }
 
@@ -157,21 +278,23 @@ async function getSourcesState(userId) {
       .select('shop access_token accessToken')
       .lean(),
     User
-      ? User.findById(userId).select('selectedMetaAccounts selectedGoogleAccounts selectedGAProperties email name displayName').lean()
+      ? User.findById(userId)
+          .select('selectedMetaAccounts selectedGoogleAccounts selectedGAProperties email name displayName')
+          .lean()
       : Promise.resolve(null),
   ]);
 
   // META
   const metaConnected = !!(meta && hasAnyMetaToken(meta));
   const metaAvail = meta ? metaAvailableIds(meta) : [];
-  const metaSel  = meta ? selectedMetaIds(meta, user) : selectedMetaIds({}, user);
-  const metaReq  = metaConnected && needsSelection(metaAvail.length, metaSel.length);
+  const metaSel = meta ? selectedMetaIds(meta, user) : selectedMetaIds({}, user);
+  const metaReq = metaConnected && needsSelection(metaAvail.length, metaSel.length);
 
   // GOOGLE ADS
   const googleConnected = !!(google && hasGoogleOAuth(google));
   const gAdsAvail = google ? googleAdsAvailableIds(google) : [];
-  const gAdsSel   = google ? selectedGoogleAdsIds(google, user) : selectedGoogleAdsIds({}, user);
-  const gAdsReq   = googleConnected && needsSelection(gAdsAvail.length, gAdsSel.length);
+  const gAdsSel = google ? selectedGoogleAdsIds(google, user) : selectedGoogleAdsIds({}, user);
+  const gAdsReq = googleConnected && needsSelection(gAdsAvail.length, gAdsSel.length);
 
   // GA4 (depende de OAuth + props disponibles)
   const ga4Avail = google ? ga4AvailableIds(google) : [];
@@ -182,7 +305,7 @@ async function getSourcesState(userId) {
   // SHOPIFY
   const shopifyConnected = !!(shop && shop.shop && (shop.access_token || shop.accessToken));
 
-  const state = {
+  return {
     meta: {
       connected: metaConnected,
       requiredSelection: metaReq,
@@ -216,8 +339,6 @@ async function getSourcesState(userId) {
       selected: shopifyConnected ? ['shopify'] : [],
     },
   };
-
-  return state;
 }
 
 /**
@@ -311,16 +432,14 @@ function buildStartKey({ userId, source, types }) {
 
 /* ✅ helpers: obtener receptor del email desde req/user */
 function getRecipientFromReq(req, fallbackUserDoc) {
-  const email =
-    String(req?.user?.email || req?.user?.emails?.[0]?.value || fallbackUserDoc?.email || '').trim();
-  const name =
-    String(
-      req?.user?.name ||
+  const email = String(req?.user?.email || req?.user?.emails?.[0]?.value || fallbackUserDoc?.email || '').trim();
+  const name = String(
+    req?.user?.name ||
       req?.user?.displayName ||
       fallbackUserDoc?.name ||
       fallbackUserDoc?.displayName ||
       ''
-    ).trim();
+  ).trim();
 
   return { email, name };
 }
@@ -345,10 +464,9 @@ async function markAuditEmailNotified({ userId, types, source, startedAt, jobId 
           'notifications.auditReadyEmailOrigin': String(source || ''),
         },
       },
-      { strict: false } // ✅ guarda aunque el schema aún no defina notifications
+      { strict: false }
     );
   } catch (e) {
-    // no tronamos el flujo si esto falla
     console.warn('[auditRunner] markAuditEmailNotified failed:', e?.message || e);
   }
 }
@@ -384,7 +502,39 @@ router.post('/:type/run', requireAuth, express.json(), async (req, res) => {
       });
     }
 
-    const ok = await runAuditFor({ userId: req.user._id, type, source });
+    // ✅ analytics: audit_requested (single)
+    const singleRunId = newId();
+    await emitEventSafe({
+      name: 'audit_requested',
+      userId: req.user._id,
+      dedupeKey: `audit_requested:${String(req.user._id)}:single:${singleRunId}:${type}`,
+      props: { mode: 'single', type, source },
+      source: 'server',
+    });
+
+    const t0 = Date.now();
+    let ok = false;
+    let errMsg = null;
+
+    try {
+      ok = !!(await runAuditFor({ userId: req.user._id, type, source }));
+    } catch (e) {
+      ok = false;
+      errMsg = e?.message || String(e);
+      throw e;
+    } finally {
+      const durationMs = Date.now() - t0;
+
+      // ✅ analytics: audit_completed (single)
+      await emitEventSafe({
+        name: 'audit_completed',
+        userId: req.user._id,
+        dedupeKey: `audit_completed:${String(req.user._id)}:single:${singleRunId}:${type}`,
+        props: { mode: 'single', type, source, ok, durationMs, error: errMsg },
+        source: 'server',
+      });
+    }
+
     const latest = await fetchLatestAuditSummary(req.user._id, type);
 
     return res.json({ ok: !!ok, type, source, latestAudit: latest });
@@ -412,7 +562,7 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
     const rawTypes = Array.isArray(req.body?.types)
       ? req.body.types
           .map((t) => normalizeType(String(t)))
-          .filter((t) => ['meta','google','shopify','ga4'].includes(t))
+          .filter((t) => ['meta', 'google', 'shopify', 'ga4'].includes(t))
       : null;
 
     let types = [];
@@ -435,7 +585,7 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
         error: 'NO_TYPES_READY',
         detail:
           'No hay integraciones listas para auditar. Si tienes varias cuentas/propiedades, selecciona cuál auditar.',
-        skippedByConnection: skippedByConnection,
+        skippedByConnection,
         state: {
           meta: state.meta,
           google: state.google,
@@ -450,7 +600,7 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
     const prev = LAST_START.get(String(req.user._id));
     const now = Date.now();
 
-    if (prev && prev.key === key && (now - prev.at) < START_DEDUP_MS) {
+    if (prev && prev.key === key && now - prev.at < START_DEDUP_MS) {
       return res.json({
         ok: true,
         deduped: true,
@@ -476,6 +626,11 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
       auditReadyEmailSent: false,
       auditReadyEmailSentAt: null,
       auditReadyEmailError: null,
+
+      // ✅ NUEVO: para activar el “bloque 5” EXACTO cuando ya está lista (persistida)
+      auditReadyEventSent: false,
+      auditReadyEventSentAt: null,
+      auditReadyEventError: null,
     };
 
     for (const t of types) {
@@ -489,6 +644,27 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
 
     jobs.set(jobId, stateJob);
 
+    // ✅ analytics: audit_requested (job)
+    await emitEventSafe({
+      name: 'audit_requested',
+      userId: req.user._id,
+      dedupeKey: `audit_requested:${String(req.user._id)}:${jobId}`,
+      props: {
+        mode: 'job',
+        jobId,
+        source,
+        types,
+        skippedByConnection,
+        state: {
+          meta: state?.meta,
+          google: state?.google,
+          ga4: state?.ga4,
+          shopify: state?.shopify,
+        },
+      },
+      source: 'server',
+    });
+
     res.json({
       ok: true,
       jobId,
@@ -499,18 +675,59 @@ router.post('/start', requireAuth, express.json(), async (req, res) => {
 
     setImmediate(async () => {
       for (const t of types) {
+        const t0 = Date.now();
         stateJob.items[t].status = 'running';
+
+        let ok = false;
+        let errMsg = null;
+
         try {
-          const ok = await runAuditFor({ userId: req.user._id, type: t, source });
+          ok = !!(await runAuditFor({ userId: req.user._id, type: t, source }));
           stateJob.items[t].status = 'done';
-          stateJob.items[t].ok = !!ok;
+          stateJob.items[t].ok = ok;
         } catch (e) {
+          errMsg = e?.message || String(e);
           stateJob.items[t].status = 'done';
           stateJob.items[t].ok = false;
-          stateJob.items[t].error = e?.message || String(e);
+          stateJob.items[t].error = errMsg;
         }
+
+        const durationMs = Date.now() - t0;
+
+        // ✅ analytics: audit_completed (por tipo)
+        await emitEventSafe({
+          name: 'audit_completed',
+          userId: req.user._id,
+          dedupeKey: `audit_completed:${String(req.user._id)}:${jobId}:${t}`,
+          props: {
+            mode: 'job',
+            jobId,
+            type: t,
+            source,
+            ok,
+            durationMs,
+            error: errMsg,
+            stage: 'job_finished',
+          },
+          source: 'server',
+        });
       }
+
       stateJob.finishedAt = Date.now();
+
+      // ✅ analytics: job terminado (no depende de persistencia)
+      await emitEventSafe({
+        name: 'audit_job_completed',
+        userId: req.user._id,
+        dedupeKey: `audit_job_completed:${String(req.user._id)}:${jobId}`,
+        props: {
+          jobId,
+          source,
+          types,
+          durationMs: (stateJob.finishedAt || Date.now()) - (stateJob.startedAt || Date.now()),
+        },
+        source: 'server',
+      });
     });
   } catch (e) {
     console.error('audits/start error:', e);
@@ -554,15 +771,38 @@ router.get('/progress', requireAuth, async (req, res) => {
       s.finishedAt = Date.now();
       latestAudits = await fetchLatestAuditsByTypes(s.userId, Object.keys(items));
 
+      // ✅✅✅ EVENTO “LISTA” EXACTO CUANDO EL UI DEBERÍA DECIR “AUDITORÍA GENERADA”
+      if (!s.auditReadyEventSent) {
+        try {
+          await emitEventSafe({
+            name: 'audit_completed',
+            userId: s.userId,
+            dedupeKey: `audit_completed:ready:${String(s.userId)}:${jobId}`,
+            props: {
+              mode: 'job',
+              jobId,
+              source: s.source || null,
+              types: Object.keys(items),
+              stage: 'ready',
+              percent: 100,
+            },
+            source: 'server',
+          });
+
+          s.auditReadyEventSent = true;
+          s.auditReadyEventSentAt = Date.now();
+          s.auditReadyEventError = null;
+        } catch (e) {
+          s.auditReadyEventSent = true; // evita loops
+          s.auditReadyEventSentAt = Date.now();
+          s.auditReadyEventError = e?.message || String(e);
+        }
+      }
+
       // ✅✅✅ AQUÍ ES DONDE MANDAMOS 1 SOLO CORREO (SOLO ONBOARDING)
       const isOnboarding = String(s.source || '').toLowerCase() === 'onboarding';
 
-      // Evita duplicados aunque el front llame 20 veces /progress
-      if (
-        isOnboarding &&
-        !s.auditReadyEmailSent &&
-        typeof sendAuditReadyEmail === 'function'
-      ) {
+      if (isOnboarding && !s.auditReadyEmailSent && typeof sendAuditReadyEmail === 'function') {
         try {
           // Intentamos obtener email/nombre
           let userDoc = null;
@@ -600,7 +840,6 @@ router.get('/progress', requireAuth, async (req, res) => {
             s.auditReadyEmailError = 'MISSING_USER_EMAIL';
           }
         } catch (e) {
-          // No rompemos el endpoint de progress; solo registramos
           s.auditReadyEmailSent = true; // evita loops
           s.auditReadyEmailSentAt = Date.now();
           s.auditReadyEmailError = e?.message || String(e);
@@ -625,6 +864,13 @@ router.get('/progress', requireAuth, async (req, res) => {
       auditReadyEmailSentAt: s.auditReadyEmailSentAt || null,
       auditReadyEmailError: s.auditReadyEmailError || null,
     },
+
+    // ✅ útil para QA/debug de BLOQUE 5
+    analytics: {
+      auditReadyEventSent: !!s.auditReadyEventSent,
+      auditReadyEventSentAt: s.auditReadyEventSentAt || null,
+      auditReadyEventError: s.auditReadyEventError || null,
+    },
   });
 });
 
@@ -636,10 +882,7 @@ router.get('/latest', requireAuth, async (req, res) => {
     const typeQ = String(req.query.type || 'all').toLowerCase();
     const originQ = req.query.origin ? String(req.query.origin) : null;
 
-    const wantedTypes =
-      typeQ === 'all'
-        ? ['google', 'meta', 'ga4', 'shopify']
-        : [typeQ];
+    const wantedTypes = typeQ === 'all' ? ['google', 'meta', 'ga4', 'shopify'] : [typeQ];
 
     const allowed = new Set(['google', 'meta', 'ga4', 'shopify', 'all']);
     if (!allowed.has(typeQ)) {

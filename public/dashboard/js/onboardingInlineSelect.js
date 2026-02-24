@@ -1,4 +1,4 @@
-//dashboard-src/public/js/onboardingInlineSelect.js
+// dashboard-src/public/js/onboardingInlineSelect.js
 'use strict';
 
 /**
@@ -10,13 +10,10 @@
  */
 (function () {
   try {
-    if (window.__ADNOVA_ASM_LOADED__) {
-      // ya está inicializado
-      return;
-    }
+    if (window.__ADNOVA_ASM_LOADED__) return;
     window.__ADNOVA_ASM_LOADED__ = true;
   } catch {
-    // si algo raro pasa, seguimos (pero casi nunca)
+    // noop
   }
 
   /* =========================================================
@@ -28,6 +25,7 @@
     if (!r.ok) throw new Error(txt || `HTTP ${r.status}`);
     return txt ? JSON.parse(txt) : {};
   }
+
   async function _post(u, b) {
     const r = await fetch(u, {
       method: 'POST',
@@ -97,45 +95,37 @@
   };
 
   /* =========================================================
- * UI utils
- * =======================================================*/
-const _el = (id) => document.getElementById(id);
+   * UI utils (FIX: no romper modal, no mezclar show/hide)
+   * =======================================================*/
+  const _el = (id) => document.getElementById(id);
 
-// ✅ show/hide GENÉRICO (NO toca body lock)
-function _showEl(el) {
-  if (!el) return;
-  el.classList.remove('hidden');
-  el.style.display = 'block';
-}
-function _hideEl(el) {
-  if (!el) return;
-  el.classList.add('hidden');
-  el.style.display = 'none';
-}
+  // ✅ show/hide genérico (NO toca body lock)
+  function _showEl(el) {
+    if (!el) return;
+    el.classList.remove('hidden');
+    el.style.display = 'block';
+  }
+  function _hideEl(el) {
+    if (!el) return;
+    el.classList.add('hidden');
+    el.style.display = 'none';
+  }
 
-// ✅ show/hide SOLO para el MODAL (aquí sí bloqueamos body)
-function _openModalEl(modal) {
-  if (!modal) return;
-  modal.classList.remove('hidden');
-  modal.classList.add('asm-open');
-  modal.style.display = 'block';
-  document.body.classList.add('asm-lock');
-}
-function _closeModalEl(modal) {
-  if (!modal) return;
-  modal.classList.add('hidden');
-  modal.classList.remove('asm-open');
-  modal.style.display = 'none';
-  document.body.classList.remove('asm-lock');
-}
-
-const _hide = (el) => {
-  if (!el) return;
-  el.classList.add('hidden');
-  el.classList.remove('asm-open');
-  el.style.display = 'none';
-  document.body.classList.remove('asm-lock');
-};
+  // ✅ open/close SOLO modal (aquí sí bloqueamos body)
+  function _openModalEl(modal) {
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    modal.classList.add('asm-open');
+    modal.style.display = 'block';
+    document.body.classList.add('asm-lock');
+  }
+  function _closeModalEl(modal) {
+    if (!modal) return;
+    modal.classList.add('hidden');
+    modal.classList.remove('asm-open');
+    modal.style.display = 'none';
+    document.body.classList.remove('asm-lock');
+  }
 
   function _ensureHintNode() {
     let hint = _el('asm-hint');
@@ -144,24 +134,23 @@ const _hide = (el) => {
       if (panel) {
         hint = document.createElement('div');
         hint.id = 'asm-hint';
-        hint.style.margin = '8px 0 0';
+        hint.style.margin = '10px 0 0';
         hint.style.fontSize = '.9rem';
-        hint.style.opacity = '0.85';
+        hint.style.opacity = '0.9';
         panel.insertBefore(hint, panel.querySelector('.asm-footer'));
       }
     }
     return hint;
   }
+
   function _hint(text, type = 'info') {
     const box = _ensureHintNode();
     if (!box) return;
+
     box.textContent = text || '';
     box.style.color =
-      type === 'warn'
-        ? '#f59e0b'
-        : type === 'error'
-        ? '#ef4444'
-        : '#a1a1aa';
+      type === 'warn' ? '#f59e0b' : type === 'error' ? '#ef4444' : '#a1a1aa';
+
     text ? _showEl(box) : _hideEl(box);
   }
 
@@ -207,7 +196,12 @@ const _hide = (el) => {
     cb.addEventListener('change', () => onChange(!!cb.checked, value, kind, cb));
 
     wrap.appendChild(cb);
-    wrap.appendChild(document.createTextNode(' ' + label));
+
+    const txt = document.createElement('span');
+    txt.className = 'asm-chip-text';
+    txt.textContent = label || value || '';
+    wrap.appendChild(txt);
+
     return wrap;
   }
 
@@ -250,6 +244,8 @@ const _hide = (el) => {
 
   /* =========================================================
    * ✅ Inyectar modal + estilos si NO existe
+   * - FIX: quitar background animado
+   * - FIX: eliminar scroll horizontal (overflow-x)
    * =======================================================*/
   function _ensureModalSkeleton() {
     if (_el('account-select-modal')) return;
@@ -258,358 +254,356 @@ const _hide = (el) => {
       const style = document.createElement('style');
       style.id = 'asm-styles';
       style.textContent = `
-  :root{
-    --asm-bg: rgba(10,10,14,.78);
-    --asm-panel: rgba(12,12,18,.72);
-    --asm-border: rgba(255,255,255,.10);
-    --asm-text: rgba(231,231,241,.92);
-    --asm-muted: rgba(161,161,170,.92);
+        :root{
+          --asm-bg: rgba(0,0,0,.62);
+          --asm-panel: rgba(12,12,18,.80);
+          --asm-border: rgba(255,255,255,.10);
+          --asm-text: rgba(231,231,241,.92);
+          --asm-muted: rgba(161,161,170,.92);
 
-    --asm-purple: #7c3aed;
-    --asm-purple-2: #a78bfa;
-    --asm-cyan: #22d3ee;
-    --asm-pink: #fb7185;
+          --asm-purple: #7c3aed;
+          --asm-purple-2: #a78bfa;
 
-    --asm-shadow: 0 24px 80px rgba(0,0,0,.55);
-    --asm-shadow-2: 0 28px 120px rgba(124,58,237,.16);
+          --asm-shadow: 0 24px 80px rgba(0,0,0,.55);
+          --asm-shadow-2: 0 28px 120px rgba(124,58,237,.14);
 
-    --asm-radius: 18px;
-    --asm-radius-2: 14px;
+          --asm-radius: 18px;
+          --asm-radius-2: 14px;
 
-    --asm-ease: cubic-bezier(.2,.9,.2,1);
-  }
+          --asm-ease: cubic-bezier(.2,.9,.2,1);
+        }
 
-  body.asm-lock { overflow: hidden !important; }
+        /* ✅ lock scroll del body mientras modal está abierto */
+        body.asm-lock { overflow: hidden !important; }
 
-  #account-select-modal.hidden { display:none !important; }
+        /* ✅ evitar scroll horizontal raro global dentro del modal */
+        #account-select-modal, #account-select-modal * { box-sizing: border-box; }
+        #account-select-modal { overflow-x: hidden; }
+        #account-select-modal .asm-panel,
+        #account-select-modal .asm-body,
+        #account-select-modal .asm-list { overflow-x: hidden !important; }
 
-  #account-select-modal{
-    position: fixed;
-    inset: 0;
-    z-index: 99999;
-    display: none;
-  }
+        #account-select-modal.hidden { display:none !important; }
+        #account-select-modal{
+          position: fixed;
+          inset: 0;
+          z-index: 99999;
+          display: none;
+        }
+        #account-select-modal.asm-open{ display:block; }
 
-  #account-select-modal.asm-open{ display:block; }
+        /* ✅ SIN ANIMACIÓN de background (solo fade-in leve) */
+        #account-select-modal .asm-backdrop{
+          position:absolute; inset:0;
+          background:
+            radial-gradient(1200px 700px at 20% 10%, rgba(124,58,237,.16), transparent 60%),
+            radial-gradient(900px 600px at 80% 30%, rgba(34,211,238,.08), transparent 55%),
+            rgba(0,0,0,.62);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          opacity: 0;
+          animation: asmFadeIn .18s var(--asm-ease) forwards;
+        }
 
-  #account-select-modal .asm-backdrop{
-    position:absolute; inset:0;
-    background:
-      radial-gradient(1200px 700px at 20% 10%, rgba(124,58,237,.18), transparent 60%),
-      radial-gradient(900px 600px at 80% 30%, rgba(34,211,238,.10), transparent 55%),
-      radial-gradient(700px 500px at 60% 85%, rgba(251,113,133,.08), transparent 60%),
-      rgba(0,0,0,.62);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    opacity: 0;
-    animation: asmFadeIn .22s var(--asm-ease) forwards;
-  }
+        #account-select-modal .asm-panel{
+          position: relative;
+          width: min(900px, calc(100vw - 28px));
+          max-height: calc(100vh - 28px);
+          margin: 14px auto;
+          border-radius: var(--asm-radius);
+          border: 1px solid var(--asm-border);
+          background: linear-gradient(180deg, rgba(12,12,18,.88), rgba(10,10,14,.74));
+          box-shadow: var(--asm-shadow), var(--asm-shadow-2);
+          overflow: hidden; /* ✅ clave anti scroll X */
+          display:flex;
+          flex-direction:column;
 
-  #account-select-modal .asm-panel{
-    position: relative;
-    width: min(900px, calc(100vw - 28px));
-    max-height: calc(100vh - 28px);
-    margin: 14px auto;
-    border-radius: var(--asm-radius);
-    border: 1px solid var(--asm-border);
-    background: linear-gradient(180deg, rgba(12,12,18,.82), rgba(10,10,14,.70));
-    box-shadow: var(--asm-shadow), var(--asm-shadow-2);
-    overflow: hidden;
-    display:flex;
-    flex-direction:column;
+          transform: translateY(14px) scale(.985);
+          opacity: 0;
+          animation: asmPopIn .24s var(--asm-ease) .02s forwards;
+        }
 
-    transform: translateY(14px) scale(.985);
-    opacity: 0;
-    animation: asmPopIn .28s var(--asm-ease) .02s forwards;
-  }
+        #account-select-modal .asm-panel::after{
+          content:"";
+          position:absolute; left:-40%; top:-60%;
+          width: 180%; height: 120%;
+          background: radial-gradient(circle at 30% 30%, rgba(167,139,250,.12), transparent 55%);
+          opacity:.75;
+          pointer-events:none;
+        }
 
-  #account-select-modal .asm-panel::before{
-    content:"";
-    position:absolute; inset:-2px;
-    border-radius: calc(var(--asm-radius) + 2px);
-    background:
-      conic-gradient(from 180deg,
-        rgba(124,58,237,.0),
-        rgba(124,58,237,.55),
-        rgba(34,211,238,.40),
-        rgba(251,113,133,.35),
-        rgba(124,58,237,.0)
-      );
-    filter: blur(14px);
-    opacity: .22;
-    pointer-events:none;
-  }
+        #account-select-modal .asm-head{
+          position: relative;
+          padding: 14px 16px;
+          display:flex;
+          align-items:center;
+          justify-content:space-between;
+          border-bottom: 1px solid rgba(255,255,255,.08);
+          background: linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.00));
+        }
 
-  #account-select-modal .asm-panel::after{
-    content:"";
-    position:absolute; left:-40%; top:-60%;
-    width: 180%; height: 120%;
-    background: radial-gradient(circle at 30% 30%, rgba(167,139,250,.14), transparent 55%);
-    opacity:.8;
-    pointer-events:none;
-  }
+        #account-select-modal .asm-title{
+          font-weight: 800;
+          font-size: 14px;
+          letter-spacing: .22px;
+          display:flex;
+          gap:10px;
+          align-items:center;
+          color: var(--asm-text);
+        }
 
-  #account-select-modal .asm-head{
-    position: relative;
-    padding: 14px 16px;
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    border-bottom: 1px solid rgba(255,255,255,.08);
-    background:
-      linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.00));
-  }
+        #account-select-modal .asm-title::before{
+          content:"✦";
+          display:inline-flex;
+          width: 26px;
+          height: 26px;
+          align-items:center;
+          justify-content:center;
+          border-radius: 999px;
+          background: rgba(124,58,237,.14);
+          border: 1px solid rgba(124,58,237,.28);
+          color: rgba(167,139,250,.95);
+          box-shadow: 0 10px 30px rgba(124,58,237,.18);
+        }
 
-  #account-select-modal .asm-title{
-    font-weight: 800;
-    font-size: 14px;
-    letter-spacing: .22px;
-    display:flex;
-    gap:10px;
-    align-items:center;
-    color: var(--asm-text);
-  }
+        #account-select-modal .asm-sub{
+          color: var(--asm-muted);
+          font-size: 12px;
+          margin-top: 4px;
+        }
 
-  #account-select-modal .asm-title::before{
-    content:"✦";
-    display:inline-flex;
-    width: 26px;
-    height: 26px;
-    align-items:center;
-    justify-content:center;
-    border-radius: 999px;
-    background: rgba(124,58,237,.14);
-    border: 1px solid rgba(124,58,237,.28);
-    color: rgba(167,139,250,.95);
-    box-shadow: 0 10px 30px rgba(124,58,237,.18);
-  }
+        #account-select-modal .asm-x{
+          appearance:none;
+          border: 1px solid rgba(255,255,255,.10);
+          background: rgba(255,255,255,.04);
+          color: rgba(226,232,240,.88);
+          cursor:pointer;
+          padding: 8px 10px;
+          border-radius: 12px;
+          transition: transform .14s var(--asm-ease), background .14s var(--asm-ease), border-color .14s var(--asm-ease);
+        }
+        #account-select-modal .asm-x:hover{
+          transform: translateY(-1px);
+          background: rgba(255,255,255,.08);
+          border-color: rgba(167,139,250,.35);
+        }
 
-  #account-select-modal .asm-sub{
-    color: var(--asm-muted);
-    font-size: 12px;
-    margin-top: 4px;
-  }
+        #account-select-modal .asm-body{
+          padding: 14px 16px 12px;
+          overflow-y: auto;
+          overflow-x: hidden; /* ✅ clave anti scroll X */
+        }
 
-  #account-select-modal .asm-x{
-    appearance:none;
-    border: 1px solid rgba(255,255,255,.10);
-    background: rgba(255,255,255,.04);
-    color: rgba(226,232,240,.88);
-    cursor:pointer;
-    padding: 8px 10px;
-    border-radius: 12px;
-    transition: transform .14s var(--asm-ease), background .14s var(--asm-ease), border-color .14s var(--asm-ease);
-  }
-  #account-select-modal .asm-x:hover{
-    transform: translateY(-1px);
-    background: rgba(255,255,255,.08);
-    border-color: rgba(167,139,250,.35);
-  }
+        #account-select-modal .asm-body::-webkit-scrollbar{ width: 10px; }
+        #account-select-modal .asm-body::-webkit-scrollbar-track{ background: rgba(255,255,255,.03); border-radius: 999px; }
+        #account-select-modal .asm-body::-webkit-scrollbar-thumb{
+          background: rgba(167,139,250,.22);
+          border-radius: 999px;
+          border: 2px solid rgba(0,0,0,.25);
+        }
+        #account-select-modal .asm-body::-webkit-scrollbar-thumb:hover{ background: rgba(167,139,250,.30); }
 
-  #account-select-modal .asm-body{
-    padding: 14px 16px 12px;
-    overflow:auto;
-  }
+        #account-select-modal .asm-section{ margin-top: 14px; }
+        #account-select-modal .asm-section h4{
+          margin: 0 0 10px 0;
+          font-size: 12.5px;
+          font-weight: 800;
+          letter-spacing: .18px;
+          color: rgba(226,232,240,.92);
+          display:flex;
+          align-items:center;
+          gap:8px;
+        }
 
-  #account-select-modal .asm-body::-webkit-scrollbar{ width: 10px; }
-  #account-select-modal .asm-body::-webkit-scrollbar-track{ background: rgba(255,255,255,.03); border-radius: 999px; }
-  #account-select-modal .asm-body::-webkit-scrollbar-thumb{
-    background: rgba(167,139,250,.22);
-    border-radius: 999px;
-    border: 2px solid rgba(0,0,0,.25);
-  }
-  #account-select-modal .asm-body::-webkit-scrollbar-thumb:hover{ background: rgba(167,139,250,.30); }
+        .asm-count{
+          margin-left: auto;
+          color: rgba(148,163,184,.92);
+          font-weight: 700;
+          font-size: 12px;
+          padding: 3px 8px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,.10);
+          background: rgba(255,255,255,.03);
+        }
 
-  #account-select-modal .asm-section{ margin-top: 14px; }
-  #account-select-modal .asm-section h4{
-    margin: 0 0 10px 0;
-    font-size: 12.5px;
-    font-weight: 800;
-    letter-spacing: .18px;
-    color: rgba(226,232,240,.92);
-    display:flex;
-    align-items:center;
-    gap:8px;
-  }
+        #account-select-modal .asm-list{
+          display:flex;
+          flex-direction: column;
+          gap:10px;
+          overflow-x:hidden; /* ✅ */
+        }
 
-  .asm-count{
-    margin-left: auto;
-    color: rgba(148,163,184,.92);
-    font-weight: 700;
-    font-size: 12px;
-    padding: 3px 8px;
-    border-radius: 999px;
-    border: 1px solid rgba(255,255,255,.10);
-    background: rgba(255,255,255,.03);
-  }
+        #account-select-modal .asm-chip{
+          position: relative;
+          display:flex;
+          align-items:center;
+          gap:12px;
+          padding: 12px 12px;
+          border-radius: var(--asm-radius-2);
+          border: 1px solid rgba(255,255,255,.10);
+          background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+          cursor:pointer;
+          user-select:none;
+          overflow:hidden; /* ✅ CLAVE: evita scroll X por shimmer */
+          transition: transform .14s var(--asm-ease), border-color .14s var(--asm-ease), background .14s var(--asm-ease), box-shadow .14s var(--asm-ease);
+        }
 
-  #account-select-modal .asm-list{
-    display:flex;
-    flex-direction: column;
-    gap:10px;
-  }
+        #account-select-modal .asm-chip:hover{
+          transform: translateY(-1px);
+          border-color: rgba(167,139,250,.22);
+          box-shadow: 0 14px 40px rgba(0,0,0,.30);
+          background: linear-gradient(180deg, rgba(124,58,237,.10), rgba(255,255,255,.03));
+        }
 
-  #account-select-modal .asm-chip{
-    position: relative;
-    display:flex;
-    align-items:center;
-    gap:12px;
-    padding: 12px 12px;
-    border-radius: var(--asm-radius-2);
-    border: 1px solid rgba(255,255,255,.10);
-    background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
-    cursor:pointer;
-    user-select:none;
-    transition: transform .14s var(--asm-ease), border-color .14s var(--asm-ease), background .14s var(--asm-ease), box-shadow .14s var(--asm-ease);
-  }
+        #account-select-modal .asm-chip::after{
+          content:"";
+          position:absolute;
+          inset: 0;
+          border-radius: var(--asm-radius-2);
+          background: linear-gradient(120deg, transparent 0%, rgba(167,139,250,.10) 45%, transparent 70%);
+          transform: translateX(-120%);
+          opacity: 0;
+          pointer-events:none;
+        }
+        #account-select-modal .asm-chip:hover::after{
+          opacity: 1;
+          animation: asmShimmer .85s var(--asm-ease) forwards;
+        }
 
-  #account-select-modal .asm-chip:hover{
-    transform: translateY(-1px);
-    border-color: rgba(167,139,250,.22);
-    box-shadow: 0 14px 40px rgba(0,0,0,.30);
-    background: linear-gradient(180deg, rgba(124,58,237,.10), rgba(255,255,255,.03));
-  }
+        #account-select-modal .asm-chip-text{
+          display:block;
+          min-width:0;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          color: rgba(226,232,240,.92);
+          font-weight: 650;
+          letter-spacing: .1px;
+        }
 
-  #account-select-modal .asm-chip::after{
-    content:"";
-    position:absolute;
-    inset: 0;
-    border-radius: var(--asm-radius-2);
-    background: linear-gradient(120deg, transparent 0%, rgba(167,139,250,.12) 45%, transparent 70%);
-    transform: translateX(-120%);
-    opacity: 0;
-    transition: opacity .18s var(--asm-ease);
-    pointer-events:none;
-  }
-  #account-select-modal .asm-chip:hover::after{
-    opacity: 1;
-    animation: asmShimmer .9s var(--asm-ease) forwards;
-  }
+        #account-select-modal .asm-chip input[type="checkbox"]{
+          appearance:none;
+          width: 18px;
+          height: 18px;
+          flex: 0 0 18px;
+          border-radius: 6px;
+          border: 1px solid rgba(255,255,255,.20);
+          background: rgba(0,0,0,.22);
+          display:inline-flex;
+          align-items:center;
+          justify-content:center;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+          transition: border-color .14s var(--asm-ease), background .14s var(--asm-ease), transform .14s var(--asm-ease);
+        }
+        #account-select-modal .asm-chip input[type="checkbox"]:hover{
+          border-color: rgba(167,139,250,.40);
+        }
+        #account-select-modal .asm-chip input[type="checkbox"]:checked{
+          background: linear-gradient(180deg, rgba(124,58,237,.95), rgba(124,58,237,.70));
+          border-color: rgba(167,139,250,.55);
+          transform: scale(1.02);
+        }
+        #account-select-modal .asm-chip input[type="checkbox"]:checked::before{
+          content:"✓";
+          font-size: 12px;
+          color: white;
+          font-weight: 900;
+          transform: translateY(-.5px);
+        }
 
-  #account-select-modal .asm-chip input[type="checkbox"]{
-    appearance:none;
-    width: 18px;
-    height: 18px;
-    border-radius: 6px;
-    border: 1px solid rgba(255,255,255,.20);
-    background: rgba(0,0,0,.22);
-    display:inline-flex;
-    align-items:center;
-    justify-content:center;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
-    transition: border-color .14s var(--asm-ease), background .14s var(--asm-ease), transform .14s var(--asm-ease);
-  }
-  #account-select-modal .asm-chip input[type="checkbox"]:hover{
-    border-color: rgba(167,139,250,.40);
-  }
-  #account-select-modal .asm-chip input[type="checkbox"]:checked{
-    background: linear-gradient(180deg, rgba(124,58,237,.95), rgba(124,58,237,.70));
-    border-color: rgba(167,139,250,.55);
-    transform: scale(1.02);
-  }
-  #account-select-modal .asm-chip input[type="checkbox"]:checked::before{
-    content:"✓";
-    font-size: 12px;
-    color: white;
-    font-weight: 900;
-    transform: translateY(-.5px);
-  }
+        #account-select-modal .asm-chip input[disabled]{ opacity:.45; cursor:not-allowed; }
+        #account-select-modal .asm-chip:has(input[disabled]){
+          opacity:.72;
+          cursor:not-allowed;
+          filter: saturate(.9);
+        }
 
-  #account-select-modal .asm-chip input[disabled]{ opacity:.45; cursor:not-allowed; }
-  #account-select-modal .asm-chip:has(input[disabled]){
-    opacity:.72;
-    cursor:not-allowed;
-    filter: saturate(.9);
-  }
+        #account-select-modal .asm-err{
+          color:#fecaca;
+          font-size: 12px;
+          margin-bottom: 10px;
+          display:none;
+          padding: 10px 12px;
+          border-radius: 12px;
+          border: 1px solid rgba(239,68,68,.25);
+          background: rgba(239,68,68,.10);
+        }
 
-  #account-select-modal .asm-err{
-    color:#fecaca;
-    font-size: 12px;
-    margin-bottom: 10px;
-    display:none;
-    padding: 10px 12px;
-    border-radius: 12px;
-    border: 1px solid rgba(239,68,68,.25);
-    background: rgba(239,68,68,.10);
-  }
+        #asm-hint{
+          padding: 8px 10px;
+          border-radius: 12px;
+          border: 1px solid rgba(255,255,255,.10);
+          background: rgba(255,255,255,.03);
+          margin-top: 12px;
+        }
 
-  #asm-hint{
-    padding: 8px 10px;
-    border-radius: 12px;
-    border: 1px solid rgba(255,255,255,.10);
-    background: rgba(255,255,255,.03);
-    margin-top: 12px;
-  }
+        #account-select-modal .asm-footer{
+          padding: 12px 16px;
+          display:flex;
+          gap:10px;
+          justify-content:flex-end;
+          align-items:center;
+          border-top: 1px solid rgba(255,255,255,.08);
+          background: rgba(255,255,255,.02);
+        }
 
-  #account-select-modal .asm-footer{
-    padding: 12px 16px;
-    display:flex;
-    gap:10px;
-    justify-content:flex-end;
-    align-items:center;
-    border-top: 1px solid rgba(255,255,255,.08);
-    background: rgba(255,255,255,.02);
-  }
+        .asm-btn{
+          appearance:none;
+          border: 1px solid rgba(255,255,255,.14);
+          background: rgba(255,255,255,.05);
+          color: rgba(226,232,240,.92);
+          padding: 10px 12px;
+          border-radius: 12px;
+          cursor:pointer;
+          font-weight: 700;
+          font-size: 13px;
+          transition: transform .14s var(--asm-ease), background .14s var(--asm-ease), border-color .14s var(--asm-ease);
+        }
+        .asm-btn:hover{
+          transform: translateY(-1px);
+          background: rgba(255,255,255,.08);
+          border-color: rgba(167,139,250,.22);
+        }
 
-  .asm-btn{
-    appearance:none;
-    border: 1px solid rgba(255,255,255,.14);
-    background: rgba(255,255,255,.05);
-    color: rgba(226,232,240,.92);
-    padding: 10px 12px;
-    border-radius: 12px;
-    cursor:pointer;
-    font-weight: 700;
-    font-size: 13px;
-    transition: transform .14s var(--asm-ease), background .14s var(--asm-ease), border-color .14s var(--asm-ease);
-  }
-  .asm-btn:hover{
-    transform: translateY(-1px);
-    background: rgba(255,255,255,.08);
-    border-color: rgba(167,139,250,.22);
-  }
+        .asm-btn-primary{
+          background: linear-gradient(180deg, rgba(124,58,237,1), rgba(124,58,237,.72));
+          border-color: rgba(167,139,250,.35);
+          color:#fff;
+          box-shadow: 0 16px 50px rgba(124,58,237,.25);
+        }
+        .asm-btn-primary:hover{
+          background: linear-gradient(180deg, rgba(109,40,217,1), rgba(124,58,237,.70));
+          border-color: rgba(167,139,250,.55);
+        }
 
-  .asm-btn-primary{
-    background: linear-gradient(180deg, rgba(124,58,237,1), rgba(124,58,237,.72));
-    border-color: rgba(167,139,250,.35);
-    color:#fff;
-    box-shadow: 0 16px 50px rgba(124,58,237,.25);
-  }
-  .asm-btn-primary:hover{
-    background: linear-gradient(180deg, rgba(109,40,217,1), rgba(124,58,237,.70));
-    border-color: rgba(167,139,250,.55);
-  }
+        .asm-btn-primary--disabled{
+          opacity:.55;
+          cursor:not-allowed;
+          box-shadow:none;
+          transform:none !important;
+        }
 
-  .asm-btn-primary--disabled{
-    opacity:.55;
-    cursor:not-allowed;
-    box-shadow:none;
-    transform:none !important;
-  }
+        @keyframes asmFadeIn{ from { opacity: 0; } to { opacity: 1; } }
+        @keyframes asmPopIn{
+          from { opacity: 0; transform: translateY(16px) scale(.98); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes asmShimmer{
+          from { transform: translateX(-120%); }
+          to { transform: translateX(120%); }
+        }
 
-  @keyframes asmFadeIn{ from { opacity: 0; } to { opacity: 1; } }
-  @keyframes asmPopIn{
-    from { opacity: 0; transform: translateY(16px) scale(.98); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-  }
-  @keyframes asmShimmer{ from { transform: translateX(-120%); } to { transform: translateX(120%); } }
-
-  @media (max-width: 640px){
-    #account-select-modal .asm-panel{
-      width: calc(100vw - 18px);
-      margin: 9px auto;
-      max-height: calc(100vh - 18px);
-      border-radius: 16px;
-    }
-    #account-select-modal .asm-chip{ padding: 11px 11px; }
-    #account-select-modal .asm-footer{ gap:8px; }
-    /* ✅ FIX: evita scroll horizontal raro al hover */
-#account-select-modal .asm-panel { overflow: hidden; }
-#account-select-modal .asm-body  { overflow-y: auto; overflow-x: hidden; }
-#account-select-modal .asm-list  { overflow-x: hidden; }
-#account-select-modal .asm-chip  { overflow: hidden; }
-  }
-`;
+        @media (max-width: 640px){
+          #account-select-modal .asm-panel{
+            width: calc(100vw - 18px);
+            margin: 9px auto;
+            max-height: calc(100vh - 18px);
+            border-radius: 16px;
+          }
+          #account-select-modal .asm-chip{ padding: 11px 11px; }
+          #account-select-modal .asm-footer{ gap:8px; }
+        }
+      `;
       document.head.appendChild(style);
     }
 
@@ -658,6 +652,7 @@ const _hide = (el) => {
     const b = _el('asm-backdrop');
     const x = _el('asm-close');
     const c = _el('asm-cancel');
+
     if (b) b.addEventListener('click', close);
     if (x) x.addEventListener('click', close);
     if (c) c.addEventListener('click', close);
@@ -699,18 +694,20 @@ const _hide = (el) => {
 
     ASM.data.meta = list;
 
-    const selected =
-      Array.isArray(v?.selectedAccountIds) ? v.selectedAccountIds :
-      Array.isArray(v?.selected) ? v.selected :
-      [];
+    const selected = Array.isArray(v?.selectedAccountIds)
+      ? v.selectedAccountIds
+      : Array.isArray(v?.selected)
+      ? v.selected
+      : [];
+
     const def = v?.defaultAccountId || null;
 
     ASM.sel.meta.clear();
-    const first = selected?.[0] ? normActId(selected[0]) : (def ? normActId(def) : '');
+    const first = selected?.[0] ? normActId(selected[0]) : def ? normActId(def) : '';
     if (first) ASM.sel.meta.add(first);
 
     const count = ASM.data.meta.length;
-    const allow = (ASM.only === 'all' || ASM.only === 'meta');
+    const allow = ASM.only === 'all' || ASM.only === 'meta';
     ASM.visible.meta = allow && (ASM.showAll ? count > 0 : count > 1);
   }
 
@@ -744,8 +741,8 @@ const _hide = (el) => {
     const adsCount = ASM.data.googleAds.length;
     const gaCount = ASM.data.googleGa.length;
 
-    const allowAds = (ASM.only === 'all' || ASM.only === 'googleAds');
-    const allowGa = (ASM.only === 'all' || ASM.only === 'googleGa');
+    const allowAds = ASM.only === 'all' || ASM.only === 'googleAds';
+    const allowGa = ASM.only === 'all' || ASM.only === 'googleGa';
 
     ASM.visible.googleAds = allowAds && (ASM.showAll ? adsCount > 0 : adsCount > 1);
     ASM.visible.googleGa = allowGa && (ASM.showAll ? gaCount > 0 : gaCount > 1);
@@ -805,10 +802,10 @@ const _hide = (el) => {
       _hideEl(metaList);
     }
 
-    // GOOGLE ADS
+    // GOOGLE ADS  ✅ FIX: usar _showEl/_hideEl (antes rompía y no abría el modal)
     if (ASM.visible.googleAds && ASM.data.googleAds.length > 0) {
-      _show(gAdsTitle);
-      _show(gAdsList);
+      _showEl(gAdsTitle);
+      _showEl(gAdsList);
       gAdsList.innerHTML = '';
 
       ASM.data.googleAds.forEach((a) => {
@@ -836,8 +833,8 @@ const _hide = (el) => {
 
       _updateLimitUI('googleAds');
     } else {
-      _hide(gAdsTitle);
-      _hide(gAdsList);
+      _hideEl(gAdsTitle);
+      _hideEl(gAdsList);
     }
 
     // GOOGLE ANALYTICS (GA4)
@@ -848,8 +845,8 @@ const _hide = (el) => {
     };
 
     if (ASM.visible.googleGa && ASM.data.googleGa.length > 0) {
-      _show(gGaTitle);
-      _show(gGaList);
+      _showEl(gGaTitle);
+      _showEl(gGaList);
       gGaList.innerHTML = '';
 
       ASM.data.googleGa.forEach((p) => {
@@ -880,8 +877,8 @@ const _hide = (el) => {
 
       _updateLimitUI('googleGa');
     } else {
-      _hide(gGaTitle);
-      _hide(gGaList);
+      _hideEl(gGaTitle);
+      _hideEl(gGaList);
     }
 
     if (!ASM.visible.meta && !ASM.visible.googleAds && !ASM.visible.googleGa) {
@@ -894,7 +891,9 @@ const _hide = (el) => {
   async function _openModal() {
     _ensureModalSkeleton();
     _renderLists();
-    _openModalEl(_el('account-select-modal'));
+
+    const modal = _el('account-select-modal');
+    _openModalEl(modal);
 
     const saveBtn = _el('asm-save');
     if (!saveBtn) return;
@@ -941,7 +940,7 @@ const _hide = (el) => {
           }
         }
 
-        // ✅ Google Ads (POST canónico, sin ACK)
+        // ✅ Google Ads (POST canónico)
         if (ASM.visible.googleAds) {
           const ids = Array.from(ASM.sel.googleAds).slice(0, MAX_SELECT);
           if (ids.length) {
@@ -951,38 +950,25 @@ const _hide = (el) => {
 
         await Promise.all(tasks);
 
-        _hide(_el('account-select-modal'));
+        _closeModalEl(modal);
 
-        window.dispatchEvent(
-          new CustomEvent('adnova:accounts-selection-saved', {
-            detail: {
-              meta: Array.from(ASM.sel.meta).slice(0, 1),
-              googleAds: Array.from(ASM.sel.googleAds).slice(0, 1),
-              ga4: Array.from(ASM.sel.googleGa).slice(0, 1), // ✅ RAW
-              mode: 'settings',
-              only: ASM.only,
-            },
-          })
-        );
-        window.dispatchEvent(
-          new CustomEvent('adray:accounts-selection-saved', {
-            detail: {
-              meta: Array.from(ASM.sel.meta).slice(0, 1),
-              googleAds: Array.from(ASM.sel.googleAds).slice(0, 1),
-              ga4: Array.from(ASM.sel.googleGa).slice(0, 1), // ✅ RAW
-              mode: 'settings',
-              only: ASM.only,
-            },
-          })
-        );
+        const detail = {
+          meta: Array.from(ASM.sel.meta).slice(0, 1),
+          googleAds: Array.from(ASM.sel.googleAds).slice(0, 1),
+          ga4: Array.from(ASM.sel.googleGa).slice(0, 1), // ✅ RAW
+          mode: 'settings',
+          only: ASM.only,
+        };
+
+        window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved', { detail }));
+        window.dispatchEvent(new CustomEvent('adray:accounts-selection-saved', { detail }));
       } catch (e) {
         console.error('save selection error', e);
 
         const box = _el('asm-error');
         if (box) {
-          // mensaje unificado (ya no hay ACK timeout)
           box.textContent = 'Ocurrió un error guardando tu selección. Intenta de nuevo.';
-          _show(box);
+          _showEl(box);
         }
         _hint('', 'info');
 
@@ -996,14 +982,12 @@ const _hide = (el) => {
    * Public API: openAccountSelectModal
    * =======================================================*/
   async function openAccountSelectModal(opts = {}) {
-    const only = (opts.only || 'all');
-    const force = opts.force !== false;
+    const only = opts.only || 'all';
     const showAll = !!opts.showAll;
     const required = opts.required || {};
 
     ASM.mode = 'settings';
     ASM.only = only;
-    ASM.force = force;
     ASM.showAll = showAll;
 
     ASM.required.meta = !!required.meta;
@@ -1053,7 +1037,6 @@ const _hide = (el) => {
     const d = ev?.detail || {};
     openAccountSelectModal({
       only: d.only || 'all',
-      force: d.force !== false,
       showAll: !!d.showAll,
       required: d.required || {},
     }).catch(console.error);
@@ -1063,7 +1046,6 @@ const _hide = (el) => {
     const d = ev?.detail || {};
     openAccountSelectModal({
       only: d.only || 'all',
-      force: d.force !== false,
       showAll: !!d.showAll,
       required: d.required || {},
     }).catch(console.error);
@@ -1131,7 +1113,6 @@ const _hide = (el) => {
 
       openAccountSelectModal({
         only: info.only,
-        force: true,
         showAll: false,
         required: info.required,
       }).catch(console.error);
@@ -1139,4 +1120,5 @@ const _hide = (el) => {
       console.error('ASM auto-open error', e);
     }
   });
+
 })();

@@ -9,6 +9,9 @@ const router  = express.Router();
 const User  = require('../models/User');
 const Audit = require('../models/Audit');
 
+// ✅ Analytics events (Internal Admin / DB analytics)
+const { trackEvent } = require('../services/trackEvent');
+
 // ✅ Auditorías: cleanup al desconectar (best-effort)
 const {
   deleteAuditsForUserSources,
@@ -42,11 +45,13 @@ const SCOPES = [
 
 const DEFAULT_META_OBJECTIVE = 'ventas';
 
+// ✅ Defaults de UX (sin onboarding)
+const DEFAULT_RETURN_TO = '/dashboard/settings?tab=integrations';
+
 /* =========================
  * Helpers
  * ========================= */
 function safeAppSecretProof(accessToken) {
-  // appsecret_proof es recomendado pero no obligatorio
   if (!accessToken) return null;
   if (!APP_SECRET) return null;
   try {
@@ -117,7 +122,7 @@ function appendQuery(url, key, value) {
 
 /**
  * ✅ Blindaje anti open-redirect:
- * Solo permitimos returnTo relativo y dentro del SAAS.
+ * Solo permitimos returnTo relativo y dentro del dashboard/settings.
  */
 function sanitizeReturnTo(raw) {
   const val = String(raw || '').trim();
@@ -130,7 +135,6 @@ function sanitizeReturnTo(raw) {
   const allowed = [
     '/dashboard/settings',
     '/dashboard',
-    '/onboarding',
   ];
   const ok = allowed.some(prefix => val.startsWith(prefix));
   if (!ok) return '';
@@ -140,6 +144,19 @@ function sanitizeReturnTo(raw) {
   }
 
   return val;
+}
+
+/**
+ * ✅ Flow key para dedupe idempotente por sesión/flujo
+ * - Evita que "meta_connected:<user>" mate el tracking para siempre.
+ * - Idempotente dentro de una sesión: si Meta redirige 2 veces, no duplica.
+ */
+function getFlowKey(req) {
+  const sid = req?.sessionID || req?.session?.id || null;
+  if (sid) return String(sid);
+  // fallback si por alguna razón no hay sessionID
+  const tmp = crypto.randomBytes(12).toString('hex');
+  return `nosession_${tmp}`;
 }
 
 /**
@@ -175,7 +192,8 @@ router.get('/login', (req, res) => {
   // Validación suave de ENV (para no crashear)
   if (!APP_ID || !APP_SECRET || !REDIRECT_URI) {
     console.warn('[meta] Missing FACEBOOK_APP_ID/SECRET/REDIRECT_URI');
-    return res.redirect('/onboarding?meta=error&reason=missing_env');
+    const dest = appendQuery(DEFAULT_RETURN_TO, 'meta', 'error');
+    return res.redirect(appendQuery(dest, 'reason', 'missing_env'));
   }
 
   const state = crypto.randomBytes(20).toString('hex');
@@ -206,7 +224,9 @@ router.get('/callback', async (req, res) => {
   if (!code || !state || state !== req.session.fb_state) {
     delete req.session.fb_state;
     delete req.session.fb_returnTo;
-    return res.redirect('/onboarding?meta=fail');
+
+    const dest0 = appendQuery(DEFAULT_RETURN_TO, 'meta', 'fail');
+    return res.redirect(appendQuery(dest0, 'reason', 'bad_state'));
   }
 
   delete req.session.fb_state;
@@ -219,7 +239,8 @@ router.get('/callback', async (req, res) => {
 
     if (!accessToken) {
       delete req.session.fb_returnTo;
-      return res.redirect('/onboarding?meta=error&reason=no_token');
+      const dest0 = appendQuery(DEFAULT_RETURN_TO, 'meta', 'error');
+      return res.redirect(appendQuery(dest0, 'reason', 'no_token'));
     }
 
     // 2) upgrade to long-lived (best effort)
@@ -237,7 +258,8 @@ router.get('/callback', async (req, res) => {
     const dbg = await debugToken(accessToken);
     if (String(dbg?.app_id) !== String(APP_ID) || dbg?.is_valid !== true) {
       delete req.session.fb_returnTo;
-      return res.redirect('/onboarding?meta=error&reason=invalid_token');
+      const dest0 = appendQuery(DEFAULT_RETURN_TO, 'meta', 'error');
+      return res.redirect(appendQuery(dest0, 'reason', 'invalid_token'));
     }
 
     // 4) basic profile
@@ -305,7 +327,7 @@ router.get('/callback', async (req, res) => {
 
     const userId = req.user._id;
 
-    // 7) actualiza User (no romper)
+    // 7) actualiza User
     await User.findByIdAndUpdate(userId, {
       $set: {
         metaConnected: true,
@@ -314,7 +336,7 @@ router.get('/callback', async (req, res) => {
       }
     });
 
-    // ✅ Nuevo criterio de selector con UX MAX_SELECT=1:
+    // ✅ UX selector con MAX_SELECT=1
     const allDigits = adAccounts.map(a => normActId(a.account_id)).filter(Boolean);
     const availableCount = allDigits.length;
     const shouldForceSelector = availableCount > MAX_SELECT;
@@ -385,32 +407,61 @@ router.get('/callback', async (req, res) => {
       });
     }
 
-    // ✅ 9) redirect final E2E:
+    // ✅ 8) TRACK: meta_connected (E2E Internal Analytics)
+    // FIX: dedupeKey por sesión/flow (no por usuario fijo)
+    try {
+      const flowKey = getFlowKey(req);
+      await trackEvent({
+        name: 'meta_connected',
+        userId,
+        source: 'app',
+        dedupeKey: `meta_connected:${String(userId)}:${flowKey}`,
+        ts: new Date(),
+        props: {
+          flowKey,
+          sessionId: req.sessionID || null,
+          fbUserId: fbUserId || null,
+          accountsCount: Array.isArray(adAccounts) ? adAccounts.length : 0,
+          scopesCount: Array.isArray(grantedScopes) ? grantedScopes.length : 0,
+          forcedSelector: !!shouldForceSelector,
+          selectedAccountIds: Array.isArray(selectedDigits) ? selectedDigits : [],
+          defaultAccountId: defaultAccountId || null,
+        },
+      });
+    } catch (e) {
+      if (process.env.ANALYTICS_DEBUG === '1') {
+        console.warn('[meta] track meta_connected failed:', e?.message || e);
+      }
+    }
+
+    // ✅ 9) redirect final
     let destino = '';
     const sessionReturnTo = sanitizeReturnTo(req.session.fb_returnTo);
     delete req.session.fb_returnTo;
 
-    if (sessionReturnTo) {
-      destino = sessionReturnTo;
+    destino = sessionReturnTo || DEFAULT_RETURN_TO;
 
-      if (shouldForceSelector) {
-        destino = appendQuery(destino, 'selector', '1');
-      }
-      destino = appendQuery(destino, 'meta', 'ok');
+    if (shouldForceSelector) {
+      destino = appendQuery(destino, 'selector', '1');
     } else {
-      destino = req.user.onboardingComplete
-        ? '/dashboard'
-        : `/onboarding?meta=ok&selector=${shouldForceSelector ? '1' : '0'}`;
+      destino = appendQuery(destino, 'selector', '0');
     }
 
+    destino = appendQuery(destino, 'meta', 'ok');
+
     req.login(req.user, (err) => {
-      if (err) return res.redirect('/onboarding?meta=error');
+      if (err) {
+        const dest0 = appendQuery(DEFAULT_RETURN_TO, 'meta', 'error');
+        return res.redirect(appendQuery(dest0, 'reason', 'login_failed'));
+      }
       return res.redirect(destino);
     });
   } catch (err) {
     console.error('❌ Meta callback error:', err?.response?.data || err.message);
     delete req.session.fb_returnTo;
-    return res.redirect('/onboarding?meta=error');
+
+    const dest0 = appendQuery(DEFAULT_RETURN_TO, 'meta', 'error');
+    return res.redirect(appendQuery(dest0, 'reason', 'callback_exception'));
   }
 });
 
@@ -423,7 +474,6 @@ router.get('/accounts', requireAuth, async (req, res) => {
     const userId = req.user._id;
 
     if (!MetaAccount) {
-      // fallback legacy
       const u = await User.findById(userId).lean();
       const selected = Array.isArray(u?.selectedMetaAccounts)
         ? u.selectedMetaAccounts.map(normActId).filter(Boolean).slice(0, MAX_SELECT)
@@ -485,7 +535,6 @@ router.get('/accounts', requireAuth, async (req, res) => {
 /* =========================
  * ✅ SAVE SELECTION (MAX_SELECT=1)
  * POST /auth/meta/accounts/selection
- * Body: { accountIds: ["act_123","123"] } o { accountId: "..." }
  * ========================= */
 router.post('/accounts/selection', requireAuth, express.json(), async (req, res) => {
   try {
@@ -505,6 +554,8 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
       return res.status(400).json({ ok: false, error: 'NO_VALID_ACCOUNTS' });
     }
 
+    let finalSelected = wanted;
+
     if (!MetaAccount) {
       await User.updateOne(
         { _id: userId },
@@ -515,6 +566,29 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
           },
         }
       );
+
+      // ✅ TRACK: meta_ads_selected (FIX dedupeKey por flow)
+      try {
+        const flowKey = getFlowKey(req);
+        await trackEvent({
+          name: 'meta_ads_selected',
+          userId,
+          source: 'app',
+          dedupeKey: `meta_ads_selected:${String(userId)}:${flowKey}`,
+          ts: new Date(),
+          props: {
+            flowKey,
+            sessionId: req.sessionID || null,
+            selectedAccountId: wanted[0],
+            selectedAccountIds: wanted,
+          },
+        });
+      } catch (e) {
+        if (process.env.ANALYTICS_DEBUG === '1') {
+          console.warn('[meta] track meta_ads_selected failed (no MetaAccount):', e?.message || e);
+        }
+      }
+
       return res.json({ ok: true, selectedAccountIds: wanted, defaultAccountId: wanted[0] });
     }
 
@@ -532,6 +606,8 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
     if (!selected.length) {
       return res.status(400).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
     }
+
+    finalSelected = selected;
 
     await MetaAccount.updateOne(
       { _id: doc._id },
@@ -553,7 +629,29 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
       }
     );
 
-    return res.json({ ok: true, selectedAccountIds: selected, defaultAccountId: selected[0] });
+    // ✅ TRACK: meta_ads_selected (FIX dedupeKey por flow)
+    try {
+      const flowKey = getFlowKey(req);
+      await trackEvent({
+        name: 'meta_ads_selected',
+        userId,
+        source: 'app',
+        dedupeKey: `meta_ads_selected:${String(userId)}:${flowKey}`,
+        ts: new Date(),
+        props: {
+          flowKey,
+          sessionId: req.sessionID || null,
+          selectedAccountId: selected[0],
+          selectedAccountIds: selected,
+        },
+      });
+    } catch (e) {
+      if (process.env.ANALYTICS_DEBUG === '1') {
+        console.warn('[meta] track meta_ads_selected failed:', e?.message || e);
+      }
+    }
+
+    return res.json({ ok: true, selectedAccountIds: finalSelected, defaultAccountId: finalSelected[0] });
   } catch (e) {
     console.error('[meta] accounts/selection error:', e);
     return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
@@ -798,7 +896,7 @@ router.post('/default-account', requireAuth, express.json(), async (req, res) =>
         return res.status(400).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
       }
 
-      const nextSelected = [accountId]; // ✅ con UX max=1, el default es la selección
+      const nextSelected = [accountId];
 
       await MetaAccount.findOneAndUpdate(
         { $or: [{ userId: req.user._id }, { user: req.user._id }] },
@@ -828,15 +926,12 @@ router.post('/default-account', requireAuth, express.json(), async (req, res) =>
 });
 
 /* =========================
- * ✅ Preview para modal: cuántas auditorías se eliminarán
- * GET /auth/meta/disconnect/preview
- * (alineado a Audit.js => type:'meta')
+ * ✅ Preview disconnect
  * ========================= */
 router.get('/disconnect/preview', requireAuth, async (req, res) => {
   try {
     const userId = req.user._id;
 
-    // Preferimos conteo real por type (E2E con tu Audit.js)
     let count = 0;
     try {
       count = await Audit.countDocuments({ userId, type: 'meta' });
@@ -844,7 +939,6 @@ router.get('/disconnect/preview', requireAuth, async (req, res) => {
       count = 0;
     }
 
-    // Best-effort: si tu helper existe y está alineado, puede enriquecer
     try {
       const c = await countAuditsForUserSources(userId, ['meta']);
       if (typeof c?.count === 'number') count = c.count;
@@ -861,20 +955,14 @@ router.get('/disconnect/preview', requireAuth, async (req, res) => {
 });
 
 /* =========================
- * ✅ DISCONNECT META (Ads)
- * POST /auth/meta/disconnect
- * - Revoca permisos (best-effort)
- * - Limpia tokens/selecciones
- * - ✅ Elimina auditorías Meta (E2E con Audit.js)
+ * ✅ DISCONNECT META
  * ========================= */
 router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
   try {
     const userId = req.user._id;
 
-    // Conteo antes (para deleted real)
     const before = await Audit.countDocuments({ userId, type: 'meta' }).catch(() => 0);
 
-    // 1) Obtener token (best-effort) para revocar permisos
     let accessToken = null;
 
     if (MetaAccount) {
@@ -895,16 +983,13 @@ router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
       accessToken = u?.metaAccessToken || null;
     }
 
-    // 2) Revocar permisos en Meta (best-effort)
     const revoke = await revokeMetaPermissionsBestEffort(accessToken);
 
-    // 3) Limpiar persistencia canónica (MetaAccount) o fallback legacy (User)
     if (MetaAccount) {
       await MetaAccount.updateOne(
         { $or: [{ userId }, { user: userId }] },
         {
           $set: {
-            // tokens
             longLivedToken: null,
             longlivedToken: null,
             access_token: null,
@@ -914,18 +999,14 @@ router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
             expiresAt: null,
             expires_at: null,
 
-            // cuentas
             ad_accounts: [],
             adAccounts: [],
 
-            // selección
             selectedAccountIds: [],
             defaultAccountId: null,
 
-            // permisos
             scopes: [],
 
-            // identidad (opcional)
             fb_user_id: null,
             email: null,
             name: null,
@@ -936,7 +1017,6 @@ router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
       );
     }
 
-    // 4) Limpiar User (sin tocar metaObjective para no borrar preferencia)
     await User.updateOne(
       { _id: userId },
       {
@@ -944,23 +1024,19 @@ router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
           metaConnected: false,
           metaFbUserId: null,
 
-          // legacy tokens/estado
           metaAccessToken: null,
           metaTokenExpiresAt: null,
           metaDefaultAccountId: null,
           metaScopes: [],
 
-          // selección
           selectedMetaAccounts: [],
         }
       }
     );
 
-    // 5) ✅ Eliminar auditorías de Meta (E2E con Audit.js)
     let auditsDeleteOk = true;
     let auditsDeleteError = null;
 
-    // Best-effort: tu helper
     try {
       await deleteAuditsForUserSources(userId, ['meta']);
     } catch (e) {
@@ -969,7 +1045,6 @@ router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
       console.warn('[meta] audit cleanup failed (best-effort):', auditsDeleteError);
     }
 
-    // Fallback: borrado real por type
     try {
       await Audit.deleteMany({ userId, type: 'meta' });
     } catch (e) {
@@ -980,6 +1055,30 @@ router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
 
     const after = await Audit.countDocuments({ userId, type: 'meta' }).catch(() => 0);
     const auditsDeleted = Math.max(0, before - after);
+
+    // ✅ TRACK: meta_disconnected (FIX dedupeKey por flow)
+    try {
+      const flowKey = getFlowKey(req);
+      await trackEvent({
+        name: 'meta_disconnected',
+        userId,
+        source: 'app',
+        dedupeKey: `meta_disconnected:${String(userId)}:${flowKey}`,
+        ts: new Date(),
+        props: {
+          flowKey,
+          sessionId: req.sessionID || null,
+          revokeAttempted: !!revoke?.attempted,
+          revokeOk: !!revoke?.ok,
+          auditsDeleted,
+          auditsDeleteOk,
+        },
+      });
+    } catch (e) {
+      if (process.env.ANALYTICS_DEBUG === '1') {
+        console.warn('[meta] track meta_disconnected failed:', e?.message || e);
+      }
+    }
 
     return res.json({
       ok: true,

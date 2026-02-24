@@ -15,6 +15,16 @@ const Audit = require('../models/Audit');
 
 const { deleteAuditsForUserSources } = require('../services/auditCleanup');
 
+/* =========================
+ * ✅ NEW: Analytics Events (no rompe si falta/si falla)
+ * ========================= */
+let trackEvent = null;
+try {
+  ({ trackEvent } = require('../services/trackEvent'));
+} catch (_) {
+  trackEvent = null;
+}
+
 /* =========================================================
  *  Modelo GoogleAccount (fallback si no existe el archivo)
  * =======================================================*/
@@ -68,6 +78,10 @@ try {
       // Legacy GA4 (para compat con código viejo)
       selectedGaPropertyId: { type: String },
 
+      // ✅ NEW: flags explícitos de conexión por producto
+      connectedAds: { type: Boolean, default: false },
+      connectedGa4: { type: Boolean, default: false },
+
       // Misc
       objective: { type: String, enum: ['ventas', 'alcance', 'leads'], default: null },
       lastAdsDiscoveryError: { type: String, default: null },
@@ -88,16 +102,29 @@ try {
 }
 
 /* =========================
- * ENV
+ * ENV (Ads + GA4 separados)
  * ========================= */
 const {
+  // Ads (legacy / default)
   GOOGLE_CLIENT_ID,
   GOOGLE_CLIENT_SECRET,
   GOOGLE_REDIRECT_URI,          // preferido
   GOOGLE_CONNECT_CALLBACK_URL,  // fallback legacy
+
+  // GA4 (nuevo)
+  GOOGLE_GA4_CLIENT_ID,
+  GOOGLE_GA4_CLIENT_SECRET,
+  GOOGLE_GA4_REDIRECT_URI,
+  GOOGLE_GA4_CALLBACK_URL, // fallback opcional si lo usas así en Render
 } = process.env;
 
 const DEFAULT_GOOGLE_OBJECTIVE = 'ventas';
+
+/* =========================
+ * ✅ Productos (Ads vs GA4)
+ * ========================= */
+const PRODUCT_ADS = 'ads';
+const PRODUCT_GA4 = 'ga4';
 
 /* =========================
  * Helpers
@@ -107,14 +134,41 @@ function requireSession(req, res, next) {
   return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
 }
 
-function oauth() {
-  const redirectUri = GOOGLE_REDIRECT_URI || GOOGLE_CONNECT_CALLBACK_URL;
-  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !redirectUri) {
-    console.warn('[googleConnect] Missing GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI');
+/**
+ * ✅ OAuth client por producto (Ads vs GA4)
+ * - Ads usa GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI
+ * - GA4 usa GOOGLE_GA4_CLIENT_ID/SECRET/REDIRECT_URI
+ *
+ * Nota: puedes usar el MISMO redirect URI para ambos clients (recomendado),
+ * pero si usas distintos, asegúrate de registrarlos en Google Cloud Console.
+ */
+function oauthForProduct(product) {
+  // Ads (default)
+  let clientId = GOOGLE_CLIENT_ID;
+  let clientSecret = GOOGLE_CLIENT_SECRET;
+  let redirectUri = GOOGLE_REDIRECT_URI || GOOGLE_CONNECT_CALLBACK_URL;
+
+  // GA4
+  if (product === PRODUCT_GA4) {
+    clientId = GOOGLE_GA4_CLIENT_ID || clientId;
+    clientSecret = GOOGLE_GA4_CLIENT_SECRET || clientSecret;
+    redirectUri = GOOGLE_GA4_REDIRECT_URI || GOOGLE_GA4_CALLBACK_URL || redirectUri;
   }
+
+  if (!clientId || !clientSecret || !redirectUri) {
+    console.warn('[googleConnect] Missing OAuth env vars for product:', product, {
+      hasAdsClient: !!GOOGLE_CLIENT_ID,
+      hasAdsSecret: !!GOOGLE_CLIENT_SECRET,
+      hasAdsRedirect: !!(GOOGLE_REDIRECT_URI || GOOGLE_CONNECT_CALLBACK_URL),
+      hasGa4Client: !!GOOGLE_GA4_CLIENT_ID,
+      hasGa4Secret: !!GOOGLE_GA4_CLIENT_SECRET,
+      hasGa4Redirect: !!(GOOGLE_GA4_REDIRECT_URI || GOOGLE_GA4_CALLBACK_URL),
+    });
+  }
+
   return new OAuth2Client({
-    clientId: GOOGLE_CLIENT_ID,
-    clientSecret: GOOGLE_CLIENT_SECRET,
+    clientId,
+    clientSecret,
     redirectUri,
   });
 }
@@ -145,11 +199,10 @@ function sanitizeReturnTo(raw) {
   // solo rutas relativas
   if (!val.startsWith('/')) return '';
 
-  // allowlist mínima (amplía si lo necesitas)
+  // ✅ allowlist mínima (onboarding eliminado del flujo de login)
   const allowed = [
     '/dashboard/settings',
     '/dashboard',
-    '/onboarding',
   ];
   const ok = allowed.some(prefix => val.startsWith(prefix));
   if (!ok) return '';
@@ -164,25 +217,33 @@ function sanitizeReturnTo(raw) {
 
 /**
  * ✅ Revocar token en Google (best-effort)
- * - intenta revocar refresh_token primero (ideal)
- * - si no hay refresh_token, intenta access_token
- * - si falla revocación, NO bloquea la desconexión local
+ * - Intentamos con Ads client y con GA4 client por si el token está ligado al otro client_id.
  */
 async function revokeGoogleTokenBestEffort({ refreshToken, accessToken }) {
   const token = refreshToken || accessToken;
   if (!token) return { attempted: false, ok: true };
 
-  try {
-    const client = oauth();
-    await client.revokeToken(token);
-    return { attempted: true, ok: true };
-  } catch (e) {
-    console.warn(
-      '[googleConnect] revokeToken failed (best-effort):',
-      e?.response?.data || e?.message || e
-    );
-    return { attempted: true, ok: false };
+  const attempts = [
+    { product: PRODUCT_ADS, client: oauthForProduct(PRODUCT_ADS) },
+    { product: PRODUCT_GA4, client: oauthForProduct(PRODUCT_GA4) },
+  ];
+
+  let lastErr = null;
+  for (const a of attempts) {
+    try {
+      await a.client.revokeToken(token);
+      return { attempted: true, ok: true, via: a.product };
+    } catch (e) {
+      lastErr = e;
+      // seguimos intentando con el otro client
+    }
   }
+
+  console.warn(
+    '[googleConnect] revokeToken failed (best-effort):',
+    lastErr?.response?.data || lastErr?.message || lastErr
+  );
+  return { attempted: true, ok: false };
 }
 
 const normCustomerId = (s = '') =>
@@ -218,6 +279,44 @@ const hasAdwordsScope = (scopes = []) =>
 const hasGaScope = (scopes = []) =>
   Array.isArray(scopes) && scopes.some((s) => String(s).includes('/auth/analytics.readonly'));
 
+/* =========================
+ * Productos (Ads vs GA4)
+ * ========================= */
+function getProductFromReq(req) {
+  // 1) query param explícito
+  const q = String(req.query.product || '').trim().toLowerCase();
+  if (q === PRODUCT_ADS) return PRODUCT_ADS;
+  if (q === PRODUCT_GA4) return PRODUCT_GA4;
+
+  // 2) inferir por ruta (blindaje anti-rewrite/alias)
+  const path = String(req.path || '').toLowerCase();
+  const full = String(req.originalUrl || '').toLowerCase();
+
+  if (path.includes('/ga') || full.includes('/ga/connect') || full.includes('/connect/ga4')) return PRODUCT_GA4;
+  if (path.includes('/ads') || full.includes('/ads/connect') || full.includes('/connect/ads')) return PRODUCT_ADS;
+
+  // 3) fallback seguro: si no sabemos, NO mezclar (elige GA4 solo si el returnTo/product sugieren ga4)
+  const rt = String(req.query.returnTo || '').toLowerCase();
+  if (rt.includes('product=ga4') || rt.includes('ga4')) return PRODUCT_GA4;
+  if (rt.includes('product=ads') || rt.includes('google-ads') || rt.includes('gads')) return PRODUCT_ADS;
+
+  return null; // legacy only si de verdad quieres mantenerlo
+}
+
+function scopesForProduct(product) {
+  const base = [
+    'openid',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
+  ];
+
+  if (product === PRODUCT_ADS) return [...base, ADS_SCOPE];
+  if (product === PRODUCT_GA4) return [...base, GA_SCOPE];
+
+  // legacy: ambos
+  return [...base, GA_SCOPE, ADS_SCOPE];
+}
+
 function filterSelectedByAvailable(selectedIds, availableSet) {
   const sel = Array.isArray(selectedIds) ? selectedIds : [];
   return sel.map(normId).filter(Boolean).filter((id) => availableSet.has(id));
@@ -226,6 +325,41 @@ function filterSelectedByAvailable(selectedIds, availableSet) {
 function filterSelectedPropsByAvailable(selectedPropIds, availableSet) {
   const sel = Array.isArray(selectedPropIds) ? selectedPropIds : [];
   return sel.map(normPropertyId).filter(Boolean).filter((pid) => availableSet.has(pid));
+}
+
+/* =========================
+ * ✅ helper para emitir eventos sin romper flujo
+ * ========================= */
+function emitEventBestEffort(req, name, props = {}, opts = {}) {
+  if (!trackEvent) return;
+  const userId = req?.user?._id;
+  if (!userId) return;
+
+  const ip =
+    String(req.headers['x-forwarded-for'] || '')
+      .split(',')[0]
+      .trim() ||
+    req.ip ||
+    null;
+
+  const ua = String(req.headers['user-agent'] || '').slice(0, 240) || null;
+
+  const payload = {
+    name,
+    userId,
+    props: {
+      ...props,
+      route: req.originalUrl || null,
+      ip,
+      ua,
+    },
+  };
+
+  if (opts.dedupeKey) payload.dedupeKey = opts.dedupeKey;
+
+  Promise.resolve()
+    .then(() => trackEvent(payload))
+    .catch(() => {});
 }
 
 /* =========================================================
@@ -273,53 +407,55 @@ async function fetchGA4Properties(oauthClient) {
     // ignore y cae al fallback
   }
 
-  // 2) Fallback moderno: properties.search
+  // 2) Fallback compatible: accountSummaries.list -> propertySummaries
   const out = [];
   let pageToken;
+
   do {
-    const resp = await admin.properties.search({
-      requestBody: { query: '' },
-      pageToken,
+    const resp = await admin.accountSummaries.list({
       pageSize: 200,
+      pageToken,
     });
-    (resp.data.properties || []).forEach((p) => {
-      out.push({
-        propertyId: p.name,
-        displayName: p.displayName || p.name,
-        timeZone: p.timeZone || null,
-        currencyCode: p.currencyCode || null,
-      });
-    });
-    pageToken = resp.data.nextPageToken || undefined;
+
+    const summaries = resp?.data?.accountSummaries || [];
+    for (const s of summaries) {
+      const props = Array.isArray(s?.propertySummaries) ? s.propertySummaries : [];
+      for (const p of props) {
+        out.push({
+          propertyId: p.property, // "properties/123"
+          displayName: p.displayName || p.property,
+          timeZone: null,
+          currencyCode: null,
+        });
+      }
+    }
+
+    pageToken = resp?.data?.nextPageToken || undefined;
   } while (pageToken);
 
   return out;
 }
 
 /* =========================================================
- *  Iniciar OAuth (Ads + GA) — estilo Master Metrics
+ *  Iniciar OAuth (Ads / GA4 / ambos) — estilo Master Metrics
  * =======================================================*/
-function buildAuthUrl(req, returnTo) {
-  const client = oauth();
+function buildAuthUrl(req, returnTo, product) {
+  const client = oauthForProduct(product);
 
-  const safeReturnTo = sanitizeReturnTo(returnTo) || '/onboarding?google=connected';
+  // ✅ Default: dashboard (onboarding eliminado del login)
+  const safeReturnTo = sanitizeReturnTo(returnTo) || '/dashboard/';
 
   const state = JSON.stringify({
     uid: String(req.user._id),
     returnTo: safeReturnTo,
+    product: product || null, // ✅ clave para callback
   });
 
   return client.generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent',
-    include_granted_scopes: true,
-    scope: [
-      'openid',
-      'https://www.googleapis.com/auth/userinfo.email',
-      'https://www.googleapis.com/auth/userinfo.profile',
-      GA_SCOPE,
-      ADS_SCOPE,
-    ],
+    include_granted_scopes: false, // ✅ separación estricta por producto
+    scope: scopesForProduct(product),
     state,
   });
 }
@@ -329,36 +465,113 @@ async function startConnect(req, res) {
     const returnTo =
       typeof req.query.returnTo === 'string' && req.query.returnTo.trim()
         ? req.query.returnTo
-        : '/onboarding?google=connected';
+        : '/dashboard/';
 
-    const url = buildAuthUrl(req, returnTo);
+    const product = getProductFromReq(req); // ✅ ads | ga4 | null(legacy)
+
+    emitEventBestEffort(req, 'google_connect_started', {
+      returnTo: sanitizeReturnTo(returnTo) || '/dashboard/',
+      product: product || 'both',
+    });
+
+    const url = buildAuthUrl(req, returnTo, product);
     return res.redirect(url);
   } catch (err) {
     console.error('[googleConnect] connect error:', err);
-    return res.redirect('/onboarding?google=error&reason=connect_build');
+    emitEventBestEffort(req, 'google_connect_failed', {
+      stage: 'build_auth_url',
+      error: String(err?.message || err),
+    });
+
+    return res.redirect('/dashboard/?google=error&reason=connect_build');
   }
 }
 
-// Rutas para iniciar OAuth
+/* =========================================================
+ * ✅ Rutas de inicio OAuth
+ * - Legacy: /connect (ambos)
+ * - NUEVO Front: /ads/connect y /ga/connect
+ * =======================================================*/
+
+// legacy
 router.get('/connect', requireSession, startConnect);
-// alias más explícito
-router.get('/ads', requireSession, startConnect);
+
+// ✅ alias legacy (solo Ads)
+router.get('/ads', requireSession, (req, res) => {
+  req.query.product = PRODUCT_ADS;
+  return startConnect(req, res);
+});
+
+// ✅ alias legacy (solo GA4) por si alguien lo usa
+router.get('/ga', requireSession, (req, res) => {
+  req.query.product = PRODUCT_GA4;
+  return startConnect(req, res);
+});
+
+// ✅ nuevas rutas (estas son las que debe usar Settings.tsx)
+router.get('/ads/connect', requireSession, (req, res) => {
+  req.query.product = PRODUCT_ADS;
+  return startConnect(req, res);
+});
+router.get('/ga/connect', requireSession, (req, res) => {
+  req.query.product = PRODUCT_GA4;
+  return startConnect(req, res);
+});
+
+// ✅ compat con tus rutas previas (por si algo ya las usa)
+router.get('/connect/ads', requireSession, (req, res) => {
+  req.query.product = PRODUCT_ADS;
+  return startConnect(req, res);
+});
+router.get('/connect/ga4', requireSession, (req, res) => {
+  req.query.product = PRODUCT_GA4;
+  return startConnect(req, res);
+});
 
 /* =========================================================
- *  Callback compartido (connect / ads)
+ *  Callback compartido
  * =======================================================*/
 async function googleCallbackHandler(req, res) {
   try {
     if (req.query.error) {
-      return res.redirect(`/onboarding?google=error&reason=${encodeURIComponent(req.query.error)}`);
+      emitEventBestEffort(req, 'google_connect_failed', {
+        stage: 'oauth_error',
+        error: String(req.query.error),
+      });
+      return res.redirect(`/dashboard/?google=error&reason=${encodeURIComponent(req.query.error)}`);
     }
 
     const code = req.query.code;
     if (!code) {
-      return res.redirect('/onboarding?google=error&reason=no_code');
+      emitEventBestEffort(req, 'google_connect_failed', { stage: 'missing_code' });
+      return res.redirect('/dashboard/?google=error&reason=no_code');
     }
 
-    const client = oauth();
+    // ============================
+    // ✅ Resolver "product" desde state ANTES de pedir tokens
+    // ============================
+    let returnTo = '/dashboard/';
+    let productFromState = null;
+
+    if (req.query.state) {
+      try {
+        const s = JSON.parse(req.query.state);
+        if (s && typeof s.returnTo === 'string' && s.returnTo.trim()) {
+          const safe = sanitizeReturnTo(s.returnTo);
+          if (safe) returnTo = safe;
+        }
+        if (s && typeof s.product === 'string') {
+          const p = String(s.product).toLowerCase();
+          if (p === PRODUCT_ADS || p === PRODUCT_GA4) productFromState = p;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    // ✅ client correcto (Ads o GA4) para canjear el code
+    const client = oauthForProduct(productFromState || null);
+
     const { tokens } = await client.getToken(code);
     client.setCredentials(tokens);
 
@@ -368,7 +581,8 @@ async function googleCallbackHandler(req, res) {
     const grantedScopes = normalizeScopes(tokens.scope || []);
 
     if (!accessToken) {
-      return res.redirect('/onboarding?google=error&reason=no_access_token');
+      emitEventBestEffort(req, 'google_connect_failed', { stage: 'missing_access_token' });
+      return res.redirect('/dashboard/?google=error&reason=no_access_token');
     }
 
     // Perfil básico de Google (email)
@@ -377,8 +591,28 @@ async function googleCallbackHandler(req, res) {
 
     const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
     let ga = await GoogleAccount.findOne(q).select(
-      '+refreshToken scope selectedCustomerIds selectedPropertyIds selectedGaPropertyId'
-    );
+  [
+    '+refreshToken',
+    '+accessToken',
+    '+scope',
+
+    // ✅ GA4 tokens/scopes separados (si tu modelo los tiene select:false)
+    '+ga4RefreshToken',
+    '+ga4AccessToken',
+    '+ga4Scope',
+
+    'selectedCustomerIds',
+    'selectedPropertyIds',
+    'selectedGaPropertyId',
+    'defaultCustomerId',
+    'defaultPropertyId',
+    'customers',
+    'ad_accounts',
+    'gaProperties',
+    'connectedAds',
+    'connectedGa4',
+  ].join(' ')
+);
 
     if (!ga) {
       ga = new GoogleAccount({ user: req.user._id, userId: req.user._id });
@@ -387,26 +621,64 @@ async function googleCallbackHandler(req, res) {
     ga.email = profile.email || ga.email || null;
 
     // Tokens
-    if (refreshToken) {
-      ga.refreshToken = refreshToken;
-    } else if (!ga.refreshToken && tokens.refresh_token) {
-      ga.refreshToken = tokens.refresh_token;
-    }
+    if (productFromState === PRODUCT_GA4) {
+  // ✅ Guardar en GA4 separado
+  if (refreshToken) ga.ga4RefreshToken = refreshToken;
+  else if (!ga.ga4RefreshToken && tokens.refresh_token) ga.ga4RefreshToken = tokens.refresh_token;
 
-    ga.accessToken = accessToken;
-    ga.expiresAt = expiresAt;
+  ga.ga4AccessToken = accessToken;
+  ga.ga4ExpiresAt = expiresAt;
 
-    // Scopes acumulados
-    const existingScopes = Array.isArray(ga.scope) ? ga.scope : [];
-    ga.scope = normalizeScopes([...existingScopes, ...grantedScopes]);
+  const existing = Array.isArray(ga.ga4Scope) ? ga.ga4Scope : [];
+  ga.ga4Scope = normalizeScopes([...existing, ...grantedScopes]);
+
+  ga.connectedGa4 = true;
+} else {
+  // ✅ Ads (default)
+  if (refreshToken) ga.refreshToken = refreshToken;
+  else if (!ga.refreshToken && tokens.refresh_token) ga.refreshToken = tokens.refresh_token;
+
+  ga.accessToken = accessToken;
+  ga.expiresAt = expiresAt;
+
+  const existing = Array.isArray(ga.scope) ? ga.scope : [];
+  ga.scope = normalizeScopes([...existing, ...grantedScopes]);
+
+  ga.connectedAds = true;
+}
 
     ga.updatedAt = new Date();
     await ga.save();
 
+    const adsScopesNow = Array.isArray(ga.scope) ? ga.scope : [];
+const ga4ScopesNow = Array.isArray(ga.ga4Scope) ? ga.ga4Scope : [];
+
+emitEventBestEffort(req, 'google_connect_completed', {
+  product: productFromState || 'both',
+
+  // tokens por producto
+  hasAdsRefreshToken: !!ga.refreshToken,
+  hasAdsAccessToken: !!ga.accessToken,
+  hasGa4RefreshToken: !!ga.ga4RefreshToken,
+  hasGa4AccessToken: !!ga.ga4AccessToken,
+
+  // scopes por producto
+  adsScopesCount: adsScopesNow.length,
+  ga4ScopesCount: ga4ScopesNow.length,
+  adsScopeOk: hasAdwordsScope(adsScopesNow),
+  ga4ScopeOk: hasGaScope(ga4ScopesNow),
+
+  connectedAds: !!ga.connectedAds,
+  connectedGa4: !!ga.connectedGa4,
+});
+
+    const shouldDoAds = productFromState === PRODUCT_ADS || (!productFromState);
+    const shouldDoGa4 = productFromState === PRODUCT_GA4 || (!productFromState);
+
     // ============================
-    // 1) Descubrir cuentas de Ads
+    // 1) Descubrir cuentas de Ads (solo si aplica)
     // ============================
-    if (hasAdwordsScope(ga.scope) && ga.refreshToken) {
+    if (shouldDoAds && hasAdwordsScope(ga.scope) && ga.refreshToken) {
       try {
         const enriched = await discoverAndEnrich(ga);
 
@@ -435,7 +707,6 @@ async function googleCallbackHandler(req, res) {
 
         if (defaultCustomerId) ga.defaultCustomerId = normId(defaultCustomerId);
 
-        // ✅ NO borres selección si el usuario ya eligió antes.
         const available = new Set(customers.map((c) => normId(c.id)).filter(Boolean));
         const adsCount = customers.length;
 
@@ -452,12 +723,16 @@ async function googleCallbackHandler(req, res) {
               },
             }
           );
+
+          emitEventBestEffort(req, 'google_ads_selection_autoset', {
+            selectedCustomerIds: [onlyId],
+            reason: 'single_account',
+          });
         } else if (adsCount > 1) {
           const kept = filterSelectedByAvailable(ga.selectedCustomerIds, available);
-          ga.selectedCustomerIds = kept; // si vacío => selector
+          ga.selectedCustomerIds = kept;
         }
 
-        // default dentro de selección si hay
         if (Array.isArray(ga.selectedCustomerIds) && ga.selectedCustomerIds.length) {
           const d = normId(ga.defaultCustomerId || '');
           if (!d || !ga.selectedCustomerIds.includes(d)) {
@@ -469,6 +744,13 @@ async function googleCallbackHandler(req, res) {
         ga.lastAdsDiscoveryLog = null;
         ga.updatedAt = new Date();
         await ga.save();
+
+        emitEventBestEffort(req, 'google_ads_discovered', {
+          customersCount: customers.length,
+          adAccountsCount: ad_accounts.length,
+          selectedCount: Array.isArray(ga.selectedCustomerIds) ? ga.selectedCustomerIds.length : 0,
+          hasDefaultCustomerId: !!ga.defaultCustomerId,
+        });
 
         try {
           const st = await selfTest(ga);
@@ -482,18 +764,26 @@ async function googleCallbackHandler(req, res) {
         ga.lastAdsDiscoveryError = String(reason).slice(0, 4000);
         ga.updatedAt = new Date();
         await ga.save();
+
+        emitEventBestEffort(req, 'google_ads_discovery_failed', {
+          error: String(e?.message || e),
+        });
       }
     } else {
-      if (!hasAdwordsScope(ga.scope)) {
+      if (shouldDoAds && !hasAdwordsScope(ga.scope)) {
         ga.lastAdsDiscoveryError = 'ADS_SCOPE_MISSING';
         await ga.save();
+        emitEventBestEffort(req, 'google_ads_scope_missing', { scopes: ga.scope || [] });
       }
     }
 
     // ============================
-    // 2) Listar properties GA4
+    // 2) Listar properties GA4 (solo si aplica)
     // ============================
-    if (hasGaScope(ga.scope) && ga.refreshToken) {
+     const ga4Scopes = Array.isArray(ga.ga4Scope) ? ga.ga4Scope : [];
+     const ga4HasScope = hasGaScope(ga4Scopes) || hasGaScope(ga.scope);
+     const ga4HasRefresh = !!(ga.ga4RefreshToken || ga.refreshToken);
+     if (shouldDoGa4 && ga4HasScope && ga4HasRefresh) {
       try {
         const propsRaw = await fetchGA4Properties(client);
 
@@ -537,6 +827,11 @@ async function googleCallbackHandler(req, res) {
                 },
               }
             );
+
+            emitEventBestEffort(req, 'ga4_selection_autoset', {
+              selectedPropertyIds: [onlyPid],
+              reason: 'single_property',
+            });
           } else if (props.length > 1) {
             let kept = filterSelectedPropsByAvailable(ga.selectedPropertyIds, availableProps);
 
@@ -559,13 +854,24 @@ async function googleCallbackHandler(req, res) {
 
           ga.updatedAt = new Date();
           await ga.save();
+
+          emitEventBestEffort(req, 'ga4_properties_discovered', {
+            propertiesCount: props.length,
+            selectedCount: Array.isArray(ga.selectedPropertyIds) ? ga.selectedPropertyIds.length : 0,
+            hasDefaultPropertyId: !!ga.defaultPropertyId,
+          });
         }
       } catch (e) {
         console.warn('⚠️ GA4 properties listing failed:', e?.response?.data || e.message);
+        emitEventBestEffort(req, 'ga4_properties_discovery_failed', { error: String(e?.message || e) });
+      }
+    } else {
+      if (shouldDoGa4 && !hasGaScope(ga.scope)) {
+        emitEventBestEffort(req, 'ga4_scope_missing', { scopes: ga.scope || [] });
       }
     }
 
-    // Marcar usuario como conectado a Google
+    // Marcar usuario como conectado a Google (global)
     await User.findByIdAndUpdate(req.user._id, {
       $set: { googleConnected: true },
     });
@@ -611,30 +917,45 @@ async function googleCallbackHandler(req, res) {
     const gaEffectiveSel = selGa.length ? selGa : legacyGa ? [legacyGa] : [];
 
     const needsSelector =
-      (adsCount > 1 && selAds.length === 0) ||
-      (gaCount > 1 && gaEffectiveSel.length === 0);
+      (shouldDoAds && adsCount > 1 && selAds.length === 0) ||
+      (shouldDoGa4 && gaCount > 1 && gaEffectiveSel.length === 0);
 
-    // ReturnTo desde state (sanitizado)
-    let returnTo = '/onboarding?google=connected';
-    if (req.query.state) {
-      try {
-        const s = JSON.parse(req.query.state);
-        if (s && typeof s.returnTo === 'string' && s.returnTo.trim()) {
-          const safe = sanitizeReturnTo(s.returnTo);
-          if (safe) returnTo = safe;
-        }
-      } catch {
-        // ignore
-      }
-    }
+    // ✅ Siempre marcamos que venimos de OAuth Google
+// (Settings.tsx usa esto para auto-abrir el selector/motor)
+returnTo = appendQuery(returnTo, 'google', 'ok');
 
-    const sep = returnTo.includes('?') ? '&' : '?';
-    returnTo = `${returnTo}${sep}selector=${needsSelector ? '1' : '0'}`;
+// ✅ Tab fijo si cae en settings
+// (sanitizeReturnTo ya lo intenta, pero esto blinda)
+if (String(returnTo).startsWith('/dashboard/settings')) {
+  returnTo = appendQuery(returnTo, 'tab', 'integrations');
+}
 
-    return res.redirect(returnTo);
+// ✅ Selector calculado (solo si hace falta)
+returnTo = appendQuery(returnTo, 'selector', needsSelector ? '1' : '0');
+
+// ✅ Producto para que el front abra el modal solo del producto conectado
+if (productFromState) {
+  returnTo = appendQuery(returnTo, 'product', String(productFromState));
+}
+
+emitEventBestEffort(req, 'google_connect_result', {
+  needsSelector,
+  product: productFromState || 'both',
+  adsCount,
+  ga4Count: gaCount,
+  selectedAdsCount: selAds.length,
+  selectedGa4Count: gaEffectiveSel.length,
+  returnTo,
+});
+
+return res.redirect(returnTo);
   } catch (err) {
     console.error('[googleConnect] callback error:', err?.response?.data || err.message || err);
-    return res.redirect('/onboarding?google=error&reason=callback_exception');
+    emitEventBestEffort(req, 'google_connect_failed', {
+      stage: 'callback_exception',
+      error: String(err?.message || err),
+    });
+    return res.redirect('/dashboard/?google=error&reason=callback_exception');
   }
 }
 
@@ -642,6 +963,8 @@ async function googleCallbackHandler(req, res) {
 router.get('/callback', requireSession, googleCallbackHandler);
 router.get('/connect/callback', requireSession, googleCallbackHandler);
 router.get('/ads/callback', requireSession, googleCallbackHandler);
+router.get('/ga/callback', requireSession, googleCallbackHandler);
+router.get('/ga4/callback', requireSession, googleCallbackHandler);
 
 /* =========================
  * ✅ PREVIEW (auditorías a borrar)
@@ -670,6 +993,50 @@ router.get('/disconnect/preview', requireSession, async (req, res) => {
 });
 
 /* =========================
+ * ✅ PREVIEW Ads-only
+ * GET /auth/google/ads/disconnect/preview
+ * ========================= */
+router.get('/ads/disconnect/preview', requireSession, async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
+
+    const googleAdsCount = await Audit.countDocuments({ userId, type: 'google' });
+
+    return res.json({
+      ok: true,
+      auditsToDelete: googleAdsCount,
+      breakdown: { googleAds: googleAdsCount },
+    });
+  } catch (e) {
+    console.error('[googleConnect] ads disconnect preview error:', e);
+    return res.status(500).json({ ok: false, error: 'PREVIEW_ERROR' });
+  }
+});
+
+/* =========================
+ * ✅ PREVIEW GA4-only
+ * GET /auth/google/ga/disconnect/preview
+ * ========================= */
+router.get('/ga/disconnect/preview', requireSession, async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
+
+    const ga4Count = await Audit.countDocuments({ userId, type: { $in: ['ga4', 'ga'] } });
+
+    return res.json({
+      ok: true,
+      auditsToDelete: ga4Count,
+      breakdown: { ga4: ga4Count },
+    });
+  } catch (e) {
+    console.error('[googleConnect] ga disconnect preview error:', e);
+    return res.status(500).json({ ok: false, error: 'PREVIEW_ERROR' });
+  }
+});
+
+/* =========================
  * Estado de conexión
  * ========================= */
 router.get('/status', requireSession, async (req, res) => {
@@ -680,14 +1047,16 @@ router.get('/status', requireSession, async (req, res) => {
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
       .select(
-        '+refreshToken +accessToken objective defaultCustomerId ' +
-        'customers ad_accounts scope gaProperties defaultPropertyId ' +
-        'lastAdsDiscoveryError lastAdsDiscoveryLog expiresAt ' +
-        'selectedCustomerIds selectedGaPropertyId selectedPropertyIds'
-      )
+  '+refreshToken +accessToken +ga4RefreshToken +ga4AccessToken ' +
+  'objective defaultCustomerId ' +
+  'customers ad_accounts scope ga4Scope gaProperties defaultPropertyId ' +
+  'lastAdsDiscoveryError lastAdsDiscoveryLog expiresAt ga4ExpiresAt ' +
+  'selectedCustomerIds selectedGaPropertyId selectedPropertyIds ' +
+  'connectedAds connectedGa4'
+)
       .lean();
 
-    const hasTokens = !!(ga?.refreshToken || ga?.accessToken);
+    const hasTokens = !!(ga?.refreshToken || ga?.accessToken || ga?.ga4RefreshToken || ga?.ga4AccessToken);
     const customers = Array.isArray(ga?.customers) ? ga.customers : [];
     const adAccounts = Array.isArray(ga?.ad_accounts) ? ga.ad_accounts : [];
     const gaProperties = Array.isArray(ga?.gaProperties) ? ga.gaProperties : [];
@@ -698,8 +1067,14 @@ router.get('/status', requireSession, async (req, res) => {
     const defaultCustomerId = previous || firstEnabledId || fallbackDefault;
 
     const scopesArr = Array.isArray(ga?.scope) ? ga.scope : [];
+    const ga4ScopesArr = Array.isArray(ga?.ga4Scope) ? ga.ga4Scope : [];
+    const gaScopeOk = hasGaScope(ga4ScopesArr) || hasGaScope(scopesArr);
     const adsScopeOk = hasAdwordsScope(scopesArr);
-    const gaScopeOk = hasGaScope(scopesArr);
+    
+
+    // ✅ Flags explícitos por producto (si no existen aún, fallback a scope)
+    const connectedAds = typeof ga?.connectedAds === 'boolean' ? ga.connectedAds : !!adsScopeOk;
+    const connectedGa4 = typeof ga?.connectedGa4 === 'boolean' ? ga.connectedGa4 : !!gaScopeOk;
 
     const selectedCustomerIds = Array.isArray(ga?.selectedCustomerIds)
       ? ga.selectedCustomerIds.map(normId).filter(Boolean)
@@ -732,6 +1107,10 @@ router.get('/status', requireSession, async (req, res) => {
     res.json({
       ok: true,
       connected: !!u?.googleConnected && hasTokens,
+
+      // ✅ Conectividad por producto (clave para front)
+      connectedAds,
+      connectedGa4,
 
       // Ads
       hasCustomers: customers.length > 0,
@@ -784,6 +1163,8 @@ router.post('/objective', requireSession, express.json(), async (req, res) => {
       { upsert: true }
     );
 
+    emitEventBestEffort(req, 'google_objective_saved', { objective: val });
+
     res.json({ ok: true });
   } catch (err) {
     console.error('[googleConnect] save objective error:', err);
@@ -824,7 +1205,8 @@ router.get('/accounts', requireSession, async (req, res) => {
         ok: false,
         error: 'ADS_SCOPE_MISSING',
         message: 'Necesitamos permiso de Google Ads para listar tus cuentas.',
-        connectUrl: '/auth/google/connect?returnTo=/onboarding?google=connected',
+        // ✅ apunta a la ruta nueva explícita Ads
+        connectUrl: '/auth/google/ads/connect?returnTo=/dashboard/settings?tab=integrations',
       });
     }
 
@@ -874,7 +1256,7 @@ router.get('/accounts', requireSession, async (req, res) => {
         fullGa.lastAdsDiscoveryError = null;
         fullGa.lastAdsDiscoveryLog = null;
 
-        const avail = new Set(customers.map((c) => normId(c.id)).filter(Boolean));
+        const avail = new Set(customers.map((c) => normId(c?.id)).filter(Boolean));
         const kept = filterSelectedByAvailable(fullGa.selectedCustomerIds, avail);
         fullGa.selectedCustomerIds = kept;
 
@@ -971,6 +1353,12 @@ router.post('/accounts/selection', requireSession, express.json(), async (req, r
       }
     );
 
+    emitEventBestEffort(req, 'google_ads_selection_saved', {
+      selectedCount: selected.length,
+      selectedCustomerIds: selected,
+      defaultCustomerId: nextDefault,
+    });
+
     return res.json({ ok: true, selectedCustomerIds: selected, defaultCustomerId: nextDefault });
   } catch (e) {
     console.error('[googleConnect] accounts/selection error:', e);
@@ -991,6 +1379,8 @@ router.post('/default-customer', requireSession, express.json(), async (req, res
       { $set: { defaultCustomerId: cid, updatedAt: new Date() } },
       { upsert: true }
     );
+
+    emitEventBestEffort(req, 'google_ads_default_customer_saved', { defaultCustomerId: cid });
 
     res.json({ ok: true, defaultCustomerId: cid });
   } catch (err) {
@@ -1013,6 +1403,8 @@ router.post('/default-property', requireSession, express.json(), async (req, res
       { upsert: true }
     );
 
+    emitEventBestEffort(req, 'ga4_default_property_saved', { defaultPropertyId: pid });
+
     res.json({ ok: true, defaultPropertyId: pid });
   } catch (err) {
     console.error('[googleConnect] default-property error:', err);
@@ -1021,7 +1413,7 @@ router.post('/default-property', requireSession, express.json(), async (req, res
 });
 
 /* =========================
- * ✅ (Opcional) Guardar selección GA4 aquí también
+ * ✅ Guardar selección GA4
  * Body: { propertyIds: ["properties/123","123"] }
  * ========================= */
 router.post('/ga4/selection', requireSession, express.json(), async (req, res) => {
@@ -1075,12 +1467,280 @@ router.post('/ga4/selection', requireSession, express.json(), async (req, res) =
       }
     );
 
+    emitEventBestEffort(req, 'ga4_selection_saved', {
+      selectedCount: selected.length,
+      selectedPropertyIds: selected,
+      defaultPropertyId: nextDefault,
+    });
+
     return res.json({ ok: true, selectedPropertyIds: selected, defaultPropertyId: nextDefault });
   } catch (e) {
     console.error('[googleConnect] ga4/selection error:', e);
     return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
   }
 });
+
+/* =========================
+ * ✅ Desconectar SOLO Google Ads
+ * POST /auth/google/ads/disconnect
+ * ========================= */
+router.post('/ads/disconnect', requireSession, express.json(), async (req, res) => {
+  try {
+    const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
+    const userId = req.user._id;
+
+    // auditorías Ads antes
+    const beforeGoogle = await Audit.countDocuments({ userId, type: 'google' });
+
+    const ga = await GoogleAccount.findOne(q)
+      .select('+refreshToken +accessToken +ga4RefreshToken +ga4AccessToken connectedAds connectedGa4')
+      .lean();
+
+    // revoke best-effort SOLO con token ads (no uses ga4 token aquí)
+    const revoke = await revokeGoogleTokenBestEffort({
+      refreshToken: ga?.refreshToken || null,
+      accessToken: ga?.accessToken || null,
+    });
+
+    // limpiar Ads (sin tocar GA4)
+    await GoogleAccount.updateOne(
+      q,
+      { $set: { ...buildUnsetForAdsOnly(), updatedAt: new Date() } },
+      { upsert: false }
+    );
+
+    // borrar auditorías SOLO Ads
+    let auditsDeleteOk = true;
+    let auditsDeleteError = null;
+
+    try {
+      await deleteAuditsForUserSources(userId, ['google']);
+    } catch (e) {
+      auditsDeleteOk = false;
+      auditsDeleteError = e?.message || 'AUDIT_DELETE_FAILED';
+      console.warn('[googleConnect] ads auditCleanup failed (best-effort):', auditsDeleteError);
+    }
+
+    try {
+      await Audit.deleteMany({ userId, type: 'google' });
+    } catch (e) {
+      auditsDeleteOk = false;
+      auditsDeleteError = auditsDeleteError || (e?.message || 'AUDIT_DELETE_FALLBACK_FAILED');
+      console.warn('[googleConnect] ads audit delete fallback failed:', e?.message || e);
+    }
+
+    const afterGoogle = await Audit.countDocuments({ userId, type: 'google' });
+    const auditsDeleted = Math.max(0, beforeGoogle - afterGoogle);
+
+    // refrescar doc para decidir googleConnected
+    const fresh = await GoogleAccount.findOne(q)
+      .select('+refreshToken +accessToken +ga4RefreshToken +ga4AccessToken connectedAds connectedGa4')
+      .lean();
+
+    const googleConnected = computeGoogleConnectedAfter(fresh);
+
+    // actualizar User: solo limpiar Ads prefs/selección (NO GA4)
+    await User.updateOne(
+      { _id: userId },
+      {
+        $set: {
+          googleConnected,
+          selectedGoogleAccounts: [],
+          'preferences.googleAds.auditAccountIds': [],
+        },
+      }
+    );
+
+    emitEventBestEffort(req, 'google_ads_disconnected', {
+      revokeAttempted: revoke.attempted,
+      revokeOk: revoke.ok,
+      revokeVia: revoke.via || null,
+      auditsDeleted,
+      auditsDeleteOk,
+      auditsDeleteError,
+      googleConnectedAfter: googleConnected,
+    });
+
+    return res.json({
+      ok: true,
+      disconnected: true,
+      product: 'ads',
+      googleConnectedAfter: googleConnected,
+      revokeAttempted: revoke.attempted,
+      revokeOk: revoke.ok,
+      revokeVia: revoke.via || null,
+      auditsDeleted,
+      auditsDeleteOk,
+      auditsDeleteError,
+    });
+  } catch (err) {
+    console.error('[googleConnect] ads disconnect error:', err?.response?.data || err?.message || err);
+    emitEventBestEffort(req, 'google_ads_disconnect_failed', { error: String(err?.message || err) });
+    return res.status(500).json({ ok: false, error: 'DISCONNECT_ERROR' });
+  }
+});
+
+/* =========================
+ * ✅ Desconectar SOLO GA4
+ * POST /auth/google/ga/disconnect
+ * ========================= */
+router.post('/ga/disconnect', requireSession, express.json(), async (req, res) => {
+  try {
+    const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
+    const userId = req.user._id;
+
+    const beforeGA4 = await Audit.countDocuments({ userId, type: { $in: ['ga4', 'ga'] } });
+
+    const ga = await GoogleAccount.findOne(q)
+      .select('+refreshToken +accessToken +ga4RefreshToken +ga4AccessToken connectedAds connectedGa4')
+      .lean();
+
+    // revoke best-effort SOLO GA4 token (si no hay ga4 token, no revokes con ads)
+    const revoke = await revokeGoogleTokenBestEffort({
+      refreshToken: ga?.ga4RefreshToken || null,
+      accessToken: ga?.ga4AccessToken || null,
+    });
+
+    // limpiar GA4 (sin tocar Ads)
+    await GoogleAccount.updateOne(
+      q,
+      { $set: { ...buildUnsetForGa4Only(), updatedAt: new Date() } },
+      { upsert: false }
+    );
+
+    // borrar auditorías SOLO GA4
+    let auditsDeleteOk = true;
+    let auditsDeleteError = null;
+
+    try {
+      await deleteAuditsForUserSources(userId, ['ga4', 'ga']);
+    } catch (e) {
+      auditsDeleteOk = false;
+      auditsDeleteError = e?.message || 'AUDIT_DELETE_FAILED';
+      console.warn('[googleConnect] ga4 auditCleanup failed (best-effort):', auditsDeleteError);
+    }
+
+    try {
+      await Audit.deleteMany({ userId, type: { $in: ['ga4', 'ga'] } });
+    } catch (e) {
+      auditsDeleteOk = false;
+      auditsDeleteError = auditsDeleteError || (e?.message || 'AUDIT_DELETE_FALLBACK_FAILED');
+      console.warn('[googleConnect] ga4 audit delete fallback failed:', e?.message || e);
+    }
+
+    const afterGA4 = await Audit.countDocuments({ userId, type: { $in: ['ga4', 'ga'] } });
+    const auditsDeleted = Math.max(0, beforeGA4 - afterGA4);
+
+    // refrescar doc para decidir googleConnected
+    const fresh = await GoogleAccount.findOne(q)
+      .select('+refreshToken +accessToken +ga4RefreshToken +ga4AccessToken connectedAds connectedGa4')
+      .lean();
+
+    const googleConnected = computeGoogleConnectedAfter(fresh);
+
+    // actualizar User: solo limpiar GA4 prefs/selección (NO Ads)
+    await User.updateOne(
+      { _id: userId },
+      {
+        $set: {
+          googleConnected,
+          selectedGAProperties: [],
+          'preferences.googleAnalytics.auditPropertyIds': [],
+        },
+      }
+    );
+
+    emitEventBestEffort(req, 'ga4_disconnected', {
+      revokeAttempted: revoke.attempted,
+      revokeOk: revoke.ok,
+      revokeVia: revoke.via || null,
+      auditsDeleted,
+      auditsDeleteOk,
+      auditsDeleteError,
+      googleConnectedAfter: googleConnected,
+    });
+
+    return res.json({
+      ok: true,
+      disconnected: true,
+      product: 'ga4',
+      googleConnectedAfter: googleConnected,
+      revokeAttempted: revoke.attempted,
+      revokeOk: revoke.ok,
+      revokeVia: revoke.via || null,
+      auditsDeleted,
+      auditsDeleteOk,
+      auditsDeleteError,
+    });
+  } catch (err) {
+    console.error('[googleConnect] ga4 disconnect error:', err?.response?.data || err?.message || err);
+    emitEventBestEffort(req, 'ga4_disconnect_failed', { error: String(err?.message || err) });
+    return res.status(500).json({ ok: false, error: 'DISCONNECT_ERROR' });
+  }
+});
+
+/* =========================
+ * ✅ Helpers: detectar si queda conectado algo de Google
+ * ========================= */
+function isTruthyToken(x) {
+  return !!(x && String(x).trim());
+}
+
+function computeGoogleConnectedAfter(gaDoc) {
+  // Ads conectado si flag true o si hay tokens ads (fallback)
+  const ads = !!gaDoc?.connectedAds || isTruthyToken(gaDoc?.refreshToken) || isTruthyToken(gaDoc?.accessToken);
+  // GA4 conectado si flag true o si hay tokens ga4 (fallback)
+  const ga4 = !!gaDoc?.connectedGa4 || isTruthyToken(gaDoc?.ga4RefreshToken) || isTruthyToken(gaDoc?.ga4AccessToken);
+  return ads || ga4;
+}
+
+/* =========================
+ * ✅ Helpers: limpiar por producto (Ads vs GA4)
+ * ========================= */
+function buildUnsetForAdsOnly() {
+  return {
+    // tokens ads
+    accessToken: null,
+    refreshToken: null,
+    expiresAt: null,
+    scope: [],
+
+    // datos ads
+    customers: [],
+    ad_accounts: [],
+    defaultCustomerId: null,
+    selectedCustomerIds: [],
+    managerCustomerId: null,
+    loginCustomerId: null,
+
+    // flags
+    connectedAds: false,
+
+    // debug ads
+    lastAdsDiscoveryError: null,
+    lastAdsDiscoveryLog: null,
+  };
+}
+
+function buildUnsetForGa4Only() {
+  return {
+    // tokens ga4
+    ga4AccessToken: null,
+    ga4RefreshToken: null,
+    ga4ExpiresAt: null,
+    ga4Scope: [],
+    ga4ConnectedAt: null,
+
+    // datos ga4
+    gaProperties: [],
+    defaultPropertyId: null,
+    selectedPropertyIds: [],
+    selectedGaPropertyId: null,
+
+    // flags
+    connectedGa4: false,
+  };
+}
 
 /* =========================
  * ✅ Desconectar Google (Ads + GA4)
@@ -1091,30 +1751,35 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
     const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
     const userId = req.user._id;
 
-    // Conteo antes (para calcular deletedCount real aunque auditCleanup use keys distintas)
     const beforeGoogle = await Audit.countDocuments({ userId, type: 'google' });
     const beforeGA4 = await Audit.countDocuments({ userId, type: { $in: ['ga4', 'ga'] } });
     const beforeTotal = beforeGoogle + beforeGA4;
 
-    // Traemos tokens (select:false) para poder revocar best-effort
-    const ga = await GoogleAccount.findOne(q).select('+refreshToken +accessToken').lean();
+    const ga = await GoogleAccount.findOne(q)
+  .select('+refreshToken +accessToken +ga4RefreshToken +ga4AccessToken')
+  .lean();
 
-    const refreshToken = ga?.refreshToken || null;
-    const accessToken  = ga?.accessToken || null;
+const refreshToken = ga?.refreshToken || ga?.ga4RefreshToken || null;
+const accessToken  = ga?.accessToken  || ga?.ga4AccessToken  || null;
 
-    // 1) Revocar token (best-effort)
     const revoke = await revokeGoogleTokenBestEffort({ refreshToken, accessToken });
 
-    // 2) Limpiar GoogleAccount (canónico)
     await GoogleAccount.updateOne(
       q,
       {
         $set: {
           accessToken: null,
-          refreshToken: null,
-          expiresAt: null,
+refreshToken: null,
+expiresAt: null,
 
-          scope: [],
+scope: [],
+
+// ✅ GA4 tokens/scopes también
+ga4AccessToken: null,
+ga4RefreshToken: null,
+ga4ExpiresAt: null,
+ga4Scope: [],
+ga4ConnectedAt: null,
 
           // Ads
           customers: [],
@@ -1130,7 +1795,10 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
           selectedPropertyIds: [],
           selectedGaPropertyId: null,
 
-          // misc / debug
+          // ✅ flags por producto
+          connectedAds: false,
+          connectedGa4: false,
+
           lastAdsDiscoveryError: null,
           lastAdsDiscoveryLog: null,
 
@@ -1140,33 +1808,25 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
       { upsert: false }
     );
 
-    // 3) Limpiar User (flags + selecciones)
-    // ⚠️ NO tocamos googleObjective para no borrar preferencias del usuario.
     await User.updateOne(
       { _id: userId },
       {
         $set: {
           googleConnected: false,
 
-          // legacy selections
           selectedGoogleAccounts: [],
           selectedGAProperties: [],
 
-          // preferences
           'preferences.googleAds.auditAccountIds': [],
           'preferences.googleAnalytics.auditPropertyIds': [],
         },
       }
     );
 
-    // 4) ✅ BORRAR AUDITORÍAS (ALINEADO A Audit.js)
     let auditsDeleteOk = true;
     let auditsDeleteError = null;
 
-    // Primero intentamos tu servicio (best-effort)
     try {
-      // Si tu auditCleanup ya lo ajustaste a types, esto funcionará.
-      // Si usa "keys" internas, igual no rompe, y abajo hacemos fallback por type.
       await deleteAuditsForUserSources(userId, ['google', 'ga4', 'ga']);
     } catch (e) {
       auditsDeleteOk = false;
@@ -1174,8 +1834,6 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
       console.warn('[googleConnect] auditCleanup failed (best-effort):', auditsDeleteError);
     }
 
-    // Fallback: aseguramos borrado por type (sin depender del helper)
-    // (esto deja el sistema realmente E2E con tu Audit.js)
     try {
       await Audit.deleteMany({ userId, type: { $in: ['google', 'ga4', 'ga'] } });
     } catch (e) {
@@ -1184,18 +1842,27 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
       console.warn('[googleConnect] audit delete fallback failed:', e?.message || e);
     }
 
-    // Conteo después para deletedCount real
     const afterGoogle = await Audit.countDocuments({ userId, type: 'google' });
     const afterGA4 = await Audit.countDocuments({ userId, type: { $in: ['ga4', 'ga'] } });
     const afterTotal = afterGoogle + afterGA4;
 
     const auditsDeleted = Math.max(0, beforeTotal - afterTotal);
 
+    emitEventBestEffort(req, 'google_disconnected', {
+      revokeAttempted: revoke.attempted,
+      revokeOk: revoke.ok,
+      revokeVia: revoke.via || null,
+      auditsDeleted,
+      auditsDeleteOk,
+      auditsDeleteError,
+    });
+
     return res.json({
       ok: true,
       disconnected: true,
       revokeAttempted: revoke.attempted,
       revokeOk: revoke.ok,
+      revokeVia: revoke.via || null,
 
       auditsDeleted,
       auditsDeleteOk,
@@ -1203,6 +1870,7 @@ router.post('/disconnect', requireSession, express.json(), async (req, res) => {
     });
   } catch (err) {
     console.error('[googleConnect] disconnect error:', err?.response?.data || err?.message || err);
+    emitEventBestEffort(req, 'google_disconnect_failed', { error: String(err?.message || err) });
     return res.status(500).json({ ok: false, error: 'DISCONNECT_ERROR' });
   }
 });

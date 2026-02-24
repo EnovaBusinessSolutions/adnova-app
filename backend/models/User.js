@@ -24,7 +24,7 @@ const normScopes = (v) => {
   return Array.from(
     new Set(
       arr
-        .map(x => String(x || '').trim().toLowerCase())
+        .map((x) => String(x || '').trim().toLowerCase())
         .filter(Boolean)
     )
   );
@@ -49,7 +49,7 @@ const subscriptionSchema = new mongoose.Schema(
   {
     id: { type: String }, // subscription.id de Stripe
     status: { type: String, default: 'inactive' }, // incomplete | active | trialing | ...
-    priceId: { type: String },                     // price_xxx
+    priceId: { type: String }, // price_xxx
     plan: {
       type: String,
       enum: ['emprendedor', 'crecimiento', 'pro', 'enterprise', 'gratis'],
@@ -94,6 +94,21 @@ const userSchema = new mongoose.Schema(
     emailVerified: { type: Boolean, default: false, index: true },
     verifyEmailTokenHash: { type: String, index: true },
     verifyEmailExpires: { type: Date, index: true },
+
+    /**
+     * ============================
+     * ✅ Analítica (conveniencia)
+     * ============================
+     * No reemplaza AnalyticsEvent.
+     * Solo sirve como cache/soporte rápido para CRM.
+     */
+    lastLoginAt: { type: Date, default: null, index: true },
+    lastLoginMethod: {
+      type: String,
+      enum: ['google', 'password', 'magic_link', 'other', null],
+      default: null,
+      index: true,
+    },
 
     // Shopify
     shop: { type: String },
@@ -218,8 +233,10 @@ userSchema.pre('save', function (next) {
 
   // Asegura normalización de GA4 tanto en preferences como en legacy
   if (this.isModified('preferences') && this.preferences?.googleAnalytics?.auditPropertyIds) {
-    this.preferences.googleAnalytics.auditPropertyIds =
-      normalizeArray(this.preferences.googleAnalytics.auditPropertyIds, normGaPropertyId);
+    this.preferences.googleAnalytics.auditPropertyIds = normalizeArray(
+      this.preferences.googleAnalytics.auditPropertyIds,
+      normGaPropertyId
+    );
   }
   if (this.isModified('selectedGAProperties')) {
     this.selectedGAProperties = normalizeArray(this.selectedGAProperties, normGaPropertyId);
