@@ -993,6 +993,50 @@ router.get('/disconnect/preview', requireSession, async (req, res) => {
 });
 
 /* =========================
+ * ✅ PREVIEW Ads-only
+ * GET /auth/google/ads/disconnect/preview
+ * ========================= */
+router.get('/ads/disconnect/preview', requireSession, async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
+
+    const googleAdsCount = await Audit.countDocuments({ userId, type: 'google' });
+
+    return res.json({
+      ok: true,
+      auditsToDelete: googleAdsCount,
+      breakdown: { googleAds: googleAdsCount },
+    });
+  } catch (e) {
+    console.error('[googleConnect] ads disconnect preview error:', e);
+    return res.status(500).json({ ok: false, error: 'PREVIEW_ERROR' });
+  }
+});
+
+/* =========================
+ * ✅ PREVIEW GA4-only
+ * GET /auth/google/ga/disconnect/preview
+ * ========================= */
+router.get('/ga/disconnect/preview', requireSession, async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) return res.status(401).json({ ok: false, error: 'UNAUTHORIZED' });
+
+    const ga4Count = await Audit.countDocuments({ userId, type: { $in: ['ga4', 'ga'] } });
+
+    return res.json({
+      ok: true,
+      auditsToDelete: ga4Count,
+      breakdown: { ga4: ga4Count },
+    });
+  } catch (e) {
+    console.error('[googleConnect] ga disconnect preview error:', e);
+    return res.status(500).json({ ok: false, error: 'PREVIEW_ERROR' });
+  }
+});
+
+/* =========================
  * Estado de conexión
  * ========================= */
 router.get('/status', requireSession, async (req, res) => {
@@ -1435,6 +1479,268 @@ router.post('/ga4/selection', requireSession, express.json(), async (req, res) =
     return res.status(500).json({ ok: false, error: 'SELECTION_SAVE_ERROR' });
   }
 });
+
+/* =========================
+ * ✅ Desconectar SOLO Google Ads
+ * POST /auth/google/ads/disconnect
+ * ========================= */
+router.post('/ads/disconnect', requireSession, express.json(), async (req, res) => {
+  try {
+    const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
+    const userId = req.user._id;
+
+    // auditorías Ads antes
+    const beforeGoogle = await Audit.countDocuments({ userId, type: 'google' });
+
+    const ga = await GoogleAccount.findOne(q)
+      .select('+refreshToken +accessToken +ga4RefreshToken +ga4AccessToken connectedAds connectedGa4')
+      .lean();
+
+    // revoke best-effort SOLO con token ads (no uses ga4 token aquí)
+    const revoke = await revokeGoogleTokenBestEffort({
+      refreshToken: ga?.refreshToken || null,
+      accessToken: ga?.accessToken || null,
+    });
+
+    // limpiar Ads (sin tocar GA4)
+    await GoogleAccount.updateOne(
+      q,
+      { $set: { ...buildUnsetForAdsOnly(), updatedAt: new Date() } },
+      { upsert: false }
+    );
+
+    // borrar auditorías SOLO Ads
+    let auditsDeleteOk = true;
+    let auditsDeleteError = null;
+
+    try {
+      await deleteAuditsForUserSources(userId, ['google']);
+    } catch (e) {
+      auditsDeleteOk = false;
+      auditsDeleteError = e?.message || 'AUDIT_DELETE_FAILED';
+      console.warn('[googleConnect] ads auditCleanup failed (best-effort):', auditsDeleteError);
+    }
+
+    try {
+      await Audit.deleteMany({ userId, type: 'google' });
+    } catch (e) {
+      auditsDeleteOk = false;
+      auditsDeleteError = auditsDeleteError || (e?.message || 'AUDIT_DELETE_FALLBACK_FAILED');
+      console.warn('[googleConnect] ads audit delete fallback failed:', e?.message || e);
+    }
+
+    const afterGoogle = await Audit.countDocuments({ userId, type: 'google' });
+    const auditsDeleted = Math.max(0, beforeGoogle - afterGoogle);
+
+    // refrescar doc para decidir googleConnected
+    const fresh = await GoogleAccount.findOne(q)
+      .select('+refreshToken +accessToken +ga4RefreshToken +ga4AccessToken connectedAds connectedGa4')
+      .lean();
+
+    const googleConnected = computeGoogleConnectedAfter(fresh);
+
+    // actualizar User: solo limpiar Ads prefs/selección (NO GA4)
+    await User.updateOne(
+      { _id: userId },
+      {
+        $set: {
+          googleConnected,
+          selectedGoogleAccounts: [],
+          'preferences.googleAds.auditAccountIds': [],
+        },
+      }
+    );
+
+    emitEventBestEffort(req, 'google_ads_disconnected', {
+      revokeAttempted: revoke.attempted,
+      revokeOk: revoke.ok,
+      revokeVia: revoke.via || null,
+      auditsDeleted,
+      auditsDeleteOk,
+      auditsDeleteError,
+      googleConnectedAfter: googleConnected,
+    });
+
+    return res.json({
+      ok: true,
+      disconnected: true,
+      product: 'ads',
+      googleConnectedAfter: googleConnected,
+      revokeAttempted: revoke.attempted,
+      revokeOk: revoke.ok,
+      revokeVia: revoke.via || null,
+      auditsDeleted,
+      auditsDeleteOk,
+      auditsDeleteError,
+    });
+  } catch (err) {
+    console.error('[googleConnect] ads disconnect error:', err?.response?.data || err?.message || err);
+    emitEventBestEffort(req, 'google_ads_disconnect_failed', { error: String(err?.message || err) });
+    return res.status(500).json({ ok: false, error: 'DISCONNECT_ERROR' });
+  }
+});
+
+/* =========================
+ * ✅ Desconectar SOLO GA4
+ * POST /auth/google/ga/disconnect
+ * ========================= */
+router.post('/ga/disconnect', requireSession, express.json(), async (req, res) => {
+  try {
+    const q = { $or: [{ user: req.user._id }, { userId: req.user._id }] };
+    const userId = req.user._id;
+
+    const beforeGA4 = await Audit.countDocuments({ userId, type: { $in: ['ga4', 'ga'] } });
+
+    const ga = await GoogleAccount.findOne(q)
+      .select('+refreshToken +accessToken +ga4RefreshToken +ga4AccessToken connectedAds connectedGa4')
+      .lean();
+
+    // revoke best-effort SOLO GA4 token (si no hay ga4 token, no revokes con ads)
+    const revoke = await revokeGoogleTokenBestEffort({
+      refreshToken: ga?.ga4RefreshToken || null,
+      accessToken: ga?.ga4AccessToken || null,
+    });
+
+    // limpiar GA4 (sin tocar Ads)
+    await GoogleAccount.updateOne(
+      q,
+      { $set: { ...buildUnsetForGa4Only(), updatedAt: new Date() } },
+      { upsert: false }
+    );
+
+    // borrar auditorías SOLO GA4
+    let auditsDeleteOk = true;
+    let auditsDeleteError = null;
+
+    try {
+      await deleteAuditsForUserSources(userId, ['ga4', 'ga']);
+    } catch (e) {
+      auditsDeleteOk = false;
+      auditsDeleteError = e?.message || 'AUDIT_DELETE_FAILED';
+      console.warn('[googleConnect] ga4 auditCleanup failed (best-effort):', auditsDeleteError);
+    }
+
+    try {
+      await Audit.deleteMany({ userId, type: { $in: ['ga4', 'ga'] } });
+    } catch (e) {
+      auditsDeleteOk = false;
+      auditsDeleteError = auditsDeleteError || (e?.message || 'AUDIT_DELETE_FALLBACK_FAILED');
+      console.warn('[googleConnect] ga4 audit delete fallback failed:', e?.message || e);
+    }
+
+    const afterGA4 = await Audit.countDocuments({ userId, type: { $in: ['ga4', 'ga'] } });
+    const auditsDeleted = Math.max(0, beforeGA4 - afterGA4);
+
+    // refrescar doc para decidir googleConnected
+    const fresh = await GoogleAccount.findOne(q)
+      .select('+refreshToken +accessToken +ga4RefreshToken +ga4AccessToken connectedAds connectedGa4')
+      .lean();
+
+    const googleConnected = computeGoogleConnectedAfter(fresh);
+
+    // actualizar User: solo limpiar GA4 prefs/selección (NO Ads)
+    await User.updateOne(
+      { _id: userId },
+      {
+        $set: {
+          googleConnected,
+          selectedGAProperties: [],
+          'preferences.googleAnalytics.auditPropertyIds': [],
+        },
+      }
+    );
+
+    emitEventBestEffort(req, 'ga4_disconnected', {
+      revokeAttempted: revoke.attempted,
+      revokeOk: revoke.ok,
+      revokeVia: revoke.via || null,
+      auditsDeleted,
+      auditsDeleteOk,
+      auditsDeleteError,
+      googleConnectedAfter: googleConnected,
+    });
+
+    return res.json({
+      ok: true,
+      disconnected: true,
+      product: 'ga4',
+      googleConnectedAfter: googleConnected,
+      revokeAttempted: revoke.attempted,
+      revokeOk: revoke.ok,
+      revokeVia: revoke.via || null,
+      auditsDeleted,
+      auditsDeleteOk,
+      auditsDeleteError,
+    });
+  } catch (err) {
+    console.error('[googleConnect] ga4 disconnect error:', err?.response?.data || err?.message || err);
+    emitEventBestEffort(req, 'ga4_disconnect_failed', { error: String(err?.message || err) });
+    return res.status(500).json({ ok: false, error: 'DISCONNECT_ERROR' });
+  }
+});
+
+/* =========================
+ * ✅ Helpers: detectar si queda conectado algo de Google
+ * ========================= */
+function isTruthyToken(x) {
+  return !!(x && String(x).trim());
+}
+
+function computeGoogleConnectedAfter(gaDoc) {
+  // Ads conectado si flag true o si hay tokens ads (fallback)
+  const ads = !!gaDoc?.connectedAds || isTruthyToken(gaDoc?.refreshToken) || isTruthyToken(gaDoc?.accessToken);
+  // GA4 conectado si flag true o si hay tokens ga4 (fallback)
+  const ga4 = !!gaDoc?.connectedGa4 || isTruthyToken(gaDoc?.ga4RefreshToken) || isTruthyToken(gaDoc?.ga4AccessToken);
+  return ads || ga4;
+}
+
+/* =========================
+ * ✅ Helpers: limpiar por producto (Ads vs GA4)
+ * ========================= */
+function buildUnsetForAdsOnly() {
+  return {
+    // tokens ads
+    accessToken: null,
+    refreshToken: null,
+    expiresAt: null,
+    scope: [],
+
+    // datos ads
+    customers: [],
+    ad_accounts: [],
+    defaultCustomerId: null,
+    selectedCustomerIds: [],
+    managerCustomerId: null,
+    loginCustomerId: null,
+
+    // flags
+    connectedAds: false,
+
+    // debug ads
+    lastAdsDiscoveryError: null,
+    lastAdsDiscoveryLog: null,
+  };
+}
+
+function buildUnsetForGa4Only() {
+  return {
+    // tokens ga4
+    ga4AccessToken: null,
+    ga4RefreshToken: null,
+    ga4ExpiresAt: null,
+    ga4Scope: [],
+    ga4ConnectedAt: null,
+
+    // datos ga4
+    gaProperties: [],
+    defaultPropertyId: null,
+    selectedPropertyIds: [],
+    selectedGaPropertyId: null,
+
+    // flags
+    connectedGa4: false,
+  };
+}
 
 /* =========================
  * ✅ Desconectar Google (Ads + GA4)
