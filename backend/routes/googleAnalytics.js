@@ -18,9 +18,20 @@ try {
       user:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
       userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true, sparse: true },
 
+      // legacy (ads o google connect viejo)
       accessToken:  { type: String, select: false },
       refreshToken: { type: String, select: false },
       scope:        { type: [String], default: [] },
+
+      // GA4 (nuevo / plano)
+      ga4AccessToken:  { type: String, select: false },
+      ga4RefreshToken: { type: String, select: false },
+      ga4Scope:        { type: [String], default: [] },
+      ga4ExpiresAt:    { type: Date },
+      ga4ConnectedAt:  { type: Date },
+
+      // GA4 (nuevo / nested compat)
+      ga4: { type: mongoose.Schema.Types.Mixed, default: null },
 
       gaProperties:      { type: Array, default: [] },
       defaultPropertyId: { type: String, default: null },
@@ -235,28 +246,83 @@ async function ensureGaPropertyAllowed(req, res, next) {
 }
 
 /* =============== HELPERS / AUTH =============== */
+
+/**
+ * ✅ IMPORTANTE:
+ * Este router es SOLO para GA4 (Analytics). Por lo tanto:
+ * - Preferimos tokens GA4 (ga4RefreshToken/ga4AccessToken o ga4.refreshToken/ga4.accessToken)
+ * - Fallback a refreshToken/accessToken solo por compat legacy
+ * Esto NO rompe Google Ads porque Ads usa su propio router/flow.
+ */
+function pickGa4Tokens(gaDoc) {
+  const ga4Refresh =
+    gaDoc?.ga4RefreshToken ||
+    gaDoc?.ga4?.refreshToken ||
+    null;
+
+  const ga4Access =
+    gaDoc?.ga4AccessToken ||
+    gaDoc?.ga4?.accessToken ||
+    null;
+
+  const legacyRefresh = gaDoc?.refreshToken || null;
+  const legacyAccess = gaDoc?.accessToken || null;
+
+  return {
+    refreshToken: ga4Refresh || legacyRefresh,
+    accessToken: ga4Access || legacyAccess,
+    // indicativo (útil para debug)
+    usingGa4: !!ga4Refresh || !!gaDoc?.ga4?.refreshToken,
+  };
+}
+
+function resolveGoogleOAuthEnv() {
+  // ✅ Este router es SOLO GA4 (Analytics). NO usar Ads envs.
+  const clientId =
+    process.env.GOOGLE_GA4_CLIENT_ID ||
+    process.env.GOOGLE_CLIENT_ID ||
+    '';
+
+  const clientSecret =
+    process.env.GOOGLE_GA4_CLIENT_SECRET ||
+    process.env.GOOGLE_CLIENT_SECRET ||
+    '';
+
+  return { clientId, clientSecret };
+}
+
+
 async function getOAuthClientForUser(userId) {
   const ga = await GoogleAccount
     .findOne({ $or: [{ user: userId }, { userId }] })
-    .select('+refreshToken +accessToken')
+    // ✅ Traemos GA4 plano + legacy + nested compat
+    .select('+ga4RefreshToken +ga4AccessToken +refreshToken +accessToken ga4 ga4Scope scope')
     .lean();
 
-  if (!ga?.refreshToken) {
+
+  const { refreshToken, accessToken } = pickGa4Tokens(ga);
+
+  if (!refreshToken) {
     const err = new Error('NO_REFRESH_TOKEN');
     err.code = 'NO_REFRESH_TOKEN';
     throw err;
   }
 
-  const oAuth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET
-  );
+  const { clientId, clientSecret } = resolveGoogleOAuthEnv();
+  if (!clientId || !clientSecret) {
+    const err = new Error('MISSING_GOOGLE_OAUTH_ENVS');
+    err.code = 'MISSING_GOOGLE_OAUTH_ENVS';
+    throw err;
+  }
+
+  const oAuth2Client = new google.auth.OAuth2(clientId, clientSecret);
 
   oAuth2Client.setCredentials({
-    refresh_token: ga.refreshToken,
-    access_token: ga.accessToken || undefined,
+    refresh_token: refreshToken,
+    access_token: accessToken || undefined,
   });
 
+  // fuerza refresh si hace falta
   try { await oAuth2Client.getAccessToken(); } catch {}
   return oAuth2Client;
 }
@@ -381,25 +447,36 @@ async function resyncAndPersistProperties(userId) {
   const auth = await getOAuthClientForUser(userId);
   const admin = google.analyticsadmin({ version: 'v1beta', auth });
 
-  let out = [];
+  const out = [];
   let pageToken;
+
+  // ✅ Método compatible y estable: accountSummaries.list -> propertySummaries
   do {
-    const resp = await admin.properties.search({
-      requestBody: { query: '' },
-      pageToken,
+    const resp = await admin.accountSummaries.list({
       pageSize: 200,
+      pageToken,
     });
-    (resp.data.properties || []).forEach((p) => {
-      out.push({
-        propertyId: p.name,
-        displayName: p.displayName || p.name,
-        timeZone: p.timeZone || null,
-        currencyCode: p.currencyCode || null,
-      });
-    });
-    pageToken = resp.data.nextPageToken || undefined;
+
+    const summaries = resp?.data?.accountSummaries || [];
+    for (const s of summaries) {
+      const props = Array.isArray(s?.propertySummaries) ? s.propertySummaries : [];
+      for (const p of props) {
+        // p.property => "properties/123"
+        // p.displayName => nombre de la property
+        out.push({
+          propertyId: p.property,
+          displayName: p.displayName || p.property,
+          // accountSummaries NO siempre incluye timeZone/currencyCode, las dejamos null
+          timeZone: null,
+          currencyCode: null,
+        });
+      }
+    }
+
+    pageToken = resp?.data?.nextPageToken || undefined;
   } while (pageToken);
 
+  // ✅ de-dup
   const map = new Map();
   for (const p of out) map.set(p.propertyId, p);
   const properties = Array.from(map.values());
@@ -431,6 +508,7 @@ async function resyncAndPersistProperties(userId) {
   return properties;
 }
 
+
 /* ======================= RUTAS ======================= */
 
 /** GET /api/google/analytics/properties */
@@ -449,9 +527,23 @@ router.get('/properties', requireSession, async (req, res) => {
         doc = await GoogleAccount.findOne({ $or: [{ user: req.user._id }, { userId: req.user._id }] }).lean();
         defaultPropertyId = toPropertyResource(doc?.defaultPropertyId) || (properties?.[0]?.propertyId || null);
       } catch (e) {
-        const msg = e.message === 'NO_REFRESH_TOKEN' ? 'NO_REFRESH_TOKEN' : 'SYNC_FAILED';
-        return res.status(401).json({ ok: false, error: msg });
-      }
+  const isNoRefresh = e?.code === 'NO_REFRESH_TOKEN' || e?.message === 'NO_REFRESH_TOKEN';
+  const status = isNoRefresh ? 401 : 500;
+
+  console.error('GA /properties SYNC_FAILED full:', e?.response?.data || e);
+
+  return res.status(status).json({
+    ok: false,
+    error: isNoRefresh ? 'NO_REFRESH_TOKEN' : 'SYNC_FAILED',
+    details: String(
+      e?.response?.data?.error_description ||
+      e?.response?.data?.error?.message ||
+      e?.response?.data?.error ||
+      e?.message ||
+      e
+    ),
+  });
+}
     }
 
     const userDoc = await getUserDoc(req.user._id);
@@ -811,6 +903,7 @@ router.get('/overview', requireSession, ensureGaPropertyAllowed, async (req, res
  * ✅ RUTAS DASHBOARD (E2E)
  * ======================================================= */
 
+// (El resto del archivo queda igual)
 router.get('/sales', requireSession, ensureGaPropertyAllowed, async (req, res) => {
   try {
     const auth = await getOAuthClientForUser(req.user._id);
