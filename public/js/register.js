@@ -61,11 +61,13 @@ document.addEventListener('DOMContentLoaded', () => {
   async function renderTurnstile() {
     const siteKey = getTurnstileSiteKey();
     if (!siteKey) {
+      showMessage('⚠️ Falta configurar el Site Key de Turnstile.', false);
       return;
     }
 
     const slot = document.getElementById('cf-turnstile-slot');
     if (!slot) {
+      showMessage('⚠️ No se encontró el contenedor del captcha (#cf-turnstile-slot).', false);
       return;
     }
 
@@ -89,6 +91,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     } catch (err) {
       console.error('[register.js] Turnstile render error:', err);
+      showMessage('No se pudo cargar la verificación de seguridad. Recarga la página.', false);
     }
   }
 
@@ -110,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (_) {}
   }
 
-  // Render inmediato (si falla, backend decide si captcha es obligatorio)
+  // Render inmediato (registro SIEMPRE requiere captcha)
   renderTurnstile();
 
   // ---------------- submit ----------------
@@ -128,6 +131,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (password !== confirm) return showMessage('Las contraseñas no coinciden.', false);
 
     const turnstileToken = getTurnstileToken();
+    if (!turnstileToken) {
+      showMessage('Por favor completa la verificación de seguridad.', false);
+      return;
+    }
 
     try {
       showMessage('Creando cuenta…', true);
@@ -135,12 +142,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await fetch('/api/register', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          name,
-          email,
-          password,
-          ...(turnstileToken ? { turnstileToken } : {}),
-        }),
+        body:    JSON.stringify({ name, email, password, turnstileToken }),
       });
 
       const data = await res.json().catch(() => ({}));
