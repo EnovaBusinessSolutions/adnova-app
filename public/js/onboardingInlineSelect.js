@@ -97,16 +97,37 @@
   };
 
   /* =========================================================
-   * UI utils
-   * =======================================================*/
-  const _el = (id) => document.getElementById(id);
-  const _show = (el) => {
+ * UI utils
+ * =======================================================*/
+const _el = (id) => document.getElementById(id);
+
+// ✅ show/hide GENÉRICO (NO toca body lock)
+function _showEl(el) {
   if (!el) return;
   el.classList.remove('hidden');
-  el.classList.add('asm-open');
   el.style.display = 'block';
+}
+function _hideEl(el) {
+  if (!el) return;
+  el.classList.add('hidden');
+  el.style.display = 'none';
+}
+
+// ✅ show/hide SOLO para el MODAL (aquí sí bloqueamos body)
+function _openModalEl(modal) {
+  if (!modal) return;
+  modal.classList.remove('hidden');
+  modal.classList.add('asm-open');
+  modal.style.display = 'block';
   document.body.classList.add('asm-lock');
-};
+}
+function _closeModalEl(modal) {
+  if (!modal) return;
+  modal.classList.add('hidden');
+  modal.classList.remove('asm-open');
+  modal.style.display = 'none';
+  document.body.classList.remove('asm-lock');
+}
 
 const _hide = (el) => {
   if (!el) return;
@@ -141,7 +162,7 @@ const _hide = (el) => {
         : type === 'error'
         ? '#ef4444'
         : '#a1a1aa';
-    text ? _show(box) : _hide(box);
+    text ? _showEl(box) : _hideEl(box);
   }
 
   function _enableSave(enabled) {
@@ -317,7 +338,6 @@ const _hide = (el) => {
     filter: blur(14px);
     opacity: .22;
     pointer-events:none;
-    animation: asmSpin 10s linear infinite;
   }
 
   #account-select-modal .asm-panel::after{
@@ -572,7 +592,6 @@ const _hide = (el) => {
     from { opacity: 0; transform: translateY(16px) scale(.98); }
     to { opacity: 1; transform: translateY(0) scale(1); }
   }
-  @keyframes asmSpin{ from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   @keyframes asmShimmer{ from { transform: translateX(-120%); } to { transform: translateX(120%); } }
 
   @media (max-width: 640px){
@@ -584,6 +603,11 @@ const _hide = (el) => {
     }
     #account-select-modal .asm-chip{ padding: 11px 11px; }
     #account-select-modal .asm-footer{ gap:8px; }
+    /* ✅ FIX: evita scroll horizontal raro al hover */
+#account-select-modal .asm-panel { overflow: hidden; }
+#account-select-modal .asm-body  { overflow-y: auto; overflow-x: hidden; }
+#account-select-modal .asm-list  { overflow-x: hidden; }
+#account-select-modal .asm-chip  { overflow: hidden; }
   }
 `;
       document.head.appendChild(style);
@@ -630,7 +654,7 @@ const _hide = (el) => {
     `;
     document.body.appendChild(modal);
 
-    const close = () => _hide(modal);
+    const close = () => _closeModalEl(modal);
     const b = _el('asm-backdrop');
     const x = _el('asm-close');
     const c = _el('asm-cancel');
@@ -641,7 +665,7 @@ const _hide = (el) => {
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         const m = _el('account-select-modal');
-        if (m && m.style.display !== 'none') _hide(m);
+        if (m && m.style.display !== 'none') _closeModalEl(m);
       }
     });
   }
@@ -734,7 +758,7 @@ const _hide = (el) => {
     const err = _el('asm-error');
     if (err) {
       err.textContent = '';
-      _hide(err);
+      _hideEl(err);
     }
 
     _hint(`Selecciona hasta ${MAX_SELECT} cuenta por tipo.`, 'info');
@@ -748,8 +772,8 @@ const _hide = (el) => {
 
     // META
     if (ASM.visible.meta && ASM.data.meta.length > 0) {
-      _show(metaTitle);
-      _show(metaList);
+      _showEl(metaTitle);
+      _showEl(metaList);
       metaList.innerHTML = '';
 
       ASM.data.meta.forEach((a) => {
@@ -777,8 +801,8 @@ const _hide = (el) => {
 
       _updateLimitUI('meta');
     } else {
-      _hide(metaTitle);
-      _hide(metaList);
+      _hideEl(metaTitle);
+      _hideEl(metaList);
     }
 
     // GOOGLE ADS
@@ -870,7 +894,7 @@ const _hide = (el) => {
   async function _openModal() {
     _ensureModalSkeleton();
     _renderLists();
-    _show(_el('account-select-modal'));
+    _openModalEl(_el('account-select-modal'));
 
     const saveBtn = _el('asm-save');
     if (!saveBtn) return;
