@@ -32,4 +32,7 @@ optional_scopes = [ ]
 use_legacy_install_flow = false
 
 [auth]
-redirect_urls = [ "https://adray.ai/connector/auth/callback" ]
+redirect_urls = [
+  "https://adray.ai/connector/auth/callback",
+  "https://adray-app-staging-german.onrender.com/connector/auth/callback"
+]

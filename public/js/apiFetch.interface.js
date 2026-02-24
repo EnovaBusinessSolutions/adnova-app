@@ -1,6 +1,15 @@
 // public/js/apiFetch.interface.js
+async function getShopifySessionToken() {
+  try {
+    if (window.shopify && typeof window.shopify.idToken === 'function') {
+      return await window.shopify.idToken();
+    }
+  } catch (_) {}
+  return '';
+}
+
 export async function apiFetch(path, options = {}) {
-  const token = sessionStorage.getItem('sessionToken');
+  const token = await getShopifySessionToken();
 
   options.headers = {
     ...(options.headers || {}),
