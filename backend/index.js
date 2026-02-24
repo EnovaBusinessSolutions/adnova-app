@@ -317,7 +317,8 @@ app.use(
     return verifySessionToken(req, res, next);
   });
 
-app.use('/api', pixelAuditor);
+// 1) Shopify Connector Webhooks: RAW
+app.use("/connector/webhooks", express.raw({ type: "*/*" }), webhookRoutes);
 
 // 2) Stripe: RAW **solo** en /api/stripe/webhook; JSON normal para el resto
 app.use('/api/stripe', (req, res, next) => {
@@ -646,6 +647,9 @@ app.use('/api/facturapi', require('./routes/facturapi'));
 app.use('/api/billing', billingRoutes);
 
 // Meta Ads
+app.use("/api/meta/insights", sessionGuard, metaInsightsRoutes);
+app.use("/api/meta/accounts", sessionGuard, metaAccountsRoutes);
+app.use("/api/meta", metaTable);
 app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);
 app.use('/api/meta/accounts', sessionGuard, metaAccountsRoutes);
 app.use('/api/meta', metaTable);
@@ -1205,10 +1209,16 @@ app.get('/api/me', async (req, res) => {
  * ========================= */
 app.use('/api', userRoutes);
 
-app.use('/api/secure', secureRoutes);
-app.use('/api/dashboard', dashboardRoute);
-app.use('/api/shopConnection', require('./routes/shopConnection'));
-app.use('/api', subscribeRouter);
+// ✅ NEW: events endpoint (/api/events) (requiere sesión)
+app.use("/api", eventsRoutes);
+
+// ✅ NEW: admin analytics (panel interno)
+app.use("/api/admin/analytics", adminAnalyticsRoutes);
+
+app.use("/api/secure", secureRoutes);
+app.use("/api/dashboard", dashboardRoute);
+app.use("/api/shopConnection", require("./routes/shopConnection"));
+app.use("/api", subscribeRouter);
 
 // Estáticos (públicos)
 app.use('/assets', express.static(path.join(__dirname, '../public/landing/assets')));
