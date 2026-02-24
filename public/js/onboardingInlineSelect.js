@@ -101,17 +101,20 @@
    * =======================================================*/
   const _el = (id) => document.getElementById(id);
   const _show = (el) => {
-    if (el) {
-      el.classList.remove('hidden');
-      el.style.display = 'block'; // ✅ fuerza visible aunque haya estilos previos
-    }
-  };
-  const _hide = (el) => {
-    if (el) {
-      el.classList.add('hidden');
-      el.style.display = 'none';
-    }
-  };
+  if (!el) return;
+  el.classList.remove('hidden');
+  el.classList.add('asm-open');
+  el.style.display = 'block';
+  document.body.classList.add('asm-lock');
+};
+
+const _hide = (el) => {
+  if (!el) return;
+  el.classList.add('hidden');
+  el.classList.remove('asm-open');
+  el.style.display = 'none';
+  document.body.classList.remove('asm-lock');
+};
 
   function _ensureHintNode() {
     let hint = _el('asm-hint');
@@ -234,52 +237,355 @@
       const style = document.createElement('style');
       style.id = 'asm-styles';
       style.textContent = `
-        #account-select-modal.hidden { display:none !important; }
-        #account-select-modal { position: fixed; inset: 0; z-index: 99999; display: block; }
-        #account-select-modal .asm-backdrop{ position: absolute; inset:0; background: rgba(0,0,0,.65); backdrop-filter: blur(6px); }
-        #account-select-modal .asm-panel{
-          position: relative;
-          width: min(860px, calc(100vw - 28px));
-          max-height: calc(100vh - 28px);
-          margin: 14px auto;
-          border: 1px solid rgba(255,255,255,.10);
-          background: rgba(10,10,14,.92);
-          color: #e5e7eb;
-          border-radius: 16px;
-          box-shadow: 0 24px 80px rgba(0,0,0,.55);
-          overflow: hidden;
-          display:flex; flex-direction:column;
-        }
-        #account-select-modal .asm-head{ padding: 14px 16px; display:flex; align-items:center; justify-content:space-between; border-bottom: 1px solid rgba(255,255,255,.08); }
-        #account-select-modal .asm-title{ font-weight: 700; font-size: 14px; letter-spacing: .2px; display:flex; gap:8px; align-items:center; }
-        #account-select-modal .asm-x{ appearance:none; border:0; background: transparent; color:#cbd5e1; cursor:pointer; padding: 8px 10px; border-radius: 10px; }
-        #account-select-modal .asm-x:hover{ background: rgba(255,255,255,.06); }
-        #account-select-modal .asm-body{ padding: 14px 16px; overflow:auto; }
-        #account-select-modal .asm-sub{ color:#a1a1aa; font-size: 12px; margin-top: 4px; }
-        #account-select-modal .asm-section{ margin-top: 14px; }
-        #account-select-modal .asm-section h4{ margin: 0 0 8px 0; font-size: 13px; font-weight: 700; }
-        #account-select-modal .asm-list{ display:flex; flex-wrap:wrap; gap:10px; }
-        #account-select-modal .asm-chip{
-          display:flex; align-items:center; gap:10px;
-          padding: 10px 12px;
-          border: 1px solid rgba(255,255,255,.10);
-          border-radius: 12px;
-          cursor: pointer;
-          background: rgba(255,255,255,.03);
-          user-select:none;
-          min-width: 220px;
-        }
-        #account-select-modal .asm-chip:hover{ background: rgba(255,255,255,.06); }
-        #account-select-modal .asm-chip input{ transform: scale(1.1); }
-        #account-select-modal .asm-footer{ padding: 12px 16px; display:flex; gap:10px; justify-content:flex-end; align-items:center; border-top: 1px solid rgba(255,255,255,.08); }
-        #account-select-modal .asm-err{ color:#ef4444; font-size: 12px; margin-top: 10px; display:none; }
-        .asm-btn{ appearance:none; border:1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); color:#e5e7eb; padding: 10px 12px; border-radius: 12px; cursor:pointer; font-weight: 600; font-size: 13px; }
-        .asm-btn:hover{ background: rgba(255,255,255,.10); }
-        .asm-btn-primary{ background: #7c3aed; border-color: transparent; color:#fff; }
-        .asm-btn-primary:hover{ background: #6d28d9; }
-        .asm-btn-primary--disabled{ opacity:.55; cursor:not-allowed; }
-        .asm-count{ margin-left: 8px; color:#94a3b8; font-weight: 600; font-size: 12px; }
-      `;
+  :root{
+    --asm-bg: rgba(10,10,14,.78);
+    --asm-panel: rgba(12,12,18,.72);
+    --asm-border: rgba(255,255,255,.10);
+    --asm-text: rgba(231,231,241,.92);
+    --asm-muted: rgba(161,161,170,.92);
+
+    --asm-purple: #7c3aed;
+    --asm-purple-2: #a78bfa;
+    --asm-cyan: #22d3ee;
+    --asm-pink: #fb7185;
+
+    --asm-shadow: 0 24px 80px rgba(0,0,0,.55);
+    --asm-shadow-2: 0 28px 120px rgba(124,58,237,.16);
+
+    --asm-radius: 18px;
+    --asm-radius-2: 14px;
+
+    --asm-ease: cubic-bezier(.2,.9,.2,1);
+  }
+
+  body.asm-lock { overflow: hidden !important; }
+
+  #account-select-modal.hidden { display:none !important; }
+
+  #account-select-modal{
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    display: none;
+  }
+
+  #account-select-modal.asm-open{ display:block; }
+
+  #account-select-modal .asm-backdrop{
+    position:absolute; inset:0;
+    background:
+      radial-gradient(1200px 700px at 20% 10%, rgba(124,58,237,.18), transparent 60%),
+      radial-gradient(900px 600px at 80% 30%, rgba(34,211,238,.10), transparent 55%),
+      radial-gradient(700px 500px at 60% 85%, rgba(251,113,133,.08), transparent 60%),
+      rgba(0,0,0,.62);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    opacity: 0;
+    animation: asmFadeIn .22s var(--asm-ease) forwards;
+  }
+
+  #account-select-modal .asm-panel{
+    position: relative;
+    width: min(900px, calc(100vw - 28px));
+    max-height: calc(100vh - 28px);
+    margin: 14px auto;
+    border-radius: var(--asm-radius);
+    border: 1px solid var(--asm-border);
+    background: linear-gradient(180deg, rgba(12,12,18,.82), rgba(10,10,14,.70));
+    box-shadow: var(--asm-shadow), var(--asm-shadow-2);
+    overflow: hidden;
+    display:flex;
+    flex-direction:column;
+
+    transform: translateY(14px) scale(.985);
+    opacity: 0;
+    animation: asmPopIn .28s var(--asm-ease) .02s forwards;
+  }
+
+  #account-select-modal .asm-panel::before{
+    content:"";
+    position:absolute; inset:-2px;
+    border-radius: calc(var(--asm-radius) + 2px);
+    background:
+      conic-gradient(from 180deg,
+        rgba(124,58,237,.0),
+        rgba(124,58,237,.55),
+        rgba(34,211,238,.40),
+        rgba(251,113,133,.35),
+        rgba(124,58,237,.0)
+      );
+    filter: blur(14px);
+    opacity: .22;
+    pointer-events:none;
+    animation: asmSpin 10s linear infinite;
+  }
+
+  #account-select-modal .asm-panel::after{
+    content:"";
+    position:absolute; left:-40%; top:-60%;
+    width: 180%; height: 120%;
+    background: radial-gradient(circle at 30% 30%, rgba(167,139,250,.14), transparent 55%);
+    opacity:.8;
+    pointer-events:none;
+  }
+
+  #account-select-modal .asm-head{
+    position: relative;
+    padding: 14px 16px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    border-bottom: 1px solid rgba(255,255,255,.08);
+    background:
+      linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.00));
+  }
+
+  #account-select-modal .asm-title{
+    font-weight: 800;
+    font-size: 14px;
+    letter-spacing: .22px;
+    display:flex;
+    gap:10px;
+    align-items:center;
+    color: var(--asm-text);
+  }
+
+  #account-select-modal .asm-title::before{
+    content:"✦";
+    display:inline-flex;
+    width: 26px;
+    height: 26px;
+    align-items:center;
+    justify-content:center;
+    border-radius: 999px;
+    background: rgba(124,58,237,.14);
+    border: 1px solid rgba(124,58,237,.28);
+    color: rgba(167,139,250,.95);
+    box-shadow: 0 10px 30px rgba(124,58,237,.18);
+  }
+
+  #account-select-modal .asm-sub{
+    color: var(--asm-muted);
+    font-size: 12px;
+    margin-top: 4px;
+  }
+
+  #account-select-modal .asm-x{
+    appearance:none;
+    border: 1px solid rgba(255,255,255,.10);
+    background: rgba(255,255,255,.04);
+    color: rgba(226,232,240,.88);
+    cursor:pointer;
+    padding: 8px 10px;
+    border-radius: 12px;
+    transition: transform .14s var(--asm-ease), background .14s var(--asm-ease), border-color .14s var(--asm-ease);
+  }
+  #account-select-modal .asm-x:hover{
+    transform: translateY(-1px);
+    background: rgba(255,255,255,.08);
+    border-color: rgba(167,139,250,.35);
+  }
+
+  #account-select-modal .asm-body{
+    padding: 14px 16px 12px;
+    overflow:auto;
+  }
+
+  #account-select-modal .asm-body::-webkit-scrollbar{ width: 10px; }
+  #account-select-modal .asm-body::-webkit-scrollbar-track{ background: rgba(255,255,255,.03); border-radius: 999px; }
+  #account-select-modal .asm-body::-webkit-scrollbar-thumb{
+    background: rgba(167,139,250,.22);
+    border-radius: 999px;
+    border: 2px solid rgba(0,0,0,.25);
+  }
+  #account-select-modal .asm-body::-webkit-scrollbar-thumb:hover{ background: rgba(167,139,250,.30); }
+
+  #account-select-modal .asm-section{ margin-top: 14px; }
+  #account-select-modal .asm-section h4{
+    margin: 0 0 10px 0;
+    font-size: 12.5px;
+    font-weight: 800;
+    letter-spacing: .18px;
+    color: rgba(226,232,240,.92);
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+
+  .asm-count{
+    margin-left: auto;
+    color: rgba(148,163,184,.92);
+    font-weight: 700;
+    font-size: 12px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.10);
+    background: rgba(255,255,255,.03);
+  }
+
+  #account-select-modal .asm-list{
+    display:flex;
+    flex-direction: column;
+    gap:10px;
+  }
+
+  #account-select-modal .asm-chip{
+    position: relative;
+    display:flex;
+    align-items:center;
+    gap:12px;
+    padding: 12px 12px;
+    border-radius: var(--asm-radius-2);
+    border: 1px solid rgba(255,255,255,.10);
+    background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+    cursor:pointer;
+    user-select:none;
+    transition: transform .14s var(--asm-ease), border-color .14s var(--asm-ease), background .14s var(--asm-ease), box-shadow .14s var(--asm-ease);
+  }
+
+  #account-select-modal .asm-chip:hover{
+    transform: translateY(-1px);
+    border-color: rgba(167,139,250,.22);
+    box-shadow: 0 14px 40px rgba(0,0,0,.30);
+    background: linear-gradient(180deg, rgba(124,58,237,.10), rgba(255,255,255,.03));
+  }
+
+  #account-select-modal .asm-chip::after{
+    content:"";
+    position:absolute;
+    inset: 0;
+    border-radius: var(--asm-radius-2);
+    background: linear-gradient(120deg, transparent 0%, rgba(167,139,250,.12) 45%, transparent 70%);
+    transform: translateX(-120%);
+    opacity: 0;
+    transition: opacity .18s var(--asm-ease);
+    pointer-events:none;
+  }
+  #account-select-modal .asm-chip:hover::after{
+    opacity: 1;
+    animation: asmShimmer .9s var(--asm-ease) forwards;
+  }
+
+  #account-select-modal .asm-chip input[type="checkbox"]{
+    appearance:none;
+    width: 18px;
+    height: 18px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,.20);
+    background: rgba(0,0,0,.22);
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.06);
+    transition: border-color .14s var(--asm-ease), background .14s var(--asm-ease), transform .14s var(--asm-ease);
+  }
+  #account-select-modal .asm-chip input[type="checkbox"]:hover{
+    border-color: rgba(167,139,250,.40);
+  }
+  #account-select-modal .asm-chip input[type="checkbox"]:checked{
+    background: linear-gradient(180deg, rgba(124,58,237,.95), rgba(124,58,237,.70));
+    border-color: rgba(167,139,250,.55);
+    transform: scale(1.02);
+  }
+  #account-select-modal .asm-chip input[type="checkbox"]:checked::before{
+    content:"✓";
+    font-size: 12px;
+    color: white;
+    font-weight: 900;
+    transform: translateY(-.5px);
+  }
+
+  #account-select-modal .asm-chip input[disabled]{ opacity:.45; cursor:not-allowed; }
+  #account-select-modal .asm-chip:has(input[disabled]){
+    opacity:.72;
+    cursor:not-allowed;
+    filter: saturate(.9);
+  }
+
+  #account-select-modal .asm-err{
+    color:#fecaca;
+    font-size: 12px;
+    margin-bottom: 10px;
+    display:none;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(239,68,68,.25);
+    background: rgba(239,68,68,.10);
+  }
+
+  #asm-hint{
+    padding: 8px 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,.10);
+    background: rgba(255,255,255,.03);
+    margin-top: 12px;
+  }
+
+  #account-select-modal .asm-footer{
+    padding: 12px 16px;
+    display:flex;
+    gap:10px;
+    justify-content:flex-end;
+    align-items:center;
+    border-top: 1px solid rgba(255,255,255,.08);
+    background: rgba(255,255,255,.02);
+  }
+
+  .asm-btn{
+    appearance:none;
+    border: 1px solid rgba(255,255,255,.14);
+    background: rgba(255,255,255,.05);
+    color: rgba(226,232,240,.92);
+    padding: 10px 12px;
+    border-radius: 12px;
+    cursor:pointer;
+    font-weight: 700;
+    font-size: 13px;
+    transition: transform .14s var(--asm-ease), background .14s var(--asm-ease), border-color .14s var(--asm-ease);
+  }
+  .asm-btn:hover{
+    transform: translateY(-1px);
+    background: rgba(255,255,255,.08);
+    border-color: rgba(167,139,250,.22);
+  }
+
+  .asm-btn-primary{
+    background: linear-gradient(180deg, rgba(124,58,237,1), rgba(124,58,237,.72));
+    border-color: rgba(167,139,250,.35);
+    color:#fff;
+    box-shadow: 0 16px 50px rgba(124,58,237,.25);
+  }
+  .asm-btn-primary:hover{
+    background: linear-gradient(180deg, rgba(109,40,217,1), rgba(124,58,237,.70));
+    border-color: rgba(167,139,250,.55);
+  }
+
+  .asm-btn-primary--disabled{
+    opacity:.55;
+    cursor:not-allowed;
+    box-shadow:none;
+    transform:none !important;
+  }
+
+  @keyframes asmFadeIn{ from { opacity: 0; } to { opacity: 1; } }
+  @keyframes asmPopIn{
+    from { opacity: 0; transform: translateY(16px) scale(.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes asmSpin{ from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  @keyframes asmShimmer{ from { transform: translateX(-120%); } to { transform: translateX(120%); } }
+
+  @media (max-width: 640px){
+    #account-select-modal .asm-panel{
+      width: calc(100vw - 18px);
+      margin: 9px auto;
+      max-height: calc(100vh - 18px);
+      border-radius: 16px;
+    }
+    #account-select-modal .asm-chip{ padding: 11px 11px; }
+    #account-select-modal .asm-footer{ gap:8px; }
+  }
+`;
       document.head.appendChild(style);
     }
 
@@ -291,7 +597,7 @@
       <div class="asm-panel" role="dialog" aria-modal="true">
         <div class="asm-head">
           <div>
-            <div class="asm-title">⚙️ Seleccionar cuentas</div>
+            <div class="asm-title">Seleccionar cuentas</div>
             <div class="asm-sub">Selecciona hasta ${MAX_SELECT} cuenta por tipo.</div>
           </div>
           <button class="asm-x" id="asm-close" aria-label="Cerrar">✕</button>
