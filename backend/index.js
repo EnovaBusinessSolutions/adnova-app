@@ -1,38 +1,56 @@
 // backend/index.js
-require('dotenv').config();
+require("dotenv").config();
 
-const express = require('express');
-const session = require('express-session');
-const passport = require('passport');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const path = require('path');
-const fs = require('fs');
-const bcrypt = require('bcrypt');
-const crypto = require('crypto');
-const helmet = require('helmet');
-const compression = require('compression');
+const express = require("express");
+const session = require("express-session");
+const ConnectMongo = require("connect-mongo"); // ✅ NEW (Node 22 safe)
+const MongoStore = ConnectMongo?.default ?? ConnectMongo; // ✅ NEW
+const passport = require("passport");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const path = require("path");
+const fs = require("fs");
+const bcrypt = require("bcrypt");
+const crypto = require("crypto");
+const helmet = require("helmet");
+const compression = require("compression");
 
-require('./auth'); // inicializa passport (estrategia Google + serialize/deserialize)
+require("./auth"); // inicializa passport (estrategia Google + serialize/deserialize)
 
-const User = require('./models/User');
-const { sendVerifyEmail, sendWelcomeEmail, sendResetPasswordEmail } = require('./services/emailService');
+const User = require("./models/User");
+const {
+  sendVerifyEmail,
+  sendWelcomeEmail,
+  sendResetPasswordEmail,
+} = require("./services/emailService");
+
+// ✅ NEW: Analytics Events (no rompe si falla)
+const { trackEvent } = require("./services/trackEvent");
 
 // ✅ Turnstile
-const requireTurnstileAlways = require('./middlewares/requireTurnstileAlways');
-const { verifyTurnstile } = require('./services/turnstile');
-
-
+const requireTurnstileAlways = require("./middlewares/requireTurnstileAlways");
+const { verifyTurnstile } = require("./services/turnstile");
 
 /* =========================
  * Modelos para Integraciones (Disconnect)
  * (cargan con fallback para NO romper si cambia el schema)
  * ========================= */
 let MetaAccount, GoogleAccount, ShopConnections;
-try { MetaAccount = require('./models/MetaAccount'); } catch (_) { MetaAccount = null; }
-try { GoogleAccount = require('./models/GoogleAccount'); } catch (_) { GoogleAccount = null; }
-try { ShopConnections = require('./models/ShopConnections'); } catch (_) { ShopConnections = null; }
-
+try {
+  MetaAccount = require("./models/MetaAccount");
+} catch (_) {
+  MetaAccount = null;
+}
+try {
+  GoogleAccount = require("./models/GoogleAccount");
+} catch (_) {
+  GoogleAccount = null;
+}
+try {
+  ShopConnections = require("./models/ShopConnections");
+} catch (_) {
+  ShopConnections = null;
+}
 
 // Routers
 const googleConnect = require("./routes/googleConnect");
@@ -62,43 +80,25 @@ const eventsRoutes = require("./routes/events");
 const adminAnalyticsRoutes = require("./routes/adminAnalytics");
 
 // Meta
-const metaInsightsRoutes = require('./routes/metaInsights');
-const metaAccountsRoutes = require('./routes/metaAccounts');
-const metaTable = require('./routes/metaTable');
+const metaInsightsRoutes = require("./routes/metaInsights");
+const metaAccountsRoutes = require("./routes/metaAccounts");
+const metaTable = require("./routes/metaTable");
 
 const app = express();
 
 // ✅ Debug de correo (ya usa mailer.js/emailService.js)
-app.use('/__mail', require('./routes/mailDebug'));
+app.use("/__mail", require("./routes/mailDebug"));
 
 // ✅ Cron emails (protegido por CRON_KEY)
-app.use('/api/cron', require('./routes/cronEmails'));
-
+app.use("/api/cron", require("./routes/cronEmails"));
 
 const PORT = process.env.PORT || 3000;
-const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
-const APP_ORIGIN = (() => {
-  try {
-    return new URL(APP_URL).origin;
-  } catch {
-    return null;
-  }
-})();
-const RENDER_EXTERNAL_ORIGIN = (() => {
-  const raw = String(process.env.RENDER_EXTERNAL_URL || '').trim();
-  if (!raw) return null;
-  try {
-    return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).origin;
-  } catch {
-    return null;
-  }
-})();
-
+const APP_URL = (process.env.APP_URL || "https://adray.ai").replace(/\/$/, "");
 
 /* =========================
  * Seguridad y performance
  * ========================= */
-app.disable('x-powered-by');
+app.disable("x-powered-by");
 app.use(
   helmet({
     // IMPORTANTE para apps embebidas de Shopify
@@ -106,7 +106,7 @@ app.use(
     contentSecurityPolicy: false,
 
     // esto lo puedes dejar
-    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginResourcePolicy: { policy: "cross-origin" },
   })
 );
 app.use(compression());
@@ -115,18 +115,13 @@ app.use(compression());
  * CORS
  * ========================= */
 const ALLOWED_ORIGINS = [
-  'https://adray.ai',
-  'https://adray-app-staging-german.onrender.com',
-  'https://admin.shopify.com',
+  "https://adray.ai",
+  "https://admin.shopify.com",
   /^https?:\/\/[^/]+\.myshopify\.com$/i,
-  'http://localhost:3000',
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'http://localhost:8080',
-  'http://127.0.0.1:8080',
-  APP_ORIGIN,
-  RENDER_EXTERNAL_ORIGIN,
-].filter(Boolean);
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
 
 app.use(
   cors({
@@ -135,7 +130,7 @@ app.use(
       const ok = ALLOWED_ORIGINS.some((rule) =>
         rule instanceof RegExp ? rule.test(origin) : rule === origin
       );
-      return cb(ok ? null : new Error('CORS not allowed'), ok);
+      return cb(ok ? null : new Error("CORS not allowed"), ok);
     },
     credentials: true,
   })
@@ -146,107 +141,67 @@ app.options(/.*/, cors());
  * Sesión y Passport
  * (ANTES de Stripe, webhooks y APIs)
  * ========================= */
-app.set('trust proxy', 1);
+app.set("trust proxy", 1);
+
+const SESSION_COOKIE_NAME = "adray.sid"; // ✅ NEW (nombre propio)
+
+// ✅ Opción A: Session cookie (sin maxAge/expires) + store en Mongo (estable en prod)
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || 'adnova_secret',
+    name: SESSION_COOKIE_NAME, // ✅ NEW
+    secret: process.env.SESSION_SECRET || "adnova_secret",
     resave: false,
     saveUninitialized: false,
+
+    store: MongoStore.create({
+      mongoUrl: process.env.MONGO_URI,
+      collectionName: "sessions",
+      ttl: 60 * 60 * 24 * 7, // 7 días server-side
+      // opcional pero recomendado:
+      autoRemove: "native",
+    }),
+
     cookie: {
-      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      secure: process.env.NODE_ENV === "production",
       httpOnly: true,
+
+      // ✅ CLAVE OPCIÓN A:
+      // NO maxAge
+      // NO expires
+      // => el navegador borra la cookie al cerrarse
     },
   })
 );
+
 app.use(passport.initialize());
 app.use(passport.session());
 
-/* =========================
- * 🔧 DEV AUTO-LOGIN (solo localhost)
- * Permite probar sin Google OAuth
- * ========================= */
-if (process.env.NODE_ENV !== 'production') {
-  app.get('/dev/auto-login', async (req, res, next) => {
-    try {
-      const email = req.query.email || process.env.DEV_AUTO_LOGIN_EMAIL;
-      
-      if (!email) {
-        return res.status(400).json({
-          error: 'Especifica ?email=tu@email.com o configura DEV_AUTO_LOGIN_EMAIL en .env',
-          ejemplo: '/dev/auto-login?email=jose@adray.ai'
-        });
-      }
-      
-      const user = await User.findOne({ email: email.toLowerCase().trim() });
-      
-      if (!user) {
-        return res.status(404).json({ 
-          error: `Usuario no encontrado: ${email}`,
-          hint: 'Asegúrate de usar un email que exista en la base de datos'
-        });
-      }
-      
-      req.login(user, (err) => {
-        if (err) return next(err);
-        
-        console.log(`[DEV] Auto-login exitoso: ${email}`);
-        
-        // Redirigir al dashboard
-        const redirectTo = req.query.redirect || '/dashboard/creative-intelligence';
-        return res.redirect(redirectTo);
-      });
-    } catch (err) {
-      console.error('[DEV] Auto-login error:', err);
-      return res.status(500).json({ error: 'Error en auto-login' });
-    }
-  });
-  
-  console.log('🔧 [DEV] Auto-login habilitado: GET /dev/auto-login?email=tu@email.com');
-}
-
 function ensureAuthenticated(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
-  return res.redirect('/login');
+  return res.redirect("/login");
 }
 function ensureNotOnboarded(req, res, next) {
   if (!(req.isAuthenticated && req.isAuthenticated()))
-    return res.redirect('/login');
+    return res.redirect("/login");
   if (!req.user?.onboardingComplete) return next();
-  return res.redirect('/dashboard');
+  return res.redirect("/dashboard");
 }
 function sessionGuard(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
-  return res.status(401).json({ error: 'No hay sesión' });
+  return res.status(401).json({ error: "No hay sesión" });
 }
 
-  const API_SESSION_BYPASS = [
-    /^\/api\/stripe\/webhook\/?$/i,
-    /^\/api\/auth\/verify-email\/?$/i,
-    /^\/api\/public-config\/?$/i,
-    /^\/api\/register\/?$/i,
-    /^\/api\/login\/?$/i,
-    /^\/api\/auth\/login\/?$/i,
-    /^\/api\/forgot-password\/?$/i,
-    /^\/api\/bookcall(?:\/.*)?$/i,
-    /^\/api\/cron(?:\/.*)?$/i,
-    /^\/api\/logout\/?$/i,
-  ];
-
-  function shouldBypassApiSessionToken(pathname) {
-    return API_SESSION_BYPASS.some((rule) => rule.test(pathname));
-  }
-
 function isIframeRequest(req) {
-  const dest = (req.get('sec-fetch-dest') || '').toLowerCase();
-  return dest === 'iframe' || req.query.embedded === '1';
+  const dest = (req.get("sec-fetch-dest") || "").toLowerCase();
+  return dest === "iframe" || req.query.embedded === "1";
 }
 
 // ✅ Debe estar ANTES de cualquier uso
-function topLevelRedirect(res, url, label = 'Continuar con Shopify') {
+function topLevelRedirect(res, url, label = "Continuar con Shopify") {
   return res
     .status(200)
-    .type('html')
+    .type("html")
     .send(`<!doctype html>
 <html lang="es">
 <head>
@@ -293,7 +248,7 @@ function topLevelRedirect(res, url, label = 'Continuar con Shopify') {
 
 // Si NO usas /connector/auth realmente, puedes borrar este bloque completo.
 // Si SÍ existe, déjalo así:
-app.get(['/connector/auth', '/connector/auth/callback'], (req, res, next) => {
+app.get(["/connector/auth", "/connector/auth/callback"], (req, res, next) => {
   if (isIframeRequest(req)) {
     const url = new URL(req.originalUrl, APP_URL);
     return topLevelRedirect(res, url.toString());
@@ -311,9 +266,9 @@ app.get(['/connector/auth', '/connector/auth/callback'], (req, res, next) => {
 app.use("/connector/webhooks", express.raw({ type: "*/*" }), webhookRoutes);
 
 // 2) Stripe: RAW **solo** en /api/stripe/webhook; JSON normal para el resto
-app.use('/api/stripe', (req, res, next) => {
-  if (req.path === '/webhook') {
-    return express.raw({ type: 'application/json' })(req, res, next);
+app.use("/api/stripe", (req, res, next) => {
+  if (req.path === "/webhook") {
+    return express.raw({ type: "application/json" })(req, res, next);
   }
   return next();
 });
@@ -337,42 +292,41 @@ app.use("/api/stripe", stripeRouter);
 app.use(publicCSP);
 app.use(shopifyCSP);
 
-
 /* robots.txt simple */
-app.get('/robots.txt', (_req, res) => {
-  res.type('text/plain').send('User-agent: *\nDisallow:');
+app.get("/robots.txt", (_req, res) => {
+  res.type("text/plain").send("User-agent: *\nDisallow:");
 });
 
 /* =========================
  * MongoDB
  * ========================= */
 if (!process.env.MONGO_URI) {
-  console.warn('⚠️  MONGO_URI no está configurado');
+  console.warn("⚠️  MONGO_URI no está configurado");
 }
 mongoose
   .connect(process.env.MONGO_URI, {
     useNewUrlParser: true,
     useUnifiedTopology: true,
   })
-  .then(() => console.log('✅ Conectado a MongoDB Atlas'))
-  .catch((err) => console.error('❌ Error al conectar con MongoDB:', err));
+  .then(() => console.log("✅ Conectado a MongoDB Atlas"))
+  .catch((err) => console.error("❌ Error al conectar con MongoDB:", err));
 
 /* =========================
  * Rutas utilitarias públicas
  * ========================= */
-app.get('/agendar', (_req, res) => {
-  const file = path.join(__dirname, '../public/agendar.html');
-  let html = fs.readFileSync(file, 'utf8');
+app.get("/agendar", (_req, res) => {
+  const file = path.join(__dirname, "../public/agendar.html");
+  let html = fs.readFileSync(file, "utf8");
 
-  const bookingUrl = process.env.BOOKING_URL || '';
+  const bookingUrl = process.env.BOOKING_URL || "";
   html = html.replace(/{{BOOKING_URL}}/g, bookingUrl);
 
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.send(html);
 });
 
-app.get('/api/public-config', (_req, res) => {
-  res.json({ bookingUrl: process.env.BOOKING_URL || '' });
+app.get("/api/public-config", (_req, res) => {
+  res.json({ bookingUrl: process.env.BOOKING_URL || "" });
 });
 
 /* =========================
@@ -397,19 +351,17 @@ function logDash(req, label, extra) {
 }
 
 function isStartHit(req) {
-  const p = String(req.originalUrl || req.path || "");
+  const p = String(req.path || req.originalUrl || "");
   return p.endsWith("/start") || p.includes("/start?");
 }
 
 function serveDashboardSPA({ app, rootDir, label }) {
-  // 1) Logs a cualquier request del dashboard (antes de static)
   app.use("/dashboard", ensureAuthenticated, (req, _res, next) => {
     logDash(req, "DASH_REQ");
     if (isStartHit(req)) logDash(req, "START_HIT");
     return next();
   });
 
-  // 2) Assets (si el dist tiene /assets)
   app.use(
     "/assets",
     express.static(path.join(rootDir, "assets"), {
@@ -418,10 +370,8 @@ function serveDashboardSPA({ app, rootDir, label }) {
     })
   );
 
-  // 3) Static del dashboard
   app.use("/dashboard", ensureAuthenticated, express.static(rootDir));
 
-  // 4) Fallback SPA
   app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (req, res) => {
     if (isStartHit(req)) {
       logDash(req, "START_FALLBACK", `-> index.html (${label})`);
@@ -434,27 +384,30 @@ function serveDashboardSPA({ app, rootDir, label }) {
   console.log(`✅ Dashboard servido desde: ${label}`);
 }
 
-// ✅ Montaje real (aquí es donde sí va el IF/ELSE)
 if (HAS_DASHBOARD_DIST) {
-  serveDashboardSPA({ app, rootDir: DASHBOARD_DIST, label: "dashboard-src/dist" });
-} else {
-  // Legacy fallback
-  app.use("/assets", express.static(path.join(LEGACY_DASH, "assets")));
-  app.use("/dashboard", ensureAuthenticated, express.static(LEGACY_DASH));
-  app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (_req, res) => {
-    res.sendFile(path.join(LEGACY_DASH, "index.html"));
+  serveDashboardSPA({
+    app,
+    rootDir: DASHBOARD_DIST,
+    label: "dashboard-src/dist",
   });
-  console.warn("⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard");
-}
+} else {
+  serveDashboardSPA({
+    app,
+    rootDir: LEGACY_DASH,
+    label: "public/dashboard (fallback)",
+  });
 
-app.use("/api/bookcall", require("./routes/bookcall"));
+  console.warn(
+    "⚠️ dashboard-src/dist no encontrado. Usando fallback /public/dashboard"
+  );
+}
 
 /* =========================
  * Rutas de autenticación e integraciones
  * ========================= */
-app.use('/auth/google', googleConnect);
-app.use('/auth/meta', metaAuthRoutes);
-app.use('/', privacyRoutes);
+app.use("/auth/google", googleConnect);
+app.use("/auth/meta", metaAuthRoutes);
+app.use("/", privacyRoutes);
 
 // Google Analytics (GA4)
 app.use("/api/google/analytics", gaRouter);
@@ -462,10 +415,10 @@ app.use("/api/google/analytics", gaRouter);
 // ✅ GA4 Auth (nuevo)
 app.use(require("./routes/googleGa4Auth"));
 
-app.use('/api/google/ads/insights', sessionGuard, googleAdsInsightsRouter);
-app.use('/api/google/ads', sessionGuard, googleAdsInsightsRouter);
+app.use("/api/google/ads/insights", sessionGuard, googleAdsInsightsRouter);
+app.use("/api/google/ads", sessionGuard, googleAdsInsightsRouter);
 
-app.use('/api/onboarding/status', sessionGuard, require('./routes/onboardingStatus'));
+app.use("/api/onboarding/status", sessionGuard, require("./routes/onboardingStatus"));
 
 /* =========================
  * ✅ Integraciones: DISCONNECT (E2E)
@@ -526,23 +479,22 @@ app.post("/api/integrations/disconnect/google", sessionGuard, async (req, res) =
       { _id: uid },
       {
         $set: {
-          'preferences.googleAds.auditAccountIds': emptyArr(),
-          'preferences.googleAnalytics.auditPropertyIds': emptyArr(),
+          "preferences.googleAds.auditAccountIds": emptyArr(),
+          "preferences.googleAnalytics.auditPropertyIds": emptyArr(),
         },
       }
     );
 
     return res.json({ ok: true });
   } catch (e) {
-    console.error('[disconnect/google] error:', e);
-    return res.status(500).json({ ok: false, error: 'DISCONNECT_GOOGLE_FAILED' });
+    console.error("[disconnect/google] error:", e);
+    return res.status(500).json({ ok: false, error: "DISCONNECT_GOOGLE_FAILED" });
   }
 });
 
 app.post("/api/integrations/google/disconnect", sessionGuard, (req, res) =>
   res.redirect(307, "/api/integrations/disconnect/google")
 );
-
 
 app.post("/api/integrations/disconnect/meta", sessionGuard, async (req, res) => {
   try {
@@ -587,24 +539,23 @@ app.post("/api/integrations/disconnect/meta", sessionGuard, async (req, res) => 
           selectedMetaAccounts: emptyArr(),
         },
         $unset: {
-          metaAccessToken: '',
-          metaTokenExpiresAt: '',
-          metaDefaultAccountId: '',
+          metaAccessToken: "",
+          metaTokenExpiresAt: "",
+          metaDefaultAccountId: "",
         },
       }
     );
 
     return res.json({ ok: true });
   } catch (e) {
-    console.error('[disconnect/meta] error:', e);
-    return res.status(500).json({ ok: false, error: 'DISCONNECT_META_FAILED' });
+    console.error("[disconnect/meta] error:", e);
+    return res.status(500).json({ ok: false, error: "DISCONNECT_META_FAILED" });
   }
 });
 
 app.post("/api/integrations/meta/disconnect", sessionGuard, (req, res) =>
   res.redirect(307, "/api/integrations/disconnect/meta")
 );
-
 
 app.post("/api/integrations/disconnect/shopify", sessionGuard, async (req, res) => {
   try {
@@ -630,16 +581,16 @@ app.post("/api/integrations/disconnect/shopify", sessionGuard, async (req, res) 
       {
         $set: { shopifyConnected: false },
         $unset: {
-          shop: '',
-          shopifyAccessToken: '',
+          shop: "",
+          shopifyAccessToken: "",
         },
       }
     );
 
     return res.json({ ok: true });
   } catch (e) {
-    console.error('[disconnect/shopify] error:', e);
-    return res.status(500).json({ ok: false, error: 'DISCONNECT_SHOPIFY_FAILED' });
+    console.error("[disconnect/shopify] error:", e);
+    return res.status(500).json({ ok: false, error: "DISCONNECT_SHOPIFY_FAILED" });
   }
 });
 
@@ -647,12 +598,11 @@ app.post("/api/integrations/shopify/disconnect", sessionGuard, (req, res) =>
   res.redirect(307, "/api/integrations/disconnect/shopify")
 );
 
-
 // ✅ Auditorías
-app.use('/api/audits', sessionGuard, auditRunnerRoutes);
-app.use('/api/audits', sessionGuard, auditsRoutes);
-app.use('/api/audit', sessionGuard, auditRunnerRoutes);
-app.use('/api/dashboard/audits', sessionGuard, auditsRoutes);
+app.use("/api/audits", sessionGuard, auditRunnerRoutes);
+app.use("/api/audits", sessionGuard, auditsRoutes);
+app.use("/api/audit", sessionGuard, auditRunnerRoutes);
+app.use("/api/dashboard/audits", sessionGuard, auditsRoutes);
 
 app.post("/api/audit/start", sessionGuard, (req, res) =>
   res.redirect(307, "/api/audits/start")
@@ -670,98 +620,80 @@ app.post("/api/dashboard/audit", sessionGuard, (req, res) => {
   return res.redirect(307, "/api/audits/start");
 });
 
-
 // Stripe / Facturapi / Billing
-app.use('/api/facturapi', require('./routes/facturapi'));
-app.use('/api/billing', billingRoutes);
+app.use("/api/facturapi", require("./routes/facturapi"));
+app.use("/api/billing", billingRoutes);
 
 // Meta Ads
 app.use("/api/meta/insights", sessionGuard, metaInsightsRoutes);
 app.use("/api/meta/accounts", sessionGuard, metaAccountsRoutes);
 app.use("/api/meta", metaTable);
-app.use('/api/meta/insights', sessionGuard, metaInsightsRoutes);
-app.use('/api/meta/accounts', sessionGuard, metaAccountsRoutes);
-app.use('/api/meta', metaTable);
-
-// Creative Intelligence (Meta Creative Decision Engine)
-let creativeIntelligenceRoutes;
-try {
-  creativeIntelligenceRoutes = require('./routes/creativeIntelligence');
-} catch (_err) {
-  creativeIntelligenceRoutes = express.Router();
-  creativeIntelligenceRoutes.use((_req, res) => {
-    res.status(503).json({ error: 'creative intelligence module unavailable' });
-  });
-}
-app.use('/api/creative-intelligence', sessionGuard, creativeIntelligenceRoutes);
 
 // Shopify
-const verifyShopifyToken = require('../middlewares/verifyShopifyToken'); // (por ahora no usado)
+const verifyShopifyToken = require("../middlewares/verifyShopifyToken"); // (por ahora no usado)
 
 // ✅ SERVIR assets del conector ANTES del router
-const CONNECTOR_PUBLIC = path.join(__dirname, '../public/connector');
+const CONNECTOR_PUBLIC = path.join(__dirname, "../public/connector");
 
 app.use(
-  '/connector',
+  "/connector",
   express.static(CONNECTOR_PUBLIC, {
     index: false,
-    maxAge: '1h',
+    maxAge: "1h",
   }),
   connector
 );
 
-
-app.use('/api/shopify', shopifyRoutes);
-app.use('/api', mockShopify);
-
+app.use("/api/shopify", shopifyRoutes);
+app.use("/api", mockShopify);
 
 /* =========================
  * Páginas públicas y flujo de app
  * ========================= */
-app.get('/', (req, res) => {
+app.get("/", (req, res) => {
   const { shop } = req.query;
   if (shop) return res.redirect(`/connector?shop=${shop}`);
   if (req.isAuthenticated && req.isAuthenticated()) {
     return req.user.onboardingComplete
-      ? res.redirect('/dashboard')
-      : res.redirect('/onboarding');
+      ? res.redirect("/dashboard")
+      : res.redirect("/onboarding");
   }
-  return res.sendFile(path.join(__dirname, '../public/landing/index.html'));
+  return res.sendFile(path.join(__dirname, "../public/landing/index.html"));
 });
 
-app.get('/login', (_req, res) => {
-  res.sendFile(path.join(__dirname, '../public/login.html'));
+app.get("/login", (_req, res) => {
+  res.sendFile(path.join(__dirname, "../public/login.html"));
 });
 
-app.get('/onboarding', ensureNotOnboarded, async (req, res) => {
-  const filePath = path.join(__dirname, '../public/onboarding.html');
+app.get("/onboarding", ensureNotOnboarded, async (req, res) => {
+  const filePath = path.join(__dirname, "../public/onboarding.html");
   const user = await User.findById(req.user._id).lean();
   const alreadyConnectedShopify = user?.shopifyConnected || false;
 
-  fs.readFile(filePath, 'utf8', (err, html) => {
+  fs.readFile(filePath, "utf8", (err, html) => {
     if (err) {
-      console.error('❌ Error al leer onboarding.html:', err.stack || err);
-      return res.status(500).send('Error al cargar la página de onboarding.');
+      console.error("❌ Error al leer onboarding.html:", err.stack || err);
+      return res.status(500).send("Error al cargar la página de onboarding.");
     }
-    let updatedHtml = html.replace('USER_ID_REAL', req.user._id.toString());
+    let updatedHtml = html.replace("USER_ID_REAL", req.user._id.toString());
     updatedHtml = updatedHtml.replace(
-      'SHOPIFY_CONNECTED_FLAG',
-      alreadyConnectedShopify ? 'true' : 'false'
+      "SHOPIFY_CONNECTED_FLAG",
+      alreadyConnectedShopify ? "true" : "false"
     );
     updatedHtml = updatedHtml.replace(
-      'GOOGLE_CONNECTED_FLAG',
-      user?.googleConnected ? 'true' : 'false'
+      "GOOGLE_CONNECTED_FLAG",
+      user?.googleConnected ? "true" : "false"
     );
     res.send(updatedHtml);
   });
 });
 
-app.post('/api/complete-onboarding', async (req, res) => {
+app.post("/api/complete-onboarding", async (req, res) => {
   try {
     if (!req.isAuthenticated()) {
       return res
         .status(401)
-        .json({ success: false, message: 'No autenticado' });
+        .json({ success: false, message: "No autenticado" });
     }
     const result = await User.findByIdAndUpdate(req.user._id, {
       onboardingComplete: true,
@@ -769,11 +701,11 @@ app.post('/api/complete-onboarding', async (req, res) => {
     if (!result)
       return res
         .status(404)
-        .json({ success: false, message: 'Usuario no encontrado' });
+        .json({ success: false, message: "Usuario no encontrado" });
     res.json({ success: true });
   } catch (err) {
-    console.error('❌ Error al completar onboarding:', err.stack || err);
-    res.status(500).json({ success: false, message: 'Error del servidor' });
+    console.error("❌ Error al completar onboarding:", err.stack || err);
+    res.status(500).json({ success: false, message: "Error del servidor" });
   }
 });
 
@@ -787,14 +719,14 @@ function makeVerifyToken() {
 }
 
 function hashToken(token) {
-  return crypto.createHash('sha256').update(String(token)).digest('hex');
+  return crypto.createHash("sha256").update(String(token)).digest("hex");
 }
 
 // =========================
 // Intercom helpers (E2E)
 // =========================
-const INTERCOM_APP_ID = process.env.INTERCOM_APP_ID || 'sqexnuzh';
-const INTERCOM_IDENTITY_SECRET = process.env.INTERCOM_IDENTITY_SECRET || '';
+const INTERCOM_APP_ID = process.env.INTERCOM_APP_ID || "sqexnuzh";
+const INTERCOM_IDENTITY_SECRET = process.env.INTERCOM_IDENTITY_SECRET || "";
 
 function toUnixSeconds(d) {
   const t = d ? new Date(d).getTime() : Date.now();
@@ -805,9 +737,9 @@ function intercomUserHash(userId) {
   try {
     if (!INTERCOM_IDENTITY_SECRET) return null;
     return crypto
-      .createHmac('sha256', INTERCOM_IDENTITY_SECRET)
+      .createHmac("sha256", INTERCOM_IDENTITY_SECRET)
       .update(String(userId))
-      .digest('hex');
+      .digest("hex");
   } catch {
     return null;
   }
@@ -835,13 +767,13 @@ const LOGIN_RISK_MAX_FAILS = Number(process.env.LOGIN_RISK_MAX_FAILS || 3);
 const loginRiskStore = new Map();
 
 function getClientIp(req) {
-  const xf = (req.headers['x-forwarded-for'] || '').toString();
-  const ip = (xf.split(',')[0] || req.ip || '').trim();
-  return ip || 'unknown';
+  const xf = (req.headers["x-forwarded-for"] || "").toString();
+  const ip = (xf.split(",")[0] || req.ip || "").trim();
+  return ip || "unknown";
 }
 
 function riskKey(req, email) {
-  return `${getClientIp(req)}::${String(email || '').toLowerCase().trim()}`;
+  return `${getClientIp(req)}::${String(email || "").toLowerCase().trim()}`;
 }
 
 function riskGet(req, email) {
@@ -876,20 +808,18 @@ function riskClear(req, email) {
   loginRiskStore.delete(riskKey(req, email));
 }
 
-
 /* =========================
  * Auth básica (email/pass)
  * ========================= */
 
-app.post('/api/register', requireTurnstileAlways, async (req, res) => {
-
+app.post("/api/register", requireTurnstileAlways, async (req, res) => {
   try {
     let { name, email, password } = req.body || {};
 
     if (!name || !email || !password) {
       return res.status(400).json({
         success: false,
-        message: 'Nombre, correo y contraseña son requeridos',
+        message: "Nombre, correo y contraseña son requeridos",
       });
     }
 
@@ -899,39 +829,41 @@ app.post('/api/register', requireTurnstileAlways, async (req, res) => {
     if (name.length < 2 || name.length > 60) {
       return res.status(400).json({
         success: false,
-        message: 'El nombre debe tener entre 2 y 60 caracteres',
+        message: "El nombre debe tener entre 2 y 60 caracteres",
       });
     }
 
     const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRe.test(email)) {
-      return res.status(400).json({ success: false, message: 'Correo inválido' });
+      return res.status(400).json({ success: false, message: "Correo inválido" });
     }
     if (String(password).length < 8) {
       return res.status(400).json({
         success: false,
-        message: 'La contraseña debe tener al menos 8 caracteres',
+        message: "La contraseña debe tener al menos 8 caracteres",
       });
     }
 
     const exists = await User.findOne({ email });
     if (exists) {
-      return res.status(409).json({ success: false, message: 'El email ya está registrado' });
+      return res
+        .status(409)
+        .json({ success: false, message: "El email ya está registrado" });
     }
 
     const hashed = await bcrypt.hash(password, 10);
 
     const verifyToken = makeVerifyToken();
     const verifyTokenHash = hashToken(verifyToken);
-    const verifyExpires = new Date(Date.now() + VERIFY_TTL_HOURS * 60 * 60 * 1000);
+    const verifyExpires = new Date(
+      Date.now() + VERIFY_TTL_HOURS * 60 * 60 * 1000
+    );
 
     const user = await User.create({
       name,
       email,
       password: hashed,
 
-      // Si tu schema no tenía estos campos, igual te recomiendo agregarlos al modelo User.
-      // Si tu schema es strict y no los tiene, NO se guardarán (te lo indico abajo).
       emailVerified: false,
       verifyEmailTokenHash: verifyTokenHash,
       verifyEmailExpires: verifyExpires,
@@ -954,27 +886,34 @@ app.post('/api/register', requireTurnstileAlways, async (req, res) => {
         name: user.name,
       });
     } catch (mailErr) {
-      console.error('✉️  Email verificación falló (registro OK):', mailErr?.message || mailErr);
+      console.error(
+        "✉️  Email verificación falló (registro OK):",
+        mailErr?.message || mailErr
+      );
     }
 
     return res.status(201).json({
       success: true,
-      message: 'Usuario registrado. Revisa tu correo para verificar tu cuenta.',
+      message: "Usuario registrado. Revisa tu correo para verificar tu cuenta.",
       confirmUrl: `/confirmation.html?email=${encodeURIComponent(user.email)}`,
     });
   } catch (err) {
     if (err && err.code === 11000) {
-      return res.status(409).json({ success: false, message: 'El email ya está registrado' });
+      return res
+        .status(409)
+        .json({ success: false, message: "El email ya está registrado" });
     }
-    console.error('❌ Error al registrar usuario:', err);
-    return res.status(500).json({ success: false, message: 'Error interno al registrar' });
+    console.error("❌ Error al registrar usuario:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Error interno al registrar" });
   }
 });
 
-app.get('/api/auth/verify-email', async (req, res) => {
+app.get("/api/auth/verify-email", async (req, res) => {
   try {
-    const token = String(req.query.token || '').trim();
-    if (!token) return res.status(400).send('Token faltante');
+    const token = String(req.query.token || "").trim();
+    if (!token) return res.status(400).send("Token faltante");
 
     const tokenHash = hashToken(token);
 
@@ -986,7 +925,9 @@ app.get('/api/auth/verify-email', async (req, res) => {
     if (!user) {
       return res
         .status(400)
-        .send('El enlace de verificación es inválido o expiró. Solicita uno nuevo.');
+        .send(
+          "El enlace de verificación es inválido o expiró. Solicita uno nuevo."
+        );
     }
 
     user.emailVerified = true;
@@ -1006,8 +947,8 @@ app.get('/api/auth/verify-email', async (req, res) => {
 
     return res.redirect(302, "/login?verified=1");
   } catch (err) {
-    console.error('❌ verify-email:', err);
-    return res.status(500).send('Error al verificar el correo');
+    console.error("❌ verify-email:", err);
+    return res.status(500).send("Error al verificar el correo");
   }
 });
 
@@ -1017,18 +958,20 @@ app.get('/api/auth/verify-email', async (req, res) => {
 const RESET_TTL_MINUTES = Number(process.env.RESET_PASSWORD_TTL_MINUTES || 30);
 
 function makeResetToken() {
-  return crypto.randomBytes(32).toString('hex');
+  return crypto.randomBytes(32).toString("hex");
 }
 
-app.post('/api/forgot-password', requireTurnstileAlways, async (req, res) => {
+app.post("/api/forgot-password", requireTurnstileAlways, async (req, res) => {
   try {
-    const email = String(req.body?.email || '').trim().toLowerCase();
+    const email = String(req.body?.email || "").trim().toLowerCase();
 
     const safeOk = () => res.json({ ok: true });
 
     if (!email) return safeOk();
 
-    const user = await User.findOne({ email }).select('_id email name emailVerified').lean();
+    const user = await User.findOne({ email })
+      .select("_id email name emailVerified")
+      .lean();
 
     if (!user) return safeOk();
     if (user.emailVerified === false) return safeOk();
@@ -1055,7 +998,10 @@ app.post('/api/forgot-password', requireTurnstileAlways, async (req, res) => {
         token: resetToken,
       });
     } catch (mailErr) {
-      console.error('✉️ Reset email falló (forgot OK):', mailErr?.message || mailErr);
+      console.error(
+        "✉️ Reset email falló (forgot OK):",
+        mailErr?.message || mailErr
+      );
     }
 
     return safeOk();
@@ -1065,29 +1011,26 @@ app.post('/api/forgot-password', requireTurnstileAlways, async (req, res) => {
   }
 });
 
-
 /* =========================
  * ✅ LOGIN (email/pass) — E2E + Risk-based Turnstile
- * - 1-2 fallos: normal
- * - >=3 fallos (IP+email, 15min): requiere captcha
- * - si requiere captcha y falla/missing => 400 + requiresCaptcha:true
- * - si credenciales fallan => 401 + requiresCaptcha (según contador)
  * ========================= */
-app.post(['/api/login', '/api/auth/login', '/login'], async (req, res, next) => {
+app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => {
   try {
-    const email = String(req.body?.email || '').trim().toLowerCase();
-    const password = String(req.body?.password || '');
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
 
     if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Ingresa tu correo y contraseña.' });
+      return res
+        .status(400)
+        .json({ success: false, message: "Ingresa tu correo y contraseña." });
     }
 
     const risk = riskGet(req, email);
     if (risk.requiresCaptcha) {
       const token =
-        String(req.body?.turnstileToken || '').trim() ||
-        String(req.body?.['cf-turnstile-response'] || '').trim() ||
-        String(req.headers?.['x-turnstile-token'] || '').trim();
+        String(req.body?.turnstileToken || "").trim() ||
+        String(req.body?.["cf-turnstile-response"] || "").trim() ||
+        String(req.headers?.["x-turnstile-token"] || "").trim();
 
       const { ok, data } = await verifyTurnstile(token, getClientIp(req));
       if (!ok) {
@@ -1095,9 +1038,9 @@ app.post(['/api/login', '/api/auth/login', '/login'], async (req, res, next) => 
           success: false,
           ok: false,
           requiresCaptcha: true,
-          code: 'TURNSTILE_REQUIRED_OR_FAILED',
-          errorCodes: data?.['error-codes'] || [],
-          message: 'Verificación requerida. Completa el captcha para continuar.',
+          code: "TURNSTILE_REQUIRED_OR_FAILED",
+          errorCodes: data?.["error-codes"] || [],
+          message: "Verificación requerida. Completa el captcha para continuar.",
         });
       }
     }
@@ -1108,16 +1051,15 @@ app.post(['/api/login', '/api/auth/login', '/login'], async (req, res, next) => 
       const rr = riskFail(req, email);
       return res.status(401).json({
         success: false,
-        message: 'Correo o contraseña incorrectos.',
+        message: "Correo o contraseña incorrectos.",
         requiresCaptcha: rr.requiresCaptcha,
       });
     }
 
     if (user.emailVerified === false) {
-      // No aumenta risk (esto no es bot de password), pero puedes cambiarlo si quieres.
       return res.status(403).json({
         success: false,
-        message: 'Tu correo aún no está verificado. Revisa tu bandeja de entrada.',
+        message: "Tu correo aún no está verificado. Revisa tu bandeja de entrada.",
       });
     }
 
@@ -1126,7 +1068,7 @@ app.post(['/api/login', '/api/auth/login', '/login'], async (req, res, next) => 
       const rr = riskFail(req, email);
       return res.status(401).json({
         success: false,
-        message: 'Correo o contraseña incorrectos.',
+        message: "Correo o contraseña incorrectos.",
         requiresCaptcha: rr.requiresCaptcha,
       });
     }
@@ -1149,24 +1091,24 @@ app.post(['/api/login', '/api/auth/login', '/login'], async (req, res, next) => 
       return res.json({ success: true, redirect });
     });
   } catch (err) {
-    console.error('❌ /api/login error:', err);
-    return res.status(500).json({ success: false, message: 'Error del servidor' });
+    console.error("❌ /api/login error:", err);
+    return res.status(500).json({ success: false, message: "Error del servidor" });
   }
 });
-
-
 
 /* =========================
  * Utilidades de sesión / perfil
  * ========================= */
-app.get('/api/session', async (req, res) => {
+app.get("/api/session", async (req, res) => {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
     return res.status(401).json({ authenticated: false });
   }
 
   try {
     const u = await User.findById(req.user._id)
-      .select('name email shop onboardingComplete googleConnected metaConnected shopifyConnected googleObjective metaObjective plan subscription createdAt')
+      .select(
+        "name email shop onboardingComplete googleConnected metaConnected shopifyConnected googleObjective metaObjective plan subscription createdAt"
+      )
       .lean();
 
     if (!u) return res.status(401).json({ authenticated: false });
@@ -1188,14 +1130,14 @@ app.get('/api/session', async (req, res) => {
         metaObjective: u.metaObjective || null,
 
         createdAt: u.createdAt || null,
-        plan: u.plan || 'gratis',
+        plan: u.plan || "gratis",
         subscription: u.subscription || null,
       },
 
       intercom: buildIntercomPayload(u),
     });
   } catch (e) {
-    console.error('/api/session error:', e);
+    console.error("/api/session error:", e);
     return res.status(401).json({ authenticated: false });
   }
 });
@@ -1247,7 +1189,7 @@ app.get("/api/user/me", sendAuthMe);
 app.get("/api/saas/ping", sessionGuard, (req, res) => {
   res.json({ ok: true, user: req.user?.email });
 });
-app.use('/api/saas/shopify', sessionGuard, require('./routes/shopifyMatch'));
+app.use("/api/saas/shopify", sessionGuard, require("./routes/shopifyMatch"));
 
 app.get("/api/me", async (req, res) => {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
@@ -1256,10 +1198,20 @@ app.get("/api/me", async (req, res) => {
 
   try {
     const u = await User.findById(req.user._id)
-      .select('name email plan subscription createdAt onboardingComplete')
+      .select("name email plan subscription createdAt onboardingComplete")
       .lean();
 
     if (!u) return res.status(401).json({ authenticated: false });
+
+    const data = {
+      _id: String(u._id),
+      id: String(u._id),
+      email: u.email || null,
+      name: u.name || null,
+      onboardingComplete: !!u.onboardingComplete,
+      plan: u.plan || "gratis",
+      createdAt: u.createdAt || null,
+    };
 
     return res.json({
       ok: true,
@@ -1272,21 +1224,20 @@ app.get("/api/me", async (req, res) => {
         onboardingComplete: !!u.onboardingComplete,
         createdAt: u.createdAt || null,
       },
-      plan: u.plan || 'gratis',
+      plan: u.plan || "gratis",
       subscription: u.subscription || null,
       intercom: buildIntercomPayload(u),
     });
   } catch (e) {
-    console.error('/api/me error', e);
-    return res.status(500).json({ authenticated: false, error: 'internal' });
+    console.error("/api/me error", e);
+    return res.status(500).json({ authenticated: false, error: "internal" });
   }
 });
-
 
 /* =========================
  * Otras APIs internas
  * ========================= */
-app.use('/api', userRoutes);
+app.use("/api", userRoutes);
 
 // ✅ NEW: events endpoint (/api/events) (requiere sesión)
 app.use("/api", eventsRoutes);
@@ -1294,42 +1245,36 @@ app.use("/api", eventsRoutes);
 // ✅ NEW: admin analytics (panel interno)
 app.use("/api/admin/analytics", adminAnalyticsRoutes);
 
-app.use("/api/secure", secureRoutes);
+app.use("/api/secure", verifySessionToken, secureRoutes);
 app.use("/api/dashboard", dashboardRoute);
 app.use("/api/shopConnection", require("./routes/shopConnection"));
 app.use("/api", subscribeRouter);
 
 // Estáticos (públicos)
-app.use('/assets', express.static(path.join(__dirname, '../public/landing/assets')));
-app.use('/assets', express.static(path.join(__dirname, '../public/support/assets')));
-app.use('/assets', express.static(path.join(__dirname, '../public/plans/assets')));
-app.use('/assets', express.static(path.join(__dirname, '../public/bookcall/assets')));
-app.use(express.static(path.join(__dirname, '../public')));
-
+app.use("/assets", express.static(path.join(__dirname, "../public/landing/assets")));
+app.use("/assets", express.static(path.join(__dirname, "../public/support/assets")));
+app.use("/assets", express.static(path.join(__dirname, "../public/plans/assets")));
+app.use("/assets", express.static(path.join(__dirname, "../public/bookcall/assets")));
+app.use(express.static(path.join(__dirname, "../public")));
 
 // ✅ Embedded entry: Shopify Admin abre /apps/<handle>
-// Aquí NO rompas iframe. Solo manda al conector embebido con shop+host.
 app.get(/^\/apps\/[^/]+\/?.*$/, shopifyCSP, (req, res) => {
-  const shop = String(req.query.shop || '').trim();
-  const host = String(req.query.host || '').trim();
+  const shop = String(req.query.shop || "").trim();
+  const host = String(req.query.host || "").trim();
 
   if (!shop) {
-    return res.status(400).type('text/plain').send('Missing shop');
+    return res.status(400).type("text/plain").send("Missing shop");
   }
 
-  const target = new URL('/connector/interface', APP_URL);
-  target.searchParams.set('shop', shop);
-  if (host) target.searchParams.set('host', host);
+  const target = new URL("/connector/interface", APP_URL);
+  target.searchParams.set("shop", shop);
+  if (host) target.searchParams.set("host", host);
 
   return res.redirect(302, target.toString());
 });
 
-
 /* =========================
  * OAuth Google (login simple) — E2E (WELCOME REAL)
- * - Envía welcome SOLO si el usuario se creó en Mongo en este login
- * - Nunca depende de flags de sesión
- * - Marca welcomeEmailSent=true en DB para no duplicar
  * ========================= */
 app.get(
   "/auth/google/login",
@@ -1339,11 +1284,14 @@ app.get(
   })
 );
 
-app.get('/auth/google/login/callback', (req, res, next) => {
-  passport.authenticate('google', { failureRedirect: '/login' }, async (err, user, info) => {
-    try {
-      if (err) return next(err);
-      if (!user) return res.redirect('/login');
+app.get("/auth/google/login/callback", (req, res, next) => {
+  passport.authenticate(
+    "google",
+    { failureRedirect: "/login" },
+    async (err, user, info) => {
+      try {
+        if (err) return next(err);
+        if (!user) return res.redirect("/login");
 
         req.logIn(user, async (loginErr) => {
           if (loginErr) return next(loginErr);
@@ -1374,11 +1322,11 @@ app.get('/auth/google/login/callback', (req, res, next) => {
                 .select("email name welcomeEmailSent")
                 .lean();
 
-            const toEmail = String(u?.email || '').trim().toLowerCase();
-            const name =
-              String(u?.name || '').trim() ||
-              (toEmail ? toEmail.split('@')[0] : '') ||
-              'Usuario';
+              const toEmail = String(u?.email || "").trim().toLowerCase();
+              const name =
+                String(u?.name || "").trim() ||
+                (toEmail ? toEmail.split("@")[0] : "") ||
+                "Usuario";
 
               if (!toEmail) {
                 console.warn("[google-callback] Welcome NO enviado: missing email");
@@ -1408,26 +1356,24 @@ app.get('/auth/google/login/callback', (req, res, next) => {
             console.log("[google-callback] Welcome NO enviado: not-new-user");
           }
 
-        const destino = user.onboardingComplete ? '/dashboard' : '/onboarding';
-        return res.redirect(destino);
-      });
-    } catch (e) {
-      return next(e);
+          const destino = user.onboardingComplete ? "/dashboard" : "/onboarding";
+          return res.redirect(destino);
+        });
+      } catch (e) {
+        return next(e);
+      }
     }
-  })(req, res, next);
+  )(req, res, next);
 });
-
-
-
 
 /* =========================
  * Debug / Diagnóstico
  * ========================= */
-const PUBLIC_DIR = path.join(__dirname, '../public');
+const PUBLIC_DIR = path.join(__dirname, "../public");
 
-app.get('/__ping', (_req, res) => {
-  const successExists = fs.existsSync(path.join(PUBLIC_DIR, 'plans', 'success.html'));
-  const cancelExists = fs.existsSync(path.join(PUBLIC_DIR, 'plans', 'cancel.html'));
+app.get("/__ping", (_req, res) => {
+  const successExists = fs.existsSync(path.join(PUBLIC_DIR, "plans", "success.html"));
+  const cancelExists = fs.existsSync(path.join(PUBLIC_DIR, "plans", "cancel.html"));
   res.json({
     ok: true,
     cwd: __dirname,
@@ -1437,8 +1383,8 @@ app.get('/__ping', (_req, res) => {
   });
 });
 
-app.get('/__ls-public', (_req, res) => {
-  const dir = path.join(PUBLIC_DIR, 'plans');
+app.get("/__ls-public", (_req, res) => {
+  const dir = path.join(PUBLIC_DIR, "plans");
   fs.readdir(dir, (err, files) => {
     res.json({ dir, exists: !err, files: files || [], error: err?.message });
   });
@@ -1476,36 +1422,36 @@ app.post("/api/logout", (req, res, next) => {
   });
 });
 
-app.get('/logout', (req, res, next) => {
+app.get("/logout", (req, res, next) => {
   req.logout?.((err) => {
     if (err) return next(err);
-    destroySessionAndReply(req, res, { redirectTo: '/login' });
+    destroySessionAndReply(req, res, { redirectTo: "/login" });
   });
 });
 
 /* =========================
  * Rutas éxito/cancel Stripe
  * ========================= */
-app.get('/plans/success', (_req, res) => {
-  res.sendFile(path.join(PUBLIC_DIR, 'plans', 'success.html'));
+app.get("/plans/success", (_req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "plans", "success.html"));
 });
-app.get('/plans/cancel', (_req, res) => {
-  const candidate = path.join(PUBLIC_DIR, 'plans', 'cancel.html');
+app.get("/plans/cancel", (_req, res) => {
+  const candidate = path.join(PUBLIC_DIR, "plans", "cancel.html");
   if (fs.existsSync(candidate)) return res.sendFile(candidate);
-  res.redirect('/plans');
+  res.redirect("/plans");
 });
 
-app.use('/api', (req, res) => {
-  res.status(404).json({ ok:false, error:'Not Found', path: req.originalUrl });
+app.use("/api", (req, res) => {
+  res.status(404).json({ ok: false, error: "Not Found", path: req.originalUrl });
 });
 
 /* =========================
  * 404 y errores
  * ========================= */
-app.use((req, res) => res.status(404).send('Página no encontrada'));
+app.use((req, res) => res.status(404).send("Página no encontrada"));
 app.use((err, _req, res, _next) => {
-  console.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal Server Error' });
+  console.error("Unhandled error:", err);
+  res.status(500).json({ error: "Internal Server Error" });
 });
 
 app.listen(PORT, () => {

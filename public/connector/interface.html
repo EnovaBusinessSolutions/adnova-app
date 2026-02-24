@@ -165,8 +165,8 @@
     </div>
 
     <div class="hint">
-      Este conector obtiene un <b>Session Token</b> (JWT) con App Bridge y lo usa de forma efímera
-      para validar la sesión antes de redirigir a <b>/onboarding</b> (rompiendo el iframe). No expone el token en la URL.
+      Este conector obtiene un <b>Session Token</b> (JWT) con App Bridge, lo guarda en <b>sessionStorage</b>
+      y te redirige a <b>/onboarding</b> (rompiendo el iframe). No expone el token en la URL.
     </div>
 
     <div class="err" id="errBox"></div>

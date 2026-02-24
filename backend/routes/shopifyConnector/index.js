@@ -137,13 +137,29 @@ function readStateToken(token) {
   return { shop, host: host || '' };
 }
 
-// OAuth state completamente stateless para evitar dependencia de cookies 3rd-party
-function pushState(_req, { shop, host }) {
-  return makeStateToken({ shop, host });
+// (Opcional) guardamos también en session “best effort”, pero NO dependemos de esto
+function pushState(req, { shop, host }) {
+  const state = makeStateToken({ shop, host });
+
+  if (req.session) {
+    req.session.shopifyOAuth = req.session.shopifyOAuth || {};
+    req.session.shopifyOAuth[state] = { shop, host: host || '', ts: Date.now() };
+
+    // limpieza
+    const TTL = 10 * 60 * 1000;
+    for (const [k, v] of Object.entries(req.session.shopifyOAuth)) {
+      if (!v?.ts || (Date.now() - v.ts) > TTL) delete req.session.shopifyOAuth[k];
+    }
+  }
+
+  return state;
 }
 
-function popState(_req, _state) {
-  return null;
+function popState(req, state) {
+  if (!req.session?.shopifyOAuth) return null;
+  const data = req.session.shopifyOAuth[state] || null;
+  delete req.session.shopifyOAuth[state];
+  return data;
 }
 
 function buildAuthorizeUrl(shop, state) {
@@ -292,7 +308,7 @@ router.use((req, res, next) => {
   const state = pushState(req, { shop, host });
   const authorizeUrl = buildAuthorizeUrl(shop, state);
 
-  console.log('[SHOPIFY_CONNECTOR][OAUTH_REDIRECT][GUARD]', { shop, path: req.originalUrl, redirectUri: REDIRECT_URI });
+  console.log('[SHOPIFY_CONNECTOR][OAUTH_REDIRECT][GUARD]', { shop, path: req.originalUrl });
 
   if (isIframeRequest(req)) return topLevelRedirect(res, authorizeUrl, 'Continuar con Shopify');
   return res.redirect(302, authorizeUrl);
@@ -325,7 +341,7 @@ router.get('/auth', (req, res) => {
   const state = pushState(req, { shop, host });
   const authorizeUrl = buildAuthorizeUrl(shop, state);
 
-  console.log('[SHOPIFY_CONNECTOR][AUTH_START]', { shop, redirectUri: REDIRECT_URI });
+  console.log('[SHOPIFY_CONNECTOR][AUTH_START]', { shop });
 
   if (isIframeRequest(req)) return topLevelRedirect(res, authorizeUrl, 'Continuar con Shopify');
   return res.redirect(302, authorizeUrl);

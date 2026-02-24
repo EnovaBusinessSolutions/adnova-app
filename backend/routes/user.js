@@ -1,13 +1,13 @@
 // backend/routes/index.js
 const express = require('express');
-const verifySessionToken = require('../../middlewares/verifySessionToken');
+const verifyShopifyToken = require('../../middlewares/verifyShopifyToken');
 const User = require('../models/User');
 const crypto = require('crypto');
 
 const router = express.Router();
 
-router.get('/user', verifySessionToken, async (req, res) => {
-  const shop = req.shop || req.shopFromToken;
+router.get('/user', verifyShopifyToken, async (req, res) => {
+  const shop = req.shop;
 
   try {
     const now = new Date();
@@ -49,8 +49,8 @@ router.get('/user', verifySessionToken, async (req, res) => {
   }
 });
 
-router.post('/onboarding-complete', verifySessionToken, async (req, res) => {
-  const shop = req.shop || req.shopFromToken || req.body.shop;
+router.post('/onboarding-complete', verifyShopifyToken, async (req, res) => {
+  const shop = req.shop || req.body.shop;
   if (!shop) return res.status(400).json({ error: 'Shop is required' });
 
   try {

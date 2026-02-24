@@ -6,12 +6,7 @@
   "scripts": {
     "start": "node backend/index.js",
     "build:dashboard": "npm --prefix dashboard-src ci && npm --prefix dashboard-src run build",
-    "build": "npm run build:dashboard",
-    "test:shopify-session": "node scripts/shopify-session-smoke.js",
-    "shopify:deploy:staging": "shopify app deploy --config shopify.app.staging.toml",
-    "shopify:deploy:prod": "shopify app deploy --config shopify.app.toml",
-    "shopify:dev:staging": "shopify app dev --config shopify.app.staging.toml",
-    "shopify:dev:prod": "shopify app dev --config shopify.app.toml"
+    "build": "npm run build:dashboard"
   },
   "dependencies": {
     "@google-analytics/data": "^5.2.0",
