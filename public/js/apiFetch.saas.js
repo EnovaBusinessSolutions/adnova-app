@@ -1,14 +1,7 @@
-async function getShopifySessionToken() {
-  try {
-    if (window.shopify && typeof window.shopify.idToken === 'function') {
-      return await window.shopify.idToken();
-    }
-  } catch (_) {}
-  return '';
-}
-
 export async function apiFetch(url, opts = {}) {
-  const token = await getShopifySessionToken();
+  const token =
+    sessionStorage.getItem('sessionToken') ||
+    localStorage.getItem('sessionToken');
 
   const baseHeaders = {
     'Content-Type': 'application/json',

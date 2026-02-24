@@ -28,6 +28,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       sessionToken = await getSessionToken(app);
       if (!sessionToken) throw new Error('Token vacío');
 
+      sessionStorage.setItem('sessionToken', sessionToken);
+      localStorage.setItem('sessionToken', sessionToken); 
+
       fetch('https://adray.ai/api/secure/ping', {
         headers: { Authorization: `Bearer ${sessionToken}` },
         credentials: 'include'
