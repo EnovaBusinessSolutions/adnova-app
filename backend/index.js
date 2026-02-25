@@ -79,10 +79,6 @@ const eventsRoutes = require("./routes/events");
 
 const adminAnalyticsRoutes = require("./routes/adminAnalytics");
 
-
-
-
-
 // Meta
 const metaInsightsRoutes = require("./routes/metaInsights");
 const metaAccountsRoutes = require("./routes/metaAccounts");
@@ -118,14 +114,28 @@ app.use(compression());
 /* =========================
  * CORS
  * ========================= */
+const APP_ORIGIN = (() => {
+  try { return new URL(APP_URL).origin; } catch { return null; }
+})();
+const RENDER_EXTERNAL_ORIGIN = (() => {
+  const raw = String(process.env.RENDER_EXTERNAL_URL || '').trim();
+  if (!raw) return null;
+  try { return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).origin; } catch { return null; }
+})();
+
 const ALLOWED_ORIGINS = [
-  "https://adray.ai",
-  "https://admin.shopify.com",
+  'https://adray.ai',
+  'https://adray-app-staging-german.onrender.com',
+  'https://admin.shopify.com',
   /^https?:\/\/[^/]+\.myshopify\.com$/i,
-  "http://localhost:3000",
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-];
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:8080',
+  'http://127.0.0.1:8080',
+  APP_ORIGIN,
+  RENDER_EXTERNAL_ORIGIN,
+].filter(Boolean);
 
 app.use(
   cors({
@@ -260,26 +270,34 @@ app.get(["/connector/auth", "/connector/auth/callback"], (req, res, next) => {
   return next();
 });
 
-// Parsers globales
-app.use(express.json({ limit: "1mb" }));
-app.use(express.urlencoded({ extended: true }));
-
 /* =========================
- * Parsers especiales (antes de JSON global)
+ * ✅ PARSERS ESPECIALES (ANTES del JSON global)
+ * - Shopify webhooks: RAW
+ * - Stripe webhook: RAW (firma)
  * ========================= */
-app.use("/connector/webhooks", express.raw({ type: "*/*" }), webhookRoutes);
 
-app.use("/api", pixelAuditor);
+// 1) Shopify Connector Webhooks: RAW
+app.use("/connector/webhooks", express.raw({ type: "*/*" }), webhookRoutes);
 
 // 2) Stripe: RAW **solo** en /api/stripe/webhook; JSON normal para el resto
 app.use("/api/stripe", (req, res, next) => {
   if (req.path === "/webhook") {
     return express.raw({ type: "application/json" })(req, res, next);
   }
-  return express.json()(req, res, next);
+  return next();
 });
 
+// Parsers globales (después de RAW especiales)
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+/* =========================
+ * Pixel auditor (usa JSON)
+ * ========================= */
+app.use("/api", pixelAuditor);
+
 // Router de Stripe (ya con sesión/passport disponibles)
+// Nota: para /api/stripe/webhook el body ya fue preparado por el middleware anterior
 app.use("/api/stripe", stripeRouter);
 
 /* =========================
@@ -347,27 +365,17 @@ function logDash(req, label, extra) {
 }
 
 function isStartHit(req) {
-  // Detecta /dashboard/<algo>/start ó /dashboard/start
-  // Nota: req.path aquí es relativo al mount de "/dashboard" si lo montas con app.use("/dashboard", ...)
   const p = String(req.path || req.originalUrl || "");
   return p.endsWith("/start") || p.includes("/start?");
 }
 
 function serveDashboardSPA({ app, rootDir, label }) {
-  // 1) Logs a cualquier request del dashboard (antes de static)
   app.use("/dashboard", ensureAuthenticated, (req, _res, next) => {
-    // Log general (light)
     logDash(req, "DASH_REQ");
-
-    // Log específico /start
-    if (isStartHit(req)) {
-      logDash(req, "START_HIT");
-    }
-
+    if (isStartHit(req)) logDash(req, "START_HIT");
     return next();
   });
 
-  // 2) Assets
   app.use(
     "/assets",
     express.static(path.join(rootDir, "assets"), {
@@ -376,10 +384,8 @@ function serveDashboardSPA({ app, rootDir, label }) {
     })
   );
 
-  // 3) Static del dashboard
   app.use("/dashboard", ensureAuthenticated, express.static(rootDir));
 
-  // 4) Fallback SPA (IMPORTANTE: aquí se sirve index.html para rutas como /dashboard/meta-ads/start)
   app.get(/^\/dashboard(?:\/.*)?$/, ensureAuthenticated, (req, res) => {
     if (isStartHit(req)) {
       logDash(req, "START_FALLBACK", `-> index.html (${label})`);
@@ -420,6 +426,9 @@ app.use("/", privacyRoutes);
 // Google Analytics (GA4)
 app.use("/api/google/analytics", gaRouter);
 
+// ✅ GA4 Auth (nuevo)
+app.use(require("./routes/googleGa4Auth"));
+
 app.use("/api/google/ads/insights", sessionGuard, googleAdsInsightsRouter);
 app.use("/api/google/ads", sessionGuard, googleAdsInsightsRouter);
 
@@ -427,19 +436,14 @@ app.use("/api/onboarding/status", sessionGuard, require("./routes/onboardingStat
 
 /* =========================
  * ✅ Integraciones: DISCONNECT (E2E)
- * - Limpia tokens + selección (DB)
- * - No rompe nada de lo actual (solo agrega rutas nuevas)
  * ========================= */
 
-// Utilidad pequeña para limpiar arrays
 const emptyArr = () => [];
 
-// GOOGLE (Ads + GA4) — desconectar
 app.post("/api/integrations/disconnect/google", sessionGuard, async (req, res) => {
   try {
     const uid = req.user._id;
 
-    // 1) GoogleAccount (canónico)
     if (GoogleAccount) {
       await GoogleAccount.updateOne(
         { $or: [{ user: uid }, { userId: uid }] },
@@ -450,7 +454,6 @@ app.post("/api/integrations/disconnect/google", sessionGuard, async (req, res) =
             expiresAt: null,
             scope: emptyArr(),
 
-            // Ads
             managerCustomerId: null,
             loginCustomerId: null,
             defaultCustomerId: null,
@@ -459,7 +462,6 @@ app.post("/api/integrations/disconnect/google", sessionGuard, async (req, res) =
             selectedCustomerIds: emptyArr(),
             lastAdsDiscoveryError: null,
 
-            // GA4
             gaProperties: emptyArr(),
             defaultPropertyId: null,
             selectedPropertyIds: emptyArr(),
@@ -472,7 +474,6 @@ app.post("/api/integrations/disconnect/google", sessionGuard, async (req, res) =
       );
     }
 
-    // 2) User (legacy flags + selections)
     await User.updateOne(
       { _id: uid },
       {
@@ -482,14 +483,12 @@ app.post("/api/integrations/disconnect/google", sessionGuard, async (req, res) =
           selectedGAProperties: emptyArr(),
         },
         $unset: {
-          // si existen en tu User schema viejo, los quitamos sin romper
           googleAccessToken: "",
           googleRefreshToken: "",
         },
       }
     );
 
-    // 3) Preferences (si existen, no rompe si no existen)
     await User.updateOne(
       { _id: uid },
       {
@@ -507,23 +506,19 @@ app.post("/api/integrations/disconnect/google", sessionGuard, async (req, res) =
   }
 });
 
-// Alias (por si tu frontend lo llama así)
 app.post("/api/integrations/google/disconnect", sessionGuard, (req, res) =>
   res.redirect(307, "/api/integrations/disconnect/google")
 );
 
-// META — desconectar
 app.post("/api/integrations/disconnect/meta", sessionGuard, async (req, res) => {
   try {
     const uid = req.user._id;
 
-    // 1) MetaAccount (canónico)
     if (MetaAccount) {
       await MetaAccount.updateOne(
         { $or: [{ user: uid }, { userId: uid }] },
         {
           $set: {
-            // tokens (alias)
             longLivedToken: null,
             longlivedToken: null,
             access_token: null,
@@ -533,13 +528,11 @@ app.post("/api/integrations/disconnect/meta", sessionGuard, async (req, res) => 
             expiresAt: null,
             expires_at: null,
 
-            // cuentas + selección
             ad_accounts: emptyArr(),
             adAccounts: emptyArr(),
             selectedAccountIds: emptyArr(),
             defaultAccountId: null,
 
-            // scopes / metadata
             scopes: emptyArr(),
             fb_user_id: null,
 
@@ -550,7 +543,6 @@ app.post("/api/integrations/disconnect/meta", sessionGuard, async (req, res) => 
       );
     }
 
-    // 2) User (legacy flags + selections)
     await User.updateOne(
       { _id: uid },
       {
@@ -575,17 +567,14 @@ app.post("/api/integrations/disconnect/meta", sessionGuard, async (req, res) => 
   }
 });
 
-// Alias
 app.post("/api/integrations/meta/disconnect", sessionGuard, (req, res) =>
   res.redirect(307, "/api/integrations/disconnect/meta")
 );
 
-// SHOPIFY — desconectar
 app.post("/api/integrations/disconnect/shopify", sessionGuard, async (req, res) => {
   try {
     const uid = req.user._id;
 
-    // 1) ShopConnections (si existe)
     if (ShopConnections) {
       await ShopConnections.updateOne(
         { $or: [{ user: uid }, { userId: uid }] },
@@ -601,7 +590,6 @@ app.post("/api/integrations/disconnect/shopify", sessionGuard, async (req, res) 
       );
     }
 
-    // 2) User
     await User.updateOne(
       { _id: uid },
       {
@@ -620,7 +608,6 @@ app.post("/api/integrations/disconnect/shopify", sessionGuard, async (req, res) 
   }
 });
 
-// Alias
 app.post("/api/integrations/shopify/disconnect", sessionGuard, (req, res) =>
   res.redirect(307, "/api/integrations/disconnect/shopify")
 );
@@ -643,9 +630,7 @@ app.post("/api/audit/meta/start", sessionGuard, (req, res) =>
 app.post("/api/audit/shopify/start", sessionGuard, (req, res) =>
   res.redirect(307, "/api/audits/start")
 );
-// Alias legacy del dashboard → usa el runner nuevo de auditorías
 app.post("/api/dashboard/audit", sessionGuard, (req, res) => {
-  // 307 = mantiene método y body (POST + JSON)
   return res.redirect(307, "/api/audits/start");
 });
 
@@ -664,7 +649,6 @@ const verifyShopifyToken = require("../middlewares/verifyShopifyToken"); // (por
 // ✅ SERVIR assets del conector ANTES del router
 const CONNECTOR_PUBLIC = path.join(__dirname, "../public/connector");
 
-// Aplica el CSP de Shopify a todo lo que cuelgue de /connector
 app.use(
   "/connector",
   express.static(CONNECTOR_PUBLIC, {
@@ -745,7 +729,7 @@ app.post("/api/complete-onboarding", async (req, res) => {
 const VERIFY_TTL_HOURS = Number(process.env.VERIFY_EMAIL_TTL_HOURS || 24);
 
 function makeVerifyToken() {
-  return crypto.randomBytes(32).toString("hex"); // token que viaja por email
+  return crypto.randomBytes(32).toString("hex");
 }
 
 function hashToken(token) {
@@ -784,21 +768,16 @@ function buildIntercomPayload(u) {
     email: u.email || null,
     name: u.name || null,
     created_at: toUnixSeconds(u.createdAt),
-    user_hash: intercomUserHash(user_id), // null si no hay secret
+    user_hash: intercomUserHash(user_id),
   };
 }
 
 /* =========================
  * Turnstile Risk Store (Login)
- * - En memoria (simple y suficiente)
- * - Llave: IP + email
- * - Ventana: 15 min
- * - Umbral: 3 fallos => requiere captcha
  * ========================= */
 const LOGIN_RISK_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_RISK_MAX_FAILS = Number(process.env.LOGIN_RISK_MAX_FAILS || 3);
 
-// key -> { fails, expiresAt }
 const loginRiskStore = new Map();
 
 function getClientIp(req) {
@@ -827,7 +806,6 @@ function riskFail(req, email) {
   const now = Date.now();
   const prev = loginRiskStore.get(key);
 
-  // si expiró, reinicia
   if (prev && prev.expiresAt <= now) {
     loginRiskStore.delete(key);
   }
@@ -889,14 +867,12 @@ app.post("/api/register", requireTurnstileAlways, async (req, res) => {
 
     const hashed = await bcrypt.hash(password, 10);
 
-    // ✅ Genera token verificación (guardamos hash en DB)
     const verifyToken = makeVerifyToken();
     const verifyTokenHash = hashToken(verifyToken);
     const verifyExpires = new Date(
       Date.now() + VERIFY_TTL_HOURS * 60 * 60 * 1000
     );
 
-    // ✅ Crea usuario con verificación pendiente
     const user = await User.create({
       name,
       email,
@@ -907,7 +883,6 @@ app.post("/api/register", requireTurnstileAlways, async (req, res) => {
       verifyEmailExpires: verifyExpires,
     });
 
-    // ✅ NEW: Track signup (NO rompe si falla)
     try {
       await trackEvent({
         name: "user_signed_up",
@@ -917,14 +892,13 @@ app.post("/api/register", requireTurnstileAlways, async (req, res) => {
       });
     } catch {}
 
-    // ✅ Enviar correo de verificación (NO bloquea el registro si falla)
     try {
       await sendVerifyEmail({
-  userId: user._id,
-  toEmail: user.email,
-  token: verifyToken,
-  name: user.name,
-});
+        userId: user._id,
+        toEmail: user.email,
+        token: verifyToken,
+        name: user.name,
+      });
     } catch (mailErr) {
       console.error(
         "✉️  Email verificación falló (registro OK):",
@@ -976,16 +950,15 @@ app.get("/api/auth/verify-email", async (req, res) => {
     await user.save();
 
     try {
-  await trackEvent({
-    name: "email_verified",
-    userId: user._id,
-    dedupeKey: `email_verified:${user._id}`,
-    ts: new Date(),
-    props: { method: "email_link" },
-  });
-} catch {}
+      await trackEvent({
+        name: "email_verified",
+        userId: user._id,
+        dedupeKey: `email_verified:${user._id}`,
+        ts: new Date(),
+        props: { method: "email_link" },
+      });
+    } catch {}
 
-    // ✅ Redirección a una página bonita (elige una)
     return res.redirect(302, "/login?verified=1");
   } catch (err) {
     console.error("❌ verify-email:", err);
@@ -995,8 +968,6 @@ app.get("/api/auth/verify-email", async (req, res) => {
 
 /* =========================
  * ✅ FORGOT PASSWORD (E2E)
- * - Turnstile ALWAYS
- * - Respuesta “segura” (no revela si existe el correo)
  * ========================= */
 const RESET_TTL_MINUTES = Number(process.env.RESET_PASSWORD_TTL_MINUTES || 30);
 
@@ -1008,7 +979,6 @@ app.post("/api/forgot-password", requireTurnstileAlways, async (req, res) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
 
-    // Siempre responde OK (anti-enumeración)
     const safeOk = () => res.json({ ok: true });
 
     if (!email) return safeOk();
@@ -1017,7 +987,6 @@ app.post("/api/forgot-password", requireTurnstileAlways, async (req, res) => {
       .select("_id email name emailVerified")
       .lean();
 
-    // Si no existe o no verificado, igual ok (sin revelar)
     if (!user) return safeOk();
     if (user.emailVerified === false) return safeOk();
 
@@ -1025,7 +994,6 @@ app.post("/api/forgot-password", requireTurnstileAlways, async (req, res) => {
     const resetTokenHash = hashToken(resetToken);
     const resetExpires = new Date(Date.now() + RESET_TTL_MINUTES * 60 * 1000);
 
-    // Guardamos hash+expira
     await User.updateOne(
       { _id: user._id },
       {
@@ -1036,14 +1004,13 @@ app.post("/api/forgot-password", requireTurnstileAlways, async (req, res) => {
       }
     );
 
-    // Enviar email (no bloquea)
     try {
       await sendResetPasswordEmail({
-  userId: user._id,
-  toEmail: user.email,
-  name: user.name || (user.email ? user.email.split("@")[0] : "Usuario"),
-  token: resetToken,
-});
+        userId: user._id,
+        toEmail: user.email,
+        name: user.name || (user.email ? user.email.split("@")[0] : "Usuario"),
+        token: resetToken,
+      });
     } catch (mailErr) {
       console.error(
         "✉️ Reset email falló (forgot OK):",
@@ -1054,7 +1021,6 @@ app.post("/api/forgot-password", requireTurnstileAlways, async (req, res) => {
     return safeOk();
   } catch (e) {
     console.error("❌ /api/forgot-password:", e);
-    // Igual safe OK para no dar señales
     return res.json({ ok: true });
   }
 });
@@ -1073,7 +1039,6 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
         .json({ success: false, message: "Ingresa tu correo y contraseña." });
     }
 
-    // ✅ Si ya hay riesgo, exigir Turnstile
     const risk = riskGet(req, email);
     if (risk.requiresCaptcha) {
       const token =
@@ -1094,7 +1059,6 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
       }
     }
 
-    // Importante: aseguramos traer password aunque tu schema tenga select:false
     const user = await User.findOne({ email }).select("+password +emailVerified");
 
     if (!user || !user.password) {
@@ -1106,7 +1070,6 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
       });
     }
 
-    // ✅ Bloquear login si no verificó correo
     if (user.emailVerified === false) {
       return res.status(403).json({
         success: false,
@@ -1124,26 +1087,23 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
       });
     }
 
-    // ✅ Éxito: limpiar riesgo
     riskClear(req, email);
 
-    // ✅ Crear sesión con Passport (usa serializeUser/deserializeUser de ./auth)
     req.login(user, async (err) => {
-  if (err) return next(err);
+      if (err) return next(err);
 
-  // ✅ NEW: Track login real (RAW). No rompe si falla.
-  try {
-    await trackEvent({
-      name: "user_logged_in",
-      userId: user._id,
-      ts: new Date(),
-      props: { method: "email" },
+      try {
+        await trackEvent({
+          name: "user_logged_in",
+          userId: user._id,
+          ts: new Date(),
+          props: { method: "email" },
+        });
+      } catch {}
+
+      const redirect = user.onboardingComplete ? "/dashboard" : "/onboarding";
+      return res.json({ success: true, redirect });
     });
-  } catch {}
-
-  const redirect = user.onboardingComplete ? "/dashboard" : "/onboarding";
-  return res.json({ success: true, redirect });
-});
   } catch (err) {
     console.error("❌ /api/login error:", err);
     return res.status(500).json({ success: false, message: "Error del servidor" });
@@ -1183,13 +1143,11 @@ app.get("/api/session", async (req, res) => {
         googleObjective: u.googleObjective || null,
         metaObjective: u.metaObjective || null,
 
-        // ✅ extras útiles (no rompen)
         createdAt: u.createdAt || null,
         plan: u.plan || "gratis",
         subscription: u.subscription || null,
       },
 
-      // ✅ Intercom listo para "boot identified user"
       intercom: buildIntercomPayload(u),
     });
   } catch (e) {
@@ -1215,7 +1173,7 @@ async function sendAuthMe(req, res) {
 
     const data = {
       _id: String(u._id),
-      id: String(u._id), // alias útil
+      id: String(u._id),
       email: u.email || null,
       name: u.name || null,
       onboardingComplete: !!u.onboardingComplete,
@@ -1226,7 +1184,7 @@ async function sendAuthMe(req, res) {
     return res.json({
       ok: true,
       data,
-      user: data, // compat para consumidores viejos
+      user: data,
       authenticated: true,
       plan: u.plan || "gratis",
       subscription: u.subscription || null,
@@ -1238,10 +1196,7 @@ async function sendAuthMe(req, res) {
   }
 }
 
-// ✅ Endpoint que tu front está llamando
 app.get("/api/auth/me", sendAuthMe);
-
-// ✅ Aliases blindados (por si alguna pantalla/branch usa otros paths)
 app.get("/api/users/me", sendAuthMe);
 app.get("/api/user/me", sendAuthMe);
 
@@ -1250,14 +1205,12 @@ app.get("/api/saas/ping", sessionGuard, (req, res) => {
 });
 app.use("/api/saas/shopify", sessionGuard, require("./routes/shopifyMatch"));
 
-// ✅ /api/me (canónico) — lo usa dashboard + plans
 app.get("/api/me", async (req, res) => {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
     return res.status(401).json({ authenticated: false });
   }
 
   try {
-    // Traemos solo lo necesario (más ligero y estable)
     const u = await User.findById(req.user._id)
       .select("name email plan subscription createdAt onboardingComplete")
       .lean();
@@ -1275,8 +1228,8 @@ app.get("/api/me", async (req, res) => {
     };
 
     return res.json({
-      ok: true, // ✅ nuevo (no rompe)
-      data, // ✅ soporta json.data ?? json
+      ok: true,
+      data,
       authenticated: true,
       user: {
         _id: u._id,
@@ -1287,8 +1240,6 @@ app.get("/api/me", async (req, res) => {
       },
       plan: u.plan || "gratis",
       subscription: u.subscription || null,
-
-      // ✅ Intercom (safe): si no hay secret, user_hash = null (no truena)
       intercom: buildIntercomPayload(u),
     });
   } catch (e) {
@@ -1343,7 +1294,7 @@ app.get(
   "/auth/google/login",
   passport.authenticate("google", {
     scope: ["profile", "email"],
-    prompt: "select_account", // opcional
+    prompt: "select_account",
   })
 );
 
@@ -1356,26 +1307,21 @@ app.get("/auth/google/login/callback", (req, res, next) => {
         if (err) return next(err);
         if (!user) return res.redirect("/login");
 
-        // Como usamos custom callback, hacemos login manual:
         req.logIn(user, async (loginErr) => {
           if (loginErr) return next(loginErr);
 
-          // ✅ NEW: Track login real (RAW). No rompe si falla.
-try {
-  await trackEvent({
-    name: "user_logged_in",
-    userId: user._id,
-    ts: new Date(),
-    props: { method: "google" },
-  });
-} catch {}
+          try {
+            await trackEvent({
+              name: "user_logged_in",
+              userId: user._id,
+              ts: new Date(),
+              props: { method: "google" },
+            });
+          } catch {}
 
-
-          // ✅ SOLO si es usuario nuevo (creado en este login)
           const isNew = info?.isNewUser === true || user?._isNewUser === true;
 
           if (isNew) {
-            // ✅ NEW: Track signup por Google (NO rompe si falla)
             try {
               await trackEvent({
                 name: "user_signed_up",
@@ -1386,7 +1332,6 @@ try {
             } catch {}
 
             try {
-              // Leemos desde DB para decidir si ya se envió (evita duplicados)
               const u = await User.findById(user._id)
                 .select("email name welcomeEmailSent")
                 .lean();
@@ -1402,7 +1347,6 @@ try {
               } else if (u?.welcomeEmailSent === true) {
                 console.log("[google-callback] Welcome NO enviado: already-sent");
               } else {
-                // Fire & forget: NO bloquea la redirección
                 Promise.resolve()
                   .then(() => sendWelcomeEmail({ userId: user._id, toEmail, name }))
                   .then(() =>
@@ -1463,7 +1407,6 @@ app.get("/__ls-public", (_req, res) => {
 // --- LOGOUT unificado --- //
 function destroySessionAndReply(req, res, { redirectTo } = {}) {
   req.session?.destroy?.(() => {
-    // ✅ IMPORTANTE: borrar la cookie correcta (SESSION_COOKIE_NAME)
     res.clearCookie(SESSION_COOKIE_NAME, {
       path: "/",
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
@@ -1479,19 +1422,18 @@ function destroySessionAndReply(req, res, { redirectTo } = {}) {
 
 app.post("/api/logout", (req, res, next) => {
   req.logout?.(async (err) => {
-  if (err) return next(err);
+    if (err) return next(err);
 
-  // ✅ NEW: Track logout (best-effort)
-  try {
-    await trackEvent({
-      name: "user_logged_out",
-      userId: req.user?._id,
-      ts: new Date(),
-    });
-  } catch {}
+    try {
+      await trackEvent({
+        name: "user_logged_out",
+        userId: req.user?._id,
+        ts: new Date(),
+      });
+    } catch {}
 
-  destroySessionAndReply(req, res);
-});
+    destroySessionAndReply(req, res);
+  });
 });
 
 app.get("/logout", (req, res, next) => {
