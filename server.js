@@ -6,7 +6,13 @@ const path    = require('path');
 const app = express();
 const port = process.env.PORT || 3000;
 
+// ✅ Import CSP middleware
+const { shopifyCSP } = require('./middlewares/csp');
+
 app.use(express.json());
+
+// ✅ Apply CSP to /connector routes to ensure Shopify embedding works
+app.use('/connector', shopifyCSP);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
