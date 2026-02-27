@@ -1011,9 +1011,7 @@ app.post("/api/forgot-password", requireTurnstileAlways, async (req, res) => {
   }
 });
 
-/* =========================
- * ✅ LOGIN (email/pass) — E2E + Risk-based Turnstile
- * ========================= */
+
 app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
@@ -1096,9 +1094,7 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
   }
 });
 
-/* =========================
- * Utilidades de sesión / perfil
- * ========================= */
+
 app.get("/api/session", async (req, res) => {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
     return res.status(401).json({ authenticated: false });
@@ -1142,9 +1138,7 @@ app.get("/api/session", async (req, res) => {
   }
 });
 
-/* =========================
- * ✅ /api/auth/me (CANÓNICO) + aliases
- * ========================= */
+
 async function sendAuthMe(req, res) {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
     return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
@@ -1234,9 +1228,7 @@ app.get("/api/me", async (req, res) => {
   }
 });
 
-/* =========================
- * Otras APIs internas
- * ========================= */
+
 app.use("/api", userRoutes);
 
 // ✅ NEW: events endpoint (/api/events) (requiere sesión)
