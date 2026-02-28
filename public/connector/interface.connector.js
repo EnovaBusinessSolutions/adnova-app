@@ -116,16 +116,27 @@
     // 2. Configurar App Bridge v4
     // Normalmente v4 auto-detecta params de la URL si coinciden, pero forzamos config
     try {
-      shopify.config({
-        apiKey: apiKey,
-        shop: shop,
-        forceRedirect: false, 
-      });
+      /* 
+         NOTA IMPORTANTE: 
+         En algunas versiones del CDN de App Bridge v4, 'shopify' es un proxy y .config() puede no ser una función directa 
+         o ya estar pre-configurado por los meta tags. 
+         Si falla .config(), intentamos simplemente usar el objeto shopify tal cual, ya que la inicialización suele ser automática.
+      */
+      if (typeof shopify.config === 'function') {
+        shopify.config({
+          apiKey: apiKey,
+          shop: shop,
+          forceRedirect: false, 
+        });
+      } else {
+        console.warn('shopify.config no es una función. Asumiendo auto-configuración.');
+      }
     } catch (e) {
       console.error(e);
-      setStatus('Error Config');
-      showError('Fallo en shopify.config(): ' + e.message);
-      return;
+      // No bloqueamos la ejecución si falla config, a veces ya está listo.
+      // setStatus('Error Config');
+      // showError('Fallo en shopify.config(): ' + e.message);
+      // return;
     }
 
     setStatus('Generando Session Token…');
