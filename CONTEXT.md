@@ -29,33 +29,26 @@ Este documento resume los cambios críticos realizados para lograr la aprobació
 *   `middlewares/verifySessionToken.js`: Reescrito para usar `jwt.verify()`.
 *   `shopify.app.toml`: Configurado temporalmente para STAGING.
 
-### Configuración de Staging
+### Configuración de Staging (Histórico)
 
-Para probar en `adray-app-staging-german.onrender.com`:
+La version de staging se configuró en `adray-app-staging-german.onrender.com` para pruebas de validación de Shopify.
 
-1.  El archivo `shopify.app.toml` tiene las URLs apuntando a este dominio.
-2.  **IMPORTANTE (Opción Manual):** Debes actualizar la configuración de la App en el **Shopify Partner Dashboard > App Setup**:
-    *   **App URL:** `https://adray-app-staging-german.onrender.com/connector`
-    *   **Allowed redirection URL(s):** `https://adray-app-staging-german.onrender.com/connector/auth/callback`
-3.  **IMPORTANTE (Opción CLI - Recomendada):** Puedes subir la configuración del TOML directamente usando Shopify CLI:
+### Configuración de Producción (Actual - 27 Feb 2026)
+
+La aplicación ha sido configurada para **Producción** (`adray.ai`):
+
+1.  **Archivos:** `shopify.app.toml` apunta a `https://adray.ai`.
+2.  **IMPORTANTE (Deploy Shopify):** Al hacer deploy a producción, DEBES actualizar la configuración en Shopify para que apunte a producción:
     ```bash
-    # Ejecutar en la raíz del proyecto
     npm run shopify app config push
-    # O si usas npx directo:
-    npx shopify app config push
     ```
-    Esto actualizará las URLs en el Partner Dashboard automáticamente para apuntar a Staging.
-4.  Asegúrate de que las variables de entorno en Render (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `APP_URL`) coincidan con la app de staging.
+    Esto asegurará que la App en el Partner Dashboard apunte al servidor real (`adray.ai`).
+3.  **Variables de Entorno (Render Producción):**
+    *   `SHOPIFY_API_KEY`: (Prod Client ID)
+    *   `SHOPIFY_API_SECRET`: (Prod Client Secret)
+    *   `APP_URL`: `https://adray.ai`
 
-### Reversión a Producción (Antes de Merge a Main)
-
-**MUY IMPORTANTE:** Antes de hacer merge de `german/dev` a `main` (producción), debes:
-
-1.  Revertir las URLs en `shopify.app.toml` a `https://adray.ai`.
-2.  Ejecutar nuevamente `shopify app config push` (o hacerlo manual) para apuntar la App de Shopify a Producción.
-3.  Si no lo haces, la App en producción intentará redirigir a Staging.
-
-### Solución de Errores Recientes (Staging)
+### Errores Conocidos (Lecciones Aprendidas)
 
 4.  **Error `shopify.config is not a function`:**
     *   **Causa:** En algunos contextos del CDN de App Bridge v4, el objeto `shopify` se autoconfigura y el método `.config()` no está expuesto o es un Proxy, causando un crash.
