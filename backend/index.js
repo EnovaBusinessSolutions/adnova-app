@@ -635,11 +635,19 @@ const verifyShopifyToken = require("../middlewares/verifyShopifyToken"); // (por
 // ✅ SERVIR assets del conector ANTES del router
 const CONNECTOR_PUBLIC = path.join(__dirname, "../public/connector");
 
+// ✅ Evitar caché en assets críticos del connector para desarrollo/staging
 app.use(
   "/connector",
+  (req, res, next) => {
+    // Si estamos en desarrollo o staging, deshabilitar caché
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    next();
+  },
   express.static(CONNECTOR_PUBLIC, {
     index: false,
-    maxAge: "1h",
+    maxAge: "0", 
   }),
   connector
 );
