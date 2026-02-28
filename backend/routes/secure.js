@@ -1,10 +1,7 @@
 // backend/routes/secure.js
 const express = require('express');
 const router = express.Router();
-const verifySessionToken = require('../../middlewares/verifySessionToken');
-const Audit   = require('../models/Audit');
-
-router.use(verifySessionToken);
+const Audit = require('../models/Audit');
 
 router.get('/ping', (req, res) => {
   return res.json({

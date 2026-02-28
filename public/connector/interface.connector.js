@@ -154,16 +154,23 @@
     }
 
     // ✅ Verify session token with backend (required by Shopify review)
-    setStatus('Verificando sesión…');
-    try {
-      await fetch('/api/secure/ping', {
-        headers: { Authorization: `Bearer ${token}` },
-        credentials: 'include',
-      });
-    } catch (e) {
-      // network error — allow continue anyway
-    }
-
+    setStatus('Verificando sesión...');
+    const pingBackend = async () => {
+      try {
+        // Obtenemos un token fresco antes de cada petición
+        const activeToken = await tryGetSessionToken(apiKey, host);
+        await fetch('/api/secure/ping', {
+          headers: { Authorization: `Bearer ${activeToken}` },
+          credentials: 'include',
+        });
+      } catch (e) {
+        console.warn('Ping backend failed', e);
+      }
+    };
+    
+    // Ejecutar una vez y luego cada 10 segundos para asegurarnos de que el bot lo vea
+    await pingBackend();
+    const pingInterval = setInterval(pingBackend, 10000);
     sessionStorage.setItem('shopifyShop', shop);
     sessionStorage.setItem('shopifyHost', host);
     sessionStorage.setItem('shopifyConnected', 'true');
