@@ -34,10 +34,26 @@ Este documento resume los cambios críticos realizados para lograr la aprobació
 Para probar en `adray-app-staging-german.onrender.com`:
 
 1.  El archivo `shopify.app.toml` tiene las URLs apuntando a este dominio.
-2.  **IMPORTANTE:** Debes actualizar la configuración de la App en el **Shopify Partner Dashboard > App Setup**:
+2.  **IMPORTANTE (Opción Manual):** Debes actualizar la configuración de la App en el **Shopify Partner Dashboard > App Setup**:
     *   **App URL:** `https://adray-app-staging-german.onrender.com/connector`
     *   **Allowed redirection URL(s):** `https://adray-app-staging-german.onrender.com/connector/auth/callback`
-3.  Asegúrate de que las variables de entorno en Render (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `APP_URL`) coincidan con la app de staging.
+3.  **IMPORTANTE (Opción CLI - Recomendada):** Puedes subir la configuración del TOML directamente usando Shopify CLI:
+    ```bash
+    # Ejecutar en la raíz del proyecto
+    npm run shopify app config push
+    # O si usas npx directo:
+    npx shopify app config push
+    ```
+    Esto actualizará las URLs en el Partner Dashboard automáticamente para apuntar a Staging.
+4.  Asegúrate de que las variables de entorno en Render (`SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET`, `APP_URL`) coincidan con la app de staging.
+
+### Reversión a Producción (Antes de Merge a Main)
+
+**MUY IMPORTANTE:** Antes de hacer merge de `german/dev` a `main` (producción), debes:
+
+1.  Revertir las URLs en `shopify.app.toml` a `https://adray.ai`.
+2.  Ejecutar nuevamente `shopify app config push` (o hacerlo manual) para apuntar la App de Shopify a Producción.
+3.  Si no lo haces, la App en producción intentará redirigir a Staging.
 
 ### Errores Conocidos (Lecciones Aprendidas)
 
