@@ -7,11 +7,13 @@
 
   <!-- Shopify App Bridge requiere esta meta.
        ✅ Deja placeholder para que el backend la inyecte al servir /connector/interface -->
-  <meta name="shopify-api-key" content="{{SHOPIFY_API_KEY}}" />
-  <meta name="app-url" content="{{APP_URL}}" />
 
-  <!-- Opcional: mejora comportamiento dentro de iframe -->
-  <meta name="referrer" content="strict-origin-when-cross-origin" />
+  <meta name="shopify-api-key" content="{{SHOPIFY_API_KEY}}" />    
+  <meta name="app-url" content="{{APP_URL}}" />
+  
+  <!-- Content Security Policy: Vital para que cargue App Bridge en iframe -->
+  <meta http-equiv="Content-Security-Policy" content="frame-ancestors https://*.myshopify.com https://admin.shopify.com;">
+
 
   <style>
     :root { color-scheme: dark; }
@@ -173,3 +175,7 @@
   </div>
 </body>
 </html>
+
+
+
+
