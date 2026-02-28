@@ -652,7 +652,10 @@ app.use("/api", mockShopify);
  * ========================= */
 app.get("/", (req, res) => {
   const { shop } = req.query;
-  if (shop) return res.redirect(`/connector?shop=${shop}`);
+  if (shop) {
+    const qs = new URLSearchParams(req.query).toString();
+    return res.redirect(`/connector?${qs}`);
+  }
   if (req.isAuthenticated && req.isAuthenticated()) {
     return req.user.onboardingComplete
       ? res.redirect("/dashboard")
