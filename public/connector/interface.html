@@ -10,9 +10,6 @@
 
   <meta name="shopify-api-key" content="{{SHOPIFY_API_KEY}}" />    
   <meta name="app-url" content="{{APP_URL}}" />
-  
-  <!-- Content Security Policy: Vital para que cargue App Bridge en iframe -->
-  <meta http-equiv="Content-Security-Policy" content="frame-ancestors https://*.myshopify.com https://admin.shopify.com;">
 
 
   <style>
@@ -120,9 +117,8 @@
     }
   </style>
 
-  <!-- Shopify App Bridge oficial (SIN version) -->
+  <!-- Shopify App Bridge oficial (App Bridge v4) -->
   <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
-  <script src="https://cdn.shopify.com/shopifycloud/app-bridge-utils.js"></script>
 
   <!-- Pre-check rápido (UI) antes de tu script -->
   <script>
