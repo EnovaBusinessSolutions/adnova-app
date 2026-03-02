@@ -347,6 +347,8 @@ router.get('/auth', (req, res) => {
   return res.redirect(302, authorizeUrl);
 });
 
+
+
 /* =============================
  * Callback OAuth
  * ============================= */
@@ -354,6 +356,7 @@ router.get('/auth/callback', async (req, res) => {
   const { shop, code, state } = req.query;
 
   const normalizedShop = String(shop || '').trim().toLowerCase();
+  
   if (!normalizedShop || !code) {
     return res.status(400).type('text/plain').send('Missing "shop" or "code".');
   }
@@ -361,32 +364,40 @@ router.get('/auth/callback', async (req, res) => {
     return res.status(400).type('text/plain').send('Invalid "shop".');
   }
 
+  // 1. Validar HMAC
+  // NOTA: isValidHmacFromRaw requiere que req.query tenga signature/hmac originales
   if (!isValidHmacFromRaw(req)) {
     console.warn('[SHOPIFY_CONNECTOR] ⚠️ Invalid HMAC on /auth/callback', { shop: normalizedShop });
     return res.status(400).type('text/plain').send('Invalid HMAC.');
   }
 
-  // ✅ state: session best-effort + fallback stateless (para Brave)
+  // 2. Validar State (seguridad + recuperación de host)
   let saved = null;
   if (state) {
     saved = popState(req, String(state));
+    // Fallback por si la caché local falló (stateless decode)
     if (!saved) saved = readStateToken(String(state));
   }
 
+  // Si no tenemos state válido, es sospechoso o expiró
   if (state && !saved) {
-    console.warn('[SHOPIFY_CONNECTOR] ⚠️ state inválido/expirado', { shop: normalizedShop });
+    console.warn('[SHOPIFY_CONNECTOR] ⚠️ State inválido/expirado', { shop: normalizedShop });
     return res.status(400).type('text/plain').send('Invalid state.');
   }
 
+  // Cross-check shop
   if (saved?.shop && saved.shop !== normalizedShop) {
-    console.warn('[SHOPIFY_CONNECTOR] ⚠️ state/shop mismatch', { shop: normalizedShop, savedShop: saved.shop });
-    return res.status(400).type('text/plain').send('Invalid state/shop.');
+    console.warn('[SHOPIFY_CONNECTOR] ⚠️ State/shop mismatch', { shop: normalizedShop, savedShop: saved.shop });
+    return res.status(400).type('text/plain').send('Invalid state/shop mismatch.');
   }
 
-  const host = (req.query.host ? String(req.query.host) : (saved?.host || ''));
+  // ✅ Recuperar host (crucial para App Bridge)
+  // Preferimos el que viene en query si existe, sino el guardado en state
+  const host = req.query.host ? String(req.query.host) : (saved?.host || '');
 
   try {
-    const { data } = await axios.post(
+    // 3. Intercambio de token
+    const tokenRes = await axios.post(
       `https://${normalizedShop}/admin/oauth/access_token`,
       {
         client_id: SHOPIFY_API_KEY,
@@ -395,6 +406,9 @@ router.get('/auth/callback', async (req, res) => {
       },
       { headers: { 'Content-Type': 'application/json' } }
     );
+     // Nota: axios con POST devuelve data en .data 
+    // y la respuesta de Shopify trae { access_token, scope } (snake_case)
+    const data = tokenRes.data;
 
     await ShopConnections.findOneAndUpdate(
       { shop: normalizedShop },
@@ -407,24 +421,35 @@ router.get('/auth/callback', async (req, res) => {
       { upsert: true, new: true }
     );
 
-    // ✅ volvemos a tu UI
-    const uiPath =
-      `/connector/interface?shop=${encodeURIComponent(normalizedShop)}` +
-      (host ? `&host=${encodeURIComponent(host)}` : '');
 
-    const uiAbs = `${BASE_URL}${uiPath}`;
+    /* --------------------------------------------------------------------------------
+       ✅ DEBUG FINAL: LOG EXPLÍCITO DE REDIRECCIÓN
+       Para verificar en Render exactamente a dónde estamos mandando al usuario.
+       -------------------------------------------------------------------------------- */
+    const appUrl = `${BASE_URL}/connector/interface?shop=${encodeURIComponent(normalizedShop)}&host=${encodeURIComponent(host)}`;
 
-    console.log('[SHOPIFY_CONNECTOR][AUTH_OK]', { shop: normalizedShop });
+    console.log('[SHOPIFY_CONNECTOR] 🚀 [REDIRECT_START] Auth completada. Redirigiendo...');
+    console.log(`[SHOPIFY_CONNECTOR] ℹ️  Shop: ${normalizedShop}`);
+    console.log(`[SHOPIFY_CONNECTOR] ℹ️  Host: ${host ? host : '(MISSING! - App Bridge might fail)'}`);
+    console.log(`[SHOPIFY_CONNECTOR] 🎯 [TARGET_URL]: ${appUrl}`);
 
-    // Si el callback cae embebido, escapamos con click
-    if (isIframeRequest(req)) return topLevelRedirect(res, uiAbs, 'Abrir Adray en Shopify');
+    if(!host) {
+       console.warn('[SHOPIFY_CONNECTOR] ⚠️ ADVERTENCIA CRÍTICA: El parámetro "host" está vacío. Es probable que Shopify muestre 404 o pantalla en blanco.');
+    }
 
-    return res.redirect(302, uiPath);
+    // Redirección de servidor (302)
+    // Shopify Admin cargará esta URL en el iframe principal del admin
+    return res.redirect(appUrl);
+
   } catch (err) {
-    console.error('[SHOPIFY_CONNECTOR] ❌ Token exchange failed:', err.response?.data || err?.message || err);
+    console.error('[SHOPIFY_CONNECTOR] ❌ Error token exchange:', err.message);
+    if(err.response) {
+      console.error('[SHOPIFY_CONNECTOR] 🔍 Detox error data:', JSON.stringify(err.response.data));
+    }
     return res.status(502).type('text/plain').send('Token exchange failed.');
   }
 });
+
 
 /* =============================
  * Vista embebida: Interface
