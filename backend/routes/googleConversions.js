@@ -4,6 +4,11 @@
 const express = require("express");
 const router = express.Router();
 
+const { OAuth2Client } = require("google-auth-library");
+
+// ✅ Reusar tu servicio GAQL que ya funciona en prod
+const Ads = require("../services/googleAdsService");
+
 let GoogleAccount;
 try {
   GoogleAccount = require("../models/GoogleAccount");
@@ -14,52 +19,13 @@ try {
 const safeStr = (v) => String(v || "").trim();
 const normDigits = (s) => safeStr(s).replace(/[^\d]/g, "");
 
-/* =========================
- * OAuth helper (refresh token)
- * ========================= */
-let OAuth2Client = null;
-try {
-  ({ OAuth2Client } = require("google-auth-library"));
-} catch {
-  OAuth2Client = null;
+// ===== Auth guard (mismo estilo que insights) =====
+function requireAuth(req, res, next) {
+  if (req.isAuthenticated && req.isAuthenticated()) return next();
+  return res.status(401).json({ ok: false, error: "UNAUTHORIZED" });
 }
 
-function resolveGoogleClientId() {
-  return safeStr(process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_OAUTH_CLIENT_ID);
-}
-function resolveGoogleClientSecret() {
-  return safeStr(process.env.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_OAUTH_CLIENT_SECRET);
-}
-
-function canRefreshAds(doc) {
-  return !!safeStr(doc?.refreshToken);
-}
-
-async function getFreshAdsAccessToken(doc) {
-  const accessToken = safeStr(doc?.accessToken);
-  if (accessToken) return { accessToken, refreshed: false };
-
-  const refreshToken = safeStr(doc?.refreshToken);
-  if (!refreshToken) return { accessToken: "", refreshed: false };
-
-  if (!OAuth2Client) return { accessToken: "", refreshed: false };
-
-  const clientId = resolveGoogleClientId();
-  const clientSecret = resolveGoogleClientSecret();
-  if (!clientId || !clientSecret) return { accessToken: "", refreshed: false };
-
-  const oauth = new OAuth2Client(clientId, clientSecret);
-  oauth.setCredentials({ refresh_token: refreshToken });
-
-  const out = await oauth.getAccessToken();
-  const token = safeStr(out?.token || out);
-
-  return { accessToken: token, refreshed: !!token };
-}
-
-/* =========================
- * Selection helpers
- * ========================= */
+// ===== customer selection =====
 function getSelectedCustomerId(doc) {
   if (!doc) return "";
   const sel =
@@ -74,153 +40,118 @@ function getSelectedCustomerId(doc) {
 function isAdsConnected(doc) {
   if (!doc) return false;
   if (doc.connectedAds === true) return true;
-  // best-effort: si hay tokens, también cuenta como conectado
   return !!(safeStr(doc.refreshToken) || safeStr(doc.accessToken));
 }
 
+// ===== OAuth client (igual que insights) =====
+function oauth() {
+  return new OAuth2Client({
+    clientId: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    redirectUri: process.env.GOOGLE_REDIRECT_URI || process.env.GOOGLE_CONNECT_CALLBACK_URL,
+  });
+}
+
 /**
- * Llamada a Google Ads API REST (searchStream)
- * - Endpoint (v16): https://googleads.googleapis.com/v16/customers/{customerId}/googleAds:searchStream
+ * Devuelve un access_token vigente usando accessToken o refreshToken.
+ * Actualiza Mongo si logra refresh con nueva expiración.
+ * (Copiado conceptualmente de googleAdsInsights.js para consistencia)
  */
-async function googleAdsSearchStream({
-  customerId,
-  developerToken,
-  loginCustomerId,
-  accessToken,
-  query,
-}) {
-  const url = `https://googleads.googleapis.com/v16/customers/${customerId}/googleAds:searchStream`;
+async function getFreshAccessToken(gaDoc) {
+  if (gaDoc?.accessToken && gaDoc?.expiresAt) {
+    const ms = new Date(gaDoc.expiresAt).getTime() - Date.now();
+    if (ms > 60_000) return gaDoc.accessToken; // válido > 60s
+  }
 
-  const headers = {
-    Authorization: `Bearer ${accessToken}`,
-    "developer-token": developerToken,
-    "Content-Type": "application/json",
-  };
+  const client = oauth();
+  client.setCredentials({
+    refresh_token: gaDoc?.refreshToken || undefined,
+    access_token: gaDoc?.accessToken || undefined,
+  });
 
-  if (loginCustomerId) headers["login-customer-id"] = String(loginCustomerId);
-
-  const body = JSON.stringify({ query });
-
-  const r = await fetch(url, { method: "POST", headers, body });
-  const txt = await r.text();
-
-  let json;
+  // 1) refreshAccessToken (con expiry)
   try {
-    json = txt ? JSON.parse(txt) : [];
-  } catch {
-    json = [];
+    const { credentials } = await client.refreshAccessToken();
+    const access = credentials.access_token;
+    if (access) {
+      await GoogleAccount.updateOne(
+        { _id: gaDoc._id },
+        {
+          $set: {
+            accessToken: access,
+            expiresAt: credentials.expiry_date ? new Date(credentials.expiry_date) : null,
+            updatedAt: new Date(),
+          },
+        }
+      );
+      return access;
+    }
+  } catch (_) {
+    // ignore y probamos getAccessToken
   }
 
-  if (!r.ok) {
-    const msg =
-      json?.error?.message ||
-      (typeof txt === "string" && txt.slice(0, 240)) ||
-      `HTTP ${r.status}`;
-    const err = new Error(msg);
-    err.status = r.status;
-    err.raw = txt;
-    throw err;
-  }
+  // 2) getAccessToken (sin expiry)
+  const t = await client.getAccessToken().catch(() => null);
+  if (t?.token) return t.token;
 
-  return Array.isArray(json) ? json : [];
+  if (gaDoc?.accessToken) return gaDoc.accessToken;
+  throw new Error("NO_ACCESS_OR_REFRESH_TOKEN");
 }
 
-function resolveGoogleDeveloperToken() {
-  // Render suele usar GOOGLE_DEVELOPER_TOKEN
-  return safeStr(process.env.GOOGLE_DEVELOPER_TOKEN || process.env.GOOGLE_ADS_DEVELOPER_TOKEN);
-}
-
-function resolveLoginCustomerId(doc) {
-  return safeStr(
-    doc?.loginCustomerId ||
-      process.env.GOOGLE_LOGIN_CUSTOMER_ID ||
-      process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID
+// ===== shape normalizer para rows GAQL =====
+function extractConversionAction(row = {}) {
+  // En GAQL stream normalmente viene como row.conversionAction
+  // Pero dejamos fallbacks por compat
+  return (
+    row.conversionAction ||
+    row.conversion_action ||
+    row?.conversion_action?.conversionAction ||
+    row?.conversionAction ||
+    null
   );
 }
 
 // GET /api/google/ads/conversions
-router.get("/ads/conversions", async (req, res) => {
+router.get("/ads/conversions", requireAuth, async (req, res) => {
   try {
     const uid = req.user?._id;
     if (!uid) return res.status(401).json({ ok: false, error: "NO_SESSION" });
 
     if (!GoogleAccount) {
-      return res.json({
-        ok: true,
-        data: [],
-        recommendedResource: null,
-        reason: "NO_GOOGLE_MODEL",
-      });
+      return res.json({ ok: true, data: [], recommendedResource: null, reason: "NO_GOOGLE_MODEL" });
     }
 
-    // ✅ CRÍTICO: tokens están select:false, por eso usamos el static
-    const doc = await GoogleAccount.loadForUserWithTokens(uid).lean();
-    if (!doc) {
-      return res.json({
-        ok: true,
-        data: [],
-        recommendedResource: null,
-        reason: "GOOGLE_NOT_CONNECTED",
-      });
+    // ✅ tokens select:false => usamos static con tokens
+    const ga = await GoogleAccount.loadForUserWithTokens(uid)
+      .select("selectedCustomerIds defaultCustomerId connectedAds expiresAt")
+      .lean();
+
+    if (!ga) {
+      return res.json({ ok: true, data: [], recommendedResource: null, reason: "GOOGLE_NOT_CONNECTED" });
     }
 
-    if (!isAdsConnected(doc)) {
-      return res.json({
-        ok: true,
-        data: [],
-        recommendedResource: null,
-        reason: "ADS_NOT_CONNECTED",
-      });
+    if (!isAdsConnected(ga)) {
+      return res.json({ ok: true, data: [], recommendedResource: null, reason: "ADS_NOT_CONNECTED" });
     }
 
-    const customerId = getSelectedCustomerId(doc);
+    const customerId = getSelectedCustomerId(ga);
     if (!customerId) {
-      return res.json({
-        ok: true,
-        data: [],
-        recommendedResource: null,
-        reason: "NO_CUSTOMER_SELECTED",
-      });
+      return res.json({ ok: true, data: [], recommendedResource: null, reason: "NO_CUSTOMER_SELECTED" });
     }
 
-    const developerToken = resolveGoogleDeveloperToken();
-    if (!developerToken) {
-      return res.status(500).json({ ok: false, error: "MISSING_GOOGLE_DEVELOPER_TOKEN" });
-    }
-
-    // ✅ Access token (refresh si hace falta)
-    let accessToken = safeStr(doc?.accessToken);
-
-    if (!accessToken && canRefreshAds(doc)) {
-      const fresh = await getFreshAdsAccessToken(doc);
-      accessToken = fresh.accessToken;
-
-      // Persistir best-effort para siguientes llamadas
-      if (fresh.refreshed && accessToken) {
-        try {
-          await GoogleAccount.updateOne(
-            { $or: [{ user: uid }, { userId: uid }] },
-            { $set: { accessToken, updatedAt: new Date() } },
-            { upsert: false }
-          );
-        } catch {
-          // noop
-        }
-      }
+    // ✅ Multi-token: mismo refresh que insights
+    let accessToken;
+    try {
+      accessToken = await getFreshAccessToken(ga);
+    } catch {
+      accessToken = safeStr(ga?.accessToken);
     }
 
     if (!accessToken) {
-      return res.json({
-        ok: true,
-        data: [],
-        recommendedResource: null,
-        reason: "NO_ACCESS_TOKEN",
-      });
+      return res.json({ ok: true, data: [], recommendedResource: null, reason: "NO_ACCESS_TOKEN" });
     }
 
-    const loginCustomerId = resolveLoginCustomerId(doc);
-
-    const query = `
+    const GAQL = `
       SELECT
         conversion_action.resource_name,
         conversion_action.name,
@@ -230,34 +161,27 @@ router.get("/ads/conversions", async (req, res) => {
       WHERE conversion_action.status != 'REMOVED'
       ORDER BY conversion_action.name
       LIMIT 200
-    `.trim();
+    `.replace(/\s+/g, " ").trim();
 
-    const chunks = await googleAdsSearchStream({
-      customerId,
-      developerToken,
-      loginCustomerId: normDigits(loginCustomerId),
-      accessToken,
-      query,
-    });
+    // ✅ Reusar tu método probado (maneja tu versión/config)
+    const rowsRaw = await Ads.searchGAQLStream(accessToken, customerId, GAQL);
 
-    // Flatten stream response
-    const rows = [];
-    for (const ch of chunks) {
-      const results = Array.isArray(ch?.results) ? ch.results : [];
-      for (const r of results) {
-        const ca = r?.conversionAction || r?.conversion_action || {};
+    const rows = (Array.isArray(rowsRaw) ? rowsRaw : [])
+      .map((r) => {
+        const ca = extractConversionAction(r) || {};
         const resourceName = safeStr(ca.resourceName || ca.resource_name);
-        if (!resourceName) continue;
-        rows.push({
+        if (!resourceName) return null;
+
+        return {
           resourceName,
           name: safeStr(ca.name) || resourceName,
           status: safeStr(ca.status) || null,
           type: safeStr(ca.type) || null,
-        });
-      }
-    }
+        };
+      })
+      .filter(Boolean);
 
-    // recommended: PURCHASE por nombre (simple y efectivo)
+    // recommended: PURCHASE por nombre
     const re = /purchase|compra|checkout|order|pedido|conversion/i;
     let recommendedResource = null;
     const pick = rows.find((x) => re.test(x.name || ""));
@@ -271,11 +195,15 @@ router.get("/ads/conversions", async (req, res) => {
       meta: { customerId },
     });
   } catch (e) {
-    console.error("[google/ads/conversions] error:", e?.message || e);
+    const detail = e?.api?.error || e?.response?.data || e?.message || String(e);
+    const apiLog = e?.api?.log || null;
+
+    console.error("[google/ads/conversions] error:", detail);
     return res.status(500).json({
       ok: false,
       error: "GOOGLE_CONVERSIONS_FAILED",
-      message: String(e?.message || "Error listando conversiones"),
+      message: String(detail),
+      apiLog,
     });
   }
 });
