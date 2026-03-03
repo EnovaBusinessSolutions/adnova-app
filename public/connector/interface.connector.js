@@ -1,52 +1,44 @@
 // public/connector/interface.connector.js
-/*
-  Reescrito completamente para usar App Bridge v4 exclusivamente via CDN (window.shopify).
-  Elimina dependencias de @shopify/app-bridge (NPM) y su lógica de inicialización manual.
-*/
 
 (function () {
   const $ = (id) => document.getElementById(id);
 
-  const statusPill = $('statusPill');
-  const kvShop = $('kvShop');
-  const kvHost = $('kvHost');
-  const errBox = $('errBox');
-  const btnReload = $('btnReload');
-  const btnGo = $('btnGo');
+  const statusPill = $("statusPill");
+  const kvShop = $("kvShop");
+  const kvHost = $("kvHost");
+  const errBox = $("errBox");
+  const btnReload = $("btnReload");
+  const btnGo = $("btnGo");
 
   function setStatus(txt) {
-    if (statusPill) statusPill.textContent = txt;
+    if (statusPill) statusPill.textContent = txt || "";
   }
 
   function showError(msg) {
     if (!errBox) return;
-    errBox.style.display = 'block';
-    errBox.textContent = msg;
+    errBox.style.display = "block";
+    errBox.textContent = msg || "";
   }
 
   function hideError() {
     if (!errBox) return;
-    errBox.style.display = 'none';
-    errBox.textContent = '';
-  }
-
-  function qs() {
-    return new URLSearchParams(window.location.search);
+    errBox.style.display = "none";
+    errBox.textContent = "";
   }
 
   function getMeta(name) {
     const el = document.querySelector(`meta[name="${name}"]`);
-    return el ? el.getAttribute('content') : '';
+    return el ? String(el.getAttribute("content") || "") : "";
   }
 
   function topNavigate(url) {
     try {
       if (window.top && window.top !== window.self) {
-         window.top.location.href = url;
+        window.top.location.href = url;
       } else {
-         window.location.href = url;
+        window.location.href = url;
       }
-    } catch (e) {
+    } catch {
       window.location.href = url;
     }
   }
@@ -55,163 +47,203 @@
     return new Promise((r) => setTimeout(r, ms));
   }
 
-  async function waitForAppBridge(timeoutMs = 8000) {
+  async function waitForShopifyGlobal(timeoutMs = 8000) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      if (window.shopify && window.shopify.config) return true;
+      if (window.shopify && typeof window.shopify === "object") return true;
       await sleep(50);
     }
     return false;
   }
 
-  async function getSessionToken() {
-    // En App Bridge v4, obtenemos el token con shopify.idToken()
-    if (window.shopify && typeof window.shopify.idToken === 'function') {
-      return await window.shopify.idToken();
+  function withTimeout(promise, ms, label = "timeout") {
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error(label)), ms);
+      Promise.resolve(promise)
+        .then((v) => {
+          clearTimeout(t);
+          resolve(v);
+        })
+        .catch((e) => {
+          clearTimeout(t);
+          reject(e);
+        });
+    });
+  }
+
+  async function getSessionTokenSafe() {
+    if (!window.shopify || typeof window.shopify !== "object") {
+      throw new Error("window.shopify no disponible.");
     }
-    throw new Error('App Bridge v4 idToken() not available (window.shopify missing or disconnected).');
+    if (typeof window.shopify.idToken !== "function") {
+      throw new Error("shopify.idToken() no disponible en este entorno.");
+    }
+    const token = await withTimeout(window.shopify.idToken(), 7000, "idToken_timeout");
+    if (!token || typeof token !== "string") {
+      throw new Error("idToken() regresó vacío.");
+    }
+    return token;
+  }
+
+
+  async function pingBackend({ token }) {
+    // 1) Con Bearer
+    if (token) {
+      const r = await fetch("/api/secure/ping", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        credentials: "include",
+      });
+      return r;
+    }
+
+    // 2) Sin header (fallback)
+    const r2 = await fetch("/api/secure/ping", {
+      method: "GET",
+      credentials: "include",
+    });
+    return r2;
+  }
+
+  function saveSession({ token, shop, host }) {
+    try {
+      if (token) {
+        // compat: algunos módulos esperan "sessionToken"
+        sessionStorage.setItem("sessionToken", token);
+        sessionStorage.setItem("shopifySessionToken", token);
+      }
+      if (shop) sessionStorage.setItem("shopifyShop", shop);
+      if (host) sessionStorage.setItem("shopifyHost", host);
+      sessionStorage.setItem("shopifyConnected", "true");
+    } catch {
+      // ignore
+    }
+  }
+
+  function setKV(shop, host) {
+    if (kvShop) kvShop.textContent = shop || "—";
+    if (kvHost) kvHost.textContent = host || "—";
   }
 
   async function boot() {
     hideError();
-    setStatus('Leyendo parámetros…');
+    setStatus("Preparando…");
 
-    const p = qs();
-    const shop = (p.get('shop') || '').trim();
-    const host = (p.get('host') || '').trim();
+    const cfg = window.__ADRAY_CONNECTOR__ || {};
+    const shop = String(cfg.shop || "").trim();
+    const host = String(cfg.host || "").trim();
+    const apiKey = String(cfg.apiKey || getMeta("shopify-api-key") || "").trim();
+    const appUrl = String(cfg.appUrl || getMeta("app-url") || "").trim();
 
-    if (kvShop) kvShop.textContent = shop || '—';
-    if (kvHost) kvHost.textContent = host || '—';
+    setKV(shop, host);
 
-    // 1. Validar parámetros básicos
-    if (!shop) {
-      setStatus('Falta shop');
-      showError('Missing "shop".\nAbre esta pantalla desde el Admin de Shopify (Apps).');
-      return;
-    }
-    // Host es obligatorio para App Bridge en modo embedded
-    if (!host) {
-      setStatus('Falta host');
-      showError('Missing "host".\nEsto normalmente significa que no entraste desde Shopify Admin (embedded).');
-      return;
-    }
-
-    const apiKey = (getMeta('shopify-api-key') || '').trim();
-    if (!apiKey || apiKey.includes('{') || apiKey.includes('}')) {
-      setStatus('API key inválida');
-      showError('shopify-api-key inválida/missing en meta tags.');
-      return;
-    }
-
-    setStatus('Cargando App Bridge…');
-
-    const ok = await waitForAppBridge();
-    if (!ok) {
-        // Fallback or verify if script loaded
-        setStatus('Error App Bridge');
-        showError('No cargó window.shopify (CDN v4). Revisa conexión/CSP.');
-        return;
-    }
-
-    // 2. Configurar App Bridge v4
-    // Normalmente v4 auto-detecta params de la URL si coinciden, pero forzamos config
-    try {
-      /* 
-         NOTA IMPORTANTE: 
-         En algunas versiones del CDN de App Bridge v4, 'shopify' es un proxy y .config() puede no ser una función directa 
-         o ya estar pre-configurado por los meta tags. 
-         Si falla .config(), intentamos simplemente usar el objeto shopify tal cual, ya que la inicialización suele ser automática.
-      */
-      if (typeof shopify.config === 'function') {
-        shopify.config({
-          apiKey: apiKey,
-          shop: shop,
-          forceRedirect: false, 
-        });
-      } else {
-        console.warn('shopify.config no es una función. Asumiendo auto-configuración.');
-      }
-    } catch (e) {
-      console.error(e);
-      // No bloqueamos la ejecución si falla config, a veces ya está listo.
-      // setStatus('Error Config');
-      // showError('Fallo en shopify.config(): ' + e.message);
-      // return;
-    }
-
-    setStatus('Generando Session Token…');
-
-    let token = null;
-    let lastErr = null;
-
-    // Retry loop para obtener token (a veces tarda en inicializar interno)
-    for (let i = 0; i < 5; i++) {
-        try {
-            token = await getSessionToken();
-            if (token) break;
-        } catch (e) {
-            lastErr = e;
-            await sleep(500);
-        }
-    }
-
-    if (!token) {
-      setStatus('Token fallo');
+    if (!apiKey || apiKey.includes("{") || apiKey.includes("}")) {
+      setStatus("API key inválida");
       showError(
-        'No se pudo obtener idToken.\n' + (lastErr?.message || String(lastErr))
+        'No se encontró una "shopify-api-key" válida.\nVerifica que /connector/interface inyecte {{SHOPIFY_API_KEY}}.'
       );
       return;
     }
 
-    // 3. Verify session token against backend (Strict Mode)
-    // Esto es lo que exige Shopify: validar la integridad del token en el servidor
-    setStatus('Verificando sesión...');
-    
-    const pingBackend = async () => {
-      try {
-        // Siempre pedimos un token fresco antes de enviarlo
-        const activeToken = await window.shopify.idToken(); 
-        await fetch('/api/secure/ping', {
-          method: 'GET',
-          headers: { 
-             'Authorization': `Bearer ${activeToken}`,
-             'Content-Type': 'application/json'
-          },
-        });
-      } catch (e) {
-        console.warn('Ping backend failed', e);
-      }
-    };
-    
-    // Primer ping para validar que el token funciona
-    await pingBackend();
-    
-    // Podemos guardar cosas en Session Storage para uso posterior
-    sessionStorage.setItem('shopifySessionToken', token);
-    sessionStorage.setItem('shopifyShop', shop);
-    sessionStorage.setItem('shopifyHost', host);
-    sessionStorage.setItem('shopifyConnected', 'true');
-
-    // UI Ready
-    setStatus('Listo ✅');
-    if (btnGo) {
-        btnGo.disabled = false;
-        btnGo.onclick = () => {
-            const base = (getMeta('app-url') || window.location.origin).replace(/\/$/, '');
-            // Construir URL destino
-            const url = `${base}/onboarding?from=shopify&shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
-            topNavigate(url);
-        };
+    if (!shop) {
+      setStatus("Falta shop");
+      showError('Missing "shop".\nAbre esta pantalla desde Shopify Admin (Apps).');
+      return;
     }
+
+    if (!host) {
+      setStatus("Falta host");
+      showError(
+        'Missing "host".\nApp Bridge embedded requiere host. Revisa que /apps/<handle> redirija con host.'
+      );
+      return;
+    }
+
+    setStatus("Cargando App Bridge…");
+
+    const ok = await waitForShopifyGlobal();
+    if (!ok) {
+      setStatus("Error App Bridge");
+      showError(
+        "No cargó window.shopify (app-bridge.js).\nRevisa CSP / red / adblockers."
+      );
+      return;
+    }
+
+  
+    setStatus("Obteniendo Session Token…");
+
+    let token = null;
+    let tokenWarning = "";
+
+    // Intento principal: shopify.idToken()
+    try {
+      token = await getSessionTokenSafe();
+    } catch (e) {
+      // No bloqueamos; intentaremos ping sin token (auto-auth) para detectar si App Bridge ya inyecta headers
+      tokenWarning =
+        "No se pudo obtener idToken(). Continuaré con verificación por fetch.\n" +
+        (e?.message || String(e));
+      console.warn("[connector] idToken() failed:", e);
+    }
+
+    setStatus("Verificando sesión…");
+
+    let pingRes = null;
+    try {
+      pingRes = await pingBackend({ token });
+    } catch (e) {
+      setStatus("Error backend");
+      showError(
+        "No se pudo conectar al backend para verificar sesión.\n" +
+          (e?.message || String(e))
+      );
+      return;
+    }
+
+    if (!pingRes || !pingRes.ok) {
+      const code = pingRes ? `${pingRes.status}` : "NO_RESPONSE";
+      let body = "";
+      try {
+        body = pingRes ? await pingRes.text() : "";
+      } catch {}
+
+      setStatus("Auth falló");
+      showError(
+        `Ping a /api/secure/ping falló (${code}).\n` +
+          (body ? body.slice(0, 600) + (body.length > 600 ? "…" : "") + "\n" : "") +
+          (tokenWarning ? "\n---\n" + tokenWarning : "")
+      );
+      return;
+    }
+
+    // Si el backend aceptó, guardamos lo que tengamos.
+    saveSession({ token, shop, host });
+
+    setStatus("Listo ✅");
+    hideError();
+
+    if (btnGo) {
+      btnGo.disabled = false;
+      btnGo.onclick = () => {
+        const base = (appUrl || window.location.origin).replace(/\/$/, "");
+        const url =
+          `${base}/onboarding?from=shopify` +
+          `&shop=${encodeURIComponent(shop)}` +
+          `&host=${encodeURIComponent(host)}`;
+        topNavigate(url);
+      };
+    }
+
+    
   }
 
   if (btnReload) btnReload.onclick = () => window.location.reload();
 
   boot().catch((e) => {
-    setStatus('Error');
+    setStatus("Error");
     showError(e?.stack || e?.message || String(e));
   });
 })();
-
-
-

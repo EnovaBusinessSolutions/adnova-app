@@ -5,12 +5,13 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ADRAY Connector</title>
 
-  <!-- Shopify App Bridge requiere esta meta.
-       ✅ Deja placeholder para que el backend la inyecte al servir /connector/interface -->
-
-  <meta name="shopify-api-key" content="{{SHOPIFY_API_KEY}}" />    
+  <!-- ✅ Shopify App Bridge requiere esta meta -->
+  <meta name="shopify-api-key" content="{{SHOPIFY_API_KEY}}" />
   <meta name="app-url" content="{{APP_URL}}" />
 
+  <!-- ✅ NUEVO: inyectar host/shop para inicializar App Bridge sin depender del querystring -->
+  <meta name="shopify-host" content="{{HOST}}" />
+  <meta name="shopify-shop" content="{{SHOP}}" />
 
   <style>
     :root { color-scheme: dark; }
@@ -117,25 +118,42 @@
     }
   </style>
 
-  <!-- Shopify App Bridge oficial (App Bridge v4) -->
+  <!-- ✅ Shopify App Bridge oficial -->
   <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
 
-  <!-- Pre-check rápido (UI) antes de tu script -->
+  <!-- ✅ Bootstrap estable para el conector (shop/host/apiKey/appUrl), sin tocar DOM todavía -->
   <script>
     (function () {
-      try {
-        var sp = new URLSearchParams(location.search);
-        var shop = sp.get('shop') || '';
-        var host = sp.get('host') || '';
-        var pill = document.getElementById('statusPill');
-        var err = document.getElementById('errBox');
+      function meta(name) {
+        var el = document.querySelector('meta[name="' + name + '"]');
+        return el ? (el.getAttribute('content') || '') : '';
+      }
 
-        // (estos ids existen en el body; si aún no, no pasa nada)
-      } catch (e) {}
+      var sp = new URLSearchParams(location.search);
+      var shopQS = sp.get('shop') || '';
+      var hostQS = sp.get('host') || '';
+
+      var apiKey = meta('shopify-api-key');
+      var appUrl = meta('app-url');
+
+      // Preferimos lo inyectado por backend; fallback a querystring
+      var shop = meta('shopify-shop') || shopQS;
+      var host = meta('shopify-host') || hostQS;
+
+      // Exponer en global (debug + consumo por interface.connector.js)
+      window.__ADRAY_CONNECTOR__ = {
+        apiKey: apiKey,
+        appUrl: appUrl,
+        shop: shop,
+        host: host,
+        embedded: true,
+        qsShop: shopQS,
+        qsHost: hostQS
+      };
     })();
   </script>
 
-  <!-- Lógica E2E del conector -->
+  <!-- ✅ Lógica E2E del conector -->
   <script src="/connector/interface.connector.js" defer></script>
 </head>
 
@@ -169,9 +187,56 @@
 
     <div class="err" id="errBox"></div>
   </div>
+
+  <!-- ✅ UI prefill (DOM ya existe) -->
+  <script>
+    (function () {
+      function setText(id, v) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = v || '—';
+      }
+      function setPill(text) {
+        var el = document.getElementById('statusPill');
+        if (el) el.textContent = text || 'Preparando…';
+      }
+      function showErr(msg) {
+        var el = document.getElementById('errBox');
+        if (!el) return;
+        el.style.display = msg ? 'block' : 'none';
+        el.textContent = msg || '';
+      }
+
+      var cfg = window.__ADRAY_CONNECTOR__ || {};
+      setText('kvShop', cfg.shop || cfg.qsShop || '');
+      setText('kvHost', cfg.host || cfg.qsHost || '');
+
+      if (!cfg.apiKey) {
+        setPill('Falta API Key');
+        showErr('No se encontró meta "shopify-api-key". Verifica que el backend inyecte {{SHOPIFY_API_KEY}}.');
+        return;
+      }
+      if (!cfg.shop) {
+        setPill('Falta shop');
+        showErr('No se detectó "shop". Abre desde Shopify Admin o agrega ?shop=tu-tienda.myshopify.com');
+        return;
+      }
+      if (!cfg.host) {
+        setPill('Falta host');
+        showErr('No se detectó "host". App Bridge necesita el parámetro host (base64) para embedded.');
+        return;
+      }
+
+      setPill('Listo para autenticar');
+      showErr('');
+
+      // Recargar
+      var btnReload = document.getElementById('btnReload');
+      if (btnReload) {
+        btnReload.addEventListener('click', function () {
+          try { location.reload(); } catch (e) {}
+        });
+      }
+    })();
+  </script>
 </body>
 </html>
-
-
-
-
