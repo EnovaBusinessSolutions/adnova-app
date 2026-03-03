@@ -1,4 +1,14 @@
 // public/connector/interface.connector.js
+"use strict";
+
+/**
+ * ADRAY Shopify Connector (Embedded)
+ * - Usa App Bridge UMD self-host ( /connector/vendor/app-bridge.umd.js )
+ * - Usa App Bridge Utils UMD self-host ( /connector/vendor/app-bridge-utils.umd.js )
+ * - Genera Session Token con getSessionToken(app)
+ * - Valida token contra backend: GET /api/secure/ping (Authorization: Bearer <token>)
+ * - Guarda token en sessionStorage y habilita CTA a /onboarding (top-level)
+ */
 
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -47,72 +57,64 @@
     return new Promise((r) => setTimeout(r, ms));
   }
 
-  async function waitForShopifyGlobal(timeoutMs = 8000) {
+  // ✅ Detectores robustos de UMD globals (dependiendo del build, cambia el nombre)
+  function getCreateAppFn() {
+    // Comunes:
+    // - window["app-bridge"].default
+    // - window.appBridge.default
+    // - window.AppBridge (menos común)
+    const ab =
+      window["app-bridge"] ||
+      window.appBridge ||
+      window.AppBridge ||
+      null;
+
+    if (!ab) return null;
+
+    // En UMD de Shopify normalmente viene como default export
+    const createApp = ab.default || ab.createApp || null;
+    return typeof createApp === "function" ? createApp : null;
+  }
+
+  function getGetSessionTokenFn() {
+    const u =
+      window["app-bridge-utils"] ||
+      window.appBridgeUtils ||
+      window.AppBridgeUtils ||
+      null;
+
+    if (!u) return null;
+
+    const fn = u.getSessionToken || null;
+    return typeof fn === "function" ? fn : null;
+  }
+
+  async function waitForUmdGlobals(timeoutMs = 8000) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      if (window.shopify && typeof window.shopify === "object") return true;
-      await sleep(50);
+      const createApp = getCreateAppFn();
+      const getSessionToken = getGetSessionTokenFn();
+      if (createApp && getSessionToken) return { createApp, getSessionToken };
+      await sleep(60);
     }
-    return false;
+    return { createApp: null, getSessionToken: null };
   }
 
-  function withTimeout(promise, ms, label = "timeout") {
-    return new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error(label)), ms);
-      Promise.resolve(promise)
-        .then((v) => {
-          clearTimeout(t);
-          resolve(v);
-        })
-        .catch((e) => {
-          clearTimeout(t);
-          reject(e);
-        });
-    });
-  }
-
-  async function getSessionTokenSafe() {
-    if (!window.shopify || typeof window.shopify !== "object") {
-      throw new Error("window.shopify no disponible.");
-    }
-    if (typeof window.shopify.idToken !== "function") {
-      throw new Error("shopify.idToken() no disponible en este entorno.");
-    }
-    const token = await withTimeout(window.shopify.idToken(), 7000, "idToken_timeout");
-    if (!token || typeof token !== "string") {
-      throw new Error("idToken() regresó vacío.");
-    }
-    return token;
-  }
-
-
-  async function pingBackend({ token }) {
-    // 1) Con Bearer
-    if (token) {
-      const r = await fetch("/api/secure/ping", {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        credentials: "include",
-      });
-      return r;
-    }
-
-    // 2) Sin header (fallback)
-    const r2 = await fetch("/api/secure/ping", {
+  async function pingBackend(token) {
+    // Requiere verifySessionToken en backend
+    const r = await fetch("/api/secure/ping", {
       method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
       credentials: "include",
     });
-    return r2;
+    return r;
   }
 
   function saveSession({ token, shop, host }) {
     try {
       if (token) {
-        // compat: algunos módulos esperan "sessionToken"
-        sessionStorage.setItem("sessionToken", token);
-        sessionStorage.setItem("shopifySessionToken", token);
+        sessionStorage.setItem("sessionToken", token);         // compat general
+        sessionStorage.setItem("shopifySessionToken", token);  // compat conector
       }
       if (shop) sessionStorage.setItem("shopifyShop", shop);
       if (host) sessionStorage.setItem("shopifyHost", host);
@@ -142,7 +144,8 @@
     if (!apiKey || apiKey.includes("{") || apiKey.includes("}")) {
       setStatus("API key inválida");
       showError(
-        'No se encontró una "shopify-api-key" válida.\nVerifica que /connector/interface inyecte {{SHOPIFY_API_KEY}}.'
+        'No se encontró una "shopify-api-key" válida.\n' +
+          "Verifica que /connector/interface inyecte {{SHOPIFY_API_KEY}}."
       );
       return;
     }
@@ -163,63 +166,60 @@
 
     setStatus("Cargando App Bridge…");
 
-    const ok = await waitForShopifyGlobal();
-    if (!ok) {
+    const { createApp, getSessionToken } = await waitForUmdGlobals(9000);
+    if (!createApp || !getSessionToken) {
       setStatus("Error App Bridge");
       showError(
-        "No cargó window.shopify (app-bridge.js).\nRevisa CSP / red / adblockers."
+        "No se detectaron los UMD globals de App Bridge.\n\n" +
+          "Verifica que estén cargando (Network → filtro vendor):\n" +
+          "- /connector/vendor/app-bridge.umd.js\n" +
+          "- /connector/vendor/app-bridge-utils.umd.js\n\n" +
+          "Y que ambos estén en status 200."
       );
       return;
     }
 
-  
-    setStatus("Obteniendo Session Token…");
-
-    let token = null;
-    let tokenWarning = "";
-
-    // Intento principal: shopify.idToken()
+    setStatus("Inicializando…");
+    let app;
     try {
-      token = await getSessionTokenSafe();
+      // ✅ createApp requiere apiKey + host
+      app = createApp({ apiKey, host, forceRedirect: true });
     } catch (e) {
-      // No bloqueamos; intentaremos ping sin token (auto-auth) para detectar si App Bridge ya inyecta headers
-      tokenWarning =
-        "No se pudo obtener idToken(). Continuaré con verificación por fetch.\n" +
-        (e?.message || String(e));
-      console.warn("[connector] idToken() failed:", e);
+      setStatus("Error App Bridge");
+      showError("Fallo inicializando App Bridge.\n" + (e?.message || String(e)));
+      return;
+    }
+
+    setStatus("Obteniendo Session Token…");
+    let token = null;
+    try {
+      token = await getSessionToken(app);
+      if (!token || typeof token !== "string") throw new Error("Token vacío");
+    } catch (e) {
+      setStatus("Token falló");
+      showError("No se pudo obtener Session Token.\n" + (e?.message || String(e)));
+      return;
     }
 
     setStatus("Verificando sesión…");
-
-    let pingRes = null;
+    let pingRes;
+    let bodyTxt = "";
     try {
-      pingRes = await pingBackend({ token });
+      pingRes = await pingBackend(token);
+      bodyTxt = await pingRes.text();
     } catch (e) {
       setStatus("Error backend");
-      showError(
-        "No se pudo conectar al backend para verificar sesión.\n" +
-          (e?.message || String(e))
-      );
+      showError("No se pudo conectar al backend.\n" + (e?.message || String(e)));
       return;
     }
 
-    if (!pingRes || !pingRes.ok) {
-      const code = pingRes ? `${pingRes.status}` : "NO_RESPONSE";
-      let body = "";
-      try {
-        body = pingRes ? await pingRes.text() : "";
-      } catch {}
-
+    if (!pingRes.ok) {
       setStatus("Auth falló");
-      showError(
-        `Ping a /api/secure/ping falló (${code}).\n` +
-          (body ? body.slice(0, 600) + (body.length > 600 ? "…" : "") + "\n" : "") +
-          (tokenWarning ? "\n---\n" + tokenWarning : "")
-      );
+      showError(`Ping /api/secure/ping falló (${pingRes.status}).\n${bodyTxt || ""}`);
       return;
     }
 
-    // Si el backend aceptó, guardamos lo que tengamos.
+    // ✅ Si backend aceptó, guardamos token y habilitamos CTA
     saveSession({ token, shop, host });
 
     setStatus("Listo ✅");
@@ -236,8 +236,6 @@
         topNavigate(url);
       };
     }
-
-    
   }
 
   if (btnReload) btnReload.onclick = () => window.location.reload();
