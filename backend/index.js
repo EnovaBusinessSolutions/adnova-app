@@ -79,6 +79,16 @@ const eventsRoutes = require("./routes/events");
 
 const adminAnalyticsRoutes = require("./routes/adminAnalytics");
 
+/* =========================
+ * AdRay Pipeline Imports
+ * ========================= */
+const cookieParser = require('cookie-parser');
+const prisma = require('./utils/prismaClient');
+const collectRoutes = require('./routes/collect');
+const adrayWebhookRoutes = require('./routes/adrayWebhooks');
+const adrayPlatformRoutes = require('./routes/adrayPlatforms');
+const rateLimitCollect = require('./middleware/rateLimitCollect');
+
 // Meta
 const metaInsightsRoutes = require("./routes/metaInsights");
 const metaAccountsRoutes = require("./routes/metaAccounts");
@@ -282,8 +292,8 @@ app.get(["/connector/auth", "/connector/auth/callback"], (req, res, next) => {
  * ========================= */
 
 // 1) Shopify Connector Webhooks: RAW
-app.use("/connector/webhooks", express.raw({ type: "*/*" }), webhookRoutes);
-
+app.use("/connector/webhooks", express.raw({ type: "*/*" }), webhookRoutes);    
+app.use("/webhooks/shopify", express.raw({ type: "*/*" }), adrayWebhookRoutes);
 // 2) Stripe: RAW **solo** en /api/stripe/webhook; JSON normal para el resto
 app.use("/api/stripe", (req, res, next) => {
   if (req.path === "/webhook") {
@@ -295,6 +305,11 @@ app.use("/api/stripe", (req, res, next) => {
 // Parsers globales (después de RAW especiales)
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+// AdRay collect and platform routes
+app.use("/collect", rateLimitCollect, collectRoutes);
+app.use("/api", sessionGuard, adrayPlatformRoutes);
 
 /* =========================
  * Pixel auditor (usa JSON)
@@ -329,6 +344,13 @@ mongoose
   })
   .then(() => console.log("✅ Conectado a MongoDB Atlas"))
   .catch((err) => console.error("❌ Error al conectar con MongoDB:", err));
+
+/* =========================
+ * PostgreSQL (Prisma)
+ * ========================= */
+prisma.$connect()
+  .then(() => console.log("✅ Conectado a PostgreSQL (Prisma)"))
+  .catch((err) => console.error("❌ Error con PostgreSQL (Prisma):", err));
 
 /* =========================
  * Rutas utilitarias públicas

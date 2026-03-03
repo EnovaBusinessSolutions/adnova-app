@@ -2,7 +2,7 @@ services:
   - type: web
     name: adnova-ai
     env: node
-    buildCommand: npm install
+    buildCommand: npm install && npx prisma generate --schema=backend/prisma/schema.prisma
     startCommand: node backend/index.js
     envVars:
       - key: NODE_VERSION

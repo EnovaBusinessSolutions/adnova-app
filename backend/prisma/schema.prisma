@@ -1,0 +1,236 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Platform {
+  META
+  GOOGLE
+  TIKTOK
+}
+
+enum ConnectionStatus {
+  ACTIVE
+  DISCONNECTED
+  ERROR
+}
+
+enum DedupStatus {
+  SINGLE
+  BROWSER_ONLY
+  SERVER_ONLY
+  DEDUPLICATED
+}
+
+model Shop {
+  id          String   @id @default(uuid())
+  shopId      String   @unique @map("shop_id")
+  shopDomain  String   @map("shop_domain")
+  accessToken String   @map("access_token")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  platformConnections PlatformConnection[]
+  identityGraphs      IdentityGraph[]
+  sessions            Session[]
+  checkoutSessionMaps CheckoutSessionMap[]
+  events              Event[]
+  orders              Order[]
+  snapshot            MerchantSnapshot?
+
+  @@map("shops")
+}
+
+model PlatformConnection {
+  id           String           @id @default(uuid())
+  shopId       String           @map("shop_id")
+  platform     Platform
+  accessToken  String           @map("access_token")
+  pixelId      String?          @map("pixel_id")
+  adAccountId  String?          @map("ad_account_id")
+  status       ConnectionStatus @default(ACTIVE)
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+
+  shop Shop @relation(fields: [shopId], references: [shopId], onDelete: Cascade)
+
+  @@map("platform_connections")
+}
+
+model IdentityGraph {
+  id              String   @id @default(uuid())
+  shopId          String   @map("shop_id")
+  userKey         String   @map("user_key")
+  customerId      String?  @map("customer_id")
+  emailHash       String?  @map("email_hash")
+  phoneHash       String?  @map("phone_hash")
+  fbp             String?
+  fbc             String?
+  fbclid          String?
+  gclid           String?
+  ttclid          String?
+  fingerprintHash String?  @map("fingerprint_hash")
+  confidenceScore Float    @map("confidence_score")
+  firstSeenAt     DateTime @default(now()) @map("first_seen_at")
+  lastSeenAt      DateTime @default(now()) @updatedAt @map("last_seen_at")
+  deviceCount     Int      @default(1) @map("device_count")
+
+  shop Shop @relation(fields: [shopId], references: [shopId], onDelete: Cascade)
+
+  @@index([shopId, userKey])
+  @@index([shopId, fingerprintHash])
+  @@index([shopId, customerId])
+  @@map("identity_graph")
+}
+
+model Session {
+  id             String   @id @default(uuid())
+  sessionId      String   @unique @map("session_id")
+  shopId         String   @map("shop_id")
+  userKey        String   @map("user_key")
+  utmSource      String?  @map("utm_source")
+  utmMedium      String?  @map("utm_medium")
+  utmCampaign    String?  @map("utm_campaign")
+  utmContent     String?  @map("utm_content")
+  utmTerm        String?  @map("utm_term")
+  referrer       String?
+  landingPageUrl String?  @map("landing_page_url")
+  fbclid         String?
+  gclid          String?
+  ttclid         String?
+  fbp            String?
+  fbc            String?
+  isFirstTouch   Boolean  @map("is_first_touch")
+  startedAt      DateTime @default(now()) @map("started_at")
+  lastEventAt    DateTime @default(now()) @updatedAt @map("last_event_at")
+
+  shop Shop @relation(fields: [shopId], references: [shopId], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model CheckoutSessionMap {
+  id                  String   @id @default(uuid())
+  checkoutToken       String   @unique @map("checkout_token")
+  shopId              String   @map("shop_id")
+  sessionId           String   @map("session_id")
+  userKey             String   @map("user_key")
+  attributionSnapshot Json     @map("attribution_snapshot")
+  eventId             String   @map("event_id")
+  createdAt           DateTime @default(now()) @map("created_at")
+  expiresAt           DateTime @map("expires_at")
+
+  shop Shop @relation(fields: [shopId], references: [shopId], onDelete: Cascade)
+
+  @@map("checkout_session_map")
+}
+
+model Event {
+  id                String    @id @default(uuid())
+  eventId           String    @unique @map("event_id")
+  shopId            String    @map("shop_id")
+  sessionId         String    @map("session_id")
+  userKey           String    @map("user_key")
+  eventName         String    @map("event_name")
+  pageType          String?   @map("page_type")
+  pageUrl           String?   @map("page_url")
+  productId         String?   @map("product_id")
+  variantId         String?   @map("variant_id")
+  cartId            String?   @map("cart_id")
+  cartValue         Float?    @map("cart_value")
+  checkoutToken     String?   @map("checkout_token")
+  orderId           String?   @map("order_id")
+  revenue           Float?
+  currency          String?
+  items             Json?
+  rawPayload        Json      @map("raw_payload")
+  browserReceivedAt DateTime? @map("browser_received_at")
+  serverReceivedAt  DateTime? @map("server_received_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  shop Shop @relation(fields: [shopId], references: [shopId], onDelete: Cascade)
+
+  @@map("events")
+}
+
+model Order {
+  id                    String   @id @default(uuid())
+  orderId               String   @unique @map("order_id")
+  orderNumber           String   @map("order_number")
+  shopId                String   @map("shop_id")
+  checkoutToken         String?  @map("checkout_token")
+  userKey               String?  @map("user_key")
+  sessionId             String?  @map("session_id")
+  customerId            String?  @map("customer_id")
+  emailHash             String?  @map("email_hash")
+  phoneHash             String?  @map("phone_hash")
+  revenue               Float
+  subtotal              Float
+  discountTotal         Float    @map("discount_total")
+  shippingTotal         Float    @map("shipping_total")
+  taxTotal              Float    @map("tax_total")
+  currency              String
+  lineItems             Json     @map("line_items")
+  attributedChannel     String?  @map("attributed_channel")
+  attributedCampaign    String?  @map("attributed_campaign")
+  attributedAdset       String?  @map("attributed_adset")
+  attributedAd          String?  @map("attributed_ad")
+  attributedClickId     String?  @map("attributed_click_id")
+  attributionModel      String   @default("last_touch") @map("attribution_model")
+  attributionSnapshot   Json?    @map("attribution_snapshot")
+  confidenceScore       Float?   @map("confidence_score")
+  eventId               String?  @map("event_id")
+  capiSentMeta          Boolean  @default(false) @map("capi_sent_meta")
+  capiSentGoogle        Boolean  @default(false) @map("capi_sent_google")
+  capiSentTiktok        Boolean  @default(false) @map("capi_sent_tiktok")
+  capiMetaResponse      Json?    @map("capi_meta_response")
+  capiGoogleResponse    Json?    @map("capi_google_response")
+  createdAt             DateTime @default(now()) @map("created_at")
+  shopifyCreatedAt      DateTime @map("shopify_created_at")
+
+  shop Shop @relation(fields: [shopId], references: [shopId], onDelete: Cascade)
+
+  @@map("orders")
+}
+
+model EventDedup {
+  eventId           String      @id @map("event_id")
+  shopId            String      @map("shop_id")
+  orderId           String?     @map("order_id")
+  eventName         String      @map("event_name")
+  browserReceivedAt DateTime?   @map("browser_received_at")
+  serverReceivedAt  DateTime?   @map("server_received_at")
+  capiSentAt        DateTime?   @map("capi_sent_at")
+  dedupStatus       DedupStatus @map("dedup_status")
+
+  @@map("event_dedup")
+}
+
+model MerchantSnapshot {
+  id        String   @id @default(uuid())
+  shopId    String   @unique @map("shop_id")
+  snapshot  Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  shop Shop @relation(fields: [shopId], references: [shopId], onDelete: Cascade)
+
+  @@map("merchant_snapshots")
+}
+
+model FailedJob {
+  id          String    @id @default(uuid())
+  jobType     String    @map("job_type")
+  payload     Json
+  error       String
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3) @map("max_attempts")
+  nextRetryAt DateTime? @map("next_retry_at")
+  resolvedAt  DateTime? @map("resolved_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@map("failed_jobs")
+}
