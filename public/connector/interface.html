@@ -9,7 +9,7 @@
   <meta name="shopify-api-key" content="{{SHOPIFY_API_KEY}}" />
   <meta name="app-url" content="{{APP_URL}}" />
 
-  <!-- ✅ NUEVO: inyectar host/shop para inicializar App Bridge sin depender del querystring -->
+  <!-- ✅ Inyectar host/shop para inicializar App Bridge sin depender del querystring -->
   <meta name="shopify-host" content="{{HOST}}" />
   <meta name="shopify-shop" content="{{SHOP}}" />
 
@@ -118,8 +118,9 @@
     }
   </style>
 
-  <!-- ✅ Shopify App Bridge oficial -->
-  <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+  <!-- ✅ Opción A: App Bridge UMD + Utils (para getSessionToken) -->
+  <script src="https://unpkg.com/@shopify/app-bridge@3"></script>
+  <script src="https://unpkg.com/@shopify/app-bridge-utils@3"></script>
 
   <!-- ✅ Bootstrap estable para el conector (shop/host/apiKey/appUrl), sin tocar DOM todavía -->
   <script>
@@ -223,6 +224,15 @@
       if (!cfg.host) {
         setPill('Falta host');
         showErr('No se detectó "host". App Bridge necesita el parámetro host (base64) para embedded.');
+        return;
+      }
+
+      // Chequeo extra: UMD globals deben existir
+      var hasAB = !!(window['app-bridge'] && window['app-bridge'].default);
+      var hasUtils = !!(window['app-bridge-utils'] && typeof window['app-bridge-utils'].getSessionToken === 'function');
+      if (!hasAB || !hasUtils) {
+        setPill('App Bridge no listo');
+        showErr('No se detectó App Bridge UMD o app-bridge-utils.\nRevisa que unpkg.com no esté bloqueado.');
         return;
       }
 
