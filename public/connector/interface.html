@@ -118,9 +118,10 @@
     }
   </style>
 
-  <!-- ✅ Opción A: App Bridge UMD + Utils (para getSessionToken) -->
-  <script src="https://unpkg.com/@shopify/app-bridge@3"></script>
-  <script src="https://unpkg.com/@shopify/app-bridge-utils@3"></script>
+  <!-- ✅ SELF-HOST: App Bridge UMD + Utils (para getSessionToken) -->
+  <!-- (Shopify Admin suele bloquear unpkg.com, por eso lo servimos desde /connector/vendor/*) -->
+  <script src="/connector/vendor/app-bridge.umd.js"></script>
+  <script src="/connector/vendor/app-bridge-utils.umd.js"></script>
 
   <!-- ✅ Bootstrap estable para el conector (shop/host/apiKey/appUrl), sin tocar DOM todavía -->
   <script>
@@ -141,7 +142,6 @@
       var shop = meta('shopify-shop') || shopQS;
       var host = meta('shopify-host') || hostQS;
 
-      // Exponer en global (debug + consumo por interface.connector.js)
       window.__ADRAY_CONNECTOR__ = {
         apiKey: apiKey,
         appUrl: appUrl,
@@ -227,12 +227,17 @@
         return;
       }
 
-      // Chequeo extra: UMD globals deben existir
+      // Chequeo extra: UMD globals deben existir (self-host)
       var hasAB = !!(window['app-bridge'] && window['app-bridge'].default);
       var hasUtils = !!(window['app-bridge-utils'] && typeof window['app-bridge-utils'].getSessionToken === 'function');
       if (!hasAB || !hasUtils) {
         setPill('App Bridge no listo');
-        showErr('No se detectó App Bridge UMD o app-bridge-utils.\nRevisa que unpkg.com no esté bloqueado.');
+        showErr(
+          'No se detectó App Bridge UMD o app-bridge-utils.\n' +
+          'Verifica que existan:\n' +
+          '- /connector/vendor/app-bridge.umd.js\n' +
+          '- /connector/vendor/app-bridge-utils.umd.js'
+        );
         return;
       }
 
