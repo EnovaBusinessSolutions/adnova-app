@@ -84,7 +84,12 @@ const metaInsightsRoutes = require("./routes/metaInsights");
 const metaAccountsRoutes = require("./routes/metaAccounts");
 const metaTable = require("./routes/metaTable");
 
+// Routers nuevos
+const metaPixelsRoutes = require("./routes/metaPixels");
+const googleConversionsRoutes = require("./routes/googleConversions");
+const pixelsRoutes = require("./routes/pixels");
 const app = express();
+
 
 // ✅ Debug de correo (ya usa mailer.js/emailService.js)
 app.use("/__mail", require("./routes/mailDebug"));
@@ -642,6 +647,13 @@ app.use("/api/billing", billingRoutes);
 app.use("/api/meta/insights", sessionGuard, metaInsightsRoutes);
 app.use("/api/meta/accounts", sessionGuard, metaAccountsRoutes);
 app.use("/api/meta", metaTable);
+
+// Montaje (semántico)
+app.use("/api/meta", sessionGuard, metaPixelsRoutes);
+app.use("/api/google", sessionGuard, googleConversionsRoutes);
+
+// Central (select/status/confirm)
+app.use("/api/pixels", sessionGuard, pixelsRoutes);
 
 // Shopify
 const verifyShopifyToken = require("../middlewares/verifyShopifyToken"); // (por ahora no usado)
