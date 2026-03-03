@@ -8,7 +8,8 @@ const router = express.Router();
 
 const User = require('../models/User');
 
-let MetaAccount, GoogleAccount, ShopConnections;
+let MetaAccount, GoogleAccount, ShopConnections, PixelSelection;
+
 try {
   MetaAccount = require('../models/MetaAccount');
 } catch {
@@ -17,6 +18,7 @@ try {
     mongoose.models.MetaAccount ||
     model('MetaAccount', new Schema({}, { strict: false, collection: 'metaaccounts' }));
 }
+
 try {
   GoogleAccount = require('../models/GoogleAccount');
 } catch {
@@ -25,6 +27,7 @@ try {
     mongoose.models.GoogleAccount ||
     model('GoogleAccount', new Schema({}, { strict: false, collection: 'googleaccounts' }));
 }
+
 try {
   ShopConnections = require('../models/ShopConnections');
 } catch {
@@ -32,6 +35,12 @@ try {
   ShopConnections =
     mongoose.models.ShopConnections ||
     model('ShopConnections', new Schema({}, { strict: false, collection: 'shopconnections' }));
+}
+
+try {
+  PixelSelection = require('../models/PixelSelection');
+} catch {
+  PixelSelection = null;
 }
 
 /* ======================= helpers ======================= */
@@ -57,10 +66,11 @@ const normGaId = (s = '') =>
 const normGA4Id = (s = '') => {
   const raw = String(s || '').trim();
   if (!raw) return '';
-  // acepta "properties/123" o "123" o cualquier cosa con dígitos
   const digits = raw.replace(/^properties\//, '').replace(/[^\d]/g, '');
   return digits ? `properties/${digits}` : '';
 };
+
+const safeStr = (v) => String(v || '').trim();
 
 function uniq(arr = []) {
   return [...new Set((Array.isArray(arr) ? arr : []).filter(Boolean))];
@@ -91,7 +101,6 @@ function hasGoogleOAuthGa4(gaDoc) {
 function normalizeScopes(raw) {
   if (!raw) return [];
   const arr = Array.isArray(raw) ? raw : String(raw).split(/[,\s]+/);
-  // tu modelo ya normaliza a lowercase, pero aquí soportamos cualquier case
   return uniq(arr.map((s) => String(s || '').trim().toLowerCase()).filter(Boolean));
 }
 
@@ -208,7 +217,7 @@ router.get('/', requireAuth, async (req, res) => {
     const uid = req.user._id;
 
     // Carga docs (tokens/selección/defaults)
-    const [metaDoc, gaDoc, shopDoc, userDoc] = await Promise.all([
+    const [metaDoc, gaDoc, shopDoc, userDoc, pixelDocs] = await Promise.all([
       MetaAccount.findOne({ $or: [{ user: uid }, { userId: uid }] })
         .select('_id ad_accounts adAccounts access_token token accessToken longLivedToken longlivedToken selectedAccountIds defaultAccountId')
         .lean(),
@@ -221,11 +230,11 @@ router.get('/', requireAuth, async (req, res) => {
             'refreshToken',
             'accessToken',
             'scope',
-            // GA4 tokens + scopes (CRÍTICO)
+            // GA4 tokens + scopes
             'ga4RefreshToken',
             'ga4AccessToken',
             'ga4Scope',
-            // flags (fallback suave)
+            // flags
             'connectedAds',
             'connectedGa4',
             // discovery data
@@ -246,25 +255,36 @@ router.get('/', requireAuth, async (req, res) => {
         .select('_id shop accessToken access_token')
         .lean(),
 
-      // ✅ legacy selections + legacy token (Meta) para compat y para “disconnect” sin falsos positivos
       User.findById(uid)
         .select('_id metaConnected googleConnected shopifyConnected metaAccessToken selectedMetaAccounts selectedGoogleAccounts selectedGAProperties')
         .lean(),
+
+      PixelSelection
+        ? PixelSelection.find({ $or: [{ userId: uid }, { user: uid }] })
+            .select('provider selectedId selectedName meta confirmedAt')
+            .lean()
+        : Promise.resolve([]),
     ]);
 
     const user = userDoc || req.user || {};
+
+    // ===== PIXELS (NEW) =====
+    const pxList = Array.isArray(pixelDocs) ? pixelDocs : [];
+    const pxMeta = pxList.find((d) => d?.provider === 'meta') || null;
+    const pxGoogle = pxList.find((d) => d?.provider === 'google_ads') || null;
+
+    const metaPixelSelected = !!safeStr(pxMeta?.selectedId);
+    const metaPixelConfirmed = !!pxMeta?.confirmedAt;
+
+    const googleConvSelected = !!safeStr(pxGoogle?.selectedId);
+    const googleConvConfirmed = !!pxGoogle?.confirmedAt;
 
     // ===== META =====
     const metaAvailIds = metaDoc ? metaAvailableIds(metaDoc) : [];
     const metaSelectedRaw = selectedMetaFromDocOrUser(metaDoc || {}, user);
     const metaSelectedEff = effectiveSelected(metaSelectedRaw, metaAvailIds).slice(0, MAX_SELECT);
 
-    // ✅ connected robusto:
-    // - tokens reales (MetaAccount)
-    // - o token legacy en User.metaAccessToken (si tuvieras ese caso viejo)
-    // 🚫 NO confiar solo en user.metaConnected (evita “conectado fantasma” tras desconectar)
     const metaConnected = !!(hasAnyMetaToken(metaDoc) || user?.metaAccessToken);
-
     const metaRequiredSel =
       metaConnected && requiredSelectionByUX(metaAvailIds.length, metaSelectedEff.length);
 
@@ -278,8 +298,6 @@ router.get('/', requireAuth, async (req, res) => {
     const adsScopesArr = normalizeScopes(gaDoc?.scope || []);
     const adsScopeOk = hasAdwordsScope(adsScopesArr);
 
-    // Ads conectado = OAuth Ads + scope
-    // fallback suave a connectedAds (pero sin inventar conexión si no hay OAuth)
     const googleAdsConnected = !!((adsOAuth && adsScopeOk) || (adsOAuth && gaDoc?.connectedAds));
 
     const gAvailIds = gaDoc ? googleAvailableIds(gaDoc) : [];
@@ -299,17 +317,12 @@ router.get('/', requireAuth, async (req, res) => {
     const ga4ScopesArr = normalizeScopes(gaDoc?.ga4Scope || []);
     const gaScopeOk = hasGAReadScope(ga4ScopesArr);
 
-    // GA4 conectado = OAuth GA4 + scope
-    // fallback suave a connectedGa4 (pero sin inventar conexión si no hay OAuth)
     const ga4Connected = !!((ga4OAuth && gaScopeOk) || (ga4OAuth && gaDoc?.connectedGa4));
 
     const ga4AvailIds = gaDoc ? ga4AvailableIds(gaDoc) : [];
-
-    // 🔥 FIX: ya no cuenta defaultPropertyId como selección
     const ga4SelectedRaw = selectedGA4FromDocOrUser(gaDoc || {}, user);
     const ga4SelectedEff = effectiveSelected(ga4SelectedRaw, ga4AvailIds).slice(0, MAX_SELECT);
 
-    // requiredSelection SOLO si ya hay propiedades disponibles
     const ga4RequiredSel =
       ga4Connected &&
       ga4AvailIds.length > 0 &&
@@ -326,7 +339,7 @@ router.get('/', requireAuth, async (req, res) => {
       user?.shopifyConnected
     );
 
-    // ===== Payload =====
+    // ===== Payload base =====
     const status = {
       meta: {
         connected: metaConnected,
@@ -335,7 +348,6 @@ router.get('/', requireAuth, async (req, res) => {
         requiredSelection: metaRequiredSel,
         selected: metaSelectedEff,
         defaultAccountId: metaDefault,
-        // legacy compat
         count: metaAvailIds.length,
         maxSelect: MAX_SELECT,
       },
@@ -359,7 +371,6 @@ router.get('/', requireAuth, async (req, res) => {
         requiredSelection: ga4RequiredSel,
         selected: ga4SelectedEff,
         defaultPropertyId: ga4Default,
-        // legacy compat
         count: ga4AvailIds.length,
         maxSelect: MAX_SELECT,
         gaScopeOk,
@@ -368,22 +379,58 @@ router.get('/', requireAuth, async (req, res) => {
       shopify: {
         connected: shopifyConnected,
       },
+
+      // ✅ NEW: pixels/conversions state
+      pixels: {
+        meta: {
+          selected: metaPixelSelected,
+          confirmed: metaPixelConfirmed,
+          selectedId: pxMeta?.selectedId || null,
+          selectedName: pxMeta?.selectedName || null,
+          meta: pxMeta?.meta || {},
+          confirmedAt: pxMeta?.confirmedAt || null,
+        },
+        googleAds: {
+          selected: googleConvSelected,
+          confirmed: googleConvConfirmed,
+          selectedId: pxGoogle?.selectedId || null,
+          selectedName: pxGoogle?.selectedName || null,
+          meta: pxGoogle?.meta || {},
+          confirmedAt: pxGoogle?.confirmedAt || null,
+        },
+      },
     };
 
     // === LEGACY: onboarding3.js ===
-    // "google.connected" históricamente se usaba como “google ok”
-    // mantenemos: conectado si Ads o GA4 están conectados (por OAuth real)
     status.google = {
-      connected: !!((adsOAuth && adsScopeOk) || (ga4OAuth && gaScopeOk) || (adsOAuth && gaDoc?.connectedAds) || (ga4OAuth && gaDoc?.connectedGa4)),
+      connected: !!(
+        (adsOAuth && adsScopeOk) ||
+        (ga4OAuth && gaScopeOk) ||
+        (adsOAuth && gaDoc?.connectedAds) ||
+        (ga4OAuth && gaDoc?.connectedGa4)
+      ),
       count: status.ga4.count,
     };
 
+    // ✅ READY flags (para React gating)
+    status.readyToContinue = {
+      meta: metaConnected && !metaRequiredSel && status.meta.selectedCount > 0 && metaPixelSelected,
+      googleAds: googleAdsConnected && !gRequiredSel && status.googleAds.selectedCount > 0 && googleConvSelected,
+      ga4: ga4Connected && ga4AvailIds.length > 0 && !ga4RequiredSel && status.ga4.selectedCount > 0,
+    };
+
+    status.readyToAnalyze = {
+      meta: metaConnected && !metaRequiredSel && status.meta.selectedCount > 0 && metaPixelConfirmed,
+      googleAds: googleAdsConnected && !gRequiredSel && status.googleAds.selectedCount > 0 && googleConvConfirmed,
+      ga4: ga4Connected && ga4AvailIds.length > 0 && !ga4RequiredSel && status.ga4.selectedCount > 0,
+    };
+
     // Fuentes a analizar (para barra/progreso)
-    // ✅ clave: NO incluir si requiere selección
+    // ✅ clave: para Ads SOLO si pixel/conversion ya está CONFIRMADO (Continue)
     const sourcesToAnalyze = [
-      ...(metaConnected && !metaRequiredSel && status.meta.selectedCount > 0 ? ['meta'] : []),
-      ...(googleAdsConnected && !gRequiredSel && status.googleAds.selectedCount > 0 ? ['google'] : []),
-      ...(ga4Connected && ga4AvailIds.length > 0 && !ga4RequiredSel && status.ga4.selectedCount > 0 ? ['ga4'] : []),
+      ...(status.readyToAnalyze.meta ? ['meta'] : []),
+      ...(status.readyToAnalyze.googleAds ? ['google'] : []),
+      ...(status.readyToAnalyze.ga4 ? ['ga4'] : []),
       ...(shopifyConnected ? ['shopify'] : []),
     ];
 
