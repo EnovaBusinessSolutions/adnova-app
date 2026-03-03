@@ -17,13 +17,13 @@ const normActId = (s) => safeStr(s).replace(/^act_/, "").replace(/[^\d]/g, "");
 
 function getMetaToken(doc) {
   if (!doc) return "";
-  // varios esquemas posibles
   return (
     safeStr(doc.longLivedToken) ||
     safeStr(doc.longlivedToken) ||
-    safeStr(doc.accessToken) ||
     safeStr(doc.access_token) ||
-    safeStr(doc.token)
+    safeStr(doc.accessToken) ||
+    safeStr(doc.token) ||
+    ""
   );
 }
 
@@ -80,7 +80,7 @@ router.get("/pixels", async (req, res) => {
       return res.json({ ok: true, data: [], recommendedId: null, reason: "NO_META_MODEL" });
     }
 
-    const doc = await MetaAccount.findOne({ $or: [{ user: uid }, { userId: uid }] }).lean();
+    const doc = await MetaAccount.loadForUserWithTokens(uid).lean();
     const token = getMetaToken(doc);
     if (!token) {
       return res.json({ ok: true, data: [], recommendedId: null, reason: "META_NOT_CONNECTED" });
