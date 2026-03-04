@@ -1960,10 +1960,11 @@ if (ASM.flow?.next === 'googleConversion') {
     await Promise.allSettled(tasks);
 
     const mustOpen =
-      ASM.visible.meta ||
-      ASM.visible.googleAds ||
-      ASM.visible.googleGa ||
-      ASM.flow.next === 'metaPixel';
+  ASM.visible.meta ||
+  ASM.visible.googleAds ||
+  ASM.visible.googleGa ||
+  ASM.flow.next === 'metaPixel' ||
+  ASM.flow.next === 'googleConversion';
 
     if (!mustOpen) {
       window.dispatchEvent(
@@ -1984,6 +1985,12 @@ if (ASM.flow?.next === 'googleConversion') {
       ASM.only = 'meta';
       ASM.required.meta = true;
       ASM.visible.meta = true;
+    }
+
+    if (ASM.flow.next === 'googleConversion') {
+      ASM.only = 'googleAds';
+      ASM.required.googleAds = true;
+      ASM.visible.googleAds = true; // aunque sea 1
     }
 
     await _openAccountModal(opts);
