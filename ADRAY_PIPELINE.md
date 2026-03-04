@@ -457,7 +457,8 @@ Check if `cookie-parser` is already installed. If not, add `cookie-parser` to de
 
 ## Progress Tracker (Phase 2)
 
-- [ ] Step 17: Complete Google CAPI implementation (refactor to stack pattern)
-- [ ] Step 18: Dashboard Analytics API
-- [ ] Step 19: Real-time Event Feed
-- [ ] Step 20: Mount Phase 2 routes
+- [x] Step 17: Complete Google CAPI implementation (refactor to stack pattern)
+- [x] Step 18: Dashboard Analytics API
+- [x] Step 19: Real-time Event Feed
+- [x] Step 20: Mount Phase 2 routes in `backend/index.js`
+- [ ] Step 21: Dashboard Frontend Integration

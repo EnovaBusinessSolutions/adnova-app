@@ -680,6 +680,10 @@ app.use("/api/google", sessionGuard, googleConversionsRoutes);
 // Central (select/status/confirm)
 app.use("/api/pixels", sessionGuard, pixelsRoutes);
 
+// ✅ AdRay Analytics & Realtime Feed (Phase 2)
+app.use("/api/analytics", sessionGuard, require("./routes/analytics"));
+app.use("/api/feed", sessionGuard, require("./routes/feed"));
+
 // Shopify
 const verifyShopifyToken = require("../middlewares/verifyShopifyToken"); // (por ahora no usado)
 

@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const prisma = require('../utils/prismaClient');
+const redisClient = require('../utils/redisClient');
+const eventBus = require('../utils/eventBus');
 const verifyShopifyWebhookHmac = require('../middleware/verifyShopifyWebhookHmac');
 const { hashPII } = require('../utils/encryption');
 const { stitchAttribution } = require('../services/attributionStitching');
@@ -19,6 +21,16 @@ router.post('/orders-create', async (req, res) => {
   const shopId = req.get('X-Shopify-Shop-Domain');
   console.log(`\n[AdRay Webhook] Received orders/create for shop: ${shopId}`);
   
+  // ALWAYS emit live event for dashboard
+  eventBus.emit('event', {
+     type: 'WEBHOOK',
+     shopId: shopId,
+     payload: {
+        eventType: 'orders/create',
+        timestamp: new Date()
+     }
+  });
+
   // Always return 200 to Shopify immediately
   res.status(200).send('OK');
 

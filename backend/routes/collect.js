@@ -4,12 +4,24 @@ const { randomUUID } = require('crypto');
 const prisma = require('../utils/prismaClient');
 const redisClient = require('../utils/redisClient');
 const { resolveUserKey } = require('../services/identityResolution');
+const eventBus = require('../utils/eventBus');
 
 router.post('/', async (req, res) => {
   try {
     const payload = req.body;
     const shopId = payload.shop_id;
     console.log(`\n[AdRay Collect] Received event '${payload.event_name}' for shop: ${shopId}`);
+
+    // Emit live event for Dashboard Feed
+    eventBus.emit('event', {
+       type: 'COLLECT',
+       shopId: shopId,
+       payload: {
+          eventName: payload.event_name,
+          timestamp: new Date(),
+          pageUrl: payload.page_url
+       }
+    });
 
     if (!shopId) {
       console.warn('[AdRay Collect] Rejected: shop_id is required');
