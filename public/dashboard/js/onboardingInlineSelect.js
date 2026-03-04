@@ -101,7 +101,7 @@
       googleAds: false,
       googleGa: false,
 
-      // pixels
+      // pixels (wizard)
       metaPixel: false,
       googleConversion: false,
     },
@@ -119,11 +119,11 @@
     // helper runtime
     _isGoogleGaChecked: null,
 
-    // ✅ Flow/wizard runtime (Meta Pixel inside Account Modal)
+    // ✅ Flow/wizard runtime inside Account Modal
     flow: {
-  next: null, // null | 'metaPixel' | 'googleConversion'
-  step: 'A',
-},
+      next: null, // null | 'metaPixel' | 'googleConversion'
+      step: 'A', // 'A' | 'B' | 'C'
+    },
   };
 
   /* =========================================================
@@ -131,7 +131,6 @@
    * =======================================================*/
   const _el = (id) => document.getElementById(id);
 
-  // ✅ show/hide genérico (NO toca body lock)
   function _showEl(el) {
     if (!el) return;
     el.classList.remove('hidden');
@@ -143,7 +142,6 @@
     el.style.display = 'none';
   }
 
-  // ✅ open/close SOLO modal (aquí sí bloqueamos body)
   function _openModalEl(modal) {
     if (!modal) return;
     modal.classList.remove('hidden');
@@ -269,11 +267,9 @@
     overlay.classList.remove('hidden');
     overlay.style.display = 'block';
 
-    // focus safety
     const btn = overlay.querySelector('#asm-exit-cancel');
     if (btn && btn.focus) btn.focus();
 
-    // bind buttons once
     const cancelBtn = overlay.querySelector('#asm-exit-cancel');
     const leaveBtn = overlay.querySelector('#asm-exit-leave');
 
@@ -289,7 +285,6 @@
       });
     }
 
-    // clicking this overlay backdrop does NOTHING (no close)
     const exitBackdrop = overlay.querySelector('[data-exit-backdrop="1"]');
     if (exitBackdrop && !exitBackdrop.__asmBound) {
       exitBackdrop.__asmBound = true;
@@ -314,7 +309,6 @@
     if (!panel) return;
 
     panel.classList.remove('asm-shake');
-    // force reflow
     void panel.offsetWidth;
     panel.classList.add('asm-shake');
 
@@ -334,18 +328,22 @@
         leaveBtn.textContent = 'Resetting…';
       }
 
-      // ✅ Endpoint will be added in the next step.
-      // For now, we try it and ignore if missing.
       try {
-        await _post('/api/onboarding/reset', { source: 'asm' });
+        const target =
+  ASM.flow?.next === 'metaPixel'
+    ? 'meta'
+    : ASM.flow?.next === 'googleConversion'
+    ? 'google_ads'
+    : 'all';
+
+await _post('/api/onboarding/reset', { source: 'asm', target });
       } catch {
-        // noop: backend route might not exist yet
+        // noop
       }
 
       _closeExitConfirm(modalId);
       if (modal) _closeModalEl(modal);
 
-      // Let React refresh if it wants
       window.dispatchEvent(new CustomEvent('adray:onboarding-reset', { detail: { source: 'asm' } }));
     } finally {
       if (leaveBtn) {
@@ -356,7 +354,7 @@
   }
 
   /* =========================================================
-   * ✅ Inyectar modal + estilos si NO existe
+   * ✅ Inyectar modales + estilos si NO existen
    * =======================================================*/
   function _ensureStyles() {
     if (document.getElementById('asm-styles')) return;
@@ -911,16 +909,21 @@
             </div>
           </div>
 
-          <!-- ✅ Step B: Recommended Pixel (Meta) -->
+          <!-- ✅ Step B: Recommended (Meta Pixel OR Google Conversion) -->
           <div id="asm-stepB" class="hidden">
             <div id="asm-rec-box"></div>
           </div>
 
-          <!-- ✅ Step C: All Pixels (Meta) -->
+          <!-- ✅ Step C: All (Meta Pixel OR Google Conversion) -->
           <div id="asm-stepC" class="hidden">
             <div id="asm-pxm-meta-title" class="asm-section hidden">
               <h4>Meta Pixel <span class="asm-count" id="asm-pxm-meta-count">0/${MAX_SELECT}</span></h4>
               <div class="asm-list" id="asm-pxm-meta-list"></div>
+            </div>
+
+            <div id="asm-pxm-google-title" class="asm-section hidden">
+              <h4>Google Conversions <span class="asm-count" id="asm-pxm-google-count">0/${MAX_SELECT}</span></h4>
+              <div class="asm-list" id="asm-pxm-google-list"></div>
             </div>
           </div>
         </div>
@@ -938,7 +941,6 @@
     `;
     document.body.appendChild(modal);
 
-    // ✅ Instead of closing on backdrop click, we shake + hint
     const b = _el('asm-backdrop');
     if (b) {
       b.addEventListener('click', () => {
@@ -947,27 +949,16 @@
       });
     }
 
-    // ✅ X opens confirm (does not close immediately)
     const x = _el('asm-close');
-    if (x) {
-      x.addEventListener('click', () => {
-        _openExitConfirm('account-select-modal');
-      });
-    }
+    if (x) x.addEventListener('click', () => _openExitConfirm('account-select-modal'));
 
-    // Cancel button also opens confirm (safer UX)
     const c = _el('asm-cancel');
-    if (c) {
-      c.addEventListener('click', () => {
-        _openExitConfirm('account-select-modal');
-      });
-    }
+    if (c) c.addEventListener('click', () => _openExitConfirm('account-select-modal'));
 
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         const m = _el('account-select-modal');
         if (m && m.style.display !== 'none') {
-          // Escape -> confirm (not close)
           if (_isExitConfirmOpen('account-select-modal')) return;
           _openExitConfirm('account-select-modal');
         }
@@ -975,7 +966,7 @@
     });
   }
 
-  // Pixel modal remains for compat / other flows
+  // (Se mantiene por compat; ya no lo necesitamos para E2E)
   function _ensurePixelModalSkeleton() {
     if (_el('pixel-select-modal')) return;
     _ensureStyles();
@@ -1160,7 +1151,6 @@
     else if (ASM.data.metaPixels.length === 1)
       ASM.sel.metaPixel.add(ASM.data.metaPixels[0].id);
 
-    // En wizard siempre queremos mostrar (aunque sea 1)
     ASM.visible.metaPixel = true;
   }
 
@@ -1195,7 +1185,6 @@
       safeStr(v?.recommendedResource || '') || null;
     ASM.data.googleConversionsMeta = v?.meta || { customerId: '' };
 
-    // si backend no manda recommended, calculamos uno local (por si acaso)
     let rec = ASM.data.googleConversionsRecommendedResource;
     if (!rec && ASM.data.googleConversions.length) {
       const sorted = [...ASM.data.googleConversions].sort(
@@ -1210,9 +1199,8 @@
     else if (ASM.data.googleConversions.length === 1)
       ASM.sel.googleConversion.add(ASM.data.googleConversions[0].resourceName);
 
-    const allow = ASM.only === 'googleConversion';
-    const count = ASM.data.googleConversions.length;
-    ASM.visible.googleConversion = allow && (ASM.showAll ? count > 0 : count > 1);
+    // en wizard SIEMPRE queremos mostrar (aunque sea 1)
+    ASM.visible.googleConversion = true;
   }
 
   /* =========================================================
@@ -1271,14 +1259,17 @@
       );
     else _hint(`Selecciona hasta ${MAX_SELECT} cuenta por tipo.`, 'info', 'account-select-modal');
 
-    // En wizard metaPixel, el botón sigue habilitado si hay selección meta
-    const btnId = 'asm-save';
+    // Wizard Step A: habilitar por selección del tipo requerido
     if (ASM.flow.next === 'metaPixel' && ASM.flow.step === 'A') {
-      _enableSave(ASM.sel.meta.size > 0, btnId);
+      _enableSave(ASM.sel.meta.size > 0, 'asm-save');
+      return;
+    }
+    if (ASM.flow.next === 'googleConversion' && ASM.flow.step === 'A') {
+      _enableSave(ASM.sel.googleAds.size > 0, 'asm-save');
       return;
     }
 
-    _enableSave(_canSaveAccounts(), btnId);
+    _enableSave(_canSaveAccounts(), 'asm-save');
   }
 
   function _renderAccountLists() {
@@ -1288,7 +1279,6 @@
       _hideEl(err);
     }
 
-    // Texto base, se ajusta en wizard
     _hint(`Selecciona hasta ${MAX_SELECT} cuenta por tipo.`, 'info', 'account-select-modal');
 
     const metaTitle = _el('asm-meta-title');
@@ -1416,16 +1406,17 @@
       _hint('No hay cuentas suficientes para seleccionar (o solo existe 1 cuenta por tipo).', 'info', 'account-select-modal');
     }
 
-    // Wizard metaPixel Step A: solo requiere Meta
     if (ASM.flow.next === 'metaPixel' && ASM.flow.step === 'A') {
       _enableSave(ASM.sel.meta.size > 0, 'asm-save');
+    } else if (ASM.flow.next === 'googleConversion' && ASM.flow.step === 'A') {
+      _enableSave(ASM.sel.googleAds.size > 0, 'asm-save');
     } else {
       _enableSave(_canSaveAccounts(), 'asm-save');
     }
   }
 
   /* =========================================================
-   * ✅ Meta Pixel Wizard INSIDE Account Modal (NO flicker)
+   * ✅ Wizard helpers (Meta Pixel + Google Conversion)
    * =======================================================*/
   function _escapeHtml(str) {
     const s = String(str || '');
@@ -1438,11 +1429,9 @@
   }
 
   function _bestMetaPixelLocal() {
-    // 1) backend recommendedId
     const rec = safeStr(ASM.data.metaPixelsRecommendedId || '');
     if (rec) return rec;
 
-    // 2) heurística por nombre
     const ranked = [...(ASM.data.metaPixels || [])].sort((a, b) => {
       const na = safeStr(a?.name).toLowerCase();
       const nb = safeStr(b?.name).toLowerCase();
@@ -1516,6 +1505,12 @@
     const countEl = _el('asm-pxm-meta-count');
     if (!titleWrap || !listEl) return;
 
+    // hide google block
+    const gTitle = _el('asm-pxm-google-title');
+    const gList = _el('asm-pxm-google-list');
+    if (gTitle) _hideEl(gTitle);
+    if (gList) _hideEl(gList);
+
     if (!ASM.data.metaPixels.length) {
       _hideEl(titleWrap);
       _hint('No encontramos pixeles en esta cuenta. Puedes continuar y configurarlo después.', 'warn', 'account-select-modal');
@@ -1527,7 +1522,6 @@
     _showEl(titleWrap);
     listEl.innerHTML = '';
 
-    // Orden: recomendados primero
     const recId = _bestMetaPixelLocal();
     const sorted = [...ASM.data.metaPixels].sort((a, b) => {
       const aa = safeStr(a.id) === safeStr(recId) ? 1 : 0;
@@ -1601,6 +1595,145 @@
     _enableSave(true, 'asm-save');
   }
 
+  // ✅ Google Conversion wizard helpers
+  function _canSaveGoogleConversion() {
+    return ASM.sel.googleConversion.size > 0;
+  }
+
+  function _renderGoogleConversionAllList() {
+    const titleWrap = _el('asm-pxm-google-title');
+    const listEl = _el('asm-pxm-google-list');
+    const countEl = _el('asm-pxm-google-count');
+    if (!titleWrap || !listEl) return;
+
+    // hide meta block
+    const mTitle = _el('asm-pxm-meta-title');
+    const mList = _el('asm-pxm-meta-list');
+    if (mTitle) _hideEl(mTitle);
+    if (mList) _hideEl(mList);
+
+    if (!ASM.data.googleConversions.length) {
+      _hideEl(titleWrap);
+      _hint('No encontramos conversiones en esta cuenta. Puedes continuar y configurarlo después.', 'warn', 'account-select-modal');
+      ASM.sel.googleConversion.clear();
+      _enableSave(false, 'asm-save');
+      return;
+    }
+
+    _showEl(titleWrap);
+    listEl.innerHTML = '';
+
+    const recRes = safeStr(ASM.data.googleConversionsRecommendedResource || '');
+
+    const sorted = [...ASM.data.googleConversions].sort((a, b) => {
+      const aa = safeStr(a.resourceName) === recRes ? 1 : 0;
+      const bb = safeStr(b.resourceName) === recRes ? 1 : 0;
+      return bb - aa;
+    });
+
+    sorted.forEach((c) => {
+      const id = safeStr(c.resourceName);
+      const label = safeStr(c.name) || id;
+      const isChecked = ASM.sel.googleConversion.has(id);
+
+      const chip = _chip(label, id, 'googleConversion', isChecked, (checked, val, kind, cbEl) => {
+        const set = ASM.sel[kind];
+        if (checked) {
+          if (set.size >= MAX_SELECT) {
+            cbEl.checked = false;
+            return _hint('Solo puedes seleccionar 1 opción.', 'warn', 'account-select-modal');
+          }
+          set.clear();
+          set.add(val);
+        } else {
+          set.delete(val);
+        }
+
+        if (countEl) countEl.textContent = `${set.size ? 1 : 0}/${MAX_SELECT}`;
+        _enableSave(_canSaveGoogleConversion(), 'asm-save');
+      });
+
+      listEl.appendChild(chip);
+    });
+
+    if (countEl) countEl.textContent = `${ASM.sel.googleConversion.size ? 1 : 0}/${MAX_SELECT}`;
+    _enableSave(_canSaveGoogleConversion(), 'asm-save');
+  }
+
+  function _renderGoogleConversionRecommendedBox() {
+    const box = _el('asm-rec-box');
+    if (!box) return;
+
+    const rec = safeStr(ASM.data.googleConversionsRecommendedResource || '');
+    if (!rec) {
+      _hint('No encontramos una recomendación clara. Te mostramos la lista completa.', 'warn', 'account-select-modal');
+      _setAccountWizardStep('C');
+      _renderGoogleConversionAllList();
+      return;
+    }
+
+    const picked = (ASM.data.googleConversions || []).find((x) => safeStr(x.resourceName) === rec);
+    const recName = picked?.name || rec;
+
+    ASM.sel.googleConversion.clear();
+    ASM.sel.googleConversion.add(rec);
+
+    box.innerHTML = `
+      <div class="asm-spot">
+        <div class="asm-spot-title">
+          <span class="asm-badge">RECOMMENDED</span>
+          <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+            ${_escapeHtml(recName)}
+          </span>
+        </div>
+        <div class="asm-spot-sub">
+          Usaremos esta conversión para potenciar insights en tu AI.
+        </div>
+        <div class="asm-spot-sub" style="margin-top:10px;">
+          Si no es la correcta, da click en <b>“¿Quieres cambiar tu pixel?”</b>
+        </div>
+      </div>
+    `;
+
+    _enableSave(true, 'asm-save');
+  }
+
+  async function _saveGoogleConversionSelectionAndClose(modal) {
+    const resource = Array.from(ASM.sel.googleConversion)[0] || null;
+    const picked = ASM.data.googleConversions.find((x) => safeStr(x.resourceName) === safeStr(resource));
+
+    if (resource) {
+      await _post('/api/pixels/select', {
+  provider: 'google_ads', // ✅ backend acepta SOLO "meta" | "google_ads"
+  selectedId: resource,
+  selectedName: picked?.name || resource,
+  meta: {
+    customerId: safeStr(ASM.data.googleConversionsMeta?.customerId || ''),
+    source: 'asm',
+  },
+});
+    }
+
+    await _confirmPixelSelectionSafe();
+
+    _closeModalEl(modal);
+
+    const detail = {
+      googleAds: Array.from(ASM.sel.googleAds).slice(0, 1),
+      googleConversion: Array.from(ASM.sel.googleConversion).slice(0, 1),
+      mode: ASM.mode,
+      only: ASM.only,
+      flow: 'googleConversionWizard',
+    };
+
+    window.dispatchEvent(new CustomEvent('adnova:accounts-selection-saved', { detail }));
+    window.dispatchEvent(new CustomEvent('adray:accounts-selection-saved', { detail }));
+
+    window.dispatchEvent(new CustomEvent('adnova:pixels-selection-saved', { detail }));
+    window.dispatchEvent(new CustomEvent('adray:pixels-selection-saved', { detail }));
+    window.dispatchEvent(new CustomEvent('adray:onboarding-flow-completed', { detail }));
+  }
+
   function _setAccountWizardStep(step) {
     ASM.flow.step = step;
 
@@ -1625,6 +1758,9 @@
     const sub = _el('asm-sub');
     const saveBtn = _el('asm-save');
 
+    const isMeta = ASM.flow.next === 'metaPixel';
+    const isGoogle = ASM.flow.next === 'googleConversion';
+
     if (step === 'A') {
       _showEl(stepA);
 
@@ -1632,12 +1768,27 @@
         _showEl(stepChip);
         stepChip.textContent = 'Step 1/3';
       }
-      if (title) title.textContent = 'Seleccionar cuentas';
-      if (sub) sub.textContent = 'Selecciona tu cuenta de Meta Ads para continuar.';
-      if (saveBtn) saveBtn.textContent = 'Continuar';
 
-      _hint('Selecciona tu cuenta y continúa.', 'info', 'account-select-modal');
-      _enableSave(ASM.sel.meta.size > 0, 'asm-save');
+      if (isMeta) {
+        if (title) title.textContent = 'Seleccionar cuentas';
+        if (sub) sub.textContent = 'Selecciona tu cuenta de Meta Ads para continuar.';
+        if (saveBtn) saveBtn.textContent = 'Continuar';
+        _hint('Selecciona tu cuenta y continúa.', 'info', 'account-select-modal');
+        _enableSave(ASM.sel.meta.size > 0, 'asm-save');
+      } else if (isGoogle) {
+        if (title) title.textContent = 'Seleccionar cuentas';
+        if (sub) sub.textContent = 'Selecciona tu cuenta de Google Ads para continuar.';
+        if (saveBtn) saveBtn.textContent = 'Continuar';
+        _hint('Selecciona tu cuenta y continúa.', 'info', 'account-select-modal');
+        _enableSave(ASM.sel.googleAds.size > 0, 'asm-save');
+      } else {
+        if (title) title.textContent = 'Seleccionar cuentas';
+        if (sub) sub.textContent = `Selecciona hasta ${MAX_SELECT} cuenta por tipo.`;
+        if (saveBtn) saveBtn.textContent = 'Guardar selección';
+        _hint(`Selecciona hasta ${MAX_SELECT} cuenta por tipo.`, 'info', 'account-select-modal');
+        _enableSave(_canSaveAccounts(), 'asm-save');
+      }
+
       return;
     }
 
@@ -1651,12 +1802,20 @@
       if (backBtn) _showEl(backBtn);
       if (changeBtn) _showEl(changeBtn);
 
-      if (title) title.textContent = 'Tu pixel recomendado';
-      if (sub) sub.textContent = 'Elegimos la mejor opción para empezar (conversiones).';
-      if (saveBtn) saveBtn.textContent = 'Guardar selección';
+      if (isMeta) {
+        if (title) title.textContent = 'Tu pixel recomendado';
+        if (sub) sub.textContent = 'Elegimos la mejor opción para empezar (conversiones).';
+        if (saveBtn) saveBtn.textContent = 'Guardar selección';
+        _hint('Te recomendamos la mejor opción. Puedes cambiarla si lo deseas.', 'info', 'account-select-modal');
+        _enableSave(true, 'asm-save');
+      } else if (isGoogle) {
+        if (title) title.textContent = 'Tu conversión recomendada';
+        if (sub) sub.textContent = 'Elegimos la mejor opción para empezar (insights).';
+        if (saveBtn) saveBtn.textContent = 'Guardar selección';
+        _hint('Te recomendamos la mejor opción. Puedes cambiarla si lo deseas.', 'info', 'account-select-modal');
+        _enableSave(true, 'asm-save');
+      }
 
-      _hint('Te recomendamos la mejor opción. Puedes cambiarla si lo deseas.', 'info', 'account-select-modal');
-      _enableSave(true, 'asm-save');
       return;
     }
 
@@ -1669,18 +1828,25 @@
     }
     if (backBtn) _showEl(backBtn);
 
-    if (title) title.textContent = 'Seleccionar pixel';
-    if (sub) sub.textContent = 'Selecciona 1 opción para continuar.';
-    if (saveBtn) saveBtn.textContent = 'Guardar selección';
-
-    _hint('Elige 1 pixel para continuar.', 'info', 'account-select-modal');
-    _enableSave(_canSaveMetaPixel(), 'asm-save');
+    if (isMeta) {
+      if (title) title.textContent = 'Seleccionar pixel';
+      if (sub) sub.textContent = 'Selecciona 1 opción para continuar.';
+      if (saveBtn) saveBtn.textContent = 'Guardar selección';
+      _hint('Elige 1 pixel para continuar.', 'info', 'account-select-modal');
+      _enableSave(_canSaveMetaPixel(), 'asm-save');
+    } else if (isGoogle) {
+      if (title) title.textContent = 'Seleccionar conversión';
+      if (sub) sub.textContent = 'Selecciona 1 opción para continuar.';
+      if (saveBtn) saveBtn.textContent = 'Guardar selección';
+      _hint('Elige 1 conversión para continuar.', 'info', 'account-select-modal');
+      _enableSave(_canSaveGoogleConversion(), 'asm-save');
+    }
   }
 
   /* =========================================================
    * ✅ Open Account Modal
    * - Normal mode (cuentas)
-   * - MetaPixel wizard mode (A->B->C in same modal)
+   * - Wizard mode (Meta Pixel / Google Conversion) A->B->C
    * =======================================================*/
   async function _openAccountModal(opts = {}) {
     _ensureAccountModalSkeleton();
@@ -1693,37 +1859,36 @@
     const backBtn = _el('asm-back');
     const changeBtn = _el('asm-change');
 
-    // Wizard controls
-    if (backBtn) {
-      backBtn.onclick = () => {
-        if (ASM.flow.next === 'metaPixel') {
-          if (ASM.flow.step === 'B') return _setAccountWizardStep('A');
-          if (ASM.flow.step === 'C') return _setAccountWizardStep('B');
-        }
-      };
-    }
-    if (changeBtn) {
-      changeBtn.onclick = () => {
-        if (ASM.flow.next === 'metaPixel' && ASM.flow.step === 'B') {
-          _setAccountWizardStep('C');
-          _renderMetaPixelAllList();
-        }
-      };
-    }
+    // Default back/change handlers will be replaced per-wizard
+    if (backBtn) backBtn.onclick = null;
+    if (changeBtn) changeBtn.onclick = null;
 
     if (!saveBtn) return;
 
-    // ✅ If metaPixel wizard is active, override flow
+    // ✅ Meta Pixel wizard
     if (ASM.flow.next === 'metaPixel') {
-      // Force only meta visible
       ASM.only = 'meta';
       ASM.required.meta = true;
 
-      // Ensure step A is shown and button copy correct
       _setAccountWizardStep('A');
 
+      if (backBtn) {
+        backBtn.onclick = () => {
+          if (ASM.flow.step === 'B') return _setAccountWizardStep('A');
+          if (ASM.flow.step === 'C') return _setAccountWizardStep('B');
+        };
+      }
+      if (changeBtn) {
+        changeBtn.onclick = () => {
+          if (ASM.flow.step === 'B') {
+            _setAccountWizardStep('C');
+            _renderMetaPixelAllList();
+          }
+        };
+      }
+
       saveBtn.onclick = async () => {
-        // Step A: Continue (save adaccount, then show recommended pixel without closing)
+        // Step A: Continue -> save meta account -> load pixels -> Step B
         if (ASM.flow.step === 'A') {
           if (ASM.sel.meta.size === 0) {
             return _hint('Selecciona una cuenta de Meta para continuar.', 'warn', 'account-select-modal');
@@ -1736,17 +1901,14 @@
           try {
             const ids = Array.from(ASM.sel.meta).slice(0, 1);
 
-            // Save meta account selection
             try {
               await _post('/auth/meta/accounts/selection', { accountIds: ids });
             } catch {
               await _post('/api/meta/accounts/selection', { accountIds: ids });
             }
 
-            // Load pixels
             await _loadMetaPixels();
 
-            // Step B: recommended
             _setAccountWizardStep('B');
             _renderMetaPixelRecommendedBox();
 
@@ -1767,14 +1929,13 @@
           }
         }
 
-        // Step B/C: Save selection (save pixel selection + confirm + close + events)
+        // Step B/C: Save pixel + confirm + close + events
         if (ASM.flow.step === 'B' || ASM.flow.step === 'C') {
           const originalText = saveBtn.textContent;
           saveBtn.textContent = 'Guardando…';
           saveBtn.disabled = true;
 
           try {
-            // Ensure selection exists
             if (ASM.sel.metaPixel.size === 0) {
               const best = _bestMetaPixelLocal();
               if (best) ASM.sel.metaPixel.add(best);
@@ -1788,11 +1949,104 @@
 
             await _saveMetaPixelSelectionAndClose(modal);
 
-            // restore (not really needed after close)
             saveBtn.textContent = originalText || 'Guardar selección';
             saveBtn.disabled = false;
           } catch (e) {
             console.error('metaPixel wizard save error', e);
+            const box = _el('asm-error');
+            if (box) {
+              box.textContent = 'Ocurrió un error guardando tu selección. Intenta de nuevo.';
+              _showEl(box);
+            }
+            _hint('', 'info', 'account-select-modal');
+            saveBtn.textContent = originalText || 'Guardar selección';
+            saveBtn.disabled = false;
+          }
+        }
+      };
+
+      return;
+    }
+
+    // ✅ Google Conversion wizard (E2E FIX)
+    if (ASM.flow.next === 'googleConversion') {
+      ASM.only = 'googleAds';
+      ASM.required.googleAds = true;
+
+      _setAccountWizardStep('A');
+
+      if (backBtn) {
+        backBtn.onclick = () => {
+          if (ASM.flow.step === 'B') return _setAccountWizardStep('A');
+          if (ASM.flow.step === 'C') return _setAccountWizardStep('B');
+        };
+      }
+      if (changeBtn) {
+        changeBtn.onclick = () => {
+          if (ASM.flow.step === 'B') {
+            _setAccountWizardStep('C');
+            _renderGoogleConversionAllList();
+          }
+        };
+      }
+
+      saveBtn.onclick = async () => {
+        // Step A: Continue -> save customer -> load conversions -> Step B
+        if (ASM.flow.step === 'A') {
+          if (ASM.sel.googleAds.size === 0) {
+            return _hint('Selecciona una cuenta de Google Ads para continuar.', 'warn', 'account-select-modal');
+          }
+
+          const originalText = saveBtn.textContent;
+          saveBtn.textContent = 'Cargando…';
+          saveBtn.disabled = true;
+
+          try {
+            const ids = Array.from(ASM.sel.googleAds).slice(0, 1);
+
+            await _post('/auth/google/accounts/selection', { customerIds: ids });
+
+            await _loadGoogleConversions();
+
+            _setAccountWizardStep('B');
+            _renderGoogleConversionRecommendedBox();
+
+            saveBtn.textContent = 'Guardar selección';
+            saveBtn.disabled = false;
+            return;
+          } catch (e) {
+            console.error('googleConversion wizard continue error', e);
+            const box = _el('asm-error');
+            if (box) {
+              box.textContent = 'Ocurrió un error al continuar. Intenta de nuevo.';
+              _showEl(box);
+            }
+            _hint('', 'info', 'account-select-modal');
+            saveBtn.textContent = originalText || 'Continuar';
+            saveBtn.disabled = false;
+            return;
+          }
+        }
+
+        // Step B/C: Save conversion + confirm + close + events
+        if (ASM.flow.step === 'B' || ASM.flow.step === 'C') {
+          const originalText = saveBtn.textContent;
+          saveBtn.textContent = 'Guardando…';
+          saveBtn.disabled = true;
+
+          try {
+            if (!_canSaveGoogleConversion()) {
+              saveBtn.textContent = originalText || 'Guardar selección';
+              saveBtn.disabled = false;
+              return _hint('Selecciona 1 conversión para continuar.', 'warn', 'account-select-modal');
+            }
+
+            await _saveGoogleConversionSelectionAndClose(modal);
+
+            saveBtn.textContent = originalText || 'Guardar selección';
+            saveBtn.disabled = false;
+          } catch (e) {
+            console.error('googleConversion wizard save error', e);
             const box = _el('asm-error');
             if (box) {
               box.textContent = 'Ocurrió un error guardando tu selección. Intenta de nuevo.';
@@ -1864,19 +2118,6 @@
 
         _closeModalEl(modal);
 
-        // ✅ chain Google Ads -> conversion selector (after selecting customer)
-if (ASM.flow?.next === 'googleConversion') {
-  ASM.flow.next = null; // evita loops
-  setTimeout(() => {
-    openPixelSelectModal({
-      only: 'googleConversion',
-      showAll: true,
-      required: { googleConversion: true },
-      mode: ASM.mode || 'settings',
-    }).catch(console.error);
-  }, 50);
-}
-
         const detail = {
           meta: Array.from(ASM.sel.meta).slice(0, 1),
           googleAds: Array.from(ASM.sel.googleAds).slice(0, 1),
@@ -1907,30 +2148,97 @@ if (ASM.flow?.next === 'googleConversion') {
    * Pixels modal (legacy open) - kept for compatibility
    * =======================================================*/
   async function _openPixelModalLegacy() {
+    // NOT USED in our E2E flow anymore, but kept so nothing breaks if called.
     _ensurePixelModalSkeleton();
-    // (legacy rendering omitted here - unchanged in your file)
-    // Keep your existing legacy logic below this point.
+    const modal = _el('pixel-select-modal');
+    _openModalEl(modal);
+
+    const err = _el('pxm-error');
+    if (err) {
+      err.textContent = '';
+      _hideEl(err);
+    }
+
+    const gWrap = _el('pxm-google-title');
+    const gList = _el('pxm-google-list');
+    const gCount = _el('pxm-google-count');
+
+    if (!gWrap || !gList) return;
+
+    if (!ASM.data.googleConversions.length) {
+      _hideEl(gWrap);
+      _hint('No encontramos conversiones.', 'warn', 'pixel-select-modal');
+      return;
+    }
+
+    _showEl(gWrap);
+    gList.innerHTML = '';
+
+    const recRes = safeStr(ASM.data.googleConversionsRecommendedResource || '');
+    const sorted = [...ASM.data.googleConversions].sort((a, b) => {
+      const aa = safeStr(a.resourceName) === recRes ? 1 : 0;
+      const bb = safeStr(b.resourceName) === recRes ? 1 : 0;
+      return bb - aa;
+    });
+
+    sorted.forEach((c) => {
+      const id = safeStr(c.resourceName);
+      const label = safeStr(c.name) || id;
+      const isChecked = ASM.sel.googleConversion.has(id);
+
+      const chip = _chip(label, id, 'googleConversion', isChecked, (checked, val, kind, cbEl) => {
+        const set = ASM.sel[kind];
+        if (checked) {
+          if (set.size >= MAX_SELECT) {
+            cbEl.checked = false;
+            return _hint('Solo puedes seleccionar 1 opción.', 'warn', 'pixel-select-modal');
+          }
+          set.clear();
+          set.add(val);
+        } else {
+          set.delete(val);
+        }
+        if (gCount) gCount.textContent = `${set.size ? 1 : 0}/${MAX_SELECT}`;
+      });
+
+      gList.appendChild(chip);
+    });
+
+    if (gCount) gCount.textContent = `${ASM.sel.googleConversion.size ? 1 : 0}/${MAX_SELECT}`;
+
+    const saveBtn = _el('pxm-save');
+    const cancelBtn = _el('pxm-cancel');
+    const closeBtn = _el('pxm-close');
+
+    if (closeBtn) closeBtn.onclick = () => _openExitConfirm('pixel-select-modal');
+    if (cancelBtn) cancelBtn.onclick = () => _openExitConfirm('pixel-select-modal');
+
+    if (saveBtn) {
+      saveBtn.onclick = async () => {
+        try {
+          if (!_canSaveGoogleConversion()) {
+            return _hint('Selecciona 1 conversión para continuar.', 'warn', 'pixel-select-modal');
+          }
+          await _saveGoogleConversionSelectionAndClose(modal);
+        } catch (e) {
+          console.error('legacy pixel modal save error', e);
+          if (err) {
+            err.textContent = 'Ocurrió un error guardando tu selección.';
+            _showEl(err);
+          }
+        }
+      };
+    }
   }
 
   /* =========================================================
    * Public API: openAccountSelectModal / openPixelSelectModal
-   * (rest of your file remains the same from here)
    * =======================================================*/
-
-  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-  // ✅ IMPORTANT:
-  // I left everything else in your file unchanged after this point.
-  // Paste back your original tail (openAccountSelectModal/openPixelSelectModal/events/auto-open)
-  // exactly as it was. Only the modal skeleton + close behaviors changed.
-  // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-
-  // --- Your remaining code continues below (unchanged) ---
-
   async function openAccountSelectModal(opts = {}) {
     const only = opts.only || 'all';
     const showAll = !!opts.showAll;
     const required = opts.required || {};
-    const next = opts.next || null; // ✅ null | 'metaPixel'
+    const next = opts.next || null; // null | 'metaPixel' | 'googleConversion'
 
     ASM.mode = opts.mode || 'settings';
     ASM.only = only;
@@ -1948,7 +2256,6 @@ if (ASM.flow?.next === 'googleConversion') {
     ASM.visible.googleAds = false;
     ASM.visible.googleGa = false;
 
-    // ✅ wizard flow config
     ASM.flow.next = next;
     ASM.flow.step = 'A';
 
@@ -1960,11 +2267,11 @@ if (ASM.flow?.next === 'googleConversion') {
     await Promise.allSettled(tasks);
 
     const mustOpen =
-  ASM.visible.meta ||
-  ASM.visible.googleAds ||
-  ASM.visible.googleGa ||
-  ASM.flow.next === 'metaPixel' ||
-  ASM.flow.next === 'googleConversion';
+      ASM.visible.meta ||
+      ASM.visible.googleAds ||
+      ASM.visible.googleGa ||
+      ASM.flow.next === 'metaPixel' ||
+      ASM.flow.next === 'googleConversion';
 
     if (!mustOpen) {
       window.dispatchEvent(
@@ -1987,10 +2294,11 @@ if (ASM.flow?.next === 'googleConversion') {
       ASM.visible.meta = true;
     }
 
+    // ✅ If next=googleConversion, force Google Ads block visible (even if count==1)
     if (ASM.flow.next === 'googleConversion') {
       ASM.only = 'googleAds';
       ASM.required.googleAds = true;
-      ASM.visible.googleAds = true; // aunque sea 1
+      ASM.visible.googleAds = true;
     }
 
     await _openAccountModal(opts);
@@ -2014,7 +2322,7 @@ if (ASM.flow?.next === 'googleConversion') {
     ASM.visible.metaPixel = false;
     ASM.visible.googleConversion = false;
 
-    // ✅ MetaPixel flow ahora va por Account Modal Wizard (sin flicker)
+    // ✅ MetaPixel flow ahora va por Account Modal Wizard
     if (only === 'metaPixel') {
       await openAccountSelectModal({
         only: 'meta',
@@ -2026,28 +2334,22 @@ if (ASM.flow?.next === 'googleConversion') {
       return;
     }
 
-    // Google conversion / legacy pixel modal (kept)
-    const tasks = [];
-    if (only === 'googleConversion') tasks.push(_loadGoogleConversions().catch(console.error));
-
-    await Promise.allSettled(tasks);
-
-    const mustOpen = ASM.visible.googleConversion;
-
-    if (!mustOpen) {
-      window.dispatchEvent(
-        new CustomEvent('adnova:pixels-selection-not-needed', {
-          detail: { only, showAll, required: ASM.required },
-        })
-      );
-      window.dispatchEvent(
-        new CustomEvent('adray:pixels-selection-not-needed', {
-          detail: { only, showAll, required: ASM.required },
-        })
-      );
+    // ✅ GoogleConversion flow ahora también va por Account Modal Wizard (E2E)
+    if (only === 'googleConversion') {
+      await openAccountSelectModal({
+        only: 'googleAds',
+        showAll: true,
+        required: { googleAds: true },
+        next: 'googleConversion',
+        mode: ASM.mode,
+      });
       return;
     }
 
+    // fallback legacy (no debería usarse)
+    const tasks = [];
+    tasks.push(_loadGoogleConversions().catch(console.error));
+    await Promise.allSettled(tasks);
     await _openPixelModalLegacy();
   }
 
@@ -2136,14 +2438,13 @@ if (ASM.flow?.next === 'googleConversion') {
     };
 
     const next =
-    metaOk
-    ? 'metaPixel'
-    : (googleOk && (product === 'ads' || gadsOk || adsOk))
-    ? 'googleConversion'
-    : null;
+      metaOk
+        ? 'metaPixel'
+        : (googleOk && (product === 'ads' || gadsOk || adsOk))
+        ? 'googleConversion'
+        : null;
 
-   return { only, required, next };
-
+    return { only, required, next };
   }
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -2152,34 +2453,34 @@ if (ASM.flow?.next === 'googleConversion') {
       if (!info) return;
 
       if (info.next === 'metaPixel') {
-  openAccountSelectModal({
-    only: 'meta',
-    showAll: true,
-    required: { meta: true },
-    next: 'metaPixel',
-    mode: 'settings',
-  }).catch(console.error);
-  return;
-}
+        openAccountSelectModal({
+          only: 'meta',
+          showAll: true,
+          required: { meta: true },
+          next: 'metaPixel',
+          mode: 'settings',
+        }).catch(console.error);
+        return;
+      }
 
-if (info.next === 'googleConversion') {
-  openAccountSelectModal({
-    only: 'googleAds',
-    showAll: true,
-    required: { googleAds: true },
-    next: 'googleConversion',
-    mode: 'settings',
-  }).catch(console.error);
-  return;
-}
+      if (info.next === 'googleConversion') {
+        openAccountSelectModal({
+          only: 'googleAds',
+          showAll: true,
+          required: { googleAds: true },
+          next: 'googleConversion',
+          mode: 'settings',
+        }).catch(console.error);
+        return;
+      }
 
-openAccountSelectModal({
-  only: info.only,
-  showAll: false,
-  required: info.required,
-  next: null,
-  mode: 'settings',
-}).catch(console.error);
+      openAccountSelectModal({
+        only: info.only,
+        showAll: false,
+        required: info.required,
+        next: null,
+        mode: 'settings',
+      }).catch(console.error);
     } catch (e) {
       console.error('ASM auto-open error', e);
     }
