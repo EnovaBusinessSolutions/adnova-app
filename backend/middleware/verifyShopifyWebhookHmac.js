@@ -3,10 +3,11 @@
 const crypto = require('crypto');
 
 module.exports = function verifyShopifyWebhookHmac(req, res, next) {
-  const secret = process.env.SHOPIFY_API_SECRET;
+  // Usamos SHOPIFY_API_SECRET_2 (Webhooks) en vez del token de la App
+  const secret = process.env.SHOPIFY_API_SECRET_2 || process.env.SHOPIFY_API_SECRET;
 
   if (!secret) {
-    console.error('[SHOPIFY_WEBHOOK] Missing SHOPIFY_API_SECRET');
+    console.error('[SHOPIFY_WEBHOOK] Missing SHOPIFY_API_SECRET_2');
     return res.status(500).send('Server misconfigured');
   }
 

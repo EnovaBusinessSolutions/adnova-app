@@ -143,28 +143,30 @@ const ALLOWED_ORIGINS = [
   'https://adray-app-staging-german.onrender.com',
   'https://admin.shopify.com',
   /^https?:\/\/[^/]+\.myshopify\.com$/i,
-  'http://localhost:3000',
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'http://localhost:8080',
-  'http://127.0.0.1:8080',
+    /^https?:\/\/[^/]+\.ngrok-free\.dev$/i,
+    /^https?:\/\/[^/]+\.ngrok-free\.app$/i,
+    /^https?:\/\/[^/]+\.loca\.lt$/i,
   APP_ORIGIN,
   RENDER_EXTERNAL_ORIGIN,
 ].filter(Boolean);
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true); // same-origin / curl / server-side
-      const ok = ALLOWED_ORIGINS.some((rule) =>
-        rule instanceof RegExp ? rule.test(origin) : rule === origin
-      );
-      return cb(ok ? null : new Error("CORS not allowed"), ok);
-    },
-    credentials: true,
-  })
-);
-app.options(/.*/, cors());
+
+const corsOptions = {
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // same-origin / curl / server-side
+    const ok = ALLOWED_ORIGINS.some((rule) =>
+      rule instanceof RegExp ? rule.test(origin) : rule === origin
+    );
+    if (!ok) {
+        console.error(`Blocked by CORS: ${origin}`); // Debug log
+    }
+    return cb(ok ? null : new Error("CORS not allowed"), ok);
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 
 /* =========================
  * Sesión y Passport

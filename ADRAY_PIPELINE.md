@@ -427,13 +427,13 @@ Check if `cookie-parser` is already installed. If not, add `cookie-parser` to de
 - [x] Step 5: Encryption utils
 - [x] Step 6: Rate limiter
 - [x] Step 7: IdentityResolution service
-- [ ] Step 8: AttributionStitching service
-- [ ] Step 9: CAPIFanout service
-- [ ] Step 10: ShopifyEnrichment service
-- [ ] Step 11: MerchantSnapshot service
+- [x] Step 8: AttributionStitching service
+- [x] Step 9: CAPIFanout service
+- [x] Step 10: ShopifyEnrichment service
+- [x] Step 11: MerchantSnapshot service
 - [x] Step 12: /collect route
-- [ ] Step 13: Webhook routes
-- [ ] Step 14: Platform API routes
+- [x] Step 13: Webhook routes
+- [x] Step 14: Platform API routes
 - [x] Step 15: Mount in index.js
 - [x] Step 16: Cookie parser check
 - [ ] Integration test: full flow
