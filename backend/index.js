@@ -461,6 +461,7 @@ app.use("/api/google/ads", sessionGuard, googleAdsInsightsRouter);
 
 app.use("/api/onboarding/status", sessionGuard, require("./routes/onboardingStatus"));
 
+app.use('/api/onboarding', require('./routes/onboardingReset'));
 /* =========================
  * ✅ Integraciones: DISCONNECT (E2E)
  * ========================= */
