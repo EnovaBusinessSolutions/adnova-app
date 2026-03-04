@@ -121,9 +121,9 @@
 
     // ✅ Flow/wizard runtime (Meta Pixel inside Account Modal)
     flow: {
-      next: null, // null | 'metaPixel'
-      step: 'A', // A accounts | B recommended | C all pixels
-    },
+  next: null, // null | 'metaPixel' | 'googleConversion'
+  step: 'A',
+},
   };
 
   /* =========================================================
@@ -1864,6 +1864,19 @@
 
         _closeModalEl(modal);
 
+        // ✅ chain Google Ads -> conversion selector (after selecting customer)
+if (ASM.flow?.next === 'googleConversion') {
+  ASM.flow.next = null; // evita loops
+  setTimeout(() => {
+    openPixelSelectModal({
+      only: 'googleConversion',
+      showAll: true,
+      required: { googleConversion: true },
+      mode: ASM.mode || 'settings',
+    }).catch(console.error);
+  }, 50);
+}
+
         const detail = {
           meta: Array.from(ASM.sel.meta).slice(0, 1),
           googleAds: Array.from(ASM.sel.googleAds).slice(0, 1),
@@ -2115,9 +2128,15 @@
       googleGa: only === 'googleGa',
     };
 
-    const next = metaOk ? 'metaPixel' : null;
+    const next =
+    metaOk
+    ? 'metaPixel'
+    : (googleOk && (product === 'ads' || gadsOk || adsOk))
+    ? 'googleConversion'
+    : null;
 
-    return { only, required, next };
+   return { only, required, next };
+
   }
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -2126,23 +2145,34 @@
       if (!info) return;
 
       if (info.next === 'metaPixel') {
-        openAccountSelectModal({
-          only: 'meta',
-          showAll: true,
-          required: { meta: true },
-          next: 'metaPixel',
-          mode: 'settings',
-        }).catch(console.error);
-        return;
-      }
+  openAccountSelectModal({
+    only: 'meta',
+    showAll: true,
+    required: { meta: true },
+    next: 'metaPixel',
+    mode: 'settings',
+  }).catch(console.error);
+  return;
+}
 
-      openAccountSelectModal({
-        only: info.only,
-        showAll: false,
-        required: info.required,
-        next: null,
-        mode: 'settings',
-      }).catch(console.error);
+if (info.next === 'googleConversion') {
+  openAccountSelectModal({
+    only: 'googleAds',
+    showAll: true,
+    required: { googleAds: true },
+    next: 'googleConversion',
+    mode: 'settings',
+  }).catch(console.error);
+  return;
+}
+
+openAccountSelectModal({
+  only: info.only,
+  showAll: false,
+  required: info.required,
+  next: null,
+  mode: 'settings',
+}).catch(console.error);
     } catch (e) {
       console.error('ASM auto-open error', e);
     }
