@@ -1697,14 +1697,14 @@
 
     if (resource) {
       await _post('/api/pixels/select', {
-        provider: 'google',
-        selectedId: resource,
-        selectedName: picked?.name || resource,
-        meta: {
-          customerId: safeStr(ASM.data.googleConversionsMeta?.customerId || ''),
-          source: 'asm',
-        },
-      });
+  provider: 'google_ads', // ✅ backend acepta SOLO "meta" | "google_ads"
+  selectedId: resource,
+  selectedName: picked?.name || resource,
+  meta: {
+    customerId: safeStr(ASM.data.googleConversionsMeta?.customerId || ''),
+    source: 'asm',
+  },
+});
     }
 
     await _confirmPixelSelectionSafe();
