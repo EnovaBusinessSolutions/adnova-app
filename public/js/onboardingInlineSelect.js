@@ -329,7 +329,14 @@
       }
 
       try {
-        await _post('/api/onboarding/reset', { source: 'asm' });
+        const target =
+  ASM.flow?.next === 'metaPixel'
+    ? 'meta'
+    : ASM.flow?.next === 'googleConversion'
+    ? 'google_ads'
+    : 'all';
+
+await _post('/api/onboarding/reset', { source: 'asm', target });
       } catch {
         // noop
       }
