@@ -436,4 +436,28 @@ Check if `cookie-parser` is already installed. If not, add `cookie-parser` to de
 - [x] Step 14: Platform API routes
 - [x] Step 15: Mount in index.js
 - [x] Step 16: Cookie parser check
-- [ ] Integration test: full flow
+- [x] Integration test: full flow (Verified Staging)
+
+---
+
+# Phase 2: Analytics & Integrations
+
+**Goal**: Visualize the collected data in the dashboard and complete the Google Ads integration.
+
+### Implementation Plan
+
+| # | What | Depends On | Test |
+|---|------|-----------|------|
+| 17 | `backend/services/capiStack/google.js` (Google CAPI) | Phase 1 | Mock order sent to Google Ads API |
+| 18 | `backend/routes/analytics.js` | Phase 1 | `GET /api/analytics/:shop_id` returns JSON stats |
+| 19 | `backend/routes/feed.js` (SSE) | Phase 1 | `GET /api/feed/:shop_id` streams live events |
+| 20 | Mount Phase 2 routes in `index.js` | Step 18, 19 | Endpoints reachable |
+
+---
+
+## Progress Tracker (Phase 2)
+
+- [ ] Step 17: Complete Google CAPI implementation (refactor to stack pattern)
+- [ ] Step 18: Dashboard Analytics API
+- [ ] Step 19: Real-time Event Feed
+- [ ] Step 20: Mount Phase 2 routes

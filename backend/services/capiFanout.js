@@ -1,6 +1,7 @@
 const axios = require('axios');
 const prisma = require('../utils/prismaClient');
 const { decrypt } = require('../utils/encryption');
+const googleStack = require('./capiStack/google');
 
 /**
  * Generic retry wrapper with exponential backoff
@@ -109,8 +110,37 @@ async function sendToMeta(order) {
  */
 async function sendToGoogle(order) {
   return withRetry(async () => {
-    // console.log("Google CAPI not yet implemented", { orderId: order.orderId });
-    return { success: false, reason: 'Google CAPI not yet implemented' };
+    // 1. Get Google connection (Prisma first, then Mongo fallback?)
+    // Assuming we use Prisma PlatformConnection for now
+    const connection = await prisma.platformConnection.findFirst({
+       where: {
+         shopId: order.shopId,
+         platform: 'GOOGLE',
+         status: 'ACTIVE'
+       }
+    });
+    
+    // If not found, check older Mongo model?
+    // Let's assume Prisma is the source of truth for AdRay pipeline (as per README architecture)
+    if (!connection) {
+       return { success: false, reason: 'No active Google connection' };
+    }
+
+    const token = decrypt(connection.accessToken);
+    if (!token) throw new Error('Failed to decrypt Google access token');
+
+    const result = await googleStack.sendConversion(order, {
+       accessToken: token,
+       adAccountId: connection.adAccountId,
+       pixelId: connection.pixelId // mapped to conversionAction resource name
+    });
+
+    if (!result.success) {
+       throw new Error(result.error || result.reason);
+    }
+
+    return { success: true, response: result.data };
+
   }, 'google_capi', { orderId: order.orderId });
 }
 
