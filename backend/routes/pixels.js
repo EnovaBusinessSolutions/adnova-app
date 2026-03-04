@@ -101,23 +101,53 @@ router.get("/status", async (req, res) => {
 });
 
 // (Opcional) POST /api/pixels/confirm  -> para Continue
+// (Opcional) POST /api/pixels/confirm  -> para Continue / wizard
 router.post("/confirm", async (req, res) => {
   try {
     const uid = getUid(req);
     if (!uid) return res.status(401).json({ ok: false, error: "NO_SESSION" });
 
-    const provider = safeStr(req.body?.provider || "");
-    if (!provider || !["meta", "google_ads"].includes(provider)) {
-      return res.status(400).json({ ok: false, error: "INVALID_PROVIDER" });
+    const rawProvider = safeStr(req.body?.provider || "");
+
+    // ✅ Caso 1: provider explícito (comportamiento actual)
+    if (rawProvider) {
+      if (!["meta", "google_ads"].includes(rawProvider)) {
+        return res.status(400).json({ ok: false, error: "INVALID_PROVIDER" });
+      }
+
+      const doc = await PixelSelection.findOneAndUpdate(
+        { userId: uid, provider: rawProvider },
+        { $set: { confirmedAt: new Date(), updatedAt: new Date() } },
+        { new: true }
+      );
+
+      return res.json({ ok: true, data: doc ? (doc.toPublic ? doc.toPublic() : doc) : null });
     }
 
-    const doc = await PixelSelection.findOneAndUpdate(
-      { userId: uid, provider },
-      { $set: { confirmedAt: new Date(), updatedAt: new Date() } },
-      { new: true }
+    // ✅ Caso 2: wizard llama sin provider -> auto-confirm
+    const docs = await PixelSelection.find({ userId: uid }).lean();
+
+    const meta = docs.find((d) => d.provider === "meta") || null;
+    const gads = docs.find((d) => d.provider === "google_ads") || null;
+
+    const toConfirm = [];
+
+    if (meta && safeStr(meta.selectedId) && !meta.confirmedAt) toConfirm.push("meta");
+    if (gads && safeStr(gads.selectedId) && !gads.confirmedAt) toConfirm.push("google_ads");
+
+    // Si no hay nada pendiente, regresamos ok para no romper UX
+    if (!toConfirm.length) {
+      return res.json({ ok: true, data: null, note: "NOTHING_TO_CONFIRM" });
+    }
+
+    await PixelSelection.updateMany(
+      { userId: uid, provider: { $in: toConfirm } },
+      { $set: { confirmedAt: new Date(), updatedAt: new Date() } }
     );
 
-    return res.json({ ok: true, data: doc ? (doc.toPublic ? doc.toPublic() : doc) : null });
+    const updated = await PixelSelection.find({ userId: uid, provider: { $in: toConfirm } }).lean();
+
+    return res.json({ ok: true, data: updated });
   } catch (e) {
     console.error("[pixels/confirm] error:", e?.message || e);
     return res.status(500).json({ ok: false, error: "PIXELS_CONFIRM_FAILED" });
