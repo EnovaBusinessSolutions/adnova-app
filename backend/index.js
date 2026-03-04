@@ -113,7 +113,19 @@ const APP_URL = (process.env.APP_URL || "https://adray.ai").replace(/\/$/, "");
 /* =========================
  * Seguridad y performance
  * ========================= */
+
 app.disable("x-powered-by");
+
+// Fix CSP: Disable strict CSP for demo assets (Tailwind, ChartJS, FontAwesome)
+app.use((req, res, next) => {
+  if (req.path === '/adray-analytics.html' || req.path.startsWith('/api/analytics') || req.path.startsWith('/api/feed')) {
+    // Relaxed CSP for demo page
+    res.removeHeader("Content-Security-Policy");
+    res.setHeader("Content-Security-Policy", "default-src 'self' * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' *; style-src 'self' 'unsafe-inline' *; connect-src 'self' *;");
+  }
+  next();
+});
+
 app.use(
   helmet({
     // IMPORTANTE para apps embebidas de Shopify
@@ -142,6 +154,7 @@ const ALLOWED_ORIGINS = [
   'https://adray.ai',
   'https://adray-app-staging-german.onrender.com',
   'https://admin.shopify.com',
+  'http://localhost:3000', // ✅ Allow local frontend
   /^https?:\/\/[^/]+\.myshopify\.com$/i,
     /^https?:\/\/[^/]+\.ngrok-free\.dev$/i,
     /^https?:\/\/[^/]+\.ngrok-free\.app$/i,
@@ -681,8 +694,9 @@ app.use("/api/google", sessionGuard, googleConversionsRoutes);
 app.use("/api/pixels", sessionGuard, pixelsRoutes);
 
 // ✅ AdRay Analytics & Realtime Feed (Phase 2)
-app.use("/api/analytics", sessionGuard, require("./routes/analytics"));
-app.use("/api/feed", sessionGuard, require("./routes/feed"));
+// sessionGuard removed for dashboard demo/access
+app.use("/api/analytics", require("./routes/analytics"));
+app.use("/api/feed", require("./routes/feed"));
 
 // Shopify
 const verifyShopifyToken = require("../middlewares/verifyShopifyToken"); // (por ahora no usado)

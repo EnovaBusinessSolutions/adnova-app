@@ -65,8 +65,10 @@ router.get('/:shop_id', async (req, res) => {
       const rev = order.revenue || 0;
       totalRevenue += rev;
       
-      // Channel
-      const ch = (order.attributedChannel || 'unattributed').toLowerCase();
+      // Channel normalization
+      let ch = (order.attributedChannel || 'unattributed').toLowerCase();
+      if (ch === 'facebook' || ch === 'instagram') ch = 'meta';
+
       if (channelStats[ch]) {
         channelStats[ch].revenue += rev;
         channelStats[ch].orders += 1;

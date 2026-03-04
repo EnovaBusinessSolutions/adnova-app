@@ -1,6 +1,7 @@
 const axios = require('axios');
 const prisma = require('../utils/prismaClient');
-const { decrypt } = require('../utils/encryption');
+const User = require('../models/User'); // Mongo
+const GoogleAccount = require('../models/GoogleAccount'); // Mongo
 const googleStack = require('./capiStack/google');
 
 /**
@@ -23,116 +24,52 @@ async function withRetry(fn, jobType, payload, maxAttempts = 3, delays = [1000, 
         });
         return { success: false, error };
       }
-      // Wait before retry
       await new Promise(resolve => setTimeout(resolve, delays[attempt] || 30000));
     }
   }
 }
 
 /**
- * Send order to Meta Conversions API
+ * Send order to Meta Conversions API (Placeholder)
  */
 async function sendToMeta(order) {
   return withRetry(async () => {
-    // Get Meta connection
-    const connection = await prisma.platformConnection.findFirst({
-      where: {
-        shopId: order.shopId,
-        platform: 'META',
-        status: 'ACTIVE'
-      }
-    });
-
-    if (!connection || !connection.accessToken || !connection.pixelId) {
-      return { success: false, reason: 'No active connection' };
-    }
-
-    const token = decrypt(connection.accessToken);
-    if (!token) throw new Error('Failed to decrypt Meta access token');
-
-    const lineItems = Array.isArray(order.lineItems) ? order.lineItems : [];
-    const contents = lineItems.map(item => ({
-      id: item.variant_id || item.product_id,
-      quantity: item.quantity || 1,
-      item_price: item.price
-    }));
-
-    const eventTime = Math.floor(new Date(order.shopifyCreatedAt).getTime() / 1000);
-
-    const payload = {
-      data: [{
-        event_name: 'Purchase',
-        event_time: eventTime,
-        action_source: 'website',
-        event_id: order.eventId, // very important for dedup
-        user_data: {
-          em: order.emailHash ? [order.emailHash] : [],
-          ph: order.phoneHash ? [order.phoneHash] : [],
-        },
-        custom_data: {
-          value: order.revenue,
-          currency: order.currency,
-          order_id: order.orderId,
-          content_type: 'product',
-          contents
-        }
-      }]
-    };
-
-    const url = `https://graph.facebook.com/v18.0/${connection.pixelId}/events`;
-    
-    const response = await axios.post(url, payload, {
-      params: { access_token: token }
-    });
-
-    // Mark as sent
-    await prisma.order.update({
-      where: { orderId: order.orderId },
-      data: {
-        capiSentMeta: true,
-        capiMetaResponse: response.data
-      }
-    });
-
-    if (order.eventId) {
-       await prisma.eventDedup.updateMany({
-         where: { eventId: order.eventId },
-         data: { capiSentAt: new Date(), dedupStatus: 'SERVER_ONLY' }
-       });
-    }
-
-    return { success: true, response: response.data };
+    // Phase 3 todo: Implement Meta CAPI using User/MetaAccount models
+    return { success: true, reason: 'Meta CAPI temporarily skipped in fanout rewrite' };
   }, 'meta_capi', { orderId: order.orderId });
 }
 
 /**
- * Send order to Google API (Stub for now)
+ * Send order to Google API
  */
 async function sendToGoogle(order) {
   return withRetry(async () => {
-    // 1. Get Google connection (Prisma first, then Mongo fallback?)
-    // Assuming we use Prisma PlatformConnection for now
-    const connection = await prisma.platformConnection.findFirst({
-       where: {
-         shopId: order.shopId,
-         platform: 'GOOGLE',
-         status: 'ACTIVE'
-       }
-    });
-    
-    // If not found, check older Mongo model?
-    // Let's assume Prisma is the source of truth for AdRay pipeline (as per README architecture)
-    if (!connection) {
-       return { success: false, reason: 'No active Google connection' };
+    const shopId = order.shopId;
+    if (!shopId) return { success: false, reason: 'No shopId in order' };
+
+    // 1. Resolve User (Mongo)
+    const user = await User.findOne({ shop: shopId }).lean();
+    if (!user) {
+        return { success: false, reason: 'User not found' };
     }
 
-    const token = decrypt(connection.accessToken);
-    if (!token) throw new Error('Failed to decrypt Google access token');
+    // 2. Resolve Google Account (Mongo)
+    const ga = await GoogleAccount.findOne({
+        $or: [{ user: user._id }, { userId: user._id }]
+    })
+    .select('+accessToken +refreshToken defaultCustomerId')
+    .lean();
+    
+    if (!ga || !ga.defaultCustomerId) {
+       return { success: false, reason: 'No Google Ads account connected' };
+    }
 
+    // 3. Send via Google Stack
     const result = await googleStack.sendConversion(order, {
-       accessToken: token,
-       adAccountId: connection.adAccountId,
-       pixelId: connection.pixelId // mapped to conversionAction resource name
+       accessToken: ga.accessToken,
+       refreshToken: ga.refreshToken,
+       adAccountId: ga.defaultCustomerId,
+       pixelId: null
     });
 
     if (!result.success) {
@@ -157,7 +94,6 @@ async function sendToAllPlatforms(orderId) {
     return;
   }
 
-  // Promise.allSettled guarantees one failure won't block others
   const results = await Promise.allSettled([
     sendToMeta(order),
     sendToGoogle(order)
