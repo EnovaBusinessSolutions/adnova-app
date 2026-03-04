@@ -384,6 +384,10 @@ const shopifyCSPHelmet = helmet({
 });
 
 function shopifyCSP(req, res, next) {
+  // Demo check inside helper
+  if (req.path === '/adray-analytics.html' || req.path.startsWith('/api/analytics') || req.path.startsWith('/api/feed')) {
+    return next();
+  }
   const p = req.path || '';
   if (p.startsWith('/connector') || p.startsWith('/apps/')) {
     return shopifyCSPHelmet(req, res, next);
@@ -391,4 +395,12 @@ function shopifyCSP(req, res, next) {
   return next();
 }
 
-module.exports = { publicCSP, shopifyCSP };
+function publicCSPMiddleware(req, res, next) {
+   // Demo check inside helper
+   if (req.path === '/adray-analytics.html' || req.path.startsWith('/api/analytics') || req.path.startsWith('/api/feed')) {
+      return next();
+   }
+   return publicCSPHelmet(req, res, next);
+}
+
+module.exports = { publicCSP: publicCSPMiddleware, shopifyCSP };

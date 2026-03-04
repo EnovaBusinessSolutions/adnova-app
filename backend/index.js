@@ -119,9 +119,8 @@ app.disable("x-powered-by");
 // Fix CSP: Disable strict CSP for demo assets (Tailwind, ChartJS, FontAwesome)
 app.use((req, res, next) => {
   if (req.path === '/adray-analytics.html' || req.path.startsWith('/api/analytics') || req.path.startsWith('/api/feed')) {
-    // Relaxed CSP for demo page
-    res.removeHeader("Content-Security-Policy");
-    res.setHeader("Content-Security-Policy", "default-src 'self' * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' *; style-src 'self' 'unsafe-inline' *; connect-src 'self' *;");
+    // Override headers BEFORE helper sets them
+    res.setHeader("Content-Security-Policy", "default-src 'self' * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' *; style-src 'self' 'unsafe-inline' *; connect-src 'self' *; font-src 'self' *; img-src 'self' data: *;");
   }
   next();
 });
@@ -321,6 +320,11 @@ app.use("/api/stripe", (req, res, next) => {
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+// ✅ AdRay Analytics & Realtime Feed (Phase 2)
+// sessionGuard removed for dashboard demo/access
+app.use("/api/analytics", require("./routes/analytics"));
+app.use("/api/feed", require("./routes/feed"));
 
 // AdRay collect and platform routes
 app.use("/collect", rateLimitCollect, collectRoutes);
@@ -692,11 +696,6 @@ app.use("/api/google", sessionGuard, googleConversionsRoutes);
 
 // Central (select/status/confirm)
 app.use("/api/pixels", sessionGuard, pixelsRoutes);
-
-// ✅ AdRay Analytics & Realtime Feed (Phase 2)
-// sessionGuard removed for dashboard demo/access
-app.use("/api/analytics", require("./routes/analytics"));
-app.use("/api/feed", require("./routes/feed"));
 
 // Shopify
 const verifyShopifyToken = require("../middlewares/verifyShopifyToken"); // (por ahora no usado)
