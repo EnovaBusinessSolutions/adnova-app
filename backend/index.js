@@ -165,14 +165,8 @@ const ALLOWED_ORIGINS = [
 
 const corsOptions = {
   origin: (origin, cb) => {
-    if (!origin) return cb(null, true); // same-origin / curl / server-side
-    const ok = ALLOWED_ORIGINS.some((rule) =>
-      rule instanceof RegExp ? rule.test(origin) : rule === origin
-    );
-    if (!ok) {
-        console.error(`Blocked by CORS: ${origin}`); // Debug log
-    }
-    return cb(ok ? null : new Error("CORS not allowed"), ok);
+    // Permitir solicitudes de pixel /collect (aceptar cualquier origen dinámicamente)
+    return cb(null, true); 
   },
   credentials: true,
 };

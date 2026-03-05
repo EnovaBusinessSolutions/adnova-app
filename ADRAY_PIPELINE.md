@@ -1,4 +1,4 @@
-# 🧃 AdRay Pipeline — What Is This?
+﻿# 🧃 AdRay Pipeline — What Is This?
 
 Imagine you have a lemonade stand. Every time someone walks by, looks at your lemonade, or buys a cup — you write it down in a notebook. That's what AdRay does for online stores!
 
@@ -460,5 +460,29 @@ Check if `cookie-parser` is already installed. If not, add `cookie-parser` to de
 - [x] Step 17: Complete Google CAPI implementation (refactor to stack pattern)
 - [x] Step 18: Dashboard Analytics API
 - [x] Step 19: Real-time Event Feed
-- [x] Step 20: Mount Phase 2 routes in `backend/index.js`
+- [x] Step 20: Mount Phase 2 routes in ackend/index.js
 - [ ] Step 21: Dashboard Frontend Integration
+
+---
+
+## Appendix A: Low-Friction Production Testing (Without App Approval)
+
+When testing on a real merchant's store before Shopify approves the app, you cannot use the standard OAuth installation flow easily. Instead, use this manual bypass pattern.
+
+### 1. Inyectar el Pixel Manualmente
+- Provide the merchant with your minified adray-pixel.js file.
+- Instruct them to go to **Online Store > Themes > Edit code**.
+- Ask them to paste the script just before the </head> tag in their 	heme.liquid.
+- **Why:** This covers Page Views, Add to Cart, Begin Checkout, and maps identity to UTMs/click IDs. However, it *cannot* track the final Purchase securely.
+
+### 2. Manual Webhook Registration
+- Instruct the merchant (or do it if you have staff access) to go to **Settings > Notifications** in their Shopify Admin.
+- Scroll down to the **Webhooks** section and click **Create webhook**.
+- **Event:** Order create
+- **Format:** JSON
+- **URL:** https://adray-app-staging-german.onrender.com/webhooks/shopify/[merchant-shop-name.myshopify.com]/orders-create
+- **Why:** This tells Shopify to notify AdRay whenever a real purchase happens, allowing the backend to stitch the order with the frontend visitor data.
+
+### Trade-offs of this approach:
+- **Data Collection Works 100%:** AdRay will successfully build the identity graph and dashboard analytics.
+- **External CAPI Fails:** Unless you manually insert the merchant's Meta/Google API tokens into your PlatformConnection database, the backend CAPI fanout will fail (and safely log to FailedJob) because AdRay doesn't have the oauth permissions to push events on their behalf yet.
