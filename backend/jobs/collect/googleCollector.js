@@ -92,18 +92,17 @@ const safeDiv = (n, d) => (Number(d || 0) ? Number(n || 0) / Number(d || 0) : 0)
 const round2 = (x) => Math.round((Number(x || 0) + Number.EPSILON) * 100) / 100;
 const microsToCurrency = (micros) => round2(Number(micros || 0) / 1_000_000);
 
-/* Mantengo por compat (no usar para sumar por filas) */
-const microsToUnit = (v) => {
-  const n = Number(v || 0);
-  return round2(n / 1_000_000);
-};
+function clampInt(n, min, max) {
+  const x = Number(n || 0);
+  if (!Number.isFinite(x)) return min;
+  return Math.max(min, Math.min(max, Math.trunc(x)));
+}
 
 /**
- * Formatea YYYY-MM-DD en una zona horaria (evita “adelantarse” por UTC en Render)
+ * Formatea YYYY-MM-DD en una zona horaria (evita adelantarse por UTC)
  */
 function isoInTZ(date, timeZone) {
   try {
-    // en-CA => YYYY-MM-DD
     return new Intl.DateTimeFormat('en-CA', {
       timeZone: timeZone || 'UTC',
       year: 'numeric',
@@ -116,18 +115,16 @@ function isoInTZ(date, timeZone) {
 }
 
 /**
- * Rango estricto 30 días completos: termina AYER (en TZ del customer) y empieza 29 días antes.
- * Esto empata con “últimos 30 días” sin incluir hoy (parcial).
+ * Rango estricto N días completos:
+ * - termina AYER en TZ del customer
  */
-function getStrictLast30dRangeTZ(timeZone) {
+function getStrictLastNdRangeTZ(timeZone, days) {
   const now = new Date();
-
-  // AYER
   const end = new Date(now.getTime() - 24 * 60 * 60 * 1000);
   const endISO = isoInTZ(end, timeZone);
 
-  // START = end - 29 días (30 días incluyendo end)
-  const start = new Date(end.getTime() - 29 * 24 * 60 * 60 * 1000);
+  const d = clampInt(days || 30, 1, 3650);
+  const start = new Date(end.getTime() - (d - 1) * 24 * 60 * 60 * 1000);
   const startISO = isoInTZ(start, timeZone);
 
   return { since: startISO, until: endISO };
@@ -147,7 +144,7 @@ function oauth() {
 async function ensureAccessToken(gaDoc) {
   if (gaDoc?.accessToken && gaDoc?.expiresAt) {
     const ms = new Date(gaDoc.expiresAt).getTime() - Date.now();
-    if (ms > 60_000) return gaDoc.accessToken; // válido > 60s
+    if (ms > 60_000) return gaDoc.accessToken;
   }
 
   if (!gaDoc?.refreshToken && !gaDoc?.accessToken) return null;
@@ -159,8 +156,6 @@ async function ensureAccessToken(gaDoc) {
   });
 
   try {
-    // Nota: refreshAccessToken está deprecated en algunas versiones,
-    // pero lo dejamos porque ya lo tienes así y funciona en tu stack.
     const { credentials } = await client.refreshAccessToken();
     const token = credentials?.access_token || null;
 
@@ -188,7 +183,7 @@ async function ensureAccessToken(gaDoc) {
 }
 
 /**
- * Customers accesibles vía helper de Ads (multiusuario, sin MCC obligatorio)
+ * Customers accesibles
  */
 async function listAccessibleCustomers(accessToken) {
   const rns = await Ads.listAccessibleCustomers(accessToken);
@@ -207,7 +202,7 @@ async function getCustomer(accessToken, cid) {
     resourceName: data?.resourceName || `customers/${cid}`,
     descriptiveName: data?.descriptiveName || null,
     currencyCode: data?.currencyCode || 'USD',
-    timeZone: data?.timeZone || null, // importante para rango
+    timeZone: data?.timeZone || null,
   };
 }
 
@@ -218,12 +213,6 @@ function intersect(aSet, ids) {
 }
 
 /* ====================== Objective (derivado) ====================== */
-/**
- * Google Ads API no da un "goal" perfecto como UI en todos los casos.
- * Derivamos un objective estable con señales:
- * - channelType / channelSubType
- * - biddingStrategyType
- */
 function deriveGoogleCampaignObjective({ channelType, channelSubType, biddingStrategyType }) {
   const ct = String(channelType || '').toUpperCase();
   const cst = String(channelSubType || '').toUpperCase();
@@ -236,19 +225,10 @@ function deriveGoogleCampaignObjective({ channelType, channelSubType, biddingStr
   if (bst.includes('TARGET_IMPRESSION_SHARE') || bst.includes('TARGET_CPM') || bst.includes('MANUAL_CPM')) return 'AWARENESS';
   if (ct === 'VIDEO' || bst.includes('MANUAL_CPV') || bst.includes('TARGET_CPV')) return 'VIDEO_VIEWS';
   if (ct === 'DISPLAY') return 'AWARENESS';
-
   return 'OTHER';
 }
 
 /* ====================== GAQL por campañas ====================== */
-/**
- * Acumula métricas por campaña / device / network en los Map globales
- * usando el mismo accessToken y rango (since/until) REAL.
- *
- * ✅ FIX CRÍTICO:
- * - cost se acumula en micros (enteros) para evitar drift de centavos
- * - conversion a moneda se hace al final
- */
 async function accumulateCampaignBreakdowns({
   accessToken,
   customerId,
@@ -257,6 +237,7 @@ async function accumulateCampaignBreakdowns({
   byCampaignMap,
   byCampaignDeviceMap,
   byCampaignNetworkMap,
+  byDateMap, // NEW: date -> agg micros
 }) {
   const cid = normId(customerId);
   if (!cid || !since || !until) return;
@@ -320,10 +301,10 @@ async function accumulateCampaignBreakdowns({
 
     const objective = deriveGoogleCampaignObjective({ channelType, channelSubType, biddingStrategyType });
 
+    const date = seg.date || seg['segments.date'] || null;
     const impressions = Number(met.impressions || 0);
     const clicks = Number(met.clicks || 0);
 
-    // ✅ acumular EN MICROS (entero)
     const costMicros = met.costMicros ?? met.cost_micros ?? 0;
     const costMicrosNum = Number(costMicros || 0);
 
@@ -333,31 +314,23 @@ async function accumulateCampaignBreakdowns({
     const device = seg.device || 'UNSPECIFIED';
     const network = seg.adNetworkType || seg.ad_network_type || 'UNSPECIFIED';
 
-    // --- Por campaña (accountId + campaignId) ---
+    // --- Por campaña ---
     const keyC = `${cid}|${id}`;
     let c = byCampaignMap.get(keyC);
 
     if (!c) {
       c = {
         account_id: cid,
-        accountId: cid,
-        id,
-        name,
-
         campaign_id: id,
-        campaignId: id,
-        campaignName: name,
-
+        name,
         status,
-
         channelType: channelType ? String(channelType) : null,
         channelSubType: channelSubType ? String(channelSubType) : null,
         biddingStrategyType: biddingStrategyType ? String(biddingStrategyType) : null,
         objective,
-
         impressions: 0,
         clicks: 0,
-        cost_micros: 0, // ✅
+        cost_micros: 0,
         conversions: 0,
         conv_value: 0,
       };
@@ -366,7 +339,7 @@ async function accumulateCampaignBreakdowns({
 
     c.impressions += impressions;
     c.clicks += clicks;
-    c.cost_micros += costMicrosNum; // ✅
+    c.cost_micros += costMicrosNum;
     c.conversions += conversions;
     c.conv_value += conv_value;
 
@@ -377,22 +350,13 @@ async function accumulateCampaignBreakdowns({
     if (!d) {
       d = {
         account_id: cid,
-        accountId: cid,
-
         campaign_id: id,
-        campaignId: id,
         campaignName: name,
-
         device,
-
-        channelType: channelType ? String(channelType) : null,
-        channelSubType: channelSubType ? String(channelSubType) : null,
-        biddingStrategyType: biddingStrategyType ? String(biddingStrategyType) : null,
         objective,
-
         impressions: 0,
         clicks: 0,
-        cost_micros: 0, // ✅
+        cost_micros: 0,
         conversions: 0,
         conv_value: 0,
       };
@@ -401,7 +365,7 @@ async function accumulateCampaignBreakdowns({
 
     d.impressions += impressions;
     d.clicks += clicks;
-    d.cost_micros += costMicrosNum; // ✅
+    d.cost_micros += costMicrosNum;
     d.conversions += conversions;
     d.conv_value += conv_value;
 
@@ -412,22 +376,13 @@ async function accumulateCampaignBreakdowns({
     if (!n) {
       n = {
         account_id: cid,
-        accountId: cid,
-
         campaign_id: id,
-        campaignId: id,
         campaignName: name,
-
         network,
-
-        channelType: channelType ? String(channelType) : null,
-        channelSubType: channelSubType ? String(channelSubType) : null,
-        biddingStrategyType: biddingStrategyType ? String(biddingStrategyType) : null,
         objective,
-
         impressions: 0,
         clicks: 0,
-        cost_micros: 0, // ✅
+        cost_micros: 0,
         conversions: 0,
         conv_value: 0,
       };
@@ -436,36 +391,158 @@ async function accumulateCampaignBreakdowns({
 
     n.impressions += impressions;
     n.clicks += clicks;
-    n.cost_micros += costMicrosNum; // ✅
+    n.cost_micros += costMicrosNum;
     n.conversions += conversions;
     n.conv_value += conv_value;
+
+    // --- Daily agg (account-level) ---
+    if (date) {
+      const key = `${cid}|${date}`;
+      const cur = byDateMap.get(key) || {
+        account_id: cid,
+        date,
+        impressions: 0,
+        clicks: 0,
+        cost_micros: 0,
+        conversions: 0,
+        conv_value: 0,
+      };
+      cur.impressions += impressions;
+      cur.clicks += clicks;
+      cur.cost_micros += costMicrosNum;
+      cur.conversions += conversions;
+      cur.conv_value += conv_value;
+      byDateMap.set(key, cur);
+    }
   }
+}
+
+/* ====================== Compact helpers ====================== */
+function makeGoogleHeader({ userId, accountIds, accounts, range, currency, timeZone, version }) {
+  return {
+    schema: 'adray.mcp.v1',
+    source: 'googleAds',
+    generatedAt: new Date().toISOString(),
+    userId: String(userId),
+    accountIds: Array.isArray(accountIds) ? accountIds : [],
+    accounts: Array.isArray(accounts) ? accounts : [],
+    range,
+    currency: currency || null,
+    timeZone: timeZone || null,
+    version: version || null,
+  };
+}
+
+function computeDeltas(cur, prev) {
+  const pct = (a, b) => (b ? ((a - b) / b) * 100 : (a ? 100 : 0));
+  return {
+    cost_pct: pct(cur.cost, prev.cost),
+    impressions_pct: pct(cur.impressions, prev.impressions),
+    clicks_pct: pct(cur.clicks, prev.clicks),
+    conversions_pct: pct(cur.conversions, prev.conversions),
+    conv_value_pct: pct(cur.conv_value, prev.conv_value),
+    roas_diff: (cur.roas || 0) - (prev.roas || 0),
+    cpa_diff: (cur.cpa || 0) - (prev.cpa || 0),
+  };
+}
+
+function topN(arr, n, scoreFn) {
+  const a = Array.isArray(arr) ? arr.slice() : [];
+  a.sort((x, y) => scoreFn(y) - scoreFn(x));
+  return a.slice(0, Math.max(0, n));
+}
+
+function slimCampaignRow(c) {
+  const cost = microsToCurrency(c.cost_micros);
+  const impressions = Number(c.impressions || 0);
+  const clicks = Number(c.clicks || 0);
+  const conversions = Number(c.conversions || 0);
+  const conv_value = Number(c.conv_value || 0);
+
+  return {
+    account_id: c.account_id,
+    campaign_id: c.campaign_id,
+    name: c.name || c.campaignName || null,
+    objective: c.objective || null,
+    status: c.status || null,
+    kpis: {
+      cost,
+      impressions,
+      clicks,
+      conversions,
+      conv_value,
+      ctr: safeDiv(clicks, impressions) * 100,
+      cpc: safeDiv(cost, clicks),
+      cpa: safeDiv(cost, conversions),
+      roas: safeDiv(conv_value, cost),
+    },
+  };
+}
+
+function aggregateTopBreakdown(rows, keyField, topNCount) {
+  const map = new Map();
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const key = String(r?.[keyField] || '').trim();
+    if (!key) continue;
+
+    const cur = map.get(key) || {
+      key,
+      impressions: 0,
+      clicks: 0,
+      cost_micros: 0,
+      conversions: 0,
+      conv_value: 0,
+    };
+    cur.impressions += Number(r.impressions || 0);
+    cur.clicks += Number(r.clicks || 0);
+    cur.cost_micros += Number(r.cost_micros || 0);
+    cur.conversions += Number(r.conversions || 0);
+    cur.conv_value += Number(r.conv_value || 0);
+    map.set(key, cur);
+  }
+
+  const arr = Array.from(map.values()).map((x) => {
+    const cost = microsToCurrency(x.cost_micros);
+    return {
+      key: x.key,
+      kpis: {
+        cost,
+        impressions: x.impressions,
+        clicks: x.clicks,
+        conversions: x.conversions,
+        conv_value: x.conv_value,
+        ctr: safeDiv(x.clicks, x.impressions) * 100,
+        cpc: safeDiv(cost, x.clicks),
+        cpa: safeDiv(cost, x.conversions),
+        roas: safeDiv(x.conv_value, cost),
+      },
+    };
+  });
+
+  arr.sort((a, b) => (b.kpis.cost - a.kpis.cost));
+  return arr.slice(0, Math.max(0, topNCount || 10));
 }
 
 /* ====================== Collector principal ====================== */
 async function collectGoogle(userId, opts = {}) {
-  const { account_id } = opts || {};
+  const {
+    account_id,
+
+    // NEW: windows/retention
+    rangeDays = 30,
+    range, // optional override { from,to,tz }
+
+    // compact knobs
+    topCampaignsN = 25,
+    topBreakdownsN = 10,
+  } = opts || {};
 
   // 0) Developer Token obligatorio
   if (!DEV_TOKEN) {
-    return {
-      notAuthorized: true,
-      reason: 'MISSING_DEVELOPER_TOKEN',
-      currency: null,
-      timeZone: null,
-      timeRange: { from: null, to: null },
-      kpis: {},
-      byCampaign: [],
-      byCampaignDevice: [],
-      byCampaignNetwork: [],
-      series: [],
-      accountIds: [],
-      defaultCustomerId: null,
-      accounts: [],
-    };
+    return { ok: false, notAuthorized: true, reason: 'MISSING_DEVELOPER_TOKEN' };
   }
 
-  // 1) Trae el GoogleAccount con tokens
+  // 1) Trae GoogleAccount con tokens
   const gaDoc =
     typeof GoogleAccount.findWithTokens === 'function'
       ? await GoogleAccount.findWithTokens({ $or: [{ user: userId }, { userId }] })
@@ -474,60 +551,18 @@ async function collectGoogle(userId, opts = {}) {
         );
 
   if (!gaDoc) {
-    return {
-      notAuthorized: true,
-      reason: 'NO_GOOGLEACCOUNT',
-      currency: null,
-      timeZone: null,
-      timeRange: { from: null, to: null },
-      kpis: {},
-      byCampaign: [],
-      byCampaignDevice: [],
-      byCampaignNetwork: [],
-      series: [],
-      accountIds: [],
-      defaultCustomerId: null,
-      accounts: [],
-    };
+    return { ok: false, notAuthorized: true, reason: 'NO_GOOGLEACCOUNT' };
   }
 
   const scopes = new Set((gaDoc.scope || []).map(String));
   if (!scopes.has('https://www.googleapis.com/auth/adwords')) {
-    return {
-      notAuthorized: true,
-      reason: 'MISSING_ADWORDS_SCOPE',
-      currency: null,
-      timeZone: null,
-      timeRange: { from: null, to: null },
-      kpis: {},
-      byCampaign: [],
-      byCampaignDevice: [],
-      byCampaignNetwork: [],
-      series: [],
-      accountIds: [],
-      defaultCustomerId: gaDoc.defaultCustomerId || null,
-      accounts: [],
-    };
+    return { ok: false, notAuthorized: true, reason: 'MISSING_ADWORDS_SCOPE' };
   }
 
   // 2) Asegura accessToken
   let accessToken = await ensureAccessToken(gaDoc);
   if (!accessToken) {
-    return {
-      notAuthorized: true,
-      reason: 'NO_ACCESS_TOKEN',
-      currency: null,
-      timeZone: null,
-      timeRange: { from: null, to: null },
-      kpis: {},
-      byCampaign: [],
-      byCampaignDevice: [],
-      byCampaignNetwork: [],
-      series: [],
-      accountIds: [],
-      defaultCustomerId: gaDoc.defaultCustomerId || null,
-      accounts: [],
-    };
+    return { ok: false, notAuthorized: true, reason: 'NO_ACCESS_TOKEN' };
   }
 
   // 3) Universo de cuentas accesibles (guardadas + discover)
@@ -559,33 +594,17 @@ async function collectGoogle(userId, opts = {}) {
   const universe = Array.from(universeIds).slice(0, MAX_ACCOUNTS_FETCH);
 
   if (universe.length === 0) {
-    return {
-      notAuthorized: false,
-      reason: 'NO_CUSTOMERS',
-      currency: null,
-      timeZone: null,
-      timeRange: { from: null, to: null },
-      kpis: {},
-      byCampaign: [],
-      byCampaignDevice: [],
-      byCampaignNetwork: [],
-      series: [],
-      accountIds: [],
-      defaultCustomerId: gaDoc.defaultCustomerId || null,
-      accounts: [],
-    };
+    return { ok: true, notAuthorized: false, reason: 'NO_CUSTOMERS', datasets: [] };
   }
 
-  // 4) Resolver cuentas a auditar (misma regla que en el panel)
+  // 4) Resolver cuentas a auditar
   let idsToAudit = [];
 
-  // 4.a) override explícito
   if (account_id) {
     const forced = normId(account_id);
     if (forced) idsToAudit = [forced];
   }
 
-  // 4.b) selección del usuario
   if (idsToAudit.length === 0 && UserModel && userId) {
     try {
       const user = await UserModel.findById(userId).lean().select('preferences selectedGoogleAccounts');
@@ -600,17 +619,15 @@ async function collectGoogle(userId, opts = {}) {
 
       const picked = intersect(new Set(universe), [...new Set(selected)]).slice(0, MAX_BY_RULE);
       if (picked.length) idsToAudit = picked;
-    } catch {
-      // noop
-    }
+    } catch {}
   }
 
-  // 4.c) sin selección explícita
   if (idsToAudit.length === 0) {
     if (universe.length <= MAX_BY_RULE) {
       idsToAudit = universe;
     } else {
       return {
+        ok: false,
         notAuthorized: true,
         reason: 'SELECTION_REQUIRED(>3_CUSTOMERS)',
         requiredSelection: true,
@@ -621,35 +638,30 @@ async function collectGoogle(userId, opts = {}) {
     }
   }
 
-  if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-    logger.info('[gadsCollector] userId / universo / idsToAudit', {
-      userId: String(userId),
-      universe,
-      idsToAudit,
-    });
-  }
-
-  /* ====================== Acumuladores globales ====================== */
-  const G = { impr: 0, clk: 0, cost: 0, conv: 0, val: 0, allConv: 0, allVal: 0 };
-  const seriesMap = new Map(); // date -> agg
+  // acumuladores
+  const accountsMeta = new Map(); // cid -> { name, currencyCode, timeZone }
+  const byAccountAgg = new Map(); // cid -> kpis money (rounded)
+  const byCampaignMap = new Map();
+  const byCampaignDeviceMap = new Map();
+  const byCampaignNetworkMap = new Map();
+  const byDateMap = new Map(); // cid|date -> agg micros
 
   let currency = 'USD';
   let timeZone = null;
 
-  // rango REAL (source of truth)
   let globalSince = null;
   let globalUntil = null;
 
-  const accountsMeta = new Map(); // id -> { name, currencyCode, timeZone }
-  const byAccountAgg = new Map(); // id -> agg kpis
+  // explicit range override
+  const explicitRange = range && range.from && range.to ? {
+    since: String(range.from),
+    until: String(range.to),
+    tz: range.tz || null,
+  } : null;
 
-  const byCampaignMap = new Map();
-  const byCampaignDeviceMap = new Map();
-  const byCampaignNetworkMap = new Map();
-
-  /* ====================== Loop por cuenta (fetchInsights) ====================== */
+  // loop
   for (const customerId of idsToAudit) {
-    // 1) Metadata del customer (tz + moneda)
+    // 1) metadata
     try {
       const cInfo = await getCustomer(accessToken, customerId);
 
@@ -662,7 +674,7 @@ async function collectGoogle(userId, opts = {}) {
       currency = cInfo.currencyCode || currency;
       timeZone = cInfo.timeZone || timeZone;
     } catch (e) {
-      logger.warn('[gadsCollector] getCustomer fallo, usamos metadata mínima', {
+      logger.warn('[gadsCollector] getCustomer fallo', {
         customerId,
         error: e?.message || String(e),
       });
@@ -672,29 +684,45 @@ async function collectGoogle(userId, opts = {}) {
       }
     }
 
-    // 2) Traer métricas reales usando EXACTAMENTE el mismo helper que el panel
-    let payload;
+    const tzForThis = accountsMeta.get(customerId)?.timeZone || timeZone || 'UTC';
+    const strictRange = explicitRange ? { since: explicitRange.since, until: explicitRange.until } : getStrictLastNdRangeTZ(tzForThis, rangeDays);
+
+    const sinceThis = strictRange.since;
+    const untilThis = strictRange.until;
+
+    if (!globalSince || sinceThis < globalSince) globalSince = sinceThis;
+    if (!globalUntil || untilThis > globalUntil) globalUntil = untilThis;
+
+    // 2) fetchInsights (try range first, fallback to last_30d)
+    let payload = null;
+
     try {
       payload = await Ads.fetchInsights({
         accessToken,
         customerId,
-        datePreset: 'last_30d',
-        range: null,
-        includeToday: false, // ✅ NO hoy
+        datePreset: null,
+        range: { since: sinceThis, until: untilThis }, // ✅ variable
+        includeToday: false,
         objective: 'ventas',
         compareMode: null,
       });
     } catch (e) {
-      // Si es error de auth, intentamos refrescar una vez
-      if (e?.status === 401 || e?.status === 403) {
-        logger.warn('[gadsCollector] fetchInsights auth error, reintentando con token refrescado', {
+      // fallback: legacy behavior
+      try {
+        payload = await Ads.fetchInsights({
+          accessToken,
           customerId,
-          status: e?.status,
+          datePreset: 'last_30d',
+          range: null,
+          includeToday: false,
+          objective: 'ventas',
+          compareMode: null,
         });
-
-        accessToken = await ensureAccessToken(gaDoc);
-
-        if (accessToken) {
+      } catch (e2) {
+        // one retry on auth
+        if (e2?.status === 401 || e2?.status === 403) {
+          accessToken = await ensureAccessToken(gaDoc);
+          if (!accessToken) continue;
           try {
             payload = await Ads.fetchInsights({
               accessToken,
@@ -705,165 +733,69 @@ async function collectGoogle(userId, opts = {}) {
               objective: 'ventas',
               compareMode: null,
             });
-          } catch (err2) {
-            logger.error('[gadsCollector] fetchInsights fallo incluso tras refrescar token', {
-              customerId,
-              status: err2?.status,
-              detail: err2?.response?.data || err2?.api?.error || err2?.message,
-            });
+          } catch {
             continue;
           }
         } else {
           continue;
         }
-      } else {
-        logger.error('[gadsCollector] fetchInsights error', {
-          customerId,
-          status: e?.status,
-          detail: e?.response?.data || e?.api?.error || e?.message,
-        });
-        continue;
       }
     }
 
-    if (!payload || !payload.kpis) {
-      logger.warn('[gadsCollector] payload vacío o sin kpis para account', { customerId });
-      continue;
-    }
+    if (!payload || !payload.kpis) continue;
 
-    // 2.a) Range REAL del helper (lo que ve el panel)
-    const tzForThis = accountsMeta.get(customerId)?.timeZone || timeZone || 'UTC';
-    const strictFallback = getStrictLast30dRangeTZ(tzForThis);
-
-    const sinceThis =
-      payload?.range?.since ||
-      payload?.timeRange?.from ||
-      payload?.dateRange?.from ||
-      strictFallback.since;
-
-    const untilThis =
-      payload?.range?.until ||
-      payload?.timeRange?.to ||
-      payload?.dateRange?.to ||
-      strictFallback.until;
-
-    // global min/max (robusto)
-    if (!globalSince || sinceThis < globalSince) globalSince = sinceThis;
-    if (!globalUntil || untilThis > globalUntil) globalUntil = untilThis;
-
+    // KPIs por cuenta
     const k = payload.kpis || {};
     const impr = Number(k.impressions || 0);
     const clk = Number(k.clicks || 0);
     const cost = Number(k.cost || 0);
     const conv = Number(k.conversions || 0);
     const val = Number(k.conv_value || k.conversions_value || 0);
-    const allC = Number(k.all_conversions || 0);
-    const allV = Number(k.all_conv_value || k.all_conversions_value || 0);
 
-    // Totales globales
-    G.impr += impr;
-    G.clk += clk;
-    G.cost += cost;
-    G.conv += conv;
-    G.val += val;
-    G.allConv += allC;
-    G.allVal += allV;
-
-    // Serie diaria global (si el helper la trae)
-    const seriesArr = Array.isArray(payload.series) ? payload.series : [];
-    for (const p of seriesArr) {
-      const d = p.date || p.day || p.segment_date || p['segments.date'];
-      if (!d) continue;
-
-      // filtrar por rango real
-      if (sinceThis && d < sinceThis) continue;
-      if (untilThis && d > untilThis) continue;
-
-      const cur = seriesMap.get(d) || {
-        impressions: 0,
-        clicks: 0,
-        cost: 0,
-        conversions: 0,
-        conv_value: 0,
-        all_conversions: 0,
-        all_conv_value: 0,
-      };
-
-      cur.impressions += Number(p.impressions || 0);
-      cur.clicks += Number(p.clicks || 0);
-      cur.cost += Number(p.cost || 0);
-      cur.conversions += Number(p.conversions || 0);
-      cur.conv_value += Number(p.conv_value || p.conversions_value || 0);
-      cur.all_conversions += Number(p.all_conversions || 0);
-      cur.all_conv_value += Number(p.all_conv_value || p.all_conversions_value || 0);
-
-      seriesMap.set(d, cur);
-    }
-
-    // KPI agregados por cuenta
-    const accAgg = {
+    byAccountAgg.set(customerId, {
       impressions: impr,
       clicks: clk,
       cost,
       conversions: conv,
-      convValue: val,
-      allConversions: allC,
-      allConvValue: allV,
-    };
+      conv_value: val,
+      ctr: safeDiv(clk, impr) * 100,
+      cpc: safeDiv(cost, clk),
+      cpa: safeDiv(cost, conv),
+      roas: safeDiv(val, cost),
+    });
 
-    byAccountAgg.set(customerId, accAgg);
-
-    if (process.env.DEBUG_GOOGLE_COLLECTOR) {
-      logger.info('[gadsCollector] account payload para auditoría', {
-        customerId,
-        kpis: accAgg,
-        usedRange: { since: sinceThis, until: untilThis },
-        rawRange: payload.range || payload.timeRange || payload.dateRange || null,
-      });
-    }
-
-    // 3) Cargar breakdowns de campañas con el MISMO rango REAL
-    try {
-      await accumulateCampaignBreakdowns({
-        accessToken,
-        customerId,
-        since: sinceThis,
-        until: untilThis,
-        byCampaignMap,
-        byCampaignDeviceMap,
-        byCampaignNetworkMap,
-      });
-    } catch (e) {
-      logger.error('[gadsCollector] accumulateCampaignBreakdowns error', {
-        customerId,
-        error: e?.message || String(e),
-      });
-    }
+    // 3) campañas + breakdowns (GAQL) usando rango real
+    await accumulateCampaignBreakdowns({
+      accessToken,
+      customerId,
+      since: sinceThis,
+      until: untilThis,
+      byCampaignMap,
+      byCampaignDeviceMap,
+      byCampaignNetworkMap,
+      byDateMap,
+    });
   }
 
-  // Si por algún motivo no logramos rango global, lo derivamos por TZ (robusto)
   if (!globalSince || !globalUntil) {
-    const fallback = getStrictLast30dRangeTZ(timeZone || 'UTC');
+    const fallback = getStrictLastNdRangeTZ(timeZone || 'UTC', rangeDays);
     globalSince = globalSince || fallback.since;
     globalUntil = globalUntil || fallback.until;
   }
 
-  // Serie final ordenada
-  const series = Array.from(seriesMap.keys())
-    .sort()
-    .map((d) => ({ date: d, ...seriesMap.get(d) }));
-
-  // Construir listado de cuentas con KPIs por cuenta
+  // accounts list compact
   const accounts = idsToAudit.map((cid) => {
     const m = accountsMeta.get(cid) || {};
-    const agg = byAccountAgg.get(cid) || {
+    const a = byAccountAgg.get(cid) || {
       impressions: 0,
       clicks: 0,
       cost: 0,
       conversions: 0,
-      convValue: 0,
-      allConversions: 0,
-      allConvValue: 0,
+      conv_value: 0,
+      ctr: 0,
+      cpc: 0,
+      cpa: 0,
+      roas: 0,
     };
 
     return {
@@ -871,101 +803,210 @@ async function collectGoogle(userId, opts = {}) {
       name: m.name || `Cuenta ${cid}`,
       currency: m.currencyCode || null,
       timezone_name: m.timeZone || null,
-      kpis: {
-        impressions: agg.impressions,
-        clicks: agg.clicks,
-        cost: agg.cost,
-        conversions: agg.conversions,
-        conv_value: agg.convValue,
-        all_conversions: agg.allConversions,
-        all_conv_value: agg.allConvValue,
-        ctr: safeDiv(agg.clicks, agg.impressions) * 100,
-        cpc: safeDiv(agg.cost, agg.clicks),
-        cpa: safeDiv(agg.cost, agg.conversions),
-        roas: safeDiv(agg.convValue, agg.cost),
-        all_roas: safeDiv(agg.allConvValue, agg.cost),
-      },
+      kpis: a,
     };
   });
 
-  // Pasar los mapas de campañas a arrays ordenados
-  const byCampaign = Array.from(byCampaignMap.values())
-    .map((c) => {
-      const cost = microsToCurrency(c.cost_micros);
+  // global kpis from accountAgg
+  const G = accounts.reduce((acc, a) => {
+    const k = a.kpis || {};
+    acc.impressions += Number(k.impressions || 0);
+    acc.clicks += Number(k.clicks || 0);
+    acc.cost += Number(k.cost || 0);
+    acc.conversions += Number(k.conversions || 0);
+    acc.conv_value += Number(k.conv_value || 0);
+    return acc;
+  }, { impressions: 0, clicks: 0, cost: 0, conversions: 0, conv_value: 0 });
+
+  const globalKpis = {
+    impressions: G.impressions,
+    clicks: G.clicks,
+    cost: round2(G.cost),
+    conversions: G.conversions,
+    conv_value: round2(G.conv_value),
+    ctr: safeDiv(G.clicks, G.impressions) * 100,
+    cpc: safeDiv(G.cost, G.clicks),
+    cpa: safeDiv(G.cost, G.conversions),
+    roas: safeDiv(G.conv_value, G.cost),
+  };
+
+  // top campaigns (from byCampaignMap)
+  const byCampaignArr = Array.from(byCampaignMap.values());
+  const topByCost = topN(byCampaignArr, topCampaignsN, (c) => Number(c.cost_micros || 0));
+  const topByConv = topN(byCampaignArr, topCampaignsN, (c) => Number(c.conversions || 0));
+  const topByRoas = topN(byCampaignArr.filter(c => Number(c.cost_micros || 0) > 0), topCampaignsN, (c) => {
+    const cost = microsToCurrency(c.cost_micros);
+    return safeDiv(Number(c.conv_value || 0), cost);
+  });
+
+  const campaignsTop = {
+    top_campaigns: {
+      by_cost: topByCost.map(slimCampaignRow),
+      by_conversions: topByConv.map(slimCampaignRow),
+      by_roas: topByRoas.map(slimCampaignRow),
+    }
+  };
+
+  // breakdowns top (aggregate across campaigns)
+  const deviceTop = aggregateTopBreakdown(Array.from(byCampaignDeviceMap.values()), 'device', topBreakdownsN);
+  const networkTop = aggregateTopBreakdown(Array.from(byCampaignNetworkMap.values()), 'network', topBreakdownsN);
+
+  const breakdownsTop = {
+    device_top: deviceTop,
+    network_top: networkTop,
+  };
+
+  // daily series (account-level) from GAQL agg
+  const accountDaily = Array.from(byDateMap.values())
+    .map((x) => {
+      const cost = microsToCurrency(x.cost_micros);
       return {
-        ...c,
-        cost, // ✅ moneda final, redondeada UNA sola vez
-        ctr: safeDiv(c.clicks, c.impressions) * 100,
-        cpc: safeDiv(cost, c.clicks),
-        cpa: safeDiv(cost, c.conversions),
-        roas: safeDiv(c.conv_value, cost),
+        date: x.date,
+        account_id: x.account_id,
+        kpis: {
+          cost,
+          impressions: x.impressions,
+          clicks: x.clicks,
+          conversions: x.conversions,
+          conv_value: x.conv_value,
+          ctr: safeDiv(x.clicks, x.impressions) * 100,
+          cpc: safeDiv(cost, x.clicks),
+          cpa: safeDiv(cost, x.conversions),
+          roas: safeDiv(x.conv_value, cost),
+        }
       };
     })
-    .sort((a, b) => b.impressions - a.impressions)
-    .slice(0, 50);
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
 
-  const byCampaignDevice = Array.from(byCampaignDeviceMap.values())
-    .map((d) => {
-      const cost = microsToCurrency(d.cost_micros);
-      return {
-        ...d,
-        cost,
-        ctr: safeDiv(d.clicks, d.impressions) * 100,
-        cpc: safeDiv(cost, d.clicks),
-        cpa: safeDiv(cost, d.conversions),
-        roas: safeDiv(d.conv_value, cost),
-      };
-    })
-    .sort((a, b) => b.impressions - a.impressions);
+  // deltas (7/30) from daily series (more deterministic)
+  function aggWindowDaily(days) {
+    const end = globalUntil;
+    const start = (() => {
+      const [yy, mm, dd] = String(end).split('-').map(Number);
+      const base = new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1, 0, 0, 0));
+      base.setUTCDate(base.getUTCDate() - (days - 1));
+      return base.toISOString().slice(0, 10);
+    })();
 
-  const byCampaignNetwork = Array.from(byCampaignNetworkMap.values())
-    .map((n) => {
-      const cost = microsToCurrency(n.cost_micros);
-      return {
-        ...n,
-        cost,
-        ctr: safeDiv(n.clicks, n.impressions) * 100,
-        cpc: safeDiv(cost, n.clicks),
-        cpa: safeDiv(cost, n.conversions),
-        roas: safeDiv(n.conv_value, cost),
-      };
-    })
-    .sort((a, b) => b.impressions - a.impressions);
+    const rows = accountDaily.filter(r => r.date >= start && r.date <= end);
+    const k = rows.reduce((a, r) => {
+      const x = r.kpis || {};
+      a.cost += Number(x.cost || 0);
+      a.impressions += Number(x.impressions || 0);
+      a.clicks += Number(x.clicks || 0);
+      a.conversions += Number(x.conversions || 0);
+      a.conv_value += Number(x.conv_value || 0);
+      return a;
+    }, { cost: 0, impressions: 0, clicks: 0, conversions: 0, conv_value: 0 });
 
-  return {
-    notAuthorized: false,
+    k.ctr = safeDiv(k.clicks, k.impressions) * 100;
+    k.cpc = safeDiv(k.cost, k.clicks);
+    k.cpa = safeDiv(k.cost, k.conversions);
+    k.roas = safeDiv(k.conv_value, k.cost);
+    return k;
+  }
+
+  function prevWindowDaily(days) {
+    const end = globalUntil;
+    const endPrev = (() => {
+      const [yy, mm, dd] = String(end).split('-').map(Number);
+      const base = new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1, 0, 0, 0));
+      base.setUTCDate(base.getUTCDate() - days);
+      return base.toISOString().slice(0, 10);
+    })();
+    const startPrev = (() => {
+      const [yy, mm, dd] = String(endPrev).split('-').map(Number);
+      const base = new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1, 0, 0, 0));
+      base.setUTCDate(base.getUTCDate() - (days - 1));
+      return base.toISOString().slice(0, 10);
+    })();
+
+    const rows = accountDaily.filter(r => r.date >= startPrev && r.date <= endPrev);
+    const k = rows.reduce((a, r) => {
+      const x = r.kpis || {};
+      a.cost += Number(x.cost || 0);
+      a.impressions += Number(x.impressions || 0);
+      a.clicks += Number(x.clicks || 0);
+      a.conversions += Number(x.conversions || 0);
+      a.conv_value += Number(x.conv_value || 0);
+      return a;
+    }, { cost: 0, impressions: 0, clicks: 0, conversions: 0, conv_value: 0 });
+
+    k.ctr = safeDiv(k.clicks, k.impressions) * 100;
+    k.cpc = safeDiv(k.cost, k.clicks);
+    k.cpa = safeDiv(k.cost, k.conversions);
+    k.roas = safeDiv(k.conv_value, k.cost);
+    return k;
+  }
+
+  const last7 = aggWindowDaily(7);
+  const prev7 = prevWindowDaily(7);
+  const last30 = aggWindowDaily(30);
+  const prev30 = prevWindowDaily(30);
+
+  const summary = {
+    kpis: globalKpis,
+    windows: {
+      last_7_days: last7,
+      prev_7_days: prev7,
+      last_30_days: last30,
+      prev_30_days: prev30,
+    },
+    deltas: {
+      last7_vs_prev7: computeDeltas(last7, prev7),
+      last30_vs_prev30: computeDeltas(last30, prev30),
+    },
+  };
+
+  const rangeOut = { from: globalSince, to: globalUntil, tz: timeZone || null };
+
+  const header = makeGoogleHeader({
+    userId,
+    accountIds: idsToAudit,
+    accounts,
+    range: rangeOut,
     currency,
     timeZone,
+    version: 'gadsCollector@mcp-v1(costMicros+gaqlDaily+topN)',
+  });
 
-    // ✅ RANGO REAL alineado al panel/UI
-    timeRange: { from: globalSince, to: globalUntil },
-
-    kpis: {
-      impressions: G.impr,
-      clicks: G.clk,
-      cost: G.cost,
-      conversions: G.conv,
-      conv_value: G.val,
-      all_conversions: G.allConv,
-      all_conv_value: G.allVal,
-      ctr: safeDiv(G.clk, G.impr) * 100,
-      cpc: safeDiv(G.cost, G.clk),
-      cpa: safeDiv(G.cost, G.conv),
-      roas: safeDiv(G.val, G.cost),
-      all_roas: safeDiv(G.allVal, G.cost),
+  const datasets = [
+    {
+      source: 'googleAds',
+      dataset: 'google.insights_summary',
+      range: rangeOut,
+      data: { meta: header, summary },
     },
+    {
+      source: 'googleAds',
+      dataset: 'google.campaigns_top',
+      range: rangeOut,
+      data: { meta: header, ...campaignsTop },
+    },
+    {
+      source: 'googleAds',
+      dataset: 'google.breakdowns_top',
+      range: rangeOut,
+      data: { meta: header, ...breakdownsTop },
+    },
+    {
+      source: 'googleAds',
+      dataset: 'google.account_daily',
+      range: rangeOut,
+      data: { meta: header, account_daily: accountDaily },
+    },
+  ];
 
-    byCampaign,
-    byCampaignDevice,
-    byCampaignNetwork,
-    series,
-
+  return {
+    ok: true,
+    notAuthorized: false,
+    reason: null,
+    currency,
+    timeZone,
+    timeRange: { from: globalSince, to: globalUntil },
     accountIds: idsToAudit,
-    defaultCustomerId: gaDoc.defaultCustomerId ? normId(gaDoc.defaultCustomerId) : null,
     accounts,
-
-    targets: { cpaHigh: 15 },
-    version: 'gadsCollector@costMicros-accum+uiRemovedExcluded+range-strict30d-tz',
+    datasets,
   };
 }
 

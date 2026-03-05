@@ -3,16 +3,6 @@
 
 const mongoose = require('mongoose');
 const { Schema, model, Types } = mongoose;
-
-/**
- * McpData
- * - NO tokens
- * - SOLO marketing data (kpis, campaigns, adsets, ads, conversions, geo/device/placement, ga4 events/pages, etc.)
- * - Una sola colección con 2 kinds:
- *   - root: estado y punteros (1 por usuario)
- *   - chunk: datasets compactados (muchos por usuario)
- */
-
 const RangeSchema = new Schema(
   {
     from: { type: String, default: null }, // "YYYY-MM-DD"
@@ -25,6 +15,12 @@ const RangeSchema = new Schema(
 const SourceStateSchema = new Schema(
   {
     connected: { type: Boolean, default: false },
+
+    // ✅ NUEVO: status pro para cola/worker
+    // queued | running | ready | error
+    status: { type: String, default: 'queued' },
+
+    // compat (si lo usabas)
     ready: { type: Boolean, default: false },
 
     // IDs no sensibles (solo referencia)
@@ -40,6 +36,9 @@ const SourceStateSchema = new Schema(
     // sync/status
     lastSyncAt: { type: Date, default: null },
     lastError: { type: String, default: null },
+
+    // opcional: policy aplicada por plan
+    rangeDays: { type: Number, default: null },
   },
   { _id: false }
 );
@@ -86,18 +85,7 @@ const McpDataSchema = new Schema(
       index: true,
     },
 
-    /**
-     * dataset examples:
-     * - "meta.insights_daily_campaign"
-     * - "meta.structure_campaigns"
-     * - "meta.breakdowns_top"
-     * - "google.insights_daily_campaign"
-     * - "google.structure_campaigns"
-     * - "ga4.kpis_daily"
-     * - "ga4.landing_pages_top"
-     * - "ga4.source_medium_top"
-     * - "ga4.events_top"
-     */
+    
     dataset: { type: String, default: null, index: true },
 
     range: { type: RangeSchema, default: () => ({}) },
@@ -120,7 +108,10 @@ const McpDataSchema = new Schema(
 /* ---------------- Índices recomendados ---------------- */
 
 // 1) Root lookup rápido
-McpDataSchema.index({ userId: 1, kind: 1 }, { unique: true, partialFilterExpression: { kind: 'root' } });
+McpDataSchema.index(
+  { userId: 1, kind: 1 },
+  { unique: true, partialFilterExpression: { kind: 'root' } }
+);
 
 // 2) Consultar chunks por snapshot/source/dataset
 McpDataSchema.index({ userId: 1, kind: 1, snapshotId: 1 });
@@ -129,17 +120,94 @@ McpDataSchema.index({ userId: 1, kind: 1, source: 1, dataset: 1, 'range.from': 1
 // 3) Latest chunks
 McpDataSchema.index({ userId: 1, kind: 1, createdAt: -1 });
 
+// ✅ 4) CRÍTICO: evitar duplicados por dataset+range dentro de snapshot
+McpDataSchema.index(
+  { userId: 1, kind: 1, snapshotId: 1, source: 1, dataset: 1, 'range.from': 1, 'range.to': 1 },
+  { unique: true, partialFilterExpression: { kind: 'chunk' } }
+);
+
 /* ---------------- Helpers estáticos ---------------- */
 
 McpDataSchema.statics.upsertRoot = async function (userId, patch = {}) {
   const now = new Date();
   return this.findOneAndUpdate(
     { userId, kind: 'root' },
-    { $set: { ...patch, kind: 'root', userId, updatedAt: now }, $setOnInsert: { createdAt: now } },
+    {
+      $set: { ...patch, kind: 'root', userId, updatedAt: now },
+      $setOnInsert: { createdAt: now }
+    },
     { upsert: true, new: true }
   );
 };
 
+/**
+ * ✅ Patch específico de una fuente en root:
+ * - patchRootSource(userId, 'metaAds', { status:'running', lastError:null, ready:false })
+ */
+McpDataSchema.statics.patchRootSource = async function (userId, sourceKey, patch = {}) {
+  const now = new Date();
+  const $set = {};
+
+  for (const [k, v] of Object.entries(patch || {})) {
+    $set[`sources.${sourceKey}.${k}`] = v;
+  }
+  $set.updatedAt = now;
+
+  return this.findOneAndUpdate(
+    { userId, kind: 'root' },
+    { $setOnInsert: { userId, kind: 'root', createdAt: now }, $set },
+    { upsert: true, new: true }
+  );
+};
+
+/**
+ * ✅ UPSERT chunk (para que jobs no dupliquen)
+ */
+McpDataSchema.statics.upsertChunk = async function ({
+  userId,
+  snapshotId,
+  source,
+  dataset,
+  range,
+  data,
+  stats,
+} = {}) {
+  const now = new Date();
+  const from = range?.from ?? null;
+  const to = range?.to ?? null;
+  const tz = range?.tz ?? null;
+
+  return this.findOneAndUpdate(
+    {
+      userId,
+      kind: 'chunk',
+      snapshotId: snapshotId || null,
+      source: source || null,
+      dataset: dataset || null,
+      'range.from': from,
+      'range.to': to,
+    },
+    {
+      $set: {
+        userId,
+        kind: 'chunk',
+        snapshotId: snapshotId || null,
+        source: source || null,
+        dataset: dataset || null,
+        range: { from, to, tz },
+        data: data ?? null,
+        stats: stats || {},
+        updatedAt: now,
+      },
+      $setOnInsert: { createdAt: now },
+    },
+    { upsert: true, new: true }
+  );
+};
+
+/**
+ * (LEGACY) Insert directo (solo si lo quieres seguir usando para debug)
+ */
 McpDataSchema.statics.insertChunk = async function ({
   userId,
   snapshotId,

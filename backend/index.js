@@ -430,6 +430,8 @@ app.use("/api/onboarding/status", sessionGuard, require("./routes/onboardingStat
 
 app.use('/api/onboarding', require('./routes/onboardingReset'));
 
+app.use('/api/mcpjobs', sessionGuard, require('./routes/mcpjobs'));
+
 /* =========================
  * ✅ Integraciones: DISCONNECT (E2E)
  * ========================= */
