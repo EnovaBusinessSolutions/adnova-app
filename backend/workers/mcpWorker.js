@@ -19,7 +19,6 @@ const REDIS_URL = process.env.REDIS_URL || '';
 
 if (!MONGO_URI) {
   console.error('[mcpWorker] ❌ Missing MONGO_URI in environment');
-  // en Render es mejor salir para que veas el error claro
   process.exit(1);
 }
 if (!REDIS_URL) {
@@ -111,10 +110,7 @@ async function connectMongo() {
   // evita el "buffering timed out"
   mongoose.set('bufferCommands', false);
 
-  // conexión robusta para Render
   await mongoose.connect(MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
     serverSelectionTimeoutMS: 20_000,
     socketTimeoutMS: 45_000,
   });
@@ -140,19 +136,29 @@ async function boot() {
         return await runMetaJob({ userId, rangeDays });
       }
 
-      // luego agregamos googleAds / ga4
       throw new Error(`UNSUPPORTED_SOURCE:${source}`);
     },
     { connection, concurrency: 2 }
   );
 
-  worker.on('completed', (job) => {
-    console.log('[mcpWorker] ✅ completed', job.id, job.name);
+  // ✅ DEBUG EVENTS (aquí ya existe worker)
+  worker.on('active', (job) => {
+    console.log('[mcpWorker] ▶️ active', job.id, job.data);
   });
-
+  worker.on('completed', (job, result) => {
+    console.log('[mcpWorker] ✅ completed', job.id, result);
+  });
   worker.on('failed', (job, err) => {
     console.error('[mcpWorker] ❌ failed', job?.id, err?.message || err);
   });
+  worker.on('error', (err) => {
+    console.error('[mcpWorker] ❌ worker error', err?.message || err);
+  });
+
+  // ✅ heartbeat dentro de boot (para que no corra si boot falla)
+  setInterval(() => {
+    console.log('[mcpWorker] ❤️ heartbeat', new Date().toISOString());
+  }, 15000);
 
   console.log('[mcpWorker] ✅ running');
 }
@@ -161,24 +167,6 @@ boot().catch((e) => {
   console.error('[mcpWorker] ❌ boot error:', e?.message || e);
   process.exit(1);
 });
-
-worker.on('active', (job) => {
-  console.log('[mcpWorker] ▶️ active', job.id, job.data);
-});
-worker.on('completed', (job, result) => {
-  console.log('[mcpWorker] ✅ completed', job.id, result);
-});
-worker.on('failed', (job, err) => {
-  console.error('[mcpWorker] ❌ failed', job?.id, err?.message || err);
-});
-worker.on('error', (err) => {
-  console.error('[mcpWorker] ❌ worker error', err?.message || err);
-});
-
-// heartbeat cada 15s para confirmar que sigue vivo
-setInterval(() => {
-  console.log('[mcpWorker] ❤️ heartbeat', new Date().toISOString());
-}, 15000);
 
 /* =========================
  * Graceful shutdown
