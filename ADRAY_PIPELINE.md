@@ -465,6 +465,20 @@ Check if `cookie-parser` is already installed. If not, add `cookie-parser` to de
 
 ---
 
+# Phase 3: Universal Pixel & Platform-Agnostic Architecture
+
+**Goal**: Disconnect the core tracking and attribution engine from Shopify-specific dependencies, allowing AdRay to be installed on WooCommerce, Custom Sites, Magento, or via Google Tag Manager (GTM).
+
+### Implementation Plan
+
+| # | What | Description |
+|---|------|-------------|
+| 22 | Universal Pixel Script | Update the pixel (dray-pixel.js) to use a universal ccountId injected via snippet (e.g., <script src='cdn/pixel.js' data-account-id='acct_12345'></script>) instead of auto-detecting window.Shopify.shop. |
+| 23 | Database Realignment | In Prisma (schema.prisma), rename the Shop model to Account or Organization, and replace the shopId foreign keys with ccountId across all tables (Event, Order, Session, etc.). |
+| 24 | Backend Route Refactor | Update POST /collect and dashboard APIs to group and process data by ccountId rather than shop_id. Shopify webhooks will map their origin shop domain to the overarching ccountId. |
+
+---
+
 ## Appendix A: Low-Friction Production Testing (Without App Approval)
 
 When testing on a real merchant's store before Shopify approves the app, you cannot use the standard OAuth installation flow easily. Instead, use this manual bypass pattern.
