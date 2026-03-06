@@ -162,6 +162,24 @@ boot().catch((e) => {
   process.exit(1);
 });
 
+worker.on('active', (job) => {
+  console.log('[mcpWorker] ▶️ active', job.id, job.data);
+});
+worker.on('completed', (job, result) => {
+  console.log('[mcpWorker] ✅ completed', job.id, result);
+});
+worker.on('failed', (job, err) => {
+  console.error('[mcpWorker] ❌ failed', job?.id, err?.message || err);
+});
+worker.on('error', (err) => {
+  console.error('[mcpWorker] ❌ worker error', err?.message || err);
+});
+
+// heartbeat cada 15s para confirmar que sigue vivo
+setInterval(() => {
+  console.log('[mcpWorker] ❤️ heartbeat', new Date().toISOString());
+}, 15000);
+
 /* =========================
  * Graceful shutdown
  * ========================= */
