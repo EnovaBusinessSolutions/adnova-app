@@ -4,15 +4,20 @@
 const { Queue } = require('bullmq');
 const IORedis = require('ioredis');
 
-const REDIS_URL = process.env.REDIS_URL || process.env.UPSTASH_REDIS_REST_URL || '';
+const REDIS_URL = process.env.REDIS_URL || '';
+const QUEUE_NAME = 'mcp-collect';
 
 if (!REDIS_URL) {
-  console.warn('[mcpQueue] ⚠️  Missing REDIS_URL. Queue will not work.');
+  console.warn('[mcpQueue] Missing REDIS_URL. Queue will not work.');
 }
 
-const connection = REDIS_URL ? new IORedis(REDIS_URL, { maxRetriesPerRequest: null }) : null;
+const connection = REDIS_URL
+  ? new IORedis(REDIS_URL, {
+      maxRetriesPerRequest: null,
+    })
+  : null;
 
-const mcpQueue = new Queue('mcp-collect', {
+const mcpQueue = new Queue(QUEUE_NAME, {
   connection,
   defaultJobOptions: {
     attempts: 5,
@@ -22,19 +27,76 @@ const mcpQueue = new Queue('mcp-collect', {
   },
 });
 
-// jobId determinístico = evita spam (debounce por user+source)
-function jobIdFor(userId, source) {
-  return `mcp:${String(userId)}:${String(source)}`;
+/**
+ * ✅ JobId único para debug real
+ * - Evita reciclar el mismo jobId por user+source
+ * - Fuerza que cada prueba cree un job nuevo
+ */
+function uniqueJobId(userId, source) {
+  return `mcp:${String(userId)}:${String(source)}:${Date.now()}`;
 }
 
 async function enqueueMcpCollect({ userId, source, rangeDays, reason }) {
   if (!connection) throw new Error('REDIS_NOT_CONFIGURED');
 
-  return mcpQueue.add(
-    'collect',
-    { userId: String(userId), source, rangeDays, reason: reason || 'manual' },
-    { jobId: jobIdFor(userId, source) }
+  const payload = {
+    userId: String(userId),
+    source: String(source || ''),
+    rangeDays: rangeDays == null ? null : Number(rangeDays),
+    reason: reason || 'manual',
+    enqueuedAt: new Date().toISOString(),
+  };
+
+  console.log('[mcpQueue] enqueue request', {
+    queue: QUEUE_NAME,
+    userId: payload.userId,
+    source: payload.source,
+    rangeDays: payload.rangeDays,
+    reason: payload.reason,
+  });
+
+  const countsBefore = await mcpQueue.getJobCounts(
+    'waiting',
+    'active',
+    'completed',
+    'failed',
+    'delayed',
+    'paused'
   );
+
+  console.log('[mcpQueue] counts before add', countsBefore);
+
+  const job = await mcpQueue.add('collect', payload, {
+    jobId: uniqueJobId(payload.userId, payload.source),
+  });
+
+  let state = 'unknown';
+  try {
+    state = await job.getState();
+  } catch (_) {
+    // noop
+  }
+
+  const countsAfter = await mcpQueue.getJobCounts(
+    'waiting',
+    'active',
+    'completed',
+    'failed',
+    'delayed',
+    'paused'
+  );
+
+  console.log('[mcpQueue] enqueued job', {
+    queue: QUEUE_NAME,
+    id: job.id,
+    name: job.name,
+    state,
+    data: payload,
+  });
+
+  console.log('[mcpQueue] counts after add', countsAfter);
+
+  return job;
 }
 
 module.exports = { mcpQueue, enqueueMcpCollect };
