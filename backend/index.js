@@ -1315,6 +1315,14 @@ app.use("/api/dashboard", dashboardRoute);
 app.use("/api/shopConnection", require("./routes/shopConnection"));
 app.use("/api", subscribeRouter);
 
+// Explicit pixel route with cross-origin headers so external storefronts can load it.
+app.get('/adray-pixel.js', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+  return res.sendFile(path.join(__dirname, '../public/adray-pixel.js'));
+});
+
 // Estáticos (públicos)
 app.use("/assets", express.static(path.join(__dirname, "../public/landing/assets")));
 app.use("/assets", express.static(path.join(__dirname, "../public/support/assets")));

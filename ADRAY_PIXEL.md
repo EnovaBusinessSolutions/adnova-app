@@ -338,3 +338,68 @@ ENCRYPTION_KEY
 ---
 
 Build this completely. Start with the Prisma schema, then the Express app with all routes, then each service class. Use async/await throughout. Add JSDoc comments on all service methods. The code should be production-ready.
+
+---
+
+## Troubleshooting Checklist: `/collect` Not Appearing
+
+Current status: script tag is present, but `/collect` is still not visible in Network.
+
+Run these tests in order and stop when one fails.
+
+1. Confirm script URL is reachable directly
+- Open in browser: `https://adray-app-staging-german.onrender.com/adray-pixel.js`
+- Expected: JavaScript file contents load (not HTML error page).
+
+2. Confirm the script tag exists in page source
+- Open page source (`Ctrl+U`) and search for `adray-pixel.js`.
+- Expected: one `<script ... data-account-id="...">` is present.
+
+3. Confirm browser attempted to load pixel file
+- DevTools -> Network -> filter `adray-pixel.js`.
+- Expected: status `200`.
+- If status shows blocked (CSP/client/security), fix policy or local host method.
+
+4. Confirm runtime object exists
+- In Console: `typeof window.AdRay`
+- Expected: `"object"`.
+- If `undefined`, script failed to execute (check Console errors immediately).
+
+5. Force a manual debug event
+- In Console: `window.AdRay?.track('debug_event', { test: true })`
+- Expected: request to `/collect` appears in Network.
+
+6. Verify no filter is hiding request
+- In Network, clear text filter and check `All` + `Fetch/XHR` tabs.
+- Search for `collect` and also check for `OPTIONS` preflight.
+
+7. Validate Console errors
+- Look for messages like:
+  - `Refused to load the script ... because it violates Content Security Policy`
+  - `ERR_BLOCKED_BY_CLIENT`
+  - CORS errors for `/collect`
+- Expected: no blocking errors.
+
+8. Validate account ID format
+- `data-account-id` must be plain value, e.g. `interhomesmart.com.mx`.
+- Do not use `https://` or trailing slash `/`.
+
+9. Test without `async` during diagnosis
+- Use script tag without `async` to avoid timing issues while debugging.
+- Expected: easier reproducibility and deterministic loading.
+
+10. Check theme hook actually renders
+- If using `wp_footer`, ensure theme has `<?php wp_footer(); ?>`.
+- If uncertain, inject via `wp_head` or a headers plugin.
+
+11. Bypass external-domain blocking (quick isolation)
+- Host a local copy in WordPress (`/wp-content/uploads/adray-pixel.js`) and load from same origin.
+- If local works and remote fails, issue is CSP/WAF/adblock on third-party script domain.
+
+12. Re-test with cache disabled
+- Hard refresh (`Ctrl+F5`) + DevTools `Disable cache` checked.
+- Expected: fresh script and fresh network attempts.
+
+13. Final confirmation target
+- On page load, at least one `POST /collect` should appear (`page_view`).
+- You should not need `add_to_cart` to see initial collect.
