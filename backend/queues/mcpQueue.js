@@ -27,15 +27,6 @@ const mcpQueue = new Queue(QUEUE_NAME, {
   },
 });
 
-/**
- * ✅ JobId único para debug real
- * - Evita reciclar el mismo jobId por user+source
- * - Fuerza que cada prueba cree un job nuevo
- */
-function uniqueJobId(userId, source) {
-  return `mcp:${String(userId)}:${String(source)}:${Date.now()}`;
-}
-
 async function enqueueMcpCollect({ userId, source, rangeDays, reason }) {
   if (!connection) throw new Error('REDIS_NOT_CONFIGURED');
 
@@ -66,9 +57,8 @@ async function enqueueMcpCollect({ userId, source, rangeDays, reason }) {
 
   console.log('[mcpQueue] counts before add', countsBefore);
 
-  const job = await mcpQueue.add('collect', payload, {
-    jobId: uniqueJobId(payload.userId, payload.source),
-  });
+  // ✅ Sin jobId para evitar bloqueo por IDs custom inválidos o reciclados
+  const job = await mcpQueue.add('collect', payload);
 
   let state = 'unknown';
   try {
