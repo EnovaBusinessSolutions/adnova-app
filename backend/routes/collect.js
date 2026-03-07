@@ -6,6 +6,15 @@ const redisClient = require('../utils/redisClient');
 const { resolveUserKey } = require('../services/identityResolution');
 const eventBus = require('../utils/eventBus');
 
+function safeHostname(value) {
+  if (!value || typeof value !== 'string') return null;
+  try {
+    return new URL(value).hostname;
+  } catch (_) {
+    return null;
+  }
+}
+
 router.post('/', async (req, res) => {
   try {
     const payload = req.body;
@@ -37,7 +46,7 @@ router.post('/', async (req, res) => {
       where: { accountId },
       create: {
         accountId,
-        domain: payload.page_url ? new URL(payload.page_url).hostname : accountId,
+        domain: safeHostname(payload.page_url) || accountId,
         platform: ['SHOPIFY', 'WOOCOMMERCE', 'MAGENTO', 'CUSTOM', 'OTHER'].includes(platformEnum) ? platformEnum : 'CUSTOM'
       },
       update: {} // No updates if exists

@@ -3,7 +3,7 @@ services:
     name: adnova-ai
     env: node
     buildCommand: npm install && npx prisma generate --schema=backend/prisma/schema.prisma
-    startCommand: node backend/index.js
+    startCommand: npm run prisma:push && node backend/index.js
     envVars:
       - key: NODE_VERSION
         value: 18
