@@ -18,11 +18,11 @@ const MONGO_URI = process.env.MONGO_URI || '';
 const REDIS_URL = process.env.REDIS_URL || '';
 
 if (!MONGO_URI) {
-  console.error('[mcpWorker] ❌ Missing MONGO_URI in environment');
+  console.error('[mcpWorker] Missing MONGO_URI in environment');
   process.exit(1);
 }
 if (!REDIS_URL) {
-  console.error('[mcpWorker] ❌ Missing REDIS_URL in environment');
+  console.error('[mcpWorker] Missing REDIS_URL in environment');
   process.exit(1);
 }
 
@@ -36,17 +36,153 @@ function ymdUTC(d = new Date()) {
   return new Date(d).toISOString().slice(0, 10);
 }
 
+function toNum(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function safeString(v) {
+  return v == null ? null : String(v);
+}
+
+function estimateBytes(obj) {
+  try {
+    return Buffer.byteLength(JSON.stringify(obj ?? null), 'utf8');
+  } catch {
+    return 0;
+  }
+}
+
+function inferRowsFromDataset(datasetName, data) {
+  const ds = String(datasetName || '');
+
+  if (!data || typeof data !== 'object') return 0;
+
+  if (ds === 'meta.insights_summary') {
+    return 1;
+  }
+
+  if (ds === 'meta.campaigns_top') {
+    const top = data?.top_campaigns || {};
+    return (
+      (Array.isArray(top.by_spend) ? top.by_spend.length : 0) +
+      (Array.isArray(top.by_purchases) ? top.by_purchases.length : 0) +
+      (Array.isArray(top.by_roas) ? top.by_roas.length : 0)
+    );
+  }
+
+  if (ds === 'meta.breakdowns_top') {
+    return (
+      (Array.isArray(data?.device_top) ? data.device_top.length : 0) +
+      (Array.isArray(data?.placement_top) ? data.placement_top.length : 0)
+    );
+  }
+
+  if (ds === 'meta.campaigns_daily') {
+    return Array.isArray(data?.campaigns_daily) ? data.campaigns_daily.length : 0;
+  }
+
+  // fallback genérico
+  let total = 0;
+  for (const v of Object.values(data)) {
+    if (Array.isArray(v)) total += v.length;
+  }
+  return total;
+}
+
+function buildChunkStats(datasetName, data, stats) {
+  const rows = stats?.rows != null ? toNum(stats.rows) : inferRowsFromDataset(datasetName, data);
+  const bytes = stats?.bytes != null ? toNum(stats.bytes) : estimateBytes(data);
+  return { rows, bytes };
+}
+
+function extractMetaRootPatchFromResult(r, days) {
+  const summaryDs = Array.isArray(r?.datasets)
+    ? r.datasets.find((x) => x?.dataset === 'meta.insights_summary') || r.datasets[0]
+    : null;
+
+  const meta = summaryDs?.data?.meta || null;
+  const accounts = Array.isArray(meta?.accounts) ? meta.accounts : [];
+  const firstAccount = accounts[0] || null;
+
+  const range = r?.timeRange
+    ? {
+        from: safeString(r.timeRange.from) || safeString(r.timeRange.since) || null,
+        to: safeString(r.timeRange.to) || safeString(r.timeRange.until) || null,
+        tz: safeString(meta?.range?.tz) || safeString(summaryDs?.range?.tz) || null,
+      }
+    : {
+        from: safeString(summaryDs?.range?.from) || null,
+        to: safeString(summaryDs?.range?.to) || null,
+        tz: safeString(summaryDs?.range?.tz) || null,
+      };
+
+  const accountId =
+    safeString(firstAccount?.id) ||
+    (Array.isArray(r?.accountIds) && r.accountIds.length ? safeString(r.accountIds[0]) : null) ||
+    safeString(r?.defaultAccountId) ||
+    null;
+
+  const name = safeString(firstAccount?.name) || null;
+  const currency = safeString(firstAccount?.currency) || safeString(r?.currency) || null;
+  const timezone =
+    safeString(firstAccount?.timezone_name) ||
+    safeString(firstAccount?.timezone) ||
+    safeString(range?.tz) ||
+    null;
+
+  return {
+    sourcePatch: {
+      connected: true,
+      status: 'ready',
+      ready: true,
+      lastError: null,
+      lastSyncAt: new Date(),
+      rangeDays: days,
+      accountId,
+      name,
+      currency,
+      timezone,
+    },
+    rootPatch: {
+      latestSnapshotId: null, // se setea después
+      coverage: {
+        range,
+        defaultRangeDays: days,
+        granularity: ['summary', 'daily', 'campaign', 'breakdown'],
+      },
+    },
+    metaSummary: {
+      accountId,
+      name,
+      currency,
+      timezone,
+      range,
+    },
+  };
+}
+
+function summarizeDatasets(datasets) {
+  const out = {};
+  for (const ds of Array.isArray(datasets) ? datasets : []) {
+    out[String(ds?.dataset || 'unknown')] = buildChunkStats(ds?.dataset, ds?.data, ds?.stats);
+  }
+  return out;
+}
+
 async function resolveRangeDaysByPlan(userId, requestedDays) {
   if (requestedDays) return Number(requestedDays);
 
   const u = await User.findById(userId).select('plan').lean();
-  const plan = String(u?.plan || 'gratis');
+  const plan = String(u?.plan || 'gratis').toLowerCase();
 
-  // ✅ Free: 60d
-  if (plan === 'gratis') return 60;
+  // Free: 60d
+  if (plan === 'gratis' || plan === 'free') return 60;
 
-  // Pro/enterprise: por ahora 90 (luego 365)
-  if (plan === 'pro' || plan === 'enterprise') return 90;
+  // Pro / crecimiento / enterprise: > 60d
+  if (plan === 'pro' || plan === 'crecimiento' || plan === 'growth' || plan === 'enterprise') {
+    return 90;
+  }
 
   return 60;
 }
@@ -55,6 +191,7 @@ async function runMetaJob({ userId, rangeDays }) {
   const snapshotId = `snap_${ymdUTC()}`;
 
   await McpData.patchRootSource(userId, 'metaAds', {
+    connected: true,
     status: 'running',
     ready: false,
     lastError: null,
@@ -62,43 +199,80 @@ async function runMetaJob({ userId, rangeDays }) {
 
   const days = await resolveRangeDaysByPlan(userId, rangeDays);
 
-  // 👇 tu collector debe regresar { ok:true, datasets:[...] }
+  console.log('[mcpWorker] runMetaJob:start', {
+    userId: String(userId),
+    snapshotId,
+    rangeDays: days,
+  });
+
   const r = await collectMeta(userId, { rangeDays: days });
+
+  console.log('[mcpWorker] collectMeta:result', {
+    userId: String(userId),
+    ok: !!r?.ok,
+    reason: r?.reason || null,
+    datasetsCount: Array.isArray(r?.datasets) ? r.datasets.length : 0,
+    accountIds: Array.isArray(r?.accountIds) ? r.accountIds : [],
+    timeRange: r?.timeRange || null,
+  });
 
   if (!r?.ok) {
     await McpData.patchRootSource(userId, 'metaAds', {
+      connected: true,
       status: 'error',
       ready: false,
       lastError: r?.reason || 'META_COLLECT_FAILED',
       lastSyncAt: null,
       rangeDays: days,
     });
+
     throw new Error(r?.reason || 'META_COLLECT_FAILED');
   }
 
-  // Guardar datasets (upsert para evitar duplicados)
+  // Guardar chunks con stats enriquecidos
   for (const ds of r.datasets || []) {
+    const enrichedStats = buildChunkStats(ds?.dataset, ds?.data, ds?.stats);
+
     await McpData.upsertChunk({
       userId,
       snapshotId,
-      source: ds.source,     // esperado: "metaAds"
-      dataset: ds.dataset,   // e.g. "meta.insights_summary"
-      range: ds.range,       // {from,to,tz}
+      source: ds.source,
+      dataset: ds.dataset,
+      range: ds.range,
       data: ds.data,
-      stats: ds.stats || null,
+      stats: enrichedStats,
+    });
+
+    console.log('[mcpWorker] chunk upserted', {
+      userId: String(userId),
+      snapshotId,
+      dataset: ds?.dataset,
+      source: ds?.source,
+      range: ds?.range || null,
+      stats: enrichedStats,
     });
   }
 
-  await McpData.patchRootSource(userId, 'metaAds', {
-    status: 'ready',
-    ready: true,
-    lastError: null,
-    lastSyncAt: new Date(),
-    rangeDays: days,
+  // Enriquecer root con metadata real del source
+  const rootMeta = extractMetaRootPatchFromResult(r, days);
+
+  await McpData.patchRootSource(userId, 'metaAds', rootMeta.sourcePatch);
+
+  await McpData.upsertRoot(userId, {
+    latestSnapshotId: snapshotId,
+    coverage: rootMeta.rootPatch.coverage,
+    stats: {
+      rows: Object.values(summarizeDatasets(r.datasets)).reduce((acc, s) => acc + toNum(s.rows), 0),
+      bytes: Object.values(summarizeDatasets(r.datasets)).reduce((acc, s) => acc + toNum(s.bytes), 0),
+    },
   });
 
-  // opcional: guardar latestSnapshotId en root
-  await McpData.upsertRoot(userId, { latestSnapshotId: snapshotId });
+  console.log('[mcpWorker] root enriched', {
+    userId: String(userId),
+    snapshotId,
+    metaAds: rootMeta.metaSummary,
+    datasets: summarizeDatasets(r.datasets),
+  });
 
   return { ok: true, snapshotId, saved: (r.datasets || []).length };
 }
@@ -107,7 +281,6 @@ async function runMetaJob({ userId, rangeDays }) {
  * Mongo Connect (CRÍTICO)
  * ========================= */
 async function connectMongo() {
-  // evita el "buffering timed out"
   mongoose.set('bufferCommands', false);
 
   await mongoose.connect(MONGO_URI, {
@@ -115,7 +288,7 @@ async function connectMongo() {
     socketTimeoutMS: 45_000,
   });
 
-  console.log('[mcpWorker] ✅ Mongo connected');
+  console.log('[mcpWorker] Mongo connected');
 }
 
 /* =========================
@@ -130,6 +303,13 @@ async function boot() {
     'mcp-collect',
     async (job) => {
       const { userId, source, rangeDays } = job.data || {};
+
+      console.log('[mcpWorker] job received', {
+        id: job?.id,
+        name: job?.name,
+        data: job?.data || null,
+      });
+
       if (!userId) throw new Error('MISSING_USER_ID');
 
       if (source === 'metaAds') {
@@ -141,30 +321,31 @@ async function boot() {
     { connection, concurrency: 2 }
   );
 
-  // ✅ DEBUG EVENTS (aquí ya existe worker)
   worker.on('active', (job) => {
-    console.log('[mcpWorker] ▶️ active', job.id, job.data);
-  });
-  worker.on('completed', (job, result) => {
-    console.log('[mcpWorker] ✅ completed', job.id, result);
-  });
-  worker.on('failed', (job, err) => {
-    console.error('[mcpWorker] ❌ failed', job?.id, err?.message || err);
-  });
-  worker.on('error', (err) => {
-    console.error('[mcpWorker] ❌ worker error', err?.message || err);
+    console.log('[mcpWorker] active', job.id, job.data);
   });
 
-  // ✅ heartbeat dentro de boot (para que no corra si boot falla)
+  worker.on('completed', (job, result) => {
+    console.log('[mcpWorker] completed', job.id, result);
+  });
+
+  worker.on('failed', (job, err) => {
+    console.error('[mcpWorker] failed', job?.id, err?.message || err);
+  });
+
+  worker.on('error', (err) => {
+    console.error('[mcpWorker] worker error', err?.message || err);
+  });
+
   setInterval(() => {
-    console.log('[mcpWorker] ❤️ heartbeat', new Date().toISOString());
+    console.log('[mcpWorker] heartbeat', new Date().toISOString());
   }, 15000);
 
-  console.log('[mcpWorker] ✅ running');
+  console.log('[mcpWorker] running');
 }
 
 boot().catch((e) => {
-  console.error('[mcpWorker] ❌ boot error:', e?.message || e);
+  console.error('[mcpWorker] boot error:', e?.message || e);
   process.exit(1);
 });
 

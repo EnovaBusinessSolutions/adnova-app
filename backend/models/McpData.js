@@ -3,11 +3,32 @@
 
 const mongoose = require('mongoose');
 const { Schema, model, Types } = mongoose;
+
+/* =========================
+ * Shared sub-schemas
+ * ========================= */
 const RangeSchema = new Schema(
   {
-    from: { type: String, default: null }, // "YYYY-MM-DD"
-    to: { type: String, default: null },   // "YYYY-MM-DD"
-    tz: { type: String, default: null },   // "America/Mexico_City"
+    from: { type: String, default: null }, // YYYY-MM-DD
+    to: { type: String, default: null },   // YYYY-MM-DD
+    tz: { type: String, default: null },   // America/Mexico_City
+  },
+  { _id: false }
+);
+
+const StatsSchema = new Schema(
+  {
+    rows: { type: Number, default: 0 },
+    bytes: { type: Number, default: 0 },
+  },
+  { _id: false }
+);
+
+const CoverageSchema = new Schema(
+  {
+    range: { type: RangeSchema, default: () => ({}) },
+    defaultRangeDays: { type: Number, default: 30 },
+    granularity: { type: [String], default: [] }, // ["summary","daily","campaign","breakdown"]
   },
   { _id: false }
 );
@@ -16,19 +37,18 @@ const SourceStateSchema = new Schema(
   {
     connected: { type: Boolean, default: false },
 
-    // ✅ NUEVO: status pro para cola/worker
     // queued | running | ready | error
     status: { type: String, default: 'queued' },
 
-    // compat (si lo usabas)
+    // compat
     ready: { type: Boolean, default: false },
 
-    // IDs no sensibles (solo referencia)
-    accountId: { type: String, default: null },   // Meta: "123" (sin act_)
-    customerId: { type: String, default: null },  // Google Ads: "1234567890"
-    propertyId: { type: String, default: null },  // GA4: "properties/123"
+    // IDs no sensibles
+    accountId: { type: String, default: null },   // Meta
+    customerId: { type: String, default: null },  // Google Ads
+    propertyId: { type: String, default: null },  // GA4
 
-    // metadata opcional (NO sensible)
+    // metadata útil para la ficha del source
     name: { type: String, default: null },
     currency: { type: String, default: null },
     timezone: { type: String, default: null },
@@ -37,12 +57,15 @@ const SourceStateSchema = new Schema(
     lastSyncAt: { type: Date, default: null },
     lastError: { type: String, default: null },
 
-    // opcional: policy aplicada por plan
+    // policy efectiva aplicada por plan
     rangeDays: { type: Number, default: null },
   },
   { _id: false }
 );
 
+/* =========================
+ * Main schema
+ * ========================= */
 const McpDataSchema = new Schema(
   {
     // owner
@@ -53,31 +76,36 @@ const McpDataSchema = new Schema(
 
     /**
      * ==========================
-     * ROOT FIELDS (kind="root")
+     * ROOT-ONLY FIELDS
      * ==========================
      */
     sources: {
-      metaAds: { type: SourceStateSchema, default: () => ({}) },
-      googleAds: { type: SourceStateSchema, default: () => ({}) },
-      ga4: { type: SourceStateSchema, default: () => ({}) },
+      type: new Schema(
+        {
+          metaAds: { type: SourceStateSchema, default: () => ({}) },
+          googleAds: { type: SourceStateSchema, default: () => ({}) },
+          ga4: { type: SourceStateSchema, default: () => ({}) },
+        },
+        { _id: false }
+      ),
+      default: undefined,
     },
 
     coverage: {
-      range: { type: RangeSchema, default: () => ({}) },
-      defaultRangeDays: { type: Number, default: 30 },
-      granularity: { type: [String], default: [] }, // e.g. ["daily","campaign","adset","ad","landing_page"]
+      type: CoverageSchema,
+      default: undefined,
     },
 
     latestSnapshotId: { type: String, default: null },
 
     /**
      * ==========================
-     * CHUNK FIELDS (kind="chunk")
+     * CHUNK-ONLY FIELDS
      * ==========================
      */
     snapshotId: { type: String, default: null, index: true },
 
-    // "metaAds" | "googleAds" | "ga4"
+    // metaAds | googleAds | ga4
     source: {
       type: String,
       enum: ['metaAds', 'googleAds', 'ga4', null],
@@ -85,83 +113,185 @@ const McpDataSchema = new Schema(
       index: true,
     },
 
-    
     dataset: { type: String, default: null, index: true },
 
-    range: { type: RangeSchema, default: () => ({}) },
+    range: {
+      type: RangeSchema,
+      default: undefined,
+    },
 
-    // Compact payload (normalized rows, already safe)
+    // Compact payload normalized y seguro
     data: { type: Schema.Types.Mixed, default: null },
 
-    // opcional: stats para debug
+    // stats útiles para debug/volumen
     stats: {
-      rows: { type: Number, default: 0 },
-      bytes: { type: Number, default: 0 },
+      type: StatsSchema,
+      default: undefined,
     },
   },
   {
     collection: 'mcpdata',
-    timestamps: true, // createdAt / updatedAt
+    timestamps: true,
+    minimize: true,
   }
 );
 
-/* ---------------- Índices recomendados ---------------- */
+/* =========================
+ * Indexes
+ * ========================= */
 
-// 1) Root lookup rápido
+// Root lookup rápido
 McpDataSchema.index(
   { userId: 1, kind: 1 },
   { unique: true, partialFilterExpression: { kind: 'root' } }
 );
 
-// 2) Consultar chunks por snapshot/source/dataset
+// Consultar chunks por snapshot/source/dataset
 McpDataSchema.index({ userId: 1, kind: 1, snapshotId: 1 });
 McpDataSchema.index({ userId: 1, kind: 1, source: 1, dataset: 1, 'range.from': 1 });
 
-// 3) Latest chunks
+// Latest chunks
 McpDataSchema.index({ userId: 1, kind: 1, createdAt: -1 });
 
-// ✅ 4) CRÍTICO: evitar duplicados por dataset+range dentro de snapshot
+// Evitar duplicados por dataset+range dentro de snapshot
 McpDataSchema.index(
   { userId: 1, kind: 1, snapshotId: 1, source: 1, dataset: 1, 'range.from': 1, 'range.to': 1 },
   { unique: true, partialFilterExpression: { kind: 'chunk' } }
 );
 
-/* ---------------- Helpers estáticos ---------------- */
+/* =========================
+ * Helpers internos
+ * ========================= */
+function cleanUndefined(obj) {
+  if (obj == null || typeof obj !== 'object') return obj;
+
+  if (Array.isArray(obj)) {
+    return obj.map(cleanUndefined).filter((v) => v !== undefined);
+  }
+
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v === undefined) continue;
+    const cleaned = cleanUndefined(v);
+    if (cleaned !== undefined) out[k] = cleaned;
+  }
+  return out;
+}
+
+function normalizeRootPatch(userId, patch = {}) {
+  const cleaned = cleanUndefined(patch || {});
+  return {
+    ...cleaned,
+    kind: 'root',
+    userId,
+  };
+}
+
+function normalizeChunkPayload({
+  userId,
+  snapshotId,
+  source,
+  dataset,
+  range,
+  data,
+  stats,
+} = {}) {
+  const from = range?.from ?? null;
+  const to = range?.to ?? null;
+  const tz = range?.tz ?? null;
+
+  return {
+    userId,
+    kind: 'chunk',
+    snapshotId: snapshotId || null,
+    source: source || null,
+    dataset: dataset || null,
+    range: { from, to, tz },
+    data: data ?? null,
+    stats: {
+      rows: Number(stats?.rows || 0),
+      bytes: Number(stats?.bytes || 0),
+    },
+  };
+}
+
+/* =========================
+ * Statics
+ * ========================= */
 
 McpDataSchema.statics.upsertRoot = async function (userId, patch = {}) {
   const now = new Date();
+  const normalized = normalizeRootPatch(userId, patch);
+
   return this.findOneAndUpdate(
     { userId, kind: 'root' },
     {
-      $set: { ...patch, kind: 'root', userId, updatedAt: now },
-      $setOnInsert: { createdAt: now }
+      $set: {
+        ...normalized,
+        updatedAt: now,
+      },
+      $setOnInsert: {
+        createdAt: now,
+      },
+      // ✅ limpia campos chunk-only por si existían de antes
+      $unset: {
+        snapshotId: 1,
+        source: 1,
+        dataset: 1,
+        range: 1,
+        data: 1,
+      },
     },
     { upsert: true, new: true }
   );
 };
 
 /**
- * ✅ Patch específico de una fuente en root:
- * - patchRootSource(userId, 'metaAds', { status:'running', lastError:null, ready:false })
+ * Patch específico de una fuente dentro del root
+ * Ej:
+ * patchRootSource(userId, 'metaAds', {
+ *   connected: true,
+ *   status: 'ready',
+ *   accountId: '123',
+ *   currency: 'MXN'
+ * })
  */
 McpDataSchema.statics.patchRootSource = async function (userId, sourceKey, patch = {}) {
   const now = new Date();
-  const $set = {};
+  const $set = {
+    updatedAt: now,
+  };
 
-  for (const [k, v] of Object.entries(patch || {})) {
+  for (const [k, v] of Object.entries(cleanUndefined(patch || {}))) {
     $set[`sources.${sourceKey}.${k}`] = v;
   }
-  $set.updatedAt = now;
 
   return this.findOneAndUpdate(
     { userId, kind: 'root' },
-    { $setOnInsert: { userId, kind: 'root', createdAt: now }, $set },
+    {
+      $setOnInsert: {
+        userId,
+        kind: 'root',
+        createdAt: now,
+      },
+      $set,
+      // ✅ limpia campos chunk-only por si existían de antes
+      $unset: {
+        snapshotId: 1,
+        source: 1,
+        dataset: 1,
+        range: 1,
+        data: 1,
+      },
+    },
     { upsert: true, new: true }
   );
 };
 
 /**
- * ✅ UPSERT chunk (para que jobs no dupliquen)
+ * UPSERT chunk limpio
+ * - solo persiste campos chunk-only
+ * - evita contaminar con metadata de root
  */
 McpDataSchema.statics.upsertChunk = async function ({
   userId,
@@ -173,40 +303,47 @@ McpDataSchema.statics.upsertChunk = async function ({
   stats,
 } = {}) {
   const now = new Date();
-  const from = range?.from ?? null;
-  const to = range?.to ?? null;
-  const tz = range?.tz ?? null;
+  const normalized = normalizeChunkPayload({
+    userId,
+    snapshotId,
+    source,
+    dataset,
+    range,
+    data,
+    stats,
+  });
 
   return this.findOneAndUpdate(
     {
       userId,
       kind: 'chunk',
-      snapshotId: snapshotId || null,
-      source: source || null,
-      dataset: dataset || null,
-      'range.from': from,
-      'range.to': to,
+      snapshotId: normalized.snapshotId,
+      source: normalized.source,
+      dataset: normalized.dataset,
+      'range.from': normalized.range.from,
+      'range.to': normalized.range.to,
     },
     {
       $set: {
-        userId,
-        kind: 'chunk',
-        snapshotId: snapshotId || null,
-        source: source || null,
-        dataset: dataset || null,
-        range: { from, to, tz },
-        data: data ?? null,
-        stats: stats || {},
+        ...normalized,
         updatedAt: now,
       },
-      $setOnInsert: { createdAt: now },
+      $setOnInsert: {
+        createdAt: now,
+      },
+      // ✅ limpia campos root-only por si existían de antes
+      $unset: {
+        sources: 1,
+        coverage: 1,
+        latestSnapshotId: 1,
+      },
     },
     { upsert: true, new: true }
   );
 };
 
 /**
- * (LEGACY) Insert directo (solo si lo quieres seguir usando para debug)
+ * Insert directo legacy/debug
  */
 McpDataSchema.statics.insertChunk = async function ({
   userId,
@@ -217,16 +354,17 @@ McpDataSchema.statics.insertChunk = async function ({
   data,
   stats,
 } = {}) {
-  return this.create({
+  const normalized = normalizeChunkPayload({
     userId,
-    kind: 'chunk',
-    snapshotId: snapshotId || null,
-    source: source || null,
-    dataset: dataset || null,
-    range: range || {},
-    data: data ?? null,
-    stats: stats || {},
+    snapshotId,
+    source,
+    dataset,
+    range,
+    data,
+    stats,
   });
+
+  return this.create(normalized);
 };
 
 module.exports = mongoose.models.McpData || model('McpData', McpDataSchema);
