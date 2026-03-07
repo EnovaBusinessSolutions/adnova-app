@@ -1,570 +1,143 @@
-﻿# 🧃 AdRay Pipeline — What Is This?
+﻿# AdRay Pipeline (Single Source of Truth)
 
-Imagine you have a lemonade stand. Every time someone walks by, looks at your lemonade, or buys a cup — you write it down in a notebook. That's what AdRay does for online stores!
+This document replaces previous planning files and keeps only what is essential.
 
-When someone visits a Shopify store, AdRay watches what they do (looked at a product, added to cart, bought something). Then it figures out WHERE that person came from — did they click a Facebook ad? A Google ad? Did they just type the website?
+## Goal
+Build and run a platform-agnostic attribution pipeline (Shopify + WooCommerce + custom sites) that:
+- captures browser events,
+- stitches attribution,
+- processes purchase events server-side,
+- and exposes clean dashboard metrics.
 
-Once someone buys lemonade (makes a purchase), AdRay tells Facebook and Google: "Hey! That ad you showed? It worked! Someone bought something!" This helps the store owner know which ads are actually making money.
+## Current Status
+- Universal pixel is live and loadable cross-origin from AdRay server.
+- Pixel load on merchant site returns `200 OK`.
+- Browser events are reaching `POST /collect`, but current production responses show `500 Internal Server Error`.
+- Account-based model is active (`accountId`), with Shopify backward compatibility.
 
-That's it. Watch → Remember → Tell the ad companies.
+## Active Incident: `/collect` Returns 500
+Observed behavior:
+- `adray-pixel.js` loads correctly (`200`).
+- Browser sends `POST /collect` from merchant site.
+- Backend returns `500`.
 
----
+Most likely root causes (priority order):
+1. Database schema mismatch in production (app code uses `account*` fields but DB still has `shop*` shape).
+2. Missing/incorrect production env vars (`DATABASE_URL`, `REDIS_URL`, `ENCRYPTION_KEY`).
+3. Runtime DB connectivity or Prisma migration drift.
+4. Invalid payload fields causing server-side parsing/write failure.
 
-# AdRay Pipeline — Implementation Plan
+Immediate containment:
+- Keep pixel loaded to validate traffic flow, but treat data as non-persistent until `/collect` is green.
+- Do not begin attribution analysis until `/collect` has stable `2xx`.
 
-> **For AI copilots**: This document is the single source of truth. Follow steps in order. Each step lists exact file paths, what goes in them, and the patterns to follow. The codebase uses **CommonJS** (`require`/`module.exports`), **Express 5.1**, and existing MongoDB/Mongoose stays untouched — all new pipeline code uses **PostgreSQL via Prisma**.
+## Core Architecture
+- Browser Pixel -> `POST /collect` -> PostgreSQL (Prisma)
+- Checkout map -> attribution snapshot at checkout time
+- Purchase webhook -> orders table -> async pipeline
+- Async pipeline:
+  - attribution stitching,
+  - order enrichment,
+  - CAPI fanout,
+  - merchant snapshot update
 
----
+## Canonical Data Model (Essential)
+- `Account`
+- `PlatformConnection`
+- `IdentityGraph`
+- `Session`
+- `CheckoutSessionMap`
+- `Event`
+- `Order`
+- `EventDedup`
+- `MerchantSnapshot`
+- `FailedJob`
 
-## Architecture Summary
+## Critical Endpoints
+- `POST /collect`
+- `POST /webhooks/shopify/orders-create`
+- `POST /webhooks/shopify/checkouts-create`
+- `GET /api/pixels/:account_id/meta`
+- `GET /api/conversions/:account_id/google`
+- `POST /api/connections/:account_id`
 
-```
-Browser Pixel → POST /collect → Prisma (Postgres) → events, sessions, identity_graph
-                                                   ↘ checkout_session_map (on begin_checkout)
+## Pixel Installation (Merchant)
+Use this snippet in merchant `<head>`:
 
-Shopify Webhook → POST /webhooks/shopify/:shop_id/orders-create
-                    → orders table
-                    → async: CAPI fanout (Meta, Google) + enrichment + snapshot
-                    → all errors → failed_jobs table (never crash, always return 200)
-
-Existing MongoDB ← untouched (User, Audit, MetaAccount, GoogleAccount, ShopConnections)
-New PostgreSQL   ← all pipeline tables (shops, events, orders, sessions, identity_graph, etc.)
-Redis            ← event dedup (24h TTL sets) + variant cache (1h TTL) + session cache
-```
-
----
-
-## Simplifications Applied
-
-| Removed | Why |
-|---------|-----|
-| BullMQ worker process | Use in-process async (`setImmediate` + retry helper). One deployable. Add workers later if needed. |
-| TikTok CAPI | Stub only. Meta + Google first. TikTok is identical pattern, add after core works. |
-| Separate rate-limit Redis store | Use `express-rate-limit` with default memory store. Swap to Redis store when scaling. |
-| Google CAPI full implementation | Stub with TODO. Google Enhanced Conversions requires developer token + complex auth. Meta CAPI is the priority. |
-| MerchantSnapshot background job | Compute on webhook + on-demand API call. No scheduler needed. |
-
-**Result: 14 files (10 new, 4 modified) instead of 22.**
-
----
-
-## Environment Variables Required
-
-Add these to `.env` and Render dashboard:
-
-```
-DATABASE_URL=postgresql://user:pass@host:5432/adray
-REDIS_URL=redis://default:pass@host:6379
-ENCRYPTION_KEY=<64-char hex string, generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))">
-SHOPIFY_API_SECRET=<already exists, used for HMAC>
-META_APP_ID=<from Meta Developer Portal>
-META_APP_SECRET=<from Meta Developer Portal>
-GOOGLE_CLIENT_ID=<already exists>
-GOOGLE_CLIENT_SECRET=<already exists>
-```
-
----
-
-## File Map
-
-```
-backend/
-  prisma/
-    schema.prisma          ← NEW: all pipeline tables
-  utils/
-    prismaClient.js        ← NEW: singleton PrismaClient
-    redisClient.js         ← NEW: singleton ioredis
-    encryption.js          ← NEW: AES-256-GCM + SHA-256 hashing
-  middleware/
-    rateLimitCollect.js    ← NEW: 100 req/min per shop
-  services/
-    identityResolution.js  ← NEW: user_key resolution chain
-    attributionStitching.js← NEW: last-touch attribution
-    capiFanout.js          ← NEW: Meta CAPI + Google stub + retry
-    merchantSnapshot.js    ← NEW: 30-day analytics snapshot
-    shopifyEnrichment.js   ← NEW: variant enrichment w/ Redis cache
-  routes/
-    collect.js             ← NEW: POST /collect
-    adrayWebhooks.js       ← NEW: orders-create, checkouts-create
-    adrayPlatforms.js      ← NEW: pixel list, conversions, connections
-  index.js                 ← MODIFY: mount routes, init Prisma
-render.yaml                ← MODIFY: add prisma generate to build
-package.json               ← MODIFY: add prisma, @prisma/client, express-rate-limit
-ADRAY_PIPELINE.md          ← THIS FILE
+```html
+<script src="https://adray-app-staging-german.onrender.com/adray-pixel.js"
+        data-account-id="merchant-domain-or-acct-id"></script>
 ```
 
----
-
-## Step-by-Step Implementation
-
-### STEP 1: Dependencies & Config
-
-**File: `package.json`** — Add to `dependencies`:
-```
-"prisma": "^6.0.0",
-"@prisma/client": "^6.0.0",
-"express-rate-limit": "^7.0.0",
-"cookie-parser": "^1.4.6"
-```
-Add to `scripts`:
-```
-"prisma:generate": "npx prisma generate --schema=backend/prisma/schema.prisma",
-"prisma:migrate": "npx prisma migrate dev --schema=backend/prisma/schema.prisma",
-"prisma:deploy": "npx prisma migrate deploy --schema=backend/prisma/schema.prisma"
-```
-
-**File: `render.yaml`** — Change `buildCommand` to:
-```
-npm install && npx prisma generate --schema=backend/prisma/schema.prisma
-```
-
----
-
-### STEP 2: Prisma Schema
-
-**File: `backend/prisma/schema.prisma`** — CREATE
-
-Datasource: `postgresql`, env `DATABASE_URL`.
-Generator: `@prisma/client`.
-
-**Tables** (all use `@id @default(uuid())` for `id` fields):
-
-1. **`Shop`** — `id`, `shopId` (String @unique — Shopify domain), `shopDomain`, `accessToken`, `createdAt`, `updatedAt`
-
-2. **`PlatformConnection`** — `id`, `shopId` (FK→Shop), `platform` (enum: META/GOOGLE/TIKTOK), `accessToken` (encrypted), `pixelId`, `adAccountId`, `status` (enum: ACTIVE/DISCONNECTED/ERROR), `createdAt`, `updatedAt`
-
-3. **`IdentityGraph`** — `id`, `shopId` (FK→Shop), `userKey` (String), `customerId?`, `emailHash?`, `phoneHash?`, `fbp?`, `fbc?`, `fbclid?`, `gclid?`, `ttclid?`, `fingerprintHash?`, `confidenceScore` (Float), `firstSeenAt`, `lastSeenAt`, `deviceCount` (Int @default(1)). Index on `[shopId, userKey]`, index on `[shopId, fingerprintHash]`, index on `[shopId, customerId]`.
-
-4. **`Session`** — `id`, `sessionId` (String @unique), `shopId` (FK→Shop), `userKey`, `utmSource?`, `utmMedium?`, `utmCampaign?`, `utmContent?`, `utmTerm?`, `referrer?`, `landingPageUrl?`, `fbclid?`, `gclid?`, `ttclid?`, `fbp?`, `fbc?`, `isFirstTouch` (Boolean), `startedAt`, `lastEventAt`
-
-5. **`CheckoutSessionMap`** — `id`, `checkoutToken` (String @unique), `shopId` (FK→Shop), `sessionId`, `userKey`, `attributionSnapshot` (Json), `eventId` (String — pre-assigned UUID for purchase dedup), `createdAt`, `expiresAt` (30 days from creation)
-
-6. **`Event`** — `id`, `eventId` (String @unique), `shopId` (FK→Shop), `sessionId`, `userKey`, `eventName` (String), `pageType?`, `pageUrl?`, `productId?`, `variantId?`, `cartId?`, `cartValue?` (Float), `checkoutToken?`, `orderId?`, `revenue?` (Float), `currency?`, `items?` (Json), `rawPayload` (Json), `browserReceivedAt?`, `serverReceivedAt`, `createdAt`
-
-7. **`Order`** — `id`, `orderId` (String @unique), `orderNumber`, `shopId` (FK→Shop), `checkoutToken?`, `userKey?`, `sessionId?`, `customerId?`, `emailHash?`, `phoneHash?`, `revenue` (Float), `subtotal` (Float), `discountTotal` (Float), `shippingTotal` (Float), `taxTotal` (Float), `currency`, `lineItems` (Json), `attributedChannel?`, `attributedCampaign?`, `attributedAdset?`, `attributedAd?`, `attributedClickId?`, `attributionModel` (String @default("last_touch")), `attributionSnapshot?` (Json), `confidenceScore?` (Float), `eventId?`, `capiSentMeta` (Boolean @default(false)), `capiSentGoogle` (Boolean @default(false)), `capiSentTiktok` (Boolean @default(false)), `capiMetaResponse?` (Json), `capiGoogleResponse?` (Json), `createdAt`, `shopifyCreatedAt`
-
-8. **`EventDedup`** — `eventId` (String @id), `shopId`, `orderId?`, `eventName`, `browserReceivedAt?`, `serverReceivedAt?`, `capiSentAt?`, `dedupStatus` (enum: SINGLE/BROWSER_ONLY/SERVER_ONLY/DEDUPLICATED)
-
-9. **`MerchantSnapshot`** — `id`, `shopId` (FK→Shop, @unique), `snapshot` (Json), `updatedAt`
-
-10. **`FailedJob`** — `id`, `jobType` (String), `payload` (Json), `error` (String), `attempts` (Int @default(0)), `maxAttempts` (Int @default(3)), `nextRetryAt?`, `resolvedAt?`, `createdAt`
-
-**Enums**: `Platform`, `ConnectionStatus`, `DedupStatus`
-
----
-
-### STEP 3: Utility Modules
-
-**File: `backend/utils/prismaClient.js`** — CREATE
-- `const { PrismaClient } = require('@prisma/client')`
-- Singleton pattern: store on `global.__prisma` in dev to survive hot-reload
-- Export single instance
-- `process.on('beforeExit', () => prisma.$disconnect())`
-
-**File: `backend/utils/redisClient.js`** — CREATE
-- `const Redis = require('ioredis')` (already installed v5.6.1)
-- `new Redis(process.env.REDIS_URL)` with `maxRetriesPerRequest: 3`, `lazyConnect: true`
-- Export singleton
-- Log connection errors, don't crash (Redis is enhancement, not critical path)
-
-**File: `backend/utils/encryption.js`** — CREATE
-- `encrypt(text)` → AES-256-GCM with `ENCRYPTION_KEY` (first 32 bytes as key). Returns `iv:authTag:ciphertext` (all hex). IV is `crypto.randomBytes(16)`.
-- `decrypt(packed)` → split on `:`, decipher with same key
-- `hashPII(value)` → `crypto.createHash('sha256').update(String(value).toLowerCase().trim()).digest('hex')`. Returns hex string. Returns null if input is falsy.
-- `hashFingerprint(userAgent, ip, timezone, language)` → SHA-256 of concatenated values
-- All functions are synchronous, no async needed
-
----
-
-### STEP 4: Middleware
-
-**File: `backend/middleware/rateLimitCollect.js`** — CREATE
-- `const rateLimit = require('express-rate-limit')`
-- Export middleware: `windowMs: 60_000`, `max: 100`, `keyGenerator: (req) => req.body?.shop_id || req.ip`
-- `standardHeaders: true`, `legacyHeaders: false`
-- Response on limit: `{ success: false, error: 'Rate limit exceeded' }`
-
----
-
-### STEP 5: Services (build in this order)
-
-#### 5A: `backend/services/identityResolution.js` — CREATE
-
-```
-Dependencies: prismaClient, encryption (hashFingerprint, hashPII), redisClient
-```
-
-**`resolveUserKey(shopId, cookieUserKey, payload, res)`**
-1. If `cookieUserKey` exists → query `IdentityGraph` where `shopId + userKey = cookieUserKey`. If found → update `lastSeenAt`, merge any new identifiers from payload, return `userKey`.
-2. If `payload.fbclid || payload.gclid || payload.ttclid` → create new `userKey` (uuid), store click ID mapping in `IdentityGraph`, confidence `1.0`.
-3. If `payload.customer_id` → query `IdentityGraph` where `shopId + customerId`. If found → return existing `userKey`.
-4. Compute `fingerprintHash` from `payload.user_agent + payload.ip + payload.timezone + payload.language`. Query `IdentityGraph` where `shopId + fingerprintHash`. If found → return `userKey`, confidence `0.6`.
-5. Else → create new `userKey` (uuid), store fingerprint, confidence `0.6`.
-6. Always: set cookie `_adray_uid` on `res` — `httpOnly: true, secure: true, sameSite: 'Lax', maxAge: 63072000000` (2 years in ms), `path: '/'`.
-7. Return `{ userKey, isNew, confidenceScore }`.
-
-**`mergeIdentifiers(existing, payload)`** — helper. Upserts new fields (emailHash, phoneHash, fbp, fbc, click IDs) into existing IdentityGraph record without overwriting non-null values.
-
-#### 5B: `backend/services/attributionStitching.js` — CREATE
-
-**`stitchAttribution(order, checkoutMap)`**
-1. `checkoutMap` is the `CheckoutSessionMap` record (may be null).
-2. If null → return `{ channel: 'unattributed', confidence: 0.0 }`.
-3. Extract from `checkoutMap.attributionSnapshot`:
-   - `fbclid` → `{ channel: 'paid_social', platform: 'facebook', confidence: 1.0 }`
-   - `gclid` → `{ channel: 'paid_search', platform: 'google', confidence: 1.0 }`
-   - `ttclid` → `{ channel: 'paid_social', platform: 'tiktok', confidence: 1.0 }`
-   - `utm_source` exists → `{ channel: utm_medium || 'referral', platform: utm_source, confidence: 0.85 }`
-   - `referrer` exists → classify domain: google/bing→organic_search, facebook/instagram→organic_social, else→referral. Confidence `0.7`.
-   - None → `{ channel: 'direct', confidence: 0.5 }`
-4. Update `order` record with attributed fields.
-5. Return attribution object.
-
-#### 5C: `backend/services/capiFanout.js` — CREATE
-
-**`withRetry(fn, attempts = 3, delays = [1000, 5000, 30000])`** — generic retry helper with exponential backoff. On final failure, write to `FailedJob` table.
-
-**`sendToAllPlatforms(orderId)`**
-1. Fetch order from DB with full fields.
-2. `Promise.allSettled([sendToMeta(order), sendToGoogle(order)])`.
-3. Log results. Never throws.
-
-**`sendToMeta(order)`**
-1. Query `PlatformConnection` where `shopId + platform = META + status = ACTIVE`. If none → return skip.
-2. Decrypt `accessToken`.
-3. Build payload per Meta CAPI spec:
-   - `event_name: 'Purchase'`
-   - `event_id: order.eventId` (for browser dedup)
-   - `event_time: Math.floor(order.shopifyCreatedAt / 1000)`
-   - `action_source: 'website'`
-   - `user_data: { em: [emailHash], ph: [phoneHash], fbp, fbc }`
-   - `custom_data: { value: order.revenue, currency: order.currency, order_id: order.orderId, contents: mapped lineItems }`
-4. `POST https://graph.facebook.com/v18.0/${pixelId}/events?access_token=${token}` via axios.
-5. Update order: `capiSentMeta = true`, `capiMetaResponse = response.data`.
-6. Update `EventDedup` if exists.
-7. Wrapped in `withRetry`.
-
-**`sendToGoogle(order)`** — STUB. Log `"Google CAPI not yet implemented"`. Set `capiSentGoogle = false`. TODO for phase 2.
-
-#### 5D: `backend/services/shopifyEnrichment.js` — CREATE
-
-**`enrichOrderLineItems(lineItems, shopId)`**
-1. Get shop's Shopify access token from `ShopConnections` model (existing Mongoose model) or from pipeline `Shop` table.
-2. For each item with `variant_id`:
-   - Check Redis: `adray:variant:${shopId}:${variantId}`. If cached → use it.
-   - Else: GET `https://${shop}/admin/api/2024-07/variants/${variantId}.json` with access token.
-   - Cache result in Redis with 3600s TTL.
-3. Return enriched array with `title, image_url, vendor, product_type, tags`.
-4. Errors are non-fatal — return original item if enrichment fails.
-
-#### 5E: `backend/services/merchantSnapshot.js` — CREATE
-
-**`updateSnapshot(shopId)`**
-1. Query `Order` table: last 30 days, `WHERE shopId = X`.
-2. Compute: `totalRevenue, orderCount, aov, revenueByChannel` (group by `attributedChannel`), `unattributedCount`, `unattributedRate`.
-3. Query `Event` table: last 30 days funnel — count by `eventName` (page_view → view_item → add_to_cart → begin_checkout → purchase).
-4. Compute `attributionConfidenceDistribution` — group orders by confidence buckets.
-5. Top 10 products by revenue from `lineItems` JSON aggregation.
-6. Upsert `MerchantSnapshot` record with full JSON.
-7. Return snapshot object.
-
----
-
-### STEP 6: Routes
-
-#### 6A: `backend/routes/collect.js` — CREATE
-
-`POST /collect`
-1. Validate: `req.body.shop_id` required, else 400.
-2. Verify shop exists in `Shop` table (query or create from `ShopConnections`).
-3. Read cookie `_adray_uid` from `req.cookies`.
-4. Call `identityResolution.resolveUserKey(shopId, cookieUserKey, req.body, res)`.
-5. Generate `eventId = crypto.randomUUID()`.
-6. Dedup check: `redis.set('adray:ev:' + eventId, '1', 'EX', 86400, 'NX')`. If returns null (already exists) → return `{ success: true, event_id: eventId, user_key: userKey, deduplicated: true }`.
-7. Parse event data from body: `event_name, page_url, page_type, product_id, variant_id, cart_id, cart_value, checkout_token, items`.
-8. If `event_name === 'begin_checkout'` AND `checkout_token` exists:
-   - Build `attributionSnapshot` from current session (UTMs + click IDs).
-   - Create `CheckoutSessionMap` record with pre-assigned `eventId` for future purchase dedup.
-9. Write `Event` record to DB.
-10. Upsert `Session` record: create if `session_id` doesn't exist, else update `lastEventAt` and merge UTMs.
-11. Return `{ success: true, event_id: eventId, user_key: userKey }`.
-
-Middleware chain: `rateLimitCollect` → `express.json()` (already global) → handler.
-
-#### 6B: `backend/routes/adrayWebhooks.js` — CREATE
-
-Uses existing `verifyShopifyWebhookHmac` from `backend/middleware/verifyShopifyWebhookHmac.js`. Body is raw Buffer (mounted with `express.raw` in index.js).
-
-**`POST /webhooks/shopify/:shop_id/orders-create`**
-1. Parse raw body to JSON: `JSON.parse(req.body.toString())`.
-2. Idempotency: query `Order` where `orderId = payload.id`. If exists → return 200.
-3. Query `CheckoutSessionMap` where `checkoutToken = payload.checkout_token`.
-4. If found → extract `sessionId, userKey, attributionSnapshot, eventId`.
-5. If not found → set `userKey = null, sessionId = null`, flag unattributed.
-6. Hash email/phone with `hashPII`.
-7. Build & insert `Order` record with all financial fields + line items.
-8. Fire async (non-blocking, `setImmediate`):
-   - `attributionStitching.stitchAttribution(order, checkoutMap)`
-   - `shopifyEnrichment.enrichOrderLineItems(lineItems, shopId)` → update order
-   - `capiFanout.sendToAllPlatforms(order.id)`
-   - `merchantSnapshot.updateSnapshot(shopId)`
-9. Wrap entire handler in try/catch. On error → log + write to `FailedJob`. Always return 200.
-
-**`POST /webhooks/shopify/:shop_id/checkouts-create`**
-1. Parse raw body.
-2. Extract `checkout_token`.
-3. Upsert `CheckoutSessionMap` if not exists (set `expiresAt` to now + 30 days).
-4. Return 200.
-
-#### 6C: `backend/routes/adrayPlatforms.js` — CREATE
-
-All routes require `sessionGuard` (existing middleware).
-
-**`GET /api/pixels/:shop_id/meta`**
-1. Get `MetaAccount` from Mongoose (existing model) OR `PlatformConnection` from Prisma.
-2. Call `GET https://graph.facebook.com/v18.0/me/adspixels?fields=id,name,last_fired_time&access_token=${token}`.
-3. Return pixel list.
-
-**`GET /api/conversions/:shop_id/google`**
-1. Get Google access token (existing `GoogleAccount` model).
-2. Call Google Ads API to list conversion actions.
-3. Filter to `type === 'WEBPAGE'`.
-4. Return list.
-
-**`POST /api/connections/:shop_id`**
-1. Body: `{ platform, accessToken, pixelId, adAccountId }`.
-2. Encrypt `accessToken`.
-3. Upsert `PlatformConnection` record.
-4. Optional: send test event to verify.
-5. Return `{ status: 'ACTIVE' }`.
-
----
-
-### STEP 7: Mount in index.js
-
-**File: `backend/index.js`** — MODIFY
-
-**Near the top (imports section ~L1-L80):**
-```
-const collectRoutes = require('./routes/collect');
-const adrayWebhookRoutes = require('./routes/adrayWebhooks');
-const adrayPlatformRoutes = require('./routes/adrayPlatforms');
-const rateLimitCollect = require('./middleware/rateLimitCollect');
-const prisma = require('./utils/prismaClient');
-const cookieParser = require('cookie-parser');
-```
-Wrap in try/catch like existing imports if applicable.
-
-**Between L285 and L295 (BEFORE express.json):**
-```
-app.use("/webhooks/shopify", express.raw({ type: "*/*" }), adrayWebhookRoutes);
-```
-
-**Near L621-L656 (alongside other API routes):**
-```
-app.use(cookieParser());
-app.use("/collect", rateLimitCollect, collectRoutes);
-app.use("/api", sessionGuard, adrayPlatformRoutes);
-```
-
-**Near L309 (after mongoose.connect):**
-```
-prisma.$connect().then(() => console.log('✅ Prisma connected')).catch(e => console.error('❌ Prisma connection error:', e));
-```
-
----
-
-### STEP 8: Cookie Parsing
-
-Check if `cookie-parser` is already installed. If not, add `cookie-parser` to dependencies and mount `app.use(require('cookie-parser')())` near other middleware. The `/collect` route needs `req.cookies._adray_uid`.
-
----
-
-## Implementation Order (strict)
-
-| # | What | Depends On | Test |
-|---|------|-----------|------|
-| 1 | `package.json` + `render.yaml` changes | nothing | `npm install` succeeds |
-| 2 | `backend/prisma/schema.prisma` | step 1 | `npx prisma migrate dev` creates tables |
-| 3 | `backend/utils/prismaClient.js` | step 2 | `node -e "require('./backend/utils/prismaClient')"` |
-| 4 | `backend/utils/redisClient.js` | nothing | connection log on import |
-| 5 | `backend/utils/encryption.js` | nothing | `encrypt('test')` → `decrypt(result)` === `'test'` |
-| 6 | `backend/middleware/rateLimitCollect.js` | nothing | unit test |
-| 7 | `backend/services/identityResolution.js` | steps 3,4,5 | mock test with fake payload |
-| 8 | `backend/services/attributionStitching.js` | step 3 | unit test with mock checkout map |
-| 9 | `backend/services/capiFanout.js` | steps 3,5 | mock test (skip real API calls) |
-| 10 | `backend/services/shopifyEnrichment.js` | steps 3,4 | mock test |
-| 11 | `backend/services/merchantSnapshot.js` | step 3 | mock test with sample orders |
-| 12 | `backend/routes/collect.js` | steps 6,7 | `curl -X POST /collect` with payload |
-| 13 | `backend/routes/adrayWebhooks.js` | steps 8,9,10,11 | simulate webhook with HMAC |
-| 14 | `backend/routes/adrayPlatforms.js` | steps 3,5 | `curl GET /api/pixels/:id/meta` |
-| 15 | `backend/index.js` modifications | steps 12,13,14 | server starts, routes respond |
-| 16 | `cookie-parser` check | step 15 | - |
-
----
-
-## Critical Rules for Implementation
-
-1. **CommonJS only** — `require()` / `module.exports`. No `import/export`.
-2. **Webhooks MUST return 200** — wrap handler body in try/catch, catch logs to `FailedJob`, always `res.status(200).send('OK')`.
-3. **Never log PII** — use `hashPII()` before any `console.log` touching email/phone.
-4. **Raw body BEFORE json parser** — webhook route mount MUST be between L285–L295 of index.js.
-5. **Async fire-and-forget pattern** — use `setImmediate(() => { fn().catch(e => logToFailedJob(e)) })` for post-webhook processing.
-6. **Cookie name** — `_adray_uid` exactly. httpOnly, Secure, SameSite=Lax, maxAge=63072000000.
-7. **UUIDs** — use `crypto.randomUUID()` for all ID generation (built-in Node 18+).
-8. **Prisma field naming** — use camelCase in schema (Prisma convention), map to snake_case DB columns with `@map`.
-9. **Error → FailedJob** — any processing error writes `{ jobType, payload, error: e.message }` to `FailedJob` table for manual retry.
-10. **No new npm scripts for workers** — all async work runs in-process via `setImmediate`. BullMQ upgrade is phase 2.
-
----
-
-## Progress Tracker
-
-- [x] Step 1: Dependencies
-- [x] Step 2: Prisma schema
-- [x] Step 3: Prisma client
-- [x] Step 4: Redis client
-- [x] Step 5: Encryption utils
-- [x] Step 6: Rate limiter
-- [x] Step 7: IdentityResolution service
-- [x] Step 8: AttributionStitching service
-- [x] Step 9: CAPIFanout service
-- [x] Step 10: ShopifyEnrichment service
-- [x] Step 11: MerchantSnapshot service
-- [x] Step 12: /collect route
-- [x] Step 13: Webhook routes
-- [x] Step 14: Platform API routes
-- [x] Step 15: Mount in index.js
-- [x] Step 16: Cookie parser check
-- [x] Integration test: full flow (Verified Staging)
-
----
-
-# Phase 2: Analytics & Integrations
-
-**Goal**: Visualize the collected data in the dashboard and complete the Google Ads integration.
-
-### Implementation Plan
-
-| # | What | Depends On | Test |
-|---|------|-----------|------|
-| 17 | `backend/services/capiStack/google.js` (Google CAPI) | Phase 1 | Mock order sent to Google Ads API |
-| 18 | `backend/routes/analytics.js` | Phase 1 | `GET /api/analytics/:shop_id` returns JSON stats |
-| 19 | `backend/routes/feed.js` (SSE) | Phase 1 | `GET /api/feed/:shop_id` streams live events |
-| 20 | Mount Phase 2 routes in `index.js` | Step 18, 19 | Endpoints reachable |
-
----
-
-## Progress Tracker (Phase 2)
-
-- [x] Step 17: Complete Google CAPI implementation (refactor to stack pattern)
-- [x] Step 18: Dashboard Analytics API
-- [x] Step 19: Real-time Event Feed
-- [x] Step 20: Mount Phase 2 routes in ackend/index.js
-- [ ] Step 21: Dashboard Frontend Integration
-
----
-
-# Phase 3: Universal Pixel & Platform-Agnostic Architecture
-
-**Goal**: Disconnect the core tracking and attribution engine from Shopify-specific dependencies, allowing AdRay to be installed on WooCommerce, Custom Sites, Magento, or via Google Tag Manager (GTM).
-
-### Implementation Plan
-
-| # | What | Description |
-|---|------|-------------|
-| 22 | Universal Pixel Script | Update the pixel (adray-pixel.js) to use a universal accountId injected via snippet. |
-| 23 | Database Realignment | In Prisma (schema.prisma), rename the Shop model to Account, and replace the shopId foreign keys with accountId across all tables. |
-| 24 | Backend Route Refactor | Update POST /collect and dashboard APIs to group and process data by accountId rather than shop_id. |
-
-## Progress Tracker (Phase 3)
-
-- [x] Step 22: Universal Pixel Script - `adray-pixel.js` updated to v2.0
-- [x] Step 23: Database Realignment - Prisma schema migrated Shop→Account
-- [x] Step 24: Backend Route Refactor - All routes now use accountId
-
----
-
-## Appendix B: WooCommerce Installation Guide
-
-### Method 1: Header Script Injection (Recommended)
-
-1. **Get your Account ID**: Generate a unique account ID for the merchant (e.g., `wc_mystore_com` or use their domain as-is).
-
-2. **Install the pixel** by adding this script to the site's `<head>`:
-   ```html
-   <!-- AdRay Universal Pixel v2.0 -->
-   <script src="https://adray-app-staging-german.onrender.com/adray-pixel.js" 
-           data-account-id="YOUR_ACCOUNT_ID"></script>
-   ```
-
-   **Where to add it in WooCommerce:**
-   - **Option A (Theme Header)**: Go to **Appearance > Theme Editor > header.php** - paste before `</head>`
-   - **Option B (Code Snippets Plugin)**: Install "Insert Headers and Footers" plugin, add to Header Scripts
-   - **Option C (Child Theme)**: Add via `wp_head` action in `functions.php`
-
-3. **Test the installation**:
-   - Open browser DevTools → Network tab
-   - Visit the store homepage
-   - Filter by "collect" - you should see a POST request with status 200
-   - Check payload contains: `account_id`, `event_name: "page_view"`, `platform: "woocommerce"`
-
-### Method 2: Google Tag Manager
-
-1. Create a **Custom HTML Tag** in GTM with:
-   ```html
-   <script src="https://adray-app-staging-german.onrender.com/adray-pixel.js" 
-           data-account-id="YOUR_ACCOUNT_ID"></script>
-   ```
-
-2. Set trigger to **All Pages**
-
-3. Publish the container
-
-### WooCommerce Events Auto-Detected
-
-The pixel v2.0 automatically captures:
-
-| Event | Detection Method |
-|-------|------------------|
-| `page_view` | On page load |
-| `add_to_cart` | Intercepts WC REST API + jQuery `added_to_cart` event |
-| `begin_checkout` | Detects `.woocommerce-checkout` body class |
-| `purchase` | Must be sent via server-side webhook (see below) |
-
-### WooCommerce Purchase Tracking (Server-Side)
-
-The pixel can track `purchase` events manually using:
-```javascript
-AdRay.track('purchase', {
-  order_id: 'WC-12345',
-  revenue: 99.50,
-  currency: 'USD'
-});
-```
-
-For automated server-side tracking, a WooCommerce webhook endpoint will be added in a future update.
-
----
-
-## Appendix A: Low-Friction Production Testing (Without App Approval)
-
-When testing on a real merchant's store before Shopify approves the app, you cannot use the standard OAuth installation flow easily. Instead, use this manual bypass pattern.
-
-### 1. Inyectar el Pixel Manualmente
-- Provide the merchant with your minified adray-pixel.js file.
-- Instruct them to go to **Online Store > Themes > Edit code**.
-- Ask them to paste the script just before the </head> tag in their 	heme.liquid.
-- **Why:** This covers Page Views, Add to Cart, Begin Checkout, and maps identity to UTMs/click IDs. However, it *cannot* track the final Purchase securely.
-
-### 2. Manual Webhook Registration
-- Instruct the merchant (or do it if you have staff access) to go to **Settings > Notifications** in their Shopify Admin.
-- Scroll down to the **Webhooks** section and click **Create webhook**.
-- **Event:** Order create
-- **Format:** JSON
-- **URL:** https://adray-app-staging-german.onrender.com/webhooks/shopify/[merchant-shop-name.myshopify.com]/orders-create
-- **Why:** This tells Shopify to notify AdRay whenever a real purchase happens, allowing the backend to stitch the order with the frontend visitor data.
-
-### Trade-offs of this approach:
-- **Data Collection Works 100%:** AdRay will successfully build the identity graph and dashboard analytics.
-- **External CAPI Fails:** Unless you manually insert the merchant's Meta/Google API tokens into your PlatformConnection database, the backend CAPI fanout will fail (and safely log to FailedJob) because AdRay doesn't have the oauth permissions to push events on their behalf yet.
+Notes:
+- `data-account-id` must be plain value (no `https://`, no trailing slash).
+- Initial event `page_view` should hit `/collect` without any cart action.
+
+## Required Environment Variables
+- `DATABASE_URL`
+- `REDIS_URL`
+- `ENCRYPTION_KEY`
+- `SHOPIFY_API_SECRET`
+- `META_APP_ID`
+- `META_APP_SECRET`
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+
+## What Is Working Now
+- Universal pixel loading and event collection.
+- Identity cookie `_adray_uid` handling.
+- Event/session/checkouts persistence.
+- Shopify webhook ingestion for orders/checkouts.
+- Async pipeline orchestration and failed job logging.
+
+## Open Gaps (High Priority)
+1. WooCommerce purchase webhook route (server-side order ingestion).
+2. Full Meta CAPI send implementation (currently partial/stubbed behavior in current stack).
+3. Add missing browser fields consistently (`utm_content`, `utm_term`, `landing_page_url`, explicit `view_item`).
+4. Ensure `req.ip` is passed for fingerprint confidence quality.
+
+## Next Steps (Execution Order)
+1. Resolve `/collect` 500 in production (P0).
+2. Implement `POST /webhooks/woocommerce/:account_id/orders-create` with signature validation.
+3. Map Woo order payload -> `Order` model and run same async pipeline used by Shopify.
+4. Complete Meta CAPI production payload + response persistence + dedup updates.
+5. Expand pixel payload coverage (`utm_content`, `utm_term`, `landing_page_url`, `view_item`).
+6. Run end-to-end QA (page_view -> add_to_cart -> begin_checkout -> purchase -> dashboard).
+
+## `/collect` 500 Resolution Plan (P0)
+Step 1. Capture exact backend error from production logs.
+- Trigger one `/collect` event from browser.
+- Copy stack trace and failing line/module.
+
+Step 2. Validate Prisma schema state in production.
+- Confirm deployed Prisma client matches current `backend/prisma/schema.prisma`.
+- Run migration status and apply pending migrations.
+
+Step 3. Validate production env variables.
+- Verify `DATABASE_URL`, `REDIS_URL`, `ENCRYPTION_KEY` are set and valid.
+- Restart service after env verification.
+
+Step 4. Run a direct health test for `/collect`.
+- Send minimal payload with `account_id` + `event_name` + `page_url`.
+- Confirm `200` and persisted row in `events` table.
+
+Step 5. Re-test from WooCommerce site.
+- Confirm `page_view` and `add_to_cart` produce `2xx`.
+- Confirm no new `500` in logs.
+
+Step 6. Close incident and continue roadmap.
+- Mark `/collect` stable after 30+ min without errors under normal traffic.
+
+## Purchase Test Protocol (Now)
+1. Open merchant site and verify `POST /collect` events in Network.
+2. Add product to cart and verify `add_to_cart`.
+3. Start checkout and verify `begin_checkout`.
+4. Complete a purchase.
+5. Verify webhook receipt and order processing logs.
+6. Confirm dashboard updates (events first, then attributed order/revenue).
+
+## Definition of Done
+- Purchase from WooCommerce appears as attributed order in dashboard.
+- Meta CAPI event is sent successfully with `event_id` dedup.
+- Snapshot reflects latest revenue/channel metrics.
+- No critical errors in `FailedJob` for purchase path.
