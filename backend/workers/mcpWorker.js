@@ -62,13 +62,8 @@ function inferRowsFromDataset(datasetName, data) {
     return 1;
   }
 
-  if (ds === 'meta.campaigns_top') {
-    const top = data?.top_campaigns || {};
-    return (
-      (Array.isArray(top.by_spend) ? top.by_spend.length : 0) +
-      (Array.isArray(top.by_purchases) ? top.by_purchases.length : 0) +
-      (Array.isArray(top.by_roas) ? top.by_roas.length : 0)
-    );
+  if (ds === 'meta.campaigns_ranked') {
+    return Array.isArray(data?.campaigns_ranked) ? data.campaigns_ranked.length : 0;
   }
 
   if (ds === 'meta.breakdowns_top') {
@@ -78,8 +73,22 @@ function inferRowsFromDataset(datasetName, data) {
     );
   }
 
-  if (ds === 'meta.campaigns_daily') {
-    return Array.isArray(data?.campaigns_daily) ? data.campaigns_daily.length : 0;
+  if (ds === 'meta.optimization_signals') {
+    const s = data?.optimization_signals || {};
+    return (
+      (Array.isArray(s.winners) ? s.winners.length : 0) +
+      (Array.isArray(s.risks) ? s.risks.length : 0) +
+      (Array.isArray(s.quick_wins) ? s.quick_wins.length : 0) +
+      (Array.isArray(s.insights) ? s.insights.length : 0) +
+      (Array.isArray(s.recommendations) ? s.recommendations.length : 0)
+    );
+  }
+
+  if (ds === 'meta.daily_trends_ai') {
+    return (
+      (Array.isArray(data?.totals_by_day) ? data.totals_by_day.length : 0) +
+      (Array.isArray(data?.campaigns_daily) ? data.campaigns_daily.length : 0)
+    );
   }
 
   // fallback genérico
@@ -94,6 +103,14 @@ function buildChunkStats(datasetName, data, stats) {
   const rows = stats?.rows != null ? toNum(stats.rows) : inferRowsFromDataset(datasetName, data);
   const bytes = stats?.bytes != null ? toNum(stats.bytes) : estimateBytes(data);
   return { rows, bytes };
+}
+
+function summarizeDatasets(datasets) {
+  const out = {};
+  for (const ds of Array.isArray(datasets) ? datasets : []) {
+    out[String(ds?.dataset || 'unknown')] = buildChunkStats(ds?.dataset, ds?.data, ds?.stats);
+  }
+  return out;
 }
 
 function extractMetaRootPatchFromResult(r, days) {
@@ -145,11 +162,11 @@ function extractMetaRootPatchFromResult(r, days) {
       timezone,
     },
     rootPatch: {
-      latestSnapshotId: null, // se setea después
+      latestSnapshotId: null, // se setea abajo
       coverage: {
         range,
         defaultRangeDays: days,
-        granularity: ['summary', 'daily', 'campaign', 'breakdown'],
+        granularity: ['summary', 'ranked_campaigns', 'breakdown', 'signals', 'daily_ai'],
       },
     },
     metaSummary: {
@@ -162,14 +179,6 @@ function extractMetaRootPatchFromResult(r, days) {
   };
 }
 
-function summarizeDatasets(datasets) {
-  const out = {};
-  for (const ds of Array.isArray(datasets) ? datasets : []) {
-    out[String(ds?.dataset || 'unknown')] = buildChunkStats(ds?.dataset, ds?.data, ds?.stats);
-  }
-  return out;
-}
-
 async function resolveRangeDaysByPlan(userId, requestedDays) {
   if (requestedDays) return Number(requestedDays);
 
@@ -179,7 +188,7 @@ async function resolveRangeDaysByPlan(userId, requestedDays) {
   // Free: 60d
   if (plan === 'gratis' || plan === 'free') return 60;
 
-  // Pro / crecimiento / enterprise: > 60d
+  // Pro / crecimiento / growth / enterprise: > 60d
   if (plan === 'pro' || plan === 'crecimiento' || plan === 'growth' || plan === 'enterprise') {
     return 90;
   }
@@ -255,6 +264,7 @@ async function runMetaJob({ userId, rangeDays }) {
 
   // Enriquecer root con metadata real del source
   const rootMeta = extractMetaRootPatchFromResult(r, days);
+  const datasetSummary = summarizeDatasets(r.datasets);
 
   await McpData.patchRootSource(userId, 'metaAds', rootMeta.sourcePatch);
 
@@ -262,8 +272,8 @@ async function runMetaJob({ userId, rangeDays }) {
     latestSnapshotId: snapshotId,
     coverage: rootMeta.rootPatch.coverage,
     stats: {
-      rows: Object.values(summarizeDatasets(r.datasets)).reduce((acc, s) => acc + toNum(s.rows), 0),
-      bytes: Object.values(summarizeDatasets(r.datasets)).reduce((acc, s) => acc + toNum(s.bytes), 0),
+      rows: Object.values(datasetSummary).reduce((acc, s) => acc + toNum(s.rows), 0),
+      bytes: Object.values(datasetSummary).reduce((acc, s) => acc + toNum(s.bytes), 0),
     },
   });
 
@@ -271,14 +281,14 @@ async function runMetaJob({ userId, rangeDays }) {
     userId: String(userId),
     snapshotId,
     metaAds: rootMeta.metaSummary,
-    datasets: summarizeDatasets(r.datasets),
+    datasets: datasetSummary,
   });
 
   return { ok: true, snapshotId, saved: (r.datasets || []).length };
 }
 
 /* =========================
- * Mongo Connect (CRÍTICO)
+ * Mongo Connect
  * ========================= */
 async function connectMongo() {
   mongoose.set('bufferCommands', false);

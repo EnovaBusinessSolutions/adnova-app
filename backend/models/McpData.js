@@ -28,7 +28,7 @@ const CoverageSchema = new Schema(
   {
     range: { type: RangeSchema, default: () => ({}) },
     defaultRangeDays: { type: Number, default: 30 },
-    granularity: { type: [String], default: [] }, // ["summary","daily","campaign","breakdown"]
+    granularity: { type: [String], default: [] }, // ["summary","ranked_campaigns","breakdown","signals","daily_ai"]
   },
   { _id: false }
 );
@@ -99,6 +99,16 @@ const McpDataSchema = new Schema(
     latestSnapshotId: { type: String, default: null },
 
     /**
+     * stats aplica tanto para root como para chunk:
+     * - root: volumen agregado del snapshot actual
+     * - chunk: volumen del dataset específico
+     */
+    stats: {
+      type: StatsSchema,
+      default: undefined,
+    },
+
+    /**
      * ==========================
      * CHUNK-ONLY FIELDS
      * ==========================
@@ -122,12 +132,6 @@ const McpDataSchema = new Schema(
 
     // Compact payload normalized y seguro
     data: { type: Schema.Types.Mixed, default: null },
-
-    // stats útiles para debug/volumen
-    stats: {
-      type: StatsSchema,
-      default: undefined,
-    },
   },
   {
     collection: 'mcpdata',
@@ -162,18 +166,37 @@ McpDataSchema.index(
 /* =========================
  * Helpers internos
  * ========================= */
-function cleanUndefined(obj) {
-  if (obj == null || typeof obj !== 'object') return obj;
+function isPlainObject(value) {
+  if (value == null || typeof value !== 'object') return false;
+  return Object.getPrototypeOf(value) === Object.prototype;
+}
 
+function cleanUndefined(obj) {
+  if (obj === undefined) return undefined;
+  if (obj === null) return null;
+
+  // Preservar Date
+  if (obj instanceof Date) return obj;
+
+  // Preservar ObjectId
+  if (obj instanceof Types.ObjectId) return obj;
+
+  // Preservar arrays
   if (Array.isArray(obj)) {
-    return obj.map(cleanUndefined).filter((v) => v !== undefined);
+    return obj
+      .map(cleanUndefined)
+      .filter((v) => v !== undefined);
   }
+
+  // Preservar objetos no planos (Buffer, clases, etc.)
+  if (!isPlainObject(obj)) return obj;
 
   const out = {};
   for (const [k, v] of Object.entries(obj)) {
-    if (v === undefined) continue;
     const cleaned = cleanUndefined(v);
-    if (cleaned !== undefined) out[k] = cleaned;
+    if (cleaned !== undefined) {
+      out[k] = cleaned;
+    }
   }
   return out;
 }
@@ -233,7 +256,7 @@ McpDataSchema.statics.upsertRoot = async function (userId, patch = {}) {
       $setOnInsert: {
         createdAt: now,
       },
-      // ✅ limpia campos chunk-only por si existían de antes
+      // limpia campos chunk-only por si existían de antes
       $unset: {
         snapshotId: 1,
         source: 1,
@@ -262,7 +285,8 @@ McpDataSchema.statics.patchRootSource = async function (userId, sourceKey, patch
     updatedAt: now,
   };
 
-  for (const [k, v] of Object.entries(cleanUndefined(patch || {}))) {
+  const cleanedPatch = cleanUndefined(patch || {});
+  for (const [k, v] of Object.entries(cleanedPatch)) {
     $set[`sources.${sourceKey}.${k}`] = v;
   }
 
@@ -275,7 +299,7 @@ McpDataSchema.statics.patchRootSource = async function (userId, sourceKey, patch
         createdAt: now,
       },
       $set,
-      // ✅ limpia campos chunk-only por si existían de antes
+      // limpia campos chunk-only por si existían de antes
       $unset: {
         snapshotId: 1,
         source: 1,
@@ -331,7 +355,7 @@ McpDataSchema.statics.upsertChunk = async function ({
       $setOnInsert: {
         createdAt: now,
       },
-      // ✅ limpia campos root-only por si existían de antes
+      // limpia campos root-only por si existían de antes
       $unset: {
         sources: 1,
         coverage: 1,

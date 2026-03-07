@@ -6,7 +6,7 @@ const mongoose = require('mongoose');
 
 const API_VER = process.env.FACEBOOK_API_VERSION || 'v19.0';
 
-// [★] Límite duro 3 por requerimiento (cuentas a auditar)
+// [★] Límite duro 3 por requerimiento
 const HARD_LIMIT = 3;
 const MAX_ACCOUNTS = Math.min(
   HARD_LIMIT,
@@ -36,7 +36,10 @@ try {
     },
     { collection: 'metaaccounts' }
   );
-  schema.pre('save', function (n) { this.updatedAt = new Date(); n(); });
+  schema.pre('save', function (n) {
+    this.updatedAt = new Date();
+    n();
+  });
   MetaAccount = mongoose.models.MetaAccount || model('MetaAccount', schema);
 }
 
@@ -51,7 +54,6 @@ try {
 const toNum = (v) => Number(v || 0);
 const safeDiv = (n, d) => (Number(d || 0) ? Number(n || 0) / Number(d || 0) : 0);
 const normAct = (s = '') => String(s).replace(/^act_/, '').replace(/[^\d]/g, '').trim();
-
 const minorToUnit = (v) => (v == null ? null : Number(v) / 100);
 
 function clampInt(n, min, max) {
@@ -111,15 +113,10 @@ function addDaysYMD(ymd, deltaDays) {
   return base.toISOString().slice(0, 10);
 }
 
-/**
- * Rango “strict” TZ-aware:
- * - includeToday=false => hasta AYER (recomendado para auditorías y alineación Ads)
- * - includeToday=true  => hasta HOY (parcial)
- */
 function getStrictRangeForTZ(timeZone, rangeDays, includeToday) {
   const todayYMD = ymdInTimeZone(new Date(), timeZone || 'UTC');
   const end = includeToday ? todayYMD : addDaysYMD(todayYMD, -1);
-  const days = clampInt(rangeDays || 30, 1, 3650); // permite histórico
+  const days = clampInt(rangeDays || 30, 1, 3650);
   const start = addDaysYMD(end, -(days - 1));
   return { since: start, until: end };
 }
@@ -169,11 +166,8 @@ function normalizeMetaObjective(raw) {
 }
 
 /* =========================
-   Click metric (alinear con Ads Manager)
-   =========================
-   link = "Clics en el enlace" (inline_link_clicks)
-   all  = "Clics (todos)" (clicks)
-*/
+   Click metric
+   ========================= */
 const META_CLICK_METRIC = String(process.env.META_CLICK_METRIC || 'link').toLowerCase();
 
 function pickClicks(x) {
@@ -203,7 +197,7 @@ async function fetchJSON(url, { retries = 1 } = {}) {
       if (!r.ok) {
         const code = j?.error?.code || r.status;
         if ((code === 4 || code === 17 || String(code).startsWith('5')) && i < retries) {
-          await new Promise(res => setTimeout(res, 800 + i * 500));
+          await new Promise((res) => setTimeout(res, 800 + i * 500));
           continue;
         }
         const msg = j?.error?.message || `HTTP_${r.status}`;
@@ -280,7 +274,7 @@ function getAllAvailableAccounts(accDoc) {
     ...(Array.isArray(accDoc?.adAccounts) ? accDoc.adAccounts : []),
   ];
   return raw
-    .map(x => {
+    .map((x) => {
       const id = normAct(x?.id || x || '');
       const name = x?.name || x?.account_name || null;
       return id ? { id, name } : null;
@@ -349,13 +343,13 @@ function sumKpis(rows) {
 
 function topN(list, n, scoreFn) {
   const arr = Array.isArray(list) ? list.slice() : [];
-  arr.sort((a, b) => (scoreFn(b) - scoreFn(a)));
+  arr.sort((a, b) => scoreFn(b) - scoreFn(a));
   return arr.slice(0, Math.max(0, n));
 }
 
 function makeMetaHeader({ userId, accountIds, accounts, range, currency, version }) {
   return {
-    schema: 'adray.mcp.v1',
+    schema: 'adray.mcp.v2',
     source: 'metaAds',
     generatedAt: new Date().toISOString(),
     userId: String(userId),
@@ -380,42 +374,236 @@ function computeDeltas(cur, prev) {
   };
 }
 
+function trimText(v, max = 120) {
+  const s = String(v || '').trim();
+  if (!s) return '';
+  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
+}
+
+function scoreCampaignForRanking(c) {
+  const k = c?.kpis || {};
+  const spend = toNum(k.spend);
+  const purchases = toNum(k.purchases);
+  const roas = toNum(k.roas);
+  const ctr = toNum(k.ctr);
+  const cpa = toNum(k.cpa);
+
+  return (
+    spend * 0.35 +
+    purchases * 25 +
+    roas * 120 +
+    ctr * 10 -
+    cpa * 0.2
+  );
+}
+
+function campaignHealthLabel(c) {
+  const k = c?.kpis || {};
+  const spend = toNum(k.spend);
+  const roas = toNum(k.roas);
+  const purchases = toNum(k.purchases);
+  const cpa = toNum(k.cpa);
+
+  if (spend <= 0) return 'NO_SPEND';
+  if (purchases >= 3 && roas >= 2.5) return 'WINNER';
+  if (purchases >= 1 && roas >= 1.5) return 'PROMISING';
+  if (spend >= 100 && purchases === 0) return 'RISK';
+  if (cpa > 0 && roas < 1) return 'INEFFICIENT';
+  return 'MIXED';
+}
+
+function campaignTags(c, topSets = {}) {
+  const tags = [];
+  const id = String(c?.campaign_id || '');
+  const k = c?.kpis || {};
+  const spend = toNum(k.spend);
+  const purchases = toNum(k.purchases);
+  const roas = toNum(k.roas);
+  const cpa = toNum(k.cpa);
+  const ctr = toNum(k.ctr);
+
+  if (topSets.bySpend?.has(id)) tags.push('top_spend');
+  if (topSets.byPurchases?.has(id)) tags.push('top_purchases');
+  if (topSets.byRoas?.has(id)) tags.push('top_roas');
+
+  if (campaignHealthLabel(c) === 'WINNER') tags.push('winner');
+  if (campaignHealthLabel(c) === 'PROMISING') tags.push('promising');
+  if (campaignHealthLabel(c) === 'RISK') tags.push('risk');
+  if (campaignHealthLabel(c) === 'INEFFICIENT') tags.push('inefficient');
+
+  if (spend > 0 && purchases === 0) tags.push('spend_without_purchases');
+  if (roas >= 3) tags.push('high_roas');
+  if (roas > 0 && roas < 1) tags.push('low_roas');
+  if (cpa >= 150 && purchases > 0) tags.push('high_cpa');
+  if (ctr >= 2) tags.push('strong_ctr');
+  if (ctr > 0 && ctr < 0.8) tags.push('weak_ctr');
+
+  return Array.from(new Set(tags));
+}
+
+function slimCampaign(c, topSets) {
+  const k = c.kpis || {};
+  return {
+    account_id: c.account_id,
+    campaign_id: c.campaign_id,
+    name: trimText(c.name || 'Sin nombre', 120),
+    objective_norm: c.objective_norm,
+    status: c.status || null,
+    health: campaignHealthLabel(c),
+    ranking_score: Number(scoreCampaignForRanking(c).toFixed(2)),
+    tags: campaignTags(c, topSets),
+    kpis: {
+      spend: toNum(k.spend),
+      impressions: toNum(k.impressions),
+      clicks: toNum(k.clicks),
+      purchases: toNum(k.purchases),
+      purchase_value: toNum(k.purchase_value),
+      roas: toNum(k.roas),
+      cpa: toNum(k.cpa),
+      cpc: toNum(k.cpc),
+      ctr: toNum(k.ctr),
+    },
+  };
+}
+
+function aggregateBreakdown(rows, keyName, n) {
+  const map = new Map();
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const key = String(r?.[keyName] || '').trim();
+    if (!key) continue;
+    const k = r?.kpis || {};
+    const cur = map.get(key) || { key, spend: 0, impressions: 0, clicks: 0, purchases: 0, purchase_value: 0 };
+    cur.spend += toNum(k.spend);
+    cur.impressions += toNum(k.impressions);
+    cur.clicks += toNum(k.clicks);
+    cur.purchases += toNum(k.purchases);
+    cur.purchase_value += toNum(k.purchase_value);
+    map.set(key, cur);
+  }
+  const arr = Array.from(map.values()).map((x) => ({
+    ...x,
+    roas: x.purchase_value && x.spend ? safeDiv(x.purchase_value, x.spend) : 0,
+    cpa: safeDiv(x.spend, x.purchases),
+    cpc: safeDiv(x.spend, x.clicks),
+    ctr: x.impressions ? (x.clicks / x.impressions) * 100 : 0,
+  }));
+  arr.sort((a, b) => b.spend - a.spend);
+  return arr.slice(0, n);
+}
+
+function buildOptimizationSignals({ rankedCampaigns, deviceTop, placementTop, summary }) {
+  const winners = rankedCampaigns
+    .filter((c) => c.health === 'WINNER' || c.health === 'PROMISING')
+    .slice(0, 5);
+
+  const risks = rankedCampaigns
+    .filter((c) => c.tags.includes('risk') || c.tags.includes('inefficient') || c.tags.includes('spend_without_purchases'))
+    .slice(0, 5);
+
+  const quickWins = rankedCampaigns
+    .filter((c) => c.tags.includes('top_roas') && !c.tags.includes('top_spend'))
+    .slice(0, 5);
+
+  const deviceWinner = deviceTop[0] || null;
+  const placementWinner = placementTop[0] || null;
+
+  const insights = [];
+  if (summary?.deltas?.last7_vs_prev7?.purchase_value_pct > 0) {
+    insights.push('Revenue improved in the last 7 days versus the previous 7-day window.');
+  }
+  if (summary?.deltas?.last7_vs_prev7?.purchase_value_pct < 0) {
+    insights.push('Revenue declined in the last 7 days versus the previous 7-day window.');
+  }
+  if (deviceWinner?.key) {
+    insights.push(`Best-performing device by spend concentration is ${deviceWinner.key}.`);
+  }
+  if (placementWinner?.key) {
+    insights.push(`Top placement by spend concentration is ${placementWinner.key}.`);
+  }
+  if (winners.length) {
+    insights.push(`Top winner campaign is ${winners[0].name}.`);
+  }
+  if (risks.length) {
+    insights.push(`Main efficiency risk campaign is ${risks[0].name}.`);
+  }
+
+  const recommendations = [];
+  if (quickWins.length) {
+    recommendations.push('Consider shifting more budget toward efficient campaigns with strong ROAS but lower current spend.');
+  }
+  if (risks.length) {
+    recommendations.push('Review campaigns spending without purchases and reduce budget or refresh creatives/audiences.');
+  }
+  if (deviceWinner?.roas > 0) {
+    recommendations.push(`Prioritize creatives and placements aligned to ${deviceWinner.key} if it continues outperforming.`);
+  }
+  if (placementWinner?.roas > 0) {
+    recommendations.push(`Audit delivery on ${placementWinner.key} to see if scaling there preserves ROAS.`);
+  }
+
+  return {
+    winners,
+    risks,
+    quick_wins: quickWins,
+    insights: insights.slice(0, 6),
+    recommendations: recommendations.slice(0, 5),
+  };
+}
+
+function aggregateDailyTotals(rows) {
+  const map = new Map();
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const d = String(r?.date || '').trim();
+    if (!d) continue;
+    const k = r?.kpis || {};
+    const cur = map.get(d) || {
+      date: d,
+      kpis: { spend: 0, impressions: 0, clicks: 0, purchases: 0, purchase_value: 0 },
+    };
+    cur.kpis.spend += toNum(k.spend);
+    cur.kpis.impressions += toNum(k.impressions);
+    cur.kpis.clicks += toNum(k.clicks);
+    cur.kpis.purchases += toNum(k.purchases);
+    cur.kpis.purchase_value += toNum(k.purchase_value);
+    map.set(d, cur);
+  }
+
+  const out = Array.from(map.values()).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  for (const x of out) {
+    x.kpis.roas = x.kpis.spend > 0 ? safeDiv(x.kpis.purchase_value, x.kpis.spend) : 0;
+    x.kpis.cpa = safeDiv(x.kpis.spend, x.kpis.purchases);
+    x.kpis.cpc = safeDiv(x.kpis.spend, x.kpis.clicks);
+    x.kpis.ctr = x.kpis.impressions ? (x.kpis.clicks / x.kpis.impressions) * 100 : 0;
+  }
+  return out;
+}
+
 /* ---------------- collector core ---------------- */
 async function collectMeta(userId, opts = {}) {
   const {
-    // selection override (optional)
     account_id,
-
-    // NEW: retention/plan windows
-    rangeDays = 30, // 30 by default; caller can set 60/90/365
-    range,          // optional override: { from, to, tz }
-
+    rangeDays = 30,
+    range,
     level = 'campaign',
     fields: userFields,
-
-    // strict range aligned to Ads (timezone aware)
     strict = true,
-
     include_today = (
       opts.include_today !== undefined
         ? !!opts.include_today
         : (String(process.env.META_INCLUDE_TODAY || 'false').toLowerCase() === 'true')
     ),
-
-    // Compact output controls
-    topCampaignsN = 25,
-    topBreakdownsN = 10,
-
-    // Series controls
+    topCampaignsN = 15,
+    topBreakdownsN = 8,
     buildDailySeries = true,
-    dailySeriesDays = 30, // how many days to return in daily series
+    dailySeriesDays = 30,
+    aiDailyTopCampaigns = 5,
   } = opts;
 
   const [acc, user] = await Promise.all([
     MetaAccount.findOne({ $or: [{ user: userId }, { userId }] })
       .select('+access_token +token +accessToken +longLivedToken +longlivedToken scopes ad_accounts adAccounts defaultAccountId selectedAccountIds')
       .lean(),
-    User.findById(userId).lean()
+    User.findById(userId).lean(),
   ]);
 
   if (!acc) {
@@ -427,17 +615,16 @@ async function collectMeta(userId, opts = {}) {
     return { ok: false, notAuthorized: true, reason: 'NO_TOKEN' };
   }
 
-  const scopes = Array.isArray(acc.scopes) ? acc.scopes.map(s => String(s || '').toLowerCase()) : [];
+  const scopes = Array.isArray(acc.scopes) ? acc.scopes.map((s) => String(s || '').toLowerCase()) : [];
   const hasRead = scopes.includes('ads_read') || scopes.includes('ads_management');
   if (!hasRead) {
     return { ok: false, notAuthorized: true, reason: 'MISSING_SCOPES(ads_read|ads_management)' };
   }
 
   const available = getAllAvailableAccounts(acc);
-  const availById = new Map(available.map(a => [a.id, a]));
-  const availSet = new Set(available.map(a => a.id));
+  const availById = new Map(available.map((a) => [a.id, a]));
+  const availSet = new Set(available.map((a) => a.id));
 
-  // --- selección real ---
   let accountsToAudit = [];
 
   if (account_id) {
@@ -445,13 +632,12 @@ async function collectMeta(userId, opts = {}) {
     if (!id) return { ok: false, notAuthorized: true, reason: 'INVALID_ACCOUNT_ID' };
     if (availSet.has(id)) accountsToAudit = [{ id, name: availById.get(id)?.name || null }];
   } else {
-    // 1) prefer MetaAccount.selectedAccountIds si existe
     const metaSel = Array.isArray(acc?.selectedAccountIds) ? acc.selectedAccountIds : [];
     const legacySel = Array.isArray(user?.selectedMetaAccounts) ? user.selectedMetaAccounts : [];
     const prefSel = Array.isArray(user?.preferences?.meta?.auditAccountIds) ? user.preferences.meta.auditAccountIds : [];
     const merged = [...metaSel, ...legacySel, ...prefSel]
       .map(normAct)
-      .filter(id => id && availSet.has(id));
+      .filter((id) => id && availSet.has(id));
 
     const seen = new Set();
     const ordered = [];
@@ -463,7 +649,7 @@ async function collectMeta(userId, opts = {}) {
     }
 
     if (ordered.length) {
-      accountsToAudit = ordered.map(id => ({ id, name: availById.get(id)?.name || null }));
+      accountsToAudit = ordered.map((id) => ({ id, name: availById.get(id)?.name || null }));
     } else {
       const fallback = pickDefaultAccountId(acc);
       if (fallback && availSet.has(fallback)) {
@@ -476,14 +662,13 @@ async function collectMeta(userId, opts = {}) {
 
   if (!accountsToAudit.length && available.length) accountsToAudit = available.slice(0, 1);
 
-  // Campos base (mantengo tu set)
   const baseFields = [
     'date_start', 'date_stop',
     'campaign_id', 'campaign_name', 'objective',
     'spend', 'impressions', 'reach', 'frequency',
     'clicks', 'cpm', 'cpc', 'ctr',
     'unique_clicks', 'inline_link_clicks',
-    'actions', 'action_values'
+    'actions', 'action_values',
   ];
   const fields = Array.isArray(userFields) && userFields.length ? userFields : baseFields;
 
@@ -517,7 +702,6 @@ async function collectMeta(userId, opts = {}) {
     }
   }
 
-  // acumuladores “raw” solo internos
   const byCampaignRaw = [];
   const byCampaignDeviceRaw = [];
   const byCampaignPlacementRaw = [];
@@ -527,10 +711,6 @@ async function collectMeta(userId, opts = {}) {
   const accountNameMap = new Map();
   const accountTzMap = new Map();
 
-  let minStart = null;
-  let maxStop = null;
-
-  // si se mandó range explícito, usarlo (respeta from/to)
   const explicitRange = range && range.from && range.to ? {
     since: String(range.from),
     until: String(range.to),
@@ -552,11 +732,13 @@ async function collectMeta(userId, opts = {}) {
       ? { since: explicitRange.since, until: explicitRange.until }
       : (strict ? getStrictRangeForTZ(tz, rangeDays, !!include_today) : getStrictRangeForTZ(tz, rangeDays, !!include_today));
 
-    // campaign meta
     let campMeta = new Map();
-    try { campMeta = await fetchAllCampaignMeta(actId, token); } catch { campMeta = new Map(); }
+    try {
+      campMeta = await fetchAllCampaignMeta(actId, token);
+    } catch {
+      campMeta = new Map();
+    }
 
-    // insights por campaña (agregado)
     let data = [];
     try {
       data = await pageAllInsights(mkUrl(actId, timeRangeObj));
@@ -572,16 +754,10 @@ async function collectMeta(userId, opts = {}) {
 
     for (const x of data) {
       const { purchases, purchase_value } = extractPurchaseMetrics(x);
-
-      if (x.date_start && (!minStart || x.date_start < minStart)) minStart = x.date_start;
-      if (x.date_stop && (!maxStop || x.date_stop > maxStop)) maxStop = x.date_stop;
-
       const campIdNorm = normAct(x.campaign_id || '');
       const metaInfo = campMeta.get(campIdNorm) || {};
-
       const rawObjective = x.objective || metaInfo.objective || null;
       const objective_norm = metaInfo.objective_norm || normalizeMetaObjective(rawObjective);
-
       const key = campIdNorm || x.campaign_id || 'unknown';
 
       const cur = byCampAgg.get(key) || {
@@ -629,7 +805,6 @@ async function collectMeta(userId, opts = {}) {
       byCampAgg.set(key, cur);
     }
 
-    // Device breakdown
     const byCampDeviceAgg = new Map();
     try {
       const devData = await pageAllInsights(mkUrl(actId, timeRangeObj, { breakdowns: 'impression_device' }));
@@ -671,7 +846,6 @@ async function collectMeta(userId, opts = {}) {
       }
     } catch {}
 
-    // Placement breakdown (publisher_platform)
     const byCampPlacementAgg = new Map();
     try {
       const plData = await pageAllInsights(mkUrl(actId, timeRangeObj, { breakdowns: 'publisher_platform' }));
@@ -713,7 +887,6 @@ async function collectMeta(userId, opts = {}) {
       }
     } catch {}
 
-    // push raw rows (internal)
     for (const [, v] of byCampAgg.entries()) {
       byCampaignRaw.push({
         account_id: v.account_id,
@@ -737,19 +910,16 @@ async function collectMeta(userId, opts = {}) {
     for (const [, v] of byCampPlacementAgg.entries()) byCampaignPlacementRaw.push(v);
   }
 
-  // unify currency if possible
-  const uniqueCurrencies = Array.from(new Set(accountIds.map(id => accountCurrency.get(id)).filter(Boolean)));
+  const uniqueCurrencies = Array.from(new Set(accountIds.map((id) => accountCurrency.get(id)).filter(Boolean)));
   const unifiedCurrency = uniqueCurrencies.length === 1 ? uniqueCurrencies[0] : null;
 
-  // Build accounts array compact
-  const accounts = accountIds.map(id => ({
+  const accounts = accountIds.map((id) => ({
     id,
     name: accountNameMap.get(id) || null,
     currency: accountCurrency.get(id) || null,
     timezone_name: accountTzMap.get(id) || null,
   }));
 
-  // determine output range
   const firstTz = accountIds.length ? (accountTzMap.get(accountIds[0]) || 'UTC') : 'UTC';
   const strictRangeOut = explicitRange
     ? { since: explicitRange.since, until: explicitRange.until }
@@ -757,13 +927,10 @@ async function collectMeta(userId, opts = {}) {
 
   const from = strictRangeOut.since;
   const to = strictRangeOut.until;
+  const rangeOut = { from, to, tz: firstTz };
 
-  // ---- Compact Datasets ----
-  // A) Summary + deltas (7/30 vs prev)
-  const allKpis = sumKpis(byCampaignRaw.map(x => ({ kpis: x.kpis })));
+  const allKpis = sumKpis(byCampaignRaw.map((x) => ({ kpis: x.kpis })));
 
-  // Build “window slices” using campaignRaw rows is not time-granular; so we derive deltas by fetching 7d and prev7d at account level (cheaper).
-  // We do one extra call per account for 7d and prev7d aggregated at account level (level=account is not used; we keep level=campaign but aggregate quickly).
   const deltaWindows = {
     last7: { since: addDaysYMD(to, -6), until: to },
     prev7: { since: addDaysYMD(to, -13), until: addDaysYMD(to, -7) },
@@ -772,13 +939,12 @@ async function collectMeta(userId, opts = {}) {
   };
 
   async function fetchAggForWindow(window) {
-    // Fetch minimal fields for speed
     const agg = { spend: 0, impressions: 0, clicks: 0, purchases: 0, purchase_value: 0 };
     for (const a of accountIds) {
       const qp = new URLSearchParams();
       qp.set('time_range', JSON.stringify(window));
       qp.set('level', 'campaign');
-      qp.set('fields', ['spend','impressions','clicks','inline_link_clicks','actions','action_values'].join(','));
+      qp.set('fields', ['spend', 'impressions', 'clicks', 'inline_link_clicks', 'actions', 'action_values'].join(','));
       qp.set('limit', '5000');
       qp.set('action_report_time', process.env.META_ACTION_REPORT_TIME || 'conversion');
       qp.set('use_unified_attribution_setting', 'true');
@@ -804,15 +970,16 @@ async function collectMeta(userId, opts = {}) {
     return agg;
   }
 
-  let last7 = null, prev7 = null, last30 = null, prev30 = null;
+  let last7 = null;
+  let prev7 = null;
+  let last30 = null;
+  let prev30 = null;
   try {
     last7 = await fetchAggForWindow(deltaWindows.last7);
     prev7 = await fetchAggForWindow(deltaWindows.prev7);
     last30 = await fetchAggForWindow(deltaWindows.last30);
     prev30 = await fetchAggForWindow(deltaWindows.prev30);
-  } catch {
-    // best-effort; deltas may be null
-  }
+  } catch {}
 
   const summary = {
     kpis: allKpis,
@@ -828,89 +995,59 @@ async function collectMeta(userId, opts = {}) {
     },
   };
 
-  // B) Top campaigns (by spend / purchases / roas)
   const tops = {
     by_spend: topN(byCampaignRaw, topCampaignsN, (x) => toNum(x?.kpis?.spend)),
     by_purchases: topN(byCampaignRaw, topCampaignsN, (x) => toNum(x?.kpis?.purchases)),
-    by_roas: topN(byCampaignRaw.filter(x => toNum(x?.kpis?.spend) > 0), topCampaignsN, (x) => toNum(x?.kpis?.roas)),
+    by_roas: topN(byCampaignRaw.filter((x) => toNum(x?.kpis?.spend) > 0), topCampaignsN, (x) => toNum(x?.kpis?.roas)),
   };
 
-  // reduce payload for LLM: keep only needed fields
-  function slimCampaign(c) {
-    const k = c.kpis || {};
-    return {
-      account_id: c.account_id,
-      campaign_id: c.campaign_id,
-      name: c.name,
-      objective_norm: c.objective_norm,
-      status: c.status || null,
-      kpis: {
-        spend: toNum(k.spend),
-        impressions: toNum(k.impressions),
-        clicks: toNum(k.clicks),
-        purchases: toNum(k.purchases),
-        purchase_value: toNum(k.purchase_value),
-        roas: toNum(k.roas),
-        cpa: toNum(k.cpa),
-        cpc: toNum(k.cpc),
-        ctr: toNum(k.ctr),
-      }
-    };
-  }
-
-  const campaignsTop = {
-    top_campaigns: {
-      by_spend: tops.by_spend.map(slimCampaign),
-      by_purchases: tops.by_purchases.map(slimCampaign),
-      by_roas: tops.by_roas.map(slimCampaign),
-    }
+  const topSets = {
+    bySpend: new Set(tops.by_spend.map((x) => String(x.campaign_id))),
+    byPurchases: new Set(tops.by_purchases.map((x) => String(x.campaign_id))),
+    byRoas: new Set(tops.by_roas.map((x) => String(x.campaign_id))),
   };
 
-  // C) Breakdowns top (device + placement) aggregated across campaigns
-  function aggregateBreakdown(rows, keyName) {
-    const map = new Map();
-    for (const r of Array.isArray(rows) ? rows : []) {
-      const key = String(r?.[keyName] || '').trim();
-      if (!key) continue;
-      const k = r?.kpis || {};
-      const cur = map.get(key) || { key, spend: 0, impressions: 0, clicks: 0, purchases: 0, purchase_value: 0 };
-      cur.spend += toNum(k.spend);
-      cur.impressions += toNum(k.impressions);
-      cur.clicks += toNum(k.clicks);
-      cur.purchases += toNum(k.purchases);
-      cur.purchase_value += toNum(k.purchase_value);
-      map.set(key, cur);
-    }
-    const arr = Array.from(map.values()).map(x => ({
-      ...x,
-      roas: x.purchase_value && x.spend ? safeDiv(x.purchase_value, x.spend) : 0,
-      cpa: safeDiv(x.spend, x.purchases),
-      cpc: safeDiv(x.spend, x.clicks),
-      ctr: x.impressions ? (x.clicks / x.impressions) * 100 : 0,
-    }));
-    arr.sort((a, b) => b.spend - a.spend);
-    return arr.slice(0, topBreakdownsN);
+  const campaignMap = new Map();
+  for (const c of byCampaignRaw) {
+    const id = String(c?.campaign_id || '').trim();
+    if (!id) continue;
+    campaignMap.set(id, c);
   }
+
+  const rankedCampaigns = Array.from(campaignMap.values())
+    .map((c) => slimCampaign(c, topSets))
+    .sort((a, b) => b.ranking_score - a.ranking_score)
+    .slice(0, topCampaignsN);
 
   const breakdownsTop = {
-    device_top: aggregateBreakdown(byCampaignDeviceRaw, 'device'),
-    placement_top: aggregateBreakdown(byCampaignPlacementRaw, 'platform'),
+    device_top: aggregateBreakdown(byCampaignDeviceRaw, 'device', topBreakdownsN),
+    placement_top: aggregateBreakdown(byCampaignPlacementRaw, 'platform', topBreakdownsN),
   };
 
-  // D) Daily series (30d) for top campaigns by spend (time_increment=1)
-  const dailySeries = { campaigns_daily: [] };
-  if (buildDailySeries) {
-    const topIds = new Set(tops.by_spend.slice(0, topCampaignsN).map(c => String(c.campaign_id)));
-    const dailyRangeDays = clampInt(dailySeriesDays || 30, 7, 180);
-    const dailyRange = { since: addDaysYMD(to, -(dailyRangeDays - 1)), until: to };
+  const optimizationSignals = buildOptimizationSignals({
+    rankedCampaigns,
+    deviceTop: breakdownsTop.device_top,
+    placementTop: breakdownsTop.placement_top,
+    summary,
+  });
 
-    // We'll query per account, breakdown by campaign via time_increment=1, then keep only top campaign ids
+  const dailyRangeDays = clampInt(dailySeriesDays || 30, 7, 180);
+  const dailyRange = { since: addDaysYMD(to, -(dailyRangeDays - 1)), until: to };
+
+  const aiDailyTopIds = new Set(
+    rankedCampaigns
+      .slice(0, clampInt(aiDailyTopCampaigns || 5, 3, 10))
+      .map((c) => String(c.campaign_id))
+  );
+
+  const dailySeries = { campaigns_daily: [] };
+  if (buildDailySeries && aiDailyTopIds.size > 0) {
     for (const a of accountIds) {
       const qp = new URLSearchParams();
       qp.set('time_range', JSON.stringify(dailyRange));
       qp.set('level', 'campaign');
       qp.set('time_increment', '1');
-      qp.set('fields', ['date_start','campaign_id','campaign_name','spend','impressions','clicks','inline_link_clicks','actions','action_values'].join(','));
+      qp.set('fields', ['date_start', 'campaign_id', 'campaign_name', 'spend', 'impressions', 'clicks', 'inline_link_clicks', 'actions', 'action_values'].join(','));
       qp.set('limit', '5000');
       qp.set('action_report_time', process.env.META_ACTION_REPORT_TIME || 'conversion');
       qp.set('use_unified_attribution_setting', 'true');
@@ -918,11 +1055,15 @@ async function collectMeta(userId, opts = {}) {
 
       const url = `https://graph.facebook.com/${API_VER}/act_${a}/insights?${qp.toString()}`;
       let rows = [];
-      try { rows = await pageAllInsights(url); } catch { rows = []; }
+      try {
+        rows = await pageAllInsights(url);
+      } catch {
+        rows = [];
+      }
 
       for (const x of rows) {
         const cid = normAct(x.campaign_id || '');
-        if (!cid || !topIds.has(String(cid))) continue;
+        if (!cid || !aiDailyTopIds.has(String(cid))) continue;
 
         const { purchases, purchase_value } = extractPurchaseMetrics(x);
         const cx = pickClicks(x);
@@ -931,58 +1072,108 @@ async function collectMeta(userId, opts = {}) {
           date: x.date_start,
           account_id: a,
           campaign_id: cid,
-          campaign_name: x.campaign_name || null,
+          campaign_name: trimText(x.campaign_name || '', 120) || null,
           kpis: {
             spend: toNum(x.spend),
             impressions: toNum(x.impressions),
             clicks: cx.clicks,
             purchases: purchases == null ? 0 : toNum(purchases),
             purchase_value: purchase_value == null ? 0 : toNum(purchase_value),
-          }
+          },
         });
       }
     }
   }
 
-  const rangeOut = { from, to, tz: firstTz };
+  const totalsByDay = aggregateDailyTotals(dailySeries.campaigns_daily);
 
-  // Pack datasets (ready to be saved as chunks in mcpdata)
   const header = makeMetaHeader({
     userId,
     accountIds,
     accounts,
     range: rangeOut,
     currency: unifiedCurrency,
-    version: `metaCollector@mcp-v1(clicks=${META_CLICK_METRIC},include_today=${!!include_today})`,
+    version: `metaCollector@mcp-v2(clicks=${META_CLICK_METRIC},include_today=${!!include_today})`,
   });
+
+  const summaryStats = {
+    rows: 1,
+    bytes: 0,
+  };
+
+  const rankedStats = {
+    rows: rankedCampaigns.length,
+    bytes: 0,
+  };
+
+  const breakdownStats = {
+    rows: breakdownsTop.device_top.length + breakdownsTop.placement_top.length,
+    bytes: 0,
+  };
+
+  const signalStats = {
+    rows:
+      optimizationSignals.winners.length +
+      optimizationSignals.risks.length +
+      optimizationSignals.quick_wins.length,
+    bytes: 0,
+  };
+
+  const dailyAiStats = {
+    rows:
+      (Array.isArray(dailySeries.campaigns_daily) ? dailySeries.campaigns_daily.length : 0) +
+      (Array.isArray(totalsByDay) ? totalsByDay.length : 0),
+    bytes: 0,
+  };
 
   const datasets = [
     {
       source: 'metaAds',
       dataset: 'meta.insights_summary',
       range: rangeOut,
+      stats: summaryStats,
       data: { meta: header, summary },
     },
     {
       source: 'metaAds',
-      dataset: 'meta.campaigns_top',
+      dataset: 'meta.campaigns_ranked',
       range: rangeOut,
-      data: { meta: header, ...campaignsTop },
+      stats: rankedStats,
+      data: {
+        meta: header,
+        campaigns_ranked: rankedCampaigns,
+      },
     },
     {
       source: 'metaAds',
       dataset: 'meta.breakdowns_top',
       range: rangeOut,
+      stats: breakdownStats,
       data: { meta: header, ...breakdownsTop },
+    },
+    {
+      source: 'metaAds',
+      dataset: 'meta.optimization_signals',
+      range: rangeOut,
+      stats: signalStats,
+      data: {
+        meta: header,
+        optimization_signals: optimizationSignals,
+      },
     },
   ];
 
   if (buildDailySeries) {
     datasets.push({
       source: 'metaAds',
-      dataset: 'meta.campaigns_daily',
-      range: { from: addDaysYMD(to, -(clampInt(dailySeriesDays || 30, 7, 180) - 1)), to, tz: firstTz },
-      data: { meta: header, ...dailySeries },
+      dataset: 'meta.daily_trends_ai',
+      range: { from: dailyRange.since, to: dailyRange.until, tz: firstTz },
+      stats: dailyAiStats,
+      data: {
+        meta: header,
+        totals_by_day: totalsByDay,
+        campaigns_daily: dailySeries.campaigns_daily,
+      },
     });
   }
 
