@@ -3,9 +3,9 @@ const prisma = require('../utils/prismaClient');
 /**
  * Updates the 30-day analytics snapshot for the merchant
  * Used as context for LLM audits
- * @param {string} shopId 
+ * @param {string} accountId 
  */
-async function updateSnapshot(shopId) {
+async function updateSnapshot(accountId) {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
@@ -13,7 +13,7 @@ async function updateSnapshot(shopId) {
     // 1. Order metrics
     const orders = await prisma.order.findMany({
       where: {
-        shopId: shopId,
+        accountId: accountId,
         createdAt: { gte: thirtyDaysAgo }
       },
       select: {
@@ -56,7 +56,7 @@ async function updateSnapshot(shopId) {
     const funnelCounts = await prisma.event.groupBy({
       by: ['eventName'],
       where: {
-        shopId: shopId,
+        accountId: accountId,
         createdAt: { gte: thirtyDaysAgo }
       },
       _count: {
@@ -86,10 +86,10 @@ async function updateSnapshot(shopId) {
 
     // 4. Save to DB
     await prisma.merchantSnapshot.upsert({
-      where: { shopId },
+      where: { accountId },
       update: { snapshot },
       create: {
-        shopId,
+        accountId,
         snapshot
       }
     });
@@ -97,7 +97,7 @@ async function updateSnapshot(shopId) {
     return snapshot;
 
   } catch (err) {
-    console.error(`Error updating snapshot for ${shopId}:`, err);
+    console.error(`Error updating snapshot for ${accountId}:`, err);
     throw err;
   }
 }

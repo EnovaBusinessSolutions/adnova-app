@@ -5,10 +5,10 @@ const eventBus = require('../utils/eventBus');
 
 /**
  * Server-Sent Events (SSE) for Real-Time Dashboard Updates
- * GET /api/feed/:shop_id
+ * GET /api/feed/:account_id
  */
-router.get('/:shop_id', (req, res) => {
-  const { shop_id } = req.params;
+router.get('/:account_id', (req, res) => {
+  const { account_id } = req.params;
 
   // SSE Headers
   res.setHeader('Content-Type', 'text/event-stream');
@@ -21,8 +21,8 @@ router.get('/:shop_id', (req, res) => {
 
   // Event Listener
   const onEvent = (data) => {
-    // Only send if shop_id matches
-    if (data.shopId === shop_id) {
+    // Only send if account_id matches (support both new and legacy)
+    if (data.accountId === account_id || data.shopId === account_id) {
        res.write(`data: ${JSON.stringify(data)}\n\n`);
     }
   };

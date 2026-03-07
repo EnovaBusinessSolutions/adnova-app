@@ -9,28 +9,43 @@ const eventBus = require('../utils/eventBus');
 router.post('/', async (req, res) => {
   try {
     const payload = req.body;
-    const shopId = payload.shop_id;
-    console.log(`\n[AdRay Collect] Received event '${payload.event_name}' for shop: ${shopId}`);
+    // Support both account_id (new universal) and shop_id (legacy Shopify)
+    const accountId = payload.account_id || payload.shop_id;
+    const platform = payload.platform || 'custom';
+    console.log(`\n[AdRay Collect] Received event '${payload.event_name}' for account: ${accountId} (platform: ${platform})`);
 
     // Emit live event for Dashboard Feed
     eventBus.emit('event', {
        type: 'COLLECT',
-       shopId: shopId,
+       accountId: accountId,
        payload: {
           eventName: payload.event_name,
           timestamp: new Date(),
-          pageUrl: payload.page_url
+          pageUrl: payload.page_url,
+          platform: platform
        }
     });
 
-    if (!shopId) {
-      console.warn('[AdRay Collect] Rejected: shop_id is required');
-      return res.status(400).json({ success: false, error: 'shop_id is required' });
+    if (!accountId) {
+      console.warn('[AdRay Collect] Rejected: account_id is required');
+      return res.status(400).json({ success: false, error: 'account_id is required' });
     }
+
+    // 0. Ensure Account exists in DB (auto-provision for new accounts)
+    const platformEnum = platform.toUpperCase();
+    await prisma.account.upsert({
+      where: { accountId },
+      create: {
+        accountId,
+        domain: payload.page_url ? new URL(payload.page_url).hostname : accountId,
+        platform: ['SHOPIFY', 'WOOCOMMERCE', 'MAGENTO', 'CUSTOM', 'OTHER'].includes(platformEnum) ? platformEnum : 'CUSTOM'
+      },
+      update: {} // No updates if exists
+    });
 
     // 1. Identity Resolution (Reads/Sets Cookie)
     const cookieUserKey = req.cookies ? req.cookies._adray_uid : null;
-    const identity = await resolveUserKey(shopId, cookieUserKey, payload, res);
+    const identity = await resolveUserKey(accountId, cookieUserKey, payload, res);
     const userKey = identity.userKey;
     console.log(`[AdRay Collect] Resolved UserKey: ${userKey} (IsNew: ${identity.isNew}, Confidence: ${identity.confidenceScore})`);
 
@@ -71,7 +86,7 @@ router.post('/', async (req, res) => {
         where: { checkoutToken: payload.checkout_token },
         create: {
           checkoutToken: payload.checkout_token,
-          shopId,
+          accountId,
           sessionId,
           userKey,
           attributionSnapshot,
@@ -91,7 +106,7 @@ router.post('/', async (req, res) => {
     await prisma.event.create({
       data: {
         eventId,
-        shopId,
+        accountId,
         sessionId,
         userKey,
         eventName: payload.event_name,
@@ -117,7 +132,7 @@ router.post('/', async (req, res) => {
       where: { sessionId },
       create: {
         sessionId,
-        shopId,
+        accountId,
         userKey,
         utmSource: payload.utm_source,
         utmMedium: payload.utm_medium,

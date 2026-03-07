@@ -16,15 +16,19 @@ router.use(verifyShopifyWebhookHmac);
 
 /**
  * Handle Order Creation
+ * Note: Shopify sends shop domain in X-Shopify-Shop-Domain header
+ * We use this as the accountId for Shopify stores (backward compatible)
  */
 router.post('/orders-create', async (req, res) => {
-  const shopId = req.get('X-Shopify-Shop-Domain');
-  console.log(`\n[AdRay Webhook] Received orders/create for shop: ${shopId}`);
+  // For Shopify webhooks, shop domain = accountId (backward compatible)
+  const accountId = req.get('X-Shopify-Shop-Domain');
+  console.log(`\\n[AdRay Webhook] Received orders/create for account: ${accountId}`);
   
   // ALWAYS emit live event for dashboard
   eventBus.emit('event', {
      type: 'WEBHOOK',
-     shopId: shopId,
+     accountId: accountId,
+     shopId: accountId, // Legacy support
      payload: {
         eventType: 'orders/create',
         timestamp: new Date()
@@ -38,6 +42,17 @@ router.post('/orders-create', async (req, res) => {
     const payload = JSON.parse(req.body.toString('utf8'));
     const orderId = String(payload.id);
     console.log(`[AdRay Webhook] Processing orderId: ${orderId}`);
+
+    // 0. Ensure Account exists in DB (auto-provision for Shopify)
+    await prisma.account.upsert({
+      where: { accountId },
+      create: {
+        accountId,
+        domain: accountId,
+        platform: 'SHOPIFY'
+      },
+      update: {} // No updates if exists
+    });
 
     // 1. Idempotency Check
     const existingOrder = await prisma.order.findUnique({
@@ -79,7 +94,7 @@ router.post('/orders-create', async (req, res) => {
       data: {
         orderId,
         orderNumber: String(payload.order_number),
-        shopId,
+        accountId,
         checkoutToken,
         userKey: checkoutMap ? checkoutMap.userKey : null,
         sessionId: checkoutMap ? checkoutMap.sessionId : null,
@@ -94,7 +109,7 @@ router.post('/orders-create', async (req, res) => {
         currency: payload.currency,
         lineItems: payload.line_items || [],
         eventId,
-        shopifyCreatedAt: new Date(payload.created_at)
+        platformCreatedAt: new Date(payload.created_at)
       }
     });
 
@@ -108,7 +123,7 @@ router.post('/orders-create', async (req, res) => {
          
          // Enrich line items
          console.log(`[AdRay Pipeline] Enriching variants...`);
-         const enrichedLineItems = await enrichOrderLineItems(order.lineItems, shopId);
+         const enrichedLineItems = await enrichOrderLineItems(order.lineItems, accountId);
          
          // Update order with enriched items
          await prisma.order.update({
@@ -125,7 +140,7 @@ router.post('/orders-create', async (req, res) => {
 
          // Update Merchant Snapshot
          console.log(`[AdRay Pipeline] Taking Merchant AI Snapshot...`);
-         await updateSnapshot(shopId);
+         await updateSnapshot(accountId);
 
          console.log(`[AdRay Pipeline] Order ${orderId} processing completed successfully.`);
       } catch (err) {
@@ -133,7 +148,7 @@ router.post('/orders-create', async (req, res) => {
          await prisma.failedJob.create({
             data: {
               jobType: 'post_order_processing',
-              payload: { orderId, shopId },
+              payload: { orderId, accountId },
               error: err.message || String(err)
             }
          });
@@ -146,7 +161,7 @@ router.post('/orders-create', async (req, res) => {
     prisma.failedJob.create({
       data: {
         jobType: 'webhook_orders_create',
-        payload: { shopId, topic: 'orders/create' },
+        payload: { accountId, topic: 'orders/create' },
         error: error.message || String(error)
       }
     }).catch(() => {});
@@ -157,7 +172,7 @@ router.post('/orders-create', async (req, res) => {
  * Handle Checkout Creation
  */
 router.post('/checkouts-create', async (req, res) => {
-  const shopId = req.get('X-Shopify-Shop-Domain');
+  const accountId = req.get('X-Shopify-Shop-Domain');
   res.status(200).send('OK');
 
   try {
@@ -176,7 +191,7 @@ router.post('/checkouts-create', async (req, res) => {
       where: { checkoutToken },
       create: {
         checkoutToken,
-        shopId,
+        accountId,
         sessionId: 'unknown',
         userKey: 'unknown',
         attributionSnapshot: {},

@@ -9,12 +9,12 @@ const { startOfDay, endOfDay, subDays, eachDayOfInterval, format } = require('da
 // For now, I'll rely on index.js to wrap this router with sessionGuard.
 
 /**
- * GET /api/analytics/:shop_id
+ * GET /api/analytics/:account_id
  * Returns core dashboard metrics: Revenue, Orders, Attribution Breakdown
  */
-router.get('/:shop_id', async (req, res) => {
+router.get('/:account_id', async (req, res) => {
   try {
-    const { shop_id } = req.params;
+    const { account_id } = req.params;
     const { start, end } = req.query;
 
     // Default to last 30 days
@@ -24,7 +24,7 @@ router.get('/:shop_id', async (req, res) => {
     // 1. Fetch Orders in range
     const orders = await prisma.order.findMany({
       where: {
-        shopId: shop_id,
+        accountId: account_id,
         createdAt: { gte: startDate, lte: endDate }
       },
       select: {
@@ -38,7 +38,7 @@ router.get('/:shop_id', async (req, res) => {
     // 2. Fetch Sessions in range (for conversion rate, approximate)
     const sessionCount = await prisma.session.count({
       where: {
-        shopId: shop_id,
+        accountId: account_id,
         startedAt: { gte: startDate, lte: endDate }
       }
     });

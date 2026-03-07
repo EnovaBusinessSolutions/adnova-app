@@ -44,11 +44,11 @@ async function sendToMeta(order) {
  */
 async function sendToGoogle(order) {
   return withRetry(async () => {
-    const shopId = order.shopId;
-    if (!shopId) return { success: false, reason: 'No shopId in order' };
+    const accountId = order.accountId;
+    if (!accountId) return { success: false, reason: 'No accountId in order' };
 
-    // 1. Resolve User (Mongo)
-    const user = await User.findOne({ shop: shopId }).lean();
+    // 1. Resolve User (Mongo) - using accountId as shop identifier for backward compat
+    const user = await User.findOne({ shop: accountId }).lean();
     if (!user) {
         return { success: false, reason: 'User not found' };
     }

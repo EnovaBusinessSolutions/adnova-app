@@ -28,12 +28,12 @@ function mergeIdentifiers(existing, payload) {
 /**
  * Resolves or creates a userKey based on hierarchy:
  * Cookie -> Click ID -> Customer ID -> Fingerprint -> New
- * @param {string} shopId 
+ * @param {string} accountId 
  * @param {string|null} cookieUserKey 
  * @param {Object} payload 
  * @param {import('express').Response} res 
  */
-async function resolveUserKey(shopId, cookieUserKey, payload, res) {
+async function resolveUserKey(accountId, cookieUserKey, payload, res) {
   let matchedIdentity = null;
   let isNew = false;
   let finalConfidence = 0.0;
@@ -41,7 +41,7 @@ async function resolveUserKey(shopId, cookieUserKey, payload, res) {
   // 1. Check Cookie
   if (cookieUserKey) {
     matchedIdentity = await prisma.identityGraph.findFirst({
-      where: { shopId, userKey: cookieUserKey }
+      where: { accountId, userKey: cookieUserKey }
     });
     
     if (matchedIdentity) {
@@ -57,7 +57,7 @@ async function resolveUserKey(shopId, cookieUserKey, payload, res) {
     if (payload.ttclid) OR.push({ ttclid: payload.ttclid });
     
     matchedIdentity = await prisma.identityGraph.findFirst({
-      where: { shopId, OR }
+      where: { accountId, OR }
     });
     
     if (!matchedIdentity) {
@@ -65,7 +65,7 @@ async function resolveUserKey(shopId, cookieUserKey, payload, res) {
       const userKey = randomUUID();
       matchedIdentity = await prisma.identityGraph.create({
         data: {
-          shopId,
+          accountId,
           userKey,
           fbclid: payload.fbclid,
           gclid: payload.gclid,
@@ -83,7 +83,7 @@ async function resolveUserKey(shopId, cookieUserKey, payload, res) {
   // 3. Check Customer ID
   if (!matchedIdentity && payload.customer_id) {
     matchedIdentity = await prisma.identityGraph.findFirst({
-      where: { shopId, customerId: payload.customer_id }
+      where: { accountId, customerId: payload.customer_id }
     });
     
     if (matchedIdentity) {
@@ -98,7 +98,7 @@ async function resolveUserKey(shopId, cookieUserKey, payload, res) {
   // 4. Check Fingerprint
   if (!matchedIdentity) {
     matchedIdentity = await prisma.identityGraph.findFirst({
-      where: { shopId, fingerprintHash }
+      where: { accountId, fingerprintHash }
     });
     
     if (matchedIdentity) {
@@ -111,7 +111,7 @@ async function resolveUserKey(shopId, cookieUserKey, payload, res) {
     const userKey = randomUUID();
     matchedIdentity = await prisma.identityGraph.create({
       data: {
-        shopId,
+        accountId,
         userKey,
         fingerprintHash,
         confidenceScore: 0.6

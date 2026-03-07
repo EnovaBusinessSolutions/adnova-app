@@ -7,11 +7,11 @@ const MetaAccount = require('../models/MetaAccount');
 const GoogleAccount = require('../models/GoogleAccount');
 
 /**
- * Get Meta Pixels for a shop
+ * Get Meta Pixels for an account
  */
-router.get('/pixels/:shop_id/meta', async (req, res) => {
+router.get('/pixels/:account_id/meta', async (req, res) => {
   try {
-    const { shop_id } = req.params;
+    const { account_id } = req.params;
     
     // Auth guard ensures req.user is set (from sessionGuard)
     if (!req.user || !req.user._id) {
@@ -41,9 +41,9 @@ router.get('/pixels/:shop_id/meta', async (req, res) => {
 /**
  * Get Google Conversion Actions
  */
-router.get('/conversions/:shop_id/google', async (req, res) => {
+router.get('/conversions/:account_id/google', async (req, res) => {
   try {
-    const { shop_id } = req.params;
+    const { account_id } = req.params;
 
     if (!req.user || !req.user._id) {
        return res.status(401).json({ error: 'Unauthorized' });
@@ -67,9 +67,9 @@ router.get('/conversions/:shop_id/google', async (req, res) => {
 /**
  * Save Platform Connection
  */
-router.post('/connections/:shop_id', async (req, res) => {
+router.post('/connections/:account_id', async (req, res) => {
   try {
-    const { shop_id } = req.params;
+    const { account_id } = req.params;
     const { platform, accessToken, pixelId, adAccountId } = req.body;
 
     if (!['META', 'GOOGLE', 'TIKTOK'].includes(platform)) {
@@ -78,20 +78,20 @@ router.post('/connections/:shop_id', async (req, res) => {
 
     const encryptedToken = encrypt(accessToken);
 
-    // Upsert into Prisma Shop just to ensure the rel exists
-    await prisma.shop.upsert({
-      where: { shopId: shop_id },
+    // Upsert into Prisma Account just to ensure the rel exists
+    await prisma.account.upsert({
+      where: { accountId: account_id },
       create: { 
-        shopId: shop_id, 
-        shopDomain: shop_id, 
-        accessToken: '' // we don't have shopify access token right now
+        accountId: account_id, 
+        domain: account_id, 
+        platform: 'CUSTOM'
       },
       update: {}
     });
 
     const connection = await prisma.platformConnection.create({
       data: {
-        shopId: shop_id,
+        accountId: account_id,
         platform,
         accessToken: encryptedToken,
         pixelId,

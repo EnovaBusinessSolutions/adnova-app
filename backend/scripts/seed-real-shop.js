@@ -3,26 +3,27 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 async function main() {
-  const shopId = 'pruebas-hmac.myshopify.com';
+  const accountId = 'pruebas-hmac.myshopify.com';
   
-  console.log(`Checking if shop ${shopId} exists...`);
+  console.log(`Checking if account ${accountId} exists...`);
   
-  const existing = await prisma.shop.findUnique({
-    where: { shopId }
+  const existing = await prisma.account.findUnique({
+    where: { accountId }
   });
 
   if (existing) {
-    console.log(`✅ Shop ${shopId} already exists.`);
+    console.log(`✅ Account ${accountId} already exists.`);
   } else {
-    console.log(`Creating shop ${shopId}...`);
-    await prisma.shop.create({
+    console.log(`Creating account ${accountId}...`);
+    await prisma.account.create({
       data: {
-        shopId: shopId,
-        shopDomain: shopId,
+        accountId: accountId,
+        domain: accountId,
+        platform: 'SHOPIFY',
         accessToken: 'offline_placeholder_token_for_testing' // Placeholder for now
       }
     });
-    console.log(`✅ Shop ${shopId} created successfully.`);
+    console.log(`✅ Account ${accountId} created successfully.`);
   }
 }
 

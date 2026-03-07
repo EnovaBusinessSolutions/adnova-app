@@ -26,13 +26,22 @@ enum DedupStatus {
   DEDUPLICATED
 }
 
-model Shop {
-  id          String   @id @default(uuid())
-  shopId      String   @unique @map("shop_id")
-  shopDomain  String   @map("shop_domain")
-  accessToken String   @map("access_token")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+enum AccountPlatform {
+  SHOPIFY
+  WOOCOMMERCE
+  MAGENTO
+  CUSTOM
+  OTHER
+}
+
+model Account {
+  id          String          @id @default(uuid())
+  accountId   String          @unique @map("account_id")
+  domain      String
+  platform    AccountPlatform @default(CUSTOM)
+  accessToken String?         @map("access_token")
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
 
   platformConnections PlatformConnection[]
   identityGraphs      IdentityGraph[]
@@ -42,12 +51,12 @@ model Shop {
   orders              Order[]
   snapshot            MerchantSnapshot?
 
-  @@map("shops")
+  @@map("accounts")
 }
 
 model PlatformConnection {
   id           String           @id @default(uuid())
-  shopId       String           @map("shop_id")
+  accountId    String           @map("account_id")
   platform     Platform
   accessToken  String           @map("access_token")
   pixelId      String?          @map("pixel_id")
@@ -56,14 +65,14 @@ model PlatformConnection {
   createdAt    DateTime         @default(now()) @map("created_at")
   updatedAt    DateTime         @updatedAt @map("updated_at")
 
-  shop Shop @relation(fields: [shopId], references: [shopId], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
 
   @@map("platform_connections")
 }
 
 model IdentityGraph {
   id              String   @id @default(uuid())
-  shopId          String   @map("shop_id")
+  accountId       String   @map("account_id")
   userKey         String   @map("user_key")
   customerId      String?  @map("customer_id")
   emailHash       String?  @map("email_hash")
@@ -79,18 +88,18 @@ model IdentityGraph {
   lastSeenAt      DateTime @default(now()) @updatedAt @map("last_seen_at")
   deviceCount     Int      @default(1) @map("device_count")
 
-  shop Shop @relation(fields: [shopId], references: [shopId], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
 
-  @@index([shopId, userKey])
-  @@index([shopId, fingerprintHash])
-  @@index([shopId, customerId])
+  @@index([accountId, userKey])
+  @@index([accountId, fingerprintHash])
+  @@index([accountId, customerId])
   @@map("identity_graph")
 }
 
 model Session {
   id             String   @id @default(uuid())
   sessionId      String   @unique @map("session_id")
-  shopId         String   @map("shop_id")
+  accountId      String   @map("account_id")
   userKey        String   @map("user_key")
   utmSource      String?  @map("utm_source")
   utmMedium      String?  @map("utm_medium")
@@ -108,7 +117,7 @@ model Session {
   startedAt      DateTime @default(now()) @map("started_at")
   lastEventAt    DateTime @default(now()) @updatedAt @map("last_event_at")
 
-  shop Shop @relation(fields: [shopId], references: [shopId], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
 
   @@map("sessions")
 }
@@ -116,7 +125,7 @@ model Session {
 model CheckoutSessionMap {
   id                  String   @id @default(uuid())
   checkoutToken       String   @unique @map("checkout_token")
-  shopId              String   @map("shop_id")
+  accountId           String   @map("account_id")
   sessionId           String   @map("session_id")
   userKey             String   @map("user_key")
   attributionSnapshot Json     @map("attribution_snapshot")
@@ -124,7 +133,7 @@ model CheckoutSessionMap {
   createdAt           DateTime @default(now()) @map("created_at")
   expiresAt           DateTime @map("expires_at")
 
-  shop Shop @relation(fields: [shopId], references: [shopId], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
 
   @@map("checkout_session_map")
 }
@@ -132,7 +141,7 @@ model CheckoutSessionMap {
 model Event {
   id                String    @id @default(uuid())
   eventId           String    @unique @map("event_id")
-  shopId            String    @map("shop_id")
+  accountId         String    @map("account_id")
   sessionId         String    @map("session_id")
   userKey           String    @map("user_key")
   eventName         String    @map("event_name")
@@ -152,7 +161,7 @@ model Event {
   serverReceivedAt  DateTime? @map("server_received_at")
   createdAt         DateTime  @default(now()) @map("created_at")
 
-  shop Shop @relation(fields: [shopId], references: [shopId], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
 
   @@map("events")
 }
@@ -161,7 +170,7 @@ model Order {
   id                    String   @id @default(uuid())
   orderId               String   @unique @map("order_id")
   orderNumber           String   @map("order_number")
-  shopId                String   @map("shop_id")
+  accountId             String   @map("account_id")
   checkoutToken         String?  @map("checkout_token")
   userKey               String?  @map("user_key")
   sessionId             String?  @map("session_id")
@@ -190,16 +199,16 @@ model Order {
   capiMetaResponse      Json?    @map("capi_meta_response")
   capiGoogleResponse    Json?    @map("capi_google_response")
   createdAt             DateTime @default(now()) @map("created_at")
-  shopifyCreatedAt      DateTime @map("shopify_created_at")
+  platformCreatedAt     DateTime @map("platform_created_at")
 
-  shop Shop @relation(fields: [shopId], references: [shopId], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
 
   @@map("orders")
 }
 
 model EventDedup {
   eventId           String      @id @map("event_id")
-  shopId            String      @map("shop_id")
+  accountId         String      @map("account_id")
   orderId           String?     @map("order_id")
   eventName         String      @map("event_name")
   browserReceivedAt DateTime?   @map("browser_received_at")
@@ -212,11 +221,11 @@ model EventDedup {
 
 model MerchantSnapshot {
   id        String   @id @default(uuid())
-  shopId    String   @unique @map("shop_id")
+  accountId String   @unique @map("account_id")
   snapshot  Json
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  shop Shop @relation(fields: [shopId], references: [shopId], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
 
   @@map("merchant_snapshots")
 }

@@ -473,9 +473,77 @@ Check if `cookie-parser` is already installed. If not, add `cookie-parser` to de
 
 | # | What | Description |
 |---|------|-------------|
-| 22 | Universal Pixel Script | Update the pixel (dray-pixel.js) to use a universal ccountId injected via snippet (e.g., <script src='cdn/pixel.js' data-account-id='acct_12345'></script>) instead of auto-detecting window.Shopify.shop. |
-| 23 | Database Realignment | In Prisma (schema.prisma), rename the Shop model to Account or Organization, and replace the shopId foreign keys with ccountId across all tables (Event, Order, Session, etc.). |
-| 24 | Backend Route Refactor | Update POST /collect and dashboard APIs to group and process data by ccountId rather than shop_id. Shopify webhooks will map their origin shop domain to the overarching ccountId. |
+| 22 | Universal Pixel Script | Update the pixel (adray-pixel.js) to use a universal accountId injected via snippet. |
+| 23 | Database Realignment | In Prisma (schema.prisma), rename the Shop model to Account, and replace the shopId foreign keys with accountId across all tables. |
+| 24 | Backend Route Refactor | Update POST /collect and dashboard APIs to group and process data by accountId rather than shop_id. |
+
+## Progress Tracker (Phase 3)
+
+- [x] Step 22: Universal Pixel Script - `adray-pixel.js` updated to v2.0
+- [x] Step 23: Database Realignment - Prisma schema migrated Shop→Account
+- [x] Step 24: Backend Route Refactor - All routes now use accountId
+
+---
+
+## Appendix B: WooCommerce Installation Guide
+
+### Method 1: Header Script Injection (Recommended)
+
+1. **Get your Account ID**: Generate a unique account ID for the merchant (e.g., `wc_mystore_com` or use their domain as-is).
+
+2. **Install the pixel** by adding this script to the site's `<head>`:
+   ```html
+   <!-- AdRay Universal Pixel v2.0 -->
+   <script src="https://adray-app-staging-german.onrender.com/adray-pixel.js" 
+           data-account-id="YOUR_ACCOUNT_ID"></script>
+   ```
+
+   **Where to add it in WooCommerce:**
+   - **Option A (Theme Header)**: Go to **Appearance > Theme Editor > header.php** - paste before `</head>`
+   - **Option B (Code Snippets Plugin)**: Install "Insert Headers and Footers" plugin, add to Header Scripts
+   - **Option C (Child Theme)**: Add via `wp_head` action in `functions.php`
+
+3. **Test the installation**:
+   - Open browser DevTools → Network tab
+   - Visit the store homepage
+   - Filter by "collect" - you should see a POST request with status 200
+   - Check payload contains: `account_id`, `event_name: "page_view"`, `platform: "woocommerce"`
+
+### Method 2: Google Tag Manager
+
+1. Create a **Custom HTML Tag** in GTM with:
+   ```html
+   <script src="https://adray-app-staging-german.onrender.com/adray-pixel.js" 
+           data-account-id="YOUR_ACCOUNT_ID"></script>
+   ```
+
+2. Set trigger to **All Pages**
+
+3. Publish the container
+
+### WooCommerce Events Auto-Detected
+
+The pixel v2.0 automatically captures:
+
+| Event | Detection Method |
+|-------|------------------|
+| `page_view` | On page load |
+| `add_to_cart` | Intercepts WC REST API + jQuery `added_to_cart` event |
+| `begin_checkout` | Detects `.woocommerce-checkout` body class |
+| `purchase` | Must be sent via server-side webhook (see below) |
+
+### WooCommerce Purchase Tracking (Server-Side)
+
+The pixel can track `purchase` events manually using:
+```javascript
+AdRay.track('purchase', {
+  order_id: 'WC-12345',
+  revenue: 99.50,
+  currency: 'USD'
+});
+```
+
+For automated server-side tracking, a WooCommerce webhook endpoint will be added in a future update.
 
 ---
 

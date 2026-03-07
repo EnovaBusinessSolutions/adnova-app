@@ -9,33 +9,36 @@ const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || '2024-07';
 /**
  * Enriches order line items with Shopify variant details
  * @param {Array} lineItems 
- * @param {string} shopDomain
+ * @param {string} accountId - Account ID (for Shopify, this is the shop domain)
  */
-async function enrichOrderLineItems(lineItems, shopDomain) {
+async function enrichOrderLineItems(lineItems, accountId) {
   if (!Array.isArray(lineItems) || lineItems.length === 0) return lineItems;
 
   // 1. Get access token
   let accessToken = null;
   
-  // Try Postgres first
-  const pgShop = await prisma.shop.findUnique({
-    where: { shopId: shopDomain }
+  // Try Postgres first (Account table)
+  const pgAccount = await prisma.account.findUnique({
+    where: { accountId }
   });
   
-  if (pgShop) {
-    accessToken = pgShop.accessToken;
+  if (pgAccount && pgAccount.accessToken) {
+    accessToken = pgAccount.accessToken;
   } else {
-    // Fallback to Mongo
-    const mongoShop = await ShopConnections.findOne({ shop: shopDomain });
+    // Fallback to Mongo (ShopConnections)
+    const mongoShop = await ShopConnections.findOne({ shop: accountId });
     if (mongoShop) {
       accessToken = mongoShop.accessToken;
     }
   }
 
   if (!accessToken) {
-    console.warn(`No access token found for ${shopDomain} during enrichment.`);
+    console.warn(`No access token found for ${accountId} during enrichment.`);
     return lineItems;
   }
+
+  // Determine shop domain for API calls (for Shopify accounts, accountId IS the shop domain)
+  const shopDomain = pgAccount?.domain || accountId;
 
   const client = axios.create({
     baseURL: `https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}`,
