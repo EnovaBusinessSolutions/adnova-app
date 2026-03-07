@@ -8,6 +8,7 @@ const router  = express.Router();
 
 const User  = require('../models/User');
 const Audit = require('../models/Audit');
+const { enqueueMcpCollect } = require('../queues/mcpQueue');
 
 // ✅ Analytics events (Internal Admin / DB analytics)
 const { trackEvent } = require('../services/trackEvent');
@@ -154,7 +155,6 @@ function sanitizeReturnTo(raw) {
 function getFlowKey(req) {
   const sid = req?.sessionID || req?.session?.id || null;
   if (sid) return String(sid);
-  // fallback si por alguna razón no hay sessionID
   const tmp = crypto.randomBytes(12).toString('hex');
   return `nosession_${tmp}`;
 }
@@ -183,13 +183,39 @@ async function revokeMetaPermissionsBestEffort(accessToken) {
   }
 }
 
+/**
+ * ✅ Disparo best-effort de la colecta MCP
+ * - No rompe OAuth/selección si Redis/BullMQ fallan
+ * - Se usa cuando ya existe una cuenta final seleccionada
+ */
+async function enqueueMetaCollectBestEffort({ userId, reason, rangeDays = null }) {
+  try {
+    const job = await enqueueMcpCollect({
+      userId,
+      source: 'metaAds',
+      rangeDays: rangeDays == null ? null : Number(rangeDays),
+      reason: reason || 'meta_event',
+    });
+
+    console.log('[meta] MCP enqueued', {
+      userId: String(userId),
+      reason: reason || 'meta_event',
+      jobId: job?.id || null,
+    });
+
+    return { ok: true, jobId: job?.id || null };
+  } catch (e) {
+    console.warn('[meta] MCP enqueue failed (best-effort):', e?.message || e);
+    return { ok: false, error: e?.message || 'MCP_ENQUEUE_FAILED' };
+  }
+}
+
 /* =========================
  * LOGIN
  * ========================= */
 router.get('/login', (req, res) => {
   if (!req.isAuthenticated?.() || !req.user?._id) return res.redirect('/login');
 
-  // Validación suave de ENV (para no crashear)
   if (!APP_ID || !APP_SECRET || !REDIRECT_URI) {
     console.warn('[meta] Missing FACEBOOK_APP_ID/SECRET/REDIRECT_URI');
     const dest = appendQuery(DEFAULT_RETURN_TO, 'meta', 'error');
@@ -294,8 +320,8 @@ router.get('/callback', async (req, res) => {
       });
 
       adAccounts = (ads.data?.data || []).map((a) => ({
-        id: toActId(a.account_id),              // "act_XXXX"
-        account_id: normActId(a.account_id),    // "XXXX"
+        id: toActId(a.account_id),
+        account_id: normActId(a.account_id),
         name: a.name,
         currency: a.currency,
         configured_status: a.configured_status,
@@ -370,8 +396,8 @@ router.get('/callback', async (req, res) => {
             adAccounts:  adAccounts,
 
             // ✅ selección/default canónicos
-            selectedAccountIds: selectedDigits,     // digits sin act_
-            defaultAccountId:   defaultAccountId,   // digits sin act_
+            selectedAccountIds: selectedDigits,
+            defaultAccountId:   defaultAccountId,
 
             updatedAt: new Date()
           },
@@ -407,8 +433,15 @@ router.get('/callback', async (req, res) => {
       });
     }
 
-    // ✅ 8) TRACK: meta_connected (E2E Internal Analytics)
-    // FIX: dedupeKey por sesión/flow (no por usuario fijo)
+    // ✅ NUEVO: si NO hace falta selector, ya existe cuenta final y podemos encolar MCP
+    if (!shouldForceSelector && defaultAccountId) {
+      await enqueueMetaCollectBestEffort({
+        userId,
+        reason: 'meta_connected_auto',
+      });
+    }
+
+    // ✅ 8) TRACK: meta_connected
     try {
       const flowKey = getFlowKey(req);
       await trackEvent({
@@ -567,7 +600,11 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
         }
       );
 
-      // ✅ TRACK: meta_ads_selected (FIX dedupeKey por flow)
+      await enqueueMetaCollectBestEffort({
+        userId,
+        reason: 'meta_selection_confirmed_no_metaaccount',
+      });
+
       try {
         const flowKey = getFlowKey(req);
         await trackEvent({
@@ -629,7 +666,12 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
       }
     );
 
-    // ✅ TRACK: meta_ads_selected (FIX dedupeKey por flow)
+    // ✅ NUEVO: ya hay cuenta final seleccionada → disparar MCP
+    await enqueueMetaCollectBestEffort({
+      userId,
+      reason: 'meta_selection_confirmed',
+    });
+
     try {
       const flowKey = getFlowKey(req);
       await trackEvent({
@@ -753,10 +795,21 @@ router.post('/default-account', requireAuth, express.json(), async (req, res) =>
         $set: { selectedMetaAccounts: nextSelected.map(toActId) }
       });
 
+      await enqueueMetaCollectBestEffort({
+        userId: req.user._id,
+        reason: 'meta_default_account_changed',
+      });
+
       return res.json({ ok: true, defaultAccountId: accountId, selectedAccountIds: nextSelected });
     }
 
     await User.findByIdAndUpdate(req.user._id, { $set: { metaDefaultAccountId: accountId } });
+
+    await enqueueMetaCollectBestEffort({
+      userId: req.user._id,
+      reason: 'meta_default_account_changed_no_metaaccount',
+    });
+
     res.json({ ok: true, defaultAccountId: accountId });
   } catch (e) {
     console.error('default-account meta error:', e);
@@ -895,7 +948,6 @@ router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
     const after = await Audit.countDocuments({ userId, type: 'meta' }).catch(() => 0);
     const auditsDeleted = Math.max(0, before - after);
 
-    // ✅ TRACK: meta_disconnected (FIX dedupeKey por flow)
     try {
       const flowKey = getFlowKey(req);
       await trackEvent({
