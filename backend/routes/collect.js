@@ -16,7 +16,9 @@ function safeHostname(value) {
 }
 
 router.post('/', async (req, res) => {
+  let step = 'init';
   try {
+    step = 'parse_payload';
     const payload = req.body;
     // Support both account_id (new universal) and shop_id (legacy Shopify)
     const accountId = payload.account_id || payload.shop_id;
@@ -35,12 +37,14 @@ router.post('/', async (req, res) => {
        }
     });
 
+    step = 'validate_account';
     if (!accountId) {
       console.warn('[AdRay Collect] Rejected: account_id is required');
       return res.status(400).json({ success: false, error: 'account_id is required' });
     }
 
     // 0. Ensure Account exists in DB (auto-provision for new accounts)
+    step = 'account_upsert';
     const platformEnum = platform.toUpperCase();
     await prisma.account.upsert({
       where: { accountId },
@@ -53,21 +57,30 @@ router.post('/', async (req, res) => {
     });
 
     // 1. Identity Resolution (Reads/Sets Cookie)
+    step = 'identity_resolution';
+    if (!payload.ip) payload.ip = req.ip;
     const cookieUserKey = req.cookies ? req.cookies._adray_uid : null;
     const identity = await resolveUserKey(accountId, cookieUserKey, payload, res);
     const userKey = identity.userKey;
     console.log(`[AdRay Collect] Resolved UserKey: ${userKey} (IsNew: ${identity.isNew}, Confidence: ${identity.confidenceScore})`);
 
     // 2. Generate Event ID
+    step = 'event_id_generation';
     const eventId = randomUUID();
 
     // 3. Deduplication Check (if Redis is available)
     if (redisClient) {
-      const dedupKey = `adray:ev:${payload.event_id || eventId}`;
-      const isNew = await redisClient.set(dedupKey, '1', 'EX', 86400, 'NX');
-      if (!isNew) {
-         console.log(`[AdRay Collect] Deduplicated event: ${payload.event_id}`);
-         return res.json({ success: true, event_id: payload.event_id, user_key: userKey, deduplicated: true });
+      step = 'redis_dedup';
+      try {
+        const dedupKey = `adray:ev:${payload.event_id || eventId}`;
+        const isNew = await redisClient.set(dedupKey, '1', 'EX', 86400, 'NX');
+        if (!isNew) {
+           console.log(`[AdRay Collect] Deduplicated event: ${payload.event_id}`);
+           return res.json({ success: true, event_id: payload.event_id, user_key: userKey, deduplicated: true });
+        }
+      } catch (redisErr) {
+        // Redis is an optimization layer. Do not fail collection if it's unavailable.
+        console.warn('[AdRay Collect] Redis dedup unavailable, continuing without dedup:', redisErr.message);
       }
     }
 
@@ -76,6 +89,7 @@ router.post('/', async (req, res) => {
 
     // 4. Handle begin_checkout special case
     if (payload.event_name === 'begin_checkout' && payload.checkout_token) {
+      step = 'checkout_map_upsert';
       const attributionSnapshot = {
         utm_source: payload.utm_source,
         utm_medium: payload.utm_medium,
@@ -112,6 +126,7 @@ router.post('/', async (req, res) => {
     }
 
     // 5. Write Event to DB
+    step = 'event_insert';
     await prisma.event.create({
       data: {
         eventId,
@@ -137,6 +152,7 @@ router.post('/', async (req, res) => {
     });
 
     // 6. Upsert Session
+    step = 'session_upsert';
     await prisma.session.upsert({
       where: { sessionId },
       create: {
@@ -169,9 +185,9 @@ router.post('/', async (req, res) => {
     res.json({ success: true, event_id: eventId, user_key: userKey });
 
   } catch (error) {
-    console.error('Error in /collect:', error);
+    console.error(`[AdRay Collect] Error at step '${step}':`, error);
     // Still return 200/success-ish to client so pixel doesn't retry infinitely
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
+    res.status(500).json({ success: false, error: 'Internal Server Error', step });
   }
 });
 
