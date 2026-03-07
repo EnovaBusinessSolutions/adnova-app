@@ -1,4 +1,3 @@
-// backend/jobs/transform/metaLlmFormatter.js
 'use strict';
 
 /**
@@ -26,6 +25,11 @@ function safeStr(v) {
   return v == null ? '' : String(v);
 }
 
+function nonEmptyStr(v) {
+  const s = safeStr(v).trim();
+  return s || '';
+}
+
 function round2(v) {
   return Number(toNum(v).toFixed(2));
 }
@@ -38,13 +42,41 @@ function isObj(v) {
   return v && typeof v === 'object' && !Array.isArray(v);
 }
 
+function uniqStrings(arr, max = 20) {
+  const out = [];
+  const seen = new Set();
+
+  for (const item of Array.isArray(arr) ? arr : []) {
+    const s = nonEmptyStr(item);
+    if (!s) continue;
+    const key = s.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+    if (out.length >= max) break;
+  }
+
+  return out;
+}
+
+function safeDateStr(v) {
+  const s = nonEmptyStr(v);
+  return s || null;
+}
+
+function safePct(v) {
+  return round2(v);
+}
+
 function indexDatasets(datasets) {
   const map = new Map();
+
   for (const ds of Array.isArray(datasets) ? datasets : []) {
-    const key = safeStr(ds?.dataset).trim();
+    const key = nonEmptyStr(ds?.dataset);
     if (!key) continue;
     map.set(key, ds);
   }
+
   return map;
 }
 
@@ -61,6 +93,16 @@ function getMetaHeader(dsMap) {
     getData(dsMap, 'meta.daily_trends_ai')?.meta ||
     null
   );
+}
+
+function normalizeRange(range) {
+  if (!isObj(range)) return null;
+
+  return {
+    since: safeDateStr(range?.since),
+    until: safeDateStr(range?.until),
+    days: toNum(range?.days),
+  };
 }
 
 function buildExecutiveSummary(summaryData) {
@@ -126,18 +168,18 @@ function buildExecutiveSummary(summaryData) {
     deltas: {
       last7_vs_prev7: deltas?.last7_vs_prev7
         ? {
-            spend_pct: round2(deltas.last7_vs_prev7.spend_pct),
-            purchases_pct: round2(deltas.last7_vs_prev7.purchases_pct),
-            purchase_value_pct: round2(deltas.last7_vs_prev7.purchase_value_pct),
+            spend_pct: safePct(deltas.last7_vs_prev7.spend_pct),
+            purchases_pct: safePct(deltas.last7_vs_prev7.purchases_pct),
+            purchase_value_pct: safePct(deltas.last7_vs_prev7.purchase_value_pct),
             roas_diff: round2(deltas.last7_vs_prev7.roas_diff),
             cpa_diff: round2(deltas.last7_vs_prev7.cpa_diff),
           }
         : null,
       last30_vs_prev30: deltas?.last30_vs_prev30
         ? {
-            spend_pct: round2(deltas.last30_vs_prev30.spend_pct),
-            purchases_pct: round2(deltas.last30_vs_prev30.purchases_pct),
-            purchase_value_pct: round2(deltas.last30_vs_prev30.purchase_value_pct),
+            spend_pct: safePct(deltas.last30_vs_prev30.spend_pct),
+            purchases_pct: safePct(deltas.last30_vs_prev30.purchases_pct),
+            purchase_value_pct: safePct(deltas.last30_vs_prev30.purchase_value_pct),
             roas_diff: round2(deltas.last30_vs_prev30.roas_diff),
             cpa_diff: round2(deltas.last30_vs_prev30.cpa_diff),
           }
@@ -148,14 +190,15 @@ function buildExecutiveSummary(summaryData) {
 
 function compactCampaign(c) {
   const k = c?.kpis || {};
+
   return {
-    campaign_id: safeStr(c?.campaign_id) || null,
-    name: safeStr(c?.name) || null,
-    objective_norm: safeStr(c?.objective_norm) || null,
-    status: safeStr(c?.status) || null,
-    health: safeStr(c?.health) || null,
+    campaign_id: nonEmptyStr(c?.campaign_id) || null,
+    name: nonEmptyStr(c?.name) || null,
+    objective_norm: nonEmptyStr(c?.objective_norm) || null,
+    status: nonEmptyStr(c?.status) || null,
+    health: nonEmptyStr(c?.health) || null,
     ranking_score: round2(c?.ranking_score),
-    tags: compactArray(c?.tags || [], 8),
+    tags: uniqStrings(c?.tags || [], 8),
     kpis: {
       spend: round2(k.spend),
       purchases: round2(k.purchases),
@@ -171,12 +214,14 @@ function compactCampaign(c) {
 
 function buildRankedCampaigns(rankedData, topN = 8) {
   const ranked = compactArray(rankedData?.campaigns_ranked || [], topN);
-  return ranked.map(compactCampaign);
+  return ranked
+    .map(compactCampaign)
+    .filter((c) => c.campaign_id || c.name);
 }
 
 function compactBreakdownRow(x) {
   return {
-    key: safeStr(x?.key) || null,
+    key: nonEmptyStr(x?.key) || null,
     spend: round2(x?.spend),
     purchases: round2(x?.purchases),
     purchase_value: round2(x?.purchase_value),
@@ -190,37 +235,56 @@ function compactBreakdownRow(x) {
 
 function buildBreakdowns(breakdownsData, topN = 5) {
   return {
-    device_top: compactArray(breakdownsData?.device_top || [], topN).map(compactBreakdownRow),
-    placement_top: compactArray(breakdownsData?.placement_top || [], topN).map(compactBreakdownRow),
+    device_top: compactArray(breakdownsData?.device_top || [], topN)
+      .map(compactBreakdownRow)
+      .filter((x) => x.key),
+    placement_top: compactArray(breakdownsData?.placement_top || [], topN)
+      .map(compactBreakdownRow)
+      .filter((x) => x.key),
   };
 }
 
 function buildSignals(signalsData) {
   const s = signalsData?.optimization_signals || {};
+
   return {
-    winners: compactArray(s?.winners || [], 4).map(compactCampaign),
-    risks: compactArray(s?.risks || [], 4).map(compactCampaign),
-    quick_wins: compactArray(s?.quick_wins || [], 4).map(compactCampaign),
-    insights: compactArray(s?.insights || [], 6).map((x) => safeStr(x)).filter(Boolean),
-    recommendations: compactArray(s?.recommendations || [], 5).map((x) => safeStr(x)).filter(Boolean),
+    winners: compactArray(s?.winners || [], 4)
+      .map(compactCampaign)
+      .filter((c) => c.campaign_id || c.name),
+    risks: compactArray(s?.risks || [], 4)
+      .map(compactCampaign)
+      .filter((c) => c.campaign_id || c.name),
+    quick_wins: compactArray(s?.quick_wins || [], 4)
+      .map(compactCampaign)
+      .filter((c) => c.campaign_id || c.name),
+    insights: uniqStrings(s?.insights || [], 6),
+    recommendations: uniqStrings(s?.recommendations || [], 5),
   };
 }
 
 function summarizeTrend(values) {
   if (!Array.isArray(values) || values.length < 2) return 'flat';
+
   const first = toNum(values[0]);
   const last = toNum(values[values.length - 1]);
   const diff = last - first;
+
   if (Math.abs(diff) < 0.0001) return 'flat';
   return diff > 0 ? 'up' : 'down';
 }
 
-function buildDailyTrends(dailyData, topCampaignRows = 20) {
-  const totalsByDay = Array.isArray(dailyData?.totals_by_day) ? dailyData.totals_by_day : [];
+function sortRowsByDateAsc(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .slice()
+    .sort((a, b) => safeStr(a?.date).localeCompare(safeStr(b?.date)));
+}
+
+function buildDailyTrends(dailyData, topCampaignRows = 5) {
+  const totalsByDay = sortRowsByDateAsc(dailyData?.totals_by_day || []);
   const campaignsDaily = Array.isArray(dailyData?.campaigns_daily) ? dailyData.campaigns_daily : [];
 
-  const recentTotals = compactArray(totalsByDay, 10).map((d) => ({
-    date: safeStr(d?.date) || null,
+  const recentTotals = totalsByDay.slice(-10).map((d) => ({
+    date: safeDateStr(d?.date),
     spend: round2(d?.kpis?.spend),
     purchases: round2(d?.kpis?.purchases),
     purchase_value: round2(d?.kpis?.purchase_value),
@@ -229,21 +293,36 @@ function buildDailyTrends(dailyData, topCampaignRows = 20) {
   }));
 
   const grouped = new Map();
+
   for (const row of campaignsDaily) {
-    const id = safeStr(row?.campaign_id);
-    if (!id) continue;
-    const key = `${id}__${safeStr(row?.campaign_name)}`;
-    const arr = grouped.get(key) || [];
-    arr.push(row);
-    grouped.set(key, arr);
+    const campaignId = nonEmptyStr(row?.campaign_id);
+    const campaignName = nonEmptyStr(row?.campaign_name);
+
+    if (!campaignId && !campaignName) continue;
+
+    const groupKey = campaignId || `name:${campaignName}`;
+    const existing = grouped.get(groupKey) || {
+      campaign_id: campaignId || null,
+      campaign_name: campaignName || null,
+      rows: [],
+    };
+
+    existing.rows.push(row);
+
+    if (!existing.campaign_name && campaignName) {
+      existing.campaign_name = campaignName;
+    }
+    if (!existing.campaign_id && campaignId) {
+      existing.campaign_id = campaignId;
+    }
+
+    grouped.set(groupKey, existing);
   }
 
   const topCampaignTrendBlocks = [];
-  for (const [key, rows] of grouped.entries()) {
-    const [campaignId, campaignName] = key.split('__');
-    const sorted = rows
-      .slice()
-      .sort((a, b) => safeStr(a?.date).localeCompare(safeStr(b?.date)));
+
+  for (const group of grouped.values()) {
+    const sorted = sortRowsByDateAsc(group.rows);
 
     const spendSeries = sorted.map((r) => toNum(r?.kpis?.spend));
     const purchaseValueSeries = sorted.map((r) => toNum(r?.kpis?.purchase_value));
@@ -254,23 +333,20 @@ function buildDailyTrends(dailyData, topCampaignRows = 20) {
     const totalPurchases = purchasesSeries.reduce((a, b) => a + b, 0);
 
     topCampaignTrendBlocks.push({
-      campaign_id: campaignId || null,
-      campaign_name: campaignName || null,
+      campaign_id: group.campaign_id || null,
+      campaign_name: group.campaign_name || null,
       total_spend: round2(totalSpend),
       total_purchase_value: round2(totalPurchaseValue),
       total_purchases: round2(totalPurchases),
       roas: totalSpend > 0 ? round2(totalPurchaseValue / totalSpend) : 0,
       spend_trend: summarizeTrend(spendSeries),
       revenue_trend: summarizeTrend(purchaseValueSeries),
-      recent_days: compactArray(
-        sorted.map((r) => ({
-          date: safeStr(r?.date) || null,
-          spend: round2(r?.kpis?.spend),
-          purchases: round2(r?.kpis?.purchases),
-          purchase_value: round2(r?.kpis?.purchase_value),
-        })),
-        7
-      ),
+      recent_days: sorted.slice(-7).map((r) => ({
+        date: safeDateStr(r?.date),
+        spend: round2(r?.kpis?.spend),
+        purchases: round2(r?.kpis?.purchases),
+        purchase_value: round2(r?.kpis?.purchase_value),
+      })),
     });
   }
 
@@ -282,22 +358,137 @@ function buildDailyTrends(dailyData, topCampaignRows = 20) {
   };
 }
 
+function buildPrioritySummary(payload) {
+  const out = {
+    positives: [],
+    negatives: [],
+    actions: [],
+  };
+
+  const kpis = payload?.executive_summary?.headline_kpis || {};
+  const last7 = payload?.executive_summary?.deltas?.last7_vs_prev7 || null;
+
+  const roas = toNum(kpis?.roas);
+  const cpa = toNum(kpis?.cpa);
+  const spend = toNum(kpis?.spend);
+  const purchases = toNum(kpis?.purchases);
+
+  const winnersCount = Array.isArray(payload?.signals?.winners) ? payload.signals.winners.length : 0;
+  const risksCount = Array.isArray(payload?.signals?.risks) ? payload.signals.risks.length : 0;
+  const quickWinsCount = Array.isArray(payload?.signals?.quick_wins) ? payload.signals.quick_wins.length : 0;
+
+  if (spend > 0 && purchases > 0) {
+    out.positives.push(`The account is generating purchases from paid traffic (${round2(purchases)} total purchases).`);
+  }
+
+  if (roas >= 2) {
+    out.positives.push(`Overall ROAS looks healthy at ${round2(roas)}.`);
+  } else if (roas > 0 && roas < 1) {
+    out.negatives.push(`Overall ROAS is below 1 (${round2(roas)}), suggesting unprofitable spend.`);
+  }
+
+  if (winnersCount > 0) {
+    out.positives.push(`There are ${winnersCount} winner campaigns that may support scaling.`);
+  }
+
+  if (risksCount > 0) {
+    out.negatives.push(`There are ${risksCount} risk campaigns consuming budget inefficiently.`);
+  }
+
+  if (last7) {
+    const purchasesPct = toNum(last7?.purchases_pct);
+    const purchaseValuePct = toNum(last7?.purchase_value_pct);
+    const spendPct = toNum(last7?.spend_pct);
+    const roasDiff = toNum(last7?.roas_diff);
+
+    if (purchasesPct > 15 || purchaseValuePct > 15) {
+      out.positives.push('Recent 7-day conversion performance improved versus the previous 7-day window.');
+    }
+
+    if (spendPct > 20 && roasDiff < 0) {
+      out.negatives.push('Spend increased recently while ROAS deteriorated, which may indicate waste.');
+    }
+  }
+
+  if (quickWinsCount > 0) {
+    out.actions.push(`Review the ${quickWinsCount} quick-win campaigns first for the fastest efficiency gains.`);
+  }
+
+  if (risksCount > 0) {
+    out.actions.push('Audit risk campaigns for budget cuts, creative fatigue, audience mismatch, or poor offer alignment.');
+  }
+
+  if (roas > 0 && roas < 1) {
+    out.actions.push('Prioritize loss reduction before scaling spend.');
+  } else if (roas >= 2) {
+    out.actions.push('Consider careful scaling on winners while protecting efficiency.');
+  }
+
+  if (cpa > 0) {
+    out.actions.push(`Use current CPA (${round2(cpa)}) as a benchmark when deciding which campaigns to keep or cut.`);
+  }
+
+  return {
+    positives: uniqStrings(out.positives, 4),
+    negatives: uniqStrings(out.negatives, 4),
+    actions: uniqStrings(out.actions, 5),
+  };
+}
+
+function buildDataQuality(meta, payload) {
+  const accounts = Array.isArray(meta?.accounts) ? meta.accounts : [];
+  const range = normalizeRange(meta?.range);
+
+  const rankedCount = Array.isArray(payload?.ranked_campaigns) ? payload.ranked_campaigns.length : 0;
+  const dailyCount = Array.isArray(payload?.daily_trends?.totals_by_day) ? payload.daily_trends.totals_by_day.length : 0;
+  const winnersCount = Array.isArray(payload?.signals?.winners) ? payload.signals.winners.length : 0;
+  const risksCount = Array.isArray(payload?.signals?.risks) ? payload.signals.risks.length : 0;
+
+  return {
+    hasAnyData:
+      rankedCount > 0 ||
+      dailyCount > 0 ||
+      winnersCount > 0 ||
+      risksCount > 0 ||
+      toNum(payload?.executive_summary?.headline_kpis?.spend) > 0,
+    accountCount: accounts.length,
+    range,
+    datasetsPresent: {
+      executive_summary: !!payload?.executive_summary,
+      ranked_campaigns: rankedCount > 0,
+      breakdowns:
+        (payload?.breakdowns?.device_top || []).length > 0 ||
+        (payload?.breakdowns?.placement_top || []).length > 0,
+      signals:
+        winnersCount > 0 ||
+        risksCount > 0 ||
+        (payload?.signals?.quick_wins || []).length > 0 ||
+        (payload?.signals?.insights || []).length > 0,
+      daily_trends: dailyCount > 0,
+    },
+  };
+}
+
 function buildLlmPromptHints(payload) {
   const hints = [];
 
   const spend = toNum(payload?.executive_summary?.headline_kpis?.spend);
   const roas = toNum(payload?.executive_summary?.headline_kpis?.roas);
   const purchases = toNum(payload?.executive_summary?.headline_kpis?.purchases);
+  const last7 = payload?.executive_summary?.deltas?.last7_vs_prev7 || null;
 
   if (spend > 0) {
     hints.push('Focus on budget efficiency, ROAS, CPA, and conversion-driving campaigns.');
   }
+
   if (purchases > 0) {
     hints.push('Prioritize identifying scalable winners and underperforming spend pockets.');
   }
+
   if (roas > 0 && roas < 1) {
     hints.push('Overall ROAS is below break-even; emphasize loss reduction and budget reallocation.');
   }
+
   if (roas >= 2) {
     hints.push('There are signs of profitable performance; emphasize scaling opportunities carefully.');
   }
@@ -305,11 +496,26 @@ function buildLlmPromptHints(payload) {
   if ((payload?.signals?.risks || []).length > 0) {
     hints.push('Review risk campaigns first because they are consuming budget inefficiently.');
   }
+
   if ((payload?.signals?.quick_wins || []).length > 0) {
     hints.push('Quick wins may be the fastest path to improve efficiency without large creative changes.');
   }
 
-  return compactArray(hints, 6);
+  if (last7) {
+    const spendPct = toNum(last7?.spend_pct);
+    const purchaseValuePct = toNum(last7?.purchase_value_pct);
+    const roasDiff = toNum(last7?.roas_diff);
+
+    if (spendPct > 20 && roasDiff < 0) {
+      hints.push('Recent scaling may have hurt efficiency; validate whether increased spend is actually producing profitable revenue.');
+    }
+
+    if (purchaseValuePct > 15 && roasDiff >= 0) {
+      hints.push('Recent momentum is positive; identify whether winning campaigns can be scaled safely.');
+    }
+  }
+
+  return uniqStrings(hints, 6);
 }
 
 /**
@@ -337,22 +543,26 @@ function formatMetaForLlm({
   const dailyData = getData(dsMap, 'meta.daily_trends_ai');
 
   const meta = getMetaHeader(dsMap);
+  const range = normalizeRange(meta?.range);
 
   const payload = {
     meta: {
-      schema: 'adray.meta.llm.v1',
+      schema: 'adray.meta.llm.v2',
       source: 'metaAds',
       generatedAt: new Date().toISOString(),
       accountIds: Array.isArray(meta?.accountIds) ? meta.accountIds : [],
+      accountCount: Array.isArray(meta?.accounts) ? meta.accounts.length : 0,
       accounts: compactArray(meta?.accounts || [], 3).map((a) => ({
-        id: safeStr(a?.id) || null,
-        name: safeStr(a?.name) || null,
-        currency: safeStr(a?.currency) || null,
-        timezone_name: safeStr(a?.timezone_name) || null,
+        id: nonEmptyStr(a?.id) || null,
+        name: nonEmptyStr(a?.name) || null,
+        currency: nonEmptyStr(a?.currency) || null,
+        timezone_name: nonEmptyStr(a?.timezone_name) || null,
       })),
-      range: isObj(meta?.range) ? meta.range : null,
-      currency: safeStr(meta?.currency) || null,
-      collectorVersion: safeStr(meta?.version) || null,
+      range,
+      rangeDays: toNum(meta?.rangeDays || range?.days),
+      currency: nonEmptyStr(meta?.currency) || null,
+      latestSnapshotId: nonEmptyStr(meta?.latestSnapshotId) || null,
+      collectorVersion: nonEmptyStr(meta?.version) || null,
     },
     executive_summary: buildExecutiveSummary(summaryData),
     ranked_campaigns: buildRankedCampaigns(rankedData, topCampaigns),
@@ -361,6 +571,8 @@ function formatMetaForLlm({
     daily_trends: buildDailyTrends(dailyData, topTrendCampaigns),
   };
 
+  payload.priority_summary = buildPrioritySummary(payload);
+  payload.data_quality = buildDataQuality(meta, payload);
   payload.llm_hints = buildLlmPromptHints(payload);
 
   return payload;
@@ -383,13 +595,16 @@ function formatMetaForLlmMini({
 
   return {
     meta: full.meta,
+    data_quality: full.data_quality,
     headline_kpis: full.executive_summary?.headline_kpis || {},
     last7_vs_prev7: full.executive_summary?.deltas?.last7_vs_prev7 || null,
     top_campaigns: compactArray(full.ranked_campaigns || [], topCampaigns),
     winners: compactArray(full.signals?.winners || [], 3),
     risks: compactArray(full.signals?.risks || [], 3),
+    quick_wins: compactArray(full.signals?.quick_wins || [], 3),
     top_devices: compactArray(full.breakdowns?.device_top || [], 3),
     top_placements: compactArray(full.breakdowns?.placement_top || [], 3),
+    priority_summary: full.priority_summary || { positives: [], negatives: [], actions: [] },
     llm_hints: compactArray(full.llm_hints || [], 4),
   };
 }
