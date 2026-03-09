@@ -5,6 +5,7 @@ const router = express.Router();
 
 const McpData = require('../models/McpData');
 const { formatMetaForLlm, formatMetaForLlmMini } = require('../jobs/transform/metaLlmFormatter');
+const { formatGoogleAdsForLlm, formatGoogleAdsForLlmMini } = require('../jobs/transform/googleAdsLlmFormatter');
 
 let MetaAccount = null;
 let GoogleAccount = null;
@@ -134,10 +135,15 @@ async function findLatestSnapshotId(userId, source = 'metaAds') {
   const root = await findRoot(userId);
   if (root?.latestSnapshotId) return root.latestSnapshotId;
 
+  const datasetPrefix =
+    source === 'googleAds' ? '^google\\.' :
+    source === 'ga4' ? '^ga4\\.' :
+    '^meta\\.';
+
   const latestChunk = await McpData.findOne({
     userId,
     source,
-    dataset: { $regex: '^meta\\.' },
+    dataset: { $regex: datasetPrefix },
   })
     .sort({ updatedAt: -1, createdAt: -1 })
     .lean();
@@ -344,6 +350,41 @@ router.get('/meta/status', async (req, res) => {
 });
 
 /**
+ * GET /api/mcpdata/google-ads/status
+ * Devuelve estado real de chunks Google Ads en mcpdata.
+ */
+router.get('/google-ads/status', async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: 'NO_SESSION' });
+    }
+
+    const root = await findRoot(userId);
+    const snapshotId = root?.latestSnapshotId || await findLatestSnapshotId(userId, 'googleAds');
+
+    const chunks = snapshotId
+      ? await findSourceChunks(userId, 'googleAds', snapshotId, 'google.')
+      : [];
+
+    return res.json({
+      ok: true,
+      data: {
+        hasRoot: !!root,
+        latestSnapshotId: snapshotId || null,
+        connected: toBool(root?.sources?.googleAds?.connected),
+        ready: toBool(root?.sources?.googleAds?.ready),
+        chunkCount: chunks.length,
+        datasets: chunks.map(stripChunkForResponse),
+      },
+    });
+  } catch (e) {
+    console.error('[mcpdata/google-ads/status] error:', e);
+    return res.status(500).json({ ok: false, error: 'MCP_GOOGLEADS_STATUS_FAILED' });
+  }
+});
+
+/**
  * GET /api/mcpdata/meta/llm
  * Devuelve JSON AI-ready REAL de Meta Ads usando chunks reales guardados en mcpdata.
  *
@@ -466,6 +507,132 @@ router.get('/meta/llm-mini', async (req, res) => {
   } catch (e) {
     console.error('[mcpdata/meta/llm-mini] error:', e);
     return res.status(500).json({ ok: false, error: 'MCP_META_LLM_MINI_FAILED' });
+  }
+});
+
+/**
+ * GET /api/mcpdata/google-ads/llm
+ * Devuelve JSON AI-ready REAL de Google Ads usando chunks reales guardados en mcpdata.
+ *
+ * Query params opcionales:
+ * - snapshotId
+ * - topCampaigns
+ * - topBreakdowns
+ * - topTrendCampaigns
+ */
+router.get('/google-ads/llm', async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: 'NO_SESSION' });
+    }
+
+    const topCampaigns = Math.max(1, Math.min(20, Number(req.query.topCampaigns) || 8));
+    const topBreakdowns = Math.max(1, Math.min(10, Number(req.query.topBreakdowns) || 5));
+    const topTrendCampaigns = Math.max(1, Math.min(10, Number(req.query.topTrendCampaigns) || 5));
+
+    const root = await findRoot(userId);
+    const snapshotId =
+      safeStr(req.query.snapshotId) ||
+      root?.latestSnapshotId ||
+      await findLatestSnapshotId(userId, 'googleAds');
+
+    if (!snapshotId) {
+      return res.status(404).json({
+        ok: false,
+        error: 'GOOGLEADS_SNAPSHOT_NOT_FOUND',
+      });
+    }
+
+    const chunks = await findSourceChunks(userId, 'googleAds', snapshotId, 'google.');
+
+    if (!chunks.length) {
+      return res.status(404).json({
+        ok: false,
+        error: 'GOOGLEADS_CHUNKS_NOT_FOUND',
+        snapshotId,
+      });
+    }
+
+    const payload = formatGoogleAdsForLlm({
+      datasets: chunks,
+      topCampaigns,
+      topBreakdowns,
+      topTrendCampaigns,
+    });
+
+    return res.json({
+      ok: true,
+      data: payload,
+      meta: {
+        snapshotId,
+        chunkCount: chunks.length,
+        datasets: chunks.map(c => c.dataset),
+      },
+    });
+  } catch (e) {
+    console.error('[mcpdata/google-ads/llm] error:', e);
+    return res.status(500).json({ ok: false, error: 'MCP_GOOGLEADS_LLM_FAILED' });
+  }
+});
+
+/**
+ * GET /api/mcpdata/google-ads/llm-mini
+ * Devuelve versión ultra compacta AI-ready de Google Ads.
+ *
+ * Query params opcionales:
+ * - snapshotId
+ * - topCampaigns
+ */
+router.get('/google-ads/llm-mini', async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: 'NO_SESSION' });
+    }
+
+    const topCampaigns = Math.max(1, Math.min(20, Number(req.query.topCampaigns) || 5));
+
+    const root = await findRoot(userId);
+    const snapshotId =
+      safeStr(req.query.snapshotId) ||
+      root?.latestSnapshotId ||
+      await findLatestSnapshotId(userId, 'googleAds');
+
+    if (!snapshotId) {
+      return res.status(404).json({
+        ok: false,
+        error: 'GOOGLEADS_SNAPSHOT_NOT_FOUND',
+      });
+    }
+
+    const chunks = await findSourceChunks(userId, 'googleAds', snapshotId, 'google.');
+
+    if (!chunks.length) {
+      return res.status(404).json({
+        ok: false,
+        error: 'GOOGLEADS_CHUNKS_NOT_FOUND',
+        snapshotId,
+      });
+    }
+
+    const payload = formatGoogleAdsForLlmMini({
+      datasets: chunks,
+      topCampaigns,
+    });
+
+    return res.json({
+      ok: true,
+      data: payload,
+      meta: {
+        snapshotId,
+        chunkCount: chunks.length,
+        datasets: chunks.map(c => c.dataset),
+      },
+    });
+  } catch (e) {
+    console.error('[mcpdata/google-ads/llm-mini] error:', e);
+    return res.status(500).json({ ok: false, error: 'MCP_GOOGLEADS_LLM_MINI_FAILED' });
   }
 });
 
