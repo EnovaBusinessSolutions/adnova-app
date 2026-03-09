@@ -15,6 +15,11 @@ const Audit = require('../models/Audit');
 
 const { deleteAuditsForUserSources } = require('../services/auditCleanup');
 
+const {
+  enqueueGoogleAdsCollectBestEffort,
+  enqueueGa4CollectBestEffort,
+} = require('../queues/mcpQueue');
+
 /* =========================
  * ✅ NEW: Analytics Events (no rompe si falta/si falla)
  * ========================= */
@@ -279,6 +284,89 @@ const hasAdwordsScope = (scopes = []) =>
 const hasGaScope = (scopes = []) =>
   Array.isArray(scopes) && scopes.some((s) => String(s).includes('/auth/analytics.readonly'));
 
+function getAdsTokenBundle(ga) {
+  return {
+    accessToken: ga?.accessToken || null,
+    refreshToken: ga?.refreshToken || null,
+    expiresAt: ga?.expiresAt || null,
+    scopes: Array.isArray(ga?.scope) ? ga.scope : [],
+  };
+}
+
+function getGa4TokenBundle(ga) {
+  return {
+    accessToken: ga?.ga4AccessToken || ga?.accessToken || null,
+    refreshToken: ga?.ga4RefreshToken || ga?.refreshToken || null,
+    expiresAt: ga?.ga4ExpiresAt || ga?.expiresAt || null,
+    scopes: Array.isArray(ga?.ga4Scope) && ga.ga4Scope.length
+      ? ga.ga4Scope
+      : (Array.isArray(ga?.scope) ? ga.scope : []),
+  };
+}
+
+async function getFreshAccessTokenForProduct(gaDoc, product) {
+  const bundle = product === PRODUCT_GA4 ? getGa4TokenBundle(gaDoc) : getAdsTokenBundle(gaDoc);
+
+  if (bundle?.accessToken && bundle?.expiresAt) {
+    const ms = new Date(bundle.expiresAt).getTime() - Date.now();
+    if (ms > 60_000) return bundle.accessToken;
+  }
+
+  const refreshToken = bundle?.refreshToken || null;
+  const accessToken = bundle?.accessToken || null;
+
+  if (!refreshToken && !accessToken) {
+    throw new Error(`NO_${String(product || 'GOOGLE').toUpperCase()}_TOKENS`);
+  }
+
+  const client = oauthForProduct(product || null);
+  client.setCredentials({
+    refresh_token: refreshToken || undefined,
+    access_token: accessToken || undefined,
+  });
+
+  try {
+    const { credentials } = await client.refreshAccessToken();
+    const freshAccess = credentials?.access_token || null;
+    const freshExpiry = credentials?.expiry_date ? new Date(credentials.expiry_date) : null;
+
+    if (freshAccess) {
+      const $set = { updatedAt: new Date() };
+
+      if (product === PRODUCT_GA4) {
+        $set.ga4AccessToken = freshAccess;
+        $set.ga4ExpiresAt = freshExpiry;
+      } else {
+        $set.accessToken = freshAccess;
+        $set.expiresAt = freshExpiry;
+      }
+
+      await GoogleAccount.updateOne(
+        { _id: gaDoc._id },
+        { $set }
+      );
+
+      return freshAccess;
+    }
+  } catch (_) {
+    // fallback abajo
+  }
+
+  const t = await client.getAccessToken().catch(() => null);
+  if (t?.token) return t.token;
+
+  if (accessToken) return accessToken;
+
+  throw new Error(`NO_${String(product || 'GOOGLE').toUpperCase()}_ACCESS_TOKEN`);
+}
+
+async function buildOAuthClientForProductFromDoc(gaDoc, product) {
+  const accessToken = await getFreshAccessTokenForProduct(gaDoc, product);
+  const client = oauthForProduct(product || null);
+  client.setCredentials({ access_token: accessToken });
+  return client;
+}
+
 /* =========================
  * Productos (Ads vs GA4)
  * ========================= */
@@ -360,6 +448,60 @@ function emitEventBestEffort(req, name, props = {}, opts = {}) {
   Promise.resolve()
     .then(() => trackEvent(payload))
     .catch(() => {});
+}
+
+async function enqueueGoogleAdsAfterConnectBestEffort(req, { accountId = null, reason = 'google_ads_connect' } = {}) {
+  const userId = req?.user?._id;
+  if (!userId) return { ok: false, error: 'NO_USER' };
+
+  const result = await enqueueGoogleAdsCollectBestEffort({
+    userId,
+    accountId: accountId || null,
+    rangeDays: 60,
+    reason,
+    trigger: 'googleConnect',
+    forceFull: true,
+    extra: {
+      route: req.originalUrl || null,
+    },
+  });
+
+  emitEventBestEffort(req, 'google_ads_mcp_enqueue_result', {
+    ok: !!result?.ok,
+    jobId: result?.jobId || null,
+    error: result?.error || null,
+    accountId: accountId || null,
+    reason,
+  });
+
+  return result;
+}
+
+async function enqueueGa4AfterConnectBestEffort(req, { propertyId = null, reason = 'ga4_connect' } = {}) {
+  const userId = req?.user?._id;
+  if (!userId) return { ok: false, error: 'NO_USER' };
+
+  const result = await enqueueGa4CollectBestEffort({
+    userId,
+    propertyId: propertyId || null,
+    rangeDays: 60,
+    reason,
+    trigger: 'googleConnect',
+    forceFull: true,
+    extra: {
+      route: req.originalUrl || null,
+    },
+  });
+
+  emitEventBestEffort(req, 'ga4_mcp_enqueue_result', {
+    ok: !!result?.ok,
+    jobId: result?.jobId || null,
+    error: result?.error || null,
+    propertyId: propertyId || null,
+    reason,
+  });
+
+  return result;
 }
 
 /* =========================================================
@@ -752,6 +894,19 @@ emitEventBestEffort(req, 'google_connect_completed', {
           hasDefaultCustomerId: !!ga.defaultCustomerId,
         });
 
+        const adsMcpAccountId =
+  (Array.isArray(ga.selectedCustomerIds) && ga.selectedCustomerIds.length
+    ? ga.selectedCustomerIds[0]
+    : null) ||
+  normId(ga.defaultCustomerId || '') ||
+  normId(ad_accounts?.[0]?.id || '') ||
+  null;
+
+await enqueueGoogleAdsAfterConnectBestEffort(req, {
+  accountId: adsMcpAccountId,
+  reason: 'google_ads_oauth_callback',
+});
+
         try {
           const st = await selfTest(ga);
           console.log('[googleConnect] Google Ads selfTest:', st);
@@ -781,11 +936,13 @@ emitEventBestEffort(req, 'google_connect_completed', {
     // 2) Listar properties GA4 (solo si aplica)
     // ============================
      const ga4Scopes = Array.isArray(ga.ga4Scope) ? ga.ga4Scope : [];
-     const ga4HasScope = hasGaScope(ga4Scopes) || hasGaScope(ga.scope);
-     const ga4HasRefresh = !!(ga.ga4RefreshToken || ga.refreshToken);
-     if (shouldDoGa4 && ga4HasScope && ga4HasRefresh) {
-      try {
-        const propsRaw = await fetchGA4Properties(client);
+const ga4HasScope = hasGaScope(ga4Scopes) || hasGaScope(ga.scope);
+const ga4HasRefresh = !!(ga.ga4RefreshToken || ga.refreshToken);
+
+if (shouldDoGa4 && ga4HasScope && ga4HasRefresh) {
+  try {
+    const ga4Client = await buildOAuthClientForProductFromDoc(ga, PRODUCT_GA4);
+    const propsRaw = await fetchGA4Properties(ga4Client);
 
         const map = new Map();
         for (const p of Array.isArray(propsRaw) ? propsRaw : []) {
@@ -860,16 +1017,36 @@ emitEventBestEffort(req, 'google_connect_completed', {
             selectedCount: Array.isArray(ga.selectedPropertyIds) ? ga.selectedPropertyIds.length : 0,
             hasDefaultPropertyId: !!ga.defaultPropertyId,
           });
+
+          const ga4McpPropertyId =
+  (Array.isArray(ga.selectedPropertyIds) && ga.selectedPropertyIds.length
+    ? ga.selectedPropertyIds[0]
+    : null) ||
+  normPropertyId(ga.selectedGaPropertyId || '') ||
+  normPropertyId(ga.defaultPropertyId || '') ||
+  normPropertyId(props?.[0]?.propertyId || '') ||
+  null;
+
+await enqueueGa4AfterConnectBestEffort(req, {
+  propertyId: ga4McpPropertyId,
+  reason: 'ga4_oauth_callback',
+});
         }
       } catch (e) {
         console.warn('⚠️ GA4 properties listing failed:', e?.response?.data || e.message);
         emitEventBestEffort(req, 'ga4_properties_discovery_failed', { error: String(e?.message || e) });
       }
     } else {
-      if (shouldDoGa4 && !hasGaScope(ga.scope)) {
-        emitEventBestEffort(req, 'ga4_scope_missing', { scopes: ga.scope || [] });
-      }
-    }
+  const ga4ScopesNow = Array.isArray(ga.ga4Scope) ? ga.ga4Scope : [];
+  const ga4ScopePresent = hasGaScope(ga4ScopesNow) || hasGaScope(ga.scope);
+
+  if (shouldDoGa4 && !ga4ScopePresent) {
+    emitEventBestEffort(req, 'ga4_scope_missing', {
+      scopes: ga.scope || [],
+      ga4Scopes: ga.ga4Scope || [],
+    });
+  }
+}
 
     // Marcar usuario como conectado a Google (global)
     await User.findByIdAndUpdate(req.user._id, {
@@ -1359,6 +1536,11 @@ router.post('/accounts/selection', requireSession, express.json(), async (req, r
       defaultCustomerId: nextDefault,
     });
 
+    await enqueueGoogleAdsAfterConnectBestEffort(req, {
+  accountId: nextDefault || selected[0] || null,
+  reason: 'google_ads_selection_saved',
+});
+
     return res.json({ ok: true, selectedCustomerIds: selected, defaultCustomerId: nextDefault });
   } catch (e) {
     console.error('[googleConnect] accounts/selection error:', e);
@@ -1382,6 +1564,11 @@ router.post('/default-customer', requireSession, express.json(), async (req, res
 
     emitEventBestEffort(req, 'google_ads_default_customer_saved', { defaultCustomerId: cid });
 
+    await enqueueGoogleAdsAfterConnectBestEffort(req, {
+  accountId: cid,
+  reason: 'google_ads_default_customer_saved',
+});
+
     res.json({ ok: true, defaultCustomerId: cid });
   } catch (err) {
     console.error('[googleConnect] default-customer error:', err);
@@ -1404,6 +1591,11 @@ router.post('/default-property', requireSession, express.json(), async (req, res
     );
 
     emitEventBestEffort(req, 'ga4_default_property_saved', { defaultPropertyId: pid });
+
+    await enqueueGa4AfterConnectBestEffort(req, {
+  propertyId: pid,
+  reason: 'ga4_default_property_saved',
+});
 
     res.json({ ok: true, defaultPropertyId: pid });
   } catch (err) {
@@ -1472,6 +1664,11 @@ router.post('/ga4/selection', requireSession, express.json(), async (req, res) =
       selectedPropertyIds: selected,
       defaultPropertyId: nextDefault,
     });
+
+    await enqueueGa4AfterConnectBestEffort(req, {
+  propertyId: nextDefault || selected[0] || null,
+  reason: 'ga4_selection_saved',
+});
 
     return res.json({ ok: true, selectedPropertyIds: selected, defaultPropertyId: nextDefault });
   } catch (e) {

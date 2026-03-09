@@ -1,4 +1,3 @@
-// backend/workers/mcpWorker.js
 'use strict';
 
 require('dotenv').config();
@@ -8,6 +7,7 @@ const { Worker } = require('bullmq');
 const IORedis = require('ioredis');
 
 const { collectMeta } = require('../jobs/collect/metaCollector');
+const { collectGoogle } = require('../jobs/collect/googleCollector');
 const McpData = require('../models/McpData');
 const User = require('../models/User');
 
@@ -16,6 +16,8 @@ const User = require('../models/User');
  * ========================= */
 const MONGO_URI = process.env.MONGO_URI || '';
 const REDIS_URL = process.env.REDIS_URL || '';
+const QUEUE_NAME = process.env.MCP_QUEUE_NAME || 'mcp-collect';
+const BULLMQ_PREFIX = process.env.BULLMQ_PREFIX || 'bull';
 
 if (!MONGO_URI) {
   console.error('[mcpWorker] Missing MONGO_URI in environment');
@@ -26,7 +28,6 @@ if (!REDIS_URL) {
   process.exit(1);
 }
 
-// Redis connection para BullMQ
 const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
 
 /* =========================
@@ -58,6 +59,7 @@ function inferRowsFromDataset(datasetName, data) {
 
   if (!data || typeof data !== 'object') return 0;
 
+  /* ================= META ================= */
   if (ds === 'meta.insights_summary') {
     return 1;
   }
@@ -91,7 +93,40 @@ function inferRowsFromDataset(datasetName, data) {
     );
   }
 
-  // fallback genérico
+  /* ================= GOOGLE ADS ================= */
+  if (ds === 'google.insights_summary') {
+    return 1;
+  }
+
+  if (ds === 'google.campaigns_ranked') {
+    return Array.isArray(data?.campaigns_ranked) ? data.campaigns_ranked.length : 0;
+  }
+
+  if (ds === 'google.breakdowns_top') {
+    return (
+      (Array.isArray(data?.device_top) ? data.device_top.length : 0) +
+      (Array.isArray(data?.network_top) ? data.network_top.length : 0)
+    );
+  }
+
+  if (ds === 'google.optimization_signals') {
+    const s = data?.optimization_signals || {};
+    return (
+      (Array.isArray(s.winners) ? s.winners.length : 0) +
+      (Array.isArray(s.risks) ? s.risks.length : 0) +
+      (Array.isArray(s.quick_wins) ? s.quick_wins.length : 0) +
+      (Array.isArray(s.insights) ? s.insights.length : 0) +
+      (Array.isArray(s.recommendations) ? s.recommendations.length : 0)
+    );
+  }
+
+  if (ds === 'google.daily_trends_ai') {
+    return (
+      (Array.isArray(data?.totals_by_day) ? data.totals_by_day.length : 0) +
+      (Array.isArray(data?.campaigns_daily) ? data.campaigns_daily.length : 0)
+    );
+  }
+
   let total = 0;
   for (const v of Object.values(data)) {
     if (Array.isArray(v)) total += v.length;
@@ -111,6 +146,13 @@ function summarizeDatasets(datasets) {
     out[String(ds?.dataset || 'unknown')] = buildChunkStats(ds?.dataset, ds?.data, ds?.stats);
   }
   return out;
+}
+
+function buildRootStatsFromDatasetSummary(datasetSummary) {
+  return {
+    rows: Object.values(datasetSummary).reduce((acc, s) => acc + toNum(s.rows), 0),
+    bytes: Object.values(datasetSummary).reduce((acc, s) => acc + toNum(s.bytes), 0),
+  };
 }
 
 function extractMetaRootPatchFromResult(r, days) {
@@ -149,6 +191,7 @@ function extractMetaRootPatchFromResult(r, days) {
     null;
 
   return {
+    sourceName: 'metaAds',
     sourcePatch: {
       connected: true,
       status: 'ready',
@@ -162,7 +205,75 @@ function extractMetaRootPatchFromResult(r, days) {
       timezone,
     },
     rootPatch: {
-      latestSnapshotId: null, // se setea abajo
+      latestSnapshotId: null,
+      coverage: {
+        range,
+        defaultRangeDays: days,
+        granularity: ['summary', 'ranked_campaigns', 'breakdown', 'signals', 'daily_ai'],
+      },
+    },
+    metaSummary: {
+      accountId,
+      name,
+      currency,
+      timezone,
+      range,
+    },
+  };
+}
+
+function extractGoogleRootPatchFromResult(r, days) {
+  const summaryDs = Array.isArray(r?.datasets)
+    ? r.datasets.find((x) => x?.dataset === 'google.insights_summary') || r.datasets[0]
+    : null;
+
+  const meta = summaryDs?.data?.meta || null;
+  const accounts = Array.isArray(meta?.accounts) ? meta.accounts : [];
+  const firstAccount = accounts[0] || null;
+
+  const range = r?.timeRange
+    ? {
+        from: safeString(r.timeRange.from) || safeString(r.timeRange.since) || null,
+        to: safeString(r.timeRange.to) || safeString(r.timeRange.until) || null,
+        tz: safeString(meta?.range?.tz) || safeString(summaryDs?.range?.tz) || null,
+      }
+    : {
+        from: safeString(summaryDs?.range?.from) || null,
+        to: safeString(summaryDs?.range?.to) || null,
+        tz: safeString(summaryDs?.range?.tz) || null,
+      };
+
+  const accountId =
+    safeString(firstAccount?.id) ||
+    (Array.isArray(r?.accountIds) && r.accountIds.length ? safeString(r.accountIds[0]) : null) ||
+    safeString(r?.defaultCustomerId) ||
+    null;
+
+  const name = safeString(firstAccount?.name) || null;
+  const currency = safeString(firstAccount?.currency) || safeString(r?.currency) || null;
+  const timezone =
+    safeString(firstAccount?.timezone_name) ||
+    safeString(firstAccount?.timezone) ||
+    safeString(r?.timeZone) ||
+    safeString(range?.tz) ||
+    null;
+
+  return {
+    sourceName: 'googleAds',
+    sourcePatch: {
+      connected: true,
+      status: 'ready',
+      ready: true,
+      lastError: null,
+      lastSyncAt: new Date(),
+      rangeDays: days,
+      accountId,
+      name,
+      currency,
+      timezone,
+    },
+    rootPatch: {
+      latestSnapshotId: null,
       coverage: {
         range,
         defaultRangeDays: days,
@@ -185,15 +296,63 @@ async function resolveRangeDaysByPlan(userId, requestedDays) {
   const u = await User.findById(userId).select('plan').lean();
   const plan = String(u?.plan || 'gratis').toLowerCase();
 
-  // Free: 60d
   if (plan === 'gratis' || plan === 'free') return 60;
 
-  // Pro / crecimiento / growth / enterprise: > 60d
   if (plan === 'pro' || plan === 'crecimiento' || plan === 'growth' || plan === 'enterprise') {
     return 90;
   }
 
   return 60;
+}
+
+async function saveCollectorDatasets({ userId, snapshotId, datasets }) {
+  for (const ds of datasets || []) {
+    const enrichedStats = buildChunkStats(ds?.dataset, ds?.data, ds?.stats);
+
+    await McpData.upsertChunk({
+      userId,
+      snapshotId,
+      source: ds.source,
+      dataset: ds.dataset,
+      range: ds.range,
+      data: ds.data,
+      stats: enrichedStats,
+    });
+
+    console.log('[mcpWorker] chunk upserted', {
+      userId: String(userId),
+      snapshotId,
+      dataset: ds?.dataset,
+      source: ds?.source,
+      range: ds?.range || null,
+      stats: enrichedStats,
+    });
+  }
+}
+
+async function finalizeRootFromCollector({
+  userId,
+  snapshotId,
+  datasets,
+  extractedRoot,
+}) {
+  const datasetSummary = summarizeDatasets(datasets);
+
+  await McpData.patchRootSource(userId, extractedRoot.sourceName, extractedRoot.sourcePatch);
+
+  await McpData.upsertRoot(userId, {
+    latestSnapshotId: snapshotId,
+    coverage: extractedRoot.rootPatch.coverage,
+    stats: buildRootStatsFromDatasetSummary(datasetSummary),
+  });
+
+  console.log('[mcpWorker] root enriched', {
+    userId: String(userId),
+    snapshotId,
+    source: extractedRoot.sourceName,
+    summary: extractedRoot.metaSummary,
+    datasets: datasetSummary,
+  });
 }
 
 async function runMetaJob({ userId, rangeDays }) {
@@ -238,50 +397,83 @@ async function runMetaJob({ userId, rangeDays }) {
     throw new Error(r?.reason || 'META_COLLECT_FAILED');
   }
 
-  // Guardar chunks con stats enriquecidos
-  for (const ds of r.datasets || []) {
-    const enrichedStats = buildChunkStats(ds?.dataset, ds?.data, ds?.stats);
-
-    await McpData.upsertChunk({
-      userId,
-      snapshotId,
-      source: ds.source,
-      dataset: ds.dataset,
-      range: ds.range,
-      data: ds.data,
-      stats: enrichedStats,
-    });
-
-    console.log('[mcpWorker] chunk upserted', {
-      userId: String(userId),
-      snapshotId,
-      dataset: ds?.dataset,
-      source: ds?.source,
-      range: ds?.range || null,
-      stats: enrichedStats,
-    });
-  }
-
-  // Enriquecer root con metadata real del source
-  const rootMeta = extractMetaRootPatchFromResult(r, days);
-  const datasetSummary = summarizeDatasets(r.datasets);
-
-  await McpData.patchRootSource(userId, 'metaAds', rootMeta.sourcePatch);
-
-  await McpData.upsertRoot(userId, {
-    latestSnapshotId: snapshotId,
-    coverage: rootMeta.rootPatch.coverage,
-    stats: {
-      rows: Object.values(datasetSummary).reduce((acc, s) => acc + toNum(s.rows), 0),
-      bytes: Object.values(datasetSummary).reduce((acc, s) => acc + toNum(s.bytes), 0),
-    },
+  await saveCollectorDatasets({
+    userId,
+    snapshotId,
+    datasets: r.datasets || [],
   });
 
-  console.log('[mcpWorker] root enriched', {
+  const extractedRoot = extractMetaRootPatchFromResult(r, days);
+
+  await finalizeRootFromCollector({
+    userId,
+    snapshotId,
+    datasets: r.datasets || [],
+    extractedRoot,
+  });
+
+  return { ok: true, snapshotId, saved: (r.datasets || []).length };
+}
+
+async function runGoogleAdsJob({ userId, rangeDays, accountId }) {
+  const snapshotId = `snap_${ymdUTC()}`;
+
+  await McpData.patchRootSource(userId, 'googleAds', {
+    connected: true,
+    status: 'running',
+    ready: false,
+    lastError: null,
+  });
+
+  const days = await resolveRangeDaysByPlan(userId, rangeDays);
+
+  console.log('[mcpWorker] runGoogleAdsJob:start', {
     userId: String(userId),
     snapshotId,
-    metaAds: rootMeta.metaSummary,
-    datasets: datasetSummary,
+    rangeDays: days,
+    accountId: safeString(accountId) || null,
+  });
+
+  const r = await collectGoogle(userId, {
+    rangeDays: days,
+    account_id: safeString(accountId) || undefined,
+  });
+
+  console.log('[mcpWorker] collectGoogle:result', {
+    userId: String(userId),
+    ok: !!r?.ok,
+    reason: r?.reason || null,
+    datasetsCount: Array.isArray(r?.datasets) ? r.datasets.length : 0,
+    accountIds: Array.isArray(r?.accountIds) ? r.accountIds : [],
+    timeRange: r?.timeRange || null,
+  });
+
+  if (!r?.ok) {
+    await McpData.patchRootSource(userId, 'googleAds', {
+      connected: true,
+      status: 'error',
+      ready: false,
+      lastError: r?.reason || 'GOOGLEADS_COLLECT_FAILED',
+      lastSyncAt: null,
+      rangeDays: days,
+    });
+
+    throw new Error(r?.reason || 'GOOGLEADS_COLLECT_FAILED');
+  }
+
+  await saveCollectorDatasets({
+    userId,
+    snapshotId,
+    datasets: r.datasets || [],
+  });
+
+  const extractedRoot = extractGoogleRootPatchFromResult(r, days);
+
+  await finalizeRootFromCollector({
+    userId,
+    snapshotId,
+    datasets: r.datasets || [],
+    extractedRoot,
   });
 
   return { ok: true, snapshotId, saved: (r.datasets || []).length };
@@ -310,14 +502,16 @@ async function boot() {
   await connectMongo();
 
   worker = new Worker(
-    'mcp-collect',
+    QUEUE_NAME,
     async (job) => {
-      const { userId, source, rangeDays } = job.data || {};
+      const { userId, source, rangeDays, accountId } = job.data || {};
 
       console.log('[mcpWorker] job received', {
         id: job?.id,
         name: job?.name,
         data: job?.data || null,
+        queue: QUEUE_NAME,
+        prefix: BULLMQ_PREFIX,
       });
 
       if (!userId) throw new Error('MISSING_USER_ID');
@@ -326,9 +520,17 @@ async function boot() {
         return await runMetaJob({ userId, rangeDays });
       }
 
+      if (source === 'googleAds') {
+        return await runGoogleAdsJob({ userId, rangeDays, accountId });
+      }
+
       throw new Error(`UNSUPPORTED_SOURCE:${source}`);
     },
-    { connection, concurrency: 2 }
+    {
+      connection,
+      prefix: BULLMQ_PREFIX,
+      concurrency: 2,
+    }
   );
 
   worker.on('active', (job) => {
@@ -351,7 +553,10 @@ async function boot() {
     console.log('[mcpWorker] heartbeat', new Date().toISOString());
   }, 15000);
 
-  console.log('[mcpWorker] running');
+  console.log('[mcpWorker] running', {
+    queue: QUEUE_NAME,
+    prefix: BULLMQ_PREFIX,
+  });
 }
 
 boot().catch((e) => {
