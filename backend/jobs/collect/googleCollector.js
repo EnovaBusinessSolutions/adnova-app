@@ -258,7 +258,7 @@ function computeCampaignKpisFromMicros(row) {
     impressions,
     clicks,
     conversions,
-    conversion_value,
+    conversion_value: round2(conversion_value),
     ctr: round2(safeDiv(clicks, impressions) * 100),
     cpc: round2(safeDiv(spend, clicks)),
     cpa: round2(safeDiv(spend, conversions)),
@@ -455,7 +455,7 @@ async function accumulateCampaignBreakdowns({
     WHERE
       segments.date BETWEEN '${since}' AND '${until}'
       AND metrics.impressions > 0
-    ORDER BY metrics.impressions DESC
+    ORDER BY segments.date
   `.trim();
 
   let rows;
@@ -535,16 +535,13 @@ async function accumulateCampaignBreakdowns({
     c.conversions += conversions;
     c.conv_value += conv_value;
 
-    const keyD = `${cid}|${id}|${device}`;
+    const keyD = `${cid}|${device}`;
     let d = byCampaignDeviceMap.get(keyD);
 
     if (!d) {
       d = {
         account_id: cid,
-        campaign_id: id,
-        campaignName: name,
         device,
-        objective,
         impressions: 0,
         clicks: 0,
         cost_micros: 0,
@@ -560,16 +557,13 @@ async function accumulateCampaignBreakdowns({
     d.conversions += conversions;
     d.conv_value += conv_value;
 
-    const keyN = `${cid}|${id}|${network}`;
+    const keyN = `${cid}|${network}`;
     let n = byCampaignNetworkMap.get(keyN);
 
     if (!n) {
       n = {
         account_id: cid,
-        campaign_id: id,
-        campaignName: name,
         network,
-        objective,
         impressions: 0,
         clicks: 0,
         cost_micros: 0,
@@ -701,6 +695,49 @@ function sortByDateAsc(rows) {
     .sort((a, b) => String(a?.date || '').localeCompare(String(b?.date || '')));
 }
 
+function buildAccountAggFromDaily(byDateMap) {
+  const byAccountAgg = new Map();
+
+  for (const row of Array.from(byDateMap.values())) {
+    const cid = normId(row?.account_id);
+    if (!cid) continue;
+
+    const cur = byAccountAgg.get(cid) || {
+      impressions: 0,
+      clicks: 0,
+      spend: 0,
+      conversions: 0,
+      conversion_value: 0,
+      ctr: 0,
+      cpc: 0,
+      cpa: 0,
+      roas: 0,
+    };
+
+    const spend = microsToCurrency(row.cost_micros);
+
+    cur.impressions += Number(row.impressions || 0);
+    cur.clicks += Number(row.clicks || 0);
+    cur.spend += Number(spend || 0);
+    cur.conversions += Number(row.conversions || 0);
+    cur.conversion_value += Number(row.conv_value || 0);
+
+    byAccountAgg.set(cid, cur);
+  }
+
+  for (const [cid, k] of byAccountAgg.entries()) {
+    k.spend = round2(k.spend);
+    k.conversion_value = round2(k.conversion_value);
+    k.ctr = round2(safeDiv(k.clicks, k.impressions) * 100);
+    k.cpc = round2(safeDiv(k.spend, k.clicks));
+    k.cpa = round2(safeDiv(k.spend, k.conversions));
+    k.roas = round2(safeDiv(k.conversion_value, k.spend));
+    byAccountAgg.set(cid, k);
+  }
+
+  return byAccountAgg;
+}
+
 /* ====================== Collector principal ====================== */
 async function collectGoogle(userId, opts = {}) {
   const {
@@ -808,7 +845,6 @@ async function collectGoogle(userId, opts = {}) {
   }
 
   const accountsMeta = new Map();
-  const byAccountAgg = new Map();
   const byCampaignMap = new Map();
   const byCampaignDeviceMap = new Map();
   const byCampaignNetworkMap = new Map();
@@ -861,73 +897,6 @@ async function collectGoogle(userId, opts = {}) {
     if (!globalSince || sinceThis < globalSince) globalSince = sinceThis;
     if (!globalUntil || untilThis > globalUntil) globalUntil = untilThis;
 
-    let payload = null;
-
-    try {
-      payload = await Ads.fetchInsights({
-        accessToken,
-        customerId,
-        datePreset: null,
-        range: { since: sinceThis, until: untilThis },
-        includeToday: false,
-        objective: 'ventas',
-        compareMode: null,
-      });
-    } catch (e) {
-      try {
-        payload = await Ads.fetchInsights({
-          accessToken,
-          customerId,
-          datePreset: 'last_30d',
-          range: null,
-          includeToday: false,
-          objective: 'ventas',
-          compareMode: null,
-        });
-      } catch (e2) {
-        if (e2?.status === 401 || e2?.status === 403) {
-          accessToken = await ensureAccessToken(gaDoc);
-          if (!accessToken) continue;
-          try {
-            payload = await Ads.fetchInsights({
-              accessToken,
-              customerId,
-              datePreset: 'last_30d',
-              range: null,
-              includeToday: false,
-              objective: 'ventas',
-              compareMode: null,
-            });
-          } catch {
-            continue;
-          }
-        } else {
-          continue;
-        }
-      }
-    }
-
-    if (!payload || !payload.kpis) continue;
-
-    const k = payload.kpis || {};
-    const impressions = Number(k.impressions || 0);
-    const clicks = Number(k.clicks || 0);
-    const spend = Number(k.cost || 0);
-    const conversions = Number(k.conversions || 0);
-    const conversion_value = Number(k.conv_value || k.conversions_value || 0);
-
-    byAccountAgg.set(customerId, {
-      impressions,
-      clicks,
-      spend: round2(spend),
-      conversions,
-      conversion_value: round2(conversion_value),
-      ctr: round2(safeDiv(clicks, impressions) * 100),
-      cpc: round2(safeDiv(spend, clicks)),
-      cpa: round2(safeDiv(spend, conversions)),
-      roas: round2(safeDiv(conversion_value, spend)),
-    });
-
     await accumulateCampaignBreakdowns({
       accessToken,
       customerId,
@@ -946,6 +915,8 @@ async function collectGoogle(userId, opts = {}) {
     globalSince = globalSince || fallback.since;
     globalUntil = globalUntil || fallback.until;
   }
+
+  const byAccountAgg = buildAccountAggFromDaily(byDateMap);
 
   const accounts = idsToAudit.map((cid) => {
     const m = accountsMeta.get(cid) || {};
@@ -1139,7 +1110,7 @@ async function collectGoogle(userId, opts = {}) {
     range: rangeOut,
     currency,
     timeZone,
-    version: 'gadsCollector@mcp-v2(ranked+signals+dailyTrendsAI)',
+    version: 'gadsCollector@mcp-v3(gaql_single_source_of_truth)',
   });
 
   const datasets = [
