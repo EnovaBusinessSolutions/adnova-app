@@ -6,6 +6,7 @@ const router = express.Router();
 const McpData = require('../models/McpData');
 const { formatMetaForLlm, formatMetaForLlmMini } = require('../jobs/transform/metaLlmFormatter');
 const { formatGoogleAdsForLlm, formatGoogleAdsForLlmMini } = require('../jobs/transform/googleAdsLlmFormatter');
+const { formatGa4ForLlm, formatGa4ForLlmMini } = require('../jobs/transform/ga4LlmFormatter');
 
 let MetaAccount = null;
 let GoogleAccount = null;
@@ -385,14 +386,42 @@ router.get('/google-ads/status', async (req, res) => {
 });
 
 /**
+ * GET /api/mcpdata/ga4/status
+ * Devuelve estado real de chunks GA4 en mcpdata.
+ */
+router.get('/ga4/status', async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: 'NO_SESSION' });
+    }
+
+    const root = await findRoot(userId);
+    const snapshotId = root?.latestSnapshotId || await findLatestSnapshotId(userId, 'ga4');
+
+    const chunks = snapshotId
+      ? await findSourceChunks(userId, 'ga4', snapshotId, 'ga4.')
+      : [];
+
+    return res.json({
+      ok: true,
+      data: {
+        hasRoot: !!root,
+        latestSnapshotId: snapshotId || null,
+        connected: toBool(root?.sources?.ga4?.connected),
+        ready: toBool(root?.sources?.ga4?.ready),
+        chunkCount: chunks.length,
+        datasets: chunks.map(stripChunkForResponse),
+      },
+    });
+  } catch (e) {
+    console.error('[mcpdata/ga4/status] error:', e);
+    return res.status(500).json({ ok: false, error: 'MCP_GA4_STATUS_FAILED' });
+  }
+});
+
+/**
  * GET /api/mcpdata/meta/llm
- * Devuelve JSON AI-ready REAL de Meta Ads usando chunks reales guardados en mcpdata.
- *
- * Query params opcionales:
- * - snapshotId
- * - topCampaigns
- * - topBreakdowns
- * - topTrendCampaigns
  */
 router.get('/meta/llm', async (req, res) => {
   try {
@@ -452,11 +481,6 @@ router.get('/meta/llm', async (req, res) => {
 
 /**
  * GET /api/mcpdata/meta/llm-mini
- * Devuelve versión ultra compacta AI-ready de Meta Ads.
- *
- * Query params opcionales:
- * - snapshotId
- * - topCampaigns
  */
 router.get('/meta/llm-mini', async (req, res) => {
   try {
@@ -512,13 +536,6 @@ router.get('/meta/llm-mini', async (req, res) => {
 
 /**
  * GET /api/mcpdata/google-ads/llm
- * Devuelve JSON AI-ready REAL de Google Ads usando chunks reales guardados en mcpdata.
- *
- * Query params opcionales:
- * - snapshotId
- * - topCampaigns
- * - topBreakdowns
- * - topTrendCampaigns
  */
 router.get('/google-ads/llm', async (req, res) => {
   try {
@@ -578,11 +595,6 @@ router.get('/google-ads/llm', async (req, res) => {
 
 /**
  * GET /api/mcpdata/google-ads/llm-mini
- * Devuelve versión ultra compacta AI-ready de Google Ads.
- *
- * Query params opcionales:
- * - snapshotId
- * - topCampaigns
  */
 router.get('/google-ads/llm-mini', async (req, res) => {
   try {
@@ -633,6 +645,132 @@ router.get('/google-ads/llm-mini', async (req, res) => {
   } catch (e) {
     console.error('[mcpdata/google-ads/llm-mini] error:', e);
     return res.status(500).json({ ok: false, error: 'MCP_GOOGLEADS_LLM_MINI_FAILED' });
+  }
+});
+
+/**
+ * GET /api/mcpdata/ga4/llm
+ */
+router.get('/ga4/llm', async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: 'NO_SESSION' });
+    }
+
+    const topChannels = Math.max(1, Math.min(20, Number(req.query.topChannels) || 8));
+    const topDevices = Math.max(1, Math.min(12, Number(req.query.topDevices) || 6));
+    const topLandingPages = Math.max(1, Math.min(20, Number(req.query.topLandingPages) || 8));
+    const topSourceMedium = Math.max(1, Math.min(25, Number(req.query.topSourceMedium) || 10));
+    const topEvents = Math.max(1, Math.min(25, Number(req.query.topEvents) || 10));
+    const topTrendDays = Math.max(1, Math.min(90, Number(req.query.topTrendDays) || 30));
+
+    const root = await findRoot(userId);
+    const snapshotId =
+      safeStr(req.query.snapshotId) ||
+      root?.latestSnapshotId ||
+      await findLatestSnapshotId(userId, 'ga4');
+
+    if (!snapshotId) {
+      return res.status(404).json({
+        ok: false,
+        error: 'GA4_SNAPSHOT_NOT_FOUND',
+      });
+    }
+
+    const chunks = await findSourceChunks(userId, 'ga4', snapshotId, 'ga4.');
+
+    if (!chunks.length) {
+      return res.status(404).json({
+        ok: false,
+        error: 'GA4_CHUNKS_NOT_FOUND',
+        snapshotId,
+      });
+    }
+
+    const payload = formatGa4ForLlm({
+      datasets: chunks,
+      topChannels,
+      topDevices,
+      topLandingPages,
+      topSourceMedium,
+      topEvents,
+      topTrendDays,
+    });
+
+    return res.json({
+      ok: true,
+      data: payload,
+      meta: {
+        snapshotId,
+        chunkCount: chunks.length,
+        datasets: chunks.map(c => c.dataset),
+      },
+    });
+  } catch (e) {
+    console.error('[mcpdata/ga4/llm] error:', e);
+    return res.status(500).json({ ok: false, error: 'MCP_GA4_LLM_FAILED' });
+  }
+});
+
+/**
+ * GET /api/mcpdata/ga4/llm-mini
+ */
+router.get('/ga4/llm-mini', async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: 'NO_SESSION' });
+    }
+
+    const topChannels = Math.max(1, Math.min(10, Number(req.query.topChannels) || 5));
+    const topDevices = Math.max(1, Math.min(8, Number(req.query.topDevices) || 4));
+    const topLandingPages = Math.max(1, Math.min(10, Number(req.query.topLandingPages) || 5));
+    const topEvents = Math.max(1, Math.min(10, Number(req.query.topEvents) || 6));
+
+    const root = await findRoot(userId);
+    const snapshotId =
+      safeStr(req.query.snapshotId) ||
+      root?.latestSnapshotId ||
+      await findLatestSnapshotId(userId, 'ga4');
+
+    if (!snapshotId) {
+      return res.status(404).json({
+        ok: false,
+        error: 'GA4_SNAPSHOT_NOT_FOUND',
+      });
+    }
+
+    const chunks = await findSourceChunks(userId, 'ga4', snapshotId, 'ga4.');
+
+    if (!chunks.length) {
+      return res.status(404).json({
+        ok: false,
+        error: 'GA4_CHUNKS_NOT_FOUND',
+        snapshotId,
+      });
+    }
+
+    const payload = formatGa4ForLlmMini({
+      datasets: chunks,
+      topChannels,
+      topDevices,
+      topLandingPages,
+      topEvents,
+    });
+
+    return res.json({
+      ok: true,
+      data: payload,
+      meta: {
+        snapshotId,
+        chunkCount: chunks.length,
+        datasets: chunks.map(c => c.dataset),
+      },
+    });
+  } catch (e) {
+    console.error('[mcpdata/ga4/llm-mini] error:', e);
+    return res.status(500).json({ ok: false, error: 'MCP_GA4_LLM_MINI_FAILED' });
   }
 });
 
