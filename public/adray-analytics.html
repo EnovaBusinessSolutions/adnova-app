@@ -74,7 +74,7 @@
         </div>
 
         <!-- Metric Cards -->
-        <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8">
+        <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-6 mb-8">
             <!-- Revenue -->
             <div class="bg-white overflow-hidden shadow rounded-lg">
                 <div class="p-5">
@@ -113,18 +113,18 @@
                 </div>
             </div>
 
-            <!-- Google ROAS Proxy (Revenue / Google Orders) - Simplified for MVP -->
+            <!-- Page Views -->
             <div class="bg-white overflow-hidden shadow rounded-lg">
                 <div class="p-5">
                     <div class="flex items-center">
                         <div class="flex-shrink-0 bg-blue-500 rounded-md p-3">
-                            <i class="fab fa-google text-white text-lg"></i>
+                            <i class="fas fa-eye text-white text-lg"></i>
                         </div>
                         <div class="ml-5 w-0 flex-1">
                             <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Ventas Google</dt>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Page Views</dt>
                                 <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="google-revenue">$0.00</div>
+                                    <div class="text-2xl font-semibold text-gray-900" id="page-views">0</div>
                                 </dd>
                             </dl>
                         </div>
@@ -132,18 +132,56 @@
                 </div>
             </div>
 
-            <!-- Meta Revenue -->
+            <!-- Add To Cart -->
             <div class="bg-white overflow-hidden shadow rounded-lg">
                 <div class="p-5">
                     <div class="flex items-center">
-                        <div class="flex-shrink-0 bg-blue-700 rounded-md p-3">
-                            <i class="fab fa-facebook-f text-white text-lg"></i>
+                        <div class="flex-shrink-0 bg-amber-500 rounded-md p-3">
+                            <i class="fas fa-cart-plus text-white text-lg"></i>
                         </div>
                         <div class="ml-5 w-0 flex-1">
                             <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Ventas Meta</dt>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Add To Cart</dt>
                                 <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="meta-revenue">$0.00</div>
+                                    <div class="text-2xl font-semibold text-gray-900" id="add-to-cart">0</div>
+                                </dd>
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Begin Checkout -->
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-5">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0 bg-purple-500 rounded-md p-3">
+                            <i class="fas fa-credit-card text-white text-lg"></i>
+                        </div>
+                        <div class="ml-5 w-0 flex-1">
+                            <dl>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Begin Checkout</dt>
+                                <dd class="flex items-baseline">
+                                    <div class="text-2xl font-semibold text-gray-900" id="begin-checkout">0</div>
+                                </dd>
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Purchase Events -->
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-5">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0 bg-emerald-600 rounded-md p-3">
+                            <i class="fas fa-check-circle text-white text-lg"></i>
+                        </div>
+                        <div class="ml-5 w-0 flex-1">
+                            <dl>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Purchase Events</dt>
+                                <dd class="flex items-baseline">
+                                    <div class="text-2xl font-semibold text-gray-900" id="purchase-events">0</div>
                                 </dd>
                             </dl>
                         </div>
@@ -201,17 +239,42 @@
         let attributionChartInstance = null;
         let trendChartInstance = null;
 
+        function getShopIdFromUrl() {
+            const urlParams = new URLSearchParams(window.location.search);
+            return (
+                urlParams.get('shop') ||
+                urlParams.get('shopId') ||
+                urlParams.get('store') ||
+                ''
+            ).trim();
+        }
+
+        function resolvePublicShopId() {
+            const fromUrl = getShopIdFromUrl();
+            if (fromUrl) {
+                localStorage.setItem('adray_analytics_shop', fromUrl);
+                return fromUrl;
+            }
+
+            const fromStorage = (localStorage.getItem('adray_analytics_shop') || '').trim();
+            if (fromStorage) return fromStorage;
+
+            const typed = (window.prompt('Ingresa el shop_id para ver el dashboard de pixel:') || '').trim();
+            if (!typed) return null;
+            localStorage.setItem('adray_analytics_shop', typed);
+            return typed;
+        }
+
         // --- AUTH & INIT ---
         async function init() {
-            // Check for explicit shop in URL (bypass auth)
-            const urlParams = new URLSearchParams(window.location.search);
-            const shopParam = urlParams.get('shop');
+            // Public mode: explicit shop in URL/localStorage/prompt
+            const shopParam = resolvePublicShopId();
 
             if (shopParam) {
                 currentShopId = shopParam;
                 document.getElementById('shop-name').textContent = shopParam + ' (Demo Mode)';
                 document.getElementById('user-initial').textContent = 'D';
-                console.log('Skipping auth, using shop param:', shopParam);
+                console.log('Public analytics mode, shop:', shopParam);
                 
                 // Load data immediately
                 fetchAnalytics();
@@ -224,7 +287,7 @@
                 const data = await res.json();
                 
                 if (!data.authenticated) {
-                    window.location.href = '/login.html';
+                    alert('No hay sesion. Agrega ?shop=tu_shop_id para acceder sin login.');
                     return;
                 }
 
@@ -242,7 +305,7 @@
 
             } catch (error) {
                 console.error('Session check failed:', error);
-                window.location.href = '/login.html';
+                alert('No se pudo validar sesion. Usa ?shop=tu_shop_id para modo publico.');
             }
         }
 
@@ -276,16 +339,13 @@
             const summary = data.summary || { totalRevenue: 0, totalOrders: 0 };
             document.getElementById('total-revenue').textContent = formatCurrency(summary.totalRevenue);
             document.getElementById('total-orders').textContent = summary.totalOrders;
+            document.getElementById('page-views').textContent = (summary.pageViews || 0).toLocaleString();
+            document.getElementById('add-to-cart').textContent = (summary.addToCart || 0).toLocaleString();
+            document.getElementById('begin-checkout').textContent = (summary.beginCheckout || 0).toLocaleString();
+            document.getElementById('purchase-events').textContent = (summary.purchaseEvents || 0).toLocaleString();
             
             // Channel Metrics (Fix: API returns object, map to array)
             const channels = data.channels || {};
-            
-            // Meta (often logged as 'facebook' or 'meta')
-            const metaRevenue = (channels.facebook?.revenue || 0) + (channels.instagram?.revenue || 0);
-            const googleRevenue = channels.google?.revenue || 0;
-            
-            document.getElementById('google-revenue').textContent = formatCurrency(googleRevenue);
-            document.getElementById('meta-revenue').textContent = formatCurrency(metaRevenue);
 
             // Transform for chart
             const attributionData = Object.entries(channels).map(([key, val]) => ({

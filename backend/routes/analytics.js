@@ -4,6 +4,28 @@ const router = express.Router();
 const prisma = require('../utils/prismaClient');
 const { startOfDay, endOfDay, subDays, eachDayOfInterval, format } = require('date-fns');
 
+const EVENT_BUCKET_ALIASES = {
+  page_view: ['page_view', 'pageview', 'view_page'],
+  add_to_cart: ['add_to_cart', 'addtocart', 'cart_add'],
+  begin_checkout: ['begin_checkout', 'checkout_started', 'start_checkout'],
+  purchase: ['purchase', 'order_completed', 'checkout_completed'],
+};
+
+function normalizeEventName(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+}
+
+function resolveEventBucket(rawName) {
+  const normalized = normalizeEventName(rawName);
+  for (const [bucket, aliases] of Object.entries(EVENT_BUCKET_ALIASES)) {
+    if (aliases.includes(normalized)) return bucket;
+  }
+  return 'other';
+}
+
 // Use existing sessionGuard from index.js mount, assuming it's available or implemented here?
 // The pipeline says "All routes require sessionGuard".
 // For now, I'll rely on index.js to wrap this router with sessionGuard.
@@ -43,7 +65,19 @@ router.get('/:account_id', async (req, res) => {
       }
     });
 
-    // 3. Aggregate Data
+    // 3. Fetch Events in range (for pixel activity visibility)
+    const groupedEvents = await prisma.event.groupBy({
+      by: ['eventName'],
+      where: {
+        accountId: account_id,
+        createdAt: { gte: startDate, lte: endDate },
+      },
+      _count: {
+        _all: true,
+      },
+    });
+
+    // 4. Aggregate Data
     let totalRevenue = 0;
     let attributedRevenue = 0;
     const channelStats = {
@@ -52,6 +86,15 @@ router.get('/:account_id', async (req, res) => {
       tiktok: { revenue: 0, orders: 0 },
       other: { revenue: 0, orders: 0 },
       unattributed: { revenue: 0, orders: 0 }
+    };
+
+    const eventStats = {
+      page_view: 0,
+      add_to_cart: 0,
+      begin_checkout: 0,
+      purchase: 0,
+      other: 0,
+      total: 0,
     };
 
     // Daily breakdown map
@@ -89,7 +132,14 @@ router.get('/:account_id', async (req, res) => {
       }
     });
 
-    // 4. Return JSON
+    groupedEvents.forEach((row) => {
+      const count = row?._count?._all || 0;
+      const bucket = resolveEventBucket(row.eventName);
+      if (typeof eventStats[bucket] === 'number') eventStats[bucket] += count;
+      eventStats.total += count;
+    });
+
+    // 5. Return JSON
     res.json({
       summary: {
         totalRevenue,
@@ -97,8 +147,14 @@ router.get('/:account_id', async (req, res) => {
         attributedRevenue,
         attributedOrders: orders.length - channelStats.unattributed.orders,
         totalSessions: sessionCount,
-        conversionRate: sessionCount > 0 ? (orders.length / sessionCount) : 0
+        conversionRate: sessionCount > 0 ? (orders.length / sessionCount) : 0,
+        pageViews: eventStats.page_view,
+        addToCart: eventStats.add_to_cart,
+        beginCheckout: eventStats.begin_checkout,
+        purchaseEvents: eventStats.purchase,
+        totalEvents: eventStats.total,
       },
+      events: eventStats,
       channels: channelStats,
       daily: Object.values(dailyMap) // sorted array by date
     });
