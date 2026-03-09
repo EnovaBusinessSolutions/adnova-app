@@ -62,6 +62,14 @@ function getData(ds) {
   return ds && typeof ds === 'object' ? (ds.data || {}) : {};
 }
 
+function getSnapshotIdFromDatasets(datasets) {
+  for (const ds of Array.isArray(datasets) ? datasets : []) {
+    const sid = safeStr(ds?.snapshotId).trim();
+    if (sid) return sid;
+  }
+  return null;
+}
+
 function getMetaFromDatasets(map) {
   const candidates = [
     'ga4.insights_summary',
@@ -330,8 +338,33 @@ function buildTopEvents(eventsTop, topNCount) {
   );
 }
 
+function isMeaningfulDailyRow(r) {
+  return (
+    toNum(r?.users) > 0 ||
+    toNum(r?.sessions) > 0 ||
+    toNum(r?.conversions) > 0 ||
+    toNum(r?.revenue) > 0 ||
+    toNum(r?.engagedSessions) > 0
+  );
+}
+
+function trimDailyRows(dailyRows, maxDays) {
+  const rows = sortByDateAsc(Array.isArray(dailyRows) ? dailyRows : []);
+  if (!rows.length) return [];
+
+  const meaningful = rows.filter(isMeaningfulDailyRow);
+
+  // Si sí hay datos reales, preferimos solo días útiles
+  if (meaningful.length > 0) {
+    return meaningful.slice(-Math.max(1, maxDays));
+  }
+
+  // Si todo viene en 0, al menos no mandar 60-90 filas vacías
+  return rows.slice(-Math.min(Math.max(1, maxDays), 7));
+}
+
 function buildDailyTrendPack(dailyRows, maxDays) {
-  const rows = compactArray(sortByDateAsc(dailyRows), Math.max(1, maxDays));
+  const rows = trimDailyRows(dailyRows, maxDays);
 
   let prev = null;
   return rows.map((r) => {
@@ -509,7 +542,6 @@ function buildPrioritySummary({
 
   const k = summary?.kpis || {};
   const d7 = summary?.deltas?.last7_vs_prev7 || {};
-  const d30 = summary?.deltas?.last30_vs_prev30 || {};
 
   if (toNum(k.conversions) > 0) {
     positives.push(`The property is generating conversions (${toNum(k.conversions)} total conversions).`);
@@ -635,6 +667,7 @@ function formatGa4ForLlm({
   const map = getDatasetMap(datasets);
   const meta = getMetaFromDatasets(map);
   const extracted = extractDatasets(map);
+  const snapshotId = getSnapshotIdFromDatasets(datasets);
 
   const headline_kpis = buildHeadlineKpis(extracted.summary);
 
@@ -703,7 +736,7 @@ function formatGa4ForLlm({
       data_quality: buildDataQuality(meta, datasets),
     },
     meta: {
-      snapshotId: safeStr(meta?.latestSnapshotId) || null,
+      snapshotId: snapshotId || null,
       chunkCount: Array.isArray(datasets) ? datasets.length : 0,
       datasets: (Array.isArray(datasets) ? datasets : []).map((d) => safeStr(d?.dataset)).filter(Boolean),
     },
@@ -720,6 +753,7 @@ function formatGa4ForLlmMini({
   const map = getDatasetMap(datasets);
   const meta = getMetaFromDatasets(map);
   const extracted = extractDatasets(map);
+  const snapshotId = getSnapshotIdFromDatasets(datasets);
 
   const headline_kpis = buildHeadlineKpis(extracted.summary);
 
@@ -784,7 +818,7 @@ function formatGa4ForLlmMini({
       llm_hints: buildLlmHints(),
     },
     meta: {
-      snapshotId: safeStr(meta?.latestSnapshotId) || null,
+      snapshotId: snapshotId || null,
       chunkCount: Array.isArray(datasets) ? datasets.length : 0,
       datasets: (Array.isArray(datasets) ? datasets : []).map((d) => safeStr(d?.dataset)).filter(Boolean),
     },
