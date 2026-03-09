@@ -8,7 +8,7 @@ const EVENT_BUCKET_ALIASES = {
   page_view: ['page_view', 'pageview', 'view_page'],
   add_to_cart: ['add_to_cart', 'addtocart', 'cart_add'],
   begin_checkout: ['begin_checkout', 'checkout_started', 'start_checkout'],
-  purchase: ['purchase', 'order_completed', 'checkout_completed'],
+  purchase: ['purchase', 'order_completed', 'checkout_completed', 'order_create', 'orders_create'],
 };
 
 function normalizeEventName(value) {
@@ -139,6 +139,10 @@ router.get('/:account_id', async (req, res) => {
       eventStats.total += count;
     });
 
+    // Purchase events often come via Shopify webhook -> Order table (without Event row).
+    // Use the max as a safe dashboard metric that avoids showing 0 when orders exist.
+    const purchaseEventsResolved = Math.max(eventStats.purchase, orders.length);
+
     // 5. Return JSON
     res.json({
       summary: {
@@ -151,7 +155,9 @@ router.get('/:account_id', async (req, res) => {
         pageViews: eventStats.page_view,
         addToCart: eventStats.add_to_cart,
         beginCheckout: eventStats.begin_checkout,
-        purchaseEvents: eventStats.purchase,
+        purchaseEvents: purchaseEventsResolved,
+        purchaseEventsRaw: eventStats.purchase,
+        purchaseOrders: orders.length,
         totalEvents: eventStats.total,
       },
       events: eventStats,
