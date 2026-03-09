@@ -1,4 +1,3 @@
-// backend/jobs/collect/googleAnalyticsCollector.js
 'use strict';
 
 const fetch = require('node-fetch');
@@ -11,7 +10,6 @@ const {
   GOOGLE_CONNECT_CALLBACK_URL: GOOGLE_REDIRECT_URI,
 } = process.env;
 
-// [★] Límite duro por requerimiento (3). Se puede sobre-escribir por env.
 const HARD_LIMIT = 3;
 const MAX_BY_RULE = Math.min(
   HARD_LIMIT,
@@ -29,19 +27,18 @@ catch (_) {
     user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
     userId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
 
-    // ⚠️ GA4 tokens (separados)
     ga4AccessToken: { type: String, select: false },
-    ga4RefreshToken:{ type: String, select: false },
+    ga4RefreshToken: { type: String, select: false },
     ga4Scope: { type: [String], default: [] },
     ga4ExpiresAt: { type: Date },
 
-    gaProperties: { type: Array, default: [] }, // [{ propertyId, displayName, timeZone, currencyCode, ... }]
+    gaProperties: { type: Array, default: [] },
     defaultPropertyId: String,
     selectedPropertyIds: { type: [String], default: [] },
 
     updatedAt: { type: Date, default: Date.now },
   }, { collection: 'googleaccounts' });
-  schema.pre('save', function(n){ this.updatedAt = new Date(); n(); });
+  schema.pre('save', function (n) { this.updatedAt = new Date(); n(); });
   GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
 }
 
@@ -64,11 +61,37 @@ const normPropertyId = (val) => {
 
 const toNum = (v) => Number(v || 0);
 const safeDiv = (n, d) => (Number(d || 0) ? Number(n || 0) / Number(d || 0) : 0);
+const round2 = (x) => Math.round((Number(x || 0) + Number.EPSILON) * 100) / 100;
 
 function clampInt(n, min, max) {
   const x = Number(n || 0);
   if (!Number.isFinite(x)) return min;
   return Math.max(min, Math.min(max, Math.trunc(x)));
+}
+
+function safeStr(v) {
+  return v == null ? '' : String(v);
+}
+
+function compactArray(arr, max = 10) {
+  return Array.isArray(arr) ? arr.slice(0, Math.max(0, max)) : [];
+}
+
+function uniqStrings(arr, max = 20) {
+  const out = [];
+  const seen = new Set();
+
+  for (const x of Array.isArray(arr) ? arr : []) {
+    const s = safeStr(x).trim();
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+    if (out.length >= max) break;
+  }
+
+  return out;
 }
 
 function oauthClient() {
@@ -79,17 +102,12 @@ function oauthClient() {
   });
 }
 
-/**
- * ✅ Token refresh robusto para GA4:
- * - usa ga4AccessToken/ga4RefreshToken/ga4ExpiresAt
- */
 async function ensureGa4AccessToken(accDoc) {
   if (accDoc?.ga4AccessToken && accDoc?.ga4ExpiresAt) {
     const ms = new Date(accDoc.ga4ExpiresAt).getTime() - Date.now();
     if (ms > 60_000) return accDoc.ga4AccessToken;
   }
 
-  // sin refresh: devolvemos el access si existe
   if (!accDoc?.ga4RefreshToken && accDoc?.ga4AccessToken) return accDoc.ga4AccessToken;
   if (!accDoc?.ga4RefreshToken) return null;
 
@@ -121,7 +139,6 @@ async function ensureGa4AccessToken(accDoc) {
   }
 }
 
-/** Retry/backoff para GA4 Data API (429 / 5xx) */
 async function postJSONWithRetry(url, { headers, body }, { retries = 2 } = {}) {
   let lastErr = null;
   for (let i = 0; i <= retries; i++) {
@@ -173,9 +190,6 @@ async function ga4RunReport({ token, property, body }) {
   );
 }
 
-/**
- * YYYY-MM-DD en TZ (para construir ranges estrictos que terminan AYER)
- */
 function ymdInTZ(date, timeZone) {
   try {
     return new Intl.DateTimeFormat('en-CA', {
@@ -196,10 +210,6 @@ function addDaysYMD(ymd, deltaDays) {
   return base.toISOString().slice(0, 10);
 }
 
-/**
- * Rango estricto N días completos:
- * - includeToday=false => hasta AYER
- */
 function getStrictLastNdRangeForTZ(timeZone, days, includeToday) {
   const today = ymdInTZ(new Date(), timeZone || 'UTC');
   const end = includeToday ? today : addDaysYMD(today, -1);
@@ -208,7 +218,7 @@ function getStrictLastNdRangeForTZ(timeZone, days, includeToday) {
   return { startDate: start, endDate: end };
 }
 
-/* -------- selección de propiedades (CANÓNICA + compat) -------- */
+/* -------- selección de propiedades -------- */
 
 function listAvailableProperties(acc) {
   const list = Array.isArray(acc?.gaProperties) ? acc.gaProperties : [];
@@ -232,7 +242,6 @@ async function resolvePropertiesForAudit({ userId, accDoc, forcedPropertyId }) {
     if (id) return [byId.get(id) || { id, displayName: '', timeZone: null, currencyCode: null }];
   }
 
-  // CANÓNICO: selectedPropertyIds
   const selectedAcc = (Array.isArray(accDoc?.selectedPropertyIds) ? accDoc.selectedPropertyIds : [])
     .map(normPropertyId)
     .filter(Boolean);
@@ -246,11 +255,9 @@ async function resolvePropertiesForAudit({ userId, accDoc, forcedPropertyId }) {
     if (picked.length) return picked;
   }
 
-  // defaultPropertyId
   const d = normPropertyId(accDoc?.defaultPropertyId);
   if (d) return [byId.get(d) || { id: d, displayName: '', timeZone: null, currencyCode: null }];
 
-  // legacy: preferencias en User
   let selectedUser = [];
   if (UserModel && userId) {
     try {
@@ -264,8 +271,8 @@ async function resolvePropertiesForAudit({ userId, accDoc, forcedPropertyId }) {
               ? user.selectedProperties
               : []
         )
-        .map(normPropertyId)
-        .filter(Boolean);
+          .map(normPropertyId)
+          .filter(Boolean);
     } catch {
       selectedUser = [];
     }
@@ -282,13 +289,12 @@ async function resolvePropertiesForAudit({ userId, accDoc, forcedPropertyId }) {
   }
 
   if (!available.length) return { error: 'NO_DEFAULT_PROPERTY' };
-
   if (available.length <= MAX_BY_RULE) return available;
 
   return { error: 'SELECTION_REQUIRED(>3_PROPERTIES)', availableCount: available.length };
 }
 
-/* ---------------- Compact helpers ---------------- */
+/* ---------------- compact helpers ---------------- */
 
 function makeGa4Header({ userId, properties, range, version }) {
   return {
@@ -302,12 +308,6 @@ function makeGa4Header({ userId, properties, range, version }) {
   };
 }
 
-function topN(arr, n, scoreFn) {
-  const a = Array.isArray(arr) ? arr.slice() : [];
-  a.sort((x, y) => scoreFn(y) - scoreFn(x));
-  return a.slice(0, Math.max(0, n));
-}
-
 function computeDeltas(cur, prev) {
   const pct = (a, b) => (b ? ((a - b) / b) * 100 : (a ? 100 : 0));
   return {
@@ -315,21 +315,167 @@ function computeDeltas(cur, prev) {
     sessions_pct: pct(cur.sessions, prev.sessions),
     conversions_pct: pct(cur.conversions, prev.conversions),
     revenue_pct: pct(cur.revenue, prev.revenue),
-    engagementRate_diff: (cur.engagementRate || 0) - (prev.engagementRate || 0),
+    engagementRate_diff: round2((cur.engagementRate || 0) - (prev.engagementRate || 0)),
   };
 }
 
-/* ---------------- collector (GA4 MCPDATA-grade) ---------------- */
+function sortByDateAsc(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .slice()
+    .sort((a, b) => String(a?.date || '').localeCompare(String(b?.date || '')));
+}
+
+function topN(arr, n, scoreFn) {
+  const a = Array.isArray(arr) ? arr.slice() : [];
+  a.sort((x, y) => scoreFn(y) - scoreFn(x));
+  return a.slice(0, Math.max(0, n));
+}
+
+/* ---------------- ranking / insights ---------------- */
+
+function compactChannelRow(x) {
+  return {
+    channel: safeStr(x?.channel) || '(other)',
+    users: round2(x?.users),
+    sessions: round2(x?.sessions),
+    conversions: round2(x?.conversions),
+    revenue: round2(x?.revenue),
+    newUsers: round2(x?.newUsers),
+    engagedSessions: round2(x?.engagedSessions),
+    engagementRate: round2(x?.engagementRate),
+  };
+}
+
+function compactDeviceRow(x) {
+  return {
+    device: safeStr(x?.device) || '(other)',
+    users: round2(x?.users),
+    sessions: round2(x?.sessions),
+    conversions: round2(x?.conversions),
+    revenue: round2(x?.revenue),
+    engagedSessions: round2(x?.engagedSessions),
+    engagementRate: round2(x?.engagementRate),
+  };
+}
+
+function compactLandingRow(x) {
+  return {
+    page: safeStr(x?.page) || '(not set)',
+    sessions: round2(x?.sessions),
+    conversions: round2(x?.conversions),
+    revenue: round2(x?.revenue),
+    engagedSessions: round2(x?.engagedSessions),
+    engagementRate: round2(x?.engagementRate),
+  };
+}
+
+function compactSourceMediumRow(x) {
+  return {
+    source: safeStr(x?.source) || '(direct)',
+    medium: safeStr(x?.medium) || '(none)',
+    sessions: round2(x?.sessions),
+    conversions: round2(x?.conversions),
+    revenue: round2(x?.revenue),
+    engagedSessions: round2(x?.engagedSessions),
+    engagementRate: round2(x?.engagementRate),
+  };
+}
+
+function compactEventRow(x) {
+  return {
+    event: safeStr(x?.event) || '(not set)',
+    eventCount: round2(x?.eventCount),
+    conversions: round2(x?.conversions),
+  };
+}
+
+function buildOptimizationSignals({ channelsTop, devicesTop, landingPagesTop, sourceMediumTop, eventsTop, summary }) {
+  const winners = [];
+  const risks = [];
+  const quick_wins = [];
+  const insights = [];
+  const recommendations = [];
+
+  const bestChannels = topN(channelsTop, 4, (x) => toNum(x.revenue));
+  const weakChannels = topN(
+    channelsTop.filter(x => toNum(x.sessions) >= 20 && toNum(x.revenue) <= 0),
+    4,
+    (x) => toNum(x.sessions)
+  );
+
+  const bestLanding = topN(landingPagesTop, 4, (x) => toNum(x.revenue));
+  const weakLanding = topN(
+    landingPagesTop.filter(x => toNum(x.sessions) >= 20 && toNum(x.revenue) <= 0),
+    4,
+    (x) => toNum(x.sessions)
+  );
+
+  const bestSources = topN(sourceMediumTop, 4, (x) => toNum(x.revenue));
+  const weakSources = topN(
+    sourceMediumTop.filter(x => toNum(x.sessions) >= 20 && toNum(x.revenue) <= 0),
+    4,
+    (x) => toNum(x.sessions)
+  );
+
+  winners.push(
+    ...bestChannels.map(compactChannelRow),
+    ...bestLanding.map(compactLandingRow)
+  );
+
+  risks.push(
+    ...weakChannels.map(compactChannelRow),
+    ...weakLanding.map(compactLandingRow)
+  );
+
+  quick_wins.push(
+    ...bestSources.map(compactSourceMediumRow)
+  );
+
+  if (bestChannels.length) {
+    insights.push(`Top GA4 channels are concentrating the strongest revenue contribution.`);
+    recommendations.push('Double down on the channel groups already generating the strongest revenue and conversions.');
+  }
+
+  if (weakChannels.length) {
+    insights.push(`Some channel groups are driving sessions without corresponding revenue signals.`);
+    recommendations.push('Review low-revenue channels with material traffic and tighten acquisition quality.');
+  }
+
+  if (bestLanding.length) {
+    recommendations.push('Use the strongest landing pages as templates for future campaigns and CRO improvements.');
+  }
+
+  if (weakLanding.length) {
+    recommendations.push('Audit weak landing pages with significant sessions but poor monetization or conversion performance.');
+  }
+
+  const engagementRate = toNum(summary?.kpis?.engagementRate);
+  if (engagementRate > 0 && engagementRate < 50) {
+    insights.push('Overall GA4 engagement rate is relatively soft.');
+    recommendations.push('Improve content relevance, page speed, and landing-page-message match to lift engagement.');
+  }
+
+  const purchaseEvent = (eventsTop || []).find(e => String(e?.event || '').toLowerCase() === 'purchase');
+  if (purchaseEvent && toNum(purchaseEvent.eventCount) > 0) {
+    insights.push('GA4 confirms purchase activity in the selected date range.');
+  }
+
+  return {
+    winners: compactArray(winners, 4),
+    risks: compactArray(risks, 4),
+    quick_wins: compactArray(quick_wins, 4),
+    insights: uniqStrings(insights, 6),
+    recommendations: uniqStrings(recommendations, 6),
+  };
+}
+
+/* ---------------- collector ---------------- */
 async function collectGA4(userId, opts = {}) {
   const {
     property_id,
     include_today = false,
-
-    // NEW: for plan windows
     rangeDays = 30,
-    range, // optional override { from,to,tz }
-
-    // sizes
+    range,
     topChannelsN = 12,
     topDevicesN = 8,
     topLandingPagesN = 80,
@@ -337,7 +483,6 @@ async function collectGA4(userId, opts = {}) {
     topEventsN = 120,
   } = opts || {};
 
-  // 1) cargar googleaccount con TOKENS GA4 + scopes GA4
   const acc = await GoogleAccount
     .findOne({ $or: [{ user: userId }, { userId }] })
     .select('+ga4AccessToken +ga4RefreshToken +ga4ExpiresAt ga4Scope defaultPropertyId selectedPropertyIds gaProperties')
@@ -365,7 +510,6 @@ async function collectGA4(userId, opts = {}) {
     }
   }
 
-  // 2) resolver propiedades a auditar
   const resolved = await resolvePropertiesForAudit({
     userId,
     accDoc: acc,
@@ -392,8 +536,6 @@ async function collectGA4(userId, opts = {}) {
     console.log('[ga4Collector] auditing properties:', propertiesToAudit.map(p => p.id));
   }
 
-  // 3) resolver rango
-  // Preferimos TZ del primer property si existe; si no, UTC.
   const firstTZ = propertiesToAudit[0]?.timeZone || (range?.tz || null) || 'UTC';
 
   const explicit = range && range.from && range.to ? {
@@ -409,7 +551,6 @@ async function collectGA4(userId, opts = {}) {
 
   const rangeOut = { from: strict.startDate, to: strict.endDate, tz: strict.tz || firstTZ };
 
-  // 4) bodies
   const totalsOnlyBody = {
     dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
     metrics: [
@@ -498,7 +639,6 @@ async function collectGA4(userId, opts = {}) {
     limit: '300',
   };
 
-  // 5) agregadores globales
   const aggregate = {
     users: 0, sessions: 0, conversions: 0, revenue: 0,
     newUsers: 0, engagedSessions: 0,
@@ -507,7 +647,7 @@ async function collectGA4(userId, opts = {}) {
   const globalChannelsMap = new Map();
   const globalDevicesMap = new Map();
   const globalLandingMap = new Map();
-  const globalDailyMap = new Map(); // date -> agg
+  const globalDailyMap = new Map();
   const globalSourceMediumMap = new Map();
   const globalTopEventsMap = new Map();
 
@@ -520,11 +660,9 @@ async function collectGA4(userId, opts = {}) {
 
   const byProperty = [];
 
-  // 6) loop propiedades
   for (const prop of propertiesToAudit) {
     const property = prop.id;
 
-    // Channels
     let jChannels;
     try {
       jChannels = await runReportWithRetry(property, channelsBody);
@@ -554,9 +692,9 @@ async function collectGA4(userId, opts = {}) {
       revenue: toNum(rw.metricValues?.[3]?.value),
       newUsers: toNum(rw.metricValues?.[4]?.value),
       engagedSessions: toNum(rw.metricValues?.[5]?.value),
+      engagementRate: round2(safeDiv(toNum(rw.metricValues?.[5]?.value), toNum(rw.metricValues?.[1]?.value)) * 100),
     }));
 
-    // Totals real
     let totals = jChannels?.totals?.[0]?.metricValues || null;
     if (!totals || !Array.isArray(totals) || totals.length < 6) {
       try {
@@ -594,7 +732,6 @@ async function collectGA4(userId, opts = {}) {
       globalChannelsMap.set(key, g);
     }
 
-    // Devices
     let devices = [];
     try {
       const jDevices = await runReportWithRetry(property, devicesBody);
@@ -606,6 +743,7 @@ async function collectGA4(userId, opts = {}) {
         conversions: toNum(rw.metricValues?.[2]?.value),
         revenue: toNum(rw.metricValues?.[3]?.value),
         engagedSessions: toNum(rw.metricValues?.[4]?.value),
+        engagementRate: round2(safeDiv(toNum(rw.metricValues?.[4]?.value), toNum(rw.metricValues?.[1]?.value)) * 100),
       }));
 
       for (const d of devices) {
@@ -622,7 +760,6 @@ async function collectGA4(userId, opts = {}) {
       devices = [];
     }
 
-    // Landing pages
     let landingPages = [];
     try {
       const jLanding = await runReportWithRetry(property, landingBody);
@@ -633,6 +770,7 @@ async function collectGA4(userId, opts = {}) {
         conversions: toNum(rw.metricValues?.[1]?.value),
         revenue: toNum(rw.metricValues?.[2]?.value),
         engagedSessions: toNum(rw.metricValues?.[3]?.value),
+        engagementRate: round2(safeDiv(toNum(rw.metricValues?.[3]?.value), toNum(rw.metricValues?.[0]?.value)) * 100),
       }));
 
       for (const lp of landingPages) {
@@ -648,7 +786,6 @@ async function collectGA4(userId, opts = {}) {
       landingPages = [];
     }
 
-    // Daily
     let daily = [];
     try {
       const jDaily = await runReportWithRetry(property, dailyBody);
@@ -667,6 +804,7 @@ async function collectGA4(userId, opts = {}) {
           conversions: toNum(rw.metricValues?.[2]?.value),
           revenue: toNum(rw.metricValues?.[3]?.value),
           engagedSessions: toNum(rw.metricValues?.[4]?.value),
+          engagementRate: round2(safeDiv(toNum(rw.metricValues?.[4]?.value), toNum(rw.metricValues?.[1]?.value)) * 100),
         };
       });
 
@@ -684,7 +822,6 @@ async function collectGA4(userId, opts = {}) {
       daily = [];
     }
 
-    // Source/Medium
     let sourceMedium = [];
     try {
       const jSM = await runReportWithRetry(property, sourceMediumBody);
@@ -696,6 +833,7 @@ async function collectGA4(userId, opts = {}) {
         conversions: toNum(rw.metricValues?.[1]?.value),
         revenue: toNum(rw.metricValues?.[2]?.value),
         engagedSessions: toNum(rw.metricValues?.[3]?.value),
+        engagementRate: round2(safeDiv(toNum(rw.metricValues?.[3]?.value), toNum(rw.metricValues?.[0]?.value)) * 100),
       }));
 
       for (const sm of sourceMedium) {
@@ -711,7 +849,6 @@ async function collectGA4(userId, opts = {}) {
       sourceMedium = [];
     }
 
-    // Events
     let topEvents = [];
     try {
       const jEv = await runReportWithRetry(property, topEventsBody);
@@ -733,7 +870,6 @@ async function collectGA4(userId, opts = {}) {
       topEvents = [];
     }
 
-    // shrink per property (avoid huge payload)
     landingPages.sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
     landingPages = landingPages.slice(0, Math.max(10, topLandingPagesN));
 
@@ -743,7 +879,7 @@ async function collectGA4(userId, opts = {}) {
     topEvents.sort((a, b) => (b.eventCount || 0) - (a.eventCount || 0));
     topEvents = topEvents.slice(0, Math.max(10, topEventsN));
 
-    const engagementRate = safeDiv(propAgg.engagedSessions, propAgg.sessions) * 100;
+    const engagementRate = round2(safeDiv(propAgg.engagedSessions, propAgg.sessions) * 100);
 
     byProperty.push({
       property,
@@ -758,7 +894,6 @@ async function collectGA4(userId, opts = {}) {
         engagedSessions: propAgg.engagedSessions,
         engagementRate,
       },
-      // keep for debug/optional
       channels,
       devices,
       landingPages,
@@ -768,7 +903,6 @@ async function collectGA4(userId, opts = {}) {
     });
   }
 
-  // 7) global maps -> arrays
   let channelsGlobal = Array.from(globalChannelsMap.entries()).map(([channel, m]) => ({
     channel,
     users: m.users,
@@ -777,7 +911,7 @@ async function collectGA4(userId, opts = {}) {
     revenue: m.revenue,
     newUsers: m.newUsers,
     engagedSessions: m.engagedSessions,
-    engagementRate: safeDiv(m.engagedSessions, m.sessions) * 100,
+    engagementRate: round2(safeDiv(m.engagedSessions, m.sessions) * 100),
   }));
   channelsGlobal.sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
   channelsGlobal = channelsGlobal.slice(0, Math.max(5, topChannelsN));
@@ -789,7 +923,7 @@ async function collectGA4(userId, opts = {}) {
     conversions: m.conversions,
     revenue: m.revenue,
     engagedSessions: m.engagedSessions,
-    engagementRate: safeDiv(m.engagedSessions, m.sessions) * 100,
+    engagementRate: round2(safeDiv(m.engagedSessions, m.sessions) * 100),
   }));
   devicesGlobal.sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
   devicesGlobal = devicesGlobal.slice(0, Math.max(4, topDevicesN));
@@ -800,18 +934,34 @@ async function collectGA4(userId, opts = {}) {
     conversions: m.conversions,
     revenue: m.revenue,
     engagedSessions: m.engagedSessions,
-    engagementRate: safeDiv(m.engagedSessions, m.sessions) * 100,
+    engagementRate: round2(safeDiv(m.engagedSessions, m.sessions) * 100),
   }));
   landingGlobal.sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
   landingGlobal = landingGlobal.slice(0, Math.max(20, topLandingPagesN));
 
-  const dailyGlobal = Array.from(globalDailyMap.entries())
-    .map(([date, m]) => ({ date, ...m }))
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const dailyGlobal = sortByDateAsc(
+    Array.from(globalDailyMap.entries()).map(([date, m]) => ({
+      date,
+      users: m.users,
+      sessions: m.sessions,
+      conversions: m.conversions,
+      revenue: m.revenue,
+      engagedSessions: m.engagedSessions,
+      engagementRate: round2(safeDiv(m.engagedSessions, m.sessions) * 100),
+    }))
+  );
 
   let sourceMediumGlobal = Array.from(globalSourceMediumMap.entries()).map(([k, m]) => {
     const [source, medium] = k.split('|');
-    return { source, medium, ...m, engagementRate: safeDiv(m.engagedSessions, m.sessions) * 100 };
+    return {
+      source,
+      medium,
+      sessions: m.sessions,
+      conversions: m.conversions,
+      revenue: m.revenue,
+      engagedSessions: m.engagedSessions,
+      engagementRate: round2(safeDiv(m.engagedSessions, m.sessions) * 100),
+    };
   });
   sourceMediumGlobal.sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
   sourceMediumGlobal = sourceMediumGlobal.slice(0, Math.max(30, topSourceMediumN));
@@ -824,7 +974,6 @@ async function collectGA4(userId, opts = {}) {
   topEventsGlobal.sort((a, b) => (b.eventCount || 0) - (a.eventCount || 0));
   topEventsGlobal = topEventsGlobal.slice(0, Math.max(30, topEventsN));
 
-  // 8) summary + deltas (7/30 vs prev) usando dailyGlobal
   function aggWindow(days, endYMD) {
     const end = endYMD;
     const start = addDaysYMD(end, -(days - 1));
@@ -837,7 +986,7 @@ async function collectGA4(userId, opts = {}) {
       a.engagedSessions += toNum(r.engagedSessions);
       return a;
     }, { users: 0, sessions: 0, conversions: 0, revenue: 0, engagedSessions: 0 });
-    k.engagementRate = safeDiv(k.engagedSessions, k.sessions) * 100;
+    k.engagementRate = round2(safeDiv(k.engagedSessions, k.sessions) * 100);
     return k;
   }
 
@@ -853,7 +1002,7 @@ async function collectGA4(userId, opts = {}) {
       a.engagedSessions += toNum(r.engagedSessions);
       return a;
     }, { users: 0, sessions: 0, conversions: 0, revenue: 0, engagedSessions: 0 });
-    k.engagementRate = safeDiv(k.engagedSessions, k.sessions) * 100;
+    k.engagementRate = round2(safeDiv(k.engagedSessions, k.sessions) * 100);
     return k;
   }
 
@@ -871,7 +1020,7 @@ async function collectGA4(userId, opts = {}) {
       revenue: aggregate.revenue,
       newUsers: aggregate.newUsers,
       engagedSessions: aggregate.engagedSessions,
-      engagementRate: safeDiv(aggregate.engagedSessions, aggregate.sessions) * 100,
+      engagementRate: round2(safeDiv(aggregate.engagedSessions, aggregate.sessions) * 100),
     },
     windows: {
       last_7_days: last7,
@@ -885,22 +1034,45 @@ async function collectGA4(userId, opts = {}) {
     },
   };
 
-  // 9) datasets MCPDATA
+  const optimization_signals = buildOptimizationSignals({
+    channelsTop: channelsGlobal,
+    devicesTop: devicesGlobal,
+    landingPagesTop: landingGlobal,
+    sourceMediumTop: sourceMediumGlobal,
+    eventsTop: topEventsGlobal,
+    summary,
+  });
+
+  const daily_trends_ai = {
+    totals_by_day: dailyGlobal.map((d) => ({
+      date: d.date,
+      kpis: {
+        users: round2(d.users),
+        sessions: round2(d.sessions),
+        conversions: round2(d.conversions),
+        revenue: round2(d.revenue),
+        engagedSessions: round2(d.engagedSessions),
+        engagementRate: round2(d.engagementRate),
+      },
+    })),
+  };
+
   const header = makeGa4Header({
     userId,
     properties: propertiesMetaOut,
     range: rangeOut,
-    version: 'ga4Collector@mcp-v1(totals+topN+daily)',
+    version: 'ga4Collector@mcp-v2(summary+signals+dailyTrendsAI)',
   });
 
   const datasets = [
     { source: 'ga4', dataset: 'ga4.insights_summary', range: rangeOut, data: { meta: header, summary } },
-    { source: 'ga4', dataset: 'ga4.channels_top', range: rangeOut, data: { meta: header, channels_top: channelsGlobal } },
-    { source: 'ga4', dataset: 'ga4.devices_top', range: rangeOut, data: { meta: header, devices_top: devicesGlobal } },
-    { source: 'ga4', dataset: 'ga4.landing_pages_top', range: rangeOut, data: { meta: header, landing_pages_top: landingGlobal } },
-    { source: 'ga4', dataset: 'ga4.source_medium_top', range: rangeOut, data: { meta: header, source_medium_top: sourceMediumGlobal } },
-    { source: 'ga4', dataset: 'ga4.events_top', range: rangeOut, data: { meta: header, events_top: topEventsGlobal } },
-    { source: 'ga4', dataset: 'ga4.kpis_daily', range: rangeOut, data: { meta: header, kpis_daily: dailyGlobal } },
+    { source: 'ga4', dataset: 'ga4.channels_top', range: rangeOut, data: { meta: header, channels_top: channelsGlobal.map(compactChannelRow) } },
+    { source: 'ga4', dataset: 'ga4.devices_top', range: rangeOut, data: { meta: header, devices_top: devicesGlobal.map(compactDeviceRow) } },
+    { source: 'ga4', dataset: 'ga4.landing_pages_top', range: rangeOut, data: { meta: header, landing_pages_top: landingGlobal.map(compactLandingRow) } },
+    { source: 'ga4', dataset: 'ga4.source_medium_top', range: rangeOut, data: { meta: header, source_medium_top: sourceMediumGlobal.map(compactSourceMediumRow) } },
+    { source: 'ga4', dataset: 'ga4.events_top', range: rangeOut, data: { meta: header, events_top: topEventsGlobal.map(compactEventRow) } },
+    { source: 'ga4', dataset: 'ga4.optimization_signals', range: rangeOut, data: { meta: header, optimization_signals } },
+    { source: 'ga4', dataset: 'ga4.daily_trends_ai', range: rangeOut, data: { meta: header, ...daily_trends_ai } },
   ];
 
   return {
@@ -910,7 +1082,6 @@ async function collectGA4(userId, opts = {}) {
     range: rangeOut,
     properties: propertiesMetaOut,
     datasets,
-    // opcional: debug
     byProperty,
   };
 }
