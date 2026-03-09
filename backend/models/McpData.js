@@ -64,6 +64,73 @@ const SourceStateSchema = new Schema(
 );
 
 /* =========================
+ * AI Context sub-schemas
+ * ========================= */
+const AiContextSummarySchema = new Schema(
+  {
+    executive_summary: { type: String, default: null },
+    business_state: { type: String, default: null },
+    cross_channel_story: { type: String, default: null },
+    positives: { type: [String], default: [] },
+    negatives: { type: [String], default: [] },
+    priority_actions: { type: [String], default: [] },
+  },
+  { _id: false }
+);
+
+const EncodedPayloadSchema = new Schema(
+  {
+    schema: { type: String, default: null },
+    providerAgnostic: { type: Boolean, default: true },
+    generatedAt: { type: String, default: null },
+
+    summary: { type: AiContextSummarySchema, default: undefined },
+
+    performance_drivers: { type: [String], default: [] },
+    conversion_bottlenecks: { type: [String], default: [] },
+    scaling_opportunities: { type: [String], default: [] },
+    risk_flags: { type: [String], default: [] },
+
+    llm_context_block: { type: String, default: null },
+    llm_context_block_mini: { type: String, default: null },
+    prompt_hints: { type: [String], default: [] },
+
+    // Espacio flexible para contar la historia por canal o guardar estructura enriquecida
+    channel_story: { type: Schema.Types.Mixed, default: null },
+  },
+  { _id: false, strict: false }
+);
+
+const AiContextSchema = new Schema(
+  {
+    status: {
+      type: String,
+      enum: ['idle', 'processing', 'done', 'error'],
+      default: 'idle',
+    },
+    progress: { type: Number, default: 0 },
+    stage: { type: String, default: 'idle' },
+
+    startedAt: { type: String, default: null },
+    finishedAt: { type: String, default: null },
+
+    snapshotId: { type: String, default: null },
+
+    usedOpenAI: { type: Boolean, default: false },
+    model: { type: String, default: null },
+
+    error: { type: String, default: null },
+
+    // Base compactada cross-channel antes del enriquecimiento
+    unifiedBase: { type: Schema.Types.Mixed, default: null },
+
+    // Payload final AI-ready
+    encodedPayload: { type: EncodedPayloadSchema, default: undefined },
+  },
+  { _id: false, strict: false }
+);
+
+/* =========================
  * Main schema
  * ========================= */
 const McpDataSchema = new Schema(
@@ -97,6 +164,11 @@ const McpDataSchema = new Schema(
     },
 
     latestSnapshotId: { type: String, default: null },
+
+    aiContext: {
+      type: AiContextSchema,
+      default: undefined,
+    },
 
     /**
      * stats aplica tanto para root como para chunk:
@@ -360,6 +432,7 @@ McpDataSchema.statics.upsertChunk = async function ({
         sources: 1,
         coverage: 1,
         latestSnapshotId: 1,
+        aiContext: 1,
       },
     },
     { upsert: true, new: true }
