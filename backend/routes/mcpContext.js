@@ -6,9 +6,20 @@ const router = express.Router();
 
 const McpData = require('../models/McpData');
 
-const { formatMetaForLlmMini } = require('../jobs/transform/metaLlmFormatter');
-const { formatGoogleAdsForLlmMini } = require('../jobs/transform/googleAdsLlmFormatter');
-const { formatGa4ForLlmMini } = require('../jobs/transform/ga4LlmFormatter');
+const {
+  formatMetaForLlm,
+  formatMetaForLlmMini,
+} = require('../jobs/transform/metaLlmFormatter');
+
+const {
+  formatGoogleAdsForLlm,
+  formatGoogleAdsForLlmMini,
+} = require('../jobs/transform/googleAdsLlmFormatter');
+
+const {
+  formatGa4ForLlm,
+  formatGa4ForLlmMini,
+} = require('../jobs/transform/ga4LlmFormatter');
 
 let OpenAI = null;
 try {
@@ -32,16 +43,29 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function ymd(d = new Date()) {
-  const x = new Date(d);
-  const yyyy = x.getUTCFullYear();
-  const mm = String(x.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(x.getUTCDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
 function makeShareToken() {
   return crypto.randomBytes(24).toString('hex');
+}
+
+function compactArray(arr, max = 10) {
+  return Array.isArray(arr) ? arr.slice(0, Math.max(0, max)) : [];
+}
+
+function uniqStrings(arr, max = 20) {
+  const out = [];
+  const seen = new Set();
+
+  for (const item of Array.isArray(arr) ? arr : []) {
+    const s = safeStr(item).trim();
+    if (!s) continue;
+    const key = s.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+    if (out.length >= max) break;
+  }
+
+  return out;
 }
 
 function isRootDoc(doc) {
@@ -51,7 +75,6 @@ function isRootDoc(doc) {
   if (doc.kind === 'root') return true;
   if (doc.type === 'root') return true;
   if (doc.docType === 'root') return true;
-
   if (doc.latestSnapshotId && !doc.dataset) return true;
 
   return false;
@@ -117,38 +140,68 @@ async function findSourceChunks(userId, source, snapshotId, datasetPrefix) {
   return docs.filter(isChunkDoc);
 }
 
-function compactMetaMini(chunks) {
+function buildMetaContext(chunks) {
   if (!chunks?.length) return null;
-  return formatMetaForLlmMini({
-    datasets: chunks,
-    topCampaigns: 5,
-  });
+
+  return {
+    full: formatMetaForLlm({
+      datasets: chunks,
+      topCampaigns: 12,
+      topBreakdowns: 5,
+      topTrendCampaigns: 5,
+    }),
+    mini: formatMetaForLlmMini({
+      datasets: chunks,
+      topCampaigns: 6,
+    }),
+  };
 }
 
-function compactGoogleAdsMini(chunks) {
+function buildGoogleAdsContext(chunks) {
   if (!chunks?.length) return null;
-  return formatGoogleAdsForLlmMini({
-    datasets: chunks,
-    topCampaigns: 5,
-  });
+
+  return {
+    full: formatGoogleAdsForLlm({
+      datasets: chunks,
+      topCampaigns: 12,
+      topBreakdowns: 5,
+      topTrendCampaigns: 5,
+    }),
+    mini: formatGoogleAdsForLlmMini({
+      datasets: chunks,
+      topCampaigns: 6,
+    }),
+  };
 }
 
-function compactGa4Mini(chunks) {
+function buildGa4Context(chunks) {
   if (!chunks?.length) return null;
-  return formatGa4ForLlmMini({
-    datasets: chunks,
-    topChannels: 5,
-    topDevices: 4,
-    topLandingPages: 5,
-    topEvents: 6,
-  });
+
+  return {
+    full: formatGa4ForLlm({
+      datasets: chunks,
+      topChannels: 8,
+      topDevices: 6,
+      topLandingPages: 8,
+      topSourceMedium: 10,
+      topEvents: 10,
+      topTrendDays: 30,
+    }),
+    mini: formatGa4ForLlmMini({
+      datasets: chunks,
+      topChannels: 5,
+      topDevices: 4,
+      topLandingPages: 5,
+      topEvents: 6,
+    }),
+  };
 }
 
-function buildUnifiedBaseContext({ root, snapshotId, metaMini, googleMini, ga4Mini }) {
+function buildUnifiedBaseContext({ root, snapshotId, metaPack, googlePack, ga4Pack }) {
   const sources = root?.sources || {};
 
   return {
-    schema: 'adray.unified.context.v1',
+    schema: 'adray.unified.context.v2',
     generatedAt: nowIso(),
     snapshotId: snapshotId || null,
     coverage: root?.coverage || null,
@@ -179,89 +232,326 @@ function buildUnifiedBaseContext({ root, snapshotId, metaMini, googleMini, ga4Mi
       },
     },
     inputs: {
-      meta: metaMini || null,
-      googleAds: googleMini || null,
-      ga4: ga4Mini || null,
+      meta: metaPack
+        ? {
+            full: metaPack.full,
+            mini: metaPack.mini,
+          }
+        : null,
+      googleAds: googlePack
+        ? {
+            full: googlePack.full,
+            mini: googlePack.mini,
+          }
+        : null,
+      ga4: ga4Pack
+        ? {
+            full: ga4Pack.full,
+            mini: ga4Pack.mini,
+          }
+        : null,
     },
   };
 }
 
+function buildMetaNarrative(metaFull, metaMini) {
+  const mini = metaMini || {};
+  const full = metaFull || {};
+  const bestActive = mini?.best_active_by_roas || null;
+
+  const lines = [];
+
+  if (mini?.headline_kpis) {
+    lines.push(
+      `Meta Ads: spend ${mini.headline_kpis.spend ?? 'n/a'}, purchases ${mini.headline_kpis.purchases ?? 'n/a'}, purchase value ${mini.headline_kpis.purchase_value ?? 'n/a'}, ROAS ${mini.headline_kpis.roas ?? 'n/a'}, CPA ${mini.headline_kpis.cpa ?? 'n/a'}.`
+    );
+  }
+
+  if (bestActive?.campaign_name) {
+    lines.push(
+      `Best active Meta campaign by ROAS: "${bestActive.campaign_name}" with ROAS ${bestActive?.kpis?.roas ?? 'n/a'}, purchases ${bestActive?.kpis?.purchases ?? 'n/a'}, purchase value ${bestActive?.kpis?.purchase_value ?? 'n/a'}, spend ${bestActive?.kpis?.spend ?? 'n/a'}.`
+    );
+  }
+
+  const activeTop = compactArray(mini?.active_campaigns_top || [], 3);
+  for (const c of activeTop) {
+    if (!c?.campaign_name) continue;
+    lines.push(
+      `Meta active campaign: "${c.campaign_name}" | status ${c?.status || 'n/a'} | objective ${c?.objective_norm || c?.objective || 'n/a'} | ROAS ${c?.kpis?.roas ?? 'n/a'} | purchases ${c?.kpis?.purchases ?? 'n/a'} | purchase value ${c?.kpis?.purchase_value ?? 'n/a'} | spend ${c?.kpis?.spend ?? 'n/a'}.`
+    );
+  }
+
+  const risks = compactArray(mini?.active_risks || mini?.risks || [], 3);
+  for (const r of risks) {
+    if (!r?.campaign_name) continue;
+    lines.push(
+      `Meta active risk campaign: "${r.campaign_name}" | status ${r?.status || 'n/a'} | ROAS ${r?.kpis?.roas ?? 'n/a'} | CPA ${r?.kpis?.cpa ?? 'n/a'} | spend ${r?.kpis?.spend ?? 'n/a'}.`
+    );
+  }
+
+  const devices = compactArray(mini?.top_devices || [], 2);
+  for (const d of devices) {
+    lines.push(
+      `Meta device segment: ${d?.key || d?.device || 'n/a'} | spend ${d?.spend ?? 'n/a'} | purchases ${d?.purchases ?? 'n/a'} | ROAS ${d?.roas ?? 'n/a'}.`
+    );
+  }
+
+  const placements = compactArray(mini?.top_placements || [], 2);
+  for (const p of placements) {
+    lines.push(
+      `Meta placement segment: ${p?.key || 'n/a'} | spend ${p?.spend ?? 'n/a'} | purchases ${p?.purchases ?? 'n/a'} | ROAS ${p?.roas ?? 'n/a'}.`
+    );
+  }
+
+  lines.push(...compactArray(full?.priority_summary?.positives || mini?.priority_summary?.positives || [], 3).map((x) => `Meta positive: ${x}`));
+  lines.push(...compactArray(full?.priority_summary?.negatives || mini?.priority_summary?.negatives || [], 3).map((x) => `Meta risk: ${x}`));
+  lines.push(...compactArray(full?.priority_summary?.actions || mini?.priority_summary?.actions || [], 4).map((x) => `Meta action: ${x}`));
+
+  return lines;
+}
+
+function buildGoogleNarrative(googleFull, googleMini) {
+  const mini = googleMini || {};
+  const full = googleFull || {};
+  const bestActive = mini?.best_active_by_roas || null;
+
+  const lines = [];
+
+  if (mini?.headline_kpis) {
+    lines.push(
+      `Google Ads: spend ${mini.headline_kpis.spend ?? 'n/a'}, conversions ${mini.headline_kpis.conversions ?? 'n/a'}, conversion value ${mini.headline_kpis.conversion_value ?? 'n/a'}, ROAS ${mini.headline_kpis.roas ?? 'n/a'}, CPA ${mini.headline_kpis.cpa ?? 'n/a'}.`
+    );
+  }
+
+  if (bestActive?.campaign_name) {
+    lines.push(
+      `Best active Google Ads campaign by ROAS: "${bestActive.campaign_name}" with ROAS ${bestActive?.kpis?.roas ?? 'n/a'}, conversions ${bestActive?.kpis?.conversions ?? 'n/a'}, conversion value ${bestActive?.kpis?.conversion_value ?? 'n/a'}, spend ${bestActive?.kpis?.spend ?? 'n/a'}.`
+    );
+  }
+
+  const activeTop = compactArray(mini?.active_campaigns_top || [], 3);
+  for (const c of activeTop) {
+    if (!c?.campaign_name) continue;
+    lines.push(
+      `Google active campaign: "${c.campaign_name}" | status ${c?.status || 'n/a'} | objective ${c?.objective_norm || c?.objective || 'n/a'} | channel ${c?.channel_type || 'n/a'} | ROAS ${c?.kpis?.roas ?? 'n/a'} | conversions ${c?.kpis?.conversions ?? 'n/a'} | conversion value ${c?.kpis?.conversion_value ?? 'n/a'} | spend ${c?.kpis?.spend ?? 'n/a'}.`
+    );
+  }
+
+  const risks = compactArray(mini?.active_risks || mini?.risks || [], 3);
+  for (const r of risks) {
+    if (!r?.campaign_name) continue;
+    lines.push(
+      `Google active risk campaign: "${r.campaign_name}" | status ${r?.status || 'n/a'} | ROAS ${r?.kpis?.roas ?? 'n/a'} | CPA ${r?.kpis?.cpa ?? 'n/a'} | spend ${r?.kpis?.spend ?? 'n/a'}.`
+    );
+  }
+
+  const devices = compactArray(mini?.top_devices || [], 2);
+  for (const d of devices) {
+    lines.push(
+      `Google device segment: ${d?.key || d?.device || 'n/a'} | spend ${d?.spend ?? 'n/a'} | conversions ${d?.conversions ?? 'n/a'} | ROAS ${d?.roas ?? 'n/a'}.`
+    );
+  }
+
+  const networks = compactArray(mini?.top_networks || [], 2);
+  for (const n of networks) {
+    lines.push(
+      `Google network segment: ${n?.key || 'n/a'} | spend ${n?.spend ?? 'n/a'} | conversions ${n?.conversions ?? 'n/a'} | ROAS ${n?.roas ?? 'n/a'}.`
+    );
+  }
+
+  lines.push(...compactArray(full?.priority_summary?.positives || mini?.priority_summary?.positives || [], 3).map((x) => `Google positive: ${x}`));
+  lines.push(...compactArray(full?.priority_summary?.negatives || mini?.priority_summary?.negatives || [], 3).map((x) => `Google risk: ${x}`));
+  lines.push(...compactArray(full?.priority_summary?.actions || mini?.priority_summary?.actions || [], 4).map((x) => `Google action: ${x}`));
+
+  return lines;
+}
+
+function buildGa4Narrative(ga4FullWrapped, ga4MiniWrapped) {
+  const full = ga4FullWrapped?.ga4 || ga4FullWrapped || {};
+  const mini = ga4MiniWrapped?.data || ga4MiniWrapped || {};
+
+  const lines = [];
+
+  if (mini?.headline_kpis) {
+    lines.push(
+      `GA4: users ${mini.headline_kpis.users ?? 'n/a'}, sessions ${mini.headline_kpis.sessions ?? 'n/a'}, conversions ${mini.headline_kpis.conversions ?? 'n/a'}, revenue ${mini.headline_kpis.revenue ?? 'n/a'}, engagement rate ${mini.headline_kpis.engagementRate ?? 'n/a'}.`
+    );
+  }
+
+  const channels = compactArray(mini?.top_channels || [], 3);
+  for (const c of channels) {
+    lines.push(
+      `GA4 top channel: ${c?.channel || 'n/a'} | sessions ${c?.sessions ?? 'n/a'} | conversions ${c?.conversions ?? 'n/a'} | revenue ${c?.revenue ?? 'n/a'} | engagement rate ${c?.engagementRate ?? 'n/a'}.`
+    );
+  }
+
+  const devices = compactArray(mini?.top_devices || [], 2);
+  for (const d of devices) {
+    lines.push(
+      `GA4 top device: ${d?.device || 'n/a'} | sessions ${d?.sessions ?? 'n/a'} | conversions ${d?.conversions ?? 'n/a'} | revenue ${d?.revenue ?? 'n/a'} | engagement rate ${d?.engagementRate ?? 'n/a'}.`
+    );
+  }
+
+  const landingPages = compactArray(mini?.top_landing_pages || [], 3);
+  for (const lp of landingPages) {
+    lines.push(
+      `GA4 top landing page: ${lp?.page || 'n/a'} | sessions ${lp?.sessions ?? 'n/a'} | conversions ${lp?.conversions ?? 'n/a'} | revenue ${lp?.revenue ?? 'n/a'} | engagement rate ${lp?.engagementRate ?? 'n/a'}.`
+    );
+  }
+
+  const sourceMedium = compactArray(mini?.top_source_medium || [], 2);
+  for (const sm of sourceMedium) {
+    lines.push(
+      `GA4 source / medium: ${sm?.source || 'n/a'} / ${sm?.medium || 'n/a'} | sessions ${sm?.sessions ?? 'n/a'} | conversions ${sm?.conversions ?? 'n/a'} | revenue ${sm?.revenue ?? 'n/a'}.`
+    );
+  }
+
+  lines.push(...compactArray(mini?.priority_summary?.positives || [], 3).map((x) => `GA4 positive: ${x}`));
+  lines.push(...compactArray(mini?.priority_summary?.negatives || [], 3).map((x) => `GA4 risk: ${x}`));
+  lines.push(...compactArray(mini?.priority_summary?.actions || [], 4).map((x) => `GA4 action: ${x}`));
+
+  return lines;
+}
+
 function buildFallbackEncodedContext(base) {
-  const meta = base?.inputs?.meta || null;
-  const googleAds = base?.inputs?.googleAds || null;
-  const ga4 = base?.inputs?.ga4 || null;
+  const metaFull = base?.inputs?.meta?.full || null;
+  const metaMini = base?.inputs?.meta?.mini || null;
+  const googleFull = base?.inputs?.googleAds?.full || null;
+  const googleMini = base?.inputs?.googleAds?.mini || null;
+  const ga4Full = base?.inputs?.ga4?.full || null;
+  const ga4Mini = base?.inputs?.ga4?.mini || null;
 
-  const positives = [
-    ...(meta?.priority_summary?.positives || []),
-    ...(googleAds?.priority_summary?.positives || []),
-    ...(ga4?.priority_summary?.positives || []),
-  ].slice(0, 10);
+  const positives = uniqStrings([
+    ...(metaMini?.priority_summary?.positives || []),
+    ...(googleMini?.priority_summary?.positives || []),
+    ...(ga4Mini?.data?.priority_summary?.positives || ga4Mini?.priority_summary?.positives || []),
+  ], 12);
 
-  const negatives = [
-    ...(meta?.priority_summary?.negatives || []),
-    ...(googleAds?.priority_summary?.negatives || []),
-    ...(ga4?.priority_summary?.negatives || []),
-  ].slice(0, 10);
+  const negatives = uniqStrings([
+    ...(metaMini?.priority_summary?.negatives || []),
+    ...(googleMini?.priority_summary?.negatives || []),
+    ...(ga4Mini?.data?.priority_summary?.negatives || ga4Mini?.priority_summary?.negatives || []),
+  ], 12);
 
-  const actions = [
-    ...(meta?.priority_summary?.actions || []),
-    ...(googleAds?.priority_summary?.actions || []),
-    ...(ga4?.priority_summary?.actions || []),
-  ].slice(0, 10);
+  const actions = uniqStrings([
+    ...(metaMini?.priority_summary?.actions || []),
+    ...(googleMini?.priority_summary?.actions || []),
+    ...(ga4Mini?.data?.priority_summary?.actions || ga4Mini?.priority_summary?.actions || []),
+  ], 14);
 
-  const llmHints = [
-    ...(meta?.llm_hints || []),
-    ...(googleAds?.llm_hints || []),
-    ...(ga4?.llm_hints || []),
-  ].slice(0, 12);
+  const llmHints = uniqStrings([
+    ...(metaMini?.llm_hints || []),
+    ...(googleMini?.llm_hints || []),
+    ...(ga4Mini?.data?.llm_hints || ga4Mini?.llm_hints || []),
+  ], 18);
 
-  const contextParts = [];
+  const metaNarrative = buildMetaNarrative(metaFull, metaMini);
+  const googleNarrative = buildGoogleNarrative(googleFull, googleMini);
+  const ga4Narrative = buildGa4Narrative(ga4Full, ga4Mini);
 
-  if (meta?.headline_kpis) {
-    contextParts.push(
-      `Meta Ads summary: spend ${meta.headline_kpis.spend ?? 'n/a'}, purchases ${meta.headline_kpis.purchases ?? 'n/a'}, roas ${meta.headline_kpis.roas ?? 'n/a'}.`
-    );
-  }
+  const executiveSummary = [
+    'This AI-ready context was generated from the user’s connected marketing sources.',
+    'It combines Meta Ads, Google Ads, and GA4 into a unified provider-agnostic payload.',
+    'Campaign names, KPIs, priorities, channel quality, landing page signals, and optimization opportunities are preserved to support downstream LLM reasoning.',
+  ].join(' ');
 
-  if (googleAds?.headline_kpis) {
-    contextParts.push(
-      `Google Ads summary: spend ${googleAds.headline_kpis.spend ?? 'n/a'}, conversions ${googleAds.headline_kpis.conversions ?? 'n/a'}, roas ${googleAds.headline_kpis.roas ?? 'n/a'}.`
-    );
-  }
+  const businessState = [
+    metaMini?.headline_kpis ? `Meta ROAS ${metaMini.headline_kpis.roas ?? 'n/a'} with ${metaMini.headline_kpis.purchases ?? 'n/a'} purchases.` : null,
+    googleMini?.headline_kpis ? `Google Ads ROAS ${googleMini.headline_kpis.roas ?? 'n/a'} with ${googleMini.headline_kpis.conversions ?? 'n/a'} conversions.` : null,
+    (ga4Mini?.data?.headline_kpis || ga4Mini?.headline_kpis)
+      ? `GA4 sessions ${(ga4Mini?.data?.headline_kpis || ga4Mini?.headline_kpis)?.sessions ?? 'n/a'} with revenue ${(ga4Mini?.data?.headline_kpis || ga4Mini?.headline_kpis)?.revenue ?? 'n/a'}.`
+      : null,
+  ].filter(Boolean).join(' ');
 
-  if (ga4?.headline_kpis) {
-    contextParts.push(
-      `GA4 summary: users ${ga4.headline_kpis.users ?? 'n/a'}, sessions ${ga4.headline_kpis.sessions ?? 'n/a'}, conversions ${ga4.headline_kpis.conversions ?? 'n/a'}, revenue ${ga4.headline_kpis.revenue ?? 'n/a'}.`
-    );
-  }
+  const crossChannelStory = [
+    metaNarrative[0] || null,
+    googleNarrative[0] || null,
+    ga4Narrative[0] || null,
+  ].filter(Boolean).join(' ');
 
   return {
-    schema: 'adray.encoded.context.v1',
+    schema: 'adray.encoded.context.v2',
     providerAgnostic: true,
     generatedAt: nowIso(),
+
     summary: {
-      executive_summary:
-        'This AI-ready context was generated from the user’s connected marketing sources and compacted into a unified cross-channel payload for downstream LLM consumption.',
+      executive_summary: executiveSummary,
+      business_state: businessState,
+      cross_channel_story: crossChannelStory,
       positives,
       negatives,
       priority_actions: actions,
     },
+
+    performance_drivers: uniqStrings([
+      ...(metaMini?.winners || []).map((x) => `Meta winner: ${x?.campaign_name || x?.name || 'unknown campaign'} with ROAS ${x?.kpis?.roas ?? 'n/a'}`),
+      ...(googleMini?.winners || []).map((x) => `Google winner: ${x?.campaign_name || x?.name || 'unknown campaign'} with ROAS ${x?.kpis?.roas ?? 'n/a'}`),
+      ...compactArray((ga4Mini?.data?.top_channels || ga4Mini?.top_channels || []), 3).map((x) => `GA4 channel driver: ${x?.channel || 'unknown'} with sessions ${x?.sessions ?? 'n/a'} and revenue ${x?.revenue ?? 'n/a'}`),
+    ], 12),
+
+    conversion_bottlenecks: uniqStrings([
+      ...(metaMini?.active_risks || metaMini?.risks || []).map((x) => `Meta campaign bottleneck: ${x?.campaign_name || x?.name || 'unknown campaign'} with ROAS ${x?.kpis?.roas ?? 'n/a'} and CPA ${x?.kpis?.cpa ?? 'n/a'}`),
+      ...(googleMini?.active_risks || googleMini?.risks || []).map((x) => `Google campaign bottleneck: ${x?.campaign_name || x?.name || 'unknown campaign'} with ROAS ${x?.kpis?.roas ?? 'n/a'} and CPA ${x?.kpis?.cpa ?? 'n/a'}`),
+      ...compactArray((ga4Mini?.data?.optimization_signals?.risks || ga4Mini?.optimization_signals?.risks || []), 4).map((x) => `GA4 risk: ${x?.label || x?.type || 'unknown risk area'}`),
+    ], 12),
+
+    scaling_opportunities: uniqStrings([
+      ...(metaMini?.quick_wins || []).map((x) => `Meta scale candidate: ${x?.campaign_name || x?.name || 'unknown campaign'} with ROAS ${x?.kpis?.roas ?? 'n/a'}`),
+      ...(googleMini?.quick_wins || []).map((x) => `Google scale candidate: ${x?.campaign_name || x?.name || 'unknown campaign'} with ROAS ${x?.kpis?.roas ?? 'n/a'}`),
+      ...compactArray((ga4Mini?.data?.optimization_signals?.quick_wins || ga4Mini?.optimization_signals?.quick_wins || []), 4).map((x) => `GA4 quick win: ${x?.label || x?.type || 'unknown area'}`),
+    ], 12),
+
+    risk_flags: uniqStrings([
+      ...negatives,
+      ...(metaMini?.active_risks || []).map((x) => `Meta active risk: ${x?.campaign_name || x?.name || 'unknown campaign'}`),
+      ...(googleMini?.active_risks || []).map((x) => `Google active risk: ${x?.campaign_name || x?.name || 'unknown campaign'}`),
+    ], 12),
+
     channel_story: {
-      meta_ads: meta || null,
-      google_ads: googleAds || null,
-      ga4: ga4 || null,
+      meta_ads: {
+        mini: metaMini || null,
+        full: metaFull || null,
+      },
+      google_ads: {
+        mini: googleMini || null,
+        full: googleFull || null,
+      },
+      ga4: {
+        mini: ga4Mini || null,
+        full: ga4Full || null,
+      },
     },
+
     llm_context_block: [
       'Use this marketing context as source of truth for cross-channel performance analysis.',
-      ...contextParts,
+      'Preserve exact campaign names, campaign status, ROAS, CPA, spend, conversions, revenue, channel signals, landing pages, devices, and optimization priorities.',
+      '',
+      '=== META ADS ===',
+      ...metaNarrative,
+      '',
+      '=== GOOGLE ADS ===',
+      ...googleNarrative,
+      '',
+      '=== GA4 ===',
+      ...ga4Narrative,
+      '',
+      '=== CROSS-CHANNEL POSITIVES ===',
       ...positives.map((x) => `Positive: ${x}`),
+      '',
+      '=== CROSS-CHANNEL RISKS ===',
       ...negatives.map((x) => `Risk: ${x}`),
-      ...actions.map((x) => `Recommended action: ${x}`),
+      '',
+      '=== PRIORITY ACTIONS ===',
+      ...actions.map((x) => `Action: ${x}`),
     ].join('\n'),
+
     llm_context_block_mini: [
-      ...contextParts.slice(0, 3),
-      ...actions.slice(0, 3).map((x) => `Action: ${x}`),
-    ].join('\n'),
+      metaNarrative[0] || null,
+      googleNarrative[0] || null,
+      ga4Narrative[0] || null,
+      ...compactArray(actions, 3).map((x) => `Action: ${x}`),
+    ].filter(Boolean).join('\n'),
+
     prompt_hints: llmHints,
   };
 }
@@ -290,7 +580,7 @@ async function enrichWithOpenAI(base) {
   const model = process.env.OPENAI_MCP_CONTEXT_MODEL || 'gpt-4.1-mini';
 
   const inputPayload = {
-    schema: base?.schema || 'adray.unified.context.v1',
+    schema: base?.schema || 'adray.unified.context.v2',
     snapshotId: base?.snapshotId || null,
     sources: base?.sources || {},
     inputs: base?.inputs || {},
@@ -300,15 +590,25 @@ async function enrichWithOpenAI(base) {
     'You are generating a provider-agnostic AI context payload for a digital marketing intelligence platform.',
     'Return ONLY valid JSON.',
     'Do not include markdown fences.',
-    'Summarize the cross-channel marketing state using Meta Ads, Google Ads, and GA4 inputs.',
-    'Preserve important metrics and business signals.',
-    'Output keys exactly as requested.',
+    'Preserve specific campaign names, active/paused status, KPIs, winners, risks, channels, devices, landing pages, source/medium signals, and actionable recommendations.',
+    'Do not over-compress the information.',
+    'The output must remain rich enough so downstream LLMs can answer campaign-level and KPI-level questions.',
+    'Output keys exactly as requested.'
   ].join(' ');
 
   const userPrompt = JSON.stringify({
-    task: 'Build a unified AI-ready context payload',
+    task: 'Build a rich unified AI-ready context payload from Meta Ads, Google Ads, and GA4',
+    requirements: [
+      'Preserve exact campaign names when present.',
+      'Preserve active winners, active risks, top campaigns, and best-performing campaign blocks.',
+      'Preserve key KPIs such as spend, purchases, conversion value, ROAS, CPA, sessions, conversions, revenue, engagement rate.',
+      'Preserve meaningful segmentation like devices, placements, networks, channels, landing pages, and source/medium.',
+      'Keep the payload provider-agnostic but do not discard useful provider-specific details.',
+      'llm_context_block should be detailed and useful for analysis, not just a short summary.',
+      'llm_context_block_mini should remain brief but still mention strongest campaigns or strongest channel drivers when available.',
+    ],
     required_schema: {
-      schema: 'adray.encoded.context.v1',
+      schema: 'adray.encoded.context.v2',
       providerAgnostic: true,
       generatedAt: 'ISO datetime string',
       summary: {
@@ -323,6 +623,11 @@ async function enrichWithOpenAI(base) {
       conversion_bottlenecks: ['string'],
       scaling_opportunities: ['string'],
       risk_flags: ['string'],
+      channel_story: {
+        meta_ads: 'object|null',
+        google_ads: 'object|null',
+        ga4: 'object|null',
+      },
       llm_context_block: 'string',
       llm_context_block_mini: 'string',
       prompt_hints: ['string'],
@@ -351,7 +656,7 @@ async function enrichWithOpenAI(base) {
       usedOpenAI: true,
       model,
       payload: {
-        schema: 'adray.encoded.context.v1',
+        schema: 'adray.encoded.context.v2',
         providerAgnostic: true,
         generatedAt: nowIso(),
         ...parsed,
@@ -417,7 +722,7 @@ function buildSharedPayload(root, provider) {
     ok: true,
     data: payload,
     meta: {
-      schema: payload?.schema || 'adray.encoded.context.v1',
+      schema: payload?.schema || 'adray.encoded.context.v2',
       provider: provider || 'chatgpt',
       providerLabel: providerName,
       snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
@@ -484,16 +789,16 @@ router.post('/build', async (req, res) => {
       },
     });
 
-    const metaMini = compactMetaMini(metaChunks);
-    const googleMini = compactGoogleAdsMini(googleChunks);
-    const ga4Mini = compactGa4Mini(ga4Chunks);
+    const metaPack = buildMetaContext(metaChunks);
+    const googlePack = buildGoogleAdsContext(googleChunks);
+    const ga4Pack = buildGa4Context(ga4Chunks);
 
     const unifiedBase = buildUnifiedBaseContext({
       root,
       snapshotId,
-      metaMini,
-      googleMini,
-      ga4Mini,
+      metaPack,
+      googlePack,
+      ga4Pack,
     });
 
     await updateRootContextState(userId, {

@@ -4,6 +4,11 @@ function safeStr(v) {
   return v == null ? '' : String(v);
 }
 
+function nonEmptyStr(v) {
+  const s = safeStr(v).trim();
+  return s || '';
+}
+
 function toNum(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -24,7 +29,7 @@ function uniqStrings(arr, max = 20) {
   const seen = new Set();
 
   for (const x of Array.isArray(arr) ? arr : []) {
-    const s = safeStr(x).trim();
+    const s = nonEmptyStr(x);
     if (!s) continue;
     const k = s.toLowerCase();
     if (seen.has(k)) continue;
@@ -50,7 +55,7 @@ function getDatasetMap(datasets) {
   const map = new Map();
 
   for (const ds of Array.isArray(datasets) ? datasets : []) {
-    const key = safeStr(ds?.dataset).trim();
+    const key = nonEmptyStr(ds?.dataset);
     if (!key) continue;
     map.set(key, ds);
   }
@@ -64,7 +69,7 @@ function getData(ds) {
 
 function getSnapshotIdFromDatasets(datasets) {
   for (const ds of Array.isArray(datasets) ? datasets : []) {
-    const sid = safeStr(ds?.snapshotId).trim();
+    const sid = nonEmptyStr(ds?.snapshotId);
     if (sid) return sid;
   }
   return null;
@@ -91,6 +96,14 @@ function getMetaFromDatasets(map) {
   return {};
 }
 
+function normalizeRange(range) {
+  return {
+    from: nonEmptyStr(range?.from) || null,
+    to: nonEmptyStr(range?.to) || null,
+    tz: nonEmptyStr(range?.tz) || null,
+  };
+}
+
 function normalizeSummary(summary) {
   const k = summary?.kpis || {};
   const w = summary?.windows || {};
@@ -100,11 +113,17 @@ function normalizeSummary(summary) {
     kpis: {
       users: toNum(k.users),
       sessions: toNum(k.sessions),
+      engagedSessions: toNum(k.engagedSessions),
       conversions: toNum(k.conversions),
       revenue: round2(k.revenue),
       newUsers: toNum(k.newUsers),
-      engagedSessions: toNum(k.engagedSessions),
       engagementRate: round2(k.engagementRate),
+      avgSessionDuration: round2(k.avgSessionDuration),
+      bounceRate: round2(k.bounceRate),
+      sessionsPerUser: round2(k.sessionsPerUser),
+      conversionRate: round2(k.conversionRate),
+      revenuePerUser: round2(k.revenuePerUser),
+      revenuePerSession: round2(k.revenuePerSession),
     },
     windows: {
       last_7_days: normalizeWindow(w.last_7_days),
@@ -127,6 +146,8 @@ function normalizeWindow(w) {
     revenue: round2(w?.revenue),
     engagedSessions: toNum(w?.engagedSessions),
     engagementRate: round2(w?.engagementRate),
+    avgSessionDuration: round2(w?.avgSessionDuration),
+    bounceRate: round2(w?.bounceRate),
   };
 }
 
@@ -137,62 +158,93 @@ function normalizeDeltas(d) {
     conversions_pct: round2(d?.conversions_pct),
     revenue_pct: round2(d?.revenue_pct),
     engagementRate_diff: round2(d?.engagementRate_diff),
+    avgSessionDuration_diff: round2(d?.avgSessionDuration_diff),
+    bounceRate_diff: round2(d?.bounceRate_diff),
   };
 }
 
 function normalizeChannelRow(row) {
+  const users = toNum(row?.users);
+  const sessions = toNum(row?.sessions);
+  const conversions = toNum(row?.conversions);
+  const revenue = round2(row?.revenue);
+
   return {
-    channel: safeStr(row?.channel) || '(other)',
-    users: toNum(row?.users),
-    sessions: toNum(row?.sessions),
-    conversions: toNum(row?.conversions),
-    revenue: round2(row?.revenue),
+    channel: nonEmptyStr(row?.channel) || '(other)',
+    users,
+    sessions,
+    conversions,
+    revenue,
     newUsers: toNum(row?.newUsers),
     engagedSessions: toNum(row?.engagedSessions),
     engagementRate: round2(row?.engagementRate),
+    sessionsPerUser: users > 0 ? round2(sessions / users) : 0,
+    conversionRate: sessions > 0 ? round2((conversions / sessions) * 100) : 0,
+    revenuePerSession: sessions > 0 ? round2(revenue / sessions) : 0,
   };
 }
 
 function normalizeDeviceRow(row) {
+  const users = toNum(row?.users);
+  const sessions = toNum(row?.sessions);
+  const conversions = toNum(row?.conversions);
+  const revenue = round2(row?.revenue);
+
   return {
-    device: safeStr(row?.device) || '(other)',
-    users: toNum(row?.users),
-    sessions: toNum(row?.sessions),
-    conversions: toNum(row?.conversions),
-    revenue: round2(row?.revenue),
+    device: nonEmptyStr(row?.device) || '(other)',
+    users,
+    sessions,
+    conversions,
+    revenue,
     engagedSessions: toNum(row?.engagedSessions),
     engagementRate: round2(row?.engagementRate),
+    sessionsPerUser: users > 0 ? round2(sessions / users) : 0,
+    conversionRate: sessions > 0 ? round2((conversions / sessions) * 100) : 0,
+    revenuePerSession: sessions > 0 ? round2(revenue / sessions) : 0,
   };
 }
 
 function normalizeLandingRow(row) {
+  const sessions = toNum(row?.sessions);
+  const conversions = toNum(row?.conversions);
+  const revenue = round2(row?.revenue);
+
   return {
-    page: safeStr(row?.page) || '(not set)',
-    sessions: toNum(row?.sessions),
-    conversions: toNum(row?.conversions),
-    revenue: round2(row?.revenue),
+    page: nonEmptyStr(row?.page) || '(not set)',
+    sessions,
+    conversions,
+    revenue,
     engagedSessions: toNum(row?.engagedSessions),
     engagementRate: round2(row?.engagementRate),
+    conversionRate: sessions > 0 ? round2((conversions / sessions) * 100) : 0,
+    revenuePerSession: sessions > 0 ? round2(revenue / sessions) : 0,
   };
 }
 
 function normalizeSourceMediumRow(row) {
+  const sessions = toNum(row?.sessions);
+  const conversions = toNum(row?.conversions);
+  const revenue = round2(row?.revenue);
+
   return {
-    source: safeStr(row?.source) || '(direct)',
-    medium: safeStr(row?.medium) || '(none)',
-    sessions: toNum(row?.sessions),
-    conversions: toNum(row?.conversions),
-    revenue: round2(row?.revenue),
+    source: nonEmptyStr(row?.source) || '(direct)',
+    medium: nonEmptyStr(row?.medium) || '(none)',
+    sessions,
+    conversions,
+    revenue,
     engagedSessions: toNum(row?.engagedSessions),
     engagementRate: round2(row?.engagementRate),
+    conversionRate: sessions > 0 ? round2((conversions / sessions) * 100) : 0,
+    revenuePerSession: sessions > 0 ? round2(revenue / sessions) : 0,
   };
 }
 
 function normalizeEventRow(row) {
   return {
-    event: safeStr(row?.event) || '(not set)',
+    event: nonEmptyStr(row?.event) || '(not set)',
     eventCount: toNum(row?.eventCount),
     conversions: toNum(row?.conversions),
+    revenue: round2(row?.revenue),
   };
 }
 
@@ -204,13 +256,15 @@ function normalizeDailyRow(row) {
     0;
 
   return {
-    date: safeStr(row?.date),
+    date: nonEmptyStr(row?.date),
     users: toNum(row?.users),
     sessions: toNum(row?.sessions),
     conversions: toNum(row?.conversions),
     revenue: round2(revenue),
     engagedSessions: toNum(row?.engagedSessions),
     engagementRate: round2(row?.engagementRate),
+    avgSessionDuration: round2(row?.avgSessionDuration),
+    bounceRate: round2(row?.bounceRate),
   };
 }
 
@@ -252,15 +306,25 @@ function buildHeadlineKpis(summary) {
   return {
     users: k.users,
     sessions: k.sessions,
+    engagedSessions: k.engagedSessions,
     conversions: k.conversions,
     revenue: k.revenue,
+    newUsers: k.newUsers,
     engagementRate: k.engagementRate,
+    avgSessionDuration: k.avgSessionDuration,
+    bounceRate: k.bounceRate,
+    sessionsPerUser: k.sessionsPerUser,
+    conversionRate: k.conversionRate,
+    revenuePerUser: k.revenuePerUser,
+    revenuePerSession: k.revenuePerSession,
     last7_vs_prev7: {
       users_pct: round2(d7.users_pct),
       sessions_pct: round2(d7.sessions_pct),
       conversions_pct: round2(d7.conversions_pct),
       revenue_pct: round2(d7.revenue_pct),
       engagementRate_diff: round2(d7.engagementRate_diff),
+      avgSessionDuration_diff: round2(d7.avgSessionDuration_diff),
+      bounceRate_diff: round2(d7.bounceRate_diff),
     },
     last30_vs_prev30: {
       users_pct: round2(d30.users_pct),
@@ -268,6 +332,8 @@ function buildHeadlineKpis(summary) {
       conversions_pct: round2(d30.conversions_pct),
       revenue_pct: round2(d30.revenue_pct),
       engagementRate_diff: round2(d30.engagementRate_diff),
+      avgSessionDuration_diff: round2(d30.avgSessionDuration_diff),
+      bounceRate_diff: round2(d30.bounceRate_diff),
     },
   };
 }
@@ -276,11 +342,16 @@ function buildTopChannels(channelsTop, topNCount) {
   return compactArray(
     (Array.isArray(channelsTop) ? channelsTop : []).map((x) => ({
       channel: x.channel,
+      users: x.users,
       sessions: x.sessions,
       conversions: x.conversions,
       revenue: round2(x.revenue),
+      newUsers: x.newUsers,
+      engagedSessions: x.engagedSessions,
       engagementRate: round2(x.engagementRate),
-      users: x.users,
+      sessionsPerUser: round2(x.sessionsPerUser),
+      conversionRate: round2(x.conversionRate),
+      revenuePerSession: round2(x.revenuePerSession),
     })),
     topNCount
   );
@@ -290,11 +361,15 @@ function buildTopDevices(devicesTop, topNCount) {
   return compactArray(
     (Array.isArray(devicesTop) ? devicesTop : []).map((x) => ({
       device: x.device,
+      users: x.users,
       sessions: x.sessions,
       conversions: x.conversions,
       revenue: round2(x.revenue),
+      engagedSessions: x.engagedSessions,
       engagementRate: round2(x.engagementRate),
-      users: x.users,
+      sessionsPerUser: round2(x.sessionsPerUser),
+      conversionRate: round2(x.conversionRate),
+      revenuePerSession: round2(x.revenuePerSession),
     })),
     topNCount
   );
@@ -307,7 +382,10 @@ function buildTopLandingPages(landingPagesTop, topNCount) {
       sessions: x.sessions,
       conversions: x.conversions,
       revenue: round2(x.revenue),
+      engagedSessions: x.engagedSessions,
       engagementRate: round2(x.engagementRate),
+      conversionRate: round2(x.conversionRate),
+      revenuePerSession: round2(x.revenuePerSession),
     })),
     topNCount
   );
@@ -321,7 +399,10 @@ function buildTopSourceMedium(sourceMediumTop, topNCount) {
       sessions: x.sessions,
       conversions: x.conversions,
       revenue: round2(x.revenue),
+      engagedSessions: x.engagedSessions,
       engagementRate: round2(x.engagementRate),
+      conversionRate: round2(x.conversionRate),
+      revenuePerSession: round2(x.revenuePerSession),
     })),
     topNCount
   );
@@ -333,6 +414,7 @@ function buildTopEvents(eventsTop, topNCount) {
       event: x.event,
       eventCount: x.eventCount,
       conversions: x.conversions,
+      revenue: round2(x.revenue),
     })),
     topNCount
   );
@@ -354,13 +436,20 @@ function trimDailyRows(dailyRows, maxDays) {
 
   const meaningful = rows.filter(isMeaningfulDailyRow);
 
-  // Si sí hay datos reales, preferimos solo días útiles
   if (meaningful.length > 0) {
     return meaningful.slice(-Math.max(1, maxDays));
   }
 
-  // Si todo viene en 0, al menos no mandar 60-90 filas vacías
   return rows.slice(-Math.min(Math.max(1, maxDays), 7));
+}
+
+function trendWord(cur, prev) {
+  const a = toNum(cur);
+  const b = toNum(prev);
+
+  if (a > b) return 'up';
+  if (a < b) return 'down';
+  return 'flat';
 }
 
 function buildDailyTrendPack(dailyRows, maxDays) {
@@ -375,26 +464,20 @@ function buildDailyTrendPack(dailyRows, maxDays) {
       conversions: r.conversions,
       revenue: round2(r.revenue),
       engagementRate: round2(r.engagementRate),
+      avgSessionDuration: round2(r.avgSessionDuration),
+      bounceRate: round2(r.bounceRate),
     };
 
     if (prev) {
       row.sessions_trend = trendWord(r.sessions, prev.sessions);
       row.revenue_trend = trendWord(r.revenue, prev.revenue);
       row.conversions_trend = trendWord(r.conversions, prev.conversions);
+      row.engagement_trend = trendWord(r.engagementRate, prev.engagementRate);
     }
 
     prev = r;
     return row;
   });
-}
-
-function trendWord(cur, prev) {
-  const a = toNum(cur);
-  const b = toNum(prev);
-
-  if (a > b) return 'up';
-  if (a < b) return 'down';
-  return 'flat';
 }
 
 function buildOptimizationSignals({
@@ -411,8 +494,8 @@ function buildOptimizationSignals({
       winners: compactArray(Array.isArray(optimizationSignalsRaw.winners) ? optimizationSignalsRaw.winners : [], 6),
       risks: compactArray(Array.isArray(optimizationSignalsRaw.risks) ? optimizationSignalsRaw.risks : [], 6),
       quick_wins: compactArray(Array.isArray(optimizationSignalsRaw.quick_wins) ? optimizationSignalsRaw.quick_wins : [], 6),
-      insights: uniqStrings(optimizationSignalsRaw.insights, 8),
-      recommendations: uniqStrings(optimizationSignalsRaw.recommendations, 8),
+      insights: uniqStrings(optimizationSignalsRaw.insights, 10),
+      recommendations: uniqStrings(optimizationSignalsRaw.recommendations, 10),
     };
   }
 
@@ -462,6 +545,7 @@ function buildOptimizationSignals({
       sessions: bestLanding.sessions,
       conversions: bestLanding.conversions,
       revenue: round2(bestLanding.revenue),
+      engagementRate: round2(bestLanding.engagementRate),
     });
     out.insights.push('A leading landing page is generating most of the entry traffic.');
   }
@@ -473,6 +557,7 @@ function buildOptimizationSignals({
       sessions: bestSourceMedium.sessions,
       conversions: bestSourceMedium.conversions,
       revenue: round2(bestSourceMedium.revenue),
+      engagementRate: round2(bestSourceMedium.engagementRate),
     });
   }
 
@@ -503,7 +588,7 @@ function buildOptimizationSignals({
   }
 
   if (toNum(k.sessions) > 0 && toNum(k.conversions) === 0) {
-    out.recommendations.push('There is traffic but no conversions recorded; audit event mapping and checkout flow.');
+    out.recommendations.push('There is traffic but no conversions recorded; audit event mapping and conversion flow.');
   }
 
   if (purchaseEvent && purchaseEvent.eventCount > 0 && toNum(k.revenue) <= 0) {
@@ -522,8 +607,8 @@ function buildOptimizationSignals({
     winners: compactArray(out.winners, 6),
     risks: compactArray(out.risks, 6),
     quick_wins: compactArray(out.quick_wins, 6),
-    insights: uniqStrings(out.insights, 8),
-    recommendations: uniqStrings(out.recommendations, 8),
+    insights: uniqStrings(out.insights, 10),
+    recommendations: uniqStrings(out.recommendations, 10),
   };
 }
 
@@ -614,34 +699,73 @@ function buildPrioritySummary({
   }
 
   return {
-    positives: uniqStrings(positives, 6),
-    negatives: uniqStrings(negatives, 6),
-    actions: uniqStrings(actions, 8),
+    positives: uniqStrings(positives, 8),
+    negatives: uniqStrings(negatives, 8),
+    actions: uniqStrings(actions, 10),
   };
 }
 
-function buildLlmHints() {
-  return [
-    'Focus on sessions, conversions, revenue, engagement rate, landing pages, and channel quality.',
-    'Treat this as analytics context for business and growth decisions, not raw API output.',
-    'Prioritize scalable winners, quality traffic sources, and landing page bottlenecks.',
-    'Use trend direction to explain what is improving, declining, or staying flat.',
-  ];
+function buildLlmHints(payload) {
+  const hints = [];
+
+  const headline = payload?.headline_kpis || {};
+  const channels = payload?.top_channels || [];
+  const devices = payload?.top_devices || [];
+  const landingPages = payload?.top_landing_pages || [];
+  const sourceMedium = payload?.top_source_medium || [];
+  const risks = payload?.optimization_signals?.risks || [];
+
+  if (toNum(headline.sessions) > 0) {
+    hints.push('Focus on sessions, conversions, revenue, engagement rate, landing pages, and channel quality.');
+  }
+
+  if (toNum(headline.conversions) > 0) {
+    hints.push('Prioritize conversion-driving channels, landing pages, and device categories.');
+  }
+
+  if (toNum(headline.revenue) > 0) {
+    hints.push('Use revenue per session and conversion patterns to identify the strongest business drivers.');
+  }
+
+  if (toNum(headline.engagementRate) > 0 && toNum(headline.engagementRate) < 45) {
+    hints.push('Low engagement may indicate landing page mismatch, weak traffic quality, or tracking issues.');
+  }
+
+  if (channels.length > 0) {
+    hints.push(`Use "${channels[0].channel}" as the reference point for the strongest GA4 channel cluster.`);
+  }
+
+  if (devices.length > 0) {
+    hints.push(`Check whether "${devices[0].device}" dominates sessions and conversions, then validate UX quality on that device.`);
+  }
+
+  if (landingPages.length > 0) {
+    hints.push('Top landing pages should be audited for conversion efficiency, not just traffic volume.');
+  }
+
+  if (sourceMedium.length > 0) {
+    hints.push('Source / medium performance should be used to validate whether acquisition quality matches business outcomes.');
+  }
+
+  if (risks.length > 0) {
+    hints.push('Review risk areas first because they may be hiding funnel or tracking inefficiencies.');
+  }
+
+  return uniqStrings(hints, 10);
 }
 
-function buildDataQuality(meta, datasets) {
+function buildDataQuality(meta, datasets, payload) {
   const properties = Array.isArray(meta?.properties) ? meta.properties : [];
-  const range = meta?.range || {};
-  const dsNames = (Array.isArray(datasets) ? datasets : []).map((d) => safeStr(d?.dataset)).filter(Boolean);
+  const range = normalizeRange(meta?.range || {});
+  const dsNames = (Array.isArray(datasets) ? datasets : []).map((d) => nonEmptyStr(d?.dataset)).filter(Boolean);
 
   return {
-    hasAnyData: dsNames.length > 0,
+    hasAnyData:
+      dsNames.length > 0 ||
+      toNum(payload?.headline_kpis?.sessions) > 0 ||
+      toNum(payload?.headline_kpis?.users) > 0,
     propertyCount: properties.length,
-    range: {
-      from: safeStr(range?.from) || null,
-      to: safeStr(range?.to) || null,
-      tz: safeStr(range?.tz) || null,
-    },
+    range,
     datasetsPresent: {
       executive_summary: dsNames.includes('ga4.insights_summary'),
       channels: dsNames.includes('ga4.channels_top'),
@@ -652,6 +776,40 @@ function buildDataQuality(meta, datasets) {
       signals: dsNames.includes('ga4.optimization_signals'),
       daily_trends: dsNames.includes('ga4.daily_trends_ai') || dsNames.includes('ga4.kpis_daily'),
     },
+  };
+}
+
+function buildKpiDefinitions() {
+  return {
+    acquisition_traffic: [
+      'users',
+      'newUsers',
+      'sessions',
+      'sessionsPerUser',
+    ],
+    engagement_quality: [
+      'engagedSessions',
+      'engagementRate',
+      'avgSessionDuration',
+      'bounceRate',
+    ],
+    conversion_revenue: [
+      'conversions',
+      'conversionRate',
+      'revenue',
+      'revenuePerUser',
+      'revenuePerSession',
+    ],
+    structure_segmentation: [
+      'property_id',
+      'property_name',
+      'channel',
+      'device',
+      'landing_page',
+      'source',
+      'medium',
+      'event',
+    ],
   };
 }
 
@@ -699,46 +857,44 @@ function formatGa4ForLlm({
   });
 
   const properties = Array.isArray(meta?.properties) ? meta.properties : [];
-  const range = meta?.range || {};
+  const range = normalizeRange(meta?.range || {});
   const generatedAt = meta?.generatedAt || new Date().toISOString();
 
+  const payload = {
+    schema: 'adray.ga4.llm.v2',
+    source: 'ga4',
+    generatedAt,
+    propertyIds: properties.map((p) => nonEmptyStr(p?.id)).filter(Boolean),
+    propertyCount: properties.length,
+    properties: properties.map((p) => ({
+      id: nonEmptyStr(p?.id) || null,
+      name: nonEmptyStr(p?.name) || null,
+      currency: nonEmptyStr(p?.currencyCode) || null,
+      timezone_name: nonEmptyStr(p?.timeZone) || null,
+    })),
+    range,
+    kpi_definitions: buildKpiDefinitions(),
+    headline_kpis,
+    comparison_windows: extracted.summary?.windows || {},
+    top_channels,
+    top_devices,
+    top_landing_pages,
+    top_source_medium,
+    top_events,
+    optimization_signals,
+    daily_trends,
+    priority_summary,
+  };
+
+  payload.llm_hints = buildLlmHints(payload);
+  payload.data_quality = buildDataQuality(meta, datasets, payload);
+
   return {
-    ga4: {
-      schema: 'adray.ga4.llm.v1',
-      source: 'ga4',
-      generatedAt,
-      propertyIds: properties.map((p) => safeStr(p?.id)).filter(Boolean),
-      propertyCount: properties.length,
-      properties: properties.map((p) => ({
-        id: safeStr(p?.id) || null,
-        name: safeStr(p?.name) || null,
-        currency: safeStr(p?.currencyCode) || null,
-        timezone_name: safeStr(p?.timeZone) || null,
-      })),
-      range: {
-        from: safeStr(range?.from) || null,
-        to: safeStr(range?.to) || null,
-        tz: safeStr(range?.tz) || null,
-      },
-      executive_summary: {
-        headline_kpis,
-        comparison_windows: extracted.summary?.windows || {},
-      },
-      top_channels,
-      top_devices,
-      top_landing_pages,
-      top_source_medium,
-      top_events,
-      optimization_signals,
-      daily_trends,
-      priority_summary,
-      llm_hints: buildLlmHints(),
-      data_quality: buildDataQuality(meta, datasets),
-    },
+    ga4: payload,
     meta: {
       snapshotId: snapshotId || null,
       chunkCount: Array.isArray(datasets) ? datasets.length : 0,
-      datasets: (Array.isArray(datasets) ? datasets : []).map((d) => safeStr(d?.dataset)).filter(Boolean),
+      datasets: (Array.isArray(datasets) ? datasets : []).map((d) => nonEmptyStr(d?.dataset)).filter(Boolean),
     },
   };
 }
@@ -760,6 +916,7 @@ function formatGa4ForLlmMini({
   const top_channels = buildTopChannels(extracted.channelsTop, clampInt(topChannels, 1, 10));
   const top_devices = buildTopDevices(extracted.devicesTop, clampInt(topDevices, 1, 8));
   const top_landing_pages = buildTopLandingPages(extracted.landingPagesTop, clampInt(topLandingPages, 1, 10));
+  const top_source_medium = buildTopSourceMedium(extracted.sourceMediumTop, 6);
   const top_events = buildTopEvents(extracted.eventsTop, clampInt(topEvents, 1, 10));
 
   const optimization_signals = buildOptimizationSignals({
@@ -767,7 +924,7 @@ function formatGa4ForLlmMini({
     channelsTop: top_channels,
     devicesTop: top_devices,
     landingPagesTop: top_landing_pages,
-    sourceMediumTop: extracted.sourceMediumTop,
+    sourceMediumTop: top_source_medium,
     eventsTop: top_events,
     summary: extracted.summary,
   });
@@ -777,50 +934,66 @@ function formatGa4ForLlmMini({
     channelsTop: top_channels,
     devicesTop: top_devices,
     landingPagesTop: top_landing_pages,
-    sourceMediumTop: extracted.sourceMediumTop,
+    sourceMediumTop: top_source_medium,
     eventsTop: top_events,
     optimizationSignals: optimization_signals,
   });
 
   const properties = Array.isArray(meta?.properties) ? meta.properties : [];
-  const range = meta?.range || {};
+  const range = normalizeRange(meta?.range || {});
   const generatedAt = meta?.generatedAt || new Date().toISOString();
 
-  return {
-    data: {
-      schema: 'adray.ga4.llm.v1',
-      source: 'ga4',
-      generatedAt,
-      propertyIds: properties.map((p) => safeStr(p?.id)).filter(Boolean),
-      propertyCount: properties.length,
-      properties: properties.map((p) => ({
-        id: safeStr(p?.id) || null,
-        name: safeStr(p?.name) || null,
-        currency: safeStr(p?.currencyCode) || null,
-        timezone_name: safeStr(p?.timeZone) || null,
-      })),
-      range: {
-        from: safeStr(range?.from) || null,
-        to: safeStr(range?.to) || null,
-        tz: safeStr(range?.tz) || null,
-      },
-      data_quality: buildDataQuality(meta, datasets),
+  const payload = {
+    schema: 'adray.ga4.llm.v2',
+    source: 'ga4',
+    generatedAt,
+    propertyIds: properties.map((p) => nonEmptyStr(p?.id)).filter(Boolean),
+    propertyCount: properties.length,
+    properties: properties.map((p) => ({
+      id: nonEmptyStr(p?.id) || null,
+      name: nonEmptyStr(p?.name) || null,
+      currency: nonEmptyStr(p?.currencyCode) || null,
+      timezone_name: nonEmptyStr(p?.timeZone) || null,
+    })),
+    range,
+    data_quality: null,
+    kpi_definitions: buildKpiDefinitions(),
+    headline_kpis,
+    top_channels,
+    top_devices,
+    top_landing_pages,
+    top_source_medium,
+    top_events,
+    optimization_signals: {
+      winners: compactArray(optimization_signals?.winners || [], 4),
+      risks: compactArray(optimization_signals?.risks || [], 4),
+      quick_wins: compactArray(optimization_signals?.quick_wins || [], 4),
+      insights: compactArray(optimization_signals?.insights || [], 6),
+      recommendations: compactArray(optimization_signals?.recommendations || [], 6),
+    },
+    priority_summary: {
+      positives: compactArray(priority_summary?.positives || [], 5),
+      negatives: compactArray(priority_summary?.negatives || [], 5),
+      actions: compactArray(priority_summary?.actions || [], 6),
+    },
+    llm_hints: compactArray(buildLlmHints({
       headline_kpis,
       top_channels,
       top_devices,
       top_landing_pages,
-      top_events,
-      priority_summary: {
-        positives: compactArray(priority_summary?.positives || [], 4),
-        negatives: compactArray(priority_summary?.negatives || [], 4),
-        actions: compactArray(priority_summary?.actions || [], 5),
-      },
-      llm_hints: buildLlmHints(),
-    },
+      top_source_medium,
+      optimization_signals,
+    }), 6),
+  };
+
+  payload.data_quality = buildDataQuality(meta, datasets, payload);
+
+  return {
+    data: payload,
     meta: {
       snapshotId: snapshotId || null,
       chunkCount: Array.isArray(datasets) ? datasets.length : 0,
-      datasets: (Array.isArray(datasets) ? datasets : []).map((d) => safeStr(d?.dataset)).filter(Boolean),
+      datasets: (Array.isArray(datasets) ? datasets : []).map((d) => nonEmptyStr(d?.dataset)).filter(Boolean),
     },
   };
 }
