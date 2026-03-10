@@ -347,6 +347,81 @@
   // Order data is injected by the Adnova WordPress plugin via window.adnova_order_data.
   // Falls back to URL scraping when data is not available.
   (function detectWooPurchase() {
+    function parseAmountFromText(text) {
+      if (!text) return null;
+      var cleaned = String(text)
+        .replace(/\s+/g, '')
+        .replace(/[^0-9,.-]/g, '');
+
+      if (!cleaned) return null;
+
+      // Handle common formats: 1,234.56 and 1.234,56
+      var normalized = cleaned;
+      if (cleaned.indexOf(',') > -1 && cleaned.indexOf('.') > -1) {
+        if (cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.')) {
+          normalized = cleaned.replace(/\./g, '').replace(',', '.');
+        } else {
+          normalized = cleaned.replace(/,/g, '');
+        }
+      } else if (cleaned.indexOf(',') > -1) {
+        normalized = cleaned.replace(',', '.');
+      }
+
+      var val = Number(normalized);
+      return Number.isFinite(val) ? val : null;
+    }
+
+    function detectCurrencyFromText(text) {
+      if (!text) return null;
+      var t = String(text).toUpperCase();
+      if (t.indexOf('MXN') !== -1 || t.indexOf('$') !== -1) return 'MXN';
+      if (t.indexOf('USD') !== -1 || t.indexOf('US$') !== -1) return 'USD';
+      if (t.indexOf('EUR') !== -1 || t.indexOf('€') !== -1) return 'EUR';
+      return null;
+    }
+
+    function scrapeWooOrderDataFromDOM() {
+      var totalSelectors = [
+        '.woocommerce-order-overview__total .amount',
+        '.order-total .woocommerce-Price-amount',
+        '.order-total .amount',
+        '.woocommerce-table--order-details tfoot .order-total .amount'
+      ];
+
+      var totalText = null;
+      for (var i = 0; i < totalSelectors.length; i++) {
+        var el = document.querySelector(totalSelectors[i]);
+        if (el && el.textContent) {
+          totalText = el.textContent.trim();
+          if (totalText) break;
+        }
+      }
+
+      var items = [];
+      var rows = document.querySelectorAll('.woocommerce-table--order-details tbody tr');
+      rows.forEach(function(row) {
+        var nameEl = row.querySelector('.product-name');
+        var totalEl = row.querySelector('.product-total .amount, .product-total .woocommerce-Price-amount, .amount');
+        var qtyText = nameEl ? (nameEl.textContent || '') : '';
+        var qtyMatch = qtyText.match(/×\s*(\d+)/);
+        var qty = qtyMatch ? Number(qtyMatch[1]) : 1;
+        var lineTotal = parseAmountFromText(totalEl ? totalEl.textContent : '') || 0;
+
+        items.push({
+          id: null,
+          name: nameEl ? String(nameEl.textContent || '').replace(/×\s*\d+.*/, '').trim() : 'Producto',
+          quantity: Number.isFinite(qty) ? qty : 1,
+          line_total: lineTotal
+        });
+      });
+
+      return {
+        revenue: parseAmountFromText(totalText),
+        currency: detectCurrencyFromText(totalText),
+        items: items.length ? items : null
+      };
+    }
+
     var isOrderReceived =
       document.body.classList.contains('woocommerce-order-received') ||
       /\/order-received\//i.test(window.location.pathname);
@@ -370,7 +445,13 @@
     // Fallback: scrape order ID from URL (/order-received/12345/)
     var orderIdMatch = window.location.pathname.match(/\/order-received\/(\d+)/);
     var fallbackOrderId = orderIdMatch ? orderIdMatch[1] : null;
-    sendEvent('purchase', { order_id: fallbackOrderId });
+    var domData = scrapeWooOrderDataFromDOM();
+    sendEvent('purchase', {
+      order_id: fallbackOrderId,
+      revenue: domData.revenue,
+      currency: domData.currency,
+      items: domData.items
+    });
   })();
 
   // 6. Expose for manual triggers with enhanced API

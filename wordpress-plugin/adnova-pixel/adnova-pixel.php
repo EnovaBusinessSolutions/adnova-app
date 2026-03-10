@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,11 +15,12 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.0.0';
+    const VERSION = '1.0.1';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const DEFAULT_SCRIPT_URL = 'https://adray-app-staging-german.onrender.com/adray-pixel.js';
     const DEFAULT_COLLECT_URL = 'https://adray-app-staging-german.onrender.com/collect';
+    private static $processed_orders = array();
 
     public static function init() {
         register_activation_hook(__FILE__, array(__CLASS__, 'on_activate'));
@@ -27,6 +28,8 @@ final class Adnova_Pixel_Plugin {
         add_filter('script_loader_tag', array(__CLASS__, 'inject_script_attributes'), 10, 3);
         // WooCommerce: fire purchase on thank-you page
         add_action('woocommerce_thankyou', array(__CLASS__, 'on_woo_order_received'), 10, 1);
+        // Fallback for custom checkout flows/themes where woocommerce_thankyou is bypassed.
+        add_action('wp_footer', array(__CLASS__, 'maybe_track_woo_order_received_fallback'), 1000);
     }
 
     public static function on_activate() {
@@ -106,9 +109,19 @@ final class Adnova_Pixel_Plugin {
      * Both carry order_id so the dashboard can deduplicate revenue by order_id at query time.
      */
     public static function on_woo_order_received($order_id) {
-        if (!$order_id) {
+        if (!$order_id || !function_exists('wc_get_order')) {
             return;
         }
+
+        $order_id = (int) $order_id;
+        if ($order_id <= 0) {
+            return;
+        }
+
+        if (in_array($order_id, self::$processed_orders, true)) {
+            return;
+        }
+        self::$processed_orders[] = $order_id;
 
         $order = wc_get_order($order_id);
         if (!$order) {
@@ -150,6 +163,35 @@ final class Adnova_Pixel_Plugin {
             'checkout_token' => $order_data['checkout_token'],
             'items'          => $order_data['items'],
         ));
+    }
+
+    /**
+     * Fallback detector for thank-you pages where the standard Woo hook may not fire.
+     */
+    public static function maybe_track_woo_order_received_fallback() {
+        if (!function_exists('is_order_received_page') || !is_order_received_page()) {
+            return;
+        }
+
+        $order_id = 0;
+
+        $qv = get_query_var('order-received');
+        if ($qv) {
+            $order_id = (int) $qv;
+        }
+
+        if ($order_id <= 0 && isset($_GET['order-received'])) {
+            $order_id = (int) wp_unslash($_GET['order-received']);
+        }
+
+        if ($order_id <= 0 && isset($_GET['key']) && function_exists('wc_get_order_id_by_order_key')) {
+            $order_key = sanitize_text_field(wp_unslash($_GET['key']));
+            $order_id = (int) wc_get_order_id_by_order_key($order_key);
+        }
+
+        if ($order_id > 0) {
+            self::on_woo_order_received($order_id);
+        }
     }
 
     /**
