@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
 
 const McpData = require('../models/McpData');
@@ -15,6 +16,8 @@ try {
 } catch (_) {
   OpenAI = null;
 }
+
+const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
 
 function safeStr(v) {
   return v == null ? '' : String(v);
@@ -35,6 +38,10 @@ function ymd(d = new Date()) {
   const mm = String(x.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(x.getUTCDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
+}
+
+function makeShareToken() {
+  return crypto.randomBytes(24).toString('hex');
 }
 
 function isRootDoc(doc) {
@@ -62,6 +69,16 @@ async function findRoot(userId) {
     .lean();
 
   return docs.find(isRootDoc) || null;
+}
+
+async function findRootByShareToken(token) {
+  if (!token) return null;
+
+  return McpData.findOne({
+    kind: 'root',
+    'aiContext.shareToken': token,
+    'aiContext.shareEnabled': true,
+  }).lean();
 }
 
 async function findLatestSnapshotId(userId, source = 'metaAds') {
@@ -237,13 +254,13 @@ function buildFallbackEncodedContext(base) {
     llm_context_block: [
       'Use this marketing context as source of truth for cross-channel performance analysis.',
       ...contextParts,
-      ...positives.map(x => `Positive: ${x}`),
-      ...negatives.map(x => `Risk: ${x}`),
-      ...actions.map(x => `Recommended action: ${x}`),
+      ...positives.map((x) => `Positive: ${x}`),
+      ...negatives.map((x) => `Risk: ${x}`),
+      ...actions.map((x) => `Recommended action: ${x}`),
     ].join('\n'),
     llm_context_block_mini: [
       ...contextParts.slice(0, 3),
-      ...actions.slice(0, 3).map(x => `Action: ${x}`),
+      ...actions.slice(0, 3).map((x) => `Action: ${x}`),
     ].join('\n'),
     prompt_hints: llmHints,
   };
@@ -285,7 +302,7 @@ async function enrichWithOpenAI(base) {
     'Do not include markdown fences.',
     'Summarize the cross-channel marketing state using Meta Ads, Google Ads, and GA4 inputs.',
     'Preserve important metrics and business signals.',
-    'Output keys exactly as requested.'
+    'Output keys exactly as requested.',
   ].join(' ');
 
   const userPrompt = JSON.stringify({
@@ -325,7 +342,7 @@ async function enrichWithOpenAI(base) {
 
     const text =
       response?.output_text ||
-      response?.output?.map(x => x?.content?.map(c => c?.text || '').join('')).join('') ||
+      response?.output?.map((x) => x?.content?.map((c) => c?.text || '').join('')).join('') ||
       '';
 
     const parsed = JSON.parse(text);
@@ -380,10 +397,41 @@ function buildStatusResponse(root) {
       usedOpenAI: !!state?.usedOpenAI,
       model: state?.model || null,
       error: state?.error || null,
+      hasShareLink: !!(state?.shareEnabled && state?.shareToken),
+      shareUrl: state?.shareEnabled ? state?.shareUrl || null : null,
     },
   };
 }
 
+function buildSharedPayload(root, provider) {
+  const state = root?.aiContext || {};
+  const payload = state?.encodedPayload || null;
+  if (!payload) return null;
+
+  const providerName =
+    provider === 'claude' ? 'Claude' :
+    provider === 'gemini' ? 'Gemini' :
+    'ChatGPT';
+
+  return {
+    ok: true,
+    data: payload,
+    meta: {
+      schema: payload?.schema || 'adray.encoded.context.v1',
+      provider: provider || 'chatgpt',
+      providerLabel: providerName,
+      snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
+      generatedAt: state?.finishedAt || payload?.generatedAt || null,
+      providerAgnostic: !!payload?.providerAgnostic,
+      usedOpenAI: !!state?.usedOpenAI,
+      model: state?.model || null,
+    },
+  };
+}
+
+/**
+ * POST /api/mcp/context/build
+ */
 router.post('/build', async (req, res) => {
   try {
     const userId = req.user?._id;
@@ -462,13 +510,16 @@ router.post('/build', async (req, res) => {
     });
 
     const encoded = await enrichWithOpenAI(unifiedBase);
+    const prevRoot = await findRoot(userId);
+    const prevAi = prevRoot?.aiContext || {};
 
     await updateRootContextState(userId, {
       aiContext: {
+        ...prevAi,
         status: 'done',
         progress: 100,
         stage: 'completed',
-        startedAt: root?.aiContext?.startedAt || nowIso(),
+        startedAt: prevAi?.startedAt || nowIso(),
         finishedAt: nowIso(),
         snapshotId,
         error: null,
@@ -523,6 +574,9 @@ router.post('/build', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/mcp/context/status
+ */
 router.get('/status', async (req, res) => {
   try {
     const userId = req.user?._id;
@@ -542,6 +596,9 @@ router.get('/status', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/mcp/context/latest
+ */
 router.get('/latest', async (req, res) => {
   try {
     const userId = req.user?._id;
@@ -583,6 +640,141 @@ router.get('/latest', async (req, res) => {
   } catch (e) {
     console.error('[mcp/context/latest] error:', e);
     return res.status(500).json({ ok: false, error: 'MCP_CONTEXT_LATEST_FAILED' });
+  }
+});
+
+/**
+ * POST /api/mcp/context/link
+ * Genera o regenera el link único del usuario.
+ */
+router.post('/link', async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: 'NO_SESSION' });
+    }
+
+    const providerRaw = safeStr(req.body?.provider).toLowerCase();
+    const provider =
+      providerRaw === 'claude' || providerRaw === 'gemini' || providerRaw === 'chatgpt'
+        ? providerRaw
+        : 'chatgpt';
+
+    const regenerate = req.body?.regenerate === true;
+
+    const root = await findRoot(userId);
+    if (!root) {
+      return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
+    }
+
+    const state = root?.aiContext || {};
+    if (!state?.encodedPayload) {
+      return res.status(404).json({ ok: false, error: 'MCP_CONTEXT_NOT_READY' });
+    }
+
+    let shareToken = state?.shareToken || null;
+    if (!shareToken || regenerate) {
+      shareToken = makeShareToken();
+    }
+
+    const shareUrl = `${APP_URL}/api/mcp/context/shared/${shareToken}?provider=${encodeURIComponent(provider)}`;
+
+    await updateRootContextState(userId, {
+      aiContext: {
+        ...state,
+        shareToken,
+        shareEnabled: true,
+        shareProvider: provider,
+        shareUrl,
+        shareCreatedAt: state?.shareCreatedAt || nowIso(),
+        shareLastGeneratedAt: nowIso(),
+        shareRevokedAt: null,
+      },
+    });
+
+    return res.json({
+      ok: true,
+      data: {
+        provider,
+        shareToken,
+        shareUrl,
+        enabled: true,
+      },
+    });
+  } catch (e) {
+    console.error('[mcp/context/link] error:', e);
+    return res.status(500).json({ ok: false, error: 'MCP_CONTEXT_LINK_CREATE_FAILED' });
+  }
+});
+
+/**
+ * GET /api/mcp/context/link
+ * Devuelve el link actual del usuario.
+ */
+router.get('/link', async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: 'NO_SESSION' });
+    }
+
+    const root = await findRoot(userId);
+    if (!root) {
+      return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
+    }
+
+    const state = root?.aiContext || {};
+    const shareToken = state?.shareToken || null;
+    const shareUrl = state?.shareEnabled ? state?.shareUrl || null : null;
+
+    return res.json({
+      ok: true,
+      data: {
+        enabled: !!(state?.shareEnabled && shareToken),
+        shareToken,
+        shareUrl,
+        provider: state?.shareProvider || 'chatgpt',
+        createdAt: state?.shareCreatedAt || null,
+        lastGeneratedAt: state?.shareLastGeneratedAt || null,
+      },
+    });
+  } catch (e) {
+    console.error('[mcp/context/link:get] error:', e);
+    return res.status(500).json({ ok: false, error: 'MCP_CONTEXT_LINK_READ_FAILED' });
+  }
+});
+
+/**
+ * GET /api/mcp/context/shared/:token
+ * Ruta pública para servir la codificación final.
+ */
+router.get('/shared/:token', async (req, res) => {
+  try {
+    const token = safeStr(req.params?.token).trim();
+    if (!token) {
+      return res.status(400).json({ ok: false, error: 'MISSING_TOKEN' });
+    }
+
+    const providerRaw = safeStr(req.query?.provider).toLowerCase();
+    const provider =
+      providerRaw === 'claude' || providerRaw === 'gemini' || providerRaw === 'chatgpt'
+        ? providerRaw
+        : 'chatgpt';
+
+    const root = await findRootByShareToken(token);
+    if (!root) {
+      return res.status(404).json({ ok: false, error: 'SHARED_CONTEXT_NOT_FOUND' });
+    }
+
+    const state = root?.aiContext || {};
+    if (!state?.encodedPayload) {
+      return res.status(404).json({ ok: false, error: 'SHARED_CONTEXT_NOT_READY' });
+    }
+
+    return res.json(buildSharedPayload(root, provider));
+  } catch (e) {
+    console.error('[mcp/context/shared] error:', e);
+    return res.status(500).json({ ok: false, error: 'MCP_CONTEXT_SHARED_FAILED' });
   }
 });
 
