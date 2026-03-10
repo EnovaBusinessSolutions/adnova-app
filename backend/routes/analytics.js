@@ -80,6 +80,19 @@ router.get('/:account_id', async (req, res) => {
       },
     });
 
+    // Revenue fallback for sources that only send browser/server purchase events
+    // but do not yet sync orders into the orders table (e.g., early WooCommerce setup).
+    const purchaseRevenueAgg = await prisma.event.aggregate({
+      where: {
+        accountId: account_id,
+        createdAt: { gte: startDate, lte: endDate },
+        eventName: { in: PURCHASE_ALIASES },
+      },
+      _sum: {
+        revenue: true,
+      },
+    });
+
     // 4. Aggregate Data
     let totalRevenue = 0;
     let attributedRevenue = 0;
@@ -193,11 +206,16 @@ router.get('/:account_id', async (req, res) => {
     // Purchase events often come via Shopify webhook -> Order table (without Event row).
     // Use the max as a safe dashboard metric that avoids showing 0 when orders exist.
     const purchaseEventsResolved = Math.max(eventStats.purchase, orders.length);
+    const purchaseRevenueFromEvents = Number(purchaseRevenueAgg?._sum?.revenue || 0);
+    const totalRevenueResolved = orders.length > 0 ? totalRevenue : purchaseRevenueFromEvents;
 
     // 5. Return JSON
     res.json({
       summary: {
-        totalRevenue,
+        totalRevenue: totalRevenueResolved,
+        totalRevenueOrders: totalRevenue,
+        totalRevenueEvents: purchaseRevenueFromEvents,
+        revenueSource: orders.length > 0 ? 'orders' : 'events',
         totalOrders: orders.length,
         attributedRevenue,
         attributedOrders: orders.length - channelStats.unattributed.orders,
