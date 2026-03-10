@@ -28,6 +28,19 @@ function resolveEventBucket(rawName) {
   return 'other';
 }
 
+function normalizeLineItems(items) {
+  const arr = Array.isArray(items) ? items : [];
+  return arr.map((item) => ({
+    id: String(item?.product_id || item?.productId || item?.id || item?.variant_id || item?.variantId || ''),
+    name: String(item?.name || item?.title || 'Producto'),
+    quantity: Number(item?.quantity || item?.qty || 1),
+    price: Number(item?.price || item?.unit_price || item?.unitPrice || 0),
+    lineTotal: Number(
+      item?.line_total ?? item?.lineTotal ?? item?.total ?? item?.final_line_price ?? item?.finalLinePrice ?? 0
+    ),
+  }));
+}
+
 // Use existing sessionGuard from index.js mount, assuming it's available or implemented here?
 // The pipeline says "All routes require sessionGuard".
 // For now, I'll rely on index.js to wrap this router with sessionGuard.
@@ -54,10 +67,13 @@ router.get('/:account_id', async (req, res) => {
       select: {
         createdAt: true,
         revenue: true,
+        currency: true,
         attributedChannel: true,
         orderId: true,
+        orderNumber: true,
         lineItems: true
-      }
+      },
+      orderBy: { createdAt: 'desc' }
     });
 
     // 2. Fetch Sessions in range (for conversion rate, approximate)
@@ -203,6 +219,49 @@ router.get('/:account_id', async (req, res) => {
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 10);
 
+    const purchaseEventsDetailed = await prisma.event.findMany({
+      where: {
+        accountId: account_id,
+        createdAt: { gte: startDate, lte: endDate },
+        eventName: { in: PURCHASE_ALIASES },
+      },
+      select: {
+        createdAt: true,
+        orderId: true,
+        checkoutToken: true,
+        revenue: true,
+        currency: true,
+        items: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    const recentPurchasesFromOrders = orders.slice(0, 50).map((order) => ({
+      source: 'orders',
+      createdAt: order.createdAt,
+      orderId: order.orderId,
+      orderNumber: order.orderNumber || null,
+      checkoutToken: null,
+      revenue: Number(order.revenue || 0),
+      currency: order.currency || 'MXN',
+      items: normalizeLineItems(order.lineItems),
+    }));
+
+    const recentPurchasesFromEvents = purchaseEventsDetailed.map((ev) => ({
+      source: 'events',
+      createdAt: ev.createdAt,
+      orderId: ev.orderId || null,
+      orderNumber: null,
+      checkoutToken: ev.checkoutToken || null,
+      revenue: Number(ev.revenue || 0),
+      currency: ev.currency || 'MXN',
+      items: normalizeLineItems(ev.items),
+    }));
+
+    const recentPurchases = (orders.length > 0 ? recentPurchasesFromOrders : recentPurchasesFromEvents)
+      .slice(0, 15);
+
     // Purchase events often come via Shopify webhook -> Order table (without Event row).
     // Use the max as a safe dashboard metric that avoids showing 0 when orders exist.
     const purchaseEventsResolved = Math.max(eventStats.purchase, orders.length);
@@ -242,6 +301,7 @@ router.get('/:account_id', async (req, res) => {
       },
       channels: channelStats,
       topProducts,
+      recentPurchases,
       daily: Object.values(dailyMap) // sorted array by date
     });
 
