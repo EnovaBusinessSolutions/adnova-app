@@ -541,6 +541,9 @@ router.post('/build', async (req, res) => {
         snapshotId,
         usedOpenAI: !!freshRoot?.aiContext?.usedOpenAI,
         model: freshRoot?.aiContext?.model || null,
+        hasEncodedPayload: !!freshRoot?.aiContext?.encodedPayload,
+        providerAgnostic: !!freshRoot?.aiContext?.encodedPayload?.providerAgnostic,
+        error: freshRoot?.aiContext?.error || null,
       },
     });
   } catch (e) {
