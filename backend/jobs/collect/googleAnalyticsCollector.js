@@ -18,6 +18,18 @@ const MAX_BY_RULE = Math.min(
 
 const DEBUG_GA_COLLECTOR = process.env.DEBUG_GA_COLLECTOR === 'true';
 
+const DEFAULT_STORAGE_RANGE_DAYS = clampInt(
+  process.env.MCP_STORAGE_RANGE_DAYS || 730,
+  30,
+  3650
+);
+
+const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(
+  process.env.MCP_CONTEXT_RANGE_DAYS || 60,
+  7,
+  365
+);
+
 /* ---------------- models ---------------- */
 let GoogleAccount;
 try { GoogleAccount = require('../../models/GoogleAccount'); }
@@ -203,11 +215,33 @@ function ymdInTZ(date, timeZone) {
   }
 }
 
+function parseYmdToUtcDate(ymd) {
+  const s = safeStr(ymd).trim();
+  if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [yy, mm, dd] = s.split('-').map(Number);
+  return new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1, 0, 0, 0));
+}
+
 function addDaysYMD(ymd, deltaDays) {
-  const [yy, mm, dd] = String(ymd).split('-').map(Number);
-  const base = new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1, 0, 0, 0));
-  base.setUTCDate(base.getUTCDate() + Number(deltaDays || 0));
-  return base.toISOString().slice(0, 10);
+  const d = parseYmdToUtcDate(ymd);
+  if (!d) return null;
+  d.setUTCDate(d.getUTCDate() + Number(deltaDays || 0));
+  return d.toISOString().slice(0, 10);
+}
+
+function monthKeyFromDate(dateStr) {
+  const s = safeStr(dateStr).trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s.slice(0, 7) : 'unknown';
+}
+
+function partitionRowsByMonth(rows) {
+  const map = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const key = monthKeyFromDate(row?.date);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(row);
+  }
+  return map;
 }
 
 function getStrictLastNdRangeForTZ(timeZone, days, includeToday) {
@@ -296,15 +330,28 @@ async function resolvePropertiesForAudit({ userId, accDoc, forcedPropertyId }) {
 
 /* ---------------- compact helpers ---------------- */
 
-function makeGa4Header({ userId, properties, range, version }) {
+function makeGa4Header({
+  userId,
+  properties,
+  range,
+  version,
+  windowType,
+  storageRangeDays,
+  contextRangeDays,
+  latestSnapshotId = null,
+}) {
   return {
-    schema: 'adray.mcp.v1',
+    schema: 'adray.mcp.v2',
     source: 'ga4',
     generatedAt: new Date().toISOString(),
     userId: String(userId),
     properties: Array.isArray(properties) ? properties : [],
     range,
     version: version || null,
+    windowType: windowType || 'context',
+    storageRangeDays: Number(storageRangeDays || 0) || null,
+    contextRangeDays: Number(contextRangeDays || 0) || null,
+    latestSnapshotId: latestSnapshotId || null,
   };
 }
 
@@ -432,12 +479,12 @@ function buildOptimizationSignals({ channelsTop, devicesTop, landingPagesTop, so
   );
 
   if (bestChannels.length) {
-    insights.push(`Top GA4 channels are concentrating the strongest revenue contribution.`);
+    insights.push('Top GA4 channels are concentrating the strongest revenue contribution.');
     recommendations.push('Double down on the channel groups already generating the strongest revenue and conversions.');
   }
 
   if (weakChannels.length) {
-    insights.push(`Some channel groups are driving sessions without corresponding revenue signals.`);
+    insights.push('Some channel groups are driving sessions without corresponding revenue signals.');
     recommendations.push('Review low-revenue channels with material traffic and tighten acquisition quality.');
   }
 
@@ -474,14 +521,25 @@ async function collectGA4(userId, opts = {}) {
   const {
     property_id,
     include_today = false,
-    rangeDays = 30,
+    rangeDays, // compat legacy => contexto
+    contextRangeDays = rangeDays || DEFAULT_CONTEXT_RANGE_DAYS,
+    storageRangeDays = DEFAULT_STORAGE_RANGE_DAYS,
     range,
+    storageRange,
     topChannelsN = 12,
     topDevicesN = 8,
     topLandingPagesN = 80,
     topSourceMediumN = 120,
     topEventsN = 120,
+    buildHistoricalDatasets = (
+      opts.buildHistoricalDatasets !== undefined
+        ? !!opts.buildHistoricalDatasets
+        : String(process.env.GA4_BUILD_HISTORICAL_DATASETS || 'true').toLowerCase() === 'true'
+    ),
   } = opts || {};
+
+  const contextDays = clampInt(contextRangeDays || DEFAULT_CONTEXT_RANGE_DAYS, 7, 365);
+  const storageDays = clampInt(storageRangeDays || DEFAULT_STORAGE_RANGE_DAYS, Math.max(contextDays, 30), 3650);
 
   const acc = await GoogleAccount
     .findOne({ $or: [{ user: userId }, { userId }] })
@@ -538,106 +596,132 @@ async function collectGA4(userId, opts = {}) {
 
   const firstTZ = propertiesToAudit[0]?.timeZone || (range?.tz || null) || 'UTC';
 
-  const explicit = range && range.from && range.to ? {
+  const explicitContext = range && range.from && range.to ? {
     startDate: String(range.from),
     endDate: String(range.to),
     tz: range.tz || firstTZ,
   } : null;
 
-  const strict = explicit || {
-    ...getStrictLastNdRangeForTZ(firstTZ, rangeDays, !!include_today),
+  const explicitStorage = storageRange && storageRange.from && storageRange.to ? {
+    startDate: String(storageRange.from),
+    endDate: String(storageRange.to),
+    tz: storageRange.tz || firstTZ,
+  } : null;
+
+  const contextStrict = explicitContext || {
+    ...getStrictLastNdRangeForTZ(firstTZ, contextDays, !!include_today),
     tz: firstTZ,
   };
 
-  const rangeOut = { from: strict.startDate, to: strict.endDate, tz: strict.tz || firstTZ };
-
-  const totalsOnlyBody = {
-    dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
-    metrics: [
-      { name: 'totalUsers' },
-      { name: 'sessions' },
-      { name: 'conversions' },
-      { name: 'purchaseRevenue' },
-      { name: 'newUsers' },
-      { name: 'engagedSessions' },
-    ],
-    limit: '1',
+  const storageStrict = explicitStorage || {
+    ...getStrictLastNdRangeForTZ(firstTZ, storageDays, !!include_today),
+    tz: firstTZ,
   };
 
-  const channelsBody = {
-    dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
-    dimensions: [{ name: 'sessionDefaultChannelGroup' }],
-    metrics: [
-      { name: 'totalUsers' },
-      { name: 'sessions' },
-      { name: 'conversions' },
-      { name: 'purchaseRevenue' },
-      { name: 'newUsers' },
-      { name: 'engagedSessions' },
-    ],
-    metricAggregations: ['TOTAL'],
-    limit: '1000',
-  };
+  const contextRangeOut = { from: contextStrict.startDate, to: contextStrict.endDate, tz: contextStrict.tz || firstTZ };
+  const storageRangeOut = { from: storageStrict.startDate, to: storageStrict.endDate, tz: storageStrict.tz || firstTZ };
 
-  const devicesBody = {
-    dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
-    dimensions: [{ name: 'deviceCategory' }],
-    metrics: [
-      { name: 'totalUsers' },
-      { name: 'sessions' },
-      { name: 'conversions' },
-      { name: 'purchaseRevenue' },
-      { name: 'engagedSessions' },
-    ],
-    limit: '1000',
-  };
+  function makeTotalsOnlyBody(rangeOut) {
+    return {
+      dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
+      metrics: [
+        { name: 'totalUsers' },
+        { name: 'sessions' },
+        { name: 'conversions' },
+        { name: 'purchaseRevenue' },
+        { name: 'newUsers' },
+        { name: 'engagedSessions' },
+      ],
+      limit: '1',
+    };
+  }
 
-  const landingBody = {
-    dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
-    dimensions: [{ name: 'landingPagePlusQueryString' }],
-    metrics: [
-      { name: 'sessions' },
-      { name: 'conversions' },
-      { name: 'purchaseRevenue' },
-      { name: 'engagedSessions' },
-    ],
-    limit: '5000',
-  };
+  function makeChannelsBody(rangeOut) {
+    return {
+      dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
+      dimensions: [{ name: 'sessionDefaultChannelGroup' }],
+      metrics: [
+        { name: 'totalUsers' },
+        { name: 'sessions' },
+        { name: 'conversions' },
+        { name: 'purchaseRevenue' },
+        { name: 'newUsers' },
+        { name: 'engagedSessions' },
+      ],
+      metricAggregations: ['TOTAL'],
+      limit: '1000',
+    };
+  }
 
-  const dailyBody = {
-    dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
-    dimensions: [{ name: 'date' }],
-    metrics: [
-      { name: 'totalUsers' },
-      { name: 'sessions' },
-      { name: 'conversions' },
-      { name: 'purchaseRevenue' },
-      { name: 'engagedSessions' },
-    ],
-    limit: '400',
-  };
+  function makeDevicesBody(rangeOut) {
+    return {
+      dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
+      dimensions: [{ name: 'deviceCategory' }],
+      metrics: [
+        { name: 'totalUsers' },
+        { name: 'sessions' },
+        { name: 'conversions' },
+        { name: 'purchaseRevenue' },
+        { name: 'engagedSessions' },
+      ],
+      limit: '1000',
+    };
+  }
 
-  const sourceMediumBody = {
-    dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
-    dimensions: [{ name: 'sessionSource' }, { name: 'sessionMedium' }],
-    metrics: [
-      { name: 'sessions' },
-      { name: 'conversions' },
-      { name: 'purchaseRevenue' },
-      { name: 'engagedSessions' },
-    ],
-    limit: '5000',
-  };
+  function makeLandingBody(rangeOut) {
+    return {
+      dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
+      dimensions: [{ name: 'landingPagePlusQueryString' }, { name: 'date' }],
+      metrics: [
+        { name: 'sessions' },
+        { name: 'conversions' },
+        { name: 'purchaseRevenue' },
+        { name: 'engagedSessions' },
+      ],
+      limit: '5000',
+    };
+  }
 
-  const topEventsBody = {
-    dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
-    dimensions: [{ name: 'eventName' }],
-    metrics: [
-      { name: 'eventCount' },
-      { name: 'conversions' },
-    ],
-    limit: '300',
-  };
+  function makeDailyBody(rangeOut) {
+    return {
+      dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
+      dimensions: [{ name: 'date' }],
+      metrics: [
+        { name: 'totalUsers' },
+        { name: 'sessions' },
+        { name: 'conversions' },
+        { name: 'purchaseRevenue' },
+        { name: 'engagedSessions' },
+      ],
+      limit: '4000',
+    };
+  }
+
+  function makeSourceMediumBody(rangeOut) {
+    return {
+      dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
+      dimensions: [{ name: 'sessionSource' }, { name: 'sessionMedium' }, { name: 'date' }],
+      metrics: [
+        { name: 'sessions' },
+        { name: 'conversions' },
+        { name: 'purchaseRevenue' },
+        { name: 'engagedSessions' },
+      ],
+      limit: '5000',
+    };
+  }
+
+  function makeTopEventsBody(rangeOut) {
+    return {
+      dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
+      dimensions: [{ name: 'eventName' }, { name: 'date' }],
+      metrics: [
+        { name: 'eventCount' },
+        { name: 'conversions' },
+      ],
+      limit: '3000',
+    };
+  }
 
   const aggregate = {
     users: 0, sessions: 0, conversions: 0, revenue: 0,
@@ -650,6 +734,11 @@ async function collectGA4(userId, opts = {}) {
   const globalDailyMap = new Map();
   const globalSourceMediumMap = new Map();
   const globalTopEventsMap = new Map();
+
+  const histDailyMap = new Map();
+  const histLandingRows = [];
+  const histSourceMediumRows = [];
+  const histEventRows = [];
 
   const propertiesMetaOut = propertiesToAudit.map(p => ({
     id: p.id,
@@ -665,7 +754,7 @@ async function collectGA4(userId, opts = {}) {
 
     let jChannels;
     try {
-      jChannels = await runReportWithRetry(property, channelsBody);
+      jChannels = await runReportWithRetry(property, makeChannelsBody(contextRangeOut));
     } catch (e) {
       const reason =
         (String(e?._ga?.code || '').toUpperCase() === 'PERMISSION_DENIED')
@@ -675,7 +764,7 @@ async function collectGA4(userId, opts = {}) {
       byProperty.push({
         property,
         propertyName: prop.displayName || '',
-        dateRange: { start: rangeOut.from, end: rangeOut.to },
+        dateRange: { start: contextRangeOut.from, end: contextRangeOut.to },
         error: true,
         reason,
         kpis: { users: 0, sessions: 0, conversions: 0, revenue: 0, newUsers: 0, engagedSessions: 0, engagementRate: 0 },
@@ -698,7 +787,7 @@ async function collectGA4(userId, opts = {}) {
     let totals = jChannels?.totals?.[0]?.metricValues || null;
     if (!totals || !Array.isArray(totals) || totals.length < 6) {
       try {
-        const jTotals = await runReportWithRetry(property, totalsOnlyBody);
+        const jTotals = await runReportWithRetry(property, makeTotalsOnlyBody(contextRangeOut));
         const row0 = Array.isArray(jTotals?.rows) ? jTotals.rows[0] : null;
         totals = row0?.metricValues || totals;
       } catch {}
@@ -734,7 +823,7 @@ async function collectGA4(userId, opts = {}) {
 
     let devices = [];
     try {
-      const jDevices = await runReportWithRetry(property, devicesBody);
+      const jDevices = await runReportWithRetry(property, makeDevicesBody(contextRangeOut));
       const dRows = Array.isArray(jDevices?.rows) ? jDevices.rows : [];
       devices = dRows.map(rw => ({
         device: rw.dimensionValues?.[0]?.value || '(other)',
@@ -762,10 +851,16 @@ async function collectGA4(userId, opts = {}) {
 
     let landingPages = [];
     try {
-      const jLanding = await runReportWithRetry(property, landingBody);
+      const jLanding = await runReportWithRetry(property, makeLandingBody(contextRangeOut));
       const lRows = Array.isArray(jLanding?.rows) ? jLanding.rows : [];
       landingPages = lRows.map(rw => ({
         page: rw.dimensionValues?.[0]?.value || '(not set)',
+        date: (() => {
+          const raw = rw.dimensionValues?.[1]?.value || '';
+          return raw && raw.length === 8
+            ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
+            : raw;
+        })(),
         sessions: toNum(rw.metricValues?.[0]?.value),
         conversions: toNum(rw.metricValues?.[1]?.value),
         revenue: toNum(rw.metricValues?.[2]?.value),
@@ -788,7 +883,7 @@ async function collectGA4(userId, opts = {}) {
 
     let daily = [];
     try {
-      const jDaily = await runReportWithRetry(property, dailyBody);
+      const jDaily = await runReportWithRetry(property, makeDailyBody(contextRangeOut));
       const tRows = Array.isArray(jDaily?.rows) ? jDaily.rows : [];
       daily = tRows.map(rw => {
         const raw = rw.dimensionValues?.[0]?.value || '';
@@ -824,11 +919,17 @@ async function collectGA4(userId, opts = {}) {
 
     let sourceMedium = [];
     try {
-      const jSM = await runReportWithRetry(property, sourceMediumBody);
+      const jSM = await runReportWithRetry(property, makeSourceMediumBody(contextRangeOut));
       const smRows = Array.isArray(jSM?.rows) ? jSM.rows : [];
       sourceMedium = smRows.map(rw => ({
         source: rw.dimensionValues?.[0]?.value || '(direct)',
         medium: rw.dimensionValues?.[1]?.value || '(none)',
+        date: (() => {
+          const raw = rw.dimensionValues?.[2]?.value || '';
+          return raw && raw.length === 8
+            ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
+            : raw;
+        })(),
         sessions: toNum(rw.metricValues?.[0]?.value),
         conversions: toNum(rw.metricValues?.[1]?.value),
         revenue: toNum(rw.metricValues?.[2]?.value),
@@ -851,10 +952,16 @@ async function collectGA4(userId, opts = {}) {
 
     let topEvents = [];
     try {
-      const jEv = await runReportWithRetry(property, topEventsBody);
+      const jEv = await runReportWithRetry(property, makeTopEventsBody(contextRangeOut));
       const eRows = Array.isArray(jEv?.rows) ? jEv.rows : [];
       topEvents = eRows.map(rw => ({
         event: rw.dimensionValues?.[0]?.value || '(not set)',
+        date: (() => {
+          const raw = rw.dimensionValues?.[1]?.value || '';
+          return raw && raw.length === 8
+            ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
+            : raw;
+        })(),
         eventCount: toNum(rw.metricValues?.[0]?.value),
         conversions: toNum(rw.metricValues?.[1]?.value),
       }));
@@ -868,6 +975,97 @@ async function collectGA4(userId, opts = {}) {
       }
     } catch {
       topEvents = [];
+    }
+
+    if (buildHistoricalDatasets) {
+      try {
+        const jHistDaily = await runReportWithRetry(property, makeDailyBody(storageRangeOut));
+        const hRows = Array.isArray(jHistDaily?.rows) ? jHistDaily.rows : [];
+        for (const rw of hRows) {
+          const raw = rw.dimensionValues?.[0]?.value || '';
+          const date =
+            raw && raw.length === 8
+              ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
+              : raw;
+          if (!date) continue;
+
+          const key = date;
+          const g = histDailyMap.get(key) || { users: 0, sessions: 0, conversions: 0, revenue: 0, engagedSessions: 0 };
+          g.users += toNum(rw.metricValues?.[0]?.value);
+          g.sessions += toNum(rw.metricValues?.[1]?.value);
+          g.conversions += toNum(rw.metricValues?.[2]?.value);
+          g.revenue += toNum(rw.metricValues?.[3]?.value);
+          g.engagedSessions += toNum(rw.metricValues?.[4]?.value);
+          histDailyMap.set(key, g);
+        }
+      } catch {}
+
+      try {
+        const jHistLanding = await runReportWithRetry(property, makeLandingBody(storageRangeOut));
+        const rowsHist = Array.isArray(jHistLanding?.rows) ? jHistLanding.rows : [];
+        for (const rw of rowsHist) {
+          const raw = rw.dimensionValues?.[1]?.value || '';
+          const date =
+            raw && raw.length === 8
+              ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
+              : raw;
+
+          histLandingRows.push({
+            property_id: property,
+            page: rw.dimensionValues?.[0]?.value || '(not set)',
+            date,
+            sessions: toNum(rw.metricValues?.[0]?.value),
+            conversions: toNum(rw.metricValues?.[1]?.value),
+            revenue: toNum(rw.metricValues?.[2]?.value),
+            engagedSessions: toNum(rw.metricValues?.[3]?.value),
+            engagementRate: round2(safeDiv(toNum(rw.metricValues?.[3]?.value), toNum(rw.metricValues?.[0]?.value)) * 100),
+          });
+        }
+      } catch {}
+
+      try {
+        const jHistSM = await runReportWithRetry(property, makeSourceMediumBody(storageRangeOut));
+        const rowsHist = Array.isArray(jHistSM?.rows) ? jHistSM.rows : [];
+        for (const rw of rowsHist) {
+          const raw = rw.dimensionValues?.[2]?.value || '';
+          const date =
+            raw && raw.length === 8
+              ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
+              : raw;
+
+          histSourceMediumRows.push({
+            property_id: property,
+            source: rw.dimensionValues?.[0]?.value || '(direct)',
+            medium: rw.dimensionValues?.[1]?.value || '(none)',
+            date,
+            sessions: toNum(rw.metricValues?.[0]?.value),
+            conversions: toNum(rw.metricValues?.[1]?.value),
+            revenue: toNum(rw.metricValues?.[2]?.value),
+            engagedSessions: toNum(rw.metricValues?.[3]?.value),
+            engagementRate: round2(safeDiv(toNum(rw.metricValues?.[3]?.value), toNum(rw.metricValues?.[0]?.value)) * 100),
+          });
+        }
+      } catch {}
+
+      try {
+        const jHistEv = await runReportWithRetry(property, makeTopEventsBody(storageRangeOut));
+        const rowsHist = Array.isArray(jHistEv?.rows) ? jHistEv.rows : [];
+        for (const rw of rowsHist) {
+          const raw = rw.dimensionValues?.[1]?.value || '';
+          const date =
+            raw && raw.length === 8
+              ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
+              : raw;
+
+          histEventRows.push({
+            property_id: property,
+            event: rw.dimensionValues?.[0]?.value || '(not set)',
+            date,
+            eventCount: toNum(rw.metricValues?.[0]?.value),
+            conversions: toNum(rw.metricValues?.[1]?.value),
+          });
+        }
+      } catch {}
     }
 
     landingPages.sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
@@ -884,7 +1082,7 @@ async function collectGA4(userId, opts = {}) {
     byProperty.push({
       property,
       propertyName: prop.displayName || '',
-      dateRange: { start: rangeOut.from, end: rangeOut.to },
+      dateRange: { start: contextRangeOut.from, end: contextRangeOut.to },
       kpis: {
         users: propAgg.users,
         sessions: propAgg.sessions,
@@ -974,10 +1172,10 @@ async function collectGA4(userId, opts = {}) {
   topEventsGlobal.sort((a, b) => (b.eventCount || 0) - (a.eventCount || 0));
   topEventsGlobal = topEventsGlobal.slice(0, Math.max(30, topEventsN));
 
-  function aggWindow(days, endYMD) {
+  function aggWindow(days, endYMD, sourceRows) {
     const end = endYMD;
     const start = addDaysYMD(end, -(days - 1));
-    const rows = dailyGlobal.filter(r => r.date >= start && r.date <= end);
+    const rows = (Array.isArray(sourceRows) ? sourceRows : []).filter(r => r.date >= start && r.date <= end);
     const k = rows.reduce((a, r) => {
       a.users += toNum(r.users);
       a.sessions += toNum(r.sessions);
@@ -990,10 +1188,10 @@ async function collectGA4(userId, opts = {}) {
     return k;
   }
 
-  function prevWindow(days, endYMD) {
+  function prevWindow(days, endYMD, sourceRows) {
     const endPrev = addDaysYMD(endYMD, -days);
     const startPrev = addDaysYMD(endPrev, -(days - 1));
-    const rows = dailyGlobal.filter(r => r.date >= startPrev && r.date <= endPrev);
+    const rows = (Array.isArray(sourceRows) ? sourceRows : []).filter(r => r.date >= startPrev && r.date <= endPrev);
     const k = rows.reduce((a, r) => {
       a.users += toNum(r.users);
       a.sessions += toNum(r.sessions);
@@ -1006,11 +1204,11 @@ async function collectGA4(userId, opts = {}) {
     return k;
   }
 
-  const endForWindows = rangeOut.to;
-  const last7 = aggWindow(7, endForWindows);
-  const prev7 = prevWindow(7, endForWindows);
-  const last30 = aggWindow(30, endForWindows);
-  const prev30 = prevWindow(30, endForWindows);
+  const endForWindows = contextRangeOut.to;
+  const last7 = aggWindow(7, endForWindows, dailyGlobal);
+  const prev7 = prevWindow(7, endForWindows, dailyGlobal);
+  const last30 = aggWindow(30, endForWindows, dailyGlobal);
+  const prev30 = prevWindow(30, endForWindows, dailyGlobal);
 
   const summary = {
     kpis: {
@@ -1057,29 +1255,171 @@ async function collectGA4(userId, opts = {}) {
     })),
   };
 
-  const header = makeGa4Header({
+  const contextHeader = makeGa4Header({
     userId,
     properties: propertiesMetaOut,
-    range: rangeOut,
-    version: 'ga4Collector@mcp-v2(summary+signals+dailyTrendsAI)',
+    range: contextRangeOut,
+    version: 'ga4Collector@mcp-v3(storage+context)',
+    windowType: 'context',
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
+  });
+
+  const historyHeader = makeGa4Header({
+    userId,
+    properties: propertiesMetaOut,
+    range: storageRangeOut,
+    version: 'ga4Collector@mcp-v3(storage+context)',
+    windowType: 'storage',
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
   });
 
   const datasets = [
-    { source: 'ga4', dataset: 'ga4.insights_summary', range: rangeOut, data: { meta: header, summary } },
-    { source: 'ga4', dataset: 'ga4.channels_top', range: rangeOut, data: { meta: header, channels_top: channelsGlobal.map(compactChannelRow) } },
-    { source: 'ga4', dataset: 'ga4.devices_top', range: rangeOut, data: { meta: header, devices_top: devicesGlobal.map(compactDeviceRow) } },
-    { source: 'ga4', dataset: 'ga4.landing_pages_top', range: rangeOut, data: { meta: header, landing_pages_top: landingGlobal.map(compactLandingRow) } },
-    { source: 'ga4', dataset: 'ga4.source_medium_top', range: rangeOut, data: { meta: header, source_medium_top: sourceMediumGlobal.map(compactSourceMediumRow) } },
-    { source: 'ga4', dataset: 'ga4.events_top', range: rangeOut, data: { meta: header, events_top: topEventsGlobal.map(compactEventRow) } },
-    { source: 'ga4', dataset: 'ga4.optimization_signals', range: rangeOut, data: { meta: header, optimization_signals } },
-    { source: 'ga4', dataset: 'ga4.daily_trends_ai', range: rangeOut, data: { meta: header, ...daily_trends_ai } },
+    { source: 'ga4', dataset: 'ga4.insights_summary', range: contextRangeOut, data: { meta: contextHeader, summary } },
+    { source: 'ga4', dataset: 'ga4.channels_top', range: contextRangeOut, data: { meta: contextHeader, channels_top: channelsGlobal.map(compactChannelRow) } },
+    { source: 'ga4', dataset: 'ga4.devices_top', range: contextRangeOut, data: { meta: contextHeader, devices_top: devicesGlobal.map(compactDeviceRow) } },
+    { source: 'ga4', dataset: 'ga4.landing_pages_top', range: contextRangeOut, data: { meta: contextHeader, landing_pages_top: landingGlobal.map(compactLandingRow) } },
+    { source: 'ga4', dataset: 'ga4.source_medium_top', range: contextRangeOut, data: { meta: contextHeader, source_medium_top: sourceMediumGlobal.map(compactSourceMediumRow) } },
+    { source: 'ga4', dataset: 'ga4.events_top', range: contextRangeOut, data: { meta: contextHeader, events_top: topEventsGlobal.map(compactEventRow) } },
+    { source: 'ga4', dataset: 'ga4.optimization_signals', range: contextRangeOut, data: { meta: contextHeader, optimization_signals } },
+    { source: 'ga4', dataset: 'ga4.daily_trends_ai', range: contextRangeOut, data: { meta: contextHeader, ...daily_trends_ai } },
   ];
+
+  if (buildHistoricalDatasets) {
+    const histDailyRows = sortByDateAsc(
+      Array.from(histDailyMap.entries()).map(([date, m]) => ({
+        date,
+        kpis: {
+          users: round2(m.users),
+          sessions: round2(m.sessions),
+          conversions: round2(m.conversions),
+          revenue: round2(m.revenue),
+          engagedSessions: round2(m.engagedSessions),
+          engagementRate: round2(safeDiv(m.engagedSessions, m.sessions) * 100),
+        },
+      }))
+    );
+
+    datasets.push({
+      source: 'ga4',
+      dataset: 'ga4.history.daily_totals',
+      range: storageRangeOut,
+      data: {
+        meta: historyHeader,
+        totals_by_day: histDailyRows,
+      },
+    });
+
+    const landingByMonth = partitionRowsByMonth(histLandingRows);
+    for (const [monthKey, rows] of landingByMonth.entries()) {
+      datasets.push({
+        source: 'ga4',
+        dataset: `ga4.history.landing_pages.${monthKey}`,
+        range: {
+          from: rows[0]?.date || storageRangeOut.from,
+          to: rows[rows.length - 1]?.date || storageRangeOut.to,
+          tz: storageRangeOut.tz || null,
+        },
+        data: {
+          meta: {
+            ...historyHeader,
+            partition: monthKey,
+          },
+          landing_pages_daily: rows.map((r) => ({
+            property_id: r.property_id,
+            page: r.page,
+            date: r.date,
+            sessions: round2(r.sessions),
+            conversions: round2(r.conversions),
+            revenue: round2(r.revenue),
+            engagedSessions: round2(r.engagedSessions),
+            engagementRate: round2(r.engagementRate),
+          })),
+        },
+      });
+    }
+
+    const smByMonth = partitionRowsByMonth(histSourceMediumRows);
+    for (const [monthKey, rows] of smByMonth.entries()) {
+      datasets.push({
+        source: 'ga4',
+        dataset: `ga4.history.source_medium.${monthKey}`,
+        range: {
+          from: rows[0]?.date || storageRangeOut.from,
+          to: rows[rows.length - 1]?.date || storageRangeOut.to,
+          tz: storageRangeOut.tz || null,
+        },
+        data: {
+          meta: {
+            ...historyHeader,
+            partition: monthKey,
+          },
+          source_medium_daily: rows.map((r) => ({
+            property_id: r.property_id,
+            source: r.source,
+            medium: r.medium,
+            date: r.date,
+            sessions: round2(r.sessions),
+            conversions: round2(r.conversions),
+            revenue: round2(r.revenue),
+            engagedSessions: round2(r.engagedSessions),
+            engagementRate: round2(r.engagementRate),
+          })),
+        },
+      });
+    }
+
+    const eventsByMonth = partitionRowsByMonth(histEventRows);
+    for (const [monthKey, rows] of eventsByMonth.entries()) {
+      datasets.push({
+        source: 'ga4',
+        dataset: `ga4.history.events.${monthKey}`,
+        range: {
+          from: rows[0]?.date || storageRangeOut.from,
+          to: rows[rows.length - 1]?.date || storageRangeOut.to,
+          tz: storageRangeOut.tz || null,
+        },
+        data: {
+          meta: {
+            ...historyHeader,
+            partition: monthKey,
+          },
+          events_daily: rows.map((r) => ({
+            property_id: r.property_id,
+            event: r.event,
+            date: r.date,
+            eventCount: round2(r.eventCount),
+            conversions: round2(r.conversions),
+          })),
+        },
+      });
+    }
+  }
 
   return {
     ok: true,
     notAuthorized: false,
     reason: null,
-    range: rangeOut,
+    range: contextRangeOut,
+    contextTimeRange: {
+      from: contextRangeOut.from,
+      to: contextRangeOut.to,
+      since: contextRangeOut.from,
+      until: contextRangeOut.to,
+      tz: contextRangeOut.tz || null,
+      days: contextDays,
+    },
+    storageTimeRange: {
+      from: storageRangeOut.from,
+      to: storageRangeOut.to,
+      since: storageRangeOut.from,
+      until: storageRangeOut.to,
+      tz: storageRangeOut.tz || null,
+      days: storageDays,
+    },
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
     properties: propertiesMetaOut,
     datasets,
     byProperty,

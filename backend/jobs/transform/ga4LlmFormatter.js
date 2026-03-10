@@ -51,6 +51,20 @@ function sortByDateAsc(rows) {
     .sort((a, b) => safeStr(a?.date).localeCompare(safeStr(b?.date)));
 }
 
+function parseYmdToUtcDate(ymd) {
+  const s = nonEmptyStr(ymd);
+  if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [yy, mm, dd] = s.split('-').map(Number);
+  return new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1, 0, 0, 0));
+}
+
+function addDaysYmd(ymd, deltaDays) {
+  const d = parseYmdToUtcDate(ymd);
+  if (!d) return null;
+  d.setUTCDate(d.getUTCDate() + Number(deltaDays || 0));
+  return d.toISOString().slice(0, 10);
+}
+
 function getDatasetMap(datasets) {
   const map = new Map();
 
@@ -97,10 +111,16 @@ function getMetaFromDatasets(map) {
 }
 
 function normalizeRange(range) {
+  const from = nonEmptyStr(range?.from || range?.since) || null;
+  const to = nonEmptyStr(range?.to || range?.until) || null;
+
   return {
-    from: nonEmptyStr(range?.from) || null,
-    to: nonEmptyStr(range?.to) || null,
+    from,
+    to,
+    since: from,
+    until: to,
     tz: nonEmptyStr(range?.tz) || null,
+    days: toNum(range?.days),
   };
 }
 
@@ -430,17 +450,24 @@ function isMeaningfulDailyRow(r) {
   );
 }
 
-function trimDailyRows(dailyRows, maxDays) {
+function trimDailyRows(dailyRows, maxDays, explicitRange) {
   const rows = sortByDateAsc(Array.isArray(dailyRows) ? dailyRows : []);
   if (!rows.length) return [];
 
-  const meaningful = rows.filter(isMeaningfulDailyRow);
+  const explicitTo = nonEmptyStr(explicitRange?.to || explicitRange?.until) || null;
+  const latestDate = explicitTo || rows[rows.length - 1]?.date || null;
+  if (!latestDate) return rows.slice(-Math.max(1, maxDays));
+
+  const startDate = addDaysYmd(latestDate, -(Math.max(1, maxDays) - 1));
+  const filtered = rows.filter((r) => r.date >= startDate && r.date <= latestDate);
+
+  const meaningful = filtered.filter(isMeaningfulDailyRow);
 
   if (meaningful.length > 0) {
     return meaningful.slice(-Math.max(1, maxDays));
   }
 
-  return rows.slice(-Math.min(Math.max(1, maxDays), 7));
+  return filtered.slice(-Math.min(Math.max(1, maxDays), 7));
 }
 
 function trendWord(cur, prev) {
@@ -452,8 +479,8 @@ function trendWord(cur, prev) {
   return 'flat';
 }
 
-function buildDailyTrendPack(dailyRows, maxDays) {
-  const rows = trimDailyRows(dailyRows, maxDays);
+function buildDailyTrendPack(dailyRows, maxDays, explicitRange) {
+  const rows = trimDailyRows(dailyRows, maxDays, explicitRange);
 
   let prev = null;
   return rows.map((r) => {
@@ -754,7 +781,7 @@ function buildLlmHints(payload) {
   return uniqStrings(hints, 10);
 }
 
-function buildDataQuality(meta, datasets, payload) {
+function buildDataQuality(meta, datasets, payload, contextRangeDays) {
   const properties = Array.isArray(meta?.properties) ? meta.properties : [];
   const range = normalizeRange(meta?.range || {});
   const dsNames = (Array.isArray(datasets) ? datasets : []).map((d) => nonEmptyStr(d?.dataset)).filter(Boolean);
@@ -766,6 +793,9 @@ function buildDataQuality(meta, datasets, payload) {
       toNum(payload?.headline_kpis?.users) > 0,
     propertyCount: properties.length,
     range,
+    storageRangeDays: toNum(meta?.storageRangeDays) || null,
+    contextRangeDays: toNum(contextRangeDays) || toNum(meta?.contextRangeDays) || null,
+    windowType: nonEmptyStr(meta?.windowType) || 'context',
     datasetsPresent: {
       executive_summary: dsNames.includes('ga4.insights_summary'),
       channels: dsNames.includes('ga4.channels_top'),
@@ -815,6 +845,7 @@ function buildKpiDefinitions() {
 
 function formatGa4ForLlm({
   datasets = [],
+  contextRangeDays = 60,
   topChannels = 8,
   topDevices = 6,
   topLandingPages = 8,
@@ -827,6 +858,10 @@ function formatGa4ForLlm({
   const extracted = extractDatasets(map);
   const snapshotId = getSnapshotIdFromDatasets(datasets);
 
+  const normalizedRange = normalizeRange(meta?.range || {});
+  const effectiveContextRangeDays =
+    clampInt(contextRangeDays || meta?.contextRangeDays || normalizedRange?.days || 60, 7, 3650);
+
   const headline_kpis = buildHeadlineKpis(extracted.summary);
 
   const top_channels = buildTopChannels(extracted.channelsTop, clampInt(topChannels, 1, 20));
@@ -834,7 +869,11 @@ function formatGa4ForLlm({
   const top_landing_pages = buildTopLandingPages(extracted.landingPagesTop, clampInt(topLandingPages, 1, 20));
   const top_source_medium = buildTopSourceMedium(extracted.sourceMediumTop, clampInt(topSourceMedium, 1, 25));
   const top_events = buildTopEvents(extracted.eventsTop, clampInt(topEvents, 1, 25));
-  const daily_trends = buildDailyTrendPack(extracted.dailyTrends, clampInt(topTrendDays, 1, 90));
+  const daily_trends = buildDailyTrendPack(
+    extracted.dailyTrends,
+    clampInt(topTrendDays || effectiveContextRangeDays, 1, 90),
+    normalizedRange
+  );
 
   const optimization_signals = buildOptimizationSignals({
     optimizationSignalsRaw: extracted.optimizationSignalsRaw,
@@ -857,11 +896,10 @@ function formatGa4ForLlm({
   });
 
   const properties = Array.isArray(meta?.properties) ? meta.properties : [];
-  const range = normalizeRange(meta?.range || {});
   const generatedAt = meta?.generatedAt || new Date().toISOString();
 
   const payload = {
-    schema: 'adray.ga4.llm.v2',
+    schema: 'adray.ga4.llm.v3',
     source: 'ga4',
     generatedAt,
     propertyIds: properties.map((p) => nonEmptyStr(p?.id)).filter(Boolean),
@@ -872,7 +910,12 @@ function formatGa4ForLlm({
       currency: nonEmptyStr(p?.currencyCode) || null,
       timezone_name: nonEmptyStr(p?.timeZone) || null,
     })),
-    range,
+    range: normalizedRange,
+    context_window: {
+      rangeDays: effectiveContextRangeDays,
+      storageRangeDays: toNum(meta?.storageRangeDays) || null,
+      windowType: nonEmptyStr(meta?.windowType) || 'context',
+    },
     kpi_definitions: buildKpiDefinitions(),
     headline_kpis,
     comparison_windows: extracted.summary?.windows || {},
@@ -887,7 +930,7 @@ function formatGa4ForLlm({
   };
 
   payload.llm_hints = buildLlmHints(payload);
-  payload.data_quality = buildDataQuality(meta, datasets, payload);
+  payload.data_quality = buildDataQuality(meta, datasets, payload, effectiveContextRangeDays);
 
   return {
     ga4: payload,
@@ -901,100 +944,59 @@ function formatGa4ForLlm({
 
 function formatGa4ForLlmMini({
   datasets = [],
+  contextRangeDays = 60,
   topChannels = 5,
   topDevices = 4,
   topLandingPages = 5,
   topEvents = 6,
 } = {}) {
-  const map = getDatasetMap(datasets);
-  const meta = getMetaFromDatasets(map);
-  const extracted = extractDatasets(map);
-  const snapshotId = getSnapshotIdFromDatasets(datasets);
-
-  const headline_kpis = buildHeadlineKpis(extracted.summary);
-
-  const top_channels = buildTopChannels(extracted.channelsTop, clampInt(topChannels, 1, 10));
-  const top_devices = buildTopDevices(extracted.devicesTop, clampInt(topDevices, 1, 8));
-  const top_landing_pages = buildTopLandingPages(extracted.landingPagesTop, clampInt(topLandingPages, 1, 10));
-  const top_source_medium = buildTopSourceMedium(extracted.sourceMediumTop, 6);
-  const top_events = buildTopEvents(extracted.eventsTop, clampInt(topEvents, 1, 10));
-
-  const optimization_signals = buildOptimizationSignals({
-    optimizationSignalsRaw: extracted.optimizationSignalsRaw,
-    channelsTop: top_channels,
-    devicesTop: top_devices,
-    landingPagesTop: top_landing_pages,
-    sourceMediumTop: top_source_medium,
-    eventsTop: top_events,
-    summary: extracted.summary,
+  const full = formatGa4ForLlm({
+    datasets,
+    contextRangeDays,
+    topChannels: Math.max(topChannels, 5),
+    topDevices: Math.max(topDevices, 4),
+    topLandingPages: Math.max(topLandingPages, 5),
+    topSourceMedium: 6,
+    topEvents: Math.max(topEvents, 6),
+    topTrendDays: Math.min(Math.max(14, contextRangeDays), 30),
   });
 
-  const priority_summary = buildPrioritySummary({
-    summary: extracted.summary,
-    channelsTop: top_channels,
-    devicesTop: top_devices,
-    landingPagesTop: top_landing_pages,
-    sourceMediumTop: top_source_medium,
-    eventsTop: top_events,
-    optimizationSignals: optimization_signals,
-  });
-
-  const properties = Array.isArray(meta?.properties) ? meta.properties : [];
-  const range = normalizeRange(meta?.range || {});
-  const generatedAt = meta?.generatedAt || new Date().toISOString();
-
-  const payload = {
-    schema: 'adray.ga4.llm.v2',
-    source: 'ga4',
-    generatedAt,
-    propertyIds: properties.map((p) => nonEmptyStr(p?.id)).filter(Boolean),
-    propertyCount: properties.length,
-    properties: properties.map((p) => ({
-      id: nonEmptyStr(p?.id) || null,
-      name: nonEmptyStr(p?.name) || null,
-      currency: nonEmptyStr(p?.currencyCode) || null,
-      timezone_name: nonEmptyStr(p?.timeZone) || null,
-    })),
-    range,
-    data_quality: null,
-    kpi_definitions: buildKpiDefinitions(),
-    headline_kpis,
-    top_channels,
-    top_devices,
-    top_landing_pages,
-    top_source_medium,
-    top_events,
-    optimization_signals: {
-      winners: compactArray(optimization_signals?.winners || [], 4),
-      risks: compactArray(optimization_signals?.risks || [], 4),
-      quick_wins: compactArray(optimization_signals?.quick_wins || [], 4),
-      insights: compactArray(optimization_signals?.insights || [], 6),
-      recommendations: compactArray(optimization_signals?.recommendations || [], 6),
-    },
-    priority_summary: {
-      positives: compactArray(priority_summary?.positives || [], 5),
-      negatives: compactArray(priority_summary?.negatives || [], 5),
-      actions: compactArray(priority_summary?.actions || [], 6),
-    },
-    llm_hints: compactArray(buildLlmHints({
-      headline_kpis,
-      top_channels,
-      top_devices,
-      top_landing_pages,
-      top_source_medium,
-      optimization_signals,
-    }), 6),
-  };
-
-  payload.data_quality = buildDataQuality(meta, datasets, payload);
+  const payload = full?.ga4 || {};
+  const meta = full?.meta || {};
 
   return {
-    data: payload,
-    meta: {
-      snapshotId: snapshotId || null,
-      chunkCount: Array.isArray(datasets) ? datasets.length : 0,
-      datasets: (Array.isArray(datasets) ? datasets : []).map((d) => nonEmptyStr(d?.dataset)).filter(Boolean),
+    data: {
+      schema: payload.schema,
+      source: payload.source,
+      generatedAt: payload.generatedAt,
+      propertyIds: payload.propertyIds || [],
+      propertyCount: payload.propertyCount || 0,
+      properties: payload.properties || [],
+      range: payload.range || null,
+      context_window: payload.context_window || null,
+      data_quality: payload.data_quality || null,
+      kpi_definitions: payload.kpi_definitions || {},
+      headline_kpis: payload.headline_kpis || {},
+      top_channels: compactArray(payload.top_channels || [], 5),
+      top_devices: compactArray(payload.top_devices || [], 4),
+      top_landing_pages: compactArray(payload.top_landing_pages || [], 5),
+      top_source_medium: compactArray(payload.top_source_medium || [], 6),
+      top_events: compactArray(payload.top_events || [], 6),
+      optimization_signals: {
+        winners: compactArray(payload?.optimization_signals?.winners || [], 4),
+        risks: compactArray(payload?.optimization_signals?.risks || [], 4),
+        quick_wins: compactArray(payload?.optimization_signals?.quick_wins || [], 4),
+        insights: compactArray(payload?.optimization_signals?.insights || [], 6),
+        recommendations: compactArray(payload?.optimization_signals?.recommendations || [], 6),
+      },
+      priority_summary: {
+        positives: compactArray(payload?.priority_summary?.positives || [], 5),
+        negatives: compactArray(payload?.priority_summary?.negatives || [], 5),
+        actions: compactArray(payload?.priority_summary?.actions || [], 6),
+      },
+      llm_hints: compactArray(payload?.llm_hints || [], 6),
     },
+    meta,
   };
 }
 

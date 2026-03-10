@@ -29,6 +29,7 @@ try {
 }
 
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
+const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(process.env.MCP_CONTEXT_RANGE_DAYS || 60, 7, 365);
 
 function safeStr(v) {
   return v == null ? '' : String(v);
@@ -37,6 +38,12 @@ function safeStr(v) {
 function toNum(v, fallback = 0) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function clampInt(n, min, max) {
+  const x = Number(n || 0);
+  if (!Number.isFinite(x)) return min;
+  return Math.max(min, Math.min(max, Math.trunc(x)));
 }
 
 function nowIso() {
@@ -86,6 +93,30 @@ function isChunkDoc(doc) {
   return !!doc.dataset;
 }
 
+function resolveRequestedContextRangeDays(root, requested) {
+  const explicit = clampInt(requested, 0, 365);
+  if (explicit > 0) return explicit;
+
+  const fromRoot =
+    toNum(root?.coverage?.contextDefaultRangeDays) ||
+    toNum(root?.coverage?.defaultRangeDays) ||
+    toNum(root?.sources?.metaAds?.contextDefaultRangeDays) ||
+    toNum(root?.sources?.googleAds?.contextDefaultRangeDays) ||
+    toNum(root?.sources?.ga4?.contextDefaultRangeDays);
+
+  if (fromRoot > 0) return clampInt(fromRoot, 7, 365);
+  return DEFAULT_CONTEXT_RANGE_DAYS;
+}
+
+function getStorageRangeDaysFromRoot(root) {
+  const n =
+    toNum(root?.coverage?.storageRangeDays) ||
+    toNum(root?.sources?.metaAds?.storageRangeDays) ||
+    toNum(root?.sources?.googleAds?.storageRangeDays) ||
+    toNum(root?.sources?.ga4?.storageRangeDays);
+  return n > 0 ? n : null;
+}
+
 async function findRoot(userId) {
   const docs = await McpData.find({ userId })
     .sort({ updatedAt: -1, createdAt: -1 })
@@ -124,6 +155,43 @@ async function findLatestSnapshotId(userId, source = 'metaAds') {
   return latestChunk?.snapshotId || null;
 }
 
+function getAllowedDatasetsForSource(source) {
+  if (source === 'metaAds') {
+    return new Set([
+      'meta.insights_summary',
+      'meta.campaigns_ranked',
+      'meta.breakdowns_top',
+      'meta.optimization_signals',
+      'meta.daily_trends_ai',
+    ]);
+  }
+
+  if (source === 'googleAds') {
+    return new Set([
+      'google.insights_summary',
+      'google.campaigns_ranked',
+      'google.breakdowns_top',
+      'google.optimization_signals',
+      'google.daily_trends_ai',
+    ]);
+  }
+
+  if (source === 'ga4') {
+    return new Set([
+      'ga4.insights_summary',
+      'ga4.channels_top',
+      'ga4.devices_top',
+      'ga4.landing_pages_top',
+      'ga4.source_medium_top',
+      'ga4.events_top',
+      'ga4.optimization_signals',
+      'ga4.daily_trends_ai',
+    ]);
+  }
+
+  return null;
+}
+
 async function findSourceChunks(userId, source, snapshotId, datasetPrefix) {
   const query = {
     userId,
@@ -137,49 +205,57 @@ async function findSourceChunks(userId, source, snapshotId, datasetPrefix) {
     .sort({ createdAt: 1, updatedAt: 1 })
     .lean();
 
-  return docs.filter(isChunkDoc);
+  const allowed = getAllowedDatasetsForSource(source);
+  return docs
+    .filter(isChunkDoc)
+    .filter((doc) => !allowed || allowed.has(String(doc?.dataset || '')));
 }
 
-function buildMetaContext(chunks) {
+function buildMetaContext(chunks, contextRangeDays) {
   if (!chunks?.length) return null;
 
   return {
     full: formatMetaForLlm({
       datasets: chunks,
+      contextRangeDays,
       topCampaigns: 12,
       topBreakdowns: 5,
       topTrendCampaigns: 5,
     }),
     mini: formatMetaForLlmMini({
       datasets: chunks,
+      contextRangeDays,
       topCampaigns: 6,
     }),
   };
 }
 
-function buildGoogleAdsContext(chunks) {
+function buildGoogleAdsContext(chunks, contextRangeDays) {
   if (!chunks?.length) return null;
 
   return {
     full: formatGoogleAdsForLlm({
       datasets: chunks,
+      contextRangeDays,
       topCampaigns: 12,
       topBreakdowns: 5,
       topTrendCampaigns: 5,
     }),
     mini: formatGoogleAdsForLlmMini({
       datasets: chunks,
+      contextRangeDays,
       topCampaigns: 6,
     }),
   };
 }
 
-function buildGa4Context(chunks) {
+function buildGa4Context(chunks, contextRangeDays) {
   if (!chunks?.length) return null;
 
   return {
     full: formatGa4ForLlm({
       datasets: chunks,
+      contextRangeDays,
       topChannels: 8,
       topDevices: 6,
       topLandingPages: 8,
@@ -189,6 +265,7 @@ function buildGa4Context(chunks) {
     }),
     mini: formatGa4ForLlmMini({
       datasets: chunks,
+      contextRangeDays,
       topChannels: 5,
       topDevices: 4,
       topLandingPages: 5,
@@ -197,7 +274,15 @@ function buildGa4Context(chunks) {
   };
 }
 
-function buildUnifiedBaseContext({ root, snapshotId, metaPack, googlePack, ga4Pack }) {
+function buildUnifiedBaseContext({
+  root,
+  snapshotId,
+  contextRangeDays,
+  storageRangeDays,
+  metaPack,
+  googlePack,
+  ga4Pack,
+}) {
   const sources = root?.sources || {};
 
   return {
@@ -205,6 +290,11 @@ function buildUnifiedBaseContext({ root, snapshotId, metaPack, googlePack, ga4Pa
     generatedAt: nowIso(),
     snapshotId: snapshotId || null,
     coverage: root?.coverage || null,
+    contextWindow: {
+      rangeDays: contextRangeDays || DEFAULT_CONTEXT_RANGE_DAYS,
+      storageRangeDays: storageRangeDays || null,
+      builtAt: nowIso(),
+    },
     sources: {
       metaAds: {
         connected: !!sources?.metaAds?.connected,
@@ -213,14 +303,18 @@ function buildUnifiedBaseContext({ root, snapshotId, metaPack, googlePack, ga4Pa
         name: sources?.metaAds?.name || null,
         currency: sources?.metaAds?.currency || null,
         timezone: sources?.metaAds?.timezone || null,
+        storageRangeDays: toNum(sources?.metaAds?.storageRangeDays) || storageRangeDays || null,
+        contextDefaultRangeDays: toNum(sources?.metaAds?.contextDefaultRangeDays) || contextRangeDays || null,
       },
       googleAds: {
         connected: !!sources?.googleAds?.connected,
         ready: !!sources?.googleAds?.ready,
-        customerId: sources?.googleAds?.customerId || null,
+        customerId: sources?.googleAds?.customerId || sources?.googleAds?.accountId || null,
         name: sources?.googleAds?.name || null,
         currency: sources?.googleAds?.currency || null,
         timezone: sources?.googleAds?.timezone || null,
+        storageRangeDays: toNum(sources?.googleAds?.storageRangeDays) || storageRangeDays || null,
+        contextDefaultRangeDays: toNum(sources?.googleAds?.contextDefaultRangeDays) || contextRangeDays || null,
       },
       ga4: {
         connected: !!sources?.ga4?.connected,
@@ -229,6 +323,8 @@ function buildUnifiedBaseContext({ root, snapshotId, metaPack, googlePack, ga4Pa
         name: sources?.ga4?.name || null,
         currency: sources?.ga4?.currency || null,
         timezone: sources?.ga4?.timezone || null,
+        storageRangeDays: toNum(sources?.ga4?.storageRangeDays) || storageRangeDays || null,
+        contextDefaultRangeDays: toNum(sources?.ga4?.contextDefaultRangeDays) || contextRangeDays || null,
       },
     },
     inputs: {
@@ -473,6 +569,7 @@ function buildFallbackEncodedContext(base) {
     schema: 'adray.encoded.context.v2',
     providerAgnostic: true,
     generatedAt: nowIso(),
+    contextWindow: base?.contextWindow || null,
 
     summary: {
       executive_summary: executiveSummary,
@@ -582,6 +679,7 @@ async function enrichWithOpenAI(base) {
   const inputPayload = {
     schema: base?.schema || 'adray.unified.context.v2',
     snapshotId: base?.snapshotId || null,
+    contextWindow: base?.contextWindow || null,
     sources: base?.sources || {},
     inputs: base?.inputs || {},
   };
@@ -593,7 +691,8 @@ async function enrichWithOpenAI(base) {
     'Preserve specific campaign names, active/paused status, KPIs, winners, risks, channels, devices, landing pages, source/medium signals, and actionable recommendations.',
     'Do not over-compress the information.',
     'The output must remain rich enough so downstream LLMs can answer campaign-level and KPI-level questions.',
-    'Output keys exactly as requested.'
+    'Respect the provided context window and do not imply that older historical storage was used for reasoning unless the input explicitly contains it.',
+    'Output keys exactly as requested.',
   ].join(' ');
 
   const userPrompt = JSON.stringify({
@@ -606,11 +705,13 @@ async function enrichWithOpenAI(base) {
       'Keep the payload provider-agnostic but do not discard useful provider-specific details.',
       'llm_context_block should be detailed and useful for analysis, not just a short summary.',
       'llm_context_block_mini should remain brief but still mention strongest campaigns or strongest channel drivers when available.',
+      'Respect the contextWindow metadata from the input.',
     ],
     required_schema: {
       schema: 'adray.encoded.context.v2',
       providerAgnostic: true,
       generatedAt: 'ISO datetime string',
+      contextWindow: 'object|null',
       summary: {
         executive_summary: 'string',
         business_state: 'string',
@@ -659,6 +760,7 @@ async function enrichWithOpenAI(base) {
         schema: 'adray.encoded.context.v2',
         providerAgnostic: true,
         generatedAt: nowIso(),
+        contextWindow: base?.contextWindow || null,
         ...parsed,
       },
     };
@@ -697,6 +799,8 @@ function buildStatusResponse(root) {
       startedAt: state?.startedAt || null,
       finishedAt: state?.finishedAt || null,
       snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
+      contextRangeDays: toNum(state?.contextRangeDays) || null,
+      storageRangeDays: toNum(state?.storageRangeDays) || null,
       hasEncodedPayload: !!state?.encodedPayload,
       providerAgnostic: !!state?.encodedPayload?.providerAgnostic,
       usedOpenAI: !!state?.usedOpenAI,
@@ -727,6 +831,8 @@ function buildSharedPayload(root, provider) {
       providerLabel: providerName,
       snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
       generatedAt: state?.finishedAt || payload?.generatedAt || null,
+      contextRangeDays: toNum(state?.contextRangeDays) || null,
+      storageRangeDays: toNum(state?.storageRangeDays) || null,
       providerAgnostic: !!payload?.providerAgnostic,
       usedOpenAI: !!state?.usedOpenAI,
       model: state?.model || null,
@@ -749,6 +855,9 @@ router.post('/build', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
 
+    const contextRangeDays = resolveRequestedContextRangeDays(root, req.body?.contextRangeDays);
+    const storageRangeDays = getStorageRangeDaysFromRoot(root);
+
     const snapshotId =
       safeStr(req.body?.snapshotId) ||
       root?.latestSnapshotId ||
@@ -764,6 +873,8 @@ router.post('/build', async (req, res) => {
         startedAt: nowIso(),
         finishedAt: null,
         snapshotId,
+        contextRangeDays,
+        storageRangeDays,
         error: null,
         usedOpenAI: false,
         model: null,
@@ -785,17 +896,21 @@ router.post('/build', async (req, res) => {
         stage: 'compacting_sources',
         startedAt: root?.aiContext?.startedAt || nowIso(),
         snapshotId,
+        contextRangeDays,
+        storageRangeDays,
         error: null,
       },
     });
 
-    const metaPack = buildMetaContext(metaChunks);
-    const googlePack = buildGoogleAdsContext(googleChunks);
-    const ga4Pack = buildGa4Context(ga4Chunks);
+    const metaPack = buildMetaContext(metaChunks, contextRangeDays);
+    const googlePack = buildGoogleAdsContext(googleChunks, contextRangeDays);
+    const ga4Pack = buildGa4Context(ga4Chunks, contextRangeDays);
 
     const unifiedBase = buildUnifiedBaseContext({
       root,
       snapshotId,
+      contextRangeDays,
+      storageRangeDays,
       metaPack,
       googlePack,
       ga4Pack,
@@ -809,6 +924,8 @@ router.post('/build', async (req, res) => {
         stage: 'encoding_context',
         startedAt: root?.aiContext?.startedAt || nowIso(),
         snapshotId,
+        contextRangeDays,
+        storageRangeDays,
         unifiedBase,
         error: null,
       },
@@ -827,6 +944,8 @@ router.post('/build', async (req, res) => {
         startedAt: prevAi?.startedAt || nowIso(),
         finishedAt: nowIso(),
         snapshotId,
+        contextRangeDays,
+        storageRangeDays,
         error: null,
         unifiedBase,
         encodedPayload: encoded.payload,
@@ -844,6 +963,8 @@ router.post('/build', async (req, res) => {
         progress: freshRoot?.aiContext?.progress || 100,
         stage: freshRoot?.aiContext?.stage || 'completed',
         snapshotId,
+        contextRangeDays: toNum(freshRoot?.aiContext?.contextRangeDays) || contextRangeDays,
+        storageRangeDays: toNum(freshRoot?.aiContext?.storageRangeDays) || storageRangeDays,
         usedOpenAI: !!freshRoot?.aiContext?.usedOpenAI,
         model: freshRoot?.aiContext?.model || null,
         hasEncodedPayload: !!freshRoot?.aiContext?.encodedPayload,
@@ -940,6 +1061,8 @@ router.get('/latest', async (req, res) => {
         progress: state?.progress || 100,
         stage: state?.stage || 'completed',
         snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
+        contextRangeDays: toNum(state?.contextRangeDays) || null,
+        storageRangeDays: toNum(state?.storageRangeDays) || null,
         usedOpenAI: !!state?.usedOpenAI,
         model: state?.model || null,
         generatedAt: state?.finishedAt || null,

@@ -20,6 +20,18 @@ const REDIS_URL = process.env.REDIS_URL || '';
 const QUEUE_NAME = process.env.MCP_QUEUE_NAME || 'mcp-collect';
 const BULLMQ_PREFIX = process.env.BULLMQ_PREFIX || 'bull';
 
+const DEFAULT_STORAGE_RANGE_DAYS = clampInt(
+  process.env.MCP_STORAGE_RANGE_DAYS || 730,
+  30,
+  3650
+);
+
+const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(
+  process.env.MCP_CONTEXT_RANGE_DAYS || 60,
+  7,
+  365
+);
+
 if (!MONGO_URI) {
   console.error('[mcpWorker] Missing MONGO_URI in environment');
   process.exit(1);
@@ -36,6 +48,17 @@ const connection = new IORedis(REDIS_URL, { maxRetriesPerRequest: null });
  * ========================= */
 function ymdUTC(d = new Date()) {
   return new Date(d).toISOString().slice(0, 10);
+}
+
+function makeSnapshotId(d = new Date()) {
+  const iso = new Date(d).toISOString().replace(/[:.]/g, '-');
+  return `snap_${iso}`;
+}
+
+function clampInt(n, min, max) {
+  const x = Number(n || 0);
+  if (!Number.isFinite(x)) return min;
+  return Math.max(min, Math.min(max, Math.trunc(x)));
 }
 
 function toNum(v) {
@@ -72,7 +95,10 @@ function inferRowsFromDataset(datasetName, data) {
   if (ds === 'meta.breakdowns_top') {
     return (
       (Array.isArray(data?.device_top) ? data.device_top.length : 0) +
-      (Array.isArray(data?.placement_top) ? data.placement_top.length : 0)
+      (Array.isArray(data?.placement_top) ? data.placement_top.length : 0) +
+      (Array.isArray(data?.country_top) ? data.country_top.length : 0) +
+      (Array.isArray(data?.region_top) ? data.region_top.length : 0) +
+      (Array.isArray(data?.creative_type_top) ? data.creative_type_top.length : 0)
     );
   }
 
@@ -92,6 +118,14 @@ function inferRowsFromDataset(datasetName, data) {
       (Array.isArray(data?.totals_by_day) ? data.totals_by_day.length : 0) +
       (Array.isArray(data?.campaigns_daily) ? data.campaigns_daily.length : 0)
     );
+  }
+
+  if (ds === 'meta.history.daily_account_totals') {
+    return Array.isArray(data?.totals_by_day) ? data.totals_by_day.length : 0;
+  }
+
+  if (ds.startsWith('meta.history.daily_campaigns.')) {
+    return Array.isArray(data?.campaigns_daily) ? data.campaigns_daily.length : 0;
   }
 
   /* ================= GOOGLE ADS ================= */
@@ -196,7 +230,75 @@ function buildRootStatsFromDatasetSummary(datasetSummary) {
   };
 }
 
-function extractMetaRootPatchFromResult(r, days) {
+function pickCoverageRange(result, summaryDs) {
+  return {
+    from:
+      safeString(result?.timeRange?.from) ||
+      safeString(result?.timeRange?.since) ||
+      safeString(result?.range?.from) ||
+      safeString(summaryDs?.range?.from) ||
+      null,
+    to:
+      safeString(result?.timeRange?.to) ||
+      safeString(result?.timeRange?.until) ||
+      safeString(result?.range?.to) ||
+      safeString(summaryDs?.range?.to) ||
+      null,
+    tz:
+      safeString(result?.timeRange?.tz) ||
+      safeString(result?.range?.tz) ||
+      safeString(summaryDs?.range?.tz) ||
+      null,
+  };
+}
+
+function pickStorageCoverageRange(result, summaryDs) {
+  return {
+    from:
+      safeString(result?.storageTimeRange?.from) ||
+      safeString(result?.storageTimeRange?.since) ||
+      safeString(summaryDs?.data?.meta?.range?.from) ||
+      safeString(summaryDs?.range?.from) ||
+      null,
+    to:
+      safeString(result?.storageTimeRange?.to) ||
+      safeString(result?.storageTimeRange?.until) ||
+      safeString(summaryDs?.data?.meta?.range?.to) ||
+      safeString(summaryDs?.range?.to) ||
+      null,
+    tz:
+      safeString(result?.storageTimeRange?.tz) ||
+      safeString(summaryDs?.data?.meta?.range?.tz) ||
+      safeString(summaryDs?.range?.tz) ||
+      null,
+  };
+}
+
+function pickContextCoverageRange(result, summaryDs) {
+  return {
+    from:
+      safeString(result?.contextTimeRange?.from) ||
+      safeString(result?.contextTimeRange?.since) ||
+      safeString(result?.timeRange?.from) ||
+      safeString(result?.timeRange?.since) ||
+      safeString(summaryDs?.range?.from) ||
+      null,
+    to:
+      safeString(result?.contextTimeRange?.to) ||
+      safeString(result?.contextTimeRange?.until) ||
+      safeString(result?.timeRange?.to) ||
+      safeString(result?.timeRange?.until) ||
+      safeString(summaryDs?.range?.to) ||
+      null,
+    tz:
+      safeString(result?.contextTimeRange?.tz) ||
+      safeString(result?.timeRange?.tz) ||
+      safeString(summaryDs?.range?.tz) ||
+      null,
+  };
+}
+
+function extractMetaRootPatchFromResult(r, ranges = {}) {
   const summaryDs = Array.isArray(r?.datasets)
     ? r.datasets.find((x) => x?.dataset === 'meta.insights_summary') || r.datasets[0]
     : null;
@@ -205,17 +307,21 @@ function extractMetaRootPatchFromResult(r, days) {
   const accounts = Array.isArray(meta?.accounts) ? meta.accounts : [];
   const firstAccount = accounts[0] || null;
 
-  const range = r?.timeRange
-    ? {
-        from: safeString(r.timeRange.from) || safeString(r.timeRange.since) || null,
-        to: safeString(r.timeRange.to) || safeString(r.timeRange.until) || null,
-        tz: safeString(meta?.range?.tz) || safeString(summaryDs?.range?.tz) || null,
-      }
-    : {
-        from: safeString(summaryDs?.range?.from) || null,
-        to: safeString(summaryDs?.range?.to) || null,
-        tz: safeString(summaryDs?.range?.tz) || null,
-      };
+  const coverageRange = pickCoverageRange(r, summaryDs);
+  const storageRange = pickStorageCoverageRange(r, summaryDs);
+  const contextRange = pickContextCoverageRange(r, summaryDs);
+
+  const storageRangeDays =
+    toNum(r?.storageRangeDays) ||
+    toNum(meta?.storageRangeDays) ||
+    toNum(ranges?.storageRangeDays) ||
+    DEFAULT_STORAGE_RANGE_DAYS;
+
+  const contextRangeDays =
+    toNum(r?.contextRangeDays) ||
+    toNum(meta?.contextRangeDays) ||
+    toNum(ranges?.contextRangeDays) ||
+    DEFAULT_CONTEXT_RANGE_DAYS;
 
   const accountId =
     safeString(firstAccount?.id) ||
@@ -228,7 +334,9 @@ function extractMetaRootPatchFromResult(r, days) {
   const timezone =
     safeString(firstAccount?.timezone_name) ||
     safeString(firstAccount?.timezone) ||
-    safeString(range?.tz) ||
+    safeString(contextRange?.tz) ||
+    safeString(storageRange?.tz) ||
+    safeString(coverageRange?.tz) ||
     null;
 
   return {
@@ -239,7 +347,9 @@ function extractMetaRootPatchFromResult(r, days) {
       ready: true,
       lastError: null,
       lastSyncAt: new Date(),
-      rangeDays: days,
+      rangeDays: storageRangeDays,
+      storageRangeDays,
+      contextDefaultRangeDays: contextRangeDays,
       accountId,
       name,
       currency,
@@ -248,9 +358,21 @@ function extractMetaRootPatchFromResult(r, days) {
     rootPatch: {
       latestSnapshotId: null,
       coverage: {
-        range,
-        defaultRangeDays: days,
-        granularity: ['summary', 'ranked_campaigns', 'breakdown', 'signals', 'daily_ai'],
+        range: coverageRange,
+        storageRange,
+        contextRange,
+        defaultRangeDays: contextRangeDays,
+        storageRangeDays,
+        contextDefaultRangeDays: contextRangeDays,
+        granularity: [
+          'summary',
+          'ranked_campaigns',
+          'breakdown',
+          'signals',
+          'daily_ai',
+          'history_daily_totals',
+          'history_daily_campaigns',
+        ],
       },
     },
     metaSummary: {
@@ -258,12 +380,16 @@ function extractMetaRootPatchFromResult(r, days) {
       name,
       currency,
       timezone,
-      range,
+      range: coverageRange,
+      storageRange,
+      contextRange,
+      storageRangeDays,
+      contextRangeDays,
     },
   };
 }
 
-function extractGoogleRootPatchFromResult(r, days) {
+function extractGoogleRootPatchFromResult(r, ranges = {}) {
   const summaryDs = Array.isArray(r?.datasets)
     ? r.datasets.find((x) => x?.dataset === 'google.insights_summary') || r.datasets[0]
     : null;
@@ -272,19 +398,23 @@ function extractGoogleRootPatchFromResult(r, days) {
   const accounts = Array.isArray(meta?.accounts) ? meta.accounts : [];
   const firstAccount = accounts[0] || null;
 
-  const range = r?.timeRange
-    ? {
-        from: safeString(r.timeRange.from) || safeString(r.timeRange.since) || null,
-        to: safeString(r.timeRange.to) || safeString(r.timeRange.until) || null,
-        tz: safeString(meta?.range?.tz) || safeString(summaryDs?.range?.tz) || null,
-      }
-    : {
-        from: safeString(summaryDs?.range?.from) || null,
-        to: safeString(summaryDs?.range?.to) || null,
-        tz: safeString(summaryDs?.range?.tz) || null,
-      };
+  const coverageRange = pickCoverageRange(r, summaryDs);
+  const storageRange = pickStorageCoverageRange(r, summaryDs);
+  const contextRange = pickContextCoverageRange(r, summaryDs);
 
-  const accountId =
+  const storageRangeDays =
+    toNum(r?.storageRangeDays) ||
+    toNum(meta?.storageRangeDays) ||
+    toNum(ranges?.storageRangeDays) ||
+    DEFAULT_STORAGE_RANGE_DAYS;
+
+  const contextRangeDays =
+    toNum(r?.contextRangeDays) ||
+    toNum(meta?.contextRangeDays) ||
+    toNum(ranges?.contextRangeDays) ||
+    DEFAULT_CONTEXT_RANGE_DAYS;
+
+  const customerId =
     safeString(firstAccount?.id) ||
     (Array.isArray(r?.accountIds) && r.accountIds.length ? safeString(r.accountIds[0]) : null) ||
     safeString(r?.defaultCustomerId) ||
@@ -296,7 +426,9 @@ function extractGoogleRootPatchFromResult(r, days) {
     safeString(firstAccount?.timezone_name) ||
     safeString(firstAccount?.timezone) ||
     safeString(r?.timeZone) ||
-    safeString(range?.tz) ||
+    safeString(contextRange?.tz) ||
+    safeString(storageRange?.tz) ||
+    safeString(coverageRange?.tz) ||
     null;
 
   return {
@@ -307,8 +439,11 @@ function extractGoogleRootPatchFromResult(r, days) {
       ready: true,
       lastError: null,
       lastSyncAt: new Date(),
-      rangeDays: days,
-      accountId,
+      rangeDays: storageRangeDays,
+      storageRangeDays,
+      contextDefaultRangeDays: contextRangeDays,
+      customerId,
+      accountId: customerId,
       name,
       currency,
       timezone,
@@ -316,22 +451,30 @@ function extractGoogleRootPatchFromResult(r, days) {
     rootPatch: {
       latestSnapshotId: null,
       coverage: {
-        range,
-        defaultRangeDays: days,
+        range: coverageRange,
+        storageRange,
+        contextRange,
+        defaultRangeDays: contextRangeDays,
+        storageRangeDays,
+        contextDefaultRangeDays: contextRangeDays,
         granularity: ['summary', 'ranked_campaigns', 'breakdown', 'signals', 'daily_ai'],
       },
     },
     metaSummary: {
-      accountId,
+      customerId,
       name,
       currency,
       timezone,
-      range,
+      range: coverageRange,
+      storageRange,
+      contextRange,
+      storageRangeDays,
+      contextRangeDays,
     },
   };
 }
 
-function extractGa4RootPatchFromResult(r, days) {
+function extractGa4RootPatchFromResult(r, ranges = {}) {
   const summaryDs = Array.isArray(r?.datasets)
     ? r.datasets.find((x) => x?.dataset === 'ga4.insights_summary') || r.datasets[0]
     : null;
@@ -340,18 +483,21 @@ function extractGa4RootPatchFromResult(r, days) {
   const properties = Array.isArray(meta?.properties) ? meta.properties : [];
   const firstProperty = properties[0] || null;
 
-  const range =
-    r?.range
-      ? {
-          from: safeString(r.range.from) || null,
-          to: safeString(r.range.to) || null,
-          tz: safeString(r.range.tz) || safeString(meta?.range?.tz) || safeString(summaryDs?.range?.tz) || null,
-        }
-      : {
-          from: safeString(summaryDs?.range?.from) || safeString(meta?.range?.from) || null,
-          to: safeString(summaryDs?.range?.to) || safeString(meta?.range?.to) || null,
-          tz: safeString(summaryDs?.range?.tz) || safeString(meta?.range?.tz) || null,
-        };
+  const coverageRange = pickCoverageRange(r, summaryDs);
+  const storageRange = pickStorageCoverageRange(r, summaryDs);
+  const contextRange = pickContextCoverageRange(r, summaryDs);
+
+  const storageRangeDays =
+    toNum(r?.storageRangeDays) ||
+    toNum(meta?.storageRangeDays) ||
+    toNum(ranges?.storageRangeDays) ||
+    DEFAULT_STORAGE_RANGE_DAYS;
+
+  const contextRangeDays =
+    toNum(r?.contextRangeDays) ||
+    toNum(meta?.contextRangeDays) ||
+    toNum(ranges?.contextRangeDays) ||
+    DEFAULT_CONTEXT_RANGE_DAYS;
 
   const propertyId =
     safeString(firstProperty?.id) ||
@@ -363,7 +509,9 @@ function extractGa4RootPatchFromResult(r, days) {
   const currency = safeString(firstProperty?.currencyCode) || null;
   const timezone =
     safeString(firstProperty?.timeZone) ||
-    safeString(range?.tz) ||
+    safeString(contextRange?.tz) ||
+    safeString(storageRange?.tz) ||
+    safeString(coverageRange?.tz) ||
     null;
 
   return {
@@ -374,7 +522,9 @@ function extractGa4RootPatchFromResult(r, days) {
       ready: true,
       lastError: null,
       lastSyncAt: new Date(),
-      rangeDays: days,
+      rangeDays: storageRangeDays,
+      storageRangeDays,
+      contextDefaultRangeDays: contextRangeDays,
       propertyId,
       name,
       currency,
@@ -383,8 +533,12 @@ function extractGa4RootPatchFromResult(r, days) {
     rootPatch: {
       latestSnapshotId: null,
       coverage: {
-        range,
-        defaultRangeDays: days,
+        range: coverageRange,
+        storageRange,
+        contextRange,
+        defaultRangeDays: contextRangeDays,
+        storageRangeDays,
+        contextDefaultRangeDays: contextRangeDays,
         granularity: [
           'summary',
           'channels',
@@ -402,24 +556,47 @@ function extractGa4RootPatchFromResult(r, days) {
       name,
       currency,
       timezone,
-      range,
+      range: coverageRange,
+      storageRange,
+      contextRange,
+      storageRangeDays,
+      contextRangeDays,
     },
   };
 }
 
-async function resolveRangeDaysByPlan(userId, requestedDays) {
-  if (requestedDays) return Number(requestedDays);
+async function resolveContextRangeDaysByPlan(userId, requestedDays) {
+  if (requestedDays) {
+    return clampInt(requestedDays, 7, 365);
+  }
+
+  const envDefault = clampInt(
+    process.env.MCP_CONTEXT_RANGE_DAYS || DEFAULT_CONTEXT_RANGE_DAYS,
+    7,
+    365
+  );
+  if (envDefault) return envDefault;
 
   const u = await User.findById(userId).select('plan').lean();
   const plan = String(u?.plan || 'gratis').toLowerCase();
 
   if (plan === 'gratis' || plan === 'free') return 60;
-
   if (plan === 'pro' || plan === 'crecimiento' || plan === 'growth' || plan === 'enterprise') {
-    return 90;
+    return 60;
   }
 
   return 60;
+}
+
+async function resolveStorageRangeDays(_userId, requestedDays) {
+  if (requestedDays) {
+    return clampInt(requestedDays, 30, 3650);
+  }
+  return clampInt(
+    process.env.MCP_STORAGE_RANGE_DAYS || DEFAULT_STORAGE_RANGE_DAYS,
+    30,
+    3650
+  );
 }
 
 async function saveCollectorDatasets({ userId, snapshotId, datasets }) {
@@ -472,8 +649,8 @@ async function finalizeRootFromCollector({
   });
 }
 
-async function runMetaJob({ userId, rangeDays }) {
-  const snapshotId = `snap_${ymdUTC()}`;
+async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
+  const snapshotId = makeSnapshotId();
 
   await McpData.patchRootSource(userId, 'metaAds', {
     connected: true,
@@ -482,15 +659,20 @@ async function runMetaJob({ userId, rangeDays }) {
     lastError: null,
   });
 
-  const days = await resolveRangeDaysByPlan(userId, rangeDays);
+  const storageDays = await resolveStorageRangeDays(userId, storageRangeDays);
+  const contextDays = await resolveContextRangeDaysByPlan(userId, contextRangeDays);
 
   console.log('[mcpWorker] runMetaJob:start', {
     userId: String(userId),
     snapshotId,
-    rangeDays: days,
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
   });
 
-  const r = await collectMeta(userId, { rangeDays: days });
+  const r = await collectMeta(userId, {
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
+  });
 
   console.log('[mcpWorker] collectMeta:result', {
     userId: String(userId),
@@ -499,6 +681,8 @@ async function runMetaJob({ userId, rangeDays }) {
     datasetsCount: Array.isArray(r?.datasets) ? r.datasets.length : 0,
     accountIds: Array.isArray(r?.accountIds) ? r.accountIds : [],
     timeRange: r?.timeRange || null,
+    storageTimeRange: r?.storageTimeRange || null,
+    contextTimeRange: r?.contextTimeRange || null,
   });
 
   if (!r?.ok) {
@@ -508,7 +692,9 @@ async function runMetaJob({ userId, rangeDays }) {
       ready: false,
       lastError: r?.reason || 'META_COLLECT_FAILED',
       lastSyncAt: null,
-      rangeDays: days,
+      rangeDays: storageDays,
+      storageRangeDays: storageDays,
+      contextDefaultRangeDays: contextDays,
     });
 
     throw new Error(r?.reason || 'META_COLLECT_FAILED');
@@ -520,7 +706,10 @@ async function runMetaJob({ userId, rangeDays }) {
     datasets: r.datasets || [],
   });
 
-  const extractedRoot = extractMetaRootPatchFromResult(r, days);
+  const extractedRoot = extractMetaRootPatchFromResult(r, {
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
+  });
 
   await finalizeRootFromCollector({
     userId,
@@ -532,8 +721,8 @@ async function runMetaJob({ userId, rangeDays }) {
   return { ok: true, snapshotId, saved: (r.datasets || []).length };
 }
 
-async function runGoogleAdsJob({ userId, rangeDays, accountId }) {
-  const snapshotId = `snap_${ymdUTC()}`;
+async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, accountId }) {
+  const snapshotId = makeSnapshotId();
 
   await McpData.patchRootSource(userId, 'googleAds', {
     connected: true,
@@ -542,17 +731,19 @@ async function runGoogleAdsJob({ userId, rangeDays, accountId }) {
     lastError: null,
   });
 
-  const days = await resolveRangeDaysByPlan(userId, rangeDays);
+  const storageDays = await resolveStorageRangeDays(userId, storageRangeDays);
+  const contextDays = await resolveContextRangeDaysByPlan(userId, contextRangeDays);
 
   console.log('[mcpWorker] runGoogleAdsJob:start', {
     userId: String(userId),
     snapshotId,
-    rangeDays: days,
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
     accountId: safeString(accountId) || null,
   });
 
   const r = await collectGoogle(userId, {
-    rangeDays: days,
+    rangeDays: contextDays,
     account_id: safeString(accountId) || undefined,
   });
 
@@ -572,7 +763,9 @@ async function runGoogleAdsJob({ userId, rangeDays, accountId }) {
       ready: false,
       lastError: r?.reason || 'GOOGLEADS_COLLECT_FAILED',
       lastSyncAt: null,
-      rangeDays: days,
+      rangeDays: storageDays,
+      storageRangeDays: storageDays,
+      contextDefaultRangeDays: contextDays,
     });
 
     throw new Error(r?.reason || 'GOOGLEADS_COLLECT_FAILED');
@@ -584,7 +777,10 @@ async function runGoogleAdsJob({ userId, rangeDays, accountId }) {
     datasets: r.datasets || [],
   });
 
-  const extractedRoot = extractGoogleRootPatchFromResult(r, days);
+  const extractedRoot = extractGoogleRootPatchFromResult(r, {
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
+  });
 
   await finalizeRootFromCollector({
     userId,
@@ -596,8 +792,8 @@ async function runGoogleAdsJob({ userId, rangeDays, accountId }) {
   return { ok: true, snapshotId, saved: (r.datasets || []).length };
 }
 
-async function runGa4Job({ userId, rangeDays, propertyId }) {
-  const snapshotId = `snap_${ymdUTC()}`;
+async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyId }) {
+  const snapshotId = makeSnapshotId();
 
   await McpData.patchRootSource(userId, 'ga4', {
     connected: true,
@@ -606,17 +802,19 @@ async function runGa4Job({ userId, rangeDays, propertyId }) {
     lastError: null,
   });
 
-  const days = await resolveRangeDaysByPlan(userId, rangeDays);
+  const storageDays = await resolveStorageRangeDays(userId, storageRangeDays);
+  const contextDays = await resolveContextRangeDaysByPlan(userId, contextRangeDays);
 
   console.log('[mcpWorker] runGa4Job:start', {
     userId: String(userId),
     snapshotId,
-    rangeDays: days,
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
     propertyId: safeString(propertyId) || null,
   });
 
   const r = await collectGA4(userId, {
-    rangeDays: days,
+    rangeDays: contextDays,
     property_id: safeString(propertyId) || undefined,
   });
 
@@ -625,7 +823,7 @@ async function runGa4Job({ userId, rangeDays, propertyId }) {
     ok: !!r?.ok,
     reason: r?.reason || null,
     datasetsCount: Array.isArray(r?.datasets) ? r.datasets.length : 0,
-    properties: Array.isArray(r?.properties) ? r.properties.map(p => p?.id) : [],
+    properties: Array.isArray(r?.properties) ? r.properties.map((p) => p?.id) : [],
     range: r?.range || null,
   });
 
@@ -636,7 +834,9 @@ async function runGa4Job({ userId, rangeDays, propertyId }) {
       ready: false,
       lastError: r?.reason || 'GA4_COLLECT_FAILED',
       lastSyncAt: null,
-      rangeDays: days,
+      rangeDays: storageDays,
+      storageRangeDays: storageDays,
+      contextDefaultRangeDays: contextDays,
     });
 
     throw new Error(r?.reason || 'GA4_COLLECT_FAILED');
@@ -648,7 +848,10 @@ async function runGa4Job({ userId, rangeDays, propertyId }) {
     datasets: r.datasets || [],
   });
 
-  const extractedRoot = extractGa4RootPatchFromResult(r, days);
+  const extractedRoot = extractGa4RootPatchFromResult(r, {
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
+  });
 
   await finalizeRootFromCollector({
     userId,
@@ -685,7 +888,15 @@ async function boot() {
   worker = new Worker(
     QUEUE_NAME,
     async (job) => {
-      const { userId, source, rangeDays, accountId, propertyId } = job.data || {};
+      const {
+        userId,
+        source,
+        rangeDays,
+        contextRangeDays,
+        storageRangeDays,
+        accountId,
+        propertyId,
+      } = job.data || {};
 
       console.log('[mcpWorker] job received', {
         id: job?.id,
@@ -697,16 +908,32 @@ async function boot() {
 
       if (!userId) throw new Error('MISSING_USER_ID');
 
+      const effectiveContextRangeDays = contextRangeDays || rangeDays || null;
+
       if (source === 'metaAds') {
-        return await runMetaJob({ userId, rangeDays });
+        return await runMetaJob({
+          userId,
+          storageRangeDays,
+          contextRangeDays: effectiveContextRangeDays,
+        });
       }
 
       if (source === 'googleAds') {
-        return await runGoogleAdsJob({ userId, rangeDays, accountId });
+        return await runGoogleAdsJob({
+          userId,
+          storageRangeDays,
+          contextRangeDays: effectiveContextRangeDays,
+          accountId,
+        });
       }
 
       if (source === 'ga4') {
-        return await runGa4Job({ userId, rangeDays, propertyId });
+        return await runGa4Job({
+          userId,
+          storageRangeDays,
+          contextRangeDays: effectiveContextRangeDays,
+          propertyId,
+        });
       }
 
       throw new Error(`UNSUPPORTED_SOURCE:${source}`);
@@ -741,6 +968,8 @@ async function boot() {
   console.log('[mcpWorker] running', {
     queue: QUEUE_NAME,
     prefix: BULLMQ_PREFIX,
+    defaultStorageRangeDays: DEFAULT_STORAGE_RANGE_DAYS,
+    defaultContextRangeDays: DEFAULT_CONTEXT_RANGE_DAYS,
   });
 }
 
