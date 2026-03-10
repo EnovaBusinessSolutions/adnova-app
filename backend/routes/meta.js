@@ -6,13 +6,15 @@ const axios   = require('axios');
 const crypto  = require('crypto');
 const router  = express.Router();
 
-const User  = require('../models/User');
-const Audit = require('../models/Audit');
+const User    = require('../models/User');
+const Audit   = require('../models/Audit');
+const McpData = require('../models/McpData');
+const { enqueueMcpCollect } = require('../queues/mcpQueue');
 
-// ✅ Analytics events (Internal Admin / DB analytics)
+// Analytics events
 const { trackEvent } = require('../services/trackEvent');
 
-// ✅ Auditorías: cleanup al desconectar (best-effort)
+// Auditorías: cleanup al desconectar (best-effort)
 const {
   deleteAuditsForUserSources,
   countAuditsForUserSources,
@@ -29,7 +31,7 @@ const APP_ID       = process.env.FACEBOOK_APP_ID;
 const APP_SECRET   = process.env.FACEBOOK_APP_SECRET;
 const REDIRECT_URI = process.env.FACEBOOK_REDIRECT_URI;
 
-// ✅ Nuevo UX: máximo 1 cuenta por tipo
+// UX: máximo 1 cuenta
 const MAX_SELECT = 1;
 
 const SCOPES = [
@@ -44,16 +46,13 @@ const SCOPES = [
 ].join(',');
 
 const DEFAULT_META_OBJECTIVE = 'ventas';
-
-// ✅ Defaults de UX (sin onboarding)
 const DEFAULT_RETURN_TO = '/dashboard/settings?tab=integrations';
 
 /* =========================
  * Helpers
  * ========================= */
 function safeAppSecretProof(accessToken) {
-  if (!accessToken) return null;
-  if (!APP_SECRET) return null;
+  if (!accessToken || !APP_SECRET) return null;
   try {
     return crypto.createHmac('sha256', APP_SECRET).update(accessToken).digest('hex');
   } catch {
@@ -101,7 +100,7 @@ function requireAuth(req, res, next) {
   return res.status(401).json({ error: 'not_authenticated' });
 }
 
-const normActId = (s = '') => String(s || '').replace(/^act_/, '').trim();
+const normActId = (s = '') => String(s || '').replace(/^act_/, '').replace(/[^\d]/g, '').trim();
 const toActId   = (s = '') => {
   const id = normActId(s);
   return id ? `act_${id}` : '';
@@ -120,48 +119,29 @@ function appendQuery(url, key, value) {
   }
 }
 
-/**
- * ✅ Blindaje anti open-redirect:
- * Solo permitimos returnTo relativo y dentro del dashboard/settings.
- */
 function sanitizeReturnTo(raw) {
   const val = String(raw || '').trim();
   if (!val) return '';
-
   if (/^https?:\/\//i.test(val)) return '';
   if (val.includes('\n') || val.includes('\r')) return '';
   if (!val.startsWith('/')) return '';
 
-  const allowed = [
-    '/dashboard/settings',
-    '/dashboard',
-  ];
+  const allowed = ['/dashboard/settings', '/dashboard'];
   const ok = allowed.some(prefix => val.startsWith(prefix));
   if (!ok) return '';
 
   if (val.startsWith('/dashboard/settings')) {
     return appendQuery(val, 'tab', 'integrations');
   }
-
   return val;
 }
 
-/**
- * ✅ Flow key para dedupe idempotente por sesión/flujo
- * - Evita que "meta_connected:<user>" mate el tracking para siempre.
- * - Idempotente dentro de una sesión: si Meta redirige 2 veces, no duplica.
- */
 function getFlowKey(req) {
   const sid = req?.sessionID || req?.session?.id || null;
   if (sid) return String(sid);
-  // fallback si por alguna razón no hay sessionID
-  const tmp = crypto.randomBytes(12).toString('hex');
-  return `nosession_${tmp}`;
+  return `nosession_${crypto.randomBytes(12).toString('hex')}`;
 }
 
-/**
- * ✅ Revocar permisos de Meta (best-effort)
- */
 async function revokeMetaPermissionsBestEffort(accessToken) {
   if (!accessToken) return { attempted: false, ok: true };
 
@@ -183,13 +163,89 @@ async function revokeMetaPermissionsBestEffort(accessToken) {
   }
 }
 
+async function resolveMetaRangeDaysByPlan(userId) {
+  try {
+    const u = await User.findById(userId).select('plan').lean();
+    const plan = String(u?.plan || 'gratis').toLowerCase();
+
+    if (plan === 'gratis' || plan === 'free') return 60;
+    if (plan === 'pro' || plan === 'crecimiento' || plan === 'growth' || plan === 'enterprise') return 90;
+    return 60;
+  } catch {
+    return 60;
+  }
+}
+
+function pickSelectedMetaAccountMeta(adAccounts, accountId) {
+  const id = normActId(accountId);
+  const raw = Array.isArray(adAccounts) ? adAccounts : [];
+  const found = raw.find((a) => normActId(a?.account_id || a?.accountId || a?.id) === id);
+  if (!found) return null;
+
+  return {
+    accountId: id,
+    name: found?.name || null,
+    currency: found?.currency || null,
+    timezone: found?.timezone_name || found?.timezoneName || null,
+  };
+}
+
+async function patchMetaSourceQueued({ userId, accountMeta = null, rangeDays = null }) {
+  try {
+    await McpData.patchRootSource(userId, 'metaAds', {
+      connected: true,
+      status: 'queued',
+      ready: false,
+      lastError: null,
+      rangeDays: rangeDays == null ? null : Number(rangeDays),
+      accountId: accountMeta?.accountId || null,
+      name: accountMeta?.name || null,
+      currency: accountMeta?.currency || null,
+      timezone: accountMeta?.timezone || null,
+    });
+  } catch (e) {
+    console.warn('[meta] root queued patch failed (best-effort):', e?.message || e);
+  }
+}
+
+async function enqueueMetaCollectBestEffort({ userId, reason, rangeDays = null, accountMeta = null }) {
+  try {
+    const effectiveRangeDays = rangeDays == null ? await resolveMetaRangeDaysByPlan(userId) : Number(rangeDays);
+
+    await patchMetaSourceQueued({
+      userId,
+      accountMeta,
+      rangeDays: effectiveRangeDays,
+    });
+
+    const job = await enqueueMcpCollect({
+      userId,
+      source: 'metaAds',
+      rangeDays: effectiveRangeDays,
+      reason: reason || 'meta_event',
+    });
+
+    console.log('[meta] MCP enqueued', {
+      userId: String(userId),
+      reason: reason || 'meta_event',
+      rangeDays: effectiveRangeDays,
+      accountId: accountMeta?.accountId || null,
+      jobId: job?.id || null,
+    });
+
+    return { ok: true, jobId: job?.id || null, rangeDays: effectiveRangeDays };
+  } catch (e) {
+    console.warn('[meta] MCP enqueue failed (best-effort):', e?.message || e);
+    return { ok: false, error: e?.message || 'MCP_ENQUEUE_FAILED' };
+  }
+}
+
 /* =========================
  * LOGIN
  * ========================= */
 router.get('/login', (req, res) => {
   if (!req.isAuthenticated?.() || !req.user?._id) return res.redirect('/login');
 
-  // Validación suave de ENV (para no crashear)
   if (!APP_ID || !APP_SECRET || !REDIRECT_URI) {
     console.warn('[meta] Missing FACEBOOK_APP_ID/SECRET/REDIRECT_URI');
     const dest = appendQuery(DEFAULT_RETURN_TO, 'meta', 'error');
@@ -243,7 +299,7 @@ router.get('/callback', async (req, res) => {
       return res.redirect(appendQuery(dest0, 'reason', 'no_token'));
     }
 
-    // 2) upgrade to long-lived (best effort)
+    // 2) upgrade to long-lived
     try {
       const t2 = await toLongLivedToken(accessToken);
       if (t2?.access_token) {
@@ -294,8 +350,8 @@ router.get('/callback', async (req, res) => {
       });
 
       adAccounts = (ads.data?.data || []).map((a) => ({
-        id: toActId(a.account_id),              // "act_XXXX"
-        account_id: normActId(a.account_id),    // "XXXX"
+        id: toActId(a.account_id),
+        account_id: normActId(a.account_id),
         name: a.name,
         currency: a.currency,
         configured_status: a.configured_status,
@@ -318,8 +374,8 @@ router.get('/callback', async (req, res) => {
         timeout: 15000
       });
       grantedScopes = (perms.data?.data || [])
-        .filter(p => p.status === 'granted' && p.permission)
-        .map(p => String(p.permission));
+        .filter((p) => p.status === 'granted' && p.permission)
+        .map((p) => String(p.permission));
       grantedScopes = uniq(grantedScopes);
     } catch (e) {
       console.warn('[meta] No se pudieron leer /me/permissions:', e?.response?.data || e.message);
@@ -336,8 +392,8 @@ router.get('/callback', async (req, res) => {
       }
     });
 
-    // ✅ UX selector con MAX_SELECT=1
-    const allDigits = adAccounts.map(a => normActId(a.account_id)).filter(Boolean);
+    // selector con MAX_SELECT=1
+    const allDigits = adAccounts.map((a) => normActId(a.account_id)).filter(Boolean);
     const availableCount = allDigits.length;
     const shouldForceSelector = availableCount > MAX_SELECT;
 
@@ -369,9 +425,8 @@ router.get('/callback', async (req, res) => {
             ad_accounts: adAccounts,
             adAccounts:  adAccounts,
 
-            // ✅ selección/default canónicos
-            selectedAccountIds: selectedDigits,     // digits sin act_
-            defaultAccountId:   defaultAccountId,   // digits sin act_
+            selectedAccountIds: selectedDigits,
+            defaultAccountId:   defaultAccountId,
 
             updatedAt: new Date()
           },
@@ -387,7 +442,6 @@ router.get('/callback', async (req, res) => {
         );
       }
 
-      // espejo legacy en User (UI vieja)
       await User.findByIdAndUpdate(userId, {
         $set: {
           metaObjective: DEFAULT_META_OBJECTIVE,
@@ -407,8 +461,17 @@ router.get('/callback', async (req, res) => {
       });
     }
 
-    // ✅ 8) TRACK: meta_connected (E2E Internal Analytics)
-    // FIX: dedupeKey por sesión/flow (no por usuario fijo)
+    // Si NO hace falta selector, ya existe cuenta final y podemos encolar MCP
+    if (!shouldForceSelector && defaultAccountId) {
+      const accountMeta = pickSelectedMetaAccountMeta(adAccounts, defaultAccountId);
+      await enqueueMetaCollectBestEffort({
+        userId,
+        reason: 'meta_connected_auto',
+        accountMeta,
+      });
+    }
+
+    // TRACK: meta_connected
     try {
       const flowKey = getFlowKey(req);
       await trackEvent({
@@ -434,19 +497,13 @@ router.get('/callback', async (req, res) => {
       }
     }
 
-    // ✅ 9) redirect final
+    // redirect final
     let destino = '';
     const sessionReturnTo = sanitizeReturnTo(req.session.fb_returnTo);
     delete req.session.fb_returnTo;
 
     destino = sessionReturnTo || DEFAULT_RETURN_TO;
-
-    if (shouldForceSelector) {
-      destino = appendQuery(destino, 'selector', '1');
-    } else {
-      destino = appendQuery(destino, 'selector', '0');
-    }
-
+    destino = appendQuery(destino, 'selector', shouldForceSelector ? '1' : '0');
     destino = appendQuery(destino, 'meta', 'ok');
 
     req.login(req.user, (err) => {
@@ -457,7 +514,7 @@ router.get('/callback', async (req, res) => {
       return res.redirect(destino);
     });
   } catch (err) {
-    console.error('❌ Meta callback error:', err?.response?.data || err.message);
+    console.error('Meta callback error:', err?.response?.data || err.message);
     delete req.session.fb_returnTo;
 
     const dest0 = appendQuery(DEFAULT_RETURN_TO, 'meta', 'error');
@@ -466,7 +523,7 @@ router.get('/callback', async (req, res) => {
 });
 
 /* =========================
- * ✅ ACCOUNTS (para selector / integraciones)
+ * ACCOUNTS
  * GET /auth/meta/accounts
  * ========================= */
 router.get('/accounts', requireAuth, async (req, res) => {
@@ -504,13 +561,13 @@ router.get('/accounts', requireAuth, async (req, res) => {
       timezone_name: a?.timezone_name || a?.timezoneName || null,
     }));
 
-    const available = new Set(accounts.map(a => normActId(a.account_id)).filter(Boolean));
+    const available = new Set(accounts.map((a) => normActId(a.account_id)).filter(Boolean));
 
     let selectedAccountIds = Array.isArray(doc?.selectedAccountIds)
       ? doc.selectedAccountIds.map(normActId).filter(Boolean)
       : [];
 
-    selectedAccountIds = selectedAccountIds.filter(id => available.has(id)).slice(0, MAX_SELECT);
+    selectedAccountIds = selectedAccountIds.filter((id) => available.has(id)).slice(0, MAX_SELECT);
 
     const defaultAccountId =
       doc?.defaultAccountId && available.has(normActId(doc.defaultAccountId))
@@ -533,7 +590,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
 });
 
 /* =========================
- * ✅ SAVE SELECTION (MAX_SELECT=1)
+ * SAVE SELECTION
  * POST /auth/meta/accounts/selection
  * ========================= */
 router.post('/accounts/selection', requireAuth, express.json(), async (req, res) => {
@@ -567,7 +624,12 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
         }
       );
 
-      // ✅ TRACK: meta_ads_selected (FIX dedupeKey por flow)
+      await enqueueMetaCollectBestEffort({
+        userId,
+        reason: 'meta_selection_confirmed_no_metaaccount',
+        accountMeta: { accountId: wanted[0] },
+      });
+
       try {
         const flowKey = getFlowKey(req);
         await trackEvent({
@@ -600,9 +662,9 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
     if (!doc) return res.status(404).json({ ok: false, error: 'NO_METAACCOUNT' });
 
     const raw = doc?.ad_accounts || doc?.adAccounts || [];
-    const available = new Set(raw.map(a => normActId(a?.account_id || a?.accountId || a?.id)).filter(Boolean));
+    const available = new Set(raw.map((a) => normActId(a?.account_id || a?.accountId || a?.id)).filter(Boolean));
 
-    const selected = wanted.filter(id => available.has(id)).slice(0, MAX_SELECT);
+    const selected = wanted.filter((id) => available.has(id)).slice(0, MAX_SELECT);
     if (!selected.length) {
       return res.status(400).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
     }
@@ -629,7 +691,14 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
       }
     );
 
-    // ✅ TRACK: meta_ads_selected (FIX dedupeKey por flow)
+    const accountMeta = pickSelectedMetaAccountMeta(raw, selected[0]) || { accountId: selected[0] };
+
+    await enqueueMetaCollectBestEffort({
+      userId,
+      reason: 'meta_selection_confirmed',
+      accountMeta,
+    });
+
     try {
       const flowKey = getFlowKey(req);
       await trackEvent({
@@ -659,7 +728,7 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
 });
 
 /* =========================
- * STATUS (legacy)
+ * STATUS
  * ========================= */
 router.get('/status', requireAuth, async (req, res) => {
   try {
@@ -687,7 +756,6 @@ router.get('/status', requireAuth, async (req, res) => {
 
     const connected = !!(doc?.longLivedToken || doc?.longlivedToken || doc?.access_token || doc?.token);
     const accounts  = doc?.ad_accounts || doc?.adAccounts || [];
-
     const defaultAccountId = doc?.defaultAccountId || accounts?.[0]?.account_id || null;
     const objective = doc?.objective ?? null;
     const scopes = Array.isArray(doc?.scopes) ? doc.scopes : [];
@@ -714,7 +782,7 @@ router.get('/status', requireAuth, async (req, res) => {
 });
 
 /* =========================
- * DEFAULT ACCOUNT (legacy)
+ * DEFAULT ACCOUNT
  * ========================= */
 router.post('/default-account', requireAuth, express.json(), async (req, res) => {
   try {
@@ -729,7 +797,7 @@ router.post('/default-account', requireAuth, express.json(), async (req, res) =>
         .lean();
 
       const raw = doc?.ad_accounts || doc?.adAccounts || [];
-      const available = new Set(raw.map(a => normActId(a?.account_id || a?.accountId || a?.id)));
+      const available = new Set(raw.map((a) => normActId(a?.account_id || a?.accountId || a?.id)));
 
       if (!available.has(accountId)) {
         return res.status(400).json({ ok: false, error: 'ACCOUNT_NOT_ALLOWED' });
@@ -753,10 +821,25 @@ router.post('/default-account', requireAuth, express.json(), async (req, res) =>
         $set: { selectedMetaAccounts: nextSelected.map(toActId) }
       });
 
+      const accountMeta = pickSelectedMetaAccountMeta(raw, accountId) || { accountId };
+
+      await enqueueMetaCollectBestEffort({
+        userId: req.user._id,
+        reason: 'meta_default_account_changed',
+        accountMeta,
+      });
+
       return res.json({ ok: true, defaultAccountId: accountId, selectedAccountIds: nextSelected });
     }
 
     await User.findByIdAndUpdate(req.user._id, { $set: { metaDefaultAccountId: accountId } });
+
+    await enqueueMetaCollectBestEffort({
+      userId: req.user._id,
+      reason: 'meta_default_account_changed_no_metaaccount',
+      accountMeta: { accountId },
+    });
+
     res.json({ ok: true, defaultAccountId: accountId });
   } catch (e) {
     console.error('default-account meta error:', e);
@@ -765,7 +848,7 @@ router.post('/default-account', requireAuth, express.json(), async (req, res) =>
 });
 
 /* =========================
- * ✅ Preview disconnect
+ * Preview disconnect
  * ========================= */
 router.get('/disconnect/preview', requireAuth, async (req, res) => {
   try {
@@ -794,12 +877,11 @@ router.get('/disconnect/preview', requireAuth, async (req, res) => {
 });
 
 /* =========================
- * ✅ DISCONNECT META
+ * DISCONNECT META
  * ========================= */
 router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
   try {
     const userId = req.user._id;
-
     const before = await Audit.countDocuments({ userId, type: 'meta' }).catch(() => 0);
 
     let accessToken = null;
@@ -873,6 +955,28 @@ router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
       }
     );
 
+    // limpiar MCP de Meta (best-effort)
+    try {
+      await McpData.deleteMany({ userId, kind: 'chunk', source: 'metaAds' });
+      await McpData.patchRootSource(userId, 'metaAds', {
+        connected: false,
+        status: 'queued',
+        ready: false,
+        accountId: null,
+        name: null,
+        currency: null,
+        timezone: null,
+        lastSyncAt: null,
+        lastError: null,
+        rangeDays: null,
+      });
+      await McpData.upsertRoot(userId, {
+        latestSnapshotId: null,
+      });
+    } catch (e) {
+      console.warn('[meta] MCP cleanup failed (best-effort):', e?.message || e);
+    }
+
     let auditsDeleteOk = true;
     let auditsDeleteError = null;
 
@@ -895,7 +999,6 @@ router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
     const after = await Audit.countDocuments({ userId, type: 'meta' }).catch(() => 0);
     const auditsDeleted = Math.max(0, before - after);
 
-    // ✅ TRACK: meta_disconnected (FIX dedupeKey por flow)
     try {
       const flowKey = getFlowKey(req);
       await trackEvent({
@@ -924,7 +1027,6 @@ router.post('/disconnect', requireAuth, express.json(), async (req, res) => {
       disconnected: true,
       revokeAttempted: revoke.attempted,
       revokeOk: revoke.ok,
-
       auditsDeleted,
       auditsDeleteOk,
       auditsDeleteError,

@@ -1,4 +1,3 @@
-// backend/jobs/collect/googleAnalyticsCollector.js
 'use strict';
 
 const fetch = require('node-fetch');
@@ -11,7 +10,6 @@ const {
   GOOGLE_CONNECT_CALLBACK_URL: GOOGLE_REDIRECT_URI,
 } = process.env;
 
-// [★] Límite duro por requerimiento (3). Se puede sobre-escribir por env.
 const HARD_LIMIT = 3;
 const MAX_BY_RULE = Math.min(
   HARD_LIMIT,
@@ -28,20 +26,19 @@ catch (_) {
   const schema = new Schema({
     user: { type: Schema.Types.ObjectId, ref: 'User', index: true },
     userId: { type: Schema.Types.ObjectId, ref: 'User', index: true },
-    accessToken: { type: String, select: false },
-    refreshToken:{ type: String, select: false },
 
-    gaProperties: { type: Array, default: [] }, // [{ propertyId, displayName, account, accountName? }, ...]
+    ga4AccessToken: { type: String, select: false },
+    ga4RefreshToken: { type: String, select: false },
+    ga4Scope: { type: [String], default: [] },
+    ga4ExpiresAt: { type: Date },
+
+    gaProperties: { type: Array, default: [] },
     defaultPropertyId: String,
-
-    // ✅ NUEVO CANÓNICO (tu onboarding/Settings ya lo usa)
     selectedPropertyIds: { type: [String], default: [] },
 
-    scope: { type: [String], default: [] },
-    expiresAt: { type: Date },
     updatedAt: { type: Date, default: Date.now },
   }, { collection: 'googleaccounts' });
-  schema.pre('save', function(n){ this.updatedAt = new Date(); n(); });
+  schema.pre('save', function (n) { this.updatedAt = new Date(); n(); });
   GoogleAccount = mongoose.models.GoogleAccount || model('GoogleAccount', schema);
 }
 
@@ -64,6 +61,38 @@ const normPropertyId = (val) => {
 
 const toNum = (v) => Number(v || 0);
 const safeDiv = (n, d) => (Number(d || 0) ? Number(n || 0) / Number(d || 0) : 0);
+const round2 = (x) => Math.round((Number(x || 0) + Number.EPSILON) * 100) / 100;
+
+function clampInt(n, min, max) {
+  const x = Number(n || 0);
+  if (!Number.isFinite(x)) return min;
+  return Math.max(min, Math.min(max, Math.trunc(x)));
+}
+
+function safeStr(v) {
+  return v == null ? '' : String(v);
+}
+
+function compactArray(arr, max = 10) {
+  return Array.isArray(arr) ? arr.slice(0, Math.max(0, max)) : [];
+}
+
+function uniqStrings(arr, max = 20) {
+  const out = [];
+  const seen = new Set();
+
+  for (const x of Array.isArray(arr) ? arr : []) {
+    const s = safeStr(x).trim();
+    if (!s) continue;
+    const k = s.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(s);
+    if (out.length >= max) break;
+  }
+
+  return out;
+}
 
 function oauthClient() {
   return new OAuth2Client({
@@ -73,29 +102,19 @@ function oauthClient() {
   });
 }
 
-/**
- * ✅ Token refresh robusto:
- * - Si hay accessToken pero está vigente (expiresAt - 60s), lo usamos.
- * - Si no, refrescamos con refreshToken y persistimos.
- */
-async function ensureAccessToken(accDoc) {
-  if (accDoc?.accessToken && accDoc?.expiresAt) {
-    const ms = new Date(accDoc.expiresAt).getTime() - Date.now();
-    if (ms > 60_000) return accDoc.accessToken; // válido > 60s
+async function ensureGa4AccessToken(accDoc) {
+  if (accDoc?.ga4AccessToken && accDoc?.ga4ExpiresAt) {
+    const ms = new Date(accDoc.ga4ExpiresAt).getTime() - Date.now();
+    if (ms > 60_000) return accDoc.ga4AccessToken;
   }
 
-  if (!accDoc?.refreshToken && accDoc?.accessToken) {
-    // no podemos refrescar; devolvemos el existente (mejor que null)
-    return accDoc.accessToken;
-  }
-  if (!accDoc?.refreshToken) return null;
+  if (!accDoc?.ga4RefreshToken && accDoc?.ga4AccessToken) return accDoc.ga4AccessToken;
+  if (!accDoc?.ga4RefreshToken) return null;
 
   const client = oauthClient();
-  client.setCredentials({ refresh_token: accDoc.refreshToken });
+  client.setCredentials({ refresh_token: accDoc.ga4RefreshToken });
 
   try {
-    // Nota: refreshAccessToken está deprecado en algunas versiones,
-    // pero sigue funcionando en muchos entornos. Lo mantenemos por compat.
     const { credentials } = await client.refreshAccessToken();
     const token = credentials?.access_token || null;
 
@@ -104,8 +123,8 @@ async function ensureAccessToken(accDoc) {
         { _id: accDoc._id },
         {
           $set: {
-            accessToken: token,
-            expiresAt: credentials?.expiry_date ? new Date(credentials.expiry_date) : null,
+            ga4AccessToken: token,
+            ga4ExpiresAt: credentials?.expiry_date ? new Date(credentials.expiry_date) : null,
             updatedAt: new Date(),
           }
         }
@@ -116,11 +135,10 @@ async function ensureAccessToken(accDoc) {
     if (DEBUG_GA_COLLECTOR) {
       console.warn('[ga4Collector] refreshAccessToken failed:', e?.message || String(e));
     }
-    return accDoc?.accessToken || null;
+    return accDoc?.ga4AccessToken || null;
   }
 }
 
-/** Retry/backoff para GA4 Data API (429 / 5xx) */
 async function postJSONWithRetry(url, { headers, body }, { retries = 2 } = {}) {
   let lastErr = null;
   for (let i = 0; i <= retries; i++) {
@@ -133,7 +151,6 @@ async function postJSONWithRetry(url, { headers, body }, { retries = 2 } = {}) {
         const gaStatus = j?.error?.status || '';
         const msg = j?.error?.message || `GA4 runReport failed (HTTP_${status})`;
 
-        // 429/5xx -> reintenta
         const retriable =
           status === 429 ||
           String(gaStatus).toUpperCase() === 'RESOURCE_EXHAUSTED' ||
@@ -161,7 +178,6 @@ async function postJSONWithRetry(url, { headers, body }, { retries = 2 } = {}) {
   throw lastErr || new Error('unknown_error');
 }
 
-/** Ejecuta runReport de GA4 */
 async function ga4RunReport({ token, property, body }) {
   const url = `https://analyticsdata.googleapis.com/v1beta/${property}:runReport`;
   return await postJSONWithRetry(
@@ -174,55 +190,58 @@ async function ga4RunReport({ token, property, body }) {
   );
 }
 
-/** '30daysAgo' / 'yesterday' → GA4 acepta estos literales tal cual */
-function resolveDateRange({ start, end, include_today } = {}) {
-  // ✅ para alinear con UI cuando “incluye hoy”:
-  // - include_today=true => end=today; start=29daysAgo (30 días inclusive)
-  // - include_today=false => end=yesterday; start=30daysAgo (30 días inclusive)
-  let s = start;
-  let e = end;
-
-  if (!s) s = include_today ? '29daysAgo' : '30daysAgo';
-  if (!e) e = include_today ? 'today' : 'yesterday';
-
-  const abs = /^\d{4}-\d{2}-\d{2}$/;
-  const isAbs = abs.test(String(s)) && abs.test(String(e));
-  return isAbs ? { start: s, end: e } : { start: s, end: e };
+function ymdInTZ(date, timeZone) {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: timeZone || 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  } catch {
+    return new Date(date).toISOString().slice(0, 10);
+  }
 }
 
-/* -------- selección de propiedades (CANÓNICA + compat) -------- */
+function addDaysYMD(ymd, deltaDays) {
+  const [yy, mm, dd] = String(ymd).split('-').map(Number);
+  const base = new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1, 0, 0, 0));
+  base.setUTCDate(base.getUTCDate() + Number(deltaDays || 0));
+  return base.toISOString().slice(0, 10);
+}
+
+function getStrictLastNdRangeForTZ(timeZone, days, includeToday) {
+  const today = ymdInTZ(new Date(), timeZone || 'UTC');
+  const end = includeToday ? today : addDaysYMD(today, -1);
+  const d = clampInt(days || 30, 1, 3650);
+  const start = addDaysYMD(end, -(d - 1));
+  return { startDate: start, endDate: end };
+}
+
+/* -------- selección de propiedades -------- */
 
 function listAvailableProperties(acc) {
   const list = Array.isArray(acc?.gaProperties) ? acc.gaProperties : [];
   return list.map(p => {
     const id = normPropertyId(p?.propertyId || p?.id);
-    return id
-      ? { id, displayName: p?.displayName || '', accountName: p?.accountName || p?.account || '' }
-      : null;
+    return id ? {
+      id,
+      displayName: p?.displayName || '',
+      timeZone: p?.timeZone || null,
+      currencyCode: p?.currencyCode || null,
+    } : null;
   }).filter(Boolean);
 }
 
-/**
- * ✅ Resolver propiedades E2E:
- * prioridad:
- * 1) forcedPropertyId (opts.property_id)
- * 2) accDoc.selectedPropertyIds (CANÓNICO)
- * 3) accDoc.defaultPropertyId
- * 4) User.preferences.googleAnalytics.auditPropertyIds (legacy)
- * 5) si available <= MAX_BY_RULE -> todas
- * 6) si available > MAX_BY_RULE -> requiredSelection
- */
 async function resolvePropertiesForAudit({ userId, accDoc, forcedPropertyId }) {
   const available = listAvailableProperties(accDoc);
   const byId = new Map(available.map(a => [a.id, a]));
 
-  // 1) override del caller (forzar una sola)
   if (forcedPropertyId) {
     const id = normPropertyId(forcedPropertyId);
-    if (id) return [{ id, displayName: byId.get(id)?.displayName || '', accountName: byId.get(id)?.accountName || '' }];
+    if (id) return [byId.get(id) || { id, displayName: '', timeZone: null, currencyCode: null }];
   }
 
-  // 2) CANÓNICO: selectedPropertyIds en GoogleAccount
   const selectedAcc = (Array.isArray(accDoc?.selectedPropertyIds) ? accDoc.selectedPropertyIds : [])
     .map(normPropertyId)
     .filter(Boolean);
@@ -231,18 +250,14 @@ async function resolvePropertiesForAudit({ userId, accDoc, forcedPropertyId }) {
     const picked = [...new Set(selectedAcc)]
       .filter(id => (available.length ? byId.has(id) : true))
       .slice(0, MAX_BY_RULE)
-      .map(id => byId.get(id) || ({ id, displayName: '', accountName: '' }));
+      .map(id => byId.get(id) || ({ id, displayName: '', timeZone: null, currencyCode: null }));
 
     if (picked.length) return picked;
   }
 
-  // 3) defaultPropertyId
   const d = normPropertyId(accDoc?.defaultPropertyId);
-  if (d) {
-    return [{ id: d, displayName: byId.get(d)?.displayName || '', accountName: byId.get(d)?.accountName || '' }];
-  }
+  if (d) return [byId.get(d) || { id: d, displayName: '', timeZone: null, currencyCode: null }];
 
-  // 4) legacy: preferencias en User (por compat)
   let selectedUser = [];
   if (UserModel && userId) {
     try {
@@ -256,8 +271,8 @@ async function resolvePropertiesForAudit({ userId, accDoc, forcedPropertyId }) {
               ? user.selectedProperties
               : []
         )
-        .map(normPropertyId)
-        .filter(Boolean);
+          .map(normPropertyId)
+          .filter(Boolean);
     } catch {
       selectedUser = [];
     }
@@ -267,56 +282,227 @@ async function resolvePropertiesForAudit({ userId, accDoc, forcedPropertyId }) {
     const picked = [...new Set(selectedUser)]
       .filter(id => (available.length ? byId.has(id) : true))
       .slice(0, MAX_BY_RULE)
-      .map(id => byId.get(id) || ({ id, displayName: '', accountName: '' }));
+      .map(id => byId.get(id) || ({ id, displayName: '', timeZone: null, currencyCode: null }));
 
     if (picked.length) return picked;
     return { error: 'NO_VALID_SELECTED_PROPERTIES' };
   }
 
-  // 5) si no hay available, no hay forma de seleccionar
   if (!available.length) return { error: 'NO_DEFAULT_PROPERTY' };
-
-  // 6) sin selección: si disponibles <= MAX_BY_RULE, usa todas; si > MAX_BY_RULE, requiere selección
   if (available.length <= MAX_BY_RULE) return available;
 
   return { error: 'SELECTION_REQUIRED(>3_PROPERTIES)', availableCount: available.length };
 }
 
+/* ---------------- compact helpers ---------------- */
+
+function makeGa4Header({ userId, properties, range, version }) {
+  return {
+    schema: 'adray.mcp.v1',
+    source: 'ga4',
+    generatedAt: new Date().toISOString(),
+    userId: String(userId),
+    properties: Array.isArray(properties) ? properties : [],
+    range,
+    version: version || null,
+  };
+}
+
+function computeDeltas(cur, prev) {
+  const pct = (a, b) => (b ? ((a - b) / b) * 100 : (a ? 100 : 0));
+  return {
+    users_pct: pct(cur.users, prev.users),
+    sessions_pct: pct(cur.sessions, prev.sessions),
+    conversions_pct: pct(cur.conversions, prev.conversions),
+    revenue_pct: pct(cur.revenue, prev.revenue),
+    engagementRate_diff: round2((cur.engagementRate || 0) - (prev.engagementRate || 0)),
+  };
+}
+
+function sortByDateAsc(rows) {
+  return (Array.isArray(rows) ? rows : [])
+    .slice()
+    .sort((a, b) => String(a?.date || '').localeCompare(String(b?.date || '')));
+}
+
+function topN(arr, n, scoreFn) {
+  const a = Array.isArray(arr) ? arr.slice() : [];
+  a.sort((x, y) => scoreFn(y) - scoreFn(x));
+  return a.slice(0, Math.max(0, n));
+}
+
+/* ---------------- ranking / insights ---------------- */
+
+function compactChannelRow(x) {
+  return {
+    channel: safeStr(x?.channel) || '(other)',
+    users: round2(x?.users),
+    sessions: round2(x?.sessions),
+    conversions: round2(x?.conversions),
+    revenue: round2(x?.revenue),
+    newUsers: round2(x?.newUsers),
+    engagedSessions: round2(x?.engagedSessions),
+    engagementRate: round2(x?.engagementRate),
+  };
+}
+
+function compactDeviceRow(x) {
+  return {
+    device: safeStr(x?.device) || '(other)',
+    users: round2(x?.users),
+    sessions: round2(x?.sessions),
+    conversions: round2(x?.conversions),
+    revenue: round2(x?.revenue),
+    engagedSessions: round2(x?.engagedSessions),
+    engagementRate: round2(x?.engagementRate),
+  };
+}
+
+function compactLandingRow(x) {
+  return {
+    page: safeStr(x?.page) || '(not set)',
+    sessions: round2(x?.sessions),
+    conversions: round2(x?.conversions),
+    revenue: round2(x?.revenue),
+    engagedSessions: round2(x?.engagedSessions),
+    engagementRate: round2(x?.engagementRate),
+  };
+}
+
+function compactSourceMediumRow(x) {
+  return {
+    source: safeStr(x?.source) || '(direct)',
+    medium: safeStr(x?.medium) || '(none)',
+    sessions: round2(x?.sessions),
+    conversions: round2(x?.conversions),
+    revenue: round2(x?.revenue),
+    engagedSessions: round2(x?.engagedSessions),
+    engagementRate: round2(x?.engagementRate),
+  };
+}
+
+function compactEventRow(x) {
+  return {
+    event: safeStr(x?.event) || '(not set)',
+    eventCount: round2(x?.eventCount),
+    conversions: round2(x?.conversions),
+  };
+}
+
+function buildOptimizationSignals({ channelsTop, devicesTop, landingPagesTop, sourceMediumTop, eventsTop, summary }) {
+  const winners = [];
+  const risks = [];
+  const quick_wins = [];
+  const insights = [];
+  const recommendations = [];
+
+  const bestChannels = topN(channelsTop, 4, (x) => toNum(x.revenue));
+  const weakChannels = topN(
+    channelsTop.filter(x => toNum(x.sessions) >= 20 && toNum(x.revenue) <= 0),
+    4,
+    (x) => toNum(x.sessions)
+  );
+
+  const bestLanding = topN(landingPagesTop, 4, (x) => toNum(x.revenue));
+  const weakLanding = topN(
+    landingPagesTop.filter(x => toNum(x.sessions) >= 20 && toNum(x.revenue) <= 0),
+    4,
+    (x) => toNum(x.sessions)
+  );
+
+  const bestSources = topN(sourceMediumTop, 4, (x) => toNum(x.revenue));
+  const weakSources = topN(
+    sourceMediumTop.filter(x => toNum(x.sessions) >= 20 && toNum(x.revenue) <= 0),
+    4,
+    (x) => toNum(x.sessions)
+  );
+
+  winners.push(
+    ...bestChannels.map(compactChannelRow),
+    ...bestLanding.map(compactLandingRow)
+  );
+
+  risks.push(
+    ...weakChannels.map(compactChannelRow),
+    ...weakLanding.map(compactLandingRow)
+  );
+
+  quick_wins.push(
+    ...bestSources.map(compactSourceMediumRow)
+  );
+
+  if (bestChannels.length) {
+    insights.push(`Top GA4 channels are concentrating the strongest revenue contribution.`);
+    recommendations.push('Double down on the channel groups already generating the strongest revenue and conversions.');
+  }
+
+  if (weakChannels.length) {
+    insights.push(`Some channel groups are driving sessions without corresponding revenue signals.`);
+    recommendations.push('Review low-revenue channels with material traffic and tighten acquisition quality.');
+  }
+
+  if (bestLanding.length) {
+    recommendations.push('Use the strongest landing pages as templates for future campaigns and CRO improvements.');
+  }
+
+  if (weakLanding.length) {
+    recommendations.push('Audit weak landing pages with significant sessions but poor monetization or conversion performance.');
+  }
+
+  const engagementRate = toNum(summary?.kpis?.engagementRate);
+  if (engagementRate > 0 && engagementRate < 50) {
+    insights.push('Overall GA4 engagement rate is relatively soft.');
+    recommendations.push('Improve content relevance, page speed, and landing-page-message match to lift engagement.');
+  }
+
+  const purchaseEvent = (eventsTop || []).find(e => String(e?.event || '').toLowerCase() === 'purchase');
+  if (purchaseEvent && toNum(purchaseEvent.eventCount) > 0) {
+    insights.push('GA4 confirms purchase activity in the selected date range.');
+  }
+
+  return {
+    winners: compactArray(winners, 4),
+    risks: compactArray(risks, 4),
+    quick_wins: compactArray(quick_wins, 4),
+    insights: uniqStrings(insights, 6),
+    recommendations: uniqStrings(recommendations, 6),
+  };
+}
+
 /* ---------------- collector ---------------- */
-async function collectGA4(
-  userId,
-  { property_id, start, end, include_today = false } = {}
-) {
-  // 1) Cargar cuenta con tokens y scopes
+async function collectGA4(userId, opts = {}) {
+  const {
+    property_id,
+    include_today = false,
+    rangeDays = 30,
+    range,
+    topChannelsN = 12,
+    topDevicesN = 8,
+    topLandingPagesN = 80,
+    topSourceMediumN = 120,
+    topEventsN = 120,
+  } = opts || {};
+
   const acc = await GoogleAccount
     .findOne({ $or: [{ user: userId }, { userId }] })
-    .select('+accessToken +refreshToken +expiresAt scope defaultPropertyId selectedPropertyIds gaProperties')
+    .select('+ga4AccessToken +ga4RefreshToken +ga4ExpiresAt ga4Scope defaultPropertyId selectedPropertyIds gaProperties')
     .lean();
 
-  if (!acc) {
-    return { notAuthorized: true, reason: 'NO_GOOGLEACCOUNT' };
-  }
+  if (!acc) return { ok: false, notAuthorized: true, reason: 'NO_GOOGLEACCOUNT' };
 
-  // 2) Validar scope
-  const hasScope = Array.isArray(acc.scope) && acc.scope.includes(GA_SCOPE_READ);
-  if (!hasScope) {
-    return { notAuthorized: true, reason: 'MISSING_SCOPE(analytics.readonly)' };
-  }
+  const hasScope = Array.isArray(acc.ga4Scope) && acc.ga4Scope.includes(GA_SCOPE_READ);
+  if (!hasScope) return { ok: false, notAuthorized: true, reason: 'MISSING_SCOPE(analytics.readonly)' };
 
-  // 3) token (con refresco robusto)
-  let token = await ensureAccessToken(acc);
-  if (!token) {
-    return { notAuthorized: true, reason: 'NO_ACCESS_TOKEN' };
-  }
+  let token = await ensureGa4AccessToken(acc);
+  if (!token) return { ok: false, notAuthorized: true, reason: 'NO_GA4_ACCESS_TOKEN' };
 
-  // helper local: runReport con refresco en caso de 401/403
   async function runReportWithRetry(property, body) {
     try {
       return await ga4RunReport({ token, property, body });
     } catch (e) {
       const http = e?._ga?.http;
-      if ((http === 401 || http === 403) && acc.refreshToken) {
-        token = await ensureAccessToken({ ...acc, accessToken: null, expiresAt: null });
+      if ((http === 401 || http === 403) && acc.ga4RefreshToken) {
+        token = await ensureGa4AccessToken({ ...acc, ga4AccessToken: null, ga4ExpiresAt: null });
         if (!token) throw e;
         return await ga4RunReport({ token, property, body });
       }
@@ -324,7 +510,6 @@ async function collectGA4(
     }
   }
 
-  // 4) resolver propiedades a auditar (CANÓNICO)
   const resolved = await resolvePropertiesForAudit({
     userId,
     accDoc: acc,
@@ -332,34 +517,42 @@ async function collectGA4(
   });
 
   if (resolved?.error) {
-    if (resolved.error === 'NO_DEFAULT_PROPERTY') {
-      return { notAuthorized: true, reason: 'NO_DEFAULT_PROPERTY' };
-    }
-    if (resolved.error === 'NO_VALID_SELECTED_PROPERTIES') {
-      return { notAuthorized: true, reason: 'NO_VALID_SELECTED_PROPERTIES' };
-    }
+    if (resolved.error === 'NO_DEFAULT_PROPERTY') return { ok: false, notAuthorized: true, reason: 'NO_DEFAULT_PROPERTY' };
+    if (resolved.error === 'NO_VALID_SELECTED_PROPERTIES') return { ok: false, notAuthorized: true, reason: 'NO_VALID_SELECTED_PROPERTIES' };
     if (String(resolved.error).startsWith('SELECTION_REQUIRED')) {
-      return { notAuthorized: true, reason: resolved.error, requiredSelection: true, availableCount: resolved.availableCount || null };
+      return {
+        ok: false,
+        notAuthorized: true,
+        reason: resolved.error,
+        requiredSelection: true,
+        availableCount: resolved.availableCount || null
+      };
     }
   }
 
   const propertiesToAudit = (Array.isArray(resolved) ? resolved : []).slice(0, MAX_BY_RULE);
 
   if (DEBUG_GA_COLLECTOR) {
-    console.log('[ga4Collector] -> auditing GA4 properties:', propertiesToAudit.map(p => p.id));
+    console.log('[ga4Collector] auditing properties:', propertiesToAudit.map(p => p.id));
   }
 
-  const dateRange = resolveDateRange({ start, end, include_today });
+  const firstTZ = propertiesToAudit[0]?.timeZone || (range?.tz || null) || 'UTC';
 
-  /* ========= Reportes (base + enriquecidos para IA) ========= */
+  const explicit = range && range.from && range.to ? {
+    startDate: String(range.from),
+    endDate: String(range.to),
+    tz: range.tz || firstTZ,
+  } : null;
 
-  // IMPORTANTE:
-  // ✅ Para KPIs “reales” (especialmente totalUsers/newUsers) NO se deben sumar filas de breakdown.
-  // Usamos metricAggregations:['TOTAL'] para leer el total oficial que coincide con GA UI.
+  const strict = explicit || {
+    ...getStrictLastNdRangeForTZ(firstTZ, rangeDays, !!include_today),
+    tz: firstTZ,
+  };
 
-  // 0) Totales sin dimensiones (fallback si GA no entrega "totals" en el breakdown)
+  const rangeOut = { from: strict.startDate, to: strict.endDate, tz: strict.tz || firstTZ };
+
   const totalsOnlyBody = {
-    dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
+    dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
     metrics: [
       { name: 'totalUsers' },
       { name: 'sessions' },
@@ -371,9 +564,8 @@ async function collectGA4(
     limit: '1',
   };
 
-  // 1) Canales (channel grouping) + TOTAL para KPIs correctos
   const channelsBody = {
-    dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
+    dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
     dimensions: [{ name: 'sessionDefaultChannelGroup' }],
     metrics: [
       { name: 'totalUsers' },
@@ -383,13 +575,12 @@ async function collectGA4(
       { name: 'newUsers' },
       { name: 'engagedSessions' },
     ],
-    metricAggregations: ['TOTAL'], // ✅ clave para evitar discrepancias de usuarios
+    metricAggregations: ['TOTAL'],
     limit: '1000',
   };
 
-  // 2) Dispositivos
   const devicesBody = {
-    dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
+    dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
     dimensions: [{ name: 'deviceCategory' }],
     metrics: [
       { name: 'totalUsers' },
@@ -401,9 +592,8 @@ async function collectGA4(
     limit: '1000',
   };
 
-  // 3) Landing pages
   const landingBody = {
-    dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
+    dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
     dimensions: [{ name: 'landingPagePlusQueryString' }],
     metrics: [
       { name: 'sessions' },
@@ -414,9 +604,8 @@ async function collectGA4(
     limit: '5000',
   };
 
-  // 4) Tendencia diaria
   const dailyBody = {
-    dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
+    dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
     dimensions: [{ name: 'date' }],
     metrics: [
       { name: 'totalUsers' },
@@ -428,9 +617,8 @@ async function collectGA4(
     limit: '400',
   };
 
-  // 5) Source / Medium
   const sourceMediumBody = {
-    dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
+    dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
     dimensions: [{ name: 'sessionSource' }, { name: 'sessionMedium' }],
     metrics: [
       { name: 'sessions' },
@@ -441,43 +629,40 @@ async function collectGA4(
     limit: '5000',
   };
 
-  // 6) Top eventos
   const topEventsBody = {
-    dateRanges: [{ startDate: dateRange.start, endDate: dateRange.end }],
+    dateRanges: [{ startDate: rangeOut.from, endDate: rangeOut.to }],
     dimensions: [{ name: 'eventName' }],
     metrics: [
       { name: 'eventCount' },
       { name: 'conversions' },
     ],
-    limit: '200',
+    limit: '300',
   };
 
-  const byProperty = [];
-  let aggregate = {
+  const aggregate = {
     users: 0, sessions: 0, conversions: 0, revenue: 0,
     newUsers: 0, engagedSessions: 0,
   };
 
   const globalChannelsMap = new Map();
-  const globalDevicesMap  = new Map();
-  const globalLandingMap  = new Map();
+  const globalDevicesMap = new Map();
+  const globalLandingMap = new Map();
+  const globalDailyMap = new Map();
+  const globalSourceMediumMap = new Map();
+  const globalTopEventsMap = new Map();
 
-  const globalDailyMap = new Map(); // date -> {users,sessions,conversions,revenue,engagedSessions}
-  const globalSourceMediumMap = new Map(); // "source|medium" -> metrics
-  const globalTopEventsMap = new Map(); // eventName -> {eventCount, conversions}
+  const propertiesMetaOut = propertiesToAudit.map(p => ({
+    id: p.id,
+    name: p.displayName || '',
+    timeZone: p.timeZone || null,
+    currencyCode: p.currencyCode || null,
+  }));
 
-  // 6) Ejecutar para cada propiedad seleccionada
+  const byProperty = [];
+
   for (const prop of propertiesToAudit) {
     const property = prop.id;
 
-    const meta = (Array.isArray(acc.gaProperties) ? acc.gaProperties : []).find(p =>
-      normPropertyId(p.propertyId) === property
-    ) || {};
-
-    const accountName  = meta.accountName || meta.account || prop.accountName || '';
-    const propertyName = meta.displayName || prop.displayName || '';
-
-    // ---- canales (breakdown) ----
     let jChannels;
     try {
       jChannels = await runReportWithRetry(property, channelsBody);
@@ -489,51 +674,34 @@ async function collectGA4(
 
       byProperty.push({
         property,
-        accountName,
-        propertyName,
-        dateRange,
+        propertyName: prop.displayName || '',
+        dateRange: { start: rangeOut.from, end: rangeOut.to },
         error: true,
         reason,
-
-        channels: [],
-        devices: [],
-        landingPages: [],
-        daily: [],
-        sourceMedium: [],
-        topEvents: [],
-
-        kpis: {
-          users: 0, sessions: 0, conversions: 0, revenue: 0,
-          newUsers: 0, engagedSessions: 0,
-          engagementRate: 0,
-        },
+        kpis: { users: 0, sessions: 0, conversions: 0, revenue: 0, newUsers: 0, engagedSessions: 0, engagementRate: 0 },
       });
       continue;
     }
 
     const rows = Array.isArray(jChannels?.rows) ? jChannels.rows : [];
     const channels = rows.map(rw => ({
-      channel:     rw.dimensionValues?.[0]?.value || '(other)',
-      users:       toNum(rw.metricValues?.[0]?.value),
-      sessions:    toNum(rw.metricValues?.[1]?.value),
+      channel: rw.dimensionValues?.[0]?.value || '(other)',
+      users: toNum(rw.metricValues?.[0]?.value),
+      sessions: toNum(rw.metricValues?.[1]?.value),
       conversions: toNum(rw.metricValues?.[2]?.value),
-      revenue:     toNum(rw.metricValues?.[3]?.value),
-      newUsers:    toNum(rw.metricValues?.[4]?.value),
+      revenue: toNum(rw.metricValues?.[3]?.value),
+      newUsers: toNum(rw.metricValues?.[4]?.value),
       engagedSessions: toNum(rw.metricValues?.[5]?.value),
+      engagementRate: round2(safeDiv(toNum(rw.metricValues?.[5]?.value), toNum(rw.metricValues?.[1]?.value)) * 100),
     }));
 
-    // ✅ KPIs reales (TOTAL oficial) para evitar sobreconteo de usuarios/newUsers
     let totals = jChannels?.totals?.[0]?.metricValues || null;
-
-    // Fallback robusto: si no vino totals por cualquier razón, pedimos totales sin dimensiones
     if (!totals || !Array.isArray(totals) || totals.length < 6) {
       try {
         const jTotals = await runReportWithRetry(property, totalsOnlyBody);
         const row0 = Array.isArray(jTotals?.rows) ? jTotals.rows[0] : null;
         totals = row0?.metricValues || totals;
-      } catch (_) {
-        // si falla el fallback, dejamos totals como esté (o null)
-      }
+      } catch {}
     }
 
     const propAgg = {
@@ -545,7 +713,6 @@ async function collectGA4(
       engagedSessions: toNum(totals?.[5]?.value),
     };
 
-    // Actualizar agregados globales (por propiedad)
     aggregate.users += propAgg.users || 0;
     aggregate.sessions += propAgg.sessions || 0;
     aggregate.conversions += propAgg.conversions || 0;
@@ -553,12 +720,9 @@ async function collectGA4(
     aggregate.newUsers += propAgg.newUsers || 0;
     aggregate.engagedSessions += propAgg.engagedSessions || 0;
 
-    // Map global de canales (breakdown; aquí sí se suman filas por canal)
     for (const c of channels) {
       const key = c.channel || '(other)';
-      const g = globalChannelsMap.get(key) || {
-        users: 0, sessions: 0, conversions: 0, revenue: 0, newUsers: 0, engagedSessions: 0
-      };
+      const g = globalChannelsMap.get(key) || { users: 0, sessions: 0, conversions: 0, revenue: 0, newUsers: 0, engagedSessions: 0 };
       g.users += c.users || 0;
       g.sessions += c.sessions || 0;
       g.conversions += c.conversions || 0;
@@ -568,18 +732,18 @@ async function collectGA4(
       globalChannelsMap.set(key, g);
     }
 
-    // ---- dispositivos ----
     let devices = [];
     try {
       const jDevices = await runReportWithRetry(property, devicesBody);
       const dRows = Array.isArray(jDevices?.rows) ? jDevices.rows : [];
       devices = dRows.map(rw => ({
-        device:      rw.dimensionValues?.[0]?.value || '(other)',
-        users:       toNum(rw.metricValues?.[0]?.value),
-        sessions:    toNum(rw.metricValues?.[1]?.value),
+        device: rw.dimensionValues?.[0]?.value || '(other)',
+        users: toNum(rw.metricValues?.[0]?.value),
+        sessions: toNum(rw.metricValues?.[1]?.value),
         conversions: toNum(rw.metricValues?.[2]?.value),
-        revenue:     toNum(rw.metricValues?.[3]?.value),
+        revenue: toNum(rw.metricValues?.[3]?.value),
         engagedSessions: toNum(rw.metricValues?.[4]?.value),
+        engagementRate: round2(safeDiv(toNum(rw.metricValues?.[4]?.value), toNum(rw.metricValues?.[1]?.value)) * 100),
       }));
 
       for (const d of devices) {
@@ -596,17 +760,17 @@ async function collectGA4(
       devices = [];
     }
 
-    // ---- landing pages ----
     let landingPages = [];
     try {
       const jLanding = await runReportWithRetry(property, landingBody);
       const lRows = Array.isArray(jLanding?.rows) ? jLanding.rows : [];
       landingPages = lRows.map(rw => ({
-        page:        rw.dimensionValues?.[0]?.value || '(not set)',
-        sessions:    toNum(rw.metricValues?.[0]?.value),
+        page: rw.dimensionValues?.[0]?.value || '(not set)',
+        sessions: toNum(rw.metricValues?.[0]?.value),
         conversions: toNum(rw.metricValues?.[1]?.value),
-        revenue:     toNum(rw.metricValues?.[2]?.value),
+        revenue: toNum(rw.metricValues?.[2]?.value),
         engagedSessions: toNum(rw.metricValues?.[3]?.value),
+        engagementRate: round2(safeDiv(toNum(rw.metricValues?.[3]?.value), toNum(rw.metricValues?.[0]?.value)) * 100),
       }));
 
       for (const lp of landingPages) {
@@ -622,14 +786,12 @@ async function collectGA4(
       landingPages = [];
     }
 
-    // ---- daily trend ----
     let daily = [];
     try {
       const jDaily = await runReportWithRetry(property, dailyBody);
       const tRows = Array.isArray(jDaily?.rows) ? jDaily.rows : [];
       daily = tRows.map(rw => {
         const raw = rw.dimensionValues?.[0]?.value || '';
-        // GA4 date: YYYYMMDD -> YYYY-MM-DD
         const date =
           raw && raw.length === 8
             ? `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`
@@ -642,6 +804,7 @@ async function collectGA4(
           conversions: toNum(rw.metricValues?.[2]?.value),
           revenue: toNum(rw.metricValues?.[3]?.value),
           engagedSessions: toNum(rw.metricValues?.[4]?.value),
+          engagementRate: round2(safeDiv(toNum(rw.metricValues?.[4]?.value), toNum(rw.metricValues?.[1]?.value)) * 100),
         };
       });
 
@@ -659,7 +822,6 @@ async function collectGA4(
       daily = [];
     }
 
-    // ---- source/medium ----
     let sourceMedium = [];
     try {
       const jSM = await runReportWithRetry(property, sourceMediumBody);
@@ -671,6 +833,7 @@ async function collectGA4(
         conversions: toNum(rw.metricValues?.[1]?.value),
         revenue: toNum(rw.metricValues?.[2]?.value),
         engagedSessions: toNum(rw.metricValues?.[3]?.value),
+        engagementRate: round2(safeDiv(toNum(rw.metricValues?.[3]?.value), toNum(rw.metricValues?.[0]?.value)) * 100),
       }));
 
       for (const sm of sourceMedium) {
@@ -686,7 +849,6 @@ async function collectGA4(
       sourceMedium = [];
     }
 
-    // ---- top events ----
     let topEvents = [];
     try {
       const jEv = await runReportWithRetry(property, topEventsBody);
@@ -708,32 +870,21 @@ async function collectGA4(
       topEvents = [];
     }
 
-    // Limitar tamaños para no inflar el prompt del LLM
     landingPages.sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
-    landingPages = landingPages.slice(0, 60);
+    landingPages = landingPages.slice(0, Math.max(10, topLandingPagesN));
 
     sourceMedium.sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
-    sourceMedium = sourceMedium.slice(0, 80);
+    sourceMedium = sourceMedium.slice(0, Math.max(10, topSourceMediumN));
 
     topEvents.sort((a, b) => (b.eventCount || 0) - (a.eventCount || 0));
-    topEvents = topEvents.slice(0, 80);
+    topEvents = topEvents.slice(0, Math.max(10, topEventsN));
 
-    // KPI enriquecidos
-    const engagementRate = safeDiv(propAgg.engagedSessions, propAgg.sessions) * 100;
+    const engagementRate = round2(safeDiv(propAgg.engagedSessions, propAgg.sessions) * 100);
 
     byProperty.push({
       property,
-      accountName,
-      propertyName,
-      dateRange,
-
-      channels,
-      devices,
-      landingPages,
-      daily,
-      sourceMedium,
-      topEvents,
-
+      propertyName: prop.displayName || '',
+      dateRange: { start: rangeOut.from, end: rangeOut.to },
       kpis: {
         users: propAgg.users,
         sessions: propAgg.sessions,
@@ -743,11 +894,16 @@ async function collectGA4(
         engagedSessions: propAgg.engagedSessions,
         engagementRate,
       },
+      channels,
+      devices,
+      landingPages,
+      daily,
+      sourceMedium,
+      topEvents,
     });
   }
 
-  // Global maps -> arrays
-  const channelsGlobal = Array.from(globalChannelsMap.entries()).map(([channel, m]) => ({
+  let channelsGlobal = Array.from(globalChannelsMap.entries()).map(([channel, m]) => ({
     channel,
     users: m.users,
     sessions: m.sessions,
@@ -755,20 +911,22 @@ async function collectGA4(
     revenue: m.revenue,
     newUsers: m.newUsers,
     engagedSessions: m.engagedSessions,
-    engagementRate: safeDiv(m.engagedSessions, m.sessions) * 100,
+    engagementRate: round2(safeDiv(m.engagedSessions, m.sessions) * 100),
   }));
   channelsGlobal.sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
+  channelsGlobal = channelsGlobal.slice(0, Math.max(5, topChannelsN));
 
-  const devicesGlobal = Array.from(globalDevicesMap.entries()).map(([device, m]) => ({
+  let devicesGlobal = Array.from(globalDevicesMap.entries()).map(([device, m]) => ({
     device,
     users: m.users,
     sessions: m.sessions,
     conversions: m.conversions,
     revenue: m.revenue,
     engagedSessions: m.engagedSessions,
-    engagementRate: safeDiv(m.engagedSessions, m.sessions) * 100,
+    engagementRate: round2(safeDiv(m.engagedSessions, m.sessions) * 100),
   }));
   devicesGlobal.sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
+  devicesGlobal = devicesGlobal.slice(0, Math.max(4, topDevicesN));
 
   let landingGlobal = Array.from(globalLandingMap.entries()).map(([page, m]) => ({
     page,
@@ -776,21 +934,37 @@ async function collectGA4(
     conversions: m.conversions,
     revenue: m.revenue,
     engagedSessions: m.engagedSessions,
-    engagementRate: safeDiv(m.engagedSessions, m.sessions) * 100,
+    engagementRate: round2(safeDiv(m.engagedSessions, m.sessions) * 100),
   }));
   landingGlobal.sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
-  landingGlobal = landingGlobal.slice(0, 100);
+  landingGlobal = landingGlobal.slice(0, Math.max(20, topLandingPagesN));
 
-  const dailyGlobal = Array.from(globalDailyMap.entries())
-    .map(([date, m]) => ({ date, ...m }))
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const dailyGlobal = sortByDateAsc(
+    Array.from(globalDailyMap.entries()).map(([date, m]) => ({
+      date,
+      users: m.users,
+      sessions: m.sessions,
+      conversions: m.conversions,
+      revenue: m.revenue,
+      engagedSessions: m.engagedSessions,
+      engagementRate: round2(safeDiv(m.engagedSessions, m.sessions) * 100),
+    }))
+  );
 
   let sourceMediumGlobal = Array.from(globalSourceMediumMap.entries()).map(([k, m]) => {
     const [source, medium] = k.split('|');
-    return { source, medium, ...m, engagementRate: safeDiv(m.engagedSessions, m.sessions) * 100 };
+    return {
+      source,
+      medium,
+      sessions: m.sessions,
+      conversions: m.conversions,
+      revenue: m.revenue,
+      engagedSessions: m.engagedSessions,
+      engagementRate: round2(safeDiv(m.engagedSessions, m.sessions) * 100),
+    };
   });
   sourceMediumGlobal.sort((a, b) => (b.sessions || 0) - (a.sessions || 0));
-  sourceMediumGlobal = sourceMediumGlobal.slice(0, 120);
+  sourceMediumGlobal = sourceMediumGlobal.slice(0, Math.max(30, topSourceMediumN));
 
   let topEventsGlobal = Array.from(globalTopEventsMap.entries()).map(([event, m]) => ({
     event,
@@ -798,57 +972,117 @@ async function collectGA4(
     conversions: m.conversions,
   }));
   topEventsGlobal.sort((a, b) => (b.eventCount || 0) - (a.eventCount || 0));
-  topEventsGlobal = topEventsGlobal.slice(0, 120);
+  topEventsGlobal = topEventsGlobal.slice(0, Math.max(30, topEventsN));
 
-  const properties = byProperty.map(p => ({
-    id: p.property,
-    accountName: p.accountName,
-    propertyName: p.propertyName
-  }));
-
-  // Compat: si sólo hubo una propiedad, exponer campos “simples”
-  if (byProperty.length === 1) {
-    const p = byProperty[0];
-    return {
-      notAuthorized: false,
-      property: p.property,
-      accountName: p.accountName,
-      propertyName: p.propertyName,
-      dateRange,
-
-      // compat (global == property)
-      channels: channelsGlobal,
-      devices: devicesGlobal,
-      landingPages: landingGlobal,
-
-      // ✅ enriquecidos
-      daily: dailyGlobal,
-      sourceMedium: sourceMediumGlobal,
-      topEvents: topEventsGlobal,
-
-      byProperty,
-      aggregate,
-      properties,
-      version: 'ga4Collector@canonical-selection+totals-v4',
-    };
+  function aggWindow(days, endYMD) {
+    const end = endYMD;
+    const start = addDaysYMD(end, -(days - 1));
+    const rows = dailyGlobal.filter(r => r.date >= start && r.date <= end);
+    const k = rows.reduce((a, r) => {
+      a.users += toNum(r.users);
+      a.sessions += toNum(r.sessions);
+      a.conversions += toNum(r.conversions);
+      a.revenue += toNum(r.revenue);
+      a.engagedSessions += toNum(r.engagedSessions);
+      return a;
+    }, { users: 0, sessions: 0, conversions: 0, revenue: 0, engagedSessions: 0 });
+    k.engagementRate = round2(safeDiv(k.engagedSessions, k.sessions) * 100);
+    return k;
   }
 
+  function prevWindow(days, endYMD) {
+    const endPrev = addDaysYMD(endYMD, -days);
+    const startPrev = addDaysYMD(endPrev, -(days - 1));
+    const rows = dailyGlobal.filter(r => r.date >= startPrev && r.date <= endPrev);
+    const k = rows.reduce((a, r) => {
+      a.users += toNum(r.users);
+      a.sessions += toNum(r.sessions);
+      a.conversions += toNum(r.conversions);
+      a.revenue += toNum(r.revenue);
+      a.engagedSessions += toNum(r.engagedSessions);
+      return a;
+    }, { users: 0, sessions: 0, conversions: 0, revenue: 0, engagedSessions: 0 });
+    k.engagementRate = round2(safeDiv(k.engagedSessions, k.sessions) * 100);
+    return k;
+  }
+
+  const endForWindows = rangeOut.to;
+  const last7 = aggWindow(7, endForWindows);
+  const prev7 = prevWindow(7, endForWindows);
+  const last30 = aggWindow(30, endForWindows);
+  const prev30 = prevWindow(30, endForWindows);
+
+  const summary = {
+    kpis: {
+      users: aggregate.users,
+      sessions: aggregate.sessions,
+      conversions: aggregate.conversions,
+      revenue: aggregate.revenue,
+      newUsers: aggregate.newUsers,
+      engagedSessions: aggregate.engagedSessions,
+      engagementRate: round2(safeDiv(aggregate.engagedSessions, aggregate.sessions) * 100),
+    },
+    windows: {
+      last_7_days: last7,
+      prev_7_days: prev7,
+      last_30_days: last30,
+      prev_30_days: prev30,
+    },
+    deltas: {
+      last7_vs_prev7: computeDeltas(last7, prev7),
+      last30_vs_prev30: computeDeltas(last30, prev30),
+    },
+  };
+
+  const optimization_signals = buildOptimizationSignals({
+    channelsTop: channelsGlobal,
+    devicesTop: devicesGlobal,
+    landingPagesTop: landingGlobal,
+    sourceMediumTop: sourceMediumGlobal,
+    eventsTop: topEventsGlobal,
+    summary,
+  });
+
+  const daily_trends_ai = {
+    totals_by_day: dailyGlobal.map((d) => ({
+      date: d.date,
+      kpis: {
+        users: round2(d.users),
+        sessions: round2(d.sessions),
+        conversions: round2(d.conversions),
+        revenue: round2(d.revenue),
+        engagedSessions: round2(d.engagedSessions),
+        engagementRate: round2(d.engagementRate),
+      },
+    })),
+  };
+
+  const header = makeGa4Header({
+    userId,
+    properties: propertiesMetaOut,
+    range: rangeOut,
+    version: 'ga4Collector@mcp-v2(summary+signals+dailyTrendsAI)',
+  });
+
+  const datasets = [
+    { source: 'ga4', dataset: 'ga4.insights_summary', range: rangeOut, data: { meta: header, summary } },
+    { source: 'ga4', dataset: 'ga4.channels_top', range: rangeOut, data: { meta: header, channels_top: channelsGlobal.map(compactChannelRow) } },
+    { source: 'ga4', dataset: 'ga4.devices_top', range: rangeOut, data: { meta: header, devices_top: devicesGlobal.map(compactDeviceRow) } },
+    { source: 'ga4', dataset: 'ga4.landing_pages_top', range: rangeOut, data: { meta: header, landing_pages_top: landingGlobal.map(compactLandingRow) } },
+    { source: 'ga4', dataset: 'ga4.source_medium_top', range: rangeOut, data: { meta: header, source_medium_top: sourceMediumGlobal.map(compactSourceMediumRow) } },
+    { source: 'ga4', dataset: 'ga4.events_top', range: rangeOut, data: { meta: header, events_top: topEventsGlobal.map(compactEventRow) } },
+    { source: 'ga4', dataset: 'ga4.optimization_signals', range: rangeOut, data: { meta: header, optimization_signals } },
+    { source: 'ga4', dataset: 'ga4.daily_trends_ai', range: rangeOut, data: { meta: header, ...daily_trends_ai } },
+  ];
+
   return {
+    ok: true,
     notAuthorized: false,
-    dateRange,
-    channels: channelsGlobal,
-    devices: devicesGlobal,
-    landingPages: landingGlobal,
-
-    // ✅ enriquecidos
-    daily: dailyGlobal,
-    sourceMedium: sourceMediumGlobal,
-    topEvents: topEventsGlobal,
-
+    reason: null,
+    range: rangeOut,
+    properties: propertiesMetaOut,
+    datasets,
     byProperty,
-    aggregate,
-    properties,
-    version: 'ga4Collector@canonical-selection+totals-v4',
   };
 }
 

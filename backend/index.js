@@ -98,8 +98,11 @@ const metaTable = require("./routes/metaTable");
 const metaPixelsRoutes = require("./routes/metaPixels");
 const googleConversionsRoutes = require("./routes/googleConversions");
 const pixelsRoutes = require("./routes/pixels");
-const app = express();
 
+// ✅ NEW: MCPDATA router
+const mcpdataRoutes = require("./routes/mcpdata");
+
+const app = express();
 
 // ✅ Debug de correo (ya usa mailer.js/emailService.js)
 app.use("/__mail", require("./routes/mailDebug"));
@@ -475,6 +478,11 @@ app.use("/api/google/ads", sessionGuard, googleAdsInsightsRouter);
 app.use("/api/onboarding/status", sessionGuard, require("./routes/onboardingStatus"));
 
 app.use('/api/onboarding', require('./routes/onboardingReset'));
+
+app.use('/api/mcpjobs', sessionGuard, require('./routes/mcpjobs'));
+
+app.use('/api/mcp/context', require('./routes/mcpContext'));
+
 /* =========================
  * ✅ Integraciones: DISCONNECT (E2E)
  * ========================= */
@@ -483,6 +491,7 @@ const emptyArr = () => [];
 
 app.post("/api/integrations/disconnect/google", sessionGuard, async (req, res) => {
   try {
+    // ✅ FIX CRÍTICO: quitamos el typo ";a"
     const uid = req.user._id;
 
     if (GoogleAccount) {
@@ -691,6 +700,9 @@ app.use("/api/google", sessionGuard, googleConversionsRoutes);
 // Central (select/status/confirm)
 app.use("/api/pixels", sessionGuard, pixelsRoutes);
 
+// ✅ MCPDATA (marketing-only, sin tokens) — requiere sesión
+app.use("/api/mcpdata", sessionGuard, mcpdataRoutes);
+
 // Shopify
 const verifyShopifyToken = require("../middlewares/verifyShopifyToken"); // (por ahora no usado)
 
@@ -709,7 +721,7 @@ app.use(
   },
   express.static(CONNECTOR_PUBLIC, {
     index: false,
-    maxAge: "0", 
+    maxAge: "0",
   }),
   connector
 );
@@ -1084,7 +1096,6 @@ app.post("/api/forgot-password", requireTurnstileAlways, async (req, res) => {
   }
 });
 
-
 app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
@@ -1167,7 +1178,6 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
   }
 });
 
-
 app.get("/api/session", async (req, res) => {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
     return res.status(401).json({ authenticated: false });
@@ -1210,7 +1220,6 @@ app.get("/api/session", async (req, res) => {
     return res.status(401).json({ authenticated: false });
   }
 });
-
 
 async function sendAuthMe(req, res) {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
@@ -1300,7 +1309,6 @@ app.get("/api/me", async (req, res) => {
     return res.status(500).json({ authenticated: false, error: "internal" });
   }
 });
-
 
 app.use("/api", userRoutes);
 

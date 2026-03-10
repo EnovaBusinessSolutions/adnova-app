@@ -1,0 +1,467 @@
+// backend/models/McpData.js
+'use strict';
+
+const mongoose = require('mongoose');
+const { Schema, model, Types } = mongoose;
+
+/* =========================
+ * Shared sub-schemas
+ * ========================= */
+const RangeSchema = new Schema(
+  {
+    from: { type: String, default: null }, // YYYY-MM-DD
+    to: { type: String, default: null },   // YYYY-MM-DD
+    tz: { type: String, default: null },   // America/Mexico_City
+  },
+  { _id: false }
+);
+
+const StatsSchema = new Schema(
+  {
+    rows: { type: Number, default: 0 },
+    bytes: { type: Number, default: 0 },
+  },
+  { _id: false }
+);
+
+const CoverageSchema = new Schema(
+  {
+    range: { type: RangeSchema, default: () => ({}) },
+    defaultRangeDays: { type: Number, default: 30 },
+    granularity: { type: [String], default: [] }, // ["summary","ranked_campaigns","breakdown","signals","daily_ai"]
+  },
+  { _id: false }
+);
+
+const SourceStateSchema = new Schema(
+  {
+    connected: { type: Boolean, default: false },
+
+    // queued | running | ready | error
+    status: { type: String, default: 'queued' },
+
+    // compat
+    ready: { type: Boolean, default: false },
+
+    // IDs no sensibles
+    accountId: { type: String, default: null },   // Meta
+    customerId: { type: String, default: null },  // Google Ads
+    propertyId: { type: String, default: null },  // GA4
+
+    // metadata útil para la ficha del source
+    name: { type: String, default: null },
+    currency: { type: String, default: null },
+    timezone: { type: String, default: null },
+
+    // sync/status
+    lastSyncAt: { type: Date, default: null },
+    lastError: { type: String, default: null },
+
+    // policy efectiva aplicada por plan
+    rangeDays: { type: Number, default: null },
+  },
+  { _id: false }
+);
+
+/* =========================
+ * AI Context sub-schemas
+ * ========================= */
+const AiContextSummarySchema = new Schema(
+  {
+    executive_summary: { type: String, default: null },
+    business_state: { type: String, default: null },
+    cross_channel_story: { type: String, default: null },
+    positives: { type: [String], default: [] },
+    negatives: { type: [String], default: [] },
+    priority_actions: { type: [String], default: [] },
+  },
+  { _id: false }
+);
+
+const EncodedPayloadSchema = new Schema(
+  {
+    schema: { type: String, default: null },
+    providerAgnostic: { type: Boolean, default: true },
+    generatedAt: { type: String, default: null },
+
+    summary: { type: AiContextSummarySchema, default: undefined },
+
+    performance_drivers: { type: [String], default: [] },
+    conversion_bottlenecks: { type: [String], default: [] },
+    scaling_opportunities: { type: [String], default: [] },
+    risk_flags: { type: [String], default: [] },
+
+    llm_context_block: { type: String, default: null },
+    llm_context_block_mini: { type: String, default: null },
+    prompt_hints: { type: [String], default: [] },
+
+    // Espacio flexible para contar la historia por canal o guardar estructura enriquecida
+    channel_story: { type: Schema.Types.Mixed, default: null },
+  },
+  { _id: false, strict: false }
+);
+
+const AiContextSchema = new Schema(
+  {
+    status: {
+      type: String,
+      enum: ['idle', 'processing', 'done', 'error'],
+      default: 'idle',
+    },
+    progress: { type: Number, default: 0 },
+    stage: { type: String, default: 'idle' },
+
+    startedAt: { type: String, default: null },
+    finishedAt: { type: String, default: null },
+
+    snapshotId: { type: String, default: null },
+
+    usedOpenAI: { type: Boolean, default: false },
+    model: { type: String, default: null },
+
+    error: { type: String, default: null },
+
+    // Base compactada cross-channel antes del enriquecimiento
+    unifiedBase: { type: Schema.Types.Mixed, default: null },
+
+    // Payload final AI-ready
+    encodedPayload: { type: EncodedPayloadSchema, default: undefined },
+  },
+  { _id: false, strict: false }
+);
+
+/* =========================
+ * Main schema
+ * ========================= */
+const McpDataSchema = new Schema(
+  {
+    // owner
+    userId: { type: Types.ObjectId, ref: 'User', required: true, index: true },
+
+    // root | chunk
+    kind: { type: String, enum: ['root', 'chunk'], required: true, index: true },
+
+    /**
+     * ==========================
+     * ROOT-ONLY FIELDS
+     * ==========================
+     */
+    sources: {
+      type: new Schema(
+        {
+          metaAds: { type: SourceStateSchema, default: () => ({}) },
+          googleAds: { type: SourceStateSchema, default: () => ({}) },
+          ga4: { type: SourceStateSchema, default: () => ({}) },
+        },
+        { _id: false }
+      ),
+      default: undefined,
+    },
+
+    coverage: {
+      type: CoverageSchema,
+      default: undefined,
+    },
+
+    latestSnapshotId: { type: String, default: null },
+
+    aiContext: {
+      type: AiContextSchema,
+      default: undefined,
+    },
+
+    /**
+     * stats aplica tanto para root como para chunk:
+     * - root: volumen agregado del snapshot actual
+     * - chunk: volumen del dataset específico
+     */
+    stats: {
+      type: StatsSchema,
+      default: undefined,
+    },
+
+    /**
+     * ==========================
+     * CHUNK-ONLY FIELDS
+     * ==========================
+     */
+    snapshotId: { type: String, default: null, index: true },
+
+    // metaAds | googleAds | ga4
+    source: {
+      type: String,
+      enum: ['metaAds', 'googleAds', 'ga4', null],
+      default: null,
+      index: true,
+    },
+
+    dataset: { type: String, default: null, index: true },
+
+    range: {
+      type: RangeSchema,
+      default: undefined,
+    },
+
+    // Compact payload normalized y seguro
+    data: { type: Schema.Types.Mixed, default: null },
+  },
+  {
+    collection: 'mcpdata',
+    timestamps: true,
+    minimize: true,
+  }
+);
+
+/* =========================
+ * Indexes
+ * ========================= */
+
+// Root lookup rápido
+McpDataSchema.index(
+  { userId: 1, kind: 1 },
+  { unique: true, partialFilterExpression: { kind: 'root' } }
+);
+
+// Consultar chunks por snapshot/source/dataset
+McpDataSchema.index({ userId: 1, kind: 1, snapshotId: 1 });
+McpDataSchema.index({ userId: 1, kind: 1, source: 1, dataset: 1, 'range.from': 1 });
+
+// Latest chunks
+McpDataSchema.index({ userId: 1, kind: 1, createdAt: -1 });
+
+// Evitar duplicados por dataset+range dentro de snapshot
+McpDataSchema.index(
+  { userId: 1, kind: 1, snapshotId: 1, source: 1, dataset: 1, 'range.from': 1, 'range.to': 1 },
+  { unique: true, partialFilterExpression: { kind: 'chunk' } }
+);
+
+/* =========================
+ * Helpers internos
+ * ========================= */
+function isPlainObject(value) {
+  if (value == null || typeof value !== 'object') return false;
+  return Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function cleanUndefined(obj) {
+  if (obj === undefined) return undefined;
+  if (obj === null) return null;
+
+  // Preservar Date
+  if (obj instanceof Date) return obj;
+
+  // Preservar ObjectId
+  if (obj instanceof Types.ObjectId) return obj;
+
+  // Preservar arrays
+  if (Array.isArray(obj)) {
+    return obj
+      .map(cleanUndefined)
+      .filter((v) => v !== undefined);
+  }
+
+  // Preservar objetos no planos (Buffer, clases, etc.)
+  if (!isPlainObject(obj)) return obj;
+
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    const cleaned = cleanUndefined(v);
+    if (cleaned !== undefined) {
+      out[k] = cleaned;
+    }
+  }
+  return out;
+}
+
+function normalizeRootPatch(userId, patch = {}) {
+  const cleaned = cleanUndefined(patch || {});
+  return {
+    ...cleaned,
+    kind: 'root',
+    userId,
+  };
+}
+
+function normalizeChunkPayload({
+  userId,
+  snapshotId,
+  source,
+  dataset,
+  range,
+  data,
+  stats,
+} = {}) {
+  const from = range?.from ?? null;
+  const to = range?.to ?? null;
+  const tz = range?.tz ?? null;
+
+  return {
+    userId,
+    kind: 'chunk',
+    snapshotId: snapshotId || null,
+    source: source || null,
+    dataset: dataset || null,
+    range: { from, to, tz },
+    data: data ?? null,
+    stats: {
+      rows: Number(stats?.rows || 0),
+      bytes: Number(stats?.bytes || 0),
+    },
+  };
+}
+
+/* =========================
+ * Statics
+ * ========================= */
+
+McpDataSchema.statics.upsertRoot = async function (userId, patch = {}) {
+  const now = new Date();
+  const normalized = normalizeRootPatch(userId, patch);
+
+  return this.findOneAndUpdate(
+    { userId, kind: 'root' },
+    {
+      $set: {
+        ...normalized,
+        updatedAt: now,
+      },
+      $setOnInsert: {
+        createdAt: now,
+      },
+      // limpia campos chunk-only por si existían de antes
+      $unset: {
+        snapshotId: 1,
+        source: 1,
+        dataset: 1,
+        range: 1,
+        data: 1,
+      },
+    },
+    { upsert: true, new: true }
+  );
+};
+
+/**
+ * Patch específico de una fuente dentro del root
+ * Ej:
+ * patchRootSource(userId, 'metaAds', {
+ *   connected: true,
+ *   status: 'ready',
+ *   accountId: '123',
+ *   currency: 'MXN'
+ * })
+ */
+McpDataSchema.statics.patchRootSource = async function (userId, sourceKey, patch = {}) {
+  const now = new Date();
+  const $set = {
+    updatedAt: now,
+  };
+
+  const cleanedPatch = cleanUndefined(patch || {});
+  for (const [k, v] of Object.entries(cleanedPatch)) {
+    $set[`sources.${sourceKey}.${k}`] = v;
+  }
+
+  return this.findOneAndUpdate(
+    { userId, kind: 'root' },
+    {
+      $setOnInsert: {
+        userId,
+        kind: 'root',
+        createdAt: now,
+      },
+      $set,
+      // limpia campos chunk-only por si existían de antes
+      $unset: {
+        snapshotId: 1,
+        source: 1,
+        dataset: 1,
+        range: 1,
+        data: 1,
+      },
+    },
+    { upsert: true, new: true }
+  );
+};
+
+/**
+ * UPSERT chunk limpio
+ * - solo persiste campos chunk-only
+ * - evita contaminar con metadata de root
+ */
+McpDataSchema.statics.upsertChunk = async function ({
+  userId,
+  snapshotId,
+  source,
+  dataset,
+  range,
+  data,
+  stats,
+} = {}) {
+  const now = new Date();
+  const normalized = normalizeChunkPayload({
+    userId,
+    snapshotId,
+    source,
+    dataset,
+    range,
+    data,
+    stats,
+  });
+
+  return this.findOneAndUpdate(
+    {
+      userId,
+      kind: 'chunk',
+      snapshotId: normalized.snapshotId,
+      source: normalized.source,
+      dataset: normalized.dataset,
+      'range.from': normalized.range.from,
+      'range.to': normalized.range.to,
+    },
+    {
+      $set: {
+        ...normalized,
+        updatedAt: now,
+      },
+      $setOnInsert: {
+        createdAt: now,
+      },
+      // limpia campos root-only por si existían de antes
+      $unset: {
+        sources: 1,
+        coverage: 1,
+        latestSnapshotId: 1,
+        aiContext: 1,
+      },
+    },
+    { upsert: true, new: true }
+  );
+};
+
+/**
+ * Insert directo legacy/debug
+ */
+McpDataSchema.statics.insertChunk = async function ({
+  userId,
+  snapshotId,
+  source,
+  dataset,
+  range,
+  data,
+  stats,
+} = {}) {
+  const normalized = normalizeChunkPayload({
+    userId,
+    snapshotId,
+    source,
+    dataset,
+    range,
+    data,
+    stats,
+  });
+
+  return this.create(normalized);
+};
+
+module.exports = mongoose.models.McpData || model('McpData', McpDataSchema);
