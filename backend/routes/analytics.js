@@ -11,6 +11,8 @@ const EVENT_BUCKET_ALIASES = {
   purchase: ['purchase', 'order_completed', 'checkout_completed', 'order_create', 'orders_create'],
 };
 
+const PURCHASE_ALIASES = EVENT_BUCKET_ALIASES.purchase;
+
 function normalizeEventName(value) {
   return String(value || '')
     .trim()
@@ -53,7 +55,8 @@ router.get('/:account_id', async (req, res) => {
         createdAt: true,
         revenue: true,
         attributedChannel: true,
-        orderId: true
+        orderId: true,
+        lineItems: true
       }
     });
 
@@ -96,6 +99,7 @@ router.get('/:account_id', async (req, res) => {
       other: 0,
       total: 0,
     };
+    const productMap = new Map();
 
     // Daily breakdown map
     const dailyMap = {};
@@ -130,6 +134,27 @@ router.get('/:account_id', async (req, res) => {
         dailyMap[day].revenue += rev;
         dailyMap[day].orders += 1;
       }
+
+      // Top products by revenue
+      const items = Array.isArray(order.lineItems) ? order.lineItems : [];
+      items.forEach((item) => {
+        const id = String(item?.product_id || item?.productId || item?.id || item?.variant_id || item?.variantId || 'unknown');
+        const name = String(item?.name || item?.title || 'Unknown Product');
+        const qty = Number(item?.quantity || item?.qty || 1);
+        const unitPrice = Number(item?.price || item?.unit_price || item?.unitPrice || 0);
+        const lineRevenueRaw =
+          item?.line_total ?? item?.lineTotal ?? item?.total ?? item?.final_line_price ?? item?.finalLinePrice;
+        const lineRevenue = Number.isFinite(Number(lineRevenueRaw))
+          ? Number(lineRevenueRaw)
+          : (Number.isFinite(unitPrice) ? unitPrice * (Number.isFinite(qty) ? qty : 1) : 0);
+
+        const key = `${id}::${name}`;
+        const current = productMap.get(key) || { id, name, units: 0, revenue: 0, orderCount: 0 };
+        current.units += Number.isFinite(qty) ? qty : 1;
+        current.revenue += Number.isFinite(lineRevenue) ? lineRevenue : 0;
+        current.orderCount += 1;
+        productMap.set(key, current);
+      });
     });
 
     groupedEvents.forEach((row) => {
@@ -138,6 +163,32 @@ router.get('/:account_id', async (req, res) => {
       if (typeof eventStats[bucket] === 'number') eventStats[bucket] += count;
       eventStats.total += count;
     });
+
+    const purchaseEventOrderIds = await prisma.event.findMany({
+      where: {
+        accountId: account_id,
+        createdAt: { gte: startDate, lte: endDate },
+        eventName: { in: PURCHASE_ALIASES },
+        orderId: { not: null },
+      },
+      select: { orderId: true },
+      distinct: ['orderId'],
+    });
+
+    const purchaseOrderIds = purchaseEventOrderIds.map((x) => x.orderId).filter(Boolean);
+    const matchedOrders = purchaseOrderIds.length
+      ? await prisma.order.count({
+          where: {
+            accountId: account_id,
+            createdAt: { gte: startDate, lte: endDate },
+            orderId: { in: purchaseOrderIds },
+          },
+        })
+      : 0;
+
+    const topProducts = Array.from(productMap.values())
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10);
 
     // Purchase events often come via Shopify webhook -> Order table (without Event row).
     // Use the max as a safe dashboard metric that avoids showing 0 when orders exist.
@@ -150,6 +201,8 @@ router.get('/:account_id', async (req, res) => {
         totalOrders: orders.length,
         attributedRevenue,
         attributedOrders: orders.length - channelStats.unattributed.orders,
+        unattributedOrders: channelStats.unattributed.orders,
+        unattributedRevenue: channelStats.unattributed.revenue,
         totalSessions: sessionCount,
         conversionRate: sessionCount > 0 ? (orders.length / sessionCount) : 0,
         pageViews: eventStats.page_view,
@@ -161,7 +214,16 @@ router.get('/:account_id', async (req, res) => {
         totalEvents: eventStats.total,
       },
       events: eventStats,
+      pixelHealth: {
+        eventsReceived: eventStats.total,
+        purchaseSignals: eventStats.purchase,
+        orders: orders.length,
+        matchedOrders,
+        orderMatchRate: orders.length > 0 ? Number((matchedOrders / orders.length).toFixed(4)) : 0,
+        purchaseSignalCoverage: orders.length > 0 ? Number((eventStats.purchase / orders.length).toFixed(4)) : 0,
+      },
       channels: channelStats,
+      topProducts,
       daily: Object.values(dailyMap) // sorted array by date
     });
 
