@@ -25,6 +25,8 @@ final class Adnova_Pixel_Plugin {
         register_activation_hook(__FILE__, array(__CLASS__, 'on_activate'));
         add_action('wp_enqueue_scripts', array(__CLASS__, 'enqueue_pixel_script'), 100);
         add_filter('script_loader_tag', array(__CLASS__, 'inject_script_attributes'), 10, 3);
+        // WooCommerce: fire purchase on thank-you page
+        add_action('woocommerce_thankyou', array(__CLASS__, 'on_woo_order_received'), 10, 1);
     }
 
     public static function on_activate() {
@@ -96,29 +98,95 @@ final class Adnova_Pixel_Plugin {
         return sanitize_text_field($host);
     }
 
-    private static function send_activation_ping() {
+    /**
+     * WooCommerce thank-you page: inject order data for the browser pixel
+     * AND fire a server-side backup purchase event to /collect.
+     *
+     * The browser fires event_id='brw_wc_{order_id}'; server uses 'srv_wc_{order_id}'.
+     * Both carry order_id so the dashboard can deduplicate revenue by order_id at query time.
+     */
+    public static function on_woo_order_received($order_id) {
+        if (!$order_id) {
+            return;
+        }
+
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return;
+        }
+
+        // Build items list
+        $items = array();
+        foreach ($order->get_items() as $item) {
+            $product  = $item->get_product();
+            $qty      = max(1, (int) $item->get_quantity());
+            $items[]  = array(
+                'id'       => $product ? (string) $product->get_id() : null,
+                'name'     => $item->get_name(),
+                'quantity' => $qty,
+                'price'    => round((float) $item->get_total() / $qty, 2),
+            );
+        }
+
+        $order_data = array(
+            'order_id'       => (string) $order_id,
+            'revenue'        => (float) $order->get_total(),
+            'currency'       => $order->get_currency(),
+            'checkout_token' => $order->get_cart_hash(),
+            'items'          => $items,
+        );
+
+        // Inject data for browser pixel (picks it up in section 5 of adray-pixel.js)
+        echo '<script>window.adnova_order_data=' . wp_json_encode($order_data) . ';</script>' . "\n";
+
+        // Server-side backup: fires even if the browser blocks the pixel
+        self::send_server_side_event('purchase', array(
+            'event_id'       => 'srv_wc_' . $order_id,
+            'page_url'       => $order->get_checkout_order_received_url(),
+            'page_type'      => 'checkout',
+            'order_id'       => $order_data['order_id'],
+            'revenue'        => $order_data['revenue'],
+            'currency'       => $order_data['currency'],
+            'checkout_token' => $order_data['checkout_token'],
+            'items'          => $order_data['items'],
+        ));
+    }
+
+    /**
+     * Generic server-side event sender — POSTs directly to /collect.
+     */
+    private static function send_server_side_event($event_name, array $extra = array()) {
         $site_id = self::get_site_id();
 
-        $payload = array(
-            'account_id' => $site_id,
-            'site_id' => $site_id,
-            'platform' => 'wordpress',
-            'event_name' => 'plugin_activated',
-            'page_url' => home_url('/'),
-            'page_type' => 'home',
-            'plugin_version' => self::VERSION,
+        $payload = array_merge(
+            array(
+                'account_id' => $site_id,
+                'platform'   => 'woocommerce',
+                'event_name' => $event_name,
+                'page_url'   => home_url('/'),
+            ),
+            $extra
         );
 
         wp_remote_post(
             self::DEFAULT_COLLECT_URL,
             array(
-                'timeout' => 4,
-                'headers' => array(
+                'timeout'  => 5,
+                'blocking' => false,   // non-blocking: don't slow down the page
+                'headers'  => array(
                     'Content-Type' => 'application/json',
                 ),
-                'body' => wp_json_encode($payload),
+                'body'     => wp_json_encode($payload),
             )
         );
+    }
+
+    private static function send_activation_ping() {
+        self::send_server_side_event('plugin_activated', array(
+            'page_url'       => home_url('/'),
+            'page_type'      => 'home',
+            'plugin_version' => self::VERSION,
+        ));
     }
 }
 
