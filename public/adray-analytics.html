@@ -74,7 +74,7 @@
         </div>
 
         <!-- Metric Cards -->
-        <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-6 mb-8">
+        <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 mb-8">
             <!-- Revenue -->
             <div class="bg-white overflow-hidden shadow rounded-lg">
                 <div class="p-5">
@@ -188,6 +188,44 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Unattributed Orders -->
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-5">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0 bg-rose-500 rounded-md p-3">
+                            <i class="fas fa-unlink text-white text-lg"></i>
+                        </div>
+                        <div class="ml-5 w-0 flex-1">
+                            <dl>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Órdenes sin atribución</dt>
+                                <dd class="flex items-baseline">
+                                    <div class="text-2xl font-semibold text-gray-900" id="unattributed-orders">0</div>
+                                </dd>
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Unattributed Revenue -->
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-5">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0 bg-orange-500 rounded-md p-3">
+                            <i class="fas fa-ban text-white text-lg"></i>
+                        </div>
+                        <div class="ml-5 w-0 flex-1">
+                            <dl>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Revenue sin atribuir</dt>
+                                <dd class="flex items-baseline">
+                                    <div class="text-2xl font-semibold text-gray-900" id="unattributed-revenue">$0.00</div>
+                                </dd>
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Charts & Feed Split -->
@@ -229,6 +267,42 @@
                             Esperando eventos...
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- New: Pixel Health + Top Products -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
+            <div class="bg-white shadow rounded-lg p-6">
+                <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Pixel Health</h3>
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                    <div class="bg-gray-50 rounded-lg p-3">
+                        <p class="text-xs text-gray-500">Eventos recibidos</p>
+                        <p class="text-xl font-semibold text-gray-900" id="ph-events-received">0</p>
+                    </div>
+                    <div class="bg-gray-50 rounded-lg p-3">
+                        <p class="text-xs text-gray-500">Señales de purchase</p>
+                        <p class="text-xl font-semibold text-gray-900" id="ph-purchase-signals">0</p>
+                    </div>
+                    <div class="bg-gray-50 rounded-lg p-3">
+                        <p class="text-xs text-gray-500">Órdenes matcheadas</p>
+                        <p class="text-xl font-semibold text-gray-900" id="ph-matched-orders">0</p>
+                    </div>
+                    <div class="bg-gray-50 rounded-lg p-3">
+                        <p class="text-xs text-gray-500">Order Match Rate</p>
+                        <p class="text-xl font-semibold text-gray-900" id="ph-order-match-rate">0%</p>
+                    </div>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-3">
+                    <p class="text-xs text-gray-500">Purchase Signal Coverage</p>
+                    <p class="text-xl font-semibold text-gray-900" id="ph-purchase-coverage">0%</p>
+                </div>
+            </div>
+
+            <div class="bg-white shadow rounded-lg p-6">
+                <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Top Products</h3>
+                <div class="space-y-3" id="top-products-list">
+                    <p class="text-sm text-gray-400">Sin datos de productos todavía.</p>
                 </div>
             </div>
         </div>
@@ -337,12 +411,21 @@
         function renderDashboard(data) {
             // Metrics (Fix: match API structure)
             const summary = data.summary || { totalRevenue: 0, totalOrders: 0 };
+            const pixelHealth = data.pixelHealth || {};
             document.getElementById('total-revenue').textContent = formatCurrency(summary.totalRevenue);
             document.getElementById('total-orders').textContent = summary.totalOrders;
             document.getElementById('page-views').textContent = (summary.pageViews || 0).toLocaleString();
             document.getElementById('add-to-cart').textContent = (summary.addToCart || 0).toLocaleString();
             document.getElementById('begin-checkout').textContent = (summary.beginCheckout || 0).toLocaleString();
             document.getElementById('purchase-events').textContent = (summary.purchaseEvents || 0).toLocaleString();
+            document.getElementById('unattributed-orders').textContent = (summary.unattributedOrders || 0).toLocaleString();
+            document.getElementById('unattributed-revenue').textContent = formatCurrency(summary.unattributedRevenue || 0);
+
+            document.getElementById('ph-events-received').textContent = (pixelHealth.eventsReceived || 0).toLocaleString();
+            document.getElementById('ph-purchase-signals').textContent = (pixelHealth.purchaseSignals || 0).toLocaleString();
+            document.getElementById('ph-matched-orders').textContent = (pixelHealth.matchedOrders || 0).toLocaleString();
+            document.getElementById('ph-order-match-rate').textContent = formatPercent(pixelHealth.orderMatchRate || 0);
+            document.getElementById('ph-purchase-coverage').textContent = formatPercent(pixelHealth.purchaseSignalCoverage || 0);
             
             // Channel Metrics (Fix: API returns object, map to array)
             const channels = data.channels || {};
@@ -357,6 +440,32 @@
             // Charts
             renderAttributionChart(attributionData);
             renderTrendChart(data.daily || []);
+            renderTopProducts(data.topProducts || []);
+        }
+
+        function renderTopProducts(products) {
+            const container = document.getElementById('top-products-list');
+            if (!container) return;
+
+            if (!Array.isArray(products) || products.length === 0) {
+                container.innerHTML = '<p class="text-sm text-gray-400">Sin datos de productos todavía.</p>';
+                return;
+            }
+
+            container.innerHTML = products.slice(0, 10).map((p, idx) => {
+                const name = p.name || p.title || p.id || 'Producto sin nombre';
+                const units = Number(p.units || 0);
+                const revenue = Number(p.revenue || 0);
+                return `
+                    <div class="flex items-center justify-between border border-gray-100 rounded-lg p-3">
+                        <div>
+                            <p class="text-sm font-semibold text-gray-900">#${idx + 1} ${name}</p>
+                            <p class="text-xs text-gray-500">Unidades: ${units.toLocaleString()}</p>
+                        </div>
+                        <p class="text-sm font-bold text-indigo-600">${formatCurrency(revenue)}</p>
+                    </div>
+                `;
+            }).join('');
         }
 
         function renderAttributionChart(attributionData) {
@@ -494,6 +603,10 @@
         // --- UTILS ---
         function formatCurrency(value) {
             return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(value);
+        }
+
+        function formatPercent(value) {
+            return `${(Number(value || 0) * 100).toFixed(1)}%`;
         }
 
         // Start
