@@ -6,14 +6,14 @@ const mongoose = require('mongoose');
 
 const API_VER = process.env.FACEBOOK_API_VERSION || 'v19.0';
 
-// [★] Límite duro 3 por requerimiento
+
 const HARD_LIMIT = 3;
 const MAX_ACCOUNTS = Math.min(
   HARD_LIMIT,
   Number(process.env.META_MAX_ACCOUNTS || HARD_LIMIT)
 );
 
-// --- Models (con fallbacks) ---
+
 let MetaAccount, User;
 try {
   MetaAccount = require('../../models/MetaAccount');
@@ -86,7 +86,7 @@ function pickDefaultAccountId(acc) {
   return '';
 }
 
-/* ---------------- TZ helpers ---------------- */
+
 function ymdInTimeZone(date, timeZone) {
   try {
     const fmt = new Intl.DateTimeFormat('en-CA', {
@@ -165,9 +165,7 @@ function normalizeMetaObjective(raw) {
   return 'OTHER';
 }
 
-/* =========================
-   Click metric
-   ========================= */
+
 const META_CLICK_METRIC = String(process.env.META_CLICK_METRIC || 'link').toLowerCase();
 
 function pickClicks(x) {
@@ -187,7 +185,7 @@ function pickClicks(x) {
   };
 }
 
-/* ---------------- fetch helpers ---------------- */
+
 async function fetchJSON(url, { retries = 1 } = {}) {
   let lastErr = null;
   for (let i = 0; i <= retries; i++) {
