@@ -439,16 +439,27 @@ router.get('/:account_id', async (req, res) => {
     const { start, end } = req.query;
     const requestedModelRaw = String(req.query.attribution_model || req.query.attributionModel || 'last_touch').toLowerCase();
     const attributionModel = ATTRIBUTION_MODELS.has(requestedModelRaw) ? requestedModelRaw : 'last_touch';
+    const allTime = String(req.query.all_time || '0') === '1';
+    const recentLimitRaw = String(req.query.recent_limit || '100').toLowerCase();
+    const recentLimit = recentLimitRaw === 'all'
+      ? 5000
+      : Math.max(15, Math.min(1000, Number.parseInt(recentLimitRaw, 10) || 100));
 
     // Default to last 30 days
-    const startDate = start ? startOfDay(new Date(start)) : startOfDay(subDays(new Date(), 30));
+    const startDate = allTime ? new Date(0) : (start ? startOfDay(new Date(start)) : startOfDay(subDays(new Date(), 30)));
     const endDate = end ? endOfDay(new Date(end)) : endOfDay(new Date());
+    const ordersDateWhere = {
+      OR: [
+        { createdAt: { gte: startDate, lte: endDate } },
+        { platformCreatedAt: { gte: startDate, lte: endDate } },
+      ],
+    };
 
     // 1. Fetch Orders in range
     const orders = await prisma.order.findMany({
       where: {
         accountId: account_id,
-        createdAt: { gte: startDate, lte: endDate }
+        ...ordersDateWhere,
       },
       select: {
         createdAt: true,
@@ -465,7 +476,10 @@ router.get('/:account_id', async (req, res) => {
         orderNumber: true,
         lineItems: true
       },
-      orderBy: { createdAt: 'desc' }
+      orderBy: [
+        { platformCreatedAt: 'desc' },
+        { createdAt: 'desc' },
+      ]
     });
 
     // 2. Fetch Sessions in range (for conversion rate, approximate)
@@ -602,7 +616,7 @@ router.get('/:account_id', async (req, res) => {
       ? await prisma.order.count({
           where: {
             accountId: account_id,
-            createdAt: { gte: startDate, lte: endDate },
+            ...ordersDateWhere,
             orderId: { in: purchaseOrderIds },
           },
         })
@@ -628,7 +642,7 @@ router.get('/:account_id', async (req, res) => {
         items: true,
       },
       orderBy: { createdAt: 'desc' },
-      take: 50,
+      take: recentLimit,
     });
 
     const purchaseEventsForModel = await prisma.event.findMany({
@@ -845,7 +859,7 @@ router.get('/:account_id', async (req, res) => {
       ? conversionsWithAttribution
       : dedupeEventConversions(conversionsWithAttribution);
 
-    const recentPurchases = modeledConversions.slice(0, 50).map((conv) => {
+    const recentPurchases = modeledConversions.slice(0, recentLimit).map((conv) => {
       if (conv.source === 'orders') return conv;
       const key = `${conv.orderId || ''}::${conv.checkoutToken || ''}::${new Date(conv.createdAt).toISOString()}`;
       const detailed = detailedByKey.get(key);
@@ -853,7 +867,7 @@ router.get('/:account_id', async (req, res) => {
         ...conv,
         items: detailed ? normalizeLineItems(detailed.items) : conv.items,
       };
-    }).slice(0, 15);
+    });
 
     // Recompute channel stats by selected attribution model over resolved conversions.
     Object.keys(channelStats).forEach((key) => {
@@ -923,6 +937,10 @@ router.get('/:account_id', async (req, res) => {
         unattributedOrders: channelStats.unattributed.orders,
         unattributedRevenue: channelStats.unattributed.revenue,
         attributionModel,
+        allTime,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        recentLimit,
         totalSessions: sessionCount,
         conversionRate: sessionCount > 0 ? (totalOrdersResolved / sessionCount) : 0,
         pageViews: eventStats.page_view,
