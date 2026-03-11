@@ -87,6 +87,7 @@ const prisma = require('./utils/prismaClient');
 const collectRoutes = require('./routes/collect');
 const adrayWebhookRoutes = require('./routes/adrayWebhooks');
 const adrayPlatformRoutes = require('./routes/adrayPlatforms');
+const wooOrdersRoutes = require('./routes/wooOrders');
 const rateLimitCollect = require('./middleware/rateLimitCollect');
 
 // Meta
@@ -322,6 +323,7 @@ app.use(cookieParser());
 // sessionGuard removed for dashboard demo/access
 app.use("/api/analytics", require("./routes/analytics"));
 app.use("/api/feed", require("./routes/feed"));
+app.use('/api', wooOrdersRoutes);
 
 // AdRay collect and platform routes
 app.use("/collect", rateLimitCollect, collectRoutes);

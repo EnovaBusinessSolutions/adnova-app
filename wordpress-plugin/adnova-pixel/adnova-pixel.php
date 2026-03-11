@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.0.3
+ * Version: 1.0.4
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,11 +15,13 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.0.3';
+    const VERSION = '1.0.4';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
+    const OPTION_BACKFILL_DONE = 'adnova_pixel_backfill_done';
     const DEFAULT_SCRIPT_URL = 'https://adray-app-staging-german.onrender.com/adray-pixel.js';
     const DEFAULT_COLLECT_URL = 'https://adray-app-staging-german.onrender.com/collect';
+    const DEFAULT_ORDER_SYNC_URL = 'https://adray-app-staging-german.onrender.com/api/woo/orders-sync';
     private static $processed_orders = array();
 
     public static function init() {
@@ -34,6 +36,7 @@ final class Adnova_Pixel_Plugin {
         add_action('woocommerce_order_status_completed', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         // Fallback for custom checkout flows/themes where woocommerce_thankyou is bypassed.
         add_action('wp_footer', array(__CLASS__, 'maybe_track_woo_order_received_fallback'), 1000);
+        add_action('adnova_pixel_backfill_orders', array(__CLASS__, 'backfill_recent_orders'));
     }
 
     public static function on_activate() {
@@ -46,6 +49,10 @@ final class Adnova_Pixel_Plugin {
         }
 
         self::send_activation_ping();
+
+        if (!wp_next_scheduled('adnova_pixel_backfill_orders')) {
+            wp_schedule_single_event(time() + 30, 'adnova_pixel_backfill_orders');
+        }
     }
 
     public static function enqueue_pixel_script() {
@@ -118,6 +125,23 @@ final class Adnova_Pixel_Plugin {
         }
 
         return '';
+    }
+
+    private static function get_order_subtotal_amount($order) {
+        if (!$order) {
+            return 0.0;
+        }
+
+        $subtotal = 0.0;
+        foreach ($order->get_items() as $item) {
+            if (method_exists($item, 'get_subtotal')) {
+                $subtotal += (float) $item->get_subtotal();
+            } else {
+                $subtotal += (float) $item->get_total();
+            }
+        }
+
+        return $subtotal;
     }
 
     private static function get_order_attribution_data($order) {
@@ -217,6 +241,31 @@ final class Adnova_Pixel_Plugin {
         self::track_woo_order_purchase($order_id, false);
     }
 
+    public static function backfill_recent_orders() {
+        if (!function_exists('wc_get_orders')) {
+            return;
+        }
+
+        $done_version = get_option(self::OPTION_BACKFILL_DONE, '');
+        if ($done_version === self::VERSION) {
+            return;
+        }
+
+        $orders = wc_get_orders(array(
+            'limit' => 100,
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'status' => array('processing', 'completed', 'on-hold'),
+            'return' => 'ids',
+        ));
+
+        foreach ($orders as $order_id) {
+            self::sync_woo_order_to_backend($order_id);
+        }
+
+        update_option(self::OPTION_BACKFILL_DONE, self::VERSION, false);
+    }
+
     private static function track_woo_order_purchase($order_id, $inject_browser) {
         if (!$order_id || !function_exists('wc_get_order')) {
             return;
@@ -271,6 +320,7 @@ final class Adnova_Pixel_Plugin {
         }
 
         if ($already_sent) {
+            self::sync_woo_order_to_backend($order_id, $order, $order_data);
             return;
         }
 
@@ -299,6 +349,89 @@ final class Adnova_Pixel_Plugin {
 
         $order->update_meta_data('_adnova_purchase_sent', gmdate('c'));
         $order->save();
+        self::sync_woo_order_to_backend($order_id, $order, $order_data);
+    }
+
+    private static function sync_woo_order_to_backend($order_id, $order = null, $order_data = null) {
+        if (!function_exists('wc_get_order')) {
+            return;
+        }
+
+        $order_id = (int) $order_id;
+        if ($order_id <= 0) {
+            return;
+        }
+
+        if (!$order) {
+            $order = wc_get_order($order_id);
+        }
+        if (!$order) {
+            return;
+        }
+
+        if (!$order_data) {
+            $items = array();
+            foreach ($order->get_items() as $item) {
+                $product  = $item->get_product();
+                $qty      = max(1, (int) $item->get_quantity());
+                $items[]  = array(
+                    'id'       => $product ? (string) $product->get_id() : null,
+                    'name'     => $item->get_name(),
+                    'quantity' => $qty,
+                    'price'    => round((float) $item->get_total() / $qty, 2),
+                );
+            }
+
+            $order_data = array_merge(
+                array(
+                    'order_id'       => (string) $order_id,
+                    'revenue'        => (float) $order->get_total(),
+                    'currency'       => $order->get_currency(),
+                    'checkout_token' => $order->get_cart_hash(),
+                    'items'          => $items,
+                ),
+                self::get_order_attribution_data($order)
+            );
+        }
+
+        $payload = array(
+            'account_id' => self::get_site_id(),
+            'order_id' => $order_data['order_id'],
+            'order_number' => (string) $order->get_order_number(),
+            'checkout_token' => isset($order_data['checkout_token']) ? $order_data['checkout_token'] : null,
+            'customer_id' => $order->get_customer_id() ? (string) $order->get_customer_id() : null,
+            'revenue' => isset($order_data['revenue']) ? $order_data['revenue'] : (float) $order->get_total(),
+            'subtotal' => self::get_order_subtotal_amount($order),
+            'discount_total' => (float) $order->get_discount_total(),
+            'shipping_total' => (float) $order->get_shipping_total(),
+            'tax_total' => (float) $order->get_total_tax(),
+            'currency' => isset($order_data['currency']) ? $order_data['currency'] : $order->get_currency(),
+            'items' => isset($order_data['items']) ? $order_data['items'] : array(),
+            'created_at' => $order->get_date_created() ? $order->get_date_created()->date('c') : gmdate('c'),
+            'utm_source' => isset($order_data['utm_source']) ? $order_data['utm_source'] : null,
+            'utm_medium' => isset($order_data['utm_medium']) ? $order_data['utm_medium'] : null,
+            'utm_campaign' => isset($order_data['utm_campaign']) ? $order_data['utm_campaign'] : null,
+            'utm_content' => isset($order_data['utm_content']) ? $order_data['utm_content'] : null,
+            'utm_term' => isset($order_data['utm_term']) ? $order_data['utm_term'] : null,
+            'referrer' => isset($order_data['referrer']) ? $order_data['referrer'] : null,
+            'gclid' => isset($order_data['gclid']) ? $order_data['gclid'] : null,
+            'fbclid' => isset($order_data['fbclid']) ? $order_data['fbclid'] : null,
+            'ttclid' => isset($order_data['ttclid']) ? $order_data['ttclid'] : null,
+            'woo_source_label' => isset($order_data['woo_source_label']) ? $order_data['woo_source_label'] : null,
+            'woo_source_type' => isset($order_data['woo_source_type']) ? $order_data['woo_source_type'] : null,
+        );
+
+        wp_remote_post(
+            self::DEFAULT_ORDER_SYNC_URL,
+            array(
+                'timeout'  => 8,
+                'blocking' => false,
+                'headers'  => array(
+                    'Content-Type' => 'application/json',
+                ),
+                'body'     => wp_json_encode($payload),
+            )
+        );
     }
 
     /**
