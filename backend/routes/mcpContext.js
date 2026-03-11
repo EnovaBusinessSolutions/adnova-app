@@ -258,47 +258,49 @@ async function loadSourceStateForSnapshot(userId, source, snapshotId) {
   };
 }
 
-async function waitForBuildableSnapshot(userId, preferredSnapshotId, timeoutMs = BUILD_WAIT_TIMEOUT_MS) {
-  const started = Date.now();
+function getCandidateSources(root, sourceStatesByName) {
+  const allSources = ['metaAds', 'googleAds', 'ga4'];
 
-  let lastRoot = await findRoot(userId);
-  let candidateSnapshotId =
-    safeStr(preferredSnapshotId) ||
-    safeStr(lastRoot?.latestSnapshotId) ||
+  const connectedSources = allSources.filter((src) => sourceLooksConnected(root, src));
+  if (connectedSources.length > 0) return connectedSources;
+
+  return allSources.filter((src) => !!sourceStatesByName?.[src]?.hasChunks);
+}
+
+async function resolveDynamicSnapshotId(userId, root, explicitSnapshotId) {
+  if (safeStr(explicitSnapshotId)) return safeStr(explicitSnapshotId);
+
+  return (
+    safeStr(root?.latestSnapshotId) ||
     await findLatestSnapshotId(userId, 'metaAds') ||
     await findLatestSnapshotId(userId, 'googleAds') ||
     await findLatestSnapshotId(userId, 'ga4') ||
-    '';
+    ''
+  );
+}
+
+async function waitForBuildableSnapshot(userId, explicitSnapshotId, timeoutMs = BUILD_WAIT_TIMEOUT_MS) {
+  const started = Date.now();
 
   while (Date.now() - started <= timeoutMs) {
-    lastRoot = await findRoot(userId);
-    candidateSnapshotId =
-      safeStr(candidateSnapshotId) ||
-      safeStr(lastRoot?.latestSnapshotId) ||
-      await findLatestSnapshotId(userId, 'metaAds') ||
-      await findLatestSnapshotId(userId, 'googleAds') ||
-      await findLatestSnapshotId(userId, 'ga4') ||
-      '';
+    const lastRoot = await findRoot(userId);
+    const candidateSnapshotId = await resolveDynamicSnapshotId(userId, lastRoot, explicitSnapshotId);
 
     const sourceNames = ['metaAds', 'googleAds', 'ga4'];
-
-    const connectedSources = sourceNames.filter((src) => sourceLooksConnected(lastRoot, src));
-
     const sourceStates = await Promise.all(
       sourceNames.map((src) => loadSourceStateForSnapshot(userId, src, candidateSnapshotId))
     );
 
     const bySource = Object.fromEntries(sourceStates.map((x) => [x.source, x]));
+    const candidateSources = getCandidateSources(lastRoot, bySource);
 
-    const buildableConnectedSources = connectedSources.filter((src) => {
+    const buildableConnectedSources = candidateSources.filter((src) => {
       const ready = sourceLooksReady(lastRoot, src);
       const hasChunks = !!bySource[src]?.hasChunks;
       return ready && hasChunks;
     });
 
-    const someReadyWithChunks = buildableConnectedSources.length > 0;
-
-    if (someReadyWithChunks) {
+    if (buildableConnectedSources.length > 0) {
       return {
         root: lastRoot,
         snapshotId: candidateSnapshotId || null,
@@ -310,32 +312,25 @@ async function waitForBuildableSnapshot(userId, preferredSnapshotId, timeoutMs =
     await sleep(BUILD_WAIT_POLL_MS);
   }
 
-  // último intento aunque no esté “perfecto”
-  lastRoot = await findRoot(userId);
-  candidateSnapshotId =
-    safeStr(candidateSnapshotId) ||
-    safeStr(lastRoot?.latestSnapshotId) ||
-    await findLatestSnapshotId(userId, 'metaAds') ||
-    await findLatestSnapshotId(userId, 'googleAds') ||
-    await findLatestSnapshotId(userId, 'ga4') ||
-    '';
+  const fallbackRoot = await findRoot(userId);
+  const fallbackSnapshotId = await resolveDynamicSnapshotId(userId, fallbackRoot, explicitSnapshotId);
 
   const fallbackStates = await Promise.all(
-    ['metaAds', 'googleAds', 'ga4'].map((src) => loadSourceStateForSnapshot(userId, src, candidateSnapshotId))
+    ['metaAds', 'googleAds', 'ga4'].map((src) => loadSourceStateForSnapshot(userId, src, fallbackSnapshotId))
   );
 
   const bySource = Object.fromEntries(fallbackStates.map((x) => [x.source, x]));
+  const candidateSources = getCandidateSources(fallbackRoot, bySource);
 
-  const connectedSources = ['metaAds', 'googleAds', 'ga4'].filter((src) => sourceLooksConnected(lastRoot, src));
-  const buildableConnectedSources = connectedSources.filter((src) => {
-    const ready = sourceLooksReady(lastRoot, src);
+  const buildableConnectedSources = candidateSources.filter((src) => {
+    const ready = sourceLooksReady(fallbackRoot, src);
     const hasChunks = !!bySource[src]?.hasChunks;
     return ready && hasChunks;
   });
 
   return {
-    root: lastRoot,
-    snapshotId: candidateSnapshotId || null,
+    root: fallbackRoot,
+    snapshotId: fallbackSnapshotId || null,
     sourceStates: bySource,
     buildableConnectedSources,
   };
@@ -895,9 +890,7 @@ async function updateRootContextState(userId, patch) {
 
   return McpData.findByIdAndUpdate(
     root._id,
-    {
-      $set: patch,
-    },
+    { $set: patch },
     { new: true }
   ).lean();
 }
@@ -973,8 +966,9 @@ router.post('/build', async (req, res) => {
     const contextRangeDays = resolveRequestedContextRangeDays(initialRoot, req.body?.contextRangeDays);
     const storageRangeDays = getStorageRangeDaysFromRoot(initialRoot);
 
+    const explicitSnapshotId = safeStr(req.body?.snapshotId) || null;
     const preferredSnapshotId =
-      safeStr(req.body?.snapshotId) ||
+      explicitSnapshotId ||
       safeStr(initialRoot?.latestSnapshotId) ||
       await findLatestSnapshotId(userId, 'metaAds') ||
       await findLatestSnapshotId(userId, 'googleAds') ||
@@ -999,13 +993,53 @@ router.post('/build', async (req, res) => {
       },
     });
 
-    const readyState = await waitForBuildableSnapshot(userId, preferredSnapshotId, BUILD_WAIT_TIMEOUT_MS);
+    const readyState = await waitForBuildableSnapshot(userId, explicitSnapshotId, BUILD_WAIT_TIMEOUT_MS);
     const effectiveRoot = readyState?.root || await findRoot(userId);
-    const snapshotId = safeStr(readyState?.snapshotId) || safeStr(effectiveRoot?.latestSnapshotId) || preferredSnapshotId || null;
+    const snapshotId =
+      safeStr(readyState?.snapshotId) ||
+      safeStr(effectiveRoot?.latestSnapshotId) ||
+      preferredSnapshotId ||
+      null;
 
     const metaChunks = readyState?.sourceStates?.metaAds?.chunks || [];
     const googleChunks = readyState?.sourceStates?.googleAds?.chunks || [];
     const ga4Chunks = readyState?.sourceStates?.ga4?.chunks || [];
+
+    const hasAnyBuildable =
+      (readyState?.buildableConnectedSources || []).length > 0 ||
+      metaChunks.length > 0 ||
+      googleChunks.length > 0 ||
+      ga4Chunks.length > 0;
+
+    if (!hasAnyBuildable) {
+      await updateRootContextState(userId, {
+        aiContext: {
+          ...(effectiveRoot?.aiContext || {}),
+          status: 'error',
+          progress: 100,
+          stage: 'failed',
+          finishedAt: nowIso(),
+          snapshotId,
+          contextRangeDays,
+          storageRangeDays,
+          error: 'MCP_CONTEXT_NO_READY_SOURCES',
+          encodedPayload: null,
+        },
+      });
+
+      return res.status(409).json({
+        ok: false,
+        error: 'MCP_CONTEXT_NO_READY_SOURCES',
+        data: {
+          snapshotId,
+          contextRangeDays,
+          storageRangeDays,
+          metaReady: metaChunks.length > 0,
+          googleReady: googleChunks.length > 0,
+          ga4Ready: ga4Chunks.length > 0,
+        },
+      });
+    }
 
     await updateRootContextState(userId, {
       aiContext: {
@@ -1013,7 +1047,7 @@ router.post('/build', async (req, res) => {
         status: 'processing',
         progress: 35,
         stage: 'compacting_sources',
-        startedAt: (effectiveRoot?.aiContext?.startedAt || nowIso()),
+        startedAt: effectiveRoot?.aiContext?.startedAt || nowIso(),
         finishedAt: null,
         snapshotId,
         contextRangeDays,
@@ -1043,7 +1077,7 @@ router.post('/build', async (req, res) => {
         status: 'processing',
         progress: 65,
         stage: 'encoding_context',
-        startedAt: (effectiveRoot?.aiContext?.startedAt || nowIso()),
+        startedAt: effectiveRoot?.aiContext?.startedAt || nowIso(),
         finishedAt: null,
         snapshotId,
         contextRangeDays,
@@ -1198,7 +1232,6 @@ router.get('/latest', async (req, res) => {
 
 /**
  * POST /api/mcp/context/link
- * Genera o regenera el link único del usuario.
  */
 router.post('/link', async (req, res) => {
   try {
@@ -1262,7 +1295,6 @@ router.post('/link', async (req, res) => {
 
 /**
  * GET /api/mcp/context/link
- * Devuelve el link actual del usuario.
  */
 router.get('/link', async (req, res) => {
   try {
@@ -1299,7 +1331,6 @@ router.get('/link', async (req, res) => {
 
 /**
  * GET /api/mcp/context/shared/:token
- * Ruta pública para servir la codificación final.
  */
 router.get('/shared/:token', async (req, res) => {
   try {
