@@ -448,7 +448,7 @@ router.get('/:account_id', async (req, res) => {
     // Default to last 30 days
     const startDate = allTime ? new Date(0) : (start ? startOfDay(new Date(start)) : startOfDay(subDays(new Date(), 30)));
     const endDate = end ? endOfDay(new Date(end)) : endOfDay(new Date());
-    const ordersDateWhere = {
+    const broadOrdersDateWhere = {
       OR: [
         { createdAt: { gte: startDate, lte: endDate } },
         { platformCreatedAt: { gte: startDate, lte: endDate } },
@@ -459,7 +459,7 @@ router.get('/:account_id', async (req, res) => {
     const orders = await prisma.order.findMany({
       where: {
         accountId: account_id,
-        ...ordersDateWhere,
+        ...broadOrdersDateWhere,
       },
       select: {
         createdAt: true,
@@ -481,6 +481,17 @@ router.get('/:account_id', async (req, res) => {
         { createdAt: 'desc' },
       ]
     });
+
+    const filteredOrders = orders
+      .filter((order) => {
+        const effectiveOrderDate = new Date(order.platformCreatedAt || order.createdAt);
+        return effectiveOrderDate >= startDate && effectiveOrderDate <= endDate;
+      })
+      .sort((a, b) => {
+        const aTime = new Date(a.platformCreatedAt || a.createdAt).getTime();
+        const bTime = new Date(b.platformCreatedAt || b.createdAt).getTime();
+        return bTime - aTime;
+      });
 
     // 2. Fetch Sessions in range (for conversion rate, approximate)
     const sessionCount = await prisma.session.count({
@@ -543,7 +554,7 @@ router.get('/:account_id', async (req, res) => {
        dailyMap[format(day, 'yyyy-MM-dd')] = { date: format(day, 'yyyy-MM-dd'), revenue: 0, orders: 0 };
     });
 
-    orders.forEach(order => {
+    filteredOrders.forEach(order => {
       const effectiveOrderDate = order.platformCreatedAt || order.createdAt;
       const rev = order.revenue || 0;
       totalRevenue += rev;
@@ -616,7 +627,7 @@ router.get('/:account_id', async (req, res) => {
       ? await prisma.order.count({
           where: {
             accountId: account_id,
-            ...ordersDateWhere,
+            ...broadOrdersDateWhere,
             orderId: { in: purchaseOrderIds },
           },
         })
@@ -663,7 +674,7 @@ router.get('/:account_id', async (req, res) => {
       orderBy: { createdAt: 'desc' },
     });
 
-    const conversionInputsFromOrders = orders.map((order) => ({
+    const conversionInputsFromOrders = filteredOrders.map((order) => ({
       source: 'orders',
       createdAt: order.platformCreatedAt || order.createdAt,
       storedAt: order.createdAt,
@@ -708,7 +719,7 @@ router.get('/:account_id', async (req, res) => {
       wooSourceType: ev?.rawPayload?.woo_source_type || null,
     }));
 
-    const conversionInputs = (orders.length > 0 ? conversionInputsFromOrders : conversionInputsFromEvents);
+    const conversionInputs = (filteredOrders.length > 0 ? conversionInputsFromOrders : conversionInputsFromEvents);
 
     const checkoutTokens = Array.from(new Set(conversionInputs.map((c) => c.checkoutToken).filter(Boolean)));
     const userKeys = Array.from(new Set(conversionInputs.map((c) => c.userKey).filter(Boolean)));
@@ -855,7 +866,7 @@ router.get('/:account_id', async (req, res) => {
       })
     );
 
-    const modeledConversions = orders.length > 0
+    const modeledConversions = filteredOrders.length > 0
       ? conversionsWithAttribution
       : dedupeEventConversions(conversionsWithAttribution);
 
@@ -915,14 +926,14 @@ router.get('/:account_id', async (req, res) => {
 
     // Purchase events often come via Shopify webhook -> Order table (without Event row).
     // Use the max as a safe dashboard metric that avoids showing 0 when orders exist.
-    const modeledEventOrders = orders.length > 0 ? eventStats.purchase : modeledConversions.length;
-    const purchaseEventsResolved = Math.max(modeledEventOrders, orders.length);
-    const totalOrdersResolved = orders.length > 0 ? orders.length : modeledConversions.length;
+    const modeledEventOrders = filteredOrders.length > 0 ? eventStats.purchase : modeledConversions.length;
+    const purchaseEventsResolved = Math.max(modeledEventOrders, filteredOrders.length);
+    const totalOrdersResolved = filteredOrders.length > 0 ? filteredOrders.length : modeledConversions.length;
     const purchaseRevenueFromEvents = Number(purchaseRevenueAgg?._sum?.revenue || 0);
-    const purchaseRevenueFromEventsModeled = orders.length > 0
+    const purchaseRevenueFromEventsModeled = filteredOrders.length > 0
       ? purchaseRevenueFromEvents
       : modeledConversions.reduce((acc, conv) => acc + Number(conv.revenue || 0), 0);
-    const totalRevenueResolved = orders.length > 0 ? totalRevenue : purchaseRevenueFromEventsModeled;
+    const totalRevenueResolved = filteredOrders.length > 0 ? totalRevenue : purchaseRevenueFromEventsModeled;
 
     // 5. Return JSON
     res.json({
@@ -930,7 +941,7 @@ router.get('/:account_id', async (req, res) => {
         totalRevenue: totalRevenueResolved,
         totalRevenueOrders: totalRevenue,
         totalRevenueEvents: purchaseRevenueFromEventsModeled,
-        revenueSource: orders.length > 0 ? 'orders' : 'events',
+        revenueSource: filteredOrders.length > 0 ? 'orders' : 'events',
         totalOrders: totalOrdersResolved,
         attributedRevenue,
         attributedOrders: modeledAttributedOrders,
@@ -955,10 +966,10 @@ router.get('/:account_id', async (req, res) => {
       pixelHealth: {
         eventsReceived: eventStats.total,
         purchaseSignals: eventStats.purchase,
-        orders: orders.length,
+        orders: filteredOrders.length,
         matchedOrders,
-        orderMatchRate: orders.length > 0 ? Number((matchedOrders / orders.length).toFixed(4)) : 0,
-        purchaseSignalCoverage: orders.length > 0 ? Number((eventStats.purchase / orders.length).toFixed(4)) : 0,
+        orderMatchRate: filteredOrders.length > 0 ? Number((matchedOrders / filteredOrders.length).toFixed(4)) : 0,
+        purchaseSignalCoverage: filteredOrders.length > 0 ? Number((eventStats.purchase / filteredOrders.length).toFixed(4)) : 0,
       },
       channels: channelStats,
       topProducts,
