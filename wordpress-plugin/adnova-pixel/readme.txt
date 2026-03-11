@@ -4,7 +4,7 @@ Tags: analytics, tracking, pixel, marketing
 Requires at least: 6.0
 Tested up to: 6.7
 Requires PHP: 7.4
-Stable tag: 1.0.1
+Stable tag: 1.0.2
 License: GPL-2.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -27,11 +27,12 @@ Eventos soportados (actual):
 - `begin_checkout`
 - `purchase`
 
-WooCommerce purchase (v1.0.1):
+WooCommerce purchase (v1.0.2):
 - En la pagina de thank-you envia `purchase` con `order_id`, `revenue`, `currency` e `items`.
 - Tiene fallback server-side via `woocommerce_thankyou`.
 - Tiene fallback extra via `wp_footer` para themes/checkouts custom que no ejecutan el hook normal.
 - Tiene fallback browser-side por scraping del DOM cuando no existe `window.adnova_order_data`.
+- Incluye metadatos de atribucion de WooCommerce (`_wc_order_attribution_*`) en el evento purchase server-side/browser-side.
 
 Dashboard (api/analytics) muestra:
 - Revenue total (con fallback a eventos de `purchase` si no hay ordenes sincronizadas).
@@ -60,6 +61,10 @@ Estado de atribucion (importante):
 	- Confirma que el backend tenga activo el mapeo checkout/order y reglas de atribucion.
 
 == Changelog ==
+= 1.0.2 =
+- Envio de UTM/click IDs desde metadatos de pedido WooCommerce (`_wc_order_attribution_*`) en `purchase`.
+- Reduce casos de `unattributed` en dashboard cuando WooCommerce ya marca fuente (Google, Directo, etc.).
+
 = 1.0.1 =
 - Mejoras para WooCommerce purchase en checkouts custom (fallback `wp_footer`).
 - Fallback browser-side para capturar total/items desde DOM en thank-you page.

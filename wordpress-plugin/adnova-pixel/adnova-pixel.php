@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.0.1';
+    const VERSION = '1.0.2';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const DEFAULT_SCRIPT_URL = 'https://adray-app-staging-german.onrender.com/adray-pixel.js';
@@ -101,6 +101,51 @@ final class Adnova_Pixel_Plugin {
         return sanitize_text_field($host);
     }
 
+    private static function get_order_attribution_data($order) {
+        if (!$order) {
+            return array();
+        }
+
+        $meta = array(
+            'utm_source'   => (string) $order->get_meta('_wc_order_attribution_utm_source', true),
+            'utm_medium'   => (string) $order->get_meta('_wc_order_attribution_utm_medium', true),
+            'utm_campaign' => (string) $order->get_meta('_wc_order_attribution_utm_campaign', true),
+            'utm_content'  => (string) $order->get_meta('_wc_order_attribution_utm_content', true),
+            'utm_term'     => (string) $order->get_meta('_wc_order_attribution_utm_term', true),
+            'referrer'     => (string) $order->get_meta('_wc_order_attribution_referrer', true),
+            'gclid'        => (string) $order->get_meta('_wc_order_attribution_gclid', true),
+            'fbclid'       => (string) $order->get_meta('_wc_order_attribution_fbclid', true),
+            'ttclid'       => (string) $order->get_meta('_wc_order_attribution_ttclid', true),
+        );
+
+        // Cookie fallback for stores that keep click IDs client-side.
+        $cookie_map = array(
+            'utm_source' => 'utm_source',
+            'utm_medium' => 'utm_medium',
+            'utm_campaign' => 'utm_campaign',
+            'utm_content' => 'utm_content',
+            'utm_term' => 'utm_term',
+            'gclid' => 'gclid',
+            'fbclid' => 'fbclid',
+            'ttclid' => 'ttclid',
+        );
+
+        foreach ($cookie_map as $field => $cookie_key) {
+            if ($meta[$field] !== '') {
+                continue;
+            }
+            if (isset($_COOKIE[$cookie_key])) {
+                $meta[$field] = sanitize_text_field(wp_unslash($_COOKIE[$cookie_key]));
+            }
+        }
+
+        foreach ($meta as $key => $value) {
+            $meta[$key] = $value !== '' ? sanitize_text_field($value) : null;
+        }
+
+        return $meta;
+    }
+
     /**
      * WooCommerce thank-you page: inject order data for the browser pixel
      * AND fire a server-side backup purchase event to /collect.
@@ -141,12 +186,17 @@ final class Adnova_Pixel_Plugin {
             );
         }
 
-        $order_data = array(
-            'order_id'       => (string) $order_id,
-            'revenue'        => (float) $order->get_total(),
-            'currency'       => $order->get_currency(),
-            'checkout_token' => $order->get_cart_hash(),
-            'items'          => $items,
+        $attribution_data = self::get_order_attribution_data($order);
+
+        $order_data = array_merge(
+            array(
+                'order_id'       => (string) $order_id,
+                'revenue'        => (float) $order->get_total(),
+                'currency'       => $order->get_currency(),
+                'checkout_token' => $order->get_cart_hash(),
+                'items'          => $items,
+            ),
+            $attribution_data
         );
 
         // Inject data for browser pixel (picks it up in section 5 of adray-pixel.js)
@@ -162,6 +212,15 @@ final class Adnova_Pixel_Plugin {
             'currency'       => $order_data['currency'],
             'checkout_token' => $order_data['checkout_token'],
             'items'          => $order_data['items'],
+            'utm_source'     => isset($order_data['utm_source']) ? $order_data['utm_source'] : null,
+            'utm_medium'     => isset($order_data['utm_medium']) ? $order_data['utm_medium'] : null,
+            'utm_campaign'   => isset($order_data['utm_campaign']) ? $order_data['utm_campaign'] : null,
+            'utm_content'    => isset($order_data['utm_content']) ? $order_data['utm_content'] : null,
+            'utm_term'       => isset($order_data['utm_term']) ? $order_data['utm_term'] : null,
+            'referrer'       => isset($order_data['referrer']) ? $order_data['referrer'] : null,
+            'gclid'          => isset($order_data['gclid']) ? $order_data['gclid'] : null,
+            'fbclid'         => isset($order_data['fbclid']) ? $order_data['fbclid'] : null,
+            'ttclid'         => isset($order_data['ttclid']) ? $order_data['ttclid'] : null,
         ));
     }
 
