@@ -672,7 +672,7 @@
             }
 
             container.innerHTML = filtered.map((p) => {
-                const date = p.createdAt ? new Date(p.createdAt).toLocaleString() : '-';
+                const date = formatDateTimeMx(p.createdAt);
                 const orderId = p.orderNumber || p.orderId || p.checkoutToken || '-';
                 const revenue = formatCurrencyWithCode(Number(p.revenue || 0), p.currency || 'MXN');
                 const items = Array.isArray(p.items) ? p.items : [];
@@ -831,7 +831,7 @@
                         <div class="ml-3 w-0 flex-1">
                             <p class="text-sm font-medium text-gray-900">${title}</p>
                             <p class="text-xs text-gray-500 truncate">${detail}</p>
-                            <p class="text-[10px] text-gray-400 mt-1">${new Date().toLocaleTimeString()}</p>
+                            <p class="text-[10px] text-gray-400 mt-1">${formatTimeMx()}</p>
                         </div>
                     </div>
                 `;
@@ -851,6 +851,36 @@
         }
 
         // --- UTILS ---
+        const DASHBOARD_TIMEZONE = 'America/Mexico_City';
+
+        function formatDateTimeMx(value) {
+            if (!value) return '-';
+            const d = new Date(value);
+            if (Number.isNaN(d.getTime())) return '-';
+            return new Intl.DateTimeFormat('es-MX', {
+                timeZone: DASHBOARD_TIMEZONE,
+                year: 'numeric',
+                month: 'numeric',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: true,
+            }).format(d);
+        }
+
+        function formatTimeMx(value = new Date()) {
+            const d = value instanceof Date ? value : new Date(value);
+            if (Number.isNaN(d.getTime())) return '-';
+            return new Intl.DateTimeFormat('es-MX', {
+                timeZone: DASHBOARD_TIMEZONE,
+                hour: 'numeric',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: true,
+            }).format(d);
+        }
+
         function formatCurrency(value) {
             return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(value);
         }
