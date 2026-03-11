@@ -54,6 +54,26 @@ function ratio(num, den) {
   return round2(toNum(num) / d);
 }
 
+function clampInt(n, min, max) {
+  const x = Number(n || 0);
+  if (!Number.isFinite(x)) return min;
+  return Math.max(min, Math.min(max, Math.trunc(x)));
+}
+
+function parseYmdToUtcDate(ymd) {
+  const s = safeDateStr(ymd);
+  if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [yy, mm, dd] = s.split('-').map(Number);
+  return new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1, 0, 0, 0));
+}
+
+function addDaysYmd(ymd, deltaDays) {
+  const d = parseYmdToUtcDate(ymd);
+  if (!d) return null;
+  d.setUTCDate(d.getUTCDate() + Number(deltaDays || 0));
+  return d.toISOString().slice(0, 10);
+}
+
 function indexDatasets(datasets) {
   const map = new Map();
   for (const ds of Array.isArray(datasets) ? datasets : []) {
@@ -82,11 +102,42 @@ function getGoogleHeader(dsMap) {
 function normalizeRange(range) {
   if (!isObj(range)) return null;
 
+  const from = safeDateStr(range?.from || range?.since);
+  const to = safeDateStr(range?.to || range?.until);
+
   return {
-    from: safeDateStr(range?.from),
-    to: safeDateStr(range?.to),
+    from,
+    to,
+    since: from,
+    until: to,
     tz: safeDateStr(range?.tz),
+    days: toNum(range?.days),
   };
+}
+
+function filterRowsByContextRange(rows, contextRangeDays, explicitRange) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return [];
+
+  const rangeDays = clampInt(contextRangeDays || 60, 1, 3650);
+  const explicitTo = safeDateStr(explicitRange?.to || explicitRange?.until);
+  const computedLatest = list
+    .map((r) => safeDateStr(r?.date))
+    .filter(Boolean)
+    .sort()
+    .slice(-1)[0] || null;
+
+  const endDate = explicitTo || computedLatest;
+  if (!endDate) return list.slice();
+
+  const startDate = addDaysYmd(endDate, -(rangeDays - 1));
+  if (!startDate) return list.slice();
+
+  return list.filter((r) => {
+    const d = safeDateStr(r?.date);
+    if (!d) return false;
+    return d >= startDate && d <= endDate;
+  });
 }
 
 function buildExecutiveSummary(summaryData) {
@@ -188,7 +239,7 @@ function normalizeCampaignIdentity(c) {
     campaign_type: nonEmptyStr(c?.campaign_type) || null,
     objective: nonEmptyStr(c?.objective) || null,
     objective_norm: nonEmptyStr(c?.objective_norm) || null,
-    bidding_strategy: nonEmptyStr(c?.bidding_strategy) || null,
+    bidding_strategy: nonEmptyStr(c?.bidding_strategy || c?.bidding_strategy_type) || null,
     optimization_goal: nonEmptyStr(c?.optimization_goal) || null,
     status: nonEmptyStr(c?.status) || null,
     channel_type: nonEmptyStr(c?.channel_type) || null,
@@ -322,9 +373,13 @@ function sortRowsByDateAsc(rows) {
     .sort((a, b) => safeStr(a?.date).localeCompare(safeStr(b?.date)));
 }
 
-function buildDailyTrends(dailyData, topCampaignRows = 5) {
-  const totalsByDay = sortRowsByDateAsc(dailyData?.totals_by_day || []);
-  const campaignsDaily = Array.isArray(dailyData?.campaigns_daily) ? dailyData.campaigns_daily : [];
+function buildDailyTrends(dailyData, topCampaignRows = 5, contextRangeDays = 60) {
+  const inferredRange = normalizeRange(dailyData?.meta?.range);
+  const rawTotalsByDay = sortRowsByDateAsc(dailyData?.totals_by_day || []);
+  const rawCampaignsDaily = Array.isArray(dailyData?.campaigns_daily) ? dailyData.campaigns_daily : [];
+
+  const totalsByDay = sortRowsByDateAsc(filterRowsByContextRange(rawTotalsByDay, contextRangeDays, inferredRange));
+  const campaignsDaily = sortRowsByDateAsc(filterRowsByContextRange(rawCampaignsDaily, contextRangeDays, inferredRange));
 
   const recentTotals = totalsByDay.slice(-14).map((d) => ({
     date: safeDateStr(d?.date),
@@ -428,7 +483,10 @@ function sortCampaignsByMetric(campaigns, metric = 'roas', max = 6, activeOnly =
   let rows = Array.isArray(campaigns) ? campaigns.slice() : [];
 
   if (activeOnly) {
-    rows = rows.filter((c) => nonEmptyStr(c?.status).toUpperCase() === 'ENABLED' || nonEmptyStr(c?.status).toUpperCase() === 'ACTIVE');
+    rows = rows.filter((c) => {
+      const s = nonEmptyStr(c?.status).toUpperCase();
+      return s === 'ENABLED' || s === 'ACTIVE';
+    });
   }
 
   rows.sort((a, b) => {
@@ -484,7 +542,7 @@ function buildCampaignViews(rankedCampaigns, signals) {
   };
 }
 
-function buildDataQuality(payload) {
+function buildDataQuality(payload, contextRangeDays) {
   const accountCount = Array.isArray(payload?.meta?.accounts) ? payload.meta.accounts.length : 0;
   const hasExecutive = !!payload?.executive_summary?.headline_kpis;
   const hasCampaigns = Array.isArray(payload?.ranked_campaigns) && payload.ranked_campaigns.length > 0;
@@ -504,6 +562,9 @@ function buildDataQuality(payload) {
     hasAnyData: !!(hasExecutive || hasCampaigns || hasBreakdowns || hasSignals || hasDaily),
     accountCount,
     range: payload?.meta?.range || null,
+    storageRangeDays: toNum(payload?.meta?.storageRangeDays) || null,
+    contextRangeDays: toNum(contextRangeDays) || toNum(payload?.meta?.contextRangeDays) || null,
+    windowType: nonEmptyStr(payload?.meta?.windowType) || 'context',
     datasetsPresent: {
       executive_summary: hasExecutive,
       ranked_campaigns: hasCampaigns,
@@ -669,6 +730,7 @@ function buildKpiDefinitions() {
 
 function formatGoogleAdsForLlm({
   datasets = [],
+  contextRangeDays = 60,
   topCampaigns = 8,
   topBreakdowns = 5,
   topTrendCampaigns = 5,
@@ -682,14 +744,18 @@ function formatGoogleAdsForLlm({
   const dailyData = getData(dsMap, 'google.daily_trends_ai');
 
   const meta = getGoogleHeader(dsMap);
+  const normalizedRange = normalizeRange(meta?.range);
+  const effectiveContextRangeDays =
+    clampInt(contextRangeDays || meta?.contextRangeDays || normalizedRange?.days || 60, 7, 3650);
+
   const ranked_campaigns = buildRankedCampaigns(rankedData, Math.max(topCampaigns, 12));
   const breakdowns = buildBreakdowns(breakdownsData, topBreakdowns);
   const signals = buildSignals(signalsData);
-  const daily_trends = buildDailyTrends(dailyData, topTrendCampaigns);
+  const daily_trends = buildDailyTrends(dailyData, topTrendCampaigns, effectiveContextRangeDays);
 
   const payload = {
     meta: {
-      schema: 'adray.google_ads.llm.v2',
+      schema: 'adray.google_ads.llm.v3',
       source: 'googleAds',
       generatedAt: new Date().toISOString(),
       accountIds: Array.isArray(meta?.accountIds) ? meta.accountIds : [],
@@ -700,11 +766,19 @@ function formatGoogleAdsForLlm({
         currency: nonEmptyStr(a?.currency) || null,
         timezone_name: nonEmptyStr(a?.timezone_name) || null,
       })),
-      range: normalizeRange(meta?.range),
+      range: normalizedRange,
       currency: nonEmptyStr(meta?.currency) || null,
       latestSnapshotId: nonEmptyStr(meta?.latestSnapshotId) || null,
       collectorVersion: nonEmptyStr(meta?.version) || null,
+      storageRangeDays: toNum(meta?.storageRangeDays) || null,
+      contextRangeDays: effectiveContextRangeDays,
+      windowType: nonEmptyStr(meta?.windowType) || 'context',
       platform: 'google_ads',
+    },
+    context_window: {
+      rangeDays: effectiveContextRangeDays,
+      storageRangeDays: toNum(meta?.storageRangeDays) || null,
+      windowType: nonEmptyStr(meta?.windowType) || 'context',
     },
     executive_summary: buildExecutiveSummary(summaryData),
     kpi_definitions: buildKpiDefinitions(),
@@ -716,7 +790,7 @@ function formatGoogleAdsForLlm({
   };
 
   payload.priority_summary = buildPrioritySummary(payload);
-  payload.data_quality = buildDataQuality(payload);
+  payload.data_quality = buildDataQuality(payload, effectiveContextRangeDays);
   payload.llm_hints = buildLlmPromptHints(payload);
 
   return payload;
@@ -724,10 +798,12 @@ function formatGoogleAdsForLlm({
 
 function formatGoogleAdsForLlmMini({
   datasets = [],
+  contextRangeDays = 60,
   topCampaigns = 5,
 } = {}) {
   const full = formatGoogleAdsForLlm({
     datasets,
+    contextRangeDays,
     topCampaigns: Math.max(topCampaigns, 10),
     topBreakdowns: 4,
     topTrendCampaigns: 4,
@@ -735,6 +811,7 @@ function formatGoogleAdsForLlmMini({
 
   return {
     meta: full.meta,
+    context_window: full.context_window,
     data_quality: full.data_quality,
     kpi_definitions: full.kpi_definitions,
     headline_kpis: full.executive_summary?.headline_kpis || {},

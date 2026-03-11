@@ -27,6 +27,19 @@ const MAX_BY_RULE = Math.min(
 
 const MAX_ACCOUNTS_FETCH = Number(process.env.GOOGLE_MAX_ACCOUNTS || 12);
 
+/* ====================== Defaults MCP ====================== */
+const DEFAULT_STORAGE_RANGE_DAYS = clampInt(
+  process.env.MCP_STORAGE_RANGE_DAYS || 730,
+  30,
+  3650
+);
+
+const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(
+  process.env.MCP_CONTEXT_RANGE_DAYS || 60,
+  7,
+  365
+);
+
 /* ====================== Modelos ====================== */
 let GoogleAccount;
 try {
@@ -131,6 +144,20 @@ function isoInTZ(date, timeZone) {
   }
 }
 
+function parseYmdToUtcDate(ymd) {
+  const s = safeStr(ymd).trim();
+  if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [yy, mm, dd] = s.split('-').map(Number);
+  return new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1, 0, 0, 0));
+}
+
+function addDaysYmd(ymd, deltaDays) {
+  const d = parseYmdToUtcDate(ymd);
+  if (!d) return null;
+  d.setUTCDate(d.getUTCDate() + Number(deltaDays || 0));
+  return d.toISOString().slice(0, 10);
+}
+
 /**
  * Rango estricto N días completos:
  * - termina AYER en TZ del customer
@@ -145,6 +172,21 @@ function getStrictLastNdRangeTZ(timeZone, days) {
   const startISO = isoInTZ(start, timeZone);
 
   return { since: startISO, until: endISO };
+}
+
+function monthKeyFromDate(dateStr) {
+  const s = safeStr(dateStr).trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s.slice(0, 7) : 'unknown';
+}
+
+function partitionRowsByMonth(rows) {
+  const map = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const key = monthKeyFromDate(row?.date);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(row);
+  }
+  return map;
 }
 
 function oauth() {
@@ -348,9 +390,14 @@ function compactCampaignRanked(row, globalKpis) {
   return {
     account_id: row.account_id,
     campaign_id: row.campaign_id,
+    campaign_name: row.name || row.campaignName || null,
     name: row.name || row.campaignName || null,
+    objective: row.objective || null,
     objective_norm: row.objective || null,
     status: row.status || null,
+    channel_type: row.channelType || null,
+    channel_sub_type: row.channelSubType || null,
+    bidding_strategy_type: row.biddingStrategyType || null,
     health,
     ranking_score,
     tags,
@@ -602,6 +649,8 @@ async function accumulateCampaignBreakdowns({
         account_id: cid,
         campaign_id: id,
         campaign_name: name,
+        objective,
+        status,
         date,
         impressions: 0,
         clicks: 0,
@@ -620,9 +669,21 @@ async function accumulateCampaignBreakdowns({
 }
 
 /* ====================== Compact helpers ====================== */
-function makeGoogleHeader({ userId, accountIds, accounts, range, currency, timeZone, version }) {
+function makeGoogleHeader({
+  userId,
+  accountIds,
+  accounts,
+  range,
+  currency,
+  timeZone,
+  version,
+  windowType,
+  storageRangeDays,
+  contextRangeDays,
+  latestSnapshotId = null,
+}) {
   return {
-    schema: 'adray.mcp.v1',
+    schema: 'adray.mcp.v2',
     source: 'googleAds',
     generatedAt: new Date().toISOString(),
     userId: String(userId),
@@ -632,6 +693,10 @@ function makeGoogleHeader({ userId, accountIds, accounts, range, currency, timeZ
     currency: currency || null,
     timeZone: timeZone || null,
     version: version || null,
+    windowType: windowType || 'context',
+    storageRangeDays: Number(storageRangeDays || 0) || null,
+    contextRangeDays: Number(contextRangeDays || 0) || null,
+    latestSnapshotId: latestSnapshotId || null,
   };
 }
 
@@ -738,15 +803,115 @@ function buildAccountAggFromDaily(byDateMap) {
   return byAccountAgg;
 }
 
+function buildDailyTotalsRows(byDateMap) {
+  return sortByDateAsc(Array.from(byDateMap.values())).map((x) => {
+    const spend = microsToCurrency(x.cost_micros);
+    return {
+      date: x.date,
+      kpis: {
+        spend,
+        impressions: x.impressions,
+        clicks: x.clicks,
+        conversions: x.conversions,
+        conversion_value: round2(x.conv_value),
+        ctr: round2(safeDiv(x.clicks, x.impressions) * 100),
+        cpc: round2(safeDiv(spend, x.clicks)),
+        cpa: round2(safeDiv(spend, x.conversions)),
+        roas: round2(safeDiv(x.conv_value, spend)),
+      },
+    };
+  });
+}
+
+function buildCampaignsDailyRows(byCampaignDateMap) {
+  return sortByDateAsc(Array.from(byCampaignDateMap.values())).map((x) => {
+    const spend = microsToCurrency(x.cost_micros);
+    return {
+      account_id: x.account_id,
+      campaign_id: x.campaign_id,
+      campaign_name: x.campaign_name,
+      objective: x.objective || null,
+      objective_norm: x.objective || null,
+      status: x.status || null,
+      date: x.date,
+      kpis: {
+        spend,
+        impressions: x.impressions,
+        clicks: x.clicks,
+        conversions: x.conversions,
+        conversion_value: round2(x.conv_value),
+        ctr: round2(safeDiv(x.clicks, x.impressions) * 100),
+        cpc: round2(safeDiv(spend, x.clicks)),
+        cpa: round2(safeDiv(spend, x.conversions)),
+        roas: round2(safeDiv(x.conv_value, spend)),
+      },
+    };
+  });
+}
+
+function aggregateWindowFromTotals(totalsByDay, endDate, days) {
+  const end = safeStr(endDate).trim();
+  if (!end) {
+    return {
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      conversions: 0,
+      conversion_value: 0,
+      ctr: 0,
+      cpc: 0,
+      cpa: 0,
+      roas: 0,
+    };
+  }
+
+  const start = addDaysYmd(end, -(Number(days || 1) - 1));
+  const rows = (Array.isArray(totalsByDay) ? totalsByDay : []).filter((r) => r.date >= start && r.date <= end);
+
+  const k = rows.reduce((a, r) => {
+    const x = r.kpis || {};
+    a.spend += Number(x.spend || 0);
+    a.impressions += Number(x.impressions || 0);
+    a.clicks += Number(x.clicks || 0);
+    a.conversions += Number(x.conversions || 0);
+    a.conversion_value += Number(x.conversion_value || 0);
+    return a;
+  }, { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_value: 0 });
+
+  k.spend = round2(k.spend);
+  k.conversion_value = round2(k.conversion_value);
+  k.ctr = round2(safeDiv(k.clicks, k.impressions) * 100);
+  k.cpc = round2(safeDiv(k.spend, k.clicks));
+  k.cpa = round2(safeDiv(k.spend, k.conversions));
+  k.roas = round2(safeDiv(k.conversion_value, k.spend));
+  return k;
+}
+
 /* ====================== Collector principal ====================== */
 async function collectGoogle(userId, opts = {}) {
   const {
     account_id,
-    rangeDays = 30,
+    rangeDays, // compat legacy => contexto
+    contextRangeDays = rangeDays || DEFAULT_CONTEXT_RANGE_DAYS,
+    storageRangeDays = DEFAULT_STORAGE_RANGE_DAYS,
     range,
+    storageRange,
     topCampaignsN = 25,
     topBreakdownsN = 10,
+    buildHistoricalDatasets = (
+      opts.buildHistoricalDatasets !== undefined
+        ? !!opts.buildHistoricalDatasets
+        : String(process.env.GOOGLE_BUILD_HISTORICAL_DATASETS || 'true').toLowerCase() === 'true'
+    ),
+    historyIncludeCampaignDaily = (
+      opts.historyIncludeCampaignDaily !== undefined
+        ? !!opts.historyIncludeCampaignDaily
+        : String(process.env.GOOGLE_HISTORY_INCLUDE_CAMPAIGN_DAILY || 'true').toLowerCase() === 'true'
+    ),
   } = opts || {};
+
+  const contextDays = clampInt(contextRangeDays || DEFAULT_CONTEXT_RANGE_DAYS, 7, 365);
+  const storageDays = clampInt(storageRangeDays || DEFAULT_STORAGE_RANGE_DAYS, Math.max(contextDays, 30), 3650);
 
   if (!DEV_TOKEN) {
     return { ok: false, notAuthorized: true, reason: 'MISSING_DEVELOPER_TOKEN' };
@@ -845,22 +1010,34 @@ async function collectGoogle(userId, opts = {}) {
   }
 
   const accountsMeta = new Map();
+
   const byCampaignMap = new Map();
   const byCampaignDeviceMap = new Map();
   const byCampaignNetworkMap = new Map();
   const byDateMap = new Map();
   const byCampaignDateMap = new Map();
 
+  const histByDateMap = new Map();
+  const histByCampaignDateMap = new Map();
+
   let currency = 'USD';
   let timeZone = null;
 
-  let globalSince = null;
-  let globalUntil = null;
+  let contextSinceGlobal = null;
+  let contextUntilGlobal = null;
+  let storageSinceGlobal = null;
+  let storageUntilGlobal = null;
 
-  const explicitRange = range && range.from && range.to ? {
+  const explicitContextRange = range && range.from && range.to ? {
     since: String(range.from),
     until: String(range.to),
     tz: range.tz || null,
+  } : null;
+
+  const explicitStorageRange = storageRange && storageRange.from && storageRange.to ? {
+    since: String(storageRange.from),
+    until: String(storageRange.to),
+    tz: storageRange.tz || null,
   } : null;
 
   for (const customerId of idsToAudit) {
@@ -887,33 +1064,58 @@ async function collectGoogle(userId, opts = {}) {
     }
 
     const tzForThis = accountsMeta.get(customerId)?.timeZone || timeZone || 'UTC';
-    const strictRange = explicitRange
-      ? { since: explicitRange.since, until: explicitRange.until }
-      : getStrictLastNdRangeTZ(tzForThis, rangeDays);
 
-    const sinceThis = strictRange.since;
-    const untilThis = strictRange.until;
+    const contextStrictRange = explicitContextRange
+      ? { since: explicitContextRange.since, until: explicitContextRange.until }
+      : getStrictLastNdRangeTZ(tzForThis, contextDays);
 
-    if (!globalSince || sinceThis < globalSince) globalSince = sinceThis;
-    if (!globalUntil || untilThis > globalUntil) globalUntil = untilThis;
+    const storageStrictRange = explicitStorageRange
+      ? { since: explicitStorageRange.since, until: explicitStorageRange.until }
+      : getStrictLastNdRangeTZ(tzForThis, storageDays);
+
+    if (!contextSinceGlobal || contextStrictRange.since < contextSinceGlobal) contextSinceGlobal = contextStrictRange.since;
+    if (!contextUntilGlobal || contextStrictRange.until > contextUntilGlobal) contextUntilGlobal = contextStrictRange.until;
+
+    if (!storageSinceGlobal || storageStrictRange.since < storageSinceGlobal) storageSinceGlobal = storageStrictRange.since;
+    if (!storageUntilGlobal || storageStrictRange.until > storageUntilGlobal) storageUntilGlobal = storageStrictRange.until;
 
     await accumulateCampaignBreakdowns({
       accessToken,
       customerId,
-      since: sinceThis,
-      until: untilThis,
+      since: contextStrictRange.since,
+      until: contextStrictRange.until,
       byCampaignMap,
       byCampaignDeviceMap,
       byCampaignNetworkMap,
       byDateMap,
       byCampaignDateMap,
     });
+
+    if (buildHistoricalDatasets) {
+      await accumulateCampaignBreakdowns({
+        accessToken,
+        customerId,
+        since: storageStrictRange.since,
+        until: storageStrictRange.until,
+        byCampaignMap: new Map(), // histórico no necesita ranked por ahora
+        byCampaignDeviceMap: new Map(),
+        byCampaignNetworkMap: new Map(),
+        byDateMap: histByDateMap,
+        byCampaignDateMap: histByCampaignDateMap,
+      });
+    }
   }
 
-  if (!globalSince || !globalUntil) {
-    const fallback = getStrictLastNdRangeTZ(timeZone || 'UTC', rangeDays);
-    globalSince = globalSince || fallback.since;
-    globalUntil = globalUntil || fallback.until;
+  if (!contextSinceGlobal || !contextUntilGlobal) {
+    const fallback = getStrictLastNdRangeTZ(timeZone || 'UTC', contextDays);
+    contextSinceGlobal = contextSinceGlobal || fallback.since;
+    contextUntilGlobal = contextUntilGlobal || fallback.until;
+  }
+
+  if (!storageSinceGlobal || !storageUntilGlobal) {
+    const fallback = getStrictLastNdRangeTZ(timeZone || 'UTC', storageDays);
+    storageSinceGlobal = storageSinceGlobal || fallback.since;
+    storageUntilGlobal = storageUntilGlobal || fallback.until;
   }
 
   const byAccountAgg = buildAccountAggFromDaily(byDateMap);
@@ -977,113 +1179,16 @@ async function collectGoogle(userId, opts = {}) {
     network_top: networkTop,
   };
 
-  const totalsByDay = sortByDateAsc(Array.from(byDateMap.values())).map((x) => {
-    const spend = microsToCurrency(x.cost_micros);
-    return {
-      date: x.date,
-      kpis: {
-        spend,
-        impressions: x.impressions,
-        clicks: x.clicks,
-        conversions: x.conversions,
-        conversion_value: round2(x.conv_value),
-        ctr: round2(safeDiv(x.clicks, x.impressions) * 100),
-        cpc: round2(safeDiv(spend, x.clicks)),
-        cpa: round2(safeDiv(spend, x.conversions)),
-        roas: round2(safeDiv(x.conv_value, spend)),
-      },
-    };
-  });
+  const totalsByDay = buildDailyTotalsRows(byDateMap);
+  const campaignsDaily = buildCampaignsDailyRows(byCampaignDateMap);
 
-  const campaignsDaily = sortByDateAsc(Array.from(byCampaignDateMap.values())).map((x) => {
-    const spend = microsToCurrency(x.cost_micros);
-    return {
-      account_id: x.account_id,
-      campaign_id: x.campaign_id,
-      campaign_name: x.campaign_name,
-      date: x.date,
-      kpis: {
-        spend,
-        impressions: x.impressions,
-        clicks: x.clicks,
-        conversions: x.conversions,
-        conversion_value: round2(x.conv_value),
-        ctr: round2(safeDiv(x.clicks, x.impressions) * 100),
-        cpc: round2(safeDiv(spend, x.clicks)),
-        cpa: round2(safeDiv(spend, x.conversions)),
-        roas: round2(safeDiv(x.conv_value, spend)),
-      },
-    };
-  });
+  const histTotalsByDay = buildDailyTotalsRows(histByDateMap);
+  const histCampaignsDaily = buildCampaignsDailyRows(histByCampaignDateMap);
 
-  function aggWindowDaily(days) {
-    const end = globalUntil;
-    const start = (() => {
-      const [yy, mm, dd] = String(end).split('-').map(Number);
-      const base = new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1, 0, 0, 0));
-      base.setUTCDate(base.getUTCDate() - (days - 1));
-      return base.toISOString().slice(0, 10);
-    })();
-
-    const rows = totalsByDay.filter(r => r.date >= start && r.date <= end);
-    const k = rows.reduce((a, r) => {
-      const x = r.kpis || {};
-      a.spend += Number(x.spend || 0);
-      a.impressions += Number(x.impressions || 0);
-      a.clicks += Number(x.clicks || 0);
-      a.conversions += Number(x.conversions || 0);
-      a.conversion_value += Number(x.conversion_value || 0);
-      return a;
-    }, { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_value: 0 });
-
-    k.spend = round2(k.spend);
-    k.conversion_value = round2(k.conversion_value);
-    k.ctr = round2(safeDiv(k.clicks, k.impressions) * 100);
-    k.cpc = round2(safeDiv(k.spend, k.clicks));
-    k.cpa = round2(safeDiv(k.spend, k.conversions));
-    k.roas = round2(safeDiv(k.conversion_value, k.spend));
-    return k;
-  }
-
-  function prevWindowDaily(days) {
-    const end = globalUntil;
-    const endPrev = (() => {
-      const [yy, mm, dd] = String(end).split('-').map(Number);
-      const base = new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1, 0, 0, 0));
-      base.setUTCDate(base.getUTCDate() - days);
-      return base.toISOString().slice(0, 10);
-    })();
-    const startPrev = (() => {
-      const [yy, mm, dd] = String(endPrev).split('-').map(Number);
-      const base = new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1, 0, 0, 0));
-      base.setUTCDate(base.getUTCDate() - (days - 1));
-      return base.toISOString().slice(0, 10);
-    })();
-
-    const rows = totalsByDay.filter(r => r.date >= startPrev && r.date <= endPrev);
-    const k = rows.reduce((a, r) => {
-      const x = r.kpis || {};
-      a.spend += Number(x.spend || 0);
-      a.impressions += Number(x.impressions || 0);
-      a.clicks += Number(x.clicks || 0);
-      a.conversions += Number(x.conversions || 0);
-      a.conversion_value += Number(x.conversion_value || 0);
-      return a;
-    }, { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_value: 0 });
-
-    k.spend = round2(k.spend);
-    k.conversion_value = round2(k.conversion_value);
-    k.ctr = round2(safeDiv(k.clicks, k.impressions) * 100);
-    k.cpc = round2(safeDiv(k.spend, k.clicks));
-    k.cpa = round2(safeDiv(k.spend, k.conversions));
-    k.roas = round2(safeDiv(k.conversion_value, k.spend));
-    return k;
-  }
-
-  const last7 = aggWindowDaily(7);
-  const prev7 = prevWindowDaily(7);
-  const last30 = aggWindowDaily(30);
-  const prev30 = prevWindowDaily(30);
+  const last7 = aggregateWindowFromTotals(totalsByDay, contextUntilGlobal, 7);
+  const prev7 = aggregateWindowFromTotals(totalsByDay, addDaysYmd(contextUntilGlobal, -7), 7);
+  const last30 = aggregateWindowFromTotals(totalsByDay, contextUntilGlobal, 30);
+  const prev30 = aggregateWindowFromTotals(totalsByDay, addDaysYmd(contextUntilGlobal, -30), 30);
 
   const summary = {
     kpis: globalKpis,
@@ -1101,60 +1206,112 @@ async function collectGoogle(userId, opts = {}) {
 
   const optimization_signals = buildOptimizationSignals(campaignsRanked, globalKpis);
 
-  const rangeOut = { from: globalSince, to: globalUntil, tz: timeZone || null };
+  const contextRangeOut = { from: contextSinceGlobal, to: contextUntilGlobal, tz: timeZone || null };
+  const storageRangeOut = { from: storageSinceGlobal, to: storageUntilGlobal, tz: timeZone || null };
 
-  const header = makeGoogleHeader({
+  const contextHeader = makeGoogleHeader({
     userId,
     accountIds: idsToAudit,
     accounts,
-    range: rangeOut,
+    range: contextRangeOut,
     currency,
     timeZone,
-    version: 'gadsCollector@mcp-v3(gaql_single_source_of_truth)',
+    version: 'gadsCollector@mcp-v4(storage+context)',
+    windowType: 'context',
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
+  });
+
+  const historyHeader = makeGoogleHeader({
+    userId,
+    accountIds: idsToAudit,
+    accounts,
+    range: storageRangeOut,
+    currency,
+    timeZone,
+    version: 'gadsCollector@mcp-v4(storage+context)',
+    windowType: 'storage',
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
   });
 
   const datasets = [
     {
       source: 'googleAds',
       dataset: 'google.insights_summary',
-      range: rangeOut,
-      data: { meta: header, summary },
+      range: contextRangeOut,
+      data: { meta: contextHeader, summary },
     },
     {
       source: 'googleAds',
       dataset: 'google.campaigns_ranked',
-      range: rangeOut,
+      range: contextRangeOut,
       data: {
-        meta: header,
+        meta: contextHeader,
         campaigns_ranked: compactArray(campaignsRanked, Math.max(1, topCampaignsN)),
       },
     },
     {
       source: 'googleAds',
       dataset: 'google.breakdowns_top',
-      range: rangeOut,
-      data: { meta: header, ...breakdownsTop },
+      range: contextRangeOut,
+      data: { meta: contextHeader, ...breakdownsTop },
     },
     {
       source: 'googleAds',
       dataset: 'google.optimization_signals',
-      range: rangeOut,
+      range: contextRangeOut,
       data: {
-        meta: header,
+        meta: contextHeader,
         optimization_signals,
       },
     },
     {
       source: 'googleAds',
       dataset: 'google.daily_trends_ai',
-      range: rangeOut,
+      range: contextRangeOut,
       data: {
-        meta: header,
+        meta: contextHeader,
         totals_by_day: totalsByDay,
         campaigns_daily: campaignsDaily,
       },
     },
   ];
+
+  if (buildHistoricalDatasets) {
+    datasets.push({
+      source: 'googleAds',
+      dataset: 'google.history.daily_account_totals',
+      range: storageRangeOut,
+      data: {
+        meta: historyHeader,
+        totals_by_day: histTotalsByDay,
+      },
+    });
+
+    if (historyIncludeCampaignDaily && histCampaignsDaily.length > 0) {
+      const byMonth = partitionRowsByMonth(histCampaignsDaily);
+
+      for (const [monthKey, rows] of byMonth.entries()) {
+        datasets.push({
+          source: 'googleAds',
+          dataset: `google.history.daily_campaigns.${monthKey}`,
+          range: {
+            from: rows[0]?.date || storageRangeOut.from,
+            to: rows[rows.length - 1]?.date || storageRangeOut.to,
+            tz: timeZone || null,
+          },
+          data: {
+            meta: {
+              ...historyHeader,
+              partition: monthKey,
+            },
+            campaigns_daily: rows,
+          },
+        });
+      }
+    }
+  }
 
   return {
     ok: true,
@@ -1162,7 +1319,30 @@ async function collectGoogle(userId, opts = {}) {
     reason: null,
     currency,
     timeZone,
-    timeRange: { from: globalSince, to: globalUntil },
+
+    // compat
+    timeRange: { from: contextSinceGlobal, to: contextUntilGlobal },
+
+    // nuevos metadatos
+    contextTimeRange: {
+      from: contextSinceGlobal,
+      to: contextUntilGlobal,
+      since: contextSinceGlobal,
+      until: contextUntilGlobal,
+      tz: timeZone || null,
+      days: contextDays,
+    },
+    storageTimeRange: {
+      from: storageSinceGlobal,
+      to: storageUntilGlobal,
+      since: storageSinceGlobal,
+      until: storageUntilGlobal,
+      tz: timeZone || null,
+      days: storageDays,
+    },
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
+
     accountIds: idsToAudit,
     accounts,
     datasets,

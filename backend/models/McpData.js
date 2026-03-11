@@ -28,7 +28,7 @@ const CoverageSchema = new Schema(
   {
     range: { type: RangeSchema, default: () => ({}) },
     defaultRangeDays: { type: Number, default: 30 },
-    granularity: { type: [String], default: [] }, // ["summary","ranked_campaigns","breakdown","signals","daily_ai"]
+    granularity: { type: [String], default: [] },
   },
   { _id: false }
 );
@@ -64,43 +64,14 @@ const SourceStateSchema = new Schema(
 );
 
 /* =========================
- * AI Context sub-schemas
- * ========================= */
-const AiContextSummarySchema = new Schema(
-  {
-    executive_summary: { type: String, default: null },
-    business_state: { type: String, default: null },
-    cross_channel_story: { type: String, default: null },
-    positives: { type: [String], default: [] },
-    negatives: { type: [String], default: [] },
-    priority_actions: { type: [String], default: [] },
-  },
-  { _id: false }
-);
-
-const EncodedPayloadSchema = new Schema(
-  {
-    schema: { type: String, default: null },
-    providerAgnostic: { type: Boolean, default: true },
-    generatedAt: { type: String, default: null },
-
-    summary: { type: AiContextSummarySchema, default: undefined },
-
-    performance_drivers: { type: [String], default: [] },
-    conversion_bottlenecks: { type: [String], default: [] },
-    scaling_opportunities: { type: [String], default: [] },
-    risk_flags: { type: [String], default: [] },
-
-    llm_context_block: { type: String, default: null },
-    llm_context_block_mini: { type: String, default: null },
-    prompt_hints: { type: [String], default: [] },
-
-    // Espacio flexible para contar la historia por canal o guardar estructura enriquecida
-    channel_story: { type: Schema.Types.Mixed, default: null },
-  },
-  { _id: false, strict: false }
-);
-
+ * AI Context sub-schema
+ * =========================
+ *
+ * encodedPayload se deja como Mixed porque:
+ * - es un artefacto AI-ready evolutivo
+ * - puede cambiar entre fallback/OpenAI
+ * - no queremos que Mongoose rompa por casts rígidos
+ */
 const AiContextSchema = new Schema(
   {
     status: {
@@ -121,11 +92,24 @@ const AiContextSchema = new Schema(
 
     error: { type: String, default: null },
 
+    // rangos efectivos usados por el contexto universal
+    contextRangeDays: { type: Number, default: null },
+    storageRangeDays: { type: Number, default: null },
+
     // Base compactada cross-channel antes del enriquecimiento
     unifiedBase: { type: Schema.Types.Mixed, default: null },
 
     // Payload final AI-ready
-    encodedPayload: { type: EncodedPayloadSchema, default: undefined },
+    encodedPayload: { type: Schema.Types.Mixed, default: null },
+
+    // share link state
+    shareToken: { type: String, default: null },
+    shareEnabled: { type: Boolean, default: false },
+    shareProvider: { type: String, default: null },
+    shareUrl: { type: String, default: null },
+    shareCreatedAt: { type: String, default: null },
+    shareLastGeneratedAt: { type: String, default: null },
+    shareRevokedAt: { type: String, default: null },
   },
   { _id: false, strict: false }
 );
@@ -343,13 +327,6 @@ McpDataSchema.statics.upsertRoot = async function (userId, patch = {}) {
 
 /**
  * Patch específico de una fuente dentro del root
- * Ej:
- * patchRootSource(userId, 'metaAds', {
- *   connected: true,
- *   status: 'ready',
- *   accountId: '123',
- *   currency: 'MXN'
- * })
  */
 McpDataSchema.statics.patchRootSource = async function (userId, sourceKey, patch = {}) {
   const now = new Date();
@@ -386,8 +363,6 @@ McpDataSchema.statics.patchRootSource = async function (userId, sourceKey, patch
 
 /**
  * UPSERT chunk limpio
- * - solo persiste campos chunk-only
- * - evita contaminar con metadata de root
  */
 McpDataSchema.statics.upsertChunk = async function ({
   userId,

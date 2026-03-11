@@ -29,6 +29,9 @@ try {
 }
 
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
+const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(process.env.MCP_CONTEXT_RANGE_DAYS || 60, 7, 365);
+const BUILD_WAIT_TIMEOUT_MS = clampInt(process.env.MCP_CONTEXT_BUILD_WAIT_TIMEOUT_MS || 120000, 5000, 300000);
+const BUILD_WAIT_POLL_MS = clampInt(process.env.MCP_CONTEXT_BUILD_WAIT_POLL_MS || 1500, 300, 5000);
 
 function safeStr(v) {
   return v == null ? '' : String(v);
@@ -37,6 +40,12 @@ function safeStr(v) {
 function toNum(v, fallback = 0) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function clampInt(n, min, max) {
+  const x = Number(n || 0);
+  if (!Number.isFinite(x)) return min;
+  return Math.max(min, Math.min(max, Math.trunc(x)));
 }
 
 function nowIso() {
@@ -68,6 +77,10 @@ function uniqStrings(arr, max = 20) {
   return out;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function isRootDoc(doc) {
   if (!doc || typeof doc !== 'object') return false;
 
@@ -84,6 +97,34 @@ function isChunkDoc(doc) {
   if (!doc || typeof doc !== 'object') return false;
   if (isRootDoc(doc)) return false;
   return !!doc.dataset;
+}
+
+function resolveRequestedContextRangeDays(root, requested) {
+  const explicit = clampInt(requested, 0, 365);
+  if (explicit > 0) return explicit;
+
+  const fromRoot =
+    toNum(root?.coverage?.contextDefaultRangeDays) ||
+    toNum(root?.coverage?.defaultRangeDays) ||
+    toNum(root?.sources?.metaAds?.contextDefaultRangeDays) ||
+    toNum(root?.sources?.googleAds?.contextDefaultRangeDays) ||
+    toNum(root?.sources?.ga4?.contextDefaultRangeDays);
+
+  if (fromRoot > 0) return clampInt(fromRoot, 7, 365);
+  return DEFAULT_CONTEXT_RANGE_DAYS;
+}
+
+function getStorageRangeDaysFromRoot(root) {
+  const n =
+    toNum(root?.coverage?.storageRangeDays) ||
+    toNum(root?.sources?.metaAds?.storageRangeDays) ||
+    toNum(root?.sources?.googleAds?.storageRangeDays) ||
+    toNum(root?.sources?.ga4?.storageRangeDays) ||
+    toNum(root?.sources?.metaAds?.rangeDays) ||
+    toNum(root?.sources?.googleAds?.rangeDays) ||
+    toNum(root?.sources?.ga4?.rangeDays);
+
+  return n > 0 ? n : null;
 }
 
 async function findRoot(userId) {
@@ -115,6 +156,7 @@ async function findLatestSnapshotId(userId, source = 'metaAds') {
 
   const latestChunk = await McpData.findOne({
     userId,
+    kind: 'chunk',
     source,
     dataset: { $regex: datasetPrefix },
   })
@@ -124,9 +166,47 @@ async function findLatestSnapshotId(userId, source = 'metaAds') {
   return latestChunk?.snapshotId || null;
 }
 
+function getAllowedDatasetsForSource(source) {
+  if (source === 'metaAds') {
+    return new Set([
+      'meta.insights_summary',
+      'meta.campaigns_ranked',
+      'meta.breakdowns_top',
+      'meta.optimization_signals',
+      'meta.daily_trends_ai',
+    ]);
+  }
+
+  if (source === 'googleAds') {
+    return new Set([
+      'google.insights_summary',
+      'google.campaigns_ranked',
+      'google.breakdowns_top',
+      'google.optimization_signals',
+      'google.daily_trends_ai',
+    ]);
+  }
+
+  if (source === 'ga4') {
+    return new Set([
+      'ga4.insights_summary',
+      'ga4.channels_top',
+      'ga4.devices_top',
+      'ga4.landing_pages_top',
+      'ga4.source_medium_top',
+      'ga4.events_top',
+      'ga4.optimization_signals',
+      'ga4.daily_trends_ai',
+    ]);
+  }
+
+  return null;
+}
+
 async function findSourceChunks(userId, source, snapshotId, datasetPrefix) {
   const query = {
     userId,
+    kind: 'chunk',
     source,
     dataset: { $regex: `^${datasetPrefix.replace('.', '\\.')}` },
   };
@@ -137,49 +217,170 @@ async function findSourceChunks(userId, source, snapshotId, datasetPrefix) {
     .sort({ createdAt: 1, updatedAt: 1 })
     .lean();
 
-  return docs.filter(isChunkDoc);
+  const allowed = getAllowedDatasetsForSource(source);
+  return docs
+    .filter(isChunkDoc)
+    .filter((doc) => !allowed || allowed.has(String(doc?.dataset || '')));
 }
 
-function buildMetaContext(chunks) {
+function getSourceDatasetPrefix(source) {
+  if (source === 'metaAds') return 'meta.';
+  if (source === 'googleAds') return 'google.';
+  if (source === 'ga4') return 'ga4.';
+  return '';
+}
+
+function getSourceRootState(root, source) {
+  return root?.sources?.[source] || {};
+}
+
+function sourceLooksConnected(root, source) {
+  const s = getSourceRootState(root, source);
+  return !!s?.connected;
+}
+
+function sourceLooksReady(root, source) {
+  const s = getSourceRootState(root, source);
+  return !!s?.ready || String(s?.status || '').toLowerCase() === 'ready';
+}
+
+async function loadSourceStateForSnapshot(userId, source, snapshotId) {
+  const prefix = getSourceDatasetPrefix(source);
+  const chunks = snapshotId
+    ? await findSourceChunks(userId, source, snapshotId, prefix)
+    : [];
+
+  return {
+    source,
+    snapshotId: snapshotId || null,
+    chunks,
+    hasChunks: chunks.length > 0,
+  };
+}
+
+function getCandidateSources(root, sourceStatesByName) {
+  const allSources = ['metaAds', 'googleAds', 'ga4'];
+
+  const connectedSources = allSources.filter((src) => sourceLooksConnected(root, src));
+  if (connectedSources.length > 0) return connectedSources;
+
+  return allSources.filter((src) => !!sourceStatesByName?.[src]?.hasChunks);
+}
+
+async function resolveDynamicSnapshotId(userId, root, explicitSnapshotId) {
+  if (safeStr(explicitSnapshotId)) return safeStr(explicitSnapshotId);
+
+  return (
+    safeStr(root?.latestSnapshotId) ||
+    await findLatestSnapshotId(userId, 'metaAds') ||
+    await findLatestSnapshotId(userId, 'googleAds') ||
+    await findLatestSnapshotId(userId, 'ga4') ||
+    ''
+  );
+}
+
+async function waitForBuildableSnapshot(userId, explicitSnapshotId, timeoutMs = BUILD_WAIT_TIMEOUT_MS) {
+  const started = Date.now();
+
+  while (Date.now() - started <= timeoutMs) {
+    const lastRoot = await findRoot(userId);
+    const candidateSnapshotId = await resolveDynamicSnapshotId(userId, lastRoot, explicitSnapshotId);
+
+    const sourceNames = ['metaAds', 'googleAds', 'ga4'];
+    const sourceStates = await Promise.all(
+      sourceNames.map((src) => loadSourceStateForSnapshot(userId, src, candidateSnapshotId))
+    );
+
+    const bySource = Object.fromEntries(sourceStates.map((x) => [x.source, x]));
+    const candidateSources = getCandidateSources(lastRoot, bySource);
+
+    const buildableConnectedSources = candidateSources.filter((src) => {
+      const ready = sourceLooksReady(lastRoot, src);
+      const hasChunks = !!bySource[src]?.hasChunks;
+      return ready && hasChunks;
+    });
+
+    if (buildableConnectedSources.length > 0) {
+      return {
+        root: lastRoot,
+        snapshotId: candidateSnapshotId || null,
+        sourceStates: bySource,
+        buildableConnectedSources,
+      };
+    }
+
+    await sleep(BUILD_WAIT_POLL_MS);
+  }
+
+  const fallbackRoot = await findRoot(userId);
+  const fallbackSnapshotId = await resolveDynamicSnapshotId(userId, fallbackRoot, explicitSnapshotId);
+
+  const fallbackStates = await Promise.all(
+    ['metaAds', 'googleAds', 'ga4'].map((src) => loadSourceStateForSnapshot(userId, src, fallbackSnapshotId))
+  );
+
+  const bySource = Object.fromEntries(fallbackStates.map((x) => [x.source, x]));
+  const candidateSources = getCandidateSources(fallbackRoot, bySource);
+
+  const buildableConnectedSources = candidateSources.filter((src) => {
+    const ready = sourceLooksReady(fallbackRoot, src);
+    const hasChunks = !!bySource[src]?.hasChunks;
+    return ready && hasChunks;
+  });
+
+  return {
+    root: fallbackRoot,
+    snapshotId: fallbackSnapshotId || null,
+    sourceStates: bySource,
+    buildableConnectedSources,
+  };
+}
+
+function buildMetaContext(chunks, contextRangeDays) {
   if (!chunks?.length) return null;
 
   return {
     full: formatMetaForLlm({
       datasets: chunks,
+      contextRangeDays,
       topCampaigns: 12,
       topBreakdowns: 5,
       topTrendCampaigns: 5,
     }),
     mini: formatMetaForLlmMini({
       datasets: chunks,
+      contextRangeDays,
       topCampaigns: 6,
     }),
   };
 }
 
-function buildGoogleAdsContext(chunks) {
+function buildGoogleAdsContext(chunks, contextRangeDays) {
   if (!chunks?.length) return null;
 
   return {
     full: formatGoogleAdsForLlm({
       datasets: chunks,
+      contextRangeDays,
       topCampaigns: 12,
       topBreakdowns: 5,
       topTrendCampaigns: 5,
     }),
     mini: formatGoogleAdsForLlmMini({
       datasets: chunks,
+      contextRangeDays,
       topCampaigns: 6,
     }),
   };
 }
 
-function buildGa4Context(chunks) {
+function buildGa4Context(chunks, contextRangeDays) {
   if (!chunks?.length) return null;
 
   return {
     full: formatGa4ForLlm({
       datasets: chunks,
+      contextRangeDays,
       topChannels: 8,
       topDevices: 6,
       topLandingPages: 8,
@@ -189,6 +390,7 @@ function buildGa4Context(chunks) {
     }),
     mini: formatGa4ForLlmMini({
       datasets: chunks,
+      contextRangeDays,
       topChannels: 5,
       topDevices: 4,
       topLandingPages: 5,
@@ -197,7 +399,15 @@ function buildGa4Context(chunks) {
   };
 }
 
-function buildUnifiedBaseContext({ root, snapshotId, metaPack, googlePack, ga4Pack }) {
+function buildUnifiedBaseContext({
+  root,
+  snapshotId,
+  contextRangeDays,
+  storageRangeDays,
+  metaPack,
+  googlePack,
+  ga4Pack,
+}) {
   const sources = root?.sources || {};
 
   return {
@@ -205,6 +415,11 @@ function buildUnifiedBaseContext({ root, snapshotId, metaPack, googlePack, ga4Pa
     generatedAt: nowIso(),
     snapshotId: snapshotId || null,
     coverage: root?.coverage || null,
+    contextWindow: {
+      rangeDays: contextRangeDays || DEFAULT_CONTEXT_RANGE_DAYS,
+      storageRangeDays: storageRangeDays || null,
+      builtAt: nowIso(),
+    },
     sources: {
       metaAds: {
         connected: !!sources?.metaAds?.connected,
@@ -213,14 +428,18 @@ function buildUnifiedBaseContext({ root, snapshotId, metaPack, googlePack, ga4Pa
         name: sources?.metaAds?.name || null,
         currency: sources?.metaAds?.currency || null,
         timezone: sources?.metaAds?.timezone || null,
+        storageRangeDays: toNum(sources?.metaAds?.storageRangeDays) || toNum(sources?.metaAds?.rangeDays) || storageRangeDays || null,
+        contextDefaultRangeDays: toNum(sources?.metaAds?.contextDefaultRangeDays) || contextRangeDays || null,
       },
       googleAds: {
         connected: !!sources?.googleAds?.connected,
         ready: !!sources?.googleAds?.ready,
-        customerId: sources?.googleAds?.customerId || null,
+        customerId: sources?.googleAds?.customerId || sources?.googleAds?.accountId || null,
         name: sources?.googleAds?.name || null,
         currency: sources?.googleAds?.currency || null,
         timezone: sources?.googleAds?.timezone || null,
+        storageRangeDays: toNum(sources?.googleAds?.storageRangeDays) || toNum(sources?.googleAds?.rangeDays) || storageRangeDays || null,
+        contextDefaultRangeDays: toNum(sources?.googleAds?.contextDefaultRangeDays) || contextRangeDays || null,
       },
       ga4: {
         connected: !!sources?.ga4?.connected,
@@ -229,27 +448,14 @@ function buildUnifiedBaseContext({ root, snapshotId, metaPack, googlePack, ga4Pa
         name: sources?.ga4?.name || null,
         currency: sources?.ga4?.currency || null,
         timezone: sources?.ga4?.timezone || null,
+        storageRangeDays: toNum(sources?.ga4?.storageRangeDays) || toNum(sources?.ga4?.rangeDays) || storageRangeDays || null,
+        contextDefaultRangeDays: toNum(sources?.ga4?.contextDefaultRangeDays) || contextRangeDays || null,
       },
     },
     inputs: {
-      meta: metaPack
-        ? {
-            full: metaPack.full,
-            mini: metaPack.mini,
-          }
-        : null,
-      googleAds: googlePack
-        ? {
-            full: googlePack.full,
-            mini: googlePack.mini,
-          }
-        : null,
-      ga4: ga4Pack
-        ? {
-            full: ga4Pack.full,
-            mini: ga4Pack.mini,
-          }
-        : null,
+      meta: metaPack ? { full: metaPack.full, mini: metaPack.mini } : null,
+      googleAds: googlePack ? { full: googlePack.full, mini: googlePack.mini } : null,
+      ga4: ga4Pack ? { full: ga4Pack.full, mini: ga4Pack.mini } : null,
     },
   };
 }
@@ -473,6 +679,7 @@ function buildFallbackEncodedContext(base) {
     schema: 'adray.encoded.context.v2',
     providerAgnostic: true,
     generatedAt: nowIso(),
+    contextWindow: base?.contextWindow || null,
 
     summary: {
       executive_summary: executiveSummary,
@@ -577,11 +784,12 @@ async function enrichWithOpenAI(base) {
     };
   }
 
-  const model = process.env.OPENAI_MCP_CONTEXT_MODEL || 'gpt-4.1-mini';
+  const model = process.env.OPENAI_MCP_CONTEXT_MODEL || 'gpt-5.2';
 
   const inputPayload = {
     schema: base?.schema || 'adray.unified.context.v2',
     snapshotId: base?.snapshotId || null,
+    contextWindow: base?.contextWindow || null,
     sources: base?.sources || {},
     inputs: base?.inputs || {},
   };
@@ -593,7 +801,8 @@ async function enrichWithOpenAI(base) {
     'Preserve specific campaign names, active/paused status, KPIs, winners, risks, channels, devices, landing pages, source/medium signals, and actionable recommendations.',
     'Do not over-compress the information.',
     'The output must remain rich enough so downstream LLMs can answer campaign-level and KPI-level questions.',
-    'Output keys exactly as requested.'
+    'Respect the provided context window and do not imply that older historical storage was used for reasoning unless the input explicitly contains it.',
+    'Output keys exactly as requested.',
   ].join(' ');
 
   const userPrompt = JSON.stringify({
@@ -606,11 +815,13 @@ async function enrichWithOpenAI(base) {
       'Keep the payload provider-agnostic but do not discard useful provider-specific details.',
       'llm_context_block should be detailed and useful for analysis, not just a short summary.',
       'llm_context_block_mini should remain brief but still mention strongest campaigns or strongest channel drivers when available.',
+      'Respect the contextWindow metadata from the input.',
     ],
     required_schema: {
       schema: 'adray.encoded.context.v2',
       providerAgnostic: true,
       generatedAt: 'ISO datetime string',
+      contextWindow: 'object|null',
       summary: {
         executive_summary: 'string',
         business_state: 'string',
@@ -659,6 +870,7 @@ async function enrichWithOpenAI(base) {
         schema: 'adray.encoded.context.v2',
         providerAgnostic: true,
         generatedAt: nowIso(),
+        contextWindow: base?.contextWindow || null,
         ...parsed,
       },
     };
@@ -678,9 +890,7 @@ async function updateRootContextState(userId, patch) {
 
   return McpData.findByIdAndUpdate(
     root._id,
-    {
-      $set: patch,
-    },
+    { $set: patch },
     { new: true }
   ).lean();
 }
@@ -697,6 +907,8 @@ function buildStatusResponse(root) {
       startedAt: state?.startedAt || null,
       finishedAt: state?.finishedAt || null,
       snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
+      contextRangeDays: toNum(state?.contextRangeDays) || null,
+      storageRangeDays: toNum(state?.storageRangeDays) || null,
       hasEncodedPayload: !!state?.encodedPayload,
       providerAgnostic: !!state?.encodedPayload?.providerAgnostic,
       usedOpenAI: !!state?.usedOpenAI,
@@ -727,6 +939,8 @@ function buildSharedPayload(root, provider) {
       providerLabel: providerName,
       snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
       generatedAt: state?.finishedAt || payload?.generatedAt || null,
+      contextRangeDays: toNum(state?.contextRangeDays) || null,
+      storageRangeDays: toNum(state?.storageRangeDays) || null,
       providerAgnostic: !!payload?.providerAgnostic,
       usedOpenAI: !!state?.usedOpenAI,
       model: state?.model || null,
@@ -744,26 +958,34 @@ router.post('/build', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const root = await findRoot(userId);
-    if (!root) {
+    const initialRoot = await findRoot(userId);
+    if (!initialRoot) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
 
-    const snapshotId =
-      safeStr(req.body?.snapshotId) ||
-      root?.latestSnapshotId ||
+    const contextRangeDays = resolveRequestedContextRangeDays(initialRoot, req.body?.contextRangeDays);
+    const storageRangeDays = getStorageRangeDaysFromRoot(initialRoot);
+
+    const explicitSnapshotId = safeStr(req.body?.snapshotId) || null;
+    const preferredSnapshotId =
+      explicitSnapshotId ||
+      safeStr(initialRoot?.latestSnapshotId) ||
       await findLatestSnapshotId(userId, 'metaAds') ||
       await findLatestSnapshotId(userId, 'googleAds') ||
-      await findLatestSnapshotId(userId, 'ga4');
+      await findLatestSnapshotId(userId, 'ga4') ||
+      null;
 
     await updateRootContextState(userId, {
       aiContext: {
+        ...(initialRoot?.aiContext || {}),
         status: 'processing',
         progress: 10,
-        stage: 'loading_sources',
+        stage: 'waiting_for_snapshot',
         startedAt: nowIso(),
         finishedAt: null,
-        snapshotId,
+        snapshotId: preferredSnapshotId,
+        contextRangeDays,
+        storageRangeDays,
         error: null,
         usedOpenAI: false,
         model: null,
@@ -771,31 +993,79 @@ router.post('/build', async (req, res) => {
       },
     });
 
-    const [metaChunks, googleChunks, ga4Chunks] = await Promise.all([
-      snapshotId ? findSourceChunks(userId, 'metaAds', snapshotId, 'meta.') : [],
-      snapshotId ? findSourceChunks(userId, 'googleAds', snapshotId, 'google.') : [],
-      snapshotId ? findSourceChunks(userId, 'ga4', snapshotId, 'ga4.') : [],
-    ]);
+    const readyState = await waitForBuildableSnapshot(userId, explicitSnapshotId, BUILD_WAIT_TIMEOUT_MS);
+    const effectiveRoot = readyState?.root || await findRoot(userId);
+    const snapshotId =
+      safeStr(readyState?.snapshotId) ||
+      safeStr(effectiveRoot?.latestSnapshotId) ||
+      preferredSnapshotId ||
+      null;
+
+    const metaChunks = readyState?.sourceStates?.metaAds?.chunks || [];
+    const googleChunks = readyState?.sourceStates?.googleAds?.chunks || [];
+    const ga4Chunks = readyState?.sourceStates?.ga4?.chunks || [];
+
+    const hasAnyBuildable =
+      (readyState?.buildableConnectedSources || []).length > 0 ||
+      metaChunks.length > 0 ||
+      googleChunks.length > 0 ||
+      ga4Chunks.length > 0;
+
+    if (!hasAnyBuildable) {
+      await updateRootContextState(userId, {
+        aiContext: {
+          ...(effectiveRoot?.aiContext || {}),
+          status: 'error',
+          progress: 100,
+          stage: 'failed',
+          finishedAt: nowIso(),
+          snapshotId,
+          contextRangeDays,
+          storageRangeDays,
+          error: 'MCP_CONTEXT_NO_READY_SOURCES',
+          encodedPayload: null,
+        },
+      });
+
+      return res.status(409).json({
+        ok: false,
+        error: 'MCP_CONTEXT_NO_READY_SOURCES',
+        data: {
+          snapshotId,
+          contextRangeDays,
+          storageRangeDays,
+          metaReady: metaChunks.length > 0,
+          googleReady: googleChunks.length > 0,
+          ga4Ready: ga4Chunks.length > 0,
+        },
+      });
+    }
 
     await updateRootContextState(userId, {
       aiContext: {
-        ...(await findRoot(userId))?.aiContext,
+        ...(effectiveRoot?.aiContext || {}),
         status: 'processing',
         progress: 35,
         stage: 'compacting_sources',
-        startedAt: root?.aiContext?.startedAt || nowIso(),
+        startedAt: effectiveRoot?.aiContext?.startedAt || nowIso(),
+        finishedAt: null,
         snapshotId,
+        contextRangeDays,
+        storageRangeDays,
         error: null,
+        encodedPayload: null,
       },
     });
 
-    const metaPack = buildMetaContext(metaChunks);
-    const googlePack = buildGoogleAdsContext(googleChunks);
-    const ga4Pack = buildGa4Context(ga4Chunks);
+    const metaPack = buildMetaContext(metaChunks, contextRangeDays);
+    const googlePack = buildGoogleAdsContext(googleChunks, contextRangeDays);
+    const ga4Pack = buildGa4Context(ga4Chunks, contextRangeDays);
 
     const unifiedBase = buildUnifiedBaseContext({
-      root,
+      root: effectiveRoot,
       snapshotId,
+      contextRangeDays,
+      storageRangeDays,
       metaPack,
       googlePack,
       ga4Pack,
@@ -807,8 +1077,11 @@ router.post('/build', async (req, res) => {
         status: 'processing',
         progress: 65,
         stage: 'encoding_context',
-        startedAt: root?.aiContext?.startedAt || nowIso(),
+        startedAt: effectiveRoot?.aiContext?.startedAt || nowIso(),
+        finishedAt: null,
         snapshotId,
+        contextRangeDays,
+        storageRangeDays,
         unifiedBase,
         error: null,
       },
@@ -827,6 +1100,8 @@ router.post('/build', async (req, res) => {
         startedAt: prevAi?.startedAt || nowIso(),
         finishedAt: nowIso(),
         snapshotId,
+        contextRangeDays,
+        storageRangeDays,
         error: null,
         unifiedBase,
         encodedPayload: encoded.payload,
@@ -844,6 +1119,8 @@ router.post('/build', async (req, res) => {
         progress: freshRoot?.aiContext?.progress || 100,
         stage: freshRoot?.aiContext?.stage || 'completed',
         snapshotId,
+        contextRangeDays: toNum(freshRoot?.aiContext?.contextRangeDays) || contextRangeDays,
+        storageRangeDays: toNum(freshRoot?.aiContext?.storageRangeDays) || storageRangeDays,
         usedOpenAI: !!freshRoot?.aiContext?.usedOpenAI,
         model: freshRoot?.aiContext?.model || null,
         hasEncodedPayload: !!freshRoot?.aiContext?.encodedPayload,
@@ -940,6 +1217,8 @@ router.get('/latest', async (req, res) => {
         progress: state?.progress || 100,
         stage: state?.stage || 'completed',
         snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
+        contextRangeDays: toNum(state?.contextRangeDays) || null,
+        storageRangeDays: toNum(state?.storageRangeDays) || null,
         usedOpenAI: !!state?.usedOpenAI,
         model: state?.model || null,
         generatedAt: state?.finishedAt || null,
@@ -953,7 +1232,6 @@ router.get('/latest', async (req, res) => {
 
 /**
  * POST /api/mcp/context/link
- * Genera o regenera el link único del usuario.
  */
 router.post('/link', async (req, res) => {
   try {
@@ -1017,7 +1295,6 @@ router.post('/link', async (req, res) => {
 
 /**
  * GET /api/mcp/context/link
- * Devuelve el link actual del usuario.
  */
 router.get('/link', async (req, res) => {
   try {
@@ -1054,7 +1331,6 @@ router.get('/link', async (req, res) => {
 
 /**
  * GET /api/mcp/context/shared/:token
- * Ruta pública para servir la codificación final.
  */
 router.get('/shared/:token', async (req, res) => {
   try {

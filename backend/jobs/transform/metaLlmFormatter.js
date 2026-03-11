@@ -74,6 +74,12 @@ function ratio(num, den) {
   return round2(toNum(num) / d);
 }
 
+function clampInt(n, min, max) {
+  const x = Number(n || 0);
+  if (!Number.isFinite(x)) return min;
+  return Math.max(min, Math.min(max, Math.trunc(x)));
+}
+
 function indexDatasets(datasets) {
   const map = new Map();
 
@@ -104,11 +110,57 @@ function getMetaHeader(dsMap) {
 function normalizeRange(range) {
   if (!isObj(range)) return null;
 
+  const since = safeDateStr(range?.since || range?.from);
+  const until = safeDateStr(range?.until || range?.to);
+  const days = toNum(range?.days);
+
   return {
-    since: safeDateStr(range?.since),
-    until: safeDateStr(range?.until),
-    days: toNum(range?.days),
+    since,
+    until,
+    from: since,
+    to: until,
+    days,
+    tz: safeStr(range?.tz || '') || null,
   };
+}
+
+function parseYmdToUtcDate(ymd) {
+  const s = safeDateStr(ymd);
+  if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [yy, mm, dd] = s.split('-').map(Number);
+  return new Date(Date.UTC(yy, (mm || 1) - 1, dd || 1, 0, 0, 0));
+}
+
+function addDaysYmd(ymd, deltaDays) {
+  const d = parseYmdToUtcDate(ymd);
+  if (!d) return null;
+  d.setUTCDate(d.getUTCDate() + Number(deltaDays || 0));
+  return d.toISOString().slice(0, 10);
+}
+
+function filterRowsByContextRange(rows, contextRangeDays, explicitRange) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return [];
+
+  const rangeDays = clampInt(contextRangeDays || 60, 1, 3650);
+  const explicitTo = safeDateStr(explicitRange?.until || explicitRange?.to);
+  const computedLatest = list
+    .map((r) => safeDateStr(r?.date))
+    .filter(Boolean)
+    .sort()
+    .slice(-1)[0] || null;
+
+  const endDate = explicitTo || computedLatest;
+  if (!endDate) return list.slice();
+
+  const startDate = addDaysYmd(endDate, -(rangeDays - 1));
+  if (!startDate) return list.slice();
+
+  return list.filter((r) => {
+    const d = safeDateStr(r?.date);
+    if (!d) return false;
+    return d >= startDate && d <= endDate;
+  });
 }
 
 function buildExecutiveSummary(summaryData) {
@@ -395,9 +447,13 @@ function sortRowsByDateAsc(rows) {
     .sort((a, b) => safeStr(a?.date).localeCompare(safeStr(b?.date)));
 }
 
-function buildDailyTrends(dailyData, topCampaignRows = 5) {
-  const totalsByDay = sortRowsByDateAsc(dailyData?.totals_by_day || []);
-  const campaignsDaily = Array.isArray(dailyData?.campaigns_daily) ? dailyData.campaigns_daily : [];
+function buildDailyTrends(dailyData, topCampaignRows = 5, contextRangeDays = 60) {
+  const rawTotalsByDay = sortRowsByDateAsc(dailyData?.totals_by_day || []);
+  const rawCampaignsDaily = Array.isArray(dailyData?.campaigns_daily) ? dailyData.campaigns_daily : [];
+
+  const inferredRange = normalizeRange(dailyData?.meta?.range);
+  const totalsByDay = sortRowsByDateAsc(filterRowsByContextRange(rawTotalsByDay, contextRangeDays, inferredRange));
+  const campaignsDaily = sortRowsByDateAsc(filterRowsByContextRange(rawCampaignsDaily, contextRangeDays, inferredRange));
 
   const recentTotals = totalsByDay.slice(-14).map((d) => ({
     date: safeDateStr(d?.date),
@@ -607,7 +663,7 @@ function buildPrioritySummary(payload) {
   };
 }
 
-function buildDataQuality(meta, payload) {
+function buildDataQuality(meta, payload, contextRangeDays) {
   const accounts = Array.isArray(meta?.accounts) ? meta.accounts : [];
   const range = normalizeRange(meta?.range);
 
@@ -625,6 +681,9 @@ function buildDataQuality(meta, payload) {
       toNum(payload?.executive_summary?.headline_kpis?.spend) > 0,
     accountCount: accounts.length,
     range,
+    storageRangeDays: toNum(meta?.storageRangeDays) || null,
+    contextRangeDays: toNum(contextRangeDays) || toNum(meta?.contextRangeDays) || null,
+    windowType: nonEmptyStr(meta?.windowType) || 'context',
     datasetsPresent: {
       executive_summary: !!payload?.executive_summary,
       ranked_campaigns: rankedCount > 0,
@@ -763,6 +822,7 @@ function buildKpiDefinitions() {
  */
 function formatMetaForLlm({
   datasets = [],
+  contextRangeDays = 60,
   topCampaigns = 8,
   topBreakdowns = 5,
   topTrendCampaigns = 5,
@@ -777,15 +837,17 @@ function formatMetaForLlm({
 
   const meta = getMetaHeader(dsMap);
   const range = normalizeRange(meta?.range);
+  const effectiveContextRangeDays =
+    clampInt(contextRangeDays || meta?.contextRangeDays || range?.days || 60, 7, 3650);
 
   const ranked_campaigns = buildRankedCampaigns(rankedData, Math.max(topCampaigns, 12));
   const breakdowns = buildBreakdowns(breakdownsData, topBreakdowns);
   const signals = buildSignals(signalsData);
-  const daily_trends = buildDailyTrends(dailyData, topTrendCampaigns);
+  const daily_trends = buildDailyTrends(dailyData, topTrendCampaigns, effectiveContextRangeDays);
 
   const payload = {
     meta: {
-      schema: 'adray.meta.llm.v3',
+      schema: 'adray.meta.llm.v4',
       source: 'metaAds',
       generatedAt: new Date().toISOString(),
       accountIds: Array.isArray(meta?.accountIds) ? meta.accountIds : [],
@@ -798,10 +860,18 @@ function formatMetaForLlm({
       })),
       range,
       rangeDays: toNum(meta?.rangeDays || range?.days),
+      storageRangeDays: toNum(meta?.storageRangeDays) || null,
+      contextRangeDays: effectiveContextRangeDays,
+      windowType: nonEmptyStr(meta?.windowType) || 'context',
       currency: nonEmptyStr(meta?.currency) || null,
       latestSnapshotId: nonEmptyStr(meta?.latestSnapshotId) || null,
       collectorVersion: nonEmptyStr(meta?.version) || null,
       platform: 'meta',
+    },
+    context_window: {
+      rangeDays: effectiveContextRangeDays,
+      storageRangeDays: toNum(meta?.storageRangeDays) || null,
+      windowType: nonEmptyStr(meta?.windowType) || 'context',
     },
     executive_summary: buildExecutiveSummary(summaryData),
     kpi_definitions: buildKpiDefinitions(),
@@ -813,7 +883,7 @@ function formatMetaForLlm({
   };
 
   payload.priority_summary = buildPrioritySummary(payload);
-  payload.data_quality = buildDataQuality(meta, payload);
+  payload.data_quality = buildDataQuality(meta, payload, effectiveContextRangeDays);
   payload.llm_hints = buildLlmPromptHints(payload);
 
   return payload;
@@ -824,10 +894,12 @@ function formatMetaForLlm({
  */
 function formatMetaForLlmMini({
   datasets = [],
+  contextRangeDays = 60,
   topCampaigns = 6,
 } = {}) {
   const full = formatMetaForLlm({
     datasets,
+    contextRangeDays,
     topCampaigns: Math.max(topCampaigns, 10),
     topBreakdowns: 4,
     topTrendCampaigns: 4,
@@ -835,6 +907,7 @@ function formatMetaForLlmMini({
 
   return {
     meta: full.meta,
+    context_window: full.context_window,
     data_quality: full.data_quality,
     kpi_definitions: full.kpi_definitions,
     headline_kpis: full.executive_summary?.headline_kpis || {},
