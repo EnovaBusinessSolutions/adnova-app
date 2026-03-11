@@ -111,6 +111,21 @@ function stitchSnapshotAttribution(snapshot = {}) {
   return { channel: 'unattributed', platform: null, confidence: 0.0, source: 'none' };
 }
 
+function isSameSiteReferrer(referrerValue, accountId) {
+  const referrerDomain = getDomain(referrerValue);
+  const accountDomain = String(accountId || '').replace(/^www\./, '').toLowerCase();
+  if (!referrerDomain || !accountDomain) return false;
+  return referrerDomain === accountDomain || referrerDomain.endsWith('.' + accountDomain);
+}
+
+function stitchSnapshotAttributionForAccount(snapshot = {}, accountId) {
+  const attribution = stitchSnapshotAttribution(snapshot);
+  if (attribution.source === 'referrer' && isSameSiteReferrer(snapshot?.referrer, accountId)) {
+    return { channel: 'unattributed', platform: null, confidence: 0.0, source: 'none' };
+  }
+  return attribution;
+}
+
 function normalizeChannelForStats(channelRaw) {
   let ch = String(channelRaw || 'unattributed').toLowerCase();
   if (ch === 'facebook' || ch === 'instagram' || ch === 'paid_social') ch = 'meta';
@@ -161,6 +176,33 @@ function buildAttributionTouchpoints({ snapshots = [], sessions = [] }) {
 
   sessions.forEach((session) => {
     const attribution = stitchSnapshotAttribution(toSnapshotFromSession(session) || {});
+    touchpoints.push({
+      timestamp: new Date(session.startedAt),
+      attribution,
+      source: 'session',
+      isFirstTouch: Boolean(session.isFirstTouch),
+    });
+  });
+
+  return touchpoints
+    .filter((tp) => tp.timestamp && !Number.isNaN(tp.timestamp.getTime()))
+    .sort((a, b) => a.timestamp - b.timestamp);
+}
+
+function buildAttributionTouchpointsForAccount({ snapshots = [], sessions = [], accountId }) {
+  const touchpoints = [];
+
+  snapshots.forEach((snap) => {
+    const attribution = stitchSnapshotAttributionForAccount(snap.snapshot || {}, accountId);
+    touchpoints.push({
+      timestamp: new Date(snap.timestamp),
+      attribution,
+      source: snap.source || 'checkout_snapshot',
+    });
+  });
+
+  sessions.forEach((session) => {
+    const attribution = stitchSnapshotAttributionForAccount(toSnapshotFromSession(session) || {}, accountId);
     touchpoints.push({
       timestamp: new Date(session.startedAt),
       attribution,
@@ -715,7 +757,7 @@ router.get('/:account_id', async (req, res) => {
           )
         : [];
 
-      const touchpoints = buildAttributionTouchpoints({ snapshots, sessions });
+      const touchpoints = buildAttributionTouchpointsForAccount({ snapshots, sessions, accountId: account_id });
       const attribution = resolveConversionAttribution({ model: attributionModel, touchpoints });
       const wooFallback = deriveWooFallbackAttribution({
         woo_source_label: conv.wooSourceLabel,
@@ -742,6 +784,12 @@ router.get('/:account_id', async (req, res) => {
         isAttributed: finalAttribution.isAttributed,
         wooSourceLabel: conv.wooSourceLabel || null,
         wooSourceType: conv.wooSourceType || null,
+        attributionDebug: {
+          wooSourceLabel: conv.wooSourceLabel || null,
+          wooSourceType: conv.wooSourceType || null,
+          payloadUtmSource: conv?.payloadSnapshot?.utm_source || null,
+          payloadReferrer: conv?.payloadSnapshot?.referrer || null,
+        },
       };
     });
 

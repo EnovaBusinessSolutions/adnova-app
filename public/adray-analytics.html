@@ -551,6 +551,11 @@
                 if (p.attributionSource === 'woo_fallback' && p.wooSourceLabel) {
                     attrText = p.wooSourceLabel;
                 }
+                const debugBits = [];
+                if (p.attributionDebug?.wooSourceLabel) debugBits.push(`woo=${p.attributionDebug.wooSourceLabel}`);
+                if (p.attributionDebug?.payloadUtmSource) debugBits.push(`utm=${p.attributionDebug.payloadUtmSource}`);
+                if (p.attributionDebug?.payloadReferrer) debugBits.push(`ref=${p.attributionDebug.payloadReferrer}`);
+                const debugTitle = debugBits.length ? ` title="${debugBits.join(' | ')}"` : '';
 
                 return `
                     <tr class="border-b border-gray-100 align-top">
@@ -558,7 +563,7 @@
                         <td class="py-3 pr-4 text-gray-900 font-medium">${orderId}</td>
                         <td class="py-3 pr-4 text-indigo-600 font-semibold whitespace-nowrap">${revenue}</td>
                         <td class="py-3 pr-4 text-gray-700">${itemsText}${extraCount}</td>
-                        <td class="py-3 pr-4 text-gray-700 whitespace-nowrap">${attrText}</td>
+                        <td class="py-3 pr-4 text-gray-700 whitespace-nowrap"${debugTitle}>${attrText}</td>
                         <td class="py-3 pr-4 text-gray-500 whitespace-nowrap">${sourceLabel}</td>
                     </tr>
                 `;
