@@ -325,6 +325,7 @@ app.use(cookieParser());
 app.use("/api/analytics", require("./routes/analytics"));
 app.use("/api/feed", require("./routes/feed"));
 app.use('/api', wooOrdersRoutes);
+app.use('/api/platform-connections', require('./routes/platformConnections'));
 app.use('/wp-plugin', wordpressPluginRoutes);
 
 // AdRay collect and platform routes

@@ -67,6 +67,7 @@ model PlatformConnection {
 
   account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
 
+  @@unique([accountId, platform])
   @@map("platform_connections")
 }
 

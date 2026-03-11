@@ -33,7 +33,10 @@ async function withRetry(fn, jobType, payload, maxAttempts = 3, delays = [1000, 
 }
 
 /**
- * Send order to Meta Conversions API
+ * Send order to Meta Conversions API.
+ * Resolution order:
+ *   1. PlatformConnection (Prisma/PostgreSQL) — works for Woo + Shopify
+ *   2. MongoDB MetaAccount / PixelSelection   — legacy Shopify fallback
  */
 async function sendToMeta(order) {
   return withRetry(async () => {
@@ -44,54 +47,70 @@ async function sendToMeta(order) {
       return { success: false, reason: 'No accountId in order' };
     }
 
-    // 1. Resolve User (Mongo) via shop domain
-    const user = await User.findOne({ shop: accountId }).lean();
-    if (!user) {
-      console.warn(`[Meta CAPI] SKIP: No User found with shop=${accountId}`);
-      return { success: false, reason: 'User not found for Meta CAPI' };
-    }
-    console.log(`[Meta CAPI] User found: ${user._id}`);
+    let accessToken = null;
+    let pixelId     = null;
 
-    // 2. Resolve MetaAccount with token
-    const metaAccount = await MetaAccount.loadForUserWithTokens(user._id).lean();
-    if (!metaAccount) {
-      console.warn(`[Meta CAPI] SKIP: No MetaAccount for userId=${user._id}`);
-      return { success: false, reason: 'MetaAccount not found' };
+    // ── 1. PlatformConnection (Prisma) ─────────────────────────────────────
+    const conn = await prisma.platformConnection.findFirst({
+      where: { accountId, platform: 'META', status: 'ACTIVE' },
+    });
+
+    if (conn?.accessToken && conn?.pixelId) {
+      accessToken = conn.accessToken;
+      pixelId     = conn.pixelId;
+      console.log(`[Meta CAPI] PlatformConnection found — pixel: ${pixelId}`);
+    } else {
+      console.log(`[Meta CAPI] No PlatformConnection for ${accountId}, trying MongoDB fallback…`);
+
+      // ── 2. MongoDB fallback (legacy Shopify path) ───────────────────────
+      const user = await User.findOne({
+        $or: [{ shop: accountId }, { email: accountId }],
+      }).lean();
+
+      if (!user) {
+        console.warn(`[Meta CAPI] SKIP: No User found for accountId=${accountId} (Prisma+Mongo both empty)`);
+        return { success: false, reason: 'No User / PlatformConnection found for Meta CAPI' };
+      }
+      console.log(`[Meta CAPI] Mongo User found: ${user._id}`);
+
+      const metaAccount = await MetaAccount.loadForUserWithTokens(user._id).lean();
+      accessToken =
+        metaAccount?.longLivedToken ||
+        metaAccount?.longlivedToken ||
+        metaAccount?.access_token  ||
+        metaAccount?.accessToken   ||
+        metaAccount?.token         ||
+        null;
+
+      if (!accessToken) {
+        console.warn(`[Meta CAPI] SKIP: No Meta token for userId=${user._id}`);
+        return { success: false, reason: 'No Meta access token' };
+      }
+
+      const pixelSel = await PixelSelection.findOne({
+        $or: [{ userId: user._id }, { user: user._id }],
+        provider: 'meta',
+      }).lean();
+
+      pixelId = pixelSel?.selectedId || null;
+      if (!pixelId) {
+        console.warn(`[Meta CAPI] SKIP: No Meta pixel selected for userId=${user._id}`);
+        return { success: false, reason: 'No Meta pixel selected for this account' };
+      }
+      console.log(`[Meta CAPI] Mongo pixel resolved: ${pixelId}`);
     }
 
-    const accessToken =
-      metaAccount.longLivedToken  ||
-      metaAccount.longlivedToken  ||
-      metaAccount.access_token    ||
-      metaAccount.accessToken     ||
-      metaAccount.token           ||
-      null;
-    if (!accessToken) {
-      console.warn(`[Meta CAPI] SKIP: MetaAccount exists but no token for userId=${user._id}`);
-      return { success: false, reason: 'No Meta access token' };
-    }
-    console.log(`[Meta CAPI] MetaAccount token resolved for userId=${user._id}`);
+    console.log(`[Meta CAPI] Sending — pixel: ${pixelId} — testCode: ${process.env.META_CAPI_TEST_CODE || 'none'}`);
 
-    // 3. Resolve selected pixel
-    const pixelSel = await PixelSelection.findOne({
-      $or: [{ userId: user._id }, { user: user._id }],
-      provider: 'meta',
-    }).lean();
-    if (!pixelSel?.selectedId) {
-      console.warn(`[Meta CAPI] SKIP: No Meta pixel selected for userId=${user._id}`);
-      return { success: false, reason: 'No Meta pixel selected for this account' };
-    }
-    console.log(`[Meta CAPI] Pixel resolved: ${pixelSel.selectedId} — testCode: ${process.env.META_CAPI_TEST_CODE || 'none'}`);
-
-    // 4. Send conversion event
+    // ── 3. Send conversion ──────────────────────────────────────────────────
     const result = await metaStack.sendConversion(order, {
       accessToken,
-      pixelId: pixelSel.selectedId,
+      pixelId,
       testEventCode: process.env.META_CAPI_TEST_CODE || undefined,
     });
 
     if (!result.success) throw new Error(result.reason || 'Meta CAPI call failed');
-    console.log(`[Meta CAPI] ✅ Purchase sent for order ${order.orderId} → pixel ${pixelSel.selectedId}`);
+    console.log(`[Meta CAPI] ✅ Purchase sent for order ${order.orderId} → pixel ${pixelId}`);
     return { success: true, response: result.data };
   }, 'meta_capi', { orderId: order.orderId });
 }
