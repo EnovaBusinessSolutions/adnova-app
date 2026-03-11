@@ -548,6 +548,9 @@
                         .join(' / ');
                     attrText = splitText;
                 }
+                if (p.attributionSource === 'woo_fallback' && p.wooSourceLabel) {
+                    attrText = p.wooSourceLabel;
+                }
 
                 return `
                     <tr class="border-b border-gray-100 align-top">

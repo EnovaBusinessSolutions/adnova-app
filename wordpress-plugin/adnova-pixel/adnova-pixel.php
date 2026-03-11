@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.0.2
+ * Version: 1.0.3
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.0.2';
+    const VERSION = '1.0.3';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const DEFAULT_SCRIPT_URL = 'https://adray-app-staging-german.onrender.com/adray-pixel.js';
@@ -28,6 +28,10 @@ final class Adnova_Pixel_Plugin {
         add_filter('script_loader_tag', array(__CLASS__, 'inject_script_attributes'), 10, 3);
         // WooCommerce: fire purchase on thank-you page
         add_action('woocommerce_thankyou', array(__CLASS__, 'on_woo_order_received'), 10, 1);
+        // Server-side order capture even when thank-you is not rendered in browser.
+        add_action('woocommerce_payment_complete', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
+        add_action('woocommerce_order_status_processing', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
+        add_action('woocommerce_order_status_completed', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         // Fallback for custom checkout flows/themes where woocommerce_thankyou is bypassed.
         add_action('wp_footer', array(__CLASS__, 'maybe_track_woo_order_received_fallback'), 1000);
     }
@@ -101,22 +105,38 @@ final class Adnova_Pixel_Plugin {
         return sanitize_text_field($host);
     }
 
+    private static function get_order_meta_first($order, $keys) {
+        if (!$order || !is_array($keys)) {
+            return '';
+        }
+
+        foreach ($keys as $key) {
+            $value = (string) $order->get_meta($key, true);
+            if ($value !== '') {
+                return $value;
+            }
+        }
+
+        return '';
+    }
+
     private static function get_order_attribution_data($order) {
         if (!$order) {
             return array();
         }
 
         $meta = array(
-            'utm_source'   => (string) $order->get_meta('_wc_order_attribution_utm_source', true),
-            'utm_medium'   => (string) $order->get_meta('_wc_order_attribution_utm_medium', true),
-            'utm_campaign' => (string) $order->get_meta('_wc_order_attribution_utm_campaign', true),
-            'utm_content'  => (string) $order->get_meta('_wc_order_attribution_utm_content', true),
-            'utm_term'     => (string) $order->get_meta('_wc_order_attribution_utm_term', true),
-            'referrer'     => (string) $order->get_meta('_wc_order_attribution_referrer', true),
-            'gclid'        => (string) $order->get_meta('_wc_order_attribution_gclid', true),
-            'fbclid'       => (string) $order->get_meta('_wc_order_attribution_fbclid', true),
-            'ttclid'       => (string) $order->get_meta('_wc_order_attribution_ttclid', true),
-            'woo_source_type' => (string) $order->get_meta('_wc_order_attribution_source_type', true),
+            'utm_source'   => self::get_order_meta_first($order, array('_wc_order_attribution_utm_source', 'wc_order_attribution_utm_source', '_utm_source')),
+            'utm_medium'   => self::get_order_meta_first($order, array('_wc_order_attribution_utm_medium', 'wc_order_attribution_utm_medium', '_utm_medium')),
+            'utm_campaign' => self::get_order_meta_first($order, array('_wc_order_attribution_utm_campaign', 'wc_order_attribution_utm_campaign', '_utm_campaign')),
+            'utm_content'  => self::get_order_meta_first($order, array('_wc_order_attribution_utm_content', 'wc_order_attribution_utm_content', '_utm_content')),
+            'utm_term'     => self::get_order_meta_first($order, array('_wc_order_attribution_utm_term', 'wc_order_attribution_utm_term', '_utm_term')),
+            'referrer'     => self::get_order_meta_first($order, array('_wc_order_attribution_referrer', 'wc_order_attribution_referrer', '_referrer')),
+            'gclid'        => self::get_order_meta_first($order, array('_wc_order_attribution_gclid', 'wc_order_attribution_gclid', '_gclid')),
+            'fbclid'       => self::get_order_meta_first($order, array('_wc_order_attribution_fbclid', 'wc_order_attribution_fbclid', '_fbclid')),
+            'ttclid'       => self::get_order_meta_first($order, array('_wc_order_attribution_ttclid', 'wc_order_attribution_ttclid', '_ttclid')),
+            'woo_source_type' => self::get_order_meta_first($order, array('_wc_order_attribution_source_type', 'wc_order_attribution_source_type')),
+            'woo_session_source' => self::get_order_meta_first($order, array('_wc_order_attribution_session_source', 'wc_order_attribution_session_source')),
         );
 
         $session_entry = (string) $order->get_meta('_wc_order_attribution_session_entry', true);
@@ -157,6 +177,8 @@ final class Adnova_Pixel_Plugin {
             } else {
                 $source_label = ucfirst($meta['utm_source']);
             }
+        } elseif (!empty($meta['woo_session_source'])) {
+            $source_label = ucfirst($meta['woo_session_source']);
         } elseif ($source_type === 'direct') {
             $source_label = 'Directo';
         } elseif ($source_type === 'organic' && !empty($meta['referrer'])) {
@@ -188,6 +210,14 @@ final class Adnova_Pixel_Plugin {
      * Both carry order_id so the dashboard can deduplicate revenue by order_id at query time.
      */
     public static function on_woo_order_received($order_id) {
+        self::track_woo_order_purchase($order_id, true);
+    }
+
+    public static function on_woo_order_server_side($order_id) {
+        self::track_woo_order_purchase($order_id, false);
+    }
+
+    private static function track_woo_order_purchase($order_id, $inject_browser) {
         if (!$order_id || !function_exists('wc_get_order')) {
             return;
         }
@@ -206,6 +236,8 @@ final class Adnova_Pixel_Plugin {
         if (!$order) {
             return;
         }
+
+        $already_sent = (bool) $order->get_meta('_adnova_purchase_sent', true);
 
         // Build items list
         $items = array();
@@ -233,8 +265,14 @@ final class Adnova_Pixel_Plugin {
             $attribution_data
         );
 
-        // Inject data for browser pixel (picks it up in section 5 of adray-pixel.js)
-        echo '<script>window.adnova_order_data=' . wp_json_encode($order_data) . ';</script>' . "\n";
+        if ($inject_browser) {
+            // Inject data for browser pixel (picks it up in section 5 of adray-pixel.js)
+            echo '<script>window.adnova_order_data=' . wp_json_encode($order_data) . ';</script>' . "\n";
+        }
+
+        if ($already_sent) {
+            return;
+        }
 
         // Server-side backup: fires even if the browser blocks the pixel
         self::send_server_side_event('purchase', array(
@@ -255,7 +293,12 @@ final class Adnova_Pixel_Plugin {
             'gclid'          => isset($order_data['gclid']) ? $order_data['gclid'] : null,
             'fbclid'         => isset($order_data['fbclid']) ? $order_data['fbclid'] : null,
             'ttclid'         => isset($order_data['ttclid']) ? $order_data['ttclid'] : null,
+            'woo_source_label' => isset($order_data['woo_source_label']) ? $order_data['woo_source_label'] : null,
+            'woo_source_type'  => isset($order_data['woo_source_type']) ? $order_data['woo_source_type'] : null,
         ));
+
+        $order->update_meta_data('_adnova_purchase_sent', gmdate('c'));
+        $order->save();
     }
 
     /**

@@ -247,6 +247,9 @@ function conversionPriorityScore(conv) {
   let score = 0;
   if (conv.isAttributed) score += 100;
   score += Number(conv.attributionConfidence || 0) * 10;
+  if (Number(conv.revenue || 0) > 0) score += 8;
+  if (Array.isArray(conv.items) && conv.items.length > 0) score += 4;
+  if (conv.wooSourceLabel) score += 6;
   if (conv.userKey) score += 2;
   if (conv.checkoutToken) score += 2;
   if (conv.orderId) score += 2;
@@ -737,6 +740,8 @@ router.get('/:account_id', async (req, res) => {
         attributionModel,
         attributionSplits: finalAttribution.splits,
         isAttributed: finalAttribution.isAttributed,
+        wooSourceLabel: conv.wooSourceLabel || null,
+        wooSourceType: conv.wooSourceType || null,
       };
     });
 
