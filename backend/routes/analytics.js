@@ -243,6 +243,47 @@ function resolveConversionAttribution({ model, touchpoints }) {
   };
 }
 
+function conversionPriorityScore(conv) {
+  let score = 0;
+  if (conv.isAttributed) score += 100;
+  score += Number(conv.attributionConfidence || 0) * 10;
+  if (conv.userKey) score += 2;
+  if (conv.checkoutToken) score += 2;
+  if (conv.orderId) score += 2;
+  return score;
+}
+
+function dedupeEventConversions(conversions) {
+  const byKey = new Map();
+
+  conversions.forEach((conv) => {
+    const key = conv.orderId
+      ? `order:${conv.orderId}`
+      : conv.checkoutToken
+        ? `checkout:${conv.checkoutToken}`
+        : `fallback:${new Date(conv.createdAt).toISOString()}:${conv.revenue}:${conv.userKey || ''}`;
+
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, conv);
+      return;
+    }
+
+    const currentScore = conversionPriorityScore(conv);
+    const existingScore = conversionPriorityScore(existing);
+    if (currentScore > existingScore) {
+      byKey.set(key, conv);
+      return;
+    }
+
+    if (currentScore === existingScore && new Date(conv.createdAt) > new Date(existing.createdAt)) {
+      byKey.set(key, conv);
+    }
+  });
+
+  return Array.from(byKey.values()).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
 // Use existing sessionGuard from index.js mount, assuming it's available or implemented here?
 // The pipeline says "All routes require sessionGuard".
 // For now, I'll rely on index.js to wrap this router with sessionGuard.
@@ -592,7 +633,11 @@ router.get('/:account_id', async (req, res) => {
       })
     );
 
-    const recentPurchases = conversionsWithAttribution.slice(0, 50).map((conv) => {
+    const modeledConversions = orders.length > 0
+      ? conversionsWithAttribution
+      : dedupeEventConversions(conversionsWithAttribution);
+
+    const recentPurchases = modeledConversions.slice(0, 50).map((conv) => {
       if (conv.source === 'orders') return conv;
       const key = `${conv.orderId || ''}::${conv.checkoutToken || ''}::${new Date(conv.createdAt).toISOString()}`;
       const detailed = detailedByKey.get(key);
@@ -613,7 +658,7 @@ router.get('/:account_id', async (req, res) => {
     let modeledAttributedOrders = 0;
     let modeledUnattributedOrders = 0;
 
-    conversionsWithAttribution.forEach((conv) => {
+    modeledConversions.forEach((conv) => {
       const rev = Number(conv.revenue || 0);
       const splits = Array.isArray(conv.attributionSplits) && conv.attributionSplits.length > 0
         ? conv.attributionSplits
@@ -648,17 +693,21 @@ router.get('/:account_id', async (req, res) => {
 
     // Purchase events often come via Shopify webhook -> Order table (without Event row).
     // Use the max as a safe dashboard metric that avoids showing 0 when orders exist.
-    const purchaseEventsResolved = Math.max(eventStats.purchase, orders.length);
-    const totalOrdersResolved = orders.length > 0 ? orders.length : purchaseEventsResolved;
+    const modeledEventOrders = orders.length > 0 ? eventStats.purchase : modeledConversions.length;
+    const purchaseEventsResolved = Math.max(modeledEventOrders, orders.length);
+    const totalOrdersResolved = orders.length > 0 ? orders.length : modeledConversions.length;
     const purchaseRevenueFromEvents = Number(purchaseRevenueAgg?._sum?.revenue || 0);
-    const totalRevenueResolved = orders.length > 0 ? totalRevenue : purchaseRevenueFromEvents;
+    const purchaseRevenueFromEventsModeled = orders.length > 0
+      ? purchaseRevenueFromEvents
+      : modeledConversions.reduce((acc, conv) => acc + Number(conv.revenue || 0), 0);
+    const totalRevenueResolved = orders.length > 0 ? totalRevenue : purchaseRevenueFromEventsModeled;
 
     // 5. Return JSON
     res.json({
       summary: {
         totalRevenue: totalRevenueResolved,
         totalRevenueOrders: totalRevenue,
-        totalRevenueEvents: purchaseRevenueFromEvents,
+        totalRevenueEvents: purchaseRevenueFromEventsModeled,
         revenueSource: orders.length > 0 ? 'orders' : 'events',
         totalOrders: totalOrdersResolved,
         attributedRevenue,
