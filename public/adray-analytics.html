@@ -322,7 +322,22 @@
         <div class="mt-8 bg-white shadow rounded-lg p-6">
             <div class="flex items-center justify-between mb-4">
                 <h3 class="text-lg leading-6 font-medium text-gray-900">Detalle de compras recientes</h3>
-                <span class="text-xs text-gray-500">ingreso + productos + fuente</span>
+                <div class="flex items-center gap-3">
+                    <select id="recent-purchases-filter" onchange="renderRecentPurchases(recentPurchasesState)" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white">
+                        <option value="all">Todas</option>
+                        <option value="orders">Woo Orders</option>
+                        <option value="events">Pixel Events</option>
+                    </select>
+                    <select id="recent-purchases-sort" onchange="renderRecentPurchases(recentPurchasesState)" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white">
+                        <option value="date_desc">Mas recientes</option>
+                        <option value="date_asc">Mas antiguas</option>
+                        <option value="revenue_desc">Mayor ingreso</option>
+                        <option value="revenue_asc">Menor ingreso</option>
+                        <option value="order_asc">Pedido asc</option>
+                        <option value="order_desc">Pedido desc</option>
+                    </select>
+                    <span class="text-xs text-gray-500">ingreso + productos + fuente</span>
+                </div>
             </div>
             <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
@@ -334,11 +349,12 @@
                             <th class="py-2 pr-4">Productos</th>
                             <th class="py-2 pr-4">Atribución</th>
                             <th class="py-2 pr-4">Fuente</th>
+                            <th class="py-2 pr-4">Debug</th>
                         </tr>
                     </thead>
                     <tbody id="recent-purchases-list">
                         <tr>
-                            <td colspan="6" class="py-6 text-center text-gray-400">Sin compras todavía.</td>
+                            <td colspan="7" class="py-6 text-center text-gray-400">Sin compras todavía.</td>
                         </tr>
                     </tbody>
                 </table>
@@ -351,6 +367,7 @@
         let currentAttributionModel = 'last_touch';
         let attributionChartInstance = null;
         let trendChartInstance = null;
+        let recentPurchasesState = [];
 
         function getShopIdFromUrl() {
             const urlParams = new URLSearchParams(window.location.search);
@@ -523,21 +540,39 @@
             const container = document.getElementById('recent-purchases-list');
             if (!container) return;
 
-            if (!Array.isArray(purchases) || purchases.length === 0) {
-                container.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-gray-400">Sin compras todavía.</td></tr>';
+            recentPurchasesState = Array.isArray(purchases) ? purchases.slice() : [];
+
+            const filterValue = document.getElementById('recent-purchases-filter')?.value || 'all';
+            const sortValue = document.getElementById('recent-purchases-sort')?.value || 'date_desc';
+
+            let filtered = recentPurchasesState.slice();
+            if (filterValue === 'orders') filtered = filtered.filter((p) => p.source === 'orders');
+            if (filterValue === 'events') filtered = filtered.filter((p) => p.source === 'events');
+
+            filtered.sort((a, b) => {
+                if (sortValue === 'date_asc') return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+                if (sortValue === 'revenue_desc') return Number(b.revenue || 0) - Number(a.revenue || 0);
+                if (sortValue === 'revenue_asc') return Number(a.revenue || 0) - Number(b.revenue || 0);
+                if (sortValue === 'order_asc') return String(a.orderNumber || a.orderId || '').localeCompare(String(b.orderNumber || b.orderId || ''), 'es');
+                if (sortValue === 'order_desc') return String(b.orderNumber || b.orderId || '').localeCompare(String(a.orderNumber || a.orderId || ''), 'es');
+                return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+            });
+
+            if (!Array.isArray(filtered) || filtered.length === 0) {
+                container.innerHTML = '<tr><td colspan="7" class="py-6 text-center text-gray-400">Sin compras todavía.</td></tr>';
                 return;
             }
 
-            container.innerHTML = purchases.map((p) => {
+            container.innerHTML = filtered.map((p) => {
                 const date = p.createdAt ? new Date(p.createdAt).toLocaleString() : '-';
-                const orderId = p.orderId || p.checkoutToken || '-';
+                const orderId = p.orderNumber || p.orderId || p.checkoutToken || '-';
                 const revenue = formatCurrencyWithCode(Number(p.revenue || 0), p.currency || 'MXN');
                 const items = Array.isArray(p.items) ? p.items : [];
                 const itemsText = items.length
                     ? items.slice(0, 2).map((i) => `${i.name || 'Producto'} x${Number(i.quantity || 1)}`).join(' · ')
                     : 'Sin items';
                 const extraCount = items.length > 2 ? ` +${items.length - 2} más` : '';
-                const sourceLabel = p.source === 'orders' ? 'Shopify/Woo Orders' : 'Pixel Events';
+                const sourceLabel = p.source === 'orders' ? 'Woo Orders Sync' : 'Pixel Events';
                 const attrChannel = p.attributedChannel || 'unattributed';
                 const attrPlatform = p.attributedPlatform || '-';
                 const attrConfidence = Number(p.attributionConfidence || 0);
@@ -551,11 +586,15 @@
                 if (p.attributionSource === 'woo_fallback' && p.wooSourceLabel) {
                     attrText = p.wooSourceLabel;
                 }
+                if (p.attributionSource === 'orders_sync' && p.attributedPlatform) {
+                    attrText = p.attributedPlatform;
+                }
                 const debugBits = [];
                 if (p.attributionDebug?.wooSourceLabel) debugBits.push(`woo=${p.attributionDebug.wooSourceLabel}`);
                 if (p.attributionDebug?.payloadUtmSource) debugBits.push(`utm=${p.attributionDebug.payloadUtmSource}`);
                 if (p.attributionDebug?.payloadReferrer) debugBits.push(`ref=${p.attributionDebug.payloadReferrer}`);
                 const debugTitle = debugBits.length ? ` title="${debugBits.join(' | ')}"` : '';
+                const debugText = debugBits.length ? debugBits.join(' | ') : '-';
 
                 return `
                     <tr class="border-b border-gray-100 align-top">
@@ -565,6 +604,7 @@
                         <td class="py-3 pr-4 text-gray-700">${itemsText}${extraCount}</td>
                         <td class="py-3 pr-4 text-gray-700 whitespace-nowrap"${debugTitle}>${attrText}</td>
                         <td class="py-3 pr-4 text-gray-500 whitespace-nowrap">${sourceLabel}</td>
+                        <td class="py-3 pr-4 text-gray-500">${debugText}</td>
                     </tr>
                 `;
             }).join('');

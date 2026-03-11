@@ -371,6 +371,22 @@ function deriveWooFallbackAttribution(rawPayload = {}) {
         source: 'woo_fallback',
       };
     }
+      if (normalized.includes('yahoo')) {
+        return {
+          channel: 'other',
+          platform: 'mx.search.yahoo.com',
+          confidence: 0.55,
+          source: 'woo_fallback',
+        };
+      }
+      if (normalized.includes('hostinger')) {
+        return {
+          channel: 'other',
+          platform: 'hpanel.hostinger.com',
+          confidence: 0.55,
+          source: 'woo_fallback',
+        };
+      }
     if (normalized.includes('facebook') || normalized.includes('instagram')) {
       return {
         channel: 'meta',
@@ -439,6 +455,9 @@ router.get('/:account_id', async (req, res) => {
         revenue: true,
         currency: true,
         attributedChannel: true,
+        attributionSnapshot: true,
+        confidenceScore: true,
+        attributionModel: true,
         checkoutToken: true,
         userKey: true,
         orderId: true,
@@ -639,6 +658,12 @@ router.get('/:account_id', async (req, res) => {
       currency: order.currency || 'MXN',
       items: normalizeLineItems(order.lineItems),
       orderAttributedChannel: order.attributedChannel || null,
+      orderAttributionSnapshot: order.attributionSnapshot || null,
+      orderAttributionConfidence: Number(order.confidenceScore || 0),
+      orderAttributionModel: order.attributionModel || null,
+      wooSourceLabel: order?.attributionSnapshot?.woo_source_label || null,
+      wooSourceType: order?.attributionSnapshot?.woo_source_type || null,
+      payloadSnapshot: order.attributionSnapshot || null,
     }));
 
     const conversionInputsFromEvents = purchaseEventsForModel.map((ev) => ({
@@ -731,7 +756,7 @@ router.get('/:account_id', async (req, res) => {
       const snapshots = [];
       if (conv.orderAttributedChannel) {
         snapshots.push({
-          snapshot: { utm_source: conv.orderAttributedChannel, utm_medium: conv.orderAttributedChannel },
+          snapshot: conv.orderAttributionSnapshot || { utm_source: conv.orderAttributedChannel, utm_medium: conv.orderAttributedChannel },
           timestamp: conv.createdAt,
           source: 'order_snapshot',
         });
@@ -762,16 +787,29 @@ router.get('/:account_id', async (req, res) => {
       const wooFallback = deriveWooFallbackAttribution({
         woo_source_label: conv.wooSourceLabel,
         woo_source_type: conv.wooSourceType,
-        utm_source: conv?.payloadSnapshot?.utm_source || null,
+        utm_source: conv?.payloadSnapshot?.utm_source || conv?.orderAttributionSnapshot?.utm_source || null,
       });
 
-      const finalAttribution = (!attribution.isAttributed && wooFallback)
+      const orderStoredAttribution = (conv.source === 'orders' && conv.orderAttributedChannel && conv.orderAttributedChannel !== 'unattributed')
+        ? {
+            primary: {
+              channel: conv.orderAttributedChannel,
+              platform: conv?.wooSourceLabel || conv?.orderAttributionSnapshot?.utm_source || conv.orderAttributedChannel,
+              confidence: Number(conv.orderAttributionConfidence || 0.75),
+              source: String(conv.orderAttributionModel || '').startsWith('woo_') ? 'woo_fallback' : 'orders_sync',
+            },
+            splits: [{ channel: conv.orderAttributedChannel, weight: 1 }],
+            isAttributed: true,
+          }
+        : null;
+
+      const finalAttribution = orderStoredAttribution || ((!attribution.isAttributed && wooFallback)
         ? {
             primary: wooFallback,
             splits: [{ channel: wooFallback.channel, weight: 1 }],
             isAttributed: true,
           }
-        : attribution;
+        : attribution);
 
       return {
         ...conv,
@@ -787,8 +825,8 @@ router.get('/:account_id', async (req, res) => {
         attributionDebug: {
           wooSourceLabel: conv.wooSourceLabel || null,
           wooSourceType: conv.wooSourceType || null,
-          payloadUtmSource: conv?.payloadSnapshot?.utm_source || null,
-          payloadReferrer: conv?.payloadSnapshot?.referrer || null,
+          payloadUtmSource: conv?.payloadSnapshot?.utm_source || conv?.orderAttributionSnapshot?.utm_source || null,
+          payloadReferrer: conv?.payloadSnapshot?.referrer || conv?.orderAttributionSnapshot?.referrer || null,
         },
       };
     });

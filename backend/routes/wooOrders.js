@@ -12,6 +12,7 @@ function normalizeWooChannel(payload = {}) {
   if (utmSource === 'google') return 'google';
   if (utmSource === 'facebook' || utmSource === 'instagram') return 'meta';
   if (utmSource === 'tiktok') return 'tiktok';
+  if (utmSource === 'yahoo' || utmSource === 'bing') return 'other';
 
   if (utmMedium === 'paid_search') return 'google';
   if (utmMedium === 'paid_social') {
@@ -19,8 +20,11 @@ function normalizeWooChannel(payload = {}) {
     return 'meta';
   }
 
-  if (wooSourceLabel.includes('google') || wooSourceLabel.includes('yahoo') || wooSourceLabel.includes('bing')) {
+  if (wooSourceLabel.includes('google')) {
     return 'google';
+  }
+  if (wooSourceLabel.includes('yahoo') || wooSourceLabel.includes('bing') || wooSourceLabel.includes('referido')) {
+    return 'other';
   }
   if (wooSourceLabel.includes('facebook') || wooSourceLabel.includes('instagram')) {
     return 'meta';
