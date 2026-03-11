@@ -88,6 +88,7 @@ const collectRoutes = require('./routes/collect');
 const adrayWebhookRoutes = require('./routes/adrayWebhooks');
 const adrayPlatformRoutes = require('./routes/adrayPlatforms');
 const wooOrdersRoutes = require('./routes/wooOrders');
+const wordpressPluginRoutes = require('./routes/wordpressPlugin');
 const rateLimitCollect = require('./middleware/rateLimitCollect');
 
 // Meta
@@ -324,6 +325,7 @@ app.use(cookieParser());
 app.use("/api/analytics", require("./routes/analytics"));
 app.use("/api/feed", require("./routes/feed"));
 app.use('/api', wooOrdersRoutes);
+app.use('/wp-plugin', wordpressPluginRoutes);
 
 // AdRay collect and platform routes
 app.use("/collect", rateLimitCollect, collectRoutes);

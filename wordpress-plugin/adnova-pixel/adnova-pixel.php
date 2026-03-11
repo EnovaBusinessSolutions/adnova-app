@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.0.4
+ * Version: 1.1.0
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,19 +15,23 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.0.4';
+    const VERSION = '1.1.0';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_BACKFILL_DONE = 'adnova_pixel_backfill_done';
     const DEFAULT_SCRIPT_URL = 'https://adray-app-staging-german.onrender.com/adray-pixel.js';
     const DEFAULT_COLLECT_URL = 'https://adray-app-staging-german.onrender.com/collect';
     const DEFAULT_ORDER_SYNC_URL = 'https://adray-app-staging-german.onrender.com/api/woo/orders-sync';
+    const DEFAULT_UPDATE_METADATA_URL = 'https://adray-app-staging-german.onrender.com/wp-plugin/adnova-pixel/update.json';
     private static $processed_orders = array();
 
     public static function init() {
         register_activation_hook(__FILE__, array(__CLASS__, 'on_activate'));
         add_action('wp_enqueue_scripts', array(__CLASS__, 'enqueue_pixel_script'), 100);
         add_filter('script_loader_tag', array(__CLASS__, 'inject_script_attributes'), 10, 3);
+        add_filter('pre_set_site_transient_update_plugins', array(__CLASS__, 'inject_plugin_update'));
+        add_filter('plugins_api', array(__CLASS__, 'plugins_api_handler'), 10, 3);
+        add_filter('auto_update_plugin', array(__CLASS__, 'enable_auto_update'), 10, 2);
         // WooCommerce: fire purchase on thank-you page
         add_action('woocommerce_thankyou', array(__CLASS__, 'on_woo_order_received'), 10, 1);
         // Server-side order capture even when thank-you is not rendered in browser.
@@ -53,6 +57,104 @@ final class Adnova_Pixel_Plugin {
         if (!wp_next_scheduled('adnova_pixel_backfill_orders')) {
             wp_schedule_single_event(time() + 30, 'adnova_pixel_backfill_orders');
         }
+
+        delete_site_transient('update_plugins');
+    }
+
+    private static function get_plugin_basename() {
+        return plugin_basename(__FILE__);
+    }
+
+    private static function fetch_update_metadata() {
+        $response = wp_remote_get(self::DEFAULT_UPDATE_METADATA_URL, array(
+            'timeout' => 10,
+            'headers' => array('Accept' => 'application/json'),
+        ));
+
+        if (is_wp_error($response)) {
+            return null;
+        }
+
+        $code = wp_remote_retrieve_response_code($response);
+        if ($code < 200 || $code >= 300) {
+            return null;
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        $decoded = json_decode($body, true);
+
+        return is_array($decoded) ? $decoded : null;
+    }
+
+    public static function inject_plugin_update($transient) {
+        if (!is_object($transient) || empty($transient->checked)) {
+            return $transient;
+        }
+
+        $plugin_file = self::get_plugin_basename();
+        $current_version = isset($transient->checked[$plugin_file])
+            ? (string) $transient->checked[$plugin_file]
+            : self::VERSION;
+
+        $metadata = self::fetch_update_metadata();
+        if (!$metadata || empty($metadata['version']) || empty($metadata['download_url'])) {
+            return $transient;
+        }
+
+        if (version_compare($metadata['version'], $current_version, '<=')) {
+            return $transient;
+        }
+
+        $update = new stdClass();
+        $update->slug = 'adnova-pixel';
+        $update->plugin = $plugin_file;
+        $update->new_version = $metadata['version'];
+        $update->url = isset($metadata['homepage']) ? $metadata['homepage'] : '';
+        $update->package = $metadata['download_url'];
+        $update->tested = isset($metadata['tested']) ? $metadata['tested'] : '';
+        $update->requires = isset($metadata['requires']) ? $metadata['requires'] : '';
+        $update->requires_php = isset($metadata['requires_php']) ? $metadata['requires_php'] : '';
+
+        if (!isset($transient->response) || !is_array($transient->response)) {
+            $transient->response = array();
+        }
+
+        $transient->response[$plugin_file] = $update;
+        return $transient;
+    }
+
+    public static function plugins_api_handler($result, $action, $args) {
+        if ($action !== 'plugin_information' || empty($args->slug) || $args->slug !== 'adnova-pixel') {
+            return $result;
+        }
+
+        $metadata = self::fetch_update_metadata();
+        if (!$metadata) {
+            return $result;
+        }
+
+        $info = new stdClass();
+        $info->name = isset($metadata['name']) ? $metadata['name'] : 'Adnova Pixel';
+        $info->slug = 'adnova-pixel';
+        $info->version = isset($metadata['version']) ? $metadata['version'] : self::VERSION;
+        $info->homepage = isset($metadata['homepage']) ? $metadata['homepage'] : '';
+        $info->download_link = isset($metadata['download_url']) ? $metadata['download_url'] : '';
+        $info->requires = isset($metadata['requires']) ? $metadata['requires'] : '';
+        $info->tested = isset($metadata['tested']) ? $metadata['tested'] : '';
+        $info->requires_php = isset($metadata['requires_php']) ? $metadata['requires_php'] : '';
+        $info->last_updated = isset($metadata['last_updated']) ? $metadata['last_updated'] : '';
+        $info->sections = isset($metadata['sections']) && is_array($metadata['sections']) ? $metadata['sections'] : array();
+        $info->banners = isset($metadata['banners']) && is_array($metadata['banners']) ? $metadata['banners'] : array();
+
+        return $info;
+    }
+
+    public static function enable_auto_update($update, $item) {
+        if (is_object($item) && isset($item->plugin) && $item->plugin === self::get_plugin_basename()) {
+            return true;
+        }
+
+        return $update;
     }
 
     public static function enqueue_pixel_script() {
