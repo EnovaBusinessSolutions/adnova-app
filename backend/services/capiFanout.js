@@ -38,15 +38,26 @@ async function withRetry(fn, jobType, payload, maxAttempts = 3, delays = [1000, 
 async function sendToMeta(order) {
   return withRetry(async () => {
     const accountId = order.accountId;
-    if (!accountId) return { success: false, reason: 'No accountId in order' };
+    console.log(`[Meta CAPI] Starting fanout for order ${order.orderId} / account ${accountId}`);
+    if (!accountId) {
+      console.warn('[Meta CAPI] SKIP: No accountId in order');
+      return { success: false, reason: 'No accountId in order' };
+    }
 
     // 1. Resolve User (Mongo) via shop domain
     const user = await User.findOne({ shop: accountId }).lean();
-    if (!user) return { success: false, reason: 'User not found for Meta CAPI' };
+    if (!user) {
+      console.warn(`[Meta CAPI] SKIP: No User found with shop=${accountId}`);
+      return { success: false, reason: 'User not found for Meta CAPI' };
+    }
+    console.log(`[Meta CAPI] User found: ${user._id}`);
 
     // 2. Resolve MetaAccount with token
     const metaAccount = await MetaAccount.loadForUserWithTokens(user._id).lean();
-    if (!metaAccount) return { success: false, reason: 'MetaAccount not found' };
+    if (!metaAccount) {
+      console.warn(`[Meta CAPI] SKIP: No MetaAccount for userId=${user._id}`);
+      return { success: false, reason: 'MetaAccount not found' };
+    }
 
     const accessToken =
       metaAccount.longLivedToken  ||
@@ -55,14 +66,22 @@ async function sendToMeta(order) {
       metaAccount.accessToken     ||
       metaAccount.token           ||
       null;
-    if (!accessToken) return { success: false, reason: 'No Meta access token' };
+    if (!accessToken) {
+      console.warn(`[Meta CAPI] SKIP: MetaAccount exists but no token for userId=${user._id}`);
+      return { success: false, reason: 'No Meta access token' };
+    }
+    console.log(`[Meta CAPI] MetaAccount token resolved for userId=${user._id}`);
 
     // 3. Resolve selected pixel
     const pixelSel = await PixelSelection.findOne({
       $or: [{ userId: user._id }, { user: user._id }],
       provider: 'meta',
     }).lean();
-    if (!pixelSel?.selectedId) return { success: false, reason: 'No Meta pixel selected for this account' };
+    if (!pixelSel?.selectedId) {
+      console.warn(`[Meta CAPI] SKIP: No Meta pixel selected for userId=${user._id}`);
+      return { success: false, reason: 'No Meta pixel selected for this account' };
+    }
+    console.log(`[Meta CAPI] Pixel resolved: ${pixelSel.selectedId} — testCode: ${process.env.META_CAPI_TEST_CODE || 'none'}`);
 
     // 4. Send conversion event
     const result = await metaStack.sendConversion(order, {
@@ -72,7 +91,7 @@ async function sendToMeta(order) {
     });
 
     if (!result.success) throw new Error(result.reason || 'Meta CAPI call failed');
-    console.log(`[Meta CAPI] Purchase sent for order ${order.orderId} → pixel ${pixelSel.selectedId}`);
+    console.log(`[Meta CAPI] ✅ Purchase sent for order ${order.orderId} → pixel ${pixelSel.selectedId}`);
     return { success: true, response: result.data };
   }, 'meta_capi', { orderId: order.orderId });
 }
