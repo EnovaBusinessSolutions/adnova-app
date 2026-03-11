@@ -116,7 +116,10 @@ final class Adnova_Pixel_Plugin {
             'gclid'        => (string) $order->get_meta('_wc_order_attribution_gclid', true),
             'fbclid'       => (string) $order->get_meta('_wc_order_attribution_fbclid', true),
             'ttclid'       => (string) $order->get_meta('_wc_order_attribution_ttclid', true),
+            'woo_source_type' => (string) $order->get_meta('_wc_order_attribution_source_type', true),
         );
+
+        $session_entry = (string) $order->get_meta('_wc_order_attribution_session_entry', true);
 
         // Cookie fallback for stores that keep click IDs client-side.
         $cookie_map = array(
@@ -142,6 +145,37 @@ final class Adnova_Pixel_Plugin {
         foreach ($meta as $key => $value) {
             $meta[$key] = $value !== '' ? sanitize_text_field($value) : null;
         }
+
+        $source_label = null;
+        $source_type = isset($meta['woo_source_type']) && $meta['woo_source_type']
+            ? strtolower($meta['woo_source_type'])
+            : null;
+
+        if (!empty($meta['utm_source'])) {
+            if ($source_type === 'organic') {
+                $source_label = 'Orgánico: ' . ucfirst($meta['utm_source']);
+            } else {
+                $source_label = ucfirst($meta['utm_source']);
+            }
+        } elseif ($source_type === 'direct') {
+            $source_label = 'Directo';
+        } elseif ($source_type === 'organic' && !empty($meta['referrer'])) {
+            $host = parse_url($meta['referrer'], PHP_URL_HOST);
+            if (is_string($host) && $host !== '') {
+                $source_label = 'Orgánico: ' . ucfirst(preg_replace('/^www\./', '', $host));
+            }
+        } elseif (!empty($session_entry)) {
+            $entry_host = parse_url($session_entry, PHP_URL_HOST);
+            if (is_string($entry_host) && $entry_host !== '') {
+                $source_label = ucfirst(preg_replace('/^www\./', '', $entry_host));
+            }
+        }
+
+        if (!$source_label) {
+            $source_label = 'Desconocido';
+        }
+
+        $meta['woo_source_label'] = sanitize_text_field($source_label);
 
         return $meta;
     }

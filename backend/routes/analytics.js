@@ -284,6 +284,86 @@ function dedupeEventConversions(conversions) {
   return Array.from(byKey.values()).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }
 
+function deriveWooFallbackAttribution(rawPayload = {}) {
+  const sourceLabel = String(rawPayload?.woo_source_label || '').trim();
+  const sourceType = String(rawPayload?.woo_source_type || '').trim().toLowerCase();
+  const utmSource = String(rawPayload?.utm_source || '').trim().toLowerCase();
+
+  if (utmSource === 'google') {
+    return {
+      channel: 'google',
+      platform: 'google',
+      confidence: 0.6,
+      source: 'woo_fallback',
+    };
+  }
+
+  if (utmSource === 'facebook' || utmSource === 'instagram') {
+    return {
+      channel: 'meta',
+      platform: utmSource,
+      confidence: 0.6,
+      source: 'woo_fallback',
+    };
+  }
+
+  if (utmSource === 'tiktok') {
+    return {
+      channel: 'tiktok',
+      platform: 'tiktok',
+      confidence: 0.6,
+      source: 'woo_fallback',
+    };
+  }
+
+  if (sourceLabel) {
+    const normalized = sourceLabel.toLowerCase();
+    if (normalized.includes('google')) {
+      return {
+        channel: 'google',
+        platform: 'google',
+        confidence: 0.55,
+        source: 'woo_fallback',
+      };
+    }
+    if (normalized.includes('facebook') || normalized.includes('instagram')) {
+      return {
+        channel: 'meta',
+        platform: 'meta',
+        confidence: 0.55,
+        source: 'woo_fallback',
+      };
+    }
+    if (normalized.includes('tiktok')) {
+      return {
+        channel: 'tiktok',
+        platform: 'tiktok',
+        confidence: 0.55,
+        source: 'woo_fallback',
+      };
+    }
+    if (normalized.includes('directo') || normalized.includes('direct')) {
+      return {
+        channel: 'direct',
+        platform: 'direct',
+        confidence: 0.5,
+        source: 'woo_fallback',
+      };
+    }
+  }
+
+  if (sourceType === 'direct') {
+    return {
+      channel: 'direct',
+      platform: 'direct',
+      confidence: 0.5,
+      source: 'woo_fallback',
+    };
+  }
+
+  return null;
+}
+
 // Use existing sessionGuard from index.js mount, assuming it's available or implemented here?
 // The pipeline says "All routes require sessionGuard".
 // For now, I'll rely on index.js to wrap this router with sessionGuard.
@@ -498,6 +578,7 @@ router.get('/:account_id', async (req, res) => {
         userKey: true,
         revenue: true,
         currency: true,
+        rawPayload: true,
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -525,6 +606,19 @@ router.get('/:account_id', async (req, res) => {
       revenue: Number(ev.revenue || 0),
       currency: ev.currency || 'MXN',
       items: [],
+      payloadSnapshot: {
+        utm_source: ev?.rawPayload?.utm_source || null,
+        utm_medium: ev?.rawPayload?.utm_medium || null,
+        utm_campaign: ev?.rawPayload?.utm_campaign || null,
+        utm_content: ev?.rawPayload?.utm_content || null,
+        utm_term: ev?.rawPayload?.utm_term || null,
+        referrer: ev?.rawPayload?.referrer || null,
+        gclid: ev?.rawPayload?.gclid || null,
+        fbclid: ev?.rawPayload?.fbclid || null,
+        ttclid: ev?.rawPayload?.ttclid || null,
+      },
+      wooSourceLabel: ev?.rawPayload?.woo_source_label || null,
+      wooSourceType: ev?.rawPayload?.woo_source_type || null,
     }));
 
     const conversionInputs = (orders.length > 0 ? conversionInputsFromOrders : conversionInputsFromEvents);
@@ -604,6 +698,13 @@ router.get('/:account_id', async (req, res) => {
           source: 'checkout_snapshot',
         });
       }
+      if (conv.payloadSnapshot) {
+        snapshots.push({
+          snapshot: conv.payloadSnapshot,
+          timestamp: conv.createdAt,
+          source: 'purchase_payload',
+        });
+      }
 
       const sessions = resolvedUserKey
         ? (sessionsByUserKey.get(resolvedUserKey) || []).filter(
@@ -613,16 +714,29 @@ router.get('/:account_id', async (req, res) => {
 
       const touchpoints = buildAttributionTouchpoints({ snapshots, sessions });
       const attribution = resolveConversionAttribution({ model: attributionModel, touchpoints });
+      const wooFallback = deriveWooFallbackAttribution({
+        woo_source_label: conv.wooSourceLabel,
+        woo_source_type: conv.wooSourceType,
+        utm_source: conv?.payloadSnapshot?.utm_source || null,
+      });
+
+      const finalAttribution = (!attribution.isAttributed && wooFallback)
+        ? {
+            primary: wooFallback,
+            splits: [{ channel: wooFallback.channel, weight: 1 }],
+            isAttributed: true,
+          }
+        : attribution;
 
       return {
         ...conv,
-        attributedChannel: attribution.primary.channel,
-        attributedPlatform: attribution.primary.platform,
-        attributionConfidence: attribution.primary.confidence,
-        attributionSource: attribution.primary.source,
+        attributedChannel: finalAttribution.primary.channel,
+        attributedPlatform: finalAttribution.primary.platform,
+        attributionConfidence: finalAttribution.primary.confidence,
+        attributionSource: finalAttribution.primary.source,
         attributionModel,
-        attributionSplits: attribution.splits,
-        isAttributed: attribution.isAttributed,
+        attributionSplits: finalAttribution.splits,
+        isAttributed: finalAttribution.isAttributed,
       };
     });
 
