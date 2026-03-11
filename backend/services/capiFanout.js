@@ -2,7 +2,10 @@ const axios = require('axios');
 const prisma = require('../utils/prismaClient');
 const User = require('../models/User'); // Mongo
 const GoogleAccount = require('../models/GoogleAccount'); // Mongo
+const MetaAccount = require('../models/MetaAccount'); // Mongo
+const PixelSelection = require('../models/PixelSelection'); // Mongo
 const googleStack = require('./capiStack/google');
+const metaStack   = require('./capiStack/meta');
 
 /**
  * Generic retry wrapper with exponential backoff
@@ -30,12 +33,47 @@ async function withRetry(fn, jobType, payload, maxAttempts = 3, delays = [1000, 
 }
 
 /**
- * Send order to Meta Conversions API (Placeholder)
+ * Send order to Meta Conversions API
  */
 async function sendToMeta(order) {
   return withRetry(async () => {
-    // Phase 3 todo: Implement Meta CAPI using User/MetaAccount models
-    return { success: true, reason: 'Meta CAPI temporarily skipped in fanout rewrite' };
+    const accountId = order.accountId;
+    if (!accountId) return { success: false, reason: 'No accountId in order' };
+
+    // 1. Resolve User (Mongo) via shop domain
+    const user = await User.findOne({ shop: accountId }).lean();
+    if (!user) return { success: false, reason: 'User not found for Meta CAPI' };
+
+    // 2. Resolve MetaAccount with token
+    const metaAccount = await MetaAccount.loadForUserWithTokens(user._id).lean();
+    if (!metaAccount) return { success: false, reason: 'MetaAccount not found' };
+
+    const accessToken =
+      metaAccount.longLivedToken  ||
+      metaAccount.longlivedToken  ||
+      metaAccount.access_token    ||
+      metaAccount.accessToken     ||
+      metaAccount.token           ||
+      null;
+    if (!accessToken) return { success: false, reason: 'No Meta access token' };
+
+    // 3. Resolve selected pixel
+    const pixelSel = await PixelSelection.findOne({
+      $or: [{ userId: user._id }, { user: user._id }],
+      provider: 'meta',
+    }).lean();
+    if (!pixelSel?.selectedId) return { success: false, reason: 'No Meta pixel selected for this account' };
+
+    // 4. Send conversion event
+    const result = await metaStack.sendConversion(order, {
+      accessToken,
+      pixelId: pixelSel.selectedId,
+      testEventCode: process.env.META_CAPI_TEST_CODE || undefined,
+    });
+
+    if (!result.success) throw new Error(result.reason || 'Meta CAPI call failed');
+    console.log(`[Meta CAPI] Purchase sent for order ${order.orderId} → pixel ${pixelSel.selectedId}`);
+    return { success: true, response: result.data };
   }, 'meta_capi', { orderId: order.orderId });
 }
 
