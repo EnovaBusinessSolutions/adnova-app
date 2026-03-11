@@ -2,6 +2,7 @@ const express = require('express');
 const { randomUUID } = require('crypto');
 const router = express.Router();
 const prisma = require('../utils/prismaClient');
+const { sendToAllPlatforms } = require('../services/capiFanout');
 
 function normalizeWooChannel(payload = {}) {
   const utmSource = String(payload.utm_source || '').trim().toLowerCase();
@@ -117,6 +118,15 @@ router.post('/woo/orders-sync', async (req, res) => {
         ...orderData,
       },
       update: orderData,
+    });
+
+    // Fire-and-forget: keep sync endpoint fast while still pushing conversions.
+    setImmediate(async () => {
+      try {
+        await sendToAllPlatforms(order.orderId);
+      } catch (fanoutError) {
+        console.error(`[Woo Orders Sync] CAPI fanout failed for ${order.orderId}:`, fanoutError?.message || fanoutError);
+      }
     });
 
     res.json({ success: true, orderId: order.orderId, attributedChannel: order.attributedChannel });
