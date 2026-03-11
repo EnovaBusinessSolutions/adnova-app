@@ -12,6 +12,8 @@ const EVENT_BUCKET_ALIASES = {
 };
 
 const PURCHASE_ALIASES = EVENT_BUCKET_ALIASES.purchase;
+const ATTRIBUTION_MODELS = new Set(['first_touch', 'last_touch', 'linear']);
+const ATTRIBUTION_LOOKBACK_DAYS = 30;
 
 function normalizeEventName(value) {
   return String(value || '')
@@ -28,6 +30,95 @@ function resolveEventBucket(rawName) {
   return 'other';
 }
 
+function getDomain(url) {
+  try {
+    return new URL(url).hostname.replace('www.', '').toLowerCase();
+  } catch (_) {
+    return null;
+  }
+}
+
+function stitchSnapshotAttribution(snapshot = {}) {
+  if (!snapshot || typeof snapshot !== 'object') {
+    return { channel: 'unattributed', platform: null, confidence: 0.0, source: 'none' };
+  }
+
+  if (snapshot.fbclid) {
+    return {
+      channel: 'paid_social',
+      platform: 'facebook',
+      clickId: snapshot.fbclid,
+      campaign: snapshot.utm_campaign || null,
+      adset: snapshot.utm_content || null,
+      ad: snapshot.utm_term || null,
+      confidence: 1.0,
+      source: 'click_id',
+    };
+  }
+
+  if (snapshot.gclid) {
+    return {
+      channel: 'paid_search',
+      platform: 'google',
+      clickId: snapshot.gclid,
+      campaign: snapshot.utm_campaign || null,
+      adset: snapshot.utm_content || null,
+      ad: snapshot.utm_term || null,
+      confidence: 1.0,
+      source: 'click_id',
+    };
+  }
+
+  if (snapshot.ttclid) {
+    return {
+      channel: 'paid_social',
+      platform: 'tiktok',
+      clickId: snapshot.ttclid,
+      campaign: snapshot.utm_campaign || null,
+      adset: snapshot.utm_content || null,
+      ad: snapshot.utm_term || null,
+      confidence: 1.0,
+      source: 'click_id',
+    };
+  }
+
+  if (snapshot.utm_source) {
+    return {
+      channel: snapshot.utm_medium || 'referral',
+      platform: snapshot.utm_source,
+      campaign: snapshot.utm_campaign || null,
+      adset: snapshot.utm_content || null,
+      ad: snapshot.utm_term || null,
+      confidence: 0.85,
+      source: 'utm',
+    };
+  }
+
+  if (snapshot.referrer) {
+    const domain = getDomain(snapshot.referrer);
+    if (!domain) {
+      return { channel: 'unattributed', platform: null, confidence: 0.0, source: 'none' };
+    }
+    if (['google.com', 'bing.com', 'yahoo.com'].some((d) => domain.includes(d))) {
+      return { channel: 'organic_search', platform: domain, confidence: 0.7, source: 'referrer' };
+    }
+    if (['facebook.com', 'instagram.com', 't.co', 'twitter.com'].some((d) => domain.includes(d))) {
+      return { channel: 'organic_social', platform: domain, confidence: 0.7, source: 'referrer' };
+    }
+    return { channel: 'referral', platform: domain, confidence: 0.7, source: 'referrer' };
+  }
+
+  return { channel: 'unattributed', platform: null, confidence: 0.0, source: 'none' };
+}
+
+function normalizeChannelForStats(channelRaw) {
+  let ch = String(channelRaw || 'unattributed').toLowerCase();
+  if (ch === 'facebook' || ch === 'instagram' || ch === 'paid_social') ch = 'meta';
+  if (ch === 'paid_search') ch = 'google';
+  if (ch !== 'meta' && ch !== 'google' && ch !== 'tiktok' && ch !== 'unattributed') ch = 'other';
+  return ch;
+}
+
 function normalizeLineItems(items) {
   const arr = Array.isArray(items) ? items : [];
   return arr.map((item) => ({
@@ -39,6 +130,117 @@ function normalizeLineItems(items) {
       item?.line_total ?? item?.lineTotal ?? item?.total ?? item?.final_line_price ?? item?.finalLinePrice ?? 0
     ),
   }));
+}
+
+function toSnapshotFromSession(session) {
+  if (!session) return null;
+  return {
+    utm_source: session.utmSource || null,
+    utm_medium: session.utmMedium || null,
+    utm_campaign: session.utmCampaign || null,
+    utm_content: session.utmContent || null,
+    utm_term: session.utmTerm || null,
+    referrer: session.referrer || null,
+    fbclid: session.fbclid || null,
+    gclid: session.gclid || null,
+    ttclid: session.ttclid || null,
+  };
+}
+
+function buildAttributionTouchpoints({ snapshots = [], sessions = [] }) {
+  const touchpoints = [];
+
+  snapshots.forEach((snap) => {
+    const attribution = stitchSnapshotAttribution(snap.snapshot || {});
+    touchpoints.push({
+      timestamp: new Date(snap.timestamp),
+      attribution,
+      source: snap.source || 'checkout_snapshot',
+    });
+  });
+
+  sessions.forEach((session) => {
+    const attribution = stitchSnapshotAttribution(toSnapshotFromSession(session) || {});
+    touchpoints.push({
+      timestamp: new Date(session.startedAt),
+      attribution,
+      source: 'session',
+      isFirstTouch: Boolean(session.isFirstTouch),
+    });
+  });
+
+  return touchpoints
+    .filter((tp) => tp.timestamp && !Number.isNaN(tp.timestamp.getTime()))
+    .sort((a, b) => a.timestamp - b.timestamp);
+}
+
+function resolveConversionAttribution({ model, touchpoints }) {
+  const valid = touchpoints.filter((tp) => {
+    const ch = normalizeChannelForStats(tp?.attribution?.channel);
+    return ch !== 'unattributed';
+  });
+
+  if (valid.length === 0) {
+    return {
+      primary: { channel: 'unattributed', platform: null, confidence: 0, source: 'none' },
+      splits: [{ channel: 'unattributed', weight: 1 }],
+      isAttributed: false,
+    };
+  }
+
+  if (model === 'first_touch') {
+    const first = valid[0].attribution;
+    const channel = normalizeChannelForStats(first.channel);
+    return {
+      primary: {
+        channel,
+        platform: first.platform || null,
+        confidence: Number(first.confidence || 0),
+        source: first.source || 'first_touch',
+      },
+      splits: [{ channel, weight: 1 }],
+      isAttributed: true,
+    };
+  }
+
+  if (model === 'linear') {
+    const perTouch = 1 / valid.length;
+    const splitMap = new Map();
+    valid.forEach((tp) => {
+      const ch = normalizeChannelForStats(tp.attribution.channel);
+      splitMap.set(ch, Number(splitMap.get(ch) || 0) + perTouch);
+    });
+
+    const last = valid[valid.length - 1].attribution;
+    const splits = Array.from(splitMap.entries()).map(([channel, weight]) => ({
+      channel,
+      weight,
+    }));
+
+    return {
+      primary: {
+        channel: 'multi_touch',
+        platform: last.platform || null,
+        confidence: Number(last.confidence || 0),
+        source: 'linear',
+      },
+      splits,
+      isAttributed: true,
+    };
+  }
+
+  const last = valid[valid.length - 1].attribution;
+  const channel = normalizeChannelForStats(last.channel);
+  return {
+    primary: {
+      channel,
+      platform: last.platform || null,
+      confidence: Number(last.confidence || 0),
+      source: last.source || 'last_touch',
+    },
+    splits: [{ channel, weight: 1 }],
+    isAttributed: true,
+  };
 }
 
 // Use existing sessionGuard from index.js mount, assuming it's available or implemented here?
@@ -53,6 +255,8 @@ router.get('/:account_id', async (req, res) => {
   try {
     const { account_id } = req.params;
     const { start, end } = req.query;
+    const requestedModelRaw = String(req.query.attribution_model || req.query.attributionModel || 'last_touch').toLowerCase();
+    const attributionModel = ATTRIBUTION_MODELS.has(requestedModelRaw) ? requestedModelRaw : 'last_touch';
 
     // Default to last 30 days
     const startDate = start ? startOfDay(new Date(start)) : startOfDay(subDays(new Date(), 30));
@@ -69,6 +273,8 @@ router.get('/:account_id', async (req, res) => {
         revenue: true,
         currency: true,
         attributedChannel: true,
+        checkoutToken: true,
+        userKey: true,
         orderId: true,
         orderNumber: true,
         lineItems: true
@@ -229,6 +435,7 @@ router.get('/:account_id', async (req, res) => {
         createdAt: true,
         orderId: true,
         checkoutToken: true,
+        userKey: true,
         revenue: true,
         currency: true,
         items: true,
@@ -237,34 +444,212 @@ router.get('/:account_id', async (req, res) => {
       take: 50,
     });
 
-    const recentPurchasesFromOrders = orders.slice(0, 50).map((order) => ({
+    const purchaseEventsForModel = await prisma.event.findMany({
+      where: {
+        accountId: account_id,
+        createdAt: { gte: startDate, lte: endDate },
+        eventName: { in: PURCHASE_ALIASES },
+      },
+      select: {
+        createdAt: true,
+        orderId: true,
+        checkoutToken: true,
+        userKey: true,
+        revenue: true,
+        currency: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const conversionInputsFromOrders = orders.map((order) => ({
       source: 'orders',
       createdAt: order.createdAt,
       orderId: order.orderId,
       orderNumber: order.orderNumber || null,
-      checkoutToken: null,
+      checkoutToken: order.checkoutToken || null,
+      userKey: order.userKey || null,
       revenue: Number(order.revenue || 0),
       currency: order.currency || 'MXN',
       items: normalizeLineItems(order.lineItems),
+      orderAttributedChannel: order.attributedChannel || null,
     }));
 
-    const recentPurchasesFromEvents = purchaseEventsDetailed.map((ev) => ({
+    const conversionInputsFromEvents = purchaseEventsForModel.map((ev) => ({
       source: 'events',
       createdAt: ev.createdAt,
       orderId: ev.orderId || null,
       orderNumber: null,
       checkoutToken: ev.checkoutToken || null,
+      userKey: ev.userKey || null,
       revenue: Number(ev.revenue || 0),
       currency: ev.currency || 'MXN',
-      items: normalizeLineItems(ev.items),
+      items: [],
     }));
 
-    const recentPurchases = (orders.length > 0 ? recentPurchasesFromOrders : recentPurchasesFromEvents)
-      .slice(0, 15);
+    const conversionInputs = (orders.length > 0 ? conversionInputsFromOrders : conversionInputsFromEvents);
+
+    const checkoutTokens = Array.from(new Set(conversionInputs.map((c) => c.checkoutToken).filter(Boolean)));
+    const userKeys = Array.from(new Set(conversionInputs.map((c) => c.userKey).filter(Boolean)));
+
+    const [checkoutSnapshots, relevantSessions] = await Promise.all([
+      checkoutTokens.length > 0
+        ? prisma.checkoutSessionMap.findMany({
+            where: {
+              accountId: account_id,
+              checkoutToken: { in: checkoutTokens },
+            },
+            select: {
+              checkoutToken: true,
+              attributionSnapshot: true,
+              createdAt: true,
+              userKey: true,
+            },
+          })
+        : Promise.resolve([]),
+      userKeys.length > 0
+        ? prisma.session.findMany({
+            where: {
+              accountId: account_id,
+              userKey: { in: userKeys },
+              startedAt: {
+                lte: endDate,
+                gte: subDays(startDate, ATTRIBUTION_LOOKBACK_DAYS),
+              },
+            },
+            select: {
+              userKey: true,
+              startedAt: true,
+              isFirstTouch: true,
+              utmSource: true,
+              utmMedium: true,
+              utmCampaign: true,
+              utmContent: true,
+              utmTerm: true,
+              referrer: true,
+              fbclid: true,
+              gclid: true,
+              ttclid: true,
+            },
+            orderBy: { startedAt: 'asc' },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const checkoutByToken = new Map(checkoutSnapshots.map((m) => [m.checkoutToken, m]));
+    const sessionsByUserKey = new Map();
+    relevantSessions.forEach((s) => {
+      if (!sessionsByUserKey.has(s.userKey)) sessionsByUserKey.set(s.userKey, []);
+      sessionsByUserKey.get(s.userKey).push(s);
+    });
+
+    const conversionsWithAttribution = conversionInputs.map((conv) => {
+      const checkout = conv.checkoutToken ? checkoutByToken.get(conv.checkoutToken) : null;
+      const resolvedUserKey = conv.userKey || checkout?.userKey || null;
+      const conversionDate = new Date(conv.createdAt);
+      const lookbackStart = subDays(conversionDate, ATTRIBUTION_LOOKBACK_DAYS);
+
+      const snapshots = [];
+      if (conv.orderAttributedChannel) {
+        snapshots.push({
+          snapshot: { utm_source: conv.orderAttributedChannel, utm_medium: conv.orderAttributedChannel },
+          timestamp: conv.createdAt,
+          source: 'order_snapshot',
+        });
+      }
+      if (checkout?.attributionSnapshot) {
+        snapshots.push({
+          snapshot: checkout.attributionSnapshot,
+          timestamp: checkout.createdAt || conv.createdAt,
+          source: 'checkout_snapshot',
+        });
+      }
+
+      const sessions = resolvedUserKey
+        ? (sessionsByUserKey.get(resolvedUserKey) || []).filter(
+            (s) => new Date(s.startedAt) <= conversionDate && new Date(s.startedAt) >= lookbackStart
+          )
+        : [];
+
+      const touchpoints = buildAttributionTouchpoints({ snapshots, sessions });
+      const attribution = resolveConversionAttribution({ model: attributionModel, touchpoints });
+
+      return {
+        ...conv,
+        attributedChannel: attribution.primary.channel,
+        attributedPlatform: attribution.primary.platform,
+        attributionConfidence: attribution.primary.confidence,
+        attributionSource: attribution.primary.source,
+        attributionModel,
+        attributionSplits: attribution.splits,
+        isAttributed: attribution.isAttributed,
+      };
+    });
+
+    const detailedByKey = new Map(
+      purchaseEventsDetailed.map((ev) => {
+        const key = `${ev.orderId || ''}::${ev.checkoutToken || ''}::${new Date(ev.createdAt).toISOString()}`;
+        return [key, ev];
+      })
+    );
+
+    const recentPurchases = conversionsWithAttribution.slice(0, 50).map((conv) => {
+      if (conv.source === 'orders') return conv;
+      const key = `${conv.orderId || ''}::${conv.checkoutToken || ''}::${new Date(conv.createdAt).toISOString()}`;
+      const detailed = detailedByKey.get(key);
+      return {
+        ...conv,
+        items: detailed ? normalizeLineItems(detailed.items) : conv.items,
+      };
+    }).slice(0, 15);
+
+    // Recompute channel stats by selected attribution model over resolved conversions.
+    Object.keys(channelStats).forEach((key) => {
+      channelStats[key].revenue = 0;
+      channelStats[key].orders = 0;
+    });
+
+    let modeledAttributedRevenue = 0;
+    let modeledUnattributedRevenue = 0;
+    let modeledAttributedOrders = 0;
+    let modeledUnattributedOrders = 0;
+
+    conversionsWithAttribution.forEach((conv) => {
+      const rev = Number(conv.revenue || 0);
+      const splits = Array.isArray(conv.attributionSplits) && conv.attributionSplits.length > 0
+        ? conv.attributionSplits
+        : [{ channel: 'unattributed', weight: 1 }];
+
+      splits.forEach((split) => {
+        const ch = normalizeChannelForStats(split.channel);
+        const weight = Number(split.weight || 0);
+        const revenueShare = rev * weight;
+
+        if (!channelStats[ch]) {
+          channelStats.other.revenue += revenueShare;
+          channelStats.other.orders += weight;
+        } else {
+          channelStats[ch].revenue += revenueShare;
+          channelStats[ch].orders += weight;
+        }
+      });
+
+      if (conv.isAttributed) {
+        modeledAttributedRevenue += rev;
+        modeledAttributedOrders += 1;
+      } else {
+        modeledUnattributedRevenue += rev;
+        modeledUnattributedOrders += 1;
+      }
+    });
+
+    attributedRevenue = modeledAttributedRevenue;
+    channelStats.unattributed.revenue = modeledUnattributedRevenue;
+    channelStats.unattributed.orders = modeledUnattributedOrders;
 
     // Purchase events often come via Shopify webhook -> Order table (without Event row).
     // Use the max as a safe dashboard metric that avoids showing 0 when orders exist.
     const purchaseEventsResolved = Math.max(eventStats.purchase, orders.length);
+    const totalOrdersResolved = orders.length > 0 ? orders.length : purchaseEventsResolved;
     const purchaseRevenueFromEvents = Number(purchaseRevenueAgg?._sum?.revenue || 0);
     const totalRevenueResolved = orders.length > 0 ? totalRevenue : purchaseRevenueFromEvents;
 
@@ -275,19 +660,20 @@ router.get('/:account_id', async (req, res) => {
         totalRevenueOrders: totalRevenue,
         totalRevenueEvents: purchaseRevenueFromEvents,
         revenueSource: orders.length > 0 ? 'orders' : 'events',
-        totalOrders: orders.length,
+        totalOrders: totalOrdersResolved,
         attributedRevenue,
-        attributedOrders: orders.length - channelStats.unattributed.orders,
+        attributedOrders: modeledAttributedOrders,
         unattributedOrders: channelStats.unattributed.orders,
         unattributedRevenue: channelStats.unattributed.revenue,
+        attributionModel,
         totalSessions: sessionCount,
-        conversionRate: sessionCount > 0 ? (orders.length / sessionCount) : 0,
+        conversionRate: sessionCount > 0 ? (totalOrdersResolved / sessionCount) : 0,
         pageViews: eventStats.page_view,
         addToCart: eventStats.add_to_cart,
         beginCheckout: eventStats.begin_checkout,
         purchaseEvents: purchaseEventsResolved,
         purchaseEventsRaw: eventStats.purchase,
-        purchaseOrders: orders.length,
+        purchaseOrders: totalOrdersResolved,
         totalEvents: eventStats.total,
       },
       events: eventStats,
