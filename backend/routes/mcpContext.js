@@ -26,6 +26,32 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function buildShareVersion(root) {
+  const state = root?.aiContext || {};
+  const snapshotId = safeStr(state?.snapshotId || root?.latestSnapshotId || '');
+  const finishedAt = safeStr(state?.finishedAt || '');
+  const sourceSnapshots = state?.sourceSnapshots || {};
+  const metaSnap = safeStr(sourceSnapshots?.metaAds || '');
+  const googleSnap = safeStr(sourceSnapshots?.googleAds || '');
+  const ga4Snap = safeStr(sourceSnapshots?.ga4 || '');
+
+  return [
+    snapshotId,
+    finishedAt,
+    metaSnap,
+    googleSnap,
+    ga4Snap,
+  ].filter(Boolean).join('|') || String(Date.now());
+}
+
+function setNoCacheHeaders(res) {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
+  res.set('Vary', 'Accept-Encoding');
+}
+
 async function findRootByShareToken(token) {
   if (!token) return null;
 
@@ -61,6 +87,7 @@ function buildStatusResponse(root) {
       pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
       hasShareLink: !!(state?.shareEnabled && state?.shareToken),
       shareUrl: state?.shareEnabled ? state?.shareUrl || null : null,
+      shareVersion: state?.shareVersion || null,
     },
   };
 }
@@ -90,6 +117,7 @@ function buildSharedPayload(root, provider) {
       providerAgnostic: !!payload?.providerAgnostic,
       usedOpenAI: !!state?.usedOpenAI,
       model: state?.model || null,
+      shareVersion: state?.shareVersion || null,
     },
   };
 }
@@ -176,6 +204,7 @@ router.get('/status', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
 
+    setNoCacheHeaders(res);
     return res.json(buildStatusResponse(root));
   } catch (e) {
     console.error('[mcp/context/status] error:', e);
@@ -211,6 +240,7 @@ router.get('/latest', async (req, res) => {
       });
     }
 
+    setNoCacheHeaders(res);
     return res.json({
       ok: true,
       data: state.encodedPayload,
@@ -225,6 +255,7 @@ router.get('/latest', async (req, res) => {
         usedOpenAI: !!state?.usedOpenAI,
         model: state?.model || null,
         generatedAt: state?.finishedAt || null,
+        shareVersion: state?.shareVersion || null,
       },
     });
   } catch (e) {
@@ -261,12 +292,19 @@ router.post('/link', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'MCP_CONTEXT_NOT_READY' });
     }
 
+    const currentShareVersion = buildShareVersion(root);
+
     let shareToken = state?.shareToken || null;
-    if (!shareToken || regenerate) {
+    const mustRotateToken =
+      regenerate ||
+      !shareToken ||
+      safeStr(state?.shareVersion) !== safeStr(currentShareVersion);
+
+    if (mustRotateToken) {
       shareToken = makeShareToken();
     }
 
-    const shareUrl = `${APP_URL}/api/mcp/context/shared/${shareToken}?provider=${encodeURIComponent(provider)}`;
+    const shareUrl = `${APP_URL}/api/mcp/context/shared/${shareToken}?provider=${encodeURIComponent(provider)}&v=${encodeURIComponent(currentShareVersion)}`;
 
     await updateRootContextState(userId, {
       aiContext: {
@@ -275,7 +313,10 @@ router.post('/link', async (req, res) => {
         shareEnabled: true,
         shareProvider: provider,
         shareUrl,
-        shareCreatedAt: state?.shareCreatedAt || nowIso(),
+        shareVersion: currentShareVersion,
+        shareCreatedAt: mustRotateToken
+          ? nowIso()
+          : (state?.shareCreatedAt || nowIso()),
         shareLastGeneratedAt: nowIso(),
         shareRevokedAt: null,
       },
@@ -288,6 +329,8 @@ router.post('/link', async (req, res) => {
         shareToken,
         shareUrl,
         enabled: true,
+        shareVersion: currentShareVersion,
+        rotated: !!mustRotateToken,
       },
     });
   } catch (e) {
@@ -315,6 +358,7 @@ router.get('/link', async (req, res) => {
     const shareToken = state?.shareToken || null;
     const shareUrl = state?.shareEnabled ? state?.shareUrl || null : null;
 
+    setNoCacheHeaders(res);
     return res.json({
       ok: true,
       data: {
@@ -324,6 +368,7 @@ router.get('/link', async (req, res) => {
         provider: state?.shareProvider || 'chatgpt',
         createdAt: state?.shareCreatedAt || null,
         lastGeneratedAt: state?.shareLastGeneratedAt || null,
+        shareVersion: state?.shareVersion || null,
       },
     });
   } catch (e) {
@@ -358,6 +403,7 @@ router.get('/shared/:token', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'SHARED_CONTEXT_NOT_READY' });
     }
 
+    setNoCacheHeaders(res);
     return res.json(buildSharedPayload(root, provider));
   } catch (e) {
     console.error('[mcp/context/shared] error:', e);
