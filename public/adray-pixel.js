@@ -18,6 +18,61 @@
     return urlParams.get(param);
   }
 
+  function safeStorageGet(storage, key) {
+    try {
+      return storage.getItem(key);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function safeStorageSet(storage, key, value) {
+    try {
+      storage.setItem(key, value);
+    } catch (_) {}
+  }
+
+  function generateId() {
+    try {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID();
+      }
+    } catch (_) {}
+    return 'adray_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+  }
+
+  function getOrCreateSessionId() {
+    var key = '__adray_session_id';
+    var existing = safeStorageGet(window.sessionStorage, key);
+    if (existing) return existing;
+    var created = generateId();
+    safeStorageSet(window.sessionStorage, key, created);
+    return created;
+  }
+
+  function persistAttributionParams() {
+    var keys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'gclid', 'ttclid'];
+    var changed = false;
+
+    keys.forEach(function(key) {
+      var incoming = getQueryParam(key);
+      if (incoming) {
+        safeStorageSet(window.localStorage, '__adray_attr_' + key, incoming);
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      safeStorageSet(window.localStorage, '__adray_attr_updated_at', String(Date.now()));
+    }
+  }
+
+  function getAttributionParam(key) {
+    var fromQuery = getQueryParam(key);
+    if (fromQuery) return fromQuery;
+    return safeStorageGet(window.localStorage, '__adray_attr_' + key);
+  }
+
   function getLandingPageUrl() {
     try {
       const key = '__adray_landing_page_url';
@@ -98,6 +153,7 @@
 
     const payload = {
       account_id: getAccountId(),
+      session_id: getOrCreateSessionId(),
       platform: detectPlatform(),
       event_name: eventName,
       page_url: window.location.href,
@@ -106,14 +162,14 @@
       user_agent: navigator.userAgent,
       language: navigator.language,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      fbclid: getQueryParam('fbclid'),
-      gclid: getQueryParam('gclid'),
-      ttclid: getQueryParam('ttclid'),
-      utm_source: getQueryParam('utm_source'),
-      utm_medium: getQueryParam('utm_medium'),
-      utm_campaign: getQueryParam('utm_campaign'),
-      utm_content: getQueryParam('utm_content'),
-      utm_term: getQueryParam('utm_term'),
+      fbclid: getAttributionParam('fbclid'),
+      gclid: getAttributionParam('gclid'),
+      ttclid: getAttributionParam('ttclid'),
+      utm_source: getAttributionParam('utm_source'),
+      utm_medium: getAttributionParam('utm_medium'),
+      utm_campaign: getAttributionParam('utm_campaign'),
+      utm_content: getAttributionParam('utm_content'),
+      utm_term: getAttributionParam('utm_term'),
       referrer: document.referrer,
       fbp: getCookie('_fbp'),
       fbc: getCookie('_fbc'),
@@ -185,6 +241,7 @@
   // === PLATFORM-SPECIFIC EVENT INTERCEPTORS ===
 
   // 1. Send Page View immediately
+  persistAttributionParams();
   sendEvent("page_view");
 
   // 1.1 Product page view for funnel completeness (view_item)
