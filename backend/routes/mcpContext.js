@@ -145,27 +145,6 @@ async function findRootByShareToken(token) {
   }).lean();
 }
 
-async function findLatestSnapshotId(userId, source = 'metaAds') {
-  const root = await findRoot(userId);
-  if (root?.latestSnapshotId) return root.latestSnapshotId;
-
-  const datasetPrefix =
-    source === 'googleAds' ? '^google\\.' :
-    source === 'ga4' ? '^ga4\\.' :
-    '^meta\\.';
-
-  const latestChunk = await McpData.findOne({
-    userId,
-    kind: 'chunk',
-    source,
-    dataset: { $regex: datasetPrefix },
-  })
-    .sort({ updatedAt: -1, createdAt: -1 })
-    .lean();
-
-  return latestChunk?.snapshotId || null;
-}
-
 function getAllowedDatasetsForSource(source) {
   if (source === 'metaAds') {
     return new Set([
@@ -203,26 +182,6 @@ function getAllowedDatasetsForSource(source) {
   return null;
 }
 
-async function findSourceChunks(userId, source, snapshotId, datasetPrefix) {
-  const query = {
-    userId,
-    kind: 'chunk',
-    source,
-    dataset: { $regex: `^${datasetPrefix.replace('.', '\\.')}` },
-  };
-
-  if (snapshotId) query.snapshotId = snapshotId;
-
-  const docs = await McpData.find(query)
-    .sort({ createdAt: 1, updatedAt: 1 })
-    .lean();
-
-  const allowed = getAllowedDatasetsForSource(source);
-  return docs
-    .filter(isChunkDoc)
-    .filter((doc) => !allowed || allowed.has(String(doc?.dataset || '')));
-}
-
 function getSourceDatasetPrefix(source) {
   if (source === 'metaAds') return 'meta.';
   if (source === 'googleAds') return 'google.';
@@ -244,68 +203,142 @@ function sourceLooksReady(root, source) {
   return !!s?.ready || String(s?.status || '').toLowerCase() === 'ready';
 }
 
-async function loadSourceStateForSnapshot(userId, source, snapshotId) {
+async function findLatestSnapshotId(userId, source = 'metaAds') {
+  const datasetPrefix =
+    source === 'googleAds' ? '^google\\.' :
+    source === 'ga4' ? '^ga4\\.' :
+    '^meta\\.';
+
+  const latestChunk = await McpData.findOne({
+    userId,
+    kind: 'chunk',
+    source,
+    dataset: { $regex: datasetPrefix },
+  })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .lean();
+
+  return latestChunk?.snapshotId || null;
+}
+
+async function findSourceChunks(userId, source, snapshotId, datasetPrefix) {
+  const query = {
+    userId,
+    kind: 'chunk',
+    source,
+    dataset: { $regex: `^${datasetPrefix.replace('.', '\\.')}` },
+  };
+
+  if (snapshotId) query.snapshotId = snapshotId;
+
+  const docs = await McpData.find(query)
+    .sort({ createdAt: 1, updatedAt: 1 })
+    .lean();
+
+  const allowed = getAllowedDatasetsForSource(source);
+  return docs
+    .filter(isChunkDoc)
+    .filter((doc) => !allowed || allowed.has(String(doc?.dataset || '')));
+}
+
+async function findBestSnapshotIdForSource(userId, source, preferredSnapshotId) {
+  const preferred = safeStr(preferredSnapshotId);
   const prefix = getSourceDatasetPrefix(source);
+
+  if (preferred) {
+    const preferredDocs = await findSourceChunks(userId, source, preferred, prefix);
+    if (preferredDocs.length > 0) return preferred;
+  }
+
+  return await findLatestSnapshotId(userId, source);
+}
+
+async function loadBestSourceState(userId, root, source, preferredSnapshotId) {
+  const prefix = getSourceDatasetPrefix(source);
+  const rootState = getSourceRootState(root, source);
+  const connected = sourceLooksConnected(root, source);
+  const rootReady = sourceLooksReady(root, source);
+
+  const snapshotId = await findBestSnapshotIdForSource(userId, source, preferredSnapshotId);
   const chunks = snapshotId
     ? await findSourceChunks(userId, source, snapshotId, prefix)
     : [];
 
+  const hasChunks = chunks.length > 0;
+  const usable = hasChunks;
+  const ready = rootReady || usable;
+
   return {
     source,
+    preferredSnapshotId: preferredSnapshotId || null,
     snapshotId: snapshotId || null,
     chunks,
-    hasChunks: chunks.length > 0,
+    chunkCount: chunks.length,
+    hasChunks,
+    connected: connected || hasChunks,
+    rootReady,
+    ready,
+    usable,
+    rootState,
   };
 }
 
 function getCandidateSources(root, sourceStatesByName) {
   const allSources = ['metaAds', 'googleAds', 'ga4'];
+  const set = new Set();
 
-  const connectedSources = allSources.filter((src) => sourceLooksConnected(root, src));
-  if (connectedSources.length > 0) return connectedSources;
+  for (const src of allSources) {
+    if (sourceLooksConnected(root, src)) set.add(src);
+    if (sourceStatesByName?.[src]?.hasChunks) set.add(src);
+  }
 
-  return allSources.filter((src) => !!sourceStatesByName?.[src]?.hasChunks);
+  return Array.from(set);
 }
 
-async function resolveDynamicSnapshotId(userId, root, explicitSnapshotId) {
-  if (safeStr(explicitSnapshotId)) return safeStr(explicitSnapshotId);
-
-  return (
-    safeStr(root?.latestSnapshotId) ||
-    await findLatestSnapshotId(userId, 'metaAds') ||
-    await findLatestSnapshotId(userId, 'googleAds') ||
-    await findLatestSnapshotId(userId, 'ga4') ||
-    ''
-  );
+function sourceStateSummaryForStatus(state) {
+  return {
+    connected: !!state?.connected,
+    rootReady: !!state?.rootReady,
+    ready: !!state?.ready,
+    usable: !!state?.usable,
+    snapshotId: state?.snapshotId || null,
+    chunkCount: toNum(state?.chunkCount, 0),
+  };
 }
 
-async function waitForBuildableSnapshot(userId, explicitSnapshotId, timeoutMs = BUILD_WAIT_TIMEOUT_MS) {
+async function waitForBuildableSources(userId, root, explicitSnapshotId, timeoutMs = BUILD_WAIT_TIMEOUT_MS) {
   const started = Date.now();
+  const preferredGlobalSnapshotId =
+    safeStr(explicitSnapshotId) ||
+    safeStr(root?.latestSnapshotId) ||
+    '';
 
   while (Date.now() - started <= timeoutMs) {
     const lastRoot = await findRoot(userId);
-    const candidateSnapshotId = await resolveDynamicSnapshotId(userId, lastRoot, explicitSnapshotId);
-
     const sourceNames = ['metaAds', 'googleAds', 'ga4'];
-    const sourceStates = await Promise.all(
-      sourceNames.map((src) => loadSourceStateForSnapshot(userId, src, candidateSnapshotId))
+
+    const sourceStatesArr = await Promise.all(
+      sourceNames.map((src) => loadBestSourceState(userId, lastRoot, src, preferredGlobalSnapshotId))
     );
 
-    const bySource = Object.fromEntries(sourceStates.map((x) => [x.source, x]));
+    const bySource = Object.fromEntries(sourceStatesArr.map((x) => [x.source, x]));
     const candidateSources = getCandidateSources(lastRoot, bySource);
 
-    const buildableConnectedSources = candidateSources.filter((src) => {
-      const ready = sourceLooksReady(lastRoot, src);
-      const hasChunks = !!bySource[src]?.hasChunks;
-      return ready && hasChunks;
+    const usableSources = candidateSources.filter((src) => !!bySource[src]?.usable);
+    const pendingConnectedSources = candidateSources.filter((src) => {
+      const s = bySource[src];
+      return !!s?.connected && !s?.usable;
     });
 
-    if (buildableConnectedSources.length > 0) {
+    if (usableSources.length > 0 && pendingConnectedSources.length === 0) {
       return {
         root: lastRoot,
-        snapshotId: candidateSnapshotId || null,
+        preferredGlobalSnapshotId: preferredGlobalSnapshotId || null,
         sourceStates: bySource,
-        buildableConnectedSources,
+        candidateSources,
+        usableSources,
+        pendingConnectedSources,
+        timedOut: false,
       };
     }
 
@@ -313,26 +346,28 @@ async function waitForBuildableSnapshot(userId, explicitSnapshotId, timeoutMs = 
   }
 
   const fallbackRoot = await findRoot(userId);
-  const fallbackSnapshotId = await resolveDynamicSnapshotId(userId, fallbackRoot, explicitSnapshotId);
+  const sourceNames = ['metaAds', 'googleAds', 'ga4'];
 
-  const fallbackStates = await Promise.all(
-    ['metaAds', 'googleAds', 'ga4'].map((src) => loadSourceStateForSnapshot(userId, src, fallbackSnapshotId))
+  const fallbackStatesArr = await Promise.all(
+    sourceNames.map((src) => loadBestSourceState(userId, fallbackRoot, src, safeStr(explicitSnapshotId) || safeStr(fallbackRoot?.latestSnapshotId) || ''))
   );
 
-  const bySource = Object.fromEntries(fallbackStates.map((x) => [x.source, x]));
+  const bySource = Object.fromEntries(fallbackStatesArr.map((x) => [x.source, x]));
   const candidateSources = getCandidateSources(fallbackRoot, bySource);
-
-  const buildableConnectedSources = candidateSources.filter((src) => {
-    const ready = sourceLooksReady(fallbackRoot, src);
-    const hasChunks = !!bySource[src]?.hasChunks;
-    return ready && hasChunks;
+  const usableSources = candidateSources.filter((src) => !!bySource[src]?.usable);
+  const pendingConnectedSources = candidateSources.filter((src) => {
+    const s = bySource[src];
+    return !!s?.connected && !s?.usable;
   });
 
   return {
     root: fallbackRoot,
-    snapshotId: fallbackSnapshotId || null,
+    preferredGlobalSnapshotId: safeStr(explicitSnapshotId) || safeStr(fallbackRoot?.latestSnapshotId) || null,
     sourceStates: bySource,
-    buildableConnectedSources,
+    candidateSources,
+    usableSources,
+    pendingConnectedSources,
+    timedOut: true,
   };
 }
 
@@ -386,7 +421,7 @@ function buildGa4Context(chunks, contextRangeDays) {
       topLandingPages: 8,
       topSourceMedium: 10,
       topEvents: 10,
-      topTrendDays: 30,
+      topTrendDays: clampInt(contextRangeDays || DEFAULT_CONTEXT_RANGE_DAYS, 7, 120),
     }),
     mini: formatGa4ForLlmMini({
       datasets: chunks,
@@ -401,20 +436,41 @@ function buildGa4Context(chunks, contextRangeDays) {
 
 function buildUnifiedBaseContext({
   root,
-  snapshotId,
   contextRangeDays,
   storageRangeDays,
+  sourceStates,
   metaPack,
   googlePack,
   ga4Pack,
 }) {
   const sources = root?.sources || {};
+  const metaState = sourceStates?.metaAds || null;
+  const googleState = sourceStates?.googleAds || null;
+  const ga4State = sourceStates?.ga4 || null;
+
+  const sourceSnapshots = {
+    metaAds: metaState?.snapshotId || null,
+    googleAds: googleState?.snapshotId || null,
+    ga4: ga4State?.snapshotId || null,
+  };
 
   return {
     schema: 'adray.unified.context.v2',
     generatedAt: nowIso(),
-    snapshotId: snapshotId || null,
+    snapshotId:
+      sourceSnapshots.metaAds ||
+      sourceSnapshots.googleAds ||
+      sourceSnapshots.ga4 ||
+      safeStr(root?.latestSnapshotId) ||
+      null,
+    sourceSnapshots,
     coverage: root?.coverage || null,
+    contextPolicy: {
+      mode: 'working_window_on_long_term_storage',
+      reasoningRangeDays: contextRangeDays || DEFAULT_CONTEXT_RANGE_DAYS,
+      storageRangeDays: storageRangeDays || null,
+      note: 'The encoded context is optimized for recent decision-making while long-term historical data remains stored in MCP.',
+    },
     contextWindow: {
       rangeDays: contextRangeDays || DEFAULT_CONTEXT_RANGE_DAYS,
       storageRangeDays: storageRangeDays || null,
@@ -422,32 +478,41 @@ function buildUnifiedBaseContext({
     },
     sources: {
       metaAds: {
-        connected: !!sources?.metaAds?.connected,
-        ready: !!sources?.metaAds?.ready,
+        connected: !!(sources?.metaAds?.connected || metaState?.hasChunks),
+        ready: !!(sources?.metaAds?.ready || metaState?.usable),
+        usable: !!metaState?.usable,
         accountId: sources?.metaAds?.accountId || null,
         name: sources?.metaAds?.name || null,
         currency: sources?.metaAds?.currency || null,
         timezone: sources?.metaAds?.timezone || null,
+        snapshotId: metaState?.snapshotId || null,
+        chunkCount: toNum(metaState?.chunkCount, 0),
         storageRangeDays: toNum(sources?.metaAds?.storageRangeDays) || toNum(sources?.metaAds?.rangeDays) || storageRangeDays || null,
         contextDefaultRangeDays: toNum(sources?.metaAds?.contextDefaultRangeDays) || contextRangeDays || null,
       },
       googleAds: {
-        connected: !!sources?.googleAds?.connected,
-        ready: !!sources?.googleAds?.ready,
+        connected: !!(sources?.googleAds?.connected || googleState?.hasChunks),
+        ready: !!(sources?.googleAds?.ready || googleState?.usable),
+        usable: !!googleState?.usable,
         customerId: sources?.googleAds?.customerId || sources?.googleAds?.accountId || null,
         name: sources?.googleAds?.name || null,
         currency: sources?.googleAds?.currency || null,
         timezone: sources?.googleAds?.timezone || null,
+        snapshotId: googleState?.snapshotId || null,
+        chunkCount: toNum(googleState?.chunkCount, 0),
         storageRangeDays: toNum(sources?.googleAds?.storageRangeDays) || toNum(sources?.googleAds?.rangeDays) || storageRangeDays || null,
         contextDefaultRangeDays: toNum(sources?.googleAds?.contextDefaultRangeDays) || contextRangeDays || null,
       },
       ga4: {
-        connected: !!sources?.ga4?.connected,
-        ready: !!sources?.ga4?.ready,
+        connected: !!(sources?.ga4?.connected || ga4State?.hasChunks),
+        ready: !!(sources?.ga4?.ready || ga4State?.usable),
+        usable: !!ga4State?.usable,
         propertyId: sources?.ga4?.propertyId || null,
         name: sources?.ga4?.name || null,
         currency: sources?.ga4?.currency || null,
         timezone: sources?.ga4?.timezone || null,
+        snapshotId: ga4State?.snapshotId || null,
+        chunkCount: toNum(ga4State?.chunkCount, 0),
         storageRangeDays: toNum(sources?.ga4?.storageRangeDays) || toNum(sources?.ga4?.rangeDays) || storageRangeDays || null,
         contextDefaultRangeDays: toNum(sources?.ga4?.contextDefaultRangeDays) || contextRangeDays || null,
       },
@@ -680,6 +745,8 @@ function buildFallbackEncodedContext(base) {
     providerAgnostic: true,
     generatedAt: nowIso(),
     contextWindow: base?.contextWindow || null,
+    contextPolicy: base?.contextPolicy || null,
+    sourceSnapshots: base?.sourceSnapshots || null,
 
     summary: {
       executive_summary: executiveSummary,
@@ -789,7 +856,9 @@ async function enrichWithOpenAI(base) {
   const inputPayload = {
     schema: base?.schema || 'adray.unified.context.v2',
     snapshotId: base?.snapshotId || null,
+    sourceSnapshots: base?.sourceSnapshots || null,
     contextWindow: base?.contextWindow || null,
+    contextPolicy: base?.contextPolicy || null,
     sources: base?.sources || {},
     inputs: base?.inputs || {},
   };
@@ -802,6 +871,7 @@ async function enrichWithOpenAI(base) {
     'Do not over-compress the information.',
     'The output must remain rich enough so downstream LLMs can answer campaign-level and KPI-level questions.',
     'Respect the provided context window and do not imply that older historical storage was used for reasoning unless the input explicitly contains it.',
+    'Treat a source with usable data as analysis-ready even if another metadata flag says not ready.',
     'Output keys exactly as requested.',
   ].join(' ');
 
@@ -816,12 +886,16 @@ async function enrichWithOpenAI(base) {
       'llm_context_block should be detailed and useful for analysis, not just a short summary.',
       'llm_context_block_mini should remain brief but still mention strongest campaigns or strongest channel drivers when available.',
       'Respect the contextWindow metadata from the input.',
+      'If a source has usable data in inputs, do not describe it as unavailable or not ready.',
+      'Use sourceSnapshots as per-source lineage metadata, not as a reason to drop usable sources.',
     ],
     required_schema: {
       schema: 'adray.encoded.context.v2',
       providerAgnostic: true,
       generatedAt: 'ISO datetime string',
       contextWindow: 'object|null',
+      contextPolicy: 'object|null',
+      sourceSnapshots: 'object|null',
       summary: {
         executive_summary: 'string',
         business_state: 'string',
@@ -871,6 +945,8 @@ async function enrichWithOpenAI(base) {
         providerAgnostic: true,
         generatedAt: nowIso(),
         contextWindow: base?.contextWindow || null,
+        contextPolicy: base?.contextPolicy || null,
+        sourceSnapshots: base?.sourceSnapshots || null,
         ...parsed,
       },
     };
@@ -907,6 +983,7 @@ function buildStatusResponse(root) {
       startedAt: state?.startedAt || null,
       finishedAt: state?.finishedAt || null,
       snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
+      sourceSnapshots: state?.sourceSnapshots || state?.unifiedBase?.sourceSnapshots || null,
       contextRangeDays: toNum(state?.contextRangeDays) || null,
       storageRangeDays: toNum(state?.storageRangeDays) || null,
       hasEncodedPayload: !!state?.encodedPayload,
@@ -914,6 +991,7 @@ function buildStatusResponse(root) {
       usedOpenAI: !!state?.usedOpenAI,
       model: state?.model || null,
       error: state?.error || null,
+      sources: state?.sourcesStatus || null,
       hasShareLink: !!(state?.shareEnabled && state?.shareToken),
       shareUrl: state?.shareEnabled ? state?.shareUrl || null : null,
     },
@@ -938,6 +1016,7 @@ function buildSharedPayload(root, provider) {
       provider: provider || 'chatgpt',
       providerLabel: providerName,
       snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
+      sourceSnapshots: state?.sourceSnapshots || payload?.sourceSnapshots || null,
       generatedAt: state?.finishedAt || payload?.generatedAt || null,
       contextRangeDays: toNum(state?.contextRangeDays) || null,
       storageRangeDays: toNum(state?.storageRangeDays) || null,
@@ -970,9 +1049,6 @@ router.post('/build', async (req, res) => {
     const preferredSnapshotId =
       explicitSnapshotId ||
       safeStr(initialRoot?.latestSnapshotId) ||
-      await findLatestSnapshotId(userId, 'metaAds') ||
-      await findLatestSnapshotId(userId, 'googleAds') ||
-      await findLatestSnapshotId(userId, 'ga4') ||
       null;
 
     await updateRootContextState(userId, {
@@ -980,10 +1056,11 @@ router.post('/build', async (req, res) => {
         ...(initialRoot?.aiContext || {}),
         status: 'processing',
         progress: 10,
-        stage: 'waiting_for_snapshot',
+        stage: 'waiting_for_sources',
         startedAt: nowIso(),
         finishedAt: null,
         snapshotId: preferredSnapshotId,
+        sourceSnapshots: null,
         contextRangeDays,
         storageRangeDays,
         error: null,
@@ -993,20 +1070,28 @@ router.post('/build', async (req, res) => {
       },
     });
 
-    const readyState = await waitForBuildableSnapshot(userId, explicitSnapshotId, BUILD_WAIT_TIMEOUT_MS);
+    const readyState = await waitForBuildableSources(userId, initialRoot, explicitSnapshotId, BUILD_WAIT_TIMEOUT_MS);
     const effectiveRoot = readyState?.root || await findRoot(userId);
-    const snapshotId =
-      safeStr(readyState?.snapshotId) ||
-      safeStr(effectiveRoot?.latestSnapshotId) ||
-      preferredSnapshotId ||
-      null;
 
-    const metaChunks = readyState?.sourceStates?.metaAds?.chunks || [];
-    const googleChunks = readyState?.sourceStates?.googleAds?.chunks || [];
-    const ga4Chunks = readyState?.sourceStates?.ga4?.chunks || [];
+    const sourceStates = readyState?.sourceStates || {};
+    const metaState = sourceStates?.metaAds || null;
+    const googleState = sourceStates?.googleAds || null;
+    const ga4State = sourceStates?.ga4 || null;
+
+    const sourceSnapshots = {
+      metaAds: metaState?.snapshotId || null,
+      googleAds: googleState?.snapshotId || null,
+      ga4: ga4State?.snapshotId || null,
+    };
+
+    const metaChunks = metaState?.chunks || [];
+    const googleChunks = googleState?.chunks || [];
+    const ga4Chunks = ga4State?.chunks || [];
+
+    const usableSources = readyState?.usableSources || [];
+    const pendingConnectedSources = readyState?.pendingConnectedSources || [];
 
     const hasAnyBuildable =
-      (readyState?.buildableConnectedSources || []).length > 0 ||
       metaChunks.length > 0 ||
       googleChunks.length > 0 ||
       ga4Chunks.length > 0;
@@ -1019,24 +1104,37 @@ router.post('/build', async (req, res) => {
           progress: 100,
           stage: 'failed',
           finishedAt: nowIso(),
-          snapshotId,
+          snapshotId:
+            sourceSnapshots.metaAds ||
+            sourceSnapshots.googleAds ||
+            sourceSnapshots.ga4 ||
+            preferredSnapshotId ||
+            null,
+          sourceSnapshots,
           contextRangeDays,
           storageRangeDays,
-          error: 'MCP_CONTEXT_NO_READY_SOURCES',
+          sourcesStatus: {
+            metaAds: sourceStateSummaryForStatus(metaState),
+            googleAds: sourceStateSummaryForStatus(googleState),
+            ga4: sourceStateSummaryForStatus(ga4State),
+          },
+          error: 'MCP_CONTEXT_NO_USABLE_SOURCES',
           encodedPayload: null,
         },
       });
 
       return res.status(409).json({
         ok: false,
-        error: 'MCP_CONTEXT_NO_READY_SOURCES',
+        error: 'MCP_CONTEXT_NO_USABLE_SOURCES',
         data: {
-          snapshotId,
           contextRangeDays,
           storageRangeDays,
-          metaReady: metaChunks.length > 0,
-          googleReady: googleChunks.length > 0,
-          ga4Ready: ga4Chunks.length > 0,
+          sourceSnapshots,
+          sources: {
+            metaAds: sourceStateSummaryForStatus(metaState),
+            googleAds: sourceStateSummaryForStatus(googleState),
+            ga4: sourceStateSummaryForStatus(ga4State),
+          },
         },
       });
     }
@@ -1046,12 +1144,23 @@ router.post('/build', async (req, res) => {
         ...(effectiveRoot?.aiContext || {}),
         status: 'processing',
         progress: 35,
-        stage: 'compacting_sources',
+        stage: pendingConnectedSources.length > 0 ? 'compacting_partial_sources' : 'compacting_sources',
         startedAt: effectiveRoot?.aiContext?.startedAt || nowIso(),
         finishedAt: null,
-        snapshotId,
+        snapshotId:
+          sourceSnapshots.metaAds ||
+          sourceSnapshots.googleAds ||
+          sourceSnapshots.ga4 ||
+          preferredSnapshotId ||
+          null,
+        sourceSnapshots,
         contextRangeDays,
         storageRangeDays,
+        sourcesStatus: {
+          metaAds: sourceStateSummaryForStatus(metaState),
+          googleAds: sourceStateSummaryForStatus(googleState),
+          ga4: sourceStateSummaryForStatus(ga4State),
+        },
         error: null,
         encodedPayload: null,
       },
@@ -1063,9 +1172,9 @@ router.post('/build', async (req, res) => {
 
     const unifiedBase = buildUnifiedBaseContext({
       root: effectiveRoot,
-      snapshotId,
       contextRangeDays,
       storageRangeDays,
+      sourceStates,
       metaPack,
       googlePack,
       ga4Pack,
@@ -1079,10 +1188,16 @@ router.post('/build', async (req, res) => {
         stage: 'encoding_context',
         startedAt: effectiveRoot?.aiContext?.startedAt || nowIso(),
         finishedAt: null,
-        snapshotId,
+        snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+        sourceSnapshots,
         contextRangeDays,
         storageRangeDays,
         unifiedBase,
+        sourcesStatus: {
+          metaAds: sourceStateSummaryForStatus(metaState),
+          googleAds: sourceStateSummaryForStatus(googleState),
+          ga4: sourceStateSummaryForStatus(ga4State),
+        },
         error: null,
       },
     });
@@ -1094,12 +1209,13 @@ router.post('/build', async (req, res) => {
     await updateRootContextState(userId, {
       aiContext: {
         ...prevAi,
-        status: 'done',
+        status: pendingConnectedSources.length > 0 ? 'partial' : 'done',
         progress: 100,
-        stage: 'completed',
+        stage: pendingConnectedSources.length > 0 ? 'completed_partial' : 'completed',
         startedAt: prevAi?.startedAt || nowIso(),
         finishedAt: nowIso(),
-        snapshotId,
+        snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+        sourceSnapshots,
         contextRangeDays,
         storageRangeDays,
         error: null,
@@ -1107,6 +1223,13 @@ router.post('/build', async (req, res) => {
         encodedPayload: encoded.payload,
         usedOpenAI: !!encoded.usedOpenAI,
         model: encoded.model || null,
+        sourcesStatus: {
+          metaAds: sourceStateSummaryForStatus(metaState),
+          googleAds: sourceStateSummaryForStatus(googleState),
+          ga4: sourceStateSummaryForStatus(ga4State),
+        },
+        usableSources,
+        pendingConnectedSources,
       },
     });
 
@@ -1115,16 +1238,24 @@ router.post('/build', async (req, res) => {
     return res.json({
       ok: true,
       data: {
-        status: freshRoot?.aiContext?.status || 'done',
+        status: freshRoot?.aiContext?.status || (pendingConnectedSources.length > 0 ? 'partial' : 'done'),
         progress: freshRoot?.aiContext?.progress || 100,
-        stage: freshRoot?.aiContext?.stage || 'completed',
-        snapshotId,
+        stage: freshRoot?.aiContext?.stage || (pendingConnectedSources.length > 0 ? 'completed_partial' : 'completed'),
+        snapshotId: freshRoot?.aiContext?.snapshotId || unifiedBase?.snapshotId || null,
+        sourceSnapshots: freshRoot?.aiContext?.sourceSnapshots || sourceSnapshots,
         contextRangeDays: toNum(freshRoot?.aiContext?.contextRangeDays) || contextRangeDays,
         storageRangeDays: toNum(freshRoot?.aiContext?.storageRangeDays) || storageRangeDays,
         usedOpenAI: !!freshRoot?.aiContext?.usedOpenAI,
         model: freshRoot?.aiContext?.model || null,
         hasEncodedPayload: !!freshRoot?.aiContext?.encodedPayload,
         providerAgnostic: !!freshRoot?.aiContext?.encodedPayload?.providerAgnostic,
+        usableSources: freshRoot?.aiContext?.usableSources || usableSources,
+        pendingConnectedSources: freshRoot?.aiContext?.pendingConnectedSources || pendingConnectedSources,
+        sources: freshRoot?.aiContext?.sourcesStatus || {
+          metaAds: sourceStateSummaryForStatus(metaState),
+          googleAds: sourceStateSummaryForStatus(googleState),
+          ga4: sourceStateSummaryForStatus(ga4State),
+        },
         error: freshRoot?.aiContext?.error || null,
       },
     });
@@ -1217,6 +1348,7 @@ router.get('/latest', async (req, res) => {
         progress: state?.progress || 100,
         stage: state?.stage || 'completed',
         snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
+        sourceSnapshots: state?.sourceSnapshots || state?.encodedPayload?.sourceSnapshots || null,
         contextRangeDays: toNum(state?.contextRangeDays) || null,
         storageRangeDays: toNum(state?.storageRangeDays) || null,
         usedOpenAI: !!state?.usedOpenAI,
