@@ -452,6 +452,7 @@ router.get('/:account_id', async (req, res) => {
       },
       select: {
         createdAt: true,
+        platformCreatedAt: true,
         revenue: true,
         currency: true,
         attributedChannel: true,
@@ -529,6 +530,7 @@ router.get('/:account_id', async (req, res) => {
     });
 
     orders.forEach(order => {
+      const effectiveOrderDate = order.platformCreatedAt || order.createdAt;
       const rev = order.revenue || 0;
       totalRevenue += rev;
       
@@ -549,7 +551,7 @@ router.get('/:account_id', async (req, res) => {
       }
 
       // Daily
-      const day = format(new Date(order.createdAt), 'yyyy-MM-dd');
+      const day = format(new Date(effectiveOrderDate), 'yyyy-MM-dd');
       if (dailyMap[day]) {
         dailyMap[day].revenue += rev;
         dailyMap[day].orders += 1;
@@ -649,7 +651,8 @@ router.get('/:account_id', async (req, res) => {
 
     const conversionInputsFromOrders = orders.map((order) => ({
       source: 'orders',
-      createdAt: order.createdAt,
+      createdAt: order.platformCreatedAt || order.createdAt,
+      storedAt: order.createdAt,
       orderId: order.orderId,
       orderNumber: order.orderNumber || null,
       checkoutToken: order.checkoutToken || null,

@@ -550,12 +550,12 @@
             if (filterValue === 'events') filtered = filtered.filter((p) => p.source === 'events');
 
             filtered.sort((a, b) => {
-                if (sortValue === 'date_asc') return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+                if (sortValue === 'date_asc') return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
                 if (sortValue === 'revenue_desc') return Number(b.revenue || 0) - Number(a.revenue || 0);
                 if (sortValue === 'revenue_asc') return Number(a.revenue || 0) - Number(b.revenue || 0);
                 if (sortValue === 'order_asc') return String(a.orderNumber || a.orderId || '').localeCompare(String(b.orderNumber || b.orderId || ''), 'es');
                 if (sortValue === 'order_desc') return String(b.orderNumber || b.orderId || '').localeCompare(String(a.orderNumber || a.orderId || ''), 'es');
-                return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+                return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
             });
 
             if (!Array.isArray(filtered) || filtered.length === 0) {
