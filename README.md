@@ -684,13 +684,13 @@ Current dashboard status from live review:
 
 ### Missing or incomplete data for a complete dashboard
 
-1. Paid media completeness still requires spend and ROAS for Meta and Google.
-2. Session intelligence should evolve from modal drill-down into a stronger dedicated session panel for analysis.
+1. Session intelligence should evolve from modal drill-down into a stronger dedicated session panel for analysis.
+2. Paid media depends on the existing `shop -> user -> McpData` link. When that mapping does not exist yet, the dashboard now shows the block but cannot populate the marketing snapshot.
 
 ### Execution order
 
 1. Expand the session drill-down into a richer session panel for analysis.
-2. Add paid media metrics such as spend and ROAS.
+2. Strengthen the bridge between public `account_id` and marketing snapshots so every eligible shop resolves paid media automatically.
 
 ### Completed dashboard steps
 
@@ -703,12 +703,14 @@ Current dashboard status from live review:
 - Metric cards converted into a carousel with 4 visible cards on desktop.
 - `Live Feed` linked to `sessionId` with clickable session drill-down.
 - Session detail modal implemented with summary, funnel, timeline, and linked orders.
+- Paid Media panel added with Meta, Google, and blended spend / revenue / ROAS from `McpData` snapshots when the shop is linked to a user snapshot.
+- Paid Media block now degrades safely to `No vinculado` or `Sin snapshot` when the marketing mapping is missing.
 
 ### Current development focus
 
 - Richer session panel for analysis and pattern discovery.
 - Session-level understanding of what a user did during a visit, including funnel steps and timeline.
-- Paid media metrics for spend and ROAS.
+- Automatic resolution of paid media snapshots for all eligible shops, not only already-linked Shopify shops.
 
 ### Live Feed decision rule
 

@@ -491,6 +491,38 @@
                         </div>
                     </div>
                 </div>
+
+                <div class="bg-white shadow rounded-lg p-6">
+                    <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
+                        <h3 class="text-lg leading-6 font-medium text-gray-900">Paid Media</h3>
+                        <span id="pm-link-status" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Sin snapshot</span>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Blended</div>
+                            <div class="mt-2 text-lg font-semibold text-gray-900" id="pm-blended-spend">$0.00</div>
+                            <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-blended-revenue">$0.00</span></div>
+                            <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-blended-roas">-</span></div>
+                            <div class="mt-1 text-xs text-gray-400" id="pm-blended-meta">Meta + Google</div>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Meta Ads</div>
+                            <div class="mt-2 text-lg font-semibold text-gray-900" id="pm-meta-status">-</div>
+                            <div class="mt-1 text-sm text-gray-500">Spend: <span id="pm-meta-spend">$0.00</span></div>
+                            <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-meta-revenue">$0.00</span></div>
+                            <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-meta-roas">-</span></div>
+                            <div class="mt-1 text-xs text-gray-400" id="pm-meta-sync">Sin snapshot asociado</div>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Google Ads</div>
+                            <div class="mt-2 text-lg font-semibold text-gray-900" id="pm-google-status">-</div>
+                            <div class="mt-1 text-sm text-gray-500">Spend: <span id="pm-google-spend">$0.00</span></div>
+                            <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-google-revenue">$0.00</span></div>
+                            <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-google-roas">-</span></div>
+                            <div class="mt-1 text-xs text-gray-400" id="pm-google-sync">Sin snapshot asociado</div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <div class="bg-white shadow rounded-lg p-6">
@@ -915,6 +947,7 @@
             const pixelHealth = data.pixelHealth || {};
             const dataQuality = data.dataQuality || {};
             const integrationHealth = data.integrationHealth || {};
+            const paidMedia = data.paidMedia || {};
             updateDateRangeLabel(summary);
             document.getElementById('total-revenue').textContent = formatCurrency(summary.totalRevenue);
             document.getElementById('total-orders').textContent = summary.totalOrders;
@@ -931,6 +964,7 @@
             document.getElementById('dq-fallback-active').textContent = dataQuality.fallbackActive ? 'ACTIVO' : 'NO';
             document.getElementById('dq-snapshot-updated').textContent = formatDateTimeMx(dataQuality.snapshotUpdatedAt);
             renderIntegrationHealth(integrationHealth);
+            renderPaidMedia(paidMedia);
 
             const modelBadge = document.getElementById('attribution-model-badge');
             if (modelBadge) {
@@ -997,6 +1031,63 @@
                 statusEl.textContent = status === 'ACTIVE' ? 'ACTIVE' : status;
                 updatedEl.textContent = state.updatedAt ? `Actualizado: ${formatDateTimeMx(state.updatedAt)}` : 'Sin conexión registrada';
             });
+        }
+
+        function renderPaidMedia(paidMedia) {
+            const linkStatus = document.getElementById('pm-link-status');
+            const blendedSpend = document.getElementById('pm-blended-spend');
+            const blendedRevenue = document.getElementById('pm-blended-revenue');
+            const blendedRoas = document.getElementById('pm-blended-roas');
+            const blendedMeta = document.getElementById('pm-blended-meta');
+
+            if (linkStatus) {
+                if (paidMedia?.available) linkStatus.textContent = 'Snapshot activo';
+                else if (paidMedia?.linked) linkStatus.textContent = 'Sin snapshot';
+                else linkStatus.textContent = 'No vinculado';
+            }
+
+            const blendedCurrency = paidMedia?.blended?.currency || paidMedia?.meta?.currency || paidMedia?.google?.currency || 'MXN';
+            if (blendedSpend) blendedSpend.textContent = formatCurrencyWithCode(paidMedia?.blended?.spend || 0, blendedCurrency);
+            if (blendedRevenue) blendedRevenue.textContent = formatCurrencyWithCode(paidMedia?.blended?.revenue || 0, blendedCurrency);
+            if (blendedRoas) blendedRoas.textContent = formatRoas(paidMedia?.blended?.roas);
+            if (blendedMeta) blendedMeta.textContent = paidMedia?.available
+                ? 'Resumen agregado desde snapshots MCP'
+                : 'Visible cuando el shop queda vinculado al snapshot de marketing';
+
+            renderPaidMediaSource('meta', paidMedia?.meta || {});
+            renderPaidMediaSource('google', paidMedia?.google || {});
+        }
+
+        function renderPaidMediaSource(prefix, sourceState) {
+            const statusEl = document.getElementById(`pm-${prefix}-status`);
+            const spendEl = document.getElementById(`pm-${prefix}-spend`);
+            const revenueEl = document.getElementById(`pm-${prefix}-revenue`);
+            const roasEl = document.getElementById(`pm-${prefix}-roas`);
+            const syncEl = document.getElementById(`pm-${prefix}-sync`);
+            if (!statusEl || !spendEl || !revenueEl || !roasEl || !syncEl) return;
+
+            const currency = sourceState?.currency || 'MXN';
+            let statusLabel = 'Desconectado';
+            if (sourceState?.hasSnapshot) statusLabel = 'Snapshot listo';
+            else if (sourceState?.connected) statusLabel = 'Conectado';
+
+            statusEl.textContent = statusLabel;
+            spendEl.textContent = formatCurrencyWithCode(sourceState?.spend || 0, currency);
+            revenueEl.textContent = formatCurrencyWithCode(sourceState?.revenue || 0, currency);
+            roasEl.textContent = formatRoas(sourceState?.roas);
+
+            if (sourceState?.hasSnapshot) {
+                const spendDelta = sourceState?.spendDeltaPct;
+                const roasDelta = sourceState?.roasDelta;
+                const deltaBits = [];
+                if (typeof spendDelta === 'number') deltaBits.push(`Spend 7d: ${spendDelta.toFixed(1)}%`);
+                if (typeof roasDelta === 'number') deltaBits.push(`ROAS Δ: ${roasDelta.toFixed(2)}`);
+                syncEl.textContent = deltaBits.length ? deltaBits.join(' · ') : 'Snapshot MCP disponible';
+            } else if (sourceState?.connected) {
+                syncEl.textContent = 'Conectado, pero sin snapshot usable todavía';
+            } else {
+                syncEl.textContent = 'Sin snapshot asociado';
+            }
         }
 
         function renderRecentPurchases(purchases) {
@@ -1264,6 +1355,11 @@
             } catch (_) {
                 return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(value || 0);
             }
+        }
+
+        function formatRoas(value) {
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? `${parsed.toFixed(2)}x` : '-';
         }
 
         function formatPercent(value) {

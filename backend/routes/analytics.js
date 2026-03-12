@@ -4,6 +4,27 @@ const router = express.Router();
 const prisma = require('../utils/prismaClient');
 const { startOfDay, endOfDay, subDays, eachDayOfInterval, format } = require('date-fns');
 
+let McpData = null;
+let ShopConnections = null;
+let formatMetaForLlmMini = null;
+let formatGoogleAdsForLlmMini = null;
+
+try {
+  McpData = require('../models/McpData');
+} catch (_) {}
+
+try {
+  ShopConnections = require('../models/ShopConnections');
+} catch (_) {}
+
+try {
+  ({ formatMetaForLlmMini } = require('../jobs/transform/metaLlmFormatter'));
+} catch (_) {}
+
+try {
+  ({ formatGoogleAdsForLlmMini } = require('../jobs/transform/googleAdsLlmFormatter'));
+} catch (_) {}
+
 const EVENT_BUCKET_ALIASES = {
   page_view: ['page_view', 'pageview', 'view_page'],
   view_item: ['view_item', 'product_view', 'view_product', 'product_detail_view'],
@@ -15,6 +36,204 @@ const EVENT_BUCKET_ALIASES = {
 const PURCHASE_ALIASES = EVENT_BUCKET_ALIASES.purchase;
 const ATTRIBUTION_MODELS = new Set(['first_touch', 'last_touch', 'linear']);
 const ATTRIBUTION_LOOKBACK_DAYS = 30;
+
+function toFiniteNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function toFiniteNumberOrNull(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeShopDomain(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return null;
+
+  try {
+    return new URL(raw.includes('://') ? raw : `https://${raw}`).hostname.replace(/^www\./, '');
+  } catch (_) {
+    return raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  }
+}
+
+function isRootMcpDoc(doc) {
+  if (!doc || typeof doc !== 'object') return false;
+  if (doc.kind === 'root') return true;
+  if (doc.isRoot === true) return true;
+  if (doc.type === 'root') return true;
+  if (doc.docType === 'root') return true;
+  return Boolean(doc.latestSnapshotId && !doc.dataset);
+}
+
+function isChunkMcpDoc(doc) {
+  if (!doc || typeof doc !== 'object') return false;
+  if (isRootMcpDoc(doc)) return false;
+  return Boolean(doc.dataset);
+}
+
+async function findMcpRoot(userId) {
+  if (!McpData || !userId) return null;
+
+  const docs = await McpData.find({ userId })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .lean();
+
+  return docs.find(isRootMcpDoc) || null;
+}
+
+async function findLatestSnapshotId(userId, source, rootDoc) {
+  if (!McpData || !userId) return null;
+  if (rootDoc?.latestSnapshotId) return rootDoc.latestSnapshotId;
+
+  const datasetPrefix = source === 'googleAds' ? '^google\\.' : '^meta\\.';
+  const latestChunk = await McpData.findOne({
+    userId,
+    source,
+    dataset: { $regex: datasetPrefix },
+  })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .lean();
+
+  return latestChunk?.snapshotId || null;
+}
+
+async function findMcpChunks(userId, source, snapshotId, datasetPrefix) {
+  if (!McpData || !userId || !snapshotId) return [];
+
+  const docs = await McpData.find({
+    userId,
+    source,
+    snapshotId,
+    dataset: { $regex: `^${datasetPrefix.replace('.', '\\.')}` },
+  })
+    .sort({ createdAt: 1, updatedAt: 1 })
+    .lean();
+
+  return docs.filter(isChunkMcpDoc);
+}
+
+async function resolvePaidMediaUserId(accountId, domain) {
+  if (!ShopConnections) return null;
+
+  const candidates = Array.from(new Set([
+    normalizeShopDomain(accountId),
+    normalizeShopDomain(domain),
+  ].filter(Boolean)));
+
+  if (!candidates.length) return null;
+
+  const shopConnection = await ShopConnections.findOne({
+    shop: { $in: candidates },
+    matchedToUserId: { $ne: null },
+  })
+    .select('matchedToUserId')
+    .lean();
+
+  return shopConnection?.matchedToUserId || null;
+}
+
+function buildPaidMediaSourceSummary({ sourceState, payload, snapshotId, revenueKey }) {
+  const kpis = payload?.headline_kpis || {};
+  const spend = toFiniteNumber(kpis.spend, 0);
+  const revenue = toFiniteNumber(kpis[revenueKey], toFiniteNumber(kpis.purchase_value || kpis.conversion_value, 0));
+
+  return {
+    connected: Boolean(sourceState?.connected),
+    ready: Boolean(sourceState?.ready),
+    status: String(sourceState?.status || (sourceState?.ready ? 'ready' : sourceState?.connected ? 'connected' : 'disconnected')).toUpperCase(),
+    hasSnapshot: Boolean(payload && snapshotId),
+    snapshotId: snapshotId || null,
+    currency: sourceState?.currency || payload?.meta?.currency || null,
+    lastSyncAt: sourceState?.lastSyncAt || null,
+    spend,
+    revenue,
+    roas: toFiniteNumberOrNull(kpis.roas),
+    conversions: toFiniteNumber(kpis.purchases ?? kpis.conversions, 0),
+    clicks: toFiniteNumber(kpis.link_clicks ?? kpis.clicks, 0),
+    spendDeltaPct: toFiniteNumberOrNull(payload?.last7_vs_prev7?.spend_pct),
+    roasDelta: toFiniteNumberOrNull(payload?.last7_vs_prev7?.roas_diff),
+  };
+}
+
+async function buildPaidMediaSummary({ accountId, domain }) {
+  const base = {
+    linked: false,
+    available: false,
+    reason: 'not_linked',
+    meta: buildPaidMediaSourceSummary({ sourceState: null, payload: null, snapshotId: null, revenueKey: 'purchase_value' }),
+    google: buildPaidMediaSourceSummary({ sourceState: null, payload: null, snapshotId: null, revenueKey: 'conversion_value' }),
+    blended: {
+      spend: 0,
+      revenue: 0,
+      roas: null,
+      currency: null,
+    },
+  };
+
+  if (!McpData || !ShopConnections || !formatMetaForLlmMini || !formatGoogleAdsForLlmMini) {
+    return { ...base, reason: 'marketing_models_unavailable' };
+  }
+
+  try {
+    const userId = await resolvePaidMediaUserId(accountId, domain);
+    if (!userId) return base;
+
+    const rootDoc = await findMcpRoot(userId);
+    if (!rootDoc) {
+      return { ...base, linked: true, reason: 'root_not_found' };
+    }
+
+    const [metaSnapshotId, googleSnapshotId] = await Promise.all([
+      findLatestSnapshotId(userId, 'metaAds', rootDoc),
+      findLatestSnapshotId(userId, 'googleAds', rootDoc),
+    ]);
+
+    const [metaChunks, googleChunks] = await Promise.all([
+      findMcpChunks(userId, 'metaAds', metaSnapshotId, 'meta.'),
+      findMcpChunks(userId, 'googleAds', googleSnapshotId, 'google.'),
+    ]);
+
+    const metaPayload = metaChunks.length ? formatMetaForLlmMini({ datasets: metaChunks, topCampaigns: 4 }) : null;
+    const googlePayload = googleChunks.length ? formatGoogleAdsForLlmMini({ datasets: googleChunks, topCampaigns: 4 }) : null;
+
+    const meta = buildPaidMediaSourceSummary({
+      sourceState: rootDoc?.sources?.metaAds || null,
+      payload: metaPayload,
+      snapshotId: metaSnapshotId,
+      revenueKey: 'purchase_value',
+    });
+
+    const google = buildPaidMediaSourceSummary({
+      sourceState: rootDoc?.sources?.googleAds || null,
+      payload: googlePayload,
+      snapshotId: googleSnapshotId,
+      revenueKey: 'conversion_value',
+    });
+
+    const blendedSpend = meta.spend + google.spend;
+    const blendedRevenue = meta.revenue + google.revenue;
+    const hasAnySnapshot = meta.hasSnapshot || google.hasSnapshot;
+
+    return {
+      linked: true,
+      available: hasAnySnapshot,
+      reason: hasAnySnapshot ? null : 'snapshots_not_found',
+      meta,
+      google,
+      blended: {
+        spend: blendedSpend,
+        revenue: blendedRevenue,
+        roas: blendedSpend > 0 ? Number((blendedRevenue / blendedSpend).toFixed(2)) : null,
+        currency: meta.currency || google.currency || null,
+      },
+    };
+  } catch (error) {
+    console.error('[Analytics API] Paid media summary error:', error);
+    return { ...base, reason: 'lookup_failed' };
+  }
+}
 
 function normalizeEventName(value) {
   return String(value || '')
@@ -507,7 +726,7 @@ router.get('/:account_id', async (req, res) => {
       });
 
     // 2. Fetch Sessions in range (for conversion rate, approximate)
-    const [sessionCount, merchantSnapshot, platformConnections] = await Promise.all([
+    const [sessionCount, merchantSnapshot, platformConnections, accountRecord] = await Promise.all([
       prisma.session.count({
         where: {
           accountId: account_id,
@@ -521,6 +740,10 @@ router.get('/:account_id', async (req, res) => {
       prisma.platformConnection.findMany({
         where: { accountId: account_id },
         select: { platform: true, status: true, updatedAt: true },
+      }),
+      prisma.account.findUnique({
+        where: { accountId: account_id },
+        select: { domain: true },
       }),
     ]);
 
@@ -538,6 +761,11 @@ router.get('/:account_id', async (req, res) => {
         status: conn.status,
         updatedAt: conn.updatedAt || null,
       };
+    });
+
+    const paidMedia = await buildPaidMediaSummary({
+      accountId: account_id,
+      domain: accountRecord?.domain || account_id,
     });
 
     // 3. Fetch Events in range (for pixel activity visibility)
@@ -1017,6 +1245,7 @@ router.get('/:account_id', async (req, res) => {
         snapshotUpdatedAt: merchantSnapshot?.updatedAt || null,
       },
       integrationHealth,
+      paidMedia,
       events: eventStats,
       pixelHealth: {
         eventsReceived: eventStats.total,
