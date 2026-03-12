@@ -1514,7 +1514,16 @@
         async function fetchSessionExplorerOverviewData() {
             const res = await fetch(`/api/analytics/${currentShopId}/session-explorer?limit=12`);
             if (!res.ok) throw new Error('No se pudo cargar el historial del explorador');
-            return res.json();
+            const data = await res.json();
+            console.info('[Session Explorer] overview payload', {
+                shopId: currentShopId,
+                totalProfiles: data?.summary?.totalProfiles || 0,
+                totalSessions: data?.summary?.totalSessions || 0,
+                totalOrders: data?.summary?.totalOrders || 0,
+                wooProfiles: Array.isArray(data?.profiles) ? data.profiles.filter((item) => item.profileType === 'woocommerce_customer').length : 0,
+                profilesWithOrders: Array.isArray(data?.profiles) ? data.profiles.filter((item) => Number(item.orderCount || 0) > 0).length : 0,
+            });
+            return data;
         }
 
         function renderSessionExplorerOverview(data) {
@@ -1525,6 +1534,25 @@
             const topProfile = profiles[0] || null;
             const topCampaigns = profiles.filter((item) => item.lastCampaign).slice(0, 4);
             const topLandings = profiles.filter((item) => item.lastLandingPageUrl).slice(0, 4);
+
+            console.info('[Session Explorer] rendering overview', {
+                totalProfiles: profiles.length,
+                wooProfiles,
+                orderLedProfiles,
+                topProfile: topProfile?.profileKey || null,
+            });
+            if (!wooProfiles || !orderLedProfiles) {
+                console.warn('[Session Explorer] overview without Woo coverage', {
+                    wooProfiles,
+                    orderLedProfiles,
+                    sampleProfiles: profiles.slice(0, 5).map((item) => ({
+                        profileKey: item.profileKey,
+                        profileType: item.profileType,
+                        orderCount: item.orderCount,
+                        sessionCount: item.sessionCount,
+                    })),
+                });
+            }
 
             sessionExplorerState.mode = 'overview';
             sessionExplorerState.overview = data;
@@ -1676,6 +1704,7 @@
 
         async function openSessionDetail(sessionId) {
             if (!currentShopId || !sessionId) return;
+            console.info('[Session Explorer] open session detail', { shopId: currentShopId, sessionId });
             openSessionDetailPanel();
 
             document.getElementById('session-detail-title').textContent = `Sesion ${sessionId}`;
@@ -1722,6 +1751,16 @@
             const timeline = Array.isArray(data.timeline) ? data.timeline : [];
             const pages = Array.isArray(journey.pages) ? journey.pages : [];
             const products = Array.isArray(journey.products) ? journey.products : [];
+
+            console.info('[Session Explorer] render session detail', {
+                sessionId: session.sessionId || null,
+                profileKey: profile.profileKey || null,
+                profileType: profile.profileType || null,
+                historicalOrderCount: profile.historicalOrderCount || 0,
+                relatedSessionCount: profile.relatedSessionCount || 0,
+                currentOrders: orders.filter((item) => item.isCurrentSession).length,
+                historicalOrders: orders.filter((item) => !item.isCurrentSession).length,
+            });
 
             sessionExplorerState.mode = 'session';
             sessionExplorerState.currentSessionId = session.sessionId || null;
@@ -1981,7 +2020,14 @@
         async function fetchSessionDetailData(sessionId) {
             const res = await fetch(`/api/analytics/${currentShopId}/sessions/${encodeURIComponent(sessionId)}`);
             if (!res.ok) throw new Error('No se pudo cargar la sesión');
-            return res.json();
+            const data = await res.json();
+            console.debug('[Session Explorer] raw session detail payload', {
+                sessionId,
+                profile: data?.profile || null,
+                peerCount: Array.isArray(data?.peers) ? data.peers.length : 0,
+                orderCount: Array.isArray(data?.orders) ? data.orders.length : 0,
+            });
+            return data;
         }
 
         async function loadComparisonSession(sessionId, triggerButton = null) {
