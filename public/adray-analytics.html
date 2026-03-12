@@ -37,6 +37,22 @@
         .metric-carousel-track {
             transition: transform 0.35s ease;
         }
+        .session-flow-step {
+            position: relative;
+            min-width: 120px;
+        }
+        .session-flow-step:not(:last-child)::after {
+            content: '';
+            position: absolute;
+            top: 24px;
+            right: -18px;
+            width: 24px;
+            height: 2px;
+            background: linear-gradient(90deg, #818cf8 0%, #c7d2fe 100%);
+        }
+        .pattern-rate-bar > span {
+            transition: width 0.35s ease;
+        }
         @keyframes slideIn {
             from { opacity: 0; transform: translateY(-10px); }
             to { opacity: 1; transform: translateY(0); }
@@ -425,6 +441,38 @@
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
             <div class="space-y-6">
                 <div class="bg-white shadow rounded-lg p-6">
+                    <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
+                        <h3 class="text-lg leading-6 font-medium text-gray-900">Paid Media</h3>
+                        <span id="pm-link-status" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Sin snapshot</span>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Blended</div>
+                            <div class="mt-2 text-lg font-semibold text-gray-900" id="pm-blended-spend">$0.00</div>
+                            <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-blended-revenue">$0.00</span></div>
+                            <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-blended-roas">-</span></div>
+                            <div class="mt-1 text-xs text-gray-400" id="pm-blended-meta">Meta + Google</div>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Meta Ads</div>
+                            <div class="mt-2 text-lg font-semibold text-gray-900" id="pm-meta-status">-</div>
+                            <div class="mt-1 text-sm text-gray-500">Spend: <span id="pm-meta-spend">$0.00</span></div>
+                            <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-meta-revenue">$0.00</span></div>
+                            <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-meta-roas">-</span></div>
+                            <div class="mt-1 text-xs text-gray-400" id="pm-meta-sync">Sin snapshot asociado</div>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Google Ads</div>
+                            <div class="mt-2 text-lg font-semibold text-gray-900" id="pm-google-status">-</div>
+                            <div class="mt-1 text-sm text-gray-500">Spend: <span id="pm-google-spend">$0.00</span></div>
+                            <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-google-revenue">$0.00</span></div>
+                            <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-google-roas">-</span></div>
+                            <div class="mt-1 text-xs text-gray-400" id="pm-google-sync">Sin snapshot asociado</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white shadow rounded-lg p-6">
                     <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Pixel Health</h3>
                     <div class="grid grid-cols-2 gap-4 mb-4">
                         <div class="bg-gray-50 rounded-lg p-3">
@@ -492,37 +540,6 @@
                     </div>
                 </div>
 
-                <div class="bg-white shadow rounded-lg p-6">
-                    <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
-                        <h3 class="text-lg leading-6 font-medium text-gray-900">Paid Media</h3>
-                        <span id="pm-link-status" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Sin snapshot</span>
-                    </div>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div class="bg-gray-50 rounded-lg p-4">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Blended</div>
-                            <div class="mt-2 text-lg font-semibold text-gray-900" id="pm-blended-spend">$0.00</div>
-                            <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-blended-revenue">$0.00</span></div>
-                            <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-blended-roas">-</span></div>
-                            <div class="mt-1 text-xs text-gray-400" id="pm-blended-meta">Meta + Google</div>
-                        </div>
-                        <div class="bg-gray-50 rounded-lg p-4">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Meta Ads</div>
-                            <div class="mt-2 text-lg font-semibold text-gray-900" id="pm-meta-status">-</div>
-                            <div class="mt-1 text-sm text-gray-500">Spend: <span id="pm-meta-spend">$0.00</span></div>
-                            <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-meta-revenue">$0.00</span></div>
-                            <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-meta-roas">-</span></div>
-                            <div class="mt-1 text-xs text-gray-400" id="pm-meta-sync">Sin snapshot asociado</div>
-                        </div>
-                        <div class="bg-gray-50 rounded-lg p-4">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Google Ads</div>
-                            <div class="mt-2 text-lg font-semibold text-gray-900" id="pm-google-status">-</div>
-                            <div class="mt-1 text-sm text-gray-500">Spend: <span id="pm-google-spend">$0.00</span></div>
-                            <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-google-revenue">$0.00</span></div>
-                            <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-google-roas">-</span></div>
-                            <div class="mt-1 text-xs text-gray-400" id="pm-google-sync">Sin snapshot asociado</div>
-                        </div>
-                    </div>
-                </div>
             </div>
 
             <div class="bg-white shadow rounded-lg p-6">
@@ -610,6 +627,16 @@
                         <div class="bg-gray-50 rounded-xl p-4">
                             <h4 class="text-sm font-semibold text-gray-900 mb-3">Path y productos</h4>
                             <div class="space-y-3 text-sm text-gray-600" id="session-detail-journey"></div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                        <div class="bg-gradient-to-br from-indigo-50 via-white to-cyan-50 rounded-xl p-4 border border-indigo-100">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Mapa visual de la sesión</h4>
+                            <div id="session-detail-visual" class="flex flex-wrap gap-6 items-start"></div>
+                        </div>
+                        <div class="bg-gradient-to-br from-amber-50 via-white to-emerald-50 rounded-xl p-4 border border-amber-100">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Patrones y próximos pasos</h4>
+                            <div class="space-y-4" id="session-detail-patterns"></div>
                         </div>
                     </div>
                     <div class="bg-gray-50 rounded-xl p-4">
@@ -833,6 +860,8 @@
             document.getElementById('session-detail-orders').innerHTML = '<p>Cargando órdenes...</p>';
             document.getElementById('session-detail-attribution').innerHTML = '<p>Cargando atribución...</p>';
             document.getElementById('session-detail-journey').innerHTML = '<p>Cargando path...</p>';
+            document.getElementById('session-detail-visual').innerHTML = '<p class="text-sm text-gray-500">Construyendo diagrama...</p>';
+            document.getElementById('session-detail-patterns').innerHTML = '<p class="text-sm text-gray-500">Buscando patrones...</p>';
             document.getElementById('session-detail-timeline').innerHTML = '<p>Cargando timeline...</p>';
 
             try {
@@ -845,6 +874,8 @@
                 document.getElementById('session-detail-orders').innerHTML = '<p class="text-gray-500">-</p>';
                 document.getElementById('session-detail-attribution').innerHTML = '<p class="text-gray-500">-</p>';
                 document.getElementById('session-detail-journey').innerHTML = '<p class="text-gray-500">-</p>';
+                document.getElementById('session-detail-visual').innerHTML = '<p class="text-gray-500">-</p>';
+                document.getElementById('session-detail-patterns').innerHTML = '<p class="text-gray-500">-</p>';
                 document.getElementById('session-detail-timeline').innerHTML = '<p class="text-gray-500">-</p>';
             }
         }
@@ -853,6 +884,7 @@
             const session = data.session || {};
             const metrics = data.metrics || {};
             const journey = data.journey || {};
+            const patterns = data.patterns || {};
             const orders = Array.isArray(data.orders) ? data.orders : [];
             const timeline = Array.isArray(data.timeline) ? data.timeline : [];
             const pages = Array.isArray(journey.pages) ? journey.pages : [];
@@ -884,6 +916,7 @@
                 <p><strong>UTM:</strong> ${(session.utmSource || '-') + ' / ' + (session.utmCampaign || '-')}</p>
                 <p><strong>Referrer:</strong> ${session.referrer || '-'}</p>
                 <p><strong>Funnel:</strong> PV ${metrics.pageViews || 0} · VI ${metrics.viewItem || 0} · ATC ${metrics.addToCart || 0} · BC ${metrics.beginCheckout || 0} · P ${metrics.purchase || 0}</p>
+                <p><strong>Otras sesiones del mismo usuario:</strong> ${patterns.peerSessionCount || 0}</p>
             `;
 
             document.getElementById('session-detail-attribution').innerHTML = `
@@ -915,6 +948,9 @@
                 </div>
             `;
 
+            document.getElementById('session-detail-visual').innerHTML = renderSessionVisual(patterns);
+            document.getElementById('session-detail-patterns').innerHTML = renderSessionPatterns(patterns);
+
             document.getElementById('session-detail-orders').innerHTML = orders.length
                 ? orders.map((order) => `
                     <div class="border border-gray-200 rounded-lg p-3 bg-white">
@@ -940,6 +976,81 @@
                     </div>
                 `).join('')
                 : '<p class="text-gray-500">Sin eventos en esta sesión.</p>';
+        }
+
+        function renderSessionVisual(patterns) {
+            const path = Array.isArray(patterns.currentPath) ? patterns.currentPath : [];
+            const comparison = Array.isArray(patterns.stageComparison) ? patterns.stageComparison : [];
+
+            const flowHtml = path.length
+                ? `<div class="flex flex-wrap gap-6 items-start">${path.map((step) => `
+                    <div class="session-flow-step">
+                        <div class="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shadow-lg">
+                            <span class="text-sm font-semibold">${step.label.slice(0, 2).toUpperCase()}</span>
+                        </div>
+                        <p class="mt-2 text-sm font-semibold text-gray-900">${step.label}</p>
+                    </div>
+                `).join('')}</div>`
+                : '<p class="text-sm text-gray-500">Sin pasos suficientes para dibujar el recorrido.</p>';
+
+            const barsHtml = comparison.length
+                ? `<div class="space-y-3 mt-5">${comparison.map((item) => `
+                    <div>
+                        <div class="flex items-center justify-between text-xs text-gray-600 mb-1">
+                            <span>${item.label}</span>
+                            <span>${Math.round(Number(item.peerRate || 0) * 100)}% en otras sesiones</span>
+                        </div>
+                        <div class="pattern-rate-bar h-2 rounded-full bg-gray-200 overflow-hidden">
+                            <span class="block h-full ${item.current ? 'bg-emerald-500' : 'bg-amber-400'}" style="width:${Math.max(4, Math.round(Number(item.peerRate || 0) * 100))}%"></span>
+                        </div>
+                    </div>
+                `).join('')}</div>`
+                : '';
+
+            return `${flowHtml}${barsHtml}`;
+        }
+
+        function renderSessionPatterns(patterns) {
+            const cards = Array.isArray(patterns.patternCards) ? patterns.patternCards : [];
+            const topLandingPages = Array.isArray(patterns.topLandingPages) ? patterns.topLandingPages : [];
+            const topCampaigns = Array.isArray(patterns.topCampaigns) ? patterns.topCampaigns : [];
+
+            const cardsHtml = cards.length
+                ? cards.map((card) => `
+                    <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                        <p class="text-sm font-semibold text-gray-900">${card.title || '-'}</p>
+                        <p class="mt-1 text-sm text-gray-600">${card.detail || '-'}</p>
+                        <p class="mt-2 text-xs font-medium text-emerald-700 uppercase tracking-wide">Aplicación sugerida</p>
+                        <p class="text-sm text-emerald-700">${card.action || '-'}</p>
+                    </div>
+                `).join('')
+                : '<p class="text-sm text-gray-500">Sin patrones suficientes todavía.</p>';
+
+            const sideNotes = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Landings recurrentes</p>
+                        <div class="mt-2 space-y-1 text-sm text-gray-600">
+                            ${topLandingPages.length
+                                ? topLandingPages.map((item) => `<p class="truncate">${item.url} · ${item.sessions} sesiones</p>`).join('')
+                                : '<p>Sin suficiente historial.</p>'}
+                        </div>
+                    </div>
+                    <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Campañas frecuentes</p>
+                        <div class="mt-2 space-y-1 text-sm text-gray-600">
+                            ${topCampaigns.length
+                                ? topCampaigns.map((item) => `<p>${item.campaign} · ${item.sessions} sesiones</p>`).join('')
+                                : '<p>Sin campaña dominante.</p>'}
+                        </div>
+                    </div>
+                </div>
+                <div class="text-xs text-gray-500">
+                    Promedio en otras sesiones: ${patterns.avgEvents || 0} eventos · ${formatDuration(patterns.avgDurationSeconds || 0)}
+                </div>
+            `;
+
+            return `${cardsHtml}${sideNotes}`;
         }
 
         // --- FETCH ANALYTICS ---

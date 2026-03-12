@@ -704,6 +704,8 @@ Current dashboard status from live review:
 - `Live Feed` linked to `sessionId` with clickable session drill-down.
 - Session detail converted from modal into a persistent `Session Explorer` panel inside the dashboard.
 - Session detail enriched with attribution, checkout tokens, top pages, and touched products.
+- `Paid Media` moved above `Pixel Health` to prioritize commercial context before ingestion health.
+- `Session Explorer` now includes a visual journey map plus simple behavioral patterns based on other sessions from the same `userKey`.
 - Paid Media panel added with Meta, Google, and blended spend / revenue / ROAS from `McpData` snapshots when the shop is linked to a user snapshot.
 - Paid Media block now degrades safely to `No vinculado` or `Sin snapshot` when the marketing mapping is missing.
 - Paid Media resolution now tries multiple bridges: `ShopConnections.matchedToUserId`, `User.shop`, and `PlatformConnection.adAccountId -> McpData.sources`.

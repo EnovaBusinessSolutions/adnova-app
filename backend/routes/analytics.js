@@ -429,6 +429,139 @@ function normalizeChannelForStats(channelRaw) {
   return ch;
 }
 
+function compactSessionPath(timeline = []) {
+  const labels = [];
+  const seen = new Set();
+
+  timeline.forEach((event) => {
+    const bucket = String(event?.bucket || 'other');
+    if (seen.has(bucket)) return;
+    seen.add(bucket);
+
+    let label = 'Otro';
+    if (bucket === 'page_view') label = 'Landing';
+    if (bucket === 'view_item') label = 'Producto';
+    if (bucket === 'add_to_cart') label = 'Carrito';
+    if (bucket === 'begin_checkout') label = 'Checkout';
+    if (bucket === 'purchase') label = 'Compra';
+
+    labels.push({ bucket, label, occurredAt: event.createdAt || null });
+  });
+
+  return labels;
+}
+
+function buildBehaviorPatternSummary({ currentMetrics, peerSessions, peerEventCounts, currentPath }) {
+  const peers = Array.isArray(peerSessions) ? peerSessions : [];
+  const peerSessionCount = peers.length;
+
+  const aggregate = {
+    page_view: 0,
+    view_item: 0,
+    add_to_cart: 0,
+    begin_checkout: 0,
+    purchase: 0,
+    avgEvents: 0,
+    avgDurationSeconds: 0,
+  };
+
+  const landingMap = new Map();
+  const campaignMap = new Map();
+
+  peers.forEach((session) => {
+    const counts = peerEventCounts.get(session.sessionId) || {};
+    const durationSeconds = session.startedAt && session.lastEventAt
+      ? Math.max(0, Math.round((new Date(session.lastEventAt).getTime() - new Date(session.startedAt).getTime()) / 1000))
+      : 0;
+
+    aggregate.avgEvents += Number(session._totalEvents || 0);
+    aggregate.avgDurationSeconds += durationSeconds;
+
+    ['page_view', 'view_item', 'add_to_cart', 'begin_checkout', 'purchase'].forEach((bucket) => {
+      if (Number(counts[bucket] || 0) > 0) aggregate[bucket] += 1;
+    });
+
+    if (session.landingPageUrl) {
+      landingMap.set(session.landingPageUrl, Number(landingMap.get(session.landingPageUrl) || 0) + 1);
+    }
+    if (session.utmCampaign) {
+      campaignMap.set(session.utmCampaign, Number(campaignMap.get(session.utmCampaign) || 0) + 1);
+    }
+  });
+
+  if (peerSessionCount > 0) {
+    aggregate.avgEvents = Number((aggregate.avgEvents / peerSessionCount).toFixed(1));
+    aggregate.avgDurationSeconds = Math.round(aggregate.avgDurationSeconds / peerSessionCount);
+  }
+
+  const stageComparison = [
+    { key: 'page_view', label: 'Landing', current: Number(currentMetrics.pageViews || 0) > 0, peerRate: peerSessionCount ? Number((aggregate.page_view / peerSessionCount).toFixed(2)) : 0 },
+    { key: 'view_item', label: 'Producto', current: Number(currentMetrics.viewItem || 0) > 0, peerRate: peerSessionCount ? Number((aggregate.view_item / peerSessionCount).toFixed(2)) : 0 },
+    { key: 'add_to_cart', label: 'Carrito', current: Number(currentMetrics.addToCart || 0) > 0, peerRate: peerSessionCount ? Number((aggregate.add_to_cart / peerSessionCount).toFixed(2)) : 0 },
+    { key: 'begin_checkout', label: 'Checkout', current: Number(currentMetrics.beginCheckout || 0) > 0, peerRate: peerSessionCount ? Number((aggregate.begin_checkout / peerSessionCount).toFixed(2)) : 0 },
+    { key: 'purchase', label: 'Compra', current: Number(currentMetrics.purchase || 0) > 0, peerRate: peerSessionCount ? Number((aggregate.purchase / peerSessionCount).toFixed(2)) : 0 },
+  ];
+
+  const topLandingPages = Array.from(landingMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([url, sessions]) => ({ url, sessions }));
+
+  const topCampaigns = Array.from(campaignMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([campaign, sessions]) => ({ campaign, sessions }));
+
+  const patternCards = [];
+  const currentReachedCheckout = Number(currentMetrics.beginCheckout || 0) > 0;
+  const currentPurchased = Number(currentMetrics.purchase || 0) > 0;
+  const peerCheckoutRate = stageComparison.find((item) => item.key === 'begin_checkout')?.peerRate || 0;
+  const peerPurchaseRate = stageComparison.find((item) => item.key === 'purchase')?.peerRate || 0;
+
+  if (currentReachedCheckout && !currentPurchased) {
+    patternCards.push({
+      title: 'Sesión con alta intención',
+      detail: `Esta sesión llegó a checkout. En otras sesiones comparables, ${Math.round(peerPurchaseRate * 100)}% termina comprando.`,
+      action: 'Reforzar remarketing o recuperación de checkout durante la siguiente ventana corta.',
+    });
+  }
+
+  if (Number(currentMetrics.viewItem || 0) > 0 && Number(currentMetrics.addToCart || 0) === 0) {
+    patternCards.push({
+      title: 'Explora productos pero no añade al carrito',
+      detail: `Vio ${currentMetrics.viewItem || 0} productos y no añadió ninguno.`,
+      action: 'Revisar claridad de oferta, precio, shipping o CTAs en PDP.',
+    });
+  }
+
+  if (!currentReachedCheckout && peerCheckoutRate >= 0.35) {
+    patternCards.push({
+      title: 'Sesión por debajo del patrón habitual',
+      detail: `Otros recorridos del mismo usuario llegan a checkout en ${Math.round(peerCheckoutRate * 100)}% de los casos.`,
+      action: 'Analizar qué faltó en esta visita: fuente, landing o fricción previa al carrito.',
+    });
+  }
+
+  if (!patternCards.length) {
+    patternCards.push({
+      title: 'Patrón todavía estable',
+      detail: 'No hay una desviación fuerte entre esta sesión y las demás disponibles del mismo usuario.',
+      action: 'Seguir acumulando sesiones para afinar el patrón conductual y los disparadores.',
+    });
+  }
+
+  return {
+    peerSessionCount,
+    avgEvents: aggregate.avgEvents,
+    avgDurationSeconds: aggregate.avgDurationSeconds,
+    currentPath,
+    stageComparison,
+    topLandingPages,
+    topCampaigns,
+    patternCards: patternCards.slice(0, 3),
+  };
+}
+
 function normalizeLineItems(items) {
   const arr = Array.isArray(items) ? items : [];
   return arr.map((item) => ({
@@ -1374,7 +1507,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    const [events, relatedOrders] = await Promise.all([
+    const [events, relatedOrders, peerSessions] = await Promise.all([
       prisma.event.findMany({
         where: { accountId: account_id, sessionId: session_id },
         select: {
@@ -1409,7 +1542,53 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         },
         orderBy: { createdAt: 'desc' },
       }),
+      session.userKey
+        ? prisma.session.findMany({
+            where: {
+              accountId: account_id,
+              userKey: session.userKey,
+              sessionId: { not: session_id },
+            },
+            select: {
+              sessionId: true,
+              startedAt: true,
+              lastEventAt: true,
+              landingPageUrl: true,
+              utmCampaign: true,
+            },
+            orderBy: { startedAt: 'desc' },
+            take: 12,
+          })
+        : Promise.resolve([]),
     ]);
+
+    const peerSessionIds = peerSessions.map((item) => item.sessionId).filter(Boolean);
+    const peerEventRows = peerSessionIds.length
+      ? await prisma.event.groupBy({
+          by: ['sessionId', 'eventName'],
+          where: {
+            accountId: account_id,
+            sessionId: { in: peerSessionIds },
+          },
+          _count: { _all: true },
+        })
+      : [];
+
+    const peerEventCounts = new Map();
+    peerEventRows.forEach((row) => {
+      const sessionIdKey = row.sessionId;
+      if (!peerEventCounts.has(sessionIdKey)) peerEventCounts.set(sessionIdKey, { _totalEvents: 0 });
+      const current = peerEventCounts.get(sessionIdKey);
+      const bucket = resolveEventBucket(row.eventName);
+      current[bucket] = Number(current[bucket] || 0) + Number(row._count?._all || 0);
+      current._totalEvents = Number(current._totalEvents || 0) + Number(row._count?._all || 0);
+      peerEventCounts.set(sessionIdKey, current);
+    });
+
+    const normalizedPeerSessions = peerSessions.map((item) => ({
+      ...item,
+      _totalEvents: Number(peerEventCounts.get(item.sessionId)?._totalEvents || 0),
+    }));
 
     const metrics = {
       totalEvents: events.length,
@@ -1507,6 +1686,13 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
 
     const attributedTouchpoint = stitchSnapshotAttributionForAccount(toSnapshotFromSession(session) || {}, account_id);
     const pageUrlsInOrder = timeline.map((item) => item.pageUrl).filter(Boolean);
+    const currentPath = compactSessionPath(timeline);
+    const patterns = buildBehaviorPatternSummary({
+      currentMetrics: metrics,
+      peerSessions: normalizedPeerSessions,
+      peerEventCounts,
+      currentPath,
+    });
 
     const sessionDurationSeconds = session.startedAt && session.lastEventAt
       ? Math.max(0, Math.round((new Date(session.lastEventAt).getTime() - new Date(session.startedAt).getTime()) / 1000))
@@ -1533,6 +1719,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
           source: attributedTouchpoint.source || 'none',
         },
       },
+      patterns,
       timeline,
       orders: relatedOrders,
     });
