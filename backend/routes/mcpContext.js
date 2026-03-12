@@ -51,6 +51,13 @@ function buildShortShareUrl(token) {
   return `${APP_URL}/s/${encodeURIComponent(token)}`;
 }
 
+function buildVersionedShareUrl(token, provider = 'chatgpt', version = '') {
+  const base = buildApiShareUrl(token, provider);
+  const cleanVersion = safeStr(version).trim();
+  if (!cleanVersion) return base;
+  return `${base}&v=${encodeURIComponent(cleanVersion)}`;
+}
+
 function normalizeProvider(raw) {
   const p = safeStr(raw).trim().toLowerCase();
   return p === 'claude' || p === 'gemini' || p === 'chatgpt' ? p : 'chatgpt';
@@ -79,12 +86,78 @@ async function findLatestContextRootForUser(userId) {
   return root || null;
 }
 
+function getVersionSeedFromRoot(root) {
+  const state = root?.aiContext || {};
+  return (
+    safeStr(state?.snapshotId).trim() ||
+    safeStr(root?.latestSnapshotId).trim() ||
+    safeStr(state?.finishedAt).trim() ||
+    safeStr(state?.encodedPayload?.generatedAt).trim() ||
+    safeStr(root?.updatedAt).trim() ||
+    String(Date.now())
+  );
+}
+
+async function syncUserVersionedLink(userId, preferredProvider = null) {
+  if (!userId) return null;
+
+  const user = await User.findById(userId).select(
+    [
+      'mcpShareToken',
+      'mcpShareEnabled',
+      'mcpShareProvider',
+      'mcpShareShortUrl',
+      'mcpShareVersionedUrl',
+      'mcpShareVersion',
+      'mcpShareSnapshotId',
+      'mcpShareCreatedAt',
+      'mcpShareRevokedAt',
+      'mcpShareLastGeneratedAt',
+    ].join(' ')
+  );
+
+  if (!user) return null;
+  if (!(user.mcpShareEnabled && user.mcpShareToken)) return user;
+
+  const latestRoot = await findLatestContextRootForUser(userId);
+  if (!latestRoot?.aiContext?.encodedPayload) return user;
+
+  const provider = normalizeProvider(preferredProvider || user.mcpShareProvider || 'chatgpt');
+  const shareToken = safeStr(user.mcpShareToken).trim();
+  const shortUrl = buildShortShareUrl(shareToken);
+  const snapshotId = safeStr(latestRoot?.aiContext?.snapshotId || latestRoot?.latestSnapshotId).trim() || null;
+  const version = getVersionSeedFromRoot(latestRoot);
+  const versionedUrl = buildVersionedShareUrl(shareToken, provider, version);
+
+  user.mcpShareProvider = provider;
+  user.mcpShareShortUrl = shortUrl;
+  user.mcpShareVersionedUrl = versionedUrl;
+  user.mcpShareVersion = version;
+  user.mcpShareSnapshotId = snapshotId;
+  user.mcpShareLastGeneratedAt = nowDate();
+  user.mcpShareRevokedAt = null;
+
+  await user.save();
+  return user;
+}
+
 async function findUserShareState(userId) {
   if (!userId) return null;
 
   return await User.findById(userId)
     .select(
-      'mcpShareToken mcpShareEnabled mcpShareProvider mcpShareCreatedAt mcpShareRevokedAt mcpShareLastGeneratedAt'
+      [
+        'mcpShareToken',
+        'mcpShareEnabled',
+        'mcpShareProvider',
+        'mcpShareShortUrl',
+        'mcpShareVersionedUrl',
+        'mcpShareVersion',
+        'mcpShareSnapshotId',
+        'mcpShareCreatedAt',
+        'mcpShareRevokedAt',
+        'mcpShareLastGeneratedAt',
+      ].join(' ')
     )
     .lean();
 }
@@ -97,7 +170,19 @@ async function findUserByShareToken(token) {
     mcpShareToken: cleanToken,
     mcpShareEnabled: true,
   }).select(
-    '_id mcpShareToken mcpShareEnabled mcpShareProvider mcpShareCreatedAt mcpShareRevokedAt mcpShareLastGeneratedAt'
+    [
+      '_id',
+      'mcpShareToken',
+      'mcpShareEnabled',
+      'mcpShareProvider',
+      'mcpShareShortUrl',
+      'mcpShareVersionedUrl',
+      'mcpShareVersion',
+      'mcpShareSnapshotId',
+      'mcpShareCreatedAt',
+      'mcpShareRevokedAt',
+      'mcpShareLastGeneratedAt',
+    ].join(' ')
   );
 }
 
@@ -106,6 +191,12 @@ function buildStatusResponse(root, shareState = null) {
   const shareEnabled = !!(shareState?.mcpShareEnabled && shareState?.mcpShareToken);
   const shareToken = shareEnabled ? shareState?.mcpShareToken || null : null;
   const shareProvider = normalizeProvider(shareState?.mcpShareProvider || 'chatgpt');
+  const shareShortUrl = shareEnabled
+    ? safeStr(shareState?.mcpShareShortUrl).trim() || buildShortShareUrl(shareToken)
+    : null;
+  const shareVersionedUrl = shareEnabled
+    ? safeStr(shareState?.mcpShareVersionedUrl).trim() || null
+    : null;
 
   return {
     ok: true,
@@ -128,11 +219,14 @@ function buildStatusResponse(root, shareState = null) {
       usableSources: Array.isArray(state?.usableSources) ? state.usableSources : [],
       pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
       hasShareLink: shareEnabled,
-      shareUrl: shareEnabled ? buildShortShareUrl(shareToken) : null,
-      shareShortUrl: shareEnabled ? buildShortShareUrl(shareToken) : null,
+      shareUrl: shareShortUrl,
+      shareShortUrl,
       shareApiUrl: shareEnabled ? buildApiShareUrl(shareToken, shareProvider) : null,
+      shareVersionedUrl,
       shareToken,
       shareProvider,
+      shareVersion: shareState?.mcpShareVersion || null,
+      shareSnapshotId: shareState?.mcpShareSnapshotId || null,
       shareCreatedAt: shareState?.mcpShareCreatedAt || null,
       shareRevokedAt: shareState?.mcpShareRevokedAt || null,
     },
@@ -187,6 +281,12 @@ router.post('/build', async (req, res) => {
       explicitSnapshotId: safeStr(req.body?.snapshotId) || null,
       contextRangeDays: req.body?.contextRangeDays || null,
     });
+
+    try {
+      await syncUserVersionedLink(userId, req.body?.provider || null);
+    } catch (syncErr) {
+      console.error('[mcp/context/build] syncUserVersionedLink warning:', syncErr);
+    }
 
     return res.json({
       ok: true,
@@ -250,7 +350,9 @@ router.get('/status', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
 
-    const shareState = await findUserShareState(userId);
+    const shareState = await syncUserVersionedLink(userId).catch(async () => {
+      return await findUserShareState(userId);
+    });
 
     setNoCacheHeaders(res);
     return res.json(buildStatusResponse(root, shareState));
@@ -336,7 +438,18 @@ router.post('/link', async (req, res) => {
     }
 
     const user = await User.findById(userId).select(
-      'mcpShareToken mcpShareEnabled mcpShareProvider mcpShareCreatedAt mcpShareRevokedAt mcpShareLastGeneratedAt'
+      [
+        'mcpShareToken',
+        'mcpShareEnabled',
+        'mcpShareProvider',
+        'mcpShareShortUrl',
+        'mcpShareVersionedUrl',
+        'mcpShareVersion',
+        'mcpShareSnapshotId',
+        'mcpShareCreatedAt',
+        'mcpShareRevokedAt',
+        'mcpShareLastGeneratedAt',
+      ].join(' ')
     );
 
     if (!user) {
@@ -350,15 +463,23 @@ router.post('/link', async (req, res) => {
       shareToken = makeShortShareToken();
     }
 
+    const shortUrl = buildShortShareUrl(shareToken);
+    const version = getVersionSeedFromRoot(latestContextRoot);
+    const snapshotId = safeStr(latestContextRoot?.aiContext?.snapshotId || latestContextRoot?.latestSnapshotId).trim() || null;
+    const versionedUrl = buildVersionedShareUrl(shareToken, provider, version);
+
     user.mcpShareToken = shareToken;
     user.mcpShareEnabled = true;
     user.mcpShareProvider = provider;
+    user.mcpShareShortUrl = shortUrl;
+    user.mcpShareVersionedUrl = versionedUrl;
+    user.mcpShareVersion = version;
+    user.mcpShareSnapshotId = snapshotId;
     user.mcpShareCreatedAt = alreadyActive ? (user.mcpShareCreatedAt || nowDate()) : nowDate();
     user.mcpShareLastGeneratedAt = nowDate();
     user.mcpShareRevokedAt = null;
     await user.save();
 
-    const shareShortUrl = buildShortShareUrl(shareToken);
     const shareApiUrl = buildApiShareUrl(shareToken, provider);
 
     return res.json({
@@ -366,9 +487,12 @@ router.post('/link', async (req, res) => {
       data: {
         provider,
         shareToken,
-        shareUrl: shareShortUrl,
-        shareShortUrl,
+        shareUrl: shortUrl,
+        shareShortUrl: shortUrl,
         shareApiUrl,
+        shareVersionedUrl: versionedUrl,
+        shareVersion: version,
+        shareSnapshotId: snapshotId,
         enabled: true,
         created: !alreadyActive,
       },
@@ -389,9 +513,22 @@ router.get('/link', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const user = await User.findById(userId).select(
-      'mcpShareToken mcpShareEnabled mcpShareProvider mcpShareCreatedAt mcpShareRevokedAt mcpShareLastGeneratedAt'
-    );
+    const user = await syncUserVersionedLink(userId).catch(async () => {
+      return await User.findById(userId).select(
+        [
+          'mcpShareToken',
+          'mcpShareEnabled',
+          'mcpShareProvider',
+          'mcpShareShortUrl',
+          'mcpShareVersionedUrl',
+          'mcpShareVersion',
+          'mcpShareSnapshotId',
+          'mcpShareCreatedAt',
+          'mcpShareRevokedAt',
+          'mcpShareLastGeneratedAt',
+        ].join(' ')
+      );
+    });
 
     if (!user) {
       return res.status(404).json({ ok: false, error: 'USER_NOT_FOUND' });
@@ -400,6 +537,12 @@ router.get('/link', async (req, res) => {
     const enabled = !!(user.mcpShareEnabled && user.mcpShareToken);
     const shareToken = enabled ? user.mcpShareToken : null;
     const provider = normalizeProvider(user.mcpShareProvider || 'chatgpt');
+    const shortUrl = enabled
+      ? safeStr(user.mcpShareShortUrl).trim() || buildShortShareUrl(shareToken)
+      : null;
+    const versionedUrl = enabled
+      ? safeStr(user.mcpShareVersionedUrl).trim() || null
+      : null;
 
     setNoCacheHeaders(res);
     return res.json({
@@ -407,9 +550,12 @@ router.get('/link', async (req, res) => {
       data: {
         enabled,
         shareToken,
-        shareUrl: enabled ? buildShortShareUrl(shareToken) : null,
-        shareShortUrl: enabled ? buildShortShareUrl(shareToken) : null,
+        shareUrl: shortUrl,
+        shareShortUrl: shortUrl,
         shareApiUrl: enabled ? buildApiShareUrl(shareToken, provider) : null,
+        shareVersionedUrl: versionedUrl,
+        shareVersion: user.mcpShareVersion || null,
+        shareSnapshotId: user.mcpShareSnapshotId || null,
         provider,
         createdAt: user.mcpShareCreatedAt || null,
         lastGeneratedAt: user.mcpShareLastGeneratedAt || null,
@@ -434,7 +580,18 @@ router.delete('/link', async (req, res) => {
     }
 
     const user = await User.findById(userId).select(
-      'mcpShareToken mcpShareEnabled mcpShareProvider mcpShareCreatedAt mcpShareRevokedAt mcpShareLastGeneratedAt'
+      [
+        'mcpShareToken',
+        'mcpShareEnabled',
+        'mcpShareProvider',
+        'mcpShareShortUrl',
+        'mcpShareVersionedUrl',
+        'mcpShareVersion',
+        'mcpShareSnapshotId',
+        'mcpShareCreatedAt',
+        'mcpShareRevokedAt',
+        'mcpShareLastGeneratedAt',
+      ].join(' ')
     );
 
     if (!user) {
@@ -445,6 +602,10 @@ router.delete('/link', async (req, res) => {
 
     user.mcpShareEnabled = false;
     user.mcpShareToken = null;
+    user.mcpShareShortUrl = null;
+    user.mcpShareVersionedUrl = null;
+    user.mcpShareVersion = null;
+    user.mcpShareSnapshotId = null;
     user.mcpShareRevokedAt = nowDate();
     await user.save();
 
@@ -474,7 +635,18 @@ router.post('/link/revoke', async (req, res) => {
     }
 
     const user = await User.findById(userId).select(
-      'mcpShareToken mcpShareEnabled mcpShareProvider mcpShareCreatedAt mcpShareRevokedAt mcpShareLastGeneratedAt'
+      [
+        'mcpShareToken',
+        'mcpShareEnabled',
+        'mcpShareProvider',
+        'mcpShareShortUrl',
+        'mcpShareVersionedUrl',
+        'mcpShareVersion',
+        'mcpShareSnapshotId',
+        'mcpShareCreatedAt',
+        'mcpShareRevokedAt',
+        'mcpShareLastGeneratedAt',
+      ].join(' ')
     );
 
     if (!user) {
@@ -485,6 +657,10 @@ router.post('/link/revoke', async (req, res) => {
 
     user.mcpShareEnabled = false;
     user.mcpShareToken = null;
+    user.mcpShareShortUrl = null;
+    user.mcpShareVersionedUrl = null;
+    user.mcpShareVersion = null;
+    user.mcpShareSnapshotId = null;
     user.mcpShareRevokedAt = nowDate();
     await user.save();
 
@@ -528,6 +704,12 @@ router.get('/shared/:token', async (req, res) => {
     const state = root?.aiContext || {};
     if (!state?.encodedPayload) {
       return res.status(404).json({ ok: false, error: 'SHARED_CONTEXT_NOT_READY' });
+    }
+
+    try {
+      await syncUserVersionedLink(user._id, provider);
+    } catch (syncErr) {
+      console.error('[mcp/context/shared] syncUserVersionedLink warning:', syncErr);
     }
 
     setNoCacheHeaders(res);
