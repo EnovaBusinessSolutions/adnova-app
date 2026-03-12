@@ -27,6 +27,12 @@ Build and run a platform-agnostic attribution pipeline for Shopify, WooCommerce,
 
 ## Current Status
 
+### Frontend note
+
+- The public analytics page at `public/adray-analytics.html` must avoid CSS class names that look like ad containers such as `ad-panel`, `ad-control`, or similar.
+- Brave Shields can apply cosmetic filtering after first paint and hide those elements even when the DOM and data are correct.
+- Neutral naming like `ops-panel` and `ops-control` is the current safe convention for public analytics UI blocks.
+
 ### Working now
 
 - Universal pixel is live and loadable cross-origin from the AdRay server.

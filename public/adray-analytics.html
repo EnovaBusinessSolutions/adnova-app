@@ -107,6 +107,113 @@
             color: var(--dash-soft) !important;
         }
 
+        .session-toolbar-btn,
+        .session-close-btn,
+        .session-compare-trigger,
+        .session-clear-btn,
+        .session-filter-select,
+        .session-peer-pill,
+        .session-compare-pill {
+            border: 1px solid rgba(202, 138, 229, 0.18) !important;
+            background: rgba(225, 216, 243, 0.06) !important;
+            color: var(--dash-text) !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+        }
+
+        .session-toolbar-btn:hover,
+        .session-close-btn:hover,
+        .session-clear-btn:hover,
+        .session-peer-pill:hover,
+        .session-compare-pill:hover {
+            background: rgba(225, 216, 243, 0.1) !important;
+            border-color: rgba(202, 138, 229, 0.32) !important;
+        }
+
+        .session-compare-trigger {
+            background: linear-gradient(135deg, rgba(202, 138, 229, 0.18) 0%, rgba(126, 240, 200, 0.08) 100%) !important;
+            color: var(--dash-accent) !important;
+        }
+
+        .session-compare-trigger:hover {
+            background: linear-gradient(135deg, rgba(202, 138, 229, 0.24) 0%, rgba(126, 240, 200, 0.14) 100%) !important;
+        }
+
+        .session-summary-card,
+        .session-visual-card,
+        .session-pattern-card,
+        .session-compare-panel,
+        .session-metric-card,
+        .session-order-card,
+        .session-pattern-item,
+        .session-side-card,
+        .session-timeline-item {
+            background: linear-gradient(180deg, rgba(30, 20, 47, 0.96) 0%, rgba(16, 10, 25, 0.94) 100%) !important;
+            border: 1px solid rgba(202, 138, 229, 0.16) !important;
+            box-shadow: 0 18px 48px rgba(0, 0, 0, 0.24) !important;
+        }
+
+        .session-visual-card {
+            background: linear-gradient(135deg, rgba(52, 28, 90, 0.92) 0%, rgba(14, 26, 49, 0.9) 100%) !important;
+        }
+
+        .session-pattern-card,
+        .session-pattern-item {
+            background: linear-gradient(135deg, rgba(68, 35, 25, 0.92) 0%, rgba(19, 32, 27, 0.9) 100%) !important;
+        }
+
+        .session-peer-pill.is-current {
+            background: linear-gradient(135deg, rgba(202, 138, 229, 0.84) 0%, rgba(181, 92, 255, 0.88) 100%) !important;
+            border-color: rgba(202, 138, 229, 0.65) !important;
+            color: #120a1f !important;
+        }
+
+        .session-peer-pill.is-current span {
+            color: inherit !important;
+        }
+
+        .session-compare-pill {
+            border-radius: 999px;
+        }
+
+        .session-metric-card-value {
+            color: var(--dash-text) !important;
+        }
+
+        .session-meta-copy {
+            color: var(--dash-soft) !important;
+        }
+
+        .session-accent-copy,
+        .session-accent-copy p {
+            color: var(--dash-accent) !important;
+        }
+
+        .session-positive-copy,
+        .session-positive-copy p {
+            color: var(--dash-success) !important;
+        }
+
+        .session-warning-copy,
+        .session-warning-copy p {
+            color: var(--dash-warning) !important;
+        }
+
+        .session-flow-step:not(:last-child)::after {
+            background: linear-gradient(90deg, rgba(202, 138, 229, 0.85) 0%, rgba(126, 240, 200, 0.72) 100%);
+        }
+
+        .pattern-rate-bar {
+            background: rgba(225, 216, 243, 0.12) !important;
+        }
+
+        .session-compare-current-bar {
+            background: linear-gradient(90deg, rgba(202, 138, 229, 0.92) 0%, rgba(181, 92, 255, 0.85) 100%) !important;
+        }
+
+        .session-compare-peer-bar {
+            background: linear-gradient(90deg, rgba(124, 168, 255, 0.88) 0%, rgba(164, 139, 190, 0.78) 100%) !important;
+        }
+
         .dashboard-title,
         .panel-title,
         .brand-mark {
@@ -1071,7 +1178,7 @@
                     </div>
                     <div class="flex items-center gap-3">
                         <span class="text-xs text-gray-500">Panel persistente para seguir analizando la sesión mientras navegas el dashboard</span>
-                        <button id="session-detail-close" type="button" class="inline-flex items-center justify-center w-10 h-10 rounded-full border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">
+                        <button id="session-detail-close" type="button" class="session-close-btn inline-flex items-center justify-center w-10 h-10 rounded-full text-gray-700 hover:bg-gray-50">
                             <i class="fas fa-times"></i>
                         </button>
                     </div>
@@ -1079,19 +1186,19 @@
                 <div class="p-6 space-y-6">
                     <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
                         <div class="flex items-center gap-2 flex-wrap">
-                            <button id="session-peer-prev" type="button" class="inline-flex items-center px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <button id="session-peer-prev" type="button" class="session-toolbar-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
                                 <i class="fas fa-chevron-left mr-2"></i> Sesión previa
                             </button>
-                            <button id="session-peer-next" type="button" class="inline-flex items-center px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <button id="session-peer-next" type="button" class="session-toolbar-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
                                 Siguiente sesión <i class="fas fa-chevron-right ml-2"></i>
                             </button>
-                            <button id="session-compare-recommended" type="button" class="hidden inline-flex items-center px-3 py-2 rounded-lg border border-indigo-200 bg-indigo-50 text-sm text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed">
+                            <button id="session-compare-recommended" type="button" class="session-compare-trigger hidden inline-flex items-center px-3 py-2 rounded-lg text-sm text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed">
                                 <i class="fas fa-sparkles mr-2"></i> Comparación sugerida
                             </button>
                         </div>
                         <div class="flex items-center gap-2 flex-wrap">
                             <label for="session-timeline-filter" class="text-xs uppercase tracking-wide text-gray-500">Timeline</label>
-                            <select id="session-timeline-filter" class="text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white">
+                            <select id="session-timeline-filter" class="session-filter-select text-sm rounded-lg px-3 py-2 bg-white">
                                 <option value="all">Todos</option>
                                 <option value="funnel">Funnel</option>
                                 <option value="commerce">Commerce</option>
@@ -1104,13 +1211,13 @@
                         <div id="session-peer-list" class="flex flex-wrap gap-2"></div>
                         <p id="session-compare-recommended-note" class="mt-2 text-xs text-gray-500"></p>
                     </div>
-                    <div id="session-compare-panel" class="hidden bg-gradient-to-br from-slate-50 via-white to-indigo-50 border border-slate-200 rounded-2xl p-5">
+                    <div id="session-compare-panel" class="session-compare-panel hidden rounded-2xl p-5">
                         <div class="flex items-center justify-between gap-4 flex-wrap mb-4">
                             <div>
                                 <h4 class="text-sm font-semibold text-gray-900">Comparación lado a lado</h4>
                                 <p class="text-xs text-gray-500" id="session-compare-title">Selecciona una sesión relacionada para comparar.</p>
                             </div>
-                            <button id="session-compare-clear" type="button" class="inline-flex items-center px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50">
+                            <button id="session-compare-clear" type="button" class="session-clear-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
                                 Limpiar comparación
                             </button>
                         </div>
@@ -1118,36 +1225,36 @@
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-4 gap-4" id="session-detail-metrics"></div>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <div class="bg-gray-50 rounded-xl p-4">
+                        <div class="session-summary-card rounded-xl p-4">
                             <h4 class="text-sm font-semibold text-gray-900 mb-3">Resumen</h4>
                             <div class="space-y-2 text-sm text-gray-600" id="session-detail-summary"></div>
                         </div>
-                        <div class="bg-gray-50 rounded-xl p-4">
+                        <div class="session-summary-card rounded-xl p-4">
                             <h4 class="text-sm font-semibold text-gray-900 mb-3">Órdenes ligadas</h4>
                             <div class="space-y-2 text-sm text-gray-600" id="session-detail-orders"></div>
                         </div>
                     </div>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <div class="bg-gray-50 rounded-xl p-4">
+                        <div class="session-summary-card rounded-xl p-4">
                             <h4 class="text-sm font-semibold text-gray-900 mb-3">Atribución y señales</h4>
                             <div class="space-y-2 text-sm text-gray-600" id="session-detail-attribution"></div>
                         </div>
-                        <div class="bg-gray-50 rounded-xl p-4">
+                        <div class="session-summary-card rounded-xl p-4">
                             <h4 class="text-sm font-semibold text-gray-900 mb-3">Path y productos</h4>
                             <div class="space-y-3 text-sm text-gray-600" id="session-detail-journey"></div>
                         </div>
                     </div>
                     <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                        <div class="bg-gradient-to-br from-indigo-50 via-white to-cyan-50 rounded-xl p-4 border border-indigo-100">
+                        <div class="session-visual-card rounded-xl p-4">
                             <h4 class="text-sm font-semibold text-gray-900 mb-3">Mapa visual de la sesión</h4>
                             <div id="session-detail-visual" class="flex flex-wrap gap-6 items-start"></div>
                         </div>
-                        <div class="bg-gradient-to-br from-amber-50 via-white to-emerald-50 rounded-xl p-4 border border-amber-100">
+                        <div class="session-pattern-card rounded-xl p-4">
                             <h4 class="text-sm font-semibold text-gray-900 mb-3">Patrones y próximos pasos</h4>
                             <div class="space-y-4" id="session-detail-patterns"></div>
                         </div>
                     </div>
-                    <div class="bg-gray-50 rounded-xl p-4">
+                    <div class="session-summary-card rounded-xl p-4">
                         <h4 class="text-sm font-semibold text-gray-900 mb-3">Timeline de eventos</h4>
                         <div class="space-y-3" id="session-detail-timeline"></div>
                     </div>
@@ -1446,9 +1553,9 @@
                 { label: 'Productos únicos', value: metrics.uniqueProducts || 0 },
                 { label: 'Órdenes', value: metrics.orderCount || 0 },
             ].map((item) => `
-                <div class="bg-gray-50 rounded-xl p-4">
+                <div class="session-metric-card rounded-xl p-4">
                     <div class="text-xs uppercase tracking-wide text-gray-500">${item.label}</div>
-                    <div class="mt-2 text-2xl font-semibold text-gray-900">${item.value}</div>
+                    <div class="session-metric-card-value mt-2 text-2xl font-semibold text-gray-900">${item.value}</div>
                 </div>
             `).join('');
 
@@ -1503,7 +1610,7 @@
 
             document.getElementById('session-detail-orders').innerHTML = orders.length
                 ? orders.map((order) => `
-                    <div class="border border-gray-200 rounded-lg p-3 bg-white">
+                    <div class="session-order-card rounded-lg p-3">
                         <p class="font-medium text-gray-900">${order.orderNumber || order.orderId || '-'}</p>
                         <p class="text-sm text-gray-500">${formatCurrencyWithCode(order.revenue || 0, order.currency || 'MXN')} · ${order.attributedChannel || 'unattributed'}</p>
                     </div>
@@ -1519,7 +1626,7 @@
             const recommendedSessionId = patterns?.recommendedComparison?.sessionId || '';
 
             const currentChip = currentSessionId ? `
-                <button type="button" class="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-indigo-600 text-white text-sm shadow-sm">
+                <button type="button" class="session-peer-pill is-current inline-flex items-center gap-2 px-3 py-2 rounded-full text-sm shadow-sm">
                     <span>Actual</span>
                     <span class="font-semibold">${currentSessionId}</span>
                 </button>
@@ -1538,13 +1645,13 @@
                 if (peer.flags?.purchased) badges.push('BUY');
                 if (peer.sessionId === recommendedSessionId) badges.unshift('Sugerida');
                 return `
-                    <div class="inline-flex items-center gap-2 px-3 py-2 rounded-full border border-gray-300 bg-white text-sm text-gray-700">
+                    <div class="session-peer-pill inline-flex items-center gap-2 px-3 py-2 rounded-full text-sm text-gray-700">
                         <button type="button" data-session-id="${peer.sessionId}" class="session-peer-chip inline-flex items-center gap-2 hover:text-indigo-700">
                             <span class="font-semibold">${peer.sessionId}</span>
                             <span class="text-xs text-gray-500">${formatDateTimeMx(peer.startedAt)}</span>
                             <span class="text-xs text-gray-400">${badges.join(' · ') || 'Navegación'}</span>
                         </button>
-                        <button type="button" data-compare-session-id="${peer.sessionId}" class="session-compare-chip inline-flex items-center px-2 py-1 rounded-full bg-slate-100 text-xs text-slate-700 hover:bg-slate-200">
+                        <button type="button" data-compare-session-id="${peer.sessionId}" class="session-compare-pill session-compare-chip inline-flex items-center px-2 py-1 text-xs text-slate-700 hover:bg-slate-200">
                             Comparar
                         </button>
                     </div>
@@ -1630,7 +1737,7 @@
 
             container.innerHTML = filteredTimeline.length
                 ? filteredTimeline.map((event) => `
-                    <div class="border border-gray-200 rounded-lg p-3 bg-white">
+                    <div class="session-timeline-item rounded-lg p-3">
                         <div class="flex items-center justify-between gap-4">
                             <div>
                                 <p class="font-medium text-gray-900">${event.eventName}</p>
@@ -1718,7 +1825,7 @@
                         const delta = row.current - row.compare;
                         const deltaText = delta === 0 ? 'igual' : delta > 0 ? `+${delta}` : `${delta}`;
                         return `
-                            <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                            <div class="session-metric-card rounded-xl p-4">
                                 <p class="text-xs uppercase tracking-wide text-gray-500">${row.label}</p>
                                 <div class="mt-2 flex items-end justify-between gap-4">
                                     <div>
@@ -1730,7 +1837,7 @@
                                         <p class="text-xs text-gray-500">Comparada</p>
                                     </div>
                                 </div>
-                                <p class="mt-2 text-xs ${delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-amber-600' : 'text-gray-500'}">Delta: ${deltaText}</p>
+                                <p class="mt-2 text-xs ${delta > 0 ? 'session-positive-copy' : delta < 0 ? 'session-warning-copy' : 'session-meta-copy'}">Delta: ${deltaText}</p>
                             </div>
                         `;
                     }).join('')}
@@ -1755,7 +1862,7 @@
             ];
 
             return `
-                <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                <div class="session-summary-card rounded-xl p-4">
                     <p class="text-sm font-semibold text-gray-900 mb-3">Funnel comparado</p>
                     <div class="space-y-3">
                         ${steps.map((step) => {
@@ -1767,8 +1874,8 @@
                                         <span>Actual ${step.current} / Comparada ${step.compare}</span>
                                     </div>
                                     <div class="space-y-1">
-                                        <div class="h-2 rounded-full bg-indigo-100 overflow-hidden"><span class="block h-full bg-indigo-600" style="width:${Math.round((step.current / maxValue) * 100)}%"></span></div>
-                                        <div class="h-2 rounded-full bg-slate-100 overflow-hidden"><span class="block h-full bg-slate-500" style="width:${Math.round((step.compare / maxValue) * 100)}%"></span></div>
+                                        <div class="pattern-rate-bar h-2 rounded-full overflow-hidden"><span class="session-compare-current-bar block h-full" style="width:${Math.round((step.current / maxValue) * 100)}%"></span></div>
+                                        <div class="pattern-rate-bar h-2 rounded-full overflow-hidden"><span class="session-compare-peer-bar block h-full" style="width:${Math.round((step.compare / maxValue) * 100)}%"></span></div>
                                     </div>
                                 </div>
                             `;
@@ -1800,7 +1907,7 @@
             }
 
             return `
-                <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                <div class="session-summary-card rounded-xl p-4">
                     <p class="text-sm font-semibold text-gray-900 mb-3">Lectura rápida</p>
                     <div class="space-y-2 text-sm text-gray-700">
                         ${insights.map((item) => `<p>${item}</p>`).join('')}
@@ -1849,11 +1956,11 @@
 
             const cardsHtml = cards.length
                 ? cards.map((card) => `
-                    <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                    <div class="session-pattern-item rounded-xl p-4">
                         <p class="text-sm font-semibold text-gray-900">${card.title || '-'}</p>
                         <p class="mt-1 text-sm text-gray-600">${card.detail || '-'}</p>
-                        <p class="mt-2 text-xs font-medium text-emerald-700 uppercase tracking-wide">Aplicación sugerida</p>
-                        <p class="text-sm text-emerald-700">${card.action || '-'}</p>
+                        <p class="session-positive-copy mt-2 text-xs font-medium uppercase tracking-wide">Aplicación sugerida</p>
+                        <p class="session-positive-copy text-sm">${card.action || '-'}</p>
                     </div>
                 `).join('')
                 : '<p class="text-sm text-gray-500">Sin patrones suficientes todavía.</p>';
@@ -1864,11 +1971,11 @@
                         <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Lectura longitudinal</p>
                         <div class="space-y-3">
                             ${longitudinalCards.map((card) => `
-                                <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                                <div class="session-side-card rounded-xl p-4">
                                     <p class="text-sm font-semibold text-gray-900">${card.title || '-'}</p>
                                     <p class="mt-1 text-sm text-gray-600">${card.detail || '-'}</p>
-                                    <p class="mt-2 text-xs font-medium text-sky-700 uppercase tracking-wide">Cómo usarlo</p>
-                                    <p class="text-sm text-sky-700">${card.action || '-'}</p>
+                                    <p class="session-accent-copy mt-2 text-xs font-medium uppercase tracking-wide">Cómo usarlo</p>
+                                    <p class="session-accent-copy text-sm">${card.action || '-'}</p>
                                 </div>
                             `).join('')}
                         </div>
@@ -1878,7 +1985,7 @@
 
             const sideNotes = `
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                    <div class="session-side-card rounded-xl p-4">
                         <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Landings recurrentes</p>
                         <div class="mt-2 space-y-1 text-sm text-gray-600">
                             ${topLandingPages.length
@@ -1886,7 +1993,7 @@
                                 : '<p>Sin suficiente historial.</p>'}
                         </div>
                     </div>
-                    <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                    <div class="session-side-card rounded-xl p-4">
                         <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Campañas frecuentes</p>
                         <div class="mt-2 space-y-1 text-sm text-gray-600">
                             ${topCampaigns.length
