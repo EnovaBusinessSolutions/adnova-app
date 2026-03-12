@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.1.0
+ * Version: 1.1.1
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.1.0';
+    const VERSION = '1.1.1';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_BACKFILL_DONE = 'adnova_pixel_backfill_done';
@@ -41,6 +41,7 @@ final class Adnova_Pixel_Plugin {
         // Fallback for custom checkout flows/themes where woocommerce_thankyou is bypassed.
         add_action('wp_footer', array(__CLASS__, 'maybe_track_woo_order_received_fallback'), 1000);
         add_action('adnova_pixel_backfill_orders', array(__CLASS__, 'backfill_recent_orders'));
+        self::maybe_schedule_backfill();
     }
 
     public static function on_activate() {
@@ -59,6 +60,21 @@ final class Adnova_Pixel_Plugin {
         }
 
         delete_site_transient('update_plugins');
+    }
+
+    private static function maybe_schedule_backfill() {
+        if (!function_exists('wc_get_orders')) {
+            return;
+        }
+
+        $done_version = get_option(self::OPTION_BACKFILL_DONE, '');
+        if ($done_version === self::VERSION) {
+            return;
+        }
+
+        if (!wp_next_scheduled('adnova_pixel_backfill_orders')) {
+            wp_schedule_single_event(time() + 30, 'adnova_pixel_backfill_orders');
+        }
     }
 
     private static function get_plugin_basename() {
