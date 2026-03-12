@@ -46,16 +46,28 @@ function buildShortShareUrl(token) {
   return `${APP_URL}/s/${encodeURIComponent(token)}`;
 }
 
-async function findRootByShareToken(token) {
-  if (!token) return null;
+/**
+ * Busca el owner del token y luego devuelve el latest root real del usuario.
+ * Esto garantiza que el mismo link corto siempre sirva el contexto universal más reciente.
+ */
+async function findLatestRootByShareToken(token) {
+  const cleanToken = safeStr(token).trim();
+  if (!cleanToken) return null;
 
-  return McpData.findOne({
+  const ownerRoot = await McpData.findOne({
     kind: 'root',
-    'aiContext.shareToken': token,
+    'aiContext.shareToken': cleanToken,
     'aiContext.shareEnabled': true,
   })
     .sort({ updatedAt: -1, createdAt: -1, _id: -1 })
     .lean();
+
+  if (!ownerRoot?.userId) return null;
+
+  const latestRoot = await findRoot(ownerRoot.userId);
+  if (!latestRoot) return null;
+
+  return latestRoot;
 }
 
 async function clearDuplicateShareTokensForUser(userId, keepRootId, token) {
@@ -532,7 +544,7 @@ router.post('/link/revoke', async (req, res) => {
 
 /**
  * GET /api/mcp/context/shared/:token
- * Siempre devuelve el contexto universal más reciente del usuario dueño de ese token.
+ * Devuelve SIEMPRE el contexto universal más reciente del usuario dueño de ese token.
  */
 router.get('/shared/:token', async (req, res) => {
   try {
@@ -547,7 +559,7 @@ router.get('/shared/:token', async (req, res) => {
         ? providerRaw
         : 'chatgpt';
 
-    const root = await findRootByShareToken(token);
+    const root = await findLatestRootByShareToken(token);
     if (!root) {
       return res.status(404).json({ ok: false, error: 'SHARED_CONTEXT_NOT_FOUND' });
     }
