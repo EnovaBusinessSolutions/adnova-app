@@ -29,7 +29,7 @@ router.get('/adnova-pixel/update.json', (_req, res) => {
     slug: 'adnova-pixel',
     version,
     homepage: 'https://adray-app-staging-german.onrender.com',
-    download_url: `https://adray-app-staging-german.onrender.com/wp-plugin/adnova-pixel/download?v=${version}`,
+    download_url: `https://adray-app-staging-german.onrender.com/wp-plugin/adnova-pixel/download/adnova-pixel.zip?v=${version}`,
     requires: '6.0',
     tested: '6.7',
     requires_php: '7.4',
@@ -43,6 +43,15 @@ router.get('/adnova-pixel/update.json', (_req, res) => {
   });
 });
 
+router.get('/adnova-pixel/download/adnova-pixel.zip', (_req, res) => {
+  if (!fs.existsSync(pluginZipFile)) {
+    return res.status(404).json({ error: 'Plugin ZIP not found' });
+  }
+
+  return res.download(pluginZipFile, 'adnova-pixel.zip');
+});
+
+// Alias for backward compatibility
 router.get('/adnova-pixel/download', (_req, res) => {
   if (!fs.existsSync(pluginZipFile)) {
     return res.status(404).json({ error: 'Plugin ZIP not found' });
