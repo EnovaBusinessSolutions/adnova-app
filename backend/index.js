@@ -1468,7 +1468,7 @@ app.get("/plans/cancel", (_req, res) => {
 /* =========================
  * Short public MCP links
  * ========================= */
-app.get("/s/:token", (req, res) => {
+app.get("/s/:token", async (req, res) => {
   try {
     res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0");
     res.set("Pragma", "no-cache");
@@ -1487,10 +1487,44 @@ app.get("/s/:token", (req, res) => {
         ? providerRaw
         : "chatgpt";
 
-    const target = new URL(`/api/mcp/context/shared/${encodeURIComponent(token)}`, APP_URL);
-    target.searchParams.set("provider", provider);
+    const user = await User.findOne({
+      mcpShareToken: token,
+      mcpShareEnabled: true,
+    }).select(
+      [
+        "mcpShareToken",
+        "mcpShareEnabled",
+        "mcpShareProvider",
+        "mcpShareVersionedUrl",
+        "mcpShareShortUrl",
+      ].join(" ")
+    ).lean();
 
-    return res.redirect(302, target.toString());
+    if (!user) {
+      return res.status(404).type("text/plain").send("Short link not found");
+    }
+
+    const storedVersionedUrl = String(user?.mcpShareVersionedUrl || "").trim();
+    if (storedVersionedUrl) {
+      try {
+        const target = new URL(storedVersionedUrl);
+
+        if (!target.searchParams.get("provider")) {
+          target.searchParams.set("provider", provider);
+        } else if (provider && target.searchParams.get("provider") !== provider) {
+          target.searchParams.set("provider", provider);
+        }
+
+        return res.redirect(302, target.toString());
+      } catch (e) {
+        console.error("[short-mcp-link] invalid stored versioned url:", e);
+      }
+    }
+
+    const fallback = new URL(`/api/mcp/context/shared/${encodeURIComponent(token)}`, APP_URL);
+    fallback.searchParams.set("provider", provider);
+
+    return res.redirect(302, fallback.toString());
   } catch (err) {
     console.error("[short-mcp-link] error:", err);
     return res.status(500).type("text/plain").send("Short link failed");
