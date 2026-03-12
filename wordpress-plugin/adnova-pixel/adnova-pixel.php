@@ -246,6 +246,42 @@ final class Adnova_Pixel_Plugin {
         return $subtotal;
     }
 
+    private static function get_order_customer_identity($order) {
+        if (!$order) {
+            return array(
+                'customer_name' => null,
+                'customer_first_name' => null,
+                'customer_last_name' => null,
+                'billing_company' => null,
+            );
+        }
+
+        $first_name = sanitize_text_field((string) $order->get_billing_first_name());
+        $last_name = sanitize_text_field((string) $order->get_billing_last_name());
+        $company = sanitize_text_field((string) $order->get_billing_company());
+
+        if ($first_name === '' && $last_name === '') {
+            $first_name = sanitize_text_field((string) $order->get_shipping_first_name());
+            $last_name = sanitize_text_field((string) $order->get_shipping_last_name());
+        }
+
+        if ($company === '') {
+            $company = sanitize_text_field((string) $order->get_shipping_company());
+        }
+
+        $customer_name = trim($first_name . ' ' . $last_name);
+        if ($customer_name === '') {
+            $customer_name = $company;
+        }
+
+        return array(
+            'customer_name' => $customer_name !== '' ? $customer_name : null,
+            'customer_first_name' => $first_name !== '' ? $first_name : null,
+            'customer_last_name' => $last_name !== '' ? $last_name : null,
+            'billing_company' => $company !== '' ? $company : null,
+        );
+    }
+
     private static function get_order_attribution_data($order) {
         if (!$order) {
             return array();
@@ -496,12 +532,18 @@ final class Adnova_Pixel_Plugin {
             );
         }
 
+        $customer_identity = self::get_order_customer_identity($order);
+
         $payload = array(
             'account_id' => self::get_site_id(),
             'order_id' => $order_data['order_id'],
             'order_number' => (string) $order->get_order_number(),
             'checkout_token' => isset($order_data['checkout_token']) ? $order_data['checkout_token'] : null,
             'customer_id' => $order->get_customer_id() ? (string) $order->get_customer_id() : null,
+            'customer_name' => $customer_identity['customer_name'],
+            'customer_first_name' => $customer_identity['customer_first_name'],
+            'customer_last_name' => $customer_identity['customer_last_name'],
+            'billing_company' => $customer_identity['billing_company'],
             'revenue' => isset($order_data['revenue']) ? $order_data['revenue'] : (float) $order->get_total(),
             'subtotal' => self::get_order_subtotal_amount($order),
             'discount_total' => (float) $order->get_discount_total(),

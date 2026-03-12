@@ -1787,12 +1787,39 @@ function collectUniqueStrings(values = []) {
   ));
 }
 
-function buildIdentityProfileDescriptor({ customerId, emailHash, phoneHash, userKey }) {
+function normalizeCustomerDisplayName(value) {
+  const invalidTokens = new Set(['unknown', 'undefined', 'null', 'n/a', 'none', '-']);
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return null;
+  if (invalidTokens.has(normalized.toLowerCase())) return null;
+  if (/^\d+$/.test(normalized)) return null;
+  return normalized;
+}
+
+function extractOrderCustomerDisplayName(attributionSnapshot) {
+  const snapshot = attributionSnapshot && typeof attributionSnapshot === 'object'
+    ? attributionSnapshot
+    : {};
+
+  return normalizeCustomerDisplayName(
+    snapshot.customer_name
+    || snapshot.customer_display_name
+    || snapshot.display_name
+    || [snapshot.customer_first_name, snapshot.customer_last_name].filter(Boolean).join(' ')
+    || [snapshot.billing_first_name, snapshot.billing_last_name].filter(Boolean).join(' ')
+    || snapshot.billing_company
+  );
+}
+
+function buildIdentityProfileDescriptor({ customerId, emailHash, phoneHash, userKey, customerDisplayName }) {
+  const normalizedCustomerDisplayName = normalizeCustomerDisplayName(customerDisplayName);
+
   if (customerId) {
     return {
       profileKey: `customer:${customerId}`,
       profileType: 'woocommerce_customer',
-      profileLabel: `Woo customer #${customerId}`,
+      customerDisplayName: normalizedCustomerDisplayName,
+      profileLabel: normalizedCustomerDisplayName ? `${normalizedCustomerDisplayName} · Woo #${customerId}` : `Woo customer #${customerId}`,
     };
   }
 
@@ -1845,6 +1872,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
         customerId: true,
         emailHash: true,
         phoneHash: true,
+        attributionSnapshot: true,
         orderId: true,
         orderNumber: true,
         revenue: true,
@@ -1946,6 +1974,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
           customerId: true,
           emailHash: true,
           phoneHash: true,
+          attributionSnapshot: true,
           orderId: true,
           orderNumber: true,
           revenue: true,
@@ -1959,11 +1988,16 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
       })
     : [];
 
+  const resolvedCustomerDisplayName = historicalOrders
+    .map((order) => extractOrderCustomerDisplayName(order.attributionSnapshot))
+    .find(Boolean) || null;
+
   const profileDescriptor = buildIdentityProfileDescriptor({
     customerId: finalCustomerIds[0] || null,
     emailHash: finalEmailHashes[0] || null,
     phoneHash: finalPhoneHashes[0] || null,
     userKey: finalUserKeys[0] || sessionUserKey || null,
+    customerDisplayName: resolvedCustomerDisplayName,
   });
 
   return {
@@ -1981,6 +2015,15 @@ router.get('/:account_id/session-explorer', async (req, res) => {
   try {
     const { account_id } = req.params;
     const limit = Math.max(5, Math.min(30, Number.parseInt(String(req.query.limit || '12'), 10) || 12));
+
+    const accountRecord = await prisma.account.findUnique({
+      where: { accountId: account_id },
+      select: {
+        platform: true,
+        domain: true,
+      },
+    });
+    const storePlatform = String(accountRecord?.platform || 'CUSTOM').toUpperCase();
 
     const [recentSessions, recentOrders] = await Promise.all([
       prisma.session.findMany({
@@ -2006,6 +2049,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           customerId: true,
           emailHash: true,
           phoneHash: true,
+          attributionSnapshot: true,
           orderId: true,
           orderNumber: true,
           revenue: true,
@@ -2146,6 +2190,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           profileKey: descriptor.profileKey,
           profileType: descriptor.profileType,
           profileLabel: descriptor.profileLabel,
+          customerDisplayName: descriptor.customerDisplayName || null,
           customerId: descriptor.profileType === 'woocommerce_customer'
             ? String(descriptor.profileKey || '').replace(/^customer:/, '')
             : null,
@@ -2160,17 +2205,26 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           userKeys: new Set(),
         });
       }
-      return profiles.get(descriptor.profileKey);
+      const profile = profiles.get(descriptor.profileKey);
+      if (descriptor.customerDisplayName && !profile.customerDisplayName) {
+        profile.customerDisplayName = descriptor.customerDisplayName;
+        if (profile.customerId) {
+          profile.profileLabel = `${descriptor.customerDisplayName} · Woo #${profile.customerId}`;
+        }
+      }
+      return profile;
     };
 
     const orderSignalBySessionId = new Map();
     historicalOrders.forEach((order) => {
       const resolvedUserKey = order.userKey || checkoutByToken.get(order.checkoutToken || '')?.userKey || null;
+      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot);
       const signal = {
         customerId: order.customerId || null,
         emailHash: order.emailHash || null,
         phoneHash: order.phoneHash || null,
         userKey: resolvedUserKey,
+        customerDisplayName,
       };
       if (order.sessionId && !orderSignalBySessionId.has(order.sessionId)) {
         orderSignalBySessionId.set(order.sessionId, signal);
@@ -2184,6 +2238,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
         emailHash: identity.emailHash || null,
         phoneHash: identity.phoneHash || null,
         userKey: session.userKey,
+        customerDisplayName: identity.customerDisplayName || null,
       });
       const profile = ensureProfile(descriptor);
       profile.sessionCount += 1;
@@ -2204,11 +2259,13 @@ router.get('/:account_id/session-explorer', async (req, res) => {
     historicalOrders.forEach((order) => {
       const bridgedUserKey = order.userKey || checkoutByToken.get(order.checkoutToken || '')?.userKey || null;
       const identity = bridgedUserKey ? (identityByUserKey.get(bridgedUserKey) || {}) : {};
+      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot);
       const descriptor = buildIdentityProfileDescriptor({
         customerId: order.customerId || identity.customerId || null,
         emailHash: order.emailHash || identity.emailHash || null,
         phoneHash: order.phoneHash || identity.phoneHash || null,
         userKey: bridgedUserKey || null,
+        customerDisplayName,
       });
       const profile = ensureProfile(descriptor);
       profile.orderCount += 1;
@@ -2227,6 +2284,25 @@ router.get('/:account_id/session-explorer', async (req, res) => {
         userKeys: Array.from(profile.userKeys).filter(Boolean),
       }))
       .sort((a, b) => {
+        if (storePlatform === 'WOOCOMMERCE') {
+          const aOrderScore = Number(a.orderCount || 0) > 0 ? 1 : 0;
+          const bOrderScore = Number(b.orderCount || 0) > 0 ? 1 : 0;
+          if (bOrderScore !== aOrderScore) return bOrderScore - aOrderScore;
+          const aRevenue = Number(a.totalRevenue || 0);
+          const bRevenue = Number(b.totalRevenue || 0);
+          if (bRevenue !== aRevenue) return bRevenue - aRevenue;
+          const aLinkedSessionScore = a.recentSessionStartedAt ? 1 : 0;
+          const bLinkedSessionScore = b.recentSessionStartedAt ? 1 : 0;
+          if (bLinkedSessionScore !== aLinkedSessionScore) return bLinkedSessionScore - aLinkedSessionScore;
+          const aRecentSessionAt = new Date(a.recentSessionStartedAt || 0).getTime();
+          const bRecentSessionAt = new Date(b.recentSessionStartedAt || 0).getTime();
+          if (bRecentSessionAt !== aRecentSessionAt) return bRecentSessionAt - aRecentSessionAt;
+          const aSeen = new Date(a.lastSeenAt || 0).getTime();
+          const bSeen = new Date(b.lastSeenAt || 0).getTime();
+          if (bSeen !== aSeen) return bSeen - aSeen;
+          return String(a.profileLabel || '').localeCompare(String(b.profileLabel || ''), 'es');
+        }
+
         const aLinkedSessionScore = a.recentSessionStartedAt ? 1 : 0;
         const bLinkedSessionScore = b.recentSessionStartedAt ? 1 : 0;
         if (bLinkedSessionScore !== aLinkedSessionScore) return bLinkedSessionScore - aLinkedSessionScore;
@@ -2249,7 +2325,9 @@ router.get('/:account_id/session-explorer', async (req, res) => {
         return String(a.profileLabel || '').localeCompare(String(b.profileLabel || ''), 'es');
       });
 
-    const shopifyContext = await resolveShopifyAdminContext([account_id]);
+    const shopifyContext = storePlatform === 'SHOPIFY'
+      ? await resolveShopifyAdminContext([account_id, accountRecord?.domain || null])
+      : null;
     const wooCustomerIds = allProfiles
       .filter((profile) => profile.profileType === 'woocommerce_customer')
       .map((profile) => String(profile.customerId || '').trim())
@@ -2273,7 +2351,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
     const hydratedProfiles = allProfiles.map((profile) => {
       if (profile.profileType !== 'woocommerce_customer') return profile;
       const customerId = String(profile.customerId || '').trim();
-      const displayName = customerId ? customerDisplayNames[customerId] || null : null;
+      const displayName = profile.customerDisplayName || (customerId ? customerDisplayNames[customerId] || null : null);
       return {
         ...profile,
         customerDisplayName: displayName,
@@ -2286,22 +2364,24 @@ router.get('/:account_id/session-explorer', async (req, res) => {
 
     console.info('[Analytics API] Session explorer result', {
       accountId: account_id,
+      storePlatform,
       totalProfilesBuilt: profiles.size,
       returnedProfiles: serializedProfiles.length,
       allWooProfiles: allProfiles.filter((item) => item.profileType === 'woocommerce_customer').length,
       wooProfiles: serializedProfiles.filter((item) => item.profileType === 'woocommerce_customer').length,
       allProfilesWithOrders: allProfiles.filter((item) => Number(item.orderCount || 0) > 0).length,
       profilesWithOrders: serializedProfiles.filter((item) => Number(item.orderCount || 0) > 0).length,
-      resolvedCustomerNames: Object.keys(customerDisplayNames).length,
+      resolvedCustomerNames: hydratedProfiles.filter((item) => item.profileType === 'woocommerce_customer' && item.customerDisplayName).length,
     });
 
     res.json({
       summary: {
+        storePlatform,
         totalProfiles: hydratedProfiles.length,
         totalSessions: recentSessions.length,
         totalOrders: historicalOrders.length,
         totalRevenue: historicalOrders.reduce((sum, item) => sum + Number(item.revenue || 0), 0),
-        resolvedCustomerNames: Object.keys(customerDisplayNames).length,
+        resolvedCustomerNames: hydratedProfiles.filter((item) => item.profileType === 'woocommerce_customer' && item.customerDisplayName).length,
         shopifyNameLookupActive: Boolean(shopifyContext?.shop && shopifyContext?.accessToken),
       },
       profiles: serializedProfiles,

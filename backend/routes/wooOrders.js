@@ -45,6 +45,20 @@ function parseFloatSafe(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function normalizeCustomerDisplayName(...values) {
+  const invalidTokens = new Set(['unknown', 'undefined', 'null', 'n/a', 'none', '-']);
+
+  for (const value of values) {
+    const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!normalized) continue;
+    if (invalidTokens.has(normalized.toLowerCase())) continue;
+    if (/^\d+$/.test(normalized)) continue;
+    return normalized;
+  }
+
+  return null;
+}
+
 router.post('/woo/orders-sync', async (req, res) => {
   try {
     const payload = req.body || {};
@@ -71,6 +85,11 @@ router.post('/woo/orders-sync', async (req, res) => {
       : null;
 
     const attributedChannel = normalizeWooChannel(payload);
+    const customerDisplayName = normalizeCustomerDisplayName(
+      payload.customer_name,
+      [payload.customer_first_name, payload.customer_last_name].filter(Boolean).join(' '),
+      payload.billing_company
+    );
     const attributionSnapshot = {
       utm_source: payload.utm_source || null,
       utm_medium: payload.utm_medium || null,
@@ -83,6 +102,10 @@ router.post('/woo/orders-sync', async (req, res) => {
       ttclid: payload.ttclid || null,
       woo_source_label: payload.woo_source_label || null,
       woo_source_type: payload.woo_source_type || null,
+      customer_name: customerDisplayName,
+      customer_first_name: payload.customer_first_name || null,
+      customer_last_name: payload.customer_last_name || null,
+      billing_company: payload.billing_company || null,
     };
 
     const orderData = {

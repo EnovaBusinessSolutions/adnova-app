@@ -1526,6 +1526,7 @@
         function renderSessionExplorerOverview(data) {
             const summary = data?.summary || {};
             const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
+            const storePlatform = String(summary.storePlatform || 'CUSTOM').toUpperCase();
             const wooProfiles = profiles.filter((item) => item.profileType === 'woocommerce_customer').length;
             const orderLedProfiles = profiles.filter((item) => Number(item.orderCount || 0) > 0).length;
             const resolvedCustomerNames = Number(summary.resolvedCustomerNames || 0);
@@ -1533,6 +1534,23 @@
             const topProfile = profiles[0] || null;
             const topCampaigns = profiles.filter((item) => item.lastCampaign).slice(0, 4);
             const topLandings = profiles.filter((item) => item.lastLandingPageUrl).slice(0, 4);
+            const isWooStore = storePlatform === 'WOOCOMMERCE';
+            const titleText = isWooStore
+                ? 'Perfiles WooCommerce detectados por órdenes y sesiones web ligadas'
+                : 'Perfiles históricos y sesiones web ligadas';
+            const viewDescription = isWooStore
+                ? 'estos chips representan perfiles WooCommerce enriquecidos con sesiones web cuando el pixel logra ligarlas.'
+                : 'estos chips representan perfiles históricos detectados desde sesiones web y señales de identidad.';
+            const orderDescription = isWooStore
+                ? 'en WooCommerce priorizamos perfiles con órdenes primero y luego la sesión web ligada más reciente.'
+                : 'el listado prioriza perfiles con sesión web reciente ligada y después el resto del historial.';
+            const nameDescription = isWooStore
+                ? (resolvedCustomerNames > 0
+                    ? `${resolvedCustomerNames} perfiles Woo ya traen nombre legible guardado desde la sincronización de órdenes.`
+                    : 'todavía no entran nombres legibles desde Woo en este corte; las órdenes antiguas pueden requerir resincronización para reemplazar IDs técnicos.')
+                : (shopifyNameLookupActive
+                    ? `Shopify name lookup activo, ${resolvedCustomerNames} nombres resueltos en este corte.`
+                    : 'no hay token Shopify utilizable para resolver displayName, por eso sólo se muestra el perfil técnico.');
 
             console.info('[Session Explorer] rendering overview', {
                 totalProfiles: profiles.length,
@@ -1562,7 +1580,7 @@
             sessionExplorerState.currentData = null;
             sessionExplorerState.compareData = null;
 
-            document.getElementById('session-detail-title').textContent = 'Perfiles WooCommerce detectados por órdenes y sesiones web ligadas';
+            document.getElementById('session-detail-title').textContent = titleText;
             document.getElementById('session-detail-metrics').innerHTML = [
                 { label: 'Perfiles', value: summary.totalProfiles || 0 },
                 { label: 'Sesiones recientes', value: summary.totalSessions || 0 },
@@ -1577,15 +1595,16 @@
 
             document.getElementById('session-detail-summary').innerHTML = `
                 <p><strong>Estado:</strong> Explorador persistente en modo histórico.</p>
-                <p><strong>Qué estás viendo:</strong> estos chips son perfiles históricos detectados desde WooCommerce y/o desde sesiones web, no una lista de sesiones recientes.</p>
+                <p><strong>Plataforma detectada:</strong> ${storePlatform}</p>
+                <p><strong>Qué estás viendo:</strong> ${viewDescription}</p>
                 <p><strong>Perfiles Woo:</strong> ${wooProfiles} de ${profiles.length || 0}</p>
                 <p><strong>Perfiles con compras:</strong> ${orderLedProfiles}</p>
                 <p><strong>Perfil más reciente:</strong> ${topProfile?.profileLabel || '-'}</p>
                 <p><strong>Última actividad:</strong> ${formatDateTimeMx(topProfile?.lastSeenAt)}</p>
                 <p><strong>Sesión recomendada:</strong> ${topProfile?.recentSessionId || '-'}</p>
-                <p><strong>Orden actual:</strong> el listado ahora prioriza perfiles con sesión web reciente ligada; después caen los Woo históricos sin sesión.</p>
-                <p><strong>Lectura:</strong> si ves "0 sesiones", Woo sí conoce ese cliente por órdenes, pero el pixel todavía no lo amarró a una sesión web capturada.</p>
-                <p><strong>Nombre del cliente:</strong> ${shopifyNameLookupActive ? `Shopify name lookup activo, ${resolvedCustomerNames} nombres resueltos en este corte.` : 'no hay token Shopify utilizable para resolver displayName, por eso sólo se muestra Woo por ID.'}</p>
+                <p><strong>Orden actual:</strong> ${orderDescription}</p>
+                <p><strong>Lectura:</strong> si ves "0 sesiones", la plataforma conoce ese cliente por órdenes, pero el pixel todavía no lo amarró a una sesión web capturada.</p>
+                <p><strong>Nombre del cliente:</strong> ${nameDescription}</p>
             `;
 
             document.getElementById('session-detail-orders').innerHTML = profiles.length
@@ -1611,7 +1630,7 @@
                 <p><strong>Perfiles por email/hash:</strong> ${profiles.filter((item) => item.profileType === 'email_hash').length}</p>
                 <p><strong>Perfiles por teléfono/hash:</strong> ${profiles.filter((item) => item.profileType === 'phone_hash').length}</p>
                 <p><strong>Solo browser key:</strong> ${profiles.filter((item) => item.profileType === 'user_key').length}</p>
-                <p><strong>Señal útil:</strong> el backend ya mezcla sesiones, órdenes e identidad guardada para enriquecer el análisis.</p>
+                <p><strong>Señal útil:</strong> el backend ya mezcla sesiones, órdenes e identidad guardada y adapta la lectura al tipo de tienda detectado.</p>
             `;
 
             document.getElementById('session-detail-journey').innerHTML = `
