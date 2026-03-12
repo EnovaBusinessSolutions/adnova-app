@@ -544,7 +544,7 @@ router.post('/link/revoke', async (req, res) => {
 
 /**
  * GET /api/mcp/context/shared/:token
- * Devuelve SIEMPRE el contexto universal más reciente del usuario dueño de ese token.
+ * Siempre devuelve el contexto universal MÁS RECIENTE del usuario dueño de ese token.
  */
 router.get('/shared/:token', async (req, res) => {
   try {
@@ -559,18 +559,25 @@ router.get('/shared/:token', async (req, res) => {
         ? providerRaw
         : 'chatgpt';
 
-    const root = await findLatestRootByShareToken(token);
-    if (!root) {
+    // 1) Encontrar cualquier root activo que sea dueño del token
+    const tokenRoot = await findRootByShareToken(token);
+    if (!tokenRoot) {
       return res.status(404).json({ ok: false, error: 'SHARED_CONTEXT_NOT_FOUND' });
     }
 
-    const state = root?.aiContext || {};
+    // 2) Con ese owner, cargar SIEMPRE el latest root del usuario
+    const latestRoot = await findRoot(tokenRoot.userId || tokenRoot.user);
+    if (!latestRoot) {
+      return res.status(404).json({ ok: false, error: 'SHARED_CONTEXT_NOT_FOUND' });
+    }
+
+    const state = latestRoot?.aiContext || {};
     if (!state?.encodedPayload) {
       return res.status(404).json({ ok: false, error: 'SHARED_CONTEXT_NOT_READY' });
     }
 
     setNoCacheHeaders(res);
-    return res.json(buildSharedPayload(root, provider));
+    return res.json(buildSharedPayload(latestRoot, provider));
   } catch (e) {
     console.error('[mcp/context/shared] error:', e);
     return res.status(500).json({ ok: false, error: 'MCP_CONTEXT_SHARED_FAILED' });
