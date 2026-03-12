@@ -29,7 +29,7 @@ router.get('/adnova-pixel/update.json', (_req, res) => {
     slug: 'adnova-pixel',
     version,
     homepage: 'https://adray-app-staging-german.onrender.com',
-    download_url: 'https://adray-app-staging-german.onrender.com/wp-plugin/adnova-pixel/download',
+    download_url: `https://adray-app-staging-german.onrender.com/wp-plugin/adnova-pixel/download?v=${version}`,
     requires: '6.0',
     tested: '6.7',
     requires_php: '7.4',
