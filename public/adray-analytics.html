@@ -261,6 +261,14 @@
             background: linear-gradient(135deg, rgba(202, 138, 229, 0.28) 0%, rgba(181, 92, 255, 0.22) 100%);
         }
 
+        .live-feed-badge {
+            background: rgba(126, 240, 200, 0.14) !important;
+            border: 1px solid rgba(126, 240, 200, 0.55) !important;
+            color: #7ef0c8 !important;
+            box-shadow: 0 0 22px rgba(126, 240, 200, 0.22), inset 0 1px 0 rgba(255,255,255,0.04);
+            text-shadow: 0 0 12px rgba(126, 240, 200, 0.2);
+        }
+
         .ops-panel,
         .adray-dashboard #metric-carousel-track > .metric-card-slide > div,
         .adray-dashboard #session-detail-panel > div {
@@ -627,26 +635,7 @@
         
         <!-- Header & Controls -->
         <div class="dashboard-hero mb-8">
-            <div class="max-w-4xl min-w-0">
-                <p class="dashboard-kicker">Radar Operativo</p>
-                <h2 class="dashboard-title text-gray-900">
-                    Dashboard de lectura rápida
-                </h2>
-                <p class="dashboard-subtitle mt-4 max-w-3xl">
-                    Comercial, atribución y salud técnica en una sola vista para detectar qué está funcionando, dónde se está perdiendo intención y qué sesión conviene revisar primero.
-                </p>
-                <div class="mt-4 flex flex-col sm:flex-row sm:flex-wrap gap-3">
-                    <div class="metric-pill">
-                        <i class="fas fa-calendar-alt mr-1.5 text-gray-400"></i>
-                        <span id="date-range-label">Últimos 30 días</span>
-                    </div>
-                    <div class="metric-pill text-green-600">
-                        <i class="fas fa-circle mr-1.5 text-[8px] animate-pulse"></i>
-                        <span id="live-feed-status">Conectando Live Feed...</span>
-                    </div>
-                </div>
-            </div>
-            <div class="mt-6 flex gap-3 flex-wrap justify-start">
+            <div class="flex gap-3 flex-wrap justify-start">
                 <div class="ops-control">
                     <label for="date-preset" class="text-xs text-gray-500 mr-2">Rango</label>
                     <select id="date-preset" onchange="onDatePresetChange()" class="text-sm bg-transparent focus:outline-none">
@@ -982,7 +971,7 @@
                             <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Live Feed</h3>
                             <p class="panel-subtitle text-sm mt-1">Observa eventos entrantes y abre sesiones sin perder el contexto del tablero.</p>
                         </div>
-                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                        <span class="live-feed-badge inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium">
                             En vivo
                         </span>
                     </div>
@@ -995,6 +984,100 @@
                 </div>
             </div>
         </div>
+
+        <section id="session-detail-panel" class="hidden mt-8">
+            <div class="ops-panel overflow-hidden border border-gray-200">
+                <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between gap-4 flex-wrap">
+                    <div>
+                        <p class="panel-kicker">Exploración</p>
+                        <h3 class="panel-title text-lg font-semibold text-gray-900">Session Explorer</h3>
+                        <p class="text-sm text-gray-500" id="session-detail-title">Cargando...</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs text-gray-500">Panel persistente para seguir analizando la sesión mientras navegas el dashboard</span>
+                        <button id="session-detail-close" type="button" class="session-close-btn inline-flex items-center justify-center w-10 h-10 rounded-full text-gray-700 hover:bg-gray-50">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+                <div class="p-6 space-y-6">
+                    <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <button id="session-peer-prev" type="button" class="session-toolbar-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <i class="fas fa-chevron-left mr-2"></i> Sesión previa
+                            </button>
+                            <button id="session-peer-next" type="button" class="session-toolbar-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                                Siguiente sesión <i class="fas fa-chevron-right ml-2"></i>
+                            </button>
+                            <button id="session-compare-recommended" type="button" class="session-compare-trigger hidden inline-flex items-center px-3 py-2 rounded-lg text-sm text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <i class="fas fa-sparkles mr-2"></i> Comparación sugerida
+                            </button>
+                        </div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <label for="session-timeline-filter" class="text-xs uppercase tracking-wide text-gray-500">Timeline</label>
+                            <select id="session-timeline-filter" class="session-filter-select text-sm rounded-lg px-3 py-2 bg-white">
+                                <option value="all">Todos</option>
+                                <option value="funnel">Funnel</option>
+                                <option value="commerce">Commerce</option>
+                                <option value="content">Contenido</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Sesiones relacionadas del mismo usuario</p>
+                        <div id="session-peer-list" class="flex flex-wrap gap-2"></div>
+                        <p id="session-compare-recommended-note" class="mt-2 text-xs text-gray-500"></p>
+                    </div>
+                    <div id="session-compare-panel" class="session-compare-panel hidden rounded-2xl p-5">
+                        <div class="flex items-center justify-between gap-4 flex-wrap mb-4">
+                            <div>
+                                <h4 class="text-sm font-semibold text-gray-900">Comparación lado a lado</h4>
+                                <p class="text-xs text-gray-500" id="session-compare-title">Selecciona una sesión relacionada para comparar.</p>
+                            </div>
+                            <button id="session-compare-clear" type="button" class="session-clear-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
+                                Limpiar comparación
+                            </button>
+                        </div>
+                        <div id="session-compare-content" class="space-y-4"></div>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4" id="session-detail-metrics"></div>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div class="session-summary-card rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Resumen</h4>
+                            <div class="space-y-2 text-sm text-gray-600" id="session-detail-summary"></div>
+                        </div>
+                        <div class="session-summary-card rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Órdenes ligadas</h4>
+                            <div class="space-y-2 text-sm text-gray-600" id="session-detail-orders"></div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div class="session-summary-card rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Atribución y señales</h4>
+                            <div class="space-y-2 text-sm text-gray-600" id="session-detail-attribution"></div>
+                        </div>
+                        <div class="session-summary-card rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Path y productos</h4>
+                            <div class="space-y-3 text-sm text-gray-600" id="session-detail-journey"></div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                        <div class="session-visual-card rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Mapa visual de la sesión</h4>
+                            <div id="session-detail-visual" class="flex flex-wrap gap-6 items-start"></div>
+                        </div>
+                        <div class="session-pattern-card rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Patrones y próximos pasos</h4>
+                            <div class="space-y-4" id="session-detail-patterns"></div>
+                        </div>
+                    </div>
+                    <div class="session-summary-card rounded-xl p-4">
+                        <h4 class="text-sm font-semibold text-gray-900 mb-3">Timeline de eventos</h4>
+                        <div class="space-y-3" id="session-detail-timeline"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
 
         <!-- New: Pixel Health + Supporting Panels + Top Products -->
         <div class="dashboard-support-grid grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
@@ -1168,99 +1251,6 @@
             </div>
         </div>
 
-        <section id="session-detail-panel" class="hidden mt-8">
-            <div class="ops-panel overflow-hidden border border-gray-200">
-                <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between gap-4 flex-wrap">
-                    <div>
-                        <p class="panel-kicker">Exploración</p>
-                        <h3 class="panel-title text-lg font-semibold text-gray-900">Session Explorer</h3>
-                        <p class="text-sm text-gray-500" id="session-detail-title">Cargando...</p>
-                    </div>
-                    <div class="flex items-center gap-3">
-                        <span class="text-xs text-gray-500">Panel persistente para seguir analizando la sesión mientras navegas el dashboard</span>
-                        <button id="session-detail-close" type="button" class="session-close-btn inline-flex items-center justify-center w-10 h-10 rounded-full text-gray-700 hover:bg-gray-50">
-                            <i class="fas fa-times"></i>
-                        </button>
-                    </div>
-                </div>
-                <div class="p-6 space-y-6">
-                    <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
-                        <div class="flex items-center gap-2 flex-wrap">
-                            <button id="session-peer-prev" type="button" class="session-toolbar-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
-                                <i class="fas fa-chevron-left mr-2"></i> Sesión previa
-                            </button>
-                            <button id="session-peer-next" type="button" class="session-toolbar-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
-                                Siguiente sesión <i class="fas fa-chevron-right ml-2"></i>
-                            </button>
-                            <button id="session-compare-recommended" type="button" class="session-compare-trigger hidden inline-flex items-center px-3 py-2 rounded-lg text-sm text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed">
-                                <i class="fas fa-sparkles mr-2"></i> Comparación sugerida
-                            </button>
-                        </div>
-                        <div class="flex items-center gap-2 flex-wrap">
-                            <label for="session-timeline-filter" class="text-xs uppercase tracking-wide text-gray-500">Timeline</label>
-                            <select id="session-timeline-filter" class="session-filter-select text-sm rounded-lg px-3 py-2 bg-white">
-                                <option value="all">Todos</option>
-                                <option value="funnel">Funnel</option>
-                                <option value="commerce">Commerce</option>
-                                <option value="content">Contenido</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div>
-                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Sesiones relacionadas del mismo usuario</p>
-                        <div id="session-peer-list" class="flex flex-wrap gap-2"></div>
-                        <p id="session-compare-recommended-note" class="mt-2 text-xs text-gray-500"></p>
-                    </div>
-                    <div id="session-compare-panel" class="session-compare-panel hidden rounded-2xl p-5">
-                        <div class="flex items-center justify-between gap-4 flex-wrap mb-4">
-                            <div>
-                                <h4 class="text-sm font-semibold text-gray-900">Comparación lado a lado</h4>
-                                <p class="text-xs text-gray-500" id="session-compare-title">Selecciona una sesión relacionada para comparar.</p>
-                            </div>
-                            <button id="session-compare-clear" type="button" class="session-clear-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-                                Limpiar comparación
-                            </button>
-                        </div>
-                        <div id="session-compare-content" class="space-y-4"></div>
-                    </div>
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4" id="session-detail-metrics"></div>
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Resumen</h4>
-                            <div class="space-y-2 text-sm text-gray-600" id="session-detail-summary"></div>
-                        </div>
-                        <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Órdenes ligadas</h4>
-                            <div class="space-y-2 text-sm text-gray-600" id="session-detail-orders"></div>
-                        </div>
-                    </div>
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Atribución y señales</h4>
-                            <div class="space-y-2 text-sm text-gray-600" id="session-detail-attribution"></div>
-                        </div>
-                        <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Path y productos</h4>
-                            <div class="space-y-3 text-sm text-gray-600" id="session-detail-journey"></div>
-                        </div>
-                    </div>
-                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                        <div class="session-visual-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Mapa visual de la sesión</h4>
-                            <div id="session-detail-visual" class="flex flex-wrap gap-6 items-start"></div>
-                        </div>
-                        <div class="session-pattern-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Patrones y próximos pasos</h4>
-                            <div class="space-y-4" id="session-detail-patterns"></div>
-                        </div>
-                    </div>
-                    <div class="session-summary-card rounded-xl p-4">
-                        <h4 class="text-sm font-semibold text-gray-900 mb-3">Timeline de eventos</h4>
-                        <div class="space-y-3" id="session-detail-timeline"></div>
-                    </div>
-                </div>
-            </div>
-        </section>
     </main>
 
     <script>
