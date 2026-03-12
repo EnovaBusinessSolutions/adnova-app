@@ -518,9 +518,102 @@ function compactSessionPath(timeline = []) {
   return labels;
 }
 
-function buildBehaviorPatternSummary({ currentMetrics, peerSessions, peerEventCounts, currentPath }) {
+function computeStageDepthFromCounts(counts = {}) {
+  if (Number(counts.purchase || 0) > 0) return 4;
+  if (Number(counts.begin_checkout || 0) > 0) return 3;
+  if (Number(counts.add_to_cart || 0) > 0) return 2;
+  if (Number(counts.view_item || 0) > 0) return 1;
+  if (Number(counts.page_view || 0) > 0) return 0;
+  return -1;
+}
+
+function getSessionDaypartLabel(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return null;
+
+  const hour = date.getHours();
+  if (hour < 12) return 'mañana';
+  if (hour < 18) return 'tarde';
+  return 'noche';
+}
+
+function buildRecommendedComparison({ currentSession, currentMetrics, peerSessions, peerEventCounts }) {
+  const peers = Array.isArray(peerSessions) ? peerSessions : [];
+  if (!peers.length) return null;
+
+  const currentCounts = {
+    page_view: Number(currentMetrics.pageViews || 0),
+    view_item: Number(currentMetrics.viewItem || 0),
+    add_to_cart: Number(currentMetrics.addToCart || 0),
+    begin_checkout: Number(currentMetrics.beginCheckout || 0),
+    purchase: Number(currentMetrics.purchase || 0),
+  };
+
+  const currentDepth = computeStageDepthFromCounts(currentCounts);
+  const currentTotalEvents = Number(currentMetrics.totalEvents || 0);
+  const currentStartedAt = currentSession?.startedAt ? new Date(currentSession.startedAt).getTime() : null;
+  const currentPurchased = currentDepth >= 4;
+  const currentReachedCheckout = currentDepth >= 3;
+
+  let best = null;
+
+  peers.forEach((peer) => {
+    const counts = peerEventCounts.get(peer.sessionId) || {};
+    const peerDepth = computeStageDepthFromCounts(counts);
+    const peerTotalEvents = Number(counts._totalEvents || peer._totalEvents || 0);
+    let score = 12 - Math.abs(currentDepth - peerDepth) * 3;
+
+    score += Math.max(0, 4 - Math.abs(currentTotalEvents - peerTotalEvents));
+
+    if (!currentPurchased && Number(counts.purchase || 0) > 0) score += 6;
+    if (currentReachedCheckout && !currentPurchased && Number(counts.purchase || 0) > 0) score += 4;
+    if (!currentReachedCheckout && Number(counts.begin_checkout || 0) > 0) score += 3;
+    if ((currentSession?.utmCampaign || '') && peer.utmCampaign === currentSession.utmCampaign) score += 2;
+    if ((currentSession?.landingPageUrl || '') && peer.landingPageUrl === currentSession.landingPageUrl) score += 2;
+
+    const peerStartedAt = peer.startedAt ? new Date(peer.startedAt).getTime() : null;
+    if (currentStartedAt && peerStartedAt) {
+      const hoursDiff = Math.abs(currentStartedAt - peerStartedAt) / 3600000;
+      score += Math.max(0, 2 - Math.min(2, hoursDiff / 24));
+    }
+
+    const reason = !currentPurchased && Number(counts.purchase || 0) > 0
+      ? 'Comparar contra una sesión del mismo usuario que sí terminó comprando.'
+      : Math.abs(currentDepth - peerDepth) <= 1
+        ? 'Comparar contra la sesión más parecida en intensidad y profundidad de recorrido.'
+        : 'Comparar contra una sesión cercana en contexto para detectar fricción o mejora.';
+
+    if (!best || score > best.score) {
+      best = {
+        sessionId: peer.sessionId,
+        score,
+        reason,
+        headline: !currentPurchased && Number(counts.purchase || 0) > 0
+          ? 'Referencia de conversión'
+          : 'Comparación sugerida',
+      };
+    }
+  });
+
+  return best
+    ? {
+        sessionId: best.sessionId,
+        reason: best.reason,
+        headline: best.headline,
+      }
+    : null;
+}
+
+function buildBehaviorPatternSummary({ currentSession, currentMetrics, peerSessions, peerEventCounts, currentPath }) {
   const peers = Array.isArray(peerSessions) ? peerSessions : [];
   const peerSessionCount = peers.length;
+  const currentCounts = {
+    page_view: Number(currentMetrics.pageViews || 0),
+    view_item: Number(currentMetrics.viewItem || 0),
+    add_to_cart: Number(currentMetrics.addToCart || 0),
+    begin_checkout: Number(currentMetrics.beginCheckout || 0),
+    purchase: Number(currentMetrics.purchase || 0),
+  };
 
   const aggregate = {
     page_view: 0,
@@ -534,6 +627,20 @@ function buildBehaviorPatternSummary({ currentMetrics, peerSessions, peerEventCo
 
   const landingMap = new Map();
   const campaignMap = new Map();
+  const daypartMap = new Map();
+
+  const sessionSnapshots = [
+    {
+      sessionId: currentSession?.sessionId || 'current',
+      startedAt: currentSession?.startedAt || null,
+      lastEventAt: currentSession?.lastEventAt || null,
+      landingPageUrl: currentSession?.landingPageUrl || null,
+      utmCampaign: currentSession?.utmCampaign || null,
+      counts: currentCounts,
+      totalEvents: Number(currentMetrics.totalEvents || 0),
+      isCurrent: true,
+    },
+  ];
 
   peers.forEach((session) => {
     const counts = peerEventCounts.get(session.sessionId) || {};
@@ -554,7 +661,24 @@ function buildBehaviorPatternSummary({ currentMetrics, peerSessions, peerEventCo
     if (session.utmCampaign) {
       campaignMap.set(session.utmCampaign, Number(campaignMap.get(session.utmCampaign) || 0) + 1);
     }
+
+    const daypart = getSessionDaypartLabel(session.startedAt);
+    if (daypart) daypartMap.set(daypart, Number(daypartMap.get(daypart) || 0) + 1);
+
+    sessionSnapshots.push({
+      sessionId: session.sessionId,
+      startedAt: session.startedAt || null,
+      lastEventAt: session.lastEventAt || null,
+      landingPageUrl: session.landingPageUrl || null,
+      utmCampaign: session.utmCampaign || null,
+      counts,
+      totalEvents: Number(session._totalEvents || 0),
+      isCurrent: false,
+    });
   });
+
+  const currentDaypart = getSessionDaypartLabel(currentSession?.startedAt || null);
+  if (currentDaypart) daypartMap.set(currentDaypart, Number(daypartMap.get(currentDaypart) || 0) + 1);
 
   if (peerSessionCount > 0) {
     aggregate.avgEvents = Number((aggregate.avgEvents / peerSessionCount).toFixed(1));
@@ -578,6 +702,71 @@ function buildBehaviorPatternSummary({ currentMetrics, peerSessions, peerEventCo
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
     .map(([campaign, sessions]) => ({ campaign, sessions }));
+
+  const trackedSessions = sessionSnapshots.filter((item) => item.startedAt);
+  const totalTrackedSessions = trackedSessions.length;
+  const checkoutSessions = trackedSessions.filter((item) => Number(item.counts.begin_checkout || 0) > 0).length;
+  const purchaseSessions = trackedSessions.filter((item) => Number(item.counts.purchase || 0) > 0).length;
+  const productSessions = trackedSessions.filter((item) => Number(item.counts.view_item || 0) > 0).length;
+
+  const sortedByStartedAt = trackedSessions
+    .slice()
+    .sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
+
+  let averageGapHours = 0;
+  if (sortedByStartedAt.length > 1) {
+    let totalGapHours = 0;
+    for (let index = 1; index < sortedByStartedAt.length; index += 1) {
+      const previous = new Date(sortedByStartedAt[index - 1].startedAt).getTime();
+      const current = new Date(sortedByStartedAt[index].startedAt).getTime();
+      totalGapHours += Math.max(0, (current - previous) / 3600000);
+    }
+    averageGapHours = Number((totalGapHours / (sortedByStartedAt.length - 1)).toFixed(1));
+  }
+
+  const topDaypartEntry = Array.from(daypartMap.entries()).sort((a, b) => b[1] - a[1])[0] || null;
+  const topDaypart = topDaypartEntry
+    ? {
+        label: topDaypartEntry[0],
+        sessions: Number(topDaypartEntry[1] || 0),
+        rate: totalTrackedSessions ? Number((Number(topDaypartEntry[1] || 0) / totalTrackedSessions).toFixed(2)) : 0,
+      }
+    : null;
+
+  const longitudinalCards = [];
+
+  if (totalTrackedSessions > 1) {
+    longitudinalCards.push({
+      title: 'Recurrencia real',
+      detail: `Hay ${totalTrackedSessions} sesiones trazadas para este usuario. ${Math.round((productSessions / totalTrackedSessions) * 100)}% llega a producto y ${Math.round((checkoutSessions / totalTrackedSessions) * 100)}% alcanza checkout.`,
+      action: 'Usar este volumen para distinguir si la sesión actual es anomalía o parte de un patrón repetido.',
+    });
+  }
+
+  if (topDaypart) {
+    longitudinalCards.push({
+      title: 'Ventana dominante',
+      detail: `${Math.round(topDaypart.rate * 100)}% de las sesiones ocurre en la ${topDaypart.label}.`,
+      action: averageGapHours > 0
+        ? `La separación media entre sesiones es de ${averageGapHours} horas; sirve para decidir retargeting inmediato vs recordatorio diferido.`
+        : 'Aún no hay suficiente separación temporal para estimar ritmo de retorno.',
+    });
+  }
+
+  longitudinalCards.push({
+    title: 'Desenlace histórico',
+    detail: `${Math.round((purchaseSessions / Math.max(totalTrackedSessions, 1)) * 100)}% de las sesiones termina en compra.`,
+    action: purchaseSessions > 0
+      ? 'Comparar la sesión actual con una sesión compradora ayuda a ubicar la fricción que faltó resolver.'
+      : 'Todavía no hay compra previa; conviene enfocarse en el salto de producto a carrito y de carrito a checkout.',
+  });
+
+  const recommendedComparison = buildRecommendedComparison({
+    currentSession,
+    currentMetrics,
+    peerSessions: peers,
+    peerEventCounts,
+  });
 
   const patternCards = [];
   const currentReachedCheckout = Number(currentMetrics.beginCheckout || 0) > 0;
@@ -619,12 +808,17 @@ function buildBehaviorPatternSummary({ currentMetrics, peerSessions, peerEventCo
 
   return {
     peerSessionCount,
+    totalTrackedSessions,
     avgEvents: aggregate.avgEvents,
     avgDurationSeconds: aggregate.avgDurationSeconds,
+    averageGapHours,
     currentPath,
     stageComparison,
     topLandingPages,
     topCampaigns,
+    topDaypart,
+    longitudinalCards: longitudinalCards.slice(0, 3),
+    recommendedComparison,
     patternCards: patternCards.slice(0, 3),
   };
 }
@@ -1755,6 +1949,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
     const pageUrlsInOrder = timeline.map((item) => item.pageUrl).filter(Boolean);
     const currentPath = compactSessionPath(timeline);
     const patterns = buildBehaviorPatternSummary({
+      currentSession: session,
       currentMetrics: metrics,
       peerSessions: normalizedPeerSessions,
       peerEventCounts,

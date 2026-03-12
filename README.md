@@ -684,12 +684,12 @@ Current dashboard status from live review:
 
 ### Missing or incomplete data for a complete dashboard
 
-1. Session intelligence already includes comparison workflows, but still needs stronger operator shortcuts and longitudinal patterns across many sessions.
+1. Session intelligence now includes a recommended comparison shortcut plus longitudinal reading across many sessions, but still needs deeper operator workflows once real usage reveals the most valuable shortcuts.
 2. Paid media resolution now tries `MetaAccount` and `GoogleAccount` ownership too, but some accounts can still miss a usable `user -> McpData` path if historical onboarding data is incomplete.
 
 ### Execution order
 
-1. Strengthen the session explorer with stronger operator shortcuts and longitudinal patterns across many sessions.
+1. Observe how operators use the new suggested comparison and longitudinal cards, then refine the next review shortcuts around the most common decisions.
 2. Keep expanding the bridge between public `account_id` and marketing snapshots so every eligible account resolves paid media automatically.
 
 ### Completed dashboard steps
@@ -708,13 +708,14 @@ Current dashboard status from live review:
 - `Session Explorer` now includes a visual journey map plus simple behavioral patterns based on other sessions from the same `userKey`.
 - `Session Explorer` now includes related-session navigation and timeline filters for faster operator review.
 - `Session Explorer` now supports side-by-side comparison against another related session.
+- `Session Explorer` now recommends a comparison session automatically and adds longitudinal cards that summarize recurrence, dominant time window, and historical outcome across the tracked sessions of the same user.
 - Paid Media panel added with Meta, Google, and blended spend / revenue / ROAS from `McpData` snapshots when the shop is linked to a user snapshot.
 - Paid Media block now degrades safely to `No vinculado` or `Sin snapshot` when the marketing mapping is missing.
 - Paid Media resolution now tries multiple bridges: `ShopConnections.matchedToUserId`, `User.shop`, `MetaAccount`, `GoogleAccount`, and `PlatformConnection.adAccountId -> McpData.sources`.
 
 ### Current development focus
 
-- Strengthen the persistent `Session Explorer` with stronger operator shortcuts and longitudinal patterning.
+- Refine the persistent `Session Explorer` using real operator feedback on the suggested comparison flow and longitudinal summaries.
 - Continue improving session-level understanding of what a user did during a visit, including funnel steps, attribution, and path quality.
 - Automatic resolution of paid media snapshots for all eligible accounts, not only already-linked Shopify shops.
 

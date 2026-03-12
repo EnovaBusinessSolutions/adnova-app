@@ -616,6 +616,9 @@
                             <button id="session-peer-next" type="button" class="inline-flex items-center px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
                                 Siguiente sesión <i class="fas fa-chevron-right ml-2"></i>
                             </button>
+                            <button id="session-compare-recommended" type="button" class="hidden inline-flex items-center px-3 py-2 rounded-lg border border-indigo-200 bg-indigo-50 text-sm text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <i class="fas fa-sparkles mr-2"></i> Comparación sugerida
+                            </button>
                         </div>
                         <div class="flex items-center gap-2 flex-wrap">
                             <label for="session-timeline-filter" class="text-xs uppercase tracking-wide text-gray-500">Timeline</label>
@@ -630,6 +633,7 @@
                     <div>
                         <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Sesiones relacionadas del mismo usuario</p>
                         <div id="session-peer-list" class="flex flex-wrap gap-2"></div>
+                        <p id="session-compare-recommended-note" class="mt-2 text-xs text-gray-500"></p>
                     </div>
                     <div id="session-compare-panel" class="hidden bg-gradient-to-br from-slate-50 via-white to-indigo-50 border border-slate-200 rounded-2xl p-5">
                         <div class="flex items-center justify-between gap-4 flex-wrap mb-4">
@@ -883,11 +887,16 @@
             const nextBtn = document.getElementById('session-peer-next');
             const timelineFilter = document.getElementById('session-timeline-filter');
             const clearCompareBtn = document.getElementById('session-compare-clear');
+            const recommendedCompareBtn = document.getElementById('session-compare-recommended');
             closeBtn?.addEventListener('click', closeSessionDetailPanel);
             prevBtn?.addEventListener('click', () => navigatePeerSession(-1));
             nextBtn?.addEventListener('click', () => navigatePeerSession(1));
             timelineFilter?.addEventListener('change', renderSessionTimelineFromState);
             clearCompareBtn?.addEventListener('click', clearSessionComparison);
+            recommendedCompareBtn?.addEventListener('click', async () => {
+                const sessionId = recommendedCompareBtn.getAttribute('data-session-id');
+                if (sessionId) await loadComparisonSession(sessionId, recommendedCompareBtn);
+            });
         }
 
         function openSessionDetailPanel() {
@@ -982,6 +991,7 @@
                 <p><strong>Referrer:</strong> ${session.referrer || '-'}</p>
                 <p><strong>Funnel:</strong> PV ${metrics.pageViews || 0} · VI ${metrics.viewItem || 0} · ATC ${metrics.addToCart || 0} · BC ${metrics.beginCheckout || 0} · P ${metrics.purchase || 0}</p>
                 <p><strong>Otras sesiones del mismo usuario:</strong> ${patterns.peerSessionCount || 0}</p>
+                <p><strong>Sesiones trazadas totales:</strong> ${patterns.totalTrackedSessions || ((patterns.peerSessionCount || 0) + 1)}</p>
             `;
 
             document.getElementById('session-detail-attribution').innerHTML = `
@@ -1015,8 +1025,9 @@
 
             document.getElementById('session-detail-visual').innerHTML = renderSessionVisual(patterns);
             document.getElementById('session-detail-patterns').innerHTML = renderSessionPatterns(patterns);
-            renderPeerSessions(peers, session.sessionId || null);
+            renderPeerSessions(peers, session.sessionId || null, patterns);
             updatePeerNavigation(peers, session.sessionId || null);
+            updateRecommendedComparison(patterns);
             renderSessionComparison();
 
             document.getElementById('session-detail-orders').innerHTML = orders.length
@@ -1031,9 +1042,10 @@
             renderSessionTimelineFromState();
         }
 
-        function renderPeerSessions(peers, currentSessionId) {
+        function renderPeerSessions(peers, currentSessionId, patterns = {}) {
             const container = document.getElementById('session-peer-list');
             if (!container) return;
+            const recommendedSessionId = patterns?.recommendedComparison?.sessionId || '';
 
             const currentChip = currentSessionId ? `
                 <button type="button" class="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-indigo-600 text-white text-sm shadow-sm">
@@ -1053,6 +1065,7 @@
                 if (peer.flags?.addedToCart) badges.push('ATC');
                 if (peer.flags?.reachedCheckout) badges.push('CHK');
                 if (peer.flags?.purchased) badges.push('BUY');
+                if (peer.sessionId === recommendedSessionId) badges.unshift('Sugerida');
                 return `
                     <div class="inline-flex items-center gap-2 px-3 py-2 rounded-full border border-gray-300 bg-white text-sm text-gray-700">
                         <button type="button" data-session-id="${peer.sessionId}" class="session-peer-chip inline-flex items-center gap-2 hover:text-indigo-700">
@@ -1077,20 +1090,30 @@
             container.querySelectorAll('.session-compare-chip').forEach((button) => {
                 button.addEventListener('click', async () => {
                     const sessionId = button.getAttribute('data-compare-session-id');
-                    if (!sessionId) return;
-                    try {
-                        button.setAttribute('disabled', 'true');
-                        const compareData = await fetchSessionDetailData(sessionId);
-                        sessionExplorerState.compareData = compareData;
-                        renderSessionComparison();
-                    } catch (_) {
-                        sessionExplorerState.compareData = null;
-                        renderSessionComparison('No se pudo cargar la sesión de comparación.');
-                    } finally {
-                        button.removeAttribute('disabled');
-                    }
+                    if (sessionId) await loadComparisonSession(sessionId, button);
                 });
             });
+        }
+
+        function updateRecommendedComparison(patterns = {}) {
+            const button = document.getElementById('session-compare-recommended');
+            const note = document.getElementById('session-compare-recommended-note');
+            const recommendation = patterns?.recommendedComparison || null;
+
+            if (!button || !note) return;
+
+            if (!recommendation?.sessionId) {
+                button.classList.add('hidden');
+                button.removeAttribute('data-session-id');
+                note.textContent = patterns?.peerSessionCount
+                    ? 'No hay una comparación recomendada clara todavía; usa las sesiones relacionadas para revisar manualmente.'
+                    : 'Todavía no hay sesiones relacionadas suficientes para recomendar una comparación.';
+                return;
+            }
+
+            button.classList.remove('hidden');
+            button.setAttribute('data-session-id', recommendation.sessionId);
+            note.textContent = `${recommendation.headline || 'Comparación sugerida'}: ${recommendation.reason || 'Abrir una sesión relacionada con mejor valor analítico.'}`;
         }
 
         function updatePeerNavigation(peers, currentSessionId) {
@@ -1156,6 +1179,22 @@
             const res = await fetch(`/api/analytics/${currentShopId}/sessions/${encodeURIComponent(sessionId)}`);
             if (!res.ok) throw new Error('No se pudo cargar la sesión');
             return res.json();
+        }
+
+        async function loadComparisonSession(sessionId, triggerButton = null) {
+            if (!sessionId) return;
+
+            try {
+                triggerButton?.setAttribute('disabled', 'true');
+                const compareData = await fetchSessionDetailData(sessionId);
+                sessionExplorerState.compareData = compareData;
+                renderSessionComparison();
+            } catch (_) {
+                sessionExplorerState.compareData = null;
+                renderSessionComparison('No se pudo cargar la sesión de comparación.');
+            } finally {
+                triggerButton?.removeAttribute('disabled');
+            }
         }
 
         function clearSessionComparison() {
@@ -1333,6 +1372,7 @@
 
         function renderSessionPatterns(patterns) {
             const cards = Array.isArray(patterns.patternCards) ? patterns.patternCards : [];
+            const longitudinalCards = Array.isArray(patterns.longitudinalCards) ? patterns.longitudinalCards : [];
             const topLandingPages = Array.isArray(patterns.topLandingPages) ? patterns.topLandingPages : [];
             const topCampaigns = Array.isArray(patterns.topCampaigns) ? patterns.topCampaigns : [];
 
@@ -1346,6 +1386,24 @@
                     </div>
                 `).join('')
                 : '<p class="text-sm text-gray-500">Sin patrones suficientes todavía.</p>';
+
+            const longitudinalHtml = longitudinalCards.length
+                ? `
+                    <div>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Lectura longitudinal</p>
+                        <div class="space-y-3">
+                            ${longitudinalCards.map((card) => `
+                                <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                                    <p class="text-sm font-semibold text-gray-900">${card.title || '-'}</p>
+                                    <p class="mt-1 text-sm text-gray-600">${card.detail || '-'}</p>
+                                    <p class="mt-2 text-xs font-medium text-sky-700 uppercase tracking-wide">Cómo usarlo</p>
+                                    <p class="text-sm text-sky-700">${card.action || '-'}</p>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `
+                : '';
 
             const sideNotes = `
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1367,11 +1425,11 @@
                     </div>
                 </div>
                 <div class="text-xs text-gray-500">
-                    Promedio en otras sesiones: ${patterns.avgEvents || 0} eventos · ${formatDuration(patterns.avgDurationSeconds || 0)}
+                    Promedio en otras sesiones: ${patterns.avgEvents || 0} eventos · ${formatDuration(patterns.avgDurationSeconds || 0)}${patterns.averageGapHours ? ` · separación media ${patterns.averageGapHours}h` : ''}
                 </div>
             `;
 
-            return `${cardsHtml}${sideNotes}`;
+            return `${cardsHtml}${longitudinalHtml}${sideNotes}`;
         }
 
         // --- FETCH ANALYTICS ---
