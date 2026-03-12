@@ -21,6 +21,22 @@
         .feed-item-enter {
             animation: slideIn 0.3s ease-out forwards;
         }
+        .metric-card-slide {
+            min-width: 100%;
+        }
+        @media (min-width: 640px) {
+            .metric-card-slide {
+                min-width: 50%;
+            }
+        }
+        @media (min-width: 1024px) {
+            .metric-card-slide {
+                min-width: 25%;
+            }
+        }
+        .metric-carousel-track {
+            transition: transform 0.35s ease;
+        }
         @keyframes slideIn {
             from { opacity: 0; transform: translateY(-10px); }
             to { opacity: 1; transform: translateY(0); }
@@ -111,9 +127,23 @@
         </div>
 
         <!-- Metric Cards -->
-        <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 mb-8">
+        <div class="mb-8">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-lg font-medium text-gray-900">Métricas clave</h3>
+                <div class="flex items-center gap-2">
+                    <button id="metric-carousel-prev" type="button" class="inline-flex items-center justify-center w-10 h-10 rounded-full border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <button id="metric-carousel-next" type="button" class="inline-flex items-center justify-center w-10 h-10 rounded-full border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">
+                        <i class="fas fa-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="overflow-hidden">
+                <div id="metric-carousel-track" class="metric-carousel-track flex">
             <!-- Revenue -->
-            <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="metric-card-slide pr-5 box-border">
+            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
                 <div class="p-5">
                     <div class="flex items-center">
                         <div class="flex-shrink-0 bg-indigo-500 rounded-md p-3">
@@ -130,9 +160,11 @@
                     </div>
                 </div>
             </div>
+            </div>
 
             <!-- Orders -->
-            <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="metric-card-slide pr-5 box-border">
+            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
                 <div class="p-5">
                     <div class="flex items-center">
                         <div class="flex-shrink-0 bg-green-500 rounded-md p-3">
@@ -149,9 +181,11 @@
                     </div>
                 </div>
             </div>
+            </div>
 
             <!-- Sessions -->
-            <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="metric-card-slide pr-5 box-border">
+            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
                 <div class="p-5">
                     <div class="flex items-center">
                         <div class="flex-shrink-0 bg-sky-500 rounded-md p-3">
@@ -168,9 +202,11 @@
                     </div>
                 </div>
             </div>
+            </div>
 
             <!-- Conversion Rate -->
-            <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="metric-card-slide pr-5 box-border">
+            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
                 <div class="p-5">
                     <div class="flex items-center">
                         <div class="flex-shrink-0 bg-cyan-600 rounded-md p-3">
@@ -187,9 +223,11 @@
                     </div>
                 </div>
             </div>
+            </div>
 
             <!-- Page Views -->
-            <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="metric-card-slide pr-5 box-border">
+            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
                 <div class="p-5">
                     <div class="flex items-center">
                         <div class="flex-shrink-0 bg-blue-500 rounded-md p-3">
@@ -206,9 +244,11 @@
                     </div>
                 </div>
             </div>
+            </div>
 
             <!-- View Item -->
-            <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="metric-card-slide pr-5 box-border">
+            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
                 <div class="p-5">
                     <div class="flex items-center">
                         <div class="flex-shrink-0 bg-teal-500 rounded-md p-3">
@@ -225,9 +265,11 @@
                     </div>
                 </div>
             </div>
+            </div>
 
             <!-- Add To Cart -->
-            <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="metric-card-slide pr-5 box-border">
+            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
                 <div class="p-5">
                     <div class="flex items-center">
                         <div class="flex-shrink-0 bg-amber-500 rounded-md p-3">
@@ -244,9 +286,11 @@
                     </div>
                 </div>
             </div>
+            </div>
 
             <!-- Begin Checkout -->
-            <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="metric-card-slide pr-5 box-border">
+            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
                 <div class="p-5">
                     <div class="flex items-center">
                         <div class="flex-shrink-0 bg-purple-500 rounded-md p-3">
@@ -263,9 +307,11 @@
                     </div>
                 </div>
             </div>
+            </div>
 
             <!-- Purchase Events -->
-            <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="metric-card-slide pr-5 box-border">
+            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
                 <div class="p-5">
                     <div class="flex items-center">
                         <div class="flex-shrink-0 bg-emerald-600 rounded-md p-3">
@@ -282,9 +328,11 @@
                     </div>
                 </div>
             </div>
+            </div>
 
             <!-- Unattributed Orders -->
-            <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="metric-card-slide pr-5 box-border">
+            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
                 <div class="p-5">
                     <div class="flex items-center">
                         <div class="flex-shrink-0 bg-rose-500 rounded-md p-3">
@@ -301,9 +349,11 @@
                     </div>
                 </div>
             </div>
+            </div>
 
             <!-- Unattributed Revenue -->
-            <div class="bg-white overflow-hidden shadow rounded-lg">
+            <div class="metric-card-slide pr-5 box-border">
+            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
                 <div class="p-5">
                     <div class="flex items-center">
                         <div class="flex-shrink-0 bg-orange-500 rounded-md p-3">
@@ -318,6 +368,9 @@
                             </dl>
                         </div>
                     </div>
+                </div>
+            </div>
+            </div>
                 </div>
             </div>
         </div>
@@ -496,6 +549,38 @@
                 </table>
             </div>
         </div>
+
+        <div id="session-detail-modal" class="hidden fixed inset-0 z-50">
+            <div class="absolute inset-0 bg-black/40" id="session-detail-backdrop"></div>
+            <div class="relative z-10 max-w-6xl mx-auto mt-8 mb-8 bg-white rounded-2xl shadow-2xl overflow-hidden max-h-[85vh] flex flex-col">
+                <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-900">Detalle de sesión</h3>
+                        <p class="text-sm text-gray-500" id="session-detail-title">Cargando...</p>
+                    </div>
+                    <button id="session-detail-close" type="button" class="inline-flex items-center justify-center w-10 h-10 rounded-full border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="p-6 overflow-y-auto space-y-6">
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4" id="session-detail-metrics"></div>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div class="bg-gray-50 rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Resumen</h4>
+                            <div class="space-y-2 text-sm text-gray-600" id="session-detail-summary"></div>
+                        </div>
+                        <div class="bg-gray-50 rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Órdenes ligadas</h4>
+                            <div class="space-y-2 text-sm text-gray-600" id="session-detail-orders"></div>
+                        </div>
+                    </div>
+                    <div class="bg-gray-50 rounded-xl p-4">
+                        <h4 class="text-sm font-semibold text-gray-900 mb-3">Timeline de eventos</h4>
+                        <div class="space-y-3" id="session-detail-timeline"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </main>
 
     <script>
@@ -504,6 +589,8 @@
         let attributionChartInstance = null;
         let trendChartInstance = null;
         let recentPurchasesState = [];
+        let metricCarouselIndex = 0;
+        let metricCarouselVisible = 4;
 
         function formatDateInputValue(date) {
             const year = date.getFullYear();
@@ -596,6 +683,8 @@
         // --- AUTH & INIT ---
         async function init() {
             initializeDateControls();
+            initializeMetricCarousel();
+            initializeSessionDetailModal();
 
             // Public mode: explicit shop in URL/localStorage/prompt
             const shopParam = resolvePublicShopId();
@@ -637,6 +726,146 @@
                 console.error('Session check failed:', error);
                 alert('No se pudo validar sesion. Usa ?shop=tu_shop_id para modo publico.');
             }
+        }
+
+        function initializeMetricCarousel() {
+            const prev = document.getElementById('metric-carousel-prev');
+            const next = document.getElementById('metric-carousel-next');
+            prev?.addEventListener('click', () => moveMetricCarousel(-1));
+            next?.addEventListener('click', () => moveMetricCarousel(1));
+            window.addEventListener('resize', () => {
+                syncMetricCarouselViewport();
+                updateMetricCarousel();
+            });
+            syncMetricCarouselViewport();
+            updateMetricCarousel();
+        }
+
+        function syncMetricCarouselViewport() {
+            if (window.innerWidth >= 1024) metricCarouselVisible = 4;
+            else if (window.innerWidth >= 640) metricCarouselVisible = 2;
+            else metricCarouselVisible = 1;
+        }
+
+        function moveMetricCarousel(direction) {
+            const slides = document.querySelectorAll('.metric-card-slide');
+            const maxIndex = Math.max(0, slides.length - metricCarouselVisible);
+            metricCarouselIndex = Math.max(0, Math.min(maxIndex, metricCarouselIndex + direction));
+            updateMetricCarousel();
+        }
+
+        function updateMetricCarousel() {
+            const track = document.getElementById('metric-carousel-track');
+            const slides = document.querySelectorAll('.metric-card-slide');
+            if (!track || slides.length === 0) return;
+
+            const slideWidth = slides[0].getBoundingClientRect().width;
+            track.style.transform = `translateX(-${metricCarouselIndex * slideWidth}px)`;
+
+            const maxIndex = Math.max(0, slides.length - metricCarouselVisible);
+            const prev = document.getElementById('metric-carousel-prev');
+            const next = document.getElementById('metric-carousel-next');
+            if (prev) prev.disabled = metricCarouselIndex === 0;
+            if (next) next.disabled = metricCarouselIndex >= maxIndex;
+        }
+
+        function initializeSessionDetailModal() {
+            const closeBtn = document.getElementById('session-detail-close');
+            const backdrop = document.getElementById('session-detail-backdrop');
+            closeBtn?.addEventListener('click', closeSessionDetailModal);
+            backdrop?.addEventListener('click', closeSessionDetailModal);
+        }
+
+        function openSessionDetailModal() {
+            const modal = document.getElementById('session-detail-modal');
+            modal?.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeSessionDetailModal() {
+            const modal = document.getElementById('session-detail-modal');
+            modal?.classList.add('hidden');
+            document.body.style.overflow = '';
+        }
+
+        async function openSessionDetail(sessionId) {
+            if (!currentShopId || !sessionId) return;
+            openSessionDetailModal();
+
+            document.getElementById('session-detail-title').textContent = `Sesion ${sessionId}`;
+            document.getElementById('session-detail-metrics').innerHTML = '<div class="text-sm text-gray-500">Cargando métricas...</div>';
+            document.getElementById('session-detail-summary').innerHTML = '<p>Cargando resumen...</p>';
+            document.getElementById('session-detail-orders').innerHTML = '<p>Cargando órdenes...</p>';
+            document.getElementById('session-detail-timeline').innerHTML = '<p>Cargando timeline...</p>';
+
+            try {
+                const res = await fetch(`/api/analytics/${currentShopId}/sessions/${encodeURIComponent(sessionId)}`);
+                if (!res.ok) throw new Error('No se pudo cargar la sesión');
+                const data = await res.json();
+                renderSessionDetail(data);
+            } catch (error) {
+                document.getElementById('session-detail-summary').innerHTML = `<p class="text-red-600">${error.message}</p>`;
+                document.getElementById('session-detail-orders').innerHTML = '<p class="text-gray-500">-</p>';
+                document.getElementById('session-detail-timeline').innerHTML = '<p class="text-gray-500">-</p>';
+            }
+        }
+
+        function renderSessionDetail(data) {
+            const session = data.session || {};
+            const metrics = data.metrics || {};
+            const orders = Array.isArray(data.orders) ? data.orders : [];
+            const timeline = Array.isArray(data.timeline) ? data.timeline : [];
+
+            document.getElementById('session-detail-title').textContent = `Sesion ${session.sessionId || '-'}`;
+
+            document.getElementById('session-detail-metrics').innerHTML = [
+                { label: 'Eventos', value: metrics.totalEvents || 0 },
+                { label: 'Page Views', value: metrics.pageViews || 0 },
+                { label: 'View Item', value: metrics.viewItem || 0 },
+                { label: 'Revenue', value: formatCurrency(metrics.revenue || 0) },
+            ].map((item) => `
+                <div class="bg-gray-50 rounded-xl p-4">
+                    <div class="text-xs uppercase tracking-wide text-gray-500">${item.label}</div>
+                    <div class="mt-2 text-2xl font-semibold text-gray-900">${item.value}</div>
+                </div>
+            `).join('');
+
+            document.getElementById('session-detail-summary').innerHTML = `
+                <p><strong>User Key:</strong> ${session.userKey || '-'}</p>
+                <p><strong>Inicio:</strong> ${formatDateTimeMx(session.startedAt)}</p>
+                <p><strong>Último evento:</strong> ${formatDateTimeMx(session.lastEventAt)}</p>
+                <p><strong>Duración:</strong> ${formatDuration(session.sessionDurationSeconds || 0)}</p>
+                <p><strong>Landing:</strong> ${session.landingPageUrl || '-'}</p>
+                <p><strong>UTM:</strong> ${(session.utmSource || '-') + ' / ' + (session.utmCampaign || '-')}</p>
+                <p><strong>Referrer:</strong> ${session.referrer || '-'}</p>
+                <p><strong>Funnel:</strong> PV ${metrics.pageViews || 0} · VI ${metrics.viewItem || 0} · ATC ${metrics.addToCart || 0} · BC ${metrics.beginCheckout || 0} · P ${metrics.purchase || 0}</p>
+            `;
+
+            document.getElementById('session-detail-orders').innerHTML = orders.length
+                ? orders.map((order) => `
+                    <div class="border border-gray-200 rounded-lg p-3 bg-white">
+                        <p class="font-medium text-gray-900">${order.orderNumber || order.orderId || '-'}</p>
+                        <p class="text-sm text-gray-500">${formatCurrencyWithCode(order.revenue || 0, order.currency || 'MXN')} · ${order.attributedChannel || 'unattributed'}</p>
+                    </div>
+                `).join('')
+                : '<p class="text-gray-500">Sin órdenes ligadas a esta sesión.</p>';
+
+            document.getElementById('session-detail-timeline').innerHTML = timeline.length
+                ? timeline.map((event) => `
+                    <div class="border border-gray-200 rounded-lg p-3 bg-white">
+                        <div class="flex items-center justify-between gap-4">
+                            <div>
+                                <p class="font-medium text-gray-900">${event.eventName}</p>
+                                <p class="text-xs text-gray-500">${event.pageUrl || event.productId || event.orderId || '-'}</p>
+                            </div>
+                            <div class="text-right">
+                                <p class="text-sm text-gray-700">${formatTimeMx(event.createdAt)}</p>
+                                <p class="text-xs text-gray-400">${event.bucket || '-'}</p>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')
+                : '<p class="text-gray-500">Sin eventos en esta sesión.</p>';
         }
 
         // --- FETCH ANALYTICS ---
@@ -949,6 +1178,7 @@
                 let color = 'text-indigo-600';
                 let title = data.type;
                 let detail = '';
+                const sessionId = data.sessionId || data.payload?.sessionId || null;
 
                 if (data.type === 'COLLECT') {
                     icon = 'fa-mouse-pointer';
@@ -959,9 +1189,10 @@
                     icon = 'fa-server';
                     color = 'text-green-600';
                     title = 'Orden Shopify';
-                    detail = 'Nueva orden procesada';
+                    detail = data.payload?.orderId ? `Orden ${data.payload.orderId}` : 'Nueva orden procesada';
                 }
 
+                el.classList.add('cursor-pointer', 'hover:bg-gray-100');
                 el.innerHTML = `
                     <div class="flex items-start">
                         <div class="flex-shrink-0 pt-0.5">
@@ -970,10 +1201,15 @@
                         <div class="ml-3 w-0 flex-1">
                             <p class="text-sm font-medium text-gray-900">${title}</p>
                             <p class="text-xs text-gray-500 truncate">${detail}</p>
+                            <p class="text-[11px] text-indigo-600 mt-1">${sessionId ? `Sesion: ${sessionId}` : 'Sin sessionId'}</p>
                             <p class="text-[10px] text-gray-400 mt-1">${formatTimeMx()}</p>
                         </div>
                     </div>
                 `;
+
+                if (sessionId) {
+                    el.addEventListener('click', () => openSessionDetail(sessionId));
+                }
 
                 container.prepend(el);
 
@@ -1035,6 +1271,13 @@
 
         function formatPercent(value) {
             return `${(Number(value || 0) * 100).toFixed(1)}%`;
+        }
+
+        function formatDuration(seconds) {
+            const total = Number(seconds || 0);
+            const mins = Math.floor(total / 60);
+            const secs = total % 60;
+            return `${mins}m ${secs}s`;
         }
 
         function onAttributionModelChange() {

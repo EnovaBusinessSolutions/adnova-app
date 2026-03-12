@@ -1038,4 +1038,142 @@ router.get('/:account_id', async (req, res) => {
   }
 });
 
+router.get('/:account_id/sessions/:session_id', async (req, res) => {
+  try {
+    const { account_id, session_id } = req.params;
+
+    const session = await prisma.session.findUnique({
+      where: { sessionId: session_id },
+      select: {
+        sessionId: true,
+        accountId: true,
+        userKey: true,
+        startedAt: true,
+        lastEventAt: true,
+        utmSource: true,
+        utmMedium: true,
+        utmCampaign: true,
+        utmContent: true,
+        utmTerm: true,
+        referrer: true,
+        landingPageUrl: true,
+        fbclid: true,
+        gclid: true,
+        ttclid: true,
+        fbp: true,
+        fbc: true,
+      },
+    });
+
+    if (!session || session.accountId !== account_id) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+
+    const [events, relatedOrders] = await Promise.all([
+      prisma.event.findMany({
+        where: { accountId: account_id, sessionId: session_id },
+        select: {
+          eventId: true,
+          eventName: true,
+          createdAt: true,
+          pageUrl: true,
+          pageType: true,
+          productId: true,
+          variantId: true,
+          cartId: true,
+          cartValue: true,
+          checkoutToken: true,
+          orderId: true,
+          revenue: true,
+          currency: true,
+          rawPayload: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.order.findMany({
+        where: { accountId: account_id, sessionId: session_id },
+        select: {
+          orderId: true,
+          orderNumber: true,
+          revenue: true,
+          currency: true,
+          createdAt: true,
+          platformCreatedAt: true,
+          attributedChannel: true,
+          attributionSnapshot: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const metrics = {
+      totalEvents: events.length,
+      pageViews: 0,
+      viewItem: 0,
+      addToCart: 0,
+      beginCheckout: 0,
+      purchase: 0,
+      revenue: 0,
+      uniquePages: 0,
+      uniqueProducts: 0,
+      orderCount: relatedOrders.length,
+    };
+
+    const pageSet = new Set();
+    const productSet = new Set();
+
+    const timeline = events.map((event) => {
+      const bucket = resolveEventBucket(event.eventName);
+      if (bucket === 'page_view') metrics.pageViews += 1;
+      if (bucket === 'view_item') metrics.viewItem += 1;
+      if (bucket === 'add_to_cart') metrics.addToCart += 1;
+      if (bucket === 'begin_checkout') metrics.beginCheckout += 1;
+      if (bucket === 'purchase') metrics.purchase += 1;
+      metrics.revenue += Number(event.revenue || 0);
+
+      if (event.pageUrl) pageSet.add(event.pageUrl);
+      if (event.productId) productSet.add(String(event.productId));
+
+      return {
+        eventId: event.eventId,
+        eventName: event.eventName,
+        bucket,
+        createdAt: event.createdAt,
+        pageUrl: event.pageUrl,
+        pageType: event.pageType,
+        productId: event.productId,
+        variantId: event.variantId,
+        cartId: event.cartId,
+        cartValue: event.cartValue,
+        checkoutToken: event.checkoutToken,
+        orderId: event.orderId,
+        revenue: event.revenue,
+        currency: event.currency,
+        utmSource: event?.rawPayload?.utm_source || null,
+        utmCampaign: event?.rawPayload?.utm_campaign || null,
+      };
+    });
+
+    metrics.uniquePages = pageSet.size;
+    metrics.uniqueProducts = productSet.size;
+
+    const sessionDurationSeconds = session.startedAt && session.lastEventAt
+      ? Math.max(0, Math.round((new Date(session.lastEventAt).getTime() - new Date(session.startedAt).getTime()) / 1000))
+      : 0;
+
+    res.json({
+      session: {
+        ...session,
+        sessionDurationSeconds,
+      },
+      metrics,
+      timeline,
+      orders: relatedOrders,
+    });
+  } catch (error) {
+    console.error('[Analytics API] Session detail error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 module.exports = router;

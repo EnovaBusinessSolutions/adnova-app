@@ -23,17 +23,6 @@ router.post('/orders-create', async (req, res) => {
   // For Shopify webhooks, shop domain = accountId (backward compatible)
   const accountId = req.get('X-Shopify-Shop-Domain');
   console.log(`\\n[AdRay Webhook] Received orders/create for account: ${accountId}`);
-  
-  // ALWAYS emit live event for dashboard
-  eventBus.emit('event', {
-     type: 'WEBHOOK',
-     accountId: accountId,
-     shopId: accountId, // Legacy support
-     payload: {
-        eventType: 'orders/create',
-        timestamp: new Date()
-     }
-  });
 
   // Always return 200 to Shopify immediately
   res.status(200).send('OK');
@@ -110,6 +99,24 @@ router.post('/orders-create', async (req, res) => {
         lineItems: payload.line_items || [],
         eventId,
         platformCreatedAt: new Date(payload.created_at)
+      }
+    });
+
+    // Emit live event for dashboard after order/session context is known.
+    eventBus.emit('event', {
+      type: 'WEBHOOK',
+      accountId,
+      shopId: accountId,
+      sessionId: checkoutMap?.sessionId || null,
+      userKey: checkoutMap?.userKey || null,
+      eventId,
+      payload: {
+        eventType: 'orders/create',
+        timestamp: new Date().toISOString(),
+        orderId,
+        checkoutToken: checkoutToken || null,
+        revenue,
+        currency: payload.currency || null,
       }
     });
 

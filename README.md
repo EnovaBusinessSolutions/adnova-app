@@ -670,14 +670,22 @@ Current dashboard status from live review:
 - Pixel Health is rendering.
 - Recent purchases are rendering.
 - `Live Feed` is now working correctly in real time after SSE hardening.
+- Visual confirmation received for:
+  - `View Item` card,
+  - `Data Quality` block,
+  - `Integration Health` block.
 
 ### Missing or incomplete data for a complete dashboard
 
 1. Paid media completeness still requires spend and ROAS for Meta and Google.
+2. Metric density is now high enough that cards should be navigated as a carousel instead of showing every KPI at once.
+3. `Live Feed` must be session-aware so operators can inspect exactly what a user did inside one session and extract high-value session patterns.
 
 ### Execution order
 
-1. Add paid media metrics such as spend and ROAS.
+1. Convert metric cards into a carousel with 4 visible cards.
+2. Link `Live Feed` events to `sessionId` and open a per-session drill-down.
+3. Add paid media metrics such as spend and ROAS.
 
 ### Completed dashboard steps
 
@@ -687,6 +695,12 @@ Current dashboard status from live review:
 - Data quality indicators added for revenue source, fallback mode, and snapshot freshness.
 - Attribution detail expanded in recent purchases with campaign and click ID when available.
 - Integration Health added for Meta, Google, and TikTok from `PlatformConnection` status.
+
+### Current development focus
+
+- Metric carousel with 4 visible cards.
+- Session drill-down from `Live Feed` using `sessionId`.
+- Session-level understanding of what a user did during a visit, including funnel steps and timeline.
 
 ### Live Feed decision rule
 

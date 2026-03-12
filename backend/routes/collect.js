@@ -25,18 +25,6 @@ router.post('/', async (req, res) => {
     const platform = payload.platform || 'custom';
     console.log(`\n[AdRay Collect] Received event '${payload.event_name}' for account: ${accountId} (platform: ${platform})`);
 
-    // Emit live event for Dashboard Feed
-    eventBus.emit('event', {
-       type: 'COLLECT',
-       accountId: accountId,
-       payload: {
-          eventName: payload.event_name,
-          timestamp: new Date(),
-          pageUrl: payload.page_url,
-          platform: platform
-       }
-    });
-
     step = 'validate_account';
     if (!accountId) {
       console.warn('[AdRay Collect] Rejected: account_id is required');
@@ -86,6 +74,25 @@ router.post('/', async (req, res) => {
 
     const sessionId = payload.session_id || randomUUID();
     console.log(`[AdRay Collect] Session ID: ${sessionId}`);
+
+    // Emit live event for Dashboard Feed after identity + session are resolved.
+    eventBus.emit('event', {
+      type: 'COLLECT',
+      accountId,
+      sessionId,
+      userKey,
+      eventId,
+      payload: {
+        eventName: payload.event_name,
+        timestamp: new Date().toISOString(),
+        pageUrl: payload.page_url,
+        platform,
+        productId: payload.product_id || null,
+        cartValue: payload.cart_value ? parseFloat(payload.cart_value) : null,
+        checkoutToken: payload.checkout_token || null,
+        orderId: payload.order_id || null,
+      }
+    });
 
     // 4. Handle begin_checkout special case
     if (payload.event_name === 'begin_checkout' && payload.checkout_token) {
