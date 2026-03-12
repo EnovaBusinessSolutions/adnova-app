@@ -1737,6 +1737,377 @@ router.get('/:account_id', async (req, res) => {
   }
 });
 
+function collectUniqueStrings(values = []) {
+  return Array.from(new Set(
+    values
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  ));
+}
+
+function buildIdentityProfileDescriptor({ customerId, emailHash, phoneHash, userKey }) {
+  if (customerId) {
+    return {
+      profileKey: `customer:${customerId}`,
+      profileType: 'woocommerce_customer',
+      profileLabel: `Woo customer #${customerId}`,
+    };
+  }
+
+  if (emailHash) {
+    return {
+      profileKey: `email:${emailHash}`,
+      profileType: 'email_hash',
+      profileLabel: 'Perfil por email',
+    };
+  }
+
+  if (phoneHash) {
+    return {
+      profileKey: `phone:${phoneHash}`,
+      profileType: 'phone_hash',
+      profileLabel: 'Perfil por teléfono',
+    };
+  }
+
+  return {
+    profileKey: `user:${userKey || 'unknown'}`,
+    profileType: 'user_key',
+    profileLabel: userKey ? `Browser profile ${String(userKey).slice(0, 10)}` : 'Perfil web',
+  };
+}
+
+function buildIdentityOrClauses({ userKeys = [], customerIds = [], emailHashes = [], phoneHashes = [] }) {
+  const clauses = [];
+  if (userKeys.length) clauses.push({ userKey: { in: userKeys } });
+  if (customerIds.length) clauses.push({ customerId: { in: customerIds } });
+  if (emailHashes.length) clauses.push({ emailHash: { in: emailHashes } });
+  if (phoneHashes.length) clauses.push({ phoneHash: { in: phoneHashes } });
+  return clauses;
+}
+
+async function resolveSessionIdentityContext({ accountId, sessionId, sessionUserKey, checkoutTokens = [] }) {
+  const seedOrderClauses = [{ sessionId }];
+  if (checkoutTokens.length) seedOrderClauses.push({ checkoutToken: { in: checkoutTokens } });
+  if (sessionUserKey) seedOrderClauses.push({ userKey: sessionUserKey });
+
+  const [seedOrders, seedIdentityRows] = await Promise.all([
+    prisma.order.findMany({
+      where: {
+        accountId,
+        OR: seedOrderClauses,
+      },
+      select: {
+        sessionId: true,
+        userKey: true,
+        customerId: true,
+        emailHash: true,
+        phoneHash: true,
+        orderId: true,
+        orderNumber: true,
+        revenue: true,
+        currency: true,
+        createdAt: true,
+        platformCreatedAt: true,
+        attributedChannel: true,
+      },
+      orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
+      take: 100,
+    }),
+    sessionUserKey
+      ? prisma.identityGraph.findMany({
+          where: { accountId, userKey: sessionUserKey },
+          select: {
+            userKey: true,
+            customerId: true,
+            emailHash: true,
+            phoneHash: true,
+          },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const seedUserKeys = collectUniqueStrings([
+    sessionUserKey,
+    ...seedOrders.map((item) => item.userKey),
+    ...seedIdentityRows.map((item) => item.userKey),
+  ]);
+  const seedCustomerIds = collectUniqueStrings([
+    ...seedOrders.map((item) => item.customerId),
+    ...seedIdentityRows.map((item) => item.customerId),
+  ]);
+  const seedEmailHashes = collectUniqueStrings([
+    ...seedOrders.map((item) => item.emailHash),
+    ...seedIdentityRows.map((item) => item.emailHash),
+  ]);
+  const seedPhoneHashes = collectUniqueStrings([
+    ...seedOrders.map((item) => item.phoneHash),
+    ...seedIdentityRows.map((item) => item.phoneHash),
+  ]);
+
+  const sharedIdentityClauses = buildIdentityOrClauses({
+    userKeys: seedUserKeys,
+    customerIds: seedCustomerIds,
+    emailHashes: seedEmailHashes,
+    phoneHashes: seedPhoneHashes,
+  });
+
+  const sharedIdentityRows = sharedIdentityClauses.length
+    ? await prisma.identityGraph.findMany({
+        where: {
+          accountId,
+          OR: sharedIdentityClauses,
+        },
+        select: {
+          userKey: true,
+          customerId: true,
+          emailHash: true,
+          phoneHash: true,
+          lastSeenAt: true,
+        },
+      })
+    : [];
+
+  const finalUserKeys = collectUniqueStrings([
+    ...seedUserKeys,
+    ...sharedIdentityRows.map((item) => item.userKey),
+  ]);
+  const finalCustomerIds = collectUniqueStrings([
+    ...seedCustomerIds,
+    ...sharedIdentityRows.map((item) => item.customerId),
+  ]);
+  const finalEmailHashes = collectUniqueStrings([
+    ...seedEmailHashes,
+    ...sharedIdentityRows.map((item) => item.emailHash),
+  ]);
+  const finalPhoneHashes = collectUniqueStrings([
+    ...seedPhoneHashes,
+    ...sharedIdentityRows.map((item) => item.phoneHash),
+  ]);
+
+  const historicalOrderClauses = buildIdentityOrClauses({
+    userKeys: finalUserKeys,
+    customerIds: finalCustomerIds,
+    emailHashes: finalEmailHashes,
+    phoneHashes: finalPhoneHashes,
+  });
+
+  const historicalOrders = historicalOrderClauses.length
+    ? await prisma.order.findMany({
+        where: {
+          accountId,
+          OR: historicalOrderClauses,
+        },
+        select: {
+          sessionId: true,
+          userKey: true,
+          customerId: true,
+          emailHash: true,
+          phoneHash: true,
+          orderId: true,
+          orderNumber: true,
+          revenue: true,
+          currency: true,
+          createdAt: true,
+          platformCreatedAt: true,
+          attributedChannel: true,
+        },
+        orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
+        take: 250,
+      })
+    : [];
+
+  const profileDescriptor = buildIdentityProfileDescriptor({
+    customerId: finalCustomerIds[0] || null,
+    emailHash: finalEmailHashes[0] || null,
+    phoneHash: finalPhoneHashes[0] || null,
+    userKey: finalUserKeys[0] || sessionUserKey || null,
+  });
+
+  return {
+    userKeys: finalUserKeys,
+    customerIds: finalCustomerIds,
+    emailHashes: finalEmailHashes,
+    phoneHashes: finalPhoneHashes,
+    profile: profileDescriptor,
+    sharedIdentityRows,
+    historicalOrders,
+  };
+}
+
+router.get('/:account_id/session-explorer', async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const limit = Math.max(5, Math.min(30, Number.parseInt(String(req.query.limit || '12'), 10) || 12));
+
+    const recentSessions = await prisma.session.findMany({
+      where: { accountId: account_id },
+      select: {
+        sessionId: true,
+        userKey: true,
+        startedAt: true,
+        lastEventAt: true,
+        landingPageUrl: true,
+        utmSource: true,
+        utmCampaign: true,
+      },
+      orderBy: { startedAt: 'desc' },
+      take: 250,
+    });
+
+    const recentUserKeys = collectUniqueStrings(recentSessions.map((item) => item.userKey));
+    const identityRows = recentUserKeys.length
+      ? await prisma.identityGraph.findMany({
+          where: {
+            accountId: account_id,
+            userKey: { in: recentUserKeys },
+          },
+          select: {
+            userKey: true,
+            customerId: true,
+            emailHash: true,
+            phoneHash: true,
+            lastSeenAt: true,
+          },
+        })
+      : [];
+
+    const customerIds = collectUniqueStrings(identityRows.map((item) => item.customerId));
+    const emailHashes = collectUniqueStrings(identityRows.map((item) => item.emailHash));
+    const phoneHashes = collectUniqueStrings(identityRows.map((item) => item.phoneHash));
+    const orderClauses = buildIdentityOrClauses({
+      userKeys: recentUserKeys,
+      customerIds,
+      emailHashes,
+      phoneHashes,
+    });
+
+    const historicalOrders = orderClauses.length
+      ? await prisma.order.findMany({
+          where: {
+            accountId: account_id,
+            OR: orderClauses,
+          },
+          select: {
+            sessionId: true,
+            userKey: true,
+            customerId: true,
+            emailHash: true,
+            phoneHash: true,
+            orderId: true,
+            orderNumber: true,
+            revenue: true,
+            currency: true,
+            createdAt: true,
+            platformCreatedAt: true,
+            attributedChannel: true,
+          },
+          orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
+          take: 400,
+        })
+      : [];
+
+    const identityByUserKey = new Map();
+    identityRows.forEach((row) => {
+      if (!row.userKey) return;
+      if (!identityByUserKey.has(row.userKey)) {
+        identityByUserKey.set(row.userKey, row);
+      }
+    });
+
+    const profiles = new Map();
+    const ensureProfile = (descriptor) => {
+      if (!profiles.has(descriptor.profileKey)) {
+        profiles.set(descriptor.profileKey, {
+          profileKey: descriptor.profileKey,
+          profileType: descriptor.profileType,
+          profileLabel: descriptor.profileLabel,
+          sessionCount: 0,
+          orderCount: 0,
+          totalRevenue: 0,
+          recentSessionId: null,
+          recentSessionStartedAt: null,
+          lastSeenAt: null,
+          lastLandingPageUrl: null,
+          lastCampaign: null,
+          userKeys: new Set(),
+        });
+      }
+      return profiles.get(descriptor.profileKey);
+    };
+
+    recentSessions.forEach((session) => {
+      const identity = identityByUserKey.get(session.userKey) || {};
+      const descriptor = buildIdentityProfileDescriptor({
+        customerId: identity.customerId || null,
+        emailHash: identity.emailHash || null,
+        phoneHash: identity.phoneHash || null,
+        userKey: session.userKey,
+      });
+      const profile = ensureProfile(descriptor);
+      profile.sessionCount += 1;
+      profile.userKeys.add(String(session.userKey || '').trim());
+      const startedAtIso = session.startedAt ? new Date(session.startedAt).toISOString() : null;
+      if (!profile.recentSessionStartedAt || (startedAtIso && startedAtIso > profile.recentSessionStartedAt)) {
+        profile.recentSessionId = session.sessionId;
+        profile.recentSessionStartedAt = startedAtIso;
+        profile.lastLandingPageUrl = session.landingPageUrl || null;
+        profile.lastCampaign = session.utmCampaign || session.utmSource || null;
+      }
+      const lastSeenIso = session.lastEventAt ? new Date(session.lastEventAt).toISOString() : startedAtIso;
+      if (!profile.lastSeenAt || (lastSeenIso && lastSeenIso > profile.lastSeenAt)) {
+        profile.lastSeenAt = lastSeenIso;
+      }
+    });
+
+    historicalOrders.forEach((order) => {
+      const identity = order.userKey ? (identityByUserKey.get(order.userKey) || {}) : {};
+      const descriptor = buildIdentityProfileDescriptor({
+        customerId: order.customerId || identity.customerId || null,
+        emailHash: order.emailHash || identity.emailHash || null,
+        phoneHash: order.phoneHash || identity.phoneHash || null,
+        userKey: order.userKey || null,
+      });
+      const profile = ensureProfile(descriptor);
+      profile.orderCount += 1;
+      profile.totalRevenue += Number(order.revenue || 0);
+      if (order.userKey) profile.userKeys.add(String(order.userKey).trim());
+      const orderSeenAt = order.platformCreatedAt || order.createdAt;
+      const orderSeenIso = orderSeenAt ? new Date(orderSeenAt).toISOString() : null;
+      if (!profile.lastSeenAt || (orderSeenIso && orderSeenIso > profile.lastSeenAt)) {
+        profile.lastSeenAt = orderSeenIso;
+      }
+    });
+
+    const serializedProfiles = Array.from(profiles.values())
+      .map((profile) => ({
+        ...profile,
+        userKeys: Array.from(profile.userKeys).filter(Boolean),
+      }))
+      .sort((a, b) => {
+        const aSeen = new Date(a.lastSeenAt || 0).getTime();
+        const bSeen = new Date(b.lastSeenAt || 0).getTime();
+        if (bSeen !== aSeen) return bSeen - aSeen;
+        if (b.sessionCount !== a.sessionCount) return b.sessionCount - a.sessionCount;
+        return b.totalRevenue - a.totalRevenue;
+      })
+      .slice(0, limit);
+
+    res.json({
+      summary: {
+        totalProfiles: serializedProfiles.length,
+        totalSessions: recentSessions.length,
+        totalOrders: historicalOrders.length,
+        totalRevenue: historicalOrders.reduce((sum, item) => sum + Number(item.revenue || 0), 0),
+      },
+      profiles: serializedProfiles,
+    });
+  } catch (error) {
+    console.error('[Analytics API] Session explorer overview error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 router.get('/:account_id/sessions/:session_id', async (req, res) => {
   try {
     const { account_id, session_id } = req.params;
@@ -1768,7 +2139,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
       return res.status(404).json({ error: 'Session not found' });
     }
 
-    const [events, relatedOrders, peerSessions] = await Promise.all([
+    const [events, currentSessionOrders] = await Promise.all([
       prisma.event.findMany({
         where: { accountId: account_id, sessionId: session_id },
         select: {
@@ -1803,25 +2174,39 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         },
         orderBy: { createdAt: 'desc' },
       }),
-      session.userKey
-        ? prisma.session.findMany({
-            where: {
-              accountId: account_id,
-              userKey: session.userKey,
-              sessionId: { not: session_id },
-            },
-            select: {
-              sessionId: true,
-              startedAt: true,
-              lastEventAt: true,
-              landingPageUrl: true,
-              utmCampaign: true,
-            },
-            orderBy: { startedAt: 'desc' },
-            take: 12,
-          })
-        : Promise.resolve([]),
     ]);
+
+    const checkoutTokenSet = new Set();
+    events.forEach((event) => {
+      if (event.checkoutToken) checkoutTokenSet.add(String(event.checkoutToken));
+    });
+
+    const identityContext = await resolveSessionIdentityContext({
+      accountId: account_id,
+      sessionId: session_id,
+      sessionUserKey: session.userKey || null,
+      checkoutTokens: Array.from(checkoutTokenSet),
+    });
+
+    const peerSessions = identityContext.userKeys.length
+      ? await prisma.session.findMany({
+          where: {
+            accountId: account_id,
+            userKey: { in: identityContext.userKeys },
+            sessionId: { not: session_id },
+          },
+          select: {
+            sessionId: true,
+            startedAt: true,
+            lastEventAt: true,
+            landingPageUrl: true,
+            utmCampaign: true,
+            userKey: true,
+          },
+          orderBy: { startedAt: 'desc' },
+          take: 24,
+        })
+      : [];
 
     const peerSessionIds = peerSessions.map((item) => item.sessionId).filter(Boolean);
     const peerEventRows = peerSessionIds.length
@@ -1861,15 +2246,13 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
       revenue: 0,
       uniquePages: 0,
       uniqueProducts: 0,
-      orderCount: relatedOrders.length,
+      orderCount: currentSessionOrders.length,
     };
 
     const pageSet = new Set();
     const productSet = new Set();
     const pageMap = new Map();
     const productMap = new Map();
-    const checkoutTokenSet = new Set();
-
     const timeline = events.map((event) => {
       const bucket = resolveEventBucket(event.eventName);
       if (bucket === 'page_view') metrics.pageViews += 1;
@@ -1982,6 +2365,15 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         },
       },
       patterns,
+      profile: {
+        ...identityContext.profile,
+        userKeys: identityContext.userKeys,
+        customerIds: identityContext.customerIds,
+        emailHashes: identityContext.emailHashes,
+        phoneHashes: identityContext.phoneHashes,
+        relatedSessionCount: normalizedPeerSessions.length + 1,
+        historicalOrderCount: identityContext.historicalOrders.length,
+      },
       peers: normalizedPeerSessions.map((item) => {
         const counts = peerEventCounts.get(item.sessionId) || {};
         const durationSeconds = item.startedAt && item.lastEventAt
@@ -2005,7 +2397,10 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         };
       }),
       timeline,
-      orders: relatedOrders,
+      orders: identityContext.historicalOrders.map((order) => ({
+        ...order,
+        isCurrentSession: order.sessionId === session_id,
+      })),
     });
   } catch (error) {
     console.error('[Analytics API] Session detail error:', error);
