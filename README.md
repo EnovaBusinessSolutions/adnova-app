@@ -684,12 +684,12 @@ Current dashboard status from live review:
 
 ### Missing or incomplete data for a complete dashboard
 
-1. Session intelligence is already richer and no longer depends on a blocking modal, but it can still evolve into a stronger explorer with cross-session comparison and filters.
+1. Session intelligence already includes journey and patterning, but still needs deeper comparison workflows and operator shortcuts.
 2. Paid media resolution now tries multiple bridges, but some accounts can still miss a usable `user -> McpData` path if they were never linked cleanly in onboarding.
 
 ### Execution order
 
-1. Strengthen the session explorer with filters, navigation, and comparison workflows.
+1. Strengthen the session explorer with deeper comparison workflows and operator shortcuts.
 2. Keep expanding the bridge between public `account_id` and marketing snapshots so every eligible account resolves paid media automatically.
 
 ### Completed dashboard steps
@@ -706,13 +706,14 @@ Current dashboard status from live review:
 - Session detail enriched with attribution, checkout tokens, top pages, and touched products.
 - `Paid Media` moved above `Pixel Health` to prioritize commercial context before ingestion health.
 - `Session Explorer` now includes a visual journey map plus simple behavioral patterns based on other sessions from the same `userKey`.
+- `Session Explorer` now includes related-session navigation and timeline filters for faster operator review.
 - Paid Media panel added with Meta, Google, and blended spend / revenue / ROAS from `McpData` snapshots when the shop is linked to a user snapshot.
 - Paid Media block now degrades safely to `No vinculado` or `Sin snapshot` when the marketing mapping is missing.
 - Paid Media resolution now tries multiple bridges: `ShopConnections.matchedToUserId`, `User.shop`, and `PlatformConnection.adAccountId -> McpData.sources`.
 
 ### Current development focus
 
-- Strengthen the persistent `Session Explorer` with better navigation and analytical workflows.
+- Strengthen the persistent `Session Explorer` with deeper comparison workflows and faster operator shortcuts.
 - Continue improving session-level understanding of what a user did during a visit, including funnel steps, attribution, and path quality.
 - Automatic resolution of paid media snapshots for all eligible accounts, not only already-linked Shopify shops.
 

@@ -608,6 +608,29 @@
                     </div>
                 </div>
                 <div class="p-6 space-y-6">
+                    <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <button id="session-peer-prev" type="button" class="inline-flex items-center px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <i class="fas fa-chevron-left mr-2"></i> Sesión previa
+                            </button>
+                            <button id="session-peer-next" type="button" class="inline-flex items-center px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                                Siguiente sesión <i class="fas fa-chevron-right ml-2"></i>
+                            </button>
+                        </div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <label for="session-timeline-filter" class="text-xs uppercase tracking-wide text-gray-500">Timeline</label>
+                            <select id="session-timeline-filter" class="text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white">
+                                <option value="all">Todos</option>
+                                <option value="funnel">Funnel</option>
+                                <option value="commerce">Commerce</option>
+                                <option value="content">Contenido</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Sesiones relacionadas del mismo usuario</p>
+                        <div id="session-peer-list" class="flex flex-wrap gap-2"></div>
+                    </div>
                     <div class="grid grid-cols-1 md:grid-cols-4 gap-4" id="session-detail-metrics"></div>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div class="bg-gray-50 rounded-xl p-4">
@@ -656,6 +679,12 @@
         let recentPurchasesState = [];
         let metricCarouselIndex = 0;
         let metricCarouselVisible = 4;
+        let sessionExplorerState = {
+            currentSessionId: null,
+            currentSessionStartedAt: null,
+            peers: [],
+            timeline: [],
+        };
 
         function formatDateInputValue(date) {
             const year = date.getFullYear();
@@ -836,7 +865,13 @@
 
         function initializeSessionDetailPanel() {
             const closeBtn = document.getElementById('session-detail-close');
+            const prevBtn = document.getElementById('session-peer-prev');
+            const nextBtn = document.getElementById('session-peer-next');
+            const timelineFilter = document.getElementById('session-timeline-filter');
             closeBtn?.addEventListener('click', closeSessionDetailPanel);
+            prevBtn?.addEventListener('click', () => navigatePeerSession(-1));
+            nextBtn?.addEventListener('click', () => navigatePeerSession(1));
+            timelineFilter?.addEventListener('change', renderSessionTimelineFromState);
         }
 
         function openSessionDetailPanel() {
@@ -855,6 +890,12 @@
             openSessionDetailPanel();
 
             document.getElementById('session-detail-title').textContent = `Sesion ${sessionId}`;
+            sessionExplorerState.currentSessionId = sessionId;
+            sessionExplorerState.currentSessionStartedAt = null;
+            sessionExplorerState.peers = [];
+            sessionExplorerState.timeline = [];
+            const peerList = document.getElementById('session-peer-list');
+            if (peerList) peerList.innerHTML = '<span class="text-sm text-gray-500">Buscando sesiones relacionadas...</span>';
             document.getElementById('session-detail-metrics').innerHTML = '<div class="text-sm text-gray-500">Cargando métricas...</div>';
             document.getElementById('session-detail-summary').innerHTML = '<p>Cargando resumen...</p>';
             document.getElementById('session-detail-orders').innerHTML = '<p>Cargando órdenes...</p>';
@@ -885,10 +926,16 @@
             const metrics = data.metrics || {};
             const journey = data.journey || {};
             const patterns = data.patterns || {};
+            const peers = Array.isArray(data.peers) ? data.peers : [];
             const orders = Array.isArray(data.orders) ? data.orders : [];
             const timeline = Array.isArray(data.timeline) ? data.timeline : [];
             const pages = Array.isArray(journey.pages) ? journey.pages : [];
             const products = Array.isArray(journey.products) ? journey.products : [];
+
+            sessionExplorerState.currentSessionId = session.sessionId || null;
+            sessionExplorerState.currentSessionStartedAt = session.startedAt || null;
+            sessionExplorerState.peers = peers;
+            sessionExplorerState.timeline = timeline;
 
             document.getElementById('session-detail-title').textContent = `Sesion ${session.sessionId || '-'}`;
 
@@ -950,6 +997,8 @@
 
             document.getElementById('session-detail-visual').innerHTML = renderSessionVisual(patterns);
             document.getElementById('session-detail-patterns').innerHTML = renderSessionPatterns(patterns);
+            renderPeerSessions(peers, session.sessionId || null);
+            updatePeerNavigation(peers, session.sessionId || null);
 
             document.getElementById('session-detail-orders').innerHTML = orders.length
                 ? orders.map((order) => `
@@ -960,8 +1009,91 @@
                 `).join('')
                 : '<p class="text-gray-500">Sin órdenes ligadas a esta sesión.</p>';
 
-            document.getElementById('session-detail-timeline').innerHTML = timeline.length
-                ? timeline.map((event) => `
+            renderSessionTimelineFromState();
+        }
+
+        function renderPeerSessions(peers, currentSessionId) {
+            const container = document.getElementById('session-peer-list');
+            if (!container) return;
+
+            const currentChip = currentSessionId ? `
+                <button type="button" class="inline-flex items-center gap-2 px-3 py-2 rounded-full bg-indigo-600 text-white text-sm shadow-sm">
+                    <span>Actual</span>
+                    <span class="font-semibold">${currentSessionId}</span>
+                </button>
+            ` : '';
+
+            if (!Array.isArray(peers) || peers.length === 0) {
+                container.innerHTML = currentChip || '<span class="text-sm text-gray-500">No hay otras sesiones relacionadas todavía.</span>';
+                return;
+            }
+
+            container.innerHTML = `${currentChip}${peers.map((peer) => {
+                const badges = [];
+                if (peer.flags?.viewedProduct) badges.push('PDP');
+                if (peer.flags?.addedToCart) badges.push('ATC');
+                if (peer.flags?.reachedCheckout) badges.push('CHK');
+                if (peer.flags?.purchased) badges.push('BUY');
+                return `
+                    <button type="button" data-session-id="${peer.sessionId}" class="session-peer-chip inline-flex items-center gap-2 px-3 py-2 rounded-full border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50">
+                        <span class="font-semibold">${peer.sessionId}</span>
+                        <span class="text-xs text-gray-500">${formatDateTimeMx(peer.startedAt)}</span>
+                        <span class="text-xs text-gray-400">${badges.join(' · ') || 'Navegación'}</span>
+                    </button>
+                `;
+            }).join('')}`;
+
+            container.querySelectorAll('.session-peer-chip').forEach((button) => {
+                button.addEventListener('click', () => {
+                    const sessionId = button.getAttribute('data-session-id');
+                    if (sessionId) openSessionDetail(sessionId);
+                });
+            });
+        }
+
+        function updatePeerNavigation(peers, currentSessionId) {
+            const prevBtn = document.getElementById('session-peer-prev');
+            const nextBtn = document.getElementById('session-peer-next');
+            const ordered = Array.isArray(peers) ? peers.slice().sort((a, b) => new Date(a.startedAt || 0) - new Date(b.startedAt || 0)) : [];
+            const withCurrent = currentSessionId ? [...ordered, { sessionId: currentSessionId, startedAt: sessionExplorerState.currentSessionStartedAt || null, isCurrent: true }] : ordered;
+            withCurrent.sort((a, b) => new Date(a.startedAt || 0) - new Date(b.startedAt || 0));
+            const index = withCurrent.findIndex((item) => item.sessionId === currentSessionId);
+            const prev = index > 0 ? withCurrent[index - 1] : null;
+            const next = index >= 0 && index < withCurrent.length - 1 ? withCurrent[index + 1] : null;
+
+            if (prevBtn) {
+                prevBtn.disabled = !prev || prev.isCurrent;
+                prevBtn.dataset.targetSessionId = prev && !prev.isCurrent ? prev.sessionId : '';
+            }
+            if (nextBtn) {
+                nextBtn.disabled = !next || next.isCurrent;
+                nextBtn.dataset.targetSessionId = next && !next.isCurrent ? next.sessionId : '';
+            }
+        }
+
+        function navigatePeerSession(direction) {
+            const buttonId = direction < 0 ? 'session-peer-prev' : 'session-peer-next';
+            const button = document.getElementById(buttonId);
+            const sessionId = button?.dataset?.targetSessionId || '';
+            if (sessionId) openSessionDetail(sessionId);
+        }
+
+        function renderSessionTimelineFromState() {
+            const container = document.getElementById('session-detail-timeline');
+            const filterValue = document.getElementById('session-timeline-filter')?.value || 'all';
+            if (!container) return;
+
+            const timeline = Array.isArray(sessionExplorerState.timeline) ? sessionExplorerState.timeline : [];
+            const filteredTimeline = timeline.filter((event) => {
+                if (filterValue === 'all') return true;
+                if (filterValue === 'funnel') return ['page_view', 'view_item', 'add_to_cart', 'begin_checkout', 'purchase'].includes(event.bucket);
+                if (filterValue === 'commerce') return ['view_item', 'add_to_cart', 'begin_checkout', 'purchase'].includes(event.bucket) || Boolean(event.productId || event.orderId || event.checkoutToken);
+                if (filterValue === 'content') return event.bucket === 'page_view' || (!event.productId && !event.orderId && !event.checkoutToken);
+                return true;
+            });
+
+            container.innerHTML = filteredTimeline.length
+                ? filteredTimeline.map((event) => `
                     <div class="border border-gray-200 rounded-lg p-3 bg-white">
                         <div class="flex items-center justify-between gap-4">
                             <div>
@@ -975,7 +1107,7 @@
                         </div>
                     </div>
                 `).join('')
-                : '<p class="text-gray-500">Sin eventos en esta sesión.</p>';
+                : '<p class="text-gray-500">No hay eventos para ese filtro.</p>';
         }
 
         function renderSessionVisual(patterns) {

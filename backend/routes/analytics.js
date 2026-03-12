@@ -1720,6 +1720,28 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         },
       },
       patterns,
+      peers: normalizedPeerSessions.map((item) => {
+        const counts = peerEventCounts.get(item.sessionId) || {};
+        const durationSeconds = item.startedAt && item.lastEventAt
+          ? Math.max(0, Math.round((new Date(item.lastEventAt).getTime() - new Date(item.startedAt).getTime()) / 1000))
+          : 0;
+
+        return {
+          sessionId: item.sessionId,
+          startedAt: item.startedAt,
+          lastEventAt: item.lastEventAt,
+          landingPageUrl: item.landingPageUrl || null,
+          utmCampaign: item.utmCampaign || null,
+          totalEvents: Number(item._totalEvents || 0),
+          durationSeconds,
+          flags: {
+            viewedProduct: Number(counts.view_item || 0) > 0,
+            addedToCart: Number(counts.add_to_cart || 0) > 0,
+            reachedCheckout: Number(counts.begin_checkout || 0) > 0,
+            purchased: Number(counts.purchase || 0) > 0,
+          },
+        };
+      }),
       timeline,
       orders: relatedOrders,
     });
