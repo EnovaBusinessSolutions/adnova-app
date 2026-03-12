@@ -673,26 +673,20 @@ Current dashboard status from live review:
 
 ### Missing or incomplete data for a complete dashboard
 
-1. `Sessions` and `Conversion Rate` must be visible in UI. The backend already returns them.
-2. `view_item` should be exposed as a visible funnel step, not only `page_view`, `add_to_cart`, `begin_checkout`, and `purchase`.
-3. Revenue data freshness and source-of-truth status should be shown explicitly:
-  - revenue from `orders` vs fallback from `events`,
-  - snapshot freshness,
-  - whether fallback mode is active.
-4. Attribution should expose deeper breakdown when available:
-  - campaign,
-  - ad set,
-  - ad,
-  - click id,
-  - attributed revenue by source.
-5. Paid media completeness still requires spend, ROAS, and integration health for Meta and Google.
+1. Paid media completeness still requires spend and ROAS for Meta and Google.
 
 ### Execution order
 
-1. Add `Sessions` and `Conversion Rate` cards to the dashboard.
-2. Add `view_item` to the visible funnel.
-3. Add data quality indicators for revenue source and snapshot freshness.
-4. Extend attribution detail and paid media metrics.
+1. Add paid media metrics such as spend and ROAS.
+
+### Completed dashboard steps
+
+- `Live Feed` SSE fixed and validated.
+- `Sessions` and `Conversion Rate` added to the UI.
+- `view_item` added as a visible funnel step.
+- Data quality indicators added for revenue source, fallback mode, and snapshot freshness.
+- Attribution detail expanded in recent purchases with campaign and click ID when available.
+- Integration Health added for Meta, Google, and TikTok from `PlatformConnection` status.
 
 ### Live Feed decision rule
 

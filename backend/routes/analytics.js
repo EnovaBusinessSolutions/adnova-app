@@ -6,6 +6,7 @@ const { startOfDay, endOfDay, subDays, eachDayOfInterval, format } = require('da
 
 const EVENT_BUCKET_ALIASES = {
   page_view: ['page_view', 'pageview', 'view_page'],
+  view_item: ['view_item', 'product_view', 'view_product', 'product_detail_view'],
   add_to_cart: ['add_to_cart', 'addtocart', 'cart_add'],
   begin_checkout: ['begin_checkout', 'checkout_started', 'start_checkout'],
   purchase: ['purchase', 'order_completed', 'checkout_completed', 'order_create', 'orders_create'],
@@ -224,7 +225,7 @@ function resolveConversionAttribution({ model, touchpoints }) {
 
   if (valid.length === 0) {
     return {
-      primary: { channel: 'unattributed', platform: null, confidence: 0, source: 'none' },
+      primary: { channel: 'unattributed', platform: null, campaign: null, adset: null, ad: null, clickId: null, confidence: 0, source: 'none' },
       splits: [{ channel: 'unattributed', weight: 1 }],
       isAttributed: false,
     };
@@ -237,6 +238,10 @@ function resolveConversionAttribution({ model, touchpoints }) {
       primary: {
         channel,
         platform: first.platform || null,
+        campaign: first.campaign || null,
+        adset: first.adset || null,
+        ad: first.ad || null,
+        clickId: first.clickId || null,
         confidence: Number(first.confidence || 0),
         source: first.source || 'first_touch',
       },
@@ -263,6 +268,10 @@ function resolveConversionAttribution({ model, touchpoints }) {
       primary: {
         channel: 'multi_touch',
         platform: last.platform || null,
+        campaign: last.campaign || null,
+        adset: last.adset || null,
+        ad: last.ad || null,
+        clickId: last.clickId || null,
         confidence: Number(last.confidence || 0),
         source: 'linear',
       },
@@ -277,6 +286,10 @@ function resolveConversionAttribution({ model, touchpoints }) {
     primary: {
       channel,
       platform: last.platform || null,
+      campaign: last.campaign || null,
+      adset: last.adset || null,
+      ad: last.ad || null,
+      clickId: last.clickId || null,
       confidence: Number(last.confidence || 0),
       source: last.source || 'last_touch',
     },
@@ -494,11 +507,37 @@ router.get('/:account_id', async (req, res) => {
       });
 
     // 2. Fetch Sessions in range (for conversion rate, approximate)
-    const sessionCount = await prisma.session.count({
-      where: {
-        accountId: account_id,
-        startedAt: { gte: startDate, lte: endDate }
-      }
+    const [sessionCount, merchantSnapshot, platformConnections] = await Promise.all([
+      prisma.session.count({
+        where: {
+          accountId: account_id,
+          startedAt: { gte: startDate, lte: endDate }
+        }
+      }),
+      prisma.merchantSnapshot.findUnique({
+        where: { accountId: account_id },
+        select: { updatedAt: true },
+      }),
+      prisma.platformConnection.findMany({
+        where: { accountId: account_id },
+        select: { platform: true, status: true, updatedAt: true },
+      }),
+    ]);
+
+    const integrationHealth = {
+      meta: { connected: false, status: 'DISCONNECTED', updatedAt: null },
+      google: { connected: false, status: 'DISCONNECTED', updatedAt: null },
+      tiktok: { connected: false, status: 'DISCONNECTED', updatedAt: null },
+    };
+
+    platformConnections.forEach((conn) => {
+      const platformKey = String(conn.platform || '').toLowerCase();
+      if (!integrationHealth[platformKey]) return;
+      integrationHealth[platformKey] = {
+        connected: conn.status === 'ACTIVE',
+        status: conn.status,
+        updatedAt: conn.updatedAt || null,
+      };
     });
 
     // 3. Fetch Events in range (for pixel activity visibility)
@@ -539,6 +578,7 @@ router.get('/:account_id', async (req, res) => {
 
     const eventStats = {
       page_view: 0,
+      view_item: 0,
       add_to_cart: 0,
       begin_checkout: 0,
       purchase: 0,
@@ -823,6 +863,10 @@ router.get('/:account_id', async (req, res) => {
             primary: {
               channel: conv.orderAttributedChannel,
               platform: conv?.wooSourceLabel || conv?.orderAttributionSnapshot?.utm_source || conv.orderAttributedChannel,
+              campaign: conv?.orderAttributionSnapshot?.utm_campaign || null,
+              adset: conv?.orderAttributionSnapshot?.utm_content || null,
+              ad: conv?.orderAttributionSnapshot?.utm_term || null,
+              clickId: conv?.orderAttributionSnapshot?.gclid || conv?.orderAttributionSnapshot?.fbclid || conv?.orderAttributionSnapshot?.ttclid || null,
               confidence: Number(conv.orderAttributionConfidence || 0.75),
               source: String(conv.orderAttributionModel || '').startsWith('woo_') ? 'woo_fallback' : 'orders_sync',
             },
@@ -843,6 +887,10 @@ router.get('/:account_id', async (req, res) => {
         ...conv,
         attributedChannel: finalAttribution.primary.channel,
         attributedPlatform: finalAttribution.primary.platform,
+        attributedCampaign: finalAttribution.primary.campaign || null,
+        attributedAdset: finalAttribution.primary.adset || null,
+        attributedAd: finalAttribution.primary.ad || null,
+        attributedClickId: finalAttribution.primary.clickId || null,
         attributionConfidence: finalAttribution.primary.confidence,
         attributionSource: finalAttribution.primary.source,
         attributionModel,
@@ -955,6 +1003,7 @@ router.get('/:account_id', async (req, res) => {
         totalSessions: sessionCount,
         conversionRate: sessionCount > 0 ? (totalOrdersResolved / sessionCount) : 0,
         pageViews: eventStats.page_view,
+        viewItem: eventStats.view_item,
         addToCart: eventStats.add_to_cart,
         beginCheckout: eventStats.begin_checkout,
         purchaseEvents: purchaseEventsResolved,
@@ -962,6 +1011,12 @@ router.get('/:account_id', async (req, res) => {
         purchaseOrders: totalOrdersResolved,
         totalEvents: eventStats.total,
       },
+      dataQuality: {
+        revenueSource: filteredOrders.length > 0 ? 'orders' : 'events',
+        fallbackActive: filteredOrders.length === 0,
+        snapshotUpdatedAt: merchantSnapshot?.updatedAt || null,
+      },
+      integrationHealth,
       events: eventStats,
       pixelHealth: {
         eventsReceived: eventStats.total,

@@ -207,6 +207,25 @@
                 </div>
             </div>
 
+            <!-- View Item -->
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-5">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0 bg-teal-500 rounded-md p-3">
+                            <i class="fas fa-box-open text-white text-lg"></i>
+                        </div>
+                        <div class="ml-5 w-0 flex-1">
+                            <dl>
+                                <dt class="text-sm font-medium text-gray-500 truncate">View Item</dt>
+                                <dd class="flex items-baseline">
+                                    <div class="text-2xl font-semibold text-gray-900" id="view-item">0</div>
+                                </dd>
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Add To Cart -->
             <div class="bg-white overflow-hidden shadow rounded-lg">
                 <div class="p-5">
@@ -299,6 +318,56 @@
                             </dl>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Quality -->
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-3 mb-8">
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-4">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Revenue Source</div>
+                    <div class="mt-2 text-lg font-semibold text-gray-900" id="dq-revenue-source">-</div>
+                    <div class="mt-1 text-sm text-gray-500">Fuente usada para el revenue del dashboard.</div>
+                </div>
+            </div>
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-4">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Fallback Mode</div>
+                    <div class="mt-2 text-lg font-semibold text-gray-900" id="dq-fallback-active">-</div>
+                    <div class="mt-1 text-sm text-gray-500">Indica si el dashboard está usando eventos por falta de órdenes.</div>
+                </div>
+            </div>
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-4">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Snapshot Freshness</div>
+                    <div class="mt-2 text-lg font-semibold text-gray-900" id="dq-snapshot-updated">-</div>
+                    <div class="mt-1 text-sm text-gray-500">Última actualización del snapshot del merchant.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Integration Health -->
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-3 mb-8">
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-4">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Meta Health</div>
+                    <div class="mt-2 text-lg font-semibold text-gray-900" id="ih-meta-status">-</div>
+                    <div class="mt-1 text-sm text-gray-500" id="ih-meta-updated">-</div>
+                </div>
+            </div>
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-4">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Google Health</div>
+                    <div class="mt-2 text-lg font-semibold text-gray-900" id="ih-google-status">-</div>
+                    <div class="mt-1 text-sm text-gray-500" id="ih-google-updated">-</div>
+                </div>
+            </div>
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-4">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">TikTok Health</div>
+                    <div class="mt-2 text-lg font-semibold text-gray-900" id="ih-tiktok-status">-</div>
+                    <div class="mt-1 text-sm text-gray-500" id="ih-tiktok-updated">-</div>
                 </div>
             </div>
         </div>
@@ -403,7 +472,7 @@
                         <option value="order_asc">Pedido asc</option>
                         <option value="order_desc">Pedido desc</option>
                     </select>
-                    <span class="text-xs text-gray-500">ingreso + productos + fuente</span>
+                    <span class="text-xs text-gray-500">ingreso + productos + fuente + atribución</span>
                 </div>
             </div>
             <div class="overflow-x-auto">
@@ -618,17 +687,24 @@
             // Metrics (Fix: match API structure)
             const summary = data.summary || { totalRevenue: 0, totalOrders: 0 };
             const pixelHealth = data.pixelHealth || {};
+            const dataQuality = data.dataQuality || {};
+            const integrationHealth = data.integrationHealth || {};
             updateDateRangeLabel(summary);
             document.getElementById('total-revenue').textContent = formatCurrency(summary.totalRevenue);
             document.getElementById('total-orders').textContent = summary.totalOrders;
             document.getElementById('total-sessions').textContent = (summary.totalSessions || 0).toLocaleString();
             document.getElementById('conversion-rate').textContent = formatPercent(summary.conversionRate || 0);
             document.getElementById('page-views').textContent = (summary.pageViews || 0).toLocaleString();
+            document.getElementById('view-item').textContent = (summary.viewItem || 0).toLocaleString();
             document.getElementById('add-to-cart').textContent = (summary.addToCart || 0).toLocaleString();
             document.getElementById('begin-checkout').textContent = (summary.beginCheckout || 0).toLocaleString();
             document.getElementById('purchase-events').textContent = (summary.purchaseEvents || 0).toLocaleString();
             document.getElementById('unattributed-orders').textContent = (summary.unattributedOrders || 0).toLocaleString();
             document.getElementById('unattributed-revenue').textContent = formatCurrency(summary.unattributedRevenue || 0);
+            document.getElementById('dq-revenue-source').textContent = (dataQuality.revenueSource || '-').toUpperCase();
+            document.getElementById('dq-fallback-active').textContent = dataQuality.fallbackActive ? 'ACTIVO' : 'NO';
+            document.getElementById('dq-snapshot-updated').textContent = formatDateTimeMx(dataQuality.snapshotUpdatedAt);
+            renderIntegrationHealth(integrationHealth);
 
             const modelBadge = document.getElementById('attribution-model-badge');
             if (modelBadge) {
@@ -684,6 +760,19 @@
             }).join('');
         }
 
+        function renderIntegrationHealth(integrationHealth) {
+            const platforms = ['meta', 'google', 'tiktok'];
+            platforms.forEach((platform) => {
+                const statusEl = document.getElementById(`ih-${platform}-status`);
+                const updatedEl = document.getElementById(`ih-${platform}-updated`);
+                if (!statusEl || !updatedEl) return;
+                const state = integrationHealth?.[platform] || {};
+                const status = String(state.status || 'DISCONNECTED').toUpperCase();
+                statusEl.textContent = status === 'ACTIVE' ? 'ACTIVE' : status;
+                updatedEl.textContent = state.updatedAt ? `Actualizado: ${formatDateTimeMx(state.updatedAt)}` : 'Sin conexión registrada';
+            });
+        }
+
         function renderRecentPurchases(purchases) {
             const container = document.getElementById('recent-purchases-list');
             if (!container) return;
@@ -737,10 +826,15 @@
                 if (p.attributionSource === 'orders_sync' && p.attributedPlatform) {
                     attrText = p.attributedPlatform;
                 }
+                if (p.attributedCampaign) {
+                    attrText += ` · ${p.attributedCampaign}`;
+                }
                 const debugBits = [];
                 if (p.attributionDebug?.wooSourceLabel) debugBits.push(`woo=${p.attributionDebug.wooSourceLabel}`);
                 if (p.attributionDebug?.payloadUtmSource) debugBits.push(`utm=${p.attributionDebug.payloadUtmSource}`);
                 if (p.attributionDebug?.payloadReferrer) debugBits.push(`ref=${p.attributionDebug.payloadReferrer}`);
+                if (p.attributedCampaign) debugBits.push(`campaign=${p.attributedCampaign}`);
+                if (p.attributedClickId) debugBits.push(`click=${p.attributedClickId}`);
                 const debugTitle = debugBits.length ? ` title="${debugBits.join(' | ')}"` : '';
                 const debugText = debugBits.length ? debugBits.join(' | ') : '-';
 
