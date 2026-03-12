@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AdRay Analytics Dashboard</title>
+    <link rel="stylesheet" href="/theme.css">
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Chart.js -->
@@ -11,6 +12,265 @@
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+        :root {
+            --dash-bg: #050508;
+            --dash-panel: rgba(18, 12, 29, 0.9);
+            --dash-panel-strong: rgba(30, 19, 47, 0.96);
+            --dash-panel-soft: rgba(225, 216, 243, 0.06);
+            --dash-border: rgba(202, 138, 229, 0.18);
+            --dash-border-strong: rgba(202, 138, 229, 0.3);
+            --dash-text: #f4f1ff;
+            --dash-muted: rgba(225, 216, 243, 0.72);
+            --dash-soft: rgba(225, 216, 243, 0.52);
+            --dash-accent: #ca8ae5;
+            --dash-accent-strong: #b55cff;
+            --dash-success: #7ef0c8;
+            --dash-warning: #f3c77a;
+            --dash-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
+            --dash-radius: 22px;
+        }
+
+        body.adray-dashboard {
+            font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background:
+                radial-gradient(1200px 700px at 8% -10%, rgba(181, 92, 255, 0.18), transparent 60%),
+                radial-gradient(900px 520px at 100% 0%, rgba(62, 40, 111, 0.42), transparent 55%),
+                linear-gradient(180deg, #08070d 0%, #050508 100%);
+            color: var(--dash-text);
+            min-height: 100vh;
+        }
+
+        body.adray-dashboard::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+            background-size: 48px 48px;
+            mask-image: radial-gradient(circle at center, rgba(0,0,0,0.55), transparent 92%);
+            opacity: 0.22;
+        }
+
+        .dashboard-shell {
+            position: relative;
+            z-index: 1;
+        }
+
+        .dashboard-hero {
+            background: linear-gradient(135deg, rgba(32, 21, 51, 0.98) 0%, rgba(14, 9, 24, 0.96) 100%);
+            border: 1px solid var(--dash-border-strong);
+            border-radius: 30px;
+            box-shadow: var(--dash-shadow);
+            padding: 1.5rem;
+        }
+
+        .dashboard-kicker,
+        .panel-kicker {
+            font-size: 0.72rem;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--dash-accent);
+            font-weight: 700;
+        }
+
+        .dashboard-title,
+        .panel-title,
+        .brand-mark {
+            font-family: "Ulm Grotesk", 'Inter', sans-serif;
+            letter-spacing: -0.03em;
+        }
+
+        .dashboard-title {
+            font-size: clamp(2.2rem, 5vw, 3.6rem);
+            line-height: 0.95;
+            margin-top: 0.4rem;
+        }
+
+        .dashboard-subtitle,
+        .panel-subtitle {
+            color: var(--dash-muted);
+            line-height: 1.5;
+        }
+
+        .panel-title {
+            font-size: 1.18rem;
+        }
+
+        .ad-control {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.6rem;
+            border-radius: 16px;
+            border: 1px solid var(--dash-border);
+            background: rgba(225, 216, 243, 0.04);
+            color: var(--dash-text);
+            padding: 0.72rem 0.95rem;
+            backdrop-filter: blur(10px);
+        }
+
+        .ad-refresh-btn {
+            border: 1px solid rgba(202, 138, 229, 0.28);
+            border-radius: 16px;
+            background: linear-gradient(135deg, rgba(202, 138, 229, 0.2) 0%, rgba(181, 92, 255, 0.16) 100%);
+            color: var(--dash-text);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+        }
+
+        .ad-refresh-btn:hover {
+            background: linear-gradient(135deg, rgba(202, 138, 229, 0.28) 0%, rgba(181, 92, 255, 0.22) 100%);
+        }
+
+        .ad-panel,
+        .adray-dashboard .bg-white,
+        .adray-dashboard #metric-carousel-track > .metric-card-slide > div {
+            background: linear-gradient(180deg, rgba(26, 17, 41, 0.95) 0%, rgba(12, 8, 19, 0.92) 100%) !important;
+            border: 1px solid var(--dash-border) !important;
+            border-radius: var(--dash-radius) !important;
+            box-shadow: var(--dash-shadow) !important;
+            backdrop-filter: blur(12px);
+        }
+
+        .adray-dashboard .bg-gray-50,
+        .adray-dashboard .bg-slate-50,
+        .adray-dashboard .bg-indigo-50,
+        .adray-dashboard .bg-amber-50,
+        .adray-dashboard .bg-emerald-50,
+        .adray-dashboard .bg-cyan-50 {
+            background: var(--dash-panel-soft) !important;
+            border-color: rgba(202, 138, 229, 0.12) !important;
+        }
+
+        .adray-dashboard .border-gray-100,
+        .adray-dashboard .border-gray-200,
+        .adray-dashboard .border-gray-300,
+        .adray-dashboard .border-slate-200,
+        .adray-dashboard .border-indigo-100,
+        .adray-dashboard .border-amber-100,
+        .adray-dashboard .border-indigo-200 {
+            border-color: var(--dash-border) !important;
+        }
+
+        .adray-dashboard .text-gray-900,
+        .adray-dashboard .text-gray-800,
+        .adray-dashboard .text-slate-600,
+        .adray-dashboard .text-slate-700 {
+            color: var(--dash-text) !important;
+        }
+
+        .adray-dashboard .text-gray-700,
+        .adray-dashboard .text-gray-600,
+        .adray-dashboard .text-gray-500,
+        .adray-dashboard .text-gray-400 {
+            color: var(--dash-muted) !important;
+        }
+
+        .adray-dashboard .text-indigo-600,
+        .adray-dashboard .text-indigo-700,
+        .adray-dashboard .text-blue-500,
+        .adray-dashboard .text-green-600,
+        .adray-dashboard .text-sky-700,
+        .adray-dashboard .text-emerald-700,
+        .adray-dashboard .text-emerald-600,
+        .adray-dashboard .text-amber-600 {
+            color: var(--dash-accent) !important;
+        }
+
+        .adray-dashboard .shadow,
+        .adray-dashboard .shadow-sm,
+        .adray-dashboard .shadow-lg,
+        .adray-dashboard .shadow-2xl {
+            box-shadow: var(--dash-shadow) !important;
+        }
+
+        .adray-dashboard nav {
+            background: rgba(8, 7, 13, 0.72) !important;
+            border-bottom: 1px solid rgba(202, 138, 229, 0.14) !important;
+            backdrop-filter: blur(16px);
+        }
+
+        .adray-dashboard select,
+        .adray-dashboard input,
+        .adray-dashboard button {
+            color: var(--dash-text);
+        }
+
+        .adray-dashboard select,
+        .adray-dashboard input[type="date"] {
+            background: transparent;
+        }
+
+        .adray-dashboard table thead tr {
+            border-color: rgba(202, 138, 229, 0.18) !important;
+        }
+
+        .adray-dashboard thead th {
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            font-size: 0.68rem;
+            color: var(--dash-soft) !important;
+            font-weight: 700;
+        }
+
+        .adray-dashboard #session-detail-panel h4 {
+            font-family: "Ulm Grotesk", 'Inter', sans-serif;
+            letter-spacing: -0.02em;
+        }
+
+        .adray-dashboard #session-detail-panel .text-xs.uppercase,
+        .adray-dashboard .uppercase.tracking-wide {
+            letter-spacing: 0.14em;
+        }
+
+        .adray-dashboard #recent-purchases-list tr,
+        .adray-dashboard #feed-container > div {
+            border-color: rgba(202, 138, 229, 0.12) !important;
+        }
+
+        .adray-dashboard #recent-purchases-list tr:hover,
+        .adray-dashboard #feed-container > div:hover {
+            background: rgba(225, 216, 243, 0.05) !important;
+        }
+
+        .adray-dashboard .metric-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            border-radius: 999px;
+            background: rgba(225, 216, 243, 0.06);
+            border: 1px solid rgba(202, 138, 229, 0.14);
+            padding: 0.45rem 0.8rem;
+            color: var(--dash-muted);
+            font-size: 0.8rem;
+        }
+
+        .adray-dashboard .metric-card-slide dt,
+        .adray-dashboard .metric-card-slide .text-xs,
+        .adray-dashboard .panel-kicker {
+            color: var(--dash-soft) !important;
+        }
+
+        .adray-dashboard .metric-card-slide .text-2xl,
+        .adray-dashboard .metric-card-slide .text-xl,
+        .adray-dashboard .metric-card-slide .text-lg {
+            color: var(--dash-text) !important;
+        }
+
+        .adray-dashboard .metric-card-slide .flex-shrink-0 {
+            box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
+        }
+
+        .adray-dashboard canvas {
+            filter: saturate(1.05);
+        }
+
+        .adray-dashboard #session-detail-panel {
+            scroll-margin-top: 90px;
+        }
+
         .animate-pulse-slow {
             animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
         }
@@ -59,7 +319,7 @@
         }
     </style>
 </head>
-<body class="bg-gray-50 text-gray-800 font-sans min-h-screen">
+<body class="adray-dashboard min-h-screen">
 
     <!-- Navbar -->
     <nav class="bg-white border-b border-gray-200 sticky top-0 z-50">
@@ -67,7 +327,7 @@
             <div class="flex justify-between h-16">
                 <div class="flex">
                     <div class="flex-shrink-0 flex items-center">
-                        <span class="text-xl font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-md">AdRay <span class="text-gray-500 font-normal text-sm">Analytics</span></span>
+                        <span class="brand-mark text-xl font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-md">AdRay <span class="text-gray-500 font-normal text-sm">Analytics</span></span>
                     </div>
                 </div>
                 <div class="flex items-center space-x-4">
@@ -79,27 +339,31 @@
     </nav>
 
     <!-- Main Content -->
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <main class="dashboard-shell max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
         <!-- Header & Controls -->
-        <div class="md:flex md:items-center md:justify-between mb-8">
+        <div class="dashboard-hero md:flex md:items-start md:justify-between mb-8 gap-6">
             <div class="flex-1 min-w-0">
-                <h2 class="text-2xl font-bold leading-7 text-gray-900 sm:text-3xl sm:truncate">
-                    Resumen General
+                <p class="dashboard-kicker">Radar Operativo</p>
+                <h2 class="dashboard-title text-gray-900 sm:truncate">
+                    Dashboard de lectura rápida
                 </h2>
+                <p class="dashboard-subtitle mt-4 max-w-3xl">
+                    Comercial, atribución y salud técnica en una sola vista para detectar qué está funcionando, dónde se está perdiendo intención y qué sesión conviene revisar primero.
+                </p>
                 <div class="mt-1 flex flex-col sm:flex-row sm:flex-wrap sm:mt-0 sm:space-x-6">
-                    <div class="mt-2 flex items-center text-sm text-gray-500">
+                    <div class="metric-pill mt-4">
                         <i class="fas fa-calendar-alt mr-1.5 text-gray-400"></i>
                         <span id="date-range-label">Últimos 30 días</span>
                     </div>
-                    <div class="mt-2 flex items-center text-sm text-green-600">
+                    <div class="metric-pill mt-4 text-green-600">
                         <i class="fas fa-circle mr-1.5 text-[8px] animate-pulse"></i>
                         <span id="live-feed-status">Conectando Live Feed...</span>
                     </div>
                 </div>
             </div>
-            <div class="mt-4 flex md:mt-0 md:ml-4 gap-3 flex-wrap justify-end">
-                <div class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2">
+            <div class="mt-6 flex md:mt-0 md:ml-4 gap-3 flex-wrap justify-end">
+                <div class="ad-control">
                     <label for="date-preset" class="text-xs text-gray-500 mr-2">Rango</label>
                     <select id="date-preset" onchange="onDatePresetChange()" class="text-sm bg-transparent focus:outline-none">
                         <option value="7d">7 dias</option>
@@ -110,7 +374,7 @@
                         <option value="custom">Custom</option>
                     </select>
                 </div>
-                <div class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2">
+                <div class="ad-control">
                     <label for="history-limit" class="text-xs text-gray-500 mr-2">Historial</label>
                     <select id="history-limit" class="text-sm bg-transparent focus:outline-none">
                         <option value="50">50</option>
@@ -120,15 +384,15 @@
                         <option value="all">Todo</option>
                     </select>
                 </div>
-                <div class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2">
+                <div class="ad-control">
                     <label for="start-date" class="text-xs text-gray-500 mr-2">Inicio</label>
                     <input id="start-date" type="date" class="text-sm bg-transparent focus:outline-none" />
                 </div>
-                <div class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2">
+                <div class="ad-control">
                     <label for="end-date" class="text-xs text-gray-500 mr-2">Fin</label>
                     <input id="end-date" type="date" class="text-sm bg-transparent focus:outline-none" />
                 </div>
-                <div class="inline-flex items-center rounded-md border border-gray-300 bg-white px-3 py-2">
+                <div class="ad-control">
                     <label for="attribution-model" class="text-xs text-gray-500 mr-2">Modelo</label>
                     <select id="attribution-model" onchange="onAttributionModelChange()" class="text-sm bg-transparent focus:outline-none">
                         <option value="first_touch">First touch</option>
@@ -136,7 +400,7 @@
                         <option value="linear">Lineal</option>
                     </select>
                 </div>
-                <button onclick="fetchAnalytics()" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                <button onclick="fetchAnalytics()" class="ad-refresh-btn inline-flex items-center px-4 py-2 shadow-sm text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
                     <i class="fas fa-sync-alt mr-2"></i> Actualizar
                 </button>
             </div>
@@ -145,7 +409,10 @@
         <!-- Metric Cards -->
         <div class="mb-8">
             <div class="flex items-center justify-between mb-3">
-                <h3 class="text-lg font-medium text-gray-900">Métricas clave</h3>
+                <div>
+                    <p class="panel-kicker">Core KPI</p>
+                    <h3 class="panel-title text-lg font-medium text-gray-900">Métricas clave</h3>
+                </div>
                 <div class="flex items-center gap-2">
                     <button id="metric-carousel-prev" type="button" class="inline-flex items-center justify-center w-10 h-10 rounded-full border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">
                         <i class="fas fa-chevron-left"></i>
@@ -397,9 +664,13 @@
             <!-- Left Column: Charts (2/3 width) -->
             <div class="lg:col-span-2 space-y-8">
                 <!-- Attribution Chart -->
-                <div class="bg-white shadow rounded-lg p-6">
+                <div class="ad-panel p-6">
                     <div class="flex items-center justify-between mb-4">
-                        <h3 class="text-lg leading-6 font-medium text-gray-900">Atribución por Canal</h3>
+                        <div>
+                            <p class="panel-kicker">Comercial</p>
+                            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Atribución por Canal</h3>
+                            <p class="panel-subtitle text-sm mt-1">Detecta qué fuentes concentran ingreso atribuible bajo el modelo activo.</p>
+                        </div>
                         <span id="attribution-model-badge" class="text-xs text-gray-500">Modelo: last touch</span>
                     </div>
                     <div class="relative h-64">
@@ -408,8 +679,10 @@
                 </div>
 
                 <!-- Daily Trend Chart -->
-                <div class="bg-white shadow rounded-lg p-6">
-                    <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Tendencia Diaria (Ingresos)</h3>
+                <div class="ad-panel p-6">
+                    <p class="panel-kicker">Ritmo</p>
+                    <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Tendencia Diaria</h3>
+                    <p class="panel-subtitle text-sm mb-4">Lee la velocidad del revenue para distinguir crecimiento real de picos aislados.</p>
                     <div class="relative h-64">
                         <canvas id="trendChart"></canvas>
                     </div>
@@ -418,11 +691,13 @@
 
             <!-- Right Column: Live Feed (1/3 width) -->
             <div class="lg:col-span-1">
-                <div class="bg-white shadow rounded-lg h-full flex flex-col" style="max-height: 800px;">
+                <div class="ad-panel h-full flex flex-col" style="max-height: 800px;">
                     <div class="px-6 py-4 border-b border-gray-200 bg-gray-50 rounded-t-lg flex justify-between items-center">
-                        <h3 class="text-lg leading-6 font-medium text-gray-900">
-                            Live Feed
-                        </h3>
+                        <div>
+                            <p class="panel-kicker">Tiempo real</p>
+                            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Live Feed</h3>
+                            <p class="panel-subtitle text-sm mt-1">Observa eventos entrantes y abre sesiones sin perder el contexto del tablero.</p>
+                        </div>
                         <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                             En vivo
                         </span>
@@ -440,9 +715,13 @@
         <!-- New: Pixel Health + Supporting Panels + Top Products -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
             <div class="space-y-6">
-                <div class="bg-white shadow rounded-lg p-6">
+                <div class="ad-panel p-6">
                     <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
-                        <h3 class="text-lg leading-6 font-medium text-gray-900">Paid Media</h3>
+                        <div>
+                            <p class="panel-kicker">Inversión</p>
+                            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Paid Media</h3>
+                            <p class="panel-subtitle text-sm mt-1">Compara gasto, revenue y ROAS para decidir si el tráfico está justificando la inversión.</p>
+                        </div>
                         <span id="pm-link-status" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Sin snapshot</span>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -472,8 +751,10 @@
                     </div>
                 </div>
 
-                <div class="bg-white shadow rounded-lg p-6">
-                    <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Pixel Health</h3>
+                <div class="ad-panel p-6">
+                    <p class="panel-kicker">Instrumentación</p>
+                    <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Pixel Health</h3>
+                    <p class="panel-subtitle text-sm mb-4">Valida si el tracking está enviando suficiente señal para confiar en la lectura comercial.</p>
                     <div class="grid grid-cols-2 gap-4 mb-4">
                         <div class="bg-gray-50 rounded-lg p-3">
                             <p class="text-xs text-gray-500">Eventos recibidos</p>
@@ -498,8 +779,10 @@
                     </div>
                 </div>
 
-                <div class="bg-white shadow rounded-lg p-6">
-                    <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Data Quality</h3>
+                <div class="ad-panel p-6">
+                    <p class="panel-kicker">Confianza</p>
+                    <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Data Quality</h3>
+                    <p class="panel-subtitle text-sm mb-4">Mide si el dashboard está leyendo desde la mejor fuente posible o si entró en fallback.</p>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div class="bg-gray-50 rounded-lg p-4">
                             <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Revenue Source</div>
@@ -519,8 +802,10 @@
                     </div>
                 </div>
 
-                <div class="bg-white shadow rounded-lg p-6">
-                    <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Integration Health</h3>
+                <div class="ad-panel p-6">
+                    <p class="panel-kicker">Conectividad</p>
+                    <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Integration Health</h3>
+                    <p class="panel-subtitle text-sm mb-4">Confirma qué integraciones están activas y cuándo fue su última señal útil.</p>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div class="bg-gray-50 rounded-lg p-4">
                             <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Meta Health</div>
@@ -542,8 +827,10 @@
 
             </div>
 
-            <div class="bg-white shadow rounded-lg p-6">
-                <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Top Products</h3>
+            <div class="ad-panel p-6">
+                <p class="panel-kicker">Merchandising</p>
+                <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Top Products</h3>
+                <p class="panel-subtitle text-sm mb-4">Ubica rápido qué catálogo concentra unidades e ingreso dentro del rango actual.</p>
                 <div class="space-y-3" id="top-products-list">
                     <p class="text-sm text-gray-400">Sin datos de productos todavía.</p>
                 </div>
@@ -551,9 +838,13 @@
         </div>
 
         <!-- New: Recent Purchases Detail -->
-        <div class="mt-8 bg-white shadow rounded-lg p-6">
+        <div class="mt-8 ad-panel p-6">
             <div class="flex items-center justify-between mb-4">
-                <h3 class="text-lg leading-6 font-medium text-gray-900">Detalle de compras recientes</h3>
+                <div>
+                    <p class="panel-kicker">Auditoría</p>
+                    <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Detalle de compras recientes</h3>
+                    <p class="panel-subtitle text-sm mt-1">Cruza pedido, ingreso, productos y atribución para validar la historia detrás de cada conversión.</p>
+                </div>
                 <div class="flex items-center gap-3">
                     <select id="recent-purchases-filter" onchange="renderRecentPurchases(recentPurchasesState)" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white">
                         <option value="all">Todas</option>
@@ -594,10 +885,11 @@
         </div>
 
         <section id="session-detail-panel" class="hidden mt-8">
-            <div class="bg-white rounded-2xl shadow-2xl overflow-hidden border border-gray-200">
+            <div class="ad-panel overflow-hidden border border-gray-200">
                 <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between gap-4 flex-wrap">
                     <div>
-                        <h3 class="text-lg font-semibold text-gray-900">Session Explorer</h3>
+                        <p class="panel-kicker">Exploración</p>
+                        <h3 class="panel-title text-lg font-semibold text-gray-900">Session Explorer</h3>
                         <p class="text-sm text-gray-500" id="session-detail-title">Cargando...</p>
                     </div>
                     <div class="flex items-center gap-3">
@@ -1713,27 +2005,42 @@
 
             if (attributionChartInstance) attributionChartInstance.destroy();
 
-            attributionChartInstance = new Chart(ctx, {
+                attributionChartInstance = new Chart(ctx, {
                 type: 'doughnut',
                 data: {
                     labels: labels,
                     datasets: [{
                         data: values,
                         backgroundColor: [
-                            '#4F46E5', // Indigo
-                            '#10B981', // Green
-                            '#F59E0B', // Amber
-                            '#EF4444', // Red
-                            '#6B7280'  // Gray
+                            '#CA8AE5',
+                            '#7EF0C8',
+                            '#F3C77A',
+                            '#7CA8FF',
+                            '#A48BBE'
                         ],
-                        borderWidth: 0
+                        borderWidth: 1,
+                        borderColor: 'rgba(8, 7, 13, 0.85)'
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     plugins: {
-                        legend: { position: 'right' }
+                        legend: {
+                            position: 'right',
+                            labels: {
+                                color: '#F4F1FF',
+                                boxWidth: 12,
+                                padding: 16,
+                            },
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(12, 8, 19, 0.95)',
+                            titleColor: '#F4F1FF',
+                            bodyColor: 'rgba(225, 216, 243, 0.9)',
+                            borderColor: 'rgba(202, 138, 229, 0.2)',
+                            borderWidth: 1,
+                        },
                     }
                 }
             });
@@ -1757,17 +2064,41 @@
                     datasets: [{
                         label: 'Ingresos',
                         data: values,
-                        borderColor: '#4F46E5',
-                        backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                        borderColor: '#CA8AE5',
+                        backgroundColor: 'rgba(202, 138, 229, 0.14)',
                         tension: 0.3,
-                        fill: true
+                        fill: true,
+                        pointRadius: 3,
+                        pointHoverRadius: 4,
+                        pointBackgroundColor: '#F4F1FF',
+                        pointBorderColor: '#CA8AE5'
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
                     scales: {
-                        y: { beginAtZero: true }
+                        x: {
+                            ticks: { color: 'rgba(225, 216, 243, 0.72)' },
+                            grid: { color: 'rgba(202, 138, 229, 0.08)' },
+                        },
+                        y: {
+                            beginAtZero: true,
+                            ticks: { color: 'rgba(225, 216, 243, 0.72)' },
+                            grid: { color: 'rgba(202, 138, 229, 0.08)' },
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: '#F4F1FF' },
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(12, 8, 19, 0.95)',
+                            titleColor: '#F4F1FF',
+                            bodyColor: 'rgba(225, 216, 243, 0.9)',
+                            borderColor: 'rgba(202, 138, 229, 0.2)',
+                            borderWidth: 1,
+                        },
                     }
                 }
             });
