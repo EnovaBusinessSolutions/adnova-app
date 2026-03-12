@@ -7,6 +7,8 @@ const { startOfDay, endOfDay, subDays, eachDayOfInterval, format } = require('da
 let McpData = null;
 let ShopConnections = null;
 let User = null;
+let MetaAccount = null;
+let GoogleAccount = null;
 let formatMetaForLlmMini = null;
 let formatGoogleAdsForLlmMini = null;
 
@@ -20,6 +22,14 @@ try {
 
 try {
   User = require('../models/User');
+} catch (_) {}
+
+try {
+  MetaAccount = require('../models/MetaAccount');
+} catch (_) {}
+
+try {
+  GoogleAccount = require('../models/GoogleAccount');
 } catch (_) {}
 
 try {
@@ -191,6 +201,60 @@ async function resolveUserIdByPlatformConnections(platformConnections = []) {
   return rootDoc?.userId || null;
 }
 
+async function resolveUserIdByConnectedAccountDocs(platformConnections = []) {
+  if (!Array.isArray(platformConnections) || platformConnections.length === 0) return null;
+
+  const metaIds = Array.from(new Set(
+    platformConnections
+      .filter((conn) => String(conn.platform || '').toUpperCase() === 'META')
+      .map((conn) => normalizeMetaAccountId(conn.adAccountId))
+      .filter(Boolean)
+  ));
+
+  const googleIds = Array.from(new Set(
+    platformConnections
+      .filter((conn) => String(conn.platform || '').toUpperCase() === 'GOOGLE')
+      .map((conn) => normalizeGoogleCustomerId(conn.adAccountId))
+      .filter(Boolean)
+  ));
+
+  if (metaIds.length && MetaAccount) {
+    const metaDoc = await MetaAccount.findOne({
+      $or: [
+        { defaultAccountId: { $in: metaIds } },
+        { selectedAccountIds: { $in: metaIds } },
+        { 'ad_accounts.id': { $in: metaIds } },
+        { 'ad_accounts.account_id': { $in: metaIds } },
+        { 'adAccounts.id': { $in: metaIds } },
+        { 'adAccounts.account_id': { $in: metaIds } },
+      ],
+    })
+      .select('user userId')
+      .lean();
+
+    const metaUserId = metaDoc?.userId || metaDoc?.user || null;
+    if (metaUserId) return metaUserId;
+  }
+
+  if (googleIds.length && GoogleAccount) {
+    const googleDoc = await GoogleAccount.findOne({
+      $or: [
+        { defaultCustomerId: { $in: googleIds } },
+        { selectedCustomerIds: { $in: googleIds } },
+        { 'customers.id': { $in: googleIds } },
+        { 'ad_accounts.id': { $in: googleIds } },
+      ],
+    })
+      .select('user userId')
+      .lean();
+
+    const googleUserId = googleDoc?.userId || googleDoc?.user || null;
+    if (googleUserId) return googleUserId;
+  }
+
+  return null;
+}
+
 async function resolvePaidMediaUserId({ accountId, domain, platformConnections = [] }) {
   const candidates = Array.from(new Set([
     normalizeShopDomain(accountId),
@@ -202,6 +266,9 @@ async function resolvePaidMediaUserId({ accountId, domain, platformConnections =
 
   const fromUserShop = await resolveUserIdByUserShop(candidates);
   if (fromUserShop) return fromUserShop;
+
+  const fromConnectedAccounts = await resolveUserIdByConnectedAccountDocs(platformConnections);
+  if (fromConnectedAccounts) return fromConnectedAccounts;
 
   const fromPlatformConnections = await resolveUserIdByPlatformConnections(platformConnections);
   if (fromPlatformConnections) return fromPlatformConnections;

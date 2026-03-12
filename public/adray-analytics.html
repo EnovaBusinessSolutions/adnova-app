@@ -631,6 +631,18 @@
                         <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Sesiones relacionadas del mismo usuario</p>
                         <div id="session-peer-list" class="flex flex-wrap gap-2"></div>
                     </div>
+                    <div id="session-compare-panel" class="hidden bg-gradient-to-br from-slate-50 via-white to-indigo-50 border border-slate-200 rounded-2xl p-5">
+                        <div class="flex items-center justify-between gap-4 flex-wrap mb-4">
+                            <div>
+                                <h4 class="text-sm font-semibold text-gray-900">Comparación lado a lado</h4>
+                                <p class="text-xs text-gray-500" id="session-compare-title">Selecciona una sesión relacionada para comparar.</p>
+                            </div>
+                            <button id="session-compare-clear" type="button" class="inline-flex items-center px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50">
+                                Limpiar comparación
+                            </button>
+                        </div>
+                        <div id="session-compare-content" class="space-y-4"></div>
+                    </div>
                     <div class="grid grid-cols-1 md:grid-cols-4 gap-4" id="session-detail-metrics"></div>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div class="bg-gray-50 rounded-xl p-4">
@@ -684,6 +696,8 @@
             currentSessionStartedAt: null,
             peers: [],
             timeline: [],
+            currentData: null,
+            compareData: null,
         };
 
         function formatDateInputValue(date) {
@@ -868,10 +882,12 @@
             const prevBtn = document.getElementById('session-peer-prev');
             const nextBtn = document.getElementById('session-peer-next');
             const timelineFilter = document.getElementById('session-timeline-filter');
+            const clearCompareBtn = document.getElementById('session-compare-clear');
             closeBtn?.addEventListener('click', closeSessionDetailPanel);
             prevBtn?.addEventListener('click', () => navigatePeerSession(-1));
             nextBtn?.addEventListener('click', () => navigatePeerSession(1));
             timelineFilter?.addEventListener('change', renderSessionTimelineFromState);
+            clearCompareBtn?.addEventListener('click', clearSessionComparison);
         }
 
         function openSessionDetailPanel() {
@@ -894,8 +910,11 @@
             sessionExplorerState.currentSessionStartedAt = null;
             sessionExplorerState.peers = [];
             sessionExplorerState.timeline = [];
+            sessionExplorerState.currentData = null;
+            sessionExplorerState.compareData = null;
             const peerList = document.getElementById('session-peer-list');
             if (peerList) peerList.innerHTML = '<span class="text-sm text-gray-500">Buscando sesiones relacionadas...</span>';
+            renderSessionComparison();
             document.getElementById('session-detail-metrics').innerHTML = '<div class="text-sm text-gray-500">Cargando métricas...</div>';
             document.getElementById('session-detail-summary').innerHTML = '<p>Cargando resumen...</p>';
             document.getElementById('session-detail-orders').innerHTML = '<p>Cargando órdenes...</p>';
@@ -906,9 +925,7 @@
             document.getElementById('session-detail-timeline').innerHTML = '<p>Cargando timeline...</p>';
 
             try {
-                const res = await fetch(`/api/analytics/${currentShopId}/sessions/${encodeURIComponent(sessionId)}`);
-                if (!res.ok) throw new Error('No se pudo cargar la sesión');
-                const data = await res.json();
+                const data = await fetchSessionDetailData(sessionId);
                 renderSessionDetail(data);
             } catch (error) {
                 document.getElementById('session-detail-summary').innerHTML = `<p class="text-red-600">${error.message}</p>`;
@@ -936,6 +953,7 @@
             sessionExplorerState.currentSessionStartedAt = session.startedAt || null;
             sessionExplorerState.peers = peers;
             sessionExplorerState.timeline = timeline;
+            sessionExplorerState.currentData = data;
 
             document.getElementById('session-detail-title').textContent = `Sesion ${session.sessionId || '-'}`;
 
@@ -999,6 +1017,7 @@
             document.getElementById('session-detail-patterns').innerHTML = renderSessionPatterns(patterns);
             renderPeerSessions(peers, session.sessionId || null);
             updatePeerNavigation(peers, session.sessionId || null);
+            renderSessionComparison();
 
             document.getElementById('session-detail-orders').innerHTML = orders.length
                 ? orders.map((order) => `
@@ -1035,11 +1054,16 @@
                 if (peer.flags?.reachedCheckout) badges.push('CHK');
                 if (peer.flags?.purchased) badges.push('BUY');
                 return `
-                    <button type="button" data-session-id="${peer.sessionId}" class="session-peer-chip inline-flex items-center gap-2 px-3 py-2 rounded-full border border-gray-300 bg-white text-sm text-gray-700 hover:bg-gray-50">
-                        <span class="font-semibold">${peer.sessionId}</span>
-                        <span class="text-xs text-gray-500">${formatDateTimeMx(peer.startedAt)}</span>
-                        <span class="text-xs text-gray-400">${badges.join(' · ') || 'Navegación'}</span>
-                    </button>
+                    <div class="inline-flex items-center gap-2 px-3 py-2 rounded-full border border-gray-300 bg-white text-sm text-gray-700">
+                        <button type="button" data-session-id="${peer.sessionId}" class="session-peer-chip inline-flex items-center gap-2 hover:text-indigo-700">
+                            <span class="font-semibold">${peer.sessionId}</span>
+                            <span class="text-xs text-gray-500">${formatDateTimeMx(peer.startedAt)}</span>
+                            <span class="text-xs text-gray-400">${badges.join(' · ') || 'Navegación'}</span>
+                        </button>
+                        <button type="button" data-compare-session-id="${peer.sessionId}" class="session-compare-chip inline-flex items-center px-2 py-1 rounded-full bg-slate-100 text-xs text-slate-700 hover:bg-slate-200">
+                            Comparar
+                        </button>
+                    </div>
                 `;
             }).join('')}`;
 
@@ -1047,6 +1071,24 @@
                 button.addEventListener('click', () => {
                     const sessionId = button.getAttribute('data-session-id');
                     if (sessionId) openSessionDetail(sessionId);
+                });
+            });
+
+            container.querySelectorAll('.session-compare-chip').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    const sessionId = button.getAttribute('data-compare-session-id');
+                    if (!sessionId) return;
+                    try {
+                        button.setAttribute('disabled', 'true');
+                        const compareData = await fetchSessionDetailData(sessionId);
+                        sessionExplorerState.compareData = compareData;
+                        renderSessionComparison();
+                    } catch (_) {
+                        sessionExplorerState.compareData = null;
+                        renderSessionComparison('No se pudo cargar la sesión de comparación.');
+                    } finally {
+                        button.removeAttribute('disabled');
+                    }
                 });
             });
         }
@@ -1108,6 +1150,153 @@
                     </div>
                 `).join('')
                 : '<p class="text-gray-500">No hay eventos para ese filtro.</p>';
+        }
+
+        async function fetchSessionDetailData(sessionId) {
+            const res = await fetch(`/api/analytics/${currentShopId}/sessions/${encodeURIComponent(sessionId)}`);
+            if (!res.ok) throw new Error('No se pudo cargar la sesión');
+            return res.json();
+        }
+
+        function clearSessionComparison() {
+            sessionExplorerState.compareData = null;
+            renderSessionComparison();
+        }
+
+        function renderSessionComparison(errorMessage = '') {
+            const panel = document.getElementById('session-compare-panel');
+            const title = document.getElementById('session-compare-title');
+            const content = document.getElementById('session-compare-content');
+            if (!panel || !title || !content) return;
+
+            const currentData = sessionExplorerState.currentData;
+            const compareData = sessionExplorerState.compareData;
+
+            if (errorMessage) {
+                panel.classList.remove('hidden');
+                title.textContent = errorMessage;
+                content.innerHTML = '<p class="text-sm text-red-600">No se pudo construir la comparación.</p>';
+                return;
+            }
+
+            if (!currentData || !compareData) {
+                panel.classList.add('hidden');
+                title.textContent = 'Selecciona una sesión relacionada para comparar.';
+                content.innerHTML = '';
+                return;
+            }
+
+            panel.classList.remove('hidden');
+            title.textContent = `Actual ${currentData.session?.sessionId || '-'} vs ${compareData.session?.sessionId || '-'}`;
+
+            const currentMetrics = currentData.metrics || {};
+            const compareMetrics = compareData.metrics || {};
+            const metricRows = [
+                { label: 'Eventos', current: Number(currentMetrics.totalEvents || 0), compare: Number(compareMetrics.totalEvents || 0) },
+                { label: 'Duración', current: Number(currentData.session?.sessionDurationSeconds || 0), compare: Number(compareData.session?.sessionDurationSeconds || 0), formatter: formatDuration },
+                { label: 'View Item', current: Number(currentMetrics.viewItem || 0), compare: Number(compareMetrics.viewItem || 0) },
+                { label: 'Add To Cart', current: Number(currentMetrics.addToCart || 0), compare: Number(compareMetrics.addToCart || 0) },
+                { label: 'Checkout', current: Number(currentMetrics.beginCheckout || 0), compare: Number(compareMetrics.beginCheckout || 0) },
+                { label: 'Purchase', current: Number(currentMetrics.purchase || 0), compare: Number(compareMetrics.purchase || 0) },
+            ];
+
+            const cardsHtml = `
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    ${metricRows.map((row) => {
+                        const currentValue = row.formatter ? row.formatter(row.current) : row.current;
+                        const compareValue = row.formatter ? row.formatter(row.compare) : row.compare;
+                        const delta = row.current - row.compare;
+                        const deltaText = delta === 0 ? 'igual' : delta > 0 ? `+${delta}` : `${delta}`;
+                        return `
+                            <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                                <p class="text-xs uppercase tracking-wide text-gray-500">${row.label}</p>
+                                <div class="mt-2 flex items-end justify-between gap-4">
+                                    <div>
+                                        <p class="text-lg font-semibold text-gray-900">${currentValue}</p>
+                                        <p class="text-xs text-gray-500">Actual</p>
+                                    </div>
+                                    <div class="text-right">
+                                        <p class="text-lg font-semibold text-slate-600">${compareValue}</p>
+                                        <p class="text-xs text-gray-500">Comparada</p>
+                                    </div>
+                                </div>
+                                <p class="mt-2 text-xs ${delta > 0 ? 'text-emerald-600' : delta < 0 ? 'text-amber-600' : 'text-gray-500'}">Delta: ${deltaText}</p>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+
+            const funnelHtml = renderComparisonFunnel(currentData, compareData);
+            const insightHtml = renderComparisonInsights(currentData, compareData);
+
+            content.innerHTML = `${cardsHtml}<div class="grid grid-cols-1 xl:grid-cols-2 gap-4">${funnelHtml}${insightHtml}</div>`;
+        }
+
+        function renderComparisonFunnel(currentData, compareData) {
+            const currentMetrics = currentData.metrics || {};
+            const compareMetrics = compareData.metrics || {};
+            const steps = [
+                { label: 'PV', current: Number(currentMetrics.pageViews || 0), compare: Number(compareMetrics.pageViews || 0) },
+                { label: 'VI', current: Number(currentMetrics.viewItem || 0), compare: Number(compareMetrics.viewItem || 0) },
+                { label: 'ATC', current: Number(currentMetrics.addToCart || 0), compare: Number(compareMetrics.addToCart || 0) },
+                { label: 'BC', current: Number(currentMetrics.beginCheckout || 0), compare: Number(compareMetrics.beginCheckout || 0) },
+                { label: 'P', current: Number(currentMetrics.purchase || 0), compare: Number(compareMetrics.purchase || 0) },
+            ];
+
+            return `
+                <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                    <p class="text-sm font-semibold text-gray-900 mb-3">Funnel comparado</p>
+                    <div class="space-y-3">
+                        ${steps.map((step) => {
+                            const maxValue = Math.max(step.current, step.compare, 1);
+                            return `
+                                <div>
+                                    <div class="flex items-center justify-between text-xs text-gray-600 mb-1">
+                                        <span>${step.label}</span>
+                                        <span>Actual ${step.current} / Comparada ${step.compare}</span>
+                                    </div>
+                                    <div class="space-y-1">
+                                        <div class="h-2 rounded-full bg-indigo-100 overflow-hidden"><span class="block h-full bg-indigo-600" style="width:${Math.round((step.current / maxValue) * 100)}%"></span></div>
+                                        <div class="h-2 rounded-full bg-slate-100 overflow-hidden"><span class="block h-full bg-slate-500" style="width:${Math.round((step.compare / maxValue) * 100)}%"></span></div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderComparisonInsights(currentData, compareData) {
+            const currentMetrics = currentData.metrics || {};
+            const compareMetrics = compareData.metrics || {};
+            const insights = [];
+
+            if (Number(currentMetrics.beginCheckout || 0) > Number(compareMetrics.beginCheckout || 0)) {
+                insights.push('La sesión actual empuja más al checkout que la comparada.');
+            }
+            if (Number(currentMetrics.purchase || 0) < Number(compareMetrics.purchase || 0)) {
+                insights.push('La sesión comparada convierte mejor al final del funnel.');
+            }
+            if (Number(currentMetrics.viewItem || 0) > Number(compareMetrics.viewItem || 0) && Number(currentMetrics.addToCart || 0) === 0) {
+                insights.push('La actual explora más productos, pero no transforma esa exploración en intención.');
+            }
+            if (Number(currentData.session?.sessionDurationSeconds || 0) > Number(compareData.session?.sessionDurationSeconds || 0)) {
+                insights.push('La actual dura más; vale revisar si eso significa más interés o más fricción.');
+            }
+            if (!insights.length) {
+                insights.push('Ambas sesiones se comportan de forma parecida; no hay una desviación fuerte en el recorrido.');
+            }
+
+            return `
+                <div class="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
+                    <p class="text-sm font-semibold text-gray-900 mb-3">Lectura rápida</p>
+                    <div class="space-y-2 text-sm text-gray-700">
+                        ${insights.map((item) => `<p>${item}</p>`).join('')}
+                    </div>
+                </div>
+            `;
         }
 
         function renderSessionVisual(patterns) {
