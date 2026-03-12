@@ -38,8 +38,12 @@ function setNoCacheHeaders(res) {
   res.set('Vary', 'Accept-Encoding');
 }
 
-function buildStableShareUrl(token, provider = 'chatgpt') {
+function buildApiShareUrl(token, provider = 'chatgpt') {
   return `${APP_URL}/api/mcp/context/shared/${encodeURIComponent(token)}?provider=${encodeURIComponent(provider)}`;
+}
+
+function buildShortShareUrl(token) {
+  return `${APP_URL}/s/${encodeURIComponent(token)}`;
 }
 
 async function findRootByShareToken(token) {
@@ -49,7 +53,61 @@ async function findRootByShareToken(token) {
     kind: 'root',
     'aiContext.shareToken': token,
     'aiContext.shareEnabled': true,
-  }).lean();
+  })
+    .sort({ updatedAt: -1, createdAt: -1, _id: -1 })
+    .lean();
+}
+
+async function clearDuplicateShareTokensForUser(userId, keepRootId, token) {
+  const cleanToken = safeStr(token).trim();
+  if (!userId || !keepRootId || !cleanToken) return;
+
+  await McpData.updateMany(
+    {
+      userId,
+      kind: 'root',
+      _id: { $ne: keepRootId },
+      'aiContext.shareToken': cleanToken,
+    },
+    {
+      $set: {
+        'aiContext.shareEnabled': false,
+        'aiContext.shareToken': null,
+        'aiContext.shareUrl': null,
+        'aiContext.shareShortUrl': null,
+        'aiContext.shareApiUrl': null,
+        'aiContext.shareRevokedAt': nowIso(),
+      },
+    }
+  );
+}
+
+async function revokeAllShareTokensForUser(userId, token = null) {
+  const query = {
+    userId,
+    kind: 'root',
+  };
+
+  const cleanToken = safeStr(token).trim();
+  if (cleanToken) {
+    query['aiContext.shareToken'] = cleanToken;
+  } else {
+    query['aiContext.shareEnabled'] = true;
+  }
+
+  await McpData.updateMany(
+    query,
+    {
+      $set: {
+        'aiContext.shareEnabled': false,
+        'aiContext.shareToken': null,
+        'aiContext.shareUrl': null,
+        'aiContext.shareShortUrl': null,
+        'aiContext.shareApiUrl': null,
+        'aiContext.shareRevokedAt': nowIso(),
+      },
+    }
+  );
 }
 
 function buildStatusResponse(root) {
@@ -76,7 +134,9 @@ function buildStatusResponse(root) {
       usableSources: Array.isArray(state?.usableSources) ? state.usableSources : [],
       pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
       hasShareLink: !!(state?.shareEnabled && state?.shareToken),
-      shareUrl: state?.shareEnabled ? state?.shareUrl || null : null,
+      shareUrl: state?.shareEnabled ? (state?.shareUrl || state?.shareShortUrl || null) : null,
+      shareShortUrl: state?.shareEnabled ? (state?.shareShortUrl || state?.shareUrl || null) : null,
+      shareApiUrl: state?.shareEnabled ? state?.shareApiUrl || null : null,
       shareToken: state?.shareEnabled ? state?.shareToken || null : null,
       shareProvider: state?.shareProvider || 'chatgpt',
       shareCreatedAt: state?.shareCreatedAt || null,
@@ -283,14 +343,15 @@ router.post('/link', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'MCP_CONTEXT_NOT_READY' });
     }
 
-    let shareToken = state?.shareToken || null;
+    let shareToken = safeStr(state?.shareToken).trim() || null;
     const alreadyActive = !!(state?.shareEnabled && shareToken);
 
     if (!alreadyActive) {
       shareToken = makeShortShareToken();
     }
 
-    const shareUrl = buildStableShareUrl(shareToken, provider);
+    const shareShortUrl = buildShortShareUrl(shareToken);
+    const shareApiUrl = buildApiShareUrl(shareToken, provider);
 
     await updateRootContextState(userId, {
       aiContext: {
@@ -298,19 +359,25 @@ router.post('/link', async (req, res) => {
         shareToken,
         shareEnabled: true,
         shareProvider: provider,
-        shareUrl,
+        shareUrl: shareShortUrl,
+        shareShortUrl,
+        shareApiUrl,
         shareCreatedAt: alreadyActive ? (state?.shareCreatedAt || nowIso()) : nowIso(),
         shareLastGeneratedAt: nowIso(),
         shareRevokedAt: null,
       },
     });
 
+    await clearDuplicateShareTokensForUser(userId, root?._id, shareToken);
+
     return res.json({
       ok: true,
       data: {
         provider,
         shareToken,
-        shareUrl,
+        shareUrl: shareShortUrl,
+        shareShortUrl,
+        shareApiUrl,
         enabled: true,
         created: !alreadyActive,
       },
@@ -338,7 +405,9 @@ router.get('/link', async (req, res) => {
 
     const state = root?.aiContext || {};
     const shareToken = state?.shareToken || null;
-    const shareUrl = state?.shareEnabled ? state?.shareUrl || null : null;
+    const shareUrl = state?.shareEnabled ? (state?.shareUrl || state?.shareShortUrl || null) : null;
+    const shareShortUrl = state?.shareEnabled ? (state?.shareShortUrl || state?.shareUrl || null) : null;
+    const shareApiUrl = state?.shareEnabled ? state?.shareApiUrl || null : null;
 
     setNoCacheHeaders(res);
     return res.json({
@@ -347,6 +416,8 @@ router.get('/link', async (req, res) => {
         enabled: !!(state?.shareEnabled && shareToken),
         shareToken,
         shareUrl,
+        shareShortUrl,
+        shareApiUrl,
         provider: state?.shareProvider || 'chatgpt',
         createdAt: state?.shareCreatedAt || null,
         lastGeneratedAt: state?.shareLastGeneratedAt || null,
@@ -376,7 +447,8 @@ router.delete('/link', async (req, res) => {
     }
 
     const state = root?.aiContext || {};
-    const hadActiveLink = !!(state?.shareEnabled && state?.shareToken);
+    const currentToken = safeStr(state?.shareToken).trim() || null;
+    const hadActiveLink = !!(state?.shareEnabled && currentToken);
 
     await updateRootContextState(userId, {
       aiContext: {
@@ -384,11 +456,15 @@ router.delete('/link', async (req, res) => {
         shareEnabled: false,
         shareToken: null,
         shareUrl: null,
+        shareShortUrl: null,
+        shareApiUrl: null,
         shareProvider: state?.shareProvider || 'chatgpt',
         shareLastGeneratedAt: state?.shareLastGeneratedAt || null,
         shareRevokedAt: nowIso(),
       },
     });
+
+    await revokeAllShareTokensForUser(userId, currentToken);
 
     return res.json({
       ok: true,
@@ -421,7 +497,8 @@ router.post('/link/revoke', async (req, res) => {
     }
 
     const state = root?.aiContext || {};
-    const hadActiveLink = !!(state?.shareEnabled && state?.shareToken);
+    const currentToken = safeStr(state?.shareToken).trim() || null;
+    const hadActiveLink = !!(state?.shareEnabled && currentToken);
 
     await updateRootContextState(userId, {
       aiContext: {
@@ -429,11 +506,15 @@ router.post('/link/revoke', async (req, res) => {
         shareEnabled: false,
         shareToken: null,
         shareUrl: null,
+        shareShortUrl: null,
+        shareApiUrl: null,
         shareProvider: state?.shareProvider || 'chatgpt',
         shareLastGeneratedAt: state?.shareLastGeneratedAt || null,
         shareRevokedAt: nowIso(),
       },
     });
+
+    await revokeAllShareTokensForUser(userId, currentToken);
 
     return res.json({
       ok: true,

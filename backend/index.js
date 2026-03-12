@@ -1465,6 +1465,32 @@ app.get("/plans/cancel", (_req, res) => {
   res.redirect("/plans");
 });
 
+/* =========================
+ * Short public MCP links
+ * ========================= */
+app.get("/s/:token", (req, res) => {
+  try {
+    const token = String(req.params?.token || "").trim();
+    if (!token) {
+      return res.status(400).type("text/plain").send("Missing token");
+    }
+
+    const providerRaw = String(req.query?.provider || "chatgpt").trim().toLowerCase();
+    const provider =
+      providerRaw === "claude" || providerRaw === "gemini" || providerRaw === "chatgpt"
+        ? providerRaw
+        : "chatgpt";
+
+    const target = new URL(`/api/mcp/context/shared/${encodeURIComponent(token)}`, APP_URL);
+    target.searchParams.set("provider", provider);
+
+    return res.redirect(302, target.toString());
+  } catch (err) {
+    console.error("[short-mcp-link] error:", err);
+    return res.status(500).type("text/plain").send("Short link failed");
+  }
+});
+
 app.use("/api", (req, res) => {
   res.status(404).json({ ok: false, error: "Not Found", path: req.originalUrl });
 });
