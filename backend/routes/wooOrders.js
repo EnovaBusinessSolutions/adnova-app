@@ -3,6 +3,7 @@ const { randomUUID } = require('crypto');
 const router = express.Router();
 const prisma = require('../utils/prismaClient');
 const { sendToAllPlatforms } = require('../services/capiFanout');
+const { hashPII } = require('../utils/encryption');
 
 function normalizeWooChannel(payload = {}) {
   const utmSource = String(payload.utm_source || '').trim().toLowerCase();
@@ -90,6 +91,10 @@ router.post('/woo/orders-sync', async (req, res) => {
       [payload.customer_first_name, payload.customer_last_name].filter(Boolean).join(' '),
       payload.billing_company
     );
+
+    const emailHash = typeof hashPII === 'function' ? hashPII(payload.customer_email) : null;
+    const phoneHash = typeof hashPII === 'function' ? hashPII(payload.customer_phone) : null;
+
     const attributionSnapshot = {
       utm_source: payload.utm_source || null,
       utm_medium: payload.utm_medium || null,
@@ -112,9 +117,11 @@ router.post('/woo/orders-sync', async (req, res) => {
       orderNumber: String(payload.order_number || payload.order_id),
       accountId,
       checkoutToken,
-      userKey: checkoutMap ? checkoutMap.userKey : null,
-      sessionId: checkoutMap ? checkoutMap.sessionId : null,
+      userKey: payload.user_key || (checkoutMap ? checkoutMap.userKey : null),
+      sessionId: payload.session_id || (checkoutMap ? checkoutMap.sessionId : null),
       customerId: payload.customer_id ? String(payload.customer_id) : null,
+      emailHash,
+      phoneHash,
       revenue: parseFloatSafe(payload.revenue),
       subtotal: parseFloatSafe(payload.subtotal),
       discountTotal: parseFloatSafe(payload.discount_total),

@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.1.1
+ * Version: 1.1.2
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.1.1';
+    const VERSION = '1.1.2';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_BACKFILL_DONE = 'adnova_pixel_backfill_done';
@@ -38,6 +38,7 @@ final class Adnova_Pixel_Plugin {
         add_action('woocommerce_payment_complete', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         add_action('woocommerce_order_status_processing', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         add_action('woocommerce_order_status_completed', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
+        add_action('woocommerce_checkout_update_order_meta', array(__CLASS__, 'save_pixel_cookies_to_order'), 10, 1);
         // Fallback for custom checkout flows/themes where woocommerce_thankyou is bypassed.
         add_action('wp_footer', array(__CLASS__, 'maybe_track_woo_order_received_fallback'), 1000);
         add_action('adnova_pixel_backfill_orders', array(__CLASS__, 'backfill_recent_orders'));
@@ -269,12 +270,17 @@ final class Adnova_Pixel_Plugin {
                 'customer_first_name' => null,
                 'customer_last_name' => null,
                 'billing_company' => null,
+                'customer_email' => null,
+                'customer_phone' => null,
             );
         }
 
         $first_name = sanitize_text_field((string) $order->get_billing_first_name());
         $last_name = sanitize_text_field((string) $order->get_billing_last_name());
         $company = sanitize_text_field((string) $order->get_billing_company());
+        
+        $email = sanitize_text_field((string) $order->get_billing_email());
+        $phone = sanitize_text_field((string) $order->get_billing_phone());
 
         if ($first_name === '' && $last_name === '') {
             $first_name = sanitize_text_field((string) $order->get_shipping_first_name());
@@ -295,6 +301,8 @@ final class Adnova_Pixel_Plugin {
             'customer_first_name' => $first_name !== '' ? $first_name : null,
             'customer_last_name' => $last_name !== '' ? $last_name : null,
             'billing_company' => $company !== '' ? $company : null,
+            'customer_email' => $email !== '' ? $email : null,
+            'customer_phone' => $phone !== '' ? $phone : null,
         );
     }
 
@@ -393,6 +401,19 @@ final class Adnova_Pixel_Plugin {
 
     public static function on_woo_order_server_side($order_id) {
         self::track_woo_order_purchase($order_id, false);
+    }
+
+    public static function save_pixel_cookies_to_order($order_id) {
+        $order = wc_get_order($order_id);
+        if ($order) {
+            if (isset($_COOKIE['__adray_session_id'])) {
+                $order->update_meta_data('_adray_session_id', sanitize_text_field(wp_unslash($_COOKIE['__adray_session_id'])));
+            }
+            if (isset($_COOKIE['__adray_visitor_id'])) {
+                $order->update_meta_data('_adray_visitor_id', sanitize_text_field(wp_unslash($_COOKIE['__adray_visitor_id'])));
+            }
+            $order->save();
+        }
     }
 
     public static function backfill_recent_orders() {
@@ -552,6 +573,8 @@ final class Adnova_Pixel_Plugin {
 
         $payload = array(
             'account_id' => self::get_site_id(),
+            'session_id' => $order->get_meta('_adray_session_id') ? $order->get_meta('_adray_session_id') : null,
+            'user_key' => $order->get_meta('_adray_visitor_id') ? $order->get_meta('_adray_visitor_id') : null,
             'order_id' => $order_data['order_id'],
             'order_number' => (string) $order->get_order_number(),
             'checkout_token' => isset($order_data['checkout_token']) ? $order_data['checkout_token'] : null,
@@ -560,6 +583,8 @@ final class Adnova_Pixel_Plugin {
             'customer_first_name' => $customer_identity['customer_first_name'],
             'customer_last_name' => $customer_identity['customer_last_name'],
             'billing_company' => $customer_identity['billing_company'],
+            'customer_email' => $customer_identity['customer_email'],
+            'customer_phone' => $customer_identity['customer_phone'],
             'revenue' => isset($order_data['revenue']) ? $order_data['revenue'] : (float) $order->get_total(),
             'subtotal' => self::get_order_subtotal_amount($order),
             'discount_total' => (float) $order->get_discount_total(),

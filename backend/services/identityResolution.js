@@ -138,7 +138,7 @@ async function resolveUserKey(accountId, cookieUserKey, payload, res) {
     res.cookie('_adray_uid', matchedIdentity.userKey, {
       httpOnly: true,
       secure: true,
-      sameSite: 'Lax',
+      sameSite: 'None',
       maxAge: 63072000000,
       path: '/'
     });

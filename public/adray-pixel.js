@@ -44,13 +44,19 @@
   function getOrCreateSessionId() {
     var key = '__adray_session_id';
     var existing = safeStorageGet(window.sessionStorage, key);
-    if (existing) return existing;
-    var created = generateId();
-    safeStorageSet(window.sessionStorage, key, created);
-    return created;
-  }
+      
+      // Fallback to cookie
+      if (!existing) {
+        var match = document.cookie.match(new RegExp('(^| )' + key + '=([^;]+)'));
+        if (match) existing = match[2];
+      }
 
-  function persistAttributionParams() {
+      var id = existing || generateId();
+      
+      safeStorageSet(window.sessionStorage, key, id);
+      document.cookie = key + "=" + id + "; path=/; max-age=1800; SameSite=Lax";
+      
+      return id;
     var keys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'gclid', 'ttclid'];
     var changed = false;
 
