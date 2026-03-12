@@ -1470,6 +1470,12 @@ app.get("/plans/cancel", (_req, res) => {
  * ========================= */
 app.get("/s/:token", (req, res) => {
   try {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0");
+    res.set("Pragma", "no-cache");
+    res.set("Expires", "0");
+    res.set("Surrogate-Control", "no-store");
+    res.set("Vary", "Accept-Encoding");
+
     const token = String(req.params?.token || "").trim();
     if (!token) {
       return res.status(400).type("text/plain").send("Missing token");

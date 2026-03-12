@@ -46,9 +46,110 @@ function buildShortShareUrl(token) {
   return `${APP_URL}/s/${encodeURIComponent(token)}`;
 }
 
+function normalizeProvider(raw) {
+  const p = safeStr(raw).trim().toLowerCase();
+  return p === 'claude' || p === 'gemini' || p === 'chatgpt' ? p : 'chatgpt';
+}
+
 /**
- * Busca el owner del token y luego devuelve el latest root real del usuario.
- * Esto garantiza que el mismo link corto siempre sirva el contexto universal más reciente.
+ * Root con contexto universal REAL más reciente.
+ * IMPORTANTE:
+ * - NO depende de updatedAt general del documento.
+ * - Prioriza aiContext.finishedAt / snapshotId / createdAt.
+ */
+async function findLatestContextRootForUser(userId) {
+  if (!userId) return null;
+
+  const root = await McpData.findOne({
+    userId,
+    kind: 'root',
+    'aiContext.encodedPayload': { $exists: true, $ne: null },
+  })
+    .sort({
+      'aiContext.finishedAt': -1,
+      'aiContext.snapshotId': -1,
+      createdAt: -1,
+      _id: -1,
+    });
+
+  return root || null;
+}
+
+/**
+ * Busca cualquier root del usuario que tenga un share link activo.
+ * Esto nos permite conservar el MISMO token aunque el latest context root cambie.
+ */
+async function findActiveShareRootForUser(userId) {
+  if (!userId) return null;
+
+  const root = await McpData.findOne({
+    userId,
+    kind: 'root',
+    'aiContext.shareToken': { $exists: true, $ne: null },
+    'aiContext.shareEnabled': true,
+  })
+    .sort({
+      'aiContext.shareCreatedAt': -1,
+      updatedAt: -1,
+      createdAt: -1,
+      _id: -1,
+    });
+
+  return root || null;
+}
+
+/**
+ * Sincroniza el link activo del usuario hacia el latest context root.
+ * Así el token sigue siendo el mismo, pero ahora "vive" también en el root nuevo.
+ */
+async function syncActiveShareLinkToLatestRoot(userId, preferredProvider = null) {
+  if (!userId) return null;
+
+  const activeShareRoot = await findActiveShareRootForUser(userId);
+  const latestRoot = await findLatestContextRootForUser(userId);
+
+  if (!latestRoot?._id) return null;
+
+  const activeState = activeShareRoot?.aiContext || {};
+  const latestState = latestRoot?.aiContext || {};
+
+  let shareToken = safeStr(activeState?.shareToken).trim() || safeStr(latestState?.shareToken).trim() || null;
+  if (!shareToken) return null;
+
+  const provider = normalizeProvider(preferredProvider || activeState?.shareProvider || latestState?.shareProvider || 'chatgpt');
+  const shareShortUrl = buildShortShareUrl(shareToken);
+  const shareApiUrl = buildApiShareUrl(shareToken, provider);
+  const shareCreatedAt =
+    latestState?.shareCreatedAt ||
+    activeState?.shareCreatedAt ||
+    nowIso();
+
+  await McpData.updateOne(
+    { _id: latestRoot._id },
+    {
+      $set: {
+        'aiContext.shareToken': shareToken,
+        'aiContext.shareEnabled': true,
+        'aiContext.shareProvider': provider,
+        'aiContext.shareUrl': shareShortUrl,
+        'aiContext.shareShortUrl': shareShortUrl,
+        'aiContext.shareApiUrl': shareApiUrl,
+        'aiContext.shareCreatedAt': shareCreatedAt,
+        'aiContext.shareLastGeneratedAt': nowIso(),
+        'aiContext.shareRevokedAt': null,
+      },
+    }
+  );
+
+  await clearDuplicateShareTokensForUser(userId, latestRoot._id, shareToken);
+
+  const refreshedRoot = await McpData.findById(latestRoot._id);
+  return refreshedRoot || latestRoot;
+}
+
+/**
+ * Busca el owner del token y luego devuelve el latest context root REAL del usuario.
+ * Además intenta autocorregir el link para que el token quede sincronizado al root más reciente.
  */
 async function findLatestRootByShareToken(token) {
   const cleanToken = safeStr(token).trim();
@@ -59,12 +160,23 @@ async function findLatestRootByShareToken(token) {
     'aiContext.shareToken': cleanToken,
     'aiContext.shareEnabled': true,
   })
-    .sort({ updatedAt: -1, createdAt: -1, _id: -1 })
+    .sort({
+      'aiContext.shareCreatedAt': -1,
+      updatedAt: -1,
+      createdAt: -1,
+      _id: -1,
+    })
     .lean();
 
   if (!ownerRoot?.userId) return null;
 
-  const latestRoot = await findRoot(ownerRoot.userId);
+  const syncedRoot = await syncActiveShareLinkToLatestRoot(ownerRoot.userId);
+  if (syncedRoot?._id) {
+    const syncedToken = safeStr(syncedRoot?.aiContext?.shareToken).trim();
+    if (syncedToken === cleanToken) return syncedRoot;
+  }
+
+  const latestRoot = await findLatestContextRootForUser(ownerRoot.userId);
   if (!latestRoot) return null;
 
   return latestRoot;
@@ -206,6 +318,12 @@ router.post('/build', async (req, res) => {
       contextRangeDays: req.body?.contextRangeDays || null,
     });
 
+    try {
+      await syncActiveShareLinkToLatestRoot(userId, req.body?.provider || null);
+    } catch (syncErr) {
+      console.error('[mcp/context/build] share sync warning:', syncErr);
+    }
+
     return res.json({
       ok: true,
       data: result?.data || null,
@@ -263,7 +381,7 @@ router.get('/status', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const root = await findRoot(userId);
+    const root = (await syncActiveShareLinkToLatestRoot(userId)) || (await findLatestContextRootForUser(userId)) || (await findRoot(userId));
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
@@ -286,7 +404,7 @@ router.get('/latest', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const root = await findRoot(userId);
+    const root = (await syncActiveShareLinkToLatestRoot(userId)) || (await findLatestContextRootForUser(userId)) || (await findRoot(userId));
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
@@ -339,48 +457,56 @@ router.post('/link', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const providerRaw = safeStr(req.body?.provider).toLowerCase();
-    const provider =
-      providerRaw === 'claude' || providerRaw === 'gemini' || providerRaw === 'chatgpt'
-        ? providerRaw
-        : 'chatgpt';
+    const provider = normalizeProvider(req.body?.provider);
 
-    const root = await findRoot(userId);
-    if (!root) {
+    const latestContextRoot = (await findLatestContextRootForUser(userId)) || (await findRoot(userId));
+    if (!latestContextRoot) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
 
-    const state = root?.aiContext || {};
+    const state = latestContextRoot?.aiContext || {};
     if (!state?.encodedPayload) {
       return res.status(404).json({ ok: false, error: 'MCP_CONTEXT_NOT_READY' });
     }
 
-    let shareToken = safeStr(state?.shareToken).trim() || null;
-    const alreadyActive = !!(state?.shareEnabled && shareToken);
+    const activeShareRoot = await findActiveShareRootForUser(userId);
 
-    if (!alreadyActive) {
+    let shareToken =
+      safeStr(activeShareRoot?.aiContext?.shareToken).trim() ||
+      safeStr(state?.shareToken).trim() ||
+      null;
+
+    const alreadyActive = !!shareToken;
+
+    if (!shareToken) {
       shareToken = makeShortShareToken();
     }
 
     const shareShortUrl = buildShortShareUrl(shareToken);
     const shareApiUrl = buildApiShareUrl(shareToken, provider);
+    const shareCreatedAt =
+      state?.shareCreatedAt ||
+      activeShareRoot?.aiContext?.shareCreatedAt ||
+      nowIso();
 
-    await updateRootContextState(userId, {
-      aiContext: {
-        ...state,
-        shareToken,
-        shareEnabled: true,
-        shareProvider: provider,
-        shareUrl: shareShortUrl,
-        shareShortUrl,
-        shareApiUrl,
-        shareCreatedAt: alreadyActive ? (state?.shareCreatedAt || nowIso()) : nowIso(),
-        shareLastGeneratedAt: nowIso(),
-        shareRevokedAt: null,
-      },
-    });
+    await McpData.updateOne(
+      { _id: latestContextRoot._id },
+      {
+        $set: {
+          'aiContext.shareToken': shareToken,
+          'aiContext.shareEnabled': true,
+          'aiContext.shareProvider': provider,
+          'aiContext.shareUrl': shareShortUrl,
+          'aiContext.shareShortUrl': shareShortUrl,
+          'aiContext.shareApiUrl': shareApiUrl,
+          'aiContext.shareCreatedAt': shareCreatedAt,
+          'aiContext.shareLastGeneratedAt': nowIso(),
+          'aiContext.shareRevokedAt': null,
+        },
+      }
+    );
 
-    await clearDuplicateShareTokensForUser(userId, root?._id, shareToken);
+    await clearDuplicateShareTokensForUser(userId, latestContextRoot._id, shareToken);
 
     return res.json({
       ok: true,
@@ -410,7 +536,13 @@ router.get('/link', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const root = await findRoot(userId);
+    const syncedRoot = await syncActiveShareLinkToLatestRoot(userId);
+    const root =
+      syncedRoot ||
+      (await findActiveShareRootForUser(userId)) ||
+      (await findLatestContextRootForUser(userId)) ||
+      (await findRoot(userId));
+
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
@@ -453,7 +585,11 @@ router.delete('/link', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const root = await findRoot(userId);
+    const root =
+      (await findActiveShareRootForUser(userId)) ||
+      (await findLatestContextRootForUser(userId)) ||
+      (await findRoot(userId));
+
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
@@ -503,7 +639,11 @@ router.post('/link/revoke', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const root = await findRoot(userId);
+    const root =
+      (await findActiveShareRootForUser(userId)) ||
+      (await findLatestContextRootForUser(userId)) ||
+      (await findRoot(userId));
+
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
@@ -553,11 +693,7 @@ router.get('/shared/:token', async (req, res) => {
       return res.status(400).json({ ok: false, error: 'MISSING_TOKEN' });
     }
 
-    const providerRaw = safeStr(req.query?.provider).toLowerCase();
-    const provider =
-      providerRaw === 'claude' || providerRaw === 'gemini' || providerRaw === 'chatgpt'
-        ? providerRaw
-        : 'chatgpt';
+    const provider = normalizeProvider(req.query?.provider);
 
     const root = await findLatestRootByShareToken(token);
     if (!root) {
@@ -565,8 +701,14 @@ router.get('/shared/:token', async (req, res) => {
     }
 
     const state = root?.aiContext || {};
+    const activeToken = safeStr(state?.shareToken).trim();
+
     if (!state?.encodedPayload) {
       return res.status(404).json({ ok: false, error: 'SHARED_CONTEXT_NOT_READY' });
+    }
+
+    if (activeToken && activeToken !== token) {
+      return res.status(404).json({ ok: false, error: 'SHARED_CONTEXT_NOT_FOUND' });
     }
 
     setNoCacheHeaders(res);
