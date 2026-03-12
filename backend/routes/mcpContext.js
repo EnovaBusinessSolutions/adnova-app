@@ -544,7 +544,7 @@ router.post('/link/revoke', async (req, res) => {
 
 /**
  * GET /api/mcp/context/shared/:token
- * Siempre devuelve el contexto universal más reciente del usuario dueño de ese token.
+ * Devuelve SIEMPRE el contexto universal más reciente del usuario dueño de ese token.
  */
 router.get('/shared/:token', async (req, res) => {
   try {
@@ -559,44 +559,20 @@ router.get('/shared/:token', async (req, res) => {
         ? providerRaw
         : 'chatgpt';
 
-    const tokenRoot = await findRootByShareToken(token);
-    if (!tokenRoot) {
+    const root = await findLatestRootByShareToken(token);
+    if (!root) {
       return res.status(404).json({ ok: false, error: 'SHARED_CONTEXT_NOT_FOUND' });
     }
 
-    const ownerId =
-      tokenRoot?.userId ||
-      tokenRoot?.user ||
-      tokenRoot?.owner ||
-      null;
-
-    if (!ownerId) {
-      console.error('[mcp/context/shared] owner missing for token root', {
-        token,
-        rootId: tokenRoot?._id || null,
-      });
-      return res.status(404).json({ ok: false, error: 'SHARED_CONTEXT_OWNER_NOT_FOUND' });
-    }
-
-    const latestRoot = await findRoot(ownerId);
-    if (!latestRoot) {
-      console.error('[mcp/context/shared] latest root not found for token owner', {
-        token,
-        ownerId: String(ownerId),
-        tokenRootId: tokenRoot?._id || null,
-      });
-      return res.status(404).json({ ok: false, error: 'SHARED_CONTEXT_NOT_FOUND' });
-    }
-
-    const state = latestRoot?.aiContext || {};
+    const state = root?.aiContext || {};
     if (!state?.encodedPayload) {
       return res.status(404).json({ ok: false, error: 'SHARED_CONTEXT_NOT_READY' });
     }
 
     setNoCacheHeaders(res);
-    return res.json(buildSharedPayload(latestRoot, provider));
+    return res.json(buildSharedPayload(root, provider));
   } catch (e) {
-    console.error('[mcp/context/shared] error:', e?.stack || e?.message || e);
+    console.error('[mcp/context/shared] error:', e);
     return res.status(500).json({ ok: false, error: 'MCP_CONTEXT_SHARED_FAILED' });
   }
 });
