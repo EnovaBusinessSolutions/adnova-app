@@ -9,6 +9,9 @@ const IORedis = require('ioredis');
 const { collectMeta } = require('../jobs/collect/metaCollector');
 const { collectGoogle } = require('../jobs/collect/googleCollector');
 const { collectGA4 } = require('../jobs/collect/googleAnalyticsCollector');
+const {
+  rebuildUnifiedContextForUser,
+} = require('../services/mcpContextBuilder');
 const McpData = require('../models/McpData');
 const User = require('../models/User');
 
@@ -30,6 +33,12 @@ const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(
   process.env.MCP_CONTEXT_RANGE_DAYS || 60,
   7,
   365
+);
+
+const WORKER_CONTEXT_REBUILD_TIMEOUT_MS = clampInt(
+  process.env.MCP_WORKER_CONTEXT_REBUILD_TIMEOUT_MS || 15000,
+  3000,
+  120000
 );
 
 if (!MONGO_URI) {
@@ -649,6 +658,61 @@ async function finalizeRootFromCollector({
   });
 }
 
+async function triggerContextRebuildBestEffort({
+  userId,
+  source,
+  snapshotId,
+  contextRangeDays,
+}) {
+  try {
+    console.log('[mcpWorker] context rebuild:start', {
+      userId: String(userId),
+      source,
+      snapshotId,
+      contextRangeDays: contextRangeDays || null,
+      timeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
+    });
+
+    const result = await rebuildUnifiedContextForUser(userId, {
+      explicitSnapshotId: snapshotId || null,
+      contextRangeDays: contextRangeDays || null,
+      timeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
+      reason: `${safeString(source) || 'source'}_synced`,
+      requestedBy: 'mcpWorker',
+    });
+
+    console.log('[mcpWorker] context rebuild:done', {
+      userId: String(userId),
+      source,
+      snapshotId,
+      status: result?.data?.status || null,
+      stage: result?.data?.stage || null,
+      sourceSnapshots: result?.data?.sourceSnapshots || null,
+      usableSources: result?.data?.usableSources || [],
+      pendingConnectedSources: result?.data?.pendingConnectedSources || [],
+    });
+
+    return {
+      ok: true,
+      data: result?.data || null,
+    };
+  } catch (err) {
+    console.warn('[mcpWorker] context rebuild failed (best effort)', {
+      userId: String(userId),
+      source,
+      snapshotId,
+      error: err?.message || err?.code || err,
+      data: err?.data || null,
+    });
+
+    return {
+      ok: false,
+      error: err?.message || err?.code || 'CONTEXT_REBUILD_FAILED',
+      data: err?.data || null,
+    };
+  }
+}
+
 async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
   const snapshotId = makeSnapshotId();
 
@@ -718,7 +782,19 @@ async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
     extractedRoot,
   });
 
-  return { ok: true, snapshotId, saved: (r.datasets || []).length };
+  const rebuild = await triggerContextRebuildBestEffort({
+    userId,
+    source: 'metaAds',
+    snapshotId,
+    contextRangeDays: contextDays,
+  });
+
+  return {
+    ok: true,
+    snapshotId,
+    saved: (r.datasets || []).length,
+    contextRebuild: rebuild,
+  };
 }
 
 async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, accountId }) {
@@ -789,7 +865,19 @@ async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, acc
     extractedRoot,
   });
 
-  return { ok: true, snapshotId, saved: (r.datasets || []).length };
+  const rebuild = await triggerContextRebuildBestEffort({
+    userId,
+    source: 'googleAds',
+    snapshotId,
+    contextRangeDays: contextDays,
+  });
+
+  return {
+    ok: true,
+    snapshotId,
+    saved: (r.datasets || []).length,
+    contextRebuild: rebuild,
+  };
 }
 
 async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyId }) {
@@ -860,7 +948,19 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
     extractedRoot,
   });
 
-  return { ok: true, snapshotId, saved: (r.datasets || []).length };
+  const rebuild = await triggerContextRebuildBestEffort({
+    userId,
+    source: 'ga4',
+    snapshotId,
+    contextRangeDays: contextDays,
+  });
+
+  return {
+    ok: true,
+    snapshotId,
+    saved: (r.datasets || []).length,
+    contextRebuild: rebuild,
+  };
 }
 
 /* =========================
@@ -970,6 +1070,7 @@ async function boot() {
     prefix: BULLMQ_PREFIX,
     defaultStorageRangeDays: DEFAULT_STORAGE_RANGE_DAYS,
     defaultContextRangeDays: DEFAULT_CONTEXT_RANGE_DAYS,
+    workerContextRebuildTimeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
   });
 }
 
