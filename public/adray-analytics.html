@@ -442,27 +442,27 @@
     <main class="dashboard-shell max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
         <!-- Header & Controls -->
-        <div class="dashboard-hero md:flex md:items-start md:justify-between mb-8 gap-6">
-            <div class="flex-1 min-w-0">
+        <div class="dashboard-hero mb-8">
+            <div class="max-w-4xl min-w-0">
                 <p class="dashboard-kicker">Radar Operativo</p>
-                <h2 class="dashboard-title text-gray-900 sm:truncate">
+                <h2 class="dashboard-title text-gray-900">
                     Dashboard de lectura rápida
                 </h2>
                 <p class="dashboard-subtitle mt-4 max-w-3xl">
                     Comercial, atribución y salud técnica en una sola vista para detectar qué está funcionando, dónde se está perdiendo intención y qué sesión conviene revisar primero.
                 </p>
-                <div class="mt-1 flex flex-col sm:flex-row sm:flex-wrap sm:mt-0 sm:space-x-6">
-                    <div class="metric-pill mt-4">
+                <div class="mt-4 flex flex-col sm:flex-row sm:flex-wrap gap-3">
+                    <div class="metric-pill">
                         <i class="fas fa-calendar-alt mr-1.5 text-gray-400"></i>
                         <span id="date-range-label">Últimos 30 días</span>
                     </div>
-                    <div class="metric-pill mt-4 text-green-600">
+                    <div class="metric-pill text-green-600">
                         <i class="fas fa-circle mr-1.5 text-[8px] animate-pulse"></i>
                         <span id="live-feed-status">Conectando Live Feed...</span>
                     </div>
                 </div>
             </div>
-            <div class="mt-6 flex md:mt-0 md:ml-4 gap-3 flex-wrap justify-end">
+            <div class="mt-6 flex gap-3 flex-wrap justify-start">
                 <div class="ad-control">
                     <label for="date-preset" class="text-xs text-gray-500 mr-2">Rango</label>
                     <select id="date-preset" onchange="onDatePresetChange()" class="text-sm bg-transparent focus:outline-none">
