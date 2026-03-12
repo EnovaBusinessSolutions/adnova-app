@@ -67,6 +67,20 @@
             z-index: 1;
         }
 
+        .dashboard-section-heading {
+            margin-bottom: 0.75rem;
+        }
+
+        .dashboard-section-grid,
+        .dashboard-support-grid {
+            align-items: stretch;
+        }
+
+        .dashboard-section-grid > *,
+        .dashboard-support-grid > * {
+            min-width: 0;
+        }
+
         .dashboard-hero {
             background: linear-gradient(135deg, rgba(32, 21, 51, 0.98) 0%, rgba(14, 9, 24, 0.96) 100%);
             border: 1px solid var(--dash-border-strong);
@@ -82,6 +96,15 @@
             text-transform: uppercase;
             color: var(--dash-accent);
             font-weight: 700;
+        }
+
+        .dashboard-section-heading .panel-kicker,
+        .dashboard-section-heading .panel-title {
+            color: var(--dash-text) !important;
+        }
+
+        .dashboard-section-heading .panel-kicker {
+            color: var(--dash-soft) !important;
         }
 
         .dashboard-title,
@@ -134,11 +157,49 @@
         .ad-panel,
         .adray-dashboard #metric-carousel-track > .metric-card-slide > div,
         .adray-dashboard #session-detail-panel > div {
+            display: block !important;
+            position: relative;
             background: linear-gradient(180deg, rgba(26, 17, 41, 0.95) 0%, rgba(12, 8, 19, 0.92) 100%) !important;
             border: 1px solid var(--dash-border) !important;
             border-radius: var(--dash-radius) !important;
             box-shadow: var(--dash-shadow) !important;
             backdrop-filter: blur(12px);
+        }
+
+        .dashboard-section-grid .ad-panel,
+        .dashboard-support-grid .ad-panel {
+            min-height: 22rem;
+        }
+
+        .dashboard-support-grid .ad-panel,
+        .dashboard-section-grid .ad-panel,
+        .dashboard-section-grid .ad-panel p,
+        .dashboard-support-grid .ad-panel p,
+        .dashboard-section-grid .ad-panel h3,
+        .dashboard-support-grid .ad-panel h3,
+        .dashboard-section-grid .ad-panel h4,
+        .dashboard-support-grid .ad-panel h4,
+        .dashboard-section-grid .ad-panel span,
+        .dashboard-support-grid .ad-panel span,
+        .dashboard-section-grid .ad-panel div,
+        .dashboard-support-grid .ad-panel div,
+        .dashboard-section-grid .ad-panel th,
+        .dashboard-support-grid .ad-panel th,
+        .dashboard-section-grid .ad-panel td,
+        .dashboard-support-grid .ad-panel td,
+        .dashboard-section-grid .ad-panel label,
+        .dashboard-support-grid .ad-panel label {
+            color: inherit;
+        }
+
+        .dashboard-section-grid .ad-panel::before,
+        .dashboard-support-grid .ad-panel::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border-radius: inherit;
+            pointer-events: none;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
         }
 
         .adray-dashboard .ad-subpanel,
@@ -508,7 +569,7 @@
 
         <!-- Metric Cards -->
         <div class="mb-8">
-            <div class="flex items-center justify-between mb-3">
+            <div class="dashboard-section-heading flex items-center justify-between mb-3">
                 <div>
                     <p class="panel-kicker">Core KPI</p>
                     <h3 class="panel-title text-lg font-medium text-gray-900">Métricas clave</h3>
@@ -759,7 +820,7 @@
         </div>
 
         <!-- Charts & Feed Split -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div class="dashboard-section-grid grid grid-cols-1 lg:grid-cols-3 gap-8">
             
             <!-- Left Column: Charts (2/3 width) -->
             <div class="lg:col-span-2 space-y-8">
@@ -813,7 +874,7 @@
         </div>
 
         <!-- New: Pixel Health + Supporting Panels + Top Products -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
+        <div class="dashboard-support-grid grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
             <div class="space-y-6">
                 <div class="ad-panel p-6">
                     <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
