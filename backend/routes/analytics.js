@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const prisma = require('../utils/prismaClient');
 const { startOfDay, endOfDay, subDays, eachDayOfInterval, format } = require('date-fns');
+const { getCustomerDisplayNames } = require('../services/shopifyService');
 
 let McpData = null;
 let ShopConnections = null;
@@ -272,6 +273,46 @@ async function resolvePaidMediaUserId({ accountId, domain, platformConnections =
 
   const fromPlatformConnections = await resolveUserIdByPlatformConnections(platformConnections);
   if (fromPlatformConnections) return fromPlatformConnections;
+
+  return null;
+}
+
+async function resolveShopifyAdminContext(candidates = []) {
+  const normalizedCandidates = Array.from(new Set(candidates.filter(Boolean).map(normalizeShopDomain).filter(Boolean)));
+
+  if (ShopConnections && normalizedCandidates.length) {
+    const shopConnection = await ShopConnections.findOne({
+      shop: { $in: normalizedCandidates },
+      accessToken: { $exists: true, $ne: '' },
+    })
+      .select('shop accessToken matchedToUserId')
+      .lean();
+
+    if (shopConnection?.shop && shopConnection?.accessToken) {
+      return {
+        shop: shopConnection.shop,
+        accessToken: shopConnection.accessToken,
+        userId: shopConnection.matchedToUserId || null,
+      };
+    }
+  }
+
+  if (User && normalizedCandidates.length) {
+    const user = await User.findOne({
+      shop: { $in: normalizedCandidates },
+      shopifyAccessToken: { $exists: true, $ne: '' },
+    })
+      .select('shop shopifyAccessToken')
+      .lean();
+
+    if (user?.shop && user?.shopifyAccessToken) {
+      return {
+        shop: user.shop,
+        accessToken: user.shopifyAccessToken,
+        userId: user._id || null,
+      };
+    }
+  }
 
   return null;
 }
@@ -2105,6 +2146,9 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           profileKey: descriptor.profileKey,
           profileType: descriptor.profileType,
           profileLabel: descriptor.profileLabel,
+          customerId: descriptor.profileType === 'woocommerce_customer'
+            ? String(descriptor.profileKey || '').replace(/^customer:/, '')
+            : null,
           sessionCount: 0,
           orderCount: 0,
           totalRevenue: 0,
@@ -2199,7 +2243,39 @@ router.get('/:account_id/session-explorer', async (req, res) => {
         return String(a.profileLabel || '').localeCompare(String(b.profileLabel || ''), 'es');
       });
 
-    const serializedProfiles = allProfiles
+    const shopifyContext = await resolveShopifyAdminContext([account_id]);
+    const wooCustomerIds = allProfiles
+      .filter((profile) => profile.profileType === 'woocommerce_customer')
+      .map((profile) => String(profile.customerId || '').trim())
+      .filter(Boolean)
+      .slice(0, Math.max(limit * 2, 24));
+
+    let customerDisplayNames = {};
+    if (shopifyContext?.shop && shopifyContext?.accessToken && wooCustomerIds.length) {
+      try {
+        customerDisplayNames = await getCustomerDisplayNames(shopifyContext.shop, shopifyContext.accessToken, wooCustomerIds);
+      } catch (error) {
+        console.warn('[Analytics API] Shopify customer name lookup failed', {
+          accountId: account_id,
+          shop: shopifyContext.shop,
+          customerIds: wooCustomerIds.length,
+          error: error?.message || String(error),
+        });
+      }
+    }
+
+    const hydratedProfiles = allProfiles.map((profile) => {
+      if (profile.profileType !== 'woocommerce_customer') return profile;
+      const customerId = String(profile.customerId || '').trim();
+      const displayName = customerId ? customerDisplayNames[customerId] || null : null;
+      return {
+        ...profile,
+        customerDisplayName: displayName,
+        profileLabel: displayName ? `${displayName} · Woo #${customerId}` : profile.profileLabel,
+      };
+    });
+
+    const serializedProfiles = hydratedProfiles
       .slice(0, limit);
 
     console.info('[Analytics API] Session explorer result', {
@@ -2210,11 +2286,12 @@ router.get('/:account_id/session-explorer', async (req, res) => {
       wooProfiles: serializedProfiles.filter((item) => item.profileType === 'woocommerce_customer').length,
       allProfilesWithOrders: allProfiles.filter((item) => Number(item.orderCount || 0) > 0).length,
       profilesWithOrders: serializedProfiles.filter((item) => Number(item.orderCount || 0) > 0).length,
+      resolvedCustomerNames: Object.keys(customerDisplayNames).length,
     });
 
     res.json({
       summary: {
-        totalProfiles: allProfiles.length,
+        totalProfiles: hydratedProfiles.length,
         totalSessions: recentSessions.length,
         totalOrders: historicalOrders.length,
         totalRevenue: historicalOrders.reduce((sum, item) => sum + Number(item.revenue || 0), 0),
