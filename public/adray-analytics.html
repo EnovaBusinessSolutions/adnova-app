@@ -576,19 +576,21 @@
             </div>
         </div>
 
-        <div id="session-detail-modal" class="hidden fixed inset-0 z-50">
-            <div class="absolute inset-0 bg-black/40" id="session-detail-backdrop"></div>
-            <div class="relative z-10 max-w-6xl mx-auto mt-8 mb-8 bg-white rounded-2xl shadow-2xl overflow-hidden max-h-[85vh] flex flex-col">
-                <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+        <section id="session-detail-panel" class="hidden mt-8">
+            <div class="bg-white rounded-2xl shadow-2xl overflow-hidden border border-gray-200">
+                <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between gap-4 flex-wrap">
                     <div>
-                        <h3 class="text-lg font-semibold text-gray-900">Detalle de sesión</h3>
+                        <h3 class="text-lg font-semibold text-gray-900">Session Explorer</h3>
                         <p class="text-sm text-gray-500" id="session-detail-title">Cargando...</p>
                     </div>
-                    <button id="session-detail-close" type="button" class="inline-flex items-center justify-center w-10 h-10 rounded-full border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">
-                        <i class="fas fa-times"></i>
-                    </button>
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs text-gray-500">Panel persistente para seguir analizando la sesión mientras navegas el dashboard</span>
+                        <button id="session-detail-close" type="button" class="inline-flex items-center justify-center w-10 h-10 rounded-full border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
                 </div>
-                <div class="p-6 overflow-y-auto space-y-6">
+                <div class="p-6 space-y-6">
                     <div class="grid grid-cols-1 md:grid-cols-4 gap-4" id="session-detail-metrics"></div>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div class="bg-gray-50 rounded-xl p-4">
@@ -616,7 +618,7 @@
                     </div>
                 </div>
             </div>
-        </div>
+        </section>
     </main>
 
     <script>
@@ -720,7 +722,7 @@
         async function init() {
             initializeDateControls();
             initializeMetricCarousel();
-            initializeSessionDetailModal();
+            initializeSessionDetailPanel();
 
             // Public mode: explicit shop in URL/localStorage/prompt
             const shopParam = resolvePublicShopId();
@@ -805,28 +807,25 @@
             if (next) next.disabled = metricCarouselIndex >= maxIndex;
         }
 
-        function initializeSessionDetailModal() {
+        function initializeSessionDetailPanel() {
             const closeBtn = document.getElementById('session-detail-close');
-            const backdrop = document.getElementById('session-detail-backdrop');
-            closeBtn?.addEventListener('click', closeSessionDetailModal);
-            backdrop?.addEventListener('click', closeSessionDetailModal);
+            closeBtn?.addEventListener('click', closeSessionDetailPanel);
         }
 
-        function openSessionDetailModal() {
-            const modal = document.getElementById('session-detail-modal');
-            modal?.classList.remove('hidden');
-            document.body.style.overflow = 'hidden';
+        function openSessionDetailPanel() {
+            const panel = document.getElementById('session-detail-panel');
+            panel?.classList.remove('hidden');
+            panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
-        function closeSessionDetailModal() {
-            const modal = document.getElementById('session-detail-modal');
-            modal?.classList.add('hidden');
-            document.body.style.overflow = '';
+        function closeSessionDetailPanel() {
+            const panel = document.getElementById('session-detail-panel');
+            panel?.classList.add('hidden');
         }
 
         async function openSessionDetail(sessionId) {
             if (!currentShopId || !sessionId) return;
-            openSessionDetailModal();
+            openSessionDetailPanel();
 
             document.getElementById('session-detail-title').textContent = `Sesion ${sessionId}`;
             document.getElementById('session-detail-metrics').innerHTML = '<div class="text-sm text-gray-500">Cargando métricas...</div>';

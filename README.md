@@ -684,13 +684,13 @@ Current dashboard status from live review:
 
 ### Missing or incomplete data for a complete dashboard
 
-1. Session intelligence is already richer, but it can still evolve from modal drill-down into a stronger dedicated session panel for analysis.
-2. Paid media depends on the existing `shop -> user -> McpData` link. When that mapping does not exist yet, the dashboard now shows the block but cannot populate the marketing snapshot.
+1. Session intelligence is already richer and no longer depends on a blocking modal, but it can still evolve into a stronger explorer with cross-session comparison and filters.
+2. Paid media resolution now tries multiple bridges, but some accounts can still miss a usable `user -> McpData` path if they were never linked cleanly in onboarding.
 
 ### Execution order
 
-1. Expand the session drill-down into a richer session panel for analysis.
-2. Strengthen the bridge between public `account_id` and marketing snapshots so every eligible shop resolves paid media automatically.
+1. Strengthen the session explorer with filters, navigation, and comparison workflows.
+2. Keep expanding the bridge between public `account_id` and marketing snapshots so every eligible account resolves paid media automatically.
 
 ### Completed dashboard steps
 
@@ -702,16 +702,17 @@ Current dashboard status from live review:
 - Integration Health added for Meta, Google, and TikTok from `PlatformConnection` status.
 - Metric cards converted into a carousel with 4 visible cards on desktop.
 - `Live Feed` linked to `sessionId` with clickable session drill-down.
-- Session detail modal implemented with summary, funnel, timeline, and linked orders.
+- Session detail converted from modal into a persistent `Session Explorer` panel inside the dashboard.
 - Session detail enriched with attribution, checkout tokens, top pages, and touched products.
 - Paid Media panel added with Meta, Google, and blended spend / revenue / ROAS from `McpData` snapshots when the shop is linked to a user snapshot.
 - Paid Media block now degrades safely to `No vinculado` or `Sin snapshot` when the marketing mapping is missing.
+- Paid Media resolution now tries multiple bridges: `ShopConnections.matchedToUserId`, `User.shop`, and `PlatformConnection.adAccountId -> McpData.sources`.
 
 ### Current development focus
 
-- Evolve the current rich session modal into a stronger dedicated session panel if a persistent layout is preferred.
+- Strengthen the persistent `Session Explorer` with better navigation and analytical workflows.
 - Continue improving session-level understanding of what a user did during a visit, including funnel steps, attribution, and path quality.
-- Automatic resolution of paid media snapshots for all eligible shops, not only already-linked Shopify shops.
+- Automatic resolution of paid media snapshots for all eligible accounts, not only already-linked Shopify shops.
 
 ### Live Feed decision rule
 

@@ -6,6 +6,7 @@ const { startOfDay, endOfDay, subDays, eachDayOfInterval, format } = require('da
 
 let McpData = null;
 let ShopConnections = null;
+let User = null;
 let formatMetaForLlmMini = null;
 let formatGoogleAdsForLlmMini = null;
 
@@ -15,6 +16,10 @@ try {
 
 try {
   ShopConnections = require('../models/ShopConnections');
+} catch (_) {}
+
+try {
+  User = require('../models/User');
 } catch (_) {}
 
 try {
@@ -56,6 +61,18 @@ function normalizeShopDomain(value) {
   } catch (_) {
     return raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
   }
+}
+
+function normalizeMetaAccountId(value) {
+  return String(value || '').trim().replace(/^act_/, '').replace(/\s+/g, '');
+}
+
+function normalizeGoogleCustomerId(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^customers\//, '')
+    .replace(/-/g, '')
+    .replace(/\s+/g, '');
 }
 
 function isRootMcpDoc(doc) {
@@ -114,24 +131,82 @@ async function findMcpChunks(userId, source, snapshotId, datasetPrefix) {
   return docs.filter(isChunkMcpDoc);
 }
 
-async function resolvePaidMediaUserId(accountId, domain) {
-  if (!ShopConnections) return null;
-
-  const candidates = Array.from(new Set([
-    normalizeShopDomain(accountId),
-    normalizeShopDomain(domain),
-  ].filter(Boolean)));
-
-  if (!candidates.length) return null;
-
+async function resolveUserIdByShopConnection(candidates) {
+  if (!ShopConnections || !candidates.length) return null;
+  const normalizedCandidates = Array.from(new Set(candidates.filter(Boolean)));
   const shopConnection = await ShopConnections.findOne({
-    shop: { $in: candidates },
+    shop: { $in: normalizedCandidates },
     matchedToUserId: { $ne: null },
   })
     .select('matchedToUserId')
     .lean();
 
   return shopConnection?.matchedToUserId || null;
+}
+
+async function resolveUserIdByUserShop(candidates) {
+  if (!User || !candidates.length) return null;
+
+  const user = await User.findOne({
+    shop: { $in: candidates },
+  })
+    .select('_id')
+    .lean();
+
+  return user?._id || null;
+}
+
+async function resolveUserIdByPlatformConnections(platformConnections = []) {
+  if (!McpData || !Array.isArray(platformConnections) || platformConnections.length === 0) return null;
+
+  const metaIds = Array.from(new Set(
+    platformConnections
+      .filter((conn) => String(conn.platform || '').toUpperCase() === 'META')
+      .map((conn) => normalizeMetaAccountId(conn.adAccountId))
+      .filter(Boolean)
+  ));
+
+  const googleIds = Array.from(new Set(
+    platformConnections
+      .filter((conn) => String(conn.platform || '').toUpperCase() === 'GOOGLE')
+      .map((conn) => normalizeGoogleCustomerId(conn.adAccountId))
+      .filter(Boolean)
+  ));
+
+  if (!metaIds.length && !googleIds.length) return null;
+
+  const orClauses = [];
+  if (metaIds.length) orClauses.push({ 'sources.metaAds.accountId': { $in: metaIds } });
+  if (googleIds.length) orClauses.push({ 'sources.googleAds.customerId': { $in: googleIds } });
+
+  if (!orClauses.length) return null;
+
+  const rootDoc = await McpData.findOne({
+    kind: 'root',
+    $or: orClauses,
+  })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .lean();
+
+  return rootDoc?.userId || null;
+}
+
+async function resolvePaidMediaUserId({ accountId, domain, platformConnections = [] }) {
+  const candidates = Array.from(new Set([
+    normalizeShopDomain(accountId),
+    normalizeShopDomain(domain),
+  ].filter(Boolean)));
+
+  const fromShopConnection = await resolveUserIdByShopConnection(candidates);
+  if (fromShopConnection) return fromShopConnection;
+
+  const fromUserShop = await resolveUserIdByUserShop(candidates);
+  if (fromUserShop) return fromUserShop;
+
+  const fromPlatformConnections = await resolveUserIdByPlatformConnections(platformConnections);
+  if (fromPlatformConnections) return fromPlatformConnections;
+
+  return null;
 }
 
 function buildPaidMediaSourceSummary({ sourceState, payload, snapshotId, revenueKey }) {
@@ -157,7 +232,7 @@ function buildPaidMediaSourceSummary({ sourceState, payload, snapshotId, revenue
   };
 }
 
-async function buildPaidMediaSummary({ accountId, domain }) {
+async function buildPaidMediaSummary({ accountId, domain, platformConnections = [] }) {
   const base = {
     linked: false,
     available: false,
@@ -172,12 +247,12 @@ async function buildPaidMediaSummary({ accountId, domain }) {
     },
   };
 
-  if (!McpData || !ShopConnections || !formatMetaForLlmMini || !formatGoogleAdsForLlmMini) {
+  if (!McpData || !formatMetaForLlmMini || !formatGoogleAdsForLlmMini) {
     return { ...base, reason: 'marketing_models_unavailable' };
   }
 
   try {
-    const userId = await resolvePaidMediaUserId(accountId, domain);
+    const userId = await resolvePaidMediaUserId({ accountId, domain, platformConnections });
     if (!userId) return base;
 
     const rootDoc = await findMcpRoot(userId);
@@ -766,6 +841,7 @@ router.get('/:account_id', async (req, res) => {
     const paidMedia = await buildPaidMediaSummary({
       accountId: account_id,
       domain: accountRecord?.domain || account_id,
+      platformConnections,
     });
 
     // 3. Fetch Events in range (for pixel activity visibility)
