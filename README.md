@@ -669,38 +669,35 @@ Current dashboard status from live review:
 - Daily revenue trend is rendering.
 - Pixel Health is rendering.
 - Recent purchases are rendering.
-- `Live Feed` is visible in UI but not receiving events in the current view.
+- `Live Feed` is now working correctly in real time after SSE hardening.
 
 ### Missing or incomplete data for a complete dashboard
 
-1. `Live Feed` must either show real-time collector and webhook activity or be replaced with a non-live recent activity panel.
-2. `Sessions` and `Conversion Rate` must be visible in UI. The backend already returns them.
-3. `view_item` should be exposed as a visible funnel step, not only `page_view`, `add_to_cart`, `begin_checkout`, and `purchase`.
-4. Revenue data freshness and source-of-truth status should be shown explicitly:
+1. `Sessions` and `Conversion Rate` must be visible in UI. The backend already returns them.
+2. `view_item` should be exposed as a visible funnel step, not only `page_view`, `add_to_cart`, `begin_checkout`, and `purchase`.
+3. Revenue data freshness and source-of-truth status should be shown explicitly:
   - revenue from `orders` vs fallback from `events`,
   - snapshot freshness,
   - whether fallback mode is active.
-5. Attribution should expose deeper breakdown when available:
+4. Attribution should expose deeper breakdown when available:
   - campaign,
   - ad set,
   - ad,
   - click id,
   - attributed revenue by source.
-6. Paid media completeness still requires spend, ROAS, and integration health for Meta and Google.
+5. Paid media completeness still requires spend, ROAS, and integration health for Meta and Google.
 
 ### Execution order
 
-1. Diagnose and fix `Live Feed` SSE behavior.
-2. If live mode remains low-value for operators, replace it with `Recent Activity` backed by persisted events.
-3. Add `Sessions` and `Conversion Rate` cards to the dashboard.
-4. Add `view_item` to the visible funnel.
-5. Add data quality indicators for revenue source and snapshot freshness.
-6. Extend attribution detail and paid media metrics.
+1. Add `Sessions` and `Conversion Rate` cards to the dashboard.
+2. Add `view_item` to the visible funnel.
+3. Add data quality indicators for revenue source and snapshot freshness.
+4. Extend attribution detail and paid media metrics.
 
 ### Live Feed decision rule
 
-- Keep it only if it reliably shows incoming `COLLECT` and `WEBHOOK` events in near real time.
-- If it cannot be trusted or does not add operational value, remove it from the dashboard and replace it with a persisted activity list.
+- Keep it because it now reliably shows incoming `COLLECT` and `WEBHOOK` events in near real time.
+- Revisit only if operators stop using it or if persisted activity proves more useful than live observability.
 
 ## Final Rule
 

@@ -150,6 +150,44 @@
                 </div>
             </div>
 
+            <!-- Sessions -->
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-5">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0 bg-sky-500 rounded-md p-3">
+                            <i class="fas fa-users text-white text-lg"></i>
+                        </div>
+                        <div class="ml-5 w-0 flex-1">
+                            <dl>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Sessions</dt>
+                                <dd class="flex items-baseline">
+                                    <div class="text-2xl font-semibold text-gray-900" id="total-sessions">0</div>
+                                </dd>
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Conversion Rate -->
+            <div class="bg-white overflow-hidden shadow rounded-lg">
+                <div class="p-5">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0 bg-cyan-600 rounded-md p-3">
+                            <i class="fas fa-chart-line text-white text-lg"></i>
+                        </div>
+                        <div class="ml-5 w-0 flex-1">
+                            <dl>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Conversion Rate</dt>
+                                <dd class="flex items-baseline">
+                                    <div class="text-2xl font-semibold text-gray-900" id="conversion-rate">0%</div>
+                                </dd>
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Page Views -->
             <div class="bg-white overflow-hidden shadow rounded-lg">
                 <div class="p-5">
@@ -583,6 +621,8 @@
             updateDateRangeLabel(summary);
             document.getElementById('total-revenue').textContent = formatCurrency(summary.totalRevenue);
             document.getElementById('total-orders').textContent = summary.totalOrders;
+            document.getElementById('total-sessions').textContent = (summary.totalSessions || 0).toLocaleString();
+            document.getElementById('conversion-rate').textContent = formatPercent(summary.conversionRate || 0);
             document.getElementById('page-views').textContent = (summary.pageViews || 0).toLocaleString();
             document.getElementById('add-to-cart').textContent = (summary.addToCart || 0).toLocaleString();
             document.getElementById('begin-checkout').textContent = (summary.beginCheckout || 0).toLocaleString();
