@@ -1520,6 +1520,8 @@
                 totalProfiles: data?.summary?.totalProfiles || 0,
                 totalSessions: data?.summary?.totalSessions || 0,
                 totalOrders: data?.summary?.totalOrders || 0,
+                resolvedCustomerNames: data?.summary?.resolvedCustomerNames || 0,
+                shopifyNameLookupActive: Boolean(data?.summary?.shopifyNameLookupActive),
                 wooProfiles: Array.isArray(data?.profiles) ? data.profiles.filter((item) => item.profileType === 'woocommerce_customer').length : 0,
                 profilesWithOrders: Array.isArray(data?.profiles) ? data.profiles.filter((item) => Number(item.orderCount || 0) > 0).length : 0,
             });
@@ -1531,6 +1533,8 @@
             const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
             const wooProfiles = profiles.filter((item) => item.profileType === 'woocommerce_customer').length;
             const orderLedProfiles = profiles.filter((item) => Number(item.orderCount || 0) > 0).length;
+            const resolvedCustomerNames = Number(summary.resolvedCustomerNames || 0);
+            const shopifyNameLookupActive = Boolean(summary.shopifyNameLookupActive);
             const topProfile = profiles[0] || null;
             const topCampaigns = profiles.filter((item) => item.lastCampaign).slice(0, 4);
             const topLandings = profiles.filter((item) => item.lastLandingPageUrl).slice(0, 4);
@@ -1584,8 +1588,9 @@
                 <p><strong>Perfil más reciente:</strong> ${topProfile?.profileLabel || '-'}</p>
                 <p><strong>Última actividad:</strong> ${formatDateTimeMx(topProfile?.lastSeenAt)}</p>
                 <p><strong>Sesión recomendada:</strong> ${topProfile?.recentSessionId || '-'}</p>
+                <p><strong>Orden actual:</strong> el listado ahora prioriza perfiles con sesión web reciente ligada; después caen los Woo históricos sin sesión.</p>
                 <p><strong>Lectura:</strong> si ves "0 sesiones", Woo sí conoce ese cliente por órdenes, pero el pixel todavía no lo amarró a una sesión web capturada.</p>
-                <p><strong>Nombre del cliente:</strong> hoy el dashboard sólo tiene 'customerId' de Woo y hashes de contacto; no estamos guardando 'first_name' o 'last_name', por eso la etiqueta sale como cliente Woo por ID.</p>
+                <p><strong>Nombre del cliente:</strong> ${shopifyNameLookupActive ? `Shopify name lookup activo, ${resolvedCustomerNames} nombres resueltos en este corte.` : 'no hay token Shopify utilizable para resolver displayName, por eso sólo se muestra Woo por ID.'}</p>
             `;
 
             document.getElementById('session-detail-orders').innerHTML = profiles.length

@@ -2227,6 +2227,12 @@ router.get('/:account_id/session-explorer', async (req, res) => {
         userKeys: Array.from(profile.userKeys).filter(Boolean),
       }))
       .sort((a, b) => {
+        const aLinkedSessionScore = a.recentSessionStartedAt ? 1 : 0;
+        const bLinkedSessionScore = b.recentSessionStartedAt ? 1 : 0;
+        if (bLinkedSessionScore !== aLinkedSessionScore) return bLinkedSessionScore - aLinkedSessionScore;
+        const aRecentSessionAt = new Date(a.recentSessionStartedAt || 0).getTime();
+        const bRecentSessionAt = new Date(b.recentSessionStartedAt || 0).getTime();
+        if (bRecentSessionAt !== aRecentSessionAt) return bRecentSessionAt - aRecentSessionAt;
         const aWooScore = a.profileType === 'woocommerce_customer' ? 1 : 0;
         const bWooScore = b.profileType === 'woocommerce_customer' ? 1 : 0;
         if (bWooScore !== aWooScore) return bWooScore - aWooScore;
@@ -2295,6 +2301,8 @@ router.get('/:account_id/session-explorer', async (req, res) => {
         totalSessions: recentSessions.length,
         totalOrders: historicalOrders.length,
         totalRevenue: historicalOrders.reduce((sum, item) => sum + Number(item.revenue || 0), 0),
+        resolvedCustomerNames: Object.keys(customerDisplayNames).length,
+        shopifyNameLookupActive: Boolean(shopifyContext?.shop && shopifyContext?.accessToken),
       },
       profiles: serializedProfiles,
     });
