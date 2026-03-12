@@ -969,7 +969,6 @@
                         <div>
                             <p class="panel-kicker">Comercial</p>
                             <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Atribución por Canal</h3>
-                            <p class="panel-subtitle text-sm mt-1">Detecta qué fuentes concentran ingreso atribuible bajo el modelo activo.</p>
                         </div>
                         <span id="attribution-model-badge" class="text-xs text-gray-500">Modelo: last touch</span>
                     </div>
@@ -982,7 +981,6 @@
                 <div class="ops-panel p-6">
                     <p class="panel-kicker">Ritmo</p>
                     <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Tendencia Diaria</h3>
-                    <p class="panel-subtitle text-sm mb-4">Lee la velocidad del revenue para distinguir crecimiento real de picos aislados.</p>
                     <div class="relative h-64">
                         <canvas id="trendChart"></canvas>
                     </div>
@@ -996,7 +994,6 @@
                         <div>
                             <p class="panel-kicker">Tiempo real</p>
                             <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Live Feed</h3>
-                            <p class="panel-subtitle text-sm mt-1">Observa eventos entrantes y abre sesiones sin perder el contexto del tablero.</p>
                         </div>
                         <span class="live-feed-badge inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium">
                             En vivo
@@ -1021,7 +1018,6 @@
                         <p class="text-sm text-gray-500" id="session-detail-title">Usuarios históricos</p>
                     </div>
                     <div class="flex items-center gap-3">
-                        <span class="text-xs text-gray-500">Panel persistente para separar perfiles Woo detectados por órdenes de sesiones web realmente rastreadas</span>
                         <button id="session-detail-close" type="button" class="session-close-btn inline-flex items-center justify-center w-10 h-10 rounded-full text-gray-700 hover:bg-gray-50">
                             <i class="fas fa-times"></i>
                         </button>
@@ -1237,7 +1233,6 @@
                 <div>
                     <p class="panel-kicker">Auditoría</p>
                     <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Detalle de compras recientes</h3>
-                    <p class="panel-subtitle text-sm mt-1">Cruza pedido, ingreso, productos y atribución para validar la historia detrás de cada conversión.</p>
                 </div>
                 <div class="flex items-center gap-3">
                     <select id="recent-purchases-filter" onchange="renderRecentPurchases(recentPurchasesState)" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white">
