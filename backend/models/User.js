@@ -190,6 +190,37 @@ const userSchema = new mongoose.Schema(
       set: (arr) => normalizeArray(arr, normGaPropertyId),
     },
 
+    // === MCP Share Link (link único estable por usuario) ===
+    mcpShareToken: {
+      type: String,
+      default: null,
+      index: true,
+      sparse: true,
+      trim: true,
+    },
+    mcpShareEnabled: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    mcpShareProvider: {
+      type: String,
+      enum: ['chatgpt', 'claude', 'gemini'],
+      default: 'chatgpt',
+    },
+    mcpShareCreatedAt: {
+      type: Date,
+      default: null,
+    },
+    mcpShareRevokedAt: {
+      type: Date,
+      default: null,
+    },
+    mcpShareLastGeneratedAt: {
+      type: Date,
+      default: null,
+    },
+
     // Recuperación y planes
     resetPasswordToken: { type: String },
     resetPasswordExpires: { type: Date },
@@ -217,6 +248,10 @@ userSchema.index({ verifyEmailExpires: 1 }, { sparse: true });
 
 // ✅ Opcional: si quieres consultar rápido pendientes de welcome
 userSchema.index({ welcomeEmailSent: 1, createdAt: -1 });
+
+// ✅ MCP link único por usuario
+userSchema.index({ mcpShareToken: 1 }, { sparse: true });
+userSchema.index({ mcpShareEnabled: 1, mcpShareToken: 1 }, { sparse: true });
 
 /* ---------------- hooks ---------------- */
 userSchema.pre('save', function (next) {
@@ -247,6 +282,10 @@ userSchema.pre('save', function (next) {
   }
   if (this.isModified('metaDefaultAccountId') && this.metaDefaultAccountId) {
     this.metaDefaultAccountId = normMetaId(this.metaDefaultAccountId);
+  }
+
+  if (this.isModified('mcpShareToken') && this.mcpShareToken != null) {
+    this.mcpShareToken = String(this.mcpShareToken).trim() || null;
   }
 
   // Si cambia el plan, actualizamos fecha de inicio
