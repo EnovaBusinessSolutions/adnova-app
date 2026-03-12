@@ -1,0 +1,17 @@
+{
+  "name": "Adnova Pixel",
+  "slug": "adnova-pixel",
+  "version": "1.1.2",
+  "author": "<a href=\"https://adnova.ai\">Adnova</a>",
+  "author_profile": "https://adnova.ai",
+  "requires": "5.0",
+  "tested": "6.4",
+  "requires_php": "7.0",
+  "download_url": "https://adray-app-staging-german.onrender.com/wp-plugin/adnova-pixel/adnova-pixel.zip",
+  "trunk": "https://adray-app-staging-german.onrender.com/wp-plugin/adnova-pixel/adnova-pixel.zip",
+  "last_updated": "2026-03-12 12:00:00",
+  "sections": {
+    "description": "El pixel definitivo para integrar Adnova con tu tienda WooCommerce sin depender del navegador.",
+    "changelog": "<h4>1.1.2</h4><ul><li>Agrega la obtenci&oacute;n y env&iacute;o de correo electr&oacute;nico y tel&eacute;fono de pedidos hist&oacute;ricos para unificar perfiles</li><li>Resoluci&oacute;n estricta y segura del enlazamiento del session_id nativo vía cookie del servidor.</li></ul><h4>1.1.1</h4><ul><li>Primera versi&oacute;n estable.</li></ul>"
+  }
+}
