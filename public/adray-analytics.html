@@ -62,7 +62,7 @@
                     </div>
                     <div class="mt-2 flex items-center text-sm text-green-600">
                         <i class="fas fa-circle mr-1.5 text-[8px] animate-pulse"></i>
-                        Live Feed Activo
+                        <span id="live-feed-status">Conectando Live Feed...</span>
                     </div>
                 </div>
             </div>
@@ -794,6 +794,11 @@
             const evtSource = new EventSource(`/api/feed/${currentShopId}`);
             const container = document.getElementById('feed-container');
             const placeholder = document.getElementById('feed-placeholder');
+            const liveFeedStatus = document.getElementById('live-feed-status');
+
+            evtSource.onopen = function() {
+                if (liveFeedStatus) liveFeedStatus.textContent = 'Live Feed Activo';
+            };
 
             evtSource.onmessage = function(event) {
                 if (placeholder) placeholder.style.display = 'none';
@@ -846,7 +851,7 @@
 
             evtSource.onerror = function(err) {
                 console.error("EventSource failed:", err);
-                // SSE automatically reconnects, but can handle custom retry logic if needed
+                if (liveFeedStatus) liveFeedStatus.textContent = 'Live Feed reconectando...';
             };
         }
 

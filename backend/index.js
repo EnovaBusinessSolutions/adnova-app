@@ -140,7 +140,15 @@ app.use(
     crossOriginResourcePolicy: { policy: "cross-origin" },
   })
 );
-app.use(compression());
+app.use(
+  compression({
+    filter: (req, res) => {
+      // SSE must stay uncompressed or proxies/browsers may buffer the stream.
+      if (req.path.startsWith('/api/feed')) return false;
+      return compression.filter(req, res);
+    },
+  })
+);
 
 /* =========================
  * CORS
