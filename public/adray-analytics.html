@@ -600,6 +600,16 @@
                             <div class="space-y-2 text-sm text-gray-600" id="session-detail-orders"></div>
                         </div>
                     </div>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div class="bg-gray-50 rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Atribución y señales</h4>
+                            <div class="space-y-2 text-sm text-gray-600" id="session-detail-attribution"></div>
+                        </div>
+                        <div class="bg-gray-50 rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Path y productos</h4>
+                            <div class="space-y-3 text-sm text-gray-600" id="session-detail-journey"></div>
+                        </div>
+                    </div>
                     <div class="bg-gray-50 rounded-xl p-4">
                         <h4 class="text-sm font-semibold text-gray-900 mb-3">Timeline de eventos</h4>
                         <div class="space-y-3" id="session-detail-timeline"></div>
@@ -822,6 +832,8 @@
             document.getElementById('session-detail-metrics').innerHTML = '<div class="text-sm text-gray-500">Cargando métricas...</div>';
             document.getElementById('session-detail-summary').innerHTML = '<p>Cargando resumen...</p>';
             document.getElementById('session-detail-orders').innerHTML = '<p>Cargando órdenes...</p>';
+            document.getElementById('session-detail-attribution').innerHTML = '<p>Cargando atribución...</p>';
+            document.getElementById('session-detail-journey').innerHTML = '<p>Cargando path...</p>';
             document.getElementById('session-detail-timeline').innerHTML = '<p>Cargando timeline...</p>';
 
             try {
@@ -832,6 +844,8 @@
             } catch (error) {
                 document.getElementById('session-detail-summary').innerHTML = `<p class="text-red-600">${error.message}</p>`;
                 document.getElementById('session-detail-orders').innerHTML = '<p class="text-gray-500">-</p>';
+                document.getElementById('session-detail-attribution').innerHTML = '<p class="text-gray-500">-</p>';
+                document.getElementById('session-detail-journey').innerHTML = '<p class="text-gray-500">-</p>';
                 document.getElementById('session-detail-timeline').innerHTML = '<p class="text-gray-500">-</p>';
             }
         }
@@ -839,8 +853,11 @@
         function renderSessionDetail(data) {
             const session = data.session || {};
             const metrics = data.metrics || {};
+            const journey = data.journey || {};
             const orders = Array.isArray(data.orders) ? data.orders : [];
             const timeline = Array.isArray(data.timeline) ? data.timeline : [];
+            const pages = Array.isArray(journey.pages) ? journey.pages : [];
+            const products = Array.isArray(journey.products) ? journey.products : [];
 
             document.getElementById('session-detail-title').textContent = `Sesion ${session.sessionId || '-'}`;
 
@@ -868,6 +885,35 @@
                 <p><strong>UTM:</strong> ${(session.utmSource || '-') + ' / ' + (session.utmCampaign || '-')}</p>
                 <p><strong>Referrer:</strong> ${session.referrer || '-'}</p>
                 <p><strong>Funnel:</strong> PV ${metrics.pageViews || 0} · VI ${metrics.viewItem || 0} · ATC ${metrics.addToCart || 0} · BC ${metrics.beginCheckout || 0} · P ${metrics.purchase || 0}</p>
+            `;
+
+            document.getElementById('session-detail-attribution').innerHTML = `
+                <p><strong>Canal:</strong> ${journey.attribution?.channel || 'unattributed'}</p>
+                <p><strong>Plataforma:</strong> ${journey.attribution?.platform || '-'}</p>
+                <p><strong>Campaña:</strong> ${journey.attribution?.campaign || '-'}</p>
+                <p><strong>Click ID:</strong> ${journey.attribution?.clickId || '-'}</p>
+                <p><strong>Confianza:</strong> ${formatPercent(journey.attribution?.confidence || 0)}</p>
+                <p><strong>Fuente:</strong> ${journey.attribution?.source || 'none'}</p>
+                <p><strong>Checkout Tokens:</strong> ${Array.isArray(journey.checkoutTokens) && journey.checkoutTokens.length ? journey.checkoutTokens.join(', ') : '-'}</p>
+            `;
+
+            document.getElementById('session-detail-journey').innerHTML = `
+                <div>
+                    <p><strong>Entrada:</strong> ${journey.entryPage || '-'}</p>
+                    <p><strong>Salida:</strong> ${journey.exitPage || '-'}</p>
+                </div>
+                <div>
+                    <p class="font-medium text-gray-900 mb-1">Páginas destacadas</p>
+                    ${pages.length
+                        ? pages.map((page) => `<p class="text-xs text-gray-600 truncate">${page.url} · ${page.hits} hits</p>`).join('')
+                        : '<p class="text-xs text-gray-500">Sin páginas registradas.</p>'}
+                </div>
+                <div>
+                    <p class="font-medium text-gray-900 mb-1">Productos tocados</p>
+                    ${products.length
+                        ? products.map((product) => `<p class="text-xs text-gray-600">${product.productId} · ${product.events} eventos</p>`).join('')
+                        : '<p class="text-xs text-gray-500">Sin productos registrados.</p>'}
+                </div>
             `;
 
             document.getElementById('session-detail-orders').innerHTML = orders.length

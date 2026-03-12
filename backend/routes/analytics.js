@@ -1350,6 +1350,9 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
 
     const pageSet = new Set();
     const productSet = new Set();
+    const pageMap = new Map();
+    const productMap = new Map();
+    const checkoutTokenSet = new Set();
 
     const timeline = events.map((event) => {
       const bucket = resolveEventBucket(event.eventName);
@@ -1362,6 +1365,32 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
 
       if (event.pageUrl) pageSet.add(event.pageUrl);
       if (event.productId) productSet.add(String(event.productId));
+      if (event.checkoutToken) checkoutTokenSet.add(String(event.checkoutToken));
+
+      if (event.pageUrl) {
+        const currentPage = pageMap.get(event.pageUrl) || {
+          url: event.pageUrl,
+          hits: 0,
+          firstSeenAt: event.createdAt,
+          lastSeenAt: event.createdAt,
+        };
+        currentPage.hits += 1;
+        currentPage.lastSeenAt = event.createdAt;
+        pageMap.set(event.pageUrl, currentPage);
+      }
+
+      if (event.productId) {
+        const productKey = String(event.productId);
+        const currentProduct = productMap.get(productKey) || {
+          productId: productKey,
+          events: 0,
+          firstSeenAt: event.createdAt,
+          lastSeenAt: event.createdAt,
+        };
+        currentProduct.events += 1;
+        currentProduct.lastSeenAt = event.createdAt;
+        productMap.set(productKey, currentProduct);
+      }
 
       return {
         eventId: event.eventId,
@@ -1386,6 +1415,23 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
     metrics.uniquePages = pageSet.size;
     metrics.uniqueProducts = productSet.size;
 
+    const pathHighlights = Array.from(pageMap.values())
+      .sort((a, b) => {
+        if (b.hits !== a.hits) return b.hits - a.hits;
+        return new Date(a.firstSeenAt).getTime() - new Date(b.firstSeenAt).getTime();
+      })
+      .slice(0, 8);
+
+    const productHighlights = Array.from(productMap.values())
+      .sort((a, b) => {
+        if (b.events !== a.events) return b.events - a.events;
+        return new Date(a.firstSeenAt).getTime() - new Date(b.firstSeenAt).getTime();
+      })
+      .slice(0, 8);
+
+    const attributedTouchpoint = stitchSnapshotAttributionForAccount(toSnapshotFromSession(session) || {}, account_id);
+    const pageUrlsInOrder = timeline.map((item) => item.pageUrl).filter(Boolean);
+
     const sessionDurationSeconds = session.startedAt && session.lastEventAt
       ? Math.max(0, Math.round((new Date(session.lastEventAt).getTime() - new Date(session.startedAt).getTime()) / 1000))
       : 0;
@@ -1396,6 +1442,21 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         sessionDurationSeconds,
       },
       metrics,
+      journey: {
+        entryPage: pageUrlsInOrder[0] || session.landingPageUrl || null,
+        exitPage: pageUrlsInOrder[pageUrlsInOrder.length - 1] || null,
+        checkoutTokens: Array.from(checkoutTokenSet),
+        pages: pathHighlights,
+        products: productHighlights,
+        attribution: {
+          channel: attributedTouchpoint.channel || 'unattributed',
+          platform: attributedTouchpoint.platform || null,
+          campaign: attributedTouchpoint.campaign || null,
+          clickId: attributedTouchpoint.clickId || null,
+          confidence: Number(attributedTouchpoint.confidence || 0),
+          source: attributedTouchpoint.source || 'none',
+        },
+      },
       timeline,
       orders: relatedOrders,
     });
