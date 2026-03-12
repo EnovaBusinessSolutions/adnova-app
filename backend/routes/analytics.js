@@ -1738,10 +1738,11 @@ router.get('/:account_id', async (req, res) => {
 });
 
 function collectUniqueStrings(values = []) {
+  const invalidTokens = new Set(['unknown', 'null', 'undefined', 'n/a', 'none', '-']);
   return Array.from(new Set(
     values
       .map((value) => String(value || '').trim())
-      .filter(Boolean)
+      .filter((value) => value && !invalidTokens.has(value.toLowerCase()))
   ));
 }
 
@@ -2176,31 +2177,44 @@ router.get('/:account_id/session-explorer', async (req, res) => {
       }
     });
 
-    const serializedProfiles = Array.from(profiles.values())
+    const allProfiles = Array.from(profiles.values())
       .map((profile) => ({
         ...profile,
         userKeys: Array.from(profile.userKeys).filter(Boolean),
       }))
       .sort((a, b) => {
+        const aWooScore = a.profileType === 'woocommerce_customer' ? 1 : 0;
+        const bWooScore = b.profileType === 'woocommerce_customer' ? 1 : 0;
+        if (bWooScore !== aWooScore) return bWooScore - aWooScore;
+        const aOrderScore = Number(a.orderCount || 0) > 0 ? 1 : 0;
+        const bOrderScore = Number(b.orderCount || 0) > 0 ? 1 : 0;
+        if (bOrderScore !== aOrderScore) return bOrderScore - aOrderScore;
+        const aRevenue = Number(a.totalRevenue || 0);
+        const bRevenue = Number(b.totalRevenue || 0);
+        if (bRevenue !== aRevenue) return bRevenue - aRevenue;
         const aSeen = new Date(a.lastSeenAt || 0).getTime();
         const bSeen = new Date(b.lastSeenAt || 0).getTime();
         if (bSeen !== aSeen) return bSeen - aSeen;
         if (b.sessionCount !== a.sessionCount) return b.sessionCount - a.sessionCount;
-        return b.totalRevenue - a.totalRevenue;
-      })
+        return String(a.profileLabel || '').localeCompare(String(b.profileLabel || ''), 'es');
+      });
+
+    const serializedProfiles = allProfiles
       .slice(0, limit);
 
     console.info('[Analytics API] Session explorer result', {
       accountId: account_id,
       totalProfilesBuilt: profiles.size,
       returnedProfiles: serializedProfiles.length,
+      allWooProfiles: allProfiles.filter((item) => item.profileType === 'woocommerce_customer').length,
       wooProfiles: serializedProfiles.filter((item) => item.profileType === 'woocommerce_customer').length,
+      allProfilesWithOrders: allProfiles.filter((item) => Number(item.orderCount || 0) > 0).length,
       profilesWithOrders: serializedProfiles.filter((item) => Number(item.orderCount || 0) > 0).length,
     });
 
     res.json({
       summary: {
-        totalProfiles: serializedProfiles.length,
+        totalProfiles: allProfiles.length,
         totalSessions: recentSessions.length,
         totalOrders: historicalOrders.length,
         totalRevenue: historicalOrders.reduce((sum, item) => sum + Number(item.revenue || 0), 0),
