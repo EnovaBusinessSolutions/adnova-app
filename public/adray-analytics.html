@@ -375,56 +375,6 @@
             </div>
         </div>
 
-        <!-- Data Quality -->
-        <div class="grid grid-cols-1 gap-4 md:grid-cols-3 mb-8">
-            <div class="bg-white overflow-hidden shadow rounded-lg">
-                <div class="p-4">
-                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Revenue Source</div>
-                    <div class="mt-2 text-lg font-semibold text-gray-900" id="dq-revenue-source">-</div>
-                    <div class="mt-1 text-sm text-gray-500">Fuente usada para el revenue del dashboard.</div>
-                </div>
-            </div>
-            <div class="bg-white overflow-hidden shadow rounded-lg">
-                <div class="p-4">
-                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Fallback Mode</div>
-                    <div class="mt-2 text-lg font-semibold text-gray-900" id="dq-fallback-active">-</div>
-                    <div class="mt-1 text-sm text-gray-500">Indica si el dashboard está usando eventos por falta de órdenes.</div>
-                </div>
-            </div>
-            <div class="bg-white overflow-hidden shadow rounded-lg">
-                <div class="p-4">
-                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Snapshot Freshness</div>
-                    <div class="mt-2 text-lg font-semibold text-gray-900" id="dq-snapshot-updated">-</div>
-                    <div class="mt-1 text-sm text-gray-500">Última actualización del snapshot del merchant.</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Integration Health -->
-        <div class="grid grid-cols-1 gap-4 md:grid-cols-3 mb-8">
-            <div class="bg-white overflow-hidden shadow rounded-lg">
-                <div class="p-4">
-                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Meta Health</div>
-                    <div class="mt-2 text-lg font-semibold text-gray-900" id="ih-meta-status">-</div>
-                    <div class="mt-1 text-sm text-gray-500" id="ih-meta-updated">-</div>
-                </div>
-            </div>
-            <div class="bg-white overflow-hidden shadow rounded-lg">
-                <div class="p-4">
-                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Google Health</div>
-                    <div class="mt-2 text-lg font-semibold text-gray-900" id="ih-google-status">-</div>
-                    <div class="mt-1 text-sm text-gray-500" id="ih-google-updated">-</div>
-                </div>
-            </div>
-            <div class="bg-white overflow-hidden shadow rounded-lg">
-                <div class="p-4">
-                    <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">TikTok Health</div>
-                    <div class="mt-2 text-lg font-semibold text-gray-900" id="ih-tiktok-status">-</div>
-                    <div class="mt-1 text-sm text-gray-500" id="ih-tiktok-updated">-</div>
-                </div>
-            </div>
-        </div>
-
         <!-- Charts & Feed Split -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
             
@@ -471,31 +421,75 @@
             </div>
         </div>
 
-        <!-- New: Pixel Health + Top Products -->
+        <!-- New: Pixel Health + Supporting Panels + Top Products -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
-            <div class="bg-white shadow rounded-lg p-6">
-                <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Pixel Health</h3>
-                <div class="grid grid-cols-2 gap-4 mb-4">
-                    <div class="bg-gray-50 rounded-lg p-3">
-                        <p class="text-xs text-gray-500">Eventos recibidos</p>
-                        <p class="text-xl font-semibold text-gray-900" id="ph-events-received">0</p>
+            <div class="space-y-6">
+                <div class="bg-white shadow rounded-lg p-6">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Pixel Health</h3>
+                    <div class="grid grid-cols-2 gap-4 mb-4">
+                        <div class="bg-gray-50 rounded-lg p-3">
+                            <p class="text-xs text-gray-500">Eventos recibidos</p>
+                            <p class="text-xl font-semibold text-gray-900" id="ph-events-received">0</p>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-3">
+                            <p class="text-xs text-gray-500">Señales de purchase</p>
+                            <p class="text-xl font-semibold text-gray-900" id="ph-purchase-signals">0</p>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-3">
+                            <p class="text-xs text-gray-500">Órdenes matcheadas</p>
+                            <p class="text-xl font-semibold text-gray-900" id="ph-matched-orders">0</p>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-3">
+                            <p class="text-xs text-gray-500">Order Match Rate</p>
+                            <p class="text-xl font-semibold text-gray-900" id="ph-order-match-rate">0%</p>
+                        </div>
                     </div>
                     <div class="bg-gray-50 rounded-lg p-3">
-                        <p class="text-xs text-gray-500">Señales de purchase</p>
-                        <p class="text-xl font-semibold text-gray-900" id="ph-purchase-signals">0</p>
-                    </div>
-                    <div class="bg-gray-50 rounded-lg p-3">
-                        <p class="text-xs text-gray-500">Órdenes matcheadas</p>
-                        <p class="text-xl font-semibold text-gray-900" id="ph-matched-orders">0</p>
-                    </div>
-                    <div class="bg-gray-50 rounded-lg p-3">
-                        <p class="text-xs text-gray-500">Order Match Rate</p>
-                        <p class="text-xl font-semibold text-gray-900" id="ph-order-match-rate">0%</p>
+                        <p class="text-xs text-gray-500">Purchase Signal Coverage</p>
+                        <p class="text-xl font-semibold text-gray-900" id="ph-purchase-coverage">0%</p>
                     </div>
                 </div>
-                <div class="bg-gray-50 rounded-lg p-3">
-                    <p class="text-xs text-gray-500">Purchase Signal Coverage</p>
-                    <p class="text-xl font-semibold text-gray-900" id="ph-purchase-coverage">0%</p>
+
+                <div class="bg-white shadow rounded-lg p-6">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Data Quality</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Revenue Source</div>
+                            <div class="mt-2 text-lg font-semibold text-gray-900" id="dq-revenue-source">-</div>
+                            <div class="mt-1 text-sm text-gray-500">Fuente usada para el revenue del dashboard.</div>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Fallback Mode</div>
+                            <div class="mt-2 text-lg font-semibold text-gray-900" id="dq-fallback-active">-</div>
+                            <div class="mt-1 text-sm text-gray-500">Indica si el dashboard está usando eventos por falta de órdenes.</div>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Snapshot Freshness</div>
+                            <div class="mt-2 text-lg font-semibold text-gray-900" id="dq-snapshot-updated">-</div>
+                            <div class="mt-1 text-sm text-gray-500">Última actualización del snapshot del merchant.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white shadow rounded-lg p-6">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">Integration Health</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Meta Health</div>
+                            <div class="mt-2 text-lg font-semibold text-gray-900" id="ih-meta-status">-</div>
+                            <div class="mt-1 text-sm text-gray-500" id="ih-meta-updated">-</div>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Google Health</div>
+                            <div class="mt-2 text-lg font-semibold text-gray-900" id="ih-google-status">-</div>
+                            <div class="mt-1 text-sm text-gray-500" id="ih-google-updated">-</div>
+                        </div>
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">TikTok Health</div>
+                            <div class="mt-2 text-lg font-semibold text-gray-900" id="ih-tiktok-status">-</div>
+                            <div class="mt-1 text-sm text-gray-500" id="ih-tiktok-updated">-</div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -823,6 +817,9 @@
                 { label: 'Page Views', value: metrics.pageViews || 0 },
                 { label: 'View Item', value: metrics.viewItem || 0 },
                 { label: 'Revenue', value: formatCurrency(metrics.revenue || 0) },
+                { label: 'Páginas únicas', value: metrics.uniquePages || 0 },
+                { label: 'Productos únicos', value: metrics.uniqueProducts || 0 },
+                { label: 'Órdenes', value: metrics.orderCount || 0 },
             ].map((item) => `
                 <div class="bg-gray-50 rounded-xl p-4">
                     <div class="text-xs uppercase tracking-wide text-gray-500">${item.label}</div>

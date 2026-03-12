@@ -674,18 +674,23 @@ Current dashboard status from live review:
   - `View Item` card,
   - `Data Quality` block,
   - `Integration Health` block.
+- UX confirmation received for:
+  - desktop carousel shows 4 metrics at a time and arrows navigate correctly,
+  - mobile and tablet carousel layout does not break,
+  - new `Live Feed` events show `Sesion: ...` when `sessionId` is present,
+  - clicking a `Live Feed` item with `sessionId` opens session detail,
+  - session detail shows summary, funnel, timeline, and linked orders when they exist,
+  - events without `sessionId` render as `Sin sessionId` without breaking the dashboard.
 
 ### Missing or incomplete data for a complete dashboard
 
 1. Paid media completeness still requires spend and ROAS for Meta and Google.
-2. Metric density is now high enough that cards should be navigated as a carousel instead of showing every KPI at once.
-3. `Live Feed` must be session-aware so operators can inspect exactly what a user did inside one session and extract high-value session patterns.
+2. Session intelligence should evolve from modal drill-down into a stronger dedicated session panel for analysis.
 
 ### Execution order
 
-1. Convert metric cards into a carousel with 4 visible cards.
-2. Link `Live Feed` events to `sessionId` and open a per-session drill-down.
-3. Add paid media metrics such as spend and ROAS.
+1. Expand the session drill-down into a richer session panel for analysis.
+2. Add paid media metrics such as spend and ROAS.
 
 ### Completed dashboard steps
 
@@ -695,12 +700,15 @@ Current dashboard status from live review:
 - Data quality indicators added for revenue source, fallback mode, and snapshot freshness.
 - Attribution detail expanded in recent purchases with campaign and click ID when available.
 - Integration Health added for Meta, Google, and TikTok from `PlatformConnection` status.
+- Metric cards converted into a carousel with 4 visible cards on desktop.
+- `Live Feed` linked to `sessionId` with clickable session drill-down.
+- Session detail modal implemented with summary, funnel, timeline, and linked orders.
 
 ### Current development focus
 
-- Metric carousel with 4 visible cards.
-- Session drill-down from `Live Feed` using `sessionId`.
+- Richer session panel for analysis and pattern discovery.
 - Session-level understanding of what a user did during a visit, including funnel steps and timeline.
+- Paid media metrics for spend and ROAS.
 
 ### Live Feed decision rule
 
