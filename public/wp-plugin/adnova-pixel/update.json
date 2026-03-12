@@ -7,8 +7,8 @@
   "requires": "5.0",
   "tested": "6.4",
   "requires_php": "7.0",
-  "download_url": "https://adray-app-staging-german.onrender.com/wp-plugin/adnova-pixel/adnova-pixel.zip",
-  "trunk": "https://adray-app-staging-german.onrender.com/wp-plugin/adnova-pixel/adnova-pixel.zip",
+  "download_url": "https://adray-app-staging-german.onrender.com/wp-plugin/adnova-pixel/adnova-pixel.zip?v=1.1.2",
+  "trunk": "https://adray-app-staging-german.onrender.com/wp-plugin/adnova-pixel/adnova-pixel.zip?v=1.1.2",
   "last_updated": "2026-03-12 12:00:00",
   "sections": {
     "description": "El pixel definitivo para integrar Adnova con tu tienda WooCommerce sin depender del navegador.",

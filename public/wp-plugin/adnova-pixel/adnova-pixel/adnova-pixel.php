@@ -83,8 +83,7 @@ final class Adnova_Pixel_Plugin {
     }
 
     private static function fetch_update_metadata() {
-        $url = self::DEFAULT_UPDATE_METADATA_URL . '?t=' . time();
-        $response = wp_remote_get($url, array(
+        $response = wp_remote_get(self::DEFAULT_UPDATE_METADATA_URL, array(
             'timeout' => 10,
             'headers' => array('Accept' => 'application/json'),
         ));
