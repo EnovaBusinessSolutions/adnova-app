@@ -442,21 +442,37 @@
         .feed-item-enter {
             animation: slideIn 0.3s ease-out forwards;
         }
+        .metric-carousel-viewport {
+            overflow-x: auto;
+            overflow-y: visible;
+            scroll-behavior: smooth;
+            scrollbar-width: none;
+            -ms-overflow-style: none;
+            padding-bottom: 0.35rem;
+        }
+
+        .metric-carousel-viewport::-webkit-scrollbar {
+            display: none;
+        }
+
         .metric-card-slide {
+            flex: 0 0 100%;
             min-width: 100%;
         }
         @media (min-width: 640px) {
             .metric-card-slide {
+                flex-basis: 50%;
                 min-width: 50%;
             }
         }
         @media (min-width: 1024px) {
             .metric-card-slide {
+                flex-basis: 25%;
                 min-width: 25%;
             }
         }
         .metric-carousel-track {
-            transition: transform 0.35s ease;
+            width: max-content;
         }
         .session-flow-step {
             position: relative;
@@ -583,7 +599,7 @@
                     </button>
                 </div>
             </div>
-            <div class="overflow-hidden">
+            <div id="metric-carousel-viewport" class="metric-carousel-viewport">
                 <div id="metric-carousel-track" class="metric-carousel-track flex">
             <!-- Revenue -->
             <div class="metric-card-slide pr-5 box-border">
@@ -1294,10 +1310,12 @@
         }
 
         function initializeMetricCarousel() {
+            const viewport = document.getElementById('metric-carousel-viewport');
             const prev = document.getElementById('metric-carousel-prev');
             const next = document.getElementById('metric-carousel-next');
             prev?.addEventListener('click', () => moveMetricCarousel(-1));
             next?.addEventListener('click', () => moveMetricCarousel(1));
+            viewport?.addEventListener('scroll', updateMetricCarousel, { passive: true });
             window.addEventListener('resize', () => {
                 syncMetricCarouselViewport();
                 updateMetricCarousel();
@@ -1313,25 +1331,25 @@
         }
 
         function moveMetricCarousel(direction) {
-            const slides = document.querySelectorAll('.metric-card-slide');
-            const maxIndex = Math.max(0, slides.length - metricCarouselVisible);
-            metricCarouselIndex = Math.max(0, Math.min(maxIndex, metricCarouselIndex + direction));
-            updateMetricCarousel();
+            const viewport = document.getElementById('metric-carousel-viewport');
+            if (!viewport) return;
+
+            const step = Math.max(280, Math.floor(viewport.clientWidth * 0.9));
+            viewport.scrollBy({ left: direction * step, behavior: 'smooth' });
         }
 
         function updateMetricCarousel() {
-            const track = document.getElementById('metric-carousel-track');
+            const viewport = document.getElementById('metric-carousel-viewport');
             const slides = document.querySelectorAll('.metric-card-slide');
-            if (!track || slides.length === 0) return;
+            if (!viewport || slides.length === 0) return;
 
-            const slideWidth = slides[0].getBoundingClientRect().width;
-            track.style.transform = `translateX(-${metricCarouselIndex * slideWidth}px)`;
-
-            const maxIndex = Math.max(0, slides.length - metricCarouselVisible);
+            const slideWidth = slides[0].getBoundingClientRect().width || 1;
+            metricCarouselIndex = Math.round(viewport.scrollLeft / slideWidth);
+            const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
             const prev = document.getElementById('metric-carousel-prev');
             const next = document.getElementById('metric-carousel-next');
-            if (prev) prev.disabled = metricCarouselIndex === 0;
-            if (next) next.disabled = metricCarouselIndex >= maxIndex;
+            if (prev) prev.disabled = viewport.scrollLeft <= 4;
+            if (next) next.disabled = viewport.scrollLeft >= (maxScrollLeft - 4);
         }
 
         function initializeSessionDetailPanel() {
