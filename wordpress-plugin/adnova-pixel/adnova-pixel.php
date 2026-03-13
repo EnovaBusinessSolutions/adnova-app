@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.1.4
+ * Version: 1.1.5
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.1.4';
+    const VERSION = '1.1.5';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_BACKFILL_DONE = 'adnova_pixel_backfill_done';
@@ -187,6 +187,17 @@ final class Adnova_Pixel_Plugin {
         }
 
         wp_register_script('adnova-pixel', $script_url, array(), self::VERSION, false);
+
+        // Inject logged-in Woo customer context BEFORE pixel execution.
+        $user_payload = self::get_logged_in_customer_payload();
+        if (!empty($user_payload)) {
+            wp_add_inline_script(
+                'adnova-pixel',
+                'window.adnova_user_data=' . wp_json_encode($user_payload) . ';',
+                'before'
+            );
+        }
+
         wp_enqueue_script('adnova-pixel');
     }
 
@@ -308,19 +319,19 @@ final class Adnova_Pixel_Plugin {
         );
     }
 
-    public static function inject_logged_in_customer_context() {
+    private static function get_logged_in_customer_payload() {
         if (is_admin() || !is_user_logged_in()) {
-            return;
+            return null;
         }
 
         $user = wp_get_current_user();
         if (!$user || !$user->exists()) {
-            return;
+            return null;
         }
 
         $customer_id = (string) $user->ID;
         if ($customer_id === '') {
-            return;
+            return null;
         }
 
         $email = sanitize_email((string) $user->user_email);
@@ -338,7 +349,7 @@ final class Adnova_Pixel_Plugin {
             $full_name = $company;
         }
 
-        $payload = array(
+        return array(
             'customer_id' => $customer_id,
             'email' => $email !== '' ? $email : null,
             'phone' => $phone !== '' ? $phone : null,
@@ -347,6 +358,13 @@ final class Adnova_Pixel_Plugin {
             'customer_last_name' => $last_name !== '' ? $last_name : null,
             'billing_company' => $company !== '' ? $company : null,
         );
+    }
+
+    public static function inject_logged_in_customer_context() {
+        $payload = self::get_logged_in_customer_payload();
+        if (empty($payload)) {
+            return;
+        }
 
         echo '<script>window.adnova_user_data=' . wp_json_encode($payload) . ';</script>' . "\n";
     }

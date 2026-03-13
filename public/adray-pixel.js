@@ -416,29 +416,57 @@
   }
 
   // 4.2 WooCommerce: stitch logged-in customers to the current browser session.
-  (function detectWooLogin() {
-    if (detectPlatform() !== 'woocommerce') return;
-    if (!window.adnova_user_data || !window.adnova_user_data.customer_id) {
+  function tryTrackWooLogin() {
+    var userData = window.adnova_user_data || null;
+    var platform = detectPlatform();
+    var hasWooContext = platform === 'woocommerce' || (userData && userData.customer_id);
+    if (!hasWooContext) return false;
+
+    if (!userData || !userData.customer_id) {
       safeStorageRemove(window.sessionStorage, '__adray_login_customer_id');
-      return;
+      return false;
     }
 
-    var currentCustomerId = String(window.adnova_user_data.customer_id || '');
-    if (!currentCustomerId) return;
+    var currentCustomerId = String(userData.customer_id || '').trim();
+    if (!currentCustomerId) return false;
 
     var lastTrackedCustomerId = safeStorageGet(window.sessionStorage, '__adray_login_customer_id');
-    if (lastTrackedCustomerId === currentCustomerId) return;
+    if (lastTrackedCustomerId === currentCustomerId) return true;
 
     safeStorageSet(window.sessionStorage, '__adray_login_customer_id', currentCustomerId);
     sendEvent('user_logged_in', {
+      platform: 'woocommerce',
       customer_id: currentCustomerId,
-      email: window.adnova_user_data.email || null,
-      phone: window.adnova_user_data.phone || null,
-      customer_name: window.adnova_user_data.customer_name || null,
-      customer_first_name: window.adnova_user_data.customer_first_name || null,
-      customer_last_name: window.adnova_user_data.customer_last_name || null,
-      billing_company: window.adnova_user_data.billing_company || null,
-      page_type: detectPageType() === 'other' ? 'account' : detectPageType()
+      email: userData.email || null,
+      phone: userData.phone || null,
+      customer_name: userData.customer_name || null,
+      customer_first_name: userData.customer_first_name || null,
+      customer_last_name: userData.customer_last_name || null,
+      billing_company: userData.billing_company || null,
+      page_type: detectPageType() === 'other' ? 'account' : detectPageType(),
+      login_detected_from: 'pixel_runtime'
+    });
+    return true;
+  }
+
+  (function scheduleWooLoginDetection() {
+    // Immediate attempt
+    if (tryTrackWooLogin()) return;
+
+    // Retry for delayed contexts (cached HTML, deferred script order, async account widgets)
+    var attempts = 0;
+    var maxAttempts = 40; // ~20s at 500ms
+    var timer = setInterval(function() {
+      attempts += 1;
+      if (tryTrackWooLogin() || attempts >= maxAttempts) {
+        clearInterval(timer);
+      }
+    }, 500);
+
+    document.addEventListener('DOMContentLoaded', tryTrackWooLogin, { once: true });
+    window.addEventListener('load', tryTrackWooLogin, { once: true });
+    document.addEventListener('visibilitychange', function() {
+      if (document.visibilityState === 'visible') tryTrackWooLogin();
     });
   })();
 
