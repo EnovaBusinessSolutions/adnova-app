@@ -2858,7 +2858,7 @@ function openUserExplorer(userKey, fallbackName) {
         .then(data => renderUserExplorer(data))
         .catch(err => {
             console.error(err);
-            document.getElementById('ue-content').innerHTML = '<p class="text-red-500">Error al cargar la cronología.</p>';
+            document.getElementById('ue-content').innerHTML = '<p class="text-red-500">Error al cargar la cronolog�a.</p>';
         });
 }
 
@@ -2919,7 +2919,7 @@ function renderUserExplorer(data) {
                 '<p class="text-xs text-blue-400 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Nueva Sesi�n</p>' +
                 '<div class="bg-blue-900/20 rounded-lg p-3 text-sm text-blue-100 border border-blue-800/30">' +
                     '<p><strong>Origen:</strong> ' + (s.utmSource || s.referrer || '(direct)') + ' / ' + (s.utmMedium || '(none)') + '</p>' +
-                    (s.utmCampaign ? '<p><strong>Campa�a:</strong> ' + s.utmCampaign + '</p>' : '') +
+                    (s.utmCampa�a:</strong> ' + s.utmCampaign + '</p>' : '') +
                     (s.landingPageUrl ? '<p class="truncate"><strong>Landing:</strong> ' + s.landingPageUrl + '</p>' : '') +
                 '</div>' +
             '</div>';
