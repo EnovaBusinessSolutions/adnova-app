@@ -528,13 +528,134 @@
         }
 
         .live-feed-shell {
-            height: 100%;
-            min-height: 30rem;
+            height: clamp(26rem, 58vh, 34rem) !important;
+            max-height: clamp(26rem, 58vh, 34rem) !important;
+            min-height: clamp(26rem, 58vh, 34rem) !important;
+            align-self: flex-start;
+            overflow: hidden;
         }
 
         #feed-container {
             overflow-y: auto !important;
             overscroll-behavior: contain;
+        }
+
+        #wp-online-card {
+            border-top: 1px solid rgba(202, 138, 229, 0.15);
+            border-bottom: 1px solid rgba(202, 138, 229, 0.15);
+        }
+
+        #wp-online-list {
+            max-height: 11.5rem;
+            overflow-y: auto;
+            padding-right: 0.2rem;
+        }
+
+        .wp-user-pill {
+            border-radius: 0.8rem;
+            padding: 0.62rem 0.7rem;
+            border: 1px solid transparent;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.22);
+        }
+
+        .wp-user-pill .wp-user-name {
+            color: #ffffff;
+            font-size: 0.84rem;
+            font-weight: 700;
+            line-height: 1.15;
+        }
+
+        .wp-user-pill .wp-user-meta {
+            color: rgba(241, 245, 249, 0.92);
+            font-size: 0.73rem;
+        }
+
+        .wp-user-pill .wp-user-session {
+            color: #fef3c7;
+            font-size: 0.72rem;
+            font-weight: 600;
+        }
+
+        .wp-user-pill.is-a {
+            background: linear-gradient(135deg, rgba(79, 70, 229, 0.88), rgba(168, 85, 247, 0.92));
+            border-color: rgba(196, 181, 253, 0.48);
+        }
+
+        .wp-user-pill.is-b {
+            background: linear-gradient(135deg, rgba(3, 105, 161, 0.88), rgba(14, 116, 144, 0.94));
+            border-color: rgba(125, 211, 252, 0.45);
+        }
+
+        .wp-user-pill.is-c {
+            background: linear-gradient(135deg, rgba(190, 24, 93, 0.9), rgba(251, 113, 133, 0.9));
+            border-color: rgba(253, 164, 175, 0.5);
+        }
+
+        .wp-user-pill.is-d {
+            background: linear-gradient(135deg, rgba(14, 116, 144, 0.9), rgba(45, 212, 191, 0.85));
+            border-color: rgba(153, 246, 228, 0.48);
+        }
+
+        .profile-priority-banner {
+            border: 1px solid rgba(202, 138, 229, 0.2);
+            background: linear-gradient(135deg, rgba(76, 29, 149, 0.26), rgba(12, 8, 19, 0.88));
+            border-radius: 1rem;
+            padding: 0.9rem 1rem;
+        }
+
+        .profile-priority-banner .focus-title {
+            color: #f4f1ff;
+            font-size: 0.88rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .profile-priority-banner .focus-copy {
+            color: rgba(232, 223, 247, 0.88);
+            font-size: 0.78rem;
+            margin-top: 0.2rem;
+        }
+
+        .profile-focus-grid {
+            margin-top: 0.7rem;
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.55rem;
+        }
+
+        .profile-focus-pill {
+            background: rgba(225, 216, 243, 0.08);
+            border: 1px solid rgba(202, 138, 229, 0.22);
+            border-radius: 0.7rem;
+            padding: 0.52rem 0.58rem;
+        }
+
+        .profile-focus-pill .label {
+            font-size: 0.64rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: rgba(202, 138, 229, 0.95);
+            font-weight: 700;
+        }
+
+        .profile-focus-pill .value {
+            margin-top: 0.22rem;
+            font-size: 0.84rem;
+            font-weight: 700;
+            color: #f8f6ff;
+        }
+
+        @media (max-width: 1024px) {
+            .live-feed-shell {
+                height: 34rem !important;
+                max-height: 34rem !important;
+                min-height: 34rem !important;
+            }
+
+            .profile-focus-grid {
+                grid-template-columns: 1fr;
+            }
         }
 
         .adray-dashboard .metric-pill {
@@ -1032,7 +1153,7 @@
 
             <!-- Right Column: Live Feed (1/3 width) -->
             <div class="lg:col-span-1">
-                <div class="ops-panel live-feed-shell h-full flex flex-col">
+                <div class="ops-panel live-feed-shell flex flex-col">
                     <div class="px-6 py-4 border-b border-gray-200 bg-gray-50 rounded-t-lg flex justify-between items-center">
                         <div>
                             <p class="panel-kicker">Tiempo real</p>
@@ -1075,6 +1196,7 @@
                     </div>
                 </div>
                 <div class="p-6 space-y-6">
+                    <div id="profile-priority-banner" class="profile-priority-banner"></div>
                     <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
                         <div class="flex items-center gap-2 flex-wrap">
                             <button id="session-peer-prev" type="button" class="session-toolbar-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
@@ -1342,6 +1464,11 @@
         let metricCarouselIndex = 0;
         let metricCarouselVisible = 4;
         let wpUsersPollTimer = null;
+        let wpUsersOnlineState = {
+            users: [],
+            updatedAt: null,
+            hasError: false,
+        };
         let sessionExplorerState = {
             mode: 'overview',
             overview: null,
@@ -1515,20 +1642,103 @@
                 return;
             }
 
+            const palette = ['is-a', 'is-b', 'is-c', 'is-d'];
             listEl.innerHTML = users.map((user) => {
+                const colorClass = palette[Math.abs(hashString(user.id || user.customerId || user.customerName || 'x')) % palette.length];
                 const displayName = user.customerName || (user.customerId ? `Cliente #${user.customerId}` : 'Usuario sin nombre');
                 const secondary = user.emailPreview || user.phonePreview || `ID: ${user.id}`;
                 const seenAt = user.lastSeenAt ? formatTimeMx(user.lastSeenAt) : '-';
                 const sessionText = Number(user.sessionCount || 0) > 0 ? `${user.sessionCount} sesión(es)` : 'Sin sesión ligada';
 
                 return `
-                    <div class="rounded-lg border border-gray-200 bg-white/50 px-3 py-2">
-                        <p class="text-xs font-semibold text-gray-900 truncate">${displayName}</p>
-                        <p class="text-[11px] text-gray-500 truncate">${secondary}</p>
-                        <p class="text-[11px] text-indigo-600 mt-1">${sessionText} · Última actividad ${seenAt}</p>
+                    <div class="wp-user-pill ${colorClass}">
+                        <p class="wp-user-name truncate">${displayName}</p>
+                        <p class="wp-user-meta truncate">${secondary}</p>
+                        <p class="wp-user-session mt-1">${sessionText} · Última actividad ${seenAt}</p>
                     </div>
                 `;
             }).join('');
+        }
+
+        function hashString(value) {
+            const str = String(value || '');
+            let hash = 0;
+            for (let i = 0; i < str.length; i += 1) {
+                hash = ((hash << 5) - hash) + str.charCodeAt(i);
+                hash |= 0;
+            }
+            return hash;
+        }
+
+        function renderProfilePriorityBanner(mode = 'overview', payload = {}) {
+            const el = document.getElementById('profile-priority-banner');
+            if (!el) return;
+
+            const connectedCount = Number((wpUsersOnlineState.users || []).length || 0);
+            const connectedNames = (wpUsersOnlineState.users || []).slice(0, 2)
+                .map((u) => u.customerName || u.emailPreview || `#${u.customerId || '?'}`)
+                .filter(Boolean)
+                .join(' · ');
+
+            if (mode === 'session') {
+                const profile = payload.profile || {};
+                const metrics = payload.metrics || {};
+                const compareHint = payload.patterns?.recommendedComparison?.sessionId
+                    ? `Comparación recomendada: ${payload.patterns.recommendedComparison.sessionId}`
+                    : 'Abre una sesión relacionada para comparar comportamiento.';
+
+                el.innerHTML = `
+                    <p class="focus-title">Prioridad Perfil + Sesión</p>
+                    <p class="focus-copy">Esto es lo más crítico del dashboard: identificar al perfil, ver qué compra y comparar su recorrido contra otras sesiones.</p>
+                    <div class="profile-focus-grid">
+                        <div class="profile-focus-pill">
+                            <p class="label">Perfil actual</p>
+                            <p class="value">${profile.profileLabel || '-'}</p>
+                        </div>
+                        <div class="profile-focus-pill">
+                            <p class="label">Órdenes del perfil</p>
+                            <p class="value">${profile.historicalOrderCount || 0}</p>
+                        </div>
+                        <div class="profile-focus-pill">
+                            <p class="label">Sesiones relacionadas</p>
+                            <p class="value">${payload.patterns?.peerSessionCount || 0}</p>
+                        </div>
+                    </div>
+                    <p class="focus-copy">${compareHint}</p>
+                    <p class="focus-copy">Conectados ahora: ${connectedCount}${connectedNames ? ` · ${connectedNames}` : ''}.</p>
+                `;
+                return;
+            }
+
+            const summary = payload.summary || {};
+            const profiles = Array.isArray(payload.profiles) ? payload.profiles : [];
+            const topBuyers = profiles
+                .slice()
+                .sort((a, b) => Number(b.totalRevenue || 0) - Number(a.totalRevenue || 0))
+                .slice(0, 2)
+                .map((p) => `${p.profileLabel || 'Perfil'} (${formatCurrency(p.totalRevenue || 0)})`)
+                .join(' · ');
+
+            el.innerHTML = `
+                <p class="focus-title">Centro de Perfiles</p>
+                <p class="focus-copy">Haz foco aquí para decisiones de negocio: quién está conectado ahora, qué suelen comprar y cómo comparan contra perfiles históricos.</p>
+                <div class="profile-focus-grid">
+                    <div class="profile-focus-pill">
+                        <p class="label">Conectados ahora</p>
+                        <p class="value">${connectedCount}</p>
+                    </div>
+                    <div class="profile-focus-pill">
+                        <p class="label">Perfiles históricos</p>
+                        <p class="value">${summary.totalProfiles || 0}</p>
+                    </div>
+                    <div class="profile-focus-pill">
+                        <p class="label">Revenue histórico</p>
+                        <p class="value">${formatCurrency(summary.totalRevenue || 0)}</p>
+                    </div>
+                </div>
+                <p class="focus-copy">Top compradores: ${topBuyers || 'Sin suficientes datos todavía.'}</p>
+                <p class="focus-copy">Conectados detectados: ${connectedNames || (wpUsersOnlineState.hasError ? 'Error al consultar estado online.' : 'Sin usuarios conectados recientes.')}</p>
+            `;
         }
 
         async function fetchWordPressUsersOnline() {
@@ -1541,29 +1751,53 @@
                 const users = Array.isArray(data?.users) ? data.users : [];
 
                 if (!users.length) {
+                    wpUsersOnlineState = {
+                        users: [],
+                        updatedAt: new Date().toISOString(),
+                        hasError: false,
+                    };
                     renderWordPressUsersOnlineState({
                         countText: '0',
                         statusText: 'No hay usuarios WordPress conectados en los últimos 30 min.',
                         statusClass: 'text-gray-500',
                         users: [],
                     });
+                    if (sessionExplorerState.mode === 'overview' && sessionExplorerState.overview) {
+                        renderProfilePriorityBanner('overview', sessionExplorerState.overview);
+                    }
                     return;
                 }
 
+                wpUsersOnlineState = {
+                    users,
+                    updatedAt: new Date().toISOString(),
+                    hasError: false,
+                };
                 renderWordPressUsersOnlineState({
                     countText: String(users.length),
-                    statusText: 'Conexión activa detectada desde eventos de login y sesiones recientes.',
+                    statusText: '',
                     statusClass: 'text-emerald-600',
                     users,
                 });
+                if (sessionExplorerState.mode === 'overview' && sessionExplorerState.overview) {
+                    renderProfilePriorityBanner('overview', sessionExplorerState.overview);
+                }
             } catch (error) {
                 console.error('[WP Online Users] Error:', error);
+                wpUsersOnlineState = {
+                    users: [],
+                    updatedAt: new Date().toISOString(),
+                    hasError: true,
+                };
                 renderWordPressUsersOnlineState({
                     countText: '!',
                     statusText: 'No se pudo consultar usuarios conectados. Revisa /collect o la API de analytics.',
                     statusClass: 'text-rose-600',
                     users: [],
                 });
+                if (sessionExplorerState.mode === 'overview' && sessionExplorerState.overview) {
+                    renderProfilePriorityBanner('overview', sessionExplorerState.overview);
+                }
             }
         }
 
@@ -1710,6 +1944,8 @@
             sessionExplorerState.timeline = [];
             sessionExplorerState.currentData = null;
             sessionExplorerState.compareData = null;
+
+            renderProfilePriorityBanner('overview', data);
 
             document.getElementById('session-detail-title').textContent = titleText;
             document.getElementById('session-detail-metrics').innerHTML = [
@@ -1923,6 +2159,12 @@
 
             const identifiedUser = data.identifiedUser || {};
             const linkedUserLabel = identifiedUser.customerDisplayName || identifiedUser.emailPreview || (identifiedUser.customerId ? `Woo #${identifiedUser.customerId}` : '-');
+
+            renderProfilePriorityBanner('session', {
+                profile,
+                metrics,
+                patterns,
+            });
 
             document.getElementById('session-detail-title').textContent = `${profile.profileLabel || 'Perfil histórico'} · Sesion ${session.sessionId || '-'}`;
 
