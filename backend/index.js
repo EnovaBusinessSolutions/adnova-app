@@ -79,6 +79,18 @@ const eventsRoutes = require("./routes/events");
 
 const adminAnalyticsRoutes = require("./routes/adminAnalytics");
 
+/* =========================
+ * AdRay Pipeline Imports
+ * ========================= */
+const cookieParser = require('cookie-parser');
+const prisma = require('./utils/prismaClient');
+const collectRoutes = require('./routes/collect');
+const adrayWebhookRoutes = require('./routes/adrayWebhooks');
+const adrayPlatformRoutes = require('./routes/adrayPlatforms');
+const wooOrdersRoutes = require('./routes/wooOrders');
+const wordpressPluginRoutes = require('./routes/wordpressPlugin');
+const rateLimitCollect = require('./middleware/rateLimitCollect');
+
 // Meta
 const metaInsightsRoutes = require("./routes/metaInsights");
 const metaAccountsRoutes = require("./routes/metaAccounts");
@@ -106,7 +118,18 @@ const APP_URL = (process.env.APP_URL || "https://adray.ai").replace(/\/$/, "");
 /* =========================
  * Seguridad y performance
  * ========================= */
+
 app.disable("x-powered-by");
+
+// Fix CSP: Disable strict CSP for demo assets (Tailwind, ChartJS, FontAwesome)
+app.use((req, res, next) => {
+  if (req.path === '/adray-analytics.html' || req.path.startsWith('/api/analytics') || req.path.startsWith('/api/feed')) {
+    // Override headers BEFORE helper sets them
+    res.setHeader("Content-Security-Policy", "default-src 'self' * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' *; style-src 'self' 'unsafe-inline' *; connect-src 'self' *; font-src 'self' *; img-src 'self' data: *;");
+  }
+  next();
+});
+
 app.use(
   helmet({
     // IMPORTANTE para apps embebidas de Shopify
@@ -117,33 +140,52 @@ app.use(
     crossOriginResourcePolicy: { policy: "cross-origin" },
   })
 );
-app.use(compression());
+app.use(
+  compression({
+    filter: (req, res) => {
+      // SSE must stay uncompressed or proxies/browsers may buffer the stream.
+      if (req.path.startsWith('/api/feed')) return false;
+      return compression.filter(req, res);
+    },
+  })
+);
 
 /* =========================
  * CORS
  * ========================= */
-const ALLOWED_ORIGINS = [
-  "https://adray.ai",
-  "https://admin.shopify.com",
-  /^https?:\/\/[^/]+\.myshopify\.com$/i,
-  "http://localhost:3000",
-  "http://localhost:5173",
-  "http://127.0.0.1:5173",
-];
+const APP_ORIGIN = (() => {
+  try { return new URL(APP_URL).origin; } catch { return null; }
+})();
+const RENDER_EXTERNAL_ORIGIN = (() => {
+  const raw = String(process.env.RENDER_EXTERNAL_URL || '').trim();
+  if (!raw) return null;
+  try { return new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`).origin; } catch { return null; }
+})();
 
-app.use(
-  cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true); // same-origin / curl / server-side
-      const ok = ALLOWED_ORIGINS.some((rule) =>
-        rule instanceof RegExp ? rule.test(origin) : rule === origin
-      );
-      return cb(ok ? null : new Error("CORS not allowed"), ok);
-    },
-    credentials: true,
-  })
-);
-app.options(/.*/, cors());
+const ALLOWED_ORIGINS = [
+  'https://adray.ai',
+  'https://adray-app-staging-german.onrender.com',
+  'https://admin.shopify.com',
+  'http://localhost:3000', // ✅ Allow local frontend
+  /^https?:\/\/[^/]+\.myshopify\.com$/i,
+    /^https?:\/\/[^/]+\.ngrok-free\.dev$/i,
+    /^https?:\/\/[^/]+\.ngrok-free\.app$/i,
+    /^https?:\/\/[^/]+\.loca\.lt$/i,
+  APP_ORIGIN,
+  RENDER_EXTERNAL_ORIGIN,
+].filter(Boolean);
+
+
+const corsOptions = {
+  origin: (origin, cb) => {
+    // Permitir solicitudes de pixel /collect (aceptar cualquier origen dinámicamente)
+    return cb(null, true); 
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 
 /* =========================
  * Sesión y Passport
@@ -271,8 +313,8 @@ app.get(["/connector/auth", "/connector/auth/callback"], (req, res, next) => {
  * ========================= */
 
 // 1) Shopify Connector Webhooks: RAW
-app.use("/connector/webhooks", express.raw({ type: "*/*" }), webhookRoutes);
-
+app.use("/connector/webhooks", express.raw({ type: "*/*" }), webhookRoutes);    
+app.use("/webhooks/shopify", express.raw({ type: "*/*" }), adrayWebhookRoutes);
 // 2) Stripe: RAW **solo** en /api/stripe/webhook; JSON normal para el resto
 app.use("/api/stripe", (req, res, next) => {
   if (req.path === "/webhook") {
@@ -284,6 +326,19 @@ app.use("/api/stripe", (req, res, next) => {
 // Parsers globales (después de RAW especiales)
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+// ✅ AdRay Analytics & Realtime Feed (Phase 2)
+// sessionGuard removed for dashboard demo/access
+app.use("/api/analytics", require("./routes/analytics"));
+app.use("/api/feed", require("./routes/feed"));
+app.use('/api', wooOrdersRoutes);
+app.use('/api/platform-connections', require('./routes/platformConnections'));
+app.use('/wp-plugin', wordpressPluginRoutes);
+
+// AdRay collect and platform routes
+app.use("/collect", rateLimitCollect, collectRoutes);
+app.use("/api", sessionGuard, adrayPlatformRoutes);
 
 /* =========================
  * Pixel auditor (usa JSON)
@@ -318,6 +373,13 @@ mongoose
   })
   .then(() => console.log("✅ Conectado a MongoDB Atlas"))
   .catch((err) => console.error("❌ Error al conectar con MongoDB:", err));
+
+/* =========================
+ * PostgreSQL (Prisma)
+ * ========================= */
+prisma.$connect()
+  .then(() => console.log("✅ Conectado a PostgreSQL (Prisma)"))
+  .catch((err) => console.error("❌ Error con PostgreSQL (Prisma):", err));
 
 /* =========================
  * Rutas utilitarias públicas
@@ -433,6 +495,12 @@ app.use('/api/onboarding', require('./routes/onboardingReset'));
 app.use('/api/mcpjobs', sessionGuard, require('./routes/mcpjobs'));
 
 app.use('/api/mcp/context', require('./routes/mcpContext'));
+
+// MCP Server (Phase 1) - protocol endpoint + OAuth + REST mirror
+const { mountMcpRoutes } = require('./mcp/transport');
+mountMcpRoutes(app);
+app.use('/oauth', require('./mcp/auth/oauth-server'));
+app.use('/gpt/v1', require('./mcp/rest/router'));
 
 /* =========================
  * ✅ Integraciones: DISCONNECT (E2E)
@@ -1273,6 +1341,14 @@ app.use("/api/secure", verifySessionToken, secureRoutes);
 app.use("/api/dashboard", dashboardRoute);
 app.use("/api/shopConnection", require("./routes/shopConnection"));
 app.use("/api", subscribeRouter);
+
+// Explicit pixel route with cross-origin headers so external storefronts can load it.
+app.get('/adray-pixel.js', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+  return res.sendFile(path.join(__dirname, '../public/adray-pixel.js'));
+});
 
 // Estáticos (públicos)
 app.use("/assets", express.static(path.join(__dirname, "../public/landing/assets")));

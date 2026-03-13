@@ -3,10 +3,11 @@
 const crypto = require('crypto');
 
 module.exports = function verifyShopifyWebhookHmac(req, res, next) {
-  const secret = process.env.SHOPIFY_API_SECRET;
+  // Usamos SHOPIFY_API_SECRET_2 (Webhooks) en vez del token de la App
+  const secret = process.env.SHOPIFY_API_SECRET_2 || process.env.SHOPIFY_API_SECRET;
 
   if (!secret) {
-    console.error('[SHOPIFY_WEBHOOK] Missing SHOPIFY_API_SECRET');
+    console.error('[SHOPIFY_WEBHOOK] Missing SHOPIFY_API_SECRET_2');
     return res.status(500).send('Server misconfigured');
   }
 
@@ -15,6 +16,7 @@ module.exports = function verifyShopifyWebhookHmac(req, res, next) {
     req.get('x-shopify-hmac-sha256');
 
   if (!hmacHeader) {
+    console.warn('[SHOPIFY_WEBHOOK] ❌ Missing X-Shopify-Hmac-Sha256 header');
     return res.status(401).send('Missing HMAC');
   }
 
@@ -34,12 +36,17 @@ module.exports = function verifyShopifyWebhookHmac(req, res, next) {
     const a = Buffer.from(digest, 'base64');
     const b = Buffer.from(String(hmacHeader).trim(), 'base64');
 
-    if (a.length !== b.length) return res.status(401).send('Invalid HMAC');
-    if (!crypto.timingSafeEqual(a, b)) return res.status(401).send('Invalid HMAC');
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+       console.error(`[SHOPIFY_WEBHOOK] ❌ HMAC mismatch.`);
+       console.error(`Using Secret (first 4 chars): ${secret.substring(0, 4)}***`);
+       console.error(`Calculated Digest: ${digest}`);
+       console.error(`Received HMAC: ${hmacHeader}`);
+       return res.status(401).send('Invalid HMAC');
+    }
 
     return next();
   } catch (e) {
-    // Si el header no es base64 válido o algo raro ocurre
+    console.error('[SHOPIFY_WEBHOOK] ❌ Error calculating/comparing HMAC:', e);
     return res.status(401).send('Invalid HMAC');
   }
 };
