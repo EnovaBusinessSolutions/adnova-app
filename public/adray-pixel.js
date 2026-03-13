@@ -57,6 +57,9 @@
       document.cookie = key + "=" + id + "; path=/; max-age=1800; SameSite=Lax";
       
       return id;
+  }
+
+  function persistAttributionParams() {
     var keys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'gclid', 'ttclid'];
     var changed = false;
 
