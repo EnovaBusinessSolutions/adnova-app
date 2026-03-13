@@ -879,6 +879,127 @@ function normalizeLineItems(items) {
   }));
 }
 
+function buildProductAffinityFromOrders(orders = []) {
+  const productMap = new Map();
+
+  orders.forEach((order) => {
+    const lineItems = normalizeLineItems(order?.lineItems);
+    lineItems.forEach((item) => {
+      const key = String(item.id || item.name || '').trim();
+      if (!key) return;
+
+      const current = productMap.get(key) || {
+        id: item.id || key,
+        name: item.name || 'Producto',
+        units: 0,
+        orderCount: 0,
+        revenue: 0,
+        lastPurchasedAt: null,
+      };
+
+      current.units += Number(item.quantity || 0);
+      current.orderCount += 1;
+      current.revenue += Number(item.lineTotal || item.price || 0);
+      const purchasedAt = order?.platformCreatedAt || order?.createdAt || null;
+      if (purchasedAt && (!current.lastPurchasedAt || new Date(purchasedAt).getTime() > new Date(current.lastPurchasedAt).getTime())) {
+        current.lastPurchasedAt = purchasedAt;
+      }
+
+      productMap.set(key, current);
+    });
+  });
+
+  return Array.from(productMap.values())
+    .sort((a, b) => {
+      if (b.orderCount !== a.orderCount) return b.orderCount - a.orderCount;
+      if (b.units !== a.units) return b.units - a.units;
+      return b.revenue - a.revenue;
+    })
+    .slice(0, 5);
+}
+
+function buildTopProductPairings(orders = []) {
+  const pairMap = new Map();
+
+  orders.forEach((order) => {
+    const uniqueItems = normalizeLineItems(order?.lineItems)
+      .map((item) => ({
+        id: String(item.id || item.name || '').trim(),
+        name: String(item.name || 'Producto').trim(),
+      }))
+      .filter((item) => item.id)
+      .filter((item, index, arr) => arr.findIndex((other) => other.id === item.id) === index);
+
+    for (let i = 0; i < uniqueItems.length; i += 1) {
+      for (let j = i + 1; j < uniqueItems.length; j += 1) {
+        const first = uniqueItems[i];
+        const second = uniqueItems[j];
+        const key = [first.id, second.id].sort().join('::');
+        const current = pairMap.get(key) || {
+          primary: first.name,
+          secondary: second.name,
+          orders: 0,
+        };
+        current.orders += 1;
+        pairMap.set(key, current);
+      }
+    }
+  });
+
+  return Array.from(pairMap.values())
+    .sort((a, b) => b.orders - a.orders)
+    .slice(0, 3);
+}
+
+function buildActionRecommendations({ topProducts = [], topPairings = [], totalOrders = 0, sessionSignals = {}, profileLabel = 'este perfil' }) {
+  const recommendations = [];
+  const leadProduct = topProducts[0] || null;
+  const secondProduct = topProducts[1] || null;
+  const topPairing = topPairings[0] || null;
+
+  if (leadProduct && Number(leadProduct.orderCount || 0) >= 2) {
+    recommendations.push({
+      title: 'Recompra sugerida',
+      detail: `${profileLabel} suele comprar ${leadProduct.name} con frecuencia (${leadProduct.orderCount} órdenes).`,
+      action: `Muéstrale primero ${leadProduct.name} y prueba una promo de recompra o recordatorio de stock.`
+    });
+  }
+
+  if (topPairing && Number(topPairing.orders || 0) >= 2) {
+    recommendations.push({
+      title: 'Bundle con alta afinidad',
+      detail: `${topPairing.primary} y ${topPairing.secondary} aparecen juntos en ${topPairing.orders} órdenes.`,
+      action: `Crea bundle o cross-sell directo entre ${topPairing.primary} + ${topPairing.secondary}.`
+    });
+  }
+
+  if (leadProduct && secondProduct && Number(totalOrders || 0) >= 2) {
+    recommendations.push({
+      title: 'Upsell inmediato',
+      detail: `El perfil ya mostró historial suficiente para empujar ${secondProduct.name} junto a ${leadProduct.name}.`,
+      action: `Si vuelve a interesarse por ${leadProduct.name}, ofrece ${secondProduct.name} como complemento con descuento leve.`
+    });
+  }
+
+  if (Number(sessionSignals.beginCheckout || 0) > 0 && Number(sessionSignals.purchase || 0) === 0 && leadProduct) {
+    recommendations.push({
+      title: 'Recuperación de intención',
+      detail: `La sesión actual mostró intención alta pero no cerró compra.`,
+      action: `Lanza remarketing corto con ${leadProduct.name} o incentivo puntual antes de que se enfríe la sesión.`
+    });
+  }
+
+  if (!recommendations.length) {
+    recommendations.push({
+      title: 'Seguir acumulando señal',
+      detail: 'Todavía no hay patrón comercial lo bastante fuerte para personalizar una oferta específica.',
+      action: 'Prioriza capturar más sesiones, productos vistos y próximas órdenes para afinar la recomendación.'
+    });
+  }
+
+  return recommendations.slice(0, 4);
+}
+
 function toSnapshotFromSession(session) {
   if (!session) return null;
   return {
@@ -1911,6 +2032,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
         customerId: true,
         emailHash: true,
         phoneHash: true,
+        lineItems: true,
         attributionSnapshot: true,
         orderId: true,
         orderNumber: true,
@@ -2016,6 +2138,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
           customerId: true,
           emailHash: true,
           phoneHash: true,
+          lineItems: true,
           attributionSnapshot: true,
           orderId: true,
           orderNumber: true,
@@ -2248,6 +2371,8 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           orderNumber: true,
           revenue: true,
           currency: true,
+          lineItems: true,
+          attributionSnapshot: true,
           createdAt: true,
           platformCreatedAt: true,
           attributedChannel: true,
@@ -2394,9 +2519,11 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           recentSessionId: null,
           recentSessionStartedAt: null,
           lastSeenAt: null,
+          lastOrderAt: null,
           lastLandingPageUrl: null,
           lastCampaign: null,
           userKeys: new Set(),
+          _orders: [],
         });
       }
       const profile = profiles.get(descriptor.profileKey);
@@ -2467,16 +2594,34 @@ router.get('/:account_id/session-explorer', async (req, res) => {
       if (bridgedUserKey) profile.userKeys.add(String(bridgedUserKey).trim());
       const orderSeenAt = order.platformCreatedAt || order.createdAt;
       const orderSeenIso = orderSeenAt ? new Date(orderSeenAt).toISOString() : null;
+      if (!profile.lastOrderAt || (orderSeenIso && orderSeenIso > profile.lastOrderAt)) {
+        profile.lastOrderAt = orderSeenIso;
+      }
       if (!profile.lastSeenAt || (orderSeenIso && orderSeenIso > profile.lastSeenAt)) {
         profile.lastSeenAt = orderSeenIso;
       }
+      profile._orders.push(order);
     });
 
     const allProfiles = Array.from(profiles.values())
-      .map((profile) => ({
-        ...profile,
-        userKeys: Array.from(profile.userKeys).filter(Boolean),
-      }))
+      .map((profile) => {
+        const topProducts = buildProductAffinityFromOrders(profile._orders);
+        const topPairings = buildTopProductPairings(profile._orders);
+        const actionRecommendations = buildActionRecommendations({
+          topProducts,
+          topPairings,
+          totalOrders: profile.orderCount,
+          profileLabel: profile.customerDisplayName || profile.profileLabel || 'este perfil',
+        });
+
+        return {
+          ...profile,
+          userKeys: Array.from(profile.userKeys).filter(Boolean),
+          topProducts,
+          topPairings,
+          actionRecommendations,
+        };
+      })
       .sort((a, b) => {
         if (storePlatform === 'WOOCOMMERCE') {
           const aOrderScore = Number(a.orderCount || 0) > 0 ? 1 : 0;
@@ -2645,6 +2790,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
           orderNumber: true,
           revenue: true,
           currency: true,
+          lineItems: true,
           createdAt: true,
           platformCreatedAt: true,
           attributedChannel: true,
@@ -2836,6 +2982,25 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
       currentPath,
     });
 
+    const historicalOrdersWithItems = identityContext.historicalOrders.map((order) => ({
+      ...order,
+      lineItems: normalizeLineItems(order.lineItems),
+    }));
+    const topProducts = buildProductAffinityFromOrders(historicalOrdersWithItems);
+    const topPairings = buildTopProductPairings(historicalOrdersWithItems);
+    const actionRecommendations = buildActionRecommendations({
+      topProducts,
+      topPairings,
+      totalOrders: historicalOrdersWithItems.length,
+      sessionSignals: {
+        viewItem: metrics.viewItem,
+        addToCart: metrics.addToCart,
+        beginCheckout: metrics.beginCheckout,
+        purchase: metrics.purchase,
+      },
+      profileLabel: identityContext.profile?.profileLabel || 'este perfil',
+    });
+
     const sessionDurationSeconds = session.startedAt && session.lastEventAt
       ? Math.max(0, Math.round((new Date(session.lastEventAt).getTime() - new Date(session.startedAt).getTime()) / 1000))
       : 0;
@@ -2862,6 +3027,14 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         },
       },
       patterns,
+      commerceProfile: {
+        topProducts,
+        topPairings,
+        totalOrders: historicalOrdersWithItems.length,
+        totalRevenue: historicalOrdersWithItems.reduce((sum, order) => sum + Number(order.revenue || 0), 0),
+        lastOrderAt: historicalOrdersWithItems[0]?.platformCreatedAt || historicalOrdersWithItems[0]?.createdAt || null,
+      },
+      actionRecommendations,
       profile: {
         ...identityContext.profile,
         userKeys: identityContext.userKeys,

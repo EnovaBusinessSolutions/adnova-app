@@ -528,9 +528,9 @@
         }
 
         .live-feed-shell {
-            height: clamp(26rem, 58vh, 34rem) !important;
-            max-height: clamp(26rem, 58vh, 34rem) !important;
-            min-height: clamp(26rem, 58vh, 34rem) !important;
+            height: 34rem !important;
+            max-height: 34rem !important;
+            min-height: 34rem !important;
             align-self: flex-start;
             overflow: hidden;
         }
@@ -1197,6 +1197,16 @@
                 </div>
                 <div class="p-6 space-y-6">
                     <div id="profile-priority-banner" class="profile-priority-banner"></div>
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                        <div class="session-pattern-card rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Recomendaciones accionables</h4>
+                            <div class="space-y-4" id="session-detail-actions"></div>
+                        </div>
+                        <div class="session-summary-card rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Qué suele comprar</h4>
+                            <div class="space-y-4" id="session-detail-affinity"></div>
+                        </div>
+                    </div>
                     <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
                         <div class="flex items-center gap-2 flex-wrap">
                             <button id="session-peer-prev" type="button" class="session-toolbar-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
@@ -1636,6 +1646,7 @@
             countEl.textContent = countText;
             statusEl.className = `text-xs ${statusClass}`;
             statusEl.textContent = statusText;
+            statusEl.style.display = statusText ? '' : 'none';
 
             if (!users.length) {
                 listEl.innerHTML = '';
@@ -1739,6 +1750,45 @@
                 <p class="focus-copy">Top compradores: ${topBuyers || 'Sin suficientes datos todavía.'}</p>
                 <p class="focus-copy">Conectados detectados: ${connectedNames || (wpUsersOnlineState.hasError ? 'Error al consultar estado online.' : 'Sin usuarios conectados recientes.')}</p>
             `;
+        }
+
+        function renderActionCards(recommendations = []) {
+            if (!Array.isArray(recommendations) || !recommendations.length) {
+                return '<p class="text-sm text-gray-500">Todavía no hay recomendaciones accionables.</p>';
+            }
+
+            return recommendations.map((item) => `
+                <div class="session-pattern-item rounded-xl p-4">
+                    <p class="text-sm font-semibold text-gray-900">${item.title || 'Recomendación'}</p>
+                    <p class="mt-1 text-sm text-gray-600">${item.detail || '-'}</p>
+                    <p class="session-positive-copy mt-2 text-xs font-medium uppercase tracking-wide">Acción inmediata</p>
+                    <p class="session-positive-copy text-sm">${item.action || '-'}</p>
+                </div>
+            `).join('');
+        }
+
+        function renderAffinityCards(topProducts = [], topPairings = []) {
+            const productHtml = Array.isArray(topProducts) && topProducts.length
+                ? topProducts.slice(0, 3).map((item) => `
+                    <div class="session-side-card rounded-xl p-4">
+                        <p class="text-sm font-semibold text-gray-900">${item.name || 'Producto'}</p>
+                        <p class="mt-1 text-sm text-gray-600">${item.orderCount || 0} órdenes · ${item.units || 0} unidades · ${formatCurrency(item.revenue || 0)}</p>
+                    </div>
+                `).join('')
+                : '<p class="text-sm text-gray-500">Sin afinidad de compra suficiente todavía.</p>';
+
+            const pairingHtml = Array.isArray(topPairings) && topPairings.length
+                ? `
+                    <div class="session-side-card rounded-xl p-4">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Bundles probables</p>
+                        <div class="mt-2 space-y-1 text-sm text-gray-600">
+                            ${topPairings.slice(0, 2).map((pair) => `<p>${pair.primary} + ${pair.secondary} · ${pair.orders} órdenes</p>`).join('')}
+                        </div>
+                    </div>
+                `
+                : '';
+
+            return `${productHtml}${pairingHtml}`;
         }
 
         async function fetchWordPressUsersOnline() {
@@ -1946,6 +1996,13 @@
             sessionExplorerState.compareData = null;
 
             renderProfilePriorityBanner('overview', data);
+            document.getElementById('session-detail-actions').innerHTML = renderActionCards(
+                profiles.slice(0, 3).flatMap((profile) => Array.isArray(profile.actionRecommendations) ? profile.actionRecommendations.slice(0, 1) : [])
+            );
+            document.getElementById('session-detail-affinity').innerHTML = renderAffinityCards(
+                profiles[0]?.topProducts || [],
+                profiles[0]?.topPairings || []
+            );
 
             document.getElementById('session-detail-title').textContent = titleText;
             document.getElementById('session-detail-metrics').innerHTML = [
@@ -2085,6 +2142,8 @@
                 document.getElementById('session-detail-visual').innerHTML = '<p class="text-gray-500">-</p>';
                 document.getElementById('session-detail-patterns').innerHTML = '<p class="text-gray-500">-</p>';
                 document.getElementById('session-detail-timeline').innerHTML = '<p class="text-gray-500">-</p>';
+                document.getElementById('session-detail-actions').innerHTML = '<p class="text-gray-500">-</p>';
+                document.getElementById('session-detail-affinity').innerHTML = '<p class="text-gray-500">-</p>';
                 renderPeerSessions([], null, {});
                 renderSessionComparison();
             }
@@ -2113,6 +2172,8 @@
             document.getElementById('session-detail-visual').innerHTML = '<p class="text-sm text-gray-500">Construyendo diagrama...</p>';
             document.getElementById('session-detail-patterns').innerHTML = '<p class="text-sm text-gray-500">Buscando patrones...</p>';
             document.getElementById('session-detail-timeline').innerHTML = '<p>Cargando timeline...</p>';
+            document.getElementById('session-detail-actions').innerHTML = '<p class="text-sm text-gray-500">Generando recomendaciones...</p>';
+            document.getElementById('session-detail-affinity').innerHTML = '<p class="text-sm text-gray-500">Analizando afinidad de compra...</p>';
 
             try {
                 const data = await fetchSessionDetailData(sessionId);
@@ -2125,6 +2186,8 @@
                 document.getElementById('session-detail-visual').innerHTML = '<p class="text-gray-500">-</p>';
                 document.getElementById('session-detail-patterns').innerHTML = '<p class="text-gray-500">-</p>';
                 document.getElementById('session-detail-timeline').innerHTML = '<p class="text-gray-500">-</p>';
+                document.getElementById('session-detail-actions').innerHTML = '<p class="text-gray-500">-</p>';
+                document.getElementById('session-detail-affinity').innerHTML = '<p class="text-gray-500">-</p>';
             }
         }
 
@@ -2165,6 +2228,11 @@
                 metrics,
                 patterns,
             });
+            document.getElementById('session-detail-actions').innerHTML = renderActionCards(data.actionRecommendations || []);
+            document.getElementById('session-detail-affinity').innerHTML = renderAffinityCards(
+                data.commerceProfile?.topProducts || [],
+                data.commerceProfile?.topPairings || []
+            );
 
             document.getElementById('session-detail-title').textContent = `${profile.profileLabel || 'Perfil histórico'} · Sesion ${session.sessionId || '-'}`;
 
