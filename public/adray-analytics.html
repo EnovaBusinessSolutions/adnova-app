@@ -1834,10 +1834,14 @@
             sessionExplorerState.timeline = timeline;
             sessionExplorerState.currentData = data;
 
+            const identifiedUser = data.identifiedUser || {};
+            const linkedUserLabel = identifiedUser.customerDisplayName || identifiedUser.emailPreview || (identifiedUser.customerId ? `Woo #${identifiedUser.customerId}` : '-');
+
             document.getElementById('session-detail-title').textContent = `${profile.profileLabel || 'Perfil histórico'} · Sesion ${session.sessionId || '-'}`;
 
             document.getElementById('session-detail-metrics').innerHTML = [
                 { label: 'Eventos', value: metrics.totalEvents || 0 },
+                { label: 'Logins', value: metrics.logins || 0 },
                 { label: 'Page Views', value: metrics.pageViews || 0 },
                 { label: 'View Item', value: metrics.viewItem || 0 },
                 { label: 'Revenue', value: formatCurrency(metrics.revenue || 0) },
@@ -1854,9 +1858,13 @@
             document.getElementById('session-detail-summary').innerHTML = `
                 <p><strong>Perfil:</strong> ${profile.profileLabel || '-'}</p>
                 <p><strong>Tipo:</strong> ${profile.profileType || '-'}</p>
+                <p><strong>Usuario conectado:</strong> ${linkedUserLabel}</p>
+                <p><strong>Woo Customer ID:</strong> ${identifiedUser.customerId || '-'}</p>
+                <p><strong>Email identificado:</strong> ${identifiedUser.emailPreview || '-'}</p>
                 <p><strong>User Key:</strong> ${session.userKey || '-'}</p>
                 <p><strong>Inicio:</strong> ${formatDateTimeMx(session.startedAt)}</p>
                 <p><strong>Último evento:</strong> ${formatDateTimeMx(session.lastEventAt)}</p>
+                <p><strong>Último login:</strong> ${identifiedUser.lastLoginAt ? formatDateTimeMx(identifiedUser.lastLoginAt) : '-'}</p>
                 <p><strong>Duración:</strong> ${formatDuration(session.sessionDurationSeconds || 0)}</p>
                 <p><strong>Landing:</strong> ${session.landingPageUrl || '-'}</p>
                 <p><strong>UTM:</strong> ${(session.utmSource || '-') + ' / ' + (session.utmCampaign || '-')}</p>
@@ -2055,6 +2063,23 @@
             const filterValue = document.getElementById('session-timeline-filter')?.value || 'all';
             if (!container) return;
 
+            const formatSessionEventLabel = (event) => {
+                if (event.bucket === 'login') return 'Inicio de sesión';
+                if (event.eventName === 'add_to_cart') return 'Agregó al carrito';
+                if (event.eventName === 'begin_checkout') return 'Inició checkout';
+                if (event.eventName === 'view_item') return 'View item';
+                if (event.eventName === 'page_view') return 'Page view';
+                if (event.eventName === 'purchase') return 'Compra';
+                return event.eventName || '-';
+            };
+
+            const formatSessionEventDetail = (event) => {
+                if (event.bucket === 'login') {
+                    return event.customerName || event.customerEmail || event.customerId || 'Usuario identificado';
+                }
+                return event.pageUrl || event.productId || event.orderId || '-';
+            };
+
             const timeline = Array.isArray(sessionExplorerState.timeline) ? sessionExplorerState.timeline : [];
             const filteredTimeline = timeline.filter((event) => {
                 if (filterValue === 'all') return true;
@@ -2069,8 +2094,8 @@
                     <div class="session-timeline-item rounded-lg p-3">
                         <div class="flex items-center justify-between gap-4">
                             <div>
-                                <p class="font-medium text-gray-900">${event.eventName}</p>
-                                <p class="text-xs text-gray-500">${event.pageUrl || event.productId || event.orderId || '-'}</p>
+                                <p class="font-medium text-gray-900">${formatSessionEventLabel(event)}</p>
+                                <p class="text-xs text-gray-500">${formatSessionEventDetail(event)}</p>
                             </div>
                             <div class="text-right">
                                 <p class="text-sm text-gray-700">${formatTimeMx(event.createdAt)}</p>

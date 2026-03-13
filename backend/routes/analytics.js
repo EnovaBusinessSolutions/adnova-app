@@ -4,6 +4,7 @@ const router = express.Router();
 const prisma = require('../utils/prismaClient');
 const { startOfDay, endOfDay, subDays, eachDayOfInterval, format } = require('date-fns');
 const { getCustomerDisplayNames } = require('../services/shopifyService');
+const { hashPII } = require('../utils/encryption');
 
 let McpData = null;
 let ShopConnections = null;
@@ -47,6 +48,7 @@ const EVENT_BUCKET_ALIASES = {
   add_to_cart: ['add_to_cart', 'addtocart', 'cart_add'],
   begin_checkout: ['begin_checkout', 'checkout_started', 'start_checkout'],
   purchase: ['purchase', 'order_completed', 'checkout_completed', 'order_create', 'orders_create'],
+  login: ['user_logged_in', 'user_login', 'login'],
 };
 
 const PURCHASE_ALIASES = EVENT_BUCKET_ALIASES.purchase;
@@ -1813,6 +1815,29 @@ function extractOrderCustomerDisplayName(attributionSnapshot) {
   );
 }
 
+function extractEventIdentity(rawPayload) {
+  const payload = rawPayload && typeof rawPayload === 'object'
+    ? rawPayload
+    : {};
+
+  const email = String(payload.email || payload.customer_email || '').trim().toLowerCase();
+  const phone = String(payload.phone || payload.customer_phone || '').trim();
+
+  return {
+    customerId: String(payload.customer_id || payload.customerId || '').trim() || null,
+    emailHash: email ? hashPII(email) : null,
+    phoneHash: phone ? hashPII(phone) : null,
+    emailPreview: email || null,
+    phonePreview: phone || null,
+    customerDisplayName: normalizeCustomerDisplayName(
+      payload.customer_name
+      || payload.customer_display_name
+      || [payload.customer_first_name, payload.customer_last_name].filter(Boolean).join(' ')
+      || payload.billing_company
+    ),
+  };
+}
+
 function buildIdentityProfileDescriptor({ customerId, emailHash, phoneHash, userKey, customerDisplayName }) {
   const normalizedCustomerDisplayName = normalizeCustomerDisplayName(customerDisplayName);
 
@@ -1857,10 +1882,22 @@ function buildIdentityOrClauses({ userKeys = [], customerIds = [], emailHashes =
   return clauses;
 }
 
-async function resolveSessionIdentityContext({ accountId, sessionId, sessionUserKey, checkoutTokens = [] }) {
+async function resolveSessionIdentityContext({ accountId, sessionId, sessionUserKey, checkoutTokens = [], sessionEvents = [] }) {
   const seedOrderClauses = [{ sessionId }];
   if (checkoutTokens.length) seedOrderClauses.push({ checkoutToken: { in: checkoutTokens } });
   if (sessionUserKey) seedOrderClauses.push({ userKey: sessionUserKey });
+
+  const eventIdentitySignals = sessionEvents
+    .map((event) => ({
+      eventName: event.eventName,
+      createdAt: event.createdAt,
+      ...extractEventIdentity(event.rawPayload),
+    }))
+    .filter((item) => item.customerId || item.emailHash || item.phoneHash || item.customerDisplayName || item.emailPreview);
+
+  const loginEvents = eventIdentitySignals.filter((item) => resolveEventBucket(item.eventName) === 'login');
+  const latestIdentitySignal = [...eventIdentitySignals]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] || null;
 
   const [seedOrders, seedIdentityRows] = await Promise.all([
     prisma.order.findMany({
@@ -1905,14 +1942,17 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
     ...seedIdentityRows.map((item) => item.userKey),
   ]);
   const seedCustomerIds = collectUniqueStrings([
+    ...eventIdentitySignals.map((item) => item.customerId),
     ...seedOrders.map((item) => item.customerId),
     ...seedIdentityRows.map((item) => item.customerId),
   ]);
   const seedEmailHashes = collectUniqueStrings([
+    ...eventIdentitySignals.map((item) => item.emailHash),
     ...seedOrders.map((item) => item.emailHash),
     ...seedIdentityRows.map((item) => item.emailHash),
   ]);
   const seedPhoneHashes = collectUniqueStrings([
+    ...eventIdentitySignals.map((item) => item.phoneHash),
     ...seedOrders.map((item) => item.phoneHash),
     ...seedIdentityRows.map((item) => item.phoneHash),
   ]);
@@ -1992,7 +2032,9 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
 
   const resolvedCustomerDisplayName = historicalOrders
     .map((order) => extractOrderCustomerDisplayName(order.attributionSnapshot))
-    .find(Boolean) || null;
+    .find(Boolean)
+    || latestIdentitySignal?.customerDisplayName
+    || null;
 
   const profileDescriptor = buildIdentityProfileDescriptor({
     customerId: finalCustomerIds[0] || null,
@@ -2008,6 +2050,15 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
     emailHashes: finalEmailHashes,
     phoneHashes: finalPhoneHashes,
     profile: profileDescriptor,
+    identifiedUser: {
+      customerId: finalCustomerIds[0] || latestIdentitySignal?.customerId || null,
+      customerDisplayName: resolvedCustomerDisplayName,
+      emailPreview: latestIdentitySignal?.emailPreview || null,
+      phonePreview: latestIdentitySignal?.phonePreview || null,
+      loginCount: loginEvents.length,
+      lastLoginAt: loginEvents.length ? loginEvents[loginEvents.length - 1].createdAt : null,
+    },
+    loginEvents,
     sharedIdentityRows,
     historicalOrders,
   };
@@ -2472,6 +2523,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
       sessionId: session_id,
       sessionUserKey: session.userKey || null,
       checkoutTokens: Array.from(checkoutTokenSet),
+      sessionEvents: events,
     });
 
     console.info('[Analytics API] Session detail identity', {
@@ -2537,6 +2589,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
 
     const metrics = {
       totalEvents: events.length,
+      logins: 0,
       pageViews: 0,
       viewItem: 0,
       addToCart: 0,
@@ -2554,6 +2607,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
     const productMap = new Map();
     const timeline = events.map((event) => {
       const bucket = resolveEventBucket(event.eventName);
+      if (bucket === 'login') metrics.logins += 1;
       if (bucket === 'page_view') metrics.pageViews += 1;
       if (bucket === 'view_item') metrics.viewItem += 1;
       if (bucket === 'add_to_cart') metrics.addToCart += 1;
@@ -2607,6 +2661,9 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         currency: event.currency,
         utmSource: event?.rawPayload?.utm_source || null,
         utmCampaign: event?.rawPayload?.utm_campaign || null,
+        customerId: event?.rawPayload?.customer_id || null,
+        customerName: event?.rawPayload?.customer_name || null,
+        customerEmail: event?.rawPayload?.email || event?.rawPayload?.customer_email || null,
       };
     });
 
@@ -2673,6 +2730,8 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         relatedSessionCount: normalizedPeerSessions.length + 1,
         historicalOrderCount: identityContext.historicalOrders.length,
       },
+      identifiedUser: identityContext.identifiedUser,
+      loginEvents: identityContext.loginEvents,
       peers: normalizedPeerSessions.map((item) => {
         const counts = peerEventCounts.get(item.sessionId) || {};
         const durationSeconds = item.startedAt && item.lastEventAt
