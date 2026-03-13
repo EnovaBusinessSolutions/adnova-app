@@ -2707,4 +2707,80 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
   }
 });
 
+router.get('/:account_id/users/:userKey/timeline', async (req, res) => {
+  try {
+    const { account_id, userKey } = req.params;
+
+    // Fetch user identity data
+    const identity = await prisma.identityGraph.findFirst({
+      where: { accountId: account_id, userKey },
+      select: {
+        fbp: true,
+        fbc: true,
+        emailHash: true,
+        phoneHash: true,
+        fingerprintHash: true,
+        firstSeenAt: true,
+        lastSeenAt: true,
+        deviceCount: true,
+        confidenceScore: true,
+      },
+      orderBy: { lastSeenAt: 'desc' }
+    });
+
+    // Fetch all sessions for this user
+    const sessions = await prisma.session.findMany({
+      where: { accountId: account_id, userKey },
+      orderBy: { startedAt: 'desc' }
+    });
+
+    // Fetch all events for this user (max 1000 to prevent overload)
+    const events = await prisma.event.findMany({
+      where: { accountId: account_id, userKey },
+      orderBy: { createdAt: 'desc' },
+      take: 1000
+    });
+
+    // Fetch all orders for this user
+    const orders = await prisma.order.findMany({
+      where: { accountId: account_id, userKey },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Since customer name might be in order's attributionSnapshot, let's try to extract it
+    let customerName = null;
+    let customerEmailHash = identity?.emailHash || null;
+    let customerPhoneHash = identity?.phoneHash || null;
+
+    for (const order of orders) {
+       if (!customerName && order.attributionSnapshot && order.attributionSnapshot.customer_name) {
+           customerName = order.attributionSnapshot.customer_name;
+       }
+       if (!customerName && order.attributionSnapshot && order.attributionSnapshot.customer_first_name) {
+           customerName = order.attributionSnapshot.customer_first_name + (order.attributionSnapshot.customer_last_name ? ' ' + order.attributionSnapshot.customer_last_name : '');
+       }
+       if (order.emailHash && !customerEmailHash) customerEmailHash = order.emailHash;
+       if (order.phoneHash && !customerPhoneHash) customerPhoneHash = order.phoneHash;
+    }
+
+    res.json({
+      success: true,
+      user: {
+        userKey,
+        name: customerName,
+        emailHash: customerEmailHash,
+        phoneHash: customerPhoneHash,
+        identity
+      },
+      sessions,
+      events,
+      orders
+    });
+  } catch (error) {
+    console.error('[Analytics API] User timeline error:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 module.exports = router;
+

@@ -2573,7 +2573,7 @@
                     <tr class="border-b border-gray-100 align-top">
                         <td class="py-3 pr-4 text-gray-700 whitespace-nowrap">${date}</td>
                         <td class="py-3 pr-4 text-gray-900 font-medium">${orderId}</td>
-                        <td class="py-3 pr-4 text-gray-800">${customerName}</td>
+                        <td class="py-3 pr-4 text-indigo-600 cursor-pointer hover:underline" onclick="openUserExplorer('${p.userKey || ''}', '${customerName.replace(/'/g, "\\'")}')">${customerName}</td>
                         <td class="py-3 pr-4 text-indigo-600 font-semibold whitespace-nowrap">${revenue}</td>
                         <td class="py-3 pr-4 text-gray-700">${itemsText}${extraCount}</td>
                         <td class="py-3 pr-4 text-gray-700 whitespace-nowrap"${debugTitle}>${attrText}</td>
@@ -2834,6 +2834,150 @@
         // Start
         init();
 
+
+function openUserExplorer(userKey, fallbackName) {
+    if (!userKey) {
+        alert('No hay identificador de usuario (userKey) disponible para este registro.');
+        return;
+    }
+    
+    const backdrop = document.getElementById('user-explorer-backdrop');
+    const panel = document.getElementById('user-explorer-panel');
+    
+    backdrop.classList.remove('hidden');
+    setTimeout(() => { panel.classList.remove('translate-x-full'); panel.classList.add('translate-x-0'); }, 10);
+    
+    document.getElementById('ue-name').textContent = fallbackName && fallbackName !== '-' ? fallbackName : 'Cargando perfil...';
+    document.getElementById('ue-email').textContent = 'userKey: ' + userKey;
+    document.getElementById('ue-content').innerHTML = '<div class="flex justify-center items-center h-32"><svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg></div>';
+
+    fetch('/api/analytics/' + currentShopId + '/users/' + userKey + '/timeline')
+        .then(r => r.json())
+        .then(data => renderUserExplorer(data))
+        .catch(err => {
+            console.error(err);
+            document.getElementById('ue-content').innerHTML = '<p class="text-red-500">Error al cargar la cronolog�a.</p>';
+        });
+}
+
+function closeUserExplorer() {
+    const backdrop = document.getElementById('user-explorer-backdrop');
+    const panel = document.getElementById('user-explorer-panel');
+    
+    panel.classList.remove('translate-x-0');
+    panel.classList.add('translate-x-full');
+    setTimeout(() => { backdrop.classList.add('hidden'); }, 300);
+}
+
+function formatTimeMxShort(dateStr) {
+    if (!dateStr) return '-';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '-';
+    return new Intl.DateTimeFormat('es-MX', { 
+        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' 
+    }).format(d);
+}
+
+function renderUserExplorer(data) {
+    const { user, sessions = [], events = [], orders = [] } = data;
+    
+    if (user.name) document.getElementById('ue-name').textContent = user.name;
+    else document.getElementById('ue-name').textContent = 'Usuario An�nimo';
+    
+    document.getElementById('ue-email').textContent = (user.emailHash ? 'Email: ' + user.emailHash.substring(0,8) + '... | ' : '') + 'userKey: ' + user.userKey;
+
+    let html = '<div class="relative border-l-2 border-indigo-100 ml-3 space-y-8 pb-10">';
+    
+    const timeline = [];
+    
+    sessions.forEach(s => {
+        timeline.push({ type: 'session', time: new Date(s.startedAt), data: s });
+    });
+    events.forEach(e => {
+        timeline.push({ type: 'event', time: new Date(e.createdAt), data: e });
+    });
+    orders.forEach(o => {
+        timeline.push({ type: 'order', time: new Date(o.createdAt), data: o });
+    });
+    
+    timeline.sort((a,b) => b.time - a.time);
+    
+    if (timeline.length === 0) {
+        document.getElementById('ue-content').innerHTML = '<p class="text-gray-500">No hay eventos registrados para este usuario.</p>';
+        return;
+    }
+
+    timeline.forEach(item => {
+        const timeStr = formatTimeMxShort(item.time);
+        
+        if (item.type === 'session') {
+            const s = item.data;
+            html += '<div class="relative pl-6">' +
+                '<div class="absolute -left-2 top-1.5 p-1.5 rounded-full bg-blue-500 border-4 border-white shadow-sm ring-1 ring-blue-100"></div>' +
+                '<p class="text-xs text-blue-600 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Nueva Sesi�n</p>' +
+                '<div class="bg-blue-50/50 rounded-lg p-3 text-sm text-gray-700 border border-blue-100/50">' +
+                    '<p><strong>Origen:</strong> ' + (s.utmSource || s.referrer || '(direct)') + ' / ' + (s.utmMedium || '(none)') + '</p>' +
+                    (s.utmCampaign ? '<p><strong>Campa�a:</strong> ' + s.utmCampaign + '</p>' : '') +
+                    (s.landingPageUrl ? '<p class="truncate"><strong>Landing:</strong> ' + s.landingPageUrl + '</p>' : '') +
+                '</div>' +
+            '</div>';
+        } else if (item.type === 'order') {
+            const o = item.data;
+            const revStr = new Intl.NumberFormat('es-MX', { style: 'currency', currency: o.currency || 'MXN' }).format(Number(o.revenue || 0));
+            html += '<div class="relative pl-6">' +
+                '<div class="absolute -left-2 top-1.5 p-1.5 rounded-full bg-green-500 border-4 border-white shadow-sm ring-1 ring-green-100"></div>' +
+                '<p class="text-xs text-green-700 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Compra (' + revStr + ')</p>' +
+                '<div class="bg-green-50/80 rounded-lg p-3 text-sm text-gray-800 border border-green-200">' +
+                    '<p><strong>Pedido:</strong> #' + (o.orderNumber || o.orderId) + '</p>' +
+                    '<p><strong>Atribuci�n (�ltimo Clic):</strong> ' + (o.attributedChannel || 'unattributed') + '</p>' +
+                '</div>' +
+            '</div>';
+        } else if (item.type === 'event') {
+            const e = item.data;
+            if (e.eventName.match(/page_view/i)) return; // Skip standard page views
+            let evLabel = e.eventName;
+            let evClass = 'text-gray-500';
+            let evDot = 'bg-gray-300';
+            if (e.eventName === 'add_to_cart') { evLabel = 'Agreg� al carrito'; evClass = 'text-indigo-600 font-semibold'; evDot = 'bg-indigo-400'; }
+            if (e.eventName === 'begin_checkout') { evLabel = 'Inici� Checkout'; evClass = 'text-orange-600 font-semibold'; evDot = 'bg-orange-400'; }
+            
+            html += '<div class="relative pl-6">' +
+                '<div class="absolute -left-[5px] top-2 w-2.5 h-2.5 rounded-full ' + evDot + ' ring-4 ring-white"></div>' +
+                '<p class="text-xs ' + evClass + ' mb-1">' + timeStr + ' - ' + evLabel + '</p>' +
+            '</div>';
+        }
+    });
+    
+    html += '</div>';
+    document.getElementById('ue-content').innerHTML = html;
+}
+
     </script>
+    <!-- User Explorer Panel -->
+    <div id="user-explorer-backdrop" class="fixed inset-0 bg-gray-900 bg-opacity-50 transition-opacity hidden z-40 backdrop-blur-sm" onclick="closeUserExplorer()"></div>
+    <div id="user-explorer-panel" class="fixed inset-y-0 right-0 max-w-md w-full bg-white shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-50 flex flex-col pointer-events-auto">
+        <div class="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-white shadow-sm z-10">
+            <div>
+                <p class="text-xs font-bold text-indigo-500 uppercase tracking-widest mb-1">Recorrido del Cliente</p>
+                <h2 class="text-xl font-bold text-gray-900 leading-tight" id="ue-name">Cargando...</h2>
+                <p class="text-xs text-gray-500 mt-0.5 font-mono" id="ue-email">...</p>
+            </div>
+            <button onclick="closeUserExplorer()" class="text-gray-400 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 p-2 rounded-full focus:outline-none transition-colors">
+                <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-6 bg-white" id="ue-content">
+            <div class="flex justify-center items-center h-full">
+                <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
+
+
+
+
+
