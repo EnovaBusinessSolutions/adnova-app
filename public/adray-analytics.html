@@ -922,7 +922,7 @@
                         </div>
                         <div class="ml-5 w-0 flex-1">
                             <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">ÓÓrdenes sin atribución</dt>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Ó�rdenes sin atribución</dt>
                                 <dd class="flex items-baseline">
                                     <div class="text-2xl font-semibold text-gray-900" id="unattributed-orders">0</div>
                                 </dd>
@@ -967,7 +967,7 @@
                     <div class="flex items-center justify-between mb-4">
                         <div>
                             <p class="panel-kicker">Comercial</p>
-                            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Atribución por Canal</h3>
+                            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Atribuci�n por Canal</h3>
                         </div>
                         <span id="attribution-model-badge" class="text-xs text-gray-500">Modelo: last touch</span>
                     </div>
@@ -1028,7 +1028,7 @@
                     <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
                         <div class="flex items-center gap-2 flex-wrap">
                             <button id="session-peer-prev" type="button" class="session-toolbar-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
-                                <i class="fas fa-chevron-left mr-2"></i> Sesión previa
+                                <i class="fas fa-chevron-left mr-2"></i> Sesi�n previa
                             </button>
                             <button id="session-peer-next" type="button" class="session-toolbar-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
                                 Siguiente sesión <i class="fas fa-chevron-right ml-2"></i>
@@ -1071,13 +1071,13 @@
                             <div class="space-y-2 text-sm text-gray-600" id="session-detail-summary"></div>
                         </div>
                         <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">ÓÓrdenes del perfil</h4>
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Ó�rdenes del perfil</h4>
                             <div class="space-y-2 text-sm text-gray-600" id="session-detail-orders"></div>
                         </div>
                     </div>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Atribución y señales</h4>
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Atribuci�n y se�ales</h4>
                             <div class="space-y-2 text-sm text-gray-600" id="session-detail-attribution"></div>
                         </div>
                         <div class="session-summary-card rounded-xl p-4">
@@ -1156,7 +1156,7 @@
                             <p class="text-xl font-semibold text-gray-900" id="ph-purchase-signals">0</p>
                         </div>
                         <div class="bg-gray-50 rounded-lg p-3">
-                            <p class="text-xs text-gray-500">ÓÓrdenes matcheadas</p>
+                            <p class="text-xs text-gray-500">Ó�rdenes matcheadas</p>
                             <p class="text-xl font-semibold text-gray-900" id="ph-matched-orders">0</p>
                         </div>
                         <div class="bg-gray-50 rounded-lg p-3">
@@ -1183,7 +1183,7 @@
                         <div class="bg-gray-50 rounded-lg p-4">
                             <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Fallback Mode</div>
                             <div class="mt-2 text-lg font-semibold text-gray-900" id="dq-fallback-active">-</div>
-                            <div class="mt-1 text-sm text-gray-500">Indica si el dashboard está usando eventos por falta de óÓrdenes.</div>
+                            <div class="mt-1 text-sm text-gray-500">Indica si el dashboard está usando eventos por falta de ó�rdenes.</div>
                         </div>
                         <div class="bg-gray-50 rounded-lg p-4">
                             <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Snapshot Freshness</div>
@@ -1267,7 +1267,7 @@
                             <th class="py-2 pr-4">Usuario</th>
                             <th class="py-2 pr-4">Ingreso</th>
                             <th class="py-2 pr-4">Productos</th>
-                            <th class="py-2 pr-4">Atribución</th>
+                            <th class="py-2 pr-4">Atribuci�n</th>
                             <th class="py-2 pr-4">Fuente</th>
                             <th class="py-2 pr-4">Debug</th>
                         </tr>
@@ -1538,18 +1538,18 @@
             const topLandings = profiles.filter((item) => item.lastLandingPageUrl).slice(0, 4);
             const isWooStore = storePlatform === 'WOOCOMMERCE';
             const titleText = isWooStore
-                ? 'Perfiles WooCommerce detectados por óÓrdenes y sesiones web ligadas'
+                ? 'Perfiles WooCommerce detectados por ó�rdenes y sesiones web ligadas'
                 : 'Perfiles históricos y sesiones web ligadas';
             const viewDescription = isWooStore
                 ? 'estos chips representan perfiles WooCommerce enriquecidos con sesiones web cuando el pixel logra ligarlas.'
-                : 'estos chips representan perfiles históricos detectados desde sesiones web y señales de identidad.';
+                : 'estos chips representan perfiles históricos detectados desde sesiones web y se�ales de identidad.';
             const orderDescription = isWooStore
-                ? 'en WooCommerce priorizamos perfiles con óÓrdenes primero y luego la sesión web ligada más reciente.'
+                ? 'en WooCommerce priorizamos perfiles con ó�rdenes primero y luego la sesión web ligada más reciente.'
                 : 'el listado prioriza perfiles con sesión web reciente ligada y después el resto del historial.';
             const nameDescription = isWooStore
                 ? (resolvedCustomerNames > 0
-                    ? `${resolvedCustomerNames} perfiles Woo ya traen nombre legible guardado desde la sincronización de óÓrdenes.`
-                    : 'todavía no entran nombres legibles desde Woo en este corte; las óÓrdenes antiguas pueden requerir resincronización para reemplazar IDs técnicos.')
+                    ? `${resolvedCustomerNames} perfiles Woo ya traen nombre legible guardado desde la sincronización de ó�rdenes.`
+                    : 'todavía no entran nombres legibles desde Woo en este corte; las ó�rdenes antiguas pueden requerir resincronización para reemplazar IDs técnicos.')
                 : (shopifyNameLookupActive
                     ? `Shopify name lookup activo, ${resolvedCustomerNames} nombres resueltos en este corte.`
                     : 'no hay token Shopify utilizable para resolver displayName, por eso sólo se muestra el perfil técnico.');
@@ -1586,7 +1586,7 @@
             document.getElementById('session-detail-metrics').innerHTML = [
                 { label: 'Perfiles', value: summary.totalProfiles || 0 },
                 { label: 'Sesiones recientes', value: summary.totalSessions || 0 },
-                { label: 'ÓÓrdenes históricas', value: summary.totalOrders || 0 },
+                { label: 'Ó�rdenes históricas', value: summary.totalOrders || 0 },
                 { label: 'Revenue histórico', value: formatCurrency(summary.totalRevenue || 0) },
             ].map((item) => `
                 <div class="session-metric-card rounded-xl p-4">
@@ -1603,9 +1603,9 @@
                 <p><strong>Perfiles con compras:</strong> ${orderLedProfiles}</p>
                 <p><strong>Perfil más reciente:</strong> ${topProfile?.profileLabel || '-'}</p>
                 <p><strong>Última actividad:</strong> ${formatDateTimeMx(topProfile?.lastSeenAt)}</p>
-                <p><strong>Sesión recomendada:</strong> ${topProfile?.recentSessionId || '-'}</p>
+                <p><strong>Sesi�n recomendada:</strong> ${topProfile?.recentSessionId || '-'}</p>
                 <p><strong>Orden actual:</strong> ${orderDescription}</p>
-                <p><strong>Lectura:</strong> si ves "0 sesiones", la plataforma conoce ese cliente por óÓrdenes, pero el pixel todavía no lo amarró a una sesión web capturada.</p>
+                <p><strong>Lectura:</strong> si ves "0 sesiones", la plataforma conoce ese cliente por ó�rdenes, pero el pixel todavía no lo amarró a una sesión web capturada.</p>
                 <p><strong>Nombre del cliente:</strong> ${nameDescription}</p>
             `;
 
@@ -1615,7 +1615,7 @@
                         <div class="flex items-start justify-between gap-3">
                             <div>
                                 <p class="font-medium text-gray-900">${profile.profileLabel || 'Perfil histórico'}</p>
-                                <p class="text-sm text-gray-500">${profile.orderCount || 0} óÓrdenes · ${profile.sessionCount || 0} sesiones${Number(profile.sessionCount || 0) === 0 ? ' · sin sesión web ligada' : ''}</p>
+                                <p class="text-sm text-gray-500">${profile.orderCount || 0} ó�rdenes · ${profile.sessionCount || 0} sesiones${Number(profile.sessionCount || 0) === 0 ? ' · sin sesión web ligada' : ''}</p>
                                 <p class="text-xs text-gray-400">${profile.lastSeenAt ? formatDateTimeMx(profile.lastSeenAt) : 'Sin actividad reciente'}</p>
                             </div>
                             <div class="text-right">
@@ -1632,7 +1632,7 @@
                 <p><strong>Perfiles por email/hash:</strong> ${profiles.filter((item) => item.profileType === 'email_hash').length}</p>
                 <p><strong>Perfiles por teléfono/hash:</strong> ${profiles.filter((item) => item.profileType === 'phone_hash').length}</p>
                 <p><strong>Solo browser key:</strong> ${profiles.filter((item) => item.profileType === 'user_key').length}</p>
-                <p><strong>Señal útil:</strong> el backend ya mezcla sesiones, óÓrdenes e identidad guardada y adapta la lectura al tipo de tienda detectado.</p>
+                <p><strong>Señal útil:</strong> el backend ya mezcla sesiones, ó�rdenes e identidad guardada y adapta la lectura al tipo de tienda detectado.</p>
             `;
 
             document.getElementById('session-detail-journey').innerHTML = `
@@ -1643,7 +1643,7 @@
                         : '<p class="text-xs text-gray-500">Sin landings destacadas.</p>'}
                 </div>
                 <div>
-                    <p class="font-medium text-gray-900 mb-1">Campañas recientes</p>
+                    <p class="font-medium text-gray-900 mb-1">Campa�as recientes</p>
                     ${topCampaigns.length
                         ? topCampaigns.map((item) => `<p class="text-xs text-gray-600">${item.lastCampaign} · ${item.profileLabel}</p>`).join('')
                         : '<p class="text-xs text-gray-500">Sin campañas recurrentes.</p>'}
@@ -1655,7 +1655,7 @@
                     <div class="session-side-card rounded-xl p-4">
                         <p class="text-sm font-semibold text-gray-900">${profile.profileLabel || 'Perfil'}</p>
                         <p class="text-xs text-gray-500 mt-1">${profile.profileType || 'user_key'}</p>
-                        <p class="mt-3 text-sm text-gray-600">${profile.sessionCount || 0} sesiones · ${profile.orderCount || 0} óÓrdenes</p>
+                        <p class="mt-3 text-sm text-gray-600">${profile.sessionCount || 0} sesiones · ${profile.orderCount || 0} ó�rdenes</p>
                         <p class="text-sm text-indigo-600">${formatCurrency(profile.totalRevenue || 0)}</p>
                     </div>
                 `).join('')}</div>`
@@ -1667,12 +1667,12 @@
                     <p class="mt-1 text-sm text-gray-600">Empieza mostrando perfiles históricos y luego baja al detalle cuando eliges una sesión.</p>
                 </div>
                 <div class="session-pattern-item rounded-xl p-4">
-                    <p class="text-sm font-semibold text-gray-900">La identidad mezcla más señales</p>
+                    <p class="text-sm font-semibold text-gray-900">La identidad mezcla más se�ales</p>
                     <p class="mt-1 text-sm text-gray-600">Woo customer, email hash, phone hash y userKey ahora alimentan el contexto histórico.</p>
                 </div>
                 <div class="session-pattern-item rounded-xl p-4">
                     <p class="text-sm font-semibold text-gray-900">Uso recomendado</p>
-                    <p class="mt-1 text-sm text-gray-600">Abre primero un perfil con óÓrdenes, luego compara sesiones relacionadas para detectar fricción o intención real.</p>
+                    <p class="mt-1 text-sm text-gray-600">Abre primero un perfil con ó�rdenes, luego compara sesiones relacionadas para detectar fricción o intención real.</p>
                 </div>
             `;
 
@@ -1682,7 +1682,7 @@
                         <div class="flex items-center justify-between gap-4">
                             <div>
                                 <p class="font-medium text-gray-900">${profile.profileLabel || 'Perfil histórico'}</p>
-                                <p class="text-xs text-gray-500">${profile.sessionCount || 0} sesiones · ${profile.orderCount || 0} óÓrdenes</p>
+                                <p class="text-xs text-gray-500">${profile.sessionCount || 0} sesiones · ${profile.orderCount || 0} ó�rdenes</p>
                             </div>
                             <div class="text-right">
                                 <p class="text-sm text-gray-700">${formatDateTimeMx(profile.lastSeenAt)}</p>
@@ -1742,7 +1742,7 @@
             renderSessionComparison();
             document.getElementById('session-detail-metrics').innerHTML = '<div class="text-sm text-gray-500">Cargando métricas...</div>';
             document.getElementById('session-detail-summary').innerHTML = '<p>Cargando resumen...</p>';
-            document.getElementById('session-detail-orders').innerHTML = '<p>Cargando óÓrdenes...</p>';
+            document.getElementById('session-detail-orders').innerHTML = '<p>Cargando ó�rdenes...</p>';
             document.getElementById('session-detail-attribution').innerHTML = '<p>Cargando atribución...</p>';
             document.getElementById('session-detail-journey').innerHTML = '<p>Cargando path...</p>';
             document.getElementById('session-detail-visual').innerHTML = '<p class="text-sm text-gray-500">Construyendo diagrama...</p>';
@@ -1801,7 +1801,7 @@
                 { label: 'Revenue', value: formatCurrency(metrics.revenue || 0) },
                 { label: 'Páginas únicas', value: metrics.uniquePages || 0 },
                 { label: 'Productos únicos', value: metrics.uniqueProducts || 0 },
-                { label: 'ÓÓrdenes', value: metrics.orderCount || 0 },
+                { label: 'Ó�rdenes', value: metrics.orderCount || 0 },
             ].map((item) => `
                 <div class="session-metric-card rounded-xl p-4">
                     <div class="text-xs uppercase tracking-wide text-gray-500">${item.label}</div>
@@ -1822,13 +1822,13 @@
                 <p><strong>Funnel:</strong> PV ${metrics.pageViews || 0} · VI ${metrics.viewItem || 0} · ATC ${metrics.addToCart || 0} · BC ${metrics.beginCheckout || 0} · P ${metrics.purchase || 0}</p>
                 <p><strong>Otras sesiones del mismo usuario:</strong> ${patterns.peerSessionCount || 0}</p>
                 <p><strong>Sesiones trazadas totales:</strong> ${patterns.totalTrackedSessions || ((patterns.peerSessionCount || 0) + 1)}</p>
-                <p><strong>ÓÓrdenes históricas del perfil:</strong> ${profile.historicalOrderCount || 0}</p>
+                <p><strong>Ó�rdenes históricas del perfil:</strong> ${profile.historicalOrderCount || 0}</p>
             `;
 
             document.getElementById('session-detail-attribution').innerHTML = `
                 <p><strong>Canal:</strong> ${journey.attribution?.channel || 'unattributed'}</p>
                 <p><strong>Plataforma:</strong> ${journey.attribution?.platform || '-'}</p>
-                <p><strong>Campaña:</strong> ${journey.attribution?.campaign || '-'}</p>
+                <p><strong>Campa�a:</strong> ${journey.attribution?.campaign || '-'}</p>
                 <p><strong>Click ID:</strong> ${journey.attribution?.clickId || '-'}</p>
                 <p><strong>Confianza:</strong> ${formatPercent(journey.attribution?.confidence || 0)}</p>
                 <p><strong>Fuente:</strong> ${journey.attribution?.source || 'none'}</p>
@@ -1874,7 +1874,7 @@
                         </div>
                     </div>
                 `).join('')
-                : '<p class="text-gray-500">Sin óÓrdenes ligadas a este perfil.</p>';
+                : '<p class="text-gray-500">Sin ó�rdenes ligadas a este perfil.</p>';
 
             renderSessionTimelineFromState();
         }
@@ -1896,7 +1896,7 @@
                     <button type="button" data-session-id="${profile.recentSessionId || ''}" class="session-peer-pill historical-profile-chip inline-flex items-center gap-2 px-3 py-2 rounded-full text-sm text-gray-700 ${profile.recentSessionId ? '' : 'opacity-60 cursor-not-allowed'}" ${profile.recentSessionId ? '' : 'disabled'}>
                         <span class="font-semibold">${profile.profileLabel || 'Perfil histórico'}</span>
                         <span class="text-xs text-gray-500">${profile.sessionCount || 0} sesiones</span>
-                        <span class="text-xs text-gray-400">${profile.orderCount || 0} óÓrdenes</span>
+                        <span class="text-xs text-gray-400">${profile.orderCount || 0} ó�rdenes</span>
                     </button>
                 `).join('');
 
@@ -1908,7 +1908,7 @@
                 });
 
                 const note = document.getElementById('session-compare-recommended-note');
-                if (note) note.textContent = 'Estos chips son perfiles históricos. Si alguno muestra 0 sesiones, Woo lo identificó por óÓrdenes pero el pixel aún no ligó navegación web a ese cliente.';
+                if (note) note.textContent = 'Estos chips son perfiles históricos. Si alguno muestra 0 sesiones, Woo lo identificó por ó�rdenes pero el pixel aún no ligó navegación web a ese cliente.';
                 return;
             }
 
@@ -2037,7 +2037,7 @@
                         </div>
                     </div>
                 `).join('')
-                : '<p class="text-gray-500">No hay eventos para ese filtro.</p>';
+                : '<p class="text-gray-400">No hay eventos para ese filtro.</p>';
         }
 
         async function fetchSessionDetailData(sessionId) {
@@ -2288,7 +2288,7 @@
                         </div>
                     </div>
                     <div class="session-side-card rounded-xl p-4">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Campañas frecuentes</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Campa�as frecuentes</p>
                         <div class="mt-2 space-y-1 text-sm text-gray-600">
                             ${topCampaigns.length
                                 ? topCampaigns.map((item) => `<p>${item.campaign} · ${item.sessions} sesiones</p>`).join('')
@@ -2884,11 +2884,11 @@ function renderUserExplorer(data) {
     const { user, sessions = [], events = [], orders = [] } = data;
     
     if (user.name) document.getElementById('ue-name').textContent = user.name;
-    else document.getElementById('ue-name').textContent = 'Usuario Anónimo';
+    else document.getElementById('ue-name').textContent = 'Usuario An�nimo';
     
     document.getElementById('ue-email').textContent = (user.emailHash ? 'Email: ' + user.emailHash.substring(0,8) + '... | ' : '') + 'userKey: ' + user.userKey;
 
-    let html = '<div class="relative border-l-2 border-indigo-100 ml-3 space-y-8 pb-10">';
+    let html = '<div class="relative border-l-2 border-purple-900/40 ml-3 space-y-8 pb-10">';
     
     const timeline = [];
     
@@ -2905,7 +2905,7 @@ function renderUserExplorer(data) {
     timeline.sort((a,b) => b.time - a.time);
     
     if (timeline.length === 0) {
-        document.getElementById('ue-content').innerHTML = '<p class="text-gray-500">No hay eventos registrados para este usuario.</p>';
+        document.getElementById('ue-content').innerHTML = '<p class="text-gray-400">No hay eventos registrados para este usuario.</p>';
         return;
     }
 
@@ -2915,11 +2915,11 @@ function renderUserExplorer(data) {
         if (item.type === 'session') {
             const s = item.data;
             html += '<div class="relative pl-6">' +
-                '<div class="absolute -left-2 top-1.5 p-1.5 rounded-full bg-blue-500 border-4 border-white shadow-sm ring-1 ring-blue-100"></div>' +
-                '<p class="text-xs text-blue-600 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Nueva Sesión</p>' +
-                '<div class="bg-blue-50/50 rounded-lg p-3 text-sm text-gray-700 border border-blue-100/50">' +
+                '<div class="absolute -left-2 top-1.5 p-1.5 rounded-full bg-blue-500/90 border-4 border-[#0a0711] shadow-sm ring-1 ring-blue-900/50"></div>' +
+                '<p class="text-xs text-blue-400 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Nueva Sesi�n</p>' +
+                '<div class="bg-blue-900/20 rounded-lg p-3 text-sm text-blue-100 border border-blue-800/30">' +
                     '<p><strong>Origen:</strong> ' + (s.utmSource || s.referrer || '(direct)') + ' / ' + (s.utmMedium || '(none)') + '</p>' +
-                    (s.utmCampaign ? '<p><strong>Campaña:</strong> ' + s.utmCampaign + '</p>' : '') +
+                    (s.utmCampaign ? '<p><strong>Campa�a:</strong> ' + s.utmCampaign + '</p>' : '') +
                     (s.landingPageUrl ? '<p class="truncate"><strong>Landing:</strong> ' + s.landingPageUrl + '</p>' : '') +
                 '</div>' +
             '</div>';
@@ -2927,24 +2927,24 @@ function renderUserExplorer(data) {
             const o = item.data;
             const revStr = new Intl.NumberFormat('es-MX', { style: 'currency', currency: o.currency || 'MXN' }).format(Number(o.revenue || 0));
             html += '<div class="relative pl-6">' +
-                '<div class="absolute -left-2 top-1.5 p-1.5 rounded-full bg-green-500 border-4 border-white shadow-sm ring-1 ring-green-100"></div>' +
-                '<p class="text-xs text-green-700 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Compra (' + revStr + ')</p>' +
-                '<div class="bg-green-50/80 rounded-lg p-3 text-sm text-gray-800 border border-green-200">' +
+                '<div class="absolute -left-2 top-1.5 p-1.5 rounded-full bg-emerald-500/90 border-4 border-[#0a0711] shadow-sm ring-1 ring-emerald-900/50"></div>' +
+                '<p class="text-xs text-emerald-400 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Compra (' + revStr + ')</p>' +
+                '<div class="bg-emerald-900/20 rounded-lg p-3 text-sm text-emerald-100 border border-emerald-800/30">' +
                     '<p><strong>Pedido:</strong> #' + (o.orderNumber || o.orderId) + '</p>' +
-                    '<p><strong>Atribución (Último Clic):</strong> ' + (o.attributedChannel || 'unattributed') + '</p>' +
+                    '<p><strong>Atribuci�n (�ltimo Clic):</strong> ' + (o.attributedChannel || 'unattributed') + '</p>' +
                 '</div>' +
             '</div>';
         } else if (item.type === 'event') {
             const e = item.data;
             if (e.eventName.match(/page_view/i)) return; // Skip standard page views
             let evLabel = e.eventName;
-            let evClass = 'text-gray-500';
-            let evDot = 'bg-gray-300';
-            if (e.eventName === 'add_to_cart') { evLabel = 'Agregó al carrito'; evClass = 'text-indigo-600 font-semibold'; evDot = 'bg-indigo-400'; }
-            if (e.eventName === 'begin_checkout') { evLabel = 'Inició Checkout'; evClass = 'text-orange-600 font-semibold'; evDot = 'bg-orange-400'; }
+            let evClass = 'text-gray-400';
+            let evDot = 'bg-gray-700';
+            if (e.eventName === 'add_to_cart') { evLabel = 'Agreg� al carrito'; evClass = 'text-indigo-400 font-semibold'; evDot = 'bg-indigo-500/80'; }
+            if (e.eventName === 'begin_checkout') { evLabel = 'Inici� Checkout'; evClass = 'text-amber-400 font-semibold'; evDot = 'bg-amber-500/80'; }
             
             html += '<div class="relative pl-6">' +
-                '<div class="absolute -left-[5px] top-2 w-2.5 h-2.5 rounded-full ' + evDot + ' ring-4 ring-white"></div>' +
+                '<div class="absolute -left-[5px] top-2 w-2.5 h-2.5 rounded-full ' + evDot + ' ring-4 ring-[#0a0711]"></div>' +
                 '<p class="text-xs ' + evClass + ' mb-1">' + timeStr + ' - ' + evLabel + '</p>' +
             '</div>';
         }
@@ -2956,21 +2956,21 @@ function renderUserExplorer(data) {
 
     </script>
     <!-- User Explorer Panel -->
-    <div id="user-explorer-backdrop" class="fixed inset-0 bg-gray-900 bg-opacity-50 transition-opacity hidden z-40 backdrop-blur-sm" onclick="closeUserExplorer()"></div>
-    <div id="user-explorer-panel" class="fixed inset-y-0 right-0 max-w-md w-full bg-white shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-50 flex flex-col pointer-events-auto">
-        <div class="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-white shadow-sm z-10">
+    <div id="user-explorer-backdrop" class="fixed inset-0 bg-black/80 transition-opacity hidden z-40 backdrop-blur-md" onclick="closeUserExplorer()"></div>
+    <div id="user-explorer-panel" class="fixed inset-y-0 right-0 max-w-md w-full border-l border-purple-900/30 transform shadow-2xl translate-x-full transition-transform duration-300 ease-in-out z-50 flex flex-col pointer-events-auto bg-[#0a0711] text-gray-200 bg-[#0a0711] text-gray-200">
+        <div class="px-6 py-5 border-b border-purple-900/30 flex justify-between items-center bg-[#0a0711] shadow-xl z-10">
             <div>
-                <p class="text-xs font-bold text-indigo-500 uppercase tracking-widest mb-1">Recorrido del Cliente</p>
-                <h2 class="text-xl font-bold text-gray-900 leading-tight" id="ue-name">Cargando...</h2>
-                <p class="text-xs text-gray-500 mt-0.5 font-mono" id="ue-email">...</p>
+                <p class="text-xs font-semibold text-purple-400 uppercase tracking-widest mb-1 shadow-sm">Recorrido del Cliente</p>
+                <h2 class="text-xl font-bold text-gray-50 leading-tight" id="ue-name">Cargando...</h2>
+                <p class="text-xs text-gray-400 mt-0.5 font-mono" id="ue-email">...</p>
             </div>
-            <button onclick="closeUserExplorer()" class="text-gray-400 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 p-2 rounded-full focus:outline-none transition-colors">
+            <button onclick="closeUserExplorer()" class="text-gray-400 hover:text-gray-200 bg-white/5 hover:bg-white/10 p-2 rounded-full focus:outline-none transition-colors">
                 <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
             </button>
         </div>
-        <div class="flex-1 overflow-y-auto p-6 bg-white" id="ue-content">
+        <div class="flex-1 overflow-y-auto p-6 bg-[#0a0711]" id="ue-content">
             <div class="flex justify-center items-center h-full">
                 <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
             </div>
