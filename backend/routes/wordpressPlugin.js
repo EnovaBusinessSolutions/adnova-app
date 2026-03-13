@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const archiver = require('archiver');
 
 const router = express.Router();
 
@@ -18,11 +19,47 @@ function getPluginVersion() {
   }
 }
 
+function getLatestPluginMtime(dirPath) {
+  let latest = 0;
+
+  function walk(currentPath) {
+    const entries = fs.readdirSync(currentPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = path.join(currentPath, entry.name);
+      const stat = fs.statSync(entryPath);
+      latest = Math.max(latest, stat.mtimeMs);
+      if (entry.isDirectory()) {
+        walk(entryPath);
+      }
+    }
+  }
+
+  try {
+    walk(dirPath);
+  } catch (_) {
+    return new Date().toISOString();
+  }
+
+  return new Date(latest || Date.now()).toISOString();
+}
+
+function streamPluginZip(res) {
+  return new Promise((resolve, reject) => {
+    const archive = archiver('zip', { zlib: { level: 9 } });
+
+    archive.on('error', reject);
+    archive.on('end', resolve);
+
+    res.on('close', resolve);
+    archive.pipe(res);
+    archive.directory(pluginDir, 'adnova-pixel');
+    archive.finalize();
+  });
+}
+
 router.get('/adnova-pixel/update.json', (_req, res) => {
   const version = getPluginVersion();
-  const lastUpdated = fs.existsSync(pluginZipFile)
-    ? fs.statSync(pluginZipFile).mtime.toISOString()
-    : new Date().toISOString();
+  const lastUpdated = getLatestPluginMtime(pluginDir);
 
   res.json({
     name: 'Adnova Pixel',
@@ -44,20 +81,26 @@ router.get('/adnova-pixel/update.json', (_req, res) => {
 });
 
 router.get('/adnova-pixel/download/adnova-pixel.zip', (_req, res) => {
-  if (!fs.existsSync(pluginZipFile)) {
-    return res.status(404).json({ error: 'Plugin ZIP not found' });
-  }
-
-  return res.download(pluginZipFile, 'adnova-pixel.zip');
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', 'attachment; filename="adnova-pixel.zip"');
+  streamPluginZip(res).catch((error) => {
+    console.error('[WordPress plugin] Failed to stream plugin ZIP:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to generate plugin ZIP' });
+    }
+  });
 });
 
 // Alias for backward compatibility
 router.get('/adnova-pixel/download', (_req, res) => {
-  if (!fs.existsSync(pluginZipFile)) {
-    return res.status(404).json({ error: 'Plugin ZIP not found' });
-  }
-
-  return res.download(pluginZipFile, 'adnova-pixel.zip');
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', 'attachment; filename="adnova-pixel.zip"');
+  streamPluginZip(res).catch((error) => {
+    console.error('[WordPress plugin] Failed to stream plugin ZIP:', error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Failed to generate plugin ZIP' });
+    }
+  });
 });
 
 module.exports = router;

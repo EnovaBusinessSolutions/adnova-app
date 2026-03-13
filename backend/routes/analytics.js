@@ -2064,6 +2064,143 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
   };
 }
 
+router.get('/:account_id/wordpress-users-online', async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const windowMinutes = Math.max(5, Math.min(180, Number.parseInt(String(req.query.window_minutes || '30'), 10) || 30));
+    const limit = Math.max(5, Math.min(50, Number.parseInt(String(req.query.limit || '20'), 10) || 20));
+    const since = new Date(Date.now() - windowMinutes * 60 * 1000);
+    const loginAliases = EVENT_BUCKET_ALIASES.login.map((name) => normalizeEventName(name));
+
+    const recentEvents = await prisma.event.findMany({
+      where: {
+        accountId: account_id,
+        platform: { in: ['woocommerce', 'WOOCOMMERCE'] },
+        createdAt: { gte: since },
+      },
+      select: {
+        eventName: true,
+        createdAt: true,
+        sessionId: true,
+        userKey: true,
+        rawPayload: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    });
+
+    const loginEvents = recentEvents.filter((event) => loginAliases.includes(normalizeEventName(event.eventName)));
+    const sessionIds = collectUniqueStrings(loginEvents.map((event) => event.sessionId));
+
+    const activeSessions = sessionIds.length
+      ? await prisma.session.findMany({
+          where: {
+            accountId: account_id,
+            sessionId: { in: sessionIds },
+            lastEventAt: { gte: since },
+          },
+          select: {
+            sessionId: true,
+            lastEventAt: true,
+          },
+        })
+      : [];
+
+    const activeSessionMap = new Map(activeSessions.map((item) => [item.sessionId, item.lastEventAt]));
+    const userMap = new Map();
+
+    for (const event of loginEvents) {
+      const identity = extractEventIdentity(event.rawPayload || {});
+      const dedupKey = identity.customerId
+        ? `customer:${identity.customerId}`
+        : identity.emailHash
+          ? `email:${identity.emailHash}`
+          : identity.phoneHash
+            ? `phone:${identity.phoneHash}`
+            : event.userKey
+              ? `user:${event.userKey}`
+              : null;
+
+      if (!dedupKey) continue;
+
+      const existing = userMap.get(dedupKey) || {
+        id: dedupKey,
+        customerId: identity.customerId || null,
+        customerName: identity.customerDisplayName || null,
+        emailPreview: identity.emailPreview || null,
+        phonePreview: identity.phonePreview || null,
+        lastLoginAt: null,
+        lastSeenAt: null,
+        sessionIds: new Set(),
+        source: 'user_logged_in',
+      };
+
+      const loginAt = event.createdAt ? new Date(event.createdAt) : null;
+      const sessionSeenAt = event.sessionId ? activeSessionMap.get(event.sessionId) : null;
+      const seenAt = sessionSeenAt || loginAt;
+
+      if (loginAt && (!existing.lastLoginAt || loginAt > existing.lastLoginAt)) {
+        existing.lastLoginAt = loginAt;
+      }
+      if (seenAt && (!existing.lastSeenAt || seenAt > existing.lastSeenAt)) {
+        existing.lastSeenAt = seenAt;
+      }
+      if (event.sessionId) {
+        existing.sessionIds.add(event.sessionId);
+      }
+
+      if (!existing.customerName && identity.customerDisplayName) {
+        existing.customerName = identity.customerDisplayName;
+      }
+      if (!existing.customerId && identity.customerId) {
+        existing.customerId = identity.customerId;
+      }
+      if (!existing.emailPreview && identity.emailPreview) {
+        existing.emailPreview = identity.emailPreview;
+      }
+      if (!existing.phonePreview && identity.phonePreview) {
+        existing.phonePreview = identity.phonePreview;
+      }
+
+      userMap.set(dedupKey, existing);
+    }
+
+    const users = Array.from(userMap.values())
+      .map((item) => ({
+        id: item.id,
+        customerId: item.customerId,
+        customerName: item.customerName,
+        emailPreview: item.emailPreview,
+        phonePreview: item.phonePreview,
+        sessionCount: item.sessionIds.size,
+        sessionIds: Array.from(item.sessionIds),
+        lastLoginAt: item.lastLoginAt ? item.lastLoginAt.toISOString() : null,
+        lastSeenAt: item.lastSeenAt ? item.lastSeenAt.toISOString() : null,
+        source: item.source,
+      }))
+      .sort((a, b) => {
+        const aTs = a.lastSeenAt ? new Date(a.lastSeenAt).getTime() : 0;
+        const bTs = b.lastSeenAt ? new Date(b.lastSeenAt).getTime() : 0;
+        return bTs - aTs;
+      })
+      .slice(0, limit);
+
+    return res.json({
+      success: true,
+      accountId: account_id,
+      windowMinutes,
+      users,
+      totalUsers: users.length,
+      message: users.length
+        ? `Se detectaron ${users.length} usuarios WordPress activos en la ventana reciente.`
+        : 'No se detectaron usuarios WordPress conectados en la ventana reciente.',
+    });
+  } catch (error) {
+    console.error('[Analytics API] WordPress users online error:', error);
+    return res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 router.get('/:account_id/session-explorer', async (req, res) => {
   try {
     const { account_id } = req.params;

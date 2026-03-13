@@ -1042,6 +1042,14 @@
                             En vivo
                         </span>
                     </div>
+                    <div class="px-4 py-3 border-b border-gray-200 bg-gray-50" id="wp-online-card">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Usuarios WordPress conectados ahora</p>
+                            <span id="wp-online-count" class="text-xs font-semibold text-indigo-600">0</span>
+                        </div>
+                        <p id="wp-online-status" class="text-xs text-gray-500">Cargando estado de conexión...</p>
+                        <div id="wp-online-list" class="mt-2 space-y-2"></div>
+                    </div>
                     <div class="flex-1 overflow-y-auto p-4 space-y-4" id="feed-container">
                         <!-- Feed items will be injected here -->
                         <div class="text-center text-gray-400 text-sm py-8" id="feed-placeholder">
@@ -1333,6 +1341,7 @@
         let recentPurchasesState = [];
         let metricCarouselIndex = 0;
         let metricCarouselVisible = 4;
+        let wpUsersPollTimer = null;
         let sessionExplorerState = {
             mode: 'overview',
             overview: null,
@@ -1450,6 +1459,7 @@
                 // Load data immediately
                 await fetchAnalytics();
                 connectLiveFeed();
+                startWordPressUsersPolling();
                 return;
             }
 
@@ -1473,10 +1483,87 @@
 
                 // Connect SSE
                 connectLiveFeed();
+                startWordPressUsersPolling();
 
             } catch (error) {
                 console.error('Session check failed:', error);
                 alert('No se pudo validar sesion. Usa ?shop=tu_shop_id para modo publico.');
+            }
+        }
+
+        function startWordPressUsersPolling() {
+            if (!currentShopId) return;
+            if (wpUsersPollTimer) {
+                clearInterval(wpUsersPollTimer);
+            }
+            fetchWordPressUsersOnline();
+            wpUsersPollTimer = setInterval(fetchWordPressUsersOnline, 30000);
+        }
+
+        function renderWordPressUsersOnlineState({ countText, statusText, statusClass, users = [] }) {
+            const countEl = document.getElementById('wp-online-count');
+            const statusEl = document.getElementById('wp-online-status');
+            const listEl = document.getElementById('wp-online-list');
+            if (!countEl || !statusEl || !listEl) return;
+
+            countEl.textContent = countText;
+            statusEl.className = `text-xs ${statusClass}`;
+            statusEl.textContent = statusText;
+
+            if (!users.length) {
+                listEl.innerHTML = '';
+                return;
+            }
+
+            listEl.innerHTML = users.map((user) => {
+                const displayName = user.customerName || (user.customerId ? `Cliente #${user.customerId}` : 'Usuario sin nombre');
+                const secondary = user.emailPreview || user.phonePreview || `ID: ${user.id}`;
+                const seenAt = user.lastSeenAt ? formatTimeMx(user.lastSeenAt) : '-';
+                const sessionText = Number(user.sessionCount || 0) > 0 ? `${user.sessionCount} sesión(es)` : 'Sin sesión ligada';
+
+                return `
+                    <div class="rounded-lg border border-gray-200 bg-white/50 px-3 py-2">
+                        <p class="text-xs font-semibold text-gray-900 truncate">${displayName}</p>
+                        <p class="text-[11px] text-gray-500 truncate">${secondary}</p>
+                        <p class="text-[11px] text-indigo-600 mt-1">${sessionText} · Última actividad ${seenAt}</p>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function fetchWordPressUsersOnline() {
+            if (!currentShopId) return;
+
+            try {
+                const res = await fetch(`/api/analytics/${currentShopId}/wordpress-users-online?window_minutes=30&limit=6`);
+                if (!res.ok) throw new Error(`status_${res.status}`);
+                const data = await res.json();
+                const users = Array.isArray(data?.users) ? data.users : [];
+
+                if (!users.length) {
+                    renderWordPressUsersOnlineState({
+                        countText: '0',
+                        statusText: 'No hay usuarios WordPress conectados en los últimos 30 min.',
+                        statusClass: 'text-gray-500',
+                        users: [],
+                    });
+                    return;
+                }
+
+                renderWordPressUsersOnlineState({
+                    countText: String(users.length),
+                    statusText: 'Conexión activa detectada desde eventos de login y sesiones recientes.',
+                    statusClass: 'text-emerald-600',
+                    users,
+                });
+            } catch (error) {
+                console.error('[WP Online Users] Error:', error);
+                renderWordPressUsersOnlineState({
+                    countText: '!',
+                    statusText: 'No se pudo consultar usuarios conectados. Revisa /collect o la API de analytics.',
+                    statusClass: 'text-rose-600',
+                    users: [],
+                });
             }
         }
 
@@ -2794,7 +2881,7 @@
                 if (data.type === 'COLLECT') {
                     icon = 'fa-mouse-pointer';
                     color = 'text-blue-500';
-                    title = data.payload.eventName;
+                    title = data.payload.eventName || data.payload.event_name || 'collect_event';
                     detail = data.payload.pageUrl ? new URL(data.payload.pageUrl).pathname : '';
                 } else if (data.type === 'WEBHOOK') {
                     icon = 'fa-server';
@@ -2823,6 +2910,13 @@
                 }
 
                 container.prepend(el);
+
+                if (data.type === 'COLLECT') {
+                    const eventName = String(data.payload?.eventName || data.payload?.event_name || '').toLowerCase();
+                    if (eventName === 'user_logged_in' || eventName === 'user_login' || eventName === 'login') {
+                        fetchWordPressUsersOnline();
+                    }
+                }
 
                 // Limit feed size
                 if (container.children.length > 50) {

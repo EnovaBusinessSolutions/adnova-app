@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.1.6
+ * Version: 1.1.7
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.1.6';
+    const VERSION = '1.1.7';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_BACKFILL_DONE = 'adnova_pixel_backfill_done';
@@ -135,11 +135,18 @@ final class Adnova_Pixel_Plugin {
         $update->requires = isset($metadata['requires']) ? $metadata['requires'] : '';
         $update->requires_php = isset($metadata['requires_php']) ? $metadata['requires_php'] : '';
 
-        if (!isset($transient->response) || !is_array($transient->response)) {
-            $transient->response = array();
+        if (!isset($transient->response) || !is_object($transient->response)) {
+            $transient->response = new stdClass();
+        }
+        if (!isset($transient->no_update) || !is_object($transient->no_update)) {
+            $transient->no_update = new stdClass();
         }
 
-        $transient->response[$plugin_file] = $update;
+        $transient->response->{$plugin_file} = $update;
+        if (isset($transient->no_update->{$plugin_file})) {
+            unset($transient->no_update->{$plugin_file});
+        }
+
         return $transient;
     }
 
