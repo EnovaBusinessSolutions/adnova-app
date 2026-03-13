@@ -15,7 +15,6 @@ function walk(dir, out = []) {
 }
 
 function pickPkg(spec) {
-  // ignora relativos
   if (!spec || spec.startsWith('.') || spec.startsWith('/')) return null;
   // convierte @scope/pkg/subpath => @scope/pkg
   if (spec.startsWith('@')) {

@@ -128,9 +128,58 @@ async function getOrders(shop, accessToken, limit = 50) {
   return data.data.orders.edges.map(e => e.node);
 }
 
+async function getCustomerDisplayNames(shop, accessToken, customerIds = []) {
+  const normalizedIds = Array.from(new Set(
+    (Array.isArray(customerIds) ? customerIds : [])
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+  ));
+
+  if (!normalizedIds.length) return {};
+
+  const ids = normalizedIds.map((id) => `gid://shopify/Customer/${id}`);
+  const query = `
+    query GetCustomerDisplayNames($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on Customer {
+          id
+          displayName
+          firstName
+          lastName
+          email
+        }
+      }
+    }
+  `;
+
+  const { data } = await shopifyGraphQL(shop, accessToken).post('', {
+    query,
+    variables: { ids }
+  });
+
+  const nodes = Array.isArray(data?.data?.nodes) ? data.data.nodes : [];
+  const result = {};
+  nodes.forEach((node) => {
+    if (!node?.id) return;
+    const numericId = String(node.id).split('/').pop();
+    const label = String(
+      node.displayName ||
+      [node.firstName, node.lastName].filter(Boolean).join(' ').trim() ||
+      node.email ||
+      ''
+    ).trim();
+    if (numericId && label) {
+      result[numericId] = label;
+    }
+  });
+
+  return result;
+}
+
 module.exports = {
   getShopInfo,
   getProducts,
   getCustomers,
   getOrders,
+  getCustomerDisplayNames,
 };
