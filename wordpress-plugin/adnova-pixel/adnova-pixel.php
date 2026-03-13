@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.1.5
+ * Version: 1.1.6
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.1.5';
+    const VERSION = '1.1.6';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_BACKFILL_DONE = 'adnova_pixel_backfill_done';
@@ -39,6 +39,7 @@ final class Adnova_Pixel_Plugin {
         add_action('woocommerce_order_status_processing', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         add_action('woocommerce_order_status_completed', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         add_action('woocommerce_checkout_update_order_meta', array(__CLASS__, 'save_pixel_cookies_to_order'), 10, 1);
+        add_action('wp_login', array(__CLASS__, 'track_wp_login_event'), 10, 2);
         add_action('wp_footer', array(__CLASS__, 'inject_logged_in_customer_context'), 20);
         // Fallback for custom checkout flows/themes where woocommerce_thankyou is bypassed.
         add_action('wp_footer', array(__CLASS__, 'maybe_track_woo_order_received_fallback'), 1000);
@@ -477,6 +478,54 @@ final class Adnova_Pixel_Plugin {
             }
             $order->save();
         }
+    }
+
+    public static function track_wp_login_event($user_login, $user) {
+        if (!$user || !($user instanceof WP_User)) {
+            return;
+        }
+
+        // Ignore admin/editor logins; we only care about storefront customer identity stitching.
+        $roles = is_array($user->roles) ? $user->roles : array();
+        if (!in_array('customer', $roles, true)) {
+            return;
+        }
+
+        $session_id = null;
+        if (isset($_COOKIE['__adray_session_id'])) {
+            $session_id = sanitize_text_field(wp_unslash($_COOKIE['__adray_session_id']));
+        }
+
+        $first_name = sanitize_text_field((string) get_user_meta($user->ID, 'first_name', true));
+        $last_name = sanitize_text_field((string) get_user_meta($user->ID, 'last_name', true));
+        $phone = sanitize_text_field((string) get_user_meta($user->ID, 'billing_phone', true));
+        $company = sanitize_text_field((string) get_user_meta($user->ID, 'billing_company', true));
+        $email = sanitize_email((string) $user->user_email);
+        $full_name = trim($first_name . ' ' . $last_name);
+
+        if ($full_name === '') {
+            $full_name = sanitize_text_field((string) $user->display_name);
+        }
+
+        $page_url = home_url('/mi-cuenta/');
+        $referer = wp_get_referer();
+        if (is_string($referer) && $referer !== '') {
+            $page_url = esc_url_raw($referer);
+        }
+
+        self::send_server_side_event('user_logged_in', array(
+            'session_id' => $session_id,
+            'customer_id' => (string) $user->ID,
+            'email' => $email !== '' ? $email : null,
+            'phone' => $phone !== '' ? $phone : null,
+            'customer_name' => $full_name !== '' ? $full_name : null,
+            'customer_first_name' => $first_name !== '' ? $first_name : null,
+            'customer_last_name' => $last_name !== '' ? $last_name : null,
+            'billing_company' => $company !== '' ? $company : null,
+            'page_type' => 'account',
+            'page_url' => $page_url,
+            'login_detected_from' => 'wp_login_hook',
+        ));
     }
 
     public static function backfill_recent_orders() {

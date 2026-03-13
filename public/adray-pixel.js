@@ -159,6 +159,21 @@
     return 'other';
   }
 
+  function getUserIdentityContext() {
+    var userData = window.adnova_user_data || null;
+    if (!userData || !userData.customer_id) return {};
+
+    return {
+      customer_id: String(userData.customer_id || '').trim() || null,
+      email: userData.email || null,
+      phone: userData.phone || null,
+      customer_name: userData.customer_name || null,
+      customer_first_name: userData.customer_first_name || null,
+      customer_last_name: userData.customer_last_name || null,
+      billing_company: userData.billing_company || null
+    };
+  }
+
   function sendEvent(eventName, eventData = {}) {
     const now = Date.now();
     const dedupKey = `${eventName}:${eventData.page_url || window.location.href}`;
@@ -188,6 +203,7 @@
       referrer: document.referrer,
       fbp: getCookie('_fbp'),
       fbc: getCookie('_fbc'),
+      ...getUserIdentityContext(),
       ...eventData
     };
 
