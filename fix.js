@@ -1,0 +1,14 @@
+const fs = require('fs');
+let text = fs.readFileSync('public/adray-analytics.html', 'utf8');
+text = text.replace(/Atribuci[^\s<]+n/g, 'Atribuci&oacute;n');
+text = text.replace(/[^\s<]*rdenes sin atribuci[^\s<]+n/g, '&Oacute;rdenes sin atribuci&oacute;n');
+text = text.replace(/Cargando [^\s<]+rdenes.../g, 'Cargando &oacute;rdenes...');
+text = text.replace(/Nueva Sesi[^\s<]+n/g, 'Nueva Sesi&oacute;n');
+text = text.replace(/Campa[^\s<]+a/g, 'Campa&ntilde;a');
+text = text.replace(/Agreg[^\s<]+ al carrito/g, 'Agreg&oacute; al carrito');
+text = text.replace(/Inici[^\s<]+ Checkout/g, 'Inici&oacute; Checkout');
+text = text.replace(/Usuario An[^\s<]+nimo/g, 'Usuario An&oacute;nimo');
+text = text.replace(/cronolog[^\s<]+a/g, 'cronolog&iacute;a');
+text = text.replace(/se[^\s<]+ales/g, 'se&ntilde;ales');
+fs.writeFileSync('public/adray-analytics.html', text, 'utf8');
+console.log('Fixed using generic non-space matchers');

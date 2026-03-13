@@ -922,7 +922,7 @@
                         </div>
                         <div class="ml-5 w-0 flex-1">
                             <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">�rdenes sin atribuci�n</dt>
+                                <dt class="text-sm font-medium text-gray-500 &Oacute;rdenes sin atribuci&oacute;n</dt>
                                 <dd class="flex items-baseline">
                                     <div class="text-2xl font-semibold text-gray-900" id="unattributed-orders">0</div>
                                 </dd>
@@ -967,7 +967,7 @@
                     <div class="flex items-center justify-between mb-4">
                         <div>
                             <p class="panel-kicker">Comercial</p>
-                            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Atribuci�n por Canal</h3>
+                            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Atribuci&oacute;n por Canal</h3>
                         </div>
                         <span id="attribution-model-badge" class="text-xs text-gray-500">Modelo: last touch</span>
                     </div>
@@ -1077,7 +1077,7 @@
                     </div>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Atribuci�n y se�ales</h4>
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Atribuci&oacute;n y se&ntilde;ales</h4>
                             <div class="space-y-2 text-sm text-gray-600" id="session-detail-attribution"></div>
                         </div>
                         <div class="session-summary-card rounded-xl p-4">
@@ -1267,7 +1267,7 @@
                             <th class="py-2 pr-4">Usuario</th>
                             <th class="py-2 pr-4">Ingreso</th>
                             <th class="py-2 pr-4">Productos</th>
-                            <th class="py-2 pr-4">Atribuci�n</th>
+                            <th class="py-2 pr-4">Atribuci&oacute;n</th>
                             <th class="py-2 pr-4">Fuente</th>
                             <th class="py-2 pr-4">Debug</th>
                         </tr>
@@ -1542,7 +1542,7 @@
                 : 'Perfiles históricos y sesiones web ligadas';
             const viewDescription = isWooStore
                 ? 'estos chips representan perfiles WooCommerce enriquecidos con sesiones web cuando el pixel logra ligarlas.'
-                : 'estos chips representan perfiles históricos detectados desde sesiones web y se�ales de identidad.';
+                : 'estos chips representan perfiles históricos detectados desde sesiones web y se&ntilde;ales de identidad.';
             const orderDescription = isWooStore
                 ? 'en WooCommerce priorizamos perfiles con ó�rdenes primero y luego la sesión web ligada más reciente.'
                 : 'el listado prioriza perfiles con sesión web reciente ligada y después el resto del historial.';
@@ -1643,9 +1643,9 @@
                         : '<p class="text-xs text-gray-500">Sin landings destacadas.</p>'}
                 </div>
                 <div>
-                    <p class="font-medium text-gray-900 mb-1">Campa�as recientes</p>
+                    <p class="font-medium text-gray-900 mb-1">Campa&ntilde;as recientes</p>
                     ${topCampaigns.length
-                        ? topCampaigns.map((item) => `<p class="text-xs text-gray-600">${item.lastCampaign} · ${item.profileLabel}</p>`).join('')
+                        ? topCampa&ntilde;ap((item) => `<p class="text-xs text-gray-600">${item.lastCampaign} · ${item.profileLabel}</p>`).join('')
                         : '<p class="text-xs text-gray-500">Sin campañas recurrentes.</p>'}
                 </div>
             `;
@@ -1667,7 +1667,7 @@
                     <p class="mt-1 text-sm text-gray-600">Empieza mostrando perfiles históricos y luego baja al detalle cuando eliges una sesión.</p>
                 </div>
                 <div class="session-pattern-item rounded-xl p-4">
-                    <p class="text-sm font-semibold text-gray-900">La identidad mezcla más se�ales</p>
+                    <p class="text-sm font-semibold text-gray-900">La identidad mezcla más se&ntilde;ales</p>
                     <p class="mt-1 text-sm text-gray-600">Woo customer, email hash, phone hash y userKey ahora alimentan el contexto histórico.</p>
                 </div>
                 <div class="session-pattern-item rounded-xl p-4">
@@ -1742,7 +1742,7 @@
             renderSessionComparison();
             document.getElementById('session-detail-metrics').innerHTML = '<div class="text-sm text-gray-500">Cargando métricas...</div>';
             document.getElementById('session-detail-summary').innerHTML = '<p>Cargando resumen...</p>';
-            document.getElementById('session-detail-orders').innerHTML = '<p>Cargando �rdenes...</p>';
+            document.getElementById('session-detail-orders').innerHTML = '<p>Cargando &oacute;rdenes...</p>';
             document.getElementById('session-detail-attribution').innerHTML = '<p>Cargando atribuci�n...</p>';
             document.getElementById('session-detail-journey').innerHTML = '<p>Cargando path...</p>';
             document.getElementById('session-detail-visual').innerHTML = '<p class="text-sm text-gray-500">Construyendo diagrama...</p>';
@@ -1828,7 +1828,7 @@
             document.getElementById('session-detail-attribution').innerHTML = `
                 <p><strong>Canal:</strong> ${journey.attribution?.channel || 'unattributed'}</p>
                 <p><strong>Plataforma:</strong> ${journey.attribution?.platform || '-'}</p>
-                <p><strong>Campa�a:</strong> ${journey.attribution?.campaign || '-'}</p>
+                <p><strong>Campa&ntilde;a:</strong> ${journey.attribution?.campaign || '-'}</p>
                 <p><strong>Click ID:</strong> ${journey.attribution?.clickId || '-'}</p>
                 <p><strong>Confianza:</strong> ${formatPercent(journey.attribution?.confidence || 0)}</p>
                 <p><strong>Fuente:</strong> ${journey.attribution?.source || 'none'}</p>
@@ -2288,10 +2288,10 @@
                         </div>
                     </div>
                     <div class="session-side-card rounded-xl p-4">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Campa�as frecuentes</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Campa&ntilde;as frecuentes</p>
                         <div class="mt-2 space-y-1 text-sm text-gray-600">
                             ${topCampaigns.length
-                                ? topCampaigns.map((item) => `<p>${item.campaign} · ${item.sessions} sesiones</p>`).join('')
+                                ? topCampa&ntilde;ap((item) => `<p>${item.campaign} · ${item.sessions} sesiones</p>`).join('')
                                 : '<p>Sin campaña dominante.</p>'}
                         </div>
                     </div>
@@ -2858,7 +2858,7 @@ function openUserExplorer(userKey, fallbackName) {
         .then(data => renderUserExplorer(data))
         .catch(err => {
             console.error(err);
-            document.getElementById('ue-content').innerHTML = '<p class="text-red-500">Error al cargar la cronolog�a.</p>';
+            document.getElementById('ue-content').innerHTML = '<p class="text-red-500">Error al cargar la cronolog&iacute;a.</p>';
         });
 }
 
@@ -2884,7 +2884,7 @@ function renderUserExplorer(data) {
     const { user, sessions = [], events = [], orders = [] } = data;
     
     if (user.name) document.getElementById('ue-name').textContent = user.name;
-    else document.getElementById('ue-name').textContent = 'Usuario An�nimo';
+    else document.getElementById('ue-name').textContent = 'Usuario An&oacute;nimo';
     
     document.getElementById('ue-email').textContent = (user.emailHash ? 'Email: ' + user.emailHash.substring(0,8) + '... | ' : '') + 'userKey: ' + user.userKey;
 
@@ -2916,10 +2916,10 @@ function renderUserExplorer(data) {
             const s = item.data;
             html += '<div class="relative pl-6">' +
                 '<div class="absolute -left-2 top-1.5 p-1.5 rounded-full bg-blue-500/90 border-4 border-[#0a0711] shadow-sm ring-1 ring-blue-900/50"></div>' +
-                '<p class="text-xs text-blue-400 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Nueva Sesi�n</p>' +
+                '<p class="text-xs text-blue-400 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Nueva Sesi&oacute;n</p>' +
                 '<div class="bg-blue-900/20 rounded-lg p-3 text-sm text-blue-100 border border-blue-800/30">' +
                     '<p><strong>Origen:</strong> ' + (s.utmSource || s.referrer || '(direct)') + ' / ' + (s.utmMedium || '(none)') + '</p>' +
-                    (s.utmCampa�a:</strong> ' + s.utmCampaign + '</p>' : '') +
+                    (s.utmCampa&ntilde;a:</strong> ' + s.utmCampaign + '</p>' : '') +
                     (s.landingPageUrl ? '<p class="truncate"><strong>Landing:</strong> ' + s.landingPageUrl + '</p>' : '') +
                 '</div>' +
             '</div>';
@@ -2931,7 +2931,7 @@ function renderUserExplorer(data) {
                 '<p class="text-xs text-emerald-400 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Compra (' + revStr + ')</p>' +
                 '<div class="bg-emerald-900/20 rounded-lg p-3 text-sm text-emerald-100 border border-emerald-800/30">' +
                     '<p><strong>Pedido:</strong> #' + (o.orderNumber || o.orderId) + '</p>' +
-                    '<p><strong>Atribuci�n (�ltimo Clic):</strong> ' + (o.attributedChannel || 'unattributed') + '</p>' +
+                    '<p><strong>Atribuci&oacute;n (&Uacute;ltimo Clic):</strong> ' + (o.attributedChannel || 'unattributed') + '</p>' +
                 '</div>' +
             '</div>';
         } else if (item.type === 'event') {
@@ -2940,8 +2940,8 @@ function renderUserExplorer(data) {
             let evLabel = e.eventName;
             let evClass = 'text-gray-400';
             let evDot = 'bg-gray-700';
-            if (e.eventName === 'add_to_cart') { evLabel = 'Agreg� al carrito'; evClass = 'text-indigo-400 font-semibold'; evDot = 'bg-indigo-500/80'; }
-            if (e.eventName === 'begin_checkout') { evLabel = 'Inici� Checkout'; evClass = 'text-amber-400 font-semibold'; evDot = 'bg-amber-500/80'; }
+            if (e.eventName === 'add_to_cart') { evLabel = 'Agreg&oacute; al carrito'; evClass = 'text-indigo-400 font-semibold'; evDot = 'bg-indigo-500/80'; }
+            if (e.eventName === 'begin_checkout') { evLabel = 'Inici&oacute; Checkout'; evClass = 'text-amber-400 font-semibold'; evDot = 'bg-amber-500/80'; }
             
             html += '<div class="relative pl-6">' +
                 '<div class="absolute -left-[5px] top-2 w-2.5 h-2.5 rounded-full ' + evDot + ' ring-4 ring-[#0a0711]"></div>' +
