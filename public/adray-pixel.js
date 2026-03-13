@@ -32,6 +32,12 @@
     } catch (_) {}
   }
 
+  function safeStorageRemove(storage, key) {
+    try {
+      storage.removeItem(key);
+    } catch (_) {}
+  }
+
   function generateId() {
     try {
       if (window.crypto && typeof window.crypto.randomUUID === 'function') {
@@ -408,6 +414,33 @@
       checkout_token: getCookie('cart') || getCookie('cart_sig') || null
     });
   }
+
+  // 4.2 WooCommerce: stitch logged-in customers to the current browser session.
+  (function detectWooLogin() {
+    if (detectPlatform() !== 'woocommerce') return;
+    if (!window.adnova_user_data || !window.adnova_user_data.customer_id) {
+      safeStorageRemove(window.sessionStorage, '__adray_login_customer_id');
+      return;
+    }
+
+    var currentCustomerId = String(window.adnova_user_data.customer_id || '');
+    if (!currentCustomerId) return;
+
+    var lastTrackedCustomerId = safeStorageGet(window.sessionStorage, '__adray_login_customer_id');
+    if (lastTrackedCustomerId === currentCustomerId) return;
+
+    safeStorageSet(window.sessionStorage, '__adray_login_customer_id', currentCustomerId);
+    sendEvent('user_logged_in', {
+      customer_id: currentCustomerId,
+      email: window.adnova_user_data.email || null,
+      phone: window.adnova_user_data.phone || null,
+      customer_name: window.adnova_user_data.customer_name || null,
+      customer_first_name: window.adnova_user_data.customer_first_name || null,
+      customer_last_name: window.adnova_user_data.customer_last_name || null,
+      billing_company: window.adnova_user_data.billing_company || null,
+      page_type: detectPageType() === 'other' ? 'account' : detectPageType()
+    });
+  })();
 
   // 5. WooCommerce: Purchase event on order-received (thank-you) page
   // Order data is injected by the Adnova WordPress plugin via window.adnova_order_data.

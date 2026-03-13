@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.1.3
+ * Version: 1.1.4
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.1.3';
+    const VERSION = '1.1.4';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_BACKFILL_DONE = 'adnova_pixel_backfill_done';
@@ -39,6 +39,7 @@ final class Adnova_Pixel_Plugin {
         add_action('woocommerce_order_status_processing', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         add_action('woocommerce_order_status_completed', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         add_action('woocommerce_checkout_update_order_meta', array(__CLASS__, 'save_pixel_cookies_to_order'), 10, 1);
+        add_action('wp_footer', array(__CLASS__, 'inject_logged_in_customer_context'), 20);
         // Fallback for custom checkout flows/themes where woocommerce_thankyou is bypassed.
         add_action('wp_footer', array(__CLASS__, 'maybe_track_woo_order_received_fallback'), 1000);
         add_action('adnova_pixel_backfill_orders', array(__CLASS__, 'backfill_recent_orders'));
@@ -305,6 +306,49 @@ final class Adnova_Pixel_Plugin {
             'customer_email' => $email !== '' ? $email : null,
             'customer_phone' => $phone !== '' ? $phone : null,
         );
+    }
+
+    public static function inject_logged_in_customer_context() {
+        if (is_admin() || !is_user_logged_in()) {
+            return;
+        }
+
+        $user = wp_get_current_user();
+        if (!$user || !$user->exists()) {
+            return;
+        }
+
+        $customer_id = (string) $user->ID;
+        if ($customer_id === '') {
+            return;
+        }
+
+        $email = sanitize_email((string) $user->user_email);
+        $first_name = sanitize_text_field((string) get_user_meta($user->ID, 'first_name', true));
+        $last_name = sanitize_text_field((string) get_user_meta($user->ID, 'last_name', true));
+        $phone = sanitize_text_field((string) get_user_meta($user->ID, 'billing_phone', true));
+        $company = sanitize_text_field((string) get_user_meta($user->ID, 'billing_company', true));
+        $full_name = trim($first_name . ' ' . $last_name);
+
+        if ($full_name === '') {
+            $full_name = sanitize_text_field((string) $user->display_name);
+        }
+
+        if ($full_name === '') {
+            $full_name = $company;
+        }
+
+        $payload = array(
+            'customer_id' => $customer_id,
+            'email' => $email !== '' ? $email : null,
+            'phone' => $phone !== '' ? $phone : null,
+            'customer_name' => $full_name !== '' ? $full_name : null,
+            'customer_first_name' => $first_name !== '' ? $first_name : null,
+            'customer_last_name' => $last_name !== '' ? $last_name : null,
+            'billing_company' => $company !== '' ? $company : null,
+        );
+
+        echo '<script>window.adnova_user_data=' . wp_json_encode($payload) . ';</script>' . "\n";
     }
 
     private static function get_order_attribution_data($order) {
