@@ -1127,23 +1127,8 @@
             </div>
         </div>
 
-        <!-- Top Row: Attribution + Live Feed -->
+        <!-- Top Row: Live Feed + Recommendations -->
         <div class="dashboard-section-grid grid grid-cols-1 lg:grid-cols-3 gap-8 items-stretch">
-            <div class="lg:col-span-2">
-                <div class="ops-panel p-6 h-full">
-                    <div class="flex items-center justify-between mb-4">
-                        <div>
-                            <p class="panel-kicker">Comercial</p>
-                            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Atribución por Canal</h3>
-                        </div>
-                        <span id="attribution-model-badge" class="text-xs text-gray-500">Modelo: last touch</span>
-                    </div>
-                    <div class="relative h-64">
-                        <canvas id="attributionChart"></canvas>
-                    </div>
-                </div>
-            </div>
-
             <div class="lg:col-span-1">
                 <div class="ops-panel live-feed-shell flex flex-col h-full">
                     <div class="px-6 py-4 border-b border-gray-200 bg-gray-50 rounded-t-lg flex justify-between items-center">
@@ -1170,30 +1155,46 @@
                     </div>
                 </div>
             </div>
-        </div>
 
-        <div class="mt-8 ops-panel p-6">
-            <div class="flex items-start justify-between gap-4 flex-wrap mb-4">
-                <div>
-                    <p class="panel-kicker">Perfil Intelligence</p>
-                    <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Qué hacer ahora con estos perfiles</h3>
-                    <p class="panel-subtitle text-sm mt-1">Recomendaciones visibles arriba para operar promociones, bundles y reimpacto sin tener que entrar primero al detalle.</p>
+            <div class="lg:col-span-2">
+                <div class="ops-panel p-6 h-full">
+                    <div class="flex items-start justify-between gap-4 flex-wrap mb-4">
+                        <div>
+                            <p class="panel-kicker">Perfil Intelligence</p>
+                            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Qué hacer ahora con estos perfiles</h3>
+                            <p class="panel-subtitle text-sm mt-1">Recomendaciones visibles arriba para operar promociones, bundles y reimpacto sin tener que entrar primero al detalle.</p>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                        <div class="session-pattern-card rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Acciones sugeridas</h4>
+                            <div class="space-y-4" id="top-profile-actions"></div>
+                        </div>
+                        <div class="session-summary-card rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Productos y bundles clave</h4>
+                            <div class="space-y-4" id="top-profile-affinity"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                <div class="session-pattern-card rounded-xl p-4">
-                    <h4 class="text-sm font-semibold text-gray-900 mb-3">Acciones sugeridas</h4>
-                    <div class="space-y-4" id="top-profile-actions"></div>
-                </div>
-                <div class="session-summary-card rounded-xl p-4">
-                    <h4 class="text-sm font-semibold text-gray-900 mb-3">Productos y bundles clave</h4>
-                    <div class="space-y-4" id="top-profile-affinity"></div>
-                </div>
-            </div>
         </div>
 
-        <div class="mt-8">
-            <div class="ops-panel p-6">
+        <!-- Charts Row: Attribution + Trend -->
+        <div class="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-8 items-stretch">
+            <div class="ops-panel p-6 h-full">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <p class="panel-kicker">Comercial</p>
+                        <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Atribución por Canal</h3>
+                    </div>
+                    <span id="attribution-model-badge" class="text-xs text-gray-500">Modelo: last touch</span>
+                </div>
+                <div class="relative h-64">
+                    <canvas id="attributionChart"></canvas>
+                </div>
+            </div>
+
+            <div class="ops-panel p-6 h-full">
                 <p class="panel-kicker">Ritmo</p>
                 <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Tendencia Diaria</h3>
                 <div class="relative h-64">
