@@ -46,6 +46,55 @@ function parseFloatSafe(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function hasExplicitTimezone(value) {
+  return /([zZ]|[+\-]\d{2}:\d{2})$/.test(String(value || '').trim());
+}
+
+function parseWooDateValue(rawValue, offsetSeconds = null) {
+  const raw = String(rawValue || '').trim();
+  if (!raw) return null;
+
+  const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T');
+
+  if (hasExplicitTimezone(normalized)) {
+    const direct = new Date(normalized);
+    return Number.isNaN(direct.getTime()) ? null : direct;
+  }
+
+  // When Woo sends a naive datetime, use its offset if available instead of server timezone.
+  const parts = normalized.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (parts) {
+    const year = Number(parts[1]);
+    const month = Number(parts[2]);
+    const day = Number(parts[3]);
+    const hour = Number(parts[4]);
+    const minute = Number(parts[5]);
+    const second = Number(parts[6] || 0);
+
+    if (Number.isFinite(offsetSeconds)) {
+      const utcMs = Date.UTC(year, month - 1, day, hour, minute, second) - (Number(offsetSeconds) * 1000);
+      const reconstructed = new Date(utcMs);
+      return Number.isNaN(reconstructed.getTime()) ? null : reconstructed;
+    }
+  }
+
+  const fallback = new Date(normalized);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
+}
+
+function parseWooOrderCreatedAt(payload = {}) {
+  const offsetSeconds = Number(payload.created_at_offset_seconds);
+  const safeOffsetSeconds = Number.isFinite(offsetSeconds) ? offsetSeconds : null;
+
+  const gmtCandidate = parseWooDateValue(payload.created_at_gmt || payload.date_created_gmt || null, 0);
+  if (gmtCandidate) return gmtCandidate;
+
+  const localCandidate = parseWooDateValue(payload.created_at || payload.date_created || null, safeOffsetSeconds);
+  if (localCandidate) return localCandidate;
+
+  return new Date();
+}
+
 function normalizeCustomerDisplayName(...values) {
   const invalidTokens = new Set(['unknown', 'undefined', 'null', 'n/a', 'none', '-']);
 
@@ -138,7 +187,7 @@ router.post('/woo/orders-sync', async (req, res) => {
       attributionSnapshot,
       confidenceScore: attributedChannel === 'unattributed' ? 0.4 : 0.75,
       eventId: checkoutMap ? checkoutMap.eventId : randomUUID(),
-      platformCreatedAt: payload.created_at ? new Date(payload.created_at) : new Date(),
+      platformCreatedAt: parseWooOrderCreatedAt(payload),
     };
 
     const order = await prisma.order.upsert({

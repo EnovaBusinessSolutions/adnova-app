@@ -741,6 +741,10 @@ final class Adnova_Pixel_Plugin {
         }
 
         $customer_identity = self::get_order_customer_identity($order);
+        $order_created_at = $order->get_date_created();
+        $order_created_at_local = $order_created_at ? $order_created_at->date('c') : gmdate('c');
+        $order_created_at_gmt = $order_created_at ? $order_created_at->setTimezone(new DateTimeZone('UTC'))->format('c') : gmdate('c');
+        $order_created_at_offset_seconds = $order_created_at ? (int) $order_created_at->getOffset() : 0;
 
         $payload = array(
             'account_id' => self::get_site_id(),
@@ -763,7 +767,9 @@ final class Adnova_Pixel_Plugin {
             'tax_total' => (float) $order->get_total_tax(),
             'currency' => isset($order_data['currency']) ? $order_data['currency'] : $order->get_currency(),
             'items' => isset($order_data['items']) ? $order_data['items'] : array(),
-            'created_at' => $order->get_date_created() ? $order->get_date_created()->date('c') : gmdate('c'),
+            'created_at' => $order_created_at_local,
+            'created_at_gmt' => $order_created_at_gmt,
+            'created_at_offset_seconds' => $order_created_at_offset_seconds,
             'utm_source' => isset($order_data['utm_source']) ? $order_data['utm_source'] : null,
             'utm_medium' => isset($order_data['utm_medium']) ? $order_data['utm_medium'] : null,
             'utm_campaign' => isset($order_data['utm_campaign']) ? $order_data['utm_campaign'] : null,
