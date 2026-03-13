@@ -1470,6 +1470,7 @@ router.get('/:account_id', async (req, res) => {
       orderAttributionModel: order.attributionModel || null,
       wooSourceLabel: order?.attributionSnapshot?.woo_source_label || null,
       wooSourceType: order?.attributionSnapshot?.woo_source_type || null,
+      customerName: order?.attributionSnapshot?.customer_name || null,
       payloadSnapshot: order.attributionSnapshot || null,
     }));
 
@@ -1496,6 +1497,7 @@ router.get('/:account_id', async (req, res) => {
       },
       wooSourceLabel: ev?.rawPayload?.woo_source_label || null,
       wooSourceType: ev?.rawPayload?.woo_source_type || null,
+      customerName: ev?.rawPayload?.user_data?.fn ? `${ev.rawPayload.user_data.fn} ${ev.rawPayload.user_data.ln || ''}`.trim() : null,
     }));
 
     const conversionInputs = (filteredOrders.length > 0 ? conversionInputsFromOrders : conversionInputsFromEvents);
