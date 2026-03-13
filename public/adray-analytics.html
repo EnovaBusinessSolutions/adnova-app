@@ -2856,7 +2856,7 @@ function openUserExplorer(userKey, fallbackName) {
         .then(data => renderUserExplorer(data))
         .catch(err => {
             console.error(err);
-            document.getElementById('ue-content').innerHTML = '<p class="text-red-500">Error al cargar la cronolog�a.</p>';
+            document.getElementById('ue-content').innerHTML = '<p class="text-red-500">Error al cargar la cronolog&iacute;a.</p>';
         });
 }
 
@@ -2882,7 +2882,7 @@ function renderUserExplorer(data) {
     const { user, sessions = [], events = [], orders = [] } = data;
     
     if (user.name) document.getElementById('ue-name').textContent = user.name;
-    else document.getElementById('ue-name').textContent = 'Usuario An�nimo';
+    else document.getElementById('ue-name').textContent = 'Usuario An\u00f3nimo';
     
     document.getElementById('ue-email').textContent = (user.emailHash ? 'Email: ' + user.emailHash.substring(0,8) + '... | ' : '') + 'userKey: ' + user.userKey;
 
@@ -2913,11 +2913,11 @@ function renderUserExplorer(data) {
         if (item.type === 'session') {
             const s = item.data;
             html += '<div class="relative pl-6">' +
-                '<div class="absolute -left-2 top-1.5 p-1.5 rounded-full bg-blue-500 border-4 border-white shadow-sm ring-1 ring-blue-100"></div>' +
-                '<p class="text-xs text-blue-600 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Nueva Sesi�n</p>' +
-                '<div class="bg-blue-50/50 rounded-lg p-3 text-sm text-gray-700 border border-blue-100/50">' +
+                '<div class="absolute -left-2 top-1.5 p-1.5 rounded-full bg-indigo-500 border-4 border-gray-900 shadow-sm ring-1 ring-indigo-500/30"></div>' +
+                '<p class="text-xs text-indigo-600 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Nueva Sesi\u00f3n</p>' +
+                '<div class="bg-gray-50 rounded-lg p-3 text-sm text-gray-700 border border-gray-200">' +
                     '<p><strong>Origen:</strong> ' + (s.utmSource || s.referrer || '(direct)') + ' / ' + (s.utmMedium || '(none)') + '</p>' +
-                    (s.utmCampaign ? '<p><strong>Campa�a:</strong> ' + s.utmCampaign + '</p>' : '') +
+                    (s.utmCampaign ? '<p><strong>Campa\u00f1a:</strong> ' + s.utmCampaign + '</p>' : '') +
                     (s.landingPageUrl ? '<p class="truncate"><strong>Landing:</strong> ' + s.landingPageUrl + '</p>' : '') +
                 '</div>' +
             '</div>';
@@ -2925,11 +2925,11 @@ function renderUserExplorer(data) {
             const o = item.data;
             const revStr = new Intl.NumberFormat('es-MX', { style: 'currency', currency: o.currency || 'MXN' }).format(Number(o.revenue || 0));
             html += '<div class="relative pl-6">' +
-                '<div class="absolute -left-2 top-1.5 p-1.5 rounded-full bg-green-500 border-4 border-white shadow-sm ring-1 ring-green-100"></div>' +
-                '<p class="text-xs text-green-700 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Compra (' + revStr + ')</p>' +
-                '<div class="bg-green-50/80 rounded-lg p-3 text-sm text-gray-800 border border-green-200">' +
+                '<div class="absolute -left-2 top-1.5 p-1.5 rounded-full bg-emerald-500 border-4 border-gray-900 shadow-sm ring-1 ring-emerald-500/30"></div>' +
+                '<p class="text-xs text-emerald-600 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Compra (' + revStr + ')</p>' +
+                '<div class="bg-gray-50 rounded-lg p-3 text-sm text-gray-800 border border-gray-200">' +
                     '<p><strong>Pedido:</strong> #' + (o.orderNumber || o.orderId) + '</p>' +
-                    '<p><strong>Atribuci�n (�ltimo Clic):</strong> ' + (o.attributedChannel || 'unattributed') + '</p>' +
+                    '<p><strong>Atribuci\u00f3n (\u00daltimo Clic):</strong> ' + (o.attributedChannel || 'unattributed') + '</p>' +
                 '</div>' +
             '</div>';
         } else if (item.type === 'event') {
@@ -2938,11 +2938,11 @@ function renderUserExplorer(data) {
             let evLabel = e.eventName;
             let evClass = 'text-gray-500';
             let evDot = 'bg-gray-300';
-            if (e.eventName === 'add_to_cart') { evLabel = 'Agreg� al carrito'; evClass = 'text-indigo-600 font-semibold'; evDot = 'bg-indigo-400'; }
-            if (e.eventName === 'begin_checkout') { evLabel = 'Inici� Checkout'; evClass = 'text-orange-600 font-semibold'; evDot = 'bg-orange-400'; }
+            if (e.eventName === 'add_to_cart') { evLabel = 'Agreg\u00f3 al carrito'; evClass = 'text-indigo-600 font-semibold'; evDot = 'bg-indigo-400'; }
+            if (e.eventName === 'begin_checkout') { evLabel = 'Inici\u00f3 Checkout'; evClass = 'text-orange-600 font-semibold'; evDot = 'bg-orange-400'; }
             
             html += '<div class="relative pl-6">' +
-                '<div class="absolute -left-[5px] top-2 w-2.5 h-2.5 rounded-full ' + evDot + ' ring-4 ring-white"></div>' +
+                '<div class="absolute -left-[5px] top-2 w-2.5 h-2.5 rounded-full ' + evDot + ' ring-4 ring-gray-900"></div>' +
                 '<p class="text-xs ' + evClass + ' mb-1">' + timeStr + ' - ' + evLabel + '</p>' +
             '</div>';
         }
@@ -2955,20 +2955,20 @@ function renderUserExplorer(data) {
     </script>
     <!-- User Explorer Panel -->
     <div id="user-explorer-backdrop" class="fixed inset-0 bg-gray-900 bg-opacity-50 transition-opacity hidden z-40 backdrop-blur-sm" onclick="closeUserExplorer()"></div>
-    <div id="user-explorer-panel" class="fixed inset-y-0 right-0 max-w-md w-full bg-white shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-50 flex flex-col pointer-events-auto">
-        <div class="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-white shadow-sm z-10">
+    <div id="user-explorer-panel" class="ops-panel fixed inset-y-0 right-0 max-w-md w-full shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-50 flex flex-col pointer-events-auto">
+        <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50 z-10">
             <div>
-                <p class="text-xs font-bold text-indigo-500 uppercase tracking-widest mb-1">Recorrido del Cliente</p>
-                <h2 class="text-xl font-bold text-gray-900 leading-tight" id="ue-name">Cargando...</h2>
-                <p class="text-xs text-gray-500 mt-0.5 font-mono" id="ue-email">...</p>
+                <p class="panel-kicker">Recorrido del Cliente</p>
+                <h2 class="panel-title text-xl leading-6 font-medium text-gray-900" id="ue-name">Cargando...</h2>
+                <p class="text-xs text-gray-500 mt-1 font-mono" id="ue-email">...</p>
             </div>
-            <button onclick="closeUserExplorer()" class="text-gray-400 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 p-2 rounded-full focus:outline-none transition-colors">
-                <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <button onclick="closeUserExplorer()" class="text-gray-400 hover:text-gray-500 bg-gray-50 hover:bg-gray-100 border border-gray-200 p-2 rounded-md focus:outline-none transition-colors">
+                <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
                 </svg>
             </button>
         </div>
-        <div class="flex-1 overflow-y-auto p-6 bg-white" id="ue-content">
+        <div class="flex-1 overflow-y-auto p-6 bg-gray-50" id="ue-content">
             <div class="flex justify-center items-center h-full">
                 <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
             </div>
