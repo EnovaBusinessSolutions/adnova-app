@@ -631,6 +631,34 @@
         .pattern-rate-bar > span {
             transition: width 0.35s ease;
         }
+        #user-explorer-panel {
+            display: flex !important;
+            flex-direction: column;
+            height: 100vh;
+            max-height: 100vh;
+            overflow: hidden;
+            background: linear-gradient(180deg, rgba(26, 17, 41, 0.98) 0%, rgba(12, 8, 19, 0.96) 100%);
+            border-left: 1px solid var(--dash-border);
+            box-shadow: var(--dash-shadow);
+        }
+        #user-explorer-panel .ue-header {
+            background: var(--dash-panel-soft);
+            border-bottom: 1px solid var(--dash-border);
+        }
+        #ue-content {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow-y: auto !important;
+            overscroll-behavior: contain;
+            -webkit-overflow-scrolling: touch;
+        }
+        #ue-content::-webkit-scrollbar {
+            width: 10px;
+        }
+        #ue-content::-webkit-scrollbar-thumb {
+            background: rgba(202, 138, 229, 0.35);
+            border-radius: 999px;
+        }
         @keyframes slideIn {
             from { opacity: 0; transform: translateY(-10px); }
             to { opacity: 1; transform: translateY(0); }
@@ -2960,8 +2988,8 @@ function renderUserExplorer(data) {
     </script>
     <!-- User Explorer Panel -->
     <div id="user-explorer-backdrop" class="fixed inset-0 bg-gray-900 bg-opacity-50 transition-opacity hidden z-40 backdrop-blur-sm" onclick="closeUserExplorer()"></div>
-    <div id="user-explorer-panel" class="ops-panel fixed inset-y-0 right-0 max-w-md w-full shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-50 flex flex-col pointer-events-auto">
-        <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50 z-10">
+    <div id="user-explorer-panel" class="fixed inset-y-0 right-0 max-w-md w-full h-screen max-h-screen shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-50 flex flex-col pointer-events-auto">
+        <div class="ue-header px-6 py-4 flex justify-between items-center z-10">
             <div>
                 <p class="panel-kicker">Recorrido del Cliente</p>
                 <h2 class="panel-title text-xl leading-6 font-medium text-gray-900" id="ue-name">Cargando...</h2>
@@ -2973,7 +3001,7 @@ function renderUserExplorer(data) {
                 </svg>
             </button>
         </div>
-        <div class="flex-1 overflow-y-auto overscroll-contain p-6 bg-gray-50" id="ue-content" style="overscroll-behavior: contain;">
+        <div class="flex-1 p-6 bg-gray-50" id="ue-content">
             <div class="flex justify-center items-center h-full">
                 <svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
             </div>
