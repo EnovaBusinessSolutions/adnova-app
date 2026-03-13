@@ -2075,7 +2075,6 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
     const recentEvents = await prisma.event.findMany({
       where: {
         accountId: account_id,
-        platform: { in: ['woocommerce', 'WOOCOMMERCE'] },
         createdAt: { gte: since },
       },
       select: {
@@ -2089,7 +2088,12 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
       take: 500,
     });
 
-    const loginEvents = recentEvents.filter((event) => loginAliases.includes(normalizeEventName(event.eventName)));
+    const woocommerceEvents = recentEvents.filter((event) => {
+      const payloadPlatform = String(event?.rawPayload?.platform || '').trim().toLowerCase();
+      return payloadPlatform === 'woocommerce';
+    });
+
+    const loginEvents = woocommerceEvents.filter((event) => loginAliases.includes(normalizeEventName(event.eventName)));
     const sessionIds = collectUniqueStrings(loginEvents.map((event) => event.sessionId));
 
     const activeSessions = sessionIds.length
