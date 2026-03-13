@@ -10,7 +10,7 @@ const normMetaId = (s = '') =>
 const normGoogleId = (s = '') =>
   String(s).trim().replace(/^customers\//, '').replace(/-/g, '').replace(/\s+/g, '');
 
-// "properties/123" (o "123" → "properties/123")
+// "properties/123" (o "123" -> "properties/123")
 const normGaPropertyId = (val = '') => {
   const v = String(val || '').trim();
   if (/^properties\/\d+$/.test(v)) return v;
@@ -40,16 +40,25 @@ function normalizeArray(arr, normFn) {
 }
 
 function normName(v = '') {
-  // ✅ normaliza whitespace (sin “poner” mayúsculas forzadas)
   return String(v || '').replace(/\s+/g, ' ').trim();
+}
+
+function normUrl(v = '') {
+  const s = String(v || '').trim();
+  return s || null;
+}
+
+function normSimpleString(v = '') {
+  const s = String(v || '').trim();
+  return s || null;
 }
 
 /* ---------------- sub-schema de suscripción (Stripe) ---------------- */
 const subscriptionSchema = new mongoose.Schema(
   {
-    id: { type: String }, // subscription.id de Stripe
-    status: { type: String, default: 'inactive' }, // incomplete | active | trialing | ...
-    priceId: { type: String }, // price_xxx
+    id: { type: String },
+    status: { type: String, default: 'inactive' },
+    priceId: { type: String },
     plan: {
       type: String,
       enum: ['emprendedor', 'crecimiento', 'pro', 'enterprise', 'gratis'],
@@ -57,7 +66,6 @@ const subscriptionSchema = new mongoose.Schema(
     currentPeriodEnd: { type: Date },
     cancel_at_period_end: { type: Boolean, default: false },
 
-    // Facturapi / facturación
     lastCfdiId: { type: String },
     lastCfdiTotal: { type: Number },
     lastStripeInvoice: { type: String },
@@ -68,7 +76,6 @@ const subscriptionSchema = new mongoose.Schema(
 /* ---------------- schema principal ---------------- */
 const userSchema = new mongoose.Schema(
   {
-    // ✅ nombre (para emails personalizados)
     name: { type: String, trim: true, default: '', set: normName },
 
     email: {
@@ -81,26 +88,21 @@ const userSchema = new mongoose.Schema(
     },
     password: { type: String },
 
-    // ✅ Vinculación con Google Login (para no depender solo del email)
     googleId: { type: String, index: true, sparse: true },
 
-    // ✅ Welcome email “1 sola vez” (clave para E2E)
     welcomeEmailSent: { type: Boolean, default: false, index: true },
     welcomeEmailSentAt: { type: Date, default: null },
 
     onboardingComplete: { type: Boolean, default: false },
 
-    // ✅ verificación de correo (email/pass)
     emailVerified: { type: Boolean, default: false, index: true },
     verifyEmailTokenHash: { type: String, index: true },
     verifyEmailExpires: { type: Date, index: true },
 
     /**
      * ============================
-     * ✅ Analítica (conveniencia)
+     * Analítica (conveniencia)
      * ============================
-     * No reemplaza AnalyticsEvent.
-     * Solo sirve como cache/soporte rápido para CRM.
      */
     lastLoginAt: { type: Date, default: null, index: true },
     lastLoginMethod: {
@@ -117,36 +119,33 @@ const userSchema = new mongoose.Schema(
     shopifyScopeHash: { type: Number },
     shopifyScopeHashUpdatedAt: { type: Number },
 
-    // Google (OAuth atajo legado, opcional)
+    // Google
     googleAccessToken: { type: String },
     googleRefreshToken: { type: String },
     googleConnected: { type: Boolean, default: false },
 
-    // ✅ Objetivo Google (lo usas en /api/session y lo setean rutas)
     googleObjective: {
       type: String,
       enum: ['ventas', 'alcance', 'leads'],
       default: null,
     },
 
-    // Meta (OAuth atajo legado, opcional)
+    // Meta
     metaConnected: { type: Boolean, default: false },
     metaAccessToken: { type: String },
 
-    // ✅ Datos meta “legacy”
     metaFbUserId: { type: String },
     metaTokenExpiresAt: { type: Date },
     metaDefaultAccountId: { type: String, set: normMetaId },
     metaScopes: { type: [String], default: [], set: normScopes },
 
-    // ✅ Objetivo meta
     metaObjective: {
       type: String,
       enum: ['ventas', 'alcance', 'leads'],
       default: null,
     },
 
-    // === Selección de cuentas (UI / retrocompat) ===
+    // === Selección de cuentas ===
     selectedMetaAccounts: {
       type: [String],
       default: [],
@@ -197,6 +196,7 @@ const userSchema = new mongoose.Schema(
       index: true,
       sparse: true,
       trim: true,
+      set: normSimpleString,
     },
     mcpShareEnabled: {
       type: Boolean,
@@ -208,6 +208,39 @@ const userSchema = new mongoose.Schema(
       enum: ['chatgpt', 'claude', 'gemini'],
       default: 'chatgpt',
     },
+
+    // Link bonito / estable que ve el usuario
+    mcpShareShortUrl: {
+      type: String,
+      default: null,
+      trim: true,
+      set: normUrl,
+    },
+
+    // Link real/versionado que consume el LLM
+    mcpShareVersionedUrl: {
+      type: String,
+      default: null,
+      trim: true,
+      set: normUrl,
+    },
+
+    // Versión técnica del link versionado (snapshotId, generatedAt, etc.)
+    mcpShareVersion: {
+      type: String,
+      default: null,
+      trim: true,
+      set: normSimpleString,
+    },
+
+    // Snapshot actualmente asociado a la URL versionada
+    mcpShareSnapshotId: {
+      type: String,
+      default: null,
+      trim: true,
+      set: normSimpleString,
+    },
+
     mcpShareCreatedAt: {
       type: Date,
       default: null,
@@ -242,16 +275,13 @@ const userSchema = new mongoose.Schema(
 
 /* ---------------- índices útiles ---------------- */
 userSchema.index({ plan: 1 });
-
-// Opcional extra (útil si quieres limpiar tokens expirados)
 userSchema.index({ verifyEmailExpires: 1 }, { sparse: true });
-
-// ✅ Opcional: si quieres consultar rápido pendientes de welcome
 userSchema.index({ welcomeEmailSent: 1, createdAt: -1 });
 
-// ✅ MCP link único por usuario
+// MCP link único por usuario
 userSchema.index({ mcpShareToken: 1 }, { sparse: true });
 userSchema.index({ mcpShareEnabled: 1, mcpShareToken: 1 }, { sparse: true });
+userSchema.index({ mcpShareEnabled: 1, mcpShareProvider: 1 }, { sparse: true });
 
 /* ---------------- hooks ---------------- */
 userSchema.pre('save', function (next) {
@@ -266,13 +296,13 @@ userSchema.pre('save', function (next) {
     this.selectedGoogleAccounts = normalizeArray(this.selectedGoogleAccounts, normGoogleId);
   }
 
-  // Asegura normalización de GA4 tanto en preferences como en legacy
   if (this.isModified('preferences') && this.preferences?.googleAnalytics?.auditPropertyIds) {
     this.preferences.googleAnalytics.auditPropertyIds = normalizeArray(
       this.preferences.googleAnalytics.auditPropertyIds,
       normGaPropertyId
     );
   }
+
   if (this.isModified('selectedGAProperties')) {
     this.selectedGAProperties = normalizeArray(this.selectedGAProperties, normGaPropertyId);
   }
@@ -280,15 +310,31 @@ userSchema.pre('save', function (next) {
   if (this.isModified('metaScopes')) {
     this.metaScopes = normScopes(this.metaScopes);
   }
+
   if (this.isModified('metaDefaultAccountId') && this.metaDefaultAccountId) {
     this.metaDefaultAccountId = normMetaId(this.metaDefaultAccountId);
   }
 
-  if (this.isModified('mcpShareToken') && this.mcpShareToken != null) {
-    this.mcpShareToken = String(this.mcpShareToken).trim() || null;
+  if (this.isModified('mcpShareToken')) {
+    this.mcpShareToken = normSimpleString(this.mcpShareToken);
   }
 
-  // Si cambia el plan, actualizamos fecha de inicio
+  if (this.isModified('mcpShareShortUrl')) {
+    this.mcpShareShortUrl = normUrl(this.mcpShareShortUrl);
+  }
+
+  if (this.isModified('mcpShareVersionedUrl')) {
+    this.mcpShareVersionedUrl = normUrl(this.mcpShareVersionedUrl);
+  }
+
+  if (this.isModified('mcpShareVersion')) {
+    this.mcpShareVersion = normSimpleString(this.mcpShareVersion);
+  }
+
+  if (this.isModified('mcpShareSnapshotId')) {
+    this.mcpShareSnapshotId = normSimpleString(this.mcpShareSnapshotId);
+  }
+
   if (this.isModified('plan')) {
     this.planStartedAt = new Date();
   }
@@ -309,7 +355,6 @@ userSchema.statics.setSelectedGoogleAccounts = async function (userId, ids = [])
   return normalized;
 };
 
-// Guardar preferencia GA4 “oficial” que leen tus endpoints (preferences)
 userSchema.statics.setGaAuditProperties = async function (userId, propertyIds = []) {
   const normalized = normalizeArray(propertyIds, normGaPropertyId);
   await this.updateOne(
@@ -319,7 +364,6 @@ userSchema.statics.setGaAuditProperties = async function (userId, propertyIds = 
   return normalized;
 };
 
-// ✅ mantener GA4 E2E sin romper legacy (guarda en ambos)
 userSchema.statics.setSelectedGA4Properties = async function (userId, propertyIds = []) {
   const normalized = normalizeArray(propertyIds, normGaPropertyId);
   await this.updateOne(
