@@ -3041,7 +3041,7 @@
             const limited = filtered.slice(0, Math.max(1, limitValue));
 
             container.innerHTML = limited.map((p) => {
-                const date = formatDateTimeMx(getPurchaseTimestamp(p));
+                const date = formatRecentPurchaseDate(p);
                 const orderId = p.orderNumber || p.orderId || p.checkoutToken || '-';
                 const customerName = p.customerName || '-';
                 const revenue = formatCurrencyWithCode(Number(p.revenue || 0), p.currency || 'MXN');
@@ -3373,6 +3373,15 @@
 
         function getPurchaseTimestamp(purchase = {}) {
             return purchase.platformCreatedAt || purchase.createdAt || null;
+        }
+
+        function formatRecentPurchaseDate(purchase = {}) {
+            const rawTs = getPurchaseTimestamp(purchase);
+            if (!rawTs) return '-';
+            const d = new Date(rawTs);
+            if (Number.isNaN(d.getTime())) return '-';
+            d.setHours(d.getHours() + 6);
+            return formatDateTimeMx(d);
         }
 
         function onAttributionModelChange() {
