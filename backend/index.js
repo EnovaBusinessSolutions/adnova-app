@@ -496,6 +496,12 @@ app.use('/api/mcpjobs', sessionGuard, require('./routes/mcpjobs'));
 
 app.use('/api/mcp/context', require('./routes/mcpContext'));
 
+// MCP Server (Phase 1) - protocol endpoint + OAuth + REST mirror
+const { mountMcpRoutes } = require('./mcp/transport');
+mountMcpRoutes(app);
+app.use('/oauth', require('./mcp/auth/oauth-server'));
+app.use('/gpt/v1', require('./mcp/rest/router'));
+
 /* =========================
  * ✅ Integraciones: DISCONNECT (E2E)
  * ========================= */
