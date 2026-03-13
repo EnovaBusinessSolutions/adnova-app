@@ -161,6 +161,21 @@
 
   function getUserIdentityContext() {
     var userData = window.adnova_user_data || null;
+    if ((!userData || !userData.customer_id) && document && document.querySelector) {
+      var scriptEl = document.querySelector('script[src*="adray-pixel"][data-customer-id], script[src*="pixel.js"][data-customer-id]');
+      if (scriptEl) {
+        userData = {
+          customer_id: scriptEl.getAttribute('data-customer-id') || null,
+          email: scriptEl.getAttribute('data-customer-email') || null,
+          phone: scriptEl.getAttribute('data-customer-phone') || null,
+          customer_name: scriptEl.getAttribute('data-customer-name') || null,
+          customer_first_name: scriptEl.getAttribute('data-customer-first-name') || null,
+          customer_last_name: scriptEl.getAttribute('data-customer-last-name') || null,
+          billing_company: scriptEl.getAttribute('data-billing-company') || null
+        };
+      }
+    }
+
     if (!userData || !userData.customer_id) return {};
 
     return {

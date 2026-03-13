@@ -209,12 +209,38 @@ final class Adnova_Pixel_Plugin {
 
         $site_id = self::get_site_id();
         $safe_src = esc_url($src);
+        $user_payload = self::get_logged_in_customer_payload();
 
-        return sprintf(
-            '<script src="%1$s" data-account-id="%2$s" data-site-id="%2$s" defer></script>',
-            $safe_src,
-            esc_attr($site_id)
+        $attrs = array(
+            'src="' . $safe_src . '"',
+            'data-account-id="' . esc_attr($site_id) . '"',
+            'data-site-id="' . esc_attr($site_id) . '"',
+            'defer',
         );
+
+        if (!empty($user_payload) && !empty($user_payload['customer_id'])) {
+            $attrs[] = 'data-customer-id="' . esc_attr((string) $user_payload['customer_id']) . '"';
+            if (!empty($user_payload['email'])) {
+                $attrs[] = 'data-customer-email="' . esc_attr((string) $user_payload['email']) . '"';
+            }
+            if (!empty($user_payload['phone'])) {
+                $attrs[] = 'data-customer-phone="' . esc_attr((string) $user_payload['phone']) . '"';
+            }
+            if (!empty($user_payload['customer_name'])) {
+                $attrs[] = 'data-customer-name="' . esc_attr((string) $user_payload['customer_name']) . '"';
+            }
+            if (!empty($user_payload['customer_first_name'])) {
+                $attrs[] = 'data-customer-first-name="' . esc_attr((string) $user_payload['customer_first_name']) . '"';
+            }
+            if (!empty($user_payload['customer_last_name'])) {
+                $attrs[] = 'data-customer-last-name="' . esc_attr((string) $user_payload['customer_last_name']) . '"';
+            }
+            if (!empty($user_payload['billing_company'])) {
+                $attrs[] = 'data-billing-company="' . esc_attr((string) $user_payload['billing_company']) . '"';
+            }
+        }
+
+        return '<script ' . implode(' ', $attrs) . '></script>';
     }
 
     private static function get_site_id() {
