@@ -447,6 +447,22 @@
   }
 
   // 4.2 WooCommerce: stitch logged-in customers to the current browser session.
+  function tryTrackWooLogout() {
+    var currentIdentity = getUserIdentityContext();
+    var lastTrackedCustomerId = safeStorageGet(window.sessionStorage, '__adray_login_customer_id');
+    if (!lastTrackedCustomerId) return false;
+    if (currentIdentity && currentIdentity.customer_id) return false;
+
+    safeStorageRemove(window.sessionStorage, '__adray_login_customer_id');
+    sendEvent('user_logged_out', {
+      platform: 'woocommerce',
+      customer_id: String(lastTrackedCustomerId).trim() || null,
+      page_type: detectPageType() === 'other' ? 'account' : detectPageType(),
+      logout_detected_from: 'pixel_runtime'
+    });
+    return true;
+  }
+
   function tryTrackWooLogin() {
     var userData = window.adnova_user_data || null;
     var platform = detectPlatform();
@@ -481,6 +497,8 @@
   }
 
   (function scheduleWooLoginDetection() {
+    tryTrackWooLogout();
+
     // Immediate attempt
     if (tryTrackWooLogin()) return;
 
@@ -489,15 +507,25 @@
     var maxAttempts = 40; // ~20s at 500ms
     var timer = setInterval(function() {
       attempts += 1;
+      tryTrackWooLogout();
       if (tryTrackWooLogin() || attempts >= maxAttempts) {
         clearInterval(timer);
       }
     }, 500);
 
-    document.addEventListener('DOMContentLoaded', tryTrackWooLogin, { once: true });
-    window.addEventListener('load', tryTrackWooLogin, { once: true });
+    document.addEventListener('DOMContentLoaded', function() {
+      tryTrackWooLogout();
+      tryTrackWooLogin();
+    }, { once: true });
+    window.addEventListener('load', function() {
+      tryTrackWooLogout();
+      tryTrackWooLogin();
+    }, { once: true });
     document.addEventListener('visibilitychange', function() {
-      if (document.visibilityState === 'visible') tryTrackWooLogin();
+      if (document.visibilityState === 'visible') {
+        tryTrackWooLogout();
+        tryTrackWooLogin();
+      }
     });
   })();
 

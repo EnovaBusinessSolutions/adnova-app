@@ -49,6 +49,7 @@ const EVENT_BUCKET_ALIASES = {
   begin_checkout: ['begin_checkout', 'checkout_started', 'start_checkout'],
   purchase: ['purchase', 'order_completed', 'checkout_completed', 'order_create', 'orders_create'],
   login: ['user_logged_in', 'user_login', 'login'],
+  logout: ['user_logged_out', 'user_logout', 'logout'],
 };
 
 const PURCHASE_ALIASES = EVENT_BUCKET_ALIASES.purchase;
@@ -2194,6 +2195,7 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
     const limit = Math.max(5, Math.min(50, Number.parseInt(String(req.query.limit || '20'), 10) || 20));
     const since = new Date(Date.now() - windowMinutes * 60 * 1000);
     const loginAliases = EVENT_BUCKET_ALIASES.login.map((name) => normalizeEventName(name));
+    const logoutAliases = EVENT_BUCKET_ALIASES.logout.map((name) => normalizeEventName(name));
 
     const recentEvents = await prisma.event.findMany({
       where: {
@@ -2216,8 +2218,11 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
       return payloadPlatform === 'woocommerce';
     });
 
-    const loginEvents = woocommerceEvents.filter((event) => loginAliases.includes(normalizeEventName(event.eventName)));
-    const sessionIds = collectUniqueStrings(loginEvents.map((event) => event.sessionId));
+    const authEvents = woocommerceEvents.filter((event) => {
+      const eventName = normalizeEventName(event.eventName);
+      return loginAliases.includes(eventName) || logoutAliases.includes(eventName);
+    });
+    const sessionIds = collectUniqueStrings(authEvents.map((event) => event.sessionId));
 
     const activeSessions = sessionIds.length
       ? await prisma.session.findMany({
@@ -2236,8 +2241,10 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
     const activeSessionMap = new Map(activeSessions.map((item) => [item.sessionId, item.lastEventAt]));
     const userMap = new Map();
 
-    for (const event of loginEvents) {
+    for (const event of authEvents) {
       const identity = extractEventIdentity(event.rawPayload || {});
+      const normalizedEventName = normalizeEventName(event.eventName);
+      const eventState = logoutAliases.includes(normalizedEventName) ? 'logout' : 'login';
       const dedupKey = identity.customerId
         ? `customer:${identity.customerId}`
         : identity.emailHash
@@ -2257,23 +2264,37 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
         emailPreview: identity.emailPreview || null,
         phonePreview: identity.phonePreview || null,
         lastLoginAt: null,
+        lastLogoutAt: null,
+        lastAuthState: null,
         lastSeenAt: null,
         sessionIds: new Set(),
-        source: 'user_logged_in',
+        source: eventState === 'logout' ? 'user_logged_out' : 'user_logged_in',
       };
 
-      const loginAt = event.createdAt ? new Date(event.createdAt) : null;
+      const eventAt = event.createdAt ? new Date(event.createdAt) : null;
       const sessionSeenAt = event.sessionId ? activeSessionMap.get(event.sessionId) : null;
-      const seenAt = sessionSeenAt || loginAt;
+      const seenAt = sessionSeenAt || eventAt;
 
-      if (loginAt && (!existing.lastLoginAt || loginAt > existing.lastLoginAt)) {
-        existing.lastLoginAt = loginAt;
+      if (eventState === 'login' && eventAt && (!existing.lastLoginAt || eventAt > existing.lastLoginAt)) {
+        existing.lastLoginAt = eventAt;
+      }
+      if (eventState === 'logout' && eventAt && (!existing.lastLogoutAt || eventAt > existing.lastLogoutAt)) {
+        existing.lastLogoutAt = eventAt;
+      }
+      if (eventAt) {
+        const latestKnownAuthAt = existing.lastAuthAt ? new Date(existing.lastAuthAt).getTime() : 0;
+        if (!latestKnownAuthAt || eventAt.getTime() >= latestKnownAuthAt) {
+          existing.lastAuthAt = eventAt.toISOString();
+          existing.lastAuthState = eventState;
+          existing.source = eventState === 'logout' ? 'user_logged_out' : 'user_logged_in';
+        }
       }
       if (seenAt && (!existing.lastSeenAt || seenAt > existing.lastSeenAt)) {
         existing.lastSeenAt = seenAt;
       }
       if (event.sessionId) {
-        existing.sessionIds.add(event.sessionId);
+        if (eventState === 'logout') existing.sessionIds.delete(event.sessionId);
+        else existing.sessionIds.add(event.sessionId);
       }
 
       if (!existing.customerName && identity.customerDisplayName) {
@@ -2293,6 +2314,7 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
     }
 
     const users = Array.from(userMap.values())
+      .filter((item) => item.lastAuthState !== 'logout')
       .map((item) => ({
         id: item.id,
         customerId: item.customerId,
@@ -2302,6 +2324,7 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
         sessionCount: item.sessionIds.size,
         sessionIds: Array.from(item.sessionIds),
         lastLoginAt: item.lastLoginAt ? item.lastLoginAt.toISOString() : null,
+        lastLogoutAt: item.lastLogoutAt ? item.lastLogoutAt.toISOString() : null,
         lastSeenAt: item.lastSeenAt ? item.lastSeenAt.toISOString() : null,
         source: item.source,
       }))

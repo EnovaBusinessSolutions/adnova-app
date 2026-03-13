@@ -40,6 +40,7 @@ final class Adnova_Pixel_Plugin {
         add_action('woocommerce_order_status_completed', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         add_action('woocommerce_checkout_update_order_meta', array(__CLASS__, 'save_pixel_cookies_to_order'), 10, 1);
         add_action('wp_login', array(__CLASS__, 'track_wp_login_event'), 10, 2);
+        add_action('wp_logout', array(__CLASS__, 'track_wp_logout_event'));
         add_action('wp_footer', array(__CLASS__, 'inject_logged_in_customer_context'), 20);
         // Fallback for custom checkout flows/themes where woocommerce_thankyou is bypassed.
         add_action('wp_footer', array(__CLASS__, 'maybe_track_woo_order_received_fallback'), 1000);
@@ -558,6 +559,31 @@ final class Adnova_Pixel_Plugin {
             'page_type' => 'account',
             'page_url' => $page_url,
             'login_detected_from' => 'wp_login_hook',
+        ));
+    }
+
+    public static function track_wp_logout_event() {
+        $user = wp_get_current_user();
+        if (!$user || !($user instanceof WP_User) || !$user->exists()) {
+            return;
+        }
+
+        $roles = is_array($user->roles) ? $user->roles : array();
+        if (!in_array('customer', $roles, true)) {
+            return;
+        }
+
+        $session_id = null;
+        if (isset($_COOKIE['__adray_session_id'])) {
+            $session_id = sanitize_text_field(wp_unslash($_COOKIE['__adray_session_id']));
+        }
+
+        self::send_server_side_event('user_logged_out', array(
+            'session_id' => $session_id,
+            'customer_id' => (string) $user->ID,
+            'page_type' => 'account',
+            'page_url' => esc_url_raw(home_url('/mi-cuenta/')),
+            'logout_detected_from' => 'wp_logout_hook',
         ));
     }
 
