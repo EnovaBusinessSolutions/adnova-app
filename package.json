@@ -10,6 +10,7 @@
     "test": "jest backend/mcp/__tests__/ --verbose",
     "test:mcp": "jest backend/mcp/__tests__/ --verbose",
     "test:shopify-session": "node scripts/shopify-session-smoke.js",
+    "seed:oauth-client": "node backend/scripts/seed-oauth-client.js",
     "prisma:generate": "prisma generate --schema=backend/prisma/schema.prisma",
     "prisma:migrate": "prisma migrate dev --schema=backend/prisma/schema.prisma",
     "prisma:deploy": "prisma migrate deploy --schema=backend/prisma/schema.prisma",
