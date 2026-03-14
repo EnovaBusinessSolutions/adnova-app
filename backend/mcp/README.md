@@ -41,9 +41,19 @@ curl -H "Authorization: Bearer <access_token>" "http://localhost:3000/gpt/v1/acc
 ```
 
 ### 4. OAuth flow
+
+**Crear cliente OAuth (requerido antes de usar MCP/REST):**
+```bash
+# En .env define MCP_OAUTH_CLIENT_SECRET=tu_secret_minimo_16_chars
+npm run seed:oauth-client
+```
+
+Variables opcionales: `MCP_OAUTH_CLIENT_ID` (default: adray-mcp-client), `MCP_OAUTH_REDIRECT_URIS`.
+
+**Flujo:**
 1. Usuario ya logueado en Adray (session)
-2. `GET /oauth/authorize?client_id=...&redirect_uri=...&response_type=code`
-3. Callback con `code` → intercambiar en `POST /oauth/token`
+2. `GET /oauth/authorize?client_id=adray-mcp-client&redirect_uri=https://httpbin.org/get&response_type=code&scope=read:ads_performance%20read:shopify_orders&state=xyz`
+3. Callback con `code` → intercambiar en `POST /oauth/token` con client_id, client_secret, code, redirect_uri
 4. Usar `access_token` como Bearer en MCP o REST
 
 ### 5. Cliente MCP (Claude / ChatGPT)
