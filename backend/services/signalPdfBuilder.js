@@ -128,6 +128,16 @@ function fileExistsSync(p) {
   }
 }
 
+function isExecutableFileSync(p) {
+  try {
+    if (!p) return false;
+    fs.accessSync(p, fs.constants.F_OK | fs.constants.X_OK);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 function readMaybeBase64Image(imagePath) {
   if (!imagePath || !fileExistsSync(imagePath)) return null;
   const ext = path.extname(imagePath).toLowerCase();
@@ -942,53 +952,72 @@ function buildSignalPdfHtml(model) {
 </html>`;
 }
 
-function resolvePuppeteerExecutablePath() {
-  const explicit =
-    process.env.PUPPETEER_EXECUTABLE_PATH ||
-    process.env.CHROME_PATH ||
-    process.env.GOOGLE_CHROME_BIN ||
-    '';
-
-  if (explicit && fileExistsSync(explicit)) {
-    return path.resolve(explicit);
-  }
-
-  if (!puppeteer) return null;
+function findChromeUnderDir(rootDir) {
+  if (!rootDir || !fileExistsSync(rootDir)) return null;
 
   try {
-    const p = puppeteer.executablePath();
-    if (p && fileExistsSync(p)) return p;
+    const firstLevel = fs.readdirSync(rootDir, { withFileTypes: true });
+
+    for (const entry of firstLevel) {
+      if (!entry.isDirectory()) continue;
+
+      const candidate = path.join(rootDir, entry.name, 'chrome-linux64', 'chrome');
+      if (isExecutableFileSync(candidate)) {
+        return candidate;
+      }
+    }
   } catch (_) {
-    // noop
+    return null;
   }
 
-  const localCandidates = [
-    path.resolve(process.cwd(), '.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome'),
-    path.resolve(process.cwd(), 'node_modules/puppeteer/.local-chromium'),
-    '/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome',
-    '/opt/render/project/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome',
+  return null;
+}
+
+function resolvePuppeteerExecutablePath() {
+  const envCandidates = [
+    process.env.PUPPETEER_EXECUTABLE_PATH,
+    process.env.CHROME_PATH,
+    process.env.GOOGLE_CHROME_BIN,
+  ]
+    .map((x) => safeStr(x).trim())
+    .filter(Boolean);
+
+  for (const candidate of envCandidates) {
+    if (isExecutableFileSync(candidate)) {
+      return path.resolve(candidate);
+    }
+  }
+
+  const discoveredDirs = [
+    '/opt/render/.cache/puppeteer/chrome',
+    '/opt/render/project/.cache/puppeteer/chrome',
+    path.resolve(process.cwd(), '.cache', 'puppeteer', 'chrome'),
+    path.resolve(process.cwd(), 'node_modules', '.cache', 'puppeteer', 'chrome'),
+  ];
+
+  for (const rootDir of discoveredDirs) {
+    const found = findChromeUnderDir(rootDir);
+    if (found) return found;
+  }
+
+  const fixedCandidates = [
     '/usr/bin/google-chrome',
     '/usr/bin/google-chrome-stable',
     '/usr/bin/chromium',
     '/usr/bin/chromium-browser',
+    '/snap/bin/chromium',
   ];
 
-  for (const candidate of localCandidates) {
-    if (!candidate.includes('*')) {
-      if (fileExistsSync(candidate)) return candidate;
-      continue;
+  for (const candidate of fixedCandidates) {
+    if (isExecutableFileSync(candidate)) {
+      return candidate;
     }
+  }
 
-    const [basePrefix, suffix] = candidate.split('*');
-    const baseDir = basePrefix.endsWith('/') ? basePrefix.slice(0, -1) : path.dirname(basePrefix);
-    if (!fileExistsSync(baseDir)) continue;
-
+  if (puppeteer && typeof puppeteer.executablePath === 'function') {
     try {
-      const entries = fs.readdirSync(baseDir);
-      for (const entry of entries) {
-        const full = `${basePrefix}${entry}${suffix}`;
-        if (fileExistsSync(full)) return full;
-      }
+      const p = puppeteer.executablePath();
+      if (isExecutableFileSync(p)) return p;
     } catch (_) {
       // noop
     }
@@ -1002,14 +1031,16 @@ function buildPuppeteerLaunchOptions() {
 
   if (!executablePath) {
     const err = new Error(
-      'SIGNAL_PDF_PUPPETEER_CHROME_NOT_FOUND: Chrome/Chromium is not installed or not discoverable. Set PUPPETEER_EXECUTABLE_PATH or install Chrome with "npx puppeteer browsers install chrome".'
+      'SIGNAL_PDF_PUPPETEER_CHROME_NOT_FOUND: Chrome/Chromium is not installed or not discoverable. Set PUPPETEER_EXECUTABLE_PATH and PUPPETEER_CACHE_DIR, or install Chrome with "npx puppeteer browsers install chrome".'
     );
     err.code = 'SIGNAL_PDF_PUPPETEER_CHROME_NOT_FOUND';
     throw err;
   }
 
+  console.log('[signalPdfBuilder] Using Chrome executable:', executablePath);
+
   return {
-    headless: PUPPETEER_HEADLESS_MODE ? 'new' : false,
+    headless: PUPPETEER_HEADLESS_MODE ? true : false,
     executablePath,
     timeout: PUPPETEER_LAUNCH_TIMEOUT_MS,
     protocolTimeout: PUPPETEER_RENDER_TIMEOUT_MS,
@@ -1018,9 +1049,27 @@ function buildPuppeteerLaunchOptions() {
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
-      '--font-render-hinting=none',
+      '--disable-software-rasterizer',
+      '--disable-background-networking',
+      '--disable-background-timer-throttling',
+      '--disable-breakpad',
+      '--disable-component-update',
+      '--disable-default-apps',
+      '--disable-extensions',
+      '--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints',
+      '--disable-hang-monitor',
+      '--disable-ipc-flooding-protection',
+      '--disable-popup-blocking',
+      '--disable-prompt-on-repost',
+      '--disable-renderer-backgrounding',
+      '--disable-sync',
+      '--force-color-profile=srgb',
+      '--metrics-recording-only',
+      '--mute-audio',
+      '--no-first-run',
       '--no-zygote',
-      '--single-process',
+      '--password-store=basic',
+      '--use-mock-keychain',
     ],
     defaultViewport: {
       width: 1440,
