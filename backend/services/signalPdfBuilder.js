@@ -1,4 +1,3 @@
-// backend/services/signalPdfBuilder.js
 'use strict';
 
 const fs = require('fs');
@@ -25,6 +24,17 @@ const SIGNAL_PDF_PUBLIC_BASE =
 const SIGNAL_PDF_STORAGE_DIR = process.env.SIGNAL_PDF_STORAGE_DIR
   ? path.resolve(process.env.SIGNAL_PDF_STORAGE_DIR)
   : path.resolve(process.cwd(), 'uploads', 'signals');
+
+const SIGNAL_PDF_ALLOW_PDFKIT_FALLBACK =
+  String(process.env.SIGNAL_PDF_ALLOW_PDFKIT_FALLBACK || 'false').trim().toLowerCase() === 'true';
+
+const PUPPETEER_HEADLESS_MODE =
+  String(process.env.PUPPETEER_HEADLESS_MODE || 'true').trim().toLowerCase() === 'false'
+    ? false
+    : true;
+
+const PUPPETEER_LAUNCH_TIMEOUT_MS = Number(process.env.PUPPETEER_LAUNCH_TIMEOUT_MS || 90000);
+const PUPPETEER_RENDER_TIMEOUT_MS = Number(process.env.PUPPETEER_RENDER_TIMEOUT_MS || 90000);
 
 function safeStr(v) {
   return v == null ? '' : String(v);
@@ -254,7 +264,12 @@ function extractKpiChips(signalPayload) {
 
 function buildLineage(root, signalPayload) {
   const ai = root?.aiContext || {};
-  const contextWindow = signalPayload?.contextWindow || ai?.encodedPayload?.contextWindow || ai?.signalPayload?.contextWindow || null;
+  const contextWindow =
+    signalPayload?.contextWindow ||
+    ai?.signalPayload?.contextWindow ||
+    ai?.encodedPayload?.contextWindow ||
+    null;
+
   const sourceSnapshots = ai?.sourceSnapshots || signalPayload?.sourceSnapshots || null;
 
   return {
@@ -927,6 +942,94 @@ function buildSignalPdfHtml(model) {
 </html>`;
 }
 
+function resolvePuppeteerExecutablePath() {
+  const explicit =
+    process.env.PUPPETEER_EXECUTABLE_PATH ||
+    process.env.CHROME_PATH ||
+    process.env.GOOGLE_CHROME_BIN ||
+    '';
+
+  if (explicit && fileExistsSync(explicit)) {
+    return path.resolve(explicit);
+  }
+
+  if (!puppeteer) return null;
+
+  try {
+    const p = puppeteer.executablePath();
+    if (p && fileExistsSync(p)) return p;
+  } catch (_) {
+    // noop
+  }
+
+  const localCandidates = [
+    path.resolve(process.cwd(), '.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome'),
+    path.resolve(process.cwd(), 'node_modules/puppeteer/.local-chromium'),
+    '/opt/render/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome',
+    '/opt/render/project/.cache/puppeteer/chrome/linux-*/chrome-linux64/chrome',
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/usr/bin/chromium',
+    '/usr/bin/chromium-browser',
+  ];
+
+  for (const candidate of localCandidates) {
+    if (!candidate.includes('*')) {
+      if (fileExistsSync(candidate)) return candidate;
+      continue;
+    }
+
+    const [basePrefix, suffix] = candidate.split('*');
+    const baseDir = basePrefix.endsWith('/') ? basePrefix.slice(0, -1) : path.dirname(basePrefix);
+    if (!fileExistsSync(baseDir)) continue;
+
+    try {
+      const entries = fs.readdirSync(baseDir);
+      for (const entry of entries) {
+        const full = `${basePrefix}${entry}${suffix}`;
+        if (fileExistsSync(full)) return full;
+      }
+    } catch (_) {
+      // noop
+    }
+  }
+
+  return null;
+}
+
+function buildPuppeteerLaunchOptions() {
+  const executablePath = resolvePuppeteerExecutablePath();
+
+  if (!executablePath) {
+    const err = new Error(
+      'SIGNAL_PDF_PUPPETEER_CHROME_NOT_FOUND: Chrome/Chromium is not installed or not discoverable. Set PUPPETEER_EXECUTABLE_PATH or install Chrome with "npx puppeteer browsers install chrome".'
+    );
+    err.code = 'SIGNAL_PDF_PUPPETEER_CHROME_NOT_FOUND';
+    throw err;
+  }
+
+  return {
+    headless: PUPPETEER_HEADLESS_MODE ? 'new' : false,
+    executablePath,
+    timeout: PUPPETEER_LAUNCH_TIMEOUT_MS,
+    protocolTimeout: PUPPETEER_RENDER_TIMEOUT_MS,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--font-render-hinting=none',
+      '--no-zygote',
+      '--single-process',
+    ],
+    defaultViewport: {
+      width: 1440,
+      height: 2200,
+      deviceScaleFactor: 1.5,
+    },
+  };
+}
+
 async function renderWithPuppeteer(html, outputPath) {
   if (!puppeteer) {
     const err = new Error('SIGNAL_PDF_PUPPETEER_NOT_INSTALLED');
@@ -934,14 +1037,21 @@ async function renderWithPuppeteer(html, outputPath) {
     throw err;
   }
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-  });
+  const launchOptions = buildPuppeteerLaunchOptions();
+  const browser = await puppeteer.launch(launchOptions);
 
   try {
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0' });
+
+    page.setDefaultNavigationTimeout(PUPPETEER_RENDER_TIMEOUT_MS);
+    page.setDefaultTimeout(PUPPETEER_RENDER_TIMEOUT_MS);
+
+    await page.setContent(html, {
+      waitUntil: ['domcontentloaded', 'load', 'networkidle0'],
+      timeout: PUPPETEER_RENDER_TIMEOUT_MS,
+    });
+
+    await page.emulateMediaType('screen');
 
     await page.pdf({
       path: outputPath,
@@ -954,6 +1064,7 @@ async function renderWithPuppeteer(html, outputPath) {
         left: '12mm',
       },
       preferCSSPageSize: false,
+      timeout: PUPPETEER_RENDER_TIMEOUT_MS,
     });
   } finally {
     await browser.close().catch(() => {});
@@ -1188,8 +1299,8 @@ async function renderWithPdfKit(model, outputPath) {
   });
 }
 
-function inferPublicDownloadUrl(fileName) {
-  return `${SIGNAL_PDF_PUBLIC_BASE}/${encodeURIComponent(fileName)}`;
+function inferPublicDownloadUrl() {
+  return SIGNAL_PDF_PUBLIC_BASE;
 }
 
 async function getPageCountFast(outputPath) {
@@ -1241,12 +1352,12 @@ async function generateSignalPdfForUser({
     if (puppeteer) {
       await renderWithPuppeteer(html, outputPath);
       renderer = 'puppeteer';
-    } else if (PDFDocument) {
+    } else if (SIGNAL_PDF_ALLOW_PDFKIT_FALLBACK && PDFDocument) {
       await renderWithPdfKit(model, outputPath);
       renderer = 'pdfkit';
     } else {
       const err = new Error(
-        'SIGNAL_PDF_NO_RENDERER_AVAILABLE: install "puppeteer" for premium rendering or "pdfkit" as fallback.'
+        'SIGNAL_PDF_NO_RENDERER_AVAILABLE: Puppeteer is required. Install Chrome with "npx puppeteer browsers install chrome" and ensure PUPPETEER_EXECUTABLE_PATH is resolvable if needed.'
       );
       err.code = 'SIGNAL_PDF_NO_RENDERER_AVAILABLE';
       throw err;
@@ -1262,7 +1373,7 @@ async function generateSignalPdfForUser({
       fileName,
       storageKey: fileName,
       localPath: outputPath,
-      downloadUrl: inferPublicDownloadUrl(fileName),
+      downloadUrl: inferPublicDownloadUrl(),
       generatedAt: nowIso(),
       sizeBytes: toNum(stat?.size, 0),
       pageCount: toNum(pageCount, 0) || null,
@@ -1275,7 +1386,9 @@ async function generateSignalPdfForUser({
       }
     } catch (_) {}
 
-    err.code = err.code || 'SIGNAL_PDF_BUILD_FAILED';
+    if (!err.code) {
+      err.code = 'SIGNAL_PDF_BUILD_FAILED';
+    }
     throw err;
   }
 }
