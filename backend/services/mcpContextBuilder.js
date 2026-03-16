@@ -1,8 +1,10 @@
+// backend/services/mcpContextBuilder.js
 'use strict';
 
 const crypto = require('crypto');
 
 const McpData = require('../models/McpData');
+const User = require('../models/User');
 
 const {
   formatMetaForLlm,
@@ -18,6 +20,10 @@ const {
   formatGa4ForLlm,
   formatGa4ForLlmMini,
 } = require('../jobs/transform/ga4LlmFormatter');
+
+const {
+  generateSignalPdfForUser,
+} = require('./signalPdfBuilder');
 
 let OpenAI = null;
 try {
@@ -120,6 +126,26 @@ function getStorageRangeDaysFromRoot(root) {
   return n > 0 ? n : null;
 }
 
+function emptyPdfState(extra = {}) {
+  return {
+    status: 'idle',
+    stage: 'idle',
+    progress: 0,
+    fileName: null,
+    mimeType: 'application/pdf',
+    storageKey: null,
+    localPath: null,
+    downloadUrl: null,
+    generatedAt: null,
+    sizeBytes: 0,
+    pageCount: null,
+    renderer: null,
+    version: 1,
+    error: null,
+    ...extra,
+  };
+}
+
 async function findRoot(userId) {
   const docs = await McpData.find({ userId })
     .sort({ updatedAt: -1, createdAt: -1 })
@@ -151,12 +177,13 @@ async function markContextStale(userId, reason = 'source_updated', extra = {}) {
       $set: {
         aiContext: {
           ...prevAi,
-          status: 'stale',
+          status: 'idle',
           stage: 'awaiting_rebuild',
           progress: 0,
           staleReason: safeStr(reason) || 'source_updated',
           staleAt: nowIso(),
           error: null,
+          pdf: emptyPdfState(),
           ...extra,
         },
       },
@@ -979,6 +1006,20 @@ async function enrichWithOpenAI(base) {
   }
 }
 
+async function buildSignalPdfArtifact(userId, root, signalPayload) {
+  const user = await User.findById(userId)
+    .select('name companyName workspaceName businessName email')
+    .lean()
+    .catch(() => null);
+
+  return generateSignalPdfForUser({
+    userId,
+    root,
+    signalPayload,
+    user,
+  });
+}
+
 async function buildUnifiedContextForUser(userId, options = {}) {
   const {
     explicitSnapshotId = null,
@@ -1018,7 +1059,10 @@ async function buildUnifiedContextForUser(userId, options = {}) {
         error: null,
         usedOpenAI: false,
         model: null,
+        unifiedBase: null,
         encodedPayload: null,
+        signalPayload: null,
+        pdf: emptyPdfState(),
       },
     });
   }
@@ -1072,7 +1116,10 @@ async function buildUnifiedContextForUser(userId, options = {}) {
           ga4: sourceStateSummaryForStatus(ga4State),
         },
         error: 'MCP_CONTEXT_NO_USABLE_SOURCES',
+        unifiedBase: null,
         encodedPayload: null,
+        signalPayload: null,
+        pdf: emptyPdfState({ status: 'failed', stage: 'failed', progress: 100, error: 'MCP_CONTEXT_NO_USABLE_SOURCES' }),
       },
     });
 
@@ -1115,6 +1162,8 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       },
       error: null,
       encodedPayload: null,
+      signalPayload: null,
+      pdf: emptyPdfState({ status: 'idle', stage: 'queued', progress: 0 }),
     },
   });
 
@@ -1137,7 +1186,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       ...(await findRoot(userId))?.aiContext,
       status: 'processing',
       progress: 65,
-      stage: 'encoding_context',
+      stage: 'encoding_signal',
       startedAt: effectiveRoot?.aiContext?.startedAt || nowIso(),
       finishedAt: null,
       snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
@@ -1151,17 +1200,117 @@ async function buildUnifiedContextForUser(userId, options = {}) {
         ga4: sourceStateSummaryForStatus(ga4State),
       },
       error: null,
+      pdf: emptyPdfState({ status: 'idle', stage: 'waiting_for_signal', progress: 0 }),
     },
   });
 
   const encoded = await enrichWithOpenAI(unifiedBase);
+  const signalPayload = encoded.payload;
+
+  await updateRootContextState(userId, {
+    aiContext: {
+      ...(await findRoot(userId))?.aiContext,
+      status: 'processing',
+      progress: 82,
+      stage: 'rendering_pdf',
+      startedAt: effectiveRoot?.aiContext?.startedAt || nowIso(),
+      finishedAt: null,
+      snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+      sourceSnapshots,
+      contextRangeDays,
+      storageRangeDays,
+      error: null,
+      unifiedBase,
+      encodedPayload: signalPayload,
+      signalPayload,
+      usedOpenAI: !!encoded.usedOpenAI,
+      model: encoded.model || null,
+      sourcesStatus: {
+        metaAds: sourceStateSummaryForStatus(metaState),
+        googleAds: sourceStateSummaryForStatus(googleState),
+        ga4: sourceStateSummaryForStatus(ga4State),
+      },
+      usableSources,
+      pendingConnectedSources,
+      pdf: emptyPdfState({
+        status: 'processing',
+        stage: 'rendering_pdf',
+        progress: 15,
+      }),
+    },
+  });
+
+  let pdfResult = null;
+  try {
+    const rootBeforePdf = await findRoot(userId);
+
+    await updateRootContextState(userId, {
+      aiContext: {
+        ...(rootBeforePdf?.aiContext || {}),
+        pdf: {
+          ...(rootBeforePdf?.aiContext?.pdf || emptyPdfState()),
+          status: 'processing',
+          stage: 'building_document',
+          progress: 45,
+          error: null,
+        },
+      },
+    });
+
+    pdfResult = await buildSignalPdfArtifact(userId, rootBeforePdf, signalPayload);
+  } catch (pdfErr) {
+    console.error('[mcpContextBuilder] PDF generation failed:', pdfErr?.message || pdfErr);
+
+    const failRoot = await findRoot(userId);
+    const failAi = failRoot?.aiContext || {};
+
+    await updateRootContextState(userId, {
+      aiContext: {
+        ...failAi,
+        status: 'error',
+        progress: 100,
+        stage: 'failed',
+        finishedAt: nowIso(),
+        snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+        sourceSnapshots,
+        contextRangeDays,
+        storageRangeDays,
+        unifiedBase,
+        encodedPayload: signalPayload,
+        signalPayload,
+        usedOpenAI: !!encoded.usedOpenAI,
+        model: encoded.model || null,
+        error: pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED',
+        sourcesStatus: {
+          metaAds: sourceStateSummaryForStatus(metaState),
+          googleAds: sourceStateSummaryForStatus(googleState),
+          ga4: sourceStateSummaryForStatus(ga4State),
+        },
+        usableSources,
+        pendingConnectedSources,
+        pdf: {
+          ...(failAi?.pdf || emptyPdfState()),
+          status: 'failed',
+          stage: 'failed',
+          progress: 100,
+          generatedAt: null,
+          error: pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED',
+        },
+      },
+    });
+
+    const err = new Error(pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED');
+    err.code = pdfErr?.code || 'SIGNAL_PDF_BUILD_FAILED';
+    throw err;
+  }
+
   const prevRoot = await findRoot(userId);
   const prevAi = prevRoot?.aiContext || {};
 
   await updateRootContextState(userId, {
     aiContext: {
       ...prevAi,
-      status: pendingConnectedSources.length > 0 ? 'partial' : 'done',
+      status: 'done',
       progress: 100,
       stage: pendingConnectedSources.length > 0 ? 'completed_partial' : 'completed',
       startedAt: prevAi?.startedAt || nowIso(),
@@ -1172,7 +1321,8 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       storageRangeDays,
       error: null,
       unifiedBase,
-      encodedPayload: encoded.payload,
+      encodedPayload: signalPayload,
+      signalPayload,
       usedOpenAI: !!encoded.usedOpenAI,
       model: encoded.model || null,
       sourcesStatus: {
@@ -1182,19 +1332,39 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       },
       usableSources,
       pendingConnectedSources,
+      pdf: {
+        ...(prevAi?.pdf || emptyPdfState()),
+        status: 'ready',
+        stage: 'ready',
+        progress: 100,
+        fileName: pdfResult?.fileName || null,
+        mimeType: pdfResult?.mimeType || 'application/pdf',
+        storageKey: pdfResult?.storageKey || null,
+        localPath: pdfResult?.localPath || null,
+        downloadUrl: pdfResult?.downloadUrl || null,
+        generatedAt: pdfResult?.generatedAt || nowIso(),
+        sizeBytes: toNum(pdfResult?.sizeBytes, 0),
+        pageCount: toNum(pdfResult?.pageCount, 0) || null,
+        renderer: pdfResult?.renderer || null,
+        version: 1,
+        error: null,
+      },
     },
   });
 
   const freshRoot = await findRoot(userId);
   const state = freshRoot?.aiContext || {};
+  const pdf = state?.pdf || {};
 
   return {
     ok: true,
     root: freshRoot,
     unifiedBase,
-    encodedPayload: state?.encodedPayload || encoded.payload,
+    encodedPayload: state?.encodedPayload || signalPayload,
+    signalPayload: state?.signalPayload || state?.encodedPayload || signalPayload,
+    pdf,
     data: {
-      status: state?.status || (pendingConnectedSources.length > 0 ? 'partial' : 'done'),
+      status: state?.status || 'done',
       progress: state?.progress || 100,
       stage: state?.stage || (pendingConnectedSources.length > 0 ? 'completed_partial' : 'completed'),
       snapshotId: state?.snapshotId || unifiedBase?.snapshotId || null,
@@ -1204,6 +1374,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       usedOpenAI: !!state?.usedOpenAI,
       model: state?.model || null,
       hasEncodedPayload: !!state?.encodedPayload,
+      hasSignal: !!(state?.signalPayload || state?.encodedPayload),
       providerAgnostic: !!state?.encodedPayload?.providerAgnostic,
       usableSources: state?.usableSources || usableSources,
       pendingConnectedSources: state?.pendingConnectedSources || pendingConnectedSources,
@@ -1211,6 +1382,21 @@ async function buildUnifiedContextForUser(userId, options = {}) {
         metaAds: sourceStateSummaryForStatus(metaState),
         googleAds: sourceStateSummaryForStatus(googleState),
         ga4: sourceStateSummaryForStatus(ga4State),
+      },
+      hasPdf: pdf?.status === 'ready',
+      pdf: {
+        status: pdf?.status || 'idle',
+        stage: pdf?.stage || 'idle',
+        progress: toNum(pdf?.progress, 0),
+        ready: pdf?.status === 'ready',
+        fileName: pdf?.fileName || null,
+        mimeType: pdf?.mimeType || 'application/pdf',
+        downloadUrl: pdf?.downloadUrl || null,
+        generatedAt: pdf?.generatedAt || null,
+        sizeBytes: toNum(pdf?.sizeBytes, 0),
+        pageCount: toNum(pdf?.pageCount, 0) || null,
+        renderer: pdf?.renderer || null,
+        error: pdf?.error || null,
       },
       error: state?.error || null,
     },

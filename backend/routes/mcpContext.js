@@ -1,7 +1,10 @@
+// backend/routes/mcpContext.js
 'use strict';
 
 const express = require('express');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const router = express.Router();
 
 const McpData = require('../models/McpData');
@@ -63,8 +66,29 @@ function normalizeProvider(raw) {
   return p === 'claude' || p === 'gemini' || p === 'chatgpt' ? p : 'chatgpt';
 }
 
+function normalizePdfState(pdf) {
+  const state = pdf || {};
+  return {
+    status: safeStr(state?.status) || 'idle',
+    stage: safeStr(state?.stage) || 'idle',
+    progress: toNum(state?.progress, 0),
+    ready: safeStr(state?.status) === 'ready',
+    fileName: state?.fileName || null,
+    mimeType: state?.mimeType || 'application/pdf',
+    storageKey: state?.storageKey || null,
+    localPath: state?.localPath || null,
+    downloadUrl: state?.downloadUrl || null,
+    generatedAt: state?.generatedAt || null,
+    sizeBytes: toNum(state?.sizeBytes, 0),
+    pageCount: toNum(state?.pageCount, 0) || null,
+    renderer: state?.renderer || null,
+    version: toNum(state?.version, 1) || 1,
+    error: state?.error || null,
+  };
+}
+
 /**
- * Root con contexto universal REAL más reciente.
+ * Root con Signal real más reciente.
  * IMPORTANTE:
  * - NO depende de updatedAt general del documento.
  * - Prioriza aiContext.finishedAt / snapshotId / createdAt.
@@ -75,7 +99,10 @@ async function findLatestContextRootForUser(userId) {
   const root = await McpData.findOne({
     userId,
     kind: 'root',
-    'aiContext.encodedPayload': { $exists: true, $ne: null },
+    $or: [
+      { 'aiContext.signalPayload': { $exists: true, $ne: null } },
+      { 'aiContext.encodedPayload': { $exists: true, $ne: null } },
+    ],
   }).sort({
     'aiContext.finishedAt': -1,
     'aiContext.snapshotId': -1,
@@ -88,11 +115,13 @@ async function findLatestContextRootForUser(userId) {
 
 function getVersionSeedFromRoot(root) {
   const state = root?.aiContext || {};
+  const signalPayload = state?.signalPayload || state?.encodedPayload || null;
+
   return (
     safeStr(state?.snapshotId).trim() ||
     safeStr(root?.latestSnapshotId).trim() ||
     safeStr(state?.finishedAt).trim() ||
-    safeStr(state?.encodedPayload?.generatedAt).trim() ||
+    safeStr(signalPayload?.generatedAt).trim() ||
     safeStr(root?.updatedAt).trim() ||
     String(Date.now())
   );
@@ -120,7 +149,8 @@ async function syncUserVersionedLink(userId, preferredProvider = null) {
   if (!(user.mcpShareEnabled && user.mcpShareToken)) return user;
 
   const latestRoot = await findLatestContextRootForUser(userId);
-  if (!latestRoot?.aiContext?.encodedPayload) return user;
+  const signalPayload = latestRoot?.aiContext?.signalPayload || latestRoot?.aiContext?.encodedPayload || null;
+  if (!signalPayload) return user;
 
   const provider = normalizeProvider(preferredProvider || user.mcpShareProvider || 'chatgpt');
   const shareToken = safeStr(user.mcpShareToken).trim();
@@ -188,6 +218,9 @@ async function findUserByShareToken(token) {
 
 function buildStatusResponse(root, shareState = null) {
   const state = root?.aiContext || {};
+  const signalPayload = state?.signalPayload || state?.encodedPayload || null;
+  const pdf = normalizePdfState(state?.pdf);
+
   const shareEnabled = !!(shareState?.mcpShareEnabled && shareState?.mcpShareToken);
   const shareToken = shareEnabled ? shareState?.mcpShareToken || null : null;
   const shareProvider = normalizeProvider(shareState?.mcpShareProvider || 'chatgpt');
@@ -210,14 +243,22 @@ function buildStatusResponse(root, shareState = null) {
       sourceSnapshots: state?.sourceSnapshots || state?.unifiedBase?.sourceSnapshots || null,
       contextRangeDays: toNum(state?.contextRangeDays) || null,
       storageRangeDays: toNum(state?.storageRangeDays) || null,
+
       hasEncodedPayload: !!state?.encodedPayload,
-      providerAgnostic: !!state?.encodedPayload?.providerAgnostic,
+      hasSignal: !!signalPayload,
+      signalReady: !!signalPayload,
+      providerAgnostic: !!signalPayload?.providerAgnostic,
+
       usedOpenAI: !!state?.usedOpenAI,
       model: state?.model || null,
       error: state?.error || null,
       sources: state?.sourcesStatus || null,
       usableSources: Array.isArray(state?.usableSources) ? state.usableSources : [],
       pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
+
+      hasPdf: pdf.ready,
+      pdf,
+
       hasShareLink: shareEnabled,
       shareUrl: shareShortUrl,
       shareShortUrl,
@@ -235,7 +276,7 @@ function buildStatusResponse(root, shareState = null) {
 
 function buildSharedPayload(root, provider) {
   const state = root?.aiContext || {};
-  const payload = state?.encodedPayload || null;
+  const payload = state?.signalPayload || state?.encodedPayload || null;
   if (!payload) return null;
 
   const providerName =
@@ -308,6 +349,13 @@ router.post('/build', async (req, res) => {
               stage: 'failed',
               finishedAt: nowIso(),
               error: e?.message || e?.code || 'MCP_CONTEXT_BUILD_FAILED',
+              pdf: {
+                ...(root?.aiContext?.pdf || {}),
+                status: safeStr(root?.aiContext?.pdf?.status) === 'ready' ? 'ready' : 'failed',
+                stage: safeStr(root?.aiContext?.pdf?.stage) || 'failed',
+                progress: 100,
+                error: e?.message || e?.code || 'MCP_CONTEXT_BUILD_FAILED',
+              },
             },
           });
         }
@@ -330,7 +378,7 @@ router.post('/build', async (req, res) => {
 
     return res.status(500).json({
       ok: false,
-      error: 'MCP_CONTEXT_BUILD_FAILED',
+      error: code || 'MCP_CONTEXT_BUILD_FAILED',
     });
   }
 });
@@ -364,6 +412,7 @@ router.get('/status', async (req, res) => {
 
 /**
  * GET /api/mcp/context/latest
+ * Devuelve el Signal listo más reciente.
  */
 router.get('/latest', async (req, res) => {
   try {
@@ -378,7 +427,8 @@ router.get('/latest', async (req, res) => {
     }
 
     const state = root?.aiContext || {};
-    if (!state?.encodedPayload) {
+    const signalPayload = state?.signalPayload || state?.encodedPayload || null;
+    if (!signalPayload) {
       return res.status(404).json({
         ok: false,
         error: 'MCP_CONTEXT_NOT_READY',
@@ -393,23 +443,103 @@ router.get('/latest', async (req, res) => {
     setNoCacheHeaders(res);
     return res.json({
       ok: true,
-      data: state.encodedPayload,
+      data: signalPayload,
       meta: {
         status: state?.status || 'done',
         progress: state?.progress || 100,
         stage: state?.stage || 'completed',
         snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
-        sourceSnapshots: state?.sourceSnapshots || state?.encodedPayload?.sourceSnapshots || null,
+        sourceSnapshots: state?.sourceSnapshots || signalPayload?.sourceSnapshots || null,
         contextRangeDays: toNum(state?.contextRangeDays) || null,
         storageRangeDays: toNum(state?.storageRangeDays) || null,
         usedOpenAI: !!state?.usedOpenAI,
         model: state?.model || null,
         generatedAt: state?.finishedAt || null,
+        hasPdf: normalizePdfState(state?.pdf).ready,
       },
     });
   } catch (e) {
     console.error('[mcp/context/latest] error:', e);
     return res.status(500).json({ ok: false, error: 'MCP_CONTEXT_LATEST_FAILED' });
+  }
+});
+
+/**
+ * GET /api/mcp/context/pdf/download
+ * Descarga el PDF listo del usuario autenticado.
+ */
+router.get('/pdf/download', async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: 'NO_SESSION' });
+    }
+
+    const root = (await findLatestContextRootForUser(userId)) || (await findRoot(userId));
+    if (!root) {
+      return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
+    }
+
+    const state = root?.aiContext || {};
+    const pdf = normalizePdfState(state?.pdf);
+
+    if (!pdf.ready) {
+      return res.status(409).json({
+        ok: false,
+        error: 'MCP_SIGNAL_PDF_NOT_READY',
+        data: {
+          status: state?.status || 'idle',
+          progress: state?.progress || 0,
+          stage: state?.stage || 'idle',
+          pdf,
+        },
+      });
+    }
+
+    const filePath = pdf.localPath ? path.resolve(pdf.localPath) : null;
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(404).json({
+        ok: false,
+        error: 'MCP_SIGNAL_PDF_FILE_NOT_FOUND',
+      });
+    }
+
+    setNoCacheHeaders(res);
+    res.setHeader('Content-Type', pdf.mimeType || 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeStr(pdf.fileName || 'adray-signal.pdf').replace(/"/g, '')}"`);
+    return res.download(filePath, safeStr(pdf.fileName || 'adray-signal.pdf').replace(/"/g, ''));
+  } catch (e) {
+    console.error('[mcp/context/pdf/download] error:', e);
+    return res.status(500).json({ ok: false, error: 'MCP_SIGNAL_PDF_DOWNLOAD_FAILED' });
+  }
+});
+
+/**
+ * GET /api/mcp/context/pdf/status
+ * Alias práctico por si el frontend solo quiere consultar PDF.
+ */
+router.get('/pdf/status', async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: 'NO_SESSION' });
+    }
+
+    const root = (await findLatestContextRootForUser(userId)) || (await findRoot(userId));
+    if (!root) {
+      return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
+    }
+
+    const pdf = normalizePdfState(root?.aiContext?.pdf);
+    setNoCacheHeaders(res);
+
+    return res.json({
+      ok: true,
+      data: pdf,
+    });
+  } catch (e) {
+    console.error('[mcp/context/pdf/status] error:', e);
+    return res.status(500).json({ ok: false, error: 'MCP_SIGNAL_PDF_STATUS_FAILED' });
   }
 });
 
@@ -433,7 +563,8 @@ router.post('/link', async (req, res) => {
     }
 
     const state = latestContextRoot?.aiContext || {};
-    if (!state?.encodedPayload) {
+    const signalPayload = state?.signalPayload || state?.encodedPayload || null;
+    if (!signalPayload) {
       return res.status(404).json({ ok: false, error: 'MCP_CONTEXT_NOT_READY' });
     }
 
@@ -570,7 +701,7 @@ router.get('/link', async (req, res) => {
 
 /**
  * DELETE /api/mcp/context/link
- * Revoca el link activo sin borrar la data MCP ni el contexto universal.
+ * Revoca el link activo sin borrar la data MCP ni el Signal.
  */
 router.delete('/link', async (req, res) => {
   try {
@@ -680,7 +811,7 @@ router.post('/link/revoke', async (req, res) => {
 
 /**
  * GET /api/mcp/context/shared/:token
- * Devuelve SIEMPRE el contexto universal más reciente del usuario dueño de ese token.
+ * Devuelve SIEMPRE el Signal más reciente del usuario dueño de ese token.
  */
 router.get('/shared/:token', async (req, res) => {
   try {
@@ -702,7 +833,8 @@ router.get('/shared/:token', async (req, res) => {
     }
 
     const state = root?.aiContext || {};
-    if (!state?.encodedPayload) {
+    const signalPayload = state?.signalPayload || state?.encodedPayload || null;
+    if (!signalPayload) {
       return res.status(404).json({ ok: false, error: 'SHARED_CONTEXT_NOT_READY' });
     }
 
