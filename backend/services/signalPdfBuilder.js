@@ -45,12 +45,6 @@ function toNum(v, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function clampInt(n, min, max) {
-  const x = Number(n || 0);
-  if (!Number.isFinite(x)) return min;
-  return Math.max(min, Math.min(max, Math.trunc(x)));
-}
-
 function nowIso() {
   return new Date().toISOString();
 }
@@ -113,6 +107,16 @@ function formatDateTimeLong(iso) {
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+  }).format(d);
+}
+
+function formatTimeShort(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  if (Number.isNaN(d.getTime())) return '--:--';
+  return new Intl.DateTimeFormat('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
   }).format(d);
 }
 
@@ -190,10 +194,10 @@ function getConnectedSources(root) {
   const out = [];
 
   if (root?.sources?.metaAds?.connected || root?.sources?.metaAds?.ready) {
-    out.push('Meta Ads');
+    out.push('Meta');
   }
   if (root?.sources?.googleAds?.connected || root?.sources?.googleAds?.ready) {
-    out.push('Google Ads');
+    out.push('Google');
   }
   if (root?.sources?.ga4?.connected || root?.sources?.ga4?.ready) {
     out.push('GA4');
@@ -208,68 +212,26 @@ function buildPromptHints(signalPayload) {
 
   const summary = signalPayload?.summary || {};
   return uniqStrings([
-    'Summarize the current business state using this Signal as the source of truth.',
-    'Identify the top 3 growth opportunities and explain why they matter now.',
-    'Find the main risks reducing ROAS, conversion efficiency, or revenue quality.',
-    'Build a 30-day action plan using the priority actions from this Signal.',
-    ...(summary?.priority_actions || []).slice(0, 3).map((x) => `Turn this action into an execution checklist: ${x}`),
+    'Which campaigns have the strongest ROAS and what is limiting the weaker ones?',
+    'Based on the last 60 days, where should we shift budget to improve efficiency?',
+    'Write a concise performance summary I can share with my team this week.',
+    ...(summary?.priority_actions || []).slice(0, 3).map((x) => `Turn this into an action plan: ${x}`),
   ], 6);
 }
 
 function resolveSignalSections(signalPayload) {
   const summary = signalPayload?.summary || {};
-  const performanceDrivers = uniqStrings(signalPayload?.performance_drivers || [], 8);
-  const bottlenecks = uniqStrings(signalPayload?.conversion_bottlenecks || [], 8);
-  const scaling = uniqStrings(signalPayload?.scaling_opportunities || [], 8);
-  const risks = uniqStrings(signalPayload?.risk_flags || summary?.negatives || [], 8);
-  const actions = uniqStrings(summary?.priority_actions || [], 10);
-  const positives = uniqStrings(summary?.positives || [], 8);
   const prompts = buildPromptHints(signalPayload);
 
   return {
     executiveSummary: safeStr(summary?.executive_summary).trim(),
     businessState: safeStr(summary?.business_state).trim(),
     crossChannelStory: safeStr(summary?.cross_channel_story).trim(),
-    positives,
-    risks,
-    actions,
-    performanceDrivers,
-    bottlenecks,
-    scaling,
     prompts,
     llmContextBlock: safeStr(signalPayload?.llm_context_block).trim(),
     llmContextBlockMini: safeStr(signalPayload?.llm_context_block_mini).trim(),
     channelStory: signalPayload?.channel_story || {},
   };
-}
-
-function extractKpiChips(signalPayload) {
-  const out = [];
-  const channelStory = signalPayload?.channel_story || {};
-
-  const metaHeadline = channelStory?.meta_ads?.mini?.headline_kpis || null;
-  const googleHeadline = channelStory?.google_ads?.mini?.headline_kpis || null;
-  const ga4Headline =
-    channelStory?.ga4?.mini?.data?.headline_kpis ||
-    channelStory?.ga4?.mini?.headline_kpis ||
-    null;
-
-  if (metaHeadline) {
-    out.push(`Meta ROAS ${safeStr(metaHeadline.roas || 'n/a')}`);
-    out.push(`Meta Spend ${safeStr(metaHeadline.spend || 'n/a')}`);
-  }
-
-  if (googleHeadline) {
-    out.push(`Google ROAS ${safeStr(googleHeadline.roas || 'n/a')}`);
-    out.push(`Google Spend ${safeStr(googleHeadline.spend || 'n/a')}`);
-  }
-
-  if (ga4Headline) {
-    out.push(`GA4 Sessions ${safeStr(ga4Headline.sessions || 'n/a')}`);
-    out.push(`GA4 Revenue ${safeStr(ga4Headline.revenue || 'n/a')}`);
-  }
-
-  return uniqStrings(out, 8);
 }
 
 function buildLineage(root, signalPayload) {
@@ -302,10 +264,24 @@ function buildSignalPdfModel({ userId, root, signalPayload, user = null }) {
   const connectedSources = getConnectedSources(root);
   const sections = resolveSignalSections(signalPayload);
   const lineage = buildLineage(root, signalPayload);
-  const kpiChips = extractKpiChips(signalPayload);
-  const promptHints = sections.prompts;
-  const signalVersion = safeStr(signalPayload?.schema || 'adray.encoded.context.v2');
-  const providerTag = root?.aiContext?.usedOpenAI ? (root?.aiContext?.model || 'OpenAI') : 'Adray Engine';
+
+  const signalText =
+    safeStr(signalPayload?.llm_context_block).trim() ||
+    safeStr(signalPayload?.llm_context_block_mini).trim() ||
+    safeStr(signalPayload?.encoded_context).trim() ||
+    safeStr(signalPayload?.signal).trim() ||
+    '';
+
+  const promptHints = compactArray(sections.prompts, 3);
+
+  const rollingWindowLabel =
+    lineage.contextRangeDays
+      ? `${lineage.contextRangeDays}d`
+      : lineage.storageRangeDays
+        ? `${lineage.storageRangeDays}d`
+        : 'n/a';
+
+  const generatedClock = formatTimeShort(lineage.generatedAt);
 
   return {
     userId: safeStr(userId),
@@ -315,89 +291,16 @@ function buildSignalPdfModel({ userId, root, signalPayload, user = null }) {
     generatedAt: lineage.generatedAt,
     generatedAtLong: formatDateTimeLong(lineage.generatedAt),
     generatedDateLong: formatDateLong(lineage.generatedAt),
+    generatedClock,
     contextRangeDays: lineage.contextRangeDays,
     storageRangeDays: lineage.storageRangeDays,
     snapshotId: lineage.snapshotId,
     sourceSnapshots: lineage.sourceSnapshots || {},
-    signalVersion,
-    providerTag,
     sections,
-    kpiChips,
     promptHints,
+    rollingWindowLabel,
+    signalText,
   };
-}
-
-function renderListItems(items, opts = {}) {
-  const max = opts.max || 8;
-  const emptyLabel = opts.emptyLabel || 'No items available.';
-  const icon = opts.icon || '•';
-  const list = compactArray(items, max);
-
-  if (list.length === 0) {
-    return `<li class="empty">${escapeHtml(emptyLabel)}</li>`;
-  }
-
-  return list
-    .map((item) => `<li><span class="bullet">${escapeHtml(icon)}</span><span>${escapeHtml(item)}</span></li>`)
-    .join('');
-}
-
-function renderChannelBlock(title, payload, emptyMessage) {
-  if (!payload) {
-    return `
-      <div class="channel-card">
-        <div class="channel-header">
-          <h3>${escapeHtml(title)}</h3>
-        </div>
-        <p class="muted">${escapeHtml(emptyMessage)}</p>
-      </div>
-    `;
-  }
-
-  const mini = payload?.mini?.data || payload?.mini || {};
-  const full = payload?.full?.data || payload?.full || {};
-  const headline = mini?.headline_kpis || {};
-  const priority = mini?.priority_summary || full?.priority_summary || {};
-
-  const chips = uniqStrings([
-    headline?.spend ? `Spend ${headline.spend}` : '',
-    headline?.roas ? `ROAS ${headline.roas}` : '',
-    headline?.purchases ? `Purchases ${headline.purchases}` : '',
-    headline?.conversions ? `Conversions ${headline.conversions}` : '',
-    headline?.conversion_value ? `Conv. Value ${headline.conversion_value}` : '',
-    headline?.sessions ? `Sessions ${headline.sessions}` : '',
-    headline?.revenue ? `Revenue ${headline.revenue}` : '',
-    headline?.engagementRate ? `Engagement ${headline.engagementRate}` : '',
-  ], 4);
-
-  return `
-    <div class="channel-card">
-      <div class="channel-header">
-        <h3>${escapeHtml(title)}</h3>
-      </div>
-
-      ${chips.length > 0 ? `
-        <div class="chip-row">
-          ${chips.map((x) => `<span class="soft-chip">${escapeHtml(x)}</span>`).join('')}
-        </div>
-      ` : ''}
-
-      <div class="grid-2 inner-grid">
-        <div class="sub-card">
-          <div class="sub-title">Top Positives</div>
-          <ul class="mini-list">
-            ${renderListItems(priority?.positives || [], { max: 4, emptyLabel: 'No positives captured.' })}
-          </ul>
-        </div>
-        <div class="sub-card">
-          <div class="sub-title">Priority Actions</div>
-          <ul class="mini-list">
-            ${renderListItems(priority?.actions || [], { max: 4, emptyLabel: 'No actions captured.' })}
-          </ul>
-        </div>
-      </div>
-    </div>
-  `;
 }
 
 function buildSignalPdfHtml(model) {
@@ -405,22 +308,19 @@ function buildSignalPdfHtml(model) {
   const coverImageDataUri = readMaybeBase64Image(coverImagePath);
 
   const historyLabel =
-    model.storageRangeDays && model.contextRangeDays
-      ? `${model.contextRangeDays} days active reasoning · ${model.storageRangeDays} days stored`
-      : model.contextRangeDays
-        ? `${model.contextRangeDays} day active reasoning window`
-        : model.storageRangeDays
-          ? `${model.storageRangeDays} days historical storage`
-          : 'Cross-channel historical signal ready';
+    model.contextRangeDays
+      ? `${model.contextRangeDays}d`
+      : model.storageRangeDays
+        ? `${model.storageRangeDays}d`
+        : 'n/a';
 
-  const snapshotMeta = uniqStrings([
-    model.snapshotId ? `Snapshot ${model.snapshotId}` : '',
-    model.signalVersion ? `Schema ${model.signalVersion}` : '',
-    model.providerTag ? `Built with ${model.providerTag}` : '',
-  ], 3);
+  const sourcesLabel = model.connectedSources.length > 0
+    ? model.connectedSources.join(' · ')
+    : 'No sources';
 
-  const section = model.sections;
-  const channelStory = section.channelStory || {};
+  const prompts = compactArray(model.promptHints, 3);
+  const signalText = model.signalText || 'Signal not available.';
+  const snapshotLabel = safeStr(model.snapshotId || 'n/a');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -430,524 +330,495 @@ function buildSignalPdfHtml(model) {
 <title>${escapeHtml(model.workspaceName)} Signal PDF</title>
 <style>
   :root{
-    --bg:#0b0b10;
-    --panel:#11131a;
-    --panel-2:#151823;
-    --line:rgba(255,255,255,.10);
-    --line-soft:rgba(255,255,255,.06);
-    --text:#f5f7ff;
-    --muted:rgba(235,240,255,.66);
-    --muted-2:rgba(235,240,255,.48);
-    --purple:#b55cff;
-    --purple-2:#df9aff;
-    --mint:#4fe3c1;
-    --mint-2:#8ff6df;
-    --danger:#ff7f9d;
-    --gold:#ffd47a;
+    --bg:#06070b;
+    --panel:#0a0c12;
+    --panel-2:#0f1220;
+    --panel-3:#0b0d16;
+    --line:#2b2f4a;
+    --line-soft:rgba(141,126,255,.18);
+    --text:#eef2ff;
+    --muted:#9aa3c7;
+    --muted-2:#717aa8;
+    --purple:#a96cff;
+    --purple-2:#d7a4ff;
+    --mint:#64f0cb;
+    --mint-2:#8af8de;
+    --blue:#8cb7ff;
+    --grid:rgba(120,130,255,.14);
   }
-  *{ box-sizing:border-box; }
-  html,body{ margin:0; padding:0; background:var(--bg); color:var(--text); font-family:Inter,Arial,Helvetica,sans-serif; }
-  body{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
 
-  .page{
-    width:100%;
-    min-height:100vh;
-    padding:28px;
+  *{ box-sizing:border-box; }
+
+  html,body{
+    margin:0;
+    padding:0;
+    background:var(--bg);
+    color:var(--text);
+    -webkit-print-color-adjust:exact;
+    print-color-adjust:exact;
+    font-family:Inter,Arial,Helvetica,sans-serif;
   }
-  .cover{
+
+  body{
+    background:
+      radial-gradient(circle at top left, rgba(169,108,255,.10), transparent 28%),
+      radial-gradient(circle at top right, rgba(100,240,203,.08), transparent 22%),
+      linear-gradient(180deg, #05060a 0%, #070810 100%);
+  }
+
+  .cover-page{
+    min-height:100vh;
+    padding:22mm 18mm 16mm;
     position:relative;
     overflow:hidden;
     background:
-      radial-gradient(920px 420px at 8% 8%, rgba(181,92,255,.20), transparent 60%),
-      radial-gradient(820px 380px at 100% 0%, rgba(79,227,193,.16), transparent 55%),
-      radial-gradient(980px 420px at 50% 100%, rgba(255,255,255,.06), transparent 60%),
-      linear-gradient(180deg, #0d1017 0%, #090a10 100%);
-    border:1px solid rgba(255,255,255,.10);
-    border-radius:28px;
-    padding:28px;
+      radial-gradient(circle at 15% 12%, rgba(169,108,255,.10), transparent 18%),
+      radial-gradient(circle at 84% 9%, rgba(100,240,203,.08), transparent 16%),
+      linear-gradient(180deg, #05060a 0%, #070810 100%);
   }
-  .cover::after{
+
+  .cover-page::before{
     content:"";
     position:absolute;
     inset:0;
-    background:
-      linear-gradient(135deg, rgba(255,255,255,.03), transparent 24%),
-      radial-gradient(circle at 18% 10%, rgba(181,92,255,.10), transparent 22%),
-      radial-gradient(circle at 82% 16%, rgba(79,227,193,.08), transparent 18%);
+    background-image:
+      radial-gradient(var(--grid) 0.85px, transparent 0.85px);
+    background-size:16px 16px;
+    opacity:.65;
     pointer-events:none;
   }
-  .brand-row{
+
+  .cover-shell{
     position:relative;
     z-index:1;
+    border:1px solid rgba(123,110,255,.35);
+    background:linear-gradient(180deg, rgba(10,12,18,.88), rgba(7,9,15,.96));
+    box-shadow:
+      0 0 0 1px rgba(120,120,255,.06) inset,
+      0 0 60px rgba(97,76,255,.10);
+    padding:14mm 12mm 10mm;
+    min-height:250mm;
+  }
+
+  .cover-top{
     display:flex;
-    align-items:center;
     justify-content:space-between;
+    align-items:flex-start;
     gap:18px;
   }
-  .brand-left{
+
+  .logo-col{
     display:flex;
-    align-items:center;
-    gap:12px;
+    flex-direction:column;
+    gap:6px;
   }
-  .logo-box{
-    width:42px;
-    height:42px;
-    border-radius:14px;
-    border:1px solid rgba(181,92,255,.18);
-    background:rgba(181,92,255,.12);
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    font-weight:800;
-    letter-spacing:.08em;
-    font-size:13px;
+
+  .brand-main{
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size:26px;
+    letter-spacing:.10em;
+    text-transform:uppercase;
+    color:#d7dfff;
+    font-weight:700;
   }
-  .eyebrow{
+
+  .brand-sub{
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size:9px;
+    letter-spacing:.25em;
+    color:var(--muted);
+    text-transform:uppercase;
+  }
+
+  .status-chip{
     display:inline-flex;
     align-items:center;
     gap:8px;
-    padding:8px 12px;
-    border:1px solid rgba(181,92,255,.20);
-    background:rgba(181,92,255,.10);
-    color:#eddcff;
-    border-radius:999px;
+    padding:7px 12px;
+    border:1px solid rgba(100,240,203,.25);
+    color:var(--mint-2);
     font-size:10px;
-    font-weight:700;
     letter-spacing:.18em;
     text-transform:uppercase;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    background:rgba(100,240,203,.05);
   }
-  .eyebrow .dot{
+
+  .status-dot{
     width:7px;
     height:7px;
-    border-radius:999px;
+    border-radius:50%;
     background:var(--mint);
-    box-shadow:0 0 12px rgba(79,227,193,.55);
+    box-shadow:0 0 12px rgba(100,240,203,.55);
   }
-  .cover-grid{
-    position:relative;
-    z-index:1;
-    display:grid;
-    grid-template-columns:1.35fr .95fr;
-    gap:22px;
-    margin-top:22px;
+
+  .cover-title{
+    margin:18mm 0 10mm;
   }
-  .headline{
-    font-size:42px;
-    line-height:1.02;
-    letter-spacing:-.04em;
-    margin:16px 0 0;
-    font-weight:900;
+
+  .cover-kicker{
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size:10px;
+    color:#8f98c5;
+    text-transform:uppercase;
+    letter-spacing:.20em;
+    margin-bottom:10px;
   }
-  .headline .grad{
-    background:linear-gradient(90deg,var(--purple) 0%, #fff 48%, var(--mint) 100%);
-    -webkit-background-clip:text;
-    background-clip:text;
-    color:transparent;
+
+  .workspace{
+    border:1px solid rgba(123,110,255,.28);
+    padding:10px 12px;
+    margin-bottom:12px;
+    background:rgba(12,14,24,.55);
   }
-  .sub{
-    margin-top:16px;
-    max-width:720px;
-    font-size:14px;
-    line-height:1.75;
-    color:var(--muted);
+
+  .workspace-label{
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size:9px;
+    color:#7380b8;
+    text-transform:uppercase;
+    letter-spacing:.16em;
+    margin-bottom:7px;
   }
-  .cover-art{
-    border:1px solid rgba(255,255,255,.10);
-    background:rgba(255,255,255,.03);
-    border-radius:24px;
-    overflow:hidden;
-    min-height:280px;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    position:relative;
+
+  .workspace-value{
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size:21px;
+    color:#f1f4ff;
+    font-weight:700;
+    letter-spacing:.02em;
   }
-  .cover-art img{
-    width:100%;
-    height:100%;
-    object-fit:cover;
-    display:block;
-  }
-  .cover-art .fallback{
-    width:100%;
-    height:100%;
-    min-height:280px;
-    background:
-      radial-gradient(circle at 20% 20%, rgba(181,92,255,.20), transparent 24%),
-      radial-gradient(circle at 82% 18%, rgba(79,227,193,.18), transparent 20%),
-      radial-gradient(circle at 50% 100%, rgba(255,255,255,.08), transparent 30%),
-      linear-gradient(180deg, #141825 0%, #0d1018 100%);
-  }
-  .stats-grid{
-    position:relative;
-    z-index:1;
+
+  .cover-stats{
     display:grid;
     grid-template-columns:repeat(4,minmax(0,1fr));
-    gap:12px;
-    margin-top:22px;
+    gap:10px;
+    margin:12px 0 18px;
   }
+
   .stat{
-    border:1px solid var(--line);
-    border-radius:20px;
-    background:rgba(255,255,255,.03);
-    padding:16px 16px 14px;
+    border:1px solid rgba(123,110,255,.20);
+    background:rgba(11,13,22,.7);
+    padding:10px 11px 9px;
+    min-height:72px;
   }
+
   .stat-label{
-    font-size:10px;
-    letter-spacing:.16em;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size:9px;
+    color:#6f7ab0;
     text-transform:uppercase;
-    color:var(--muted-2);
+    letter-spacing:.16em;
+    margin-bottom:8px;
   }
+
   .stat-value{
-    margin-top:10px;
-    font-size:22px;
-    line-height:1.1;
-    font-weight:800;
-    letter-spacing:-.03em;
-  }
-  .stat-note{
-    margin-top:8px;
-    font-size:12px;
-    color:var(--muted);
-    line-height:1.5;
-  }
-  .chip-row{
-    display:flex;
-    flex-wrap:wrap;
-    gap:8px;
-    margin-top:14px;
-  }
-  .soft-chip{
-    display:inline-flex;
-    align-items:center;
-    gap:6px;
-    border-radius:999px;
-    border:1px solid rgba(255,255,255,.09);
-    padding:8px 11px;
-    background:rgba(255,255,255,.03);
-    font-size:11px;
-    color:var(--text);
-  }
-  .section{
-    margin-top:18px;
-    border:1px solid rgba(255,255,255,.10);
-    border-radius:24px;
-    background:linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.02));
-    overflow:hidden;
-  }
-  .section-inner{ padding:22px; }
-  .section-kicker{
-    display:inline-flex;
-    align-items:center;
-    gap:8px;
-    font-size:10px;
-    letter-spacing:.17em;
-    text-transform:uppercase;
-    color:#ead8ff;
-    border:1px solid rgba(181,92,255,.18);
-    background:rgba(181,92,255,.10);
-    border-radius:999px;
-    padding:8px 12px;
-  }
-  .section-title{
-    margin:16px 0 0;
-    font-size:28px;
-    line-height:1.05;
-    letter-spacing:-.04em;
-    font-weight:850;
-  }
-  .section-body{
-    margin-top:14px;
-    color:var(--muted);
-    font-size:14px;
-    line-height:1.8;
-  }
-  .grid-2{
-    display:grid;
-    grid-template-columns:repeat(2,minmax(0,1fr));
-    gap:14px;
-  }
-  .grid-3{
-    display:grid;
-    grid-template-columns:repeat(3,minmax(0,1fr));
-    gap:14px;
-  }
-  .card{
-    border:1px solid var(--line);
-    border-radius:20px;
-    background:rgba(255,255,255,.03);
-    padding:16px;
-  }
-  .card-title{
-    font-size:12px;
-    letter-spacing:.16em;
-    text-transform:uppercase;
-    color:var(--muted-2);
-    margin:0 0 10px;
-  }
-  .card p{
-    margin:0;
-    color:var(--muted);
-    font-size:13px;
-    line-height:1.8;
-  }
-  ul.list, ul.mini-list{
-    list-style:none;
-    padding:0;
-    margin:0;
-  }
-  ul.list li, ul.mini-list li{
-    display:flex;
-    gap:10px;
-    margin:0;
-    padding:0;
-    color:var(--text);
-    line-height:1.7;
-  }
-  ul.list li + li{ margin-top:10px; }
-  ul.mini-list li + li{ margin-top:8px; }
-  .bullet{
-    color:var(--mint);
-    flex:0 0 auto;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size:16px;
     font-weight:700;
+    color:#f3f6ff;
+    line-height:1.15;
+    word-break:break-word;
   }
-  .empty{
-    color:var(--muted);
+
+  .stat-note{
+    margin-top:5px;
+    font-size:9px;
+    color:#7d88ba;
+    text-transform:uppercase;
+    letter-spacing:.10em;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   }
-  .quote{
-    border-left:3px solid rgba(79,227,193,.55);
-    padding-left:14px;
-    color:#eefcf8;
-    white-space:pre-wrap;
-    font-size:13px;
-    line-height:1.8;
+
+  .section-label{
+    margin:18px 0 10px;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size:10px;
+    color:#8a95ca;
+    text-transform:uppercase;
+    letter-spacing:.18em;
   }
-  .channel-card{
-    border:1px solid var(--line);
-    border-radius:20px;
-    background:rgba(255,255,255,.03);
-    padding:16px;
-  }
-  .channel-header{
+
+  .prompt-list{
     display:flex;
-    align-items:center;
-    justify-content:space-between;
+    flex-direction:column;
     gap:10px;
-    margin-bottom:10px;
   }
-  .channel-header h3{
-    margin:0;
-    font-size:18px;
-    letter-spacing:-.02em;
+
+  .prompt-card{
+    border:1px solid rgba(123,110,255,.24);
+    background:rgba(10,12,20,.72);
+    padding:10px 12px;
   }
-  .inner-grid{ margin-top:12px; }
-  .sub-card{
-    border:1px solid var(--line-soft);
-    border-radius:16px;
-    background:rgba(255,255,255,.02);
-    padding:12px;
-  }
-  .sub-title{
-    font-size:11px;
+
+  .prompt-head{
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size:9px;
     text-transform:uppercase;
     letter-spacing:.15em;
-    color:var(--muted-2);
-    margin-bottom:10px;
+    color:#7985bb;
+    margin-bottom:8px;
   }
-  .muted{
-    color:var(--muted);
-    font-size:13px;
-    line-height:1.7;
+
+  .prompt-body{
+    font-size:15px;
+    line-height:1.45;
+    color:#edf2ff;
   }
-  .footer-note{
-    margin-top:16px;
-    color:var(--muted-2);
-    font-size:11px;
-    line-height:1.7;
+
+  .prompt-foot{
+    margin-top:8px;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size:8px;
+    color:#6773a8;
+    letter-spacing:.14em;
+    text-transform:uppercase;
   }
+
+  .how-to{
+    display:grid;
+    grid-template-columns:1fr;
+    gap:7px;
+    margin-top:6px;
+  }
+
+  .how-step{
+    display:flex;
+    gap:10px;
+    align-items:flex-start;
+    color:#dfe5ff;
+    font-size:12px;
+    line-height:1.45;
+  }
+
+  .how-step .num{
+    width:22px;
+    flex:0 0 22px;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    color:#7a87bd;
+  }
+
+  .cover-footer{
+    margin-top:20px;
+    padding-top:12px;
+    border-top:1px solid rgba(123,110,255,.22);
+    display:flex;
+    justify-content:space-between;
+    gap:12px;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size:8px;
+    color:#6975aa;
+    text-transform:uppercase;
+    letter-spacing:.14em;
+  }
+
   .page-break{
     page-break-before:always;
     break-before:page;
   }
+
+  .signal-page{
+    min-height:100vh;
+    padding:18mm 16mm 18mm;
+    background:
+      radial-gradient(circle at top left, rgba(169,108,255,.05), transparent 22%),
+      linear-gradient(180deg, #06070b 0%, #090b12 100%);
+  }
+
+  .signal-shell{
+    border:1px solid rgba(123,110,255,.18);
+    background:rgba(8,10,17,.94);
+    padding:14mm 12mm 12mm;
+  }
+
+  .signal-head{
+    margin-bottom:16px;
+  }
+
+  .signal-kicker{
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size:10px;
+    color:#8692ca;
+    text-transform:uppercase;
+    letter-spacing:.18em;
+    margin-bottom:8px;
+  }
+
+  .signal-title{
+    font-size:28px;
+    line-height:1.05;
+    font-weight:800;
+    color:#f3f5ff;
+    margin:0;
+    letter-spacing:-.03em;
+  }
+
+  .signal-sub{
+    margin-top:8px;
+    color:#8f99c8;
+    font-size:12px;
+    line-height:1.6;
+  }
+
+  .signal-box{
+    border:1px solid rgba(123,110,255,.18);
+    background:
+      linear-gradient(180deg, rgba(11,13,22,.95), rgba(8,10,16,.95));
+    padding:14px;
+  }
+
+  .signal-pre{
+    margin:0;
+    white-space:pre-wrap;
+    word-break:break-word;
+    overflow-wrap:anywhere;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size:10.5px;
+    line-height:1.65;
+    color:#e8ecff;
+  }
+
+  .signal-meta{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+    margin:0 0 14px;
+  }
+
+  .meta-chip{
+    display:inline-flex;
+    align-items:center;
+    padding:6px 10px;
+    border:1px solid rgba(123,110,255,.18);
+    background:rgba(255,255,255,.02);
+    color:#91a0d6;
+    font-size:9px;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  }
+
+  img.cover-art-img{
+    display:block;
+    width:110px;
+    max-width:110px;
+    opacity:.98;
+    border:1px solid rgba(123,110,255,.20);
+    background:rgba(255,255,255,.02);
+  }
+
+  .cover-art-wrap{
+    display:flex;
+    align-items:flex-start;
+    justify-content:flex-end;
+  }
+
+  @page{
+    size:A4;
+    margin:0;
+  }
 </style>
 </head>
 <body>
-  <div class="page">
-    <div class="cover">
-      <div class="brand-row">
-        <div class="brand-left">
-          <div class="logo-box">AI</div>
-          <div>
-            <div class="eyebrow"><span class="dot"></span> Adray Signal Export</div>
-          </div>
-        </div>
-        <div class="muted">${escapeHtml(model.generatedDateLong)}</div>
-      </div>
-
-      <div class="cover-grid">
-        <div>
-          <div class="eyebrow" style="margin-top:6px;">Signal Ready</div>
-          <h1 class="headline">
-            ${escapeHtml(model.workspaceName)}<br />
-            <span class="grad">Signal PDF</span>
-          </h1>
-          <p class="sub">
-            This export captures the final Signal generated by Adray from the user’s connected sources.
-            It is ready to be used as structured context inside AI tools for strategy, diagnostics,
-            prioritization, and decision support.
-          </p>
-
-          ${model.kpiChips.length > 0 ? `
-            <div class="chip-row">
-              ${model.kpiChips.map((x) => `<span class="soft-chip">${escapeHtml(x)}</span>`).join('')}
-            </div>
-          ` : ''}
-
-          ${snapshotMeta.length > 0 ? `
-            <div class="chip-row">
-              ${snapshotMeta.map((x) => `<span class="soft-chip">${escapeHtml(x)}</span>`).join('')}
-            </div>
-          ` : ''}
+  <section class="cover-page">
+    <div class="cover-shell">
+      <div class="cover-top">
+        <div class="logo-col">
+          <div class="brand-main">ADRAY</div>
+          <div class="brand-sub">Daily Signal Report</div>
         </div>
 
-        <div class="cover-art">
-          ${coverImageDataUri
-            ? `<img src="${coverImageDataUri}" alt="Adray Signal cover" />`
-            : `<div class="fallback"></div>`}
+        <div class="status-chip">
+          <span class="status-dot"></span>
+          Signal Ready
         </div>
       </div>
 
-      <div class="stats-grid">
-        <div class="stat">
-          <div class="stat-label">Workspace</div>
-          <div class="stat-value">${escapeHtml(model.workspaceName)}</div>
-          <div class="stat-note">Signal owner / account context</div>
+      <div class="cover-title">
+        <div class="cover-kicker">Workspace</div>
+        <div class="workspace">
+          <div class="workspace-label">Active workspace</div>
+          <div class="workspace-value">${escapeHtml(model.workspaceName)}</div>
         </div>
+      </div>
 
+      <div class="cover-stats">
         <div class="stat">
-          <div class="stat-label">Connected Sources</div>
+          <div class="stat-label">Sources</div>
           <div class="stat-value">${escapeHtml(String(model.sourceCount))}</div>
-          <div class="stat-note">${escapeHtml(model.connectedSources.join(' · ') || 'No sources listed')}</div>
+          <div class="stat-note">${escapeHtml(sourcesLabel)}</div>
         </div>
 
         <div class="stat">
-          <div class="stat-label">Historical Window</div>
+          <div class="stat-label">History</div>
           <div class="stat-value">${escapeHtml(historyLabel)}</div>
-          <div class="stat-note">Reasoning and storage coverage</div>
+          <div class="stat-note">Rolling window</div>
+        </div>
+
+        <div class="stat">
+          <div class="stat-label">Reconciled</div>
+          <div class="stat-value">✓</div>
+          <div class="stat-note">Signal verified</div>
         </div>
 
         <div class="stat">
           <div class="stat-label">Generated</div>
-          <div class="stat-value">${escapeHtml(model.generatedAtLong)}</div>
-          <div class="stat-note">Final Signal + PDF output timestamp</div>
+          <div class="stat-value">${escapeHtml(model.generatedClock)}</div>
+          <div class="stat-note">Auto export</div>
         </div>
+      </div>
+
+      <div class="section-label">// Here are 3 recommended prompts for your data</div>
+
+      <div class="prompt-list">
+        ${prompts.map((prompt, idx) => `
+          <div class="prompt-card">
+            <div class="prompt-head">${idx === 0 ? 'Optimization' : idx === 1 ? 'Budget' : 'Report'}</div>
+            <div class="prompt-body">"${escapeHtml(prompt)}"</div>
+            <div class="prompt-foot">attach this pdf · paste · send</div>
+          </div>
+        `).join('')}
+      </div>
+
+      <div class="section-label" style="margin-top:18px;">// How to use</div>
+
+      <div class="how-to">
+        <div class="how-step"><span class="num">01</span><span>Open Claude, ChatGPT, Gemini, Grok or DeepSeek.</span></div>
+        <div class="how-step"><span class="num">02</span><span>Attach this PDF to your conversation.</span></div>
+        <div class="how-step"><span class="num">03</span><span>Copy a prompt above and send it.</span></div>
+        <div class="how-step"><span class="num">04</span><span>Ask follow-up questions in plain language.</span></div>
+      </div>
+
+      <div class="cover-footer">
+        <div>Adray · adray.ai · signal export</div>
+        <div>Snapshot · ${escapeHtml(snapshotLabel)}</div>
       </div>
     </div>
+  </section>
 
-    <section class="section">
-      <div class="section-inner">
-        <div class="section-kicker">Executive Overview</div>
-        <h2 class="section-title">What this Signal says right now</h2>
-        <div class="section-body">
-          ${section.executiveSummary ? `<p>${escapeHtml(section.executiveSummary)}</p>` : ''}
-          ${section.businessState ? `<p>${escapeHtml(section.businessState)}</p>` : ''}
-          ${section.crossChannelStory ? `<p>${escapeHtml(section.crossChannelStory)}</p>` : ''}
-        </div>
+  <div class="page-break"></div>
 
-        <div class="grid-3" style="margin-top:16px;">
-          <div class="card">
-            <div class="card-title">Positives</div>
-            <ul class="mini-list">
-              ${renderListItems(section.positives, { max: 6, emptyLabel: 'No positives captured.' })}
-            </ul>
-          </div>
-          <div class="card">
-            <div class="card-title">Risks</div>
-            <ul class="mini-list">
-              ${renderListItems(section.risks, { max: 6, emptyLabel: 'No risks captured.' })}
-            </ul>
-          </div>
-          <div class="card">
-            <div class="card-title">Priority Actions</div>
-            <ul class="mini-list">
-              ${renderListItems(section.actions, { max: 6, emptyLabel: 'No actions captured.' })}
-            </ul>
-          </div>
+  <section class="signal-page">
+    <div class="signal-shell">
+      <div class="signal-head">
+        <div class="signal-kicker">Full Signal</div>
+        <h1 class="signal-title">Plain text source for LLMs</h1>
+        <div class="signal-sub">
+          This section contains the raw Signal in plain text so AI models can read it more easily.
         </div>
       </div>
-    </section>
 
-    <section class="section">
-      <div class="section-inner">
-        <div class="section-kicker">Strategy Layer</div>
-        <h2 class="section-title">Where growth and friction are happening</h2>
-
-        <div class="grid-2" style="margin-top:16px;">
-          <div class="card">
-            <div class="card-title">Performance Drivers</div>
-            <ul class="list">
-              ${renderListItems(section.performanceDrivers, { max: 8, emptyLabel: 'No performance drivers captured yet.' })}
-            </ul>
-          </div>
-          <div class="card">
-            <div class="card-title">Conversion Bottlenecks</div>
-            <ul class="list">
-              ${renderListItems(section.bottlenecks, { max: 8, emptyLabel: 'No bottlenecks captured yet.' })}
-            </ul>
-          </div>
-          <div class="card">
-            <div class="card-title">Scaling Opportunities</div>
-            <ul class="list">
-              ${renderListItems(section.scaling, { max: 8, emptyLabel: 'No scaling opportunities captured yet.' })}
-            </ul>
-          </div>
-          <div class="card">
-            <div class="card-title">Suggested Prompts</div>
-            <ul class="list">
-              ${renderListItems(model.promptHints, { max: 8, emptyLabel: 'No prompts captured.' })}
-            </ul>
-          </div>
-        </div>
+      <div class="signal-meta">
+        <span class="meta-chip">Workspace · ${escapeHtml(model.workspaceName)}</span>
+        <span class="meta-chip">Sources · ${escapeHtml(sourcesLabel)}</span>
+        <span class="meta-chip">Generated · ${escapeHtml(model.generatedAtLong)}</span>
       </div>
-    </section>
 
-    <div class="page-break"></div>
-
-    <section class="section">
-      <div class="section-inner">
-        <div class="section-kicker">Channel Story</div>
-        <h2 class="section-title">Per-source Signal summary</h2>
-
-        <div class="grid-2" style="margin-top:16px;">
-          ${renderChannelBlock('Meta Ads', channelStory?.meta_ads, 'Meta Ads data was not available in this Signal.')}
-          ${renderChannelBlock('Google Ads', channelStory?.google_ads, 'Google Ads data was not available in this Signal.')}
-          ${renderChannelBlock('GA4', channelStory?.ga4, 'GA4 data was not available in this Signal.')}
-          <div class="channel-card">
-            <div class="channel-header">
-              <h3>Signal Mini Context</h3>
-            </div>
-            <div class="quote">${escapeHtml(section.llmContextBlockMini || 'Mini Signal context not available.')}</div>
-          </div>
-        </div>
+      <div class="signal-box">
+        <pre class="signal-pre">${escapeHtml(signalText)}</pre>
       </div>
-    </section>
-
-    <section class="section">
-      <div class="section-inner">
-        <div class="section-kicker">Full Signal Block</div>
-        <h2 class="section-title">AI-ready source of truth</h2>
-        <div class="card" style="margin-top:16px;">
-          <div class="quote">${escapeHtml(section.llmContextBlock || 'Full Signal block not available.')}</div>
-        </div>
-
-        <div class="footer-note">
-          This PDF was generated automatically by Adray after the Signal finished building.
-          Use it as a portable reference inside AI workflows, strategy sessions, analysis threads,
-          and execution planning.
-        </div>
-      </div>
-    </section>
-  </div>
+    </div>
+  </section>
 </body>
 </html>`;
 }
@@ -1107,12 +978,12 @@ async function renderWithPuppeteer(html, outputPath) {
       format: 'A4',
       printBackground: true,
       margin: {
-        top: '16mm',
-        right: '12mm',
-        bottom: '16mm',
-        left: '12mm',
+        top: '0mm',
+        right: '0mm',
+        bottom: '0mm',
+        left: '0mm',
       },
-      preferCSSPageSize: false,
+      preferCSSPageSize: true,
       timeout: PUPPETEER_RENDER_TIMEOUT_MS,
     });
   } finally {
@@ -1218,121 +1089,42 @@ async function renderWithPdfKit(model, outputPath) {
       doc.fillColor('#FFFFFF');
 
       doc
-        .roundedRect(28, 28, doc.page.width - 56, 245, 18)
-        .fillOpacity(1)
-        .fill('#11131A');
-
-      doc
         .font('Helvetica-Bold')
-        .fontSize(10)
-        .fillColor('#D9C7FF')
-        .text('ADRAY SIGNAL EXPORT', 50, 52);
-
-      doc
-        .font('Helvetica-Bold')
-        .fontSize(28)
-        .fillColor('#FFFFFF')
-        .text(model.workspaceName, 50, 80, { width: 330 });
-
-      doc
-        .font('Helvetica-Bold')
-        .fontSize(30)
-        .fillColor('#B55CFF')
-        .text('Signal PDF', 50, 118, { width: 330 });
+        .fontSize(20)
+        .text('ADRAY SIGNAL EXPORT', 50, 60);
 
       doc
         .font('Helvetica')
-        .fontSize(11.5)
+        .fontSize(12)
         .fillColor('#C5CCDD')
-        .text(
-          'This export contains the final Signal generated by Adray and is ready to be used as structured AI context.',
-          50,
-          166,
-          { width: 360, lineGap: 3 }
-        );
+        .text(`Workspace: ${model.workspaceName}`, 50, 100);
 
       doc
         .font('Helvetica')
         .fontSize(10)
         .fillColor('#9AA3B7')
-        .text(`Generated: ${model.generatedAtLong}`, 50, 222);
+        .text(`Generated: ${model.generatedAtLong}`, 50, 122);
 
       doc
         .font('Helvetica')
         .fontSize(10)
         .fillColor('#9AA3B7')
-        .text(`Sources: ${model.connectedSources.join(' · ') || 'No sources listed'}`, 50, 238);
+        .text(`Sources: ${model.connectedSources.join(' · ') || 'No sources listed'}`, 50, 138);
 
-      const coverImage = resolveBrandCoverImage();
-      if (coverImage && fileExistsSync(coverImage)) {
-        try {
-          doc.image(coverImage, doc.page.width - 210, 52, {
-            fit: [150, 160],
-            align: 'center',
-            valign: 'center',
-          });
-        } catch (_) {}
-      }
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(14)
+        .fillColor('#FFFFFF')
+        .text('FULL SIGNAL', 50, 190);
 
-      doc.y = 300;
-      addSectionTitle(doc, 'Executive Overview', 'What this Signal says right now');
-
-      if (model.sections.executiveSummary) renderTextBlock(doc, model.sections.executiveSummary);
-      if (model.sections.businessState) renderTextBlock(doc, model.sections.businessState);
-      if (model.sections.crossChannelStory) renderTextBlock(doc, model.sections.crossChannelStory);
-
-      addSectionTitle(doc, 'Positives');
-      renderSimpleList(doc, model.sections.positives, { emptyLabel: 'No positives captured.' });
-
-      addSectionTitle(doc, 'Risks');
-      renderSimpleList(doc, model.sections.risks, { emptyLabel: 'No risks captured.' });
-
-      addSectionTitle(doc, 'Priority Actions');
-      renderSimpleList(doc, model.sections.actions, { emptyLabel: 'No actions captured.' });
-
-      doc.addPage();
-      doc.rect(0, 0, doc.page.width, doc.page.height).fill('#0B0B10');
-
-      addSectionTitle(doc, 'Performance Drivers');
-      renderSimpleList(doc, model.sections.performanceDrivers, { emptyLabel: 'No performance drivers captured.' });
-
-      addSectionTitle(doc, 'Conversion Bottlenecks');
-      renderSimpleList(doc, model.sections.bottlenecks, { emptyLabel: 'No bottlenecks captured.' });
-
-      addSectionTitle(doc, 'Scaling Opportunities');
-      renderSimpleList(doc, model.sections.scaling, { emptyLabel: 'No scaling opportunities captured.' });
-
-      addSectionTitle(doc, 'Suggested Prompts');
-      renderSimpleList(doc, model.promptHints, { emptyLabel: 'No prompts captured.' });
-
-      doc.addPage();
-      doc.rect(0, 0, doc.page.width, doc.page.height).fill('#0B0B10');
-
-      addSectionTitle(doc, 'Signal Mini Context');
-      renderTextBlock(doc, model.sections.llmContextBlockMini || 'Mini Signal context not available.', {
-        fontSize: 10.5,
-      });
-
-      addSectionTitle(doc, 'Full Signal Block');
-      renderTextBlock(doc, model.sections.llmContextBlock || 'Full Signal block not available.', {
-        fontSize: 10.25,
-      });
-
-      const rangeLabel =
-        model.storageRangeDays && model.contextRangeDays
-          ? `${model.contextRangeDays} active reasoning days · ${model.storageRangeDays} stored days`
-          : model.contextRangeDays
-            ? `${model.contextRangeDays} active reasoning days`
-            : model.storageRangeDays
-              ? `${model.storageRangeDays} stored days`
-              : 'Historical signal ready';
-
-      doc.moveDown(1);
-      renderTextBlock(
-        doc,
-        `Generated by Adray. Historical coverage: ${rangeLabel}. Snapshot: ${model.snapshotId || 'n/a'}.`,
-        { fontSize: 9.5, color: '#9AA3B7' }
-      );
+      doc
+        .font('Courier')
+        .fontSize(9)
+        .fillColor('#E8ECF8')
+        .text(model.signalText || 'Signal not available.', 50, 220, {
+          width: 500,
+          lineGap: 3,
+        });
 
       doc.end();
     } catch (err) {
