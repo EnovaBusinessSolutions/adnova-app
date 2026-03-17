@@ -304,9 +304,6 @@ function buildSignalPdfModel({ userId, root, signalPayload, user = null }) {
 }
 
 function buildSignalPdfHtml(model) {
-  const coverImagePath = resolveBrandCoverImage();
-  const coverImageDataUri = readMaybeBase64Image(coverImagePath);
-
   const historyLabel =
     model.contextRangeDays
       ? `${model.contextRangeDays}d`
@@ -321,6 +318,8 @@ function buildSignalPdfHtml(model) {
   const prompts = compactArray(model.promptHints, 3);
   const signalText = model.signalText || 'Signal not available.';
   const snapshotLabel = safeStr(model.snapshotId || 'n/a');
+  const generatedDateLabel = safeStr(model.generatedDateLong || '');
+  const generatedClockLabel = safeStr(model.generatedClock || '--:--');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -330,21 +329,26 @@ function buildSignalPdfHtml(model) {
 <title>${escapeHtml(model.workspaceName)} Signal PDF</title>
 <style>
   :root{
-    --bg:#06070b;
-    --panel:#0a0c12;
-    --panel-2:#0f1220;
+    --bg:#04050a;
+    --bg-2:#070812;
+    --panel:#090b13;
+    --panel-2:#0c0f19;
     --panel-3:#0b0d16;
-    --line:#2b2f4a;
-    --line-soft:rgba(141,126,255,.18);
-    --text:#eef2ff;
-    --muted:#9aa3c7;
-    --muted-2:#717aa8;
+    --line:#2b2358;
+    --line-2:#6c4dff;
+    --line-soft:rgba(167,122,255,.18);
+    --text:#f2f4ff;
+    --muted:#97a0c8;
+    --muted-2:#6f79a8;
     --purple:#a96cff;
-    --purple-2:#d7a4ff;
-    --mint:#64f0cb;
-    --mint-2:#8af8de;
-    --blue:#8cb7ff;
-    --grid:rgba(120,130,255,.14);
+    --purple-2:#d8b0ff;
+    --purple-3:#7e59ff;
+    --mint:#71f0cf;
+    --mint-2:#96ffe5;
+    --danger:#ff8ab7;
+    --grid:rgba(111,89,255,.16);
+    --grid-2:rgba(169,108,255,.08);
+    --glow:rgba(169,108,255,.18);
   }
 
   *{ box-sizing:border-box; }
@@ -361,20 +365,24 @@ function buildSignalPdfHtml(model) {
 
   body{
     background:
-      radial-gradient(circle at top left, rgba(169,108,255,.10), transparent 28%),
-      radial-gradient(circle at top right, rgba(100,240,203,.08), transparent 22%),
-      linear-gradient(180deg, #05060a 0%, #070810 100%);
+      radial-gradient(circle at 12% 8%, rgba(169,108,255,.15), transparent 22%),
+      radial-gradient(circle at 88% 10%, rgba(113,240,207,.08), transparent 18%),
+      linear-gradient(180deg, #04050a 0%, #080913 100%);
+  }
+
+  .mono{
+    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   }
 
   .cover-page{
     min-height:100vh;
-    padding:22mm 18mm 16mm;
+    padding:16mm 15mm 14mm;
     position:relative;
     overflow:hidden;
     background:
-      radial-gradient(circle at 15% 12%, rgba(169,108,255,.10), transparent 18%),
-      radial-gradient(circle at 84% 9%, rgba(100,240,203,.08), transparent 16%),
-      linear-gradient(180deg, #05060a 0%, #070810 100%);
+      radial-gradient(circle at 12% 8%, rgba(169,108,255,.14), transparent 20%),
+      radial-gradient(circle at 85% 8%, rgba(113,240,207,.06), transparent 16%),
+      linear-gradient(180deg, #04050a 0%, #080913 100%);
   }
 
   .cover-page::before{
@@ -382,66 +390,102 @@ function buildSignalPdfHtml(model) {
     position:absolute;
     inset:0;
     background-image:
-      radial-gradient(var(--grid) 0.85px, transparent 0.85px);
-    background-size:16px 16px;
-    opacity:.65;
+      radial-gradient(var(--grid) 1px, transparent 1px);
+    background-size:18px 18px;
+    opacity:.9;
+    pointer-events:none;
+  }
+
+  .cover-page::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background:
+      linear-gradient(180deg, transparent 0%, rgba(122,93,255,.03) 100%);
     pointer-events:none;
   }
 
   .cover-shell{
     position:relative;
     z-index:1;
-    border:1px solid rgba(123,110,255,.35);
-    background:linear-gradient(180deg, rgba(10,12,18,.88), rgba(7,9,15,.96));
+    min-height:264mm;
+    border:1px solid rgba(132,101,255,.45);
+    background:
+      linear-gradient(180deg, rgba(7,9,15,.92) 0%, rgba(6,8,14,.97) 100%);
     box-shadow:
-      0 0 0 1px rgba(120,120,255,.06) inset,
-      0 0 60px rgba(97,76,255,.10);
-    padding:14mm 12mm 10mm;
-    min-height:250mm;
+      0 0 0 1px rgba(169,108,255,.06) inset,
+      0 0 90px rgba(108,77,255,.10);
+    padding:12mm 12mm 10mm;
   }
 
-  .cover-top{
+  .top-rule{
+    height:3px;
+    width:100%;
+    background:linear-gradient(90deg, rgba(216,176,255,.95), rgba(169,108,255,.92));
+    box-shadow:0 0 16px rgba(169,108,255,.25);
+    margin-bottom:12px;
+  }
+
+  .brand-wrap{
     display:flex;
     justify-content:space-between;
     align-items:flex-start;
     gap:18px;
   }
 
-  .logo-col{
+  .brand-left{
     display:flex;
     flex-direction:column;
     gap:6px;
   }
 
   .brand-main{
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size:26px;
-    letter-spacing:.10em;
+    font-size:52px;
+    line-height:.92;
+    letter-spacing:.06em;
     text-transform:uppercase;
-    color:#d7dfff;
-    font-weight:700;
+    color:#c5a0ff;
+    font-weight:800;
+    text-shadow:0 0 18px rgba(169,108,255,.18);
   }
 
   .brand-sub{
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     font-size:9px;
-    letter-spacing:.25em;
-    color:var(--muted);
+    letter-spacing:.20em;
     text-transform:uppercase;
+    color:#7d6bb5;
+  }
+
+  .brand-sub span{
+    color:#5d6898;
+  }
+
+  .top-right{
+    display:flex;
+    flex-direction:column;
+    align-items:flex-end;
+    gap:10px;
+  }
+
+  .date-row{
+    font-size:10px;
+    letter-spacing:.18em;
+    text-transform:uppercase;
+    color:#7b86b5;
   }
 
   .status-chip{
     display:inline-flex;
     align-items:center;
     gap:8px;
-    padding:7px 12px;
-    border:1px solid rgba(100,240,203,.25);
+    padding:8px 14px;
+    border:1px solid rgba(113,240,207,.26);
     color:var(--mint-2);
     font-size:10px;
-    letter-spacing:.18em;
+    letter-spacing:.20em;
     text-transform:uppercase;
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    background:rgba(100,240,203,.05);
+    background:rgba(113,240,207,.05);
+    box-shadow:0 0 18px rgba(113,240,207,.05) inset;
   }
 
   .status-dot{
@@ -449,94 +493,138 @@ function buildSignalPdfHtml(model) {
     height:7px;
     border-radius:50%;
     background:var(--mint);
-    box-shadow:0 0 12px rgba(100,240,203,.55);
+    box-shadow:0 0 12px rgba(113,240,207,.55);
   }
 
-  .cover-title{
-    margin:18mm 0 10mm;
+  .report-chip-row{
+    margin-top:18px;
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:12px;
   }
 
-  .cover-kicker{
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size:10px;
-    color:#8f98c5;
+  .report-chip{
+    display:inline-flex;
+    align-items:center;
+    min-height:34px;
+    padding:0 16px;
+    border-radius:4px;
+    background:linear-gradient(180deg, #b892ff 0%, #a678ff 100%);
+    color:#130d20;
+    font-size:12px;
+    font-weight:800;
+    letter-spacing:.16em;
     text-transform:uppercase;
-    letter-spacing:.20em;
-    margin-bottom:10px;
+    box-shadow:0 0 20px rgba(169,108,255,.20);
   }
 
-  .workspace{
-    border:1px solid rgba(123,110,255,.28);
-    padding:10px 12px;
-    margin-bottom:12px;
-    background:rgba(12,14,24,.55);
+  .report-side{
+    font-size:10px;
+    color:#6f79a8;
+    letter-spacing:.18em;
+    text-transform:uppercase;
+  }
+
+  .workspace-block{
+    margin-top:16px;
+    border:1px solid rgba(132,101,255,.30);
+    background:rgba(11,13,22,.74);
+    padding:12px 16px;
+    min-height:78px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:14px;
+  }
+
+  .workspace-left{
+    min-width:0;
   }
 
   .workspace-label{
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     font-size:9px;
-    color:#7380b8;
+    color:#7280b8;
     text-transform:uppercase;
-    letter-spacing:.16em;
-    margin-bottom:7px;
+    letter-spacing:.18em;
+    margin-bottom:10px;
   }
 
   .workspace-value{
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size:21px;
-    color:#f1f4ff;
-    font-weight:700;
-    letter-spacing:.02em;
+    font-size:22px;
+    font-weight:800;
+    color:#ffffff;
+    letter-spacing:.01em;
+    word-break:break-word;
   }
 
-  .cover-stats{
+  .workspace-status{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    color:var(--mint);
+    font-size:11px;
+    letter-spacing:.16em;
+    text-transform:uppercase;
+    white-space:nowrap;
+  }
+
+  .workspace-status .dot{
+    width:9px;
+    height:9px;
+    border-radius:50%;
+    background:var(--mint);
+    box-shadow:0 0 12px rgba(113,240,207,.55);
+  }
+
+  .stats-grid{
+    margin-top:14px;
     display:grid;
     grid-template-columns:repeat(4,minmax(0,1fr));
-    gap:10px;
-    margin:12px 0 18px;
+    gap:12px;
   }
 
   .stat{
-    border:1px solid rgba(123,110,255,.20);
-    background:rgba(11,13,22,.7);
-    padding:10px 11px 9px;
-    min-height:72px;
+    border:1px solid rgba(132,101,255,.24);
+    background:rgba(11,13,22,.74);
+    min-height:86px;
+    padding:10px 12px;
   }
 
   .stat-label{
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     font-size:9px;
-    color:#6f7ab0;
+    color:#7180b7;
     text-transform:uppercase;
     letter-spacing:.16em;
-    margin-bottom:8px;
+    margin-bottom:10px;
   }
 
   .stat-value{
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size:16px;
-    font-weight:700;
-    color:#f3f6ff;
-    line-height:1.15;
+    font-size:18px;
+    font-weight:800;
+    color:#f5f6ff;
+    line-height:1.1;
     word-break:break-word;
   }
 
   .stat-note{
-    margin-top:5px;
-    font-size:9px;
-    color:#7d88ba;
+    margin-top:8px;
+    font-size:8px;
+    color:#6c78a8;
     text-transform:uppercase;
-    letter-spacing:.10em;
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    letter-spacing:.16em;
+  }
+
+  .stat-note.good{
+    color:var(--mint);
   }
 
   .section-label{
     margin:18px 0 10px;
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size:10px;
-    color:#8a95ca;
+    font-size:11px;
+    color:#8b97cc;
     text-transform:uppercase;
-    letter-spacing:.18em;
+    letter-spacing:.16em;
   }
 
   .prompt-list{
@@ -546,70 +634,81 @@ function buildSignalPdfHtml(model) {
   }
 
   .prompt-card{
-    border:1px solid rgba(123,110,255,.24);
-    background:rgba(10,12,20,.72);
-    padding:10px 12px;
+    border:1px solid rgba(132,101,255,.24);
+    background:rgba(9,11,20,.76);
+    padding:10px 12px 9px;
+    position:relative;
+  }
+
+  .prompt-card::before{
+    content:"";
+    position:absolute;
+    left:0;
+    top:0;
+    bottom:0;
+    width:4px;
+    background:linear-gradient(180deg, rgba(180,134,255,.90), rgba(138,101,255,.55));
   }
 
   .prompt-head{
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     font-size:9px;
     text-transform:uppercase;
-    letter-spacing:.15em;
-    color:#7985bb;
+    letter-spacing:.16em;
+    color:#7f8bc2;
     margin-bottom:8px;
   }
 
   .prompt-body{
     font-size:15px;
-    line-height:1.45;
-    color:#edf2ff;
+    line-height:1.42;
+    color:#f0f3ff;
   }
 
   .prompt-foot{
     margin-top:8px;
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     font-size:8px;
-    color:#6773a8;
+    color:#6672a8;
     letter-spacing:.14em;
     text-transform:uppercase;
   }
 
   .how-to{
     display:grid;
-    grid-template-columns:1fr;
     gap:7px;
-    margin-top:6px;
+    margin-top:4px;
   }
 
   .how-step{
     display:flex;
-    gap:10px;
+    gap:12px;
     align-items:flex-start;
-    color:#dfe5ff;
+    color:#dce2ff;
     font-size:12px;
-    line-height:1.45;
+    line-height:1.42;
   }
 
   .how-step .num{
     width:22px;
     flex:0 0 22px;
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    color:#7a87bd;
+    color:#8b98cf;
   }
 
   .cover-footer{
     margin-top:20px;
     padding-top:12px;
-    border-top:1px solid rgba(123,110,255,.22);
+    border-top:1px solid rgba(132,101,255,.20);
     display:flex;
     justify-content:space-between;
     gap:12px;
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     font-size:8px;
-    color:#6975aa;
+    color:#6f7cb0;
     text-transform:uppercase;
-    letter-spacing:.14em;
+    letter-spacing:.15em;
+  }
+
+  .cover-footer strong{
+    color:#b79cff;
+    font-weight:700;
   }
 
   .page-break{
@@ -619,16 +718,38 @@ function buildSignalPdfHtml(model) {
 
   .signal-page{
     min-height:100vh;
-    padding:18mm 16mm 18mm;
+    padding:16mm 15mm 16mm;
+    position:relative;
+    overflow:hidden;
     background:
-      radial-gradient(circle at top left, rgba(169,108,255,.05), transparent 22%),
-      linear-gradient(180deg, #06070b 0%, #090b12 100%);
+      radial-gradient(circle at 12% 8%, rgba(169,108,255,.08), transparent 20%),
+      linear-gradient(180deg, #04050a 0%, #080913 100%);
+  }
+
+  .signal-page::before{
+    content:"";
+    position:absolute;
+    inset:0;
+    background-image:
+      radial-gradient(rgba(111,89,255,.12) 1px, transparent 1px);
+    background-size:18px 18px;
+    opacity:.75;
+    pointer-events:none;
   }
 
   .signal-shell{
-    border:1px solid rgba(123,110,255,.18);
-    background:rgba(8,10,17,.94);
-    padding:14mm 12mm 12mm;
+    position:relative;
+    z-index:1;
+    border:1px solid rgba(132,101,255,.24);
+    background:rgba(8,10,17,.95);
+    padding:12mm 11mm 11mm;
+  }
+
+  .signal-top-rule{
+    height:2px;
+    width:100%;
+    background:linear-gradient(90deg, rgba(184,146,255,.95), rgba(122,93,255,.88));
+    margin-bottom:12px;
   }
 
   .signal-head{
@@ -636,9 +757,8 @@ function buildSignalPdfHtml(model) {
   }
 
   .signal-kicker{
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     font-size:10px;
-    color:#8692ca;
+    color:#8996cb;
     text-transform:uppercase;
     letter-spacing:.18em;
     margin-bottom:8px;
@@ -655,27 +775,9 @@ function buildSignalPdfHtml(model) {
 
   .signal-sub{
     margin-top:8px;
-    color:#8f99c8;
+    color:#909bc9;
     font-size:12px;
-    line-height:1.6;
-  }
-
-  .signal-box{
-    border:1px solid rgba(123,110,255,.18);
-    background:
-      linear-gradient(180deg, rgba(11,13,22,.95), rgba(8,10,16,.95));
-    padding:14px;
-  }
-
-  .signal-pre{
-    margin:0;
-    white-space:pre-wrap;
-    word-break:break-word;
-    overflow-wrap:anywhere;
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size:10.5px;
-    line-height:1.65;
-    color:#e8ecff;
+    line-height:1.58;
   }
 
   .signal-meta{
@@ -689,28 +791,28 @@ function buildSignalPdfHtml(model) {
     display:inline-flex;
     align-items:center;
     padding:6px 10px;
-    border:1px solid rgba(123,110,255,.18);
+    border:1px solid rgba(132,101,255,.20);
     background:rgba(255,255,255,.02);
-    color:#91a0d6;
+    color:#92a0d5;
     font-size:9px;
     letter-spacing:.12em;
     text-transform:uppercase;
-    font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   }
 
-  img.cover-art-img{
-    display:block;
-    width:110px;
-    max-width:110px;
-    opacity:.98;
-    border:1px solid rgba(123,110,255,.20);
-    background:rgba(255,255,255,.02);
+  .signal-box{
+    border:1px solid rgba(132,101,255,.18);
+    background:linear-gradient(180deg, rgba(11,13,22,.95), rgba(8,10,16,.95));
+    padding:14px;
   }
 
-  .cover-art-wrap{
-    display:flex;
-    align-items:flex-start;
-    justify-content:flex-end;
+  .signal-pre{
+    margin:0;
+    white-space:pre-wrap;
+    word-break:break-word;
+    overflow-wrap:anywhere;
+    font-size:10.4px;
+    line-height:1.66;
+    color:#e9edff;
   }
 
   @page{
@@ -722,75 +824,88 @@ function buildSignalPdfHtml(model) {
 <body>
   <section class="cover-page">
     <div class="cover-shell">
-      <div class="cover-top">
-        <div class="logo-col">
-          <div class="brand-main">ADRAY</div>
-          <div class="brand-sub">Daily Signal Report</div>
+      <div class="top-rule"></div>
+
+      <div class="brand-wrap">
+        <div class="brand-left">
+          <div class="brand-main mono">ADRAY</div>
+          <div class="brand-sub mono">Marketing intelligence <span>·</span> Generative era</div>
         </div>
 
-        <div class="status-chip">
-          <span class="status-dot"></span>
+        <div class="top-right">
+          <div class="date-row mono">${escapeHtml(generatedDateLabel)}</div>
+          <div class="status-chip mono">
+            <span class="status-dot"></span>
+            Signal Ready
+          </div>
+        </div>
+      </div>
+
+      <div class="report-chip-row">
+        <div class="report-chip mono">Daily Signal Report</div>
+        <div class="report-side mono">Confidential · Internal AI artifact</div>
+      </div>
+
+      <div class="workspace-block">
+        <div class="workspace-left">
+          <div class="workspace-label mono">Workspace</div>
+          <div class="workspace-value mono">${escapeHtml(model.workspaceName)}</div>
+        </div>
+        <div class="workspace-status mono">
+          <span class="dot"></span>
           Signal Ready
         </div>
       </div>
 
-      <div class="cover-title">
-        <div class="cover-kicker">Workspace</div>
-        <div class="workspace">
-          <div class="workspace-label">Active workspace</div>
-          <div class="workspace-value">${escapeHtml(model.workspaceName)}</div>
+      <div class="stats-grid">
+        <div class="stat">
+          <div class="stat-label mono">Sources</div>
+          <div class="stat-value mono">${escapeHtml(String(model.sourceCount))}</div>
+          <div class="stat-note mono">${escapeHtml(sourcesLabel)}</div>
+        </div>
+
+        <div class="stat">
+          <div class="stat-label mono">History</div>
+          <div class="stat-value mono">${escapeHtml(historyLabel)}</div>
+          <div class="stat-note mono">Rolling window</div>
+        </div>
+
+        <div class="stat">
+          <div class="stat-label mono">Reconciled</div>
+          <div class="stat-value mono">✓</div>
+          <div class="stat-note good mono">Confidential export</div>
+        </div>
+
+        <div class="stat">
+          <div class="stat-label mono">Generated</div>
+          <div class="stat-value mono">${escapeHtml(generatedClockLabel)}</div>
+          <div class="stat-note mono">Auto · Daily</div>
         </div>
       </div>
 
-      <div class="cover-stats">
-        <div class="stat">
-          <div class="stat-label">Sources</div>
-          <div class="stat-value">${escapeHtml(String(model.sourceCount))}</div>
-          <div class="stat-note">${escapeHtml(sourcesLabel)}</div>
-        </div>
-
-        <div class="stat">
-          <div class="stat-label">History</div>
-          <div class="stat-value">${escapeHtml(historyLabel)}</div>
-          <div class="stat-note">Rolling window</div>
-        </div>
-
-        <div class="stat">
-          <div class="stat-label">Reconciled</div>
-          <div class="stat-value">✓</div>
-          <div class="stat-note">Signal verified</div>
-        </div>
-
-        <div class="stat">
-          <div class="stat-label">Generated</div>
-          <div class="stat-value">${escapeHtml(model.generatedClock)}</div>
-          <div class="stat-note">Auto export</div>
-        </div>
-      </div>
-
-      <div class="section-label">// Here are 3 recommended prompts for your data</div>
+      <div class="section-label mono">// Here are 3 recommended prompts for your data</div>
 
       <div class="prompt-list">
         ${prompts.map((prompt, idx) => `
           <div class="prompt-card">
-            <div class="prompt-head">${idx === 0 ? 'Optimization' : idx === 1 ? 'Budget' : 'Report'}</div>
+            <div class="prompt-head mono">${idx === 0 ? 'Optimization' : idx === 1 ? 'Budget' : 'Report'}</div>
             <div class="prompt-body">"${escapeHtml(prompt)}"</div>
-            <div class="prompt-foot">attach this pdf · paste · send</div>
+            <div class="prompt-foot mono">attach this pdf · paste · send</div>
           </div>
         `).join('')}
       </div>
 
-      <div class="section-label" style="margin-top:18px;">// How to use</div>
+      <div class="section-label mono" style="margin-top:18px;">// How to use</div>
 
       <div class="how-to">
-        <div class="how-step"><span class="num">01</span><span>Open Claude, ChatGPT, Gemini, Grok or DeepSeek.</span></div>
-        <div class="how-step"><span class="num">02</span><span>Attach this PDF to your conversation.</span></div>
-        <div class="how-step"><span class="num">03</span><span>Copy a prompt above and send it.</span></div>
-        <div class="how-step"><span class="num">04</span><span>Ask follow-up questions in plain language.</span></div>
+        <div class="how-step"><span class="num mono">01</span><span>Open Claude, ChatGPT, Gemini, Grok or DeepSeek.</span></div>
+        <div class="how-step"><span class="num mono">02</span><span>Attach this PDF to your conversation.</span></div>
+        <div class="how-step"><span class="num mono">03</span><span>Copy a prompt above and send it.</span></div>
+        <div class="how-step"><span class="num mono">04</span><span>Ask follow-up questions in plain language.</span></div>
       </div>
 
-      <div class="cover-footer">
-        <div>Adray · adray.ai · signal export</div>
+      <div class="cover-footer mono">
+        <div><strong>Adray</strong> · adray.ai · signal export · confidential</div>
         <div>Snapshot · ${escapeHtml(snapshotLabel)}</div>
       </div>
     </div>
@@ -800,8 +915,10 @@ function buildSignalPdfHtml(model) {
 
   <section class="signal-page">
     <div class="signal-shell">
+      <div class="signal-top-rule"></div>
+
       <div class="signal-head">
-        <div class="signal-kicker">Full Signal</div>
+        <div class="signal-kicker mono">Full Signal</div>
         <h1 class="signal-title">Plain text source for LLMs</h1>
         <div class="signal-sub">
           This section contains the raw Signal in plain text so AI models can read it more easily.
@@ -809,13 +926,13 @@ function buildSignalPdfHtml(model) {
       </div>
 
       <div class="signal-meta">
-        <span class="meta-chip">Workspace · ${escapeHtml(model.workspaceName)}</span>
-        <span class="meta-chip">Sources · ${escapeHtml(sourcesLabel)}</span>
-        <span class="meta-chip">Generated · ${escapeHtml(model.generatedAtLong)}</span>
+        <span class="meta-chip mono">Workspace · ${escapeHtml(model.workspaceName)}</span>
+        <span class="meta-chip mono">Sources · ${escapeHtml(sourcesLabel)}</span>
+        <span class="meta-chip mono">Generated · ${escapeHtml(model.generatedAtLong)}</span>
       </div>
 
       <div class="signal-box">
-        <pre class="signal-pre">${escapeHtml(signalText)}</pre>
+        <pre class="signal-pre mono">${escapeHtml(signalText)}</pre>
       </div>
     </div>
   </section>
