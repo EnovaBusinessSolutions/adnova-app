@@ -1338,7 +1338,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       usableSources,
       pendingConnectedSources,
       error: null,
-      pdf: emptyPdfState({ status: 'idle', stage: 'waiting_for_sources', progress: 0 }),
+      pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
     }));
 
     const finalRoot = waitResult?.root || await findRoot(userId);
@@ -1379,7 +1379,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       unifiedBase: null,
       encodedPayload: null,
       signalPayload: null,
-      pdf: emptyPdfState({ status: 'failed', stage: 'failed', progress: 100, error: 'MCP_CONTEXT_NO_USABLE_SOURCES' }),
+      pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
     }));
 
     const err = new Error('MCP_CONTEXT_NO_USABLE_SOURCES');
@@ -1415,7 +1415,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       usableSources,
       pendingConnectedSources,
       error: null,
-      pdf: emptyPdfState({ status: 'idle', stage: 'waiting_for_sources', progress: 0 }),
+      pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
     }));
 
     const finalRoot = partialWait?.root || await findRoot(userId);
@@ -1455,7 +1455,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     error: null,
     encodedPayload: null,
     signalPayload: null,
-    pdf: emptyPdfState({ status: 'idle', stage: 'queued', progress: 0 }),
+    pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
   }));
 
   const metaPack = buildMetaContext(metaChunks, contextRangeDays);
@@ -1498,7 +1498,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     usableSources,
     pendingConnectedSources,
     error: null,
-    pdf: emptyPdfState({ status: 'idle', stage: 'waiting_for_signal', progress: 0 }),
+    pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
   }));
 
   const encoded = await enrichWithOpenAI(unifiedBase);
@@ -1526,7 +1526,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       usableSources,
       pendingConnectedSources,
       error: null,
-      pdf: emptyPdfState({ status: 'idle', stage: 'waiting_for_signal', progress: 0 }),
+      pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
     }));
 
     const finalRoot = await findRoot(userId);
@@ -1544,105 +1544,6 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       encodedPayload: signalPayload,
       signalPayload,
     });
-  }
-
-  await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
-    ...(currentAi || {}),
-    status: 'processing',
-    progress: 82,
-    stage: 'rendering_pdf',
-    startedAt: currentAi?.startedAt || startedAt,
-    finishedAt: null,
-    buildAttemptId: attemptId,
-    snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
-    sourceSnapshots,
-    contextRangeDays,
-    storageRangeDays,
-    error: null,
-    unifiedBase,
-    encodedPayload: signalPayload,
-    signalPayload,
-    usedOpenAI: !!encoded.usedOpenAI,
-    model: encoded.model || null,
-    sourcesStatus,
-    usableSources,
-    pendingConnectedSources,
-    pdf: emptyPdfState({
-      status: 'processing',
-      stage: 'rendering_pdf',
-      progress: 15,
-    }),
-  }));
-
-  let pdfResult = null;
-  try {
-    const rootBeforePdf = await findRoot(userId);
-
-    if (safeStr(rootBeforePdf?.aiContext?.buildAttemptId).trim() !== attemptId) {
-      return buildResultFromRoot(rootBeforePdf, {
-        status: rootBeforePdf?.aiContext?.status || 'processing',
-        progress: toNum(rootBeforePdf?.aiContext?.progress, 82),
-        stage: rootBeforePdf?.aiContext?.stage || 'rendering_pdf',
-      });
-    }
-
-    await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
-      ...(currentAi || {}),
-      pdf: {
-        ...(currentAi?.pdf || emptyPdfState()),
-        status: 'processing',
-        stage: 'building_document',
-        progress: 45,
-        error: null,
-      },
-    }));
-
-    pdfResult = await buildSignalPdfArtifact(userId, rootBeforePdf, signalPayload);
-  } catch (pdfErr) {
-    console.error('[mcpContextBuilder] PDF generation failed:', pdfErr?.message || pdfErr);
-
-    const failUpdate = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
-      ...(currentAi || {}),
-      status: 'error',
-      progress: 100,
-      stage: 'failed',
-      finishedAt: nowIso(),
-      buildAttemptId: attemptId,
-      snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
-      sourceSnapshots,
-      contextRangeDays,
-      storageRangeDays,
-      unifiedBase,
-      encodedPayload: signalPayload,
-      signalPayload,
-      usedOpenAI: !!encoded.usedOpenAI,
-      model: encoded.model || null,
-      error: pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED',
-      sourcesStatus,
-      usableSources,
-      pendingConnectedSources,
-      pdf: {
-        ...(currentAi?.pdf || emptyPdfState()),
-        status: 'failed',
-        stage: 'failed',
-        progress: 100,
-        generatedAt: null,
-        error: pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED',
-      },
-    }));
-
-    const failRoot = failUpdate?.root || await findRoot(userId);
-    if (safeStr(failRoot?.aiContext?.buildAttemptId).trim() !== attemptId) {
-      return buildResultFromRoot(failRoot, {
-        status: failRoot?.aiContext?.status || 'processing',
-        progress: toNum(failRoot?.aiContext?.progress, 82),
-        stage: failRoot?.aiContext?.stage || 'rendering_pdf',
-      });
-    }
-
-    const err = new Error(pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED');
-    err.code = pdfErr?.code || 'SIGNAL_PDF_BUILD_FAILED';
-    throw err;
   }
 
   const finalUpdate = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
@@ -1666,23 +1567,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     sourcesStatus,
     usableSources,
     pendingConnectedSources,
-    pdf: {
-      ...(currentAi?.pdf || emptyPdfState()),
-      status: 'ready',
-      stage: 'ready',
-      progress: 100,
-      fileName: pdfResult?.fileName || null,
-      mimeType: pdfResult?.mimeType || 'application/pdf',
-      storageKey: pdfResult?.storageKey || null,
-      localPath: pdfResult?.localPath || null,
-      downloadUrl: pdfResult?.downloadUrl || null,
-      generatedAt: pdfResult?.generatedAt || nowIso(),
-      sizeBytes: toNum(pdfResult?.sizeBytes, 0),
-      pageCount: toNum(pdfResult?.pageCount, 0) || null,
-      renderer: pdfResult?.renderer || null,
-      version: 1,
-      error: null,
-    },
+    pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
   }));
 
   const freshRoot = finalUpdate?.root || await findRoot(userId);
@@ -1700,6 +1585,124 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     encodedPayload: signalPayload,
     signalPayload,
   });
+}
+
+async function buildPdfForUser(userId) {
+  const root = await findRoot(userId);
+  if (!root) {
+    const err = new Error('MCP_ROOT_NOT_FOUND');
+    err.code = 'MCP_ROOT_NOT_FOUND';
+    throw err;
+  }
+
+  const ai = root?.aiContext || {};
+  const signalPayload = ai?.signalPayload || ai?.encodedPayload || null;
+
+  if (!signalPayload) {
+    const err = new Error('MCP_CONTEXT_NOT_READY');
+    err.code = 'MCP_CONTEXT_NOT_READY';
+    throw err;
+  }
+
+  if (!isSignalPayloadBuildableForPdf(signalPayload)) {
+    const err = new Error('MCP_SIGNAL_NOT_VALID_FOR_PDF');
+    err.code = 'MCP_SIGNAL_NOT_VALID_FOR_PDF';
+    throw err;
+  }
+
+  if (ai?.pdf?.status === 'ready') {
+    return buildResultFromRoot(root, {
+      status: ai?.status || 'done',
+      progress: toNum(ai?.progress, 100),
+      stage: ai?.stage || 'completed',
+    });
+  }
+
+  await updateRootAiContext(userId, (currentAi) => ({
+    ...(currentAi || {}),
+    status: currentAi?.status === 'done' ? 'done' : (currentAi?.status || 'done'),
+    progress: currentAi?.status === 'done' ? 100 : toNum(currentAi?.progress, 100),
+    stage: currentAi?.status === 'done' ? 'completed' : (currentAi?.stage || 'completed'),
+    error: currentAi?.error || null,
+    pdf: {
+      ...(currentAi?.pdf || emptyPdfState()),
+      status: 'processing',
+      stage: 'building_document',
+      progress: 15,
+      error: null,
+    },
+  }));
+
+  try {
+    const rootBeforePdf = await findRoot(userId);
+
+    await updateRootAiContext(userId, (currentAi) => ({
+      ...(currentAi || {}),
+      pdf: {
+        ...(currentAi?.pdf || emptyPdfState()),
+        status: 'processing',
+        stage: 'building_document',
+        progress: 45,
+        error: null,
+      },
+    }));
+
+    const pdfResult = await buildSignalPdfArtifact(userId, rootBeforePdf, signalPayload);
+
+    const finalRoot = await updateRootAiContext(userId, (currentAi) => ({
+      ...(currentAi || {}),
+      status: currentAi?.status === 'error' ? 'done' : (currentAi?.status || 'done'),
+      progress: currentAi?.status === 'done' ? 100 : Math.max(100, toNum(currentAi?.progress, 100)),
+      stage: currentAi?.stage === 'failed' ? 'completed' : (currentAi?.stage || 'completed'),
+      error: null,
+      pdf: {
+        ...(currentAi?.pdf || emptyPdfState()),
+        status: 'ready',
+        stage: 'ready',
+        progress: 100,
+        fileName: pdfResult?.fileName || null,
+        mimeType: pdfResult?.mimeType || 'application/pdf',
+        storageKey: pdfResult?.storageKey || null,
+        localPath: pdfResult?.localPath || null,
+        downloadUrl: pdfResult?.downloadUrl || null,
+        generatedAt: pdfResult?.generatedAt || nowIso(),
+        sizeBytes: toNum(pdfResult?.sizeBytes, 0),
+        pageCount: toNum(pdfResult?.pageCount, 0) || null,
+        renderer: pdfResult?.renderer || null,
+        version: 1,
+        error: null,
+      },
+    }));
+
+    return buildResultFromRoot(finalRoot || await findRoot(userId), {
+      status: 'done',
+      progress: 100,
+      stage: 'completed',
+    });
+  } catch (pdfErr) {
+    console.error('[mcpContextBuilder] PDF generation failed:', pdfErr?.message || pdfErr);
+
+    const failRoot = await updateRootAiContext(userId, (currentAi) => ({
+      ...(currentAi || {}),
+      status: currentAi?.status === 'done' ? 'done' : (currentAi?.status || 'done'),
+      progress: currentAi?.status === 'done' ? 100 : toNum(currentAi?.progress, 100),
+      stage: currentAi?.status === 'done' ? 'completed' : (currentAi?.stage || 'completed'),
+      error: null,
+      pdf: {
+        ...(currentAi?.pdf || emptyPdfState()),
+        status: 'failed',
+        stage: 'failed',
+        progress: 100,
+        generatedAt: null,
+        error: pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED',
+      },
+    }));
+
+    const err = new Error(pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED');
+    err.code = pdfErr?.code || 'SIGNAL_PDF_BUILD_FAILED';
+    err.root = failRoot || null;
+    throw err;
+  }
 }
 
 async function rebuildUnifiedContextForUser(userId, options = {}) {
@@ -1729,6 +1732,7 @@ module.exports = {
   updateRootContextState,
   markContextStale,
   buildUnifiedContextForUser,
+  buildPdfForUser,
   rebuildUnifiedContextForUser,
   sourceStateSummaryForStatus,
   makeShareToken,

@@ -12,6 +12,7 @@ const User = require('../models/User');
 const {
   findRoot,
   buildUnifiedContextForUser,
+  buildPdfForUser,
 } = require('../services/mcpContextBuilder');
 
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
@@ -122,8 +123,8 @@ async function findLatestContextRootForUser(userId) {
 }
 
 /**
- * Si hay un build en curso reciente, prioriza el root actual.
- * Si no, usa el último root con Signal/PDF listo.
+ * Si hay un build de Signal en curso reciente, prioriza el root actual.
+ * Si no, usa el último root con Signal listo.
  */
 async function findPreferredContextRootForUser(userId) {
   if (!userId) return null;
@@ -329,6 +330,7 @@ function buildSharedPayload(root, provider) {
 
 /**
  * POST /api/mcp/context/build
+ * Construye solo el Signal / contexto universal.
  */
 router.post('/build', async (req, res) => {
   try {
@@ -352,9 +354,8 @@ router.post('/build', async (req, res) => {
       const resultData = result?.data || {};
       const status = safeStr(resultData?.status);
       const hasSignal = !!resultData?.hasSignal;
-      const hasPdf = !!resultData?.hasPdf;
 
-      if ((status === 'done' || hasSignal || hasPdf) && !resultData?.pendingConnectedSources?.length) {
+      if ((status === 'done' || hasSignal) && !resultData?.pendingConnectedSources?.length) {
         await syncUserVersionedLink(userId, req.body?.provider || null);
       }
     } catch (syncErr) {
@@ -405,6 +406,76 @@ router.post('/build', async (req, res) => {
     return res.status(500).json({
       ok: false,
       error: code || 'MCP_CONTEXT_BUILD_FAILED',
+    });
+  }
+});
+
+/**
+ * POST /api/mcp/context/pdf/build
+ * Construye el PDF a partir de un Signal ya listo.
+ */
+router.post('/pdf/build', async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: 'NO_SESSION' });
+    }
+
+    const root = await findPreferredContextRootForUser(userId);
+    if (!root) {
+      return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
+    }
+
+    const state = root?.aiContext || {};
+    const signalPayload = state?.signalPayload || state?.encodedPayload || null;
+
+    if (!signalPayload) {
+      return res.status(409).json({
+        ok: false,
+        error: 'MCP_CONTEXT_NOT_READY',
+        data: {
+          status: state?.status || 'idle',
+          progress: state?.progress || 0,
+          stage: state?.stage || 'idle',
+          pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
+          pdf: normalizePdfState(state?.pdf),
+        },
+      });
+    }
+
+    const pdf = normalizePdfState(state?.pdf);
+
+    if (pdf.ready && !req.body?.forceRebuild) {
+      setNoCacheHeaders(res);
+      return res.json({
+        ok: true,
+        data: buildStatusResponse(root)?.data || null,
+      });
+    }
+
+    const result = await buildPdfForUser(userId);
+
+    setNoCacheHeaders(res);
+    return res.json({
+      ok: true,
+      data: result?.data || null,
+    });
+  } catch (e) {
+    console.error('[mcp/context/pdf/build] error:', e);
+
+    const code = e?.code || e?.message || 'MCP_SIGNAL_PDF_BUILD_FAILED';
+
+    if (code === 'MCP_ROOT_NOT_FOUND') {
+      return res.status(404).json({ ok: false, error: code });
+    }
+
+    if (code === 'MCP_CONTEXT_NOT_READY' || code === 'MCP_SIGNAL_NOT_VALID_FOR_PDF') {
+      return res.status(409).json({ ok: false, error: code });
+    }
+
+    return res.status(500).json({
+      ok: false,
+      error: code || 'MCP_SIGNAL_PDF_BUILD_FAILED',
     });
   }
 });
