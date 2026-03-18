@@ -46,6 +46,20 @@ function parseFloatSafe(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function parseIntSafe(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
+
+function parseBooleanSafe(value) {
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return false;
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+  return false;
+}
+
 function hasExplicitTimezone(value) {
   return /([zZ]|[+\-]\d{2}:\d{2})$/.test(String(value || '').trim());
 }
@@ -156,6 +170,9 @@ router.post('/woo/orders-sync', async (req, res) => {
       ttclid: payload.ttclid || null,
       woo_source_label: payload.woo_source_label || null,
       woo_source_type: payload.woo_source_type || null,
+      woo_session_source: payload.woo_session_source || null,
+      raw_source: payload.raw_source || null,
+      collected_at: payload.collected_at || null,
       customer_name: customerDisplayName,
       customer_first_name: payload.customer_first_name || null,
       customer_last_name: payload.customer_last_name || null,
@@ -176,6 +193,9 @@ router.post('/woo/orders-sync', async (req, res) => {
       discountTotal: parseFloatSafe(payload.discount_total),
       shippingTotal: parseFloatSafe(payload.shipping_total),
       taxTotal: parseFloatSafe(payload.tax_total),
+      refundAmount: parseFloatSafe(payload.refund_amount),
+      chargebackFlag: parseBooleanSafe(payload.chargeback_flag),
+      ordersCount: parseIntSafe(payload.orders_count),
       currency: String(payload.currency || 'MXN'),
       lineItems: Array.isArray(payload.items) ? payload.items : [],
       attributedChannel,

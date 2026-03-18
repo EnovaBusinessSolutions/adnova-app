@@ -10,6 +10,33 @@ const { enrichOrderLineItems } = require('../services/shopifyEnrichment');
 const { sendToAllPlatforms } = require('../services/capiFanout');
 const { updateSnapshot } = require('../services/merchantSnapshot');
 
+function parseFloatSafe(value) {
+  const n = Number(value || 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function parseShopifyRefundAmount(payload = {}) {
+  return parseFloatSafe(
+    payload.current_total_price ? (Number(payload.total_price || 0) - Number(payload.current_total_price || 0)) :
+    payload.total_refunded_set?.shop_money?.amount ||
+    payload.total_refunded ||
+    0
+  );
+}
+
+function parseOrdersCount(payload = {}) {
+  const value = Number(payload?.customer?.orders_count);
+  return Number.isFinite(value) ? value : null;
+}
+
+function parseChargebackFlag(payload = {}) {
+  const status = String(payload.financial_status || '').toLowerCase();
+  const cancelReason = String(payload.cancel_reason || '').toLowerCase();
+  if (status.includes('chargeback')) return true;
+  if (cancelReason.includes('chargeback')) return true;
+  return false;
+}
+
 // Apply HMAC verification to all routes in this file
 // Note: Requires express.raw middleware to be mounted BEFORE this router
 router.use(verifyShopifyWebhookHmac);
@@ -70,13 +97,16 @@ router.post('/orders-create', async (req, res) => {
     const eventId = checkoutMap ? checkoutMap.eventId : require('crypto').randomUUID();
 
     // 5. Calculate totals properly
-    const revenue = parseFloat(payload.total_price || 0);
-    const subtotal = parseFloat(payload.subtotal_price || 0);
-    const discountTotal = parseFloat(payload.total_discounts || 0);
-    const taxTotal = parseFloat(payload.total_tax || 0);
-    const shippingTotal = parseFloat(
+     const revenue = parseFloatSafe(payload.total_price || 0);
+     const subtotal = parseFloatSafe(payload.subtotal_price || 0);
+     const discountTotal = parseFloatSafe(payload.total_discounts || 0);
+     const taxTotal = parseFloatSafe(payload.total_tax || 0);
+     const shippingTotal = parseFloatSafe(
        payload.total_shipping_price_set?.shop_money?.amount || 0
     );
+     const refundAmount = parseShopifyRefundAmount(payload);
+     const ordersCount = parseOrdersCount(payload);
+     const chargebackFlag = parseChargebackFlag(payload);
 
     // 6. Insert Order
     let order = await prisma.order.create({
@@ -95,6 +125,9 @@ router.post('/orders-create', async (req, res) => {
         discountTotal,
         shippingTotal,
         taxTotal,
+        refundAmount,
+        chargebackFlag,
+        ordersCount,
         currency: payload.currency,
         lineItems: payload.line_items || [],
         eventId,
@@ -172,6 +205,54 @@ router.post('/orders-create', async (req, res) => {
         error: error.message || String(error)
       }
     }).catch(() => {});
+  }
+});
+
+/**
+ * Handle Order Updates (refunds, order count evolution, financial changes)
+ */
+router.post('/orders-updated', async (req, res) => {
+  const accountId = req.get('X-Shopify-Shop-Domain');
+  res.status(200).send('OK');
+
+  try {
+    const payload = JSON.parse(req.body.toString('utf8'));
+    const orderId = String(payload.id || '').trim();
+    if (!accountId || !orderId) return;
+
+    const refundAmount = parseShopifyRefundAmount(payload);
+    const ordersCount = parseOrdersCount(payload);
+    const chargebackFlag = parseChargebackFlag(payload);
+    const revenue = parseFloatSafe(payload.total_price || 0);
+    const subtotal = parseFloatSafe(payload.subtotal_price || 0);
+    const discountTotal = parseFloatSafe(payload.total_discounts || 0);
+    const taxTotal = parseFloatSafe(payload.total_tax || 0);
+    const shippingTotal = parseFloatSafe(payload.total_shipping_price_set?.shop_money?.amount || 0);
+
+    await prisma.order.updateMany({
+      where: { accountId, orderId },
+      data: {
+        revenue,
+        subtotal,
+        discountTotal,
+        taxTotal,
+        shippingTotal,
+        refundAmount,
+        chargebackFlag,
+        ordersCount,
+        lineItems: payload.line_items || [],
+      }
+    });
+
+    setImmediate(async () => {
+      try {
+        await updateSnapshot(accountId);
+      } catch (err) {
+        console.error(`[AdRay Pipeline] Snapshot update failed for order update ${orderId}:`, err);
+      }
+    });
+  } catch (error) {
+    console.error('Error handling orders-updated webhook:', error);
   }
 });
 

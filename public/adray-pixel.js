@@ -101,6 +101,125 @@
     }
   }
 
+  function normalizeIdentityValue(kind, value) {
+    if (value == null) return null;
+    var raw = String(value).trim();
+    if (!raw) return null;
+
+    if (kind === 'email') {
+      var lower = raw.toLowerCase();
+      return /.+@.+\..+/.test(lower) ? lower : null;
+    }
+
+    if (kind === 'phone') {
+      var digits = raw.replace(/\D+/g, '');
+      return digits.length >= 7 ? digits : null;
+    }
+
+    return null;
+  }
+
+  function toHexString(bytes) {
+    return Array.prototype.map.call(bytes, function(b) {
+      return b.toString(16).padStart(2, '0');
+    }).join('');
+  }
+
+  function sha256Hex(value) {
+    if (!value || !window.crypto || !window.crypto.subtle || typeof TextEncoder === 'undefined') {
+      return Promise.resolve(null);
+    }
+
+    try {
+      var input = new TextEncoder().encode(value);
+      return window.crypto.subtle.digest('SHA-256', input).then(function(buffer) {
+        return toHexString(new Uint8Array(buffer));
+      }).catch(function() {
+        return null;
+      });
+    } catch (_) {
+      return Promise.resolve(null);
+    }
+  }
+
+  function detectCheckoutIdentityFieldType(el) {
+    if (!el || !el.name) return null;
+
+    var id = String(el.id || '').toLowerCase();
+    var name = String(el.name || '').toLowerCase();
+    var type = String(el.type || '').toLowerCase();
+
+    var isEmail =
+      type === 'email' ||
+      /email/.test(id) ||
+      /email/.test(name) ||
+      name === 'billing_email' ||
+      name === 'contact[email]';
+
+    if (isEmail) return 'email';
+
+    var isPhone =
+      type === 'tel' ||
+      /phone/.test(id) ||
+      /phone/.test(name) ||
+      name === 'billing_phone' ||
+      name === 'contact[phone]';
+
+    if (isPhone) return 'phone';
+    return null;
+  }
+
+  function shouldTrackCheckoutIdentity() {
+    return detectPlatform() === 'woocommerce' && detectPageType() === 'checkout';
+  }
+
+  function trackCheckoutIdentityField(el) {
+    if (!shouldTrackCheckoutIdentity()) return;
+    var kind = detectCheckoutIdentityFieldType(el);
+    if (!kind) return;
+
+    var normalized = normalizeIdentityValue(kind, el.value);
+    if (!normalized) return;
+
+    sha256Hex(normalized).then(function(hash) {
+      if (!hash) return;
+
+      var sentKey = '__adray_' + kind + '_hash_blur';
+      var lastSent = safeStorageGet(window.sessionStorage, sentKey);
+      if (lastSent === hash) return;
+
+      safeStorageSet(window.sessionStorage, sentKey, hash);
+
+      var identityPayload = {
+        checkout_token: getCookie('woocommerce_cart_hash') || null,
+        identity_stage: 'checkout_blur',
+        identity_field: kind
+      };
+
+      if (kind === 'email') identityPayload.email_hash = hash;
+      if (kind === 'phone') identityPayload.phone_hash = hash;
+
+      sendEvent('identity_signal', identityPayload);
+    });
+  }
+
+  function setupCheckoutIdentityBlurTracking() {
+    if (!shouldTrackCheckoutIdentity()) return;
+
+    document.addEventListener('blur', function(ev) {
+      var target = ev && ev.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      trackCheckoutIdentityField(target);
+    }, true);
+
+    // Autofill can skip blur in some flows, so change captures those updates.
+    document.addEventListener('change', function(ev) {
+      var target = ev && ev.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      trackCheckoutIdentityField(target);
+    }, true);
+  }
+
   /**
    * Returns account_id from script data attribute, or falls back to:
    * 1. Shopify shop domain (for legacy Shopify installs)
@@ -438,6 +557,8 @@
       checkout_token: getCookie('woocommerce_cart_hash') || null
     });
   }
+
+  setupCheckoutIdentityBlurTracking();
 
   // 4.1 Shopify: checkout page hit detection (if script is present there)
   if (detectPlatform() === 'shopify' && isCheckoutUrl(window.location.pathname)) {

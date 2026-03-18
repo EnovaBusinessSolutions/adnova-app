@@ -5,6 +5,7 @@ const prisma = require('../utils/prismaClient');
 const redisClient = require('../utils/redisClient');
 const { resolveUserKey } = require('../services/identityResolution');
 const eventBus = require('../utils/eventBus');
+const { hashPII } = require('../utils/encryption');
 
 function safeHostname(value) {
   if (!value || typeof value !== 'string') return null;
@@ -47,6 +48,7 @@ router.post('/', async (req, res) => {
     // 1. Identity Resolution (Reads/Sets Cookie)
     step = 'identity_resolution';
     if (!payload.ip) payload.ip = req.ip;
+    const ipHash = payload.ip ? hashPII(payload.ip) : null;
     const cookieUserKey = req.cookies ? req.cookies._adray_uid : null;
     const identity = await resolveUserKey(accountId, cookieUserKey, payload, res);
     const userKey = identity.userKey;
@@ -149,10 +151,15 @@ router.post('/', async (req, res) => {
         cartValue: payload.cart_value ? parseFloat(payload.cart_value) : null,
         checkoutToken: payload.checkout_token,
         orderId: payload.order_id,
+        rawSource: payload.raw_source || 'pixel',
+        matchType: identity.matchType || null,
+        confidenceScore: identity.confidenceScore,
+        ipHash,
         revenue: payload.revenue ? parseFloat(payload.revenue) : null,
         currency: payload.currency,
         items: payload.items || null,
         rawPayload: payload,
+        collectedAt: new Date(),
         browserReceivedAt: payload.timestamp ? new Date(payload.timestamp) : null,
         serverReceivedAt: new Date()
       }
@@ -173,6 +180,7 @@ router.post('/', async (req, res) => {
         utmTerm: payload.utm_term,
         referrer: payload.referrer,
         landingPageUrl: payload.landing_page_url,
+        ipHash,
         fbclid: payload.fbclid,
         gclid: payload.gclid,
         ttclid: payload.ttclid,
@@ -183,6 +191,7 @@ router.post('/', async (req, res) => {
       update: {
         lastEventAt: new Date(),
         userKey, // update in case it was resolved differently
+        ...(ipHash ? { ipHash } : {}),
         // Only merge utms if they exist in payload
         ...(payload.utm_source ? { utmSource: payload.utm_source } : {}),
         ...(payload.fbclid ? { fbclid: payload.fbclid } : {})
