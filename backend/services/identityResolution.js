@@ -2,6 +2,13 @@ const { randomUUID } = require('crypto');
 const prisma = require('../utils/prismaClient');
 const { hashFingerprint, hashPII } = require('../utils/encryption');
 
+function isSchemaDriftError(error) {
+  if (!error) return false;
+  if (error.code === 'P2022') return true;
+  const msg = String(error.message || '').toLowerCase();
+  return msg.includes('column') && msg.includes('does not exist');
+}
+
 function normalizeSha256(value) {
   if (!value || typeof value !== 'string') return null;
   const v = value.trim().toLowerCase();
@@ -80,19 +87,32 @@ async function resolveUserKey(accountId, cookieUserKey, payload, res) {
     if (!matchedIdentity) {
       // New user from click ID
       const userKey = randomUUID();
-      matchedIdentity = await prisma.identityGraph.create({
-        data: {
-          accountId,
-          userKey,
-          ipHash,
-          emailHash,
-          phoneHash,
-          fbclid: payload.fbclid,
-          gclid: payload.gclid,
-          ttclid: payload.ttclid,
-          confidenceScore: 1.0,
-        }
-      });
+      const clickIdentityData = {
+        accountId,
+        userKey,
+        ipHash,
+        emailHash,
+        phoneHash,
+        fbclid: payload.fbclid,
+        gclid: payload.gclid,
+        ttclid: payload.ttclid,
+        confidenceScore: 1.0,
+      };
+
+      try {
+        matchedIdentity = await prisma.identityGraph.create({ data: clickIdentityData });
+      } catch (createError) {
+        if (!isSchemaDriftError(createError)) throw createError;
+
+        matchedIdentity = await prisma.identityGraph.create({
+          data: {
+            ...clickIdentityData,
+            ipHash: undefined,
+            emailHash: undefined,
+            phoneHash: undefined,
+          }
+        });
+      }
       isNew = true;
       finalConfidence = 1.0;
       matchType = 'deterministic';
@@ -120,9 +140,14 @@ async function resolveUserKey(accountId, cookieUserKey, payload, res) {
     if (emailHash) OR.push({ emailHash });
     if (phoneHash) OR.push({ phoneHash });
 
-    matchedIdentity = await prisma.identityGraph.findFirst({
-      where: { accountId, OR }
-    });
+    try {
+      matchedIdentity = await prisma.identityGraph.findFirst({
+        where: { accountId, OR }
+      });
+    } catch (hashLookupError) {
+      if (!isSchemaDriftError(hashLookupError)) throw hashLookupError;
+      matchedIdentity = null;
+    }
 
     if (matchedIdentity) {
       finalConfidence = Math.max(matchedIdentity.confidenceScore, 0.95);
@@ -149,17 +174,30 @@ async function resolveUserKey(accountId, cookieUserKey, payload, res) {
   // 5. Create New
   if (!matchedIdentity) {
     const userKey = randomUUID();
-    matchedIdentity = await prisma.identityGraph.create({
-      data: {
-        accountId,
-        userKey,
-        fingerprintHash,
-        ipHash,
-        emailHash,
-        phoneHash,
-        confidenceScore: 0.6
-      }
-    });
+    const newIdentityData = {
+      accountId,
+      userKey,
+      fingerprintHash,
+      ipHash,
+      emailHash,
+      phoneHash,
+      confidenceScore: 0.6
+    };
+
+    try {
+      matchedIdentity = await prisma.identityGraph.create({ data: newIdentityData });
+    } catch (createError) {
+      if (!isSchemaDriftError(createError)) throw createError;
+
+      matchedIdentity = await prisma.identityGraph.create({
+        data: {
+          ...newIdentityData,
+          ipHash: undefined,
+          emailHash: undefined,
+          phoneHash: undefined,
+        }
+      });
+    }
     isNew = true;
     finalConfidence = 0.6;
     matchType = 'probabilistic';
@@ -170,10 +208,26 @@ async function resolveUserKey(accountId, cookieUserKey, payload, res) {
     updates.lastSeenAt = new Date();
     // Only update if there are meaningful changes to reduce DB writes
     if (Object.keys(updates).length > 1) { // >1 because lastSeenAt is always there
-      await prisma.identityGraph.update({
-        where: { id: matchedIdentity.id },
-        data: updates
-      });
+      try {
+        await prisma.identityGraph.update({
+          where: { id: matchedIdentity.id },
+          data: updates
+        });
+      } catch (updateError) {
+        if (!isSchemaDriftError(updateError)) throw updateError;
+
+        const fallbackUpdates = { ...updates };
+        delete fallbackUpdates.ipHash;
+        delete fallbackUpdates.emailHash;
+        delete fallbackUpdates.phoneHash;
+
+        if (Object.keys(fallbackUpdates).length > 1) {
+          await prisma.identityGraph.update({
+            where: { id: matchedIdentity.id },
+            data: fallbackUpdates
+          });
+        }
+      }
     }
   }
 

@@ -7,6 +7,13 @@ const { resolveUserKey } = require('../services/identityResolution');
 const eventBus = require('../utils/eventBus');
 const { hashPII } = require('../utils/encryption');
 
+function isSchemaDriftError(error) {
+  if (!error) return false;
+  if (error.code === 'P2022') return true;
+  const msg = String(error.message || '').toLowerCase();
+  return msg.includes('column') && msg.includes('does not exist');
+}
+
 function safeHostname(value) {
   if (!value || typeof value !== 'string') return null;
   try {
@@ -136,74 +143,123 @@ router.post('/', async (req, res) => {
 
     // 5. Write Event to DB
     step = 'event_insert';
-    await prisma.event.create({
-      data: {
-        eventId,
-        accountId,
-        sessionId,
-        userKey,
-        eventName: payload.event_name,
-        pageType: payload.page_type,
-        pageUrl: payload.page_url,
-        productId: payload.product_id,
-        variantId: payload.variant_id,
-        cartId: payload.cart_id,
-        cartValue: payload.cart_value ? parseFloat(payload.cart_value) : null,
-        checkoutToken: payload.checkout_token,
-        orderId: payload.order_id,
-        rawSource: payload.raw_source || 'pixel',
-        matchType: identity.matchType || null,
-        confidenceScore: identity.confidenceScore,
-        ipHash,
-        revenue: payload.revenue ? parseFloat(payload.revenue) : null,
-        currency: payload.currency,
-        items: payload.items || null,
-        rawPayload: payload,
-        collectedAt: new Date(),
-        browserReceivedAt: payload.timestamp ? new Date(payload.timestamp) : null,
-        serverReceivedAt: new Date()
-      }
-    });
+    const enrichedEventData = {
+      eventId,
+      accountId,
+      sessionId,
+      userKey,
+      eventName: payload.event_name,
+      pageType: payload.page_type,
+      pageUrl: payload.page_url,
+      productId: payload.product_id,
+      variantId: payload.variant_id,
+      cartId: payload.cart_id,
+      cartValue: payload.cart_value ? parseFloat(payload.cart_value) : null,
+      checkoutToken: payload.checkout_token,
+      orderId: payload.order_id,
+      rawSource: payload.raw_source || 'pixel',
+      matchType: identity.matchType || null,
+      confidenceScore: identity.confidenceScore,
+      ipHash,
+      revenue: payload.revenue ? parseFloat(payload.revenue) : null,
+      currency: payload.currency,
+      items: payload.items || null,
+      rawPayload: payload,
+      collectedAt: new Date(),
+      browserReceivedAt: payload.timestamp ? new Date(payload.timestamp) : null,
+      serverReceivedAt: new Date()
+    };
+
+    try {
+      await prisma.event.create({ data: enrichedEventData });
+    } catch (eventInsertError) {
+      if (!isSchemaDriftError(eventInsertError)) throw eventInsertError;
+
+      // Fallback for environments where recent columns are not migrated yet.
+      await prisma.event.create({
+        data: {
+          eventId,
+          accountId,
+          sessionId,
+          userKey,
+          eventName: payload.event_name,
+          pageType: payload.page_type,
+          pageUrl: payload.page_url,
+          productId: payload.product_id,
+          variantId: payload.variant_id,
+          cartId: payload.cart_id,
+          cartValue: payload.cart_value ? parseFloat(payload.cart_value) : null,
+          checkoutToken: payload.checkout_token,
+          orderId: payload.order_id,
+          revenue: payload.revenue ? parseFloat(payload.revenue) : null,
+          currency: payload.currency,
+          items: payload.items || null,
+          rawPayload: payload,
+          browserReceivedAt: payload.timestamp ? new Date(payload.timestamp) : null,
+          serverReceivedAt: new Date()
+        }
+      });
+    }
 
     // 6. Upsert Session
     step = 'session_upsert';
-    await prisma.session.upsert({
-      where: { sessionId },
-      create: {
-        sessionId,
-        accountId,
-        userKey,
-        utmSource: payload.utm_source,
-        utmMedium: payload.utm_medium,
-        utmCampaign: payload.utm_campaign,
-        utmContent: payload.utm_content,
-        utmTerm: payload.utm_term,
-        referrer: payload.referrer,
-        landingPageUrl: payload.landing_page_url,
-        ipHash,
-        fbclid: payload.fbclid,
-        gclid: payload.gclid,
-        ttclid: payload.ttclid,
-        fbp: payload.fbp,
-        fbc: payload.fbc,
-        isFirstTouch: true
-      },
-      update: {
-        lastEventAt: new Date(),
-        userKey, // update in case it was resolved differently
-        ...(ipHash ? { ipHash } : {}),
-        // Only merge utms if they exist in payload
-        ...(payload.utm_source ? { utmSource: payload.utm_source } : {}),
-        ...(payload.fbclid ? { fbclid: payload.fbclid } : {})
-      }
-    });
+    const enrichedSessionCreate = {
+      sessionId,
+      accountId,
+      userKey,
+      utmSource: payload.utm_source,
+      utmMedium: payload.utm_medium,
+      utmCampaign: payload.utm_campaign,
+      utmContent: payload.utm_content,
+      utmTerm: payload.utm_term,
+      referrer: payload.referrer,
+      landingPageUrl: payload.landing_page_url,
+      ipHash,
+      fbclid: payload.fbclid,
+      gclid: payload.gclid,
+      ttclid: payload.ttclid,
+      fbp: payload.fbp,
+      fbc: payload.fbc,
+      isFirstTouch: true
+    };
+
+    const enrichedSessionUpdate = {
+      lastEventAt: new Date(),
+      userKey, // update in case it was resolved differently
+      ...(ipHash ? { ipHash } : {}),
+      // Only merge utms if they exist in payload
+      ...(payload.utm_source ? { utmSource: payload.utm_source } : {}),
+      ...(payload.fbclid ? { fbclid: payload.fbclid } : {})
+    };
+
+    try {
+      await prisma.session.upsert({
+        where: { sessionId },
+        create: enrichedSessionCreate,
+        update: enrichedSessionUpdate
+      });
+    } catch (sessionUpsertError) {
+      if (!isSchemaDriftError(sessionUpsertError)) throw sessionUpsertError;
+
+      await prisma.session.upsert({
+        where: { sessionId },
+        create: {
+          ...enrichedSessionCreate,
+          ipHash: undefined
+        },
+        update: {
+          ...enrichedSessionUpdate,
+          ipHash: undefined
+        }
+      });
+    }
 
     res.json({ success: true, event_id: eventId, user_key: userKey });
 
   } catch (error) {
     console.error(`[AdRay Collect] Error at step '${step}':`, error);
-    // Still return 200/success-ish to client so pixel doesn't retry infinitely
-    res.status(500).json({ success: false, error: 'Internal Server Error', step });
+    // Return non-5xx to avoid browser retry storms while we surface diagnostics.
+    res.status(200).json({ success: false, error: 'Collect processing failed', step });
   }
 });
 
