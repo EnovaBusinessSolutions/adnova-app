@@ -35,6 +35,7 @@ try {
 const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(process.env.MCP_CONTEXT_RANGE_DAYS || 60, 7, 365);
 const BUILD_WAIT_TIMEOUT_MS = clampInt(process.env.MCP_CONTEXT_BUILD_WAIT_TIMEOUT_MS || 120000, 5000, 300000);
 const BUILD_WAIT_POLL_MS = clampInt(process.env.MCP_CONTEXT_BUILD_WAIT_POLL_MS || 1500, 300, 5000);
+const BUILD_ACTIVE_GUARD_MS = clampInt(process.env.MCP_CONTEXT_BUILD_ACTIVE_GUARD_MS || 180000, 15000, 900000);
 
 function safeStr(v) {
   return v == null ? '' : String(v);
@@ -146,50 +147,20 @@ function emptyPdfState(extra = {}) {
   };
 }
 
-async function findRoot(userId) {
-  const docs = await McpData.find({ userId })
-    .sort({ updatedAt: -1, createdAt: -1 })
-    .lean();
-
-  return docs.find(isRootDoc) || null;
+function makeBuildAttemptId() {
+  return `${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
 }
 
-async function updateRootContextState(userId, patch) {
-  const root = await findRoot(userId);
-  if (!root?._id) return null;
-
-  return McpData.findByIdAndUpdate(
-    root._id,
-    { $set: patch },
-    { new: true }
-  ).lean();
+function parseDateMs(v) {
+  const ms = Date.parse(v);
+  return Number.isFinite(ms) ? ms : 0;
 }
 
-async function markContextStale(userId, reason = 'source_updated', extra = {}) {
-  const root = await findRoot(userId);
-  if (!root?._id) return null;
-
-  const prevAi = root?.aiContext || {};
-
-  return McpData.findByIdAndUpdate(
-    root._id,
-    {
-      $set: {
-        aiContext: {
-          ...prevAi,
-          status: 'idle',
-          stage: 'awaiting_rebuild',
-          progress: 0,
-          staleReason: safeStr(reason) || 'source_updated',
-          staleAt: nowIso(),
-          error: null,
-          pdf: emptyPdfState(),
-          ...extra,
-        },
-      },
-    },
-    { new: true }
-  ).lean();
+function isRecentProcessingState(ai) {
+  if (!ai || ai.status !== 'processing' || !ai.buildAttemptId) return false;
+  const startedMs = parseDateMs(ai.startedAt);
+  if (!startedMs) return false;
+  return (Date.now() - startedMs) <= BUILD_ACTIVE_GUARD_MS;
 }
 
 function getAllowedDatasetsForSource(source) {
@@ -229,6 +200,34 @@ function getAllowedDatasetsForSource(source) {
   return null;
 }
 
+function getRequiredDatasetsForSource(source) {
+  if (source === 'metaAds') {
+    return {
+      allOf: ['meta.insights_summary', 'meta.campaigns_ranked'],
+      anyOf: ['meta.optimization_signals', 'meta.breakdowns_top', 'meta.daily_trends_ai'],
+    };
+  }
+
+  if (source === 'googleAds') {
+    return {
+      allOf: ['google.insights_summary', 'google.campaigns_ranked'],
+      anyOf: ['google.optimization_signals', 'google.breakdowns_top', 'google.daily_trends_ai'],
+    };
+  }
+
+  if (source === 'ga4') {
+    return {
+      allOf: ['ga4.insights_summary'],
+      anyOf: ['ga4.channels_top', 'ga4.landing_pages_top', 'ga4.source_medium_top', 'ga4.events_top'],
+    };
+  }
+
+  return {
+    allOf: [],
+    anyOf: [],
+  };
+}
+
 function getSourceDatasetPrefix(source) {
   if (source === 'metaAds') return 'meta.';
   if (source === 'googleAds') return 'google.';
@@ -248,6 +247,51 @@ function sourceLooksConnected(root, source) {
 function sourceLooksReady(root, source) {
   const s = getSourceRootState(root, source);
   return !!s?.ready || String(s?.status || '').toLowerCase() === 'ready';
+}
+
+function getDatasetsPresent(chunks) {
+  return new Set(
+    (Array.isArray(chunks) ? chunks : [])
+      .map((doc) => safeStr(doc?.dataset).trim())
+      .filter(Boolean)
+  );
+}
+
+function evaluateSourceUsability(source, chunks) {
+  const datasetNames = getDatasetsPresent(chunks);
+  const rules = getRequiredDatasetsForSource(source);
+  const allOf = Array.isArray(rules?.allOf) ? rules.allOf : [];
+  const anyOf = Array.isArray(rules?.anyOf) ? rules.anyOf : [];
+
+  const missingRequired = allOf.filter((name) => !datasetNames.has(name));
+  const hasAnyOptional = anyOf.length === 0 ? true : anyOf.some((name) => datasetNames.has(name));
+
+  const hasChunks = Array.isArray(chunks) && chunks.length > 0;
+  const usable = hasChunks && missingRequired.length === 0 && hasAnyOptional;
+
+  return {
+    usable,
+    datasetNames: Array.from(datasetNames),
+    missingRequired,
+    hasAnyOptional,
+  };
+}
+
+function isSignalPayloadBuildableForPdf(signalPayload) {
+  if (!signalPayload || typeof signalPayload !== 'object') return false;
+
+  const summary = signalPayload?.summary || {};
+  const block =
+    safeStr(signalPayload?.llm_context_block).trim() ||
+    safeStr(signalPayload?.llm_context_block_mini).trim();
+
+  const executive = safeStr(summary?.executive_summary).trim();
+  const business = safeStr(summary?.business_state).trim();
+
+  if (!block || block.length < 80) return false;
+  if (!executive && !business) return false;
+
+  return true;
 }
 
 async function findLatestSnapshotId(userId, source = 'metaAds') {
@@ -312,7 +356,8 @@ async function loadBestSourceState(userId, root, source, preferredSnapshotId) {
     : [];
 
   const hasChunks = chunks.length > 0;
-  const usable = hasChunks;
+  const usability = evaluateSourceUsability(source, chunks);
+  const usable = !!usability.usable;
   const ready = rootReady || usable;
 
   return {
@@ -327,6 +372,9 @@ async function loadBestSourceState(userId, root, source, preferredSnapshotId) {
     ready,
     usable,
     rootState,
+    datasetNames: usability.datasetNames,
+    missingRequired: usability.missingRequired,
+    hasAnyOptional: usability.hasAnyOptional,
   };
 }
 
@@ -350,6 +398,9 @@ function sourceStateSummaryForStatus(state) {
     usable: !!state?.usable,
     snapshotId: state?.snapshotId || null,
     chunkCount: toNum(state?.chunkCount, 0),
+    datasets: Array.isArray(state?.datasetNames) ? state.datasetNames : [],
+    missingRequired: Array.isArray(state?.missingRequired) ? state.missingRequired : [],
+    hasAnyOptional: !!state?.hasAnyOptional,
   };
 }
 
@@ -396,7 +447,14 @@ async function waitForBuildableSources(userId, root, explicitSnapshotId, timeout
   const sourceNames = ['metaAds', 'googleAds', 'ga4'];
 
   const fallbackStatesArr = await Promise.all(
-    sourceNames.map((src) => loadBestSourceState(userId, fallbackRoot, src, safeStr(explicitSnapshotId) || safeStr(fallbackRoot?.latestSnapshotId) || ''))
+    sourceNames.map((src) =>
+      loadBestSourceState(
+        userId,
+        fallbackRoot,
+        src,
+        safeStr(explicitSnapshotId) || safeStr(fallbackRoot?.latestSnapshotId) || ''
+      )
+    )
   );
 
   const bySource = Object.fromEntries(fallbackStatesArr.map((x) => [x.source, x]));
@@ -1020,12 +1078,150 @@ async function buildSignalPdfArtifact(userId, root, signalPayload) {
   });
 }
 
+async function findRoot(userId) {
+  const docs = await McpData.find({ userId })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .lean();
+
+  return docs.find(isRootDoc) || null;
+}
+
+async function updateRootContextState(userId, patch) {
+  const root = await findRoot(userId);
+  if (!root?._id) return null;
+
+  return McpData.findByIdAndUpdate(
+    root._id,
+    { $set: patch },
+    { new: true }
+  ).lean();
+}
+
+async function updateRootAiContext(userId, updater) {
+  const root = await findRoot(userId);
+  if (!root?._id) return null;
+
+  const currentAi = root?.aiContext || {};
+  const nextAi = typeof updater === 'function' ? updater(currentAi, root) : updater;
+
+  if (!nextAi || typeof nextAi !== 'object') {
+    return root;
+  }
+
+  return McpData.findByIdAndUpdate(
+    root._id,
+    { $set: { aiContext: nextAi } },
+    { new: true }
+  ).lean();
+}
+
+async function updateRootAiContextForAttempt(userId, attemptId, updater) {
+  const root = await findRoot(userId);
+  if (!root?._id) return { skipped: true, reason: 'ROOT_NOT_FOUND', root: null };
+
+  const currentAi = root?.aiContext || {};
+  const currentAttemptId = safeStr(currentAi?.buildAttemptId).trim();
+
+  if (attemptId && currentAttemptId && currentAttemptId !== attemptId) {
+    return { skipped: true, reason: 'ATTEMPT_SUPERSEDED', root };
+  }
+
+  const nextAi = typeof updater === 'function' ? updater(currentAi, root) : updater;
+  if (!nextAi || typeof nextAi !== 'object') {
+    return { skipped: true, reason: 'NOOP', root };
+  }
+
+  const updated = await McpData.findByIdAndUpdate(
+    root._id,
+    { $set: { aiContext: nextAi } },
+    { new: true }
+  ).lean();
+
+  return { skipped: false, reason: null, root: updated };
+}
+
+function buildResultFromRoot(root, fallback = {}) {
+  const state = root?.aiContext || {};
+  const pdf = state?.pdf || {};
+
+  return {
+    ok: true,
+    root,
+    unifiedBase: state?.unifiedBase || fallback.unifiedBase || null,
+    encodedPayload: state?.encodedPayload || fallback.encodedPayload || null,
+    signalPayload: state?.signalPayload || state?.encodedPayload || fallback.signalPayload || null,
+    pdf,
+    data: {
+      status: state?.status || fallback.status || 'idle',
+      progress: toNum(state?.progress, fallback.progress || 0),
+      stage: state?.stage || fallback.stage || 'idle',
+      snapshotId: state?.snapshotId || fallback.snapshotId || root?.latestSnapshotId || null,
+      sourceSnapshots: state?.sourceSnapshots || fallback.sourceSnapshots || null,
+      contextRangeDays: toNum(state?.contextRangeDays) || fallback.contextRangeDays || null,
+      storageRangeDays: toNum(state?.storageRangeDays) || fallback.storageRangeDays || null,
+      usedOpenAI: !!state?.usedOpenAI,
+      model: state?.model || null,
+      hasEncodedPayload: !!state?.encodedPayload,
+      hasSignal: !!(state?.signalPayload || state?.encodedPayload),
+      providerAgnostic: !!state?.encodedPayload?.providerAgnostic,
+      usableSources: Array.isArray(state?.usableSources) ? state.usableSources : (fallback.usableSources || []),
+      pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : (fallback.pendingConnectedSources || []),
+      sources: state?.sourcesStatus || fallback.sources || null,
+      hasPdf: pdf?.status === 'ready',
+      pdf: {
+        status: pdf?.status || 'idle',
+        stage: pdf?.stage || 'idle',
+        progress: toNum(pdf?.progress, 0),
+        ready: pdf?.status === 'ready',
+        fileName: pdf?.fileName || null,
+        mimeType: pdf?.mimeType || 'application/pdf',
+        downloadUrl: pdf?.downloadUrl || null,
+        generatedAt: pdf?.generatedAt || null,
+        sizeBytes: toNum(pdf?.sizeBytes, 0),
+        pageCount: toNum(pdf?.pageCount, 0) || null,
+        renderer: pdf?.renderer || null,
+        error: pdf?.error || null,
+      },
+      error: state?.error || null,
+      buildAttemptId: state?.buildAttemptId || null,
+    },
+  };
+}
+
+async function markContextStale(userId, reason = 'source_updated', extra = {}) {
+  const root = await findRoot(userId);
+  if (!root?._id) return null;
+
+  const prevAi = root?.aiContext || {};
+
+  return McpData.findByIdAndUpdate(
+    root._id,
+    {
+      $set: {
+        aiContext: {
+          ...prevAi,
+          status: 'idle',
+          stage: 'awaiting_rebuild',
+          progress: 0,
+          staleReason: safeStr(reason) || 'source_updated',
+          staleAt: nowIso(),
+          error: null,
+          pdf: emptyPdfState(),
+          ...extra,
+        },
+      },
+    },
+    { new: true }
+  ).lean();
+}
+
 async function buildUnifiedContextForUser(userId, options = {}) {
   const {
     explicitSnapshotId = null,
     contextRangeDays: requestedContextRangeDays = null,
     timeoutMs = BUILD_WAIT_TIMEOUT_MS,
     markProcessing = true,
+    forceRebuild = false,
   } = options || {};
 
   const initialRoot = await findRoot(userId);
@@ -1033,6 +1229,14 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     const err = new Error('MCP_ROOT_NOT_FOUND');
     err.code = 'MCP_ROOT_NOT_FOUND';
     throw err;
+  }
+
+  if (!forceRebuild && isRecentProcessingState(initialRoot?.aiContext)) {
+    return buildResultFromRoot(initialRoot, {
+      status: initialRoot?.aiContext?.status || 'processing',
+      progress: toNum(initialRoot?.aiContext?.progress, 10),
+      stage: initialRoot?.aiContext?.stage || 'waiting_for_sources',
+    });
   }
 
   const contextRangeDays = resolveRequestedContextRangeDays(initialRoot, requestedContextRangeDays);
@@ -1043,32 +1247,45 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     safeStr(initialRoot?.latestSnapshotId) ||
     null;
 
+  const attemptId = makeBuildAttemptId();
+  const startedAt = nowIso();
+
   if (markProcessing) {
-    await updateRootContextState(userId, {
-      aiContext: {
-        ...(initialRoot?.aiContext || {}),
-        status: 'processing',
-        progress: 10,
-        stage: 'waiting_for_sources',
-        startedAt: nowIso(),
-        finishedAt: null,
-        snapshotId: preferredSnapshotId,
-        sourceSnapshots: null,
-        contextRangeDays,
-        storageRangeDays,
-        error: null,
-        usedOpenAI: false,
-        model: null,
-        unifiedBase: null,
-        encodedPayload: null,
-        signalPayload: null,
-        pdf: emptyPdfState(),
-      },
-    });
+    await updateRootAiContext(userId, (currentAi) => ({
+      ...(currentAi || {}),
+      status: 'processing',
+      progress: 10,
+      stage: 'waiting_for_sources',
+      startedAt,
+      finishedAt: null,
+      buildAttemptId: attemptId,
+      snapshotId: preferredSnapshotId,
+      sourceSnapshots: null,
+      contextRangeDays,
+      storageRangeDays,
+      error: null,
+      usedOpenAI: false,
+      model: null,
+      unifiedBase: null,
+      encodedPayload: null,
+      signalPayload: null,
+      usableSources: [],
+      pendingConnectedSources: [],
+      sourcesStatus: null,
+      pdf: emptyPdfState({ status: 'idle', stage: 'waiting_for_sources', progress: 0 }),
+    }));
   }
 
   const readyState = await waitForBuildableSources(userId, initialRoot, explicitSnapshotId, timeoutMs);
   const effectiveRoot = readyState?.root || await findRoot(userId);
+
+  if (safeStr(effectiveRoot?.aiContext?.buildAttemptId).trim() !== attemptId) {
+    return buildResultFromRoot(effectiveRoot, {
+      status: effectiveRoot?.aiContext?.status || 'processing',
+      progress: toNum(effectiveRoot?.aiContext?.progress, 10),
+      stage: effectiveRoot?.aiContext?.stage || 'waiting_for_sources',
+    });
+  }
 
   const sourceStates = readyState?.sourceStates || {};
   const metaState = sourceStates?.metaAds || null;
@@ -1093,59 +1310,21 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     googleChunks.length > 0 ||
     ga4Chunks.length > 0;
 
-  if (!hasAnyBuildable) {
-    await updateRootContextState(userId, {
-      aiContext: {
-        ...(effectiveRoot?.aiContext || {}),
-        status: 'error',
-        progress: 100,
-        stage: 'failed',
-        finishedAt: nowIso(),
-        snapshotId:
-          sourceSnapshots.metaAds ||
-          sourceSnapshots.googleAds ||
-          sourceSnapshots.ga4 ||
-          preferredSnapshotId ||
-          null,
-        sourceSnapshots,
-        contextRangeDays,
-        storageRangeDays,
-        sourcesStatus: {
-          metaAds: sourceStateSummaryForStatus(metaState),
-          googleAds: sourceStateSummaryForStatus(googleState),
-          ga4: sourceStateSummaryForStatus(ga4State),
-        },
-        error: 'MCP_CONTEXT_NO_USABLE_SOURCES',
-        unifiedBase: null,
-        encodedPayload: null,
-        signalPayload: null,
-        pdf: emptyPdfState({ status: 'failed', stage: 'failed', progress: 100, error: 'MCP_CONTEXT_NO_USABLE_SOURCES' }),
-      },
-    });
+  const sourcesStatus = {
+    metaAds: sourceStateSummaryForStatus(metaState),
+    googleAds: sourceStateSummaryForStatus(googleState),
+    ga4: sourceStateSummaryForStatus(ga4State),
+  };
 
-    const err = new Error('MCP_CONTEXT_NO_USABLE_SOURCES');
-    err.code = 'MCP_CONTEXT_NO_USABLE_SOURCES';
-    err.data = {
-      contextRangeDays,
-      storageRangeDays,
-      sourceSnapshots,
-      sources: {
-        metaAds: sourceStateSummaryForStatus(metaState),
-        googleAds: sourceStateSummaryForStatus(googleState),
-        ga4: sourceStateSummaryForStatus(ga4State),
-      },
-    };
-    throw err;
-  }
-
-  await updateRootContextState(userId, {
-    aiContext: {
-      ...(effectiveRoot?.aiContext || {}),
+  if (!hasAnyBuildable && pendingConnectedSources.length > 0) {
+    const waitResult = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+      ...(currentAi || {}),
       status: 'processing',
-      progress: 35,
-      stage: pendingConnectedSources.length > 0 ? 'compacting_partial_sources' : 'compacting_sources',
-      startedAt: effectiveRoot?.aiContext?.startedAt || nowIso(),
+      progress: 20,
+      stage: 'waiting_for_connected_sources',
+      startedAt: currentAi?.startedAt || startedAt,
       finishedAt: null,
+      buildAttemptId: attemptId,
       snapshotId:
         sourceSnapshots.metaAds ||
         sourceSnapshots.googleAds ||
@@ -1155,24 +1334,145 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       sourceSnapshots,
       contextRangeDays,
       storageRangeDays,
-      sourcesStatus: {
-        metaAds: sourceStateSummaryForStatus(metaState),
-        googleAds: sourceStateSummaryForStatus(googleState),
-        ga4: sourceStateSummaryForStatus(ga4State),
-      },
+      sourcesStatus,
+      usableSources,
+      pendingConnectedSources,
       error: null,
+      pdf: emptyPdfState({ status: 'idle', stage: 'waiting_for_sources', progress: 0 }),
+    }));
+
+    const finalRoot = waitResult?.root || await findRoot(userId);
+    return buildResultFromRoot(finalRoot, {
+      status: 'processing',
+      progress: 20,
+      stage: 'waiting_for_connected_sources',
+      sourceSnapshots,
+      contextRangeDays,
+      storageRangeDays,
+      usableSources,
+      pendingConnectedSources,
+      sources: sourcesStatus,
+    });
+  }
+
+  if (!hasAnyBuildable) {
+    await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+      ...(currentAi || {}),
+      status: 'error',
+      progress: 100,
+      stage: 'failed',
+      finishedAt: nowIso(),
+      buildAttemptId: attemptId,
+      snapshotId:
+        sourceSnapshots.metaAds ||
+        sourceSnapshots.googleAds ||
+        sourceSnapshots.ga4 ||
+        preferredSnapshotId ||
+        null,
+      sourceSnapshots,
+      contextRangeDays,
+      storageRangeDays,
+      sourcesStatus,
+      usableSources,
+      pendingConnectedSources,
+      error: 'MCP_CONTEXT_NO_USABLE_SOURCES',
+      unifiedBase: null,
       encodedPayload: null,
       signalPayload: null,
-      pdf: emptyPdfState({ status: 'idle', stage: 'queued', progress: 0 }),
-    },
-  });
+      pdf: emptyPdfState({ status: 'failed', stage: 'failed', progress: 100, error: 'MCP_CONTEXT_NO_USABLE_SOURCES' }),
+    }));
+
+    const err = new Error('MCP_CONTEXT_NO_USABLE_SOURCES');
+    err.code = 'MCP_CONTEXT_NO_USABLE_SOURCES';
+    err.data = {
+      contextRangeDays,
+      storageRangeDays,
+      sourceSnapshots,
+      sources: sourcesStatus,
+    };
+    throw err;
+  }
+
+  if (pendingConnectedSources.length > 0) {
+    const partialWait = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+      ...(currentAi || {}),
+      status: 'processing',
+      progress: 30,
+      stage: 'waiting_for_connected_sources',
+      startedAt: currentAi?.startedAt || startedAt,
+      finishedAt: null,
+      buildAttemptId: attemptId,
+      snapshotId:
+        sourceSnapshots.metaAds ||
+        sourceSnapshots.googleAds ||
+        sourceSnapshots.ga4 ||
+        preferredSnapshotId ||
+        null,
+      sourceSnapshots,
+      contextRangeDays,
+      storageRangeDays,
+      sourcesStatus,
+      usableSources,
+      pendingConnectedSources,
+      error: null,
+      pdf: emptyPdfState({ status: 'idle', stage: 'waiting_for_sources', progress: 0 }),
+    }));
+
+    const finalRoot = partialWait?.root || await findRoot(userId);
+    return buildResultFromRoot(finalRoot, {
+      status: 'processing',
+      progress: 30,
+      stage: 'waiting_for_connected_sources',
+      sourceSnapshots,
+      contextRangeDays,
+      storageRangeDays,
+      usableSources,
+      pendingConnectedSources,
+      sources: sourcesStatus,
+    });
+  }
+
+  await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+    ...(currentAi || {}),
+    status: 'processing',
+    progress: 35,
+    stage: 'compacting_sources',
+    startedAt: currentAi?.startedAt || startedAt,
+    finishedAt: null,
+    buildAttemptId: attemptId,
+    snapshotId:
+      sourceSnapshots.metaAds ||
+      sourceSnapshots.googleAds ||
+      sourceSnapshots.ga4 ||
+      preferredSnapshotId ||
+      null,
+    sourceSnapshots,
+    contextRangeDays,
+    storageRangeDays,
+    sourcesStatus,
+    usableSources,
+    pendingConnectedSources,
+    error: null,
+    encodedPayload: null,
+    signalPayload: null,
+    pdf: emptyPdfState({ status: 'idle', stage: 'queued', progress: 0 }),
+  }));
 
   const metaPack = buildMetaContext(metaChunks, contextRangeDays);
   const googlePack = buildGoogleAdsContext(googleChunks, contextRangeDays);
   const ga4Pack = buildGa4Context(ga4Chunks, contextRangeDays);
 
+  const latestRootForBase = await findRoot(userId);
+  if (safeStr(latestRootForBase?.aiContext?.buildAttemptId).trim() !== attemptId) {
+    return buildResultFromRoot(latestRootForBase, {
+      status: latestRootForBase?.aiContext?.status || 'processing',
+      progress: toNum(latestRootForBase?.aiContext?.progress, 35),
+      stage: latestRootForBase?.aiContext?.stage || 'compacting_sources',
+    });
+  }
+
   const unifiedBase = buildUnifiedBaseContext({
-    root: effectiveRoot,
+    root: latestRootForBase,
     contextRangeDays,
     storageRangeDays,
     sourceStates,
@@ -1181,226 +1481,225 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     ga4Pack,
   });
 
-  await updateRootContextState(userId, {
-    aiContext: {
-      ...(await findRoot(userId))?.aiContext,
-      status: 'processing',
-      progress: 65,
-      stage: 'encoding_signal',
-      startedAt: effectiveRoot?.aiContext?.startedAt || nowIso(),
-      finishedAt: null,
-      snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
-      sourceSnapshots,
-      contextRangeDays,
-      storageRangeDays,
-      unifiedBase,
-      sourcesStatus: {
-        metaAds: sourceStateSummaryForStatus(metaState),
-        googleAds: sourceStateSummaryForStatus(googleState),
-        ga4: sourceStateSummaryForStatus(ga4State),
-      },
-      error: null,
-      pdf: emptyPdfState({ status: 'idle', stage: 'waiting_for_signal', progress: 0 }),
-    },
-  });
+  await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+    ...(currentAi || {}),
+    status: 'processing',
+    progress: 65,
+    stage: 'encoding_signal',
+    startedAt: currentAi?.startedAt || startedAt,
+    finishedAt: null,
+    buildAttemptId: attemptId,
+    snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+    sourceSnapshots,
+    contextRangeDays,
+    storageRangeDays,
+    unifiedBase,
+    sourcesStatus,
+    usableSources,
+    pendingConnectedSources,
+    error: null,
+    pdf: emptyPdfState({ status: 'idle', stage: 'waiting_for_signal', progress: 0 }),
+  }));
 
   const encoded = await enrichWithOpenAI(unifiedBase);
   const signalPayload = encoded.payload;
 
-  await updateRootContextState(userId, {
-    aiContext: {
-      ...(await findRoot(userId))?.aiContext,
+  if (!isSignalPayloadBuildableForPdf(signalPayload)) {
+    await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+      ...(currentAi || {}),
       status: 'processing',
-      progress: 82,
-      stage: 'rendering_pdf',
-      startedAt: effectiveRoot?.aiContext?.startedAt || nowIso(),
+      progress: 72,
+      stage: 'waiting_for_valid_signal',
+      startedAt: currentAi?.startedAt || startedAt,
       finishedAt: null,
+      buildAttemptId: attemptId,
       snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
       sourceSnapshots,
       contextRangeDays,
       storageRangeDays,
-      error: null,
       unifiedBase,
       encodedPayload: signalPayload,
       signalPayload,
       usedOpenAI: !!encoded.usedOpenAI,
       model: encoded.model || null,
-      sourcesStatus: {
-        metaAds: sourceStateSummaryForStatus(metaState),
-        googleAds: sourceStateSummaryForStatus(googleState),
-        ga4: sourceStateSummaryForStatus(ga4State),
-      },
+      sourcesStatus,
       usableSources,
       pendingConnectedSources,
-      pdf: emptyPdfState({
-        status: 'processing',
-        stage: 'rendering_pdf',
-        progress: 15,
-      }),
-    },
-  });
+      error: null,
+      pdf: emptyPdfState({ status: 'idle', stage: 'waiting_for_signal', progress: 0 }),
+    }));
+
+    const finalRoot = await findRoot(userId);
+    return buildResultFromRoot(finalRoot, {
+      status: 'processing',
+      progress: 72,
+      stage: 'waiting_for_valid_signal',
+      sourceSnapshots,
+      contextRangeDays,
+      storageRangeDays,
+      usableSources,
+      pendingConnectedSources,
+      sources: sourcesStatus,
+      unifiedBase,
+      encodedPayload: signalPayload,
+      signalPayload,
+    });
+  }
+
+  await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+    ...(currentAi || {}),
+    status: 'processing',
+    progress: 82,
+    stage: 'rendering_pdf',
+    startedAt: currentAi?.startedAt || startedAt,
+    finishedAt: null,
+    buildAttemptId: attemptId,
+    snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+    sourceSnapshots,
+    contextRangeDays,
+    storageRangeDays,
+    error: null,
+    unifiedBase,
+    encodedPayload: signalPayload,
+    signalPayload,
+    usedOpenAI: !!encoded.usedOpenAI,
+    model: encoded.model || null,
+    sourcesStatus,
+    usableSources,
+    pendingConnectedSources,
+    pdf: emptyPdfState({
+      status: 'processing',
+      stage: 'rendering_pdf',
+      progress: 15,
+    }),
+  }));
 
   let pdfResult = null;
   try {
     const rootBeforePdf = await findRoot(userId);
 
-    await updateRootContextState(userId, {
-      aiContext: {
-        ...(rootBeforePdf?.aiContext || {}),
-        pdf: {
-          ...(rootBeforePdf?.aiContext?.pdf || emptyPdfState()),
-          status: 'processing',
-          stage: 'building_document',
-          progress: 45,
-          error: null,
-        },
+    if (safeStr(rootBeforePdf?.aiContext?.buildAttemptId).trim() !== attemptId) {
+      return buildResultFromRoot(rootBeforePdf, {
+        status: rootBeforePdf?.aiContext?.status || 'processing',
+        progress: toNum(rootBeforePdf?.aiContext?.progress, 82),
+        stage: rootBeforePdf?.aiContext?.stage || 'rendering_pdf',
+      });
+    }
+
+    await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+      ...(currentAi || {}),
+      pdf: {
+        ...(currentAi?.pdf || emptyPdfState()),
+        status: 'processing',
+        stage: 'building_document',
+        progress: 45,
+        error: null,
       },
-    });
+    }));
 
     pdfResult = await buildSignalPdfArtifact(userId, rootBeforePdf, signalPayload);
   } catch (pdfErr) {
     console.error('[mcpContextBuilder] PDF generation failed:', pdfErr?.message || pdfErr);
 
-    const failRoot = await findRoot(userId);
-    const failAi = failRoot?.aiContext || {};
-
-    await updateRootContextState(userId, {
-      aiContext: {
-        ...failAi,
-        status: 'error',
-        progress: 100,
+    const failUpdate = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+      ...(currentAi || {}),
+      status: 'error',
+      progress: 100,
+      stage: 'failed',
+      finishedAt: nowIso(),
+      buildAttemptId: attemptId,
+      snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+      sourceSnapshots,
+      contextRangeDays,
+      storageRangeDays,
+      unifiedBase,
+      encodedPayload: signalPayload,
+      signalPayload,
+      usedOpenAI: !!encoded.usedOpenAI,
+      model: encoded.model || null,
+      error: pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED',
+      sourcesStatus,
+      usableSources,
+      pendingConnectedSources,
+      pdf: {
+        ...(currentAi?.pdf || emptyPdfState()),
+        status: 'failed',
         stage: 'failed',
-        finishedAt: nowIso(),
-        snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
-        sourceSnapshots,
-        contextRangeDays,
-        storageRangeDays,
-        unifiedBase,
-        encodedPayload: signalPayload,
-        signalPayload,
-        usedOpenAI: !!encoded.usedOpenAI,
-        model: encoded.model || null,
+        progress: 100,
+        generatedAt: null,
         error: pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED',
-        sourcesStatus: {
-          metaAds: sourceStateSummaryForStatus(metaState),
-          googleAds: sourceStateSummaryForStatus(googleState),
-          ga4: sourceStateSummaryForStatus(ga4State),
-        },
-        usableSources,
-        pendingConnectedSources,
-        pdf: {
-          ...(failAi?.pdf || emptyPdfState()),
-          status: 'failed',
-          stage: 'failed',
-          progress: 100,
-          generatedAt: null,
-          error: pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED',
-        },
       },
-    });
+    }));
+
+    const failRoot = failUpdate?.root || await findRoot(userId);
+    if (safeStr(failRoot?.aiContext?.buildAttemptId).trim() !== attemptId) {
+      return buildResultFromRoot(failRoot, {
+        status: failRoot?.aiContext?.status || 'processing',
+        progress: toNum(failRoot?.aiContext?.progress, 82),
+        stage: failRoot?.aiContext?.stage || 'rendering_pdf',
+      });
+    }
 
     const err = new Error(pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED');
     err.code = pdfErr?.code || 'SIGNAL_PDF_BUILD_FAILED';
     throw err;
   }
 
-  const prevRoot = await findRoot(userId);
-  const prevAi = prevRoot?.aiContext || {};
-
-  await updateRootContextState(userId, {
-    aiContext: {
-      ...prevAi,
-      status: 'done',
-      progress: 100,
-      stage: pendingConnectedSources.length > 0 ? 'completed_partial' : 'completed',
-      startedAt: prevAi?.startedAt || nowIso(),
-      finishedAt: nowIso(),
-      snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
-      sourceSnapshots,
-      contextRangeDays,
-      storageRangeDays,
-      error: null,
-      unifiedBase,
-      encodedPayload: signalPayload,
-      signalPayload,
-      usedOpenAI: !!encoded.usedOpenAI,
-      model: encoded.model || null,
-      sourcesStatus: {
-        metaAds: sourceStateSummaryForStatus(metaState),
-        googleAds: sourceStateSummaryForStatus(googleState),
-        ga4: sourceStateSummaryForStatus(ga4State),
-      },
-      usableSources,
-      pendingConnectedSources,
-      pdf: {
-        ...(prevAi?.pdf || emptyPdfState()),
-        status: 'ready',
-        stage: 'ready',
-        progress: 100,
-        fileName: pdfResult?.fileName || null,
-        mimeType: pdfResult?.mimeType || 'application/pdf',
-        storageKey: pdfResult?.storageKey || null,
-        localPath: pdfResult?.localPath || null,
-        downloadUrl: pdfResult?.downloadUrl || null,
-        generatedAt: pdfResult?.generatedAt || nowIso(),
-        sizeBytes: toNum(pdfResult?.sizeBytes, 0),
-        pageCount: toNum(pdfResult?.pageCount, 0) || null,
-        renderer: pdfResult?.renderer || null,
-        version: 1,
-        error: null,
-      },
-    },
-  });
-
-  const freshRoot = await findRoot(userId);
-  const state = freshRoot?.aiContext || {};
-  const pdf = state?.pdf || {};
-
-  return {
-    ok: true,
-    root: freshRoot,
+  const finalUpdate = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+    ...(currentAi || {}),
+    status: 'done',
+    progress: 100,
+    stage: 'completed',
+    startedAt: currentAi?.startedAt || startedAt,
+    finishedAt: nowIso(),
+    buildAttemptId: attemptId,
+    snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+    sourceSnapshots,
+    contextRangeDays,
+    storageRangeDays,
+    error: null,
     unifiedBase,
-    encodedPayload: state?.encodedPayload || signalPayload,
-    signalPayload: state?.signalPayload || state?.encodedPayload || signalPayload,
-    pdf,
-    data: {
-      status: state?.status || 'done',
-      progress: state?.progress || 100,
-      stage: state?.stage || (pendingConnectedSources.length > 0 ? 'completed_partial' : 'completed'),
-      snapshotId: state?.snapshotId || unifiedBase?.snapshotId || null,
-      sourceSnapshots: state?.sourceSnapshots || sourceSnapshots,
-      contextRangeDays: toNum(state?.contextRangeDays) || contextRangeDays,
-      storageRangeDays: toNum(state?.storageRangeDays) || storageRangeDays,
-      usedOpenAI: !!state?.usedOpenAI,
-      model: state?.model || null,
-      hasEncodedPayload: !!state?.encodedPayload,
-      hasSignal: !!(state?.signalPayload || state?.encodedPayload),
-      providerAgnostic: !!state?.encodedPayload?.providerAgnostic,
-      usableSources: state?.usableSources || usableSources,
-      pendingConnectedSources: state?.pendingConnectedSources || pendingConnectedSources,
-      sources: state?.sourcesStatus || {
-        metaAds: sourceStateSummaryForStatus(metaState),
-        googleAds: sourceStateSummaryForStatus(googleState),
-        ga4: sourceStateSummaryForStatus(ga4State),
-      },
-      hasPdf: pdf?.status === 'ready',
-      pdf: {
-        status: pdf?.status || 'idle',
-        stage: pdf?.stage || 'idle',
-        progress: toNum(pdf?.progress, 0),
-        ready: pdf?.status === 'ready',
-        fileName: pdf?.fileName || null,
-        mimeType: pdf?.mimeType || 'application/pdf',
-        downloadUrl: pdf?.downloadUrl || null,
-        generatedAt: pdf?.generatedAt || null,
-        sizeBytes: toNum(pdf?.sizeBytes, 0),
-        pageCount: toNum(pdf?.pageCount, 0) || null,
-        renderer: pdf?.renderer || null,
-        error: pdf?.error || null,
-      },
-      error: state?.error || null,
+    encodedPayload: signalPayload,
+    signalPayload,
+    usedOpenAI: !!encoded.usedOpenAI,
+    model: encoded.model || null,
+    sourcesStatus,
+    usableSources,
+    pendingConnectedSources,
+    pdf: {
+      ...(currentAi?.pdf || emptyPdfState()),
+      status: 'ready',
+      stage: 'ready',
+      progress: 100,
+      fileName: pdfResult?.fileName || null,
+      mimeType: pdfResult?.mimeType || 'application/pdf',
+      storageKey: pdfResult?.storageKey || null,
+      localPath: pdfResult?.localPath || null,
+      downloadUrl: pdfResult?.downloadUrl || null,
+      generatedAt: pdfResult?.generatedAt || nowIso(),
+      sizeBytes: toNum(pdfResult?.sizeBytes, 0),
+      pageCount: toNum(pdfResult?.pageCount, 0) || null,
+      renderer: pdfResult?.renderer || null,
+      version: 1,
+      error: null,
     },
-  };
+  }));
+
+  const freshRoot = finalUpdate?.root || await findRoot(userId);
+  return buildResultFromRoot(freshRoot, {
+    status: 'done',
+    progress: 100,
+    stage: 'completed',
+    sourceSnapshots,
+    contextRangeDays,
+    storageRangeDays,
+    usableSources,
+    pendingConnectedSources,
+    sources: sourcesStatus,
+    unifiedBase,
+    encodedPayload: signalPayload,
+    signalPayload,
+  });
 }
 
 async function rebuildUnifiedContextForUser(userId, options = {}) {
@@ -1414,6 +1713,7 @@ async function rebuildUnifiedContextForUser(userId, options = {}) {
     contextRangeDays: options?.contextRangeDays || null,
     timeoutMs: options?.timeoutMs || BUILD_WAIT_TIMEOUT_MS,
     markProcessing: true,
+    forceRebuild: !!options?.forceRebuild,
   });
 }
 

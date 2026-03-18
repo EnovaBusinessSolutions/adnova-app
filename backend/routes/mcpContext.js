@@ -12,10 +12,10 @@ const User = require('../models/User');
 const {
   findRoot,
   buildUnifiedContextForUser,
-  updateRootContextState,
 } = require('../services/mcpContextBuilder');
 
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
+const BUILD_ACTIVE_GUARD_MS = Number(process.env.MCP_CONTEXT_BUILD_ACTIVE_GUARD_MS || 180000);
 
 function safeStr(v) {
   return v == null ? '' : String(v);
@@ -26,16 +26,24 @@ function toNum(v, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function nowIso() {
-  return new Date().toISOString();
-}
-
 function nowDate() {
   return new Date();
 }
 
 function makeShortShareToken() {
   return crypto.randomBytes(8).toString('base64url');
+}
+
+function parseDateMs(v) {
+  const ms = Date.parse(v);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function isRecentProcessingState(ai) {
+  if (!ai || safeStr(ai?.status) !== 'processing' || !safeStr(ai?.buildAttemptId).trim()) return false;
+  const startedMs = parseDateMs(ai?.startedAt);
+  if (!startedMs) return false;
+  return (Date.now() - startedMs) <= BUILD_ACTIVE_GUARD_MS;
 }
 
 function setNoCacheHeaders(res) {
@@ -111,6 +119,21 @@ async function findLatestContextRootForUser(userId) {
   });
 
   return root || null;
+}
+
+/**
+ * Si hay un build en curso reciente, prioriza el root actual.
+ * Si no, usa el último root con Signal/PDF listo.
+ */
+async function findPreferredContextRootForUser(userId) {
+  if (!userId) return null;
+
+  const currentRoot = await findRoot(userId);
+  if (currentRoot?.aiContext && isRecentProcessingState(currentRoot.aiContext)) {
+    return currentRoot;
+  }
+
+  return (await findLatestContextRootForUser(userId)) || currentRoot || null;
 }
 
 function getVersionSeedFromRoot(root) {
@@ -252,6 +275,7 @@ function buildStatusResponse(root, shareState = null) {
       usedOpenAI: !!state?.usedOpenAI,
       model: state?.model || null,
       error: state?.error || null,
+      buildAttemptId: state?.buildAttemptId || null,
       sources: state?.sourcesStatus || null,
       usableSources: Array.isArray(state?.usableSources) ? state.usableSources : [],
       pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
@@ -321,46 +345,48 @@ router.post('/build', async (req, res) => {
     const result = await buildUnifiedContextForUser(userId, {
       explicitSnapshotId: safeStr(req.body?.snapshotId) || null,
       contextRangeDays: req.body?.contextRangeDays || null,
+      forceRebuild: !!req.body?.forceRebuild,
     });
 
     try {
-      await syncUserVersionedLink(userId, req.body?.provider || null);
+      const resultData = result?.data || {};
+      const status = safeStr(resultData?.status);
+      const hasSignal = !!resultData?.hasSignal;
+      const hasPdf = !!resultData?.hasPdf;
+
+      if ((status === 'done' || hasSignal || hasPdf) && !resultData?.pendingConnectedSources?.length) {
+        await syncUserVersionedLink(userId, req.body?.provider || null);
+      }
     } catch (syncErr) {
       console.error('[mcp/context/build] syncUserVersionedLink warning:', syncErr);
     }
 
+    setNoCacheHeaders(res);
+
+    const resultData = result?.data || {};
+    const stage = safeStr(resultData?.stage);
+    const status = safeStr(resultData?.status);
+
+    if (
+      status === 'processing' &&
+      (
+        stage === 'waiting_for_connected_sources' ||
+        stage === 'waiting_for_valid_signal' ||
+        stage === 'waiting_for_sources'
+      )
+    ) {
+      return res.status(202).json({
+        ok: true,
+        data: resultData,
+      });
+    }
+
     return res.json({
       ok: true,
-      data: result?.data || null,
+      data: resultData,
     });
   } catch (e) {
     console.error('[mcp/context/build] error:', e);
-
-    try {
-      const userId = req.user?._id;
-      if (userId) {
-        const root = await findRoot(userId);
-        if (root?._id) {
-          await updateRootContextState(userId, {
-            aiContext: {
-              ...(root?.aiContext || {}),
-              status: 'error',
-              progress: 100,
-              stage: 'failed',
-              finishedAt: nowIso(),
-              error: e?.message || e?.code || 'MCP_CONTEXT_BUILD_FAILED',
-              pdf: {
-                ...(root?.aiContext?.pdf || {}),
-                status: safeStr(root?.aiContext?.pdf?.status) === 'ready' ? 'ready' : 'failed',
-                stage: safeStr(root?.aiContext?.pdf?.stage) || 'failed',
-                progress: 100,
-                error: e?.message || e?.code || 'MCP_CONTEXT_BUILD_FAILED',
-              },
-            },
-          });
-        }
-      }
-    } catch (_) {}
 
     const code = e?.code || e?.message || 'MCP_CONTEXT_BUILD_FAILED';
 
@@ -393,7 +419,7 @@ router.get('/status', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const root = (await findLatestContextRootForUser(userId)) || (await findRoot(userId));
+    const root = await findPreferredContextRootForUser(userId);
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
@@ -421,7 +447,7 @@ router.get('/latest', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const root = (await findLatestContextRootForUser(userId)) || (await findRoot(userId));
+    const root = await findPreferredContextRootForUser(userId);
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
@@ -436,6 +462,7 @@ router.get('/latest', async (req, res) => {
           status: state?.status || 'idle',
           progress: state?.progress || 0,
           stage: state?.stage || 'idle',
+          pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
         },
       });
     }
@@ -456,6 +483,7 @@ router.get('/latest', async (req, res) => {
         model: state?.model || null,
         generatedAt: state?.finishedAt || null,
         hasPdf: normalizePdfState(state?.pdf).ready,
+        buildAttemptId: state?.buildAttemptId || null,
       },
     });
   } catch (e) {
@@ -475,7 +503,7 @@ router.get('/pdf/download', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const root = (await findLatestContextRootForUser(userId)) || (await findRoot(userId));
+    const root = await findPreferredContextRootForUser(userId);
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
@@ -491,6 +519,7 @@ router.get('/pdf/download', async (req, res) => {
           status: state?.status || 'idle',
           progress: state?.progress || 0,
           stage: state?.stage || 'idle',
+          pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
           pdf,
         },
       });
@@ -525,7 +554,7 @@ router.get('/pdf/status', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const root = (await findLatestContextRootForUser(userId)) || (await findRoot(userId));
+    const root = await findPreferredContextRootForUser(userId);
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }

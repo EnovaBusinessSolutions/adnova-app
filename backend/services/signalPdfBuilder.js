@@ -56,6 +56,7 @@ function compactArray(arr, max = 999) {
 function uniqStrings(arr, max = 999) {
   const out = [];
   const seen = new Set();
+
   for (const item of Array.isArray(arr) ? arr : []) {
     const s = safeStr(item).trim();
     if (!s) continue;
@@ -65,6 +66,7 @@ function uniqStrings(arr, max = 999) {
     out.push(s);
     if (out.length >= max) break;
   }
+
   return out;
 }
 
@@ -142,6 +144,50 @@ function isExecutableFileSync(p) {
   }
 }
 
+function classifyPuppeteerError(err) {
+  const raw = `${safeStr(err?.message)} ${safeStr(err?.stack)}`.toLowerCase();
+
+  if (
+    raw.includes('could not find chrome') ||
+    raw.includes('browser was not found') ||
+    raw.includes('chrome/chromium is not installed') ||
+    raw.includes('chrome/chromium is not installed or not discoverable') ||
+    raw.includes('executablepath') ||
+    raw.includes('enoent')
+  ) {
+    return 'SIGNAL_PDF_PUPPETEER_CHROME_NOT_FOUND';
+  }
+
+  if (
+    raw.includes('failed to launch') ||
+    raw.includes('error while trying to connect to the browser') ||
+    raw.includes('timed out after') ||
+    raw.includes('timeout') ||
+    raw.includes('protocol error')
+  ) {
+    return 'SIGNAL_PDF_PUPPETEER_LAUNCH_FAILED';
+  }
+
+  if (
+    raw.includes('setcontent') ||
+    raw.includes('navigation') ||
+    raw.includes('net::') ||
+    raw.includes('networkidle')
+  ) {
+    return 'SIGNAL_PDF_HTML_RENDER_FAILED';
+  }
+
+  if (
+    raw.includes('page.pdf') ||
+    raw.includes('printing failed') ||
+    raw.includes('pdf')
+  ) {
+    return 'SIGNAL_PDF_WRITE_FAILED';
+  }
+
+  return 'SIGNAL_PDF_BUILD_FAILED';
+}
+
 function readMaybeBase64Image(imagePath) {
   if (!imagePath || !fileExistsSync(imagePath)) return null;
   const ext = path.extname(imagePath).toLowerCase();
@@ -190,17 +236,37 @@ function getWorkspaceName({ root, signalPayload, user }) {
   return safeStr(explicit).trim() || 'Adray Workspace';
 }
 
-function getConnectedSources(root) {
+function getConnectedSources(root, signalPayload) {
+  const ai = root?.aiContext || {};
+  const usableSources = Array.isArray(ai?.usableSources) ? ai.usableSources : [];
+  const sourcesStatus = ai?.sourcesStatus || {};
   const out = [];
 
-  if (root?.sources?.metaAds?.connected || root?.sources?.metaAds?.ready) {
-    out.push('Meta');
+  const pushUnique = (name) => {
+    if (!out.includes(name)) out.push(name);
+  };
+
+  if (usableSources.includes('metaAds') || sourcesStatus?.metaAds?.usable) {
+    pushUnique('Meta');
   }
-  if (root?.sources?.googleAds?.connected || root?.sources?.googleAds?.ready) {
-    out.push('Google');
+  if (usableSources.includes('googleAds') || sourcesStatus?.googleAds?.usable) {
+    pushUnique('Google');
   }
-  if (root?.sources?.ga4?.connected || root?.sources?.ga4?.ready) {
-    out.push('GA4');
+  if (usableSources.includes('ga4') || sourcesStatus?.ga4?.usable) {
+    pushUnique('GA4');
+  }
+
+  if (!out.length) {
+    const channelStory = signalPayload?.channel_story || {};
+    if (channelStory?.meta_ads?.mini || channelStory?.meta_ads?.full) pushUnique('Meta');
+    if (channelStory?.google_ads?.mini || channelStory?.google_ads?.full) pushUnique('Google');
+    if (channelStory?.ga4?.mini || channelStory?.ga4?.full) pushUnique('GA4');
+  }
+
+  if (!out.length) {
+    if (root?.sources?.metaAds?.connected || root?.sources?.metaAds?.ready) pushUnique('Meta');
+    if (root?.sources?.googleAds?.connected || root?.sources?.googleAds?.ready) pushUnique('Google');
+    if (root?.sources?.ga4?.connected || root?.sources?.ga4?.ready) pushUnique('GA4');
   }
 
   return out;
@@ -253,15 +319,38 @@ function buildLineage(root, signalPayload) {
   };
 }
 
-function buildSignalPdfModel({ userId, root, signalPayload, user = null }) {
+function validateSignalPayloadForPdf(signalPayload) {
   if (!signalPayload || typeof signalPayload !== 'object') {
     const err = new Error('SIGNAL_PDF_MISSING_SIGNAL_PAYLOAD');
     err.code = 'SIGNAL_PDF_MISSING_SIGNAL_PAYLOAD';
     throw err;
   }
 
+  const summary = signalPayload?.summary || {};
+  const executiveSummary = safeStr(summary?.executive_summary).trim();
+  const businessState = safeStr(summary?.business_state).trim();
+  const llmContextBlock = safeStr(signalPayload?.llm_context_block).trim();
+  const llmContextBlockMini = safeStr(signalPayload?.llm_context_block_mini).trim();
+
+  if (!executiveSummary && !businessState) {
+    const err = new Error('SIGNAL_PDF_INVALID_SIGNAL_PAYLOAD: missing summary');
+    err.code = 'SIGNAL_PDF_INVALID_SIGNAL_PAYLOAD';
+    throw err;
+  }
+
+  const bestBlock = llmContextBlock || llmContextBlockMini;
+  if (!bestBlock || bestBlock.length < 80) {
+    const err = new Error('SIGNAL_PDF_INVALID_SIGNAL_PAYLOAD: signal text too short');
+    err.code = 'SIGNAL_PDF_INVALID_SIGNAL_PAYLOAD';
+    throw err;
+  }
+}
+
+function buildSignalPdfModel({ userId, root, signalPayload, user = null }) {
+  validateSignalPayloadForPdf(signalPayload);
+
   const workspaceName = getWorkspaceName({ root, signalPayload, user });
-  const connectedSources = getConnectedSources(root);
+  const connectedSources = getConnectedSources(root, signalPayload);
   const sections = resolveSignalSections(signalPayload);
   const lineage = buildLineage(root, signalPayload);
 
@@ -1074,15 +1163,19 @@ async function renderWithPuppeteer(html, outputPath) {
     throw err;
   }
 
-  const launchOptions = buildPuppeteerLaunchOptions();
-  const browser = await puppeteer.launch(launchOptions);
-
+  let browser = null;
   try {
+    console.log('[signalPdfBuilder] Puppeteer launch starting...');
+    const launchOptions = buildPuppeteerLaunchOptions();
+    browser = await puppeteer.launch(launchOptions);
+
+    console.log('[signalPdfBuilder] Puppeteer newPage...');
     const page = await browser.newPage();
 
     page.setDefaultNavigationTimeout(PUPPETEER_RENDER_TIMEOUT_MS);
     page.setDefaultTimeout(PUPPETEER_RENDER_TIMEOUT_MS);
 
+    console.log('[signalPdfBuilder] Puppeteer setContent...');
     await page.setContent(html, {
       waitUntil: ['domcontentloaded', 'load', 'networkidle0'],
       timeout: PUPPETEER_RENDER_TIMEOUT_MS,
@@ -1090,6 +1183,7 @@ async function renderWithPuppeteer(html, outputPath) {
 
     await page.emulateMediaType('screen');
 
+    console.log('[signalPdfBuilder] Puppeteer pdf write...');
     await page.pdf({
       path: outputPath,
       format: 'A4',
@@ -1103,8 +1197,17 @@ async function renderWithPuppeteer(html, outputPath) {
       preferCSSPageSize: true,
       timeout: PUPPETEER_RENDER_TIMEOUT_MS,
     });
+
+    console.log('[signalPdfBuilder] Puppeteer pdf write done:', outputPath);
+  } catch (err) {
+    if (!err.code) {
+      err.code = classifyPuppeteerError(err);
+    }
+    throw err;
   } finally {
-    await browser.close().catch(() => {});
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
   }
 }
 
@@ -1289,6 +1392,15 @@ async function generateSignalPdfForUser({
     throw err;
   }
 
+  const ai = root?.aiContext || {};
+  console.log('[signalPdfBuilder] generateSignalPdfForUser start', {
+    userId: safeStr(userId),
+    buildAttemptId: safeStr(ai?.buildAttemptId),
+    snapshotId: safeStr(ai?.snapshotId || root?.latestSnapshotId),
+    usableSources: Array.isArray(ai?.usableSources) ? ai.usableSources : [],
+    pendingConnectedSources: Array.isArray(ai?.pendingConnectedSources) ? ai.pendingConnectedSources : [],
+  });
+
   const model = buildSignalPdfModel({ userId, root, signalPayload, user });
 
   ensureDirSync(SIGNAL_PDF_STORAGE_DIR);
@@ -1307,10 +1419,19 @@ async function generateSignalPdfForUser({
   try {
     const html = buildSignalPdfHtml(model);
 
+    console.log('[signalPdfBuilder] model ready', {
+      workspaceName: model.workspaceName,
+      sourceCount: model.sourceCount,
+      signalTextLength: safeStr(model.signalText).length,
+      htmlLength: safeStr(html).length,
+      outputPath,
+    });
+
     if (puppeteer) {
       await renderWithPuppeteer(html, outputPath);
       renderer = 'puppeteer';
     } else if (SIGNAL_PDF_ALLOW_PDFKIT_FALLBACK && PDFDocument) {
+      console.log('[signalPdfBuilder] Falling back to pdfkit...');
       await renderWithPdfKit(model, outputPath);
       renderer = 'pdfkit';
     } else {
@@ -1323,6 +1444,13 @@ async function generateSignalPdfForUser({
 
     const stat = await fs.promises.stat(outputPath);
     const pageCount = await getPageCountFast(outputPath);
+
+    console.log('[signalPdfBuilder] PDF ready', {
+      renderer,
+      fileName,
+      sizeBytes: toNum(stat?.size, 0),
+      pageCount: toNum(pageCount, 0) || null,
+    });
 
     return {
       ok: true,
@@ -1345,8 +1473,15 @@ async function generateSignalPdfForUser({
     } catch (_) {}
 
     if (!err.code) {
-      err.code = 'SIGNAL_PDF_BUILD_FAILED';
+      err.code = classifyPuppeteerError(err);
     }
+
+    console.error('[signalPdfBuilder] PDF generation failed', {
+      code: err?.code,
+      message: err?.message,
+      outputPath,
+    });
+
     throw err;
   }
 }
