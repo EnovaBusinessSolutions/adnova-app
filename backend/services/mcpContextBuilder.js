@@ -610,9 +610,13 @@ function buildCurrentSourcesSnapshot(root, sourceStates) {
   const googleState = sourceStates?.googleAds || {};
   const ga4State = sourceStates?.ga4 || {};
 
+  const metaActive = !!(metaRoot?.connected || metaState?.hasChunks || metaState?.usable);
+  const googleActive = !!(googleRoot?.connected || googleState?.hasChunks || googleState?.usable);
+  const ga4Active = !!(ga4Root?.connected || ga4State?.hasChunks || ga4State?.usable);
+
   return {
     metaAds: {
-      active: !!metaRoot?.connected,
+      active: metaActive,
       connected: !!metaRoot?.connected,
       usable: !!metaState?.usable,
       ready: !!metaState?.ready,
@@ -623,7 +627,7 @@ function buildCurrentSourcesSnapshot(root, sourceStates) {
       name: pickFirstNonEmpty(metaRoot?.name),
     },
     googleAds: {
-      active: !!googleRoot?.connected,
+      active: googleActive,
       connected: !!googleRoot?.connected,
       usable: !!googleState?.usable,
       ready: !!googleState?.ready,
@@ -634,7 +638,7 @@ function buildCurrentSourcesSnapshot(root, sourceStates) {
       name: pickFirstNonEmpty(googleRoot?.name),
     },
     ga4: {
-      active: !!ga4Root?.connected,
+      active: ga4Active,
       connected: !!ga4Root?.connected,
       usable: !!ga4State?.usable,
       ready: !!ga4State?.ready,
@@ -1401,6 +1405,56 @@ async function markContextStale(userId, reason = 'source_updated', extra = {}) {
   ).lean();
 }
 
+function hasLiveSourceFingerprintChanged(root, nextFingerprint) {
+  const ai = root?.aiContext || {};
+  const currentStored = safeStr(ai?.currentSourceFingerprint).trim() || null;
+  const signalFp = safeStr(ai?.signal?.sourceFingerprint).trim() || null;
+  const pdfFp = safeStr(ai?.pdf?.sourceFingerprint).trim() || null;
+  const next = safeStr(nextFingerprint).trim() || null;
+
+  if (!next) return false;
+  if (!currentStored) return true;
+  if (currentStored !== next) return true;
+  if (signalFp && signalFp !== next) return true;
+  if (pdfFp && pdfFp !== next) return true;
+
+  return false;
+}
+
+function debugFingerprintLog({
+  userId,
+  label,
+  root,
+  currentSourcesSnapshot,
+  currentSourceFingerprint,
+  sourceSnapshots,
+  usableSources,
+  pendingConnectedSources,
+}) {
+  try {
+    const ai = root?.aiContext || {};
+    console.log('[mcpContextBuilder] fingerprint', {
+      label,
+      userId: String(userId),
+      storedCurrentSourceFingerprint: ai?.currentSourceFingerprint || null,
+      signalSourceFingerprint: ai?.signal?.sourceFingerprint || null,
+      pdfSourceFingerprint: ai?.pdf?.sourceFingerprint || null,
+      nextCurrentSourceFingerprint: currentSourceFingerprint || null,
+      currentSourcesSnapshot,
+      sourceSnapshots,
+      usableSources,
+      pendingConnectedSources,
+      rootSources: root?.sources || null,
+      signalStatus: ai?.signal?.status || null,
+      pdfStatus: ai?.pdf?.status || null,
+      needsSignalRebuild: ai?.needsSignalRebuild === true,
+      needsPdfRebuild: ai?.needsPdfRebuild === true,
+    });
+  } catch (_) {
+    // noop
+  }
+}
+
 async function buildUnifiedContextForUser(userId, options = {}) {
   const {
     explicitSnapshotId = null,
@@ -1414,22 +1468,6 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     const err = new Error('MCP_ROOT_NOT_FOUND');
     err.code = 'MCP_ROOT_NOT_FOUND';
     throw err;
-  }
-
-  if (!forceRebuild && isRootSignalCurrent(initialRoot)) {
-    return buildResultFromRoot(initialRoot, {
-      status: initialRoot?.aiContext?.status || 'done',
-      progress: toNum(initialRoot?.aiContext?.progress, 100),
-      stage: initialRoot?.aiContext?.stage || 'completed',
-    });
-  }
-
-  if (!forceRebuild && isRecentSignalProcessingState(initialRoot?.aiContext)) {
-    return buildResultFromRoot(initialRoot, {
-      status: initialRoot?.aiContext?.status || 'processing',
-      progress: toNum(initialRoot?.aiContext?.progress, 10),
-      stage: initialRoot?.aiContext?.stage || 'waiting_for_sources',
-    });
   }
 
   const contextRangeDays = resolveRequestedContextRangeDays(initialRoot, requestedContextRangeDays);
@@ -1474,13 +1512,25 @@ async function buildUnifiedContextForUser(userId, options = {}) {
 
   const currentSourcesSnapshot = buildCurrentSourcesSnapshot(effectiveRoot, sourceStates);
   const currentSourceFingerprint = buildCurrentSourceFingerprint(currentSourcesSnapshot);
+  const liveFingerprintChanged = hasLiveSourceFingerprintChanged(effectiveRoot, currentSourceFingerprint);
 
-  const rootAfterSourceMark = await McpData.markSourcesState(userId, {
+  debugFingerprintLog({
+    userId,
+    label: 'pre_build_decision',
+    root: effectiveRoot,
+    currentSourcesSnapshot,
+    currentSourceFingerprint,
+    sourceSnapshots,
+    usableSources,
+    pendingConnectedSources,
+  });
+
+  await McpData.markSourcesState(userId, {
     currentSourceFingerprint,
     currentSourcesSnapshot,
-    sourcesChangedAt: nowDate(),
-    needsSignalRebuild: true,
-    needsPdfRebuild: true,
+    sourcesChangedAt: liveFingerprintChanged ? nowDate() : (effectiveRoot?.aiContext?.sourcesChangedAt || nowDate()),
+    needsSignalRebuild: liveFingerprintChanged ? true : !!effectiveRoot?.aiContext?.needsSignalRebuild,
+    needsPdfRebuild: liveFingerprintChanged ? true : !!effectiveRoot?.aiContext?.needsPdfRebuild,
   });
 
   await updateRootContextState(userId, {
@@ -1492,13 +1542,32 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     'aiContext.pendingConnectedSources': pendingConnectedSources,
   });
 
-  const freshRootAfterSourceMark = rootAfterSourceMark || await findRoot(userId);
+  const freshRootAfterSourceMark = await findRoot(userId);
+
+  debugFingerprintLog({
+    userId,
+    label: 'after_mark_sources_state',
+    root: freshRootAfterSourceMark,
+    currentSourcesSnapshot,
+    currentSourceFingerprint,
+    sourceSnapshots,
+    usableSources,
+    pendingConnectedSources,
+  });
 
   if (!forceRebuild && isRootSignalCurrent(freshRootAfterSourceMark)) {
     return buildResultFromRoot(freshRootAfterSourceMark, {
       status: freshRootAfterSourceMark?.aiContext?.status || 'done',
       progress: toNum(freshRootAfterSourceMark?.aiContext?.progress, 100),
       stage: freshRootAfterSourceMark?.aiContext?.stage || 'completed',
+    });
+  }
+
+  if (!forceRebuild && isRecentSignalProcessingState(freshRootAfterSourceMark?.aiContext)) {
+    return buildResultFromRoot(freshRootAfterSourceMark, {
+      status: freshRootAfterSourceMark?.aiContext?.status || 'processing',
+      progress: toNum(freshRootAfterSourceMark?.aiContext?.progress, 10),
+      stage: freshRootAfterSourceMark?.aiContext?.stage || 'waiting_for_sources',
     });
   }
 
@@ -1710,6 +1779,18 @@ async function buildUnifiedContextForUser(userId, options = {}) {
   });
 
   const finalRoot = finishedSignalRoot || await findRoot(userId);
+
+  debugFingerprintLog({
+    userId,
+    label: 'signal_finished',
+    root: finalRoot,
+    currentSourcesSnapshot,
+    currentSourceFingerprint,
+    sourceSnapshots,
+    usableSources,
+    pendingConnectedSources,
+  });
+
   return buildResultFromRoot(finalRoot, {
     status: 'done',
     progress: 100,
