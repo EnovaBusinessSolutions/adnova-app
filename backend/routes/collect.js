@@ -14,6 +14,28 @@ function isSchemaDriftError(error) {
   return msg.includes('column') && msg.includes('does not exist');
 }
 
+async function persistEventWithFallback(prismaClient, payload) {
+  // 1) Preferred write with enriched fields.
+  try {
+    await prismaClient.event.create({ data: payload.enriched });
+    return true;
+  } catch (error1) {
+    if (!isSchemaDriftError(error1)) throw error1;
+  }
+
+  // 2) Legacy-compatible write.
+  try {
+    await prismaClient.event.create({ data: payload.legacy });
+    return true;
+  } catch (error2) {
+    if (!isSchemaDriftError(error2)) throw error2;
+  }
+
+  // 3) Minimal write for heavily drifted schemas.
+  await prismaClient.event.create({ data: payload.minimal });
+  return true;
+}
+
 function safeHostname(value) {
   if (!value || typeof value !== 'string') return null;
   try {
@@ -194,35 +216,49 @@ router.post('/', async (req, res) => {
       serverReceivedAt: new Date()
     };
 
-    try {
-      await prisma.event.create({ data: enrichedEventData });
-    } catch (eventInsertError) {
-      if (!isSchemaDriftError(eventInsertError)) throw eventInsertError;
+    const legacyEventData = {
+      eventId,
+      accountId,
+      sessionId,
+      userKey,
+      eventName: payload.event_name,
+      pageType: payload.page_type,
+      pageUrl: payload.page_url,
+      productId: payload.product_id,
+      variantId: payload.variant_id,
+      cartId: payload.cart_id,
+      cartValue: payload.cart_value ? parseFloat(payload.cart_value) : null,
+      checkoutToken: payload.checkout_token,
+      orderId: payload.order_id,
+      revenue: payload.revenue ? parseFloat(payload.revenue) : null,
+      currency: payload.currency,
+      items: payload.items || null,
+      rawPayload: payload,
+      browserReceivedAt: payload.timestamp ? new Date(payload.timestamp) : null,
+      serverReceivedAt: new Date()
+    };
 
-      // Fallback for environments where recent columns are not migrated yet.
-      await prisma.event.create({
-        data: {
-          eventId,
-          accountId,
-          sessionId,
-          userKey,
-          eventName: payload.event_name,
-          pageType: payload.page_type,
-          pageUrl: payload.page_url,
-          productId: payload.product_id,
-          variantId: payload.variant_id,
-          cartId: payload.cart_id,
-          cartValue: payload.cart_value ? parseFloat(payload.cart_value) : null,
-          checkoutToken: payload.checkout_token,
-          orderId: payload.order_id,
-          revenue: payload.revenue ? parseFloat(payload.revenue) : null,
-          currency: payload.currency,
-          items: payload.items || null,
-          rawPayload: payload,
-          browserReceivedAt: payload.timestamp ? new Date(payload.timestamp) : null,
-          serverReceivedAt: new Date()
-        }
+    const minimalEventData = {
+      eventId,
+      accountId,
+      sessionId,
+      userKey,
+      eventName: payload.event_name,
+      rawPayload: payload,
+      serverReceivedAt: new Date()
+    };
+
+    let eventPersisted = false;
+    try {
+      eventPersisted = await persistEventWithFallback(prisma, {
+        enriched: enrichedEventData,
+        legacy: legacyEventData,
+        minimal: minimalEventData
       });
+    } catch (eventPersistError) {
+      // Do not fail collect response; realtime feed is already emitted.
+      console.error('[AdRay Collect] Event persistence non-fatal error:', eventPersistError?.message || eventPersistError);
+      eventPersisted = false;
     }
 
     // 6. Upsert Session
@@ -256,29 +292,38 @@ router.post('/', async (req, res) => {
       ...(payload.fbclid ? { fbclid: payload.fbclid } : {})
     };
 
+    let sessionPersisted = false;
     try {
       await prisma.session.upsert({
         where: { sessionId },
         create: enrichedSessionCreate,
         update: enrichedSessionUpdate
       });
+      sessionPersisted = true;
     } catch (sessionUpsertError) {
-      if (!isSchemaDriftError(sessionUpsertError)) throw sessionUpsertError;
-
-      await prisma.session.upsert({
-        where: { sessionId },
-        create: {
-          ...enrichedSessionCreate,
-          ipHash: undefined
-        },
-        update: {
-          ...enrichedSessionUpdate,
-          ipHash: undefined
+      if (!isSchemaDriftError(sessionUpsertError)) {
+        console.error('[AdRay Collect] Session upsert non-fatal error:', sessionUpsertError?.message || sessionUpsertError);
+      } else {
+        try {
+          await prisma.session.upsert({
+            where: { sessionId },
+            create: {
+              ...enrichedSessionCreate,
+              ipHash: undefined
+            },
+            update: {
+              ...enrichedSessionUpdate,
+              ipHash: undefined
+            }
+          });
+          sessionPersisted = true;
+        } catch (sessionFallbackError) {
+          console.error('[AdRay Collect] Session fallback non-fatal error:', sessionFallbackError?.message || sessionFallbackError);
         }
-      });
+      }
     }
 
-    res.json({ success: true, event_id: eventId, user_key: userKey });
+    res.json({ success: true, event_id: eventId, user_key: userKey, event_persisted: eventPersisted, session_persisted: sessionPersisted });
 
   } catch (error) {
     console.error(`[AdRay Collect] Error at step '${step}':`, error);
