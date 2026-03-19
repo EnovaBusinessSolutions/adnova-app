@@ -4,6 +4,27 @@ const router = express.Router();
 const prisma = require('../utils/prismaClient');
 const { sendToAllPlatforms } = require('../services/capiFanout');
 const { hashPII } = require('../utils/encryption');
+const eventBus = require('../utils/eventBus');
+
+function isSchemaDriftError(error) {
+  if (!error) return false;
+  if (error.code === 'P2022') return true;
+  const msg = String(error.message || '').toLowerCase();
+  return msg.includes('column') && msg.includes('does not exist');
+}
+
+function normalizeAccountId(value) {
+  if (!value) return null;
+  const raw = String(value).trim().toLowerCase();
+  if (!raw) return null;
+
+  try {
+    const host = new URL(raw.includes('://') ? raw : `https://${raw}`).hostname;
+    return host.replace(/^www\./, '');
+  } catch (_) {
+    return raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  }
+}
 
 function normalizeWooChannel(payload = {}) {
   const utmSource = String(payload.utm_source || '').trim().toLowerCase();
@@ -124,15 +145,17 @@ function normalizeCustomerDisplayName(...values) {
 }
 
 router.post('/woo/orders-sync', async (req, res) => {
+  let step = 'init';
   try {
     const payload = req.body || {};
-    const accountId = String(payload.account_id || '').trim();
+    const accountId = normalizeAccountId(payload.account_id);
     const orderId = String(payload.order_id || '').trim();
 
     if (!accountId || !orderId) {
       return res.status(400).json({ success: false, error: 'account_id and order_id are required' });
     }
 
+    step = 'account_upsert';
     await prisma.account.upsert({
       where: { accountId },
       create: {
@@ -143,6 +166,7 @@ router.post('/woo/orders-sync', async (req, res) => {
       update: {},
     });
 
+    step = 'checkout_lookup';
     const checkoutToken = payload.checkout_token ? String(payload.checkout_token) : null;
     const checkoutMap = checkoutToken
       ? await prisma.checkoutSessionMap.findUnique({ where: { checkoutToken } })
@@ -210,13 +234,51 @@ router.post('/woo/orders-sync', async (req, res) => {
       platformCreatedAt: parseWooOrderCreatedAt(payload),
     };
 
-    const order = await prisma.order.upsert({
-      where: { orderId },
-      create: {
-        orderId,
-        ...orderData,
-      },
-      update: orderData,
+    step = 'order_upsert';
+    let order;
+    try {
+      order = await prisma.order.upsert({
+        where: { orderId },
+        create: {
+          orderId,
+          ...orderData,
+        },
+        update: orderData,
+      });
+    } catch (orderUpsertError) {
+      if (!isSchemaDriftError(orderUpsertError)) throw orderUpsertError;
+
+      const fallbackOrderData = { ...orderData };
+      delete fallbackOrderData.refundAmount;
+      delete fallbackOrderData.chargebackFlag;
+      delete fallbackOrderData.ordersCount;
+
+      order = await prisma.order.upsert({
+        where: { orderId },
+        create: {
+          orderId,
+          ...fallbackOrderData,
+        },
+        update: fallbackOrderData,
+      });
+    }
+
+    // Emit realtime dashboard signal for Woo sync events.
+    eventBus.emit('event', {
+      type: 'WEBHOOK',
+      accountId,
+      sessionId: order.sessionId || null,
+      userKey: order.userKey || null,
+      eventId: order.eventId || null,
+      payload: {
+        eventName: 'purchase',
+        platform: 'woocommerce',
+        orderId: order.orderId,
+        revenue: order.revenue,
+        currency: order.currency,
+        timestamp: new Date().toISOString(),
+        source: 'woo_orders_sync',
+      }
     });
 
     // Fire-and-forget: keep sync endpoint fast while still pushing conversions.
@@ -230,8 +292,8 @@ router.post('/woo/orders-sync', async (req, res) => {
 
     res.json({ success: true, orderId: order.orderId, attributedChannel: order.attributedChannel });
   } catch (error) {
-    console.error('[Woo Orders Sync] Error:', error);
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
+    console.error(`[Woo Orders Sync] Error at step '${step}':`, error);
+    res.status(500).json({ success: false, error: 'Internal Server Error', step });
   }
 });
 

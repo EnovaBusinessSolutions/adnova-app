@@ -23,13 +23,26 @@ function safeHostname(value) {
   }
 }
 
+function normalizeAccountId(value) {
+  if (!value) return null;
+  const raw = String(value).trim().toLowerCase();
+  if (!raw) return null;
+
+  try {
+    const host = new URL(raw.includes('://') ? raw : `https://${raw}`).hostname;
+    return host.replace(/^www\./, '');
+  } catch (_) {
+    return raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  }
+}
+
 router.post('/', async (req, res) => {
   let step = 'init';
   try {
     step = 'parse_payload';
     const payload = req.body;
     // Support both account_id (new universal) and shop_id (legacy Shopify)
-    const accountId = payload.account_id || payload.shop_id;
+    const accountId = normalizeAccountId(payload.account_id || payload.shop_id);
     const platform = payload.platform || 'custom';
     console.log(`\n[AdRay Collect] Received event '${payload.event_name}' for account: ${accountId} (platform: ${platform})`);
 
@@ -57,7 +70,18 @@ router.post('/', async (req, res) => {
     if (!payload.ip) payload.ip = req.ip;
     const ipHash = payload.ip ? hashPII(payload.ip) : null;
     const cookieUserKey = req.cookies ? req.cookies._adray_uid : null;
-    const identity = await resolveUserKey(accountId, cookieUserKey, payload, res);
+    let identity;
+    try {
+      identity = await resolveUserKey(accountId, cookieUserKey, payload, res);
+    } catch (identityError) {
+      console.error('[AdRay Collect] Identity resolution fallback:', identityError?.message || identityError);
+      identity = {
+        userKey: cookieUserKey || randomUUID(),
+        isNew: false,
+        confidenceScore: 0,
+        matchType: 'probabilistic'
+      };
+    }
     const userKey = identity.userKey;
     console.log(`[AdRay Collect] Resolved UserKey: ${userKey} (IsNew: ${identity.isNew}, Confidence: ${identity.confidenceScore})`);
 
