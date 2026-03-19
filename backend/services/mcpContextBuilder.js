@@ -123,6 +123,66 @@ function pickFirstNonEmpty(...values) {
   return null;
 }
 
+function normalizeErrorCode(err) {
+  return safeStr(err).trim().toUpperCase();
+}
+
+function isNonBlockingSourceError(errCode) {
+  const code = normalizeErrorCode(errCode);
+  return (
+    code === 'MISSING_ADWORDS_SCOPE' ||
+    code === 'NO_GOOGLE_ADS_SCOPE' ||
+    code === 'GOOGLEADS_NOT_AUTHORIZED' ||
+    code === 'GOOGLE_ADS_NOT_AUTHORIZED' ||
+    code === 'GOOGLEADS_AUTH_REQUIRED' ||
+    code === 'GOOGLE_ADS_AUTH_REQUIRED' ||
+    code === 'GOOGLEADS_RECONNECT_REQUIRED' ||
+    code === 'GOOGLE_ADS_RECONNECT_REQUIRED' ||
+    code === 'NO_SELECTED_ACCOUNT' ||
+    code === 'NO_SELECTED_CUSTOMER' ||
+    code === 'NO_SELECTED_PROPERTY' ||
+    code === 'NO_SELECTED_PIXEL' ||
+    code === 'NO_SELECTED_CONVERSION'
+  );
+}
+
+function sourceBlocksSignalBuild(state) {
+  const rootState = state?.rootState || {};
+  const connected = !!state?.connected;
+  const usable = !!state?.usable;
+  const ready = !!state?.ready;
+  const hasChunks = !!state?.hasChunks;
+
+  if (!connected) return false;
+  if (usable || ready || hasChunks) return false;
+
+  const status = normalizeErrorCode(rootState?.status);
+  const lastError = normalizeErrorCode(rootState?.lastError);
+
+  if (status === 'ERROR' && isNonBlockingSourceError(lastError)) {
+    return false;
+  }
+
+  if (lastError && isNonBlockingSourceError(lastError)) {
+    return false;
+  }
+
+  return true;
+}
+
+function sourceCountsAsActiveForSignal(rootState, state) {
+  const lastError = normalizeErrorCode(rootState?.lastError);
+  if (isNonBlockingSourceError(lastError) && !state?.usable && !state?.hasChunks) {
+    return false;
+  }
+
+  return !!(
+    rootState?.connected ||
+    state?.hasChunks ||
+    state?.usable
+  );
+}
+
 function isRootDoc(doc) {
   if (!doc || typeof doc !== 'object') return false;
 
@@ -463,6 +523,9 @@ function sourceStateSummaryForStatus(state) {
     selectedCustomerId: pickFirstNonEmpty(rootState?.selectedCustomerId, rootState?.customerId, rootState?.accountId),
     selectedConversionId: pickFirstNonEmpty(rootState?.selectedConversionId),
     selectedPropertyId: pickFirstNonEmpty(rootState?.selectedPropertyId, rootState?.propertyId),
+
+    status: rootState?.status || null,
+    lastError: rootState?.lastError || null,
   };
 }
 
@@ -487,7 +550,7 @@ async function waitForBuildableSources(userId, root, explicitSnapshotId, timeout
     const usableSources = candidateSources.filter((src) => !!bySource[src]?.usable);
     const pendingConnectedSources = candidateSources.filter((src) => {
       const s = bySource[src];
-      return !!s?.connected && !s?.usable;
+      return sourceBlocksSignalBuild(s);
     });
 
     if (usableSources.length > 0 && pendingConnectedSources.length === 0) {
@@ -524,7 +587,7 @@ async function waitForBuildableSources(userId, root, explicitSnapshotId, timeout
   const usableSources = candidateSources.filter((src) => !!bySource[src]?.usable);
   const pendingConnectedSources = candidateSources.filter((src) => {
     const s = bySource[src];
-    return !!s?.connected && !s?.usable;
+    return sourceBlocksSignalBuild(s);
   });
 
   return {
@@ -610,9 +673,9 @@ function buildCurrentSourcesSnapshot(root, sourceStates) {
   const googleState = sourceStates?.googleAds || {};
   const ga4State = sourceStates?.ga4 || {};
 
-  const metaActive = !!(metaRoot?.connected || metaState?.hasChunks || metaState?.usable);
-  const googleActive = !!(googleRoot?.connected || googleState?.hasChunks || googleState?.usable);
-  const ga4Active = !!(ga4Root?.connected || ga4State?.hasChunks || ga4State?.usable);
+  const metaActive = sourceCountsAsActiveForSignal(metaRoot, metaState);
+  const googleActive = sourceCountsAsActiveForSignal(googleRoot, googleState);
+  const ga4Active = sourceCountsAsActiveForSignal(ga4Root, ga4State);
 
   return {
     metaAds: {
