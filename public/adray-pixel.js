@@ -143,7 +143,7 @@
   }
 
   function detectCheckoutIdentityFieldType(el) {
-    if (!el || !el.name) return null;
+    if (!el) return null;
 
     var id = String(el.id || '').toLowerCase();
     var name = String(el.name || '').toLowerCase();
