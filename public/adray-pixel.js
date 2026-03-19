@@ -203,8 +203,48 @@
     });
   }
 
+  function sendCheckoutIdentityFromUserContext() {
+    if (!shouldTrackCheckoutIdentity()) return;
+
+    var identity = getUserIdentityContext();
+    if (!identity) return;
+
+    [
+      { kind: 'email', value: identity.email },
+      { kind: 'phone', value: identity.phone }
+    ].forEach(function(item) {
+      var normalized = normalizeIdentityValue(item.kind, item.value);
+      if (!normalized) return;
+
+      sha256Hex(normalized).then(function(hash) {
+        if (!hash) return;
+
+        var sentKey = '__adray_' + item.kind + '_hash_prefill';
+        var lastSent = safeStorageGet(window.sessionStorage, sentKey);
+        if (lastSent === hash) return;
+
+        safeStorageSet(window.sessionStorage, sentKey, hash);
+
+        var identityPayload = {
+          checkout_token: getCookie('woocommerce_cart_hash') || null,
+          identity_stage: 'checkout_prefill',
+          identity_field: item.kind
+        };
+
+        if (item.kind === 'email') identityPayload.email_hash = hash;
+        if (item.kind === 'phone') identityPayload.phone_hash = hash;
+
+        sendEvent('identity_signal', identityPayload);
+      });
+    });
+  }
+
   function setupCheckoutIdentityBlurTracking() {
     if (!shouldTrackCheckoutIdentity()) return;
+
+    // Send deterministic hashes from logged-in Woo profile even if checkout
+    // does not render an editable email field.
+    sendCheckoutIdentityFromUserContext();
 
     document.addEventListener('blur', function(ev) {
       var target = ev && ev.target;
@@ -218,6 +258,8 @@
       if (!(target instanceof HTMLInputElement)) return;
       trackCheckoutIdentityField(target);
     }, true);
+
+    setTimeout(sendCheckoutIdentityFromUserContext, 1200);
   }
 
   /**
