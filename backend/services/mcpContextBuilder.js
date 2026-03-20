@@ -1659,28 +1659,37 @@ async function buildPdfForUser(userId) {
     throw err;
   }
 
-  const ai = root?.aiContext || {};
-  const signalPayload = ai?.signalPayload || ai?.encodedPayload || null;
+const ai = root?.aiContext || {};
+const signalPayload = ai?.signalPayload || ai?.encodedPayload || null;
+const pdfState = ai?.pdf || {};
 
-  if (!signalPayload) {
-    const err = new Error('MCP_CONTEXT_NOT_READY');
-    err.code = 'MCP_CONTEXT_NOT_READY';
-    throw err;
-  }
+if (!signalPayload) {
+  const err = new Error('MCP_CONTEXT_NOT_READY');
+  err.code = 'MCP_CONTEXT_NOT_READY';
+  throw err;
+}
 
-  if (!isSignalPayloadBuildableForPdf(signalPayload)) {
-    const err = new Error('MCP_SIGNAL_NOT_VALID_FOR_PDF');
-    err.code = 'MCP_SIGNAL_NOT_VALID_FOR_PDF';
-    throw err;
-  }
+if (!isSignalPayloadBuildableForPdf(signalPayload)) {
+  const err = new Error('MCP_SIGNAL_NOT_VALID_FOR_PDF');
+  err.code = 'MCP_SIGNAL_NOT_VALID_FOR_PDF';
+  throw err;
+}
 
-  if (ai?.pdf?.status === 'ready') {
-    return buildResultFromRoot(root, {
-      status: ai?.status || 'done',
-      progress: toNum(ai?.progress, 100),
-      stage: ai?.stage || 'completed',
-    });
-  }
+if (pdfState?.status === 'ready') {
+  return buildResultFromRoot(root, {
+    status: ai?.status || 'done',
+    progress: toNum(ai?.progress, 100),
+    stage: ai?.stage || 'completed',
+  });
+}
+
+if (pdfState?.status === 'processing') {
+  return buildResultFromRoot(root, {
+    status: ai?.status || 'done',
+    progress: toNum(ai?.progress, 100),
+    stage: ai?.stage || 'completed',
+  });
+}
 
   await updateRootAiContext(userId, (currentAi) => ({
     ...(currentAi || {}),
