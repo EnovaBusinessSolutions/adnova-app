@@ -41,6 +41,24 @@ const WORKER_CONTEXT_REBUILD_TIMEOUT_MS = clampInt(
   120000
 );
 
+const WORKER_CONCURRENCY = clampInt(
+  process.env.MCP_WORKER_CONCURRENCY || 1,
+  1,
+  10
+);
+
+const WORKER_CONTEXT_REBUILD_RETRIES = clampInt(
+  process.env.MCP_WORKER_CONTEXT_REBUILD_RETRIES || 2,
+  0,
+  5
+);
+
+const WORKER_CONTEXT_REBUILD_RETRY_DELAY_MS = clampInt(
+  process.env.MCP_WORKER_CONTEXT_REBUILD_RETRY_DELAY_MS || 2500,
+  250,
+  15000
+);
+
 if (!MONGO_URI) {
   console.error('[mcpWorker] Missing MONGO_URI in environment');
   process.exit(1);
@@ -84,6 +102,100 @@ function estimateBytes(obj) {
     return Buffer.byteLength(JSON.stringify(obj ?? null), 'utf8');
   } catch {
     return 0;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientMongoError(err) {
+  const msg = String(err?.message || err?.code || err || '').toLowerCase();
+
+  return (
+    msg.includes('timed out') ||
+    msg.includes('timeout') ||
+    msg.includes('mongo') ||
+    msg.includes('server selection') ||
+    msg.includes('econnreset') ||
+    msg.includes('socket') ||
+    msg.includes('topology') ||
+    msg.includes('connection')
+  );
+}
+
+async function ensureMongoConnected() {
+  if (mongoose.connection.readyState === 1) return;
+
+  console.warn('[mcpWorker] Mongo not ready before rebuild, reconnecting...', {
+    readyState: mongoose.connection.readyState,
+  });
+
+  try {
+    await mongoose.disconnect().catch(() => {});
+  } catch (_) {}
+
+  await connectMongo();
+}
+
+const sourceLocks = new Map();
+
+async function withSourceLock(lockKey, fn) {
+  while (true) {
+    const existing = sourceLocks.get(lockKey);
+    if (!existing) break;
+    await existing;
+  }
+
+  let release;
+  const ownLock = new Promise((resolve) => {
+    release = resolve;
+  });
+
+  sourceLocks.set(lockKey, ownLock);
+
+  try {
+    return await fn();
+  } finally {
+    if (sourceLocks.get(lockKey) === ownLock) {
+      sourceLocks.delete(lockKey);
+    }
+    release();
+  }
+}
+
+async function patchSourceRebuildFailure(userId, source, errorMessage) {
+  try {
+    await McpData.patchRootSource(userId, source, {
+      connected: true,
+      status: 'error',
+      ready: false,
+      lastError: errorMessage || 'CONTEXT_REBUILD_FAILED',
+    });
+  } catch (e) {
+    console.error('[mcpWorker] patchSourceRebuildFailure failed', {
+      userId: String(userId),
+      source,
+      error: e?.message || e,
+    });
+  }
+}
+
+async function patchSourceRebuildSuccess(userId, source) {
+  try {
+    await McpData.patchRootSource(userId, source, {
+      connected: true,
+      status: 'ready',
+      ready: true,
+      lastError: null,
+      lastSyncAt: new Date(),
+    });
+  } catch (e) {
+    console.error('[mcpWorker] patchSourceRebuildSuccess failed', {
+      userId: String(userId),
+      source,
+      error: e?.message || e,
+    });
   }
 }
 
@@ -664,53 +776,91 @@ async function triggerContextRebuildBestEffort({
   snapshotId,
   contextRangeDays,
 }) {
-  try {
-    console.log('[mcpWorker] context rebuild:start', {
-      userId: String(userId),
-      source,
-      snapshotId,
-      contextRangeDays: contextRangeDays || null,
-      timeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
-    });
+  let lastFailure = null;
 
-    const result = await rebuildUnifiedContextForUser(userId, {
-      explicitSnapshotId: snapshotId || null,
-      contextRangeDays: contextRangeDays || null,
-      timeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
-      reason: `${safeString(source) || 'source'}_synced`,
-      requestedBy: 'mcpWorker',
-    });
+  for (let attempt = 1; attempt <= WORKER_CONTEXT_REBUILD_RETRIES + 1; attempt += 1) {
+    try {
+      await ensureMongoConnected();
 
-    console.log('[mcpWorker] context rebuild:done', {
-      userId: String(userId),
-      source,
-      snapshotId,
-      status: result?.data?.status || null,
-      stage: result?.data?.stage || null,
-      sourceSnapshots: result?.data?.sourceSnapshots || null,
-      usableSources: result?.data?.usableSources || [],
-      pendingConnectedSources: result?.data?.pendingConnectedSources || [],
-    });
+      console.log('[mcpWorker] context rebuild:start', {
+        userId: String(userId),
+        source,
+        snapshotId,
+        contextRangeDays: contextRangeDays || null,
+        timeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
+        attempt,
+        maxAttempts: WORKER_CONTEXT_REBUILD_RETRIES + 1,
+      });
 
-    return {
-      ok: true,
-      data: result?.data || null,
-    };
-  } catch (err) {
-    console.warn('[mcpWorker] context rebuild failed (best effort)', {
-      userId: String(userId),
-      source,
-      snapshotId,
-      error: err?.message || err?.code || err,
-      data: err?.data || null,
-    });
+      const result = await rebuildUnifiedContextForUser(userId, {
+        explicitSnapshotId: snapshotId || null,
+        contextRangeDays: contextRangeDays || null,
+        timeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
+        reason: `${safeString(source) || 'source'}_synced`,
+        requestedBy: 'mcpWorker',
+      });
 
-    return {
-      ok: false,
-      error: err?.message || err?.code || 'CONTEXT_REBUILD_FAILED',
-      data: err?.data || null,
-    };
+      console.log('[mcpWorker] context rebuild:done', {
+        userId: String(userId),
+        source,
+        snapshotId,
+        attempt,
+        status: result?.data?.status || null,
+        stage: result?.data?.stage || null,
+        sourceSnapshots: result?.data?.sourceSnapshots || null,
+        usableSources: result?.data?.usableSources || [],
+        pendingConnectedSources: result?.data?.pendingConnectedSources || [],
+      });
+
+      await patchSourceRebuildSuccess(userId, source);
+
+      return {
+        ok: true,
+        data: result?.data || null,
+      };
+    } catch (err) {
+      lastFailure = err;
+
+      const errorMsg = err?.message || err?.code || 'CONTEXT_REBUILD_FAILED';
+
+      console.warn('[mcpWorker] context rebuild failed', {
+        userId: String(userId),
+        source,
+        snapshotId,
+        attempt,
+        maxAttempts: WORKER_CONTEXT_REBUILD_RETRIES + 1,
+        error: errorMsg,
+        data: err?.data || null,
+      });
+
+      const shouldRetry =
+        attempt < WORKER_CONTEXT_REBUILD_RETRIES + 1 && isTransientMongoError(err);
+
+      if (shouldRetry) {
+        await sleep(WORKER_CONTEXT_REBUILD_RETRY_DELAY_MS * attempt);
+        continue;
+      }
+
+      await patchSourceRebuildFailure(userId, source, errorMsg);
+
+      return {
+        ok: false,
+        error: errorMsg,
+        data: err?.data || null,
+      };
+    }
   }
+
+  const finalError =
+    lastFailure?.message || lastFailure?.code || 'CONTEXT_REBUILD_FAILED';
+
+  await patchSourceRebuildFailure(userId, source, finalError);
+
+  return {
+    ok: false,
+    error: finalError,
+    data: lastFailure?.data || null,
+  };
 }
 
 async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
@@ -788,6 +938,10 @@ async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
     snapshotId,
     contextRangeDays: contextDays,
   });
+
+  if (!rebuild?.ok) {
+    throw new Error(rebuild?.error || 'META_CONTEXT_REBUILD_FAILED');
+  }
 
   return {
     ok: true,
@@ -872,6 +1026,10 @@ async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, acc
     contextRangeDays: contextDays,
   });
 
+  if (!rebuild?.ok) {
+    throw new Error(rebuild?.error || 'GOOGLEADS_CONTEXT_REBUILD_FAILED');
+  }
+
   return {
     ok: true,
     snapshotId,
@@ -955,6 +1113,10 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
     contextRangeDays: contextDays,
   });
 
+  if (!rebuild?.ok) {
+    throw new Error(rebuild?.error || 'GA4_CONTEXT_REBUILD_FAILED');
+  }
+
   return {
     ok: true,
     snapshotId,
@@ -969,12 +1131,19 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
 async function connectMongo() {
   mongoose.set('bufferCommands', false);
 
+  if (mongoose.connection.readyState === 1) {
+    return mongoose.connection;
+  }
+
   await mongoose.connect(MONGO_URI, {
-    serverSelectionTimeoutMS: 20_000,
-    socketTimeoutMS: 45_000,
+    serverSelectionTimeoutMS: 20000,
+    socketTimeoutMS: 45000,
+    maxPoolSize: 10,
+    minPoolSize: 1,
   });
 
   console.log('[mcpWorker] Mongo connected');
+  return mongoose.connection;
 }
 
 /* =========================
@@ -1009,39 +1178,42 @@ async function boot() {
       if (!userId) throw new Error('MISSING_USER_ID');
 
       const effectiveContextRangeDays = contextRangeDays || rangeDays || null;
+      const lockKey = `${String(userId)}:${String(source || 'unknown')}`;
 
-      if (source === 'metaAds') {
-        return await runMetaJob({
-          userId,
-          storageRangeDays,
-          contextRangeDays: effectiveContextRangeDays,
-        });
-      }
+      return await withSourceLock(lockKey, async () => {
+        if (source === 'metaAds') {
+          return await runMetaJob({
+            userId,
+            storageRangeDays,
+            contextRangeDays: effectiveContextRangeDays,
+          });
+        }
 
-      if (source === 'googleAds') {
-        return await runGoogleAdsJob({
-          userId,
-          storageRangeDays,
-          contextRangeDays: effectiveContextRangeDays,
-          accountId,
-        });
-      }
+        if (source === 'googleAds') {
+          return await runGoogleAdsJob({
+            userId,
+            storageRangeDays,
+            contextRangeDays: effectiveContextRangeDays,
+            accountId,
+          });
+        }
 
-      if (source === 'ga4') {
-        return await runGa4Job({
-          userId,
-          storageRangeDays,
-          contextRangeDays: effectiveContextRangeDays,
-          propertyId,
-        });
-      }
+        if (source === 'ga4') {
+          return await runGa4Job({
+            userId,
+            storageRangeDays,
+            contextRangeDays: effectiveContextRangeDays,
+            propertyId,
+          });
+        }
 
-      throw new Error(`UNSUPPORTED_SOURCE:${source}`);
+        throw new Error(`UNSUPPORTED_SOURCE:${source}`);
+      });
     },
     {
       connection,
       prefix: BULLMQ_PREFIX,
-      concurrency: 2,
+      concurrency: WORKER_CONCURRENCY,
     }
   );
 
@@ -1071,6 +1243,9 @@ async function boot() {
     defaultStorageRangeDays: DEFAULT_STORAGE_RANGE_DAYS,
     defaultContextRangeDays: DEFAULT_CONTEXT_RANGE_DAYS,
     workerContextRebuildTimeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
+    workerConcurrency: WORKER_CONCURRENCY,
+    workerContextRebuildRetries: WORKER_CONTEXT_REBUILD_RETRIES,
+    workerContextRebuildRetryDelayMs: WORKER_CONTEXT_REBUILD_RETRY_DELAY_MS,
   });
 }
 

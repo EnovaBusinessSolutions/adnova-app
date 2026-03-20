@@ -306,13 +306,44 @@ async function findLatestSnapshotId(userId, source = 'metaAds') {
     source,
     dataset: { $regex: datasetPrefix },
   })
+    .select({ snapshotId: 1, updatedAt: 1, createdAt: 1 })
     .sort({ updatedAt: -1, createdAt: -1 })
     .lean();
 
   return latestChunk?.snapshotId || null;
 }
 
-async function findSourceChunks(userId, source, snapshotId, datasetPrefix) {
+async function findSourceChunkMeta(userId, source, snapshotId, datasetPrefix) {
+  const query = {
+    userId,
+    kind: 'chunk',
+    source,
+    dataset: { $regex: `^${datasetPrefix.replace('.', '\\.')}` },
+  };
+
+  if (snapshotId) query.snapshotId = snapshotId;
+
+  const docs = await McpData.find(query)
+    .select({
+      _id: 1,
+      snapshotId: 1,
+      source: 1,
+      dataset: 1,
+      range: 1,
+      stats: 1,
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    .sort({ createdAt: 1, updatedAt: 1 })
+    .lean();
+
+  const allowed = getAllowedDatasetsForSource(source);
+  return docs
+    .filter(isChunkDoc)
+    .filter((doc) => !allowed || allowed.has(String(doc?.dataset || '')));
+}
+
+async function findSourceChunksFull(userId, source, snapshotId, datasetPrefix) {
   const query = {
     userId,
     kind: 'chunk',
@@ -337,35 +368,44 @@ async function findBestSnapshotIdForSource(userId, source, preferredSnapshotId) 
   const prefix = getSourceDatasetPrefix(source);
 
   if (preferred) {
-    const preferredDocs = await findSourceChunks(userId, source, preferred, prefix);
+    const preferredDocs = await findSourceChunkMeta(userId, source, preferred, prefix);
     if (preferredDocs.length > 0) return preferred;
   }
 
   return await findLatestSnapshotId(userId, source);
 }
 
-async function loadBestSourceState(userId, root, source, preferredSnapshotId) {
+async function loadBestSourceState(userId, root, source, preferredSnapshotId, options = {}) {
+  const { loadFullChunks = false } = options || {};
+
   const prefix = getSourceDatasetPrefix(source);
   const rootState = getSourceRootState(root, source);
   const connected = sourceLooksConnected(root, source);
   const rootReady = sourceLooksReady(root, source);
 
   const snapshotId = await findBestSnapshotIdForSource(userId, source, preferredSnapshotId);
-  const chunks = snapshotId
-    ? await findSourceChunks(userId, source, snapshotId, prefix)
+
+  const chunkMeta = snapshotId
+    ? await findSourceChunkMeta(userId, source, snapshotId, prefix)
     : [];
 
-  const hasChunks = chunks.length > 0;
-  const usability = evaluateSourceUsability(source, chunks);
+  const hasChunks = chunkMeta.length > 0;
+  const usability = evaluateSourceUsability(source, chunkMeta);
   const usable = !!usability.usable;
   const ready = rootReady || usable;
+
+  const fullChunks =
+    loadFullChunks && snapshotId && usable
+      ? await findSourceChunksFull(userId, source, snapshotId, prefix)
+      : [];
 
   return {
     source,
     preferredSnapshotId: preferredSnapshotId || null,
     snapshotId: snapshotId || null,
-    chunks,
-    chunkCount: chunks.length,
+    chunks: fullChunks,
+    chunkMeta,
+    chunkCount: chunkMeta.length,
     hasChunks,
     connected: connected || hasChunks,
     rootReady,
@@ -416,7 +456,9 @@ async function waitForBuildableSources(userId, root, explicitSnapshotId, timeout
     const sourceNames = ['metaAds', 'googleAds', 'ga4'];
 
     const sourceStatesArr = await Promise.all(
-      sourceNames.map((src) => loadBestSourceState(userId, lastRoot, src, preferredGlobalSnapshotId))
+      sourceNames.map((src) =>
+        loadBestSourceState(userId, lastRoot, src, preferredGlobalSnapshotId, { loadFullChunks: false })
+      )
     );
 
     const bySource = Object.fromEntries(sourceStatesArr.map((x) => [x.source, x]));
@@ -428,7 +470,7 @@ async function waitForBuildableSources(userId, root, explicitSnapshotId, timeout
       return !!s?.connected && !s?.usable;
     });
 
-    if (usableSources.length > 0 && pendingConnectedSources.length === 0) {
+    if (usableSources.length > 0) {
       return {
         root: lastRoot,
         preferredGlobalSnapshotId: preferredGlobalSnapshotId || null,
@@ -452,7 +494,8 @@ async function waitForBuildableSources(userId, root, explicitSnapshotId, timeout
         userId,
         fallbackRoot,
         src,
-        safeStr(explicitSnapshotId) || safeStr(fallbackRoot?.latestSnapshotId) || ''
+        safeStr(explicitSnapshotId) || safeStr(fallbackRoot?.latestSnapshotId) || '',
+        { loadFullChunks: false }
       )
     )
   );
@@ -1079,11 +1122,9 @@ async function buildSignalPdfArtifact(userId, root, signalPayload) {
 }
 
 async function findRoot(userId) {
-  const docs = await McpData.find({ userId })
+  return McpData.findOne({ userId, kind: 'root' })
     .sort({ updatedAt: -1, createdAt: -1 })
     .lean();
-
-  return docs.find(isRootDoc) || null;
 }
 
 async function updateRootContextState(userId, patch) {
@@ -1292,15 +1333,32 @@ async function buildUnifiedContextForUser(userId, options = {}) {
   const googleState = sourceStates?.googleAds || null;
   const ga4State = sourceStates?.ga4 || null;
 
+  const effectiveRootForChunks = readyState?.root || effectiveRoot;
+
+  const hydratedMetaState =
+    metaState?.usable
+      ? await loadBestSourceState(userId, effectiveRootForChunks, 'metaAds', metaState?.snapshotId, { loadFullChunks: true })
+      : metaState;
+
+  const hydratedGoogleState =
+    googleState?.usable
+      ? await loadBestSourceState(userId, effectiveRootForChunks, 'googleAds', googleState?.snapshotId, { loadFullChunks: true })
+      : googleState;
+
+  const hydratedGa4State =
+    ga4State?.usable
+      ? await loadBestSourceState(userId, effectiveRootForChunks, 'ga4', ga4State?.snapshotId, { loadFullChunks: true })
+      : ga4State;
+
   const sourceSnapshots = {
-    metaAds: metaState?.snapshotId || null,
-    googleAds: googleState?.snapshotId || null,
-    ga4: ga4State?.snapshotId || null,
+    metaAds: hydratedMetaState?.snapshotId || metaState?.snapshotId || null,
+    googleAds: hydratedGoogleState?.snapshotId || googleState?.snapshotId || null,
+    ga4: hydratedGa4State?.snapshotId || ga4State?.snapshotId || null,
   };
 
-  const metaChunks = metaState?.chunks || [];
-  const googleChunks = googleState?.chunks || [];
-  const ga4Chunks = ga4State?.chunks || [];
+  const metaChunks = hydratedMetaState?.chunks || [];
+  const googleChunks = hydratedGoogleState?.chunks || [];
+  const ga4Chunks = hydratedGa4State?.chunks || [];
 
   const usableSources = readyState?.usableSources || [];
   const pendingConnectedSources = readyState?.pendingConnectedSources || [];
@@ -1311,9 +1369,9 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     ga4Chunks.length > 0;
 
   const sourcesStatus = {
-    metaAds: sourceStateSummaryForStatus(metaState),
-    googleAds: sourceStateSummaryForStatus(googleState),
-    ga4: sourceStateSummaryForStatus(ga4State),
+    metaAds: sourceStateSummaryForStatus(hydratedMetaState),
+    googleAds: sourceStateSummaryForStatus(hydratedGoogleState),
+    ga4: sourceStateSummaryForStatus(hydratedGa4State),
   };
 
   if (!hasAnyBuildable && pendingConnectedSources.length > 0) {
@@ -1393,7 +1451,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     throw err;
   }
 
-  if (pendingConnectedSources.length > 0) {
+  if (pendingConnectedSources.length > 0 && usableSources.length === 0) {
     const partialWait = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
       ...(currentAi || {}),
       status: 'processing',
@@ -1471,11 +1529,17 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     });
   }
 
+  const hydratedSourceStates = {
+    metaAds: hydratedMetaState,
+    googleAds: hydratedGoogleState,
+    ga4: hydratedGa4State,
+  };
+
   const unifiedBase = buildUnifiedBaseContext({
     root: latestRootForBase,
     contextRangeDays,
     storageRangeDays,
-    sourceStates,
+    sourceStates: hydratedSourceStates,
     metaPack,
     googlePack,
     ga4Pack,
