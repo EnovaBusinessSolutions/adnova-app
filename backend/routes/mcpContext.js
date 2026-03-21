@@ -430,28 +430,38 @@ router.post('/pdf/build', async (req, res) => {
     const signalPayload = state?.signalPayload || state?.encodedPayload || null;
 
     if (!signalPayload) {
-      return res.status(409).json({
-        ok: false,
-        error: 'MCP_CONTEXT_NOT_READY',
-        data: {
-          status: state?.status || 'idle',
-          progress: state?.progress || 0,
-          stage: state?.stage || 'idle',
-          pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
-          pdf: normalizePdfState(state?.pdf),
-        },
-      });
-    }
+  setNoCacheHeaders(res);
+  return res.status(202).json({
+    ok: true,
+    data: {
+      status: state?.status || 'idle',
+      progress: state?.progress || 0,
+      stage: state?.stage || 'idle',
+      pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
+      pdf: normalizePdfState(state?.pdf),
+      hasSignal: false,
+      hasPdf: normalizePdfState(state?.pdf).ready,
+    },
+  });
+}
 
     const pdf = normalizePdfState(state?.pdf);
 
-    if (pdf.ready && !req.body?.forceRebuild) {
-      setNoCacheHeaders(res);
-      return res.json({
-        ok: true,
-        data: buildStatusResponse(root)?.data || null,
-      });
-    }
+if (pdf.ready && !req.body?.forceRebuild) {
+  setNoCacheHeaders(res);
+  return res.json({
+    ok: true,
+    data: buildStatusResponse(root)?.data || null,
+  });
+}
+
+if (pdf.status === 'processing' && !req.body?.forceRebuild) {
+  setNoCacheHeaders(res);
+  return res.status(202).json({
+    ok: true,
+    data: buildStatusResponse(root)?.data || null,
+  });
+}
 
     const result = await buildPdfForUser(userId);
 
@@ -470,8 +480,21 @@ router.post('/pdf/build', async (req, res) => {
     }
 
     if (code === 'MCP_CONTEXT_NOT_READY' || code === 'MCP_SIGNAL_NOT_VALID_FOR_PDF') {
-      return res.status(409).json({ ok: false, error: code });
-    }
+  const latestRoot = await findPreferredContextRootForUser(userId).catch(() => null);
+  setNoCacheHeaders(res);
+
+  return res.status(202).json({
+    ok: true,
+    data: latestRoot ? (buildStatusResponse(latestRoot)?.data || null) : {
+      status: 'idle',
+      progress: 0,
+      stage: 'idle',
+      pdf: normalizePdfState(null),
+      hasSignal: false,
+      hasPdf: false,
+    },
+  });
+}
 
     return res.status(500).json({
       ok: false,
