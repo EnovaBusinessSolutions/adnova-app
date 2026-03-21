@@ -81,7 +81,7 @@ function normalizePdfState(pdf) {
     status: safeStr(state?.status) || 'idle',
     stage: safeStr(state?.stage) || 'idle',
     progress: toNum(state?.progress, 0),
-    ready: safeStr(state?.status).toLowerCase() === 'ready',
+    ready: safeStr(state?.status) === 'ready',
     fileName: state?.fileName || null,
     mimeType: state?.mimeType || 'application/pdf',
     storageKey: state?.storageKey || null,
@@ -93,108 +93,6 @@ function normalizePdfState(pdf) {
     renderer: state?.renderer || null,
     version: toNum(state?.version, 1) || 1,
     error: state?.error || null,
-  };
-}
-
-function hasReadyPdfArtifact(pdf) {
-  const state = normalizePdfState(pdf);
-  if (state.status !== 'ready') return false;
-
-  return !!(
-    safeStr(state.fileName).trim() ||
-    safeStr(state.downloadUrl).trim() ||
-    safeStr(state.localPath).trim() ||
-    safeStr(state.storageKey).trim()
-  );
-}
-
-function isSignalPayloadBuildableForPdf(signalPayload) {
-  if (!signalPayload || typeof signalPayload !== 'object') return false;
-
-  const summary = signalPayload?.summary || {};
-  const block =
-    safeStr(signalPayload?.llm_context_block).trim() ||
-    safeStr(signalPayload?.llm_context_block_mini).trim();
-
-  const executive = safeStr(summary?.executive_summary).trim();
-  const business = safeStr(summary?.business_state).trim();
-
-  if (!block || block.length < 80) return false;
-  if (!executive && !business) return false;
-
-  return true;
-}
-
-function deriveEffectiveFlowState(root) {
-  const ai = root?.aiContext || {};
-  const pdf = normalizePdfState(ai?.pdf);
-  const signalPayload = ai?.signalPayload || ai?.encodedPayload || null;
-
-  const signalReady = isSignalPayloadBuildableForPdf(signalPayload);
-  const pdfReady = hasReadyPdfArtifact(pdf);
-  const pdfProcessing = pdf.status === 'processing';
-  const pdfFailed = pdf.status === 'failed';
-
-  if (pdfReady) {
-    return {
-      status: 'done',
-      progress: 100,
-      stage: 'completed',
-      signalReady: true,
-      pdfReady: true,
-      pdfProcessing: false,
-      pdfFailed: false,
-      canGeneratePdf: true,
-      canDownloadPdf: true,
-      showSignalBuilder: false,
-    };
-  }
-
-  if (signalReady && pdfProcessing) {
-    return {
-      status: 'done',
-      progress: 100,
-      stage: 'completed',
-      signalReady: true,
-      pdfReady: false,
-      pdfProcessing: true,
-      pdfFailed: false,
-      canGeneratePdf: true,
-      canDownloadPdf: false,
-      showSignalBuilder: false,
-    };
-  }
-
-  if (signalReady) {
-    return {
-      status: 'done',
-      progress: 100,
-      stage: 'completed',
-      signalReady: true,
-      pdfReady: false,
-      pdfProcessing: false,
-      pdfFailed: !!pdfFailed,
-      canGeneratePdf: true,
-      canDownloadPdf: false,
-      showSignalBuilder: false,
-    };
-  }
-
-  const rawStatus = safeStr(ai?.status) || 'idle';
-  const rawStage = safeStr(ai?.stage) || 'idle';
-  const rawProgress = toNum(ai?.progress, 0);
-
-  return {
-    status: rawStatus,
-    progress: rawProgress,
-    stage: rawStage,
-    signalReady: false,
-    pdfReady: false,
-    pdfProcessing,
-    pdfFailed: !!pdfFailed,
-    canGeneratePdf: false,
-    canDownloadPdf: false,
-    showSignalBuilder: rawStatus === 'processing',
   };
 }
 
@@ -346,7 +244,6 @@ function buildStatusResponse(root, shareState = null) {
   const state = root?.aiContext || {};
   const signalPayload = state?.signalPayload || state?.encodedPayload || null;
   const pdf = normalizePdfState(state?.pdf);
-  const effective = deriveEffectiveFlowState(root);
 
   const shareEnabled = !!(shareState?.mcpShareEnabled && shareState?.mcpShareToken);
   const shareToken = shareEnabled ? shareState?.mcpShareToken || null : null;
@@ -361,9 +258,9 @@ function buildStatusResponse(root, shareState = null) {
   return {
     ok: true,
     data: {
-      status: effective.status,
-      progress: effective.progress,
-      stage: effective.stage,
+      status: state?.status || 'idle',
+      progress: toNum(state?.progress, 0),
+      stage: state?.stage || 'idle',
       startedAt: state?.startedAt || null,
       finishedAt: state?.finishedAt || null,
       snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
@@ -373,7 +270,7 @@ function buildStatusResponse(root, shareState = null) {
 
       hasEncodedPayload: !!state?.encodedPayload,
       hasSignal: !!signalPayload,
-      signalReady: !!effective.signalReady,
+      signalReady: !!signalPayload,
       providerAgnostic: !!signalPayload?.providerAgnostic,
 
       usedOpenAI: !!state?.usedOpenAI,
@@ -384,19 +281,8 @@ function buildStatusResponse(root, shareState = null) {
       usableSources: Array.isArray(state?.usableSources) ? state.usableSources : [],
       pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
 
-      hasPdf: !!effective.pdfReady,
-      pdfReady: !!effective.pdfReady,
-      pdfProcessing: !!effective.pdfProcessing,
-      pdfFailed: !!effective.pdfFailed,
-      canGeneratePdf: !!effective.canGeneratePdf,
-      canDownloadPdf: !!effective.canDownloadPdf,
-      showSignalBuilder: !!effective.showSignalBuilder,
-      pdf: {
-        ...pdf,
-        ready: !!effective.pdfReady,
-        processing: !!effective.pdfProcessing,
-        failed: !!effective.pdfFailed,
-      },
+      hasPdf: pdf.ready,
+      pdf,
 
       hasShareLink: shareEnabled,
       shareUrl: shareShortUrl,
@@ -529,10 +415,8 @@ router.post('/build', async (req, res) => {
  * Construye el PDF a partir de un Signal ya listo.
  */
 router.post('/pdf/build', async (req, res) => {
-  let userId = null;
-
   try {
-    userId = req.user?._id;
+    const userId = req.user?._id;
     if (!userId) {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
@@ -546,37 +430,38 @@ router.post('/pdf/build', async (req, res) => {
     const signalPayload = state?.signalPayload || state?.encodedPayload || null;
 
     if (!signalPayload) {
-      setNoCacheHeaders(res);
-      return res.status(202).json({
-        ok: true,
-        data: buildStatusResponse(root)?.data || {
-          status: 'idle',
-          progress: 0,
-          stage: 'idle',
-          hasSignal: false,
-          hasPdf: false,
-          pdf: normalizePdfState(null),
-        },
-      });
-    }
+  setNoCacheHeaders(res);
+  return res.status(202).json({
+    ok: true,
+    data: {
+      status: state?.status || 'idle',
+      progress: state?.progress || 0,
+      stage: state?.stage || 'idle',
+      pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
+      pdf: normalizePdfState(state?.pdf),
+      hasSignal: false,
+      hasPdf: normalizePdfState(state?.pdf).ready,
+    },
+  });
+}
 
     const pdf = normalizePdfState(state?.pdf);
 
-    if (hasReadyPdfArtifact(pdf) && !req.body?.forceRebuild) {
-      setNoCacheHeaders(res);
-      return res.json({
-        ok: true,
-        data: buildStatusResponse(root)?.data || null,
-      });
-    }
+if (pdf.ready && !req.body?.forceRebuild) {
+  setNoCacheHeaders(res);
+  return res.json({
+    ok: true,
+    data: buildStatusResponse(root)?.data || null,
+  });
+}
 
-    if (pdf.status === 'processing' && !req.body?.forceRebuild) {
-      setNoCacheHeaders(res);
-      return res.status(202).json({
-        ok: true,
-        data: buildStatusResponse(root)?.data || null,
-      });
-    }
+if (pdf.status === 'processing' && !req.body?.forceRebuild) {
+  setNoCacheHeaders(res);
+  return res.status(202).json({
+    ok: true,
+    data: buildStatusResponse(root)?.data || null,
+  });
+}
 
     const result = await buildPdfForUser(userId);
 
@@ -595,25 +480,21 @@ router.post('/pdf/build', async (req, res) => {
     }
 
     if (code === 'MCP_CONTEXT_NOT_READY' || code === 'MCP_SIGNAL_NOT_VALID_FOR_PDF') {
-      const latestRoot = userId ? await findPreferredContextRootForUser(userId).catch(() => null) : null;
-      setNoCacheHeaders(res);
+  const latestRoot = await findPreferredContextRootForUser(userId).catch(() => null);
+  setNoCacheHeaders(res);
 
-      return res.status(202).json({
-        ok: true,
-        data: latestRoot ? (buildStatusResponse(latestRoot)?.data || null) : {
-          status: 'idle',
-          progress: 0,
-          stage: 'idle',
-          pdf: normalizePdfState(null),
-          hasSignal: false,
-          hasPdf: false,
-          signalReady: false,
-          canGeneratePdf: false,
-          canDownloadPdf: false,
-          showSignalBuilder: true,
-        },
-      });
-    }
+  return res.status(202).json({
+    ok: true,
+    data: latestRoot ? (buildStatusResponse(latestRoot)?.data || null) : {
+      status: 'idle',
+      progress: 0,
+      stage: 'idle',
+      pdf: normalizePdfState(null),
+      hasSignal: false,
+      hasPdf: false,
+    },
+  });
+}
 
     return res.status(500).json({
       ok: false,
@@ -667,16 +548,14 @@ router.get('/latest', async (req, res) => {
 
     const state = root?.aiContext || {};
     const signalPayload = state?.signalPayload || state?.encodedPayload || null;
-    const effective = deriveEffectiveFlowState(root);
-
     if (!signalPayload) {
       return res.status(404).json({
         ok: false,
         error: 'MCP_CONTEXT_NOT_READY',
         data: {
-          status: effective.status,
-          progress: effective.progress,
-          stage: effective.stage,
+          status: state?.status || 'idle',
+          progress: state?.progress || 0,
+          stage: state?.stage || 'idle',
           pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
         },
       });
@@ -687,21 +566,17 @@ router.get('/latest', async (req, res) => {
       ok: true,
       data: signalPayload,
       meta: {
-        status: effective.status,
-        progress: effective.progress,
-        stage: effective.stage,
+        status: state?.status || 'done',
+        progress: state?.progress || 100,
+        stage: state?.stage || 'completed',
         snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
         sourceSnapshots: state?.sourceSnapshots || signalPayload?.sourceSnapshots || null,
         contextRangeDays: toNum(state?.contextRangeDays) || null,
         storageRangeDays: toNum(state?.storageRangeDays) || null,
         usedOpenAI: !!state?.usedOpenAI,
         model: state?.model || null,
-        generatedAt: state?.finishedAt || signalPayload?.generatedAt || null,
-        hasPdf: !!effective.pdfReady,
-        pdfReady: !!effective.pdfReady,
-        pdfProcessing: !!effective.pdfProcessing,
-        canGeneratePdf: !!effective.canGeneratePdf,
-        canDownloadPdf: !!effective.canDownloadPdf,
+        generatedAt: state?.finishedAt || null,
+        hasPdf: normalizePdfState(state?.pdf).ready,
         buildAttemptId: state?.buildAttemptId || null,
       },
     });
@@ -729,23 +604,17 @@ router.get('/pdf/download', async (req, res) => {
 
     const state = root?.aiContext || {};
     const pdf = normalizePdfState(state?.pdf);
-    const effective = deriveEffectiveFlowState(root);
 
-    if (!effective.pdfReady) {
+    if (!pdf.ready) {
       return res.status(409).json({
         ok: false,
         error: 'MCP_SIGNAL_PDF_NOT_READY',
         data: {
-          status: effective.status,
-          progress: effective.progress,
-          stage: effective.stage,
+          status: state?.status || 'idle',
+          progress: state?.progress || 0,
+          stage: state?.stage || 'idle',
           pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
-          pdf: {
-            ...pdf,
-            ready: !!effective.pdfReady,
-            processing: !!effective.pdfProcessing,
-            failed: !!effective.pdfFailed,
-          },
+          pdf,
         },
       });
     }
@@ -785,23 +654,11 @@ router.get('/pdf/status', async (req, res) => {
     }
 
     const pdf = normalizePdfState(root?.aiContext?.pdf);
-    const effective = deriveEffectiveFlowState(root);
-
     setNoCacheHeaders(res);
 
     return res.json({
       ok: true,
-      data: {
-        ...pdf,
-        ready: !!effective.pdfReady,
-        processing: !!effective.pdfProcessing,
-        failed: !!effective.pdfFailed,
-        canGeneratePdf: !!effective.canGeneratePdf,
-        canDownloadPdf: !!effective.canDownloadPdf,
-        parentStatus: effective.status,
-        parentStage: effective.stage,
-        parentProgress: effective.progress,
-      },
+      data: pdf,
     });
   } catch (e) {
     console.error('[mcp/context/pdf/status] error:', e);

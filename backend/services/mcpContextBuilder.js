@@ -294,83 +294,6 @@ function isSignalPayloadBuildableForPdf(signalPayload) {
   return true;
 }
 
-function hasReadyPdfArtifact(pdf) {
-  if (!pdf || typeof pdf !== 'object') return false;
-  if (safeStr(pdf?.status).toLowerCase() !== 'ready') return false;
-
-  return !!(
-    safeStr(pdf?.fileName) ||
-    safeStr(pdf?.downloadUrl) ||
-    safeStr(pdf?.localPath) ||
-    safeStr(pdf?.storageKey)
-  );
-}
-
-function deriveEffectiveFlowState(ai, fallback = {}) {
-  const state = ai || {};
-  const pdf = state?.pdf || {};
-  const signalPayload = state?.signalPayload || state?.encodedPayload || null;
-
-  const signalReady = isSignalPayloadBuildableForPdf(signalPayload);
-  const pdfReady = hasReadyPdfArtifact(pdf);
-  const pdfProcessing = safeStr(pdf?.status).toLowerCase() === 'processing';
-  const pdfFailed = safeStr(pdf?.status).toLowerCase() === 'failed';
-
-  if (pdfReady) {
-    return {
-      status: 'done',
-      stage: 'completed',
-      progress: 100,
-      signalReady: true,
-      pdfReady: true,
-      pdfProcessing: false,
-      pdfFailed: false,
-      canGeneratePdf: true,
-      canDownloadPdf: true,
-    };
-  }
-
-  if (signalReady && pdfProcessing) {
-    return {
-      status: 'done',
-      stage: 'completed',
-      progress: 100,
-      signalReady: true,
-      pdfReady: false,
-      pdfProcessing: true,
-      pdfFailed: false,
-      canGeneratePdf: true,
-      canDownloadPdf: false,
-    };
-  }
-
-  if (signalReady) {
-    return {
-      status: 'done',
-      stage: 'completed',
-      progress: 100,
-      signalReady: true,
-      pdfReady: false,
-      pdfProcessing: false,
-      pdfFailed: !!pdfFailed,
-      canGeneratePdf: true,
-      canDownloadPdf: false,
-    };
-  }
-
-  return {
-    status: state?.status || fallback.status || 'idle',
-    stage: state?.stage || fallback.stage || 'idle',
-    progress: toNum(state?.progress, fallback.progress || 0),
-    signalReady: false,
-    pdfReady: false,
-    pdfProcessing,
-    pdfFailed: !!pdfFailed,
-    canGeneratePdf: false,
-    canDownloadPdf: false,
-  };
-}
-
 async function findLatestSnapshotId(userId, source = 'metaAds') {
   const datasetPrefix =
     source === 'googleAds' ? '^google\\.' :
@@ -1261,7 +1184,6 @@ async function updateRootAiContextForAttempt(userId, attemptId, updater) {
 function buildResultFromRoot(root, fallback = {}) {
   const state = root?.aiContext || {};
   const pdf = state?.pdf || {};
-  const effective = deriveEffectiveFlowState(state, fallback);
 
   return {
     ok: true,
@@ -1271,9 +1193,9 @@ function buildResultFromRoot(root, fallback = {}) {
     signalPayload: state?.signalPayload || state?.encodedPayload || fallback.signalPayload || null,
     pdf,
     data: {
-      status: effective.status,
-      progress: effective.progress,
-      stage: effective.stage,
+      status: state?.status || fallback.status || 'idle',
+      progress: toNum(state?.progress, fallback.progress || 0),
+      stage: state?.stage || fallback.stage || 'idle',
       snapshotId: state?.snapshotId || fallback.snapshotId || root?.latestSnapshotId || null,
       sourceSnapshots: state?.sourceSnapshots || fallback.sourceSnapshots || null,
       contextRangeDays: toNum(state?.contextRangeDays) || fallback.contextRangeDays || null,
@@ -1282,24 +1204,16 @@ function buildResultFromRoot(root, fallback = {}) {
       model: state?.model || null,
       hasEncodedPayload: !!state?.encodedPayload,
       hasSignal: !!(state?.signalPayload || state?.encodedPayload),
-      signalReady: !!effective.signalReady,
       providerAgnostic: !!state?.encodedPayload?.providerAgnostic,
       usableSources: Array.isArray(state?.usableSources) ? state.usableSources : (fallback.usableSources || []),
       pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : (fallback.pendingConnectedSources || []),
       sources: state?.sourcesStatus || fallback.sources || null,
-      hasPdf: !!effective.pdfReady,
-      pdfReady: !!effective.pdfReady,
-      pdfProcessing: !!effective.pdfProcessing,
-      pdfFailed: !!effective.pdfFailed,
-      canGeneratePdf: !!effective.canGeneratePdf,
-      canDownloadPdf: !!effective.canDownloadPdf,
+      hasPdf: pdf?.status === 'ready',
       pdf: {
         status: pdf?.status || 'idle',
         stage: pdf?.stage || 'idle',
         progress: toNum(pdf?.progress, 0),
-        ready: !!effective.pdfReady,
-        processing: !!effective.pdfProcessing,
-        failed: !!effective.pdfFailed,
+        ready: pdf?.status === 'ready',
         fileName: pdf?.fileName || null,
         mimeType: pdf?.mimeType || 'application/pdf',
         downloadUrl: pdf?.downloadUrl || null,
@@ -1745,52 +1659,50 @@ async function buildPdfForUser(userId) {
     throw err;
   }
 
-  const ai = root?.aiContext || {};
-  const signalPayload = ai?.signalPayload || ai?.encodedPayload || null;
-  const pdfState = ai?.pdf || {};
+const ai = root?.aiContext || {};
+const signalPayload = ai?.signalPayload || ai?.encodedPayload || null;
+const pdfState = ai?.pdf || {};
 
-  if (!signalPayload) {
-    const err = new Error('MCP_CONTEXT_NOT_READY');
-    err.code = 'MCP_CONTEXT_NOT_READY';
-    throw err;
-  }
+if (!signalPayload) {
+  const err = new Error('MCP_CONTEXT_NOT_READY');
+  err.code = 'MCP_CONTEXT_NOT_READY';
+  throw err;
+}
 
-  if (!isSignalPayloadBuildableForPdf(signalPayload)) {
-    const err = new Error('MCP_SIGNAL_NOT_VALID_FOR_PDF');
-    err.code = 'MCP_SIGNAL_NOT_VALID_FOR_PDF';
-    throw err;
-  }
+if (!isSignalPayloadBuildableForPdf(signalPayload)) {
+  const err = new Error('MCP_SIGNAL_NOT_VALID_FOR_PDF');
+  err.code = 'MCP_SIGNAL_NOT_VALID_FOR_PDF';
+  throw err;
+}
 
-  if (hasReadyPdfArtifact(pdfState)) {
-    return buildResultFromRoot(root, {
-      status: 'done',
-      progress: 100,
-      stage: 'completed',
-    });
-  }
+if (pdfState?.status === 'ready') {
+  return buildResultFromRoot(root, {
+    status: ai?.status || 'done',
+    progress: toNum(ai?.progress, 100),
+    stage: ai?.stage || 'completed',
+  });
+}
 
-  if (safeStr(pdfState?.status).toLowerCase() === 'processing') {
-    return buildResultFromRoot(root, {
-      status: 'done',
-      progress: 100,
-      stage: 'completed',
-    });
-  }
+if (pdfState?.status === 'processing') {
+  return buildResultFromRoot(root, {
+    status: ai?.status || 'done',
+    progress: toNum(ai?.progress, 100),
+    stage: ai?.stage || 'completed',
+  });
+}
 
   await updateRootAiContext(userId, (currentAi) => ({
     ...(currentAi || {}),
-    status: 'done',
-    progress: 100,
-    stage: 'completed',
-    finishedAt: currentAi?.finishedAt || nowIso(),
-    error: null,
+    status: currentAi?.status === 'done' ? 'done' : (currentAi?.status || 'done'),
+    progress: currentAi?.status === 'done' ? 100 : toNum(currentAi?.progress, 100),
+    stage: currentAi?.status === 'done' ? 'completed' : (currentAi?.stage || 'completed'),
+    error: currentAi?.error || null,
     pdf: {
       ...(currentAi?.pdf || emptyPdfState()),
       status: 'processing',
       stage: 'building_document',
       progress: 15,
       error: null,
-      generatedAt: null,
     },
   }));
 
@@ -1799,10 +1711,6 @@ async function buildPdfForUser(userId) {
 
     await updateRootAiContext(userId, (currentAi) => ({
       ...(currentAi || {}),
-      status: 'done',
-      progress: 100,
-      stage: 'completed',
-      error: null,
       pdf: {
         ...(currentAi?.pdf || emptyPdfState()),
         status: 'processing',
@@ -1816,10 +1724,9 @@ async function buildPdfForUser(userId) {
 
     const finalRoot = await updateRootAiContext(userId, (currentAi) => ({
       ...(currentAi || {}),
-      status: 'done',
-      progress: 100,
-      stage: 'completed',
-      finishedAt: currentAi?.finishedAt || nowIso(),
+      status: currentAi?.status === 'error' ? 'done' : (currentAi?.status || 'done'),
+      progress: currentAi?.status === 'done' ? 100 : Math.max(100, toNum(currentAi?.progress, 100)),
+      stage: currentAi?.stage === 'failed' ? 'completed' : (currentAi?.stage || 'completed'),
       error: null,
       pdf: {
         ...(currentAi?.pdf || emptyPdfState()),
@@ -1850,10 +1757,9 @@ async function buildPdfForUser(userId) {
 
     const failRoot = await updateRootAiContext(userId, (currentAi) => ({
       ...(currentAi || {}),
-      status: 'done',
-      progress: 100,
-      stage: 'completed',
-      finishedAt: currentAi?.finishedAt || nowIso(),
+      status: currentAi?.status === 'done' ? 'done' : (currentAi?.status || 'done'),
+      progress: currentAi?.status === 'done' ? 100 : toNum(currentAi?.progress, 100),
+      stage: currentAi?.status === 'done' ? 'completed' : (currentAi?.stage || 'completed'),
       error: null,
       pdf: {
         ...(currentAi?.pdf || emptyPdfState()),
