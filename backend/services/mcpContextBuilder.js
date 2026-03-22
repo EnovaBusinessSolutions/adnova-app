@@ -150,6 +150,17 @@ function stableJson(value) {
   }
 }
 
+function isPdfCurrentForAi(ai) {
+  const pdf = normalizePdfState(ai?.pdf);
+  if (pdf.status !== 'ready') return false;
+
+  const currentFingerprint = buildSignalFingerprint(ai);
+  const pdfFingerprint = safeStr(pdf?.signalFingerprint).trim();
+
+  if (!currentFingerprint || !pdfFingerprint) return false;
+  return currentFingerprint === pdfFingerprint;
+}
+
 function buildSignalFingerprintFromParts({
   snapshotId = null,
   sourceSnapshots = null,
@@ -218,11 +229,34 @@ function isPdfCurrentForAi(ai) {
   const pdf = normalizePdfState(ai?.pdf);
   if (pdf.status !== 'ready') return false;
 
+  const currentSnapshotId = safeStr(ai?.snapshotId).trim();
+  const pdfSnapshotId = safeStr(pdf?.signalSnapshotId).trim();
+
+  const currentSourceSnapshots = ai?.sourceSnapshots || null;
+  const pdfSourceSnapshots = pdf?.signalSourceSnapshots || null;
+
+  // Regla principal:
+  // si el PDF fue generado con el mismo snapshotId y los mismos sourceSnapshots,
+  // lo consideramos vigente aunque cambien otros metadatos menores.
+  if (
+    currentSnapshotId &&
+    pdfSnapshotId &&
+    currentSnapshotId === pdfSnapshotId &&
+    sameSourceSnapshots(currentSourceSnapshots, pdfSourceSnapshots)
+  ) {
+    return true;
+  }
+
+  // Fallback legacy por fingerprint para PDFs viejos que no tengan
+  // signalSnapshotId / signalSourceSnapshots completos.
   const currentFingerprint = buildSignalFingerprint(ai);
   const pdfFingerprint = safeStr(pdf?.signalFingerprint).trim();
 
-  if (!currentFingerprint || !pdfFingerprint) return false;
-  return currentFingerprint === pdfFingerprint;
+  if (currentFingerprint && pdfFingerprint) {
+    return currentFingerprint === pdfFingerprint;
+  }
+
+  return false;
 }
 
 function makeBuildAttemptId() {
