@@ -13,7 +13,6 @@ const {
   findRoot,
   buildUnifiedContextForUser,
   buildPdfForUser,
-  isPdfCurrentForAi,
 } = require('../services/mcpContextBuilder');
 
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
@@ -83,7 +82,6 @@ function normalizePdfState(pdf) {
     stage: safeStr(state?.stage) || 'idle',
     progress: toNum(state?.progress, 0),
     ready: safeStr(state?.status) === 'ready',
-    current: !!state?.current,
     fileName: state?.fileName || null,
     mimeType: state?.mimeType || 'application/pdf',
     storageKey: state?.storageKey || null,
@@ -95,9 +93,6 @@ function normalizePdfState(pdf) {
     renderer: state?.renderer || null,
     version: toNum(state?.version, 1) || 1,
     error: state?.error || null,
-    signalSnapshotId: state?.signalSnapshotId || null,
-    signalSourceSnapshots: state?.signalSourceSnapshots || null,
-    signalGeneratedAt: state?.signalGeneratedAt || null,
   };
 }
 
@@ -128,74 +123,18 @@ async function findLatestContextRootForUser(userId) {
 }
 
 /**
- * Busca el root más reciente cuyo PDF sigue siendo vigente
- * para el propio Signal guardado en ese root y cuyo archivo exista.
- */
-async function findLatestPdfReadyRootForUser(userId) {
-  if (!userId) return null;
-
-  const candidates = await McpData.find({
-    userId,
-    kind: 'root',
-    'aiContext.pdf.status': 'ready',
-    $or: [
-      { 'aiContext.signalPayload': { $exists: true, $ne: null } },
-      { 'aiContext.encodedPayload': { $exists: true, $ne: null } },
-    ],
-  })
-    .sort({
-      'aiContext.finishedAt': -1,
-      'aiContext.snapshotId': -1,
-      createdAt: -1,
-      _id: -1,
-    })
-    .limit(8);
-
-  for (const root of Array.isArray(candidates) ? candidates : []) {
-    const ai = root?.aiContext || {};
-    const pdf = ai?.pdf || {};
-    const filePath = pdf?.localPath ? path.resolve(pdf.localPath) : null;
-    const fileExists = !!(filePath && fs.existsSync(filePath));
-
-    if (fileExists && isPdfCurrentForAi(ai)) {
-      return root;
-    }
-  }
-
-  return null;
-}
-
-/**
- * Prioridad:
- * 1) Si hay processing reciente y ese mismo root ya tiene Signal/PDF vigente, usarlo.
- * 2) Si hay processing reciente pero ese root todavía no tiene nada útil, intentar mostrar
- *    el último PDF vigente existente.
- * 3) Si no hay processing, preferir el último PDF vigente; si no, el último Signal listo.
+ * Si hay un build de Signal en curso reciente, prioriza el root actual.
+ * Si no, usa el último root con Signal listo.
  */
 async function findPreferredContextRootForUser(userId) {
   if (!userId) return null;
 
   const currentRoot = await findRoot(userId);
-  const currentAi = currentRoot?.aiContext || {};
-  const currentHasSignal = !!(currentAi?.signalPayload || currentAi?.encodedPayload);
-  const currentPdfCurrent = !!isPdfCurrentForAi(currentAi);
-
-  if (currentRoot?.aiContext && isRecentProcessingState(currentAi)) {
-    if (currentHasSignal || currentPdfCurrent) {
-      return currentRoot;
-    }
-
-    const pdfReadyRoot = await findLatestPdfReadyRootForUser(userId);
-    if (pdfReadyRoot) return pdfReadyRoot;
-
+  if (currentRoot?.aiContext && isRecentProcessingState(currentRoot.aiContext)) {
     return currentRoot;
   }
 
-  const latestReadyRoot =
-    (await findLatestPdfReadyRootForUser(userId)) ||
-    (await findLatestContextRootForUser(userId));
-
-  return latestReadyRoot || currentRoot || null;
+  return (await findLatestContextRootForUser(userId)) || currentRoot || null;
 }
 
 function getVersionSeedFromRoot(root) {
@@ -304,11 +243,7 @@ async function findUserByShareToken(token) {
 function buildStatusResponse(root, shareState = null) {
   const state = root?.aiContext || {};
   const signalPayload = state?.signalPayload || state?.encodedPayload || null;
-  const pdfCurrent = !!isPdfCurrentForAi(state);
-  const pdf = normalizePdfState({
-    ...(state?.pdf || {}),
-    current: pdfCurrent,
-  });
+  const pdf = normalizePdfState(state?.pdf);
 
   const shareEnabled = !!(shareState?.mcpShareEnabled && shareState?.mcpShareToken);
   const shareToken = shareEnabled ? shareState?.mcpShareToken || null : null;
@@ -347,9 +282,6 @@ function buildStatusResponse(root, shareState = null) {
       pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
 
       hasPdf: pdf.ready,
-      pdfCurrent,
-      canDownloadPdf: pdf.ready && pdfCurrent,
-      canGeneratePdf: !!signalPayload && !pdfCurrent,
       pdf,
 
       hasShareLink: shareEnabled,
@@ -483,9 +415,8 @@ router.post('/build', async (req, res) => {
  * Construye el PDF a partir de un Signal ya listo.
  */
 router.post('/pdf/build', async (req, res) => {
-  const userId = req.user?._id;
-
   try {
+    const userId = req.user?._id;
     if (!userId) {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
@@ -497,46 +428,40 @@ router.post('/pdf/build', async (req, res) => {
 
     const state = root?.aiContext || {};
     const signalPayload = state?.signalPayload || state?.encodedPayload || null;
-    const pdfCurrent = !!isPdfCurrentForAi(state);
-    const pdf = normalizePdfState({
-      ...(state?.pdf || {}),
-      current: pdfCurrent,
-    });
 
     if (!signalPayload) {
-      setNoCacheHeaders(res);
-      return res.status(202).json({
-        ok: true,
-        data: {
-          status: state?.status || 'idle',
-          progress: state?.progress || 0,
-          stage: state?.stage || 'idle',
-          pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
-          pdf,
-          hasSignal: false,
-          hasPdf: pdf.ready,
-          pdfCurrent,
-          canDownloadPdf: false,
-          canGeneratePdf: false,
-        },
-      });
-    }
+  setNoCacheHeaders(res);
+  return res.status(202).json({
+    ok: true,
+    data: {
+      status: state?.status || 'idle',
+      progress: state?.progress || 0,
+      stage: state?.stage || 'idle',
+      pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
+      pdf: normalizePdfState(state?.pdf),
+      hasSignal: false,
+      hasPdf: normalizePdfState(state?.pdf).ready,
+    },
+  });
+}
 
-    if (pdf.ready && pdfCurrent && !req.body?.forceRebuild) {
-      setNoCacheHeaders(res);
-      return res.json({
-        ok: true,
-        data: buildStatusResponse(root)?.data || null,
-      });
-    }
+    const pdf = normalizePdfState(state?.pdf);
 
-    if (pdf.status === 'processing' && !req.body?.forceRebuild) {
-      setNoCacheHeaders(res);
-      return res.status(202).json({
-        ok: true,
-        data: buildStatusResponse(root)?.data || null,
-      });
-    }
+if (pdf.ready && !req.body?.forceRebuild) {
+  setNoCacheHeaders(res);
+  return res.json({
+    ok: true,
+    data: buildStatusResponse(root)?.data || null,
+  });
+}
+
+if (pdf.status === 'processing' && !req.body?.forceRebuild) {
+  setNoCacheHeaders(res);
+  return res.status(202).json({
+    ok: true,
+    data: buildStatusResponse(root)?.data || null,
+  });
+}
 
     const result = await buildPdfForUser(userId);
 
@@ -555,24 +480,21 @@ router.post('/pdf/build', async (req, res) => {
     }
 
     if (code === 'MCP_CONTEXT_NOT_READY' || code === 'MCP_SIGNAL_NOT_VALID_FOR_PDF') {
-      const latestRoot = await findPreferredContextRootForUser(userId).catch(() => null);
-      setNoCacheHeaders(res);
+  const latestRoot = await findPreferredContextRootForUser(userId).catch(() => null);
+  setNoCacheHeaders(res);
 
-      return res.status(202).json({
-        ok: true,
-        data: latestRoot ? (buildStatusResponse(latestRoot)?.data || null) : {
-          status: 'idle',
-          progress: 0,
-          stage: 'idle',
-          pdf: normalizePdfState(null),
-          hasSignal: false,
-          hasPdf: false,
-          pdfCurrent: false,
-          canDownloadPdf: false,
-          canGeneratePdf: false,
-        },
-      });
-    }
+  return res.status(202).json({
+    ok: true,
+    data: latestRoot ? (buildStatusResponse(latestRoot)?.data || null) : {
+      status: 'idle',
+      progress: 0,
+      stage: 'idle',
+      pdf: normalizePdfState(null),
+      hasSignal: false,
+      hasPdf: false,
+    },
+  });
+}
 
     return res.status(500).json({
       ok: false,
@@ -626,8 +548,6 @@ router.get('/latest', async (req, res) => {
 
     const state = root?.aiContext || {};
     const signalPayload = state?.signalPayload || state?.encodedPayload || null;
-    const pdfCurrent = !!isPdfCurrentForAi(state);
-
     if (!signalPayload) {
       return res.status(404).json({
         ok: false,
@@ -637,8 +557,6 @@ router.get('/latest', async (req, res) => {
           progress: state?.progress || 0,
           stage: state?.stage || 'idle',
           pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
-          hasPdf: normalizePdfState(state?.pdf).ready,
-          pdfCurrent,
         },
       });
     }
@@ -659,9 +577,6 @@ router.get('/latest', async (req, res) => {
         model: state?.model || null,
         generatedAt: state?.finishedAt || null,
         hasPdf: normalizePdfState(state?.pdf).ready,
-        pdfCurrent,
-        canDownloadPdf: normalizePdfState(state?.pdf).ready && pdfCurrent,
-        canGeneratePdf: !!signalPayload && !pdfCurrent,
         buildAttemptId: state?.buildAttemptId || null,
       },
     });
@@ -688,13 +603,9 @@ router.get('/pdf/download', async (req, res) => {
     }
 
     const state = root?.aiContext || {};
-    const pdfCurrent = !!isPdfCurrentForAi(state);
-    const pdf = normalizePdfState({
-      ...(state?.pdf || {}),
-      current: pdfCurrent,
-    });
+    const pdf = normalizePdfState(state?.pdf);
 
-    if (!(pdf.ready && pdfCurrent)) {
+    if (!pdf.ready) {
       return res.status(409).json({
         ok: false,
         error: 'MCP_SIGNAL_PDF_NOT_READY',
@@ -704,9 +615,6 @@ router.get('/pdf/download', async (req, res) => {
           stage: state?.stage || 'idle',
           pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
           pdf,
-          pdfCurrent,
-          canDownloadPdf: false,
-          canGeneratePdf: !!(state?.signalPayload || state?.encodedPayload) && !pdfCurrent,
         },
       });
     }
@@ -745,23 +653,12 @@ router.get('/pdf/status', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
 
-    const state = root?.aiContext || {};
-    const pdfCurrent = !!isPdfCurrentForAi(state);
-    const pdf = normalizePdfState({
-      ...(state?.pdf || {}),
-      current: pdfCurrent,
-    });
-
+    const pdf = normalizePdfState(root?.aiContext?.pdf);
     setNoCacheHeaders(res);
 
     return res.json({
       ok: true,
-      data: {
-        ...pdf,
-        current: pdfCurrent,
-        canDownloadPdf: pdf.ready && pdfCurrent,
-        canGeneratePdf: !!(state?.signalPayload || state?.encodedPayload) && !pdfCurrent,
-      },
+      data: pdf,
     });
   } catch (e) {
     console.error('[mcp/context/pdf/status] error:', e);
