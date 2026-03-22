@@ -95,7 +95,6 @@ function normalizePdfState(pdf) {
     renderer: state?.renderer || null,
     version: toNum(state?.version, 1) || 1,
     error: state?.error || null,
-    signalFingerprint: state?.signalFingerprint || null,
     signalSnapshotId: state?.signalSnapshotId || null,
     signalSourceSnapshots: state?.signalSourceSnapshots || null,
     signalGeneratedAt: state?.signalGeneratedAt || null,
@@ -129,7 +128,8 @@ async function findLatestContextRootForUser(userId) {
 }
 
 /**
- * Root con PDF vigente más reciente.
+ * Busca el root más reciente cuyo PDF sigue siendo vigente
+ * para el propio Signal guardado en ese root y cuyo archivo exista.
  */
 async function findLatestPdfReadyRootForUser(userId) {
   if (!userId) return null;
@@ -166,9 +166,11 @@ async function findLatestPdfReadyRootForUser(userId) {
 }
 
 /**
- * Si hay un build de Signal en curso reciente, prioriza el root actual,
- * excepto cuando ese root en processing no tiene Signal/PDF vigente pero
- * sí existe otro root con PDF vigente listo para mostrarse.
+ * Prioridad:
+ * 1) Si hay processing reciente y ese mismo root ya tiene Signal/PDF vigente, usarlo.
+ * 2) Si hay processing reciente pero ese root todavía no tiene nada útil, intentar mostrar
+ *    el último PDF vigente existente.
+ * 3) Si no hay processing, preferir el último PDF vigente; si no, el último Signal listo.
  */
 async function findPreferredContextRootForUser(userId) {
   if (!userId) return null;
@@ -189,7 +191,10 @@ async function findPreferredContextRootForUser(userId) {
     return currentRoot;
   }
 
-  const latestReadyRoot = (await findLatestPdfReadyRootForUser(userId)) || (await findLatestContextRootForUser(userId));
+  const latestReadyRoot =
+    (await findLatestPdfReadyRootForUser(userId)) ||
+    (await findLatestContextRootForUser(userId));
+
   return latestReadyRoot || currentRoot || null;
 }
 
