@@ -371,6 +371,38 @@ async function safeSignalPdfState(userId, buildAttemptId, pdfPatch = {}) {
   }
 }
 
+async function safeSupersedeOtherProcessingRuns(userId, currentAttemptId, extra = {}) {
+  const cleanAttemptId = safeStr(currentAttemptId).trim();
+  if (!userId || !cleanAttemptId) return null;
+
+  try {
+    return await SignalData.updateMany(
+      {
+        userId,
+        buildAttemptId: { $ne: cleanAttemptId },
+        status: 'processing',
+      },
+      {
+        $set: {
+          status: 'error',
+          stage: 'failed',
+          failedAt: new Date(),
+          lastHeartbeatAt: new Date(),
+          error: 'ATTEMPT_SUPERSEDED',
+          errorCode: 'ATTEMPT_SUPERSEDED',
+          errorStage: 'failed',
+          signalComplete: false,
+          signalValidForPdf: false,
+          ...extra,
+        },
+      }
+    );
+  } catch (err) {
+    console.error('[mcpContextBuilder] SignalData.updateMany supersede failed:', err?.message || err);
+    return null;
+  }
+}
+
 async function resolveSignalBuildAttemptId(userId, ai = {}) {
   const attemptId = safeStr(ai?.buildAttemptId).trim();
   if (attemptId) return attemptId;
@@ -1253,6 +1285,18 @@ async function updateRootAiContextForAttempt(userId, attemptId, updater) {
   const currentAttemptId = safeStr(currentAi?.buildAttemptId).trim();
 
   if (attemptId && currentAttemptId && currentAttemptId !== attemptId) {
+    await safeSignalRunFail(userId, attemptId, {
+      error: 'ATTEMPT_SUPERSEDED',
+      errorCode: 'ATTEMPT_SUPERSEDED',
+      errorStage: 'failed',
+      stage: 'failed',
+      progress: 100,
+      signalValidForPdf: false,
+      signalComplete: false,
+      hasSignal: !!(currentAi?.signalPayload || currentAi?.encodedPayload),
+      snapshotId: safeStr(currentAi?.snapshotId || root?.latestSnapshotId).trim() || null,
+    });
+
     return { skipped: true, reason: 'ATTEMPT_SUPERSEDED', root };
   }
 
@@ -1273,13 +1317,14 @@ async function updateRootAiContextForAttempt(userId, attemptId, updater) {
 function buildResultFromRoot(root, fallback = {}) {
   const state = root?.aiContext || {};
   const pdf = state?.pdf || {};
+  const signalPayload = state?.signalPayload || state?.encodedPayload || fallback.signalPayload || null;
 
   return {
     ok: true,
     root,
     unifiedBase: state?.unifiedBase || fallback.unifiedBase || null,
     encodedPayload: state?.encodedPayload || fallback.encodedPayload || null,
-    signalPayload: state?.signalPayload || state?.encodedPayload || fallback.signalPayload || null,
+    signalPayload,
     pdf,
     data: {
       status: state?.status || fallback.status || 'idle',
@@ -1292,7 +1337,9 @@ function buildResultFromRoot(root, fallback = {}) {
       usedOpenAI: !!state?.usedOpenAI,
       model: state?.model || null,
       hasEncodedPayload: !!state?.encodedPayload,
-      hasSignal: !!(state?.signalPayload || state?.encodedPayload),
+      hasSignal: !!signalPayload,
+      signalComplete: safeStr(state?.status) === 'done',
+      signalValidForPdf: isSignalPayloadBuildableForPdf(signalPayload),
       providerAgnostic: !!state?.encodedPayload?.providerAgnostic,
       usableSources: Array.isArray(state?.usableSources) ? state.usableSources : (fallback.usableSources || []),
       pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : (fallback.pendingConnectedSources || []),
@@ -1447,10 +1494,24 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     },
   });
 
+  await safeSupersedeOtherProcessingRuns(userId, attemptId);
+
   const readyState = await waitForBuildableSources(userId, initialRoot, explicitSnapshotId, timeoutMs);
   const effectiveRoot = readyState?.root || await findRoot(userId);
 
   if (safeStr(effectiveRoot?.aiContext?.buildAttemptId).trim() !== attemptId) {
+    await safeSignalRunFail(userId, attemptId, {
+      error: 'ATTEMPT_SUPERSEDED',
+      errorCode: 'ATTEMPT_SUPERSEDED',
+      errorStage: 'failed',
+      stage: 'failed',
+      progress: 100,
+      signalValidForPdf: false,
+      signalComplete: false,
+      hasSignal: !!(effectiveRoot?.aiContext?.signalPayload || effectiveRoot?.aiContext?.encodedPayload),
+      snapshotId: safeStr(effectiveRoot?.aiContext?.snapshotId || effectiveRoot?.latestSnapshotId).trim() || null,
+    });
+
     return buildResultFromRoot(effectiveRoot, {
       status: effectiveRoot?.aiContext?.status || 'processing',
       progress: toNum(effectiveRoot?.aiContext?.progress, 10),
@@ -1764,6 +1825,18 @@ async function buildUnifiedContextForUser(userId, options = {}) {
 
   const latestRootForBase = await findRoot(userId);
   if (safeStr(latestRootForBase?.aiContext?.buildAttemptId).trim() !== attemptId) {
+    await safeSignalRunFail(userId, attemptId, {
+      error: 'ATTEMPT_SUPERSEDED',
+      errorCode: 'ATTEMPT_SUPERSEDED',
+      errorStage: 'failed',
+      stage: 'failed',
+      progress: 100,
+      signalValidForPdf: false,
+      signalComplete: false,
+      hasSignal: !!(latestRootForBase?.aiContext?.signalPayload || latestRootForBase?.aiContext?.encodedPayload),
+      snapshotId: safeStr(latestRootForBase?.aiContext?.snapshotId || latestRootForBase?.latestSnapshotId).trim() || null,
+    });
+
     return buildResultFromRoot(latestRootForBase, {
       status: latestRootForBase?.aiContext?.status || 'processing',
       progress: toNum(latestRootForBase?.aiContext?.progress, 35),
@@ -1818,6 +1891,8 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       storageRangeDays,
       hasSignal: false,
       signalValidForPdf: false,
+      usedOpenAI: false,
+      model: null,
       sources: buildSignalSourcesPayload({
         sourcesStatus,
         sourceSnapshots,
@@ -1980,7 +2055,7 @@ async function buildPdfForUser(userId) {
   const ai = root?.aiContext || {};
   const signalPayload = ai?.signalPayload || ai?.encodedPayload || null;
   const pdfState = ai?.pdf || {};
-  const buildAttemptId = await resolveSignalBuildAttemptId(userId, ai);
+  const buildAttemptId = safeStr(ai?.buildAttemptId).trim() || await resolveSignalBuildAttemptId(userId, ai);
 
   if (!signalPayload) {
     if (buildAttemptId) {

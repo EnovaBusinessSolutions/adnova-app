@@ -157,13 +157,81 @@ async function findActiveSignalRunForUser(userId) {
   }
 }
 
-async function findPreferredSignalRunForUser(userId) {
+async function findSignalRunByAttempt(userId, buildAttemptId) {
+  const cleanAttempt = safeStr(buildAttemptId).trim();
+  if (!userId || !cleanAttempt) return null;
+
+  try {
+    const run = await SignalData.findByAttempt(userId, cleanAttempt);
+    return normalizeSignalRun(run);
+  } catch (e) {
+    console.error('[mcp/context] findSignalRunByAttempt warning:', e?.message || e);
+    return null;
+  }
+}
+
+function isSignalRunCompatibleWithRoot(signalRun, root) {
+  if (!signalRun) return false;
+  if (!root) return true;
+
+  const rootState = root?.aiContext || {};
+  const rootAttemptId = safeStr(rootState?.buildAttemptId).trim();
+  const runAttemptId = safeStr(signalRun?.buildAttemptId).trim();
+
+  if (rootAttemptId && runAttemptId) {
+    return rootAttemptId === runAttemptId;
+  }
+
+  if (rootAttemptId && !runAttemptId) {
+    return false;
+  }
+
+  const rootSnapshotId = safeStr(rootState?.snapshotId || root?.latestSnapshotId).trim();
+  const runSnapshotId = safeStr(signalRun?.snapshotId).trim();
+
+  if (rootSnapshotId && runSnapshotId) {
+    return rootSnapshotId === runSnapshotId;
+  }
+
+  return true;
+}
+
+async function findPreferredSignalRunForUser(userId, root = null) {
   if (!userId) return null;
 
-  const active = await findActiveSignalRunForUser(userId);
-  if (active) return active;
+  const effectiveRoot = root || await findPreferredContextRootForUser(userId);
+  const rootState = effectiveRoot?.aiContext || {};
+  const rootAttemptId = safeStr(rootState?.buildAttemptId).trim();
+  const rootStatus = safeStr(rootState?.status).trim();
 
-  return await findLatestSignalRunForUser(userId);
+  if (rootAttemptId) {
+    const exact = await findSignalRunByAttempt(userId, rootAttemptId);
+    if (exact) return exact;
+  }
+
+  const latest = await findLatestSignalRunForUser(userId);
+  if (!latest) return null;
+
+  if (!effectiveRoot) return latest;
+
+  const latestAttemptId = safeStr(latest?.buildAttemptId).trim();
+  const latestStatus = safeStr(latest?.status).trim();
+
+  if (rootAttemptId && latestAttemptId && latestAttemptId !== rootAttemptId) {
+    if (rootStatus === 'done' || rootStatus === 'error') {
+      return null;
+    }
+
+    if (latestStatus === 'processing') {
+      return null;
+    }
+  }
+
+  if (!isSignalRunCompatibleWithRoot(latest, effectiveRoot)) {
+    return null;
+  }
+
+  return latest;
 }
 
 /**
@@ -319,16 +387,19 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
   const state = root?.aiContext || {};
   const signalPayload = state?.signalPayload || state?.encodedPayload || null;
 
-  const run = normalizeSignalRun(signalRun);
+  const compatibleRun = isSignalRunCompatibleWithRoot(signalRun, root)
+    ? normalizeSignalRun(signalRun)
+    : null;
+
   const rootPdf = normalizePdfState(state?.pdf);
   const pdf =
-    run?.pdf && (
-      run.pdf.status !== 'idle' ||
-      run.pdf.progress > 0 ||
-      run.pdf.ready ||
-      run.pdf.error
+    compatibleRun?.pdf && (
+      compatibleRun.pdf.status !== 'idle' ||
+      compatibleRun.pdf.progress > 0 ||
+      compatibleRun.pdf.ready ||
+      compatibleRun.pdf.error
     )
-      ? run.pdf
+      ? compatibleRun.pdf
       : rootPdf;
 
   const shareEnabled = !!(shareState?.mcpShareEnabled && shareState?.mcpShareToken);
@@ -341,45 +412,45 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
     ? safeStr(shareState?.mcpShareVersionedUrl).trim() || null
     : null;
 
-  const status = chooseStatusValue(run?.status, state?.status || 'idle');
-  const stage = chooseStatusValue(run?.stage, state?.stage || 'idle');
+  const status = chooseStatusValue(compatibleRun?.status, state?.status || 'idle');
+  const stage = chooseStatusValue(compatibleRun?.stage, state?.stage || 'idle');
 
   return {
     ok: true,
     data: {
       status,
-      progress: run ? toNum(run?.progress, toNum(state?.progress, 0)) : toNum(state?.progress, 0),
+      progress: compatibleRun ? toNum(compatibleRun?.progress, toNum(state?.progress, 0)) : toNum(state?.progress, 0),
       stage,
-      startedAt: run?.startedAt || state?.startedAt || null,
-      finishedAt: run?.finishedAt || state?.finishedAt || null,
-      snapshotId: run?.snapshotId || state?.snapshotId || root?.latestSnapshotId || null,
-      sourceSnapshots: run?.sourceSnapshots || state?.sourceSnapshots || state?.unifiedBase?.sourceSnapshots || null,
-      contextRangeDays: run?.contextRangeDays || toNum(state?.contextRangeDays) || null,
-      storageRangeDays: run?.storageRangeDays || toNum(state?.storageRangeDays) || null,
+      startedAt: compatibleRun?.startedAt || state?.startedAt || null,
+      finishedAt: compatibleRun?.finishedAt || state?.finishedAt || null,
+      snapshotId: compatibleRun?.snapshotId || state?.snapshotId || root?.latestSnapshotId || null,
+      sourceSnapshots: compatibleRun?.sourceSnapshots || state?.sourceSnapshots || state?.unifiedBase?.sourceSnapshots || null,
+      contextRangeDays: compatibleRun?.contextRangeDays || toNum(state?.contextRangeDays) || null,
+      storageRangeDays: compatibleRun?.storageRangeDays || toNum(state?.storageRangeDays) || null,
 
       hasEncodedPayload: !!state?.encodedPayload,
       hasSignal: !!signalPayload,
       signalReady: !!signalPayload,
       providerAgnostic: !!signalPayload?.providerAgnostic,
 
-      usedOpenAI: run ? !!run?.usedOpenAI : !!state?.usedOpenAI,
-      model: run?.model || state?.model || null,
-      error: run?.error || state?.error || null,
-      buildAttemptId: run?.buildAttemptId || state?.buildAttemptId || null,
-      signalRunId: run?.signalRunId || null,
+      usedOpenAI: compatibleRun ? !!compatibleRun?.usedOpenAI : !!state?.usedOpenAI,
+      model: compatibleRun?.model || state?.model || null,
+      error: compatibleRun?.error || state?.error || null,
+      buildAttemptId: compatibleRun?.buildAttemptId || state?.buildAttemptId || null,
+      signalRunId: compatibleRun?.signalRunId || null,
 
-      sources: run?.sourcesStatus || state?.sourcesStatus || null,
-      connectedSources: Array.isArray(run?.connectedSources) ? run.connectedSources : [],
-      usableSources: Array.isArray(run?.usableSources)
-        ? run.usableSources
+      sources: compatibleRun?.sourcesStatus || state?.sourcesStatus || null,
+      connectedSources: Array.isArray(compatibleRun?.connectedSources) ? compatibleRun.connectedSources : [],
+      usableSources: Array.isArray(compatibleRun?.usableSources)
+        ? compatibleRun.usableSources
         : (Array.isArray(state?.usableSources) ? state.usableSources : []),
-      pendingConnectedSources: Array.isArray(run?.pendingConnectedSources)
-        ? run.pendingConnectedSources
+      pendingConnectedSources: Array.isArray(compatibleRun?.pendingConnectedSources)
+        ? compatibleRun.pendingConnectedSources
         : (Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : []),
-      failedSources: Array.isArray(run?.failedSources) ? run.failedSources : [],
+      failedSources: Array.isArray(compatibleRun?.failedSources) ? compatibleRun.failedSources : [],
 
-      signalComplete: run ? !!run.signalComplete : safeStr(state?.status) === 'done',
-      signalValidForPdf: run ? !!run.signalValidForPdf : !!signalPayload,
+      signalComplete: compatibleRun ? !!compatibleRun.signalComplete : safeStr(state?.status) === 'done',
+      signalValidForPdf: compatibleRun ? !!compatibleRun.signalValidForPdf : !!signalPayload,
       hasPdf: pdf.ready,
       pdf,
 
@@ -525,7 +596,7 @@ router.post('/pdf/build', async (req, res) => {
     }
 
     const root = await findPreferredContextRootForUser(userId);
-    const signalRun = await findPreferredSignalRunForUser(userId);
+    const signalRun = await findPreferredSignalRunForUser(userId, root);
 
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
@@ -575,7 +646,7 @@ router.post('/pdf/build', async (req, res) => {
     setNoCacheHeaders(res);
     return res.json({
       ok: true,
-      data: result?.data || buildStatusResponse(await findPreferredContextRootForUser(userId), null, await findPreferredSignalRunForUser(userId))?.data || null,
+      data: result?.data || buildStatusResponse(await findPreferredContextRootForUser(userId), null, await findPreferredSignalRunForUser(userId, await findPreferredContextRootForUser(userId)))?.data || null,
     });
   } catch (e) {
     console.error('[mcp/context/pdf/build] error:', e);
@@ -588,7 +659,7 @@ router.post('/pdf/build', async (req, res) => {
 
     if (code === 'MCP_CONTEXT_NOT_READY' || code === 'MCP_SIGNAL_NOT_VALID_FOR_PDF') {
       const latestRoot = await findPreferredContextRootForUser(userId).catch(() => null);
-      const signalRun = await findPreferredSignalRunForUser(userId).catch(() => null);
+      const signalRun = await findPreferredSignalRunForUser(userId, latestRoot).catch(() => null);
       setNoCacheHeaders(res);
 
       return res.status(202).json({
@@ -621,14 +692,12 @@ router.get('/status', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const [root, signalRun] = await Promise.all([
-      findPreferredContextRootForUser(userId),
-      findPreferredSignalRunForUser(userId),
-    ]);
-
+    const root = await findPreferredContextRootForUser(userId);
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
+
+    const signalRun = await findPreferredSignalRunForUser(userId, root);
 
     const shareState = await syncUserVersionedLink(userId).catch(async () => {
       return await findUserShareState(userId);
@@ -653,14 +722,12 @@ router.get('/latest', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const [root, signalRun] = await Promise.all([
-      findPreferredContextRootForUser(userId),
-      findPreferredSignalRunForUser(userId),
-    ]);
-
+    const root = await findPreferredContextRootForUser(userId);
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
+
+    const signalRun = await findPreferredSignalRunForUser(userId, root);
 
     const state = root?.aiContext || {};
     const signalPayload = state?.signalPayload || state?.encodedPayload || null;
@@ -717,17 +784,15 @@ router.get('/pdf/download', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const [root, signalRun] = await Promise.all([
-      findPreferredContextRootForUser(userId),
-      findPreferredSignalRunForUser(userId),
-    ]);
-
+    const root = await findPreferredContextRootForUser(userId);
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
 
+    const signalRun = await findPreferredSignalRunForUser(userId, root);
+
     const state = root?.aiContext || {};
-    const runPdf = signalRun?.pdf && signalRun?.pdf.status !== 'idle' ? signalRun.pdf : null;
+    const runPdf = signalRun?.pdf && signalRun?.pdf.status !== 'idle' && isSignalRunCompatibleWithRoot(signalRun, root) ? signalRun.pdf : null;
     const pdf = runPdf || normalizePdfState(state?.pdf);
 
     if (!pdf.ready) {
@@ -775,17 +840,15 @@ router.get('/pdf/status', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const [root, signalRun] = await Promise.all([
-      findPreferredContextRootForUser(userId),
-      findPreferredSignalRunForUser(userId),
-    ]);
-
+    const root = await findPreferredContextRootForUser(userId);
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
 
+    const signalRun = await findPreferredSignalRunForUser(userId, root);
+
     const state = root?.aiContext || {};
-    const pdf = signalRun?.pdf && signalRun?.pdf.status !== 'idle'
+    const pdf = signalRun?.pdf && signalRun?.pdf.status !== 'idle' && isSignalRunCompatibleWithRoot(signalRun, root)
       ? signalRun.pdf
       : normalizePdfState(state?.pdf);
 
@@ -795,8 +858,10 @@ router.get('/pdf/status', async (req, res) => {
       ok: true,
       data: {
         ...pdf,
-        signalRunId: signalRun?.signalRunId || null,
-        buildAttemptId: signalRun?.buildAttemptId || state?.buildAttemptId || null,
+        signalRunId: isSignalRunCompatibleWithRoot(signalRun, root) ? (signalRun?.signalRunId || null) : null,
+        buildAttemptId: isSignalRunCompatibleWithRoot(signalRun, root)
+          ? (signalRun?.buildAttemptId || state?.buildAttemptId || null)
+          : (state?.buildAttemptId || null),
       },
     });
   } catch (e) {
