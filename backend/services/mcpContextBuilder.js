@@ -5,6 +5,7 @@ const crypto = require('crypto');
 
 const McpData = require('../models/McpData');
 const User = require('../models/User');
+const SignalData = require('../models/SignalData');
 
 const {
   formatMetaForLlm,
@@ -292,6 +293,94 @@ function isSignalPayloadBuildableForPdf(signalPayload) {
   if (!executive && !business) return false;
 
   return true;
+}
+
+function buildSignalSourcesPayload({
+  sourcesStatus = null,
+  sourceSnapshots = null,
+  usableSources = [],
+  pendingConnectedSources = [],
+} = {}) {
+  const connectedSources = [];
+  const failedSources = [];
+
+  const bySource = sourcesStatus || {};
+  for (const [sourceName, state] of Object.entries(bySource)) {
+    if (state?.connected) connectedSources.push(sourceName);
+    if (state?.lastError) failedSources.push(sourceName);
+  }
+
+  const connectedFinal = uniqStrings([
+    ...connectedSources,
+    ...usableSources,
+    ...pendingConnectedSources,
+  ], 25);
+
+  return {
+    connectedSources: connectedFinal,
+    usableSources: uniqStrings(usableSources || [], 25),
+    pendingConnectedSources: uniqStrings(pendingConnectedSources || [], 25),
+    failedSources: uniqStrings(failedSources || [], 25),
+    sourceSnapshots: sourceSnapshots || null,
+    sourcesStatus: sourcesStatus || null,
+  };
+}
+
+async function safeSignalRunUpsert(payload = {}) {
+  try {
+    return await SignalData.upsertRun(payload);
+  } catch (err) {
+    console.error('[mcpContextBuilder] SignalData.upsertRun failed:', err?.message || err);
+    return null;
+  }
+}
+
+async function safeSignalRunMarkStage(userId, buildAttemptId, patch = {}) {
+  try {
+    return await SignalData.markStage(userId, buildAttemptId, patch);
+  } catch (err) {
+    console.error('[mcpContextBuilder] SignalData.markStage failed:', err?.message || err);
+    return null;
+  }
+}
+
+async function safeSignalRunComplete(userId, buildAttemptId, patch = {}) {
+  try {
+    return await SignalData.completeRun(userId, buildAttemptId, patch);
+  } catch (err) {
+    console.error('[mcpContextBuilder] SignalData.completeRun failed:', err?.message || err);
+    return null;
+  }
+}
+
+async function safeSignalRunFail(userId, buildAttemptId, patch = {}) {
+  try {
+    return await SignalData.failRun(userId, buildAttemptId, patch);
+  } catch (err) {
+    console.error('[mcpContextBuilder] SignalData.failRun failed:', err?.message || err);
+    return null;
+  }
+}
+
+async function safeSignalPdfState(userId, buildAttemptId, pdfPatch = {}) {
+  try {
+    return await SignalData.markPdfState(userId, buildAttemptId, pdfPatch);
+  } catch (err) {
+    console.error('[mcpContextBuilder] SignalData.markPdfState failed:', err?.message || err);
+    return null;
+  }
+}
+
+async function resolveSignalBuildAttemptId(userId, ai = {}) {
+  const attemptId = safeStr(ai?.buildAttemptId).trim();
+  if (attemptId) return attemptId;
+
+  try {
+    const latest = await SignalData.findLatestForUser(userId);
+    return safeStr(latest?.buildAttemptId || latest?.signalRunId).trim() || null;
+  } catch (_) {
+    return null;
+  }
 }
 
 async function findLatestSnapshotId(userId, source = 'metaAds') {
@@ -1263,6 +1352,9 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     timeoutMs = BUILD_WAIT_TIMEOUT_MS,
     markProcessing = true,
     forceRebuild = false,
+    reason = null,
+    requestedBy = 'system',
+    trigger = 'system',
   } = options || {};
 
   const initialRoot = await findRoot(userId);
@@ -1316,6 +1408,44 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       pdf: emptyPdfState({ status: 'idle', stage: 'waiting_for_sources', progress: 0 }),
     }));
   }
+
+  await safeSignalRunUpsert({
+    userId,
+    rootId: initialRoot?._id || null,
+    signalRunId: attemptId,
+    buildAttemptId: attemptId,
+    trigger: safeStr(trigger) || 'system',
+    reason: safeStr(reason) || null,
+    requestedBy: safeStr(requestedBy) || 'system',
+    status: 'processing',
+    stage: 'waiting_for_sources',
+    progress: 10,
+    signalComplete: false,
+    hasSignal: false,
+    signalValidForPdf: false,
+    snapshotId: preferredSnapshotId || null,
+    contextRangeDays,
+    storageRangeDays,
+    usedOpenAI: false,
+    model: null,
+    startedAt: new Date(startedAt),
+    lastHeartbeatAt: new Date(),
+    sources: buildSignalSourcesPayload({
+      sourcesStatus: null,
+      sourceSnapshots: null,
+      usableSources: [],
+      pendingConnectedSources: [],
+    }),
+    pdf: {
+      status: 'idle',
+      stage: 'waiting_for_sources',
+      progress: 0,
+    },
+    meta: {
+      forceRebuild: !!forceRebuild,
+      timedOut: false,
+    },
+  });
 
   const readyState = await waitForBuildableSources(userId, initialRoot, explicitSnapshotId, timeoutMs);
   const effectiveRoot = readyState?.root || await findRoot(userId);
@@ -1399,6 +1529,35 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
     }));
 
+    if (!waitResult?.skipped) {
+      await safeSignalRunMarkStage(userId, attemptId, {
+        rootId: waitResult?.root?._id || effectiveRoot?._id || initialRoot?._id || null,
+        status: 'processing',
+        stage: 'waiting_for_connected_sources',
+        progress: 20,
+        snapshotId:
+          sourceSnapshots.metaAds ||
+          sourceSnapshots.googleAds ||
+          sourceSnapshots.ga4 ||
+          preferredSnapshotId ||
+          null,
+        contextRangeDays,
+        storageRangeDays,
+        hasSignal: false,
+        signalValidForPdf: false,
+        sources: buildSignalSourcesPayload({
+          sourcesStatus,
+          sourceSnapshots,
+          usableSources,
+          pendingConnectedSources,
+        }),
+        meta: {
+          timedOut: !!readyState?.timedOut,
+          reason: 'WAITING_FOR_CONNECTED_SOURCES',
+        },
+      });
+    }
+
     const finalRoot = waitResult?.root || await findRoot(userId);
     return buildResultFromRoot(finalRoot, {
       status: 'processing',
@@ -1440,6 +1599,32 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
     }));
 
+    await safeSignalRunFail(userId, attemptId, {
+      error: 'MCP_CONTEXT_NO_USABLE_SOURCES',
+      errorCode: 'MCP_CONTEXT_NO_USABLE_SOURCES',
+      errorStage: 'failed',
+      stage: 'failed',
+      progress: 100,
+      hasSignal: false,
+      signalValidForPdf: false,
+      snapshotId:
+        sourceSnapshots.metaAds ||
+        sourceSnapshots.googleAds ||
+        sourceSnapshots.ga4 ||
+        preferredSnapshotId ||
+        null,
+      sources: buildSignalSourcesPayload({
+        sourcesStatus,
+        sourceSnapshots,
+        usableSources,
+        pendingConnectedSources,
+      }),
+      meta: {
+        timedOut: !!readyState?.timedOut,
+        reason: 'NO_USABLE_SOURCES',
+      },
+    });
+
     const err = new Error('MCP_CONTEXT_NO_USABLE_SOURCES');
     err.code = 'MCP_CONTEXT_NO_USABLE_SOURCES';
     err.data = {
@@ -1476,6 +1661,35 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
     }));
 
+    if (!partialWait?.skipped) {
+      await safeSignalRunMarkStage(userId, attemptId, {
+        rootId: partialWait?.root?._id || effectiveRoot?._id || initialRoot?._id || null,
+        status: 'processing',
+        stage: 'waiting_for_connected_sources',
+        progress: 30,
+        snapshotId:
+          sourceSnapshots.metaAds ||
+          sourceSnapshots.googleAds ||
+          sourceSnapshots.ga4 ||
+          preferredSnapshotId ||
+          null,
+        contextRangeDays,
+        storageRangeDays,
+        hasSignal: false,
+        signalValidForPdf: false,
+        sources: buildSignalSourcesPayload({
+          sourcesStatus,
+          sourceSnapshots,
+          usableSources,
+          pendingConnectedSources,
+        }),
+        meta: {
+          timedOut: !!readyState?.timedOut,
+          reason: 'PARTIAL_WAITING_FOR_CONNECTED_SOURCES',
+        },
+      });
+    }
+
     const finalRoot = partialWait?.root || await findRoot(userId);
     return buildResultFromRoot(finalRoot, {
       status: 'processing',
@@ -1490,7 +1704,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     });
   }
 
-  await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+  const compactingResult = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
     ...(currentAi || {}),
     status: 'processing',
     progress: 35,
@@ -1515,6 +1729,34 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     signalPayload: null,
     pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
   }));
+
+  if (!compactingResult?.skipped) {
+    await safeSignalRunMarkStage(userId, attemptId, {
+      rootId: compactingResult?.root?._id || effectiveRoot?._id || initialRoot?._id || null,
+      status: 'processing',
+      stage: 'compacting_sources',
+      progress: 35,
+      snapshotId:
+        sourceSnapshots.metaAds ||
+        sourceSnapshots.googleAds ||
+        sourceSnapshots.ga4 ||
+        preferredSnapshotId ||
+        null,
+      contextRangeDays,
+      storageRangeDays,
+      hasSignal: false,
+      signalValidForPdf: false,
+      sources: buildSignalSourcesPayload({
+        sourcesStatus,
+        sourceSnapshots,
+        usableSources,
+        pendingConnectedSources,
+      }),
+      meta: {
+        timedOut: !!readyState?.timedOut,
+      },
+    });
+  }
 
   const metaPack = buildMetaContext(metaChunks, contextRangeDays);
   const googlePack = buildGoogleAdsContext(googleChunks, contextRangeDays);
@@ -1545,7 +1787,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     ga4Pack,
   });
 
-  await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+  const encodingResult = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
     ...(currentAi || {}),
     status: 'processing',
     progress: 65,
@@ -1565,11 +1807,34 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
   }));
 
+  if (!encodingResult?.skipped) {
+    await safeSignalRunMarkStage(userId, attemptId, {
+      rootId: encodingResult?.root?._id || latestRootForBase?._id || initialRoot?._id || null,
+      status: 'processing',
+      stage: 'encoding_signal',
+      progress: 65,
+      snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+      contextRangeDays,
+      storageRangeDays,
+      hasSignal: false,
+      signalValidForPdf: false,
+      sources: buildSignalSourcesPayload({
+        sourcesStatus,
+        sourceSnapshots,
+        usableSources,
+        pendingConnectedSources,
+      }),
+      meta: {
+        timedOut: !!readyState?.timedOut,
+      },
+    });
+  }
+
   const encoded = await enrichWithOpenAI(unifiedBase);
   const signalPayload = encoded.payload;
 
   if (!isSignalPayloadBuildableForPdf(signalPayload)) {
-    await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+    const waitingValidResult = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
       ...(currentAi || {}),
       status: 'processing',
       progress: 72,
@@ -1593,6 +1858,32 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
     }));
 
+    if (!waitingValidResult?.skipped) {
+      await safeSignalRunMarkStage(userId, attemptId, {
+        rootId: waitingValidResult?.root?._id || latestRootForBase?._id || initialRoot?._id || null,
+        status: 'processing',
+        stage: 'waiting_for_valid_signal',
+        progress: 72,
+        snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+        contextRangeDays,
+        storageRangeDays,
+        usedOpenAI: !!encoded.usedOpenAI,
+        model: encoded.model || null,
+        hasSignal: true,
+        signalValidForPdf: false,
+        sources: buildSignalSourcesPayload({
+          sourcesStatus,
+          sourceSnapshots,
+          usableSources,
+          pendingConnectedSources,
+        }),
+        meta: {
+          timedOut: !!readyState?.timedOut,
+          providerAgnostic: !!signalPayload?.providerAgnostic,
+        },
+      });
+    }
+
     const finalRoot = await findRoot(userId);
     return buildResultFromRoot(finalRoot, {
       status: 'processing',
@@ -1610,13 +1901,14 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     });
   }
 
+  const finishedAtIso = nowIso();
   const finalUpdate = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
     ...(currentAi || {}),
     status: 'done',
     progress: 100,
     stage: 'completed',
     startedAt: currentAi?.startedAt || startedAt,
-    finishedAt: nowIso(),
+    finishedAt: finishedAtIso,
     buildAttemptId: attemptId,
     snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
     sourceSnapshots,
@@ -1633,6 +1925,32 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     pendingConnectedSources,
     pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
   }));
+
+  if (!finalUpdate?.skipped) {
+    await safeSignalRunComplete(userId, attemptId, {
+      rootId: finalUpdate?.root?._id || latestRootForBase?._id || initialRoot?._id || null,
+      stage: 'completed',
+      startedAt: new Date(startedAt),
+      finishedAt: new Date(finishedAtIso),
+      snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+      contextRangeDays,
+      storageRangeDays,
+      usedOpenAI: !!encoded.usedOpenAI,
+      model: encoded.model || null,
+      hasSignal: true,
+      signalValidForPdf: true,
+      sources: buildSignalSourcesPayload({
+        sourcesStatus,
+        sourceSnapshots,
+        usableSources,
+        pendingConnectedSources,
+      }),
+      meta: {
+        timedOut: !!readyState?.timedOut,
+        providerAgnostic: !!signalPayload?.providerAgnostic,
+      },
+    });
+  }
 
   const freshRoot = finalUpdate?.root || await findRoot(userId);
   return buildResultFromRoot(freshRoot, {
@@ -1659,37 +1977,81 @@ async function buildPdfForUser(userId) {
     throw err;
   }
 
-const ai = root?.aiContext || {};
-const signalPayload = ai?.signalPayload || ai?.encodedPayload || null;
-const pdfState = ai?.pdf || {};
+  const ai = root?.aiContext || {};
+  const signalPayload = ai?.signalPayload || ai?.encodedPayload || null;
+  const pdfState = ai?.pdf || {};
+  const buildAttemptId = await resolveSignalBuildAttemptId(userId, ai);
 
-if (!signalPayload) {
-  const err = new Error('MCP_CONTEXT_NOT_READY');
-  err.code = 'MCP_CONTEXT_NOT_READY';
-  throw err;
-}
+  if (!signalPayload) {
+    if (buildAttemptId) {
+      await safeSignalPdfState(userId, buildAttemptId, {
+        status: 'failed',
+        stage: 'failed',
+        progress: 100,
+        error: 'MCP_CONTEXT_NOT_READY',
+      });
+    }
 
-if (!isSignalPayloadBuildableForPdf(signalPayload)) {
-  const err = new Error('MCP_SIGNAL_NOT_VALID_FOR_PDF');
-  err.code = 'MCP_SIGNAL_NOT_VALID_FOR_PDF';
-  throw err;
-}
+    const err = new Error('MCP_CONTEXT_NOT_READY');
+    err.code = 'MCP_CONTEXT_NOT_READY';
+    throw err;
+  }
 
-if (pdfState?.status === 'ready') {
-  return buildResultFromRoot(root, {
-    status: ai?.status || 'done',
-    progress: toNum(ai?.progress, 100),
-    stage: ai?.stage || 'completed',
-  });
-}
+  if (!isSignalPayloadBuildableForPdf(signalPayload)) {
+    if (buildAttemptId) {
+      await safeSignalPdfState(userId, buildAttemptId, {
+        status: 'failed',
+        stage: 'failed',
+        progress: 100,
+        error: 'MCP_SIGNAL_NOT_VALID_FOR_PDF',
+      });
+    }
 
-if (pdfState?.status === 'processing') {
-  return buildResultFromRoot(root, {
-    status: ai?.status || 'done',
-    progress: toNum(ai?.progress, 100),
-    stage: ai?.stage || 'completed',
-  });
-}
+    const err = new Error('MCP_SIGNAL_NOT_VALID_FOR_PDF');
+    err.code = 'MCP_SIGNAL_NOT_VALID_FOR_PDF';
+    throw err;
+  }
+
+  if (pdfState?.status === 'ready') {
+    if (buildAttemptId) {
+      await safeSignalPdfState(userId, buildAttemptId, {
+        status: 'ready',
+        stage: 'ready',
+        progress: 100,
+        fileName: pdfState?.fileName || null,
+        mimeType: pdfState?.mimeType || 'application/pdf',
+        downloadUrl: pdfState?.downloadUrl || null,
+        generatedAt: pdfState?.generatedAt || null,
+        sizeBytes: toNum(pdfState?.sizeBytes, 0),
+        pageCount: toNum(pdfState?.pageCount, 0) || null,
+        renderer: pdfState?.renderer || null,
+        storageKey: pdfState?.storageKey || null,
+        localPath: pdfState?.localPath || null,
+      });
+    }
+
+    return buildResultFromRoot(root, {
+      status: ai?.status || 'done',
+      progress: toNum(ai?.progress, 100),
+      stage: ai?.stage || 'completed',
+    });
+  }
+
+  if (pdfState?.status === 'processing') {
+    if (buildAttemptId) {
+      await safeSignalPdfState(userId, buildAttemptId, {
+        status: 'processing',
+        stage: pdfState?.stage || 'building_document',
+        progress: toNum(pdfState?.progress, 15),
+      });
+    }
+
+    return buildResultFromRoot(root, {
+      status: ai?.status || 'done',
+      progress: toNum(ai?.progress, 100),
+      stage: ai?.stage || 'completed',
+    });
+  }
 
   await updateRootAiContext(userId, (currentAi) => ({
     ...(currentAi || {}),
@@ -1706,6 +2068,15 @@ if (pdfState?.status === 'processing') {
     },
   }));
 
+  if (buildAttemptId) {
+    await safeSignalPdfState(userId, buildAttemptId, {
+      status: 'processing',
+      stage: 'building_document',
+      progress: 15,
+      error: null,
+    });
+  }
+
   try {
     const rootBeforePdf = await findRoot(userId);
 
@@ -1719,6 +2090,15 @@ if (pdfState?.status === 'processing') {
         error: null,
       },
     }));
+
+    if (buildAttemptId) {
+      await safeSignalPdfState(userId, buildAttemptId, {
+        status: 'processing',
+        stage: 'building_document',
+        progress: 45,
+        error: null,
+      });
+    }
 
     const pdfResult = await buildSignalPdfArtifact(userId, rootBeforePdf, signalPayload);
 
@@ -1747,6 +2127,24 @@ if (pdfState?.status === 'processing') {
       },
     }));
 
+    if (buildAttemptId) {
+      await safeSignalPdfState(userId, buildAttemptId, {
+        status: 'ready',
+        stage: 'ready',
+        progress: 100,
+        fileName: pdfResult?.fileName || null,
+        mimeType: pdfResult?.mimeType || 'application/pdf',
+        storageKey: pdfResult?.storageKey || null,
+        localPath: pdfResult?.localPath || null,
+        downloadUrl: pdfResult?.downloadUrl || null,
+        generatedAt: pdfResult?.generatedAt || nowIso(),
+        sizeBytes: toNum(pdfResult?.sizeBytes, 0),
+        pageCount: toNum(pdfResult?.pageCount, 0) || null,
+        renderer: pdfResult?.renderer || null,
+        error: null,
+      });
+    }
+
     return buildResultFromRoot(finalRoot || await findRoot(userId), {
       status: 'done',
       progress: 100,
@@ -1771,6 +2169,15 @@ if (pdfState?.status === 'processing') {
       },
     }));
 
+    if (buildAttemptId) {
+      await safeSignalPdfState(userId, buildAttemptId, {
+        status: 'failed',
+        stage: 'failed',
+        progress: 100,
+        error: pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED',
+      });
+    }
+
     const err = new Error(pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED');
     err.code = pdfErr?.code || 'SIGNAL_PDF_BUILD_FAILED';
     err.root = failRoot || null;
@@ -1790,6 +2197,9 @@ async function rebuildUnifiedContextForUser(userId, options = {}) {
     timeoutMs: options?.timeoutMs || BUILD_WAIT_TIMEOUT_MS,
     markProcessing: true,
     forceRebuild: !!options?.forceRebuild,
+    reason: options?.reason || 'source_updated',
+    requestedBy: safeStr(options?.requestedBy) || 'system',
+    trigger: safeStr(options?.trigger) || 'system',
   });
 }
 

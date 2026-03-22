@@ -9,6 +9,7 @@ const router = express.Router();
 
 const McpData = require('../models/McpData');
 const User = require('../models/User');
+const SignalData = require('../models/SignalData');
 const {
   findRoot,
   buildUnifiedContextForUser,
@@ -94,6 +95,75 @@ function normalizePdfState(pdf) {
     version: toNum(state?.version, 1) || 1,
     error: state?.error || null,
   };
+}
+
+function normalizeSignalRun(run) {
+  if (!run || typeof run !== 'object') return null;
+
+  const pdf = normalizePdfState(run?.pdf || null);
+  const sources = run?.sources || {};
+
+  return {
+    _id: run?._id || null,
+    status: safeStr(run?.status) || 'idle',
+    stage: safeStr(run?.stage) || 'idle',
+    progress: toNum(run?.progress, 0),
+    startedAt: run?.startedAt || null,
+    finishedAt: run?.finishedAt || null,
+    failedAt: run?.failedAt || null,
+    snapshotId: run?.snapshotId || null,
+    contextRangeDays: toNum(run?.contextRangeDays) || null,
+    storageRangeDays: toNum(run?.storageRangeDays) || null,
+    usedOpenAI: !!run?.usedOpenAI,
+    model: run?.model || null,
+    error: run?.error || null,
+    errorCode: run?.errorCode || null,
+    errorStage: run?.errorStage || null,
+    buildAttemptId: run?.buildAttemptId || null,
+    signalRunId: run?.signalRunId || null,
+    signalComplete: !!run?.signalComplete,
+    hasSignal: !!run?.hasSignal,
+    signalValidForPdf: !!run?.signalValidForPdf,
+    sourceSnapshots: sources?.sourceSnapshots || null,
+    sourcesStatus: sources?.sourcesStatus || null,
+    connectedSources: Array.isArray(sources?.connectedSources) ? sources.connectedSources : [],
+    usableSources: Array.isArray(sources?.usableSources) ? sources.usableSources : [],
+    pendingConnectedSources: Array.isArray(sources?.pendingConnectedSources) ? sources.pendingConnectedSources : [],
+    failedSources: Array.isArray(sources?.failedSources) ? sources.failedSources : [],
+    pdf,
+    meta: run?.meta || null,
+  };
+}
+
+async function findLatestSignalRunForUser(userId) {
+  if (!userId) return null;
+  try {
+    const run = await SignalData.findLatestForUser(userId);
+    return normalizeSignalRun(run);
+  } catch (e) {
+    console.error('[mcp/context] findLatestSignalRunForUser warning:', e?.message || e);
+    return null;
+  }
+}
+
+async function findActiveSignalRunForUser(userId) {
+  if (!userId) return null;
+  try {
+    const run = await SignalData.findActiveRunForUser(userId);
+    return normalizeSignalRun(run);
+  } catch (e) {
+    console.error('[mcp/context] findActiveSignalRunForUser warning:', e?.message || e);
+    return null;
+  }
+}
+
+async function findPreferredSignalRunForUser(userId) {
+  if (!userId) return null;
+
+  const active = await findActiveSignalRunForUser(userId);
+  if (active) return active;
+
+  return await findLatestSignalRunForUser(userId);
 }
 
 /**
@@ -240,10 +310,26 @@ async function findUserByShareToken(token) {
   );
 }
 
-function buildStatusResponse(root, shareState = null) {
+function chooseStatusValue(primary, fallback) {
+  const clean = safeStr(primary).trim();
+  return clean || fallback;
+}
+
+function buildStatusResponse(root, shareState = null, signalRun = null) {
   const state = root?.aiContext || {};
   const signalPayload = state?.signalPayload || state?.encodedPayload || null;
-  const pdf = normalizePdfState(state?.pdf);
+
+  const run = normalizeSignalRun(signalRun);
+  const rootPdf = normalizePdfState(state?.pdf);
+  const pdf =
+    run?.pdf && (
+      run.pdf.status !== 'idle' ||
+      run.pdf.progress > 0 ||
+      run.pdf.ready ||
+      run.pdf.error
+    )
+      ? run.pdf
+      : rootPdf;
 
   const shareEnabled = !!(shareState?.mcpShareEnabled && shareState?.mcpShareToken);
   const shareToken = shareEnabled ? shareState?.mcpShareToken || null : null;
@@ -255,32 +341,45 @@ function buildStatusResponse(root, shareState = null) {
     ? safeStr(shareState?.mcpShareVersionedUrl).trim() || null
     : null;
 
+  const status = chooseStatusValue(run?.status, state?.status || 'idle');
+  const stage = chooseStatusValue(run?.stage, state?.stage || 'idle');
+
   return {
     ok: true,
     data: {
-      status: state?.status || 'idle',
-      progress: toNum(state?.progress, 0),
-      stage: state?.stage || 'idle',
-      startedAt: state?.startedAt || null,
-      finishedAt: state?.finishedAt || null,
-      snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
-      sourceSnapshots: state?.sourceSnapshots || state?.unifiedBase?.sourceSnapshots || null,
-      contextRangeDays: toNum(state?.contextRangeDays) || null,
-      storageRangeDays: toNum(state?.storageRangeDays) || null,
+      status,
+      progress: run ? toNum(run?.progress, toNum(state?.progress, 0)) : toNum(state?.progress, 0),
+      stage,
+      startedAt: run?.startedAt || state?.startedAt || null,
+      finishedAt: run?.finishedAt || state?.finishedAt || null,
+      snapshotId: run?.snapshotId || state?.snapshotId || root?.latestSnapshotId || null,
+      sourceSnapshots: run?.sourceSnapshots || state?.sourceSnapshots || state?.unifiedBase?.sourceSnapshots || null,
+      contextRangeDays: run?.contextRangeDays || toNum(state?.contextRangeDays) || null,
+      storageRangeDays: run?.storageRangeDays || toNum(state?.storageRangeDays) || null,
 
       hasEncodedPayload: !!state?.encodedPayload,
       hasSignal: !!signalPayload,
       signalReady: !!signalPayload,
       providerAgnostic: !!signalPayload?.providerAgnostic,
 
-      usedOpenAI: !!state?.usedOpenAI,
-      model: state?.model || null,
-      error: state?.error || null,
-      buildAttemptId: state?.buildAttemptId || null,
-      sources: state?.sourcesStatus || null,
-      usableSources: Array.isArray(state?.usableSources) ? state.usableSources : [],
-      pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
+      usedOpenAI: run ? !!run?.usedOpenAI : !!state?.usedOpenAI,
+      model: run?.model || state?.model || null,
+      error: run?.error || state?.error || null,
+      buildAttemptId: run?.buildAttemptId || state?.buildAttemptId || null,
+      signalRunId: run?.signalRunId || null,
 
+      sources: run?.sourcesStatus || state?.sourcesStatus || null,
+      connectedSources: Array.isArray(run?.connectedSources) ? run.connectedSources : [],
+      usableSources: Array.isArray(run?.usableSources)
+        ? run.usableSources
+        : (Array.isArray(state?.usableSources) ? state.usableSources : []),
+      pendingConnectedSources: Array.isArray(run?.pendingConnectedSources)
+        ? run.pendingConnectedSources
+        : (Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : []),
+      failedSources: Array.isArray(run?.failedSources) ? run.failedSources : [],
+
+      signalComplete: run ? !!run.signalComplete : safeStr(state?.status) === 'done',
+      signalValidForPdf: run ? !!run.signalValidForPdf : !!signalPayload,
       hasPdf: pdf.ready,
       pdf,
 
@@ -348,6 +447,9 @@ router.post('/build', async (req, res) => {
       explicitSnapshotId: safeStr(req.body?.snapshotId) || null,
       contextRangeDays: req.body?.contextRangeDays || null,
       forceRebuild: !!req.body?.forceRebuild,
+      reason: safeStr(req.body?.reason) || 'manual_build',
+      requestedBy: 'route:mcpContext.build',
+      trigger: safeStr(req.body?.trigger) || 'manual_api',
     });
 
     try {
@@ -415,13 +517,16 @@ router.post('/build', async (req, res) => {
  * Construye el PDF a partir de un Signal ya listo.
  */
 router.post('/pdf/build', async (req, res) => {
+  const userId = req.user?._id;
+
   try {
-    const userId = req.user?._id;
     if (!userId) {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
     const root = await findPreferredContextRootForUser(userId);
+    const signalRun = await findPreferredSignalRunForUser(userId);
+
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
@@ -430,45 +535,47 @@ router.post('/pdf/build', async (req, res) => {
     const signalPayload = state?.signalPayload || state?.encodedPayload || null;
 
     if (!signalPayload) {
-  setNoCacheHeaders(res);
-  return res.status(202).json({
-    ok: true,
-    data: {
-      status: state?.status || 'idle',
-      progress: state?.progress || 0,
-      stage: state?.stage || 'idle',
-      pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
-      pdf: normalizePdfState(state?.pdf),
-      hasSignal: false,
-      hasPdf: normalizePdfState(state?.pdf).ready,
-    },
-  });
-}
+      setNoCacheHeaders(res);
+      return res.status(202).json({
+        ok: true,
+        data: buildStatusResponse(root, null, signalRun)?.data || {
+          status: state?.status || 'idle',
+          progress: state?.progress || 0,
+          stage: state?.stage || 'idle',
+          pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
+          pdf: normalizePdfState(state?.pdf),
+          hasSignal: false,
+          hasPdf: normalizePdfState(state?.pdf).ready,
+        },
+      });
+    }
 
-    const pdf = normalizePdfState(state?.pdf);
+    const effectivePdf = signalRun?.pdf && signalRun?.pdf.status !== 'idle'
+      ? signalRun.pdf
+      : normalizePdfState(state?.pdf);
 
-if (pdf.ready && !req.body?.forceRebuild) {
-  setNoCacheHeaders(res);
-  return res.json({
-    ok: true,
-    data: buildStatusResponse(root)?.data || null,
-  });
-}
+    if (effectivePdf.ready && !req.body?.forceRebuild) {
+      setNoCacheHeaders(res);
+      return res.json({
+        ok: true,
+        data: buildStatusResponse(root, null, signalRun)?.data || null,
+      });
+    }
 
-if (pdf.status === 'processing' && !req.body?.forceRebuild) {
-  setNoCacheHeaders(res);
-  return res.status(202).json({
-    ok: true,
-    data: buildStatusResponse(root)?.data || null,
-  });
-}
+    if (effectivePdf.status === 'processing' && !req.body?.forceRebuild) {
+      setNoCacheHeaders(res);
+      return res.status(202).json({
+        ok: true,
+        data: buildStatusResponse(root, null, signalRun)?.data || null,
+      });
+    }
 
     const result = await buildPdfForUser(userId);
 
     setNoCacheHeaders(res);
     return res.json({
       ok: true,
-      data: result?.data || null,
+      data: result?.data || buildStatusResponse(await findPreferredContextRootForUser(userId), null, await findPreferredSignalRunForUser(userId))?.data || null,
     });
   } catch (e) {
     console.error('[mcp/context/pdf/build] error:', e);
@@ -480,21 +587,22 @@ if (pdf.status === 'processing' && !req.body?.forceRebuild) {
     }
 
     if (code === 'MCP_CONTEXT_NOT_READY' || code === 'MCP_SIGNAL_NOT_VALID_FOR_PDF') {
-  const latestRoot = await findPreferredContextRootForUser(userId).catch(() => null);
-  setNoCacheHeaders(res);
+      const latestRoot = await findPreferredContextRootForUser(userId).catch(() => null);
+      const signalRun = await findPreferredSignalRunForUser(userId).catch(() => null);
+      setNoCacheHeaders(res);
 
-  return res.status(202).json({
-    ok: true,
-    data: latestRoot ? (buildStatusResponse(latestRoot)?.data || null) : {
-      status: 'idle',
-      progress: 0,
-      stage: 'idle',
-      pdf: normalizePdfState(null),
-      hasSignal: false,
-      hasPdf: false,
-    },
-  });
-}
+      return res.status(202).json({
+        ok: true,
+        data: latestRoot ? (buildStatusResponse(latestRoot, null, signalRun)?.data || null) : {
+          status: 'idle',
+          progress: 0,
+          stage: 'idle',
+          pdf: normalizePdfState(null),
+          hasSignal: false,
+          hasPdf: false,
+        },
+      });
+    }
 
     return res.status(500).json({
       ok: false,
@@ -513,7 +621,11 @@ router.get('/status', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const root = await findPreferredContextRootForUser(userId);
+    const [root, signalRun] = await Promise.all([
+      findPreferredContextRootForUser(userId),
+      findPreferredSignalRunForUser(userId),
+    ]);
+
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
@@ -523,7 +635,7 @@ router.get('/status', async (req, res) => {
     });
 
     setNoCacheHeaders(res);
-    return res.json(buildStatusResponse(root, shareState));
+    return res.json(buildStatusResponse(root, shareState, signalRun));
   } catch (e) {
     console.error('[mcp/context/status] error:', e);
     return res.status(500).json({ ok: false, error: 'MCP_CONTEXT_STATUS_FAILED' });
@@ -541,18 +653,23 @@ router.get('/latest', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const root = await findPreferredContextRootForUser(userId);
+    const [root, signalRun] = await Promise.all([
+      findPreferredContextRootForUser(userId),
+      findPreferredSignalRunForUser(userId),
+    ]);
+
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
 
     const state = root?.aiContext || {};
     const signalPayload = state?.signalPayload || state?.encodedPayload || null;
+
     if (!signalPayload) {
       return res.status(404).json({
         ok: false,
         error: 'MCP_CONTEXT_NOT_READY',
-        data: {
+        data: buildStatusResponse(root, null, signalRun)?.data || {
           status: state?.status || 'idle',
           progress: state?.progress || 0,
           stage: state?.stage || 'idle',
@@ -561,23 +678,26 @@ router.get('/latest', async (req, res) => {
       });
     }
 
+    const statusData = buildStatusResponse(root, null, signalRun)?.data || {};
+
     setNoCacheHeaders(res);
     return res.json({
       ok: true,
       data: signalPayload,
       meta: {
-        status: state?.status || 'done',
-        progress: state?.progress || 100,
-        stage: state?.stage || 'completed',
-        snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
-        sourceSnapshots: state?.sourceSnapshots || signalPayload?.sourceSnapshots || null,
-        contextRangeDays: toNum(state?.contextRangeDays) || null,
-        storageRangeDays: toNum(state?.storageRangeDays) || null,
-        usedOpenAI: !!state?.usedOpenAI,
-        model: state?.model || null,
-        generatedAt: state?.finishedAt || null,
-        hasPdf: normalizePdfState(state?.pdf).ready,
-        buildAttemptId: state?.buildAttemptId || null,
+        status: statusData?.status || state?.status || 'done',
+        progress: toNum(statusData?.progress, state?.progress || 100),
+        stage: statusData?.stage || state?.stage || 'completed',
+        snapshotId: statusData?.snapshotId || state?.snapshotId || root?.latestSnapshotId || null,
+        sourceSnapshots: statusData?.sourceSnapshots || state?.sourceSnapshots || signalPayload?.sourceSnapshots || null,
+        contextRangeDays: toNum(statusData?.contextRangeDays) || toNum(state?.contextRangeDays) || null,
+        storageRangeDays: toNum(statusData?.storageRangeDays) || toNum(state?.storageRangeDays) || null,
+        usedOpenAI: 'usedOpenAI' in statusData ? !!statusData.usedOpenAI : !!state?.usedOpenAI,
+        model: statusData?.model || state?.model || null,
+        generatedAt: statusData?.finishedAt || state?.finishedAt || null,
+        hasPdf: !!statusData?.hasPdf,
+        buildAttemptId: statusData?.buildAttemptId || state?.buildAttemptId || null,
+        signalRunId: statusData?.signalRunId || null,
       },
     });
   } catch (e) {
@@ -597,23 +717,30 @@ router.get('/pdf/download', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const root = await findPreferredContextRootForUser(userId);
+    const [root, signalRun] = await Promise.all([
+      findPreferredContextRootForUser(userId),
+      findPreferredSignalRunForUser(userId),
+    ]);
+
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
 
     const state = root?.aiContext || {};
-    const pdf = normalizePdfState(state?.pdf);
+    const runPdf = signalRun?.pdf && signalRun?.pdf.status !== 'idle' ? signalRun.pdf : null;
+    const pdf = runPdf || normalizePdfState(state?.pdf);
 
     if (!pdf.ready) {
       return res.status(409).json({
         ok: false,
         error: 'MCP_SIGNAL_PDF_NOT_READY',
         data: {
-          status: state?.status || 'idle',
-          progress: state?.progress || 0,
-          stage: state?.stage || 'idle',
-          pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
+          status: signalRun?.status || state?.status || 'idle',
+          progress: signalRun ? signalRun.progress : (state?.progress || 0),
+          stage: signalRun?.stage || state?.stage || 'idle',
+          pendingConnectedSources: Array.isArray(signalRun?.pendingConnectedSources)
+            ? signalRun.pendingConnectedSources
+            : (Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : []),
           pdf,
         },
       });
@@ -648,17 +775,29 @@ router.get('/pdf/status', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'NO_SESSION' });
     }
 
-    const root = await findPreferredContextRootForUser(userId);
+    const [root, signalRun] = await Promise.all([
+      findPreferredContextRootForUser(userId),
+      findPreferredSignalRunForUser(userId),
+    ]);
+
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
 
-    const pdf = normalizePdfState(root?.aiContext?.pdf);
+    const state = root?.aiContext || {};
+    const pdf = signalRun?.pdf && signalRun?.pdf.status !== 'idle'
+      ? signalRun.pdf
+      : normalizePdfState(state?.pdf);
+
     setNoCacheHeaders(res);
 
     return res.json({
       ok: true,
-      data: pdf,
+      data: {
+        ...pdf,
+        signalRunId: signalRun?.signalRunId || null,
+        buildAttemptId: signalRun?.buildAttemptId || state?.buildAttemptId || null,
+      },
     });
   } catch (e) {
     console.error('[mcp/context/pdf/status] error:', e);
