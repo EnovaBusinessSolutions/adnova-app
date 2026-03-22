@@ -127,37 +127,6 @@ function getStorageRangeDaysFromRoot(root) {
   return n > 0 ? n : null;
 }
 
-function stableSortObject(value) {
-  if (Array.isArray(value)) {
-    return value.map(stableSortObject);
-  }
-
-  if (value && typeof value === 'object') {
-    return Object.keys(value)
-      .sort()
-      .reduce((acc, key) => {
-        acc[key] = stableSortObject(value[key]);
-        return acc;
-      }, {});
-  }
-
-  return value;
-}
-
-function stableJson(value) {
-  try {
-    return JSON.stringify(stableSortObject(value || null));
-  } catch (_) {
-    return '';
-  }
-}
-
-function sameSourceSnapshots(a, b) {
-  const left = stableJson(a || null);
-  const right = stableJson(b || null);
-  return !!left && !!right && left === right;
-}
-
 function emptyPdfState(extra = {}) {
   return {
     status: 'idle',
@@ -174,46 +143,8 @@ function emptyPdfState(extra = {}) {
     renderer: null,
     version: 1,
     error: null,
-    signalSnapshotId: null,
-    signalSourceSnapshots: null,
-    signalGeneratedAt: null,
     ...extra,
   };
-}
-
-function normalizePdfState(pdf) {
-  const state = pdf || {};
-  return {
-    ...emptyPdfState(),
-    ...state,
-    status: safeStr(state?.status) || 'idle',
-    stage: safeStr(state?.stage) || 'idle',
-    progress: toNum(state?.progress, 0),
-    sizeBytes: toNum(state?.sizeBytes, 0),
-    pageCount: toNum(state?.pageCount, 0) || null,
-    version: toNum(state?.version, 1) || 1,
-  };
-}
-
-function isPdfCurrentForTarget(pdfLike, targetSnapshotId, targetSourceSnapshots) {
-  const pdf = normalizePdfState(pdfLike);
-  if (pdf.status !== 'ready') return false;
-
-  const pdfSnapshotId = safeStr(pdf?.signalSnapshotId).trim();
-  const wantedSnapshotId = safeStr(targetSnapshotId).trim();
-
-  if (!pdfSnapshotId || !wantedSnapshotId) return false;
-  if (pdfSnapshotId !== wantedSnapshotId) return false;
-
-  return sameSourceSnapshots(pdf?.signalSourceSnapshots || null, targetSourceSnapshots || null);
-}
-
-function isPdfCurrentForAi(ai) {
-  return isPdfCurrentForTarget(
-    ai?.pdf || null,
-    ai?.snapshotId || null,
-    ai?.sourceSnapshots || null
-  );
 }
 
 function makeBuildAttemptId() {
@@ -1728,37 +1659,37 @@ async function buildPdfForUser(userId) {
     throw err;
   }
 
-  const ai = root?.aiContext || {};
-  const signalPayload = ai?.signalPayload || ai?.encodedPayload || null;
-  const pdfState = ai?.pdf || {};
+const ai = root?.aiContext || {};
+const signalPayload = ai?.signalPayload || ai?.encodedPayload || null;
+const pdfState = ai?.pdf || {};
 
-  if (!signalPayload) {
-    const err = new Error('MCP_CONTEXT_NOT_READY');
-    err.code = 'MCP_CONTEXT_NOT_READY';
-    throw err;
-  }
+if (!signalPayload) {
+  const err = new Error('MCP_CONTEXT_NOT_READY');
+  err.code = 'MCP_CONTEXT_NOT_READY';
+  throw err;
+}
 
-  if (!isSignalPayloadBuildableForPdf(signalPayload)) {
-    const err = new Error('MCP_SIGNAL_NOT_VALID_FOR_PDF');
-    err.code = 'MCP_SIGNAL_NOT_VALID_FOR_PDF';
-    throw err;
-  }
+if (!isSignalPayloadBuildableForPdf(signalPayload)) {
+  const err = new Error('MCP_SIGNAL_NOT_VALID_FOR_PDF');
+  err.code = 'MCP_SIGNAL_NOT_VALID_FOR_PDF';
+  throw err;
+}
 
-  if (pdfState?.status === 'ready') {
-    return buildResultFromRoot(root, {
-      status: ai?.status || 'done',
-      progress: toNum(ai?.progress, 100),
-      stage: ai?.stage || 'completed',
-    });
-  }
+if (pdfState?.status === 'ready') {
+  return buildResultFromRoot(root, {
+    status: ai?.status || 'done',
+    progress: toNum(ai?.progress, 100),
+    stage: ai?.stage || 'completed',
+  });
+}
 
-  if (pdfState?.status === 'processing') {
-    return buildResultFromRoot(root, {
-      status: ai?.status || 'done',
-      progress: toNum(ai?.progress, 100),
-      stage: ai?.stage || 'completed',
-    });
-  }
+if (pdfState?.status === 'processing') {
+  return buildResultFromRoot(root, {
+    status: ai?.status || 'done',
+    progress: toNum(ai?.progress, 100),
+    stage: ai?.stage || 'completed',
+  });
+}
 
   await updateRootAiContext(userId, (currentAi) => ({
     ...(currentAi || {}),
