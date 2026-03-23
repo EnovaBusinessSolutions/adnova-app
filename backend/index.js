@@ -1,6 +1,16 @@
 // backend/index.js
 require("dotenv").config();
 
+// Render inyecta RENDER_EXTERNAL_URL con la URL pública del servicio.
+// Si APP_URL no está definida, Passport/Google OAuth usarían el default (adray.ai) y el login falla en staging.
+(function bootstrapAppUrlFromRender() {
+  if (String(process.env.APP_URL || "").trim()) return;
+  const renderUrl = String(process.env.RENDER_EXTERNAL_URL || "").trim();
+  if (!renderUrl) return;
+  const withProto = /^https?:\/\//i.test(renderUrl) ? renderUrl : `https://${renderUrl}`;
+  process.env.APP_URL = withProto.replace(/\/$/, "");
+})();
+
 const express = require("express");
 const session = require("express-session");
 const ConnectMongo = require("connect-mongo"); // ✅ NEW (Node 22 safe)
