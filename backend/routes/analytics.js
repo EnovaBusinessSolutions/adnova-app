@@ -2763,6 +2763,50 @@ router.get('/:account_id/data-coverage', async (req, res) => {
     const { account_id } = req.params;
     const days = Math.max(1, Math.min(90, Number.parseInt(String(req.query.days || '30'), 10) || 30));
     const since = subDays(new Date(), days);
+    const warnings = [];
+
+    const isSchemaDriftError = (error) => {
+      if (!error) return false;
+      if (error.code === 'P2022') return true;
+      const msg = String(error.message || '').toLowerCase();
+      return msg.includes('does not exist') || (msg.includes('column') && msg.includes('exist'));
+    };
+
+    const safeCount = async (label, queryBuilder) => {
+      try {
+        return await queryBuilder();
+      } catch (error) {
+        if (isSchemaDriftError(error)) {
+          warnings.push({ label, error: String(error?.message || error) });
+          return 0;
+        }
+        throw error;
+      }
+    };
+
+    const safeFindUnique = async (label, queryBuilder, fallback = null) => {
+      try {
+        return await queryBuilder();
+      } catch (error) {
+        if (isSchemaDriftError(error)) {
+          warnings.push({ label, error: String(error?.message || error) });
+          return fallback;
+        }
+        throw error;
+      }
+    };
+
+    const safeFindMany = async (label, queryBuilder, fallback = []) => {
+      try {
+        return await queryBuilder();
+      } catch (error) {
+        if (isSchemaDriftError(error)) {
+          warnings.push({ label, error: String(error?.message || error) });
+          return fallback;
+        }
+        throw error;
+      }
+    };
 
     const eventBaseWhere = {
       accountId: account_id,
@@ -2818,45 +2862,45 @@ router.get('/:account_id/data-coverage', async (req, res) => {
       accountRecord,
       platformConnections,
     ] = await Promise.all([
-      prisma.event.count({ where: eventBaseWhere }),
-      prisma.session.count({ where: sessionBaseWhere }),
-      prisma.order.count({ where: orderBaseWhere }),
-      prisma.identityGraph.count({ where: { accountId: account_id } }),
-      prisma.checkoutSessionMap.count({ where: { accountId: account_id, createdAt: { gte: since } } }),
+      safeCount('events.total', () => prisma.event.count({ where: eventBaseWhere })),
+      safeCount('sessions.total', () => prisma.session.count({ where: sessionBaseWhere })),
+      safeCount('orders.total', () => prisma.order.count({ where: orderBaseWhere })),
+      safeCount('identity.total', () => prisma.identityGraph.count({ where: { accountId: account_id } })),
+      safeCount('checkout_map.total', () => prisma.checkoutSessionMap.count({ where: { accountId: account_id, createdAt: { gte: since } } })),
 
-      prisma.event.count({ where: { ...eventBaseWhere, rawSource: { not: null } } }),
-      prisma.event.count({ where: { ...eventBaseWhere, matchType: { not: null } } }),
-      prisma.event.count({ where: { ...eventBaseWhere, confidenceScore: { not: null } } }),
-      prisma.event.count({ where: { ...eventBaseWhere, collectedAt: { not: null } } }),
+      safeCount('events.raw_source', () => prisma.event.count({ where: { ...eventBaseWhere, rawSource: { not: null } } })),
+      safeCount('events.match_type', () => prisma.event.count({ where: { ...eventBaseWhere, matchType: { not: null } } })),
+      safeCount('events.confidence_score', () => prisma.event.count({ where: { ...eventBaseWhere, confidenceScore: { not: null } } })),
+      safeCount('events.collected_at', () => prisma.event.count({ where: { ...eventBaseWhere, collectedAt: { not: null } } })),
 
-      prisma.session.count({ where: { ...sessionBaseWhere, utmSource: { not: null } } }),
-      prisma.session.count({ where: { ...sessionBaseWhere, utmMedium: { not: null } } }),
-      prisma.session.count({ where: { ...sessionBaseWhere, utmCampaign: { not: null } } }),
-      prisma.session.count({ where: { ...sessionBaseWhere, landingPageUrl: { not: null } } }),
-      prisma.session.count({ where: { ...sessionBaseWhere, referrer: { not: null } } }),
-      prisma.session.count({ where: { ...sessionBaseWhere, ipHash: { not: null } } }),
-      prisma.session.count({ where: { ...sessionBaseWhere, ga4SessionSource: { not: null } } }),
-      prisma.session.count({ where: { ...sessionBaseWhere, sessionEndAt: { not: null } } }),
-      prisma.session.count({ where: { ...sessionBaseWhere, fbclid: { not: null } } }),
-      prisma.session.count({ where: { ...sessionBaseWhere, gclid: { not: null } } }),
-      prisma.session.count({ where: { ...sessionBaseWhere, ttclid: { not: null } } }),
+      safeCount('sessions.utm_source', () => prisma.session.count({ where: { ...sessionBaseWhere, utmSource: { not: null } } })),
+      safeCount('sessions.utm_medium', () => prisma.session.count({ where: { ...sessionBaseWhere, utmMedium: { not: null } } })),
+      safeCount('sessions.utm_campaign', () => prisma.session.count({ where: { ...sessionBaseWhere, utmCampaign: { not: null } } })),
+      safeCount('sessions.landing_page', () => prisma.session.count({ where: { ...sessionBaseWhere, landingPageUrl: { not: null } } })),
+      safeCount('sessions.referrer', () => prisma.session.count({ where: { ...sessionBaseWhere, referrer: { not: null } } })),
+      safeCount('sessions.ip_hash', () => prisma.session.count({ where: { ...sessionBaseWhere, ipHash: { not: null } } })),
+      safeCount('sessions.ga4_session_source', () => prisma.session.count({ where: { ...sessionBaseWhere, ga4SessionSource: { not: null } } })),
+      safeCount('sessions.session_end_at', () => prisma.session.count({ where: { ...sessionBaseWhere, sessionEndAt: { not: null } } })),
+      safeCount('sessions.fbclid', () => prisma.session.count({ where: { ...sessionBaseWhere, fbclid: { not: null } } })),
+      safeCount('sessions.gclid', () => prisma.session.count({ where: { ...sessionBaseWhere, gclid: { not: null } } })),
+      safeCount('sessions.ttclid', () => prisma.session.count({ where: { ...sessionBaseWhere, ttclid: { not: null } } })),
 
-      prisma.identityGraph.count({ where: { accountId: account_id, fingerprintHash: { not: null } } }),
-      prisma.identityGraph.count({ where: { accountId: account_id, emailHash: { not: null } } }),
-      prisma.identityGraph.count({ where: { accountId: account_id, phoneHash: { not: null } } }),
-      prisma.identityGraph.count({ where: { accountId: account_id, customerId: { not: null } } }),
+      safeCount('identity.fingerprint_hash', () => prisma.identityGraph.count({ where: { accountId: account_id, fingerprintHash: { not: null } } })),
+      safeCount('identity.email_hash', () => prisma.identityGraph.count({ where: { accountId: account_id, emailHash: { not: null } } })),
+      safeCount('identity.phone_hash', () => prisma.identityGraph.count({ where: { accountId: account_id, phoneHash: { not: null } } })),
+      safeCount('identity.customer_id', () => prisma.identityGraph.count({ where: { accountId: account_id, customerId: { not: null } } })),
 
-      prisma.order.count({ where: { ...orderBaseWhere, checkoutToken: { not: null } } }),
-      prisma.order.count({ where: { ...orderBaseWhere, customerId: { not: null } } }),
-      prisma.order.count({ where: { ...orderBaseWhere, emailHash: { not: null } } }),
-      prisma.order.count({ where: { ...orderBaseWhere, phoneHash: { not: null } } }),
-      prisma.order.count({ where: { ...orderBaseWhere, refundAmount: { gt: 0 } } }),
-      prisma.order.count({ where: { ...orderBaseWhere, chargebackFlag: true } }),
-      prisma.order.count({ where: { ...orderBaseWhere, ordersCount: { not: null } } }),
-      prisma.order.count({ where: { ...orderBaseWhere, platformCreatedAt: { not: null } } }),
+      safeCount('orders.checkout_token', () => prisma.order.count({ where: { ...orderBaseWhere, checkoutToken: { not: null } } })),
+      safeCount('orders.customer_id', () => prisma.order.count({ where: { ...orderBaseWhere, customerId: { not: null } } })),
+      safeCount('orders.email_hash', () => prisma.order.count({ where: { ...orderBaseWhere, emailHash: { not: null } } })),
+      safeCount('orders.phone_hash', () => prisma.order.count({ where: { ...orderBaseWhere, phoneHash: { not: null } } })),
+      safeCount('orders.refund_amount', () => prisma.order.count({ where: { ...orderBaseWhere, refundAmount: { gt: 0 } } })),
+      safeCount('orders.chargeback_flag', () => prisma.order.count({ where: { ...orderBaseWhere, chargebackFlag: true } })),
+      safeCount('orders.orders_count', () => prisma.order.count({ where: { ...orderBaseWhere, ordersCount: { not: null } } })),
+      safeCount('orders.created_at', () => prisma.order.count({ where: { ...orderBaseWhere, platformCreatedAt: { not: null } } })),
 
-      prisma.account.findUnique({ where: { accountId: account_id }, select: { domain: true } }),
-      prisma.platformConnection.findMany({ where: { accountId: account_id }, select: { platform: true, status: true } }),
+      safeFindUnique('account.domain', () => prisma.account.findUnique({ where: { accountId: account_id }, select: { domain: true } }), null),
+      safeFindMany('platform_connections.list', () => prisma.platformConnection.findMany({ where: { accountId: account_id }, select: { platform: true, status: true } }), []),
     ]);
 
     const paidMedia = await buildPaidMediaSummary({
@@ -2941,6 +2985,7 @@ router.get('/:account_id/data-coverage', async (req, res) => {
       accountId: account_id,
       windowDays: days,
       since: since.toISOString(),
+      warnings,
       totals: {
         events: totalEvents,
         sessions: totalSessions,
