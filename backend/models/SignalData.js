@@ -40,6 +40,7 @@ function safeStr(v) {
 }
 
 function toNum(v, fallback = 0) {
+  if (v == null && fallback === null) return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
@@ -142,6 +143,10 @@ const SignalSourcesSchema = new Schema(
 
     sourceSnapshots: { type: Schema.Types.Mixed, default: null },
     sourcesStatus: { type: Schema.Types.Mixed, default: null },
+
+    sourcesFingerprint: { type: String, default: null, index: true },
+    currentSourcesFingerprint: { type: String, default: null },
+    fingerprintVersion: { type: Number, default: 1 },
   },
   { _id: false, strict: false }
 );
@@ -170,6 +175,9 @@ const SignalPdfStateSchema = new Schema(
     renderer: { type: String, default: null },
     version: { type: Number, default: 1 },
     error: { type: String, default: null },
+
+    pdfFingerprint: { type: String, default: null, index: true },
+    currentPdfFingerprint: { type: String, default: null },
 
     requestedAt: { type: Date, default: null },
     startedAt: { type: Date, default: null },
@@ -207,6 +215,11 @@ const SignalDataSchema = new Schema(
     hasSignal: { type: Boolean, default: false },
     signalValidForPdf: { type: Boolean, default: false },
 
+    signalCurrent: { type: Boolean, default: false, index: true },
+    pdfCurrent: { type: Boolean, default: false, index: true },
+    needsSignalRebuild: { type: Boolean, default: false, index: true },
+    needsPdfRebuild: { type: Boolean, default: false, index: true },
+
     snapshotId: { type: String, default: null, index: true },
     contextRangeDays: { type: Number, default: null },
     storageRangeDays: { type: Number, default: null },
@@ -225,6 +238,10 @@ const SignalDataSchema = new Schema(
     },
 
     staleReason: { type: String, default: null },
+    invalidatedAt: { type: Date, default: null },
+    invalidationReason: { type: String, default: null },
+    supersededByAttemptId: { type: String, default: null, index: true },
+
     error: { type: String, default: null },
     errorCode: { type: String, default: null },
     errorStage: { type: String, default: null },
@@ -252,6 +269,11 @@ SignalDataSchema.index({ userId: 1, createdAt: -1 });
 SignalDataSchema.index({ userId: 1, status: 1, createdAt: -1 });
 SignalDataSchema.index({ userId: 1, buildAttemptId: 1 });
 SignalDataSchema.index({ userId: 1, signalComplete: 1, createdAt: -1 });
+SignalDataSchema.index({ userId: 1, signalCurrent: 1, createdAt: -1 });
+SignalDataSchema.index({ userId: 1, pdfCurrent: 1, createdAt: -1 });
+SignalDataSchema.index({ userId: 1, needsSignalRebuild: 1, createdAt: -1 });
+SignalDataSchema.index({ userId: 1, needsPdfRebuild: 1, createdAt: -1 });
+SignalDataSchema.index({ userId: 1, 'sources.sourcesFingerprint': 1 });
 SignalDataSchema.index({ rootId: 1, createdAt: -1 });
 SignalDataSchema.index({ 'pdf.status': 1, createdAt: -1 });
 
@@ -297,6 +319,11 @@ function normalizeBasePayload(payload = {}) {
     hasSignal: !!cleaned.hasSignal,
     signalValidForPdf: !!cleaned.signalValidForPdf,
 
+    signalCurrent: !!cleaned.signalCurrent,
+    pdfCurrent: !!cleaned.pdfCurrent,
+    needsSignalRebuild: !!cleaned.needsSignalRebuild,
+    needsPdfRebuild: !!cleaned.needsPdfRebuild,
+
     snapshotId: safeStr(cleaned.snapshotId).trim() || null,
     contextRangeDays: toNum(cleaned.contextRangeDays, null),
     storageRangeDays: toNum(cleaned.storageRangeDays, null),
@@ -311,6 +338,9 @@ function normalizeBasePayload(payload = {}) {
       failedSources: uniqStrings(cleaned?.sources?.failedSources || [], 25),
       sourceSnapshots: cleaned?.sources?.sourceSnapshots || null,
       sourcesStatus: buildSourcesStatusSummary(cleaned?.sources?.sourcesStatus || {}),
+      sourcesFingerprint: safeStr(cleaned?.sources?.sourcesFingerprint).trim() || null,
+      currentSourcesFingerprint: safeStr(cleaned?.sources?.currentSourcesFingerprint).trim() || null,
+      fingerprintVersion: toNum(cleaned?.sources?.fingerprintVersion, 1) || 1,
     },
 
     pdf: {
@@ -328,6 +358,8 @@ function normalizeBasePayload(payload = {}) {
       renderer: cleaned?.pdf?.renderer || null,
       version: toNum(cleaned?.pdf?.version, 1) || 1,
       error: cleaned?.pdf?.error || null,
+      pdfFingerprint: safeStr(cleaned?.pdf?.pdfFingerprint).trim() || null,
+      currentPdfFingerprint: safeStr(cleaned?.pdf?.currentPdfFingerprint).trim() || null,
       requestedAt: cleaned?.pdf?.requestedAt ? new Date(cleaned.pdf.requestedAt) : null,
       startedAt: cleaned?.pdf?.startedAt ? new Date(cleaned.pdf.startedAt) : null,
       finishedAt: cleaned?.pdf?.finishedAt ? new Date(cleaned.pdf.finishedAt) : null,
@@ -335,6 +367,10 @@ function normalizeBasePayload(payload = {}) {
     },
 
     staleReason: safeStr(cleaned.staleReason).trim() || null,
+    invalidatedAt: cleaned?.invalidatedAt ? new Date(cleaned.invalidatedAt) : null,
+    invalidationReason: safeStr(cleaned.invalidationReason).trim() || null,
+    supersededByAttemptId: safeStr(cleaned.supersededByAttemptId).trim() || null,
+
     error: cleaned.error || null,
     errorCode: safeStr(cleaned.errorCode).trim() || null,
     errorStage: safeStr(cleaned.errorStage).trim() || null,
@@ -370,6 +406,11 @@ function normalizePatchPayload(patch = {}) {
   if ('hasSignal' in cleaned) out.hasSignal = !!cleaned.hasSignal;
   if ('signalValidForPdf' in cleaned) out.signalValidForPdf = !!cleaned.signalValidForPdf;
 
+  if ('signalCurrent' in cleaned) out.signalCurrent = !!cleaned.signalCurrent;
+  if ('pdfCurrent' in cleaned) out.pdfCurrent = !!cleaned.pdfCurrent;
+  if ('needsSignalRebuild' in cleaned) out.needsSignalRebuild = !!cleaned.needsSignalRebuild;
+  if ('needsPdfRebuild' in cleaned) out.needsPdfRebuild = !!cleaned.needsPdfRebuild;
+
   if ('snapshotId' in cleaned) out.snapshotId = safeStr(cleaned.snapshotId).trim() || null;
   if ('contextRangeDays' in cleaned) out.contextRangeDays = toNum(cleaned.contextRangeDays, null);
   if ('storageRangeDays' in cleaned) out.storageRangeDays = toNum(cleaned.storageRangeDays, null);
@@ -378,6 +419,10 @@ function normalizePatchPayload(patch = {}) {
   if ('model' in cleaned) out.model = safeStr(cleaned.model).trim() || null;
 
   if ('staleReason' in cleaned) out.staleReason = safeStr(cleaned.staleReason).trim() || null;
+  if ('invalidatedAt' in cleaned) out.invalidatedAt = cleaned.invalidatedAt ? new Date(cleaned.invalidatedAt) : null;
+  if ('invalidationReason' in cleaned) out.invalidationReason = safeStr(cleaned.invalidationReason).trim() || null;
+  if ('supersededByAttemptId' in cleaned) out.supersededByAttemptId = safeStr(cleaned.supersededByAttemptId).trim() || null;
+
   if ('error' in cleaned) out.error = cleaned.error || null;
   if ('errorCode' in cleaned) out.errorCode = safeStr(cleaned.errorCode).trim() || null;
   if ('errorStage' in cleaned) out.errorStage = safeStr(cleaned.errorStage).trim() || null;
@@ -402,6 +447,9 @@ function normalizePatchPayload(patch = {}) {
       failedSources: uniqStrings(current.failedSources || [], 25),
       sourceSnapshots: current.sourceSnapshots || null,
       sourcesStatus: buildSourcesStatusSummary(current.sourcesStatus || {}),
+      sourcesFingerprint: safeStr(current.sourcesFingerprint).trim() || null,
+      currentSourcesFingerprint: safeStr(current.currentSourcesFingerprint).trim() || null,
+      fingerprintVersion: toNum(current.fingerprintVersion, 1) || 1,
     };
   }
 
@@ -422,6 +470,8 @@ function normalizePatchPayload(patch = {}) {
       renderer: pdf.renderer || null,
       version: toNum(pdf.version, 1) || 1,
       error: pdf.error || null,
+      pdfFingerprint: safeStr(pdf.pdfFingerprint).trim() || null,
+      currentPdfFingerprint: safeStr(pdf.currentPdfFingerprint).trim() || null,
       requestedAt: pdf.requestedAt ? new Date(pdf.requestedAt) : null,
       startedAt: pdf.startedAt ? new Date(pdf.startedAt) : null,
       finishedAt: pdf.finishedAt ? new Date(pdf.finishedAt) : null,
@@ -429,11 +479,13 @@ function normalizePatchPayload(patch = {}) {
     };
   }
 
+  const effectiveStartedAt = out.startedAt || cleaned.startedAt || null;
   const effectiveEnd = out.finishedAt || out.failedAt;
+
   if ('durationMs' in cleaned) {
     out.durationMs = toNum(cleaned.durationMs, 0);
-  } else if (out.startedAt && effectiveEnd) {
-    out.durationMs = calcDurationMs(out.startedAt, effectiveEnd);
+  } else if (effectiveStartedAt && effectiveEnd) {
+    out.durationMs = calcDurationMs(effectiveStartedAt, effectiveEnd);
   }
 
   return cleanUndefined(out);
@@ -503,6 +555,33 @@ SignalDataSchema.statics.findActiveRunForUser = async function (userId) {
 };
 
 /**
+ * Último run completado y válido para PDF.
+ */
+SignalDataSchema.statics.findLatestCompletedValidRunForUser = async function (userId) {
+  return this.findOne({
+    userId,
+    status: 'done',
+    signalComplete: true,
+    hasSignal: true,
+    signalValidForPdf: true,
+  })
+    .sort({ createdAt: -1, updatedAt: -1 })
+    .lean();
+};
+
+/**
+ * Último run current del usuario.
+ */
+SignalDataSchema.statics.findLatestCurrentRunForUser = async function (userId) {
+  return this.findOne({
+    userId,
+    signalCurrent: true,
+  })
+    .sort({ createdAt: -1, updatedAt: -1 })
+    .lean();
+};
+
+/**
  * Patch genérico por signalRunId.
  */
 SignalDataSchema.statics.patchRun = async function (signalRunId, patch = {}) {
@@ -554,9 +633,14 @@ SignalDataSchema.statics.markStage = async function (
     model = undefined,
     hasSignal = undefined,
     signalValidForPdf = undefined,
+    signalCurrent = undefined,
+    pdfCurrent = undefined,
+    needsSignalRebuild = undefined,
+    needsPdfRebuild = undefined,
     sources = undefined,
     error = undefined,
     staleReason = undefined,
+    invalidationReason = undefined,
     meta = undefined,
   } = {}
 ) {
@@ -572,9 +656,14 @@ SignalDataSchema.statics.markStage = async function (
     model,
     hasSignal,
     signalValidForPdf,
+    signalCurrent,
+    pdfCurrent,
+    needsSignalRebuild,
+    needsPdfRebuild,
     sources,
     error,
     staleReason,
+    invalidationReason,
     meta,
     lastHeartbeatAt: nowDate(),
   });
@@ -599,8 +688,19 @@ SignalDataSchema.statics.completeRun = async function (
     hasSignal: 'hasSignal' in (patch || {}) ? !!patch.hasSignal : true,
     signalValidForPdf:
       'signalValidForPdf' in (patch || {}) ? !!patch.signalValidForPdf : true,
+    signalCurrent:
+      'signalCurrent' in (patch || {}) ? !!patch.signalCurrent : true,
+    pdfCurrent:
+      'pdfCurrent' in (patch || {}) ? !!patch.pdfCurrent : false,
+    needsSignalRebuild:
+      'needsSignalRebuild' in (patch || {}) ? !!patch.needsSignalRebuild : false,
+    needsPdfRebuild:
+      'needsPdfRebuild' in (patch || {}) ? !!patch.needsPdfRebuild : true,
     finishedAt,
     failedAt: null,
+    invalidatedAt: null,
+    invalidationReason: null,
+    staleReason: null,
     error: null,
     errorCode: null,
     errorStage: null,
@@ -623,8 +723,13 @@ SignalDataSchema.statics.failRun = async function (
     progress = 100,
     hasSignal = false,
     signalValidForPdf = false,
+    signalCurrent = false,
+    pdfCurrent = false,
+    needsSignalRebuild = false,
+    needsPdfRebuild = false,
     sources = undefined,
     snapshotId = undefined,
+    supersededByAttemptId = undefined,
     meta = undefined,
   } = {}
 ) {
@@ -637,16 +742,104 @@ SignalDataSchema.statics.failRun = async function (
     signalComplete: false,
     hasSignal,
     signalValidForPdf,
+    signalCurrent,
+    pdfCurrent,
+    needsSignalRebuild,
+    needsPdfRebuild,
     error,
     errorCode: safeStr(errorCode).trim() || safeStr(error).trim() || null,
     errorStage: safeStr(errorStage).trim() || 'failed',
     failedAt,
     snapshotId,
+    supersededByAttemptId,
     sources,
     meta,
     durationMs: 0,
     lastHeartbeatAt: nowDate(),
   });
+};
+
+/**
+ * Marca run invalidado porque cambió el source fingerprint.
+ * Esto NO es un error técnico; es stale semántico.
+ */
+SignalDataSchema.statics.invalidateRun = async function (
+  userId,
+  buildAttemptId,
+  {
+    invalidationReason = 'SOURCE_STATE_CHANGED',
+    staleReason = 'SOURCE_STATE_CHANGED',
+    currentSourcesFingerprint = undefined,
+    currentPdfFingerprint = undefined,
+    needsSignalRebuild = true,
+    needsPdfRebuild = true,
+    signalCurrent = false,
+    pdfCurrent = false,
+    meta = undefined,
+  } = {}
+) {
+  const invalidatedAt = nowDate();
+
+  const current = await this.findOne({ userId, buildAttemptId })
+    .sort({ createdAt: -1, updatedAt: -1 });
+
+  if (!current) return null;
+
+  const nextSources = {
+    ...(current.sources?.toObject ? current.sources.toObject() : current.sources || {}),
+  };
+
+  if (currentSourcesFingerprint !== undefined) {
+    nextSources.currentSourcesFingerprint =
+      safeStr(currentSourcesFingerprint).trim() || null;
+  }
+
+  const nextPdf = {
+    ...(current.pdf?.toObject ? current.pdf.toObject() : current.pdf || {}),
+  };
+
+  if (currentPdfFingerprint !== undefined) {
+    nextPdf.currentPdfFingerprint =
+      safeStr(currentPdfFingerprint).trim() || null;
+  }
+
+  return this.findOneAndUpdate(
+    { userId, buildAttemptId },
+    {
+      $set: {
+        signalCurrent: !!signalCurrent,
+        pdfCurrent: !!pdfCurrent,
+        needsSignalRebuild: !!needsSignalRebuild,
+        needsPdfRebuild: !!needsPdfRebuild,
+        staleReason: safeStr(staleReason).trim() || null,
+        invalidationReason: safeStr(invalidationReason).trim() || null,
+        invalidatedAt,
+        sources: nextSources,
+        pdf: nextPdf,
+        meta: meta === undefined ? current.meta || null : meta,
+        updatedAt: invalidatedAt,
+        lastHeartbeatAt: invalidatedAt,
+      },
+    },
+    { new: true, sort: { createdAt: -1 } }
+  );
+};
+
+/**
+ * Invalida el último run current del usuario.
+ */
+SignalDataSchema.statics.invalidateLatestCurrentRunForUser = async function (
+  userId,
+  patch = {}
+) {
+  const current = await this.findOne({
+    userId,
+    signalCurrent: true,
+  }).sort({ createdAt: -1, updatedAt: -1 });
+
+  if (!current) return null;
+
+  return this.invalidateRun(userId, current.buildAttemptId, patch);
 };
 
 /**
@@ -683,38 +876,104 @@ SignalDataSchema.statics.markPdfState = async function (
     renderer: 'renderer' in (pdfPatch || {}) ? (pdfPatch.renderer || null) : current?.pdf?.renderer,
     version: 'version' in (pdfPatch || {}) ? (toNum(pdfPatch.version, 1) || 1) : (toNum(current?.pdf?.version, 1) || 1),
     error: 'error' in (pdfPatch || {}) ? (pdfPatch.error || null) : current?.pdf?.error,
+    pdfFingerprint: 'pdfFingerprint' in (pdfPatch || {})
+      ? (safeStr(pdfPatch.pdfFingerprint).trim() || null)
+      : (current?.pdf?.pdfFingerprint || null),
+    currentPdfFingerprint: 'currentPdfFingerprint' in (pdfPatch || {})
+      ? (safeStr(pdfPatch.currentPdfFingerprint).trim() || null)
+      : (current?.pdf?.currentPdfFingerprint || null),
     requestedAt: current?.pdf?.requestedAt || null,
     startedAt: current?.pdf?.startedAt || null,
     finishedAt: current?.pdf?.finishedAt || null,
     failedAt: current?.pdf?.failedAt || null,
   };
 
+  const patchSet = {
+    pdf: nextPdf,
+    updatedAt: now,
+    lastHeartbeatAt: now,
+  };
+
+  if ('pdfCurrent' in (pdfPatch || {})) {
+    patchSet.pdfCurrent = !!pdfPatch.pdfCurrent;
+  }
+  if ('needsPdfRebuild' in (pdfPatch || {})) {
+    patchSet.needsPdfRebuild = !!pdfPatch.needsPdfRebuild;
+  }
+
   if (status === 'processing') {
     if (!nextPdf.requestedAt) nextPdf.requestedAt = now;
     if (!nextPdf.startedAt) nextPdf.startedAt = now;
     nextPdf.failedAt = null;
+    patchSet.pdfCurrent = false;
   }
 
   if (status === 'ready') {
     nextPdf.finishedAt = now;
     nextPdf.failedAt = null;
+    patchSet.pdfCurrent =
+      'pdfCurrent' in (pdfPatch || {}) ? !!pdfPatch.pdfCurrent : true;
+    patchSet.needsPdfRebuild =
+      'needsPdfRebuild' in (pdfPatch || {}) ? !!pdfPatch.needsPdfRebuild : false;
   }
 
   if (status === 'failed') {
     nextPdf.failedAt = now;
+    patchSet.pdfCurrent = false;
+    patchSet.needsPdfRebuild = true;
   }
 
   return this.findOneAndUpdate(
     { userId, buildAttemptId },
     {
-      $set: {
-        pdf: nextPdf,
-        updatedAt: now,
-        lastHeartbeatAt: now,
-      },
+      $set: patchSet,
     },
     { new: true, sort: { createdAt: -1 } }
   );
+};
+
+/**
+ * Marca todos los runs current viejos como no current.
+ */
+SignalDataSchema.statics.clearCurrentFlagsForUser = async function (
+  userId,
+  {
+    exceptBuildAttemptId = null,
+    invalidationReason = null,
+    currentSourcesFingerprint = null,
+    currentPdfFingerprint = null,
+  } = {}
+) {
+  const query = { userId, $or: [{ signalCurrent: true }, { pdfCurrent: true }] };
+
+  if (safeStr(exceptBuildAttemptId).trim()) {
+    query.buildAttemptId = { $ne: safeStr(exceptBuildAttemptId).trim() };
+  }
+
+  const patch = {
+    signalCurrent: false,
+    pdfCurrent: false,
+    needsSignalRebuild: true,
+    needsPdfRebuild: true,
+    invalidatedAt: nowDate(),
+    lastHeartbeatAt: nowDate(),
+    updatedAt: nowDate(),
+  };
+
+  if (safeStr(invalidationReason).trim()) {
+    patch.invalidationReason = safeStr(invalidationReason).trim();
+    patch.staleReason = safeStr(invalidationReason).trim();
+  }
+
+  if (safeStr(currentSourcesFingerprint).trim()) {
+    patch['sources.currentSourcesFingerprint'] = safeStr(currentSourcesFingerprint).trim();
+  }
+
+  if (safeStr(currentPdfFingerprint).trim()) {
+    patch['pdf.currentPdfFingerprint'] = safeStr(currentPdfFingerprint).trim();
+  }
+
+  return this.updateMany(query, { $set: patch });
 };
 
 module.exports = mongoose.models.SignalData || model('SignalData', SignalDataSchema);

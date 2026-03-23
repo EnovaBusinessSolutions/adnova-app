@@ -37,6 +37,8 @@ const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(process.env.MCP_CONTEXT_RANGE_DAYS |
 const BUILD_WAIT_TIMEOUT_MS = clampInt(process.env.MCP_CONTEXT_BUILD_WAIT_TIMEOUT_MS || 120000, 5000, 300000);
 const BUILD_WAIT_POLL_MS = clampInt(process.env.MCP_CONTEXT_BUILD_WAIT_POLL_MS || 1500, 300, 5000);
 const BUILD_ACTIVE_GUARD_MS = clampInt(process.env.MCP_CONTEXT_BUILD_ACTIVE_GUARD_MS || 180000, 15000, 900000);
+const SOURCE_FINGERPRINT_VERSION = 1;
+const PDF_FINGERPRINT_VERSION = 1;
 
 function safeStr(v) {
   return v == null ? '' : String(v);
@@ -100,6 +102,34 @@ function isChunkDoc(doc) {
   return !!doc.dataset;
 }
 
+function stableSortObject(value) {
+  if (Array.isArray(value)) {
+    return value.map(stableSortObject);
+  }
+
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  const out = {};
+  for (const key of Object.keys(value).sort()) {
+    out[key] = stableSortObject(value[key]);
+  }
+  return out;
+}
+
+function stableStringify(value) {
+  return JSON.stringify(stableSortObject(value));
+}
+
+function sha256Hex(input) {
+  return crypto.createHash('sha256').update(safeStr(input)).digest('hex');
+}
+
+function safeBool(v) {
+  return !!v;
+}
+
 function resolveRequestedContextRangeDays(root, requested) {
   const explicit = clampInt(requested, 0, 365);
   if (explicit > 0) return explicit;
@@ -144,6 +174,8 @@ function emptyPdfState(extra = {}) {
     renderer: null,
     version: 1,
     error: null,
+    pdfFingerprint: null,
+    currentPdfFingerprint: null,
     ...extra,
   };
 }
@@ -300,6 +332,8 @@ function buildSignalSourcesPayload({
   sourceSnapshots = null,
   usableSources = [],
   pendingConnectedSources = [],
+  sourcesFingerprint = null,
+  currentSourcesFingerprint = null,
 } = {}) {
   const connectedSources = [];
   const failedSources = [];
@@ -323,7 +357,85 @@ function buildSignalSourcesPayload({
     failedSources: uniqStrings(failedSources || [], 25),
     sourceSnapshots: sourceSnapshots || null,
     sourcesStatus: sourcesStatus || null,
+    sourcesFingerprint: safeStr(sourcesFingerprint).trim() || null,
+    currentSourcesFingerprint: safeStr(currentSourcesFingerprint).trim() || null,
+    fingerprintVersion: SOURCE_FINGERPRINT_VERSION,
   };
+}
+
+function buildCurrentSourceFingerprint({
+  root,
+  sourceStates,
+  sourceSnapshots,
+  usableSources,
+  pendingConnectedSources,
+}) {
+  const rootSources = root?.sources || {};
+  const states = sourceStates || {};
+
+  const normalized = {
+    version: SOURCE_FINGERPRINT_VERSION,
+    usableSources: uniqStrings(usableSources || [], 10).sort(),
+    pendingConnectedSources: uniqStrings(pendingConnectedSources || [], 10).sort(),
+    sourceSnapshots: {
+      metaAds: sourceSnapshots?.metaAds || null,
+      googleAds: sourceSnapshots?.googleAds || null,
+      ga4: sourceSnapshots?.ga4 || null,
+    },
+    sources: {
+      metaAds: {
+        connected: safeBool(states?.metaAds?.connected || rootSources?.metaAds?.connected),
+        usable: safeBool(states?.metaAds?.usable),
+        ready: safeBool(states?.metaAds?.ready || rootSources?.metaAds?.ready),
+        snapshotId: states?.metaAds?.snapshotId || null,
+        accountId: rootSources?.metaAds?.accountId || states?.metaAds?.rootState?.accountId || null,
+        chunkCount: toNum(states?.metaAds?.chunkCount, 0),
+      },
+      googleAds: {
+        connected: safeBool(states?.googleAds?.connected || rootSources?.googleAds?.connected),
+        usable: safeBool(states?.googleAds?.usable),
+        ready: safeBool(states?.googleAds?.ready || rootSources?.googleAds?.ready),
+        snapshotId: states?.googleAds?.snapshotId || null,
+        customerId:
+          rootSources?.googleAds?.customerId ||
+          rootSources?.googleAds?.accountId ||
+          states?.googleAds?.rootState?.customerId ||
+          states?.googleAds?.rootState?.accountId ||
+          null,
+        chunkCount: toNum(states?.googleAds?.chunkCount, 0),
+      },
+      ga4: {
+        connected: safeBool(states?.ga4?.connected || rootSources?.ga4?.connected),
+        usable: safeBool(states?.ga4?.usable),
+        ready: safeBool(states?.ga4?.ready || rootSources?.ga4?.ready),
+        snapshotId: states?.ga4?.snapshotId || null,
+        propertyId: rootSources?.ga4?.propertyId || states?.ga4?.rootState?.propertyId || null,
+        chunkCount: toNum(states?.ga4?.chunkCount, 0),
+      },
+    },
+  };
+
+  return sha256Hex(stableStringify(normalized));
+}
+
+function buildPdfFingerprint({
+  signalPayload,
+  sourceFingerprint,
+  snapshotId,
+}) {
+  const payload = {
+    version: PDF_FINGERPRINT_VERSION,
+    sourceFingerprint: safeStr(sourceFingerprint).trim() || null,
+    snapshotId: safeStr(snapshotId).trim() || null,
+    providerAgnostic: !!signalPayload?.providerAgnostic,
+    schema: safeStr(signalPayload?.schema).trim() || null,
+  };
+
+  return sha256Hex(stableStringify(payload));
+}
+
+function getStoredRunSourceFingerprint(run) {
+  return safeStr(run?.sources?.sourcesFingerprint).trim() || null;
 }
 
 async function safeSignalRunUpsert(payload = {}) {
@@ -371,6 +483,51 @@ async function safeSignalPdfState(userId, buildAttemptId, pdfPatch = {}) {
   }
 }
 
+async function safeFindLatestCurrentRunForUser(userId) {
+  try {
+    return await SignalData.findLatestCurrentRunForUser(userId);
+  } catch (err) {
+    console.error('[mcpContextBuilder] SignalData.findLatestCurrentRunForUser failed:', err?.message || err);
+    return null;
+  }
+}
+
+async function safeFindLatestCompletedValidRunForUser(userId) {
+  try {
+    return await SignalData.findLatestCompletedValidRunForUser(userId);
+  } catch (err) {
+    console.error('[mcpContextBuilder] SignalData.findLatestCompletedValidRunForUser failed:', err?.message || err);
+    return null;
+  }
+}
+
+async function safeInvalidateRun(userId, buildAttemptId, patch = {}) {
+  try {
+    return await SignalData.invalidateRun(userId, buildAttemptId, patch);
+  } catch (err) {
+    console.error('[mcpContextBuilder] SignalData.invalidateRun failed:', err?.message || err);
+    return null;
+  }
+}
+
+async function safeInvalidateLatestCurrentRunForUser(userId, patch = {}) {
+  try {
+    return await SignalData.invalidateLatestCurrentRunForUser(userId, patch);
+  } catch (err) {
+    console.error('[mcpContextBuilder] SignalData.invalidateLatestCurrentRunForUser failed:', err?.message || err);
+    return null;
+  }
+}
+
+async function safeClearCurrentFlagsForUser(userId, patch = {}) {
+  try {
+    return await SignalData.clearCurrentFlagsForUser(userId, patch);
+  } catch (err) {
+    console.error('[mcpContextBuilder] SignalData.clearCurrentFlagsForUser failed:', err?.message || err);
+    return null;
+  }
+}
+
 async function safeSupersedeOtherProcessingRuns(userId, currentAttemptId, extra = {}) {
   const cleanAttemptId = safeStr(currentAttemptId).trim();
   if (!userId || !cleanAttemptId) return null;
@@ -393,6 +550,10 @@ async function safeSupersedeOtherProcessingRuns(userId, currentAttemptId, extra 
           errorStage: 'failed',
           signalComplete: false,
           signalValidForPdf: false,
+          signalCurrent: false,
+          pdfCurrent: false,
+          needsSignalRebuild: false,
+          needsPdfRebuild: false,
           ...extra,
         },
       }
@@ -562,6 +723,10 @@ function sourceStateSummaryForStatus(state) {
     datasets: Array.isArray(state?.datasetNames) ? state.datasetNames : [],
     missingRequired: Array.isArray(state?.missingRequired) ? state.missingRequired : [],
     hasAnyOptional: !!state?.hasAnyOptional,
+    accountId: state?.rootState?.accountId || null,
+    customerId: state?.rootState?.customerId || state?.rootState?.accountId || null,
+    propertyId: state?.rootState?.propertyId || null,
+    lastError: state?.rootState?.lastError || null,
   };
 }
 
@@ -1294,6 +1459,10 @@ async function updateRootAiContextForAttempt(userId, attemptId, updater) {
       signalValidForPdf: false,
       signalComplete: false,
       hasSignal: !!(currentAi?.signalPayload || currentAi?.encodedPayload),
+      signalCurrent: false,
+      pdfCurrent: false,
+      needsSignalRebuild: false,
+      needsPdfRebuild: false,
       snapshotId: safeStr(currentAi?.snapshotId || root?.latestSnapshotId).trim() || null,
     });
 
@@ -1340,6 +1509,12 @@ function buildResultFromRoot(root, fallback = {}) {
       hasSignal: !!signalPayload,
       signalComplete: safeStr(state?.status) === 'done',
       signalValidForPdf: isSignalPayloadBuildableForPdf(signalPayload),
+      signalCurrent: !!state?.signalCurrent,
+      pdfCurrent: !!state?.pdfCurrent,
+      needsSignalRebuild: !!state?.needsSignalRebuild,
+      needsPdfRebuild: !!state?.needsPdfRebuild,
+      sourceFingerprint: safeStr(state?.sourceFingerprint).trim() || null,
+      pdfFingerprint: safeStr(state?.pdfFingerprint).trim() || null,
       providerAgnostic: !!state?.encodedPayload?.providerAgnostic,
       usableSources: Array.isArray(state?.usableSources) ? state.usableSources : (fallback.usableSources || []),
       pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : (fallback.pendingConnectedSources || []),
@@ -1357,6 +1532,8 @@ function buildResultFromRoot(root, fallback = {}) {
         sizeBytes: toNum(pdf?.sizeBytes, 0),
         pageCount: toNum(pdf?.pageCount, 0) || null,
         renderer: pdf?.renderer || null,
+        pdfFingerprint: pdf?.pdfFingerprint || null,
+        currentPdfFingerprint: pdf?.currentPdfFingerprint || null,
         error: pdf?.error || null,
       },
       error: state?.error || null,
@@ -1382,6 +1559,12 @@ async function markContextStale(userId, reason = 'source_updated', extra = {}) {
           progress: 0,
           staleReason: safeStr(reason) || 'source_updated',
           staleAt: nowIso(),
+          signalCurrent: false,
+          pdfCurrent: false,
+          needsSignalRebuild: true,
+          needsPdfRebuild: true,
+          sourceFingerprint: null,
+          pdfFingerprint: null,
           error: null,
           pdf: emptyPdfState(),
           ...extra,
@@ -1452,6 +1635,12 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       usableSources: [],
       pendingConnectedSources: [],
       sourcesStatus: null,
+      signalCurrent: false,
+      pdfCurrent: false,
+      needsSignalRebuild: false,
+      needsPdfRebuild: true,
+      sourceFingerprint: null,
+      pdfFingerprint: null,
       pdf: emptyPdfState({ status: 'idle', stage: 'waiting_for_sources', progress: 0 }),
     }));
   }
@@ -1470,6 +1659,10 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     signalComplete: false,
     hasSignal: false,
     signalValidForPdf: false,
+    signalCurrent: false,
+    pdfCurrent: false,
+    needsSignalRebuild: false,
+    needsPdfRebuild: true,
     snapshotId: preferredSnapshotId || null,
     contextRangeDays,
     storageRangeDays,
@@ -1482,11 +1675,15 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       sourceSnapshots: null,
       usableSources: [],
       pendingConnectedSources: [],
+      sourcesFingerprint: null,
+      currentSourcesFingerprint: null,
     }),
     pdf: {
       status: 'idle',
       stage: 'waiting_for_sources',
       progress: 0,
+      pdfFingerprint: null,
+      currentPdfFingerprint: null,
     },
     meta: {
       forceRebuild: !!forceRebuild,
@@ -1508,6 +1705,10 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       progress: 100,
       signalValidForPdf: false,
       signalComplete: false,
+      signalCurrent: false,
+      pdfCurrent: false,
+      needsSignalRebuild: false,
+      needsPdfRebuild: false,
       hasSignal: !!(effectiveRoot?.aiContext?.signalPayload || effectiveRoot?.aiContext?.encodedPayload),
       snapshotId: safeStr(effectiveRoot?.aiContext?.snapshotId || effectiveRoot?.latestSnapshotId).trim() || null,
     });
@@ -1565,6 +1766,44 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     ga4: sourceStateSummaryForStatus(hydratedGa4State),
   };
 
+  const currentSourceFingerprint = buildCurrentSourceFingerprint({
+    root: effectiveRootForChunks,
+    sourceStates: {
+      metaAds: hydratedMetaState,
+      googleAds: hydratedGoogleState,
+      ga4: hydratedGa4State,
+    },
+    sourceSnapshots,
+    usableSources,
+    pendingConnectedSources,
+  });
+
+  const latestCurrentRun = await safeFindLatestCurrentRunForUser(userId);
+  const latestValidRun = latestCurrentRun || await safeFindLatestCompletedValidRunForUser(userId);
+  const previousSourceFingerprint = getStoredRunSourceFingerprint(latestValidRun);
+  const sourceStateChanged =
+    !!latestValidRun &&
+    !!previousSourceFingerprint &&
+    previousSourceFingerprint !== currentSourceFingerprint &&
+    safeStr(latestValidRun?.buildAttemptId).trim() !== attemptId;
+
+  if (sourceStateChanged) {
+    await safeInvalidateRun(userId, latestValidRun.buildAttemptId, {
+      invalidationReason: 'SOURCE_STATE_CHANGED',
+      staleReason: 'SOURCE_STATE_CHANGED',
+      currentSourcesFingerprint: currentSourceFingerprint,
+      currentPdfFingerprint: currentSourceFingerprint,
+      needsSignalRebuild: true,
+      needsPdfRebuild: true,
+      signalCurrent: false,
+      pdfCurrent: false,
+      meta: {
+        ...(latestValidRun?.meta || {}),
+        invalidatedBecauseFingerprintChanged: true,
+      },
+    });
+  }
+
   if (!hasAnyBuildable && pendingConnectedSources.length > 0) {
     const waitResult = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
       ...(currentAi || {}),
@@ -1586,8 +1825,14 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       sourcesStatus,
       usableSources,
       pendingConnectedSources,
+      signalCurrent: false,
+      pdfCurrent: false,
+      needsSignalRebuild: true,
+      needsPdfRebuild: true,
+      sourceFingerprint: currentSourceFingerprint,
+      pdfFingerprint: null,
       error: null,
-      pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
+      pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0, currentPdfFingerprint: currentSourceFingerprint }),
     }));
 
     if (!waitResult?.skipped) {
@@ -1606,11 +1851,17 @@ async function buildUnifiedContextForUser(userId, options = {}) {
         storageRangeDays,
         hasSignal: false,
         signalValidForPdf: false,
+        signalCurrent: false,
+        pdfCurrent: false,
+        needsSignalRebuild: true,
+        needsPdfRebuild: true,
         sources: buildSignalSourcesPayload({
           sourcesStatus,
           sourceSnapshots,
           usableSources,
           pendingConnectedSources,
+          sourcesFingerprint: null,
+          currentSourcesFingerprint: currentSourceFingerprint,
         }),
         meta: {
           timedOut: !!readyState?.timedOut,
@@ -1653,11 +1904,17 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       sourcesStatus,
       usableSources,
       pendingConnectedSources,
+      signalCurrent: false,
+      pdfCurrent: false,
+      needsSignalRebuild: false,
+      needsPdfRebuild: false,
+      sourceFingerprint: currentSourceFingerprint,
+      pdfFingerprint: null,
       error: 'MCP_CONTEXT_NO_USABLE_SOURCES',
       unifiedBase: null,
       encodedPayload: null,
       signalPayload: null,
-      pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
+      pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0, currentPdfFingerprint: currentSourceFingerprint }),
     }));
 
     await safeSignalRunFail(userId, attemptId, {
@@ -1668,6 +1925,10 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       progress: 100,
       hasSignal: false,
       signalValidForPdf: false,
+      signalCurrent: false,
+      pdfCurrent: false,
+      needsSignalRebuild: false,
+      needsPdfRebuild: false,
       snapshotId:
         sourceSnapshots.metaAds ||
         sourceSnapshots.googleAds ||
@@ -1679,6 +1940,8 @@ async function buildUnifiedContextForUser(userId, options = {}) {
         sourceSnapshots,
         usableSources,
         pendingConnectedSources,
+        sourcesFingerprint: null,
+        currentSourcesFingerprint: currentSourceFingerprint,
       }),
       meta: {
         timedOut: !!readyState?.timedOut,
@@ -1718,8 +1981,14 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       sourcesStatus,
       usableSources,
       pendingConnectedSources,
+      signalCurrent: false,
+      pdfCurrent: false,
+      needsSignalRebuild: true,
+      needsPdfRebuild: true,
+      sourceFingerprint: currentSourceFingerprint,
+      pdfFingerprint: null,
       error: null,
-      pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
+      pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0, currentPdfFingerprint: currentSourceFingerprint }),
     }));
 
     if (!partialWait?.skipped) {
@@ -1738,11 +2007,17 @@ async function buildUnifiedContextForUser(userId, options = {}) {
         storageRangeDays,
         hasSignal: false,
         signalValidForPdf: false,
+        signalCurrent: false,
+        pdfCurrent: false,
+        needsSignalRebuild: true,
+        needsPdfRebuild: true,
         sources: buildSignalSourcesPayload({
           sourcesStatus,
           sourceSnapshots,
           usableSources,
           pendingConnectedSources,
+          sourcesFingerprint: null,
+          currentSourcesFingerprint: currentSourceFingerprint,
         }),
         meta: {
           timedOut: !!readyState?.timedOut,
@@ -1785,10 +2060,16 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     sourcesStatus,
     usableSources,
     pendingConnectedSources,
+    signalCurrent: false,
+    pdfCurrent: false,
+    needsSignalRebuild: true,
+    needsPdfRebuild: true,
+    sourceFingerprint: currentSourceFingerprint,
+    pdfFingerprint: null,
     error: null,
     encodedPayload: null,
     signalPayload: null,
-    pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
+    pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0, currentPdfFingerprint: currentSourceFingerprint }),
   }));
 
   if (!compactingResult?.skipped) {
@@ -1807,11 +2088,17 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       storageRangeDays,
       hasSignal: false,
       signalValidForPdf: false,
+      signalCurrent: false,
+      pdfCurrent: false,
+      needsSignalRebuild: true,
+      needsPdfRebuild: true,
       sources: buildSignalSourcesPayload({
         sourcesStatus,
         sourceSnapshots,
         usableSources,
         pendingConnectedSources,
+        sourcesFingerprint: null,
+        currentSourcesFingerprint: currentSourceFingerprint,
       }),
       meta: {
         timedOut: !!readyState?.timedOut,
@@ -1833,6 +2120,10 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       progress: 100,
       signalValidForPdf: false,
       signalComplete: false,
+      signalCurrent: false,
+      pdfCurrent: false,
+      needsSignalRebuild: false,
+      needsPdfRebuild: false,
       hasSignal: !!(latestRootForBase?.aiContext?.signalPayload || latestRootForBase?.aiContext?.encodedPayload),
       snapshotId: safeStr(latestRootForBase?.aiContext?.snapshotId || latestRootForBase?.latestSnapshotId).trim() || null,
     });
@@ -1876,8 +2167,14 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     sourcesStatus,
     usableSources,
     pendingConnectedSources,
+    signalCurrent: false,
+    pdfCurrent: false,
+    needsSignalRebuild: true,
+    needsPdfRebuild: true,
+    sourceFingerprint: currentSourceFingerprint,
+    pdfFingerprint: null,
     error: null,
-    pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
+    pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0, currentPdfFingerprint: currentSourceFingerprint }),
   }));
 
   if (!encodingResult?.skipped) {
@@ -1891,6 +2188,10 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       storageRangeDays,
       hasSignal: false,
       signalValidForPdf: false,
+      signalCurrent: false,
+      pdfCurrent: false,
+      needsSignalRebuild: true,
+      needsPdfRebuild: true,
       usedOpenAI: false,
       model: null,
       sources: buildSignalSourcesPayload({
@@ -1898,6 +2199,8 @@ async function buildUnifiedContextForUser(userId, options = {}) {
         sourceSnapshots,
         usableSources,
         pendingConnectedSources,
+        sourcesFingerprint: null,
+        currentSourcesFingerprint: currentSourceFingerprint,
       }),
       meta: {
         timedOut: !!readyState?.timedOut,
@@ -1907,6 +2210,11 @@ async function buildUnifiedContextForUser(userId, options = {}) {
 
   const encoded = await enrichWithOpenAI(unifiedBase);
   const signalPayload = encoded.payload;
+  const currentPdfFingerprint = buildPdfFingerprint({
+    signalPayload,
+    sourceFingerprint: currentSourceFingerprint,
+    snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+  });
 
   if (!isSignalPayloadBuildableForPdf(signalPayload)) {
     const waitingValidResult = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
@@ -1929,8 +2237,19 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       sourcesStatus,
       usableSources,
       pendingConnectedSources,
+      signalCurrent: false,
+      pdfCurrent: false,
+      needsSignalRebuild: true,
+      needsPdfRebuild: true,
+      sourceFingerprint: currentSourceFingerprint,
+      pdfFingerprint: null,
       error: null,
-      pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
+      pdf: emptyPdfState({
+        status: 'idle',
+        stage: 'idle',
+        progress: 0,
+        currentPdfFingerprint,
+      }),
     }));
 
     if (!waitingValidResult?.skipped) {
@@ -1946,15 +2265,22 @@ async function buildUnifiedContextForUser(userId, options = {}) {
         model: encoded.model || null,
         hasSignal: true,
         signalValidForPdf: false,
+        signalCurrent: false,
+        pdfCurrent: false,
+        needsSignalRebuild: true,
+        needsPdfRebuild: true,
         sources: buildSignalSourcesPayload({
           sourcesStatus,
           sourceSnapshots,
           usableSources,
           pendingConnectedSources,
+          sourcesFingerprint: currentSourceFingerprint,
+          currentSourcesFingerprint: currentSourceFingerprint,
         }),
         meta: {
           timedOut: !!readyState?.timedOut,
           providerAgnostic: !!signalPayload?.providerAgnostic,
+          currentPdfFingerprint,
         },
       });
     }
@@ -1998,10 +2324,28 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     sourcesStatus,
     usableSources,
     pendingConnectedSources,
-    pdf: emptyPdfState({ status: 'idle', stage: 'idle', progress: 0 }),
+    signalCurrent: true,
+    pdfCurrent: false,
+    needsSignalRebuild: false,
+    needsPdfRebuild: true,
+    sourceFingerprint: currentSourceFingerprint,
+    pdfFingerprint: null,
+    pdf: emptyPdfState({
+      status: 'idle',
+      stage: 'idle',
+      progress: 0,
+      currentPdfFingerprint,
+    }),
   }));
 
   if (!finalUpdate?.skipped) {
+    await safeClearCurrentFlagsForUser(userId, {
+      exceptBuildAttemptId: attemptId,
+      invalidationReason: 'SUPERSEDED_BY_NEW_CURRENT_SIGNAL',
+      currentSourcesFingerprint: currentSourceFingerprint,
+      currentPdfFingerprint,
+    });
+
     await safeSignalRunComplete(userId, attemptId, {
       rootId: finalUpdate?.root?._id || latestRootForBase?._id || initialRoot?._id || null,
       stage: 'completed',
@@ -2014,15 +2358,22 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       model: encoded.model || null,
       hasSignal: true,
       signalValidForPdf: true,
+      signalCurrent: true,
+      pdfCurrent: false,
+      needsSignalRebuild: false,
+      needsPdfRebuild: true,
       sources: buildSignalSourcesPayload({
         sourcesStatus,
         sourceSnapshots,
         usableSources,
         pendingConnectedSources,
+        sourcesFingerprint: currentSourceFingerprint,
+        currentSourcesFingerprint: currentSourceFingerprint,
       }),
       meta: {
         timedOut: !!readyState?.timedOut,
         providerAgnostic: !!signalPayload?.providerAgnostic,
+        currentPdfFingerprint,
       },
     });
   }
@@ -2056,6 +2407,12 @@ async function buildPdfForUser(userId) {
   const signalPayload = ai?.signalPayload || ai?.encodedPayload || null;
   const pdfState = ai?.pdf || {};
   const buildAttemptId = safeStr(ai?.buildAttemptId).trim() || await resolveSignalBuildAttemptId(userId, ai);
+  const sourceFingerprint = safeStr(ai?.sourceFingerprint).trim() || null;
+  const pdfFingerprint = buildPdfFingerprint({
+    signalPayload,
+    sourceFingerprint,
+    snapshotId: safeStr(ai?.snapshotId || root?.latestSnapshotId).trim() || null,
+  });
 
   if (!signalPayload) {
     if (buildAttemptId) {
@@ -2064,6 +2421,9 @@ async function buildPdfForUser(userId) {
         stage: 'failed',
         progress: 100,
         error: 'MCP_CONTEXT_NOT_READY',
+        currentPdfFingerprint: sourceFingerprint || null,
+        pdfCurrent: false,
+        needsPdfRebuild: true,
       });
     }
 
@@ -2079,6 +2439,9 @@ async function buildPdfForUser(userId) {
         stage: 'failed',
         progress: 100,
         error: 'MCP_SIGNAL_NOT_VALID_FOR_PDF',
+        currentPdfFingerprint: sourceFingerprint || null,
+        pdfCurrent: false,
+        needsPdfRebuild: true,
       });
     }
 
@@ -2102,6 +2465,10 @@ async function buildPdfForUser(userId) {
         renderer: pdfState?.renderer || null,
         storageKey: pdfState?.storageKey || null,
         localPath: pdfState?.localPath || null,
+        pdfFingerprint: safeStr(pdfState?.pdfFingerprint).trim() || pdfFingerprint,
+        currentPdfFingerprint: pdfFingerprint,
+        pdfCurrent: safeStr(pdfState?.pdfFingerprint).trim() === pdfFingerprint,
+        needsPdfRebuild: safeStr(pdfState?.pdfFingerprint).trim() !== pdfFingerprint,
       });
     }
 
@@ -2118,6 +2485,9 @@ async function buildPdfForUser(userId) {
         status: 'processing',
         stage: pdfState?.stage || 'building_document',
         progress: toNum(pdfState?.progress, 15),
+        currentPdfFingerprint: pdfFingerprint,
+        pdfCurrent: false,
+        needsPdfRebuild: true,
       });
     }
 
@@ -2134,11 +2504,15 @@ async function buildPdfForUser(userId) {
     progress: currentAi?.status === 'done' ? 100 : toNum(currentAi?.progress, 100),
     stage: currentAi?.status === 'done' ? 'completed' : (currentAi?.stage || 'completed'),
     error: currentAi?.error || null,
+    pdfCurrent: false,
+    needsPdfRebuild: true,
+    pdfFingerprint: null,
     pdf: {
       ...(currentAi?.pdf || emptyPdfState()),
       status: 'processing',
       stage: 'building_document',
       progress: 15,
+      currentPdfFingerprint: pdfFingerprint,
       error: null,
     },
   }));
@@ -2149,6 +2523,9 @@ async function buildPdfForUser(userId) {
       stage: 'building_document',
       progress: 15,
       error: null,
+      currentPdfFingerprint: pdfFingerprint,
+      pdfCurrent: false,
+      needsPdfRebuild: true,
     });
   }
 
@@ -2157,11 +2534,15 @@ async function buildPdfForUser(userId) {
 
     await updateRootAiContext(userId, (currentAi) => ({
       ...(currentAi || {}),
+      pdfCurrent: false,
+      needsPdfRebuild: true,
+      pdfFingerprint: null,
       pdf: {
         ...(currentAi?.pdf || emptyPdfState()),
         status: 'processing',
         stage: 'building_document',
         progress: 45,
+        currentPdfFingerprint: pdfFingerprint,
         error: null,
       },
     }));
@@ -2172,6 +2553,9 @@ async function buildPdfForUser(userId) {
         stage: 'building_document',
         progress: 45,
         error: null,
+        currentPdfFingerprint: pdfFingerprint,
+        pdfCurrent: false,
+        needsPdfRebuild: true,
       });
     }
 
@@ -2183,6 +2567,9 @@ async function buildPdfForUser(userId) {
       progress: currentAi?.status === 'done' ? 100 : Math.max(100, toNum(currentAi?.progress, 100)),
       stage: currentAi?.stage === 'failed' ? 'completed' : (currentAi?.stage || 'completed'),
       error: null,
+      pdfCurrent: true,
+      needsPdfRebuild: false,
+      pdfFingerprint,
       pdf: {
         ...(currentAi?.pdf || emptyPdfState()),
         status: 'ready',
@@ -2198,6 +2585,8 @@ async function buildPdfForUser(userId) {
         pageCount: toNum(pdfResult?.pageCount, 0) || null,
         renderer: pdfResult?.renderer || null,
         version: 1,
+        pdfFingerprint,
+        currentPdfFingerprint: pdfFingerprint,
         error: null,
       },
     }));
@@ -2217,6 +2606,10 @@ async function buildPdfForUser(userId) {
         pageCount: toNum(pdfResult?.pageCount, 0) || null,
         renderer: pdfResult?.renderer || null,
         error: null,
+        pdfFingerprint,
+        currentPdfFingerprint: pdfFingerprint,
+        pdfCurrent: true,
+        needsPdfRebuild: false,
       });
     }
 
@@ -2234,12 +2627,16 @@ async function buildPdfForUser(userId) {
       progress: currentAi?.status === 'done' ? 100 : toNum(currentAi?.progress, 100),
       stage: currentAi?.status === 'done' ? 'completed' : (currentAi?.stage || 'completed'),
       error: null,
+      pdfCurrent: false,
+      needsPdfRebuild: true,
+      pdfFingerprint: null,
       pdf: {
         ...(currentAi?.pdf || emptyPdfState()),
         status: 'failed',
         stage: 'failed',
         progress: 100,
         generatedAt: null,
+        currentPdfFingerprint: pdfFingerprint,
         error: pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED',
       },
     }));
@@ -2250,6 +2647,9 @@ async function buildPdfForUser(userId) {
         stage: 'failed',
         progress: 100,
         error: pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED',
+        currentPdfFingerprint: pdfFingerprint,
+        pdfCurrent: false,
+        needsPdfRebuild: true,
       });
     }
 
@@ -2264,6 +2664,15 @@ async function rebuildUnifiedContextForUser(userId, options = {}) {
   await markContextStale(userId, options?.reason || 'source_updated', {
     rebuildRequestedAt: nowIso(),
     rebuildRequestedBy: safeStr(options?.requestedBy) || 'system',
+  });
+
+  await safeInvalidateLatestCurrentRunForUser(userId, {
+    invalidationReason: safeStr(options?.reason).trim() || 'SOURCE_STATE_CHANGED',
+    staleReason: safeStr(options?.reason).trim() || 'SOURCE_STATE_CHANGED',
+    needsSignalRebuild: true,
+    needsPdfRebuild: true,
+    signalCurrent: false,
+    pdfCurrent: false,
   });
 
   return buildUnifiedContextForUser(userId, {
