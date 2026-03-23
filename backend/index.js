@@ -248,6 +248,37 @@ function sessionGuard(req, res, next) {
   return res.status(401).json({ error: "No hay sesión" });
 }
 
+/**
+ * sessionGuard aplicado a /api antes de adrayPlatformRoutes: debe permitir rutas públicas
+ * (registro, login, verify-email, session, webhooks…). Si no, esas rutas nunca se alcanzan
+ * porque están declaradas más abajo en el archivo.
+ */
+function sessionGuardAdrayPlatforms(req, res, next) {
+  if (req.isAuthenticated && req.isAuthenticated()) return next();
+  if (req.method === "OPTIONS") return next();
+
+  const raw = String(req.originalUrl || req.url || "").split("?")[0];
+  const afterApi = raw.replace(/^\/api/, "") || "/";
+
+  const publicGet = new Set([
+    "/auth/verify-email",
+    "/session",
+    "/public-config",
+  ]);
+  const publicPost = new Set([
+    "/register",
+    "/forgot-password",
+    "/login",
+    "/auth/login",
+    "/stripe/webhook",
+  ]);
+
+  if (req.method === "GET" && publicGet.has(afterApi)) return next();
+  if (req.method === "POST" && publicPost.has(afterApi)) return next();
+
+  return sessionGuard(req, res, next);
+}
+
 function isIframeRequest(req) {
   const dest = (req.get("sec-fetch-dest") || "").toLowerCase();
   return dest === "iframe" || req.query.embedded === "1";
@@ -345,7 +376,7 @@ app.use('/wp-plugin', wordpressPluginRoutes);
 // AdRay collect and platform routes
 // Hotfix: bypass collect limiter while stabilizing production collect failures.
 app.use("/collect", collectRoutes);
-app.use("/api", sessionGuard, adrayPlatformRoutes);
+app.use("/api", sessionGuardAdrayPlatforms, adrayPlatformRoutes);
 
 /* =========================
  * Pixel auditor (usa JSON)
