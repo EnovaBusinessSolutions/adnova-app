@@ -46,15 +46,6 @@ const intercomFrame = ['https://widget.intercom.io'];
 
 /**
  * =========================
- * ✅ Cloudflare Turnstile allowlists
- * =========================
- */
-const turnstileScript  = ['https://challenges.cloudflare.com'];
-const turnstileFrame   = ['https://challenges.cloudflare.com', 'https://*.cloudflare.com'];
-const turnstileConnect = ['https://challenges.cloudflare.com', 'https://*.cloudflare.com'];
-
-/**
- * =========================
  * ✅ Tag Assistant (Extensión) - ContentSquare
  * =========================
  */
@@ -99,7 +90,7 @@ const googleImgExtra = [
 
 /**
  * CSP pública (landing, login, register, onboarding, dashboard, etc.)
- * ✅ Permite Calendly + GA4/GTM + Google Ads + Meta Pixel + Clarity + Intercom + Tag Assistant Preview + Turnstile
+ * ✅ Permite Calendly + GA4/GTM + Google Ads + Meta Pixel + Clarity + Intercom + Tag Assistant Preview
  * ✅ + Fix Tag Assistant Extension (ContentSquare)
  *
  * ⚠️ Nota: como insertas scripts inline (gtag/fbq/clarity),
@@ -117,9 +108,6 @@ const publicCSPHelmet = helmet({
       scriptSrc: [
         "'self'",
         "'unsafe-inline'",
-
-        // ✅ Turnstile
-        ...turnstileScript,
 
         // Calendly
         'https://assets.calendly.com',
@@ -154,9 +142,6 @@ const publicCSPHelmet = helmet({
       scriptSrcElem: [
         "'self'",
         "'unsafe-inline'",
-
-        // ✅ Turnstile
-        ...turnstileScript,
 
         // Calendly
         'https://assets.calendly.com',
@@ -204,9 +189,6 @@ const publicCSPHelmet = helmet({
       connectSrc: [
         "'self'",
         ...devConnect,
-
-        // ✅ Turnstile
-        ...turnstileConnect,
 
         // Calendly
         'https://assets.calendly.com',
@@ -293,9 +275,6 @@ const publicCSPHelmet = helmet({
        */
       frameSrc: [
         "'self'",
-
-        // ✅ Turnstile
-        ...turnstileFrame,
 
         'https://calendly.com',
         'https://assets.calendly.com',

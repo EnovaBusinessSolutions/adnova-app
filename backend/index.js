@@ -37,12 +37,6 @@ const {
 // ✅ NEW: Analytics Events (no rompe si falla)
 const { trackEvent } = require("./services/trackEvent");
 
-// ✅ Turnstile
-const requireTurnstileAlways = require("./middlewares/requireTurnstileAlways");
-const requireTurnstileForRegister = require("./middlewares/requireTurnstileForRegister");
-const isTurnstileRegisterSkipped = requireTurnstileForRegister.isTurnstileRegisterSkipped;
-const { verifyTurnstile } = require("./services/turnstile");
-
 /* =========================
  * Modelos para Integraciones (Disconnect)
  * (cargan con fallback para NO romper si cambia el schema)
@@ -876,10 +870,9 @@ function buildIntercomPayload(u) {
 }
 
 /* =========================
- * Turnstile Risk Store (Login)
+ * Login risk store (intentos fallidos; sin captcha — Turnstile retirado)
  * ========================= */
 const LOGIN_RISK_WINDOW_MS = 15 * 60 * 1000;
-const LOGIN_RISK_MAX_FAILS = Number(process.env.LOGIN_RISK_MAX_FAILS || 3);
 
 const loginRiskStore = new Map();
 
@@ -901,7 +894,7 @@ function riskGet(req, email) {
     return { fails: 0, requiresCaptcha: false };
   }
   const fails = v?.fails || 0;
-  return { fails, requiresCaptcha: fails >= LOGIN_RISK_MAX_FAILS };
+  return { fails, requiresCaptcha: false };
 }
 
 function riskFail(req, email) {
@@ -918,7 +911,7 @@ function riskFail(req, email) {
 
   loginRiskStore.set(key, { fails, expiresAt: now + LOGIN_RISK_WINDOW_MS });
 
-  return { fails, requiresCaptcha: fails >= LOGIN_RISK_MAX_FAILS };
+  return { fails, requiresCaptcha: false };
 }
 
 function riskClear(req, email) {
@@ -929,12 +922,7 @@ function riskClear(req, email) {
  * Auth básica (email/pass)
  * ========================= */
 
-/** Público: el front de /register decide si mostrar Turnstile */
-app.get("/api/turnstile/register-required", (_req, res) => {
-  res.json({ required: !isTurnstileRegisterSkipped() });
-});
-
-app.post("/api/register", requireTurnstileForRegister, async (req, res) => {
+app.post("/api/register", async (req, res) => {
   try {
     let { name, email, password } = req.body || {};
 
@@ -1083,7 +1071,7 @@ function makeResetToken() {
   return crypto.randomBytes(32).toString("hex");
 }
 
-app.post("/api/forgot-password", requireTurnstileAlways, async (req, res) => {
+app.post("/api/forgot-password", async (req, res) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
 
@@ -1142,26 +1130,6 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
       return res
         .status(400)
         .json({ success: false, message: "Ingresa tu correo y contraseña." });
-    }
-
-    const risk = riskGet(req, email);
-    if (risk.requiresCaptcha) {
-      const token =
-        String(req.body?.turnstileToken || "").trim() ||
-        String(req.body?.["cf-turnstile-response"] || "").trim() ||
-        String(req.headers?.["x-turnstile-token"] || "").trim();
-
-      const { ok, data } = await verifyTurnstile(token, getClientIp(req));
-      if (!ok) {
-        return res.status(400).json({
-          success: false,
-          ok: false,
-          requiresCaptcha: true,
-          code: "TURNSTILE_REQUIRED_OR_FAILED",
-          errorCodes: data?.["error-codes"] || [],
-          message: "Verificación requerida. Completa el captcha para continuar.",
-        });
-      }
     }
 
     const user = await User.findOne({ email }).select("+password +emailVerified");

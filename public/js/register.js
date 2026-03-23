@@ -1,182 +1,36 @@
-/* public/js/register.js */
+/* public/js/register.js — registro sin Cloudflare Turnstile */
 document.addEventListener('DOMContentLoaded', () => {
   const form = document.getElementById('register-form');
-  const msg  = document.getElementById('register-msg');
+  const msg = document.getElementById('register-msg');
 
   if (!form) return;
 
-  // Evita submit nativo (GET) mientras resolvemos si Turnstile aplica
-  form.addEventListener('submit', (e) => e.preventDefault(), { capture: true });
-
-  // ---------------- Turnstile (explicit) ----------------
-  function getTurnstileSiteKey() {
-    const meta = document.querySelector('meta[name="turnstile-site-key"]');
-    const metaKey = (meta?.getAttribute('content') || '').trim();
-    if (metaKey) return metaKey;
-
-    const bodyKey = (document.body?.dataset?.turnstileSitekey || '').trim();
-    if (bodyKey) return bodyKey;
-
-    const globalKey = (window.TURNSTILE_SITE_KEY || '').trim();
-    if (globalKey) return globalKey;
-
-    return '';
-  }
-
-  function ensureTurnstileScriptLoaded() {
-    return new Promise((resolve, reject) => {
-      try {
-        if (window.turnstile && typeof window.turnstile.render === 'function') return resolve();
-
-        const existing = document.querySelector('script[src*="challenges.cloudflare.com/turnstile/v0/api.js"]');
-        if (existing) {
-          let tries = 0;
-          const t = setInterval(() => {
-            tries++;
-            if (window.turnstile && typeof window.turnstile.render === 'function') {
-              clearInterval(t);
-              resolve();
-            }
-            if (tries > 40) { // ~4s
-              clearInterval(t);
-              reject(new Error('Turnstile script no expuso window.turnstile a tiempo.'));
-            }
-          }, 100);
-          return;
-        }
-
-        // fallback (por si alguien elimina el script del HTML)
-        const s = document.createElement('script');
-        s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-        s.async = true;
-        s.defer = true;
-        s.onload = () => resolve();
-        s.onerror = () => reject(new Error('No se pudo cargar Turnstile.'));
-        document.head.appendChild(s);
-      } catch (e) {
-        reject(e);
-      }
-    });
-  }
-
-  let TS_WIDGET_ID = null;
-
-  async function renderTurnstile() {
-    const siteKey = getTurnstileSiteKey();
-    if (!siteKey) {
-      showMessage('⚠️ Falta configurar el Site Key de Turnstile.', false);
-      return;
-    }
-
-    const slot = document.getElementById('cf-turnstile-slot');
-    if (!slot) {
-      showMessage('⚠️ No se encontró el contenedor del captcha (#cf-turnstile-slot).', false);
-      return;
-    }
-
-    // Evita dobles renders
-    if (TS_WIDGET_ID != null) return;
-
-    try {
-      await ensureTurnstileScriptLoaded();
-
-      // Limpia el slot por seguridad (si quedó algo)
-      slot.innerHTML = '';
-
-      TS_WIDGET_ID = window.turnstile.render(slot, {
-        sitekey: siteKey,
-        size: 'normal',     // ✅ clave para evitar 400020
-        theme: 'auto',
-        appearance: 'always',
-        callback: () => {},
-        'expired-callback': () => { resetTurnstile(); },
-        'error-callback':   () => { resetTurnstile(); },
-      });
-    } catch (err) {
-      console.error('[register.js] Turnstile render error:', err);
-      showMessage('No se pudo cargar la verificación de seguridad. Recarga la página.', false);
-    }
-  }
-
-  function getTurnstileToken() {
-    try {
-      if (TS_WIDGET_ID != null && window.turnstile?.getResponse) {
-        return (window.turnstile.getResponse(TS_WIDGET_ID) || '').trim();
-      }
-    } catch (_) {}
-    // fallback por si CF cambia algo (o si se renderizó de otra forma)
-    const el = document.querySelector('input[name="cf-turnstile-response"]');
-    return (el?.value || '').trim();
-  }
-
-  function resetTurnstile() {
-    try {
-      if (TS_WIDGET_ID != null) window.turnstile?.reset?.(TS_WIDGET_ID);
-      else window.turnstile?.reset?.();
-    } catch (_) {}
-  }
-
-  // Turnstile solo si el servidor lo exige (producción). Staging: TURNSTILE_SKIP_REGISTRATION=true
-  let turnstileRequired = true;
-
-  async function initRegisterTurnstile() {
-    try {
-      const r = await fetch('/api/turnstile/register-required');
-      if (r.ok) {
-        const d = await r.json();
-        turnstileRequired = Boolean(d.required);
-      }
-    } catch (_) {}
-
-    const wrap = document.getElementById('turnstile-wrap');
-    if (!turnstileRequired) {
-      if (wrap) wrap.style.display = 'none';
-    } else {
-      renderTurnstile();
-    }
-  }
-
-  // ---------------- submit ----------------
-  function attachSubmit() {
-    form.addEventListener('submit', async (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    const name     = (document.getElementById('name')?.value || '').trim();
-    const email    = (document.getElementById('email')?.value || '').trim();
+    const name = (document.getElementById('name')?.value || '').trim();
+    const email = (document.getElementById('email')?.value || '').trim();
     const password = document.getElementById('password')?.value || '';
-    const confirm  = document.getElementById('confirm')?.value || '';
+    const confirm = document.getElementById('confirm')?.value || '';
 
     if (!name) return showMessage('Por favor ingresa tu nombre.', false);
     if (!email) return showMessage('Por favor ingresa tu correo.', false);
     if (!password) return showMessage('Por favor ingresa una contraseña.', false);
     if (password !== confirm) return showMessage('Las contraseñas no coinciden.', false);
 
-    let turnstileToken = '';
-    if (turnstileRequired) {
-      turnstileToken = getTurnstileToken();
-      if (!turnstileToken) {
-        showMessage('Por favor completa la verificación de seguridad.', false);
-        return;
-      }
-    }
-
     try {
       showMessage('Creando cuenta…', true);
 
-      const payload = { name, email, password };
-      if (turnstileRequired && turnstileToken) payload.turnstileToken = turnstileToken;
-
       const res = await fetch('/api/register', {
-        method:  'POST',
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(payload),
+        body: JSON.stringify({ name, email, password }),
       });
 
       const data = await res.json().catch(() => ({}));
       const success = Boolean(data?.success ?? data?.ok);
 
       if (res.ok && success) {
-        // TRACKING (sin PII)
         try {
           window.gtag?.('event', 'sign_up', { method: 'email' });
           window.fbq?.('track', 'CompleteRegistration');
@@ -184,19 +38,9 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (_) {}
 
         showMessage('Cuenta creada. Revisa tu correo para verificar tu cuenta…', true);
-        resetTurnstile(); // token consumido
         setTimeout(() => (window.location.href = '/confirmation.html'), 1500);
         return;
       }
-
-      // Si Turnstile falló/expiró
-      const isTurnstileFail =
-        data?.code === 'TURNSTILE_FAILED' ||
-        data?.code === 'TURNSTILE_REQUIRED_OR_FAILED' ||
-        (Array.isArray(data?.errorCodes) && data.errorCodes.length > 0) ||
-        res.status === 400;
-
-      if (isTurnstileFail) resetTurnstile();
 
       const errMsg =
         data?.message ||
@@ -206,15 +50,10 @@ document.addEventListener('DOMContentLoaded', () => {
       showMessage(errMsg, false);
     } catch (err) {
       console.error('[register.js] Error:', err);
-      resetTurnstile();
       showMessage('Error al conectar con el servidor.', false);
     }
-    });
-  }
+  });
 
-  initRegisterTurnstile().then(() => attachSubmit());
-
-  // ---------------- UI helpers ----------------
   function showMessage(text, ok) {
     if (!msg) return;
     msg.textContent = text;
