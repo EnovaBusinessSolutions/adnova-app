@@ -74,6 +74,19 @@ function normalizeAccountId(value) {
   }
 }
 
+function deriveGa4SessionSource(payload = {}) {
+  const explicit = String(payload.ga4_session_source || '').trim();
+  if (explicit) return explicit;
+
+  const source = String(payload.utm_source || '').trim();
+  const medium = String(payload.utm_medium || '').trim();
+  if (source || medium) {
+    return `${source || '(direct)'} / ${medium || '(none)'}`;
+  }
+
+  return null;
+}
+
 router.post('/', async (req, res) => {
   let step = 'init';
   try {
@@ -121,6 +134,7 @@ router.post('/', async (req, res) => {
       };
     }
     const userKey = identity.userKey;
+    const ga4SessionSource = deriveGa4SessionSource(payload);
     console.log(`[AdRay Collect] Resolved UserKey: ${userKey} (IsNew: ${identity.isNew}, Confidence: ${identity.confidenceScore})`);
 
     // 2. Generate Event ID
@@ -300,7 +314,7 @@ router.post('/', async (req, res) => {
       sessionId,
       accountId,
       userKey,
-      ga4SessionSource: payload.ga4_session_source || null,
+      ga4SessionSource,
       utmSource: payload.utm_source,
       utmMedium: payload.utm_medium,
       utmCampaign: payload.utm_campaign,
@@ -326,7 +340,7 @@ router.post('/', async (req, res) => {
       // Only merge utms if they exist in payload
       ...(payload.utm_source ? { utmSource: payload.utm_source } : {}),
       ...(payload.fbclid ? { fbclid: payload.fbclid } : {}),
-      ...(payload.ga4_session_source ? { ga4SessionSource: payload.ga4_session_source } : {})
+      ...(ga4SessionSource ? { ga4SessionSource } : {})
     };
 
     let sessionPersisted = false;

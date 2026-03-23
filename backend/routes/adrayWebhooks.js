@@ -29,6 +29,27 @@ function parseOrdersCount(payload = {}) {
   return Number.isFinite(value) ? value : null;
 }
 
+async function resolveOrdersCountFallback({
+  prismaClient,
+  accountId,
+  customerId,
+  emailHash,
+}) {
+  const or = [];
+  if (customerId) or.push({ customerId });
+  if (emailHash) or.push({ emailHash });
+  if (!or.length) return null;
+
+  const historicalCount = await prismaClient.order.count({
+    where: {
+      accountId,
+      OR: or,
+    }
+  });
+
+  return historicalCount + 1;
+}
+
 function parseChargebackFlag(payload = {}) {
   const status = String(payload.financial_status || '').toLowerCase();
   const cancelReason = String(payload.cancel_reason || '').toLowerCase();
@@ -196,6 +217,13 @@ router.post('/orders-create', async (req, res) => {
      const refundAmount = parseShopifyRefundAmount(payload);
      const ordersCount = parseOrdersCount(payload);
      const chargebackFlag = parseChargebackFlag(payload);
+     const customerId = payload.customer?.id ? String(payload.customer.id) : null;
+     const ordersCountResolved = ordersCount ?? await resolveOrdersCountFallback({
+       prismaClient: prisma,
+       accountId,
+       customerId,
+       emailHash,
+     });
 
     // 6. Insert Order
     let order = await prisma.order.create({
@@ -206,7 +234,7 @@ router.post('/orders-create', async (req, res) => {
         checkoutToken,
         userKey: checkoutMap ? checkoutMap.userKey : null,
         sessionId: checkoutMap ? checkoutMap.sessionId : null,
-        customerId: payload.customer?.id ? String(payload.customer.id) : null,
+        customerId,
         emailHash,
         phoneHash,
         revenue,
@@ -216,7 +244,7 @@ router.post('/orders-create', async (req, res) => {
         taxTotal,
         refundAmount,
         chargebackFlag,
-        ordersCount,
+        ordersCount: ordersCountResolved,
         currency: payload.currency,
         lineItems: payload.line_items || [],
         eventId,
@@ -368,19 +396,23 @@ router.post('/orders-updated', async (req, res) => {
     const taxTotal = parseFloatSafe(payload.total_tax || 0);
     const shippingTotal = parseFloatSafe(payload.total_shipping_price_set?.shop_money?.amount || 0);
 
+    const updateData = {
+      revenue,
+      subtotal,
+      discountTotal,
+      taxTotal,
+      shippingTotal,
+      refundAmount,
+      chargebackFlag,
+      lineItems: payload.line_items || [],
+    };
+    if (ordersCount !== null) {
+      updateData.ordersCount = ordersCount;
+    }
+
     await prisma.order.updateMany({
       where: { accountId, orderId },
-      data: {
-        revenue,
-        subtotal,
-        discountTotal,
-        taxTotal,
-        shippingTotal,
-        refundAmount,
-        chargebackFlag,
-        ordersCount,
-        lineItems: payload.line_items || [],
-      }
+      data: updateData,
     });
 
     setImmediate(async () => {

@@ -130,6 +130,22 @@ function parseWooOrderCreatedAt(payload = {}) {
   return new Date();
 }
 
+async function resolveOrdersCountFallback({ prismaClient, accountId, customerId, emailHash }) {
+  const or = [];
+  if (customerId) or.push({ customerId });
+  if (emailHash) or.push({ emailHash });
+  if (!or.length) return null;
+
+  const historicalCount = await prismaClient.order.count({
+    where: {
+      accountId,
+      OR: or,
+    }
+  });
+
+  return historicalCount + 1;
+}
+
 async function persistWooEvent(prismaClient, payload) {
   try {
     await prismaClient.event.create({ data: payload.enriched });
@@ -222,13 +238,22 @@ router.post('/woo/orders-sync', async (req, res) => {
       billing_company: payload.billing_company || null,
     };
 
+    const customerId = payload.customer_id ? String(payload.customer_id) : null;
+    const incomingOrdersCount = parseIntSafe(payload.orders_count);
+    const resolvedOrdersCount = incomingOrdersCount ?? await resolveOrdersCountFallback({
+      prismaClient: prisma,
+      accountId,
+      customerId,
+      emailHash,
+    });
+
     const orderData = {
       orderNumber: String(payload.order_number || payload.order_id),
       accountId,
       checkoutToken,
       userKey: payload.user_key || (checkoutMap ? checkoutMap.userKey : null),
       sessionId: payload.session_id || (checkoutMap ? checkoutMap.sessionId : null),
-      customerId: payload.customer_id ? String(payload.customer_id) : null,
+      customerId,
       emailHash,
       phoneHash,
       revenue: parseFloatSafe(payload.revenue),
@@ -238,7 +263,7 @@ router.post('/woo/orders-sync', async (req, res) => {
       taxTotal: parseFloatSafe(payload.tax_total),
       refundAmount: parseFloatSafe(payload.refund_amount),
       chargebackFlag: parseBooleanSafe(payload.chargeback_flag),
-      ordersCount: parseIntSafe(payload.orders_count),
+      ordersCount: resolvedOrdersCount,
       currency: String(payload.currency || 'MXN'),
       lineItems: Array.isArray(payload.items) ? payload.items : [],
       attributedChannel,
