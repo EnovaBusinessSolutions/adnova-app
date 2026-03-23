@@ -1,6 +1,6 @@
 # AdRay / Adnova
 
-Last update: 2026-03-11
+Last update: 2026-03-13
 
 This is the only documentation file that should be treated as the source of truth for the repository. It consolidates the previous planning files, implementation notes, operational checklist, WordPress plugin readme, Shopify review guide, and frontend README boilerplate.
 
@@ -43,6 +43,7 @@ Build and run a platform-agnostic attribution pipeline for Shopify, WooCommerce,
 - Shopify webhook ingestion exists for orders and checkouts.
 - WooCommerce order sync path exists through the plugin and backend sync route.
 - Attribution stitching, merchant snapshot updates, and failed job logging are implemented.
+- WooCommerce attribution flow was validated end-to-end in staging on 2026-03-13, including checkout login stitching and attributed order persistence.
 
 ### Active incident
 
@@ -60,6 +61,30 @@ Immediate containment:
 - Keep the pixel loading to validate traffic flow.
 - Treat production event flow as non-persistent until `/collect` is consistently returning `2xx`.
 - Do not trust attribution analysis until collector stability is restored.
+
+### Latest staging validation (2026-03-13)
+
+Validated sample order from manual operator test:
+
+- Timestamp captured in dashboard: `13/3/2026, 8:12:57 a.m.`
+- Order: `66308`
+- Customer: `Germán Muñoz`
+- Revenue: `$374.95`
+- Item summary: `ABACO x3`
+- Attribution shown: `Google · brand-test`
+- Source shown: `Woo Orders Sync`
+- Debug shown: `woo=Google | utm=google | campaign=brand-test`
+
+Validation result:
+
+- Attribution and campaign persistence: OK.
+- Woo checkout login stitching: OK.
+- End-to-end Woo flow in staging: OK.
+
+Known issue from this same test:
+
+- Dashboard timestamp is offset from operator local time (example observed: around `2:00 p.m.` local displayed as `8:12 a.m.`).
+- Timezone normalization remains pending.
 
 ## Scope and Deliverables
 
@@ -252,9 +277,9 @@ The merchant snapshot is intended to summarize:
 ### P1
 
 - Meta CAPI is still partial or placeholder in current code.
-- Google conversions listing endpoint still has stub behavior.
 - Rate limit key still prioritizes legacy `shop_id` instead of `account_id` in non-Shopify traffic.
 - `ENCRYPTION_KEY` fallback behavior is unsafe for production if it regenerates on restart.
+- Dashboard timezone display can be offset from operator local time; requires normalization policy and UI/backend alignment.
 
 ### P2
 
@@ -274,7 +299,7 @@ The merchant snapshot is intended to summarize:
 ### Phase 2: close pipeline gaps
 
 1. Implement full Meta CAPI send.
-2. Replace Google conversions listing stub with real Google Ads API retrieval.
+2. Verify Google conversions listing and upload behavior with real ad accounts after latest backend changes.
 3. Add missing browser fields consistently: `utm_content`, `utm_term`, `landing_page_url`, and `view_item`.
 4. Ensure request IP is used for better fingerprint confidence.
 
@@ -314,8 +339,9 @@ The dashboard is considered complete when all are true:
 ### Known code notes
 
 - Meta CAPI is still placeholder in `backend/services/capiFanout.js`.
-- Google conversions listing still has stub behavior in `backend/routes/adrayPlatforms.js`.
+- Google conversions listing was upgraded from stub to real retrieval path in `backend/routes/adrayPlatforms.js`; pending final validation with fully connected production-like accounts.
 - Dashboard still has revenue fallback to purchase events when synced orders are incomplete.
+- Dashboard timezone display needs normalization validation (operator local time vs configured dashboard timezone).
 
 ### Terminal variables
 
@@ -692,6 +718,7 @@ Current dashboard status from live review:
 
 1. Session intelligence now includes a recommended comparison shortcut plus longitudinal reading across many sessions, but still needs deeper operator workflows once real usage reveals the most valuable shortcuts.
 2. Paid media resolution now tries `MetaAccount` and `GoogleAccount` ownership too, but some accounts can still miss a usable `user -> McpData` path if historical onboarding data is incomplete.
+3. Timezone rendering must be aligned to business-operational expectation to avoid confusion during incident/debug analysis.
 
 ### Execution order
 
@@ -718,12 +745,133 @@ Current dashboard status from live review:
 - Paid Media panel added with Meta, Google, and blended spend / revenue / ROAS from `McpData` snapshots when the shop is linked to a user snapshot.
 - Paid Media block now degrades safely to `No vinculado` or `Sin snapshot` when the marketing mapping is missing.
 - Paid Media resolution now tries multiple bridges: `ShopConnections.matchedToUserId`, `User.shop`, `MetaAccount`, `GoogleAccount`, and `PlatformConnection.adAccountId -> McpData.sources`.
+- Manual Woo attribution validation completed on 2026-03-13 with successful campaign persistence (`Google · brand-test`) and checkout login stitching.
 
 ### Current development focus
 
 - Refine the persistent `Session Explorer` using real operator feedback on the suggested comparison flow and longitudinal summaries.
 - Continue improving session-level understanding of what a user did during a visit, including funnel steps, attribution, and path quality.
 - Automatic resolution of paid media snapshots for all eligible accounts, not only already-linked Shopify shops.
+
+## Attribution Next Steps
+
+This section is the working checklist for everything still pending to make attribution operationally trustworthy.
+
+### P0: must close first
+
+1. Fully stabilize `POST /collect` in production.
+2. Complete and verify real Meta CAPI purchase fanout.
+3. Verify Google conversion upload end-to-end with a real connected account, valid `gclid`, and valid conversion action.
+4. Remove production dependence on the unsafe `ENCRYPTION_KEY` fallback.
+5. Confirm rate limiting keys resolve by `account_id` for public non-Shopify traffic.
+6. Fix timezone mismatch in dashboard timestamps and validate with local operator time.
+
+### Attribution data validation
+
+1. Confirm `page_view`, `view_item`, `add_to_cart`, `begin_checkout`, and `purchase` all persist for the same customer journey.
+2. Confirm `checkout_token` links browser session to checkout map and finally to the synced order.
+3. Confirm these fields survive into stored attribution data when present:
+  - `utm_source`
+  - `utm_medium`
+  - `utm_campaign`
+  - `utm_content`
+  - `utm_term`
+  - `gclid`
+  - `fbclid`
+  - `ttclid`
+4. Confirm WooCommerce attribution metadata from `_wc_order_attribution_*` is used as fallback when browser-side signals are weak.
+5. Confirm same-site referrers are not inflating non-direct attribution.
+6. Review unattributed orders one by one and classify the root cause:
+  - no browser event
+  - no checkout map
+  - missing UTMs or click IDs
+  - order sync arrived without enough attribution context
+  - collector persistence failure
+
+### Attribution model validation
+
+1. Re-run the same account with `first_touch`, `last_touch`, and `linear`.
+2. Confirm channel revenue and order allocation actually changes when multiple touchpoints exist.
+3. Confirm the dashboard badge, chart totals, and recent purchases are aligned to the selected model.
+
+### Evidence required before calling attribution usable
+
+1. API evidence for `collect`, `begin_checkout`, `woo/orders-sync`, and `analytics`.
+2. SQL evidence for events, orders, checkout linkage, and attribution fill rate.
+3. At least one real order with click ID attribution.
+4. At least one real order with UTM-only attribution.
+5. At least one real order that correctly falls back to Woo source metadata.
+6. A reviewed sample of unattributed orders with documented reason.
+
+### Manual operator checks in dashboard
+
+1. `Recent Purchases` shows channel, platform, campaign, confidence, and debug context when available.
+2. `Atribución por Canal` matches the selected attribution model.
+3. Session detail shows attribution fields, checkout tokens, touched products, and landing/referrer context.
+4. No channel is over-counted when the same order is viewed under different models.
+
+## Attribution Test Plan
+
+Use this exact sequence when validating a WooCommerce account.
+
+### Test 1: browser signal capture
+
+1. Open the store with a URL containing `utm_source`, `utm_medium`, and `utm_campaign`.
+2. Visit at least one product page.
+3. Add a product to cart.
+4. Start checkout.
+5. Complete a purchase.
+6. Verify that the dashboard later shows the same journey with `view_item`, `add_to_cart`, `begin_checkout`, and attributed purchase context.
+
+### Test 2: click ID capture
+
+1. Open the store using a test URL that includes `gclid` or `fbclid`.
+2. Complete the purchase flow.
+3. Verify the resulting order keeps the click ID in attribution data and resolves to the expected paid channel.
+
+### Test 3: Woo fallback attribution
+
+1. Complete a purchase where WooCommerce already has source metadata.
+2. Verify the synced order still receives attribution even if browser signal is incomplete.
+3. Confirm the dashboard exposes the Woo source label in recent purchases when that fallback is used.
+
+### Test 4: model comparison
+
+1. Load the same account in the dashboard.
+2. Switch the attribution selector between `first touch`, `last touch`, and `linear`.
+3. Confirm the channel chart and attributed revenue/order breakdown change consistently.
+
+### Test 5: unattributed diagnosis
+
+1. Find a recent unattributed order in the dashboard or DB.
+2. Check whether the corresponding session exists.
+3. Check whether a `checkout_token` was persisted.
+4. Check whether the order has an attribution snapshot.
+5. Record the failure mode before changing code.
+
+## User-Assisted Validation Steps
+
+When asking a human operator to test attribution, use this sequence.
+
+1. Open the store in an incognito window.
+2. Use a URL like:
+
+```text
+https://your-store-domain/?utm_source=google&utm_medium=paid_search&utm_campaign=brand-test&utm_content=adset-test&utm_term=creative-test&gclid=test-gclid-123
+```
+
+3. Browse the homepage.
+4. Open a product detail page.
+5. Add the product to cart.
+6. Start checkout.
+7. Complete a purchase if the environment allows it, or stop at checkout if you are only validating signal persistence.
+8. Send back:
+  - the exact timestamp,
+  - the final URL reached,
+  - the order number if a purchase completed,
+  - whether the dashboard later showed the correct channel and campaign.
+
+If a login state is involved, repeat the same flow once logged in and once logged out so identity stitching can be compared against attribution behavior.
 
 ### Live Feed decision rule
 

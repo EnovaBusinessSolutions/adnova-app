@@ -3025,12 +3025,12 @@
             if (filterValue === 'events') filtered = filtered.filter((p) => p.source === 'events');
 
             filtered.sort((a, b) => {
-                if (sortValue === 'date_asc') return new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime();
+                if (sortValue === 'date_asc') return new Date(getPurchaseTimestamp(a) || 0).getTime() - new Date(getPurchaseTimestamp(b) || 0).getTime();
                 if (sortValue === 'revenue_desc') return Number(b.revenue || 0) - Number(a.revenue || 0);
                 if (sortValue === 'revenue_asc') return Number(a.revenue || 0) - Number(b.revenue || 0);
                 if (sortValue === 'order_asc') return String(a.orderNumber || a.orderId || '').localeCompare(String(b.orderNumber || b.orderId || ''), 'es');
                 if (sortValue === 'order_desc') return String(b.orderNumber || b.orderId || '').localeCompare(String(a.orderNumber || a.orderId || ''), 'es');
-                return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+                return new Date(getPurchaseTimestamp(b) || 0).getTime() - new Date(getPurchaseTimestamp(a) || 0).getTime();
             });
 
             if (!Array.isArray(filtered) || filtered.length === 0) {
@@ -3041,7 +3041,7 @@
             const limited = filtered.slice(0, Math.max(1, limitValue));
 
             container.innerHTML = limited.map((p) => {
-                const date = formatDateTimeMx(p.createdAt);
+                const date = formatRecentPurchaseDate(p);
                 const orderId = p.orderNumber || p.orderId || p.checkoutToken || '-';
                 const customerName = p.customerName || '-';
                 const revenue = formatCurrencyWithCode(Number(p.revenue || 0), p.currency || 'MXN');
@@ -3203,6 +3203,30 @@
         }
 
         // --- LIVE FEED (SSE) ---
+        function resolveLiveFeedUserLabel({ sessionId = null, userKey = null } = {}) {
+            const users = Array.isArray(wpUsersOnlineState?.users) ? wpUsersOnlineState.users : [];
+            if (!users.length) return null;
+
+            const normalizedSessionId = String(sessionId || '').trim();
+            const normalizedUserKey = String(userKey || '').trim();
+
+            const bySession = normalizedSessionId
+                ? users.find((user) => Array.isArray(user.sessionIds) && user.sessionIds.includes(normalizedSessionId))
+                : null;
+
+            const byUserKey = !bySession && normalizedUserKey
+                ? users.find((user) => String(user.id || '').trim() === `user:${normalizedUserKey}`)
+                : null;
+
+            const matchedUser = bySession || byUserKey;
+            if (!matchedUser) return null;
+
+            return matchedUser.customerName
+                || matchedUser.emailPreview
+                || matchedUser.phonePreview
+                || (matchedUser.customerId ? `Woo #${matchedUser.customerId}` : null);
+        }
+
         function connectLiveFeed() {
             if (!currentShopId) return;
 
@@ -3231,6 +3255,8 @@
                 let title = data.type;
                 let detail = '';
                 const sessionId = data.sessionId || data.payload?.sessionId || null;
+                const userKey = data.userKey || data.payload?.userKey || null;
+                const linkedUserLabel = resolveLiveFeedUserLabel({ sessionId, userKey });
 
                 if (data.type === 'COLLECT') {
                     icon = 'fa-mouse-pointer';
@@ -3254,6 +3280,7 @@
                             <p class="text-sm font-medium text-gray-900">${title}</p>
                             <p class="text-xs text-gray-500 truncate">${detail}</p>
                             <p class="text-[11px] text-indigo-600 mt-1">${sessionId ? `Sesion: ${sessionId}` : 'Sin sessionId'}</p>
+                            ${linkedUserLabel ? `<p class="text-[11px] text-emerald-600 mt-1">Usuario: ${linkedUserLabel}</p>` : ''}
                             <p class="text-[10px] text-gray-400 mt-1">${formatTimeMx()}</p>
                         </div>
                     </div>
@@ -3342,6 +3369,19 @@
             const mins = Math.floor(total / 60);
             const secs = total % 60;
             return `${mins}m ${secs}s`;
+        }
+
+        function getPurchaseTimestamp(purchase = {}) {
+            return purchase.platformCreatedAt || purchase.createdAt || null;
+        }
+
+        function formatRecentPurchaseDate(purchase = {}) {
+            const rawTs = getPurchaseTimestamp(purchase);
+            if (!rawTs) return '-';
+            const d = new Date(rawTs);
+            if (Number.isNaN(d.getTime())) return '-';
+            d.setHours(d.getHours() + 6);
+            return formatDateTimeMx(d);
         }
 
         function onAttributionModelChange() {

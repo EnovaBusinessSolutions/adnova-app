@@ -63,6 +63,35 @@ const SourceStateSchema = new Schema(
   { _id: false }
 );
 
+const PdfArtifactSchema = new Schema(
+  {
+    status: {
+      type: String,
+      enum: ['idle', 'processing', 'ready', 'failed'],
+      default: 'idle',
+    },
+    stage: { type: String, default: 'idle' },
+    progress: { type: Number, default: 0 },
+
+    fileName: { type: String, default: null },
+    mimeType: { type: String, default: 'application/pdf' },
+
+    // metadata de storage / serving
+    storageKey: { type: String, default: null },
+    localPath: { type: String, default: null },
+    downloadUrl: { type: String, default: null },
+
+    generatedAt: { type: String, default: null },
+    sizeBytes: { type: Number, default: 0 },
+    pageCount: { type: Number, default: null },
+
+    renderer: { type: String, default: null },
+    version: { type: Number, default: 1 },
+    error: { type: String, default: null },
+  },
+  { _id: false }
+);
+
 /* =========================
  * AI Context sub-schema
  * =========================
@@ -71,6 +100,10 @@ const SourceStateSchema = new Schema(
  * - es un artefacto AI-ready evolutivo
  * - puede cambiar entre fallback/OpenAI
  * - no queremos que Mongoose rompa por casts rígidos
+ *
+ * signalPayload se agrega como alias semántico del nuevo producto.
+ * Durante la migración podemos seguir leyendo/escribiendo encodedPayload
+ * y también exponer signalPayload sin romper compatibilidad.
  */
 const AiContextSchema = new Schema(
   {
@@ -92,17 +125,26 @@ const AiContextSchema = new Schema(
 
     error: { type: String, default: null },
 
-    // rangos efectivos usados por el contexto universal
+    // rangos efectivos usados por el contexto / signal
     contextRangeDays: { type: Number, default: null },
     storageRangeDays: { type: Number, default: null },
 
     // Base compactada cross-channel antes del enriquecimiento
     unifiedBase: { type: Schema.Types.Mixed, default: null },
 
-    // Payload final AI-ready
+    // Payload final AI-ready (compat legacy)
     encodedPayload: { type: Schema.Types.Mixed, default: null },
 
-    // share link state
+    // Nuevo naming del producto
+    signalPayload: { type: Schema.Types.Mixed, default: null },
+
+    // Artefacto PDF generado automáticamente a partir del Signal
+    pdf: {
+      type: PdfArtifactSchema,
+      default: () => ({}),
+    },
+
+    // share link state (legacy / compat)
     shareToken: { type: String, default: null },
     shareEnabled: { type: Boolean, default: false },
     shareProvider: { type: String, default: null },
