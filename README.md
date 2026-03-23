@@ -25,6 +25,10 @@ Build and run a platform-agnostic attribution pipeline for Shopify, WooCommerce,
 - WooCommerce client distribution: WordPress plugin under `wordpress-plugin/adnova-pixel`.
 - Frontend apps: multiple Vite + React + TypeScript + shadcn-ui + Tailwind projects generated from Lovable.
 
+### Staging vs producción (OAuth, Render, Cloudflare)
+
+Checklist operativa y variables por entorno: [docs/STAGING_PRODUCTION.md](docs/STAGING_PRODUCTION.md).
+
 ## Current Status
 
 ### Frontend note
