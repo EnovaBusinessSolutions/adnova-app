@@ -1018,8 +1018,21 @@ This section is the technical path to ship missing Phase 1 data by updating only
 ### Current collect resilience status (staging)
 
 - Real-time `Live Feed` ingestion for `identity_signal` is working in staging.
-- Some staging runs still return `event_persisted: false` / `session_persisted: false`, indicating DB schema drift or write mismatch.
-- Collector now stores non-persisted payloads into `failed_jobs` (`collect_event_persist` / `collect_session_persist`) to avoid data loss while DB alignment is completed.
+- Collector fallback into `failed_jobs` remains active as a safety net, but current staging behavior shows canonical persistence working.
+
+Latest live evidence (2026-03-22):
+
+- Earlier validation (before schema alignment) showed degraded persistence:
+  - `success: true`
+  - `event_persisted: false`
+  - `session_persisted: false`
+  - `fallback_stored: true`
+- Latest validation (after alignment) confirms healthy canonical persistence:
+  - `success: true`
+  - `event_persisted: true`
+  - `session_persisted: true`
+  - `fallback_stored: false`
+- Interpretation: browser collection, realtime flow, and canonical persistence into `events`/`sessions` are now aligned in staging.
 
 ### Completion criteria for this task
 
@@ -1031,6 +1044,29 @@ This section is the technical path to ship missing Phase 1 data by updating only
   - `session_persisted: true`
   - `fallback_stored: false`
 4. If step 3 fails, inspect `failed_jobs` rows with `job_type` starting with `collect_` and complete DB migration/alignment before re-test.
+
+Current task state:
+
+- Completed.
+- Done: checkout identity capture + realtime feed validation + canonical DB persistence confirmation.
+- Result: completion criteria satisfied with `event_persisted: true`, `session_persisted: true`, `fallback_stored: false`.
+
+### Operator runbook to unblock Prisma push
+
+Run from the Render shell (or any environment pointing to staging `DATABASE_URL`):
+
+1. `npm run db:pc:check`
+2. If duplicates are reported, run `npm run db:pc:dedupe`
+3. Re-run `npm run db:pc:check` and confirm zero duplicates
+4. Run `npm run prisma:push -- --accept-data-loss`
+5. Re-test one live checkout and verify collect response flags:
+  - `event_persisted: true`
+  - `session_persisted: true`
+  - `fallback_stored: false`
+
+Safety note:
+
+- `db:pc:dedupe` creates a full backup table named `platform_connections_backup_YYYYMMDD_HHMMSS` before deleting duplicates.
 
 ### Next implementation after plugin rollout
 
