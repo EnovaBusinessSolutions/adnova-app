@@ -37,6 +37,95 @@ function parseChargebackFlag(payload = {}) {
   return false;
 }
 
+function normalizeShopifyCustomerId(payload = {}) {
+  const id = payload?.customer?.id;
+  if (!id) return null;
+  const normalized = String(id).trim();
+  return normalized || null;
+}
+
+function buildCheckoutAttributionSnapshot(payload = {}) {
+  return {
+    landing_site: payload.landing_site || null,
+    referring_site: payload.referring_site || null,
+    source_name: payload.source_name || null,
+    currency: payload.currency || null,
+    raw_source: 'webhook',
+    collected_at: new Date().toISOString(),
+  };
+}
+
+async function resolveCheckoutIdentityContext({ accountId, payload }) {
+  const customerId = normalizeShopifyCustomerId(payload);
+  const emailHash = hashPII(payload.email || payload.contact_email);
+  const phoneHash = hashPII(payload.phone || payload.shipping_address?.phone || payload.billing_address?.phone);
+
+  const identityOr = [];
+  if (customerId) identityOr.push({ customerId });
+  if (emailHash) identityOr.push({ emailHash });
+  if (phoneHash) identityOr.push({ phoneHash });
+
+  if (!identityOr.length) {
+    return { userKey: null, sessionId: null };
+  }
+
+  const identity = await prisma.identityGraph.findFirst({
+    where: {
+      accountId,
+      OR: identityOr,
+    },
+    select: {
+      userKey: true,
+      lastSeenAt: true,
+    },
+    orderBy: {
+      lastSeenAt: 'desc',
+    }
+  });
+
+  if (!identity?.userKey) {
+    return { userKey: null, sessionId: null };
+  }
+
+  const recentSession = await prisma.session.findFirst({
+    where: {
+      accountId,
+      userKey: identity.userKey,
+    },
+    select: {
+      sessionId: true,
+      lastEventAt: true,
+    },
+    orderBy: {
+      lastEventAt: 'desc',
+    }
+  });
+
+  return {
+    userKey: identity.userKey,
+    sessionId: recentSession?.sessionId || null,
+  };
+}
+
+async function persistWebhookEvent(prismaClient, payload) {
+  try {
+    await prismaClient.event.create({ data: payload.enriched });
+    return true;
+  } catch (error1) {
+    if (!error1 || error1.code !== 'P2022') throw error1;
+  }
+
+  try {
+    await prismaClient.event.create({ data: payload.legacy });
+    return true;
+  } catch (error2) {
+    if (!error2 || error2.code !== 'P2022') throw error2;
+  }
+
+  await prismaClient.event.create({ data: payload.minimal });
+  return true;
+}
+
 // Apply HMAC verification to all routes in this file
 // Note: Requires express.raw middleware to be mounted BEFORE this router
 router.use(verifyShopifyWebhookHmac);
@@ -132,6 +221,56 @@ router.post('/orders-create', async (req, res) => {
         lineItems: payload.line_items || [],
         eventId,
         platformCreatedAt: new Date(payload.created_at)
+      }
+    });
+
+    const webhookEventId = require('crypto').randomUUID();
+    const webhookEventData = {
+      eventId: webhookEventId,
+      accountId,
+      sessionId: checkoutMap?.sessionId || `webhook_${orderId}`,
+      userKey: checkoutMap?.userKey || 'unknown',
+      eventName: 'purchase',
+      pageType: 'checkout',
+      checkoutToken: checkoutToken || null,
+      orderId,
+      rawSource: 'webhook',
+      matchType: checkoutMap?.sessionId ? 'deterministic' : 'probabilistic',
+      confidenceScore: checkoutMap?.sessionId ? 1.0 : 0.7,
+      revenue,
+      currency: payload.currency || null,
+      items: payload.line_items || [],
+      rawPayload: payload,
+      collectedAt: new Date(),
+      browserReceivedAt: payload.created_at ? new Date(payload.created_at) : null,
+      serverReceivedAt: new Date(),
+    };
+
+    await persistWebhookEvent(prisma, {
+      enriched: webhookEventData,
+      legacy: {
+        eventId: webhookEventId,
+        accountId,
+        sessionId: webhookEventData.sessionId,
+        userKey: webhookEventData.userKey,
+        eventName: 'purchase',
+        checkoutToken: checkoutToken || null,
+        orderId,
+        revenue,
+        currency: payload.currency || null,
+        items: payload.line_items || [],
+        rawPayload: payload,
+        browserReceivedAt: payload.created_at ? new Date(payload.created_at) : null,
+        serverReceivedAt: new Date(),
+      },
+      minimal: {
+        eventId: webhookEventId,
+        accountId,
+        sessionId: webhookEventData.sessionId,
+        userKey: webhookEventData.userKey,
+        eventName: 'purchase',
+        rawPayload: payload,
+        serverReceivedAt: new Date(),
       }
     });
 
@@ -274,21 +413,37 @@ router.post('/checkouts-create', async (req, res) => {
     expiresAt.setDate(expiresAt.getDate() + 30);
 
     const eventId = require('crypto').randomUUID();
+    const identityContext = await resolveCheckoutIdentityContext({ accountId, payload });
+    const resolvedSessionId = identityContext.sessionId || null;
+    const resolvedUserKey = identityContext.userKey || null;
+    const attributionSnapshot = buildCheckoutAttributionSnapshot(payload);
+    const existingMap = await prisma.checkoutSessionMap.findUnique({
+      where: { checkoutToken },
+      select: {
+        sessionId: true,
+        userKey: true,
+      }
+    });
+
+    const finalSessionId = resolvedSessionId || existingMap?.sessionId || 'unknown';
+    const finalUserKey = resolvedUserKey || existingMap?.userKey || 'unknown';
 
     await prisma.checkoutSessionMap.upsert({
       where: { checkoutToken },
       create: {
         checkoutToken,
         accountId,
-        sessionId: 'unknown',
-        userKey: 'unknown',
-        attributionSnapshot: {},
+        sessionId: finalSessionId,
+        userKey: finalUserKey,
+        attributionSnapshot,
         eventId,
         expiresAt
       },
       update: {
-        // Only update expiration if it already exists
-        expiresAt
+        sessionId: finalSessionId,
+        userKey: finalUserKey,
+        attributionSnapshot,
+        expiresAt,
       }
     });
 

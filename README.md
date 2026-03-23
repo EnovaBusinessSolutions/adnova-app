@@ -1068,6 +1068,26 @@ Safety note:
 
 - `db:pc:dedupe` creates a full backup table named `platform_connections_backup_YYYYMMDD_HHMMSS` before deleting duplicates.
 
+### Phase 1 data coverage verification (all layers)
+
+Use this endpoint to validate field-by-field coverage against `datos-pixel.md`:
+
+- `GET /api/analytics/:account_id/data-coverage?days=30`
+
+Example:
+
+- `GET /api/analytics/shogun.mx/data-coverage?days=30`
+
+Response includes:
+
+- `totals` (events/sessions/orders/identities/checkoutMaps)
+- `layers` (Layer 1 to Layer 6 + critical stitch)
+- `missing` (list of fields currently not covered in the selected window)
+
+Interpretation rule:
+
+- Task is complete for Phase 1 when `missing` is empty, except fields intentionally marked as not yet exposed canonically (for example `meta_impressions` if MCP/API normalization is pending).
+
 ### Next implementation after plugin rollout
 
 1. Introduce explicit session close policy (`session_end_at`) with inactivity timeout or checkout terminal event.

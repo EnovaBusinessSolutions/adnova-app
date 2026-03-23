@@ -158,6 +158,10 @@ router.post('/', async (req, res) => {
         timestamp: new Date().toISOString(),
         pageUrl: payload.page_url,
         platform,
+        rawSource: payload.raw_source || 'pixel',
+        matchType: identity.matchType || null,
+        confidenceScore: identity.confidenceScore,
+        collectedAt: new Date().toISOString(),
         productId: payload.product_id || null,
         cartValue: payload.cart_value ? parseFloat(payload.cart_value) : null,
         checkoutToken: payload.checkout_token || null,
@@ -296,6 +300,7 @@ router.post('/', async (req, res) => {
       sessionId,
       accountId,
       userKey,
+      ga4SessionSource: payload.ga4_session_source || null,
       utmSource: payload.utm_source,
       utmMedium: payload.utm_medium,
       utmCampaign: payload.utm_campaign,
@@ -309,16 +314,19 @@ router.post('/', async (req, res) => {
       ttclid: payload.ttclid,
       fbp: payload.fbp,
       fbc: payload.fbc,
-      isFirstTouch: true
+      isFirstTouch: true,
+      sessionEndAt: new Date()
     };
 
     const enrichedSessionUpdate = {
       lastEventAt: new Date(),
+      sessionEndAt: new Date(),
       userKey, // update in case it was resolved differently
       ...(ipHash ? { ipHash } : {}),
       // Only merge utms if they exist in payload
       ...(payload.utm_source ? { utmSource: payload.utm_source } : {}),
-      ...(payload.fbclid ? { fbclid: payload.fbclid } : {})
+      ...(payload.fbclid ? { fbclid: payload.fbclid } : {}),
+      ...(payload.ga4_session_source ? { ga4SessionSource: payload.ga4_session_source } : {})
     };
 
     let sessionPersisted = false;
@@ -348,11 +356,15 @@ router.post('/', async (req, res) => {
             where: { sessionId },
             create: {
               ...enrichedSessionCreate,
-              ipHash: undefined
+              ipHash: undefined,
+              ga4SessionSource: undefined,
+              sessionEndAt: undefined,
             },
             update: {
               ...enrichedSessionUpdate,
-              ipHash: undefined
+              ipHash: undefined,
+              ga4SessionSource: undefined,
+              sessionEndAt: undefined,
             }
           });
           sessionPersisted = true;

@@ -103,6 +103,7 @@ model Session {
   sessionId      String   @unique @map("session_id")
   accountId      String   @map("account_id")
   userKey        String   @map("user_key")
+  ga4SessionSource String? @map("ga4_session_source")
   utmSource      String?  @map("utm_source")
   utmMedium      String?  @map("utm_medium")
   utmCampaign    String?  @map("utm_campaign")
@@ -118,6 +119,7 @@ model Session {
   fbc            String?
   isFirstTouch   Boolean  @map("is_first_touch")
   startedAt      DateTime @default(now()) @map("started_at")
+  sessionEndAt   DateTime? @map("session_end_at")
   lastEventAt    DateTime @default(now()) @updatedAt @map("last_event_at")
 
   account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)

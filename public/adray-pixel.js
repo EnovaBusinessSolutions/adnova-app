@@ -66,7 +66,7 @@
   }
 
   function persistAttributionParams() {
-    var keys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'gclid', 'ttclid'];
+    var keys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'gclid', 'ttclid', 'ga4_session_source'];
     var changed = false;
 
     keys.forEach(function(key) {
@@ -376,6 +376,7 @@
       utm_campaign: getAttributionParam('utm_campaign'),
       utm_content: getAttributionParam('utm_content'),
       utm_term: getAttributionParam('utm_term'),
+      ga4_session_source: getAttributionParam('ga4_session_source'),
       referrer: document.referrer,
       fbp: getCookie('_fbp'),
       fbc: getCookie('_fbc'),

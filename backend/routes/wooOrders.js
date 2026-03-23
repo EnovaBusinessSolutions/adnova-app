@@ -130,6 +130,25 @@ function parseWooOrderCreatedAt(payload = {}) {
   return new Date();
 }
 
+async function persistWooEvent(prismaClient, payload) {
+  try {
+    await prismaClient.event.create({ data: payload.enriched });
+    return true;
+  } catch (error1) {
+    if (!isSchemaDriftError(error1)) throw error1;
+  }
+
+  try {
+    await prismaClient.event.create({ data: payload.legacy });
+    return true;
+  } catch (error2) {
+    if (!isSchemaDriftError(error2)) throw error2;
+  }
+
+  await prismaClient.event.create({ data: payload.minimal });
+  return true;
+}
+
 function normalizeCustomerDisplayName(...values) {
   const invalidTokens = new Set(['unknown', 'undefined', 'null', 'n/a', 'none', '-']);
 
@@ -276,8 +295,64 @@ router.post('/woo/orders-sync', async (req, res) => {
         orderId: order.orderId,
         revenue: order.revenue,
         currency: order.currency,
+        rawSource: payload.raw_source || 'api',
+        matchType: order.sessionId ? 'deterministic' : 'probabilistic',
+        confidenceScore: Number(order.confidenceScore || 0),
+        collectedAt: new Date().toISOString(),
         timestamp: new Date().toISOString(),
         source: 'woo_orders_sync',
+      }
+    });
+
+    const rawSource = payload.raw_source || 'api';
+    const matchType = order.sessionId ? 'deterministic' : 'probabilistic';
+    const confidenceScore = Number(order.confidenceScore || 0);
+    const persistedEventId = randomUUID();
+
+    await persistWooEvent(prisma, {
+      enriched: {
+        eventId: persistedEventId,
+        accountId,
+        sessionId: order.sessionId || `woo_${order.orderId}`,
+        userKey: order.userKey || 'unknown',
+        eventName: 'purchase',
+        pageType: 'checkout',
+        checkoutToken: order.checkoutToken || null,
+        orderId: order.orderId,
+        rawSource,
+        matchType,
+        confidenceScore,
+        revenue: order.revenue,
+        currency: order.currency,
+        items: Array.isArray(payload.items) ? payload.items : [],
+        rawPayload: payload,
+        collectedAt: new Date(),
+        browserReceivedAt: payload.collected_at ? new Date(payload.collected_at) : null,
+        serverReceivedAt: new Date(),
+      },
+      legacy: {
+        eventId: persistedEventId,
+        accountId,
+        sessionId: order.sessionId || `woo_${order.orderId}`,
+        userKey: order.userKey || 'unknown',
+        eventName: 'purchase',
+        checkoutToken: order.checkoutToken || null,
+        orderId: order.orderId,
+        revenue: order.revenue,
+        currency: order.currency,
+        items: Array.isArray(payload.items) ? payload.items : [],
+        rawPayload: payload,
+        browserReceivedAt: payload.collected_at ? new Date(payload.collected_at) : null,
+        serverReceivedAt: new Date(),
+      },
+      minimal: {
+        eventId: persistedEventId,
+        accountId,
+        sessionId: order.sessionId || `woo_${order.orderId}`,
+        userKey: order.userKey || 'unknown',
+        eventName: 'purchase',
+        rawPayload: payload,
+        serverReceivedAt: new Date(),
       }
     });
 
