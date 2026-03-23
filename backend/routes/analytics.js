@@ -2913,7 +2913,7 @@ router.get('/:account_id/data-coverage', async (req, res) => {
       safeCount('orders.refund_amount', () => prisma.order.count({ where: { ...orderBaseWhere, refundAmount: { gt: 0 } } })),
       safeCount('orders.chargeback_flag', () => prisma.order.count({ where: { ...orderBaseWhere, chargebackFlag: true } })),
       safeCount('orders.orders_count', () => prisma.order.count({ where: { ...orderBaseWhere, ordersCount: { not: null } } })),
-      safeCount('orders.created_at', () => prisma.order.count({ where: { ...orderBaseWhere, platformCreatedAt: { not: null } } })),
+      safeCount('orders.created_at', () => prisma.order.count({ where: orderBaseWhere })),
 
       safeFindUnique('account.domain', () => prisma.account.findUnique({ where: { accountId: account_id }, select: { domain: true } }), null),
       safeFindMany('platform_connections.list', () => prisma.platformConnection.findMany({ where: { accountId: account_id }, select: { platform: true, status: true } }), []),
