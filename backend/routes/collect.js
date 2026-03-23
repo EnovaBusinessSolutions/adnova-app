@@ -36,6 +36,22 @@ async function persistEventWithFallback(prismaClient, payload) {
   return true;
 }
 
+async function persistCollectFailure(prismaClient, params) {
+  try {
+    await prismaClient.failedJob.create({
+      data: {
+        jobType: params.jobType,
+        payload: params.payload,
+        error: params.error,
+      }
+    });
+    return true;
+  } catch (failedJobError) {
+    console.error('[AdRay Collect] Failed to persist collect failure:', failedJobError?.message || failedJobError);
+    return false;
+  }
+}
+
 function safeHostname(value) {
   if (!value || typeof value !== 'string') return null;
   try {
@@ -249,6 +265,7 @@ router.post('/', async (req, res) => {
     };
 
     let eventPersisted = false;
+    let fallbackStored = false;
     try {
       eventPersisted = await persistEventWithFallback(prisma, {
         enriched: enrichedEventData,
@@ -259,6 +276,18 @@ router.post('/', async (req, res) => {
       // Do not fail collect response; realtime feed is already emitted.
       console.error('[AdRay Collect] Event persistence non-fatal error:', eventPersistError?.message || eventPersistError);
       eventPersisted = false;
+      fallbackStored = await persistCollectFailure(prisma, {
+        jobType: 'collect_event_persist',
+        payload: {
+          accountId,
+          sessionId,
+          userKey,
+          eventId,
+          eventName: payload.event_name,
+          collectPayload: payload,
+        },
+        error: String(eventPersistError?.message || eventPersistError || 'event persistence failed').slice(0, 1000)
+      });
     }
 
     // 6. Upsert Session
@@ -303,6 +332,16 @@ router.post('/', async (req, res) => {
     } catch (sessionUpsertError) {
       if (!isSchemaDriftError(sessionUpsertError)) {
         console.error('[AdRay Collect] Session upsert non-fatal error:', sessionUpsertError?.message || sessionUpsertError);
+        fallbackStored = await persistCollectFailure(prisma, {
+          jobType: 'collect_session_persist',
+          payload: {
+            accountId,
+            sessionId,
+            userKey,
+            collectPayload: payload,
+          },
+          error: String(sessionUpsertError?.message || sessionUpsertError || 'session persistence failed').slice(0, 1000)
+        }) || fallbackStored;
       } else {
         try {
           await prisma.session.upsert({
@@ -319,11 +358,28 @@ router.post('/', async (req, res) => {
           sessionPersisted = true;
         } catch (sessionFallbackError) {
           console.error('[AdRay Collect] Session fallback non-fatal error:', sessionFallbackError?.message || sessionFallbackError);
+          fallbackStored = await persistCollectFailure(prisma, {
+            jobType: 'collect_session_fallback_persist',
+            payload: {
+              accountId,
+              sessionId,
+              userKey,
+              collectPayload: payload,
+            },
+            error: String(sessionFallbackError?.message || sessionFallbackError || 'session fallback persistence failed').slice(0, 1000)
+          }) || fallbackStored;
         }
       }
     }
 
-    res.json({ success: true, event_id: eventId, user_key: userKey, event_persisted: eventPersisted, session_persisted: sessionPersisted });
+    res.json({
+      success: true,
+      event_id: eventId,
+      user_key: userKey,
+      event_persisted: eventPersisted,
+      session_persisted: sessionPersisted,
+      fallback_stored: fallbackStored
+    });
 
   } catch (error) {
     console.error(`[AdRay Collect] Error at step '${step}':`, error);

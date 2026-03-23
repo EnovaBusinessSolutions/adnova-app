@@ -1,6 +1,6 @@
 # AdRay / Adnova
 
-Last update: 2026-03-18
+Last update: 2026-03-22
 
 This is the only documentation file that should be treated as the source of truth for the repository. It consolidates the previous planning files, implementation notes, operational checklist, WordPress plugin readme, Shopify review guide, and frontend README boilerplate.
 
@@ -1010,6 +1010,27 @@ This section is the technical path to ship missing Phase 1 data by updating only
   - `chargeback_flag` (false unless dispute markers detected)
 2. Refunded order re-sync updates `refund_amount` > 0.
 3. Events from collect still store `raw_source`, `match_type`, `confidence_score`, `ip_hash`, and `collected_at`.
+4. `POST /collect` response should now be reviewed with persistence flags:
+  - `event_persisted`
+  - `session_persisted`
+  - `fallback_stored` (true only when payload had to be stored in `failed_jobs` as safety fallback)
+
+### Current collect resilience status (staging)
+
+- Real-time `Live Feed` ingestion for `identity_signal` is working in staging.
+- Some staging runs still return `event_persisted: false` / `session_persisted: false`, indicating DB schema drift or write mismatch.
+- Collector now stores non-persisted payloads into `failed_jobs` (`collect_event_persist` / `collect_session_persist`) to avoid data loss while DB alignment is completed.
+
+### Completion criteria for this task
+
+1. Run one live checkout test in staging (logged-in Woo flow).
+2. Confirm at least one `identity_signal` appears in `Live Feed`.
+3. Confirm `POST /collect` returns:
+  - `success: true`
+  - `event_persisted: true`
+  - `session_persisted: true`
+  - `fallback_stored: false`
+4. If step 3 fails, inspect `failed_jobs` rows with `job_type` starting with `collect_` and complete DB migration/alignment before re-test.
 
 ### Next implementation after plugin rollout
 
