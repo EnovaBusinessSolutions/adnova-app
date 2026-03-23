@@ -337,7 +337,8 @@ app.use('/api/platform-connections', require('./routes/platformConnections'));
 app.use('/wp-plugin', wordpressPluginRoutes);
 
 // AdRay collect and platform routes
-app.use("/collect", rateLimitCollect, collectRoutes);
+// Hotfix: bypass collect limiter while stabilizing production collect failures.
+app.use("/collect", collectRoutes);
 app.use("/api", sessionGuard, adrayPlatformRoutes);
 
 /* =========================

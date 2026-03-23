@@ -1397,11 +1397,27 @@ router.get('/:account_id', async (req, res) => {
       };
     });
 
-    const paidMedia = await buildPaidMediaSummary({
-      accountId: account_id,
-      domain: accountRecord?.domain || account_id,
-      platformConnections,
-    });
+    let paidMedia = {
+      linked: false,
+      available: false,
+      reason: 'lookup_skipped',
+      meta: { hasSnapshot: false, spend: null, revenue: null, clicks: null },
+      google: { hasSnapshot: false, spend: null, revenue: null, clicks: null },
+      blended: { spend: 0, revenue: 0, roas: null, currency: null },
+    };
+
+    try {
+      paidMedia = await buildPaidMediaSummary({
+        accountId: account_id,
+        domain: accountRecord?.domain || account_id,
+        platformConnections,
+      });
+    } catch (paidMediaError) {
+      warnings.push({
+        label: 'paid_media.summary',
+        error: String(paidMediaError?.message || paidMediaError),
+      });
+    }
 
     // 3. Fetch Events in range (for pixel activity visibility)
     const groupedEvents = await prisma.event.groupBy({
@@ -2754,6 +2770,271 @@ router.get('/:account_id/session-explorer', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/analytics/:account_id/data-coverage
+ * Audits Phase 1 data coverage (datos-pixel.md) for a given account.
+ */
+router.get('/:account_id/data-coverage', async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const days = Math.max(1, Math.min(90, Number.parseInt(String(req.query.days || '30'), 10) || 30));
+    const since = subDays(new Date(), days);
+    const warnings = [];
+
+    const isSchemaDriftError = (error) => {
+      if (!error) return false;
+      if (error.code === 'P2022') return true;
+      const msg = String(error.message || '').toLowerCase();
+      return msg.includes('does not exist') || (msg.includes('column') && msg.includes('exist'));
+    };
+
+    const safeCount = async (label, queryBuilder) => {
+      try {
+        return await queryBuilder();
+      } catch (error) {
+        if (isSchemaDriftError(error)) {
+          warnings.push({ label, error: String(error?.message || error) });
+          return 0;
+        }
+        throw error;
+      }
+    };
+
+    const safeFindUnique = async (label, queryBuilder, fallback = null) => {
+      try {
+        return await queryBuilder();
+      } catch (error) {
+        if (isSchemaDriftError(error)) {
+          warnings.push({ label, error: String(error?.message || error) });
+          return fallback;
+        }
+        throw error;
+      }
+    };
+
+    const safeFindMany = async (label, queryBuilder, fallback = []) => {
+      try {
+        return await queryBuilder();
+      } catch (error) {
+        if (isSchemaDriftError(error)) {
+          warnings.push({ label, error: String(error?.message || error) });
+          return fallback;
+        }
+        throw error;
+      }
+    };
+
+    const eventBaseWhere = {
+      accountId: account_id,
+      createdAt: { gte: since },
+    };
+
+    const sessionBaseWhere = {
+      accountId: account_id,
+      startedAt: { gte: since },
+    };
+
+    const orderBaseWhere = {
+      accountId: account_id,
+      OR: [
+        { createdAt: { gte: since } },
+        { platformCreatedAt: { gte: since } },
+      ],
+    };
+
+    const [
+      totalEvents,
+      totalSessions,
+      totalOrders,
+      totalIdentity,
+      totalCheckoutMaps,
+      eventsRawSource,
+      eventsMatchType,
+      eventsConfidence,
+      eventsCollectedAt,
+      sessionsUtmSource,
+      sessionsUtmMedium,
+      sessionsUtmCampaign,
+      sessionsLanding,
+      sessionsReferrer,
+      sessionsIpHash,
+      sessionsGa4Source,
+      sessionsEndAt,
+      sessionsFbclid,
+      sessionsGclid,
+      sessionsTtclid,
+      identityFingerprint,
+      identityEmail,
+      identityPhone,
+      identityCustomer,
+      ordersCheckoutToken,
+      ordersCustomer,
+      ordersEmail,
+      ordersPhone,
+      ordersRefund,
+      ordersChargeback,
+      ordersCountStamped,
+      ordersPlatformCreated,
+      accountRecord,
+      platformConnections,
+    ] = await Promise.all([
+      safeCount('events.total', () => prisma.event.count({ where: eventBaseWhere })),
+      safeCount('sessions.total', () => prisma.session.count({ where: sessionBaseWhere })),
+      safeCount('orders.total', () => prisma.order.count({ where: orderBaseWhere })),
+      safeCount('identity.total', () => prisma.identityGraph.count({ where: { accountId: account_id } })),
+      safeCount('checkout_map.total', () => prisma.checkoutSessionMap.count({ where: { accountId: account_id, createdAt: { gte: since } } })),
+
+      safeCount('events.raw_source', () => prisma.event.count({ where: { ...eventBaseWhere, rawSource: { not: null } } })),
+      safeCount('events.match_type', () => prisma.event.count({ where: { ...eventBaseWhere, matchType: { not: null } } })),
+      safeCount('events.confidence_score', () => prisma.event.count({ where: { ...eventBaseWhere, confidenceScore: { not: null } } })),
+      safeCount('events.collected_at', () => prisma.event.count({ where: { ...eventBaseWhere, collectedAt: { not: null } } })),
+
+      safeCount('sessions.utm_source', () => prisma.session.count({ where: { ...sessionBaseWhere, utmSource: { not: null } } })),
+      safeCount('sessions.utm_medium', () => prisma.session.count({ where: { ...sessionBaseWhere, utmMedium: { not: null } } })),
+      safeCount('sessions.utm_campaign', () => prisma.session.count({ where: { ...sessionBaseWhere, utmCampaign: { not: null } } })),
+      safeCount('sessions.landing_page', () => prisma.session.count({ where: { ...sessionBaseWhere, landingPageUrl: { not: null } } })),
+      safeCount('sessions.referrer', () => prisma.session.count({ where: { ...sessionBaseWhere, referrer: { not: null } } })),
+      safeCount('sessions.ip_hash', () => prisma.session.count({ where: { ...sessionBaseWhere, ipHash: { not: null } } })),
+      safeCount('sessions.ga4_session_source', () => prisma.session.count({ where: { ...sessionBaseWhere, ga4SessionSource: { not: null } } })),
+      safeCount('sessions.session_end_at', () => prisma.session.count({ where: { ...sessionBaseWhere, sessionEndAt: { not: null } } })),
+      safeCount('sessions.fbclid', () => prisma.session.count({ where: { ...sessionBaseWhere, fbclid: { not: null } } })),
+      safeCount('sessions.gclid', () => prisma.session.count({ where: { ...sessionBaseWhere, gclid: { not: null } } })),
+      safeCount('sessions.ttclid', () => prisma.session.count({ where: { ...sessionBaseWhere, ttclid: { not: null } } })),
+
+      safeCount('identity.fingerprint_hash', () => prisma.identityGraph.count({ where: { accountId: account_id, fingerprintHash: { not: null } } })),
+      safeCount('identity.email_hash', () => prisma.identityGraph.count({ where: { accountId: account_id, emailHash: { not: null } } })),
+      safeCount('identity.phone_hash', () => prisma.identityGraph.count({ where: { accountId: account_id, phoneHash: { not: null } } })),
+      safeCount('identity.customer_id', () => prisma.identityGraph.count({ where: { accountId: account_id, customerId: { not: null } } })),
+
+      safeCount('orders.checkout_token', () => prisma.order.count({ where: { ...orderBaseWhere, checkoutToken: { not: null } } })),
+      safeCount('orders.customer_id', () => prisma.order.count({ where: { ...orderBaseWhere, customerId: { not: null } } })),
+      safeCount('orders.email_hash', () => prisma.order.count({ where: { ...orderBaseWhere, emailHash: { not: null } } })),
+      safeCount('orders.phone_hash', () => prisma.order.count({ where: { ...orderBaseWhere, phoneHash: { not: null } } })),
+      safeCount('orders.refund_amount', () => prisma.order.count({ where: { ...orderBaseWhere, refundAmount: { gt: 0 } } })),
+      safeCount('orders.chargeback_flag', () => prisma.order.count({ where: { ...orderBaseWhere, chargebackFlag: true } })),
+      safeCount('orders.orders_count', () => prisma.order.count({ where: { ...orderBaseWhere, ordersCount: { not: null } } })),
+      safeCount('orders.created_at', () => prisma.order.count({ where: orderBaseWhere })),
+
+      safeFindUnique('account.domain', () => prisma.account.findUnique({ where: { accountId: account_id }, select: { domain: true } }), null),
+      safeFindMany('platform_connections.list', () => prisma.platformConnection.findMany({ where: { accountId: account_id }, select: { platform: true, status: true } }), []),
+    ]);
+
+    const paidMedia = await buildPaidMediaSummary({
+      accountId: account_id,
+      domain: accountRecord?.domain || account_id,
+      platformConnections,
+    });
+
+    const isOk = (value) => value > 0;
+    const ratio = (value, total) => (total > 0 ? Number((value / total).toFixed(4)) : null);
+
+    const layers = {
+      layer1_identity_anchors: {
+        user_key: { ok: totalEvents > 0 || totalSessions > 0, sampleCount: Math.max(totalEvents, totalSessions) },
+        email_hash: { ok: isOk(identityEmail) || isOk(ordersEmail), identityCount: identityEmail, orderCount: ordersEmail },
+        phone_hash: { ok: isOk(identityPhone) || isOk(ordersPhone), identityCount: identityPhone, orderCount: ordersPhone },
+        customer_id: { ok: isOk(identityCustomer) || isOk(ordersCustomer), identityCount: identityCustomer, orderCount: ordersCustomer },
+      },
+      layer2_session_events: {
+        session_id: { ok: totalSessions > 0, count: totalSessions },
+        utm_source: { ok: isOk(sessionsUtmSource), count: sessionsUtmSource, ratio: ratio(sessionsUtmSource, totalSessions) },
+        utm_medium: { ok: isOk(sessionsUtmMedium), count: sessionsUtmMedium, ratio: ratio(sessionsUtmMedium, totalSessions) },
+        utm_campaign: { ok: isOk(sessionsUtmCampaign), count: sessionsUtmCampaign, ratio: ratio(sessionsUtmCampaign, totalSessions) },
+        fingerprint_hash: { ok: isOk(identityFingerprint), count: identityFingerprint, ratio: ratio(identityFingerprint, totalIdentity) },
+        ip_hash: { ok: isOk(sessionsIpHash), count: sessionsIpHash, ratio: ratio(sessionsIpHash, totalSessions) },
+        page_events: { ok: totalEvents > 0, count: totalEvents, note: 'Stored as event rows in events table.' },
+        session_start_at: { ok: totalSessions > 0, count: totalSessions },
+        session_end_at: { ok: isOk(sessionsEndAt), count: sessionsEndAt, ratio: ratio(sessionsEndAt, totalSessions) },
+      },
+      layer3_touchpoints_click_ids: {
+        fbclid: { ok: isOk(sessionsFbclid), count: sessionsFbclid },
+        gclid: { ok: isOk(sessionsGclid), count: sessionsGclid },
+        ttclid: { ok: isOk(sessionsTtclid), count: sessionsTtclid },
+        event_id: { ok: totalEvents > 0, count: totalEvents },
+        landing_page: { ok: isOk(sessionsLanding), count: sessionsLanding, ratio: ratio(sessionsLanding, totalSessions) },
+        referrer: { ok: isOk(sessionsReferrer), count: sessionsReferrer, ratio: ratio(sessionsReferrer, totalSessions) },
+      },
+      layer4_order_truth: {
+        order_id: { ok: totalOrders > 0, count: totalOrders },
+        gross_revenue: { ok: totalOrders > 0, count: totalOrders },
+        refund_amount: { ok: totalOrders > 0, withRefunds: ordersRefund, note: 'Can be zero for most orders.' },
+        chargeback_flag: { ok: totalOrders > 0, withChargeback: ordersChargeback, note: 'May remain zero if disputes are absent.' },
+        orders_count: { ok: isOk(ordersCountStamped), count: ordersCountStamped, ratio: ratio(ordersCountStamped, totalOrders) },
+        checkout_token: { ok: isOk(ordersCheckoutToken) || totalCheckoutMaps > 0, orderCount: ordersCheckoutToken, mapCount: totalCheckoutMaps },
+        customer_id: { ok: isOk(ordersCustomer), count: ordersCustomer, ratio: ratio(ordersCustomer, totalOrders) },
+        created_at: { ok: isOk(ordersPlatformCreated), count: ordersPlatformCreated, ratio: ratio(ordersPlatformCreated, totalOrders) },
+      },
+      layer5_platform_signals_daily_pull: {
+        meta_spend: { ok: Boolean(paidMedia?.meta?.hasSnapshot), value: paidMedia?.meta?.spend ?? null },
+        meta_impressions: { ok: false, note: 'Not exposed as canonical field in this API yet.' },
+        meta_reported_conv_value: { ok: Boolean(paidMedia?.meta?.hasSnapshot), value: paidMedia?.meta?.revenue ?? null },
+        google_spend: { ok: Boolean(paidMedia?.google?.hasSnapshot), value: paidMedia?.google?.spend ?? null },
+        google_clicks: { ok: Boolean(paidMedia?.google?.hasSnapshot), value: paidMedia?.google?.clicks ?? null },
+        ga4_session_source: { ok: isOk(sessionsGa4Source), count: sessionsGa4Source, ratio: ratio(sessionsGa4Source, totalSessions) },
+      },
+      layer6_raw_enrichment_every_event: {
+        confidence_score: { ok: isOk(eventsConfidence), count: eventsConfidence, ratio: ratio(eventsConfidence, totalEvents) },
+        match_type: { ok: isOk(eventsMatchType), count: eventsMatchType, ratio: ratio(eventsMatchType, totalEvents) },
+        raw_source: { ok: isOk(eventsRawSource), count: eventsRawSource, ratio: ratio(eventsRawSource, totalEvents) },
+        collected_at: { ok: isOk(eventsCollectedAt), count: eventsCollectedAt, ratio: ratio(eventsCollectedAt, totalEvents) },
+      },
+      critical_stitch: {
+        checkout_token_to_session_id: {
+          ok: totalCheckoutMaps > 0,
+          count: totalCheckoutMaps,
+          note: 'Stored in checkout_session_map and enriched from collect/checkouts-create webhooks.',
+        },
+      },
+    };
+
+    const missing = [];
+    Object.entries(layers).forEach(([layerName, fields]) => {
+      Object.entries(fields).forEach(([fieldName, state]) => {
+        if (state && state.ok === false) {
+          missing.push(`${layerName}.${fieldName}`);
+        }
+      });
+    });
+
+    return res.json({
+      success: true,
+      accountId: account_id,
+      windowDays: days,
+      since: since.toISOString(),
+      warnings,
+      totals: {
+        events: totalEvents,
+        sessions: totalSessions,
+        orders: totalOrders,
+        identities: totalIdentity,
+        checkoutMaps: totalCheckoutMaps,
+      },
+      layers,
+      missing,
+    });
+  } catch (error) {
+    console.error('[Analytics API] data-coverage error:', error);
+    return res.status(200).json({
+      success: false,
+      degraded: true,
+      error: 'Data coverage failed, returned degraded response',
+      details: String(error?.message || error),
+      accountId: req.params?.account_id || null,
+      windowDays: Number.parseInt(String(req.query?.days || '30'), 10) || 30,
+      totals: {
+        events: 0,
+        sessions: 0,
+        orders: 0,
+        identities: 0,
+        checkoutMaps: 0,
+      },
+      layers: {},
+      missing: [],
+      warnings: [{ label: 'data_coverage.endpoint', error: String(error?.message || error) }],
+    });
+  }
+});
+
 router.get('/:account_id/sessions/:session_id', async (req, res) => {
   try {
     const { account_id, session_id } = req.params;
@@ -2766,6 +3047,8 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         userKey: true,
         startedAt: true,
         lastEventAt: true,
+        sessionEndAt: true,
+        ga4SessionSource: true,
         utmSource: true,
         utmMedium: true,
         utmCampaign: true,
@@ -2773,6 +3056,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         utmTerm: true,
         referrer: true,
         landingPageUrl: true,
+        ipHash: true,
         fbclid: true,
         gclid: true,
         ttclid: true,
@@ -2792,6 +3076,11 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
           eventId: true,
           eventName: true,
           createdAt: true,
+          collectedAt: true,
+          rawSource: true,
+          matchType: true,
+          confidenceScore: true,
+          ipHash: true,
           pageUrl: true,
           pageType: true,
           productId: true,
@@ -2959,6 +3248,11 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         eventName: event.eventName,
         bucket,
         createdAt: event.createdAt,
+        collectedAt: event.collectedAt || null,
+        rawSource: event.rawSource || null,
+        matchType: event.matchType || null,
+        confidenceScore: event.confidenceScore,
+        ipHash: event.ipHash || null,
         pageUrl: event.pageUrl,
         pageType: event.pageType,
         productId: event.productId,
@@ -3031,6 +3325,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
     res.json({
       session: {
         ...session,
+        sessionEndAt: session.sessionEndAt || session.lastEventAt || null,
         sessionDurationSeconds,
       },
       metrics,

@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.1.7
+ * Version: 1.1.8
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.1.7';
+    const VERSION = '1.1.8';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_BACKFILL_DONE = 'adnova_pixel_backfill_done';
@@ -38,6 +38,8 @@ final class Adnova_Pixel_Plugin {
         add_action('woocommerce_payment_complete', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         add_action('woocommerce_order_status_processing', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         add_action('woocommerce_order_status_completed', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
+        add_action('woocommerce_order_status_refunded', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
+        add_action('woocommerce_order_refunded', array(__CLASS__, 'on_woo_order_refunded'), 10, 2);
         add_action('woocommerce_checkout_update_order_meta', array(__CLASS__, 'save_pixel_cookies_to_order'), 10, 1);
         add_action('wp_login', array(__CLASS__, 'track_wp_login_event'), 10, 2);
         add_action('wp_logout', array(__CLASS__, 'track_wp_logout_event'));
@@ -501,6 +503,21 @@ final class Adnova_Pixel_Plugin {
         self::track_woo_order_purchase($order_id, false);
     }
 
+    public static function on_woo_order_refunded($order_id, $refund_id = 0) {
+        if (!$order_id) {
+            return;
+        }
+
+        self::sync_woo_order_to_backend((int) $order_id);
+        self::send_server_side_event('order_refunded', array(
+            'order_id' => (string) $order_id,
+            'refund_id' => $refund_id ? (string) $refund_id : null,
+            'raw_source' => 'plugin_server',
+            'page_type' => 'checkout',
+            'page_url' => home_url('/mi-cuenta/orders/'),
+        ));
+    }
+
     public static function save_pixel_cookies_to_order($order_id) {
         $order = wc_get_order($order_id);
         if ($order) {
@@ -673,6 +690,7 @@ final class Adnova_Pixel_Plugin {
         // Server-side backup: fires even if the browser blocks the pixel
         self::send_server_side_event('purchase', array(
             'event_id'       => 'srv_wc_' . $order_id,
+            'raw_source'     => 'plugin_server',
             'page_url'       => $order->get_checkout_order_received_url(),
             'page_type'      => 'checkout',
             'order_id'       => $order_data['order_id'],
@@ -691,6 +709,7 @@ final class Adnova_Pixel_Plugin {
             'ttclid'         => isset($order_data['ttclid']) ? $order_data['ttclid'] : null,
             'woo_source_label' => isset($order_data['woo_source_label']) ? $order_data['woo_source_label'] : null,
             'woo_source_type'  => isset($order_data['woo_source_type']) ? $order_data['woo_source_type'] : null,
+            'woo_session_source' => isset($order_data['woo_session_source']) ? $order_data['woo_session_source'] : null,
         ));
 
         $order->update_meta_data('_adnova_purchase_sent', gmdate('c'));
@@ -741,6 +760,13 @@ final class Adnova_Pixel_Plugin {
         }
 
         $customer_identity = self::get_order_customer_identity($order);
+        $customer_id_value = $order->get_customer_id();
+        $orders_count = null;
+        if ($customer_id_value && function_exists('wc_get_customer_order_count')) {
+            $orders_count = (int) wc_get_customer_order_count($customer_id_value);
+        }
+        $refund_amount = (float) $order->get_total_refunded();
+        $chargeback_flag = self::detect_chargeback_flag($order);
         $order_created_at = $order->get_date_created();
         $order_created_at_local = $order_created_at ? $order_created_at->date('c') : gmdate('c');
         $order_created_at_gmt = $order_created_at ? $order_created_at->setTimezone(new DateTimeZone('UTC'))->format('c') : gmdate('c');
@@ -750,10 +776,13 @@ final class Adnova_Pixel_Plugin {
             'account_id' => self::get_site_id(),
             'session_id' => $order->get_meta('_adray_session_id') ? $order->get_meta('_adray_session_id') : null,
             'user_key' => $order->get_meta('_adray_visitor_id') ? $order->get_meta('_adray_visitor_id') : null,
+            'raw_source' => 'plugin_order_sync',
+            'collected_at' => gmdate('c'),
             'order_id' => $order_data['order_id'],
             'order_number' => (string) $order->get_order_number(),
             'checkout_token' => isset($order_data['checkout_token']) ? $order_data['checkout_token'] : null,
-            'customer_id' => $order->get_customer_id() ? (string) $order->get_customer_id() : null,
+            'customer_id' => $customer_id_value ? (string) $customer_id_value : null,
+            'orders_count' => $orders_count,
             'customer_name' => $customer_identity['customer_name'],
             'customer_first_name' => $customer_identity['customer_first_name'],
             'customer_last_name' => $customer_identity['customer_last_name'],
@@ -765,6 +794,8 @@ final class Adnova_Pixel_Plugin {
             'discount_total' => (float) $order->get_discount_total(),
             'shipping_total' => (float) $order->get_shipping_total(),
             'tax_total' => (float) $order->get_total_tax(),
+            'refund_amount' => $refund_amount,
+            'chargeback_flag' => $chargeback_flag,
             'currency' => isset($order_data['currency']) ? $order_data['currency'] : $order->get_currency(),
             'items' => isset($order_data['items']) ? $order_data['items'] : array(),
             'created_at' => $order_created_at_local,
@@ -781,6 +812,7 @@ final class Adnova_Pixel_Plugin {
             'ttclid' => isset($order_data['ttclid']) ? $order_data['ttclid'] : null,
             'woo_source_label' => isset($order_data['woo_source_label']) ? $order_data['woo_source_label'] : null,
             'woo_source_type' => isset($order_data['woo_source_type']) ? $order_data['woo_source_type'] : null,
+            'woo_session_source' => isset($order_data['woo_session_source']) ? $order_data['woo_session_source'] : null,
         );
 
         wp_remote_post(
@@ -837,6 +869,7 @@ final class Adnova_Pixel_Plugin {
                 'platform'   => 'woocommerce',
                 'event_name' => $event_name,
                 'page_url'   => home_url('/'),
+                'raw_source' => 'plugin_server',
             ),
             $extra
         );
@@ -860,6 +893,39 @@ final class Adnova_Pixel_Plugin {
             'page_type'      => 'home',
             'plugin_version' => self::VERSION,
         ));
+    }
+
+    private static function detect_chargeback_flag($order) {
+        if (!$order) {
+            return false;
+        }
+
+        $status = strtolower((string) $order->get_status());
+        $status_markers = array('chargeback', 'dispute', 'fraud');
+        foreach ($status_markers as $marker) {
+            if (strpos($status, $marker) !== false) {
+                return true;
+            }
+        }
+
+        $meta_keys = array(
+            '_stripe_dispute_status',
+            '_wcpay_dispute_status',
+            '_paypal_dispute_status',
+            '_adnova_chargeback_flag',
+        );
+
+        foreach ($meta_keys as $meta_key) {
+            $value = strtolower((string) $order->get_meta($meta_key, true));
+            if ($value === '') {
+                continue;
+            }
+            if (strpos($value, 'chargeback') !== false || strpos($value, 'dispute') !== false || strpos($value, 'lost') !== false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
 

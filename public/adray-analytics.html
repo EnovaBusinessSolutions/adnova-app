@@ -2305,11 +2305,14 @@
                 <p><strong>User Key:</strong> ${session.userKey || '-'}</p>
                 <p><strong>Inicio:</strong> ${formatDateTimeMx(session.startedAt)}</p>
                 <p><strong>Último evento:</strong> ${formatDateTimeMx(session.lastEventAt)}</p>
+                <p><strong>Session End:</strong> ${formatDateTimeMx(session.sessionEndAt || session.lastEventAt)}</p>
                 <p><strong>Último login:</strong> ${identifiedUser.lastLoginAt ? formatDateTimeMx(identifiedUser.lastLoginAt) : '-'}</p>
                 <p><strong>Duración:</strong> ${formatDuration(session.sessionDurationSeconds || 0)}</p>
                 <p><strong>Landing:</strong> ${session.landingPageUrl || '-'}</p>
                 <p><strong>UTM:</strong> ${(session.utmSource || '-') + ' / ' + (session.utmCampaign || '-')}</p>
+                <p><strong>GA4 Session Source:</strong> ${session.ga4SessionSource || '-'}</p>
                 <p><strong>Referrer:</strong> ${session.referrer || '-'}</p>
+                <p><strong>IP Hash:</strong> ${session.ipHash ? `${String(session.ipHash).slice(0, 10)}...` : '-'}</p>
                 <p><strong>Funnel:</strong> PV ${metrics.pageViews || 0} · VI ${metrics.viewItem || 0} · ATC ${metrics.addToCart || 0} · BC ${metrics.beginCheckout || 0} · P ${metrics.purchase || 0}</p>
                 <p><strong>Otras sesiones del mismo usuario:</strong> ${patterns.peerSessionCount || 0}</p>
                 <p><strong>Sesiones trazadas totales:</strong> ${patterns.totalTrackedSessions || ((patterns.peerSessionCount || 0) + 1)}</p>
@@ -2521,6 +2524,15 @@
                 return event.pageUrl || event.productId || event.orderId || '-';
             };
 
+            const formatLayer6Meta = (event) => {
+                const bits = [];
+                if (event.rawSource) bits.push(`source=${event.rawSource}`);
+                if (event.matchType) bits.push(`match=${event.matchType}`);
+                if (typeof event.confidenceScore === 'number') bits.push(`confidence=${Math.round(event.confidenceScore * 100)}%`);
+                if (event.collectedAt) bits.push(`collected=${formatTimeMx(event.collectedAt)}`);
+                return bits.join(' | ');
+            };
+
             const timeline = Array.isArray(sessionExplorerState.timeline) ? sessionExplorerState.timeline : [];
             const filteredTimeline = timeline.filter((event) => {
                 if (filterValue === 'all') return true;
@@ -2537,6 +2549,7 @@
                             <div>
                                 <p class="font-medium text-gray-900">${formatSessionEventLabel(event)}</p>
                                 <p class="text-xs text-gray-500">${formatSessionEventDetail(event)}</p>
+                                <p class="text-[11px] text-indigo-500 mt-1">${formatLayer6Meta(event) || '-'}</p>
                             </div>
                             <div class="text-right">
                                 <p class="text-sm text-gray-700">${formatTimeMx(event.createdAt)}</p>
@@ -3279,6 +3292,7 @@
                         <div class="ml-3 w-0 flex-1">
                             <p class="text-sm font-medium text-gray-900">${title}</p>
                             <p class="text-xs text-gray-500 truncate">${detail}</p>
+                            <p class="text-[11px] text-indigo-500 mt-1">${data.payload?.rawSource || '-'} | ${data.payload?.matchType || '-'} | ${typeof data.payload?.confidenceScore === 'number' ? Math.round(Number(data.payload.confidenceScore) * 100) + '%' : '-'}</p>
                             <p class="text-[11px] text-indigo-600 mt-1">${sessionId ? `Sesion: ${sessionId}` : 'Sin sessionId'}</p>
                             ${linkedUserLabel ? `<p class="text-[11px] text-emerald-600 mt-1">Usuario: ${linkedUserLabel}</p>` : ''}
                             <p class="text-[10px] text-gray-400 mt-1">${formatTimeMx()}</p>

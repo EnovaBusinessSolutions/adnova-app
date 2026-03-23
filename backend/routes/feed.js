@@ -3,12 +3,25 @@ const express = require('express');
 const router = express.Router();
 const eventBus = require('../utils/eventBus');
 
+function normalizeAccountId(value) {
+  if (!value) return null;
+  const raw = String(value).trim().toLowerCase();
+  if (!raw) return null;
+
+  try {
+    const host = new URL(raw.includes('://') ? raw : `https://${raw}`).hostname;
+    return host.replace(/^www\./, '');
+  } catch (_) {
+    return raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  }
+}
+
 /**
  * Server-Sent Events (SSE) for Real-Time Dashboard Updates
  * GET /api/feed/:account_id
  */
 router.get('/:account_id', (req, res) => {
-  const { account_id } = req.params;
+  const accountId = normalizeAccountId(req.params.account_id);
 
   // SSE Headers
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -28,7 +41,8 @@ router.get('/:account_id', (req, res) => {
   // Event Listener
   const onEvent = (data) => {
     // Only send if account_id matches (support both new and legacy)
-    if (data.accountId === account_id || data.shopId === account_id) {
+    const eventAccountId = normalizeAccountId(data.accountId || data.shopId);
+    if (eventAccountId && accountId && eventAccountId === accountId) {
        writeEvent(data);
     }
   };
@@ -36,7 +50,7 @@ router.get('/:account_id', (req, res) => {
   eventBus.on('event', onEvent);
 
   // Initial ping to keep connection open
-  writeEvent({ type: 'connected', accountId: account_id, timestamp: new Date().toISOString() });
+  writeEvent({ type: 'connected', accountId, timestamp: new Date().toISOString() });
 
   // Heartbeat prevents proxies from closing idle SSE streams.
   const heartbeat = setInterval(() => {
