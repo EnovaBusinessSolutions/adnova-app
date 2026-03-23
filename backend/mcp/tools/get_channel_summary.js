@@ -5,10 +5,14 @@ const { validateDateRange } = require('../schemas/tool-schemas');
 const metaAdapter = require('../adapters/meta');
 const googleAdapter = require('../adapters/google');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
+const { resolveSnapshotFirstData } = require('../snapshot/runSnapshotFirst');
+const { buildAdPerformanceSnapshot } = require('../snapshot/builders');
 
 const TOOL_NAME = 'get_channel_summary';
 
-function round(n, d = 2) { return Number(Number(n || 0).toFixed(d)); }
+function round(n, d = 2) {
+  return Number(Number(n || 0).toFixed(d));
+}
 
 function register(server) {
   server.tool(
@@ -31,7 +35,14 @@ function register(server) {
         const currencies = new Set();
 
         try {
-          const meta = await metaAdapter.getAdPerformance(userId, params.date_from, params.date_to, 'total');
+          const meta = await resolveSnapshotFirstData({
+            toolName: TOOL_NAME,
+            userId,
+            refreshSource: 'metaAds',
+            buildSnapshot: () =>
+              buildAdPerformanceSnapshot(userId, 'metaAds', 'meta', params.date_from, params.date_to, 'total'),
+            execLive: () => metaAdapter.getAdPerformance(userId, params.date_from, params.date_to, 'total'),
+          });
           channels.push({
             channel: 'meta',
             spend: meta.spend,
@@ -46,7 +57,14 @@ function register(server) {
         } catch {}
 
         try {
-          const google = await googleAdapter.getAdPerformance(userId, params.date_from, params.date_to, 'total');
+          const google = await resolveSnapshotFirstData({
+            toolName: TOOL_NAME,
+            userId,
+            refreshSource: 'googleAds',
+            buildSnapshot: () =>
+              buildAdPerformanceSnapshot(userId, 'googleAds', 'google', params.date_from, params.date_to, 'total'),
+            execLive: () => googleAdapter.getAdPerformance(userId, params.date_from, params.date_to, 'total'),
+          });
           channels.push({
             channel: 'google',
             spend: google.spend,
@@ -76,7 +94,8 @@ function register(server) {
           result.total_spend = round(totalSpend);
           result.currency = currencies.values().next().value || 'USD';
         } else {
-          result.currency_note = 'Accounts use different currencies. Per-channel totals are shown in their native currency. Cross-channel total requires currency normalization.';
+          result.currency_note =
+            'Accounts use different currencies. Per-channel totals are shown in their native currency. Cross-channel total requires currency normalization.';
         }
 
         return createToolResponse(result);

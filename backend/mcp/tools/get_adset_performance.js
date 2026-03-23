@@ -5,9 +5,11 @@ const { validateDateRange } = require('../schemas/tool-schemas');
 const metaAdapter = require('../adapters/meta');
 const googleAdapter = require('../adapters/google');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
+const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
 
 const TOOL_NAME = 'get_adset_performance';
 
+/** No mcpdata snapshot for ad set / ad group daily series yet — live-only path with snapshot-first wrapper for observability. */
 function register(server) {
   server.tool(
     TOOL_NAME,
@@ -28,10 +30,16 @@ function register(server) {
         if (rangeError) return createToolErrorResponse('DATE_RANGE_TOO_LARGE', TOOL_NAME, rangeError);
 
         const adapter = params.channel === 'meta' ? metaAdapter : googleAdapter;
-        const data = await adapter.getAdsetPerformance(
-          userId, params.campaign_id, params.date_from, params.date_to
-        );
-        return createToolResponse(data);
+        const refreshSource = params.channel === 'meta' ? 'metaAds' : 'googleAds';
+
+        return runSnapshotFirstTool({
+          toolName: TOOL_NAME,
+          userId,
+          refreshSource,
+          buildSnapshot: async () => ({ ok: false }),
+          execLive: () =>
+            adapter.getAdsetPerformance(userId, params.campaign_id, params.date_from, params.date_to),
+        });
       } catch (err) {
         console.error(`[${TOOL_NAME}] error:`, err);
         return createToolErrorResponse(err.code || 'INTERNAL_ERROR', TOOL_NAME, err.message);

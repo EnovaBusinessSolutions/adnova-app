@@ -3,7 +3,8 @@
 const { z } = require('zod');
 const { validateDateRange } = require('../schemas/tool-schemas');
 const shopifyAdapter = require('../adapters/shopify');
-const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
+const { createToolErrorResponse } = require('../schemas/errors');
+const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
 
 const TOOL_NAME = 'get_shopify_products';
 
@@ -26,11 +27,20 @@ function register(server) {
         const rangeError = validateDateRange(params.date_from, params.date_to);
         if (rangeError) return createToolErrorResponse('DATE_RANGE_TOO_LARGE', TOOL_NAME, rangeError);
 
-        const data = await shopifyAdapter.getShopifyProducts(
-          userId, params.date_from, params.date_to,
-          params.sort_by || 'revenue', params.limit || 10
-        );
-        return createToolResponse(data);
+        return runSnapshotFirstTool({
+          toolName: TOOL_NAME,
+          userId,
+          refreshSource: null,
+          buildSnapshot: async () => ({ ok: false }),
+          execLive: () =>
+            shopifyAdapter.getShopifyProducts(
+              userId,
+              params.date_from,
+              params.date_to,
+              params.sort_by || 'revenue',
+              params.limit || 10
+            ),
+        });
       } catch (err) {
         console.error(`[${TOOL_NAME}] error:`, err);
         return createToolErrorResponse(err.code || 'INTERNAL_ERROR', TOOL_NAME, err.message);
