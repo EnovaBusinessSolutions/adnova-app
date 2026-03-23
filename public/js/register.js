@@ -5,6 +5,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (!form) return;
 
+  // Evita submit nativo (GET) mientras resolvemos si Turnstile aplica
+  form.addEventListener('submit', (e) => e.preventDefault(), { capture: true });
+
   // ---------------- Turnstile (explicit) ----------------
   function getTurnstileSiteKey() {
     const meta = document.querySelector('meta[name="turnstile-site-key"]');
@@ -113,11 +116,29 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (_) {}
   }
 
-  // Render inmediato (registro SIEMPRE requiere captcha)
-  renderTurnstile();
+  // Turnstile solo si el servidor lo exige (producción). Staging: TURNSTILE_SKIP_REGISTRATION=true
+  let turnstileRequired = true;
+
+  async function initRegisterTurnstile() {
+    try {
+      const r = await fetch('/api/turnstile/register-required');
+      if (r.ok) {
+        const d = await r.json();
+        turnstileRequired = Boolean(d.required);
+      }
+    } catch (_) {}
+
+    const wrap = document.getElementById('turnstile-wrap');
+    if (!turnstileRequired) {
+      if (wrap) wrap.style.display = 'none';
+    } else {
+      renderTurnstile();
+    }
+  }
 
   // ---------------- submit ----------------
-  form.addEventListener('submit', async (e) => {
+  function attachSubmit() {
+    form.addEventListener('submit', async (e) => {
     e.preventDefault();
 
     const name     = (document.getElementById('name')?.value || '').trim();
@@ -130,19 +151,25 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!password) return showMessage('Por favor ingresa una contraseña.', false);
     if (password !== confirm) return showMessage('Las contraseñas no coinciden.', false);
 
-    const turnstileToken = getTurnstileToken();
-    if (!turnstileToken) {
-      showMessage('Por favor completa la verificación de seguridad.', false);
-      return;
+    let turnstileToken = '';
+    if (turnstileRequired) {
+      turnstileToken = getTurnstileToken();
+      if (!turnstileToken) {
+        showMessage('Por favor completa la verificación de seguridad.', false);
+        return;
+      }
     }
 
     try {
       showMessage('Creando cuenta…', true);
 
+      const payload = { name, email, password };
+      if (turnstileRequired && turnstileToken) payload.turnstileToken = turnstileToken;
+
       const res = await fetch('/api/register', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ name, email, password, turnstileToken }),
+        body:    JSON.stringify(payload),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -182,7 +209,10 @@ document.addEventListener('DOMContentLoaded', () => {
       resetTurnstile();
       showMessage('Error al conectar con el servidor.', false);
     }
-  });
+    });
+  }
+
+  initRegisterTurnstile().then(() => attachSubmit());
 
   // ---------------- UI helpers ----------------
   function showMessage(text, ok) {

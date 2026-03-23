@@ -13,6 +13,7 @@ Guía para desplegar el mismo código en **staging** (p. ej. `german/dev` en Ren
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Mismo cliente con URIs extra **o** cliente dedicado | Cliente prod |
 | `GOOGLE_LOGIN_CALLBACK_URL` | (Opcional) Solo si no usas `APP_URL` | `https://adray.ai/auth/google/login/callback` si aplica |
 | `RENDER_EXTERNAL_URL` | Inyectada por Render (fallback si falta `APP_URL`) | Inyectada por Render |
+| `TURNSTILE_SKIP_REGISTRATION` | `true` / `1` / `yes` para **no** exigir Cloudflare Turnstile en registro (`/api/register`) | No definir (o `false`) |
 
 El backend asigna `APP_URL` desde `RENDER_EXTERNAL_URL` cuando `APP_URL` está vacía (ver [backend/index.js](../backend/index.js) tras `dotenv`), para que el callback de Google OAuth coincida con el host del servicio en Render.
 
@@ -45,6 +46,7 @@ Puedes añadir varias URIs al mismo cliente OAuth. Para **aislar** entornos, cre
 ## Checklist: Cloudflare Turnstile (login email/contraseña)
 
 - En el dashboard de Turnstile, permitir el hostname del entorno (`*.onrender.com` o custom) si la configuración del sitio restringe dominios.
+- **Registro sin captcha en staging:** en Render, define `TURNSTILE_SKIP_REGISTRATION=true`. El front consulta `GET /api/turnstile/register-required` y oculta el widget. **No uses esto en producción** salvo que aceptes el riesgo de abuso de registros.
 
 ## Camino hacia producción
 

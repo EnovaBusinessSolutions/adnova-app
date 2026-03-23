@@ -39,6 +39,8 @@ const { trackEvent } = require("./services/trackEvent");
 
 // ✅ Turnstile
 const requireTurnstileAlways = require("./middlewares/requireTurnstileAlways");
+const requireTurnstileForRegister = require("./middlewares/requireTurnstileForRegister");
+const isTurnstileRegisterSkipped = requireTurnstileForRegister.isTurnstileRegisterSkipped;
 const { verifyTurnstile } = require("./services/turnstile");
 
 /* =========================
@@ -927,7 +929,12 @@ function riskClear(req, email) {
  * Auth básica (email/pass)
  * ========================= */
 
-app.post("/api/register", requireTurnstileAlways, async (req, res) => {
+/** Público: el front de /register decide si mostrar Turnstile */
+app.get("/api/turnstile/register-required", (_req, res) => {
+  res.json({ required: !isTurnstileRegisterSkipped() });
+});
+
+app.post("/api/register", requireTurnstileForRegister, async (req, res) => {
   try {
     let { name, email, password } = req.body || {};
 
