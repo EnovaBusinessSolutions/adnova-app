@@ -79,6 +79,11 @@ function safeString(v) {
   return v == null ? null : String(v);
 }
 
+function safeTrim(v) {
+  const s = safeString(v);
+  return s ? s.trim() : null;
+}
+
 function estimateBytes(obj) {
   try {
     return Buffer.byteLength(JSON.stringify(obj ?? null), 'utf8');
@@ -307,7 +312,7 @@ function pickContextCoverageRange(result, summaryDs) {
   };
 }
 
-function extractMetaRootPatchFromResult(r, ranges = {}) {
+function extractMetaRootPatchFromResult(r, ranges = {}, opts = {}) {
   const summaryDs = Array.isArray(r?.datasets)
     ? r.datasets.find((x) => x?.dataset === 'meta.insights_summary') || r.datasets[0]
     : null;
@@ -348,6 +353,8 @@ function extractMetaRootPatchFromResult(r, ranges = {}) {
     safeString(coverageRange?.tz) ||
     null;
 
+  const selectedAccountId = safeTrim(opts?.accountId) || safeTrim(accountId);
+
   return {
     sourceName: 'metaAds',
     sourcePatch: {
@@ -356,10 +363,12 @@ function extractMetaRootPatchFromResult(r, ranges = {}) {
       ready: true,
       lastError: null,
       lastSyncAt: new Date(),
+      connectedAt: new Date(),
       rangeDays: storageRangeDays,
       storageRangeDays,
       contextDefaultRangeDays: contextRangeDays,
       accountId,
+      selectedAccountId,
       name,
       currency,
       timezone,
@@ -386,6 +395,7 @@ function extractMetaRootPatchFromResult(r, ranges = {}) {
     },
     metaSummary: {
       accountId,
+      selectedAccountId,
       name,
       currency,
       timezone,
@@ -398,7 +408,7 @@ function extractMetaRootPatchFromResult(r, ranges = {}) {
   };
 }
 
-function extractGoogleRootPatchFromResult(r, ranges = {}) {
+function extractGoogleRootPatchFromResult(r, ranges = {}, opts = {}) {
   const summaryDs = Array.isArray(r?.datasets)
     ? r.datasets.find((x) => x?.dataset === 'google.insights_summary') || r.datasets[0]
     : null;
@@ -440,6 +450,8 @@ function extractGoogleRootPatchFromResult(r, ranges = {}) {
     safeString(coverageRange?.tz) ||
     null;
 
+  const selectedCustomerId = safeTrim(opts?.accountId) || safeTrim(customerId);
+
   return {
     sourceName: 'googleAds',
     sourcePatch: {
@@ -448,11 +460,13 @@ function extractGoogleRootPatchFromResult(r, ranges = {}) {
       ready: true,
       lastError: null,
       lastSyncAt: new Date(),
+      connectedAt: new Date(),
       rangeDays: storageRangeDays,
       storageRangeDays,
       contextDefaultRangeDays: contextRangeDays,
       customerId,
       accountId: customerId,
+      selectedCustomerId,
       name,
       currency,
       timezone,
@@ -471,6 +485,7 @@ function extractGoogleRootPatchFromResult(r, ranges = {}) {
     },
     metaSummary: {
       customerId,
+      selectedCustomerId,
       name,
       currency,
       timezone,
@@ -483,7 +498,7 @@ function extractGoogleRootPatchFromResult(r, ranges = {}) {
   };
 }
 
-function extractGa4RootPatchFromResult(r, ranges = {}) {
+function extractGa4RootPatchFromResult(r, ranges = {}, opts = {}) {
   const summaryDs = Array.isArray(r?.datasets)
     ? r.datasets.find((x) => x?.dataset === 'ga4.insights_summary') || r.datasets[0]
     : null;
@@ -523,6 +538,8 @@ function extractGa4RootPatchFromResult(r, ranges = {}) {
     safeString(coverageRange?.tz) ||
     null;
 
+  const selectedPropertyId = safeTrim(opts?.propertyId) || safeTrim(propertyId);
+
   return {
     sourceName: 'ga4',
     sourcePatch: {
@@ -531,10 +548,12 @@ function extractGa4RootPatchFromResult(r, ranges = {}) {
       ready: true,
       lastError: null,
       lastSyncAt: new Date(),
+      connectedAt: new Date(),
       rangeDays: storageRangeDays,
       storageRangeDays,
       contextDefaultRangeDays: contextRangeDays,
       propertyId,
+      selectedPropertyId,
       name,
       currency,
       timezone,
@@ -562,6 +581,7 @@ function extractGa4RootPatchFromResult(r, ranges = {}) {
     },
     metaSummary: {
       propertyId,
+      selectedPropertyId,
       name,
       currency,
       timezone,
@@ -679,6 +699,7 @@ async function triggerContextRebuildBestEffort({
       timeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
       reason: `${safeString(source) || 'source'}_synced`,
       requestedBy: 'mcpWorker',
+      forceRebuild: true,
     });
 
     console.log('[mcpWorker] context rebuild:done', {
@@ -687,7 +708,9 @@ async function triggerContextRebuildBestEffort({
       snapshotId,
       status: result?.data?.status || null,
       stage: result?.data?.stage || null,
-      sourceSnapshots: result?.data?.sourceSnapshots || null,
+      currentSourceFingerprint: result?.data?.currentSourceFingerprint || null,
+      signal: result?.data?.signal || null,
+      pdf: result?.data?.pdf || null,
       usableSources: result?.data?.usableSources || [],
       pendingConnectedSources: result?.data?.pendingConnectedSources || [],
     });
@@ -713,7 +736,7 @@ async function triggerContextRebuildBestEffort({
   }
 }
 
-async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
+async function runMetaJob({ userId, storageRangeDays, contextRangeDays, accountId }) {
   const snapshotId = makeSnapshotId();
 
   await McpData.patchRootSource(userId, 'metaAds', {
@@ -721,6 +744,12 @@ async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
     status: 'running',
     ready: false,
     lastError: null,
+    connectedAt: new Date(),
+    ...(safeTrim(accountId) ? {
+      accountId: safeTrim(accountId),
+      selectedAccountId: safeTrim(accountId),
+      selectionUpdatedAt: new Date(),
+    } : {}),
   });
 
   const storageDays = await resolveStorageRangeDays(userId, storageRangeDays);
@@ -731,6 +760,7 @@ async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
     snapshotId,
     storageRangeDays: storageDays,
     contextRangeDays: contextDays,
+    accountId: safeTrim(accountId) || null,
   });
 
   const r = await collectMeta(userId, {
@@ -770,10 +800,16 @@ async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
     datasets: r.datasets || [],
   });
 
-  const extractedRoot = extractMetaRootPatchFromResult(r, {
-    storageRangeDays: storageDays,
-    contextRangeDays: contextDays,
-  });
+  const extractedRoot = extractMetaRootPatchFromResult(
+    r,
+    {
+      storageRangeDays: storageDays,
+      contextRangeDays: contextDays,
+    },
+    {
+      accountId,
+    }
+  );
 
   await finalizeRootFromCollector({
     userId,
@@ -805,6 +841,13 @@ async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, acc
     status: 'running',
     ready: false,
     lastError: null,
+    connectedAt: new Date(),
+    ...(safeTrim(accountId) ? {
+      customerId: safeTrim(accountId),
+      accountId: safeTrim(accountId),
+      selectedCustomerId: safeTrim(accountId),
+      selectionUpdatedAt: new Date(),
+    } : {}),
   });
 
   const storageDays = await resolveStorageRangeDays(userId, storageRangeDays);
@@ -815,12 +858,12 @@ async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, acc
     snapshotId,
     storageRangeDays: storageDays,
     contextRangeDays: contextDays,
-    accountId: safeString(accountId) || null,
+    accountId: safeTrim(accountId) || null,
   });
 
   const r = await collectGoogle(userId, {
     rangeDays: contextDays,
-    account_id: safeString(accountId) || undefined,
+    account_id: safeTrim(accountId) || undefined,
   });
 
   console.log('[mcpWorker] collectGoogle:result', {
@@ -853,10 +896,16 @@ async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, acc
     datasets: r.datasets || [],
   });
 
-  const extractedRoot = extractGoogleRootPatchFromResult(r, {
-    storageRangeDays: storageDays,
-    contextRangeDays: contextDays,
-  });
+  const extractedRoot = extractGoogleRootPatchFromResult(
+    r,
+    {
+      storageRangeDays: storageDays,
+      contextRangeDays: contextDays,
+    },
+    {
+      accountId,
+    }
+  );
 
   await finalizeRootFromCollector({
     userId,
@@ -888,6 +937,12 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
     status: 'running',
     ready: false,
     lastError: null,
+    connectedAt: new Date(),
+    ...(safeTrim(propertyId) ? {
+      propertyId: safeTrim(propertyId),
+      selectedPropertyId: safeTrim(propertyId),
+      selectionUpdatedAt: new Date(),
+    } : {}),
   });
 
   const storageDays = await resolveStorageRangeDays(userId, storageRangeDays);
@@ -898,12 +953,12 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
     snapshotId,
     storageRangeDays: storageDays,
     contextRangeDays: contextDays,
-    propertyId: safeString(propertyId) || null,
+    propertyId: safeTrim(propertyId) || null,
   });
 
   const r = await collectGA4(userId, {
     rangeDays: contextDays,
-    property_id: safeString(propertyId) || undefined,
+    property_id: safeTrim(propertyId) || undefined,
   });
 
   console.log('[mcpWorker] collectGA4:result', {
@@ -936,10 +991,16 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
     datasets: r.datasets || [],
   });
 
-  const extractedRoot = extractGa4RootPatchFromResult(r, {
-    storageRangeDays: storageDays,
-    contextRangeDays: contextDays,
-  });
+  const extractedRoot = extractGa4RootPatchFromResult(
+    r,
+    {
+      storageRangeDays: storageDays,
+      contextRangeDays: contextDays,
+    },
+    {
+      propertyId,
+    }
+  );
 
   await finalizeRootFromCollector({
     userId,
@@ -1015,6 +1076,7 @@ async function boot() {
           userId,
           storageRangeDays,
           contextRangeDays: effectiveContextRangeDays,
+          accountId,
         });
       }
 
