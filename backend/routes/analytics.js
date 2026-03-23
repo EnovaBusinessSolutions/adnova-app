@@ -1397,11 +1397,27 @@ router.get('/:account_id', async (req, res) => {
       };
     });
 
-    const paidMedia = await buildPaidMediaSummary({
-      accountId: account_id,
-      domain: accountRecord?.domain || account_id,
-      platformConnections,
-    });
+    let paidMedia = {
+      linked: false,
+      available: false,
+      reason: 'lookup_skipped',
+      meta: { hasSnapshot: false, spend: null, revenue: null, clicks: null },
+      google: { hasSnapshot: false, spend: null, revenue: null, clicks: null },
+      blended: { spend: 0, revenue: 0, roas: null, currency: null },
+    };
+
+    try {
+      paidMedia = await buildPaidMediaSummary({
+        accountId: account_id,
+        domain: accountRecord?.domain || account_id,
+        platformConnections,
+      });
+    } catch (paidMediaError) {
+      warnings.push({
+        label: 'paid_media.summary',
+        error: String(paidMediaError?.message || paidMediaError),
+      });
+    }
 
     // 3. Fetch Events in range (for pixel activity visibility)
     const groupedEvents = await prisma.event.groupBy({
@@ -2998,7 +3014,24 @@ router.get('/:account_id/data-coverage', async (req, res) => {
     });
   } catch (error) {
     console.error('[Analytics API] data-coverage error:', error);
-    return res.status(500).json({ error: 'Internal Server Error' });
+    return res.status(200).json({
+      success: false,
+      degraded: true,
+      error: 'Data coverage failed, returned degraded response',
+      details: String(error?.message || error),
+      accountId: req.params?.account_id || null,
+      windowDays: Number.parseInt(String(req.query?.days || '30'), 10) || 30,
+      totals: {
+        events: 0,
+        sessions: 0,
+        orders: 0,
+        identities: 0,
+        checkoutMaps: 0,
+      },
+      layers: {},
+      missing: [],
+      warnings: [{ label: 'data_coverage.endpoint', error: String(error?.message || error) }],
+    });
   }
 });
 
