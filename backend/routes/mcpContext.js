@@ -370,17 +370,22 @@ function isSignalRunCompatibleWithRoot(signalRun, root) {
   return true;
 }
 
+/**
+ * Regla autoritativa:
+ * - Si el root tiene buildAttemptId, SOLO se usa ese run exacto.
+ * - Solo si el root NO tiene buildAttemptId, se permite fallback a active/latest.
+ */
 async function findPreferredSignalRunForUser(userId, root = null) {
   if (!userId) return null;
 
   const effectiveRoot = root || await findPreferredContextRootForUser(userId);
   const rootState = effectiveRoot?.aiContext || {};
   const rootAttemptId = safeStr(rootState?.buildAttemptId).trim();
-  const rootStatus = safeStr(rootState?.status).trim();
 
   if (rootAttemptId) {
     const exact = await findSignalRunByAttempt(userId, rootAttemptId);
-    if (exact && isSignalRunCompatibleWithRoot(exact, effectiveRoot)) return exact;
+    if (!exact) return null;
+    return isSignalRunCompatibleWithRoot(exact, effectiveRoot) ? exact : null;
   }
 
   const active = await findActiveSignalRunForUser(userId);
@@ -389,28 +394,11 @@ async function findPreferredSignalRunForUser(userId, root = null) {
   }
 
   const latest = await findLatestSignalRunForUser(userId);
-  if (!latest) return null;
-
-  if (!effectiveRoot) return latest;
-
-  const latestAttemptId = safeStr(latest?.buildAttemptId).trim();
-  const latestStatus = safeStr(latest?.status).trim();
-
-  if (rootAttemptId && latestAttemptId && latestAttemptId !== rootAttemptId) {
-    if (rootStatus === 'done' || rootStatus === 'error') {
-      return null;
-    }
-
-    if (latestStatus === 'processing') {
-      return null;
-    }
+  if (latest && isSignalRunCompatibleWithRoot(latest, effectiveRoot)) {
+    return latest;
   }
 
-  if (!isSignalRunCompatibleWithRoot(latest, effectiveRoot)) {
-    return null;
-  }
-
-  return latest;
+  return null;
 }
 
 async function findLatestContextRootForUser(userId) {
@@ -594,6 +582,8 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
   const state = root?.aiContext || {};
   const staleSignal = rootSignalLooksStale(root);
   const stalePdf = rootPdfLooksStale(root);
+  const rootAttemptId = safeStr(state?.buildAttemptId).trim();
+  const hasAuthoritativeAttempt = !!rootAttemptId;
 
   const signalPayload = staleSignal ? null : getRootAiSignalPayload(root);
 
@@ -628,8 +618,20 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
   const status = chooseStatusValue(compatibleRun?.status, state?.status || 'idle');
   const stage = chooseStatusValue(compatibleRun?.stage, state?.stage || 'idle');
 
-  const signalComplete = !staleSignal && (compatibleRun ? !!compatibleRun.signalComplete : safeStr(state?.status) === 'done');
-  const signalValidForPdf = !staleSignal && (compatibleRun ? !!compatibleRun.signalValidForPdf : !!signalPayload && signalComplete);
+  // Regla dura:
+  // - si root trae buildAttemptId, SOLO ese run exacto puede declarar signalComplete/signalValidForPdf
+  // - no usar root.status === 'done' como fallback en ese caso
+  const signalComplete = !staleSignal && (
+    compatibleRun
+      ? !!compatibleRun.signalComplete
+      : (!hasAuthoritativeAttempt && safeStr(state?.status) === 'done')
+  );
+
+  const signalValidForPdf = !staleSignal && (
+    compatibleRun
+      ? !!compatibleRun.signalValidForPdf
+      : (!hasAuthoritativeAttempt && !!signalPayload && signalComplete)
+  );
 
   const uiFlags = deriveUiFlags({
     signalPayload,
@@ -838,50 +840,49 @@ router.post('/pdf/build', async (req, res) => {
     }
 
     const root = await findPreferredContextRootForUser(userId);
-    const signalRun = await findPreferredSignalRunForUser(userId, root);
-
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
 
-    const state = root?.aiContext || {};
-    const staleSignal = rootSignalLooksStale(root);
-    const signalPayload = staleSignal ? null : (state?.signalPayload || state?.encodedPayload || null);
+    const signalRun = await findPreferredSignalRunForUser(userId, root);
+    const statusPayload = buildStatusResponse(root, null, signalRun)?.data || null;
 
-    if (!signalPayload) {
+    // Ahora el PDF solo puede iniciar si el estado autoritativo ya dice signalReadyForPdf
+    if (!statusPayload?.signalReadyForPdf) {
       setNoCacheHeaders(res);
       return res.status(202).json({
         ok: true,
-        data: buildStatusResponse(root, null, signalRun)?.data || {
-          status: state?.status || 'idle',
-          progress: state?.progress || 0,
-          stage: state?.stage || 'idle',
-          pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
-          pdf: normalizePdfState(state?.pdf),
+        data: statusPayload || {
+          status: root?.aiContext?.status || 'idle',
+          progress: root?.aiContext?.progress || 0,
+          stage: root?.aiContext?.stage || 'idle',
+          pdf: normalizePdfState(root?.aiContext?.pdf),
           hasSignal: false,
-          hasPdf: normalizePdfState(state?.pdf).ready,
-          staleSignal,
+          hasPdf: false,
+          signalReadyForPdf: false,
+          pdfReady: false,
+          pdfProcessing: false,
+          pdfFailed: false,
+          canGeneratePdf: false,
+          canDownloadPdf: false,
+          uiMode: 'signal_building',
         },
       });
     }
 
-    const effectivePdf = signalRun?.pdf && signalRun?.pdf.status !== 'idle'
-      ? signalRun.pdf
-      : normalizePdfState(state?.pdf);
-
-    if (effectivePdf.ready && !req.body?.forceRebuild && !rootPdfLooksStale(root)) {
+    if (statusPayload?.pdfReady && !req.body?.forceRebuild) {
       setNoCacheHeaders(res);
       return res.json({
         ok: true,
-        data: buildStatusResponse(root, null, signalRun)?.data || null,
+        data: statusPayload,
       });
     }
 
-    if (effectivePdf.status === 'processing' && !req.body?.forceRebuild) {
+    if (statusPayload?.pdfProcessing && !req.body?.forceRebuild) {
       setNoCacheHeaders(res);
       return res.status(202).json({
         ok: true,
-        data: buildStatusResponse(root, null, signalRun)?.data || null,
+        data: statusPayload,
       });
     }
 
@@ -897,19 +898,12 @@ router.post('/pdf/build', async (req, res) => {
       });
     }
 
+    const freshRoot = await findPreferredContextRootForUser(userId);
+    const freshRun = await findPreferredSignalRunForUser(userId, freshRoot);
+
     return res.json({
       ok: true,
-      data:
-        resultData ||
-        buildStatusResponse(
-          await findPreferredContextRootForUser(userId),
-          null,
-          await findPreferredSignalRunForUser(
-            userId,
-            await findPreferredContextRootForUser(userId)
-          )
-        )?.data ||
-        null,
+      data: resultData || buildStatusResponse(freshRoot, null, freshRun)?.data || null,
     });
   } catch (e) {
     console.error('[mcp/context/pdf/build] error:', e);
@@ -1016,12 +1010,13 @@ router.get('/latest', async (req, res) => {
     const state = root?.aiContext || {};
     const staleSignal = rootSignalLooksStale(root);
     const signalPayload = staleSignal ? null : getRootAiSignalPayload(root);
+    const statusData = buildStatusResponse(root, null, signalRun)?.data || {};
 
-    if (!signalPayload) {
+    if (!signalPayload || !statusData?.signalComplete) {
       return res.status(409).json({
         ok: false,
         error: staleSignal ? 'MCP_CONTEXT_STALE_REBUILD_REQUIRED' : 'MCP_CONTEXT_NOT_READY',
-        data: buildStatusResponse(root, null, signalRun)?.data || {
+        data: statusData || {
           status: state?.status || 'idle',
           progress: state?.progress || 0,
           stage: state?.stage || 'idle',
@@ -1030,8 +1025,6 @@ router.get('/latest', async (req, res) => {
         },
       });
     }
-
-    const statusData = buildStatusResponse(root, null, signalRun)?.data || {};
 
     setNoCacheHeaders(res);
     return res.json({
@@ -1152,22 +1145,27 @@ router.get('/pdf/status', async (req, res) => {
     const staleSignal = rootSignalLooksStale(root);
     const stalePdf = rootPdfLooksStale(root);
 
+    const authoritativeRun = isSignalRunCompatibleWithRoot(signalRun, root)
+      ? signalRun
+      : null;
+
     const pdf = (staleSignal || stalePdf)
       ? makeStalePdfState(state?.pdf, staleSignal ? 'STALE_SIGNAL' : 'STALE_PDF')
       : (
-          signalRun?.pdf &&
-          signalRun?.pdf.status !== 'idle' &&
-          isSignalRunCompatibleWithRoot(signalRun, root)
-            ? signalRun.pdf
+          authoritativeRun?.pdf &&
+          authoritativeRun?.pdf.status !== 'idle'
+            ? authoritativeRun.pdf
             : normalizePdfState(state?.pdf)
         );
+
+    const signalComplete = !staleSignal && !!authoritativeRun?.signalComplete;
 
     const uiFlags = deriveUiFlags({
       signalPayload: staleSignal ? null : getRootAiSignalPayload(root),
       staleSignal,
       stalePdf,
       pdf,
-      signalComplete: !staleSignal && (safeStr(state?.status) === 'done'),
+      signalComplete,
     });
 
     setNoCacheHeaders(res);
@@ -1184,10 +1182,8 @@ router.get('/pdf/status', async (req, res) => {
         canGeneratePdf: uiFlags.canGeneratePdf,
         canDownloadPdf: uiFlags.canDownloadPdf,
         uiMode: uiFlags.uiMode,
-        signalRunId: isSignalRunCompatibleWithRoot(signalRun, root) ? (signalRun?.signalRunId || null) : null,
-        buildAttemptId: isSignalRunCompatibleWithRoot(signalRun, root)
-          ? (signalRun?.buildAttemptId || state?.buildAttemptId || null)
-          : (state?.buildAttemptId || null),
+        signalRunId: authoritativeRun?.signalRunId || null,
+        buildAttemptId: authoritativeRun?.buildAttemptId || state?.buildAttemptId || null,
       },
     });
   } catch (e) {
