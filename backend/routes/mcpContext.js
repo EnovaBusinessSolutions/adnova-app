@@ -233,6 +233,8 @@ function normalizePdfState(pdf) {
     version: toNum(state?.version, 1) || 1,
     sourceFingerprint: safeStr(state?.sourceFingerprint || '').trim() || null,
     connectionFingerprint: safeStr(state?.connectionFingerprint || '').trim() || null,
+    processingStartedAt: state?.processingStartedAt || null,
+    processingHeartbeatAt: state?.processingHeartbeatAt || null,
     stale: !!state?.stale,
     staleReason: state?.staleReason || null,
     error: state?.error || null,
@@ -411,12 +413,6 @@ async function findPreferredSignalRunForUser(userId, root = null) {
   return latest;
 }
 
-/**
- * Root con Signal real más reciente.
- * IMPORTANTE:
- * - NO depende de updatedAt general del documento.
- * - Prioriza aiContext.finishedAt / snapshotId / createdAt.
- */
 async function findLatestContextRootForUser(userId) {
   if (!userId) return null;
 
@@ -440,10 +436,6 @@ async function findLatestContextRootForUser(userId) {
   return root;
 }
 
-/**
- * Si hay un build de Signal en curso reciente, prioriza el root actual.
- * Si no, usa el último root con Signal listo.
- */
 async function findPreferredContextRootForUser(userId) {
   if (!userId) return null;
 
@@ -573,6 +565,31 @@ function chooseStatusValue(primary, fallback) {
   return clean || fallback;
 }
 
+function deriveUiFlags({ signalPayload, staleSignal, stalePdf, pdf, signalComplete }) {
+  const signalReadyForPdf = !staleSignal && !!signalPayload && !!signalComplete;
+  const pdfReady = !staleSignal && !stalePdf && safeStr(pdf?.status) === 'ready';
+  const pdfProcessing = !staleSignal && !stalePdf && safeStr(pdf?.status) === 'processing';
+  const pdfFailed = !staleSignal && safeStr(pdf?.status) === 'failed';
+  const canGeneratePdf = !!signalReadyForPdf && !pdfReady && !pdfProcessing;
+  const canDownloadPdf = !!pdfReady;
+
+  const uiMode =
+    pdfReady ? 'pdf_ready' :
+    pdfProcessing ? 'pdf_building' :
+    signalReadyForPdf ? 'signal_ready' :
+    'signal_building';
+
+  return {
+    signalReadyForPdf,
+    pdfReady,
+    pdfProcessing,
+    pdfFailed,
+    canGeneratePdf,
+    canDownloadPdf,
+    uiMode,
+  };
+}
+
 function buildStatusResponse(root, shareState = null, signalRun = null) {
   const state = root?.aiContext || {};
   const staleSignal = rootSignalLooksStale(root);
@@ -611,6 +628,17 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
   const status = chooseStatusValue(compatibleRun?.status, state?.status || 'idle');
   const stage = chooseStatusValue(compatibleRun?.stage, state?.stage || 'idle');
 
+  const signalComplete = !staleSignal && (compatibleRun ? !!compatibleRun.signalComplete : safeStr(state?.status) === 'done');
+  const signalValidForPdf = !staleSignal && (compatibleRun ? !!compatibleRun.signalValidForPdf : !!signalPayload && signalComplete);
+
+  const uiFlags = deriveUiFlags({
+    signalPayload,
+    staleSignal,
+    stalePdf,
+    pdf,
+    signalComplete: signalValidForPdf || signalComplete,
+  });
+
   return {
     ok: true,
     data: {
@@ -627,6 +655,9 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
       hasEncodedPayload: !staleSignal && !!state?.encodedPayload,
       hasSignal: !!signalPayload,
       signalReady: !!signalPayload,
+      signalComplete,
+      signalValidForPdf,
+      signalReadyForPdf: uiFlags.signalReadyForPdf,
       providerAgnostic: !!signalPayload?.providerAgnostic,
 
       usedOpenAI: compatibleRun ? !!compatibleRun?.usedOpenAI : !!state?.usedOpenAI,
@@ -649,13 +680,19 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
         ? compatibleRun.failedSources
         : [],
 
-      signalComplete: !staleSignal && (compatibleRun ? !!compatibleRun.signalComplete : safeStr(state?.status) === 'done'),
-      signalValidForPdf: !staleSignal && (compatibleRun ? !!compatibleRun.signalValidForPdf : !!signalPayload),
       sourceFingerprint: !staleSignal ? (safeStr(state?.sourceFingerprint).trim() || null) : null,
       connectionFingerprint: safeStr(state?.connectionFingerprint).trim() || null,
       staleSignal,
       stalePdf,
-      hasPdf: pdf.ready,
+
+      hasPdf: uiFlags.pdfReady,
+      pdfReady: uiFlags.pdfReady,
+      pdfProcessing: uiFlags.pdfProcessing,
+      pdfFailed: uiFlags.pdfFailed,
+      canGeneratePdf: uiFlags.canGeneratePdf,
+      canDownloadPdf: uiFlags.canDownloadPdf,
+      uiMode: uiFlags.uiMode,
+
       pdf,
 
       hasShareLink: shareEnabled,
@@ -706,7 +743,6 @@ function buildSharedPayload(root, provider) {
 
 /**
  * POST /api/mcp/context/build
- * Construye solo el Signal / contexto universal.
  */
 router.post('/build', async (req, res) => {
   try {
@@ -792,7 +828,6 @@ router.post('/build', async (req, res) => {
 
 /**
  * POST /api/mcp/context/pdf/build
- * Construye el PDF a partir de un Signal ya listo.
  */
 router.post('/pdf/build', async (req, res) => {
   const userId = req.user?._id;
@@ -851,19 +886,30 @@ router.post('/pdf/build', async (req, res) => {
     }
 
     const result = await buildPdfForUser(userId);
+    const resultData = result?.data || null;
 
     setNoCacheHeaders(res);
 
-    if (safeStr(result?.data?.status) === 'processing') {
+    if (resultData?.pdfProcessing) {
       return res.status(202).json({
         ok: true,
-        data: result?.data || null,
+        data: resultData,
       });
     }
 
     return res.json({
       ok: true,
-      data: result?.data || buildStatusResponse(await findPreferredContextRootForUser(userId), null, await findPreferredSignalRunForUser(userId, await findPreferredContextRootForUser(userId)))?.data || null,
+      data:
+        resultData ||
+        buildStatusResponse(
+          await findPreferredContextRootForUser(userId),
+          null,
+          await findPreferredSignalRunForUser(
+            userId,
+            await findPreferredContextRootForUser(userId)
+          )
+        )?.data ||
+        null,
     });
   } catch (e) {
     console.error('[mcp/context/pdf/build] error:', e);
@@ -891,6 +937,13 @@ router.post('/pdf/build', async (req, res) => {
           pdf: normalizePdfState(null),
           hasSignal: false,
           hasPdf: false,
+          signalReadyForPdf: false,
+          pdfReady: false,
+          pdfProcessing: false,
+          pdfFailed: false,
+          canGeneratePdf: false,
+          canDownloadPdf: false,
+          uiMode: 'signal_building',
         },
       });
     }
@@ -946,7 +999,6 @@ router.get('/status', async (req, res) => {
 
 /**
  * GET /api/mcp/context/latest
- * Devuelve el Signal listo más reciente.
  */
 router.get('/latest', async (req, res) => {
   try {
@@ -997,6 +1049,12 @@ router.get('/latest', async (req, res) => {
         model: statusData?.model || state?.model || null,
         generatedAt: statusData?.finishedAt || state?.finishedAt || null,
         hasPdf: !!statusData?.hasPdf,
+        signalReadyForPdf: !!statusData?.signalReadyForPdf,
+        pdfReady: !!statusData?.pdfReady,
+        pdfProcessing: !!statusData?.pdfProcessing,
+        canGeneratePdf: !!statusData?.canGeneratePdf,
+        canDownloadPdf: !!statusData?.canDownloadPdf,
+        uiMode: statusData?.uiMode || null,
         buildAttemptId: statusData?.buildAttemptId || state?.buildAttemptId || null,
         signalRunId: statusData?.signalRunId || null,
         sourceFingerprint: statusData?.sourceFingerprint || null,
@@ -1011,7 +1069,6 @@ router.get('/latest', async (req, res) => {
 
 /**
  * GET /api/mcp/context/pdf/download
- * Descarga el PDF listo del usuario autenticado.
  */
 router.get('/pdf/download', async (req, res) => {
   try {
@@ -1076,7 +1133,6 @@ router.get('/pdf/download', async (req, res) => {
 
 /**
  * GET /api/mcp/context/pdf/status
- * Alias práctico por si el frontend solo quiere consultar PDF.
  */
 router.get('/pdf/status', async (req, res) => {
   try {
@@ -1106,6 +1162,14 @@ router.get('/pdf/status', async (req, res) => {
             : normalizePdfState(state?.pdf)
         );
 
+    const uiFlags = deriveUiFlags({
+      signalPayload: staleSignal ? null : getRootAiSignalPayload(root),
+      staleSignal,
+      stalePdf,
+      pdf,
+      signalComplete: !staleSignal && (safeStr(state?.status) === 'done'),
+    });
+
     setNoCacheHeaders(res);
 
     return res.json({
@@ -1114,6 +1178,12 @@ router.get('/pdf/status', async (req, res) => {
         ...pdf,
         staleSignal,
         stalePdf,
+        pdfReady: uiFlags.pdfReady,
+        pdfProcessing: uiFlags.pdfProcessing,
+        pdfFailed: uiFlags.pdfFailed,
+        canGeneratePdf: uiFlags.canGeneratePdf,
+        canDownloadPdf: uiFlags.canDownloadPdf,
+        uiMode: uiFlags.uiMode,
         signalRunId: isSignalRunCompatibleWithRoot(signalRun, root) ? (signalRun?.signalRunId || null) : null,
         buildAttemptId: isSignalRunCompatibleWithRoot(signalRun, root)
           ? (signalRun?.buildAttemptId || state?.buildAttemptId || null)
@@ -1128,8 +1198,6 @@ router.get('/pdf/status', async (req, res) => {
 
 /**
  * POST /api/mcp/context/link
- * Crea el primer link si no existe.
- * Si ya existe uno activo, devuelve el mismo.
  */
 router.post('/link', async (req, res) => {
   try {
@@ -1288,7 +1356,6 @@ router.get('/link', async (req, res) => {
 
 /**
  * DELETE /api/mcp/context/link
- * Revoca el link activo sin borrar la data MCP ni el Signal.
  */
 router.delete('/link', async (req, res) => {
   try {
@@ -1343,7 +1410,6 @@ router.delete('/link', async (req, res) => {
 
 /**
  * POST /api/mcp/context/link/revoke
- * Alias amigable por si el frontend prefiere POST en lugar de DELETE.
  */
 router.post('/link/revoke', async (req, res) => {
   try {
@@ -1398,7 +1464,6 @@ router.post('/link/revoke', async (req, res) => {
 
 /**
  * GET /api/mcp/context/shared/:token
- * Devuelve SIEMPRE el Signal más reciente del usuario dueño de ese token.
  */
 router.get('/shared/:token', async (req, res) => {
   try {

@@ -37,6 +37,7 @@ const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(process.env.MCP_CONTEXT_RANGE_DAYS |
 const BUILD_WAIT_TIMEOUT_MS = clampInt(process.env.MCP_CONTEXT_BUILD_WAIT_TIMEOUT_MS || 120000, 5000, 300000);
 const BUILD_WAIT_POLL_MS = clampInt(process.env.MCP_CONTEXT_BUILD_WAIT_POLL_MS || 1500, 300, 5000);
 const BUILD_ACTIVE_GUARD_MS = clampInt(process.env.MCP_CONTEXT_BUILD_ACTIVE_GUARD_MS || 180000, 15000, 900000);
+const PDF_ACTIVE_GUARD_MS = clampInt(process.env.MCP_CONTEXT_PDF_ACTIVE_GUARD_MS || 180000, 15000, 900000);
 
 function safeStr(v) {
   return v == null ? '' : String(v);
@@ -146,6 +147,10 @@ function emptyPdfState(extra = {}) {
     error: null,
     sourceFingerprint: null,
     connectionFingerprint: null,
+    processingStartedAt: null,
+    processingHeartbeatAt: null,
+    stale: false,
+    staleReason: null,
     ...extra,
   };
 }
@@ -322,6 +327,28 @@ function isRecentProcessingState(ai) {
   const startedMs = parseDateMs(ai.startedAt);
   if (!startedMs) return false;
   return (Date.now() - startedMs) <= BUILD_ACTIVE_GUARD_MS;
+}
+
+function isRecentPdfProcessingState(pdf) {
+  if (!pdf || safeStr(pdf?.status) !== 'processing') return false;
+
+  const startedMs =
+    parseDateMs(pdf?.processingHeartbeatAt) ||
+    parseDateMs(pdf?.processingStartedAt) ||
+    parseDateMs(pdf?.generatedAt);
+
+  if (!startedMs) return false;
+  return (Date.now() - startedMs) <= PDF_ACTIVE_GUARD_MS;
+}
+
+function pdfFileExists(pdf) {
+  const localPath = safeStr(pdf?.localPath).trim();
+  if (!localPath) return false;
+  try {
+    return require('fs').existsSync(localPath);
+  } catch (_) {
+    return false;
+  }
 }
 
 function getAllowedDatasetsForSource(source) {
@@ -1479,6 +1506,13 @@ function buildResultFromRoot(root, fallback = {}) {
   const pdf = state?.pdf || {};
   const signalPayload = state?.signalPayload || state?.encodedPayload || fallback.signalPayload || null;
 
+  const signalReadyForPdf = isSignalPayloadBuildableForPdf(signalPayload);
+  const pdfReady = pdf?.status === 'ready';
+  const pdfProcessing = pdf?.status === 'processing';
+  const pdfFailed = pdf?.status === 'failed';
+  const canGeneratePdf = !!signalReadyForPdf && !pdfReady && !pdfProcessing;
+  const canDownloadPdf = !!pdfReady;
+
   return {
     ok: true,
     root,
@@ -1499,19 +1533,25 @@ function buildResultFromRoot(root, fallback = {}) {
       hasEncodedPayload: !!state?.encodedPayload,
       hasSignal: !!signalPayload,
       signalComplete: safeStr(state?.status) === 'done',
-      signalValidForPdf: isSignalPayloadBuildableForPdf(signalPayload),
+      signalValidForPdf: signalReadyForPdf,
+      signalReadyForPdf,
       providerAgnostic: !!state?.encodedPayload?.providerAgnostic,
       usableSources: Array.isArray(state?.usableSources) ? state.usableSources : (fallback.usableSources || []),
       pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : (fallback.pendingConnectedSources || []),
       sources: state?.sourcesStatus || fallback.sources || null,
       sourceFingerprint: safeStr(state?.sourceFingerprint || '').trim() || null,
       connectionFingerprint: safeStr(state?.connectionFingerprint || '').trim() || null,
-      hasPdf: pdf?.status === 'ready',
+      hasPdf: pdfReady,
+      pdfReady,
+      pdfProcessing,
+      pdfFailed,
+      canGeneratePdf,
+      canDownloadPdf,
       pdf: {
         status: pdf?.status || 'idle',
         stage: pdf?.stage || 'idle',
         progress: toNum(pdf?.progress, 0),
-        ready: pdf?.status === 'ready',
+        ready: pdfReady,
         fileName: pdf?.fileName || null,
         mimeType: pdf?.mimeType || 'application/pdf',
         downloadUrl: pdf?.downloadUrl || null,
@@ -1521,6 +1561,10 @@ function buildResultFromRoot(root, fallback = {}) {
         renderer: pdf?.renderer || null,
         sourceFingerprint: safeStr(pdf?.sourceFingerprint || '').trim() || null,
         connectionFingerprint: safeStr(pdf?.connectionFingerprint || '').trim() || null,
+        processingStartedAt: pdf?.processingStartedAt || null,
+        processingHeartbeatAt: pdf?.processingHeartbeatAt || null,
+        stale: !!pdf?.stale,
+        staleReason: pdf?.staleReason || null,
         error: pdf?.error || null,
       },
       error: state?.error || null,
@@ -2309,9 +2353,9 @@ async function buildPdfForUser(userId) {
   let pdfState = ai?.pdf || {};
   let buildAttemptId = safeStr(ai?.buildAttemptId).trim() || await resolveSignalBuildAttemptId(userId, ai);
 
-  const currentConnectionFingerprint = buildConnectionFingerprint(root);
-  const signalConnectionFingerprint = deriveConnectionFingerprintFromAi(ai);
-  const signalFingerprint = deriveSignalFingerprintFromAi(ai);
+  let currentConnectionFingerprint = buildConnectionFingerprint(root);
+  let signalConnectionFingerprint = deriveConnectionFingerprintFromAi(ai);
+  let signalFingerprint = deriveSignalFingerprintFromAi(ai);
 
   const signalLooksStale =
     !!signalConnectionFingerprint &&
@@ -2336,6 +2380,10 @@ async function buildPdfForUser(userId) {
     signalPayload = ai?.signalPayload || ai?.encodedPayload || null;
     pdfState = ai?.pdf || {};
     buildAttemptId = safeStr(ai?.buildAttemptId).trim() || await resolveSignalBuildAttemptId(userId, ai);
+
+    currentConnectionFingerprint = buildConnectionFingerprint(root);
+    signalConnectionFingerprint = deriveConnectionFingerprintFromAi(ai);
+    signalFingerprint = deriveSignalFingerprintFromAi(ai);
 
     if (safeStr(ai?.status) !== 'done' || !signalPayload) {
       return buildResultFromRoot(root, {
@@ -2382,7 +2430,8 @@ async function buildPdfForUser(userId) {
     (
       !safeStr(pdfState?.connectionFingerprint).trim() ||
       safeStr(pdfState?.connectionFingerprint).trim() === currentConnectionFingerprint
-    );
+    ) &&
+    pdfFileExists(pdfState);
 
   if (pdfIsAligned) {
     if (buildAttemptId) {
@@ -2409,20 +2458,103 @@ async function buildPdfForUser(userId) {
     });
   }
 
+  if (pdfState?.status === 'ready' && !pdfFileExists(pdfState)) {
+    await updateRootAiContext(userId, (currentAi) => ({
+      ...(currentAi || {}),
+      pdf: {
+        ...(currentAi?.pdf || emptyPdfState()),
+        status: 'failed',
+        stage: 'failed',
+        progress: 100,
+        stale: true,
+        staleReason: 'PDF_FILE_NOT_FOUND',
+        error: 'MCP_SIGNAL_PDF_FILE_NOT_FOUND',
+        sourceFingerprint: signalFingerprint || null,
+        connectionFingerprint: currentConnectionFingerprint,
+      },
+    }));
+
+    root = await findRoot(userId);
+    ai = root?.aiContext || {};
+    pdfState = ai?.pdf || {};
+  }
+
   if (pdfState?.status === 'processing') {
-    if (buildAttemptId) {
-      await safeSignalPdfState(userId, buildAttemptId, {
-        status: 'processing',
-        stage: pdfState?.stage || 'building_document',
-        progress: toNum(pdfState?.progress, 15),
+    if (pdfFileExists(pdfState)) {
+      const finalRoot = await updateRootAiContext(userId, (currentAi) => ({
+        ...(currentAi || {}),
+        pdf: {
+          ...(currentAi?.pdf || emptyPdfState()),
+          status: 'ready',
+          stage: 'ready',
+          progress: 100,
+          stale: false,
+          staleReason: null,
+          error: null,
+          sourceFingerprint: signalFingerprint || null,
+          connectionFingerprint: currentConnectionFingerprint,
+        },
+      }));
+
+      if (buildAttemptId) {
+        await safeSignalPdfState(userId, buildAttemptId, {
+          status: 'ready',
+          stage: 'ready',
+          progress: 100,
+          error: null,
+        });
+      }
+
+      return buildResultFromRoot(finalRoot || await findRoot(userId), {
+        status: ai?.status || 'done',
+        progress: toNum(ai?.progress, 100),
+        stage: ai?.stage || 'completed',
       });
     }
 
-    return buildResultFromRoot(root, {
-      status: ai?.status || 'done',
-      progress: toNum(ai?.progress, 100),
-      stage: ai?.stage || 'completed',
-    });
+    if (isRecentPdfProcessingState(pdfState)) {
+      if (buildAttemptId) {
+        await safeSignalPdfState(userId, buildAttemptId, {
+          status: 'processing',
+          stage: pdfState?.stage || 'building_document',
+          progress: Math.max(15, toNum(pdfState?.progress, 15)),
+        });
+      }
+
+      return buildResultFromRoot(root, {
+        status: ai?.status || 'done',
+        progress: toNum(ai?.progress, 100),
+        stage: ai?.stage || 'completed',
+      });
+    }
+
+    await updateRootAiContext(userId, (currentAi) => ({
+      ...(currentAi || {}),
+      pdf: {
+        ...(currentAi?.pdf || emptyPdfState()),
+        status: 'failed',
+        stage: 'failed',
+        progress: 100,
+        stale: true,
+        staleReason: 'PROCESSING_STALE',
+        error: 'SIGNAL_PDF_PROCESSING_STALE',
+        sourceFingerprint: signalFingerprint || null,
+        connectionFingerprint: currentConnectionFingerprint,
+      },
+    }));
+
+    if (buildAttemptId) {
+      await safeSignalPdfState(userId, buildAttemptId, {
+        status: 'failed',
+        stage: 'failed',
+        progress: 100,
+        error: 'SIGNAL_PDF_PROCESSING_STALE',
+      });
+    }
+
+    root = await findRoot(userId);
+    ai = root?.aiContext || {};
+    pdfState = ai?.pdf || {};
   }
 
   await updateRootAiContext(userId, (currentAi) => ({
@@ -2437,6 +2569,10 @@ async function buildPdfForUser(userId) {
       stage: 'building_document',
       progress: 15,
       error: null,
+      stale: false,
+      staleReason: null,
+      processingStartedAt: nowIso(),
+      processingHeartbeatAt: nowIso(),
       sourceFingerprint: signalFingerprint || null,
       connectionFingerprint: currentConnectionFingerprint,
     },
@@ -2462,6 +2598,10 @@ async function buildPdfForUser(userId) {
         stage: 'building_document',
         progress: 45,
         error: null,
+        stale: false,
+        staleReason: null,
+        processingStartedAt: currentAi?.pdf?.processingStartedAt || nowIso(),
+        processingHeartbeatAt: nowIso(),
         sourceFingerprint: signalFingerprint || null,
         connectionFingerprint: currentConnectionFingerprint,
       },
@@ -2501,6 +2641,10 @@ async function buildPdfForUser(userId) {
         version: Math.max(1, toNum(currentAi?.pdf?.version, 0) + 1),
         sourceFingerprint: signalFingerprint || null,
         connectionFingerprint: currentConnectionFingerprint,
+        processingStartedAt: currentAi?.pdf?.processingStartedAt || nowIso(),
+        processingHeartbeatAt: nowIso(),
+        stale: false,
+        staleReason: null,
         error: null,
       },
     }));
@@ -2545,6 +2689,9 @@ async function buildPdfForUser(userId) {
         generatedAt: null,
         sourceFingerprint: signalFingerprint || null,
         connectionFingerprint: currentConnectionFingerprint,
+        processingHeartbeatAt: nowIso(),
+        stale: false,
+        staleReason: null,
         error: pdfErr?.code || pdfErr?.message || 'SIGNAL_PDF_BUILD_FAILED',
       },
     }));
