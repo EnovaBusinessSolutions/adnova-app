@@ -41,6 +41,24 @@ const WORKER_CONTEXT_REBUILD_TIMEOUT_MS = clampInt(
   120000
 );
 
+const WORKER_CONCURRENCY = clampInt(
+  process.env.MCP_WORKER_CONCURRENCY || 1,
+  1,
+  10
+);
+
+const WORKER_CONTEXT_REBUILD_RETRIES = clampInt(
+  process.env.MCP_WORKER_CONTEXT_REBUILD_RETRIES || 2,
+  0,
+  5
+);
+
+const WORKER_CONTEXT_REBUILD_RETRY_DELAY_MS = clampInt(
+  process.env.MCP_WORKER_CONTEXT_REBUILD_RETRY_DELAY_MS || 2500,
+  250,
+  15000
+);
+
 if (!MONGO_URI) {
   console.error('[mcpWorker] Missing MONGO_URI in environment');
   process.exit(1);
@@ -79,16 +97,105 @@ function safeString(v) {
   return v == null ? null : String(v);
 }
 
-function safeTrim(v) {
-  const s = safeString(v);
-  return s ? s.trim() : null;
-}
-
 function estimateBytes(obj) {
   try {
     return Buffer.byteLength(JSON.stringify(obj ?? null), 'utf8');
   } catch {
     return 0;
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientMongoError(err) {
+  const msg = String(err?.message || err?.code || err || '').toLowerCase();
+
+  return (
+    msg.includes('timed out') ||
+    msg.includes('timeout') ||
+    msg.includes('mongo') ||
+    msg.includes('server selection') ||
+    msg.includes('econnreset') ||
+    msg.includes('socket') ||
+    msg.includes('topology') ||
+    msg.includes('connection')
+  );
+}
+
+async function ensureMongoConnected() {
+  if (mongoose.connection.readyState === 1) return;
+
+  console.warn('[mcpWorker] Mongo not ready before rebuild, reconnecting...', {
+    readyState: mongoose.connection.readyState,
+  });
+
+  try {
+    await mongoose.disconnect().catch(() => {});
+  } catch (_) {}
+
+  await connectMongo();
+}
+
+const sourceLocks = new Map();
+
+async function withSourceLock(lockKey, fn) {
+  while (true) {
+    const existing = sourceLocks.get(lockKey);
+    if (!existing) break;
+    await existing;
+  }
+
+  let release;
+  const ownLock = new Promise((resolve) => {
+    release = resolve;
+  });
+
+  sourceLocks.set(lockKey, ownLock);
+
+  try {
+    return await fn();
+  } finally {
+    if (sourceLocks.get(lockKey) === ownLock) {
+      sourceLocks.delete(lockKey);
+    }
+    release();
+  }
+}
+
+async function patchSourceRebuildFailure(userId, source, errorMessage) {
+  try {
+    await McpData.patchRootSource(userId, source, {
+      connected: true,
+      status: 'error',
+      ready: false,
+      lastError: errorMessage || 'CONTEXT_REBUILD_FAILED',
+    });
+  } catch (e) {
+    console.error('[mcpWorker] patchSourceRebuildFailure failed', {
+      userId: String(userId),
+      source,
+      error: e?.message || e,
+    });
+  }
+}
+
+async function patchSourceRebuildSuccess(userId, source) {
+  try {
+    await McpData.patchRootSource(userId, source, {
+      connected: true,
+      status: 'ready',
+      ready: true,
+      lastError: null,
+      lastSyncAt: new Date(),
+    });
+  } catch (e) {
+    console.error('[mcpWorker] patchSourceRebuildSuccess failed', {
+      userId: String(userId),
+      source,
+      error: e?.message || e,
+    });
   }
 }
 
@@ -312,7 +419,7 @@ function pickContextCoverageRange(result, summaryDs) {
   };
 }
 
-function extractMetaRootPatchFromResult(r, ranges = {}, opts = {}) {
+function extractMetaRootPatchFromResult(r, ranges = {}) {
   const summaryDs = Array.isArray(r?.datasets)
     ? r.datasets.find((x) => x?.dataset === 'meta.insights_summary') || r.datasets[0]
     : null;
@@ -353,8 +460,6 @@ function extractMetaRootPatchFromResult(r, ranges = {}, opts = {}) {
     safeString(coverageRange?.tz) ||
     null;
 
-  const selectedAccountId = safeTrim(opts?.accountId) || safeTrim(accountId);
-
   return {
     sourceName: 'metaAds',
     sourcePatch: {
@@ -363,12 +468,10 @@ function extractMetaRootPatchFromResult(r, ranges = {}, opts = {}) {
       ready: true,
       lastError: null,
       lastSyncAt: new Date(),
-      connectedAt: new Date(),
       rangeDays: storageRangeDays,
       storageRangeDays,
       contextDefaultRangeDays: contextRangeDays,
       accountId,
-      selectedAccountId,
       name,
       currency,
       timezone,
@@ -395,7 +498,6 @@ function extractMetaRootPatchFromResult(r, ranges = {}, opts = {}) {
     },
     metaSummary: {
       accountId,
-      selectedAccountId,
       name,
       currency,
       timezone,
@@ -408,7 +510,7 @@ function extractMetaRootPatchFromResult(r, ranges = {}, opts = {}) {
   };
 }
 
-function extractGoogleRootPatchFromResult(r, ranges = {}, opts = {}) {
+function extractGoogleRootPatchFromResult(r, ranges = {}) {
   const summaryDs = Array.isArray(r?.datasets)
     ? r.datasets.find((x) => x?.dataset === 'google.insights_summary') || r.datasets[0]
     : null;
@@ -450,8 +552,6 @@ function extractGoogleRootPatchFromResult(r, ranges = {}, opts = {}) {
     safeString(coverageRange?.tz) ||
     null;
 
-  const selectedCustomerId = safeTrim(opts?.accountId) || safeTrim(customerId);
-
   return {
     sourceName: 'googleAds',
     sourcePatch: {
@@ -460,13 +560,11 @@ function extractGoogleRootPatchFromResult(r, ranges = {}, opts = {}) {
       ready: true,
       lastError: null,
       lastSyncAt: new Date(),
-      connectedAt: new Date(),
       rangeDays: storageRangeDays,
       storageRangeDays,
       contextDefaultRangeDays: contextRangeDays,
       customerId,
       accountId: customerId,
-      selectedCustomerId,
       name,
       currency,
       timezone,
@@ -485,7 +583,6 @@ function extractGoogleRootPatchFromResult(r, ranges = {}, opts = {}) {
     },
     metaSummary: {
       customerId,
-      selectedCustomerId,
       name,
       currency,
       timezone,
@@ -498,7 +595,7 @@ function extractGoogleRootPatchFromResult(r, ranges = {}, opts = {}) {
   };
 }
 
-function extractGa4RootPatchFromResult(r, ranges = {}, opts = {}) {
+function extractGa4RootPatchFromResult(r, ranges = {}) {
   const summaryDs = Array.isArray(r?.datasets)
     ? r.datasets.find((x) => x?.dataset === 'ga4.insights_summary') || r.datasets[0]
     : null;
@@ -538,8 +635,6 @@ function extractGa4RootPatchFromResult(r, ranges = {}, opts = {}) {
     safeString(coverageRange?.tz) ||
     null;
 
-  const selectedPropertyId = safeTrim(opts?.propertyId) || safeTrim(propertyId);
-
   return {
     sourceName: 'ga4',
     sourcePatch: {
@@ -548,12 +643,10 @@ function extractGa4RootPatchFromResult(r, ranges = {}, opts = {}) {
       ready: true,
       lastError: null,
       lastSyncAt: new Date(),
-      connectedAt: new Date(),
       rangeDays: storageRangeDays,
       storageRangeDays,
       contextDefaultRangeDays: contextRangeDays,
       propertyId,
-      selectedPropertyId,
       name,
       currency,
       timezone,
@@ -581,7 +674,6 @@ function extractGa4RootPatchFromResult(r, ranges = {}, opts = {}) {
     },
     metaSummary: {
       propertyId,
-      selectedPropertyId,
       name,
       currency,
       timezone,
@@ -684,59 +776,94 @@ async function triggerContextRebuildBestEffort({
   snapshotId,
   contextRangeDays,
 }) {
-  try {
-    console.log('[mcpWorker] context rebuild:start', {
-      userId: String(userId),
-      source,
-      snapshotId,
-      contextRangeDays: contextRangeDays || null,
-      timeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
-    });
+  let lastFailure = null;
 
-    const result = await rebuildUnifiedContextForUser(userId, {
-      explicitSnapshotId: snapshotId || null,
-      contextRangeDays: contextRangeDays || null,
-      timeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
-      reason: `${safeString(source) || 'source'}_synced`,
-      requestedBy: 'mcpWorker',
-      forceRebuild: true,
-    });
+  for (let attempt = 1; attempt <= WORKER_CONTEXT_REBUILD_RETRIES + 1; attempt += 1) {
+    try {
+      await ensureMongoConnected();
 
-    console.log('[mcpWorker] context rebuild:done', {
-      userId: String(userId),
-      source,
-      snapshotId,
-      status: result?.data?.status || null,
-      stage: result?.data?.stage || null,
-      currentSourceFingerprint: result?.data?.currentSourceFingerprint || null,
-      signal: result?.data?.signal || null,
-      pdf: result?.data?.pdf || null,
-      usableSources: result?.data?.usableSources || [],
-      pendingConnectedSources: result?.data?.pendingConnectedSources || [],
-    });
+      console.log('[mcpWorker] context rebuild:start', {
+        userId: String(userId),
+        source,
+        snapshotId,
+        contextRangeDays: contextRangeDays || null,
+        timeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
+        attempt,
+        maxAttempts: WORKER_CONTEXT_REBUILD_RETRIES + 1,
+      });
 
-    return {
-      ok: true,
-      data: result?.data || null,
-    };
-  } catch (err) {
-    console.warn('[mcpWorker] context rebuild failed (best effort)', {
-      userId: String(userId),
-      source,
-      snapshotId,
-      error: err?.message || err?.code || err,
-      data: err?.data || null,
-    });
+      const result = await rebuildUnifiedContextForUser(userId, {
+        explicitSnapshotId: snapshotId || null,
+        contextRangeDays: contextRangeDays || null,
+        timeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
+        reason: `${safeString(source) || 'source'}_synced`,
+        requestedBy: 'mcpWorker',
+      });
 
-    return {
-      ok: false,
-      error: err?.message || err?.code || 'CONTEXT_REBUILD_FAILED',
-      data: err?.data || null,
-    };
+      console.log('[mcpWorker] context rebuild:done', {
+        userId: String(userId),
+        source,
+        snapshotId,
+        attempt,
+        status: result?.data?.status || null,
+        stage: result?.data?.stage || null,
+        sourceSnapshots: result?.data?.sourceSnapshots || null,
+        usableSources: result?.data?.usableSources || [],
+        pendingConnectedSources: result?.data?.pendingConnectedSources || [],
+      });
+
+      await patchSourceRebuildSuccess(userId, source);
+
+      return {
+        ok: true,
+        data: result?.data || null,
+      };
+    } catch (err) {
+      lastFailure = err;
+
+      const errorMsg = err?.message || err?.code || 'CONTEXT_REBUILD_FAILED';
+
+      console.warn('[mcpWorker] context rebuild failed', {
+        userId: String(userId),
+        source,
+        snapshotId,
+        attempt,
+        maxAttempts: WORKER_CONTEXT_REBUILD_RETRIES + 1,
+        error: errorMsg,
+        data: err?.data || null,
+      });
+
+      const shouldRetry =
+        attempt < WORKER_CONTEXT_REBUILD_RETRIES + 1 && isTransientMongoError(err);
+
+      if (shouldRetry) {
+        await sleep(WORKER_CONTEXT_REBUILD_RETRY_DELAY_MS * attempt);
+        continue;
+      }
+
+      await patchSourceRebuildFailure(userId, source, errorMsg);
+
+      return {
+        ok: false,
+        error: errorMsg,
+        data: err?.data || null,
+      };
+    }
   }
+
+  const finalError =
+    lastFailure?.message || lastFailure?.code || 'CONTEXT_REBUILD_FAILED';
+
+  await patchSourceRebuildFailure(userId, source, finalError);
+
+  return {
+    ok: false,
+    error: finalError,
+    data: lastFailure?.data || null,
+  };
 }
 
-async function runMetaJob({ userId, storageRangeDays, contextRangeDays, accountId }) {
+async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
   const snapshotId = makeSnapshotId();
 
   await McpData.patchRootSource(userId, 'metaAds', {
@@ -744,12 +871,6 @@ async function runMetaJob({ userId, storageRangeDays, contextRangeDays, accountI
     status: 'running',
     ready: false,
     lastError: null,
-    connectedAt: new Date(),
-    ...(safeTrim(accountId) ? {
-      accountId: safeTrim(accountId),
-      selectedAccountId: safeTrim(accountId),
-      selectionUpdatedAt: new Date(),
-    } : {}),
   });
 
   const storageDays = await resolveStorageRangeDays(userId, storageRangeDays);
@@ -760,7 +881,6 @@ async function runMetaJob({ userId, storageRangeDays, contextRangeDays, accountI
     snapshotId,
     storageRangeDays: storageDays,
     contextRangeDays: contextDays,
-    accountId: safeTrim(accountId) || null,
   });
 
   const r = await collectMeta(userId, {
@@ -800,16 +920,10 @@ async function runMetaJob({ userId, storageRangeDays, contextRangeDays, accountI
     datasets: r.datasets || [],
   });
 
-  const extractedRoot = extractMetaRootPatchFromResult(
-    r,
-    {
-      storageRangeDays: storageDays,
-      contextRangeDays: contextDays,
-    },
-    {
-      accountId,
-    }
-  );
+  const extractedRoot = extractMetaRootPatchFromResult(r, {
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
+  });
 
   await finalizeRootFromCollector({
     userId,
@@ -824,6 +938,10 @@ async function runMetaJob({ userId, storageRangeDays, contextRangeDays, accountI
     snapshotId,
     contextRangeDays: contextDays,
   });
+
+  if (!rebuild?.ok) {
+    throw new Error(rebuild?.error || 'META_CONTEXT_REBUILD_FAILED');
+  }
 
   return {
     ok: true,
@@ -841,13 +959,6 @@ async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, acc
     status: 'running',
     ready: false,
     lastError: null,
-    connectedAt: new Date(),
-    ...(safeTrim(accountId) ? {
-      customerId: safeTrim(accountId),
-      accountId: safeTrim(accountId),
-      selectedCustomerId: safeTrim(accountId),
-      selectionUpdatedAt: new Date(),
-    } : {}),
   });
 
   const storageDays = await resolveStorageRangeDays(userId, storageRangeDays);
@@ -858,12 +969,12 @@ async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, acc
     snapshotId,
     storageRangeDays: storageDays,
     contextRangeDays: contextDays,
-    accountId: safeTrim(accountId) || null,
+    accountId: safeString(accountId) || null,
   });
 
   const r = await collectGoogle(userId, {
     rangeDays: contextDays,
-    account_id: safeTrim(accountId) || undefined,
+    account_id: safeString(accountId) || undefined,
   });
 
   console.log('[mcpWorker] collectGoogle:result', {
@@ -896,16 +1007,10 @@ async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, acc
     datasets: r.datasets || [],
   });
 
-  const extractedRoot = extractGoogleRootPatchFromResult(
-    r,
-    {
-      storageRangeDays: storageDays,
-      contextRangeDays: contextDays,
-    },
-    {
-      accountId,
-    }
-  );
+  const extractedRoot = extractGoogleRootPatchFromResult(r, {
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
+  });
 
   await finalizeRootFromCollector({
     userId,
@@ -920,6 +1025,10 @@ async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, acc
     snapshotId,
     contextRangeDays: contextDays,
   });
+
+  if (!rebuild?.ok) {
+    throw new Error(rebuild?.error || 'GOOGLEADS_CONTEXT_REBUILD_FAILED');
+  }
 
   return {
     ok: true,
@@ -937,12 +1046,6 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
     status: 'running',
     ready: false,
     lastError: null,
-    connectedAt: new Date(),
-    ...(safeTrim(propertyId) ? {
-      propertyId: safeTrim(propertyId),
-      selectedPropertyId: safeTrim(propertyId),
-      selectionUpdatedAt: new Date(),
-    } : {}),
   });
 
   const storageDays = await resolveStorageRangeDays(userId, storageRangeDays);
@@ -953,12 +1056,12 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
     snapshotId,
     storageRangeDays: storageDays,
     contextRangeDays: contextDays,
-    propertyId: safeTrim(propertyId) || null,
+    propertyId: safeString(propertyId) || null,
   });
 
   const r = await collectGA4(userId, {
     rangeDays: contextDays,
-    property_id: safeTrim(propertyId) || undefined,
+    property_id: safeString(propertyId) || undefined,
   });
 
   console.log('[mcpWorker] collectGA4:result', {
@@ -991,16 +1094,10 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
     datasets: r.datasets || [],
   });
 
-  const extractedRoot = extractGa4RootPatchFromResult(
-    r,
-    {
-      storageRangeDays: storageDays,
-      contextRangeDays: contextDays,
-    },
-    {
-      propertyId,
-    }
-  );
+  const extractedRoot = extractGa4RootPatchFromResult(r, {
+    storageRangeDays: storageDays,
+    contextRangeDays: contextDays,
+  });
 
   await finalizeRootFromCollector({
     userId,
@@ -1016,6 +1113,10 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
     contextRangeDays: contextDays,
   });
 
+  if (!rebuild?.ok) {
+    throw new Error(rebuild?.error || 'GA4_CONTEXT_REBUILD_FAILED');
+  }
+
   return {
     ok: true,
     snapshotId,
@@ -1030,12 +1131,19 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
 async function connectMongo() {
   mongoose.set('bufferCommands', false);
 
+  if (mongoose.connection.readyState === 1) {
+    return mongoose.connection;
+  }
+
   await mongoose.connect(MONGO_URI, {
-    serverSelectionTimeoutMS: 20_000,
-    socketTimeoutMS: 45_000,
+    serverSelectionTimeoutMS: 20000,
+    socketTimeoutMS: 45000,
+    maxPoolSize: 10,
+    minPoolSize: 1,
   });
 
   console.log('[mcpWorker] Mongo connected');
+  return mongoose.connection;
 }
 
 /* =========================
@@ -1070,40 +1178,42 @@ async function boot() {
       if (!userId) throw new Error('MISSING_USER_ID');
 
       const effectiveContextRangeDays = contextRangeDays || rangeDays || null;
+      const lockKey = `${String(userId)}:${String(source || 'unknown')}`;
 
-      if (source === 'metaAds') {
-        return await runMetaJob({
-          userId,
-          storageRangeDays,
-          contextRangeDays: effectiveContextRangeDays,
-          accountId,
-        });
-      }
+      return await withSourceLock(lockKey, async () => {
+        if (source === 'metaAds') {
+          return await runMetaJob({
+            userId,
+            storageRangeDays,
+            contextRangeDays: effectiveContextRangeDays,
+          });
+        }
 
-      if (source === 'googleAds') {
-        return await runGoogleAdsJob({
-          userId,
-          storageRangeDays,
-          contextRangeDays: effectiveContextRangeDays,
-          accountId,
-        });
-      }
+        if (source === 'googleAds') {
+          return await runGoogleAdsJob({
+            userId,
+            storageRangeDays,
+            contextRangeDays: effectiveContextRangeDays,
+            accountId,
+          });
+        }
 
-      if (source === 'ga4') {
-        return await runGa4Job({
-          userId,
-          storageRangeDays,
-          contextRangeDays: effectiveContextRangeDays,
-          propertyId,
-        });
-      }
+        if (source === 'ga4') {
+          return await runGa4Job({
+            userId,
+            storageRangeDays,
+            contextRangeDays: effectiveContextRangeDays,
+            propertyId,
+          });
+        }
 
-      throw new Error(`UNSUPPORTED_SOURCE:${source}`);
+        throw new Error(`UNSUPPORTED_SOURCE:${source}`);
+      });
     },
     {
       connection,
       prefix: BULLMQ_PREFIX,
-      concurrency: 2,
+      concurrency: WORKER_CONCURRENCY,
     }
   );
 
@@ -1133,6 +1243,9 @@ async function boot() {
     defaultStorageRangeDays: DEFAULT_STORAGE_RANGE_DAYS,
     defaultContextRangeDays: DEFAULT_CONTEXT_RANGE_DAYS,
     workerContextRebuildTimeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
+    workerConcurrency: WORKER_CONCURRENCY,
+    workerContextRebuildRetries: WORKER_CONTEXT_REBUILD_RETRIES,
+    workerContextRebuildRetryDelayMs: WORKER_CONTEXT_REBUILD_RETRY_DELAY_MS,
   });
 }
 

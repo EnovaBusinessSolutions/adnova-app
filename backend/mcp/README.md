@@ -60,6 +60,22 @@ Variables opcionales: `MCP_OAUTH_CLIENT_ID` (default: adray-mcp-client), `MCP_OA
 Configurar MCP endpoint: `http://localhost:3000/mcp` (o `https://mcp.adray.ai/mcp` en producción).
 Usar el `access_token` OAuth en el transporte.
 
+## Snapshot-first (mcpdata) — opcional
+
+Las tools de Meta/Google pueden leer primero datos ya recolectados en `mcpdata` (datasets `*.daily_trends_ai` o `*.history.daily_account_totals`) y usar la API en vivo solo si hace falta (snapshot fresco → sin llamar a la API; snapshot obsoleto → intentar live y, si falla, devolver snapshot).
+
+**Kill-switch:** por defecto está desactivado.
+
+| Variable | Descripción |
+|----------|-------------|
+| `MCP_SNAPSHOT_FIRST_ENABLED` | `true` / `1` para activar |
+| `MCP_SNAPSHOT_FIRST_TOOLS` | Lista separada por comas (ej. `get_ad_performance,get_campaign_performance`). Vacío = todas las tools contempladas |
+| `MCP_SNAPSHOT_MAX_AGE_MIN` | Minutos para considerar el snapshot “fresco” (default 360) |
+| `MCP_SNAPSHOT_BACKGROUND_REFRESH` | Si `true`, tras `live_fallback` encola recolección MCP (requiere `REDIS_URL`) |
+| `MCP_SNAPSHOT_REFRESH_DEBOUNCE_MS` | Mínimo entre encolados por usuario+fuente (default 300000) |
+
+Logs estructurados: líneas JSON con `mcp_tool_source: true`, `source_mode` (`snapshot_fresh` \| `snapshot_stale` vía live \| `live` \| `live_fallback` \| `error`), `latency_ms`, `snapshot_id` cuando aplica.
+
 ## Tools Phase 1
 - `get_account_info` – cuentas conectadas
 - `get_ad_performance` – métricas agregadas (spend, impresiones, clicks…)

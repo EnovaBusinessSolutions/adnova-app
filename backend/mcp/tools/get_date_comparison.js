@@ -6,10 +6,14 @@ const metaAdapter = require('../adapters/meta');
 const googleAdapter = require('../adapters/google');
 const shopifyAdapter = require('../adapters/shopify');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
+const { resolveSnapshotFirstData } = require('../snapshot/runSnapshotFirst');
+const { buildAdPerformanceSnapshot } = require('../snapshot/builders');
 
 const TOOL_NAME = 'get_date_comparison';
 
-function round(n, d = 2) { return Number(Number(n || 0).toFixed(d)); }
+function round(n, d = 2) {
+  return Number(Number(n || 0).toFixed(d));
+}
 
 function direction(a, b) {
   if (b > a) return 'up';
@@ -89,8 +93,38 @@ function register(server) {
         if (params.channel === 'meta' || params.channel === 'all') {
           try {
             const [a, b] = await Promise.all([
-              metaAdapter.getAdPerformance(userId, params.period_a_from, params.period_a_to, 'total'),
-              metaAdapter.getAdPerformance(userId, params.period_b_from, params.period_b_to, 'total'),
+              resolveSnapshotFirstData({
+                toolName: TOOL_NAME,
+                userId,
+                refreshSource: 'metaAds',
+                buildSnapshot: () =>
+                  buildAdPerformanceSnapshot(
+                    userId,
+                    'metaAds',
+                    'meta',
+                    params.period_a_from,
+                    params.period_a_to,
+                    'total'
+                  ),
+                execLive: () =>
+                  metaAdapter.getAdPerformance(userId, params.period_a_from, params.period_a_to, 'total'),
+              }),
+              resolveSnapshotFirstData({
+                toolName: TOOL_NAME,
+                userId,
+                refreshSource: 'metaAds',
+                buildSnapshot: () =>
+                  buildAdPerformanceSnapshot(
+                    userId,
+                    'metaAds',
+                    'meta',
+                    params.period_b_from,
+                    params.period_b_to,
+                    'total'
+                  ),
+                execLive: () =>
+                  metaAdapter.getAdPerformance(userId, params.period_b_from, params.period_b_to, 'total'),
+              }),
             ]);
             if (params.channel === 'all') {
               result.meta = { metrics: compareMetrics(a, b) };
@@ -103,8 +137,38 @@ function register(server) {
         if (params.channel === 'google' || params.channel === 'all') {
           try {
             const [a, b] = await Promise.all([
-              googleAdapter.getAdPerformance(userId, params.period_a_from, params.period_a_to, 'total'),
-              googleAdapter.getAdPerformance(userId, params.period_b_from, params.period_b_to, 'total'),
+              resolveSnapshotFirstData({
+                toolName: TOOL_NAME,
+                userId,
+                refreshSource: 'googleAds',
+                buildSnapshot: () =>
+                  buildAdPerformanceSnapshot(
+                    userId,
+                    'googleAds',
+                    'google',
+                    params.period_a_from,
+                    params.period_a_to,
+                    'total'
+                  ),
+                execLive: () =>
+                  googleAdapter.getAdPerformance(userId, params.period_a_from, params.period_a_to, 'total'),
+              }),
+              resolveSnapshotFirstData({
+                toolName: TOOL_NAME,
+                userId,
+                refreshSource: 'googleAds',
+                buildSnapshot: () =>
+                  buildAdPerformanceSnapshot(
+                    userId,
+                    'googleAds',
+                    'google',
+                    params.period_b_from,
+                    params.period_b_to,
+                    'total'
+                  ),
+                execLive: () =>
+                  googleAdapter.getAdPerformance(userId, params.period_b_from, params.period_b_to, 'total'),
+              }),
             ]);
             if (params.channel === 'all') {
               result.google = { metrics: compareMetrics(a, b) };
