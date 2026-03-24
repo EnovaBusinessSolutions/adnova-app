@@ -1,6 +1,6 @@
 # AdRay / Adnova
 
-Last update: 2026-03-22
+Last update: 2026-03-23
 
 This is the only documentation file that should be treated as the source of truth for the repository. It consolidates the previous planning files, implementation notes, operational checklist, WordPress plugin readme, Shopify review guide, and frontend README boilerplate.
 
@@ -49,22 +49,18 @@ Checklist operativa y variables por entorno: [docs/STAGING_PRODUCTION.md](docs/S
 - Attribution stitching, merchant snapshot updates, and failed job logging are implemented.
 - WooCommerce attribution flow was validated end-to-end in staging on 2026-03-13, including checkout login stitching and attributed order persistence.
 
-### Active incident
+### Collector status (2026-03-23)
 
-`POST /collect` has been observed returning `500 Internal Server Error` in production even while the pixel asset itself loads correctly.
+- Staging collector health is stable.
+- Latest live tests returned `success: true`, `event_persisted: true`, `session_persisted: true`, `fallback_stored: false`.
+- Data coverage endpoint is stable and no longer returning `500`/degraded Prisma errors for staging.
+- Historical backfill for Layer 4 and Layer 5 session source is automated at service startup.
 
-Most likely root causes, in priority order:
+Current production guidance:
 
-1. Production database schema drift between deployed Prisma client and actual DB schema.
-2. Missing or invalid environment variables such as `DATABASE_URL`, `REDIS_URL`, or `ENCRYPTION_KEY`.
-3. Runtime DB connectivity issues.
-4. Payload shape mismatches between browser sender and collector expectations.
-
-Immediate containment:
-
-- Keep the pixel loading to validate traffic flow.
-- Treat production event flow as non-persistent until `/collect` is consistently returning `2xx`.
-- Do not trust attribution analysis until collector stability is restored.
+1. Keep monitoring `POST /collect` response flags during rollout.
+2. Treat production as healthy only when the same flags above are observed in production traffic.
+3. If flags regress, inspect `failed_jobs` rows with `collect_` job types first.
 
 ### Latest staging validation (2026-03-13)
 
@@ -162,9 +158,9 @@ The original planning spec described a shop-centric version of the same pipeline
 
 The current implementation uses an `account_id`-centric model with partial legacy `shop_id` fallback in some paths.
 
-## Phase 1 Data Coverage Audit (datos-pixel.d)
+## Phase 1 Data Coverage Audit (datos-pixel.md)
 
-Reference reviewed: `datos-pixel.d` (March 2026). The list below maps requested Phase 1 fields against current implementation.
+Reference reviewed: `datos-pixel.md` (March 2026). The list below maps requested Phase 1 fields against current implementation.
 
 ### Layer 1: Identity anchors
 
@@ -1091,6 +1087,73 @@ Response includes:
 Interpretation rule:
 
 - Task is complete for Phase 1 when `missing` is empty, except fields intentionally marked as not yet exposed canonically (for example `meta_impressions` if MCP/API normalization is pending).
+
+### Latest measured coverage snapshot (staging, 2026-03-23)
+
+Observed after deploy + live collect test:
+
+- `POST /collect`: persisted correctly (`event_persisted=true`, `session_persisted=true`).
+- Coverage endpoint: stable and returning `success=true`.
+- Layer 1, Layer 2, Layer 3, Layer 4, Layer 6, and critical stitch: operationally covered in current staging window.
+- Remaining `missing` entries are all Layer 5 platform pull fields:
+  - `layer5_platform_signals_daily_pull.meta_spend`
+  - `layer5_platform_signals_daily_pull.meta_impressions`
+  - `layer5_platform_signals_daily_pull.meta_reported_conv_value`
+  - `layer5_platform_signals_daily_pull.google_spend`
+  - `layer5_platform_signals_daily_pull.google_clicks`
+
+What this means:
+
+- Core pixel/webhook/session/order identity infrastructure is complete for Phase 1 collection.
+- Remaining gap is not browser collection; it is platform daily ingestion availability and validation.
+
+### What is still required to collect 100% of datos-pixel.md
+
+1. Enable/verify Meta Ads connector pull and persist campaign daily metrics.
+2. Enable/verify Google Ads connector pull and persist campaign daily metrics.
+3. Standardize one canonical storage path for `meta_impressions` and `meta_reported_conv_value` used by coverage API.
+4. Run daily pull job at least once with non-empty campaign activity in the selected window.
+5. Re-run coverage and confirm `missing` becomes empty.
+
+### Layer 1 Foundation acceptance (payment checkpoint)
+
+Scope used for acceptance is `layer1.md` (Custom Pixel + revenue truth + stitching base + Ads connections and basic pull), excluding explicit out-of-scope Phase 2 items.
+
+Status summary (2026-03-23):
+
+- Completed: Custom Pixel, collector, revenue truth, base stitching, onboarding/health observability.
+- In progress: Ads pull operational evidence (Meta/Google snapshots/chunks with recent data in selected pilot account).
+
+Required to close Layer 1 payment checkpoint:
+
+1. Worker active for MCP pulls (Render worker service `adnova-ai-mcp-worker`).
+2. Meta account connected and selected for pilot user.
+3. Google Ads account connected and selected for pilot user.
+4. Execute pull and verify datasets/chunks exist for both sources.
+5. Confirm spend/clicks visible in analytics coverage/dashboard for pilot window.
+
+Operational commands and endpoints:
+
+- Trigger immediate pull for connected sources (authenticated):
+  - `POST /api/mcpdata/collect-now`
+  - Body example: `{ "sources": ["metaAds", "googleAds", "ga4"], "rangeDays": 60, "forceFull": true }`
+- Validate source status:
+  - `GET /api/mcpdata/meta/status`
+  - `GET /api/mcpdata/google-ads/status`
+  - `GET /api/mcpdata/ga4/status`
+- Validate contractual Layer 1 coverage outcome:
+  - `GET /api/analytics/:account_id/data-coverage?days=30`
+
+Acceptance rule for Ads block (Layer 1):
+
+- Pass when Meta and Google both show recent pull evidence (`chunkCount > 0`) and coverage/dashboard expose spend/clicks for pilot date range.
+
+### Final test checklist (operator)
+
+1. Send one live browser event and verify collect response persistence flags.
+2. Trigger one purchase flow and verify order truth fields in coverage remain green.
+3. Run Meta/Google daily pulls and verify non-zero platform metrics.
+4. Verify `GET /api/analytics/:account_id/data-coverage?days=30` returns `missing: []`.
 
 ### Next implementation after plugin rollout
 
