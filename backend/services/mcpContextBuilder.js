@@ -602,6 +602,10 @@ async function safeSupersedeOtherProcessingRuns(userId, currentAttemptId, extra 
           errorStage: 'failed',
           signalComplete: false,
           signalValidForPdf: false,
+          hasSignal: false,
+          isCurrent: false,
+          supersededAt: new Date(),
+          supersededByAttemptId: cleanAttemptId,
           ...extra,
         },
       }
@@ -617,6 +621,11 @@ async function resolveSignalBuildAttemptId(userId, ai = {}) {
   if (attemptId) return attemptId;
 
   try {
+    const current = await SignalData.findCurrentRunForUser(userId);
+    if (current?.buildAttemptId) {
+      return safeStr(current.buildAttemptId).trim() || null;
+    }
+
     const latest = await SignalData.findLatestForUser(userId);
     return safeStr(latest?.buildAttemptId || latest?.signalRunId).trim() || null;
   } catch (_) {
@@ -1500,6 +1509,9 @@ async function updateRootAiContextForAttempt(userId, attemptId, updater) {
       errorStage: 'failed',
       stage: 'failed',
       progress: 100,
+      isCurrent: false,
+      supersededByAttemptId: attemptId,
+      hasSignal: false,
       signalValidForPdf: false,
       signalComplete: false,
       hasSignal: !!(currentAi?.signalPayload || currentAi?.encodedPayload),
@@ -1722,11 +1734,12 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     }));
   }
 
-  await safeSignalRunUpsert({
+    await safeSignalRunUpsert({
     userId,
     rootId: initialRoot?._id || null,
     signalRunId: attemptId,
     buildAttemptId: attemptId,
+    isCurrent: true,
     trigger: safeStr(trigger) || 'system',
     reason: safeStr(reason) || null,
     requestedBy: safeStr(requestedBy) || 'system',
@@ -1773,6 +1786,9 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       errorStage: 'failed',
       stage: 'failed',
       progress: 100,
+      isCurrent: false,
+      supersededByAttemptId: attemptId,
+      hasSignal: false,
       signalValidForPdf: false,
       signalComplete: false,
       hasSignal: !!(effectiveRoot?.aiContext?.signalPayload || effectiveRoot?.aiContext?.encodedPayload),
@@ -2130,6 +2146,9 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       errorStage: 'failed',
       stage: 'failed',
       progress: 100,
+      isCurrent: false,
+      supersededByAttemptId: attemptId,
+      hasSignal: false,
       signalValidForPdf: false,
       signalComplete: false,
       hasSignal: !!(latestRootForBase?.aiContext?.signalPayload || latestRootForBase?.aiContext?.encodedPayload),
@@ -2296,19 +2315,19 @@ async function buildUnifiedContextForUser(userId, options = {}) {
 
     const finalRoot = await findRoot(userId);
     return buildResultFromRoot(finalRoot, {
-      status: 'processing',
-      progress: 72,
-      stage: 'waiting_for_valid_signal',
-      sourceSnapshots,
-      contextRangeDays,
-      storageRangeDays,
-      usableSources,
-      pendingConnectedSources,
-      sources: sourcesStatus,
-      unifiedBase,
-      encodedPayload: signalPayload,
-      signalPayload,
-    });
+  status: 'processing',
+  progress: 72,
+  stage: 'waiting_for_valid_signal',
+  sourceSnapshots,
+  contextRangeDays,
+  storageRangeDays,
+  usableSources,
+  pendingConnectedSources,
+  sources: sourcesStatus,
+  unifiedBase,
+  encodedPayload: signalPayload,
+  signalPayload: null,
+});
   }
 
   const finishedAtIso = nowIso();

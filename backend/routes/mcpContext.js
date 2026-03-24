@@ -265,6 +265,9 @@ function normalizeSignalRun(run) {
 
   return {
     _id: run?._id || null,
+    isCurrent: !!run?.isCurrent,
+    supersededAt: run?.supersededAt || null,
+    supersededByAttemptId: run?.supersededByAttemptId || null,
     status: safeStr(run?.status) || 'idle',
     stage: safeStr(run?.stage) || 'idle',
     progress: toNum(run?.progress, 0),
@@ -306,6 +309,17 @@ async function findLatestSignalRunForUser(userId) {
     return normalizeSignalRun(run);
   } catch (e) {
     console.error('[mcp/context] findLatestSignalRunForUser warning:', e?.message || e);
+    return null;
+  }
+}
+
+async function findCurrentSignalRunForUser(userId) {
+  if (!userId) return null;
+  try {
+    const run = await SignalData.findCurrentRunForUser(userId);
+    return normalizeSignalRun(run);
+  } catch (e) {
+    console.error('[mcp/context] findCurrentSignalRunForUser warning:', e?.message || e);
     return null;
   }
 }
@@ -372,8 +386,9 @@ function isSignalRunCompatibleWithRoot(signalRun, root) {
 
 /**
  * Regla autoritativa:
- * - Si el root tiene buildAttemptId, SOLO se usa ese run exacto.
- * - Solo si el root NO tiene buildAttemptId, se permite fallback a active/latest.
+ * - prioridad absoluta: current run compatible
+ * - si el root tiene buildAttemptId, SOLO ese run exacto puede usarse
+ * - active/latest solo como fallback legacy cuando root no tiene buildAttemptId
  */
 async function findPreferredSignalRunForUser(userId, root = null) {
   if (!userId) return null;
@@ -381,6 +396,13 @@ async function findPreferredSignalRunForUser(userId, root = null) {
   const effectiveRoot = root || await findPreferredContextRootForUser(userId);
   const rootState = effectiveRoot?.aiContext || {};
   const rootAttemptId = safeStr(rootState?.buildAttemptId).trim();
+
+  const currentRun = await findCurrentSignalRunForUser(userId);
+  if (currentRun && isSignalRunCompatibleWithRoot(currentRun, effectiveRoot)) {
+    if (!rootAttemptId || safeStr(currentRun.buildAttemptId).trim() === rootAttemptId) {
+      return currentRun;
+    }
+  }
 
   if (rootAttemptId) {
     const exact = await findSignalRunByAttempt(userId, rootAttemptId);
@@ -456,98 +478,6 @@ function getVersionSeedFromRoot(root) {
   );
 }
 
-async function syncUserVersionedLink(userId, preferredProvider = null) {
-  if (!userId) return null;
-
-  const user = await User.findById(userId).select(
-    [
-      'mcpShareToken',
-      'mcpShareEnabled',
-      'mcpShareProvider',
-      'mcpShareShortUrl',
-      'mcpShareVersionedUrl',
-      'mcpShareVersion',
-      'mcpShareSnapshotId',
-      'mcpShareCreatedAt',
-      'mcpShareRevokedAt',
-      'mcpShareLastGeneratedAt',
-    ].join(' ')
-  );
-
-  if (!user) return null;
-  if (!(user.mcpShareEnabled && user.mcpShareToken)) return user;
-
-  const latestRoot = await findPreferredContextRootForUser(userId);
-  const signalPayload = getRootAiSignalPayload(latestRoot);
-
-  if (!signalPayload || rootSignalLooksStale(latestRoot)) {
-    return user;
-  }
-
-  const provider = normalizeProvider(preferredProvider || user.mcpShareProvider || 'chatgpt');
-  const shareToken = safeStr(user.mcpShareToken).trim();
-  const shortUrl = buildShortShareUrl(shareToken);
-  const snapshotId = safeStr(latestRoot?.aiContext?.snapshotId || latestRoot?.latestSnapshotId).trim() || null;
-  const version = getVersionSeedFromRoot(latestRoot);
-  const versionedUrl = buildVersionedShareUrl(shareToken, provider, version);
-
-  user.mcpShareProvider = provider;
-  user.mcpShareShortUrl = shortUrl;
-  user.mcpShareVersionedUrl = versionedUrl;
-  user.mcpShareVersion = version;
-  user.mcpShareSnapshotId = snapshotId;
-  user.mcpShareLastGeneratedAt = nowDate();
-  user.mcpShareRevokedAt = null;
-
-  await user.save();
-  return user;
-}
-
-async function findUserShareState(userId) {
-  if (!userId) return null;
-
-  return await User.findById(userId)
-    .select(
-      [
-        'mcpShareToken',
-        'mcpShareEnabled',
-        'mcpShareProvider',
-        'mcpShareShortUrl',
-        'mcpShareVersionedUrl',
-        'mcpShareVersion',
-        'mcpShareSnapshotId',
-        'mcpShareCreatedAt',
-        'mcpShareRevokedAt',
-        'mcpShareLastGeneratedAt',
-      ].join(' ')
-    )
-    .lean();
-}
-
-async function findUserByShareToken(token) {
-  const cleanToken = safeStr(token).trim();
-  if (!cleanToken) return null;
-
-  return await User.findOne({
-    mcpShareToken: cleanToken,
-    mcpShareEnabled: true,
-  }).select(
-    [
-      '_id',
-      'mcpShareToken',
-      'mcpShareEnabled',
-      'mcpShareProvider',
-      'mcpShareShortUrl',
-      'mcpShareVersionedUrl',
-      'mcpShareVersion',
-      'mcpShareSnapshotId',
-      'mcpShareCreatedAt',
-      'mcpShareRevokedAt',
-      'mcpShareLastGeneratedAt',
-    ].join(' ')
-  );
-}
-
 function chooseStatusValue(primary, fallback) {
   const clean = safeStr(primary).trim();
   return clean || fallback;
@@ -585,11 +515,28 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
   const rootAttemptId = safeStr(state?.buildAttemptId).trim();
   const hasAuthoritativeAttempt = !!rootAttemptId;
 
-  const signalPayload = staleSignal ? null : getRootAiSignalPayload(root);
-
   const compatibleRun = isSignalRunCompatibleWithRoot(signalRun, root)
     ? normalizeSignalRun(signalRun)
     : null;
+
+  const authoritativeSignalComplete = !staleSignal && (
+    compatibleRun
+      ? !!compatibleRun.signalComplete
+      : (!hasAuthoritativeAttempt && safeStr(state?.status) === 'done')
+  );
+
+  const authoritativeSignalValidForPdf = !staleSignal && (
+    compatibleRun
+      ? !!compatibleRun.signalValidForPdf
+      : (!hasAuthoritativeAttempt && !!getRootAiSignalPayload(root) && authoritativeSignalComplete)
+  );
+
+  const signalPayload = (
+    staleSignal ||
+    (hasAuthoritativeAttempt && !authoritativeSignalComplete)
+  )
+    ? null
+    : getRootAiSignalPayload(root);
 
   const rootPdf = staleSignal || stalePdf
     ? makeStalePdfState(state?.pdf, staleSignal ? 'STALE_SIGNAL' : 'STALE_PDF')
@@ -618,20 +565,8 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
   const status = chooseStatusValue(compatibleRun?.status, state?.status || 'idle');
   const stage = chooseStatusValue(compatibleRun?.stage, state?.stage || 'idle');
 
-  // Regla dura:
-  // - si root trae buildAttemptId, SOLO ese run exacto puede declarar signalComplete/signalValidForPdf
-  // - no usar root.status === 'done' como fallback en ese caso
-  const signalComplete = !staleSignal && (
-    compatibleRun
-      ? !!compatibleRun.signalComplete
-      : (!hasAuthoritativeAttempt && safeStr(state?.status) === 'done')
-  );
-
-  const signalValidForPdf = !staleSignal && (
-    compatibleRun
-      ? !!compatibleRun.signalValidForPdf
-      : (!hasAuthoritativeAttempt && !!signalPayload && signalComplete)
-  );
+  const signalComplete = authoritativeSignalComplete;
+  const signalValidForPdf = authoritativeSignalValidForPdf;
 
   const uiFlags = deriveUiFlags({
     signalPayload,
@@ -712,9 +647,22 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
   };
 }
 
-function buildSharedPayload(root, provider) {
+function buildSharedPayload(root, provider, signalRun = null) {
   const state = root?.aiContext || {};
-  const payload = state?.signalPayload || state?.encodedPayload || null;
+  const rootAttemptId = safeStr(state?.buildAttemptId).trim();
+  const hasAuthoritativeAttempt = !!rootAttemptId;
+  const compatibleRun = isSignalRunCompatibleWithRoot(signalRun, root)
+    ? normalizeSignalRun(signalRun)
+    : null;
+
+  const signalComplete = hasAuthoritativeAttempt
+    ? !!compatibleRun?.signalComplete
+    : safeStr(state?.status).trim().toLowerCase() === 'done';
+
+  const payload = signalComplete
+    ? (state?.signalPayload || state?.encodedPayload || null)
+    : null;
+
   if (!payload) return null;
 
   const providerName =
@@ -739,8 +687,103 @@ function buildSharedPayload(root, provider) {
       model: state?.model || null,
       sourceFingerprint: safeStr(state?.sourceFingerprint || '').trim() || null,
       connectionFingerprint: safeStr(state?.connectionFingerprint || '').trim() || null,
+      buildAttemptId: compatibleRun?.buildAttemptId || state?.buildAttemptId || null,
+      signalRunId: compatibleRun?.signalRunId || null,
     },
   };
+}
+
+async function syncUserVersionedLink(userId, preferredProvider = null) {
+  if (!userId) return null;
+
+  const user = await User.findById(userId).select(
+    [
+      'mcpShareToken',
+      'mcpShareEnabled',
+      'mcpShareProvider',
+      'mcpShareShortUrl',
+      'mcpShareVersionedUrl',
+      'mcpShareVersion',
+      'mcpShareSnapshotId',
+      'mcpShareCreatedAt',
+      'mcpShareRevokedAt',
+      'mcpShareLastGeneratedAt',
+    ].join(' ')
+  );
+
+  if (!user) return null;
+  if (!(user.mcpShareEnabled && user.mcpShareToken)) return user;
+
+  const latestRoot = await findPreferredContextRootForUser(userId);
+  const signalRun = await findPreferredSignalRunForUser(userId, latestRoot);
+  const statusData = buildStatusResponse(latestRoot, null, signalRun)?.data || null;
+
+  if (!statusData?.signalComplete || rootSignalLooksStale(latestRoot)) {
+    return user;
+  }
+
+  const provider = normalizeProvider(preferredProvider || user.mcpShareProvider || 'chatgpt');
+  const shareToken = safeStr(user.mcpShareToken).trim();
+  const shortUrl = buildShortShareUrl(shareToken);
+  const snapshotId = safeStr(latestRoot?.aiContext?.snapshotId || latestRoot?.latestSnapshotId).trim() || null;
+  const version = getVersionSeedFromRoot(latestRoot);
+  const versionedUrl = buildVersionedShareUrl(shareToken, provider, version);
+
+  user.mcpShareProvider = provider;
+  user.mcpShareShortUrl = shortUrl;
+  user.mcpShareVersionedUrl = versionedUrl;
+  user.mcpShareVersion = version;
+  user.mcpShareSnapshotId = snapshotId;
+  user.mcpShareLastGeneratedAt = nowDate();
+  user.mcpShareRevokedAt = null;
+
+  await user.save();
+  return user;
+}
+
+async function findUserShareState(userId) {
+  if (!userId) return null;
+
+  return await User.findById(userId)
+    .select(
+      [
+        'mcpShareToken',
+        'mcpShareEnabled',
+        'mcpShareProvider',
+        'mcpShareShortUrl',
+        'mcpShareVersionedUrl',
+        'mcpShareVersion',
+        'mcpShareSnapshotId',
+        'mcpShareCreatedAt',
+        'mcpShareRevokedAt',
+        'mcpShareLastGeneratedAt',
+      ].join(' ')
+    )
+    .lean();
+}
+
+async function findUserByShareToken(token) {
+  const cleanToken = safeStr(token).trim();
+  if (!cleanToken) return null;
+
+  return await User.findOne({
+    mcpShareToken: cleanToken,
+    mcpShareEnabled: true,
+  }).select(
+    [
+      '_id',
+      'mcpShareToken',
+      'mcpShareEnabled',
+      'mcpShareProvider',
+      'mcpShareShortUrl',
+      'mcpShareVersionedUrl',
+      'mcpShareVersion',
+      'mcpShareSnapshotId',
+      'mcpShareCreatedAt',
+      'mcpShareRevokedAt',
+      'mcpShareLastGeneratedAt',
+    ].join(' ')
+  );
 }
 
 /**
@@ -847,7 +890,6 @@ router.post('/pdf/build', async (req, res) => {
     const signalRun = await findPreferredSignalRunForUser(userId, root);
     const statusPayload = buildStatusResponse(root, null, signalRun)?.data || null;
 
-    // Ahora el PDF solo puede iniciar si el estado autoritativo ya dice signalReadyForPdf
     if (!statusPayload?.signalReadyForPdf) {
       setNoCacheHeaders(res);
       return res.status(202).json({
@@ -1209,10 +1251,11 @@ router.post('/link', async (req, res) => {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
 
-    const state = latestContextRoot?.aiContext || {};
+    const signalRun = await findPreferredSignalRunForUser(userId, latestContextRoot);
+    const statusData = buildStatusResponse(latestContextRoot, null, signalRun)?.data || null;
     const staleSignal = rootSignalLooksStale(latestContextRoot);
-    const signalPayload = staleSignal ? null : (state?.signalPayload || state?.encodedPayload || null);
-    if (!signalPayload) {
+
+    if (!statusData?.signalComplete) {
       return res.status(409).json({
         ok: false,
         error: staleSignal ? 'MCP_CONTEXT_STALE_REBUILD_REQUIRED' : 'MCP_CONTEXT_NOT_READY',
@@ -1481,9 +1524,10 @@ router.get('/shared/:token', async (req, res) => {
     }
 
     const staleSignal = rootSignalLooksStale(root);
-    const signalPayload = staleSignal ? null : getRootAiSignalPayload(root);
+    const signalRun = await findPreferredSignalRunForUser(user._id, root);
+    const statusData = buildStatusResponse(root, null, signalRun)?.data || null;
 
-    if (!signalPayload) {
+    if (staleSignal || !statusData?.signalComplete) {
       return res.status(409).json({
         ok: false,
         error: staleSignal ? 'SHARED_CONTEXT_STALE_REBUILD_REQUIRED' : 'SHARED_CONTEXT_NOT_READY',
@@ -1497,7 +1541,7 @@ router.get('/shared/:token', async (req, res) => {
     }
 
     setNoCacheHeaders(res);
-    return res.json(buildSharedPayload(root, provider));
+    return res.json(buildSharedPayload(root, provider, signalRun));
   } catch (e) {
     console.error('[mcp/context/shared] error:', e);
     return res.status(500).json({ ok: false, error: 'MCP_CONTEXT_SHARED_FAILED' });

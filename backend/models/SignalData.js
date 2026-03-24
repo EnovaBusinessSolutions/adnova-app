@@ -1,4 +1,3 @@
-// backend/models/SignalData.js
 'use strict';
 
 const mongoose = require('mongoose');
@@ -207,6 +206,11 @@ const SignalDataSchema = new Schema(
     hasSignal: { type: Boolean, default: false },
     signalValidForPdf: { type: Boolean, default: false },
 
+    // NUEVO: run vigente oficial
+    isCurrent: { type: Boolean, default: false, index: true },
+    supersededAt: { type: Date, default: null },
+    supersededByAttemptId: { type: String, default: null },
+
     snapshotId: { type: String, default: null, index: true },
     contextRangeDays: { type: Number, default: null },
     storageRangeDays: { type: Number, default: null },
@@ -252,6 +256,14 @@ SignalDataSchema.index({ userId: 1, createdAt: -1 });
 SignalDataSchema.index({ userId: 1, status: 1, createdAt: -1 });
 SignalDataSchema.index({ userId: 1, buildAttemptId: 1 });
 SignalDataSchema.index({ userId: 1, signalComplete: 1, createdAt: -1 });
+SignalDataSchema.index({ userId: 1, isCurrent: 1, createdAt: -1 });
+SignalDataSchema.index(
+  { userId: 1, isCurrent: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { isCurrent: true },
+  }
+);
 SignalDataSchema.index({ rootId: 1, createdAt: -1 });
 SignalDataSchema.index({ 'pdf.status': 1, createdAt: -1 });
 
@@ -296,6 +308,10 @@ function normalizeBasePayload(payload = {}) {
     signalComplete: !!cleaned.signalComplete,
     hasSignal: !!cleaned.hasSignal,
     signalValidForPdf: !!cleaned.signalValidForPdf,
+
+    isCurrent: 'isCurrent' in cleaned ? !!cleaned.isCurrent : true,
+    supersededAt: cleaned?.supersededAt ? new Date(cleaned.supersededAt) : null,
+    supersededByAttemptId: safeStr(cleaned?.supersededByAttemptId).trim() || null,
 
     snapshotId: safeStr(cleaned.snapshotId).trim() || null,
     contextRangeDays: toNum(cleaned.contextRangeDays, null),
@@ -370,6 +386,10 @@ function normalizePatchPayload(patch = {}) {
   if ('hasSignal' in cleaned) out.hasSignal = !!cleaned.hasSignal;
   if ('signalValidForPdf' in cleaned) out.signalValidForPdf = !!cleaned.signalValidForPdf;
 
+  if ('isCurrent' in cleaned) out.isCurrent = !!cleaned.isCurrent;
+  if ('supersededAt' in cleaned) out.supersededAt = cleaned.supersededAt ? new Date(cleaned.supersededAt) : null;
+  if ('supersededByAttemptId' in cleaned) out.supersededByAttemptId = safeStr(cleaned.supersededByAttemptId).trim() || null;
+
   if ('snapshotId' in cleaned) out.snapshotId = safeStr(cleaned.snapshotId).trim() || null;
   if ('contextRangeDays' in cleaned) out.contextRangeDays = toNum(cleaned.contextRangeDays, null);
   if ('storageRangeDays' in cleaned) out.storageRangeDays = toNum(cleaned.storageRangeDays, null);
@@ -440,6 +460,78 @@ function normalizePatchPayload(patch = {}) {
 }
 
 /* =========================
+ * Statics helpers
+ * ========================= */
+SignalDataSchema.statics.demoteCurrentRuns = async function (
+  userId,
+  exceptSignalRunId = null,
+  supersededByAttemptId = null
+) {
+  if (!userId) return null;
+
+  const filter = {
+    userId,
+    isCurrent: true,
+  };
+
+  if (exceptSignalRunId) {
+    filter.signalRunId = { $ne: exceptSignalRunId };
+  }
+
+  return this.updateMany(
+    filter,
+    {
+      $set: {
+        isCurrent: false,
+        supersededAt: nowDate(),
+        supersededByAttemptId: safeStr(supersededByAttemptId).trim() || null,
+        lastHeartbeatAt: nowDate(),
+      },
+    }
+  );
+};
+
+SignalDataSchema.statics.findCurrentRunForUser = async function (userId) {
+  if (!userId) return null;
+
+  return this.findOne({
+    userId,
+    isCurrent: true,
+  })
+    .sort({ createdAt: -1, updatedAt: -1 })
+    .lean();
+};
+
+SignalDataSchema.statics.promoteRunAsCurrent = async function (
+  userId,
+  buildAttemptId
+) {
+  const cleanAttempt = safeStr(buildAttemptId).trim();
+  if (!userId || !cleanAttempt) return null;
+
+  const existing = await this.findOne({ userId, buildAttemptId: cleanAttempt })
+    .sort({ createdAt: -1, updatedAt: -1 });
+
+  if (!existing) return null;
+
+  await this.demoteCurrentRuns(userId, existing.signalRunId, cleanAttempt);
+
+  return this.findOneAndUpdate(
+    { _id: existing._id },
+    {
+      $set: {
+        isCurrent: true,
+        supersededAt: null,
+        supersededByAttemptId: null,
+        updatedAt: nowDate(),
+        lastHeartbeatAt: nowDate(),
+      },
+    },
+    { new: true }
+  );
+};
+
+/* =========================
  * Statics
  * ========================= */
 
@@ -457,16 +549,33 @@ SignalDataSchema.statics.upsertRun = async function (payload = {}) {
     throw new Error('SIGNALDATA_SIGNAL_RUN_ID_REQUIRED');
   }
 
-  return this.findOneAndUpdate(
+  const shouldBeCurrent = 'isCurrent' in normalized ? !!normalized.isCurrent : true;
+
+  if (shouldBeCurrent) {
+    await this.demoteCurrentRuns(
+      normalized.userId,
+      normalized.signalRunId,
+      normalized.buildAttemptId || normalized.signalRunId
+    );
+  }
+
+  const doc = await this.findOneAndUpdate(
     { signalRunId: normalized.signalRunId },
     {
-      $set: normalized,
+      $set: {
+        ...normalized,
+        isCurrent: shouldBeCurrent,
+        supersededAt: shouldBeCurrent ? null : normalized.supersededAt,
+        supersededByAttemptId: shouldBeCurrent ? null : normalized.supersededByAttemptId,
+      },
       $setOnInsert: {
         createdAt: nowDate(),
       },
     },
     { upsert: true, new: true }
   );
+
+  return doc;
 };
 
 /**
@@ -497,6 +606,7 @@ SignalDataSchema.statics.findActiveRunForUser = async function (userId) {
   return this.findOne({
     userId,
     status: 'processing',
+    isCurrent: true,
   })
     .sort({ createdAt: -1, updatedAt: -1 })
     .lean();
@@ -511,6 +621,17 @@ SignalDataSchema.statics.patchRun = async function (signalRunId, patch = {}) {
 
   const normalized = normalizePatchPayload(patch);
   normalized.updatedAt = nowDate();
+
+  const current = await this.findOne({ signalRunId: cleanRunId });
+  if (!current) return null;
+
+  if (normalized.isCurrent === true) {
+    await this.demoteCurrentRuns(
+      current.userId,
+      current.signalRunId,
+      normalized.buildAttemptId || current.buildAttemptId || current.signalRunId
+    );
+  }
 
   return this.findOneAndUpdate(
     { signalRunId: cleanRunId },
@@ -529,10 +650,23 @@ SignalDataSchema.statics.patchRunByAttempt = async function (userId, buildAttemp
   const normalized = normalizePatchPayload(patch);
   normalized.updatedAt = nowDate();
 
+  const current = await this.findOne({ userId, buildAttemptId: cleanAttempt })
+    .sort({ createdAt: -1, updatedAt: -1 });
+
+  if (!current) return null;
+
+  if (normalized.isCurrent === true) {
+    await this.demoteCurrentRuns(
+      userId,
+      current.signalRunId,
+      cleanAttempt
+    );
+  }
+
   return this.findOneAndUpdate(
-    { userId, buildAttemptId: cleanAttempt },
+    { _id: current._id },
     { $set: normalized },
-    { new: true, sort: { createdAt: -1 } }
+    { new: true }
   );
 };
 
@@ -554,6 +688,7 @@ SignalDataSchema.statics.markStage = async function (
     model = undefined,
     hasSignal = undefined,
     signalValidForPdf = undefined,
+    isCurrent = undefined,
     sources = undefined,
     error = undefined,
     staleReason = undefined,
@@ -572,6 +707,7 @@ SignalDataSchema.statics.markStage = async function (
     model,
     hasSignal,
     signalValidForPdf,
+    isCurrent,
     sources,
     error,
     staleReason,
@@ -599,6 +735,9 @@ SignalDataSchema.statics.completeRun = async function (
     hasSignal: 'hasSignal' in (patch || {}) ? !!patch.hasSignal : true,
     signalValidForPdf:
       'signalValidForPdf' in (patch || {}) ? !!patch.signalValidForPdf : true,
+    isCurrent: 'isCurrent' in (patch || {}) ? !!patch.isCurrent : true,
+    supersededAt: null,
+    supersededByAttemptId: null,
     finishedAt,
     failedAt: null,
     error: null,
@@ -623,12 +762,16 @@ SignalDataSchema.statics.failRun = async function (
     progress = 100,
     hasSignal = false,
     signalValidForPdf = false,
+    isCurrent = undefined,
+    supersededByAttemptId = undefined,
     sources = undefined,
     snapshotId = undefined,
     meta = undefined,
   } = {}
 ) {
   const failedAt = nowDate();
+  const finalErrorCode = safeStr(errorCode).trim() || safeStr(error).trim() || null;
+  const isSuperseded = finalErrorCode === 'ATTEMPT_SUPERSEDED';
 
   return this.patchRunByAttempt(userId, buildAttemptId, {
     status: 'error',
@@ -637,8 +780,15 @@ SignalDataSchema.statics.failRun = async function (
     signalComplete: false,
     hasSignal,
     signalValidForPdf,
+    isCurrent: 'isCurrent' in arguments[2]
+      ? !!isCurrent
+      : !isSuperseded,
+    supersededAt: isSuperseded ? failedAt : null,
+    supersededByAttemptId: isSuperseded
+      ? (safeStr(supersededByAttemptId).trim() || null)
+      : null,
     error,
-    errorCode: safeStr(errorCode).trim() || safeStr(error).trim() || null,
+    errorCode: finalErrorCode,
     errorStage: safeStr(errorStage).trim() || 'failed',
     failedAt,
     snapshotId,
@@ -705,7 +855,7 @@ SignalDataSchema.statics.markPdfState = async function (
   }
 
   return this.findOneAndUpdate(
-    { userId, buildAttemptId },
+    { _id: current._id },
     {
       $set: {
         pdf: nextPdf,
@@ -713,7 +863,7 @@ SignalDataSchema.statics.markPdfState = async function (
         lastHeartbeatAt: now,
       },
     },
-    { new: true, sort: { createdAt: -1 } }
+    { new: true }
   );
 };
 
