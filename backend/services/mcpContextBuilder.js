@@ -482,6 +482,28 @@ function isSignalPayloadBuildableForPdf(signalPayload) {
   return true;
 }
 
+function deriveSignalReadinessFromAi(ai = {}, fallbackSignalPayload = null) {
+  const status = safeStr(ai?.status).trim().toLowerCase();
+  const stage = safeStr(ai?.stage).trim().toLowerCase();
+  const signalPayload = ai?.signalPayload || fallbackSignalPayload || null;
+  const payloadBuildable = isSignalPayloadBuildableForPdf(signalPayload);
+
+  const signalComplete =
+    status === 'done' &&
+    stage === 'completed' &&
+    payloadBuildable;
+
+  const signalValidForPdf = signalComplete;
+
+  return {
+    signalPayload,
+    payloadBuildable,
+    signalComplete,
+    signalValidForPdf,
+    signalReadyForPdf: signalValidForPdf,
+  };
+}
+
 function buildSignalSourcesPayload({
   sourcesStatus = null,
   sourceSnapshots = null,
@@ -1504,9 +1526,17 @@ async function updateRootAiContextForAttempt(userId, attemptId, updater) {
 function buildResultFromRoot(root, fallback = {}) {
   const state = root?.aiContext || {};
   const pdf = state?.pdf || {};
-  const signalPayload = state?.signalPayload || state?.encodedPayload || fallback.signalPayload || null;
 
-  const signalReadyForPdf = isSignalPayloadBuildableForPdf(signalPayload);
+  const readiness = deriveSignalReadinessFromAi(
+    state,
+    fallback.signalPayload || null
+  );
+
+  const signalPayload = readiness.signalPayload;
+  const signalReadyForPdf = readiness.signalReadyForPdf;
+  const signalComplete = readiness.signalComplete;
+  const signalValidForPdf = readiness.signalValidForPdf;
+
   const pdfReady = pdf?.status === 'ready';
   const pdfProcessing = pdf?.status === 'processing';
   const pdfFailed = pdf?.status === 'failed';
@@ -1532,8 +1562,8 @@ function buildResultFromRoot(root, fallback = {}) {
       model: state?.model || null,
       hasEncodedPayload: !!state?.encodedPayload,
       hasSignal: !!signalPayload,
-      signalComplete: safeStr(state?.status) === 'done',
-      signalValidForPdf: signalReadyForPdf,
+      signalComplete,
+      signalValidForPdf,
       signalReadyForPdf,
       providerAgnostic: !!state?.encodedPayload?.providerAgnostic,
       usableSources: Array.isArray(state?.usableSources) ? state.usableSources : (fallback.usableSources || []),
@@ -1649,7 +1679,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
   const attemptId = makeBuildAttemptId();
   const startedAt = nowIso();
 
-  if (markProcessing) {
+    if (markProcessing) {
     await updateRootAiContext(userId, (currentAi) => ({
       ...(currentAi || {}),
       status: 'processing',
@@ -1663,12 +1693,22 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       contextRangeDays,
       storageRangeDays,
       error: null,
-      usedOpenAI: false,
-      model: null,
+
+      // invalidación temprana y dura del signal anterior
       unifiedBase: null,
       encodedPayload: null,
       signalPayload: null,
       sourceFingerprint: null,
+      usedOpenAI: false,
+      model: null,
+
+      // metadatos auxiliares para debugging / UI
+      signalComplete: false,
+      signalValidForPdf: false,
+      signalReadyForPdf: false,
+      lastInvalidatedAt: nowIso(),
+      invalidatedByAttemptId: attemptId,
+
       connectionFingerprint: initialConnectionFingerprint,
       usableSources: [],
       pendingConnectedSources: [],
@@ -2187,7 +2227,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
   const signalPayload = encoded.payload;
 
   if (!isSignalPayloadBuildableForPdf(signalPayload)) {
-    const waitingValidResult = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+        const waitingValidResult = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
       ...(currentAi || {}),
       status: 'processing',
       progress: 72,
@@ -2200,8 +2240,11 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       contextRangeDays,
       storageRangeDays,
       unifiedBase,
+
+      // guardamos el draft, pero NO lo exponemos como signal final
       encodedPayload: signalPayload,
-      signalPayload,
+      signalPayload: null,
+
       sourceFingerprint: finalSourceFingerprint,
       connectionFingerprint: finalConnectionFingerprint,
       usedOpenAI: !!encoded.usedOpenAI,
@@ -2210,6 +2253,11 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       usableSources,
       pendingConnectedSources,
       error: null,
+
+      signalComplete: false,
+      signalValidForPdf: false,
+      signalReadyForPdf: false,
+
       pdf: emptyPdfState({
         status: 'idle',
         stage: 'idle',
@@ -2394,33 +2442,32 @@ async function buildPdfForUser(userId) {
     }
   }
 
-  if (!signalPayload) {
+    const readiness = deriveSignalReadinessFromAi(ai, null);
+  signalPayload = readiness.signalPayload || signalPayload;
+
+  if (!readiness.signalReadyForPdf) {
     if (buildAttemptId) {
       await safeSignalPdfState(userId, buildAttemptId, {
         status: 'failed',
         stage: 'failed',
         progress: 100,
-        error: 'MCP_CONTEXT_NOT_READY',
+        error: readiness.payloadBuildable
+          ? 'MCP_CONTEXT_NOT_READY'
+          : 'MCP_SIGNAL_NOT_VALID_FOR_PDF',
       });
     }
 
-    const err = new Error('MCP_CONTEXT_NOT_READY');
-    err.code = 'MCP_CONTEXT_NOT_READY';
-    throw err;
-  }
+    const err = new Error(
+      readiness.payloadBuildable
+        ? 'MCP_CONTEXT_NOT_READY'
+        : 'MCP_SIGNAL_NOT_VALID_FOR_PDF'
+    );
 
-  if (!isSignalPayloadBuildableForPdf(signalPayload)) {
-    if (buildAttemptId) {
-      await safeSignalPdfState(userId, buildAttemptId, {
-        status: 'failed',
-        stage: 'failed',
-        progress: 100,
-        error: 'MCP_SIGNAL_NOT_VALID_FOR_PDF',
-      });
-    }
+    err.code =
+      readiness.payloadBuildable
+        ? 'MCP_CONTEXT_NOT_READY'
+        : 'MCP_SIGNAL_NOT_VALID_FOR_PDF';
 
-    const err = new Error('MCP_SIGNAL_NOT_VALID_FOR_PDF');
-    err.code = 'MCP_SIGNAL_NOT_VALID_FOR_PDF';
     throw err;
   }
 
