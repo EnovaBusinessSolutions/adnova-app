@@ -7,6 +7,11 @@ const McpData = require('../models/McpData');
 const { formatMetaForLlm, formatMetaForLlmMini } = require('../jobs/transform/metaLlmFormatter');
 const { formatGoogleAdsForLlm, formatGoogleAdsForLlmMini } = require('../jobs/transform/googleAdsLlmFormatter');
 const { formatGa4ForLlm, formatGa4ForLlmMini } = require('../jobs/transform/ga4LlmFormatter');
+const {
+  enqueueMetaCollectBestEffort,
+  enqueueGoogleAdsCollectBestEffort,
+  enqueueGa4CollectBestEffort,
+} = require('../queues/mcpQueue');
 
 let MetaAccount = null;
 let GoogleAccount = null;
@@ -27,6 +32,12 @@ function safeStr(v) {
 
 function toBool(v) {
   return !!v;
+}
+
+function toBoundedInt(value, fallback, min, max) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(n)));
 }
 
 function pickMetaAccount(meta) {
@@ -771,6 +782,111 @@ router.get('/ga4/llm-mini', async (req, res) => {
   } catch (e) {
     console.error('[mcpdata/ga4/llm-mini] error:', e);
     return res.status(500).json({ ok: false, error: 'MCP_GA4_LLM_MINI_FAILED' });
+  }
+});
+
+/**
+ * POST /api/mcpdata/collect-now
+ * Enqueue immediate MCP pulls for connected sources of current user.
+ */
+router.post('/collect-now', async (req, res) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return res.status(401).json({ ok: false, error: 'NO_SESSION' });
+    }
+
+    const body = req.body || {};
+    const requested = Array.isArray(body.sources) ? body.sources : ['metaAds', 'googleAds', 'ga4'];
+    const normalizedSources = Array.from(new Set(
+      requested
+        .map((v) => String(v || '').trim())
+        .filter((v) => ['metaAds', 'googleAds', 'ga4'].includes(v))
+    ));
+
+    if (!normalizedSources.length) {
+      return res.status(400).json({ ok: false, error: 'INVALID_SOURCES' });
+    }
+
+    const rangeDays = toBoundedInt(body.rangeDays, 60, 7, 3650);
+    const forceFull = Boolean(body.forceFull);
+
+    const [metaDoc, googleDoc] = await Promise.all([
+      MetaAccount
+        ? MetaAccount.findOne({ $or: [{ user: userId }, { userId }] }).lean()
+        : null,
+      GoogleAccount
+        ? GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] }).lean()
+        : null,
+    ]);
+
+    const metaPick = metaDoc ? pickMetaAccount(metaDoc) : null;
+    const adsPick = googleDoc ? pickGoogleAdsCustomer(googleDoc) : null;
+    const ga4Pick = googleDoc ? pickGa4Property(googleDoc) : null;
+
+    const results = {};
+
+    if (normalizedSources.includes('metaAds')) {
+      if (!metaPick?.accountId) {
+        results.metaAds = { ok: false, skipped: true, error: 'META_NOT_CONNECTED_OR_SELECTED' };
+      } else {
+        results.metaAds = await enqueueMetaCollectBestEffort({
+          userId,
+          rangeDays,
+          reason: 'manual_collect_now',
+          trigger: 'mcpdata.collect-now',
+          forceFull,
+          metaAccountId: metaPick.accountId,
+          extra: { route: req.originalUrl || null },
+        });
+      }
+    }
+
+    if (normalizedSources.includes('googleAds')) {
+      if (!adsPick?.customerId) {
+        results.googleAds = { ok: false, skipped: true, error: 'GOOGLE_ADS_NOT_CONNECTED_OR_SELECTED' };
+      } else {
+        results.googleAds = await enqueueGoogleAdsCollectBestEffort({
+          userId,
+          accountId: adsPick.customerId,
+          rangeDays,
+          reason: 'manual_collect_now',
+          trigger: 'mcpdata.collect-now',
+          forceFull,
+          extra: { route: req.originalUrl || null },
+        });
+      }
+    }
+
+    if (normalizedSources.includes('ga4')) {
+      if (!ga4Pick?.propertyId) {
+        results.ga4 = { ok: false, skipped: true, error: 'GA4_NOT_CONNECTED_OR_SELECTED' };
+      } else {
+        results.ga4 = await enqueueGa4CollectBestEffort({
+          userId,
+          propertyId: ga4Pick.propertyId,
+          rangeDays,
+          reason: 'manual_collect_now',
+          trigger: 'mcpdata.collect-now',
+          forceFull,
+          extra: { route: req.originalUrl || null },
+        });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      data: {
+        userId: String(userId),
+        rangeDays,
+        forceFull,
+        requestedSources: normalizedSources,
+        results,
+      },
+    });
+  } catch (e) {
+    console.error('[mcpdata/collect-now] error:', e);
+    return res.status(500).json({ ok: false, error: 'MCP_COLLECT_NOW_FAILED' });
   }
 });
 

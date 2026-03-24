@@ -7,3 +7,12 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 18
+
+  - type: worker
+    name: adnova-ai-mcp-worker
+    env: node
+    buildCommand: npm install
+    startCommand: npm run worker:mcp
+    envVars:
+      - key: NODE_VERSION
+        value: 18
