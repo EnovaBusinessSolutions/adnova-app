@@ -11,6 +11,7 @@ const accountAdapter = require('../adapters/account');
 const metaAdapter = require('../adapters/meta');
 const googleAdapter = require('../adapters/google');
 const shopifyAdapter = require('../adapters/shopify');
+const McpData = require('../../models/McpData');
 const {
   resolveAdPerformance,
   resolveAdPerformanceAll,
@@ -19,6 +20,7 @@ const {
   resolveDateComparisonPayload,
 } = require('../services/adsPerformanceResolve');
 const { isGoogleReadsFromDbOnly } = require('../snapshot/config');
+const { chunkOverlapsDateRange } = require('../snapshot/snapshotResolver');
 
 function sendError(res, status, code, tool, extra) {
   return res.status(status).json(createToolError(code, tool, extra));
@@ -79,6 +81,51 @@ router.get('/campaign-performance', wrapHandler('get_campaign_performance', asyn
     Number(limit) || 10,
     status || 'all'
   );
+}));
+
+// Debug: inspecciona chunks Google Ads reales en mcpdata para el usuario actual.
+// Útil para verificar por qué snapshot-first devuelve google_db_only_no_snapshot.
+router.get('/debug/google-chunks', wrapHandler('debug_google_chunks', async (req, userId) => {
+  const { date_from, date_to } = req.query;
+
+  // No imponemos validateDateRange aquí para no fallar el debug si los params son nulos.
+  const maybeFrom = typeof date_from === 'string' ? date_from : null;
+  const maybeTo = typeof date_to === 'string' ? date_to : null;
+
+  const chunks = await McpData.find({
+    userId,
+    kind: 'chunk',
+    source: 'googleAds',
+    dataset: { $regex: '^google\\.' },
+  })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .limit(20)
+    .lean();
+
+  const enriched = (chunks || []).map((c) => {
+    const dataset = c?.dataset;
+    const range = c?.range || {};
+    const data = c?.data || {};
+    const totalsLen = Array.isArray(data?.totals_by_day) ? data.totals_by_day.length : 0;
+    const campaignsDailyLen = Array.isArray(data?.campaigns_daily) ? data.campaigns_daily.length : 0;
+
+    return {
+      dataset,
+      range: { from: range?.from ?? null, to: range?.to ?? null, tz: range?.tz ?? null },
+      stats: c?.stats || null,
+      totals_by_day_len: totalsLen,
+      campaigns_daily_len: campaignsDailyLen,
+      overlapsRequested: maybeFrom && maybeTo ? chunkOverlapsDateRange(c, maybeFrom, maybeTo) : null,
+    };
+  });
+
+  return {
+    ok: true,
+    userId,
+    query: { date_from: maybeFrom, date_to: maybeTo },
+    chunkCount: enriched.length,
+    chunks: enriched,
+  };
 }));
 
 router.get('/adset-performance', wrapHandler('get_adset_performance', async (req, userId) => {
