@@ -637,6 +637,72 @@
             border-color: rgba(153, 246, 228, 0.48);
         }
 
+        .attribution-journey-focus {
+            min-height: 18rem;
+        }
+
+        .attribution-journey-history {
+            max-height: 22rem;
+            overflow-y: auto;
+            padding-right: 0.25rem;
+        }
+
+        .attribution-journey-history::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .attribution-journey-history::-webkit-scrollbar-thumb {
+            background: rgba(202, 138, 229, 0.35);
+            border-radius: 999px;
+        }
+
+        .journey-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.26rem 0.58rem;
+            border-radius: 999px;
+            border: 1px solid rgba(202, 138, 229, 0.28);
+            background: rgba(225, 216, 243, 0.08);
+            font-size: 0.7rem;
+            color: var(--dash-text);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 700;
+        }
+
+        .journey-flow {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+        }
+
+        .journey-step {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            border-radius: 0.8rem;
+            border: 1px solid rgba(202, 138, 229, 0.22);
+            background: rgba(225, 216, 243, 0.07);
+            padding: 0.4rem 0.55rem;
+            font-size: 0.78rem;
+            color: var(--dash-text);
+            font-weight: 600;
+        }
+
+        .journey-arrow {
+            color: rgba(202, 138, 229, 0.88);
+            font-size: 0.74rem;
+        }
+
+        .journey-compact-card {
+            border: 1px solid rgba(202, 138, 229, 0.18);
+            border-radius: 0.9rem;
+            background: rgba(225, 216, 243, 0.07);
+            padding: 0.7rem;
+        }
+
         .profile-priority-banner {
             border: 1px solid rgba(202, 138, 229, 0.2);
             background: linear-gradient(135deg, rgba(76, 29, 149, 0.26), rgba(12, 8, 19, 0.88));
@@ -1195,19 +1261,19 @@
                 <div class="ops-panel p-6">
                     <div class="flex items-start justify-between gap-4 flex-wrap mb-4">
                         <div>
-                            <p class="panel-kicker">Perfil Intelligence</p>
-                            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Qué hacer ahora con estos perfiles</h3>
-                            <p class="panel-subtitle text-sm mt-1">Recomendaciones visibles arriba para operar promociones, bundles y reimpacto sin tener que entrar primero al detalle.</p>
+                            <p class="panel-kicker">Marketing Attribution</p>
+                            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Attribution Journey Center</h3>
+                            <p class="panel-subtitle text-sm mt-1">Visualiza cómo llegó cada conversión: clic, fuente, campaña y secuencia por sesión.</p>
                         </div>
                     </div>
                     <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                        <div class="session-pattern-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Acciones sugeridas</h4>
-                            <div class="space-y-4" id="top-profile-actions"></div>
+                        <div class="session-visual-card rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Journey seleccionado</h4>
+                            <div id="attribution-journey-focus" class="attribution-journey-focus space-y-4"></div>
                         </div>
-                        <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Productos y bundles clave</h4>
-                            <div class="space-y-4" id="top-profile-affinity"></div>
+                        <div class="session-pattern-card rounded-xl p-4">
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Journeys históricos de conversión</h4>
+                            <div id="attribution-journey-history" class="attribution-journey-history space-y-3"></div>
                         </div>
                     </div>
                 </div>
@@ -1919,15 +1985,161 @@
             return `${productHtml}${pairingHtml}`;
         }
 
-        function renderTopProfileIntelligence(recommendations = [], topProducts = [], topPairings = []) {
-            const actionsEl = document.getElementById('top-profile-actions');
-            const affinityEl = document.getElementById('top-profile-affinity');
-            if (actionsEl) {
-                actionsEl.innerHTML = renderActionCards(recommendations);
+        function escapeHtml(value) {
+            return String(value || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function resolveChannelIcon(channel, platform) {
+            const key = String(platform || channel || '').toLowerCase();
+            if (key.includes('google') || key.includes('search')) return 'fa-brands fa-google';
+            if (key.includes('facebook') || key.includes('meta') || key.includes('instagram')) return 'fa-brands fa-meta';
+            if (key.includes('tiktok')) return 'fa-brands fa-tiktok';
+            if (key.includes('email')) return 'fa-solid fa-envelope';
+            if (key.includes('organic') || key.includes('referral')) return 'fa-solid fa-globe';
+            return 'fa-solid fa-bullseye';
+        }
+
+        function scoreJourneySignal(purchase = {}) {
+            let score = 0;
+            if (purchase.attributedClickId) score += 5;
+            if (purchase.attributedCampaign) score += 4;
+            if (purchase.attributedChannel && purchase.attributedChannel !== 'unattributed') score += 3;
+            if (purchase.attributedPlatform) score += 2;
+            if (typeof purchase.attributionConfidence === 'number') score += Math.round(purchase.attributionConfidence * 3);
+            if (Array.isArray(purchase.attributionSplits) && purchase.attributionSplits.length > 1) score += 2;
+            return score;
+        }
+
+        function buildJourneyStepsFromSessionData(sessionData = {}) {
+            const journey = sessionData.journey || {};
+            const session = sessionData.session || {};
+            const metrics = sessionData.metrics || {};
+            const channel = journey.attribution?.channel || session.utmSource || 'unattributed';
+            const platform = journey.attribution?.platform || null;
+
+            const steps = [
+                { icon: resolveChannelIcon(channel, platform), label: `${channel}${platform ? ` · ${platform}` : ''}` },
+                { icon: 'fa-solid fa-link', label: journey.attribution?.clickId ? `click ${String(journey.attribution.clickId).slice(0, 12)}...` : 'sin click id' },
+                { icon: 'fa-solid fa-door-open', label: session.landingPageUrl ? `landing ${new URL(session.landingPageUrl, window.location.origin).pathname}` : 'landing n/a' },
+                { icon: 'fa-solid fa-cart-shopping', label: `ATC ${metrics.addToCart || 0}` },
+                { icon: 'fa-solid fa-credit-card', label: `Compra ${metrics.purchase || 0}` },
+            ];
+
+            return steps;
+        }
+
+        function renderJourneyFlow(steps = []) {
+            if (!steps.length) {
+                return '<p class="text-sm text-gray-500">Sin señales suficientes para dibujar el journey todavía.</p>';
             }
-            if (affinityEl) {
-                affinityEl.innerHTML = renderAffinityCards(topProducts, topPairings);
+
+            return `<div class="journey-flow">${steps.map((step, index) => `
+                <span class="journey-step"><i class="${step.icon}"></i>${escapeHtml(step.label)}</span>
+                ${index < steps.length - 1 ? '<i class="fa-solid fa-chevron-right journey-arrow"></i>' : ''}
+            `).join('')}</div>`;
+        }
+
+        function renderAttributionJourneyPanel() {
+            const focusEl = document.getElementById('attribution-journey-focus');
+            const historyEl = document.getElementById('attribution-journey-history');
+            if (!focusEl || !historyEl) return;
+
+            const currentData = sessionExplorerState.currentData;
+            if (sessionExplorerState.mode === 'session' && currentData) {
+                const steps = buildJourneyStepsFromSessionData(currentData);
+                const currentJourney = currentData.journey || {};
+                const currentSession = currentData.session || {};
+                const peers = Array.isArray(currentData.peers) ? currentData.peers : [];
+
+                focusEl.innerHTML = `
+                    <div class="journey-compact-card space-y-3">
+                        <div class="flex items-center justify-between gap-2 flex-wrap">
+                            <span class="journey-chip"><i class="fa-solid fa-route"></i>sesión activa</span>
+                            <span class="text-xs text-gray-500">${formatDateTimeMx(currentSession.startedAt)}</span>
+                        </div>
+                        ${renderJourneyFlow(steps)}
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="journey-chip"><i class="fa-solid fa-bullseye"></i>${escapeHtml(currentJourney.attribution?.channel || 'unattributed')}</span>
+                            <span class="journey-chip"><i class="fa-solid fa-signal"></i>conf ${Math.round(Number(currentJourney.attribution?.confidence || 0) * 100)}%</span>
+                            <span class="journey-chip"><i class="fa-solid fa-cash-register"></i>ordenes ${(Array.isArray(currentData.orders) ? currentData.orders.length : 0)}</span>
+                        </div>
+                    </div>
+                `;
+
+                const historicalRows = peers.slice(0, 10).map((peer) => `
+                    <button type="button" class="journey-compact-card w-full text-left hover:opacity-95" onclick="openSessionDetail('${peer.sessionId}')">
+                        <div class="flex items-center justify-between gap-2">
+                            <p class="text-sm font-semibold text-gray-900">${escapeHtml(peer.sessionId || 'sesión')}</p>
+                            <span class="text-xs text-gray-500">${formatDateTimeMx(peer.startedAt)}</span>
+                        </div>
+                        <div class="mt-2 flex items-center gap-2 flex-wrap">
+                            <span class="journey-chip"><i class="fa-solid fa-tags"></i>${escapeHtml(peer.utmCampaign || 'sin campaña')}</span>
+                            <span class="journey-chip"><i class="fa-solid fa-store"></i>${escapeHtml(peer.landingPageUrl ? new URL(peer.landingPageUrl, window.location.origin).pathname : 'sin landing')}</span>
+                        </div>
+                    </button>
+                `).join('');
+
+                historyEl.innerHTML = historicalRows || '<p class="text-sm text-gray-500">No hay sesiones históricas ligadas todavía para este usuario.</p>';
+                return;
             }
+
+            const rankedJourneys = (Array.isArray(recentPurchasesState) ? recentPurchasesState : [])
+                .filter((p) => Number(p.revenue || 0) > 0)
+                .map((p) => ({
+                    purchase: p,
+                    score: scoreJourneySignal(p),
+                }))
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 8);
+
+            if (!rankedJourneys.length) {
+                focusEl.innerHTML = '<p class="text-sm text-gray-500">Selecciona una sesión para ver su journey atribuido. Mientras tanto, aparecerán aquí las conversiones históricas con mejor señal.</p>';
+                historyEl.innerHTML = '<p class="text-sm text-gray-500">Sin conversiones con señal de atribución suficiente todavía.</p>';
+                return;
+            }
+
+            const top = rankedJourneys[0].purchase;
+            const topSteps = [
+                { icon: resolveChannelIcon(top.attributedChannel, top.attributedPlatform), label: `${top.attributedChannel || 'unattributed'}${top.attributedPlatform ? ` · ${top.attributedPlatform}` : ''}` },
+                { icon: 'fa-solid fa-link', label: top.attributedClickId ? `click ${String(top.attributedClickId).slice(0, 12)}...` : 'sin click id' },
+                { icon: 'fa-solid fa-bullhorn', label: top.attributedCampaign || 'sin campaña' },
+                { icon: 'fa-solid fa-bag-shopping', label: top.orderNumber || top.orderId || 'orden' },
+                { icon: 'fa-solid fa-sack-dollar', label: formatCurrencyWithCode(Number(top.revenue || 0), top.currency || 'MXN') },
+            ];
+
+            focusEl.innerHTML = `
+                <div class="journey-compact-card space-y-3">
+                    <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <span class="journey-chip"><i class="fa-solid fa-star"></i>mejor señal histórica</span>
+                        <span class="text-xs text-gray-500">${formatRecentPurchaseDate(top)}</span>
+                    </div>
+                    ${renderJourneyFlow(topSteps)}
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="journey-chip"><i class="fa-solid fa-gauge"></i>score ${scoreJourneySignal(top)}</span>
+                        <span class="journey-chip"><i class="fa-solid fa-percent"></i>conf ${Math.round(Number(top.attributionConfidence || 0) * 100)}%</span>
+                    </div>
+                </div>
+            `;
+
+            historyEl.innerHTML = rankedJourneys.map(({ purchase, score }) => `
+                <div class="journey-compact-card">
+                    <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <p class="text-sm font-semibold text-gray-900">${escapeHtml(purchase.orderNumber || purchase.orderId || 'Orden')}</p>
+                        <span class="text-xs text-gray-500">${formatRecentPurchaseDate(purchase)}</span>
+                    </div>
+                    <div class="mt-2 flex items-center gap-2 flex-wrap">
+                        <span class="journey-chip"><i class="${resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform)}"></i>${escapeHtml(purchase.attributedChannel || 'unattributed')}</span>
+                        <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(purchase.attributedCampaign || 'sin campaña')}</span>
+                        <span class="journey-chip"><i class="fa-solid fa-sack-dollar"></i>${formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN')}</span>
+                        <span class="journey-chip"><i class="fa-solid fa-gauge-high"></i>${score}</span>
+                    </div>
+                </div>
+            `).join('');
         }
 
         async function fetchWordPressUsersOnline() {
@@ -2138,11 +2350,7 @@
             const overviewRecommendations = profiles
                 .slice(0, 3)
                 .flatMap((profile) => Array.isArray(profile.actionRecommendations) ? profile.actionRecommendations.slice(0, 1) : []);
-            renderTopProfileIntelligence(
-                overviewRecommendations,
-                profiles[0]?.topProducts || [],
-                profiles[0]?.topPairings || []
-            );
+            renderAttributionJourneyPanel();
             document.getElementById('session-detail-actions').innerHTML = renderActionCards(overviewRecommendations);
             document.getElementById('session-detail-affinity').innerHTML = renderAffinityCards(
                 profiles[0]?.topProducts || [],
@@ -2373,11 +2581,7 @@
                 metrics,
                 patterns,
             });
-            renderTopProfileIntelligence(
-                data.actionRecommendations || [],
-                data.commerceProfile?.topProducts || [],
-                data.commerceProfile?.topPairings || []
-            );
+            renderAttributionJourneyPanel();
             document.getElementById('session-detail-actions').innerHTML = renderActionCards(data.actionRecommendations || []);
             document.getElementById('session-detail-affinity').innerHTML = renderAffinityCards(
                 data.commerceProfile?.topProducts || [],
@@ -3032,6 +3236,7 @@
             renderTrendChart(data.daily || []);
             renderTopProducts(data.topProducts || []);
             renderRecentPurchases(data.recentPurchases || []);
+            renderAttributionJourneyPanel();
         }
 
         function renderTopProducts(products) {
