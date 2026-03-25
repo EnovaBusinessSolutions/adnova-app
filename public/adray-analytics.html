@@ -1682,15 +1682,31 @@
                 const secondary = user.emailPreview || user.phonePreview || `ID: ${user.id}`;
                 const seenAt = user.lastSeenAt ? formatTimeMx(user.lastSeenAt) : '-';
                 const sessionText = Number(user.sessionCount || 0) > 0 ? `${user.sessionCount} sesión(es)` : 'Sin sesión ligada';
+                const userKey = resolveUserKeyFromOnlineUser(user);
 
                 return `
-                    <div class="wp-user-pill ${colorClass}">
+                    <button
+                        type="button"
+                        class="wp-user-pill ${colorClass} ${userKey ? 'cursor-pointer hover:opacity-95' : 'cursor-not-allowed opacity-70'}"
+                        style="width:100%;text-align:left;"
+                        ${userKey ? `data-user-key="${escapeHtmlAttr(userKey)}" data-user-name="${escapeHtmlAttr(displayName)}"` : 'disabled'}
+                    >
                         <p class="wp-user-name truncate">${displayName}</p>
                         <p class="wp-user-meta truncate">${secondary}</p>
                         <p class="wp-user-session mt-1">${sessionText} · Última actividad ${seenAt}</p>
-                    </div>
+                    </button>
                 `;
             }).join('');
+
+            listEl.querySelectorAll('[data-user-key]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    const selectedUserKey = button.getAttribute('data-user-key') || '';
+                    const selectedUserName = button.getAttribute('data-user-name') || 'Usuario';
+                    if (selectedUserKey) {
+                        openUserExplorer(selectedUserKey, selectedUserName);
+                    }
+                });
+            });
         }
 
         function hashString(value) {
@@ -1701,6 +1717,24 @@
                 hash |= 0;
             }
             return hash;
+        }
+
+        function escapeHtmlAttr(value) {
+            return String(value || '')
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+        }
+
+        function resolveUserKeyFromOnlineUser(user = {}) {
+            const idValue = String(user.id || '').trim();
+            if (idValue.startsWith('user:')) return idValue.slice(5);
+
+            const explicitUserKey = String(user.userKey || '').trim();
+            if (explicitUserKey) return explicitUserKey;
+
+            return '';
         }
 
         function renderProfilePriorityBanner(mode = 'overview', payload = {}) {
@@ -3216,6 +3250,52 @@
         }
 
         // --- LIVE FEED (SSE) ---
+        function translateEventNameSimple(rawName) {
+            const key = String(rawName || '').trim().toLowerCase();
+            if (key === 'page_view') return 'Vista de página';
+            if (key === 'view_item') return 'Vio producto';
+            if (key === 'add_to_cart') return 'Agregó al carrito';
+            if (key === 'begin_checkout') return 'Inició checkout';
+            if (key === 'purchase') return 'Compra';
+            if (key === 'user_logged_in' || key === 'user_login' || key === 'login') return 'Inicio de sesión';
+            if (key === 'connected') return 'Usuario conectado';
+            return String(rawName || 'Evento');
+        }
+
+        function translateRawSourceSimple(value) {
+            const key = String(value || '').trim().toLowerCase();
+            if (!key) return 'origen no detectado';
+            if (key === 'pixel') return 'pixel';
+            if (key === 'webhook') return 'webhook';
+            if (key === 'server') return 'servidor';
+            return key;
+        }
+
+        function translateMatchTypeSimple(value) {
+            const key = String(value || '').trim().toLowerCase();
+            if (!key) return 'sin tipo';
+            if (key === 'deterministic') return 'coincidencia exacta';
+            if (key === 'probabilistic') return 'coincidencia probable';
+            if (key === 'hybrid') return 'coincidencia mixta';
+            return key;
+        }
+
+        function formatConfidenceSimple(value) {
+            const n = Number(value);
+            if (!Number.isFinite(n)) return 'sin dato';
+            const pct = Math.max(0, Math.min(100, Math.round(n * 100)));
+            if (pct >= 85) return `${pct}% (alta)`;
+            if (pct >= 60) return `${pct}% (media)`;
+            return `${pct}% (baja)`;
+        }
+
+        function buildSignalTextSimple(payload = {}) {
+            const source = translateRawSourceSimple(payload.rawSource);
+            const match = translateMatchTypeSimple(payload.matchType);
+            const confidence = formatConfidenceSimple(payload.confidenceScore);
+            return `${source} | ${match} | confianza ${confidence}`;
+        }
+
         function resolveLiveFeedUserLabel({ sessionId = null, userKey = null } = {}) {
             const users = Array.isArray(wpUsersOnlineState?.users) ? wpUsersOnlineState.users : [];
             if (!users.length) return null;
@@ -3274,13 +3354,15 @@
                 if (data.type === 'COLLECT') {
                     icon = 'fa-mouse-pointer';
                     color = 'text-blue-500';
-                    title = data.payload.eventName || data.payload.event_name || 'collect_event';
+                    title = translateEventNameSimple(data.payload.eventName || data.payload.event_name || 'Evento');
                     detail = data.payload.pageUrl ? new URL(data.payload.pageUrl).pathname : '';
                 } else if (data.type === 'WEBHOOK') {
                     icon = 'fa-server';
                     color = 'text-green-600';
                     title = 'Orden Shopify';
                     detail = data.payload?.orderId ? `Orden ${data.payload.orderId}` : 'Nueva orden procesada';
+                } else {
+                    title = translateEventNameSimple(data.type || 'Evento');
                 }
 
                 el.classList.add('cursor-pointer', 'hover:bg-gray-100');
@@ -3292,7 +3374,7 @@
                         <div class="ml-3 w-0 flex-1">
                             <p class="text-sm font-medium text-gray-900">${title}</p>
                             <p class="text-xs text-gray-500 truncate">${detail}</p>
-                            <p class="text-[11px] text-indigo-500 mt-1">${data.payload?.rawSource || '-'} | ${data.payload?.matchType || '-'} | ${typeof data.payload?.confidenceScore === 'number' ? Math.round(Number(data.payload.confidenceScore) * 100) + '%' : '-'}</p>
+                            <p class="text-[11px] text-indigo-500 mt-1">${buildSignalTextSimple(data.payload || {})}</p>
                             <p class="text-[11px] text-indigo-600 mt-1">${sessionId ? `Sesion: ${sessionId}` : 'Sin sessionId'}</p>
                             ${linkedUserLabel ? `<p class="text-[11px] text-emerald-600 mt-1">Usuario: <button type="button" class="live-feed-user-link underline decoration-dotted" data-user-key="${userKey || ''}" data-user-name="${linkedUserLabel.replace(/"/g, '&quot;')}">${linkedUserLabel}</button></p>` : ''}
                             <p class="text-[10px] text-gray-400 mt-1">${formatTimeMx()}</p>
