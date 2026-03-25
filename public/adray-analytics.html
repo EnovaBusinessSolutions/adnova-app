@@ -856,7 +856,6 @@
                 </div>
                 <div class="flex items-center space-x-4">
                     <div id="shop-name" class="text-sm text-gray-500 font-medium">Cargando tienda...</div>
-                    <div class="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold" id="user-initial">?</div>
                 </div>
             </div>
         </div>
@@ -1647,8 +1646,7 @@
 
             if (shopParam) {
                 currentShopId = shopParam;
-                document.getElementById('shop-name').textContent = shopParam + ' (Demo Mode)';
-                document.getElementById('user-initial').textContent = 'D';
+                document.getElementById('shop-name').textContent = shopParam;
                 console.log('Public analytics mode, shop:', shopParam);
                 
                 // Load data immediately
@@ -1671,7 +1669,6 @@
                 currentShopId = user.shop;
                 
                 document.getElementById('shop-name').textContent = user.shop || 'Tienda desconocida';
-                document.getElementById('user-initial').textContent = (user.email || 'U')[0].toUpperCase();
 
                 // Load initial data
                 await fetchAnalytics();
