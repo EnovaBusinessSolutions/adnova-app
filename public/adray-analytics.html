@@ -1683,13 +1683,16 @@
                 const seenAt = user.lastSeenAt ? formatTimeMx(user.lastSeenAt) : '-';
                 const sessionText = Number(user.sessionCount || 0) > 0 ? `${user.sessionCount} sesión(es)` : 'Sin sesión ligada';
                 const userKey = resolveUserKeyFromOnlineUser(user);
+                const sessionId = resolvePrimarySessionIdFromOnlineUser(user);
 
                 return `
                     <button
                         type="button"
-                        class="wp-user-pill ${colorClass} ${userKey ? 'cursor-pointer hover:opacity-95' : 'cursor-not-allowed opacity-70'}"
+                        class="wp-user-pill ${colorClass} cursor-pointer hover:opacity-95"
                         style="width:100%;text-align:left;"
-                        ${userKey ? `data-user-key="${escapeHtmlAttr(userKey)}" data-user-name="${escapeHtmlAttr(displayName)}"` : 'disabled'}
+                        data-user-key="${escapeHtmlAttr(userKey)}"
+                        data-session-id="${escapeHtmlAttr(sessionId)}"
+                        data-user-name="${escapeHtmlAttr(displayName)}"
                     >
                         <p class="wp-user-name truncate">${displayName}</p>
                         <p class="wp-user-meta truncate">${secondary}</p>
@@ -1698,13 +1701,16 @@
                 `;
             }).join('');
 
-            listEl.querySelectorAll('[data-user-key]').forEach((button) => {
+            listEl.querySelectorAll('.wp-user-pill').forEach((button) => {
                 button.addEventListener('click', () => {
                     const selectedUserKey = button.getAttribute('data-user-key') || '';
+                    const selectedSessionId = button.getAttribute('data-session-id') || '';
                     const selectedUserName = button.getAttribute('data-user-name') || 'Usuario';
                     if (selectedUserKey) {
                         openUserExplorer(selectedUserKey, selectedUserName);
+                        return;
                     }
+                    if (selectedSessionId) openSessionDetail(selectedSessionId);
                 });
             });
         }
@@ -1737,6 +1743,39 @@
             return '';
         }
 
+        function resolvePrimarySessionIdFromOnlineUser(user = {}) {
+            const sessions = Array.isArray(user.sessionIds) ? user.sessionIds : [];
+            const first = String(sessions[0] || '').trim();
+            return first || '';
+        }
+
+        function resolveOnlineUserIdentity({ sessionId = null, userKey = null } = {}) {
+            const users = Array.isArray(wpUsersOnlineState?.users) ? wpUsersOnlineState.users : [];
+            if (!users.length) return { label: null, userKey: '', sessionId: '' };
+
+            const normalizedSessionId = String(sessionId || '').trim();
+            const normalizedUserKey = String(userKey || '').trim();
+
+            const bySession = normalizedSessionId
+                ? users.find((user) => Array.isArray(user.sessionIds) && user.sessionIds.includes(normalizedSessionId))
+                : null;
+
+            const byUserKey = !bySession && normalizedUserKey
+                ? users.find((user) => String(user.id || '').trim() === `user:${normalizedUserKey}`)
+                : null;
+
+            const matchedUser = bySession || byUserKey || null;
+            if (!matchedUser) return { label: null, userKey: normalizedUserKey, sessionId: normalizedSessionId };
+
+            return {
+                label: matchedUser.customerName
+                    || matchedUser.emailPreview
+                    || matchedUser.phonePreview
+                    || (matchedUser.customerId ? `Woo #${matchedUser.customerId}` : null),
+                userKey: resolveUserKeyFromOnlineUser(matchedUser) || normalizedUserKey,
+                sessionId: resolvePrimarySessionIdFromOnlineUser(matchedUser) || normalizedSessionId,
+            };
+        }
         function renderProfilePriorityBanner(mode = 'overview', payload = {}) {
             const el = document.getElementById('profile-priority-banner');
             if (!el) return;
@@ -3297,27 +3336,7 @@
         }
 
         function resolveLiveFeedUserLabel({ sessionId = null, userKey = null } = {}) {
-            const users = Array.isArray(wpUsersOnlineState?.users) ? wpUsersOnlineState.users : [];
-            if (!users.length) return null;
-
-            const normalizedSessionId = String(sessionId || '').trim();
-            const normalizedUserKey = String(userKey || '').trim();
-
-            const bySession = normalizedSessionId
-                ? users.find((user) => Array.isArray(user.sessionIds) && user.sessionIds.includes(normalizedSessionId))
-                : null;
-
-            const byUserKey = !bySession && normalizedUserKey
-                ? users.find((user) => String(user.id || '').trim() === `user:${normalizedUserKey}`)
-                : null;
-
-            const matchedUser = bySession || byUserKey;
-            if (!matchedUser) return null;
-
-            return matchedUser.customerName
-                || matchedUser.emailPreview
-                || matchedUser.phonePreview
-                || (matchedUser.customerId ? `Woo #${matchedUser.customerId}` : null);
+            return resolveOnlineUserIdentity({ sessionId, userKey }).label;
         }
 
         function connectLiveFeed() {
@@ -3349,7 +3368,10 @@
                 let detail = '';
                 const sessionId = data.sessionId || data.payload?.sessionId || null;
                 const userKey = data.userKey || data.payload?.userKey || null;
-                const linkedUserLabel = resolveLiveFeedUserLabel({ sessionId, userKey });
+                const resolvedIdentity = resolveOnlineUserIdentity({ sessionId, userKey });
+                const linkedUserLabel = resolvedIdentity.label;
+                const resolvedUserKey = resolvedIdentity.userKey || '';
+                const resolvedSessionId = resolvedIdentity.sessionId || String(sessionId || '');
 
                 if (data.type === 'COLLECT') {
                     icon = 'fa-mouse-pointer';
@@ -3376,7 +3398,7 @@
                             <p class="text-xs text-gray-500 truncate">${detail}</p>
                             <p class="text-[11px] text-indigo-500 mt-1">${buildSignalTextSimple(data.payload || {})}</p>
                             <p class="text-[11px] text-indigo-600 mt-1">${sessionId ? `Sesion: ${sessionId}` : 'Sin sessionId'}</p>
-                            ${linkedUserLabel ? `<p class="text-[11px] text-emerald-600 mt-1">Usuario: <button type="button" class="live-feed-user-link underline decoration-dotted" data-user-key="${userKey || ''}" data-user-name="${linkedUserLabel.replace(/"/g, '&quot;')}">${linkedUserLabel}</button></p>` : ''}
+                            ${linkedUserLabel ? `<p class="text-[11px] text-emerald-600 mt-1">Usuario: <button type="button" class="live-feed-user-link underline decoration-dotted cursor-pointer" data-user-key="${resolvedUserKey.replace(/"/g, '&quot;')}" data-session-id="${resolvedSessionId.replace(/"/g, '&quot;')}" data-user-name="${linkedUserLabel.replace(/"/g, '&quot;')}">${linkedUserLabel}</button></p>` : ''}
                             <p class="text-[10px] text-gray-400 mt-1">${formatTimeMx()}</p>
                         </div>
                     </div>
@@ -3388,10 +3410,13 @@
                         ev.preventDefault();
                         ev.stopPropagation();
                         const feedUserKey = userButton.getAttribute('data-user-key') || '';
+                        const feedSessionId = userButton.getAttribute('data-session-id') || '';
                         const feedUserName = userButton.getAttribute('data-user-name') || '';
                         if (feedUserKey) {
                             openUserExplorer(feedUserKey, feedUserName || linkedUserLabel || 'Usuario');
+                            return;
                         }
+                        if (feedSessionId) openSessionDetail(feedSessionId);
                     });
                 }
 
