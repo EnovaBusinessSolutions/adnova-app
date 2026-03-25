@@ -6,6 +6,7 @@ const metaAdapter = require('../adapters/meta');
 const googleAdapter = require('../adapters/google');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
+const { isGoogleReadsFromDbOnly } = require('../snapshot/config');
 
 const TOOL_NAME = 'get_adset_performance';
 
@@ -34,6 +35,7 @@ function register(server) {
 
         const adapter = params.channel === 'meta' ? metaAdapter : googleAdapter;
         const refreshSource = params.channel === 'meta' ? 'metaAds' : 'googleAds';
+        const googleDbOnly = params.channel === 'google' && isGoogleReadsFromDbOnly();
 
         return runSnapshotFirstTool({
           toolName: TOOL_NAME,
@@ -42,6 +44,16 @@ function register(server) {
           buildSnapshot: async () => ({ ok: false }),
           execLive: () =>
             adapter.getAdsetPerformance(userId, params.campaign_id, params.date_from, params.date_to),
+          emptyFallback: googleDbOnly
+            ? () => ({
+                channel: 'google',
+                campaign_id: params.campaign_id,
+                campaign_name: null,
+                adsets: [],
+                date_from: params.date_from,
+                date_to: params.date_to,
+              })
+            : undefined,
         });
       } catch (err) {
         console.error(`[${TOOL_NAME}] error:`, err);

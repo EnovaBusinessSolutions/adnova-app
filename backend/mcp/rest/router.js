@@ -18,6 +18,7 @@ const {
   resolveChannelSummaryPayload,
   resolveDateComparisonPayload,
 } = require('../services/adsPerformanceResolve');
+const { isGoogleReadsFromDbOnly } = require('../snapshot/config');
 
 function sendError(res, status, code, tool, extra) {
   return res.status(status).json(createToolError(code, tool, extra));
@@ -85,6 +86,16 @@ router.get('/adset-performance', wrapHandler('get_adset_performance', async (req
   if (!channel || !campaign_id || !date_from || !date_to) throw Object.assign(new Error('Missing required parameters'), { code: 'INVALID_PARAMETERS' });
   const rangeErr = validateDateRange(date_from, date_to);
   if (rangeErr) throw Object.assign(new Error(rangeErr), { code: 'DATE_RANGE_TOO_LARGE' });
+  if (channel === 'google' && isGoogleReadsFromDbOnly()) {
+    return {
+      channel: 'google',
+      campaign_id,
+      campaign_name: null,
+      adsets: [],
+      date_from,
+      date_to,
+    };
+  }
   const adapter = channel === 'meta' ? metaAdapter : googleAdapter;
   return adapter.getAdsetPerformance(userId, campaign_id, date_from, date_to);
 }));

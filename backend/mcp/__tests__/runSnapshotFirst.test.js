@@ -4,6 +4,7 @@ jest.mock('../snapshot/config', () => ({
   isSnapshotFirstEnabledForTool: () => true,
   isBackgroundRefreshEnabled: () => false,
   getRefreshDebounceMs: () => 300000,
+  isGoogleReadsFromDbOnly: () => false,
 }));
 
 const { runSnapshotFirstTool, resolveSnapshotFirstData } = require('../snapshot/runSnapshotFirst');

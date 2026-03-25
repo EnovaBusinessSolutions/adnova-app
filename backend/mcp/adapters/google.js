@@ -139,56 +139,111 @@ async function getAdPerformance(userId, dateFrom, dateTo, granularity) {
   };
 }
 
+/** GAQL WHERE for listing campaigns by delivery status (no segments.date — evita omitir activas sin tráfico en el rango). */
+function campaignIdentityStatusWhere(status) {
+  if (status === 'active') return "campaign.status = 'ENABLED'";
+  if (status === 'paused') return "campaign.status = 'PAUSED'";
+  return "campaign.status != 'REMOVED'";
+}
+
+const CAMPAIGN_IDENTITY_PAGE = 500;
+
+function aggregateGoogleCampaignMetricRows(rows) {
+  const byId = new Map();
+  for (const r of rows) {
+    const c = r.campaign || {};
+    const id = String(c.id || '').trim();
+    if (!id) continue;
+    const m = r.metrics || {};
+    const spend = toNum(m.costMicros) / 1_000_000;
+    const cur = byId.get(id) || {
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      conversions: 0,
+      convValue: 0,
+    };
+    cur.spend += spend;
+    cur.impressions += toNum(m.impressions);
+    cur.clicks += toNum(m.clicks);
+    cur.conversions += toNum(m.conversions);
+    cur.convValue += toNum(m.conversionsValue);
+    byId.set(id, cur);
+  }
+  return byId;
+}
+
 async function getCampaignPerformance(userId, dateFrom, dateTo, limit = 10, status = 'all') {
   const creds = await resolveGoogleCredentials(userId);
   if (!creds?.refreshToken) throw Object.assign(new Error('ACCOUNT_NOT_CONNECTED'), { code: 'ACCOUNT_NOT_CONNECTED' });
 
   const accessToken = await getAccessToken(creds.refreshToken);
+  const lim = Math.min(Math.max(1, Number(limit) || 10), 50);
+  const statusWhere = campaignIdentityStatusWhere(status);
 
-  let statusFilter = '';
-  if (status === 'active') statusFilter = "AND campaign.status = 'ENABLED'";
-  else if (status === 'paused') statusFilter = "AND campaign.status = 'PAUSED'";
-
-  const gaql = `
-    SELECT
-      campaign.id, campaign.name, campaign.status,
-      metrics.cost_micros, metrics.impressions, metrics.clicks,
-      metrics.ctr, metrics.conversions, metrics.conversions_value
+  const identityGaql = `
+    SELECT campaign.id, campaign.name, campaign.status
     FROM campaign
-    WHERE segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
-      ${statusFilter}
-    ORDER BY metrics.cost_micros DESC
-    LIMIT ${Math.min(limit, 50)}
+    WHERE ${statusWhere}
+    ORDER BY campaign.id
+    LIMIT ${CAMPAIGN_IDENTITY_PAGE}
   `;
 
-  const rows = await queryGaql(accessToken, creds.customerId, creds.loginCustomerId, gaql);
+  const metricsGaql = `
+    SELECT
+      campaign.id,
+      metrics.cost_micros, metrics.impressions, metrics.clicks,
+      metrics.conversions, metrics.conversions_value
+    FROM campaign
+    WHERE segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
+  `;
 
-  const campaigns = rows.map(r => {
-    const m = r.metrics || {};
+  const [identityRows, metricRows] = await Promise.all([
+    queryGaql(accessToken, creds.customerId, creds.loginCustomerId, identityGaql),
+    queryGaql(accessToken, creds.customerId, creds.loginCustomerId, metricsGaql),
+  ]);
+
+  const metricsById = aggregateGoogleCampaignMetricRows(metricRows);
+  const statusMap = { ENABLED: 'active', PAUSED: 'paused', REMOVED: 'archived' };
+
+  const campaigns = [];
+  const seen = new Set();
+  for (const r of identityRows) {
     const c = r.campaign || {};
-    const spend = toNum(m.costMicros) / 1_000_000;
-    const conversions = toNum(m.conversions);
-    const convValue = toNum(m.conversionsValue);
-    const statusMap = { ENABLED: 'active', PAUSED: 'paused', REMOVED: 'archived' };
-    return {
-      campaign_id: String(c.id || ''),
+    const id = String(c.id || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const m = metricsById.get(id) || {
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      conversions: 0,
+      convValue: 0,
+    };
+    const spend = round(m.spend);
+    const conversions = round(m.conversions);
+    const convValue = round(m.convValue);
+    campaigns.push({
+      campaign_id: id,
       campaign_name: c.name || '',
       status: statusMap[c.status] || 'unknown',
-      spend: round(spend),
-      impressions: toNum(m.impressions),
-      clicks: toNum(m.clicks),
-      ctr: round(toNum(m.ctr) * 100),
-      conversions: round(conversions),
+      spend,
+      impressions: m.impressions,
+      clicks: m.clicks,
+      ctr: round(safeDiv(m.clicks, m.impressions) * 100),
+      conversions,
       cost_per_conversion: round(safeDiv(spend, conversions)),
       roas_reported: round(safeDiv(convValue, spend)),
-    };
-  });
+    });
+  }
 
-  const totalSpend = campaigns.reduce((s, c) => s + c.spend, 0);
+  campaigns.sort((a, b) => b.spend - a.spend);
+  const sliced = campaigns.slice(0, lim);
+  const totalSpend = sliced.reduce((s, c) => s + c.spend, 0);
 
   return {
     channel: 'google',
-    campaigns,
+    campaigns: sliced,
     total_spend: round(totalSpend),
     currency: creds.currency,
     date_from: dateFrom,

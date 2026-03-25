@@ -8,6 +8,7 @@
  * - MCP_SNAPSHOT_MAX_AGE_MIN: max age in minutes for "fresh" snapshots (default 360)
  * - MCP_SNAPSHOT_BACKGROUND_REFRESH: enqueue mcp-collect on stale reads (default false)
  * - MCP_SNAPSHOT_REFRESH_DEBOUNCE_MS: min ms between background enqueues per user+source (default 300000)
+ * - MCP_GOOGLE_READS_FROM_DB_ONLY: if true, never call Google Ads live API from MCP (only Mongo mcpdata chunks)
  */
 
 const DEFAULT_MAX_AGE_MIN = 360;
@@ -60,11 +61,16 @@ function getRefreshDebounceMs() {
   return Math.min(Math.trunc(n), 86_400_000);
 }
 
+function isGoogleReadsFromDbOnly() {
+  return truthy(process.env.MCP_GOOGLE_READS_FROM_DB_ONLY);
+}
+
 module.exports = {
   isSnapshotFirstGloballyEnabled,
   isSnapshotFirstEnabledForTool,
   getSnapshotMaxAgeMinutes,
   isBackgroundRefreshEnabled,
   getRefreshDebounceMs,
+  isGoogleReadsFromDbOnly,
   DEFAULT_MAX_AGE_MIN,
 };

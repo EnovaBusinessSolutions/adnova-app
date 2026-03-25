@@ -4,6 +4,7 @@ const {
   isSnapshotFirstEnabledForTool,
   isBackgroundRefreshEnabled,
   getRefreshDebounceMs,
+  isGoogleReadsFromDbOnly,
 } = require('./config');
 
 const { createToolResponse } = require('../schemas/errors');
@@ -67,6 +68,16 @@ async function maybeEnqueueBackgroundCollect(userId, sourceKey) {
 /**
  * Core snapshot-first resolution (returns plain data). Used by tools and aggregations.
  */
+function googleDbOnlyNoLive(refreshSource) {
+  return refreshSource === 'googleAds' && isGoogleReadsFromDbOnly();
+}
+
+function googleDbOnlyMissError() {
+  const e = new Error('No Google Ads data in mcpdata for this range (MCP_GOOGLE_READS_FROM_DB_ONLY)');
+  e.code = 'GOOGLE_SNAPSHOT_MISS';
+  return e;
+}
+
 async function resolveSnapshotFirstData({
   toolName,
   userId,
@@ -80,7 +91,10 @@ async function resolveSnapshotFirstData({
     userId: String(userId),
   };
 
-  if (!isSnapshotFirstEnabledForTool(toolName)) {
+  const googleDbOnly = googleDbOnlyNoLive(refreshSource);
+  const useSnapshotFlow = isSnapshotFirstEnabledForTool(toolName) || googleDbOnly;
+
+  if (!useSnapshotFlow) {
     const data = await execLive();
     logMcpToolSource({
       ...baseLog,
@@ -107,7 +121,20 @@ async function resolveSnapshotFirstData({
         snapshot_age_min: snap.snapshot_age_min,
         latency_ms: Date.now() - t0,
         partial_coverage: !!snap.partial_coverage,
-        snapshot_first: '1',
+        snapshot_first: googleDbOnly ? 'google_db_only' : '1',
+      });
+      return snap.data;
+    }
+
+    if (googleDbOnly) {
+      logMcpToolSource({
+        ...baseLog,
+        source_mode: 'snapshot_stale_db_only',
+        snapshot_id: snap.snapshot_id || null,
+        snapshot_age_min: snap.snapshot_age_min,
+        latency_ms: Date.now() - t0,
+        partial_coverage: !!snap.partial_coverage,
+        snapshot_first: 'google_db_only',
       });
       return snap.data;
     }
@@ -138,6 +165,19 @@ async function resolveSnapshotFirstData({
       }
       return snap.data;
     }
+  }
+
+  if (googleDbOnly) {
+    logMcpToolSource({
+      ...baseLog,
+      source_mode: 'google_db_only_no_snapshot',
+      latency_ms: Date.now() - t0,
+      snapshot_first: 'google_db_only',
+    });
+    if (refreshSource) {
+      await maybeEnqueueBackgroundCollect(userId, refreshSource);
+    }
+    throw googleDbOnlyMissError();
   }
 
   try {
