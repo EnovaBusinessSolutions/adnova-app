@@ -49,6 +49,19 @@ function chunkCoversDateRange(chunk, dateFrom, dateTo) {
   return ymdGte(dateFrom, from) && ymdLte(dateTo, to);
 }
 
+/**
+ * Chunk solapa el rango pedido (inclusive).
+ * Esto permite servir "parcial" cuando el collector solo guarda hasta ayer (TZ del cliente).
+ */
+function chunkOverlapsDateRange(chunk, dateFrom, dateTo) {
+  const r = chunk?.range || {};
+  const from = safeStr(r.from);
+  const to = safeStr(r.to);
+  if (!from || !to) return false;
+  // chunk.from <= dateTo && chunk.to >= dateFrom
+  return ymdLte(from, dateTo) && ymdGte(to, dateFrom);
+}
+
 function getChunkUpdatedAt(chunk) {
   const d = chunk?.updatedAt || chunk?.createdAt;
   if (!d) return null;
@@ -135,7 +148,7 @@ async function resolveDailyTotalsForRange(userId, source, dateFrom, dateTo) {
   const datasetHistory = source === 'googleAds' ? 'google.history.daily_account_totals' : 'meta.history.daily_account_totals';
 
   const primary = await findLatestChunk(userId, source, datasetPrimary);
-  if (primary?.data && chunkCoversDateRange(primary, dateFrom, dateTo)) {
+  if (primary?.data && chunkOverlapsDateRange(primary, dateFrom, dateTo)) {
     const totals = primary.data.totals_by_day;
     const filtered = filterTotalsByDayRange(totals, dateFrom, dateTo);
     if (filtered.length > 0) {
@@ -149,7 +162,7 @@ async function resolveDailyTotalsForRange(userId, source, dateFrom, dateTo) {
   }
 
   const history = await findLatestChunk(userId, source, datasetHistory);
-  if (history?.data && chunkCoversDateRange(history, dateFrom, dateTo)) {
+  if (history?.data && chunkOverlapsDateRange(history, dateFrom, dateTo)) {
     const totals = history.data.totals_by_day;
     const filtered = filterTotalsByDayRange(totals, dateFrom, dateTo);
     if (filtered.length > 0) {
@@ -172,7 +185,7 @@ async function resolveCampaignsDailyForRange(userId, source, dateFrom, dateTo) {
   const datasetPrimary = source === 'googleAds' ? 'google.daily_trends_ai' : 'meta.daily_trends_ai';
 
   const primary = await findLatestChunk(userId, source, datasetPrimary);
-  if (!primary?.data || !chunkCoversDateRange(primary, dateFrom, dateTo)) return null;
+  if (!primary?.data || !chunkOverlapsDateRange(primary, dateFrom, dateTo)) return null;
 
   const raw = primary.data.campaigns_daily;
   if (!Array.isArray(raw) || raw.length === 0) return null;
@@ -195,6 +208,7 @@ module.exports = {
   resolveDailyTotalsForRange,
   resolveCampaignsDailyForRange,
   chunkCoversDateRange,
+  chunkOverlapsDateRange,
   filterTotalsByDayRange,
   getSnapshotAgeMinutes,
   isFreshSnapshot,
