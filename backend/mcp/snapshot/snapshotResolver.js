@@ -141,13 +141,38 @@ async function findLatestChunk(userId, source, dataset) {
 }
 
 /**
+ * Devuelve el chunk "más reciente" que además solape [dateFrom, dateTo].
+ * Esto evita el bug donde el chunk más nuevo no cubre el rango pedido.
+ */
+async function findLatestOverlappingChunk(userId, source, dataset, dateFrom, dateTo) {
+  const uid = toObjectId(userId);
+  if (!uid) return null;
+
+  // Limitamos para no escanear toda la colección.
+  const candidates = await McpData.find({
+    userId: uid,
+    kind: 'chunk',
+    source,
+    dataset,
+  })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .limit(20)
+    .lean();
+
+  for (const c of candidates || []) {
+    if (chunkOverlapsDateRange(c, dateFrom, dateTo)) return c;
+  }
+  return null;
+}
+
+/**
  * Resolve daily totals for ad performance: prefer daily_trends_ai, else history.daily_account_totals.
  */
 async function resolveDailyTotalsForRange(userId, source, dateFrom, dateTo) {
   const datasetPrimary = source === 'googleAds' ? 'google.daily_trends_ai' : 'meta.daily_trends_ai';
   const datasetHistory = source === 'googleAds' ? 'google.history.daily_account_totals' : 'meta.history.daily_account_totals';
 
-  const primary = await findLatestChunk(userId, source, datasetPrimary);
+  const primary = await findLatestOverlappingChunk(userId, source, datasetPrimary, dateFrom, dateTo);
   if (primary?.data && chunkOverlapsDateRange(primary, dateFrom, dateTo)) {
     const totals = primary.data.totals_by_day;
     const filtered = filterTotalsByDayRange(totals, dateFrom, dateTo);
@@ -161,7 +186,7 @@ async function resolveDailyTotalsForRange(userId, source, dateFrom, dateTo) {
     }
   }
 
-  const history = await findLatestChunk(userId, source, datasetHistory);
+  const history = await findLatestOverlappingChunk(userId, source, datasetHistory, dateFrom, dateTo);
   if (history?.data && chunkOverlapsDateRange(history, dateFrom, dateTo)) {
     const totals = history.data.totals_by_day;
     const filtered = filterTotalsByDayRange(totals, dateFrom, dateTo);
@@ -184,7 +209,7 @@ async function resolveDailyTotalsForRange(userId, source, dateFrom, dateTo) {
 async function resolveCampaignsDailyForRange(userId, source, dateFrom, dateTo) {
   const datasetPrimary = source === 'googleAds' ? 'google.daily_trends_ai' : 'meta.daily_trends_ai';
 
-  const primary = await findLatestChunk(userId, source, datasetPrimary);
+  const primary = await findLatestOverlappingChunk(userId, source, datasetPrimary, dateFrom, dateTo);
   if (!primary?.data || !chunkOverlapsDateRange(primary, dateFrom, dateTo)) return null;
 
   const raw = primary.data.campaigns_daily;
@@ -205,6 +230,7 @@ async function resolveCampaignsDailyForRange(userId, source, dateFrom, dateTo) {
 
 module.exports = {
   findLatestChunk,
+  findLatestOverlappingChunk,
   resolveDailyTotalsForRange,
   resolveCampaignsDailyForRange,
   chunkCoversDateRange,
