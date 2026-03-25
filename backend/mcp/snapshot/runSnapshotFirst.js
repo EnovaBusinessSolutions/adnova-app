@@ -140,15 +140,30 @@ async function resolveSnapshotFirstData({
     }
   }
 
-  const data = await execLive();
-  logMcpToolSource({
-    ...baseLog,
-    source_mode: 'live',
-    latency_ms: Date.now() - t0,
-    reason: 'no_snapshot',
-    snapshot_first: '1',
-  });
-  return data;
+  try {
+    const data = await execLive();
+    logMcpToolSource({
+      ...baseLog,
+      source_mode: 'live',
+      latency_ms: Date.now() - t0,
+      reason: 'no_snapshot',
+      snapshot_first: '1',
+    });
+    return data;
+  } catch (liveErr) {
+    logMcpToolSource({
+      ...baseLog,
+      source_mode: 'live_error_no_snapshot',
+      live_error: String(liveErr?.message || liveErr),
+      latency_ms: Date.now() - t0,
+      reason: 'no_snapshot',
+      snapshot_first: '1',
+    });
+    if (refreshSource) {
+      await maybeEnqueueBackgroundCollect(userId, refreshSource);
+    }
+    throw liveErr;
+  }
 }
 
 /**
@@ -161,7 +176,24 @@ async function runSnapshotFirstTool(opts) {
     userId: String(opts.userId),
   };
   try {
-    const data = await resolveSnapshotFirstData(opts);
+    let data;
+    try {
+      data = await resolveSnapshotFirstData(opts);
+    } catch (resolveErr) {
+      if (resolveErr?.code === 'ACCOUNT_NOT_CONNECTED') throw resolveErr;
+      if (typeof opts.emptyFallback === 'function') {
+        logMcpToolSource({
+          ...baseLog,
+          source_mode: 'empty_fallback',
+          live_error: String(resolveErr?.message || resolveErr),
+          latency_ms: Date.now() - t0,
+          snapshot_first: isSnapshotFirstEnabledForTool(opts.toolName) ? '1' : 'disabled',
+        });
+        data = opts.emptyFallback();
+      } else {
+        throw resolveErr;
+      }
+    }
     return createToolResponse(data);
   } catch (err) {
     logMcpToolSource({

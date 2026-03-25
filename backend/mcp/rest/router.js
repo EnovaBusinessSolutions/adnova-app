@@ -11,6 +11,13 @@ const accountAdapter = require('../adapters/account');
 const metaAdapter = require('../adapters/meta');
 const googleAdapter = require('../adapters/google');
 const shopifyAdapter = require('../adapters/shopify');
+const {
+  resolveAdPerformance,
+  resolveAdPerformanceAll,
+  resolveCampaignPerformance,
+  resolveChannelSummaryPayload,
+  resolveDateComparisonPayload,
+} = require('../services/adsPerformanceResolve');
 
 function sendError(res, status, code, tool, extra) {
   return res.status(status).json(createToolError(code, tool, extra));
@@ -47,13 +54,12 @@ router.get('/ad-performance', wrapHandler('get_ad_performance', async (req, user
   const gran = granularity || 'total';
 
   if (channel === 'all') {
-    const results = [];
-    try { results.push(await metaAdapter.getAdPerformance(userId, date_from, date_to, gran)); } catch {}
-    try { results.push(await googleAdapter.getAdPerformance(userId, date_from, date_to, gran)); } catch {}
-    return results;
+    return resolveAdPerformanceAll(userId, date_from, date_to, gran);
   }
-  const adapter = channel === 'meta' ? metaAdapter : googleAdapter;
-  return adapter.getAdPerformance(userId, date_from, date_to, gran);
+  if (channel !== 'meta' && channel !== 'google') {
+    throw Object.assign(new Error('Invalid channel'), { code: 'INVALID_PARAMETERS' });
+  }
+  return resolveAdPerformance(userId, channel, date_from, date_to, gran);
 }));
 
 router.get('/campaign-performance', wrapHandler('get_campaign_performance', async (req, userId) => {
@@ -61,8 +67,17 @@ router.get('/campaign-performance', wrapHandler('get_campaign_performance', asyn
   if (!channel || !date_from || !date_to) throw Object.assign(new Error('Missing required parameters'), { code: 'INVALID_PARAMETERS' });
   const rangeErr = validateDateRange(date_from, date_to);
   if (rangeErr) throw Object.assign(new Error(rangeErr), { code: 'DATE_RANGE_TOO_LARGE' });
-  const adapter = channel === 'meta' ? metaAdapter : googleAdapter;
-  return adapter.getCampaignPerformance(userId, date_from, date_to, Number(limit) || 10, status || 'all');
+  if (channel !== 'meta' && channel !== 'google') {
+    throw Object.assign(new Error('Invalid channel'), { code: 'INVALID_PARAMETERS' });
+  }
+  return resolveCampaignPerformance(
+    userId,
+    channel,
+    date_from,
+    date_to,
+    Number(limit) || 10,
+    status || 'all'
+  );
 }));
 
 router.get('/adset-performance', wrapHandler('get_adset_performance', async (req, userId) => {
@@ -96,33 +111,7 @@ router.get('/channel-summary', wrapHandler('get_channel_summary', async (req, us
   const rangeErr = validateDateRange(date_from, date_to);
   if (rangeErr) throw Object.assign(new Error(rangeErr), { code: 'DATE_RANGE_TOO_LARGE' });
 
-  const channels = [];
-  const currencies = new Set();
-  const round = (n) => Number(Number(n || 0).toFixed(2));
-
-  try {
-    const meta = await metaAdapter.getAdPerformance(userId, date_from, date_to, 'total');
-    channels.push({ channel: 'meta', spend: meta.spend, impressions: meta.impressions, clicks: meta.clicks, ctr: meta.ctr, conversions: 0, roas_reported: 0, currency: meta.currency });
-    currencies.add(meta.currency);
-  } catch {}
-
-  try {
-    const google = await googleAdapter.getAdPerformance(userId, date_from, date_to, 'total');
-    channels.push({ channel: 'google', spend: google.spend, impressions: google.impressions, clicks: google.clicks, ctr: google.ctr, conversions: 0, roas_reported: 0, currency: google.currency });
-    currencies.add(google.currency);
-  } catch {}
-
-  const totalSpend = channels.reduce((s, c) => s + c.spend, 0);
-  for (const ch of channels) { ch.spend_pct = round(totalSpend ? (ch.spend / totalSpend) * 100 : 0); }
-
-  const result = { date_from, date_to, channels };
-  if (currencies.size <= 1) {
-    result.total_spend = round(totalSpend);
-    result.currency = currencies.values().next().value || 'USD';
-  } else {
-    result.currency_note = 'Accounts use different currencies. Per-channel totals are shown in their native currency.';
-  }
-  return result;
+  return resolveChannelSummaryPayload(userId, date_from, date_to);
 }));
 
 router.get('/date-comparison', wrapHandler('get_date_comparison', async (req, userId) => {
@@ -135,55 +124,14 @@ router.get('/date-comparison', wrapHandler('get_date_comparison', async (req, us
   const errB = validateDateRange(period_b_from, period_b_to);
   if (errB) throw Object.assign(new Error(errB), { code: 'DATE_RANGE_TOO_LARGE' });
 
-  const round = (n) => Number(Number(n || 0).toFixed(2));
-  const dir = (a, b) => b > a ? 'up' : b < a ? 'down' : 'flat';
-
-  function compare(a, b, names) {
-    return names.map(name => {
-      const va = Number(a?.[name] || 0);
-      const vb = Number(b?.[name] || 0);
-      return { name, period_a_value: round(va), period_b_value: round(vb), change_absolute: round(vb - va), change_pct: round(va ? ((vb - va) / va) * 100 : vb ? 100 : 0), direction: dir(va, vb) };
-    });
-  }
-
-  const result = { channel, period_a: { from: period_a_from, to: period_a_to }, period_b: { from: period_b_from, to: period_b_to }, metrics: [] };
-  const adMetrics = ['spend', 'impressions', 'clicks', 'ctr', 'cpc', 'cpm'];
-  const shopMetrics = ['total_revenue', 'net_revenue', 'total_orders', 'average_order_value'];
-
-  if (channel === 'meta' || channel === 'all') {
-    try {
-      const [a, b] = await Promise.all([
-        metaAdapter.getAdPerformance(userId, period_a_from, period_a_to, 'total'),
-        metaAdapter.getAdPerformance(userId, period_b_from, period_b_to, 'total'),
-      ]);
-      if (channel === 'all') result.meta = { metrics: compare(a, b, adMetrics) };
-      else result.metrics = compare(a, b, adMetrics);
-    } catch {}
-  }
-
-  if (channel === 'google' || channel === 'all') {
-    try {
-      const [a, b] = await Promise.all([
-        googleAdapter.getAdPerformance(userId, period_a_from, period_a_to, 'total'),
-        googleAdapter.getAdPerformance(userId, period_b_from, period_b_to, 'total'),
-      ]);
-      if (channel === 'all') result.google = { metrics: compare(a, b, adMetrics) };
-      else result.metrics = compare(a, b, adMetrics);
-    } catch {}
-  }
-
-  if (channel === 'shopify' || channel === 'all') {
-    try {
-      const [a, b] = await Promise.all([
-        shopifyAdapter.getShopifyRevenue(userId, period_a_from, period_a_to, 'total'),
-        shopifyAdapter.getShopifyRevenue(userId, period_b_from, period_b_to, 'total'),
-      ]);
-      if (channel === 'all') result.shopify = { metrics: compare(a, b, shopMetrics) };
-      else result.metrics = compare(a, b, shopMetrics);
-    } catch {}
-  }
-
-  return result;
+  return resolveDateComparisonPayload(
+    userId,
+    channel,
+    period_a_from,
+    period_a_to,
+    period_b_from,
+    period_b_to
+  );
 }));
 
 module.exports = router;

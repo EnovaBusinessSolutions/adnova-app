@@ -2,11 +2,9 @@
 
 const { z } = require('zod');
 const { validateDateRange } = require('../schemas/tool-schemas');
-const metaAdapter = require('../adapters/meta');
-const googleAdapter = require('../adapters/google');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
-const { buildCampaignPerformanceSnapshot } = require('../snapshot/builders');
+const { campaignPerformanceSnapshotOpts } = require('../services/adsPerformanceResolve');
 
 const TOOL_NAME = 'get_campaign_performance';
 
@@ -33,43 +31,16 @@ function register(server) {
         const lim = params.limit || 10;
         const st = params.status || 'all';
 
-        if (params.channel === 'meta') {
-          return runSnapshotFirstTool({
-            toolName: TOOL_NAME,
+        return runSnapshotFirstTool(
+          campaignPerformanceSnapshotOpts(
             userId,
-            refreshSource: 'metaAds',
-            buildSnapshot: () =>
-              buildCampaignPerformanceSnapshot(
-                userId,
-                'metaAds',
-                'meta',
-                params.date_from,
-                params.date_to,
-                lim,
-                st
-              ),
-            execLive: () =>
-              metaAdapter.getCampaignPerformance(userId, params.date_from, params.date_to, lim, st),
-          });
-        }
-
-        return runSnapshotFirstTool({
-          toolName: TOOL_NAME,
-          userId,
-          refreshSource: 'googleAds',
-          buildSnapshot: () =>
-            buildCampaignPerformanceSnapshot(
-              userId,
-              'googleAds',
-              'google',
-              params.date_from,
-              params.date_to,
-              lim,
-              st
-            ),
-          execLive: () =>
-            googleAdapter.getCampaignPerformance(userId, params.date_from, params.date_to, lim, st),
-        });
+            params.channel,
+            params.date_from,
+            params.date_to,
+            lim,
+            st
+          )
+        );
       } catch (err) {
         console.error(`[${TOOL_NAME}] error:`, err);
         return createToolErrorResponse(err.code || 'INTERNAL_ERROR', TOOL_NAME, err.message);

@@ -94,6 +94,8 @@ Base URL de la API: `https://api.adray.ai/gpt/v1` (en producción) o `http://loc
 
 Sustituye `TU_ACCESS_TOKEN` por el token obtenido arriba.
 
+Los endpoints de ads (**`/ad-performance`**, **`/campaign-performance`**, **`/channel-summary`**, **`/date-comparison`**) comparten la misma lógica **snapshot-first** que las tools MCP cuando `MCP_SNAPSHOT_FIRST_ENABLED=true`: leen primero agregados en Mongo **`mcpdata`** (chunks `google.daily_trends_ai` / `meta.daily_trends_ai`, etc.) y solo entonces intentan la API en vivo si el snapshot no aplica. Detalle operativo en §8.7.
+
 ### 3.1 get_account_info
 
 ```bash
@@ -285,3 +287,71 @@ Para clientes compatibles con MCP (por ejemplo Claude Desktop):
 - [ ] MongoDB accesible para `oauth_clients`, `oauth_codes`, `oauth_tokens`
 - [ ] Usuarios de prueba con Meta, Google y Shopify conectados
 - [ ] Tests unitarios pasando (`npm run test:mcp`)
+
+---
+
+## 8. Staging (Render / `german/dev`): checklist y smoke automatizado
+
+Usa la misma **BASE** pública del backend que `APP_URL` en Render (ej. `https://adray-app-staging-german.onrender.com`). Sustituye `api.adray.ai` en los ejemplos de las secciones 2–3 por esa BASE.
+
+### 8.1 Entorno (Fase 0)
+
+- En Render: `APP_URL` y `MONGO_URI` del servicio staging coherentes con la URL real y la base de datos de staging.
+- **Recomendado (Google Ads / mcpdata):** en el dashboard de Render, añade la variable de entorno `MCP_SNAPSHOT_FIRST_ENABLED=true` en el servicio del backend staging. Así MCP y `/gpt/v1/*` leen primero agregados en Mongo `mcpdata` y evitan depender solo de la API de Google (útil si el developer token da 403 en staging). Sin chunks en `mcpdata`, las tools devuelven métricas en cero en lugar de `INTERNAL_ERROR` cuando la API falla (salvo `ACCOUNT_NOT_CONNECTED`, que sigue como 404).
+- Rutas expuestas en el mismo servicio: `/mcp`, `/oauth/*`, `/gpt/v1/*` (sin reglas de proxy que las bloqueen).
+- **CORS:** en `backend/index.js` la política actual acepta cualquier origen (`origin: (origin, cb) => cb(null, true)`), así que no suele bloquear navegador u orígenes dinámicos para OAuth MCP.
+
+### 8.2 Cliente OAuth en Mongo de staging (Fase 1)
+
+Desde tu máquina, apuntando al **Mongo de staging**:
+
+```bash
+export MONGO_URI="mongodb+srv://...staging..."
+export MCP_OAUTH_CLIENT_SECRET="minimo_16_caracteres_seguros"
+# opcional: MCP_OAUTH_CLIENT_ID, MCP_OAUTH_REDIRECT_URIS
+npm run seed:oauth-client
+```
+
+O inserta manualmente en `oauth_clients` como en la §1.
+
+### 8.3 Usuario de prueba (Fase 2)
+
+1. Inicia sesión en la **app web** de staging (cookie de sesión).
+2. Conecta Meta y/o Google y/o Shopify según lo que quieras validar.
+
+### 8.4 Token OAuth MCP (Fase 3)
+
+Con sesión abierta en el navegador, abre la URL de autorización de la §2 usando **BASE** de staging; intercambia el `code` en `POST BASE/oauth/token`. Guarda el `access_token`.
+
+### 8.5 Matriz REST + POST `/mcp` (Fases 4–5)
+
+Script (8 GET `/gpt/v1/*` + `initialize` vía `POST /mcp`):
+
+```bash
+export MCP_STAGING_BASE_URL="https://TU-STAGING.onrender.com"
+export MCP_ACCESS_TOKEN="..."
+# opcional: export MCP_META_CAMPAIGN_ID="..."  # para adset-performance
+# opcional: export MCP_SKIP_MCP_POST=1         # solo REST, sin probar /mcp
+npm run mcp:smoke:staging
+```
+
+- **PASS:** respuesta 2xx.
+- **SKIP:** 404 con `ACCOUNT_NOT_CONNECTED` (falta integración; esperado si no conectaste ese canal).
+- **FAIL:** 401 u otros errores: revisar token, parámetros o datos.
+
+El proceso termina con código de salida **1** si hay algún **FAIL** o si **POST /mcp** `initialize` no responde OK. Los **SKIP** (p. ej. `ACCOUNT_NOT_CONNECTED` sin integración) **no** cuentan como fallo. Si no defines `MCP_META_CAMPAIGN_ID`, `adset-performance` se omite (verdict SKIP) y no bloquea el exit code.
+
+### 8.6 Tests unitarios (Fase 6)
+
+En el repo: `npm run test:mcp` (mocks, sin APIs externas).
+
+### 8.7 Snapshot-first (Fase 7, opcional)
+
+Si en staging activas `MCP_SNAPSHOT_FIRST_ENABLED=true`, además:
+
+- En Render (o `.env` local), define `MCP_SNAPSHOT_FIRST_ENABLED=true`. Opcional: `MCP_SNAPSHOT_FIRST_TOOLS` (lista separada por comas); vacío = todas las tools contempladas.
+- **Datos Google/Meta en Mongo:** los KPIs diarios llegan a `mcpdata` vía el collector (`googleCollector` / `metaCollector`) y rutas como `POST /api/mcpdata/collect-now` o el worker `npm run worker:mcp`. Sin chunks recientes, el servidor puede hacer **fallback** a la API en vivo (mismo riesgo de error que antes).
+- Comprueba estado de chunks (con sesión de usuario en la app web): `GET /api/mcpdata/google-ads/status` y `GET /api/mcpdata/meta/status` en la misma BASE del backend.
+- Prueba **REST** (`/gpt/v1/ad-performance?channel=google&...`) y **MCP**: ambos usan [`backend/mcp/services/adsPerformanceResolve.js`](../backend/mcp/services/adsPerformanceResolve.js) para esos endpoints.
+- Revisa logs con `mcp_tool_source` / `source_mode` ([backend/mcp/README.md](../backend/mcp/README.md)).
+- Si usas `MCP_SNAPSHOT_BACKGROUND_REFRESH`, confirma `REDIS_URL` y el worker (`npm run worker:mcp` en el servicio que corresponda).

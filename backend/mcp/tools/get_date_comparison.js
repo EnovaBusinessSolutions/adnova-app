@@ -2,64 +2,10 @@
 
 const { z } = require('zod');
 const { validateDateRange } = require('../schemas/tool-schemas');
-const metaAdapter = require('../adapters/meta');
-const googleAdapter = require('../adapters/google');
-const shopifyAdapter = require('../adapters/shopify');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
-const { resolveSnapshotFirstData } = require('../snapshot/runSnapshotFirst');
-const { buildAdPerformanceSnapshot } = require('../snapshot/builders');
+const { resolveDateComparisonPayload } = require('../services/adsPerformanceResolve');
 
 const TOOL_NAME = 'get_date_comparison';
-
-function round(n, d = 2) {
-  return Number(Number(n || 0).toFixed(d));
-}
-
-function direction(a, b) {
-  if (b > a) return 'up';
-  if (b < a) return 'down';
-  return 'flat';
-}
-
-function compareMetrics(periodA, periodB) {
-  const metricNames = ['spend', 'impressions', 'clicks', 'ctr', 'cpc', 'cpm'];
-  const metrics = [];
-
-  for (const name of metricNames) {
-    const valA = Number(periodA?.[name] || 0);
-    const valB = Number(periodB?.[name] || 0);
-    metrics.push({
-      name,
-      period_a_value: round(valA),
-      period_b_value: round(valB),
-      change_absolute: round(valB - valA),
-      change_pct: round(valA ? ((valB - valA) / valA) * 100 : valB ? 100 : 0),
-      direction: direction(valA, valB),
-    });
-  }
-
-  return metrics;
-}
-
-function compareShopifyMetrics(periodA, periodB) {
-  const metricNames = ['total_revenue', 'net_revenue', 'total_orders', 'average_order_value'];
-  const metrics = [];
-
-  for (const name of metricNames) {
-    const valA = Number(periodA?.[name] || 0);
-    const valB = Number(periodB?.[name] || 0);
-    metrics.push({
-      name,
-      period_a_value: round(valA),
-      period_b_value: round(valB),
-      change_absolute: round(valB - valA),
-      change_pct: round(valA ? ((valB - valA) / valA) * 100 : valB ? 100 : 0),
-      direction: direction(valA, valB),
-    });
-  }
-
-  return metrics;
-}
 
 function register(server) {
   server.tool(
@@ -83,115 +29,14 @@ function register(server) {
         const errB = validateDateRange(params.period_b_from, params.period_b_to);
         if (errB) return createToolErrorResponse('DATE_RANGE_TOO_LARGE', TOOL_NAME, errB);
 
-        const result = {
-          channel: params.channel,
-          period_a: { from: params.period_a_from, to: params.period_a_to },
-          period_b: { from: params.period_b_from, to: params.period_b_to },
-          metrics: [],
-        };
-
-        if (params.channel === 'meta' || params.channel === 'all') {
-          try {
-            const [a, b] = await Promise.all([
-              resolveSnapshotFirstData({
-                toolName: TOOL_NAME,
-                userId,
-                refreshSource: 'metaAds',
-                buildSnapshot: () =>
-                  buildAdPerformanceSnapshot(
-                    userId,
-                    'metaAds',
-                    'meta',
-                    params.period_a_from,
-                    params.period_a_to,
-                    'total'
-                  ),
-                execLive: () =>
-                  metaAdapter.getAdPerformance(userId, params.period_a_from, params.period_a_to, 'total'),
-              }),
-              resolveSnapshotFirstData({
-                toolName: TOOL_NAME,
-                userId,
-                refreshSource: 'metaAds',
-                buildSnapshot: () =>
-                  buildAdPerformanceSnapshot(
-                    userId,
-                    'metaAds',
-                    'meta',
-                    params.period_b_from,
-                    params.period_b_to,
-                    'total'
-                  ),
-                execLive: () =>
-                  metaAdapter.getAdPerformance(userId, params.period_b_from, params.period_b_to, 'total'),
-              }),
-            ]);
-            if (params.channel === 'all') {
-              result.meta = { metrics: compareMetrics(a, b) };
-            } else {
-              result.metrics = compareMetrics(a, b);
-            }
-          } catch {}
-        }
-
-        if (params.channel === 'google' || params.channel === 'all') {
-          try {
-            const [a, b] = await Promise.all([
-              resolveSnapshotFirstData({
-                toolName: TOOL_NAME,
-                userId,
-                refreshSource: 'googleAds',
-                buildSnapshot: () =>
-                  buildAdPerformanceSnapshot(
-                    userId,
-                    'googleAds',
-                    'google',
-                    params.period_a_from,
-                    params.period_a_to,
-                    'total'
-                  ),
-                execLive: () =>
-                  googleAdapter.getAdPerformance(userId, params.period_a_from, params.period_a_to, 'total'),
-              }),
-              resolveSnapshotFirstData({
-                toolName: TOOL_NAME,
-                userId,
-                refreshSource: 'googleAds',
-                buildSnapshot: () =>
-                  buildAdPerformanceSnapshot(
-                    userId,
-                    'googleAds',
-                    'google',
-                    params.period_b_from,
-                    params.period_b_to,
-                    'total'
-                  ),
-                execLive: () =>
-                  googleAdapter.getAdPerformance(userId, params.period_b_from, params.period_b_to, 'total'),
-              }),
-            ]);
-            if (params.channel === 'all') {
-              result.google = { metrics: compareMetrics(a, b) };
-            } else {
-              result.metrics = compareMetrics(a, b);
-            }
-          } catch {}
-        }
-
-        if (params.channel === 'shopify' || params.channel === 'all') {
-          try {
-            const [a, b] = await Promise.all([
-              shopifyAdapter.getShopifyRevenue(userId, params.period_a_from, params.period_a_to, 'total'),
-              shopifyAdapter.getShopifyRevenue(userId, params.period_b_from, params.period_b_to, 'total'),
-            ]);
-            if (params.channel === 'all') {
-              result.shopify = { metrics: compareShopifyMetrics(a, b) };
-            } else {
-              result.metrics = compareShopifyMetrics(a, b);
-            }
-          } catch {}
-        }
-
+        const result = await resolveDateComparisonPayload(
+          userId,
+          params.channel,
+          params.period_a_from,
+          params.period_a_to,
+          params.period_b_from,
+          params.period_b_to
+        );
         return createToolResponse(result);
       } catch (err) {
         console.error(`[${TOOL_NAME}] error:`, err);

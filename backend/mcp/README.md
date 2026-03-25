@@ -35,7 +35,14 @@ npm run test:mcp
 npm start
 ```
 
+### Staging (smoke contra Render)
+
+Guía paso a paso: [docs/MCP_TESTING_AND_GPT_GUIDE.md](../../docs/MCP_TESTING_AND_GPT_GUIDE.md) §8. Con token OAuth: `npm run mcp:smoke:staging` (variables `MCP_STAGING_BASE_URL`, `MCP_ACCESS_TOKEN`).
+
 ### 3. REST mirror (requiere OAuth token)
+
+`ad-performance`, `campaign-performance`, `channel-summary` y `date-comparison` usan el mismo módulo que las tools MCP ([`services/adsPerformanceResolve.js`](./services/adsPerformanceResolve.js)): con `MCP_SNAPSHOT_FIRST_ENABLED=true` leen primero **Mongo `mcpdata`** y hacen fallback a la API si hace falta.
+
 ```bash
 curl -H "Authorization: Bearer <access_token>" "http://localhost:3000/gpt/v1/account-info"
 ```
@@ -74,7 +81,9 @@ Las tools de Meta/Google pueden leer primero datos ya recolectados en `mcpdata` 
 | `MCP_SNAPSHOT_BACKGROUND_REFRESH` | Si `true`, tras `live_fallback` encola recolección MCP (requiere `REDIS_URL`) |
 | `MCP_SNAPSHOT_REFRESH_DEBOUNCE_MS` | Mínimo entre encolados por usuario+fuente (default 300000) |
 
-Logs estructurados: líneas JSON con `mcp_tool_source: true`, `source_mode` (`snapshot_fresh` \| `snapshot_stale` vía live \| `live` \| `live_fallback` \| `error`), `latency_ms`, `snapshot_id` cuando aplica.
+Si no hay snapshot y la API en vivo falla (p. ej. Google 403), las tools de ads devuelven **métricas en cero** y log `source_mode`: `live_error_no_snapshot` o `empty_fallback` (no `INTERNAL_ERROR`), salvo `ACCOUNT_NOT_CONNECTED`.
+
+Logs estructurados: líneas JSON con `mcp_tool_source: true`, `source_mode` (`snapshot_fresh` \| `snapshot_stale` vía live \| `live` \| `live_fallback` \| `live_error_no_snapshot` \| `empty_fallback` \| `error`), `latency_ms`, `snapshot_id` cuando aplica.
 
 ## Tools Phase 1
 - `get_account_info` – cuentas conectadas

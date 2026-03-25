@@ -9,7 +9,10 @@ const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
 
 const TOOL_NAME = 'get_adset_performance';
 
-/** No mcpdata snapshot for ad set / ad group daily series yet — live-only path with snapshot-first wrapper for observability. */
+/**
+ * No hay snapshot MCP para ad set / ad group aún (solo live). Fase 2 opcional: persistir series por ad group en mcpdata
+ * (collector + resolver) para Google/Meta sin GAQL/Graph en lectura.
+ */
 function register(server) {
   server.tool(
     TOOL_NAME,

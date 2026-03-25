@@ -2,11 +2,9 @@
 
 const { z } = require('zod');
 const { validateDateRange } = require('../schemas/tool-schemas');
-const metaAdapter = require('../adapters/meta');
-const googleAdapter = require('../adapters/google');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
-const { buildAdPerformanceSnapshot } = require('../snapshot/builders');
+const { resolveAdPerformance, adPerformanceSnapshotOpts } = require('../services/adsPerformanceResolve');
 
 const TOOL_NAME = 'get_ad_performance';
 
@@ -34,51 +32,17 @@ function register(server) {
         if (params.channel === 'all') {
           const results = [];
           try {
-            const r = await runSnapshotFirstTool({
-              toolName: TOOL_NAME,
-              userId,
-              refreshSource: 'metaAds',
-              buildSnapshot: () =>
-                buildAdPerformanceSnapshot(userId, 'metaAds', 'meta', params.date_from, params.date_to, gran),
-              execLive: () => metaAdapter.getAdPerformance(userId, params.date_from, params.date_to, gran),
-            });
-            const parsed = JSON.parse(r.content[0].text);
-            if (!parsed.error) results.push(parsed);
+            results.push(await resolveAdPerformance(userId, 'meta', params.date_from, params.date_to, gran));
           } catch {}
           try {
-            const r = await runSnapshotFirstTool({
-              toolName: TOOL_NAME,
-              userId,
-              refreshSource: 'googleAds',
-              buildSnapshot: () =>
-                buildAdPerformanceSnapshot(userId, 'googleAds', 'google', params.date_from, params.date_to, gran),
-              execLive: () => googleAdapter.getAdPerformance(userId, params.date_from, params.date_to, gran),
-            });
-            const parsed = JSON.parse(r.content[0].text);
-            if (!parsed.error) results.push(parsed);
+            results.push(await resolveAdPerformance(userId, 'google', params.date_from, params.date_to, gran));
           } catch {}
           return createToolResponse(results);
         }
 
-        if (params.channel === 'meta') {
-          return runSnapshotFirstTool({
-            toolName: TOOL_NAME,
-            userId,
-            refreshSource: 'metaAds',
-            buildSnapshot: () =>
-              buildAdPerformanceSnapshot(userId, 'metaAds', 'meta', params.date_from, params.date_to, gran),
-            execLive: () => metaAdapter.getAdPerformance(userId, params.date_from, params.date_to, gran),
-          });
-        }
-
-        return runSnapshotFirstTool({
-          toolName: TOOL_NAME,
-          userId,
-          refreshSource: 'googleAds',
-          buildSnapshot: () =>
-            buildAdPerformanceSnapshot(userId, 'googleAds', 'google', params.date_from, params.date_to, gran),
-          execLive: () => googleAdapter.getAdPerformance(userId, params.date_from, params.date_to, gran),
-        });
+        return runSnapshotFirstTool(
+          adPerformanceSnapshotOpts(userId, params.channel, params.date_from, params.date_to, gran)
+        );
       } catch (err) {
         console.error(`[${TOOL_NAME}] error:`, err);
         const code = err.code || 'INTERNAL_ERROR';
