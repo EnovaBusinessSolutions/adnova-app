@@ -671,6 +671,43 @@
             font-weight: 700;
         }
 
+        .journey-chip.is-google,
+        .journey-step.is-google {
+            border-color: rgba(251, 191, 36, 0.5);
+            background: linear-gradient(135deg, rgba(180, 83, 9, 0.36), rgba(251, 191, 36, 0.2));
+        }
+
+        .journey-chip.is-meta,
+        .journey-step.is-meta {
+            border-color: rgba(96, 165, 250, 0.55);
+            background: linear-gradient(135deg, rgba(29, 78, 216, 0.34), rgba(96, 165, 250, 0.2));
+        }
+
+        .journey-chip.is-tiktok,
+        .journey-step.is-tiktok {
+            border-color: rgba(45, 212, 191, 0.55);
+            background: linear-gradient(135deg, rgba(13, 148, 136, 0.34), rgba(45, 212, 191, 0.2));
+        }
+
+        .journey-chip.is-organic,
+        .journey-step.is-organic {
+            border-color: rgba(134, 239, 172, 0.45);
+            background: linear-gradient(135deg, rgba(22, 101, 52, 0.32), rgba(74, 222, 128, 0.18));
+        }
+
+        .journey-channel-legend {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+            margin-top: 0.65rem;
+        }
+
+        .journey-channel-legend .journey-chip {
+            font-size: 0.62rem;
+            padding: 0.22rem 0.48rem;
+        }
+
         .journey-flow {
             display: flex;
             align-items: center;
@@ -689,6 +726,46 @@
             font-size: 0.78rem;
             color: var(--dash-text);
             font-weight: 600;
+        }
+
+        .journey-sankey {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 0.4rem;
+            margin-top: 0.25rem;
+        }
+
+        .journey-sankey-node {
+            border: 1px solid rgba(202, 138, 229, 0.24);
+            background: rgba(225, 216, 243, 0.08);
+            border-radius: 0.62rem;
+            min-height: 2.05rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.67rem;
+            letter-spacing: 0.06em;
+            font-weight: 700;
+            color: var(--dash-text);
+            text-transform: uppercase;
+        }
+
+        .journey-sankey-node.is-google { border-color: rgba(251, 191, 36, 0.45); }
+        .journey-sankey-node.is-meta { border-color: rgba(96, 165, 250, 0.52); }
+        .journey-sankey-node.is-tiktok { border-color: rgba(45, 212, 191, 0.52); }
+        .journey-sankey-node.is-organic { border-color: rgba(134, 239, 172, 0.44); }
+
+        .journey-anim {
+            opacity: 0;
+            transform: translateY(6px) scale(0.98);
+            animation: journeyRise 360ms ease forwards;
+        }
+
+        @keyframes journeyRise {
+            to {
+                opacity: 1;
+                transform: translateY(0) scale(1);
+            }
         }
 
         .journey-arrow {
@@ -1264,6 +1341,12 @@
                             <p class="panel-kicker">Marketing Attribution</p>
                             <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Attribution Journey Center</h3>
                             <p class="panel-subtitle text-sm mt-1">Visualiza cómo llegó cada conversión: clic, fuente, campaña y secuencia por sesión.</p>
+                            <div class="journey-channel-legend" aria-label="Leyenda de canales">
+                                <span class="journey-chip is-meta"><i class="fa-brands fa-meta"></i>Meta</span>
+                                <span class="journey-chip is-google"><i class="fa-brands fa-google"></i>Google</span>
+                                <span class="journey-chip is-tiktok"><i class="fa-brands fa-tiktok"></i>TikTok</span>
+                                <span class="journey-chip is-organic"><i class="fa-solid fa-globe"></i>Orgánico</span>
+                            </div>
                         </div>
                     </div>
                     <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -2004,6 +2087,15 @@
             return 'fa-solid fa-bullseye';
         }
 
+        function resolveChannelTone(channel, platform) {
+            const key = String(platform || channel || '').toLowerCase();
+            if (key.includes('google') || key.includes('search')) return 'is-google';
+            if (key.includes('facebook') || key.includes('meta') || key.includes('instagram')) return 'is-meta';
+            if (key.includes('tiktok')) return 'is-tiktok';
+            if (key.includes('organic') || key.includes('referral') || key.includes('direct')) return 'is-organic';
+            return '';
+        }
+
         function scoreJourneySignal(purchase = {}) {
             let score = 0;
             if (purchase.attributedClickId) score += 5;
@@ -2023,7 +2115,11 @@
             const platform = journey.attribution?.platform || null;
 
             const steps = [
-                { icon: resolveChannelIcon(channel, platform), label: `${channel}${platform ? ` · ${platform}` : ''}` },
+                {
+                    icon: resolveChannelIcon(channel, platform),
+                    label: `${channel}${platform ? ` · ${platform}` : ''}`,
+                    tone: resolveChannelTone(channel, platform),
+                },
                 { icon: 'fa-solid fa-link', label: journey.attribution?.clickId ? `click ${String(journey.attribution.clickId).slice(0, 12)}...` : 'sin click id' },
                 { icon: 'fa-solid fa-door-open', label: session.landingPageUrl ? `landing ${new URL(session.landingPageUrl, window.location.origin).pathname}` : 'landing n/a' },
                 { icon: 'fa-solid fa-cart-shopping', label: `ATC ${metrics.addToCart || 0}` },
@@ -2039,9 +2135,18 @@
             }
 
             return `<div class="journey-flow">${steps.map((step, index) => `
-                <span class="journey-step"><i class="${step.icon}"></i>${escapeHtml(step.label)}</span>
+                <span class="journey-step journey-anim ${step.tone || ''}" style="animation-delay:${index * 70}ms"><i class="${step.icon}"></i>${escapeHtml(step.label)}</span>
                 ${index < steps.length - 1 ? '<i class="fa-solid fa-chevron-right journey-arrow"></i>' : ''}
             `).join('')}</div>`;
+        }
+
+        function renderJourneySankey(steps = []) {
+            if (!steps.length) return '';
+            return `
+                <div class="journey-sankey">
+                    ${steps.map((step, index) => `<div class="journey-sankey-node journey-anim ${step.tone || ''}" style="animation-delay:${120 + (index * 55)}ms">${escapeHtml((step.label || '').split(' ')[0] || 'step')}</div>`).join('')}
+                </div>
+            `;
         }
 
         function renderAttributionJourneyPanel() {
@@ -2063,8 +2168,9 @@
                             <span class="text-xs text-gray-500">${formatDateTimeMx(currentSession.startedAt)}</span>
                         </div>
                         ${renderJourneyFlow(steps)}
+                        ${renderJourneySankey(steps)}
                         <div class="flex items-center gap-2 flex-wrap">
-                            <span class="journey-chip"><i class="fa-solid fa-bullseye"></i>${escapeHtml(currentJourney.attribution?.channel || 'unattributed')}</span>
+                            <span class="journey-chip ${resolveChannelTone(currentJourney.attribution?.channel, currentJourney.attribution?.platform)}"><i class="fa-solid fa-bullseye"></i>${escapeHtml(currentJourney.attribution?.channel || 'unattributed')}</span>
                             <span class="journey-chip"><i class="fa-solid fa-signal"></i>conf ${Math.round(Number(currentJourney.attribution?.confidence || 0) * 100)}%</span>
                             <span class="journey-chip"><i class="fa-solid fa-cash-register"></i>ordenes ${(Array.isArray(currentData.orders) ? currentData.orders.length : 0)}</span>
                         </div>
@@ -2105,7 +2211,11 @@
 
             const top = rankedJourneys[0].purchase;
             const topSteps = [
-                { icon: resolveChannelIcon(top.attributedChannel, top.attributedPlatform), label: `${top.attributedChannel || 'unattributed'}${top.attributedPlatform ? ` · ${top.attributedPlatform}` : ''}` },
+                {
+                    icon: resolveChannelIcon(top.attributedChannel, top.attributedPlatform),
+                    label: `${top.attributedChannel || 'unattributed'}${top.attributedPlatform ? ` · ${top.attributedPlatform}` : ''}`,
+                    tone: resolveChannelTone(top.attributedChannel, top.attributedPlatform),
+                },
                 { icon: 'fa-solid fa-link', label: top.attributedClickId ? `click ${String(top.attributedClickId).slice(0, 12)}...` : 'sin click id' },
                 { icon: 'fa-solid fa-bullhorn', label: top.attributedCampaign || 'sin campaña' },
                 { icon: 'fa-solid fa-bag-shopping', label: top.orderNumber || top.orderId || 'orden' },
@@ -2119,6 +2229,7 @@
                         <span class="text-xs text-gray-500">${formatRecentPurchaseDate(top)}</span>
                     </div>
                     ${renderJourneyFlow(topSteps)}
+                    ${renderJourneySankey(topSteps)}
                     <div class="flex items-center gap-2 flex-wrap">
                         <span class="journey-chip"><i class="fa-solid fa-gauge"></i>score ${scoreJourneySignal(top)}</span>
                         <span class="journey-chip"><i class="fa-solid fa-percent"></i>conf ${Math.round(Number(top.attributionConfidence || 0) * 100)}%</span>
@@ -2133,7 +2244,7 @@
                         <span class="text-xs text-gray-500">${formatRecentPurchaseDate(purchase)}</span>
                     </div>
                     <div class="mt-2 flex items-center gap-2 flex-wrap">
-                        <span class="journey-chip"><i class="${resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform)}"></i>${escapeHtml(purchase.attributedChannel || 'unattributed')}</span>
+                        <span class="journey-chip ${resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform)}"><i class="${resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform)}"></i>${escapeHtml(purchase.attributedChannel || 'unattributed')}</span>
                         <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(purchase.attributedCampaign || 'sin campaña')}</span>
                         <span class="journey-chip"><i class="fa-solid fa-sack-dollar"></i>${formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN')}</span>
                         <span class="journey-chip"><i class="fa-solid fa-gauge-high"></i>${score}</span>
