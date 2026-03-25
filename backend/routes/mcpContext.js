@@ -14,7 +14,6 @@ const {
   findRoot,
   buildUnifiedContextForUser,
   buildPdfForUser,
-  rebuildUnifiedContextForUser,
 } = require('../services/mcpContextBuilder');
 
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
@@ -168,11 +167,19 @@ function rootPdfLooksStale(root) {
   const pdfConnectionFingerprint = getPdfConnectionFingerprint(pdf);
   const pdfSourceFingerprint = getPdfSourceFingerprint(pdf);
 
-  if (pdfConnectionFingerprint && currentConnectionFingerprint && pdfConnectionFingerprint !== currentConnectionFingerprint) {
+  if (
+    pdfConnectionFingerprint &&
+    currentConnectionFingerprint &&
+    pdfConnectionFingerprint !== currentConnectionFingerprint
+  ) {
     return true;
   }
 
-  if (pdfSourceFingerprint && signalSourceFingerprint && pdfSourceFingerprint !== signalSourceFingerprint) {
+  if (
+    pdfSourceFingerprint &&
+    signalSourceFingerprint &&
+    pdfSourceFingerprint !== signalSourceFingerprint
+  ) {
     return true;
   }
 
@@ -180,7 +187,9 @@ function rootPdfLooksStale(root) {
 }
 
 function isRecentProcessingState(ai) {
-  if (!ai || safeStr(ai?.status) !== 'processing' || !safeStr(ai?.buildAttemptId).trim()) return false;
+  if (!ai || safeStr(ai?.status) !== 'processing' || !safeStr(ai?.buildAttemptId).trim()) {
+    return false;
+  }
   const startedMs = parseDateMs(ai?.startedAt);
   if (!startedMs) return false;
   return (Date.now() - startedMs) <= BUILD_ACTIVE_GUARD_MS;
@@ -373,11 +382,19 @@ function isSignalRunCompatibleWithRoot(signalRun, root) {
   const rootConnectionFingerprint = safeStr(rootState?.connectionFingerprint || '').trim();
   const runConnectionFingerprint = safeStr(signalRun?.meta?.connectionFingerprint || '').trim();
 
-  if (rootConnectionFingerprint && currentConnectionFingerprint && rootConnectionFingerprint !== currentConnectionFingerprint) {
+  if (
+    rootConnectionFingerprint &&
+    currentConnectionFingerprint &&
+    rootConnectionFingerprint !== currentConnectionFingerprint
+  ) {
     return false;
   }
 
-  if (runConnectionFingerprint && currentConnectionFingerprint && runConnectionFingerprint !== currentConnectionFingerprint) {
+  if (
+    runConnectionFingerprint &&
+    currentConnectionFingerprint &&
+    runConnectionFingerprint !== currentConnectionFingerprint
+  ) {
     return false;
   }
 
@@ -788,6 +805,8 @@ async function findUserByShareToken(token) {
 
 /**
  * POST /api/mcp/context/build
+ * Manual/build endpoint. Mantiene compat actual.
+ * Importante: este route sí puede disparar build manual.
  */
 router.post('/build', async (req, res) => {
   try {
@@ -993,6 +1012,8 @@ router.post('/pdf/build', async (req, res) => {
 
 /**
  * GET /api/mcp/context/status
+ * READ-ONLY.
+ * No dispara rebuilds, no invalida, no crea attempts.
  */
 router.get('/status', async (req, res) => {
   try {
@@ -1004,19 +1025,6 @@ router.get('/status', async (req, res) => {
     const root = await findPreferredContextRootForUser(userId);
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
-    }
-
-    const staleSignal = rootSignalLooksStale(root);
-
-    if (staleSignal && !isRecentProcessingState(root?.aiContext)) {
-      rebuildUnifiedContextForUser(userId, {
-        forceRebuild: true,
-        reason: 'source_state_changed',
-        requestedBy: 'route:mcpContext.status',
-        trigger: 'status_guard',
-      }).catch((err) => {
-        console.error('[mcp/context/status] background rebuild warning:', err?.message || err);
-      });
     }
 
     const signalRun = await findPreferredSignalRunForUser(userId, root);
@@ -1051,8 +1059,10 @@ router.get('/latest', async (req, res) => {
     const signalRun = await findPreferredSignalRunForUser(userId, root);
     const state = root?.aiContext || {};
     const staleSignal = rootSignalLooksStale(root);
-    const signalPayload = staleSignal ? null : getRootAiSignalPayload(root);
     const statusData = buildStatusResponse(root, null, signalRun)?.data || {};
+    const signalPayload = statusData?.signalComplete
+      ? getRootAiSignalPayload(root)
+      : null;
 
     if (!signalPayload || !statusData?.signalComplete) {
       return res.status(409).json({
@@ -1182,7 +1192,6 @@ router.get('/pdf/status', async (req, res) => {
     }
 
     const signalRun = await findPreferredSignalRunForUser(userId, root);
-
     const state = root?.aiContext || {};
     const staleSignal = rootSignalLooksStale(root);
     const stalePdf = rootPdfLooksStale(root);
