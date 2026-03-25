@@ -7,7 +7,7 @@ const { registerAllTools } = require('./registry');
 const SERVER_NAME = 'adray-mcp';
 const SERVER_VERSION = '1.0.0';
 
-function createMcpServer() {
+function createMcpServer(mcpUserId) {
   const server = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     {
@@ -17,7 +17,7 @@ function createMcpServer() {
     }
   );
 
-  registerAllTools(server);
+  registerAllTools(server, mcpUserId);
 
   return server;
 }
@@ -25,7 +25,15 @@ function createMcpServer() {
 function createMcpRequestHandler(resolveUserId) {
   return async (req, res) => {
     try {
-      const server = createMcpServer();
+      let mcpUserId = null;
+      if (resolveUserId) {
+        mcpUserId = await resolveUserId(req);
+        if (mcpUserId) {
+          req._mcpUserId = mcpUserId;
+        }
+      }
+
+      const server = createMcpServer(mcpUserId);
 
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
@@ -34,13 +42,6 @@ function createMcpRequestHandler(resolveUserId) {
       res.on('close', () => {
         transport.close().catch(() => {});
       });
-
-      if (resolveUserId) {
-        const userId = await resolveUserId(req);
-        if (userId) {
-          req._mcpUserId = userId;
-        }
-      }
 
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);

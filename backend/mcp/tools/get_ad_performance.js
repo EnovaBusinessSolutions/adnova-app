@@ -8,7 +8,7 @@ const { resolveAdPerformance, adPerformanceSnapshotOpts } = require('../services
 
 const TOOL_NAME = 'get_ad_performance';
 
-function register(server) {
+function register(server, mcpUserId) {
   server.tool(
     TOOL_NAME,
     'Retrieves ad performance metrics (spend, impressions, clicks, CTR, CPC, CPM) for a given channel and date range.',
@@ -21,7 +21,7 @@ function register(server) {
     { readOnlyHint: true },
     async (params, extra) => {
       try {
-        const userId = extra?.userId || extra?.request?._mcpUserId;
+        const userId = mcpUserId ?? extra?.userId ?? extra?.request?._mcpUserId;
         if (!userId) return createToolErrorResponse('UNAUTHORIZED', TOOL_NAME);
 
         const rangeError = validateDateRange(params.date_from, params.date_to);

@@ -11,10 +11,10 @@ const toolModules = [
   require('./tools/get_date_comparison'),
 ];
 
-function registerAllTools(server) {
+function registerAllTools(server, mcpUserId) {
   for (const mod of toolModules) {
     if (typeof mod.register === 'function') {
-      mod.register(server);
+      mod.register(server, mcpUserId);
     }
   }
 }

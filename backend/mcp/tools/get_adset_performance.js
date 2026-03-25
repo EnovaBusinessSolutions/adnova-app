@@ -14,7 +14,7 @@ const TOOL_NAME = 'get_adset_performance';
  * No hay snapshot MCP para ad set / ad group aún (solo live). Fase 2 opcional: persistir series por ad group en mcpdata
  * (collector + resolver) para Google/Meta sin GAQL/Graph en lectura.
  */
-function register(server) {
+function register(server, mcpUserId) {
   server.tool(
     TOOL_NAME,
     'Retrieves performance metrics broken down by ad set (Meta) or ad group (Google) within a specified campaign.',
@@ -27,7 +27,7 @@ function register(server) {
     { readOnlyHint: true },
     async (params, extra) => {
       try {
-        const userId = extra?.userId || extra?.request?._mcpUserId;
+        const userId = mcpUserId ?? extra?.userId ?? extra?.request?._mcpUserId;
         if (!userId) return createToolErrorResponse('UNAUTHORIZED', TOOL_NAME);
 
         const rangeError = validateDateRange(params.date_from, params.date_to);
