@@ -9,7 +9,7 @@ const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
 const TOOL_NAME = 'get_shopify_revenue';
 
 /** Shopify orders are not stored in mcpdata chunks yet — live API only; wrapper keeps metrics/logging consistent. */
-function register(server) {
+function register(server, mcpUserId) {
   server.tool(
     TOOL_NAME,
     'Retrieves order and revenue data from the connected Shopify store for a given date range.',
@@ -21,7 +21,7 @@ function register(server) {
     { readOnlyHint: true },
     async (params, extra) => {
       try {
-        const userId = extra?.userId || extra?.request?._mcpUserId;
+        const userId = mcpUserId ?? extra?.userId ?? extra?.request?._mcpUserId;
         if (!userId) return createToolErrorResponse('UNAUTHORIZED', TOOL_NAME);
 
         const rangeError = validateDateRange(params.date_from, params.date_to);

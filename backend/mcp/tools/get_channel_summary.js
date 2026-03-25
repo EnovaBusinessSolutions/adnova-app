@@ -7,7 +7,7 @@ const { resolveChannelSummaryPayload } = require('../services/adsPerformanceReso
 
 const TOOL_NAME = 'get_channel_summary';
 
-function register(server) {
+function register(server, mcpUserId) {
   server.tool(
     TOOL_NAME,
     'Returns a side-by-side summary of performance across all connected ad channels for a given date range.',
@@ -18,7 +18,7 @@ function register(server) {
     { readOnlyHint: true },
     async (params, extra) => {
       try {
-        const userId = extra?.userId || extra?.request?._mcpUserId;
+        const userId = mcpUserId ?? extra?.userId ?? extra?.request?._mcpUserId;
         if (!userId) return createToolErrorResponse('UNAUTHORIZED', TOOL_NAME);
 
         const rangeError = validateDateRange(params.date_from, params.date_to);

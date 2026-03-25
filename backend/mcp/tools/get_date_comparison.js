@@ -7,7 +7,7 @@ const { resolveDateComparisonPayload } = require('../services/adsPerformanceReso
 
 const TOOL_NAME = 'get_date_comparison';
 
-function register(server) {
+function register(server, mcpUserId) {
   server.tool(
     TOOL_NAME,
     'Compares ad performance metrics between two date periods for a given channel.',
@@ -21,7 +21,7 @@ function register(server) {
     { readOnlyHint: true },
     async (params, extra) => {
       try {
-        const userId = extra?.userId || extra?.request?._mcpUserId;
+        const userId = mcpUserId ?? extra?.userId ?? extra?.request?._mcpUserId;
         if (!userId) return createToolErrorResponse('UNAUTHORIZED', TOOL_NAME);
 
         const errA = validateDateRange(params.period_a_from, params.period_a_to);

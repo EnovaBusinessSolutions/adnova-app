@@ -8,7 +8,7 @@ const { campaignPerformanceSnapshotOpts } = require('../services/adsPerformanceR
 
 const TOOL_NAME = 'get_campaign_performance';
 
-function register(server) {
+function register(server, mcpUserId) {
   server.tool(
     TOOL_NAME,
     'Retrieves performance metrics broken down by campaign for a given ad channel and date range.',
@@ -22,7 +22,7 @@ function register(server) {
     { readOnlyHint: true },
     async (params, extra) => {
       try {
-        const userId = extra?.userId || extra?.request?._mcpUserId;
+        const userId = mcpUserId ?? extra?.userId ?? extra?.request?._mcpUserId;
         if (!userId) return createToolErrorResponse('UNAUTHORIZED', TOOL_NAME);
 
         const rangeError = validateDateRange(params.date_from, params.date_to);
