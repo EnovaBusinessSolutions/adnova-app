@@ -57,56 +57,117 @@ function stableHash(value) {
   return crypto.createHash('sha256').update(stableSerialize(value)).digest('hex');
 }
 
-function normalizeSourceIdentity(rootLike, source) {
-  const container =
-    rootLike?.sources ||
-    rootLike?.aiContext?.unifiedBase?.sources ||
-    rootLike ||
-    {};
+/**
+ * Helpers para stale detection
+ * Objetivo:
+ * - NO usar metadata tardía/no estructural como name/currency/timezone/lastError
+ * - SÍ usar identidad estructural estable:
+ *   connected, ready, status, id seleccionado, snapshotId
+ */
 
-  const s = container?.[source] || {};
+function getUnifiedSourcesContainer(rootLike) {
+  return rootLike?.aiContext?.unifiedBase?.sources || {};
+}
+
+function getRootSourcesContainer(rootLike) {
+  return rootLike?.sources || {};
+}
+
+function getMergedSourceState(rootLike, source) {
+  const rootSources = getRootSourcesContainer(rootLike);
+  const unifiedSources = getUnifiedSourcesContainer(rootLike);
+
+  const rootState = rootSources?.[source] || {};
+  const unifiedState = unifiedSources?.[source] || {};
+
+  return {
+    ...unifiedState,
+    ...rootState,
+  };
+}
+
+function getSourceSnapshots(rootLike) {
+  return (
+    rootLike?.aiContext?.sourceSnapshots ||
+    rootLike?.aiContext?.unifiedBase?.sourceSnapshots ||
+    {}
+  );
+}
+
+function getSourceSnapshotId(rootLike, source) {
+  const snapshots = getSourceSnapshots(rootLike);
+  return safeStr(snapshots?.[source] || '').trim() || null;
+}
+
+function getCanonicalSourceIdentity(rootLike, source) {
+  const s = getMergedSourceState(rootLike, source);
+
+  if (source === 'metaAds') {
+    return safeStr(
+      s?.accountId ||
+      s?.selectedAccountId ||
+      s?.defaultAccountId ||
+      ''
+    ).trim() || null;
+  }
+
+  if (source === 'googleAds') {
+    return safeStr(
+      s?.customerId ||
+      s?.accountId ||
+      s?.selectedCustomerId ||
+      s?.defaultCustomerId ||
+      ''
+    ).trim() || null;
+  }
+
+  if (source === 'ga4') {
+    return safeStr(
+      s?.propertyId ||
+      s?.selectedPropertyId ||
+      s?.defaultPropertyId ||
+      ''
+    ).trim() || null;
+  }
+
+  return null;
+}
+
+function normalizeSourceIdentity(rootLike, source) {
+  const s = getMergedSourceState(rootLike, source);
+  const status = safeStr(s?.status || '').trim().toLowerCase() || null;
+  const snapshotId = getSourceSnapshotId(rootLike, source);
+  const selectedId = getCanonicalSourceIdentity(rootLike, source);
+
+  const base = {
+    connected: !!s?.connected,
+    ready: !!s?.ready || status === 'ready',
+    status: status || null,
+    snapshotId,
+  };
 
   if (source === 'metaAds') {
     return {
-      connected: !!s?.connected,
-      ready: !!s?.ready || String(s?.status || '').toLowerCase() === 'ready',
-      accountId: safeStr(s?.accountId || '').trim() || null,
-      name: safeStr(s?.name || '').trim() || null,
-      currency: safeStr(s?.currency || '').trim() || null,
-      timezone: safeStr(s?.timezone || '').trim() || null,
-      lastError: safeStr(s?.lastError || '').trim() || null,
+      ...base,
+      accountId: selectedId,
     };
   }
 
   if (source === 'googleAds') {
     return {
-      connected: !!s?.connected,
-      ready: !!s?.ready || String(s?.status || '').toLowerCase() === 'ready',
-      customerId: safeStr(s?.customerId || s?.accountId || '').trim() || null,
-      name: safeStr(s?.name || '').trim() || null,
-      currency: safeStr(s?.currency || '').trim() || null,
-      timezone: safeStr(s?.timezone || '').trim() || null,
-      lastError: safeStr(s?.lastError || '').trim() || null,
+      ...base,
+      customerId: selectedId,
     };
   }
 
   if (source === 'ga4') {
     return {
-      connected: !!s?.connected,
-      ready: !!s?.ready || String(s?.status || '').toLowerCase() === 'ready',
-      propertyId: safeStr(s?.propertyId || '').trim() || null,
-      name: safeStr(s?.name || '').trim() || null,
-      currency: safeStr(s?.currency || '').trim() || null,
-      timezone: safeStr(s?.timezone || '').trim() || null,
-      lastError: safeStr(s?.lastError || '').trim() || null,
+      ...base,
+      propertyId: selectedId,
     };
   }
 
-  return {
-    connected: !!s?.connected,
-    ready: !!s?.ready || String(s?.status || '').toLowerCase() === 'ready',
-    lastError: safeStr(s?.lastError || '').trim() || null,
-  };
+  return base;
 }
 
 function buildConnectionStateSummaryFromRoot(root) {
@@ -119,7 +180,7 @@ function buildConnectionStateSummaryFromRoot(root) {
 
 function buildConnectionFingerprintFromRoot(root) {
   return stableHash({
-    version: 1,
+    version: 2,
     sources: buildConnectionStateSummaryFromRoot(root),
   });
 }
