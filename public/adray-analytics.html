@@ -3294,11 +3294,24 @@
                             <p class="text-xs text-gray-500 truncate">${detail}</p>
                             <p class="text-[11px] text-indigo-500 mt-1">${data.payload?.rawSource || '-'} | ${data.payload?.matchType || '-'} | ${typeof data.payload?.confidenceScore === 'number' ? Math.round(Number(data.payload.confidenceScore) * 100) + '%' : '-'}</p>
                             <p class="text-[11px] text-indigo-600 mt-1">${sessionId ? `Sesion: ${sessionId}` : 'Sin sessionId'}</p>
-                            ${linkedUserLabel ? `<p class="text-[11px] text-emerald-600 mt-1">Usuario: ${linkedUserLabel}</p>` : ''}
+                            ${linkedUserLabel ? `<p class="text-[11px] text-emerald-600 mt-1">Usuario: <button type="button" class="live-feed-user-link underline decoration-dotted" data-user-key="${userKey || ''}" data-user-name="${linkedUserLabel.replace(/"/g, '&quot;')}">${linkedUserLabel}</button></p>` : ''}
                             <p class="text-[10px] text-gray-400 mt-1">${formatTimeMx()}</p>
                         </div>
                     </div>
                 `;
+
+                const userButton = el.querySelector('.live-feed-user-link');
+                if (userButton) {
+                    userButton.addEventListener('click', (ev) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        const feedUserKey = userButton.getAttribute('data-user-key') || '';
+                        const feedUserName = userButton.getAttribute('data-user-name') || '';
+                        if (feedUserKey) {
+                            openUserExplorer(feedUserKey, feedUserName || linkedUserLabel || 'Usuario');
+                        }
+                    });
+                }
 
                 if (sessionId) {
                     el.addEventListener('click', () => openSessionDetail(sessionId));
@@ -3425,7 +3438,10 @@ function openUserExplorer(userKey, fallbackName) {
     document.getElementById('ue-content').innerHTML = '<div class="flex justify-center items-center h-32"><svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg></div>';
 
     fetch('/api/analytics/' + currentShopId + '/users/' + userKey + '/timeline')
-        .then(r => r.json())
+        .then(r => {
+            if (!r.ok) throw new Error('status_' + r.status);
+            return r.json();
+        })
         .then(data => renderUserExplorer(data))
         .catch(err => {
             console.error(err);
@@ -3455,14 +3471,38 @@ function formatTimeMxShort(dateStr) {
 }
 
 function renderUserExplorer(data) {
-    const { user, sessions = [], events = [], orders = [] } = data;
+    const { user, summary = {}, sessions = [], events = [], orders = [] } = data;
     
     if (user.name) document.getElementById('ue-name').textContent = user.name;
     else document.getElementById('ue-name').textContent = 'Usuario An\u00f3nimo';
     
-    document.getElementById('ue-email').textContent = (user.emailHash ? 'Email: ' + user.emailHash.substring(0,8) + '... | ' : '') + 'userKey: ' + user.userKey;
+    const stitchedText = Array.isArray(user.stitchedUserKeys) && user.stitchedUserKeys.length
+        ? ' stitchedKeys: ' + user.stitchedUserKeys.length
+        : '';
+    document.getElementById('ue-email').textContent = (user.emailHash ? 'Email: ' + user.emailHash.substring(0,8) + '... | ' : '') + 'userKey: ' + user.userKey + stitchedText;
 
-    let html = '<div class="relative border-l-2 border-indigo-100 ml-3 space-y-8 pb-10">';
+    const attribution = summary.attribution || {};
+    const attributionRows = Object.entries(attribution)
+        .sort((a, b) => Number(b[1]?.revenue || 0) - Number(a[1]?.revenue || 0))
+        .slice(0, 4)
+        .map(([channel, stats]) => {
+            const rev = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(stats?.revenue || 0));
+            return '<p><strong>' + channel.toUpperCase() + ':</strong> ' + Number(stats?.orders || 0) + ' compras · ' + rev + '</p>';
+        })
+        .join('');
+
+    const summaryHtml =
+        '<div class="grid grid-cols-2 gap-3 mb-5">' +
+            '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Ingresos</p><p class="text-sm font-semibold text-indigo-700">' + formatCurrency(Number(summary.totalRevenue || 0)) + '</p></div>' +
+            '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Compras</p><p class="text-sm font-semibold text-gray-900">' + Number(summary.totalOrders || 0) + '</p></div>' +
+            '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Sesiones</p><p class="text-sm font-semibold text-gray-900">' + Number(summary.totalSessions || 0) + '</p></div>' +
+            '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Carritos</p><p class="text-sm font-semibold text-gray-900">' + Number(summary.totalAddToCart || 0) + '</p></div>' +
+            '<div class="bg-white border border-gray-200 rounded-lg p-3 col-span-2"><p class="text-[11px] uppercase tracking-wide text-gray-500">Atribución stitchada</p>' +
+                (attributionRows || '<p class="text-sm text-gray-500">Sin atribución consolidada todavía.</p>') +
+            '</div>' +
+        '</div>';
+
+    let html = summaryHtml + '<div class="relative border-l-2 border-indigo-100 ml-3 space-y-8 pb-10">';
     
     const timeline = [];
     

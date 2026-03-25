@@ -3402,41 +3402,110 @@ router.get('/:account_id/users/:userKey/timeline', async (req, res) => {
   try {
     const { account_id, userKey } = req.params;
 
-    // Fetch user identity data
-    const identity = await prisma.identityGraph.findFirst({
+    const seedIdentityRows = await prisma.identityGraph.findMany({
       where: { accountId: account_id, userKey },
       select: {
-        fbp: true,
-        fbc: true,
+        userKey: true,
+        customerId: true,
         emailHash: true,
         phoneHash: true,
-        fingerprintHash: true,
-        firstSeenAt: true,
-        lastSeenAt: true,
-        deviceCount: true,
-        confidenceScore: true,
       },
-      orderBy: { lastSeenAt: 'desc' }
     });
 
-    // Fetch all sessions for this user
-    const sessions = await prisma.session.findMany({
-      where: { accountId: account_id, userKey },
-      orderBy: { startedAt: 'desc' }
+    const seedUserKeys = collectUniqueStrings([userKey, ...seedIdentityRows.map((row) => row.userKey)]);
+    const seedCustomerIds = collectUniqueStrings(seedIdentityRows.map((row) => row.customerId));
+    const seedEmailHashes = collectUniqueStrings(seedIdentityRows.map((row) => row.emailHash));
+    const seedPhoneHashes = collectUniqueStrings(seedIdentityRows.map((row) => row.phoneHash));
+
+    const sharedIdentityClauses = buildIdentityOrClauses({
+      userKeys: seedUserKeys,
+      customerIds: seedCustomerIds,
+      emailHashes: seedEmailHashes,
+      phoneHashes: seedPhoneHashes,
     });
 
-    // Fetch all events for this user (max 1000 to prevent overload)
-    const events = await prisma.event.findMany({
-      where: { accountId: account_id, userKey },
-      orderBy: { createdAt: 'desc' },
-      take: 1000
+    const sharedIdentityRows = sharedIdentityClauses.length
+      ? await prisma.identityGraph.findMany({
+          where: {
+            accountId: account_id,
+            OR: sharedIdentityClauses,
+          },
+          select: {
+            userKey: true,
+            customerId: true,
+            emailHash: true,
+            phoneHash: true,
+            fbp: true,
+            fbc: true,
+            fingerprintHash: true,
+            firstSeenAt: true,
+            lastSeenAt: true,
+            deviceCount: true,
+            confidenceScore: true,
+          },
+        })
+      : [];
+
+    const finalUserKeys = collectUniqueStrings([
+      ...seedUserKeys,
+      ...sharedIdentityRows.map((row) => row.userKey),
+    ]);
+    const finalCustomerIds = collectUniqueStrings([
+      ...seedCustomerIds,
+      ...sharedIdentityRows.map((row) => row.customerId),
+    ]);
+    const finalEmailHashes = collectUniqueStrings([
+      ...seedEmailHashes,
+      ...sharedIdentityRows.map((row) => row.emailHash),
+    ]);
+    const finalPhoneHashes = collectUniqueStrings([
+      ...seedPhoneHashes,
+      ...sharedIdentityRows.map((row) => row.phoneHash),
+    ]);
+
+    const orderClauses = buildIdentityOrClauses({
+      userKeys: finalUserKeys,
+      customerIds: finalCustomerIds,
+      emailHashes: finalEmailHashes,
+      phoneHashes: finalPhoneHashes,
     });
 
-    // Fetch all orders for this user
-    const orders = await prisma.order.findMany({
-      where: { accountId: account_id, userKey },
-      orderBy: { createdAt: 'desc' }
-    });
+    const [sessions, events, orders] = await Promise.all([
+      finalUserKeys.length
+        ? prisma.session.findMany({
+            where: {
+              accountId: account_id,
+              userKey: { in: finalUserKeys },
+            },
+            orderBy: { startedAt: 'desc' },
+            take: 250,
+          })
+        : Promise.resolve([]),
+      finalUserKeys.length
+        ? prisma.event.findMany({
+            where: {
+              accountId: account_id,
+              userKey: { in: finalUserKeys },
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 2000,
+          })
+        : Promise.resolve([]),
+      orderClauses.length
+        ? prisma.order.findMany({
+            where: {
+              accountId: account_id,
+              OR: orderClauses,
+            },
+            orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
+            take: 500,
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const identity = sharedIdentityRows
+      .slice()
+      .sort((a, b) => new Date(b.lastSeenAt || 0).getTime() - new Date(a.lastSeenAt || 0).getTime())[0] || null;
 
     // Since customer name might be in order's attributionSnapshot, let's try to extract it
     let customerName = null;
@@ -3454,14 +3523,63 @@ router.get('/:account_id/users/:userKey/timeline', async (req, res) => {
        if (order.phoneHash && !customerPhoneHash) customerPhoneHash = order.phoneHash;
     }
 
+    const profileDescriptor = buildIdentityProfileDescriptor({
+      customerId: finalCustomerIds[0] || null,
+      emailHash: finalEmailHashes[0] || null,
+      phoneHash: finalPhoneHashes[0] || null,
+      userKey: finalUserKeys[0] || userKey || null,
+      customerDisplayName: customerName,
+    });
+
+    const attributionStats = orders.reduce((acc, order) => {
+      const channel = normalizeChannelForStats(order?.attributedChannel || 'unattributed');
+      const revenue = Number(order?.revenue || 0);
+      if (!acc[channel]) acc[channel] = { orders: 0, revenue: 0 };
+      acc[channel].orders += 1;
+      acc[channel].revenue += revenue;
+      return acc;
+    }, {});
+
+    const eventMetrics = events.reduce((acc, event) => {
+      const bucket = resolveEventBucket(event.eventName);
+      acc.total += 1;
+      if (bucket === 'add_to_cart') acc.addToCart += 1;
+      if (bucket === 'begin_checkout') acc.beginCheckout += 1;
+      if (bucket === 'purchase') acc.purchaseEvents += 1;
+      return acc;
+    }, { total: 0, addToCart: 0, beginCheckout: 0, purchaseEvents: 0 });
+
+    const totalRevenue = orders.reduce((sum, order) => sum + Number(order.revenue || 0), 0);
+    const firstSeenAt = sessions.length ? sessions[sessions.length - 1].startedAt : (identity?.firstSeenAt || null);
+    const lastSeenAt = sessions[0]?.lastEventAt || sessions[0]?.startedAt || identity?.lastSeenAt || null;
+
     res.json({
       success: true,
       user: {
         userKey,
+        stitchedUserKeys: finalUserKeys,
+        stitchedCustomerIds: finalCustomerIds,
+        stitchedEmailHashes: finalEmailHashes,
+        stitchedPhoneHashes: finalPhoneHashes,
+        profileKey: profileDescriptor.profileKey,
+        profileType: profileDescriptor.profileType,
+        profileLabel: profileDescriptor.profileLabel,
         name: customerName,
         emailHash: customerEmailHash,
         phoneHash: customerPhoneHash,
-        identity
+        identity,
+      },
+      summary: {
+        firstSeenAt,
+        lastSeenAt,
+        totalSessions: sessions.length,
+        totalEvents: eventMetrics.total,
+        totalOrders: orders.length,
+        totalRevenue,
+        totalAddToCart: eventMetrics.addToCart,
+        totalBeginCheckout: eventMetrics.beginCheckout,
+        totalPurchaseEvents: eventMetrics.purchaseEvents,
+        attribution: attributionStats,
       },
       sessions,
       events,
