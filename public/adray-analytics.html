@@ -545,6 +545,42 @@
             overscroll-behavior: contain;
         }
 
+        .complete-orders-scroll {
+            max-height: 30rem;
+            overflow-x: auto;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            padding-right: 0.2rem;
+        }
+
+        #session-detail-orders {
+            max-height: 20rem;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            padding-right: 0.2rem;
+        }
+
+        #session-detail-timeline {
+            max-height: 24rem;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            padding-right: 0.2rem;
+        }
+
+        .complete-orders-scroll::-webkit-scrollbar,
+        #session-detail-orders::-webkit-scrollbar,
+        #session-detail-timeline::-webkit-scrollbar {
+            width: 9px;
+            height: 9px;
+        }
+
+        .complete-orders-scroll::-webkit-scrollbar-thumb,
+        #session-detail-orders::-webkit-scrollbar-thumb,
+        #session-detail-timeline::-webkit-scrollbar-thumb {
+            background: rgba(202, 138, 229, 0.35);
+            border-radius: 999px;
+        }
+
         #wp-online-card {
             border-top: 1px solid rgba(202, 138, 229, 0.15);
             border-bottom: 1px solid rgba(202, 138, 229, 0.15);
@@ -1462,7 +1498,7 @@
                     <span class="text-xs text-gray-500">ingreso + productos + fuente + atribución</span>
                 </div>
             </div>
-            <div class="overflow-x-auto">
+            <div class="overflow-x-auto complete-orders-scroll">
                 <table class="min-w-full text-sm">
                     <thead>
                         <tr class="text-left text-gray-500 border-b">
