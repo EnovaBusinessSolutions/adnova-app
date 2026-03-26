@@ -55,6 +55,7 @@ const EVENT_BUCKET_ALIASES = {
 const PURCHASE_ALIASES = EVENT_BUCKET_ALIASES.purchase;
 const ATTRIBUTION_MODELS = new Set(['first_touch', 'last_touch', 'linear']);
 const ATTRIBUTION_LOOKBACK_DAYS = 30;
+const JOURNEY_STITCH_LOOKBACK_DAYS = 7;
 
 function toFiniteNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -1332,6 +1333,7 @@ router.get('/:account_id', async (req, res) => {
         platformCreatedAt: true,
         revenue: true,
         currency: true,
+        sessionId: true,
         attributedChannel: true,
         attributionSnapshot: true,
         confidenceScore: true,
@@ -1566,6 +1568,7 @@ router.get('/:account_id', async (req, res) => {
         createdAt: true,
         orderId: true,
         checkoutToken: true,
+        sessionId: true,
         userKey: true,
         revenue: true,
         currency: true,
@@ -1585,6 +1588,7 @@ router.get('/:account_id', async (req, res) => {
         createdAt: true,
         orderId: true,
         checkoutToken: true,
+        sessionId: true,
         userKey: true,
         revenue: true,
         currency: true,
@@ -1599,6 +1603,7 @@ router.get('/:account_id', async (req, res) => {
       storedAt: order.createdAt,
       orderId: order.orderId,
       orderNumber: order.orderNumber || null,
+      sessionId: order.sessionId || null,
       checkoutToken: order.checkoutToken || null,
       userKey: order.userKey || null,
       revenue: Number(order.revenue || 0),
@@ -1619,6 +1624,7 @@ router.get('/:account_id', async (req, res) => {
       createdAt: ev.createdAt,
       orderId: ev.orderId || null,
       orderNumber: null,
+      sessionId: ev.sessionId || null,
       checkoutToken: ev.checkoutToken || null,
       userKey: ev.userKey || null,
       revenue: Number(ev.revenue || 0),
@@ -1799,13 +1805,106 @@ router.get('/:account_id', async (req, res) => {
       ? conversionsWithAttribution
       : dedupeEventConversions(conversionsWithAttribution);
 
-    const recentPurchases = modeledConversions.slice(0, recentLimit).map((conv) => {
-      if (conv.source === 'orders') return conv;
+    const recentConversions = modeledConversions.slice(0, recentLimit);
+    const recentOrderIds = Array.from(new Set(recentConversions.map((c) => c.orderId).filter(Boolean)));
+    const recentCheckoutTokens = Array.from(new Set(recentConversions.map((c) => c.checkoutToken).filter(Boolean)));
+    const recentSessionIds = Array.from(new Set(recentConversions.map((c) => c.sessionId).filter(Boolean)));
+    const recentUserKeys = Array.from(new Set(recentConversions.map((c) => c.userKey).filter(Boolean)));
+
+    const recentConversionTimes = recentConversions
+      .map((c) => new Date(c.createdAt).getTime())
+      .filter((ts) => Number.isFinite(ts));
+
+    const journeyEventOrFilters = [];
+    if (recentOrderIds.length) journeyEventOrFilters.push({ orderId: { in: recentOrderIds } });
+    if (recentCheckoutTokens.length) journeyEventOrFilters.push({ checkoutToken: { in: recentCheckoutTokens } });
+    if (recentSessionIds.length) journeyEventOrFilters.push({ sessionId: { in: recentSessionIds } });
+    if (recentUserKeys.length) journeyEventOrFilters.push({ userKey: { in: recentUserKeys } });
+
+    let stitchedCandidateEvents = [];
+    if (journeyEventOrFilters.length && recentConversionTimes.length) {
+      const earliestTs = Math.min(...recentConversionTimes) - (JOURNEY_STITCH_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+      const latestTs = Math.max(...recentConversionTimes) + (60 * 60 * 1000);
+      stitchedCandidateEvents = await prisma.event.findMany({
+        where: {
+          accountId: account_id,
+          createdAt: {
+            gte: new Date(earliestTs),
+            lte: new Date(latestTs),
+          },
+          OR: journeyEventOrFilters,
+        },
+        select: {
+          eventId: true,
+          eventName: true,
+          createdAt: true,
+          collectedAt: true,
+          pageUrl: true,
+          productId: true,
+          orderId: true,
+          checkoutToken: true,
+          sessionId: true,
+          userKey: true,
+          rawPayload: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+    }
+
+    const recentPurchases = recentConversions.map((conv) => {
       const key = `${conv.orderId || ''}::${conv.checkoutToken || ''}::${new Date(conv.createdAt).toISOString()}`;
       const detailed = detailedByKey.get(key);
+      const normalizedItems = conv.source === 'orders'
+        ? conv.items
+        : (detailed ? normalizeLineItems(detailed.items) : conv.items);
+
+      const convTs = new Date(conv.createdAt).getTime();
+      const earliestTs = convTs - (JOURNEY_STITCH_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+      const latestTs = convTs + (15 * 60 * 1000);
+
+      const stitchedEvents = stitchedCandidateEvents
+        .filter((ev) => {
+          const evTs = new Date(ev.createdAt).getTime();
+          if (!Number.isFinite(evTs)) return false;
+          if (evTs < earliestTs || evTs > latestTs) return false;
+
+          const byOrder = Boolean(conv.orderId && ev.orderId && String(ev.orderId) === String(conv.orderId));
+          const byCheckout = Boolean(conv.checkoutToken && ev.checkoutToken && String(ev.checkoutToken) === String(conv.checkoutToken));
+          const bySession = Boolean(conv.sessionId && ev.sessionId && String(ev.sessionId) === String(conv.sessionId));
+          const byUser = Boolean(conv.userKey && ev.userKey && String(ev.userKey) === String(conv.userKey));
+
+          return byOrder || byCheckout || bySession || byUser;
+        })
+        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+      const seenEventIds = new Set();
+      const journeyEvents = stitchedEvents
+        .filter((ev) => {
+          const uniqueKey = String(ev.eventId || `${ev.eventName || 'event'}:${new Date(ev.createdAt).toISOString()}`);
+          if (seenEventIds.has(uniqueKey)) return false;
+          seenEventIds.add(uniqueKey);
+          return true;
+        })
+        .slice(0, 120)
+        .map((ev) => ({
+          eventId: ev.eventId,
+          eventName: ev.eventName,
+          createdAt: ev.createdAt,
+          collectedAt: ev.collectedAt || null,
+          pageUrl: ev.pageUrl || null,
+          productId: ev.productId || null,
+          productName: ev?.rawPayload?.product_name || ev?.rawPayload?.item_name || ev?.rawPayload?.name || null,
+          itemId: ev?.rawPayload?.item_id || ev?.rawPayload?.product_id || null,
+          utmSource: ev?.rawPayload?.utm_source || null,
+          checkoutToken: ev.checkoutToken || null,
+          orderId: ev.orderId || null,
+          sessionId: ev.sessionId || null,
+        }));
+
       return {
         ...conv,
-        items: detailed ? normalizeLineItems(detailed.items) : conv.items,
+        items: normalizedItems,
+        events: journeyEvents,
       };
     });
 
