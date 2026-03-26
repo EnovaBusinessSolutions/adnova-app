@@ -2420,130 +2420,53 @@
             const channel = journey.attribution?.channel || session.utmSource || 'organic';
             const platform = journey.attribution?.platform || null;
             const confidence = Math.round(Number(journey.attribution?.confidence || 0) * 100);
-            const signals = deriveJourneySignalsFromEvents(events);
+            const leads = deriveJourneySignalsFromEvents(events).lead;
 
-            return [
+            return {
+                summary: {
+                    leads,
+                    confidence,
+                },
+                steps: [
                 {
                     icon: resolveChannelIcon(channel, platform),
                     title: 'Ad Click',
-                    sub: channel,
+                    sub: `${humanReadableChannel(channel)} · ${confidence}%`,
                     tone: resolveChannelTone(channel, platform),
-                    detailTone: resolveChannelTone(channel, platform),
-                    detail: [
-                        { label: 'Channel', value: channel || '-' },
-                        { label: 'Campaign', value: journey.attribution?.campaign || session.utmCampaign || '-' },
-                        { label: 'Click ID', value: journey.attribution?.clickId ? String(journey.attribution.clickId).slice(0, 18) : '-' },
-                        { label: 'Confidence', value: `${confidence}%` },
-                    ],
-                },
-                {
-                    icon: 'fa-solid fa-circle-plus',
-                    title: 'Lead',
-                    sub: signals.lead > 0 ? `${signals.lead} events` : 'no signal',
-                    tone: signals.lead > 0 ? 'is-meta' : '',
-                    detailTone: signals.lead > 0 ? 'is-meta' : '',
-                    detail: [
-                        { label: 'Lead Events', value: String(signals.lead || 0) },
-                        { label: 'Landing', value: normalizeJourneyPath(session.landingPageUrl) },
-                        { label: 'First event', value: events[0]?.eventName || '-' },
-                        { label: 'Last event', value: events[events.length - 1]?.eventName || '-' },
-                    ],
-                },
-                {
-                    icon: 'fa-solid fa-calendar-check',
-                    title: 'Scheduled Call',
-                    sub: signals.call > 0 ? `${signals.call} signals` : 'not detected',
-                    tone: signals.call > 0 ? 'is-tiktok' : '',
-                    detailTone: signals.call > 0 ? 'is-tiktok' : '',
-                    detail: [
-                        { label: 'Call signals', value: String(signals.call || 0) },
-                        { label: 'Session ID', value: String(session.sessionId || session.id || '-').slice(0, 18) },
-                        { label: 'Start', value: formatDateTimeMx(session.startedAt) },
-                        { label: 'Duration', value: session.durationSeconds ? `${Math.round(Number(session.durationSeconds))}s` : '-' },
-                    ],
                 },
                 {
                     icon: 'fa-solid fa-circle-check',
                     title: 'Purchase',
                     sub: metrics.purchase > 0 || orders.length > 0 ? `${orders.length || metrics.purchase} purchase(s)` : 'no purchase',
                     tone: metrics.purchase > 0 || orders.length > 0 ? 'is-organic' : '',
-                    detailTone: metrics.purchase > 0 || orders.length > 0 ? 'is-organic' : '',
-                    detail: [
-                        { label: 'Revenue', value: formatCurrency(metrics.totalRevenue || 0) },
-                        { label: 'Orders', value: String(orders.length || 0) },
-                        { label: 'ATC', value: String(metrics.addToCart || 0) },
-                        { label: 'Checkout', value: String(metrics.beginCheckout || 0) },
-                    ],
                 },
-            ];
+                ],
+            };
         }
 
         function buildMinimalJourneyNodesFromPurchase(purchase = {}) {
             const confidence = Math.round(Number(purchase.attributionConfidence || 0) * 100);
             const hasPurchase = Number(purchase.revenue || 0) > 0;
-            return [
+            return {
+                summary: {
+                    leads: null,
+                    confidence,
+                },
+                steps: [
                 {
                     icon: resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform),
                     title: 'Ad Click',
-                    sub: purchase.attributedChannel || 'unattributed',
+                    sub: `${humanReadableChannel(purchase.attributedChannel)} · ${confidence}%`,
                     tone: resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform),
-                    detailTone: resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform),
-                    detail: [
-                        { label: 'Channel', value: purchase.attributedChannel || '-' },
-                        { label: 'Campaign', value: purchase.attributedCampaign || '-' },
-                        { label: 'Click ID', value: purchase.attributedClickId ? String(purchase.attributedClickId).slice(0, 18) : '-' },
-                        { label: 'Confidence', value: `${confidence}%` },
-                    ],
-                },
-                {
-                    icon: 'fa-solid fa-circle-plus',
-                    title: 'Lead',
-                    sub: 'historical signal',
-                    tone: 'is-meta',
-                    detailTone: 'is-meta',
-                    detail: [
-                        { label: 'Order', value: purchase.orderNumber || purchase.orderId || '-' },
-                        { label: 'Customer', value: purchase.customerName || purchase.email || '-' },
-                        { label: 'Date', value: formatRecentPurchaseDate(purchase) },
-                        { label: 'Source', value: purchase.attributedSource || '-' },
-                    ],
-                },
-                {
-                    icon: 'fa-solid fa-calendar-check',
-                    title: 'Scheduled Call',
-                    sub: 'n/a in historical',
-                    tone: '',
-                    detailTone: '',
-                    detail: [
-                        { label: 'Status', value: 'Not available on historical purchase' },
-                        { label: 'Split', value: Array.isArray(purchase.attributionSplits) ? `${purchase.attributionSplits.length} touchpoints` : '-' },
-                        { label: 'Platform', value: purchase.attributedPlatform || '-' },
-                        { label: 'Final channel', value: purchase.attributedChannel || '-' },
-                    ],
                 },
                 {
                     icon: 'fa-solid fa-circle-check',
                     title: 'Purchase',
                     sub: hasPurchase ? formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN') : 'no revenue',
                     tone: hasPurchase ? 'is-organic' : '',
-                    detailTone: hasPurchase ? 'is-organic' : '',
-                    detail: [
-                        { label: 'Revenue', value: formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN') },
-                        { label: 'Order', value: purchase.orderNumber || purchase.orderId || '-' },
-                        { label: 'Score', value: String(scoreJourneySignal(purchase)) },
-                        { label: 'Confidence', value: `${confidence}%` },
-                    ],
                 },
-            ];
-        }
-
-        function renderJourneyNodeDetail(step) {
-            const items = Array.isArray(step?.detail) ? step.detail.slice(0, 4) : [];
-            if (!items.length) {
-                return '<p>No detail available.</p>';
-            }
-
-            return items.map((item) => `<p><strong>${escapeHtml(item.label)}:</strong> ${escapeHtml(item.value || '-')}</p>`).join('');
+                ],
+            };
         }
 
         function renderMinimalJourneyRail(steps = []) {
@@ -2568,34 +2491,10 @@
                         `).join('')}
                     </div>
                 </div>
-                <div id="journey-node-detail" class="journey-node-detail ${steps[0]?.detailTone || ''}">${renderJourneyNodeDetail(steps[0])}</div>
             `;
         }
 
-        function wireJourneyRailInteractions(container, steps = []) {
-            if (!container || !Array.isArray(steps) || !steps.length) return;
-            const detailEl = container.querySelector('#journey-node-detail');
-            const nodeEls = Array.from(container.querySelectorAll('[data-journey-node]'));
-            if (!detailEl || !nodeEls.length) return;
-
-            const activate = (index) => {
-                const step = steps[index];
-                if (!step) return;
-                nodeEls.forEach((node) => node.classList.remove('is-active'));
-                const activeEl = nodeEls[index];
-                if (activeEl) activeEl.classList.add('is-active');
-                detailEl.className = `journey-node-detail ${step.detailTone || ''}`;
-                detailEl.innerHTML = renderJourneyNodeDetail(step);
-            };
-
-            nodeEls.forEach((node) => {
-                const idx = Number(node.getAttribute('data-journey-node'));
-                if (!Number.isFinite(idx)) return;
-                node.addEventListener('mouseenter', () => activate(idx));
-                node.addEventListener('focus', () => activate(idx));
-                node.addEventListener('click', () => activate(idx));
-            });
-        }
+        function wireJourneyRailInteractions() {}
 
         function wireJourneyChannelLegend() {
             const legend = document.getElementById('journey-channel-legend');
@@ -2638,7 +2537,8 @@
 
             const currentData = sessionExplorerState.currentData;
             if (sessionExplorerState.mode === 'session' && currentData) {
-                const steps = buildMinimalJourneyNodesFromSessionData(currentData);
+                const journeyData = buildMinimalJourneyNodesFromSessionData(currentData);
+                const steps = Array.isArray(journeyData.steps) ? journeyData.steps : [];
                 const currentJourney = currentData.journey || {};
                 const currentSession = currentData.session || {};
                 const peers = Array.isArray(currentData.peers) ? currentData.peers : [];
@@ -2650,13 +2550,15 @@
                             <span class="journey-chip"><i class="fa-solid fa-route"></i>active</span>
                             <span class="text-xs text-gray-500">${formatDateTimeMx(currentSession.startedAt)}</span>
                         </div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="journey-chip"><i class="fa-solid fa-circle-plus"></i>Leads ${Number(journeyData.summary?.leads || 0)}</span>
+                        </div>
                         ${renderMinimalJourneyRail(steps)}
                         <div class="flex items-center gap-2 flex-wrap">
                             <span class="journey-chip ${resolveChannelTone(currentJourney.attribution?.channel, currentJourney.attribution?.platform)}"><i class="fa-solid fa-bullseye"></i>${escapeHtml(currentJourney.attribution?.channel || 'unattributed')}</span>
                         </div>
                     </div>
                 `;
-                wireJourneyRailInteractions(focusEl, steps);
 
                 const historicalRows = peers.slice(0, 10).map((peer, index) => `
                     <button type="button" class="journey-compact-card w-full text-left hover:opacity-95" onclick="openSessionDetail('${peer.sessionId}')">
@@ -2706,7 +2608,8 @@
             }
 
             const top = filteredJourneys[0].purchase;
-            const topSteps = buildMinimalJourneyNodesFromPurchase(top);
+            const topJourneyData = buildMinimalJourneyNodesFromPurchase(top);
+            const topSteps = Array.isArray(topJourneyData.steps) ? topJourneyData.steps : [];
 
             focusEl.innerHTML = `
                 <div class="journey-compact-card space-y-3">
@@ -2717,7 +2620,6 @@
                     ${renderMinimalJourneyRail(topSteps)}
                 </div>
             `;
-            wireJourneyRailInteractions(focusEl, topSteps);
 
             const customerBubbles = `
                 <div class="journey-customer-bubbles">
