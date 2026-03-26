@@ -62,14 +62,19 @@ function stableHash(value) {
  * IMPORTANT:
  * This MUST stay aligned with backend/services/mcpContextBuilder.js
  * so route-side stale detection uses the exact same connection identity model.
+ * Builder hashes ONLY connection identity:
+ * - metaAds: connected + accountId
+ * - googleAds: connected + customerId
+ * - ga4: connected + propertyId
+ *
+ * We also accept BOTH possible containers as valid:
+ * - root.sources
+ * - root.aiContext.unifiedBase.sources
+ *
+ * This avoids false stale states when one representation is richer than the other.
  */
-function normalizeSourceConnectionIdentity(rootLike, source) {
-  const container =
-    rootLike?.sources ||
-    rootLike?.aiContext?.unifiedBase?.sources ||
-    rootLike ||
-    {};
-
+function normalizeSourceConnectionIdentityFromContainer(containerLike, source) {
+  const container = containerLike || {};
   const s = container?.[source] || {};
 
   if (source === 'metaAds') {
@@ -98,19 +103,41 @@ function normalizeSourceConnectionIdentity(rootLike, source) {
   };
 }
 
-function buildConnectionStateSummaryFromRoot(root) {
+function buildConnectionStateSummaryFromContainer(container) {
   return {
-    metaAds: normalizeSourceConnectionIdentity(root, 'metaAds'),
-    googleAds: normalizeSourceConnectionIdentity(root, 'googleAds'),
-    ga4: normalizeSourceConnectionIdentity(root, 'ga4'),
+    metaAds: normalizeSourceConnectionIdentityFromContainer(container, 'metaAds'),
+    googleAds: normalizeSourceConnectionIdentityFromContainer(container, 'googleAds'),
+    ga4: normalizeSourceConnectionIdentityFromContainer(container, 'ga4'),
   };
 }
 
-function buildConnectionFingerprintFromRoot(root) {
+function buildConnectionFingerprintFromContainer(container) {
   return stableHash({
     version: 1,
-    sources: buildConnectionStateSummaryFromRoot(root),
+    sources: buildConnectionStateSummaryFromContainer(container),
   });
+}
+
+function buildConnectionFingerprintsForRoot(root) {
+  const rootSources = root?.sources || {};
+  const unifiedSources = root?.aiContext?.unifiedBase?.sources || {};
+
+  const fingerprints = new Set();
+
+  if (rootSources && Object.keys(rootSources).length > 0) {
+    fingerprints.add(buildConnectionFingerprintFromContainer(rootSources));
+  }
+
+  if (unifiedSources && Object.keys(unifiedSources).length > 0) {
+    fingerprints.add(buildConnectionFingerprintFromContainer(unifiedSources));
+  }
+
+  return Array.from(fingerprints).filter(Boolean);
+}
+
+function buildConnectionFingerprintFromRoot(root) {
+  const fingerprints = buildConnectionFingerprintsForRoot(root);
+  return fingerprints[0] || '';
 }
 
 function getRootAiSignalPayload(root) {
@@ -137,14 +164,13 @@ function getPdfSourceFingerprint(pdf) {
 function rootSignalLooksStale(root) {
   if (!root) return false;
 
-  const state = root?.aiContext || {};
-  const currentConnectionFingerprint = buildConnectionFingerprintFromRoot(root);
   const storedConnectionFingerprint = getRootSignalConnectionFingerprint(root);
-
   if (!storedConnectionFingerprint) return false;
-  if (!currentConnectionFingerprint) return false;
 
-  return storedConnectionFingerprint !== currentConnectionFingerprint;
+  const candidateFingerprints = buildConnectionFingerprintsForRoot(root);
+  if (!candidateFingerprints.length) return false;
+
+  return !candidateFingerprints.includes(storedConnectionFingerprint);
 }
 
 function rootPdfLooksStale(root) {
@@ -154,15 +180,15 @@ function rootPdfLooksStale(root) {
   const pdf = state?.pdf || {};
   if (safeStr(pdf?.status) !== 'ready') return false;
 
-  const currentConnectionFingerprint = buildConnectionFingerprintFromRoot(root);
   const signalSourceFingerprint = getRootSignalSourceFingerprint(root);
   const pdfConnectionFingerprint = getPdfConnectionFingerprint(pdf);
   const pdfSourceFingerprint = getPdfSourceFingerprint(pdf);
+  const candidateFingerprints = buildConnectionFingerprintsForRoot(root);
 
   if (
     pdfConnectionFingerprint &&
-    currentConnectionFingerprint &&
-    pdfConnectionFingerprint !== currentConnectionFingerprint
+    candidateFingerprints.length > 0 &&
+    !candidateFingerprints.includes(pdfConnectionFingerprint)
   ) {
     return true;
   }
@@ -370,22 +396,22 @@ function isSignalRunCompatibleWithRoot(signalRun, root) {
     return false;
   }
 
-  const currentConnectionFingerprint = buildConnectionFingerprintFromRoot(root);
+  const candidateFingerprints = buildConnectionFingerprintsForRoot(root);
   const rootConnectionFingerprint = safeStr(rootState?.connectionFingerprint || '').trim();
   const runConnectionFingerprint = safeStr(signalRun?.meta?.connectionFingerprint || '').trim();
 
   if (
     rootConnectionFingerprint &&
-    currentConnectionFingerprint &&
-    rootConnectionFingerprint !== currentConnectionFingerprint
+    candidateFingerprints.length > 0 &&
+    !candidateFingerprints.includes(rootConnectionFingerprint)
   ) {
     return false;
   }
 
   if (
     runConnectionFingerprint &&
-    currentConnectionFingerprint &&
-    runConnectionFingerprint !== currentConnectionFingerprint
+    candidateFingerprints.length > 0 &&
+    !candidateFingerprints.includes(runConnectionFingerprint)
   ) {
     return false;
   }
