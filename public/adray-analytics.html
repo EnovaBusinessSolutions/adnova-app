@@ -817,6 +817,47 @@
             padding: 0.22rem 0.48rem;
         }
 
+        .journey-filter-channel {
+            cursor: pointer;
+            transition: transform 140ms ease, box-shadow 140ms ease, opacity 140ms ease;
+            opacity: 0.72;
+        }
+
+        .journey-filter-channel:hover,
+        .journey-filter-channel.is-active {
+            opacity: 1;
+            transform: translateY(-1px);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.22);
+        }
+
+        .journey-customer-bubbles {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.4rem;
+            margin-bottom: 0.55rem;
+        }
+
+        .journey-customer-bubble {
+            border: 1px solid rgba(202, 138, 229, 0.28);
+            background: rgba(225, 216, 243, 0.08);
+            color: var(--dash-text);
+            border-radius: 999px;
+            font-size: 0.66rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            padding: 0.22rem 0.5rem;
+            cursor: pointer;
+            opacity: 0.78;
+        }
+
+        .journey-customer-bubble:hover,
+        .journey-customer-bubble.is-active {
+            opacity: 1;
+            border-color: rgba(202, 138, 229, 0.52);
+            box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
+        }
+
         .journey-flow {
             display: flex;
             align-items: center;
@@ -1477,11 +1518,12 @@
                             <p class="panel-kicker">Marketing Attribution</p>
                             <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Attribution Journey Center</h3>
                             <p class="panel-subtitle text-sm mt-1">Ruta de conversión por sesión.</p>
-                            <div class="journey-channel-legend" aria-label="Leyenda de canales">
-                                <span class="journey-chip is-meta"><i class="fa-brands fa-meta"></i>Meta</span>
-                                <span class="journey-chip is-google"><i class="fa-brands fa-google"></i>Google</span>
-                                <span class="journey-chip is-tiktok"><i class="fa-brands fa-tiktok"></i>TikTok</span>
-                                <span class="journey-chip is-organic"><i class="fa-solid fa-globe"></i>Orgánico</span>
+                            <div class="journey-channel-legend" id="journey-channel-legend" aria-label="Leyenda de canales">
+                                <button type="button" class="journey-chip journey-filter-channel is-active" data-channel="all"><i class="fa-solid fa-layer-group"></i>Todos</button>
+                                <button type="button" class="journey-chip journey-filter-channel is-meta" data-channel="meta"><i class="fa-brands fa-meta"></i>Meta</button>
+                                <button type="button" class="journey-chip journey-filter-channel is-google" data-channel="google"><i class="fa-brands fa-google"></i>Google</button>
+                                <button type="button" class="journey-chip journey-filter-channel is-tiktok" data-channel="tiktok"><i class="fa-brands fa-tiktok"></i>TikTok</button>
+                                <button type="button" class="journey-chip journey-filter-channel is-organic" data-channel="organic"><i class="fa-solid fa-globe"></i>Orgánico</button>
                             </div>
                         </div>
                     </div>
@@ -1822,6 +1864,14 @@
             hasError: false,
         };
         let currentStoreTypeLabel = 'Tienda';
+        let storeTypeSignals = {
+            sawWordPressEndpoint: false,
+            sawWordPressUsers: false,
+        };
+        let attributionJourneyState = {
+            channel: 'all',
+            customer: 'all',
+        };
         let sessionExplorerState = {
             mode: 'overview',
             overview: null,
@@ -2082,12 +2132,28 @@
             return value.charAt(0).toUpperCase() + value.slice(1);
         }
 
+        function inferStoreTypeFromShopId(shopName = '') {
+            const value = String(shopName || '').toLowerCase();
+            if (value.includes('.myshopify.com')) return 'Shopify';
+            return 'WooCommerce';
+        }
+
+        function resolveEffectiveStoreType(rawType, shopName = '') {
+            const mapped = mapStoreTypeLabel(rawType);
+            if (mapped !== 'Custom' && mapped !== 'Tienda') return mapped;
+
+            if (storeTypeSignals.sawWordPressEndpoint || storeTypeSignals.sawWordPressUsers) return 'WooCommerce';
+            if (String(shopName || '').toLowerCase().includes('.myshopify.com')) return 'Shopify';
+            if (currentStoreTypeLabel && currentStoreTypeLabel !== 'Custom' && currentStoreTypeLabel !== 'Tienda') return currentStoreTypeLabel;
+            return inferStoreTypeFromShopId(shopName);
+        }
+
         function updateShopHeader(shopName, rawType) {
             const shopEl = document.getElementById('shop-name');
             const typeEl = document.getElementById('shop-type-badge');
             if (shopEl) shopEl.textContent = shopName || 'Tienda desconocida';
 
-            if (rawType) currentStoreTypeLabel = mapStoreTypeLabel(rawType);
+            if (rawType) currentStoreTypeLabel = resolveEffectiveStoreType(rawType, shopName || currentShopId || '');
             if (typeEl) typeEl.textContent = currentStoreTypeLabel;
         }
 
@@ -2111,6 +2177,33 @@
             if (value.includes('tiktok')) return 'TikTok';
             if (value.includes('organic')) return 'Orgánico';
             return value.charAt(0).toUpperCase() + value.slice(1);
+        }
+
+        function normalizeAttributionChannel(channel) {
+            const value = String(channel || '').trim().toLowerCase();
+            if (value.includes('meta') || value.includes('facebook') || value.includes('instagram')) return 'meta';
+            if (value.includes('google') || value.includes('search') || value.includes('adwords')) return 'google';
+            if (value.includes('tiktok')) return 'tiktok';
+            if (value.includes('organic') || value.includes('direct') || value.includes('referral')) return 'organic';
+            return 'other';
+        }
+
+        function resolvePurchaseCustomerName(purchase = {}) {
+            const candidates = [
+                purchase.customerName,
+                purchase.customerDisplayName,
+                purchase.displayName,
+                purchase.billingName,
+                purchase.shippingName,
+                [purchase.billingFirstName, purchase.billingLastName].filter(Boolean).join(' ').trim(),
+                [purchase.customerFirstName, purchase.customerLastName].filter(Boolean).join(' ').trim(),
+                [purchase.firstName, purchase.lastName].filter(Boolean).join(' ').trim(),
+                purchase.customerEmail,
+                purchase.email,
+            ];
+
+            const hit = candidates.find((value) => String(value || '').trim());
+            return String(hit || '').trim();
         }
 
         function resolveOnlineUserIdentity({ sessionId = null, userKey = null } = {}) {
@@ -2497,10 +2590,44 @@
             });
         }
 
+        function wireJourneyChannelLegend() {
+            const legend = document.getElementById('journey-channel-legend');
+            if (!legend) return;
+            const buttons = Array.from(legend.querySelectorAll('.journey-filter-channel'));
+            if (!buttons.length) return;
+
+            buttons.forEach((button) => {
+                button.classList.toggle('is-active', button.getAttribute('data-channel') === attributionJourneyState.channel);
+                button.onclick = () => {
+                    const selected = button.getAttribute('data-channel') || 'all';
+                    attributionJourneyState.channel = selected;
+                    attributionJourneyState.customer = 'all';
+                    renderAttributionJourneyPanel();
+                };
+            });
+        }
+
+        function buildCustomerBubbleLabel(purchase = {}) {
+            const customerRaw = resolvePurchaseCustomerName(purchase);
+            return humanReadablePersonName(customerRaw || 'Cliente', 'Cliente');
+        }
+
+        function wireJourneyCustomerBubbles(container) {
+            if (!container) return;
+            container.querySelectorAll('.journey-customer-bubble').forEach((button) => {
+                button.addEventListener('click', () => {
+                    const selected = button.getAttribute('data-customer') || 'all';
+                    attributionJourneyState.customer = selected;
+                    renderAttributionJourneyPanel();
+                });
+            });
+        }
+
         function renderAttributionJourneyPanel() {
             const focusEl = document.getElementById('attribution-journey-focus');
             const historyEl = document.getElementById('attribution-journey-history');
             if (!focusEl || !historyEl) return;
+            wireJourneyChannelLegend();
 
             const currentData = sessionExplorerState.currentData;
             if (sessionExplorerState.mode === 'session' && currentData) {
@@ -2546,17 +2673,32 @@
                 .map((p) => ({
                     purchase: p,
                     score: scoreJourneySignal(p),
+                    channelKey: normalizeAttributionChannel(p.attributedChannel || p.attributedPlatform || ''),
+                    customerKey: buildCustomerBubbleLabel(p),
                 }))
                 .sort((a, b) => b.score - a.score)
-                .slice(0, 8);
+                .slice(0, 50);
 
-            if (!rankedJourneys.length) {
+            const byChannel = attributionJourneyState.channel === 'all'
+                ? rankedJourneys
+                : rankedJourneys.filter((row) => row.channelKey === attributionJourneyState.channel);
+
+            const customerOptions = ['all', ...Array.from(new Set(byChannel.map((row) => row.customerKey).filter(Boolean))).slice(0, 14)];
+            if (attributionJourneyState.customer !== 'all' && !customerOptions.includes(attributionJourneyState.customer)) {
+                attributionJourneyState.customer = 'all';
+            }
+
+            const filteredJourneys = attributionJourneyState.customer === 'all'
+                ? byChannel
+                : byChannel.filter((row) => row.customerKey === attributionJourneyState.customer);
+
+            if (!filteredJourneys.length) {
                 focusEl.innerHTML = '<p class="text-sm text-gray-500">Selecciona una sesión para ver su journey atribuido. Mientras tanto, aparecerán aquí las conversiones históricas con mejor señal.</p>';
-                historyEl.innerHTML = '<p class="text-sm text-gray-500">Sin conversiones con señal de atribución suficiente todavía.</p>';
+                historyEl.innerHTML = '<p class="text-sm text-gray-500">No hay conversiones para este filtro.</p>';
                 return;
             }
 
-            const top = rankedJourneys[0].purchase;
+            const top = filteredJourneys[0].purchase;
             const topSteps = buildMinimalJourneyNodesFromPurchase(top);
 
             focusEl.innerHTML = `
@@ -2570,8 +2712,18 @@
             `;
             wireJourneyRailInteractions(focusEl, topSteps);
 
-            historyEl.innerHTML = rankedJourneys.map(({ purchase }, index) => {
-                const person = humanReadablePersonName(purchase.customerName || purchase.email || 'Cliente');
+            const customerBubbles = `
+                <div class="journey-customer-bubbles">
+                    ${customerOptions.map((customerKey) => `
+                        <button type="button" class="journey-customer-bubble ${attributionJourneyState.customer === customerKey ? 'is-active' : ''}" data-customer="${escapeHtmlAttr(customerKey)}">
+                            ${escapeHtml(customerKey === 'all' ? 'Todos' : customerKey)}
+                        </button>
+                    `).join('')}
+                </div>
+            `;
+
+            historyEl.innerHTML = `${customerBubbles}${filteredJourneys.slice(0, 16).map(({ purchase }, index) => {
+                const person = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || 'Cliente');
                 const channel = humanReadableChannel(purchase.attributedChannel);
                 return `
                 <div class="journey-compact-card">
@@ -2585,7 +2737,8 @@
                     </div>
                 </div>
             `;
-            }).join('');
+            }).join('')}`;
+            wireJourneyCustomerBubbles(historyEl);
         }
 
         async function fetchWordPressUsersOnline() {
@@ -2596,6 +2749,9 @@
                 if (!res.ok) throw new Error(`status_${res.status}`);
                 const data = await res.json();
                 const users = Array.isArray(data?.users) ? data.users : [];
+                storeTypeSignals.sawWordPressEndpoint = true;
+                if (users.length > 0) storeTypeSignals.sawWordPressUsers = true;
+                updateShopHeader(currentShopId, 'woocommerce');
 
                 if (!users.length) {
                     wpUsersOnlineState = {
