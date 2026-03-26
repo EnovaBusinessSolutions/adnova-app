@@ -873,6 +873,25 @@
             margin-top: 0.2rem;
         }
 
+        .journey-timeline-sticky {
+            position: sticky;
+            top: 0;
+            z-index: 3;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+            font-size: 0.64rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--dash-soft);
+            background: rgba(20, 12, 37, 0.9);
+            border: 1px solid rgba(202, 138, 229, 0.2);
+            border-radius: 999px;
+            padding: 0.18rem 0.45rem;
+            margin: 0 0 0.45rem 0;
+            backdrop-filter: blur(4px);
+        }
+
         .journey-timeline::-webkit-scrollbar {
             width: 8px;
         }
@@ -2542,6 +2561,56 @@
             return `${mins}m ${secs}s`;
         }
 
+        function condenseSessionEvents(sorted = []) {
+            if (!Array.isArray(sorted) || sorted.length <= 14) {
+                return { events: sorted, dropped: 0 };
+            }
+
+            const keyEventNames = new Set(['view_item', 'add_to_cart', 'begin_checkout', 'purchase', 'user_logged_in', 'user_login', 'login', 'lead', 'generate_lead']);
+            const selectedIndexes = new Set([0, sorted.length - 1]);
+            const pageViewIndexes = [];
+
+            sorted.forEach((event, index) => {
+                const eventName = String(event.eventName || event.name || '').toLowerCase();
+                if (eventName === 'page_view') {
+                    pageViewIndexes.push(index);
+                    return;
+                }
+                if (keyEventNames.has(eventName)) selectedIndexes.add(index);
+            });
+
+            if (pageViewIndexes.length) {
+                selectedIndexes.add(pageViewIndexes[0]);
+                selectedIndexes.add(pageViewIndexes[pageViewIndexes.length - 1]);
+                if (pageViewIndexes.length > 2) {
+                    selectedIndexes.add(pageViewIndexes[Math.floor(pageViewIndexes.length / 2)]);
+                }
+            }
+
+            const ordered = Array.from(selectedIndexes)
+                .sort((a, b) => a - b)
+                .map((index) => sorted[index]);
+
+            let compact = ordered;
+            if (ordered.length > 14) {
+                compact = [...ordered.slice(0, 10), ...ordered.slice(-4)];
+            }
+
+            const dropped = Math.max(0, sorted.length - compact.length);
+            if (!dropped) return { events: compact, dropped: 0 };
+
+            const insertAt = Math.max(1, compact.length - 1);
+            const summaryEvent = {
+                eventName: '__condensed__',
+                createdAt: compact[insertAt - 1]?.createdAt || compact[insertAt - 1]?.collectedAt || null,
+                _ts: compact[insertAt - 1]?._ts || Date.now(),
+                _detailLines: [`Skipped ${dropped} low-signal events to keep this readable.`],
+            };
+
+            const withSummary = [...compact.slice(0, insertAt), summaryEvent, ...compact.slice(insertAt)];
+            return { events: withSummary, dropped };
+        }
+
         function buildSessionTimelineEvents(sessionData = {}) {
             const session = sessionData.session || {};
             const events = Array.isArray(sessionData.events) ? sessionData.events : [];
@@ -2555,9 +2624,25 @@
                 .filter((event) => Number.isFinite(event._ts))
                 .sort((a, b) => a._ts - b._ts);
 
-            return sorted.map((event, index) => {
-                const next = sorted[index + 1];
-                const durSeconds = next ? Math.max(0, (next._ts - event._ts) / 1000) : Math.max(0, Number(session.sessionDurationSeconds || 0) - ((event._ts - sorted[0]._ts) / 1000));
+            const condensed = condenseSessionEvents(sorted);
+            const visible = condensed.events;
+
+            return visible.map((event, index) => {
+                if (event.eventName === '__condensed__') {
+                    return {
+                        icon: 'fa-solid fa-filter',
+                        title: 'Condensed events',
+                        time: '-',
+                        detailLines: event._detailLines || [],
+                        tone: '',
+                    };
+                }
+
+                const next = visible[index + 1];
+                const nextTs = next?.eventName === '__condensed__' ? null : next?._ts;
+                const durSeconds = nextTs
+                    ? Math.max(0, (nextTs - event._ts) / 1000)
+                    : Math.max(0, Number(session.sessionDurationSeconds || 0) - ((event._ts - visible[0]._ts) / 1000));
                 const pagePath = normalizeJourneyPath(event.pageUrl || event.url || event.landingPageUrl || '');
                 const itemName = event.productName || event.productId || event.itemId || '';
                 const tone = resolveChannelTone(event.utmSource || session.utmSource, sessionData?.journey?.attribution?.platform || session.utmSource);
@@ -2629,6 +2714,7 @@
 
             return `
                 <div class="journey-timeline">
+                    <div class="journey-timeline-sticky"><i class="fa-solid fa-arrows-up-down"></i>Scroll events (${events.length})</div>
                     ${events.map((event) => `
                         <article class="journey-event ${event.tone || ''}">
                             <div class="journey-event-head">

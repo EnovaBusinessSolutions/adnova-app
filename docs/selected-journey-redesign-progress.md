@@ -34,12 +34,18 @@
   - Item (if available)
 - Added historical fallback timeline construction from purchase data:
   - Ad Click -> Landing (if available) -> Purchase
+- Reduced visual noise in long journeys:
+  - Added condensation logic for repeated low-signal events (especially dense page views).
+  - Keeps key moments and inserts a compact summary node when events are skipped.
+- Added sticky mini-header inside the timeline:
+  - Shows that the timeline is scrollable.
+  - Displays current visible event count for quick orientation.
 
 ## Pending / Next checks
 - Validate final visual density on real data with many events.
 - Confirm whether dwell time heuristic matches business expectations.
-- Optional: add sticky mini-header inside timeline while scrolling.
-- Optional: cap repeated low-signal events (e.g., many page_view) for cleaner story.
+- Optional: tune condensation thresholds by store size (small vs high-traffic stores).
+- Optional: add toggle to switch between "Condensed" and "Full" timeline.
 
 ## Notes
 - This file tracks implementation steps and remaining polish items for the Selected Journey redesign.
