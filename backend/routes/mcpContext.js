@@ -24,6 +24,7 @@ function safeStr(v) {
 }
 
 function toNum(v, fallback = 0) {
+  if (v == null || v === '') return fallback;
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
@@ -57,7 +58,12 @@ function stableHash(value) {
   return crypto.createHash('sha256').update(stableSerialize(value)).digest('hex');
 }
 
-function normalizeSourceIdentity(rootLike, source) {
+/**
+ * IMPORTANT:
+ * This MUST stay aligned with backend/services/mcpContextBuilder.js
+ * so route-side stale detection uses the exact same connection identity model.
+ */
+function normalizeSourceConnectionIdentity(rootLike, source) {
   const container =
     rootLike?.sources ||
     rootLike?.aiContext?.unifiedBase?.sources ||
@@ -69,51 +75,34 @@ function normalizeSourceIdentity(rootLike, source) {
   if (source === 'metaAds') {
     return {
       connected: !!s?.connected,
-      ready: !!s?.ready || String(s?.status || '').toLowerCase() === 'ready',
       accountId: safeStr(s?.accountId || '').trim() || null,
-      name: safeStr(s?.name || '').trim() || null,
-      currency: safeStr(s?.currency || '').trim() || null,
-      timezone: safeStr(s?.timezone || '').trim() || null,
-      lastError: safeStr(s?.lastError || '').trim() || null,
     };
   }
 
   if (source === 'googleAds') {
     return {
       connected: !!s?.connected,
-      ready: !!s?.ready || String(s?.status || '').toLowerCase() === 'ready',
       customerId: safeStr(s?.customerId || s?.accountId || '').trim() || null,
-      name: safeStr(s?.name || '').trim() || null,
-      currency: safeStr(s?.currency || '').trim() || null,
-      timezone: safeStr(s?.timezone || '').trim() || null,
-      lastError: safeStr(s?.lastError || '').trim() || null,
     };
   }
 
   if (source === 'ga4') {
     return {
       connected: !!s?.connected,
-      ready: !!s?.ready || String(s?.status || '').toLowerCase() === 'ready',
       propertyId: safeStr(s?.propertyId || '').trim() || null,
-      name: safeStr(s?.name || '').trim() || null,
-      currency: safeStr(s?.currency || '').trim() || null,
-      timezone: safeStr(s?.timezone || '').trim() || null,
-      lastError: safeStr(s?.lastError || '').trim() || null,
     };
   }
 
   return {
     connected: !!s?.connected,
-    ready: !!s?.ready || String(s?.status || '').toLowerCase() === 'ready',
-    lastError: safeStr(s?.lastError || '').trim() || null,
   };
 }
 
 function buildConnectionStateSummaryFromRoot(root) {
   return {
-    metaAds: normalizeSourceIdentity(root, 'metaAds'),
-    googleAds: normalizeSourceIdentity(root, 'googleAds'),
-    ga4: normalizeSourceIdentity(root, 'ga4'),
+    metaAds: normalizeSourceConnectionIdentity(root, 'metaAds'),
+    googleAds: normalizeSourceConnectionIdentity(root, 'googleAds'),
+    ga4: normalizeSourceConnectionIdentity(root, 'ga4'),
   };
 }
 
@@ -148,10 +137,13 @@ function getPdfSourceFingerprint(pdf) {
 function rootSignalLooksStale(root) {
   if (!root) return false;
 
+  const state = root?.aiContext || {};
   const currentConnectionFingerprint = buildConnectionFingerprintFromRoot(root);
   const storedConnectionFingerprint = getRootSignalConnectionFingerprint(root);
 
-  if (!storedConnectionFingerprint || !currentConnectionFingerprint) return false;
+  if (!storedConnectionFingerprint) return false;
+  if (!currentConnectionFingerprint) return false;
+
   return storedConnectionFingerprint !== currentConnectionFingerprint;
 }
 
@@ -401,12 +393,6 @@ function isSignalRunCompatibleWithRoot(signalRun, root) {
   return true;
 }
 
-/**
- * Regla autoritativa:
- * - prioridad absoluta: current run compatible
- * - si el root tiene buildAttemptId, SOLO ese run exacto puede usarse
- * - active/latest solo como fallback legacy cuando root no tiene buildAttemptId
- */
 async function findPreferredSignalRunForUser(userId, root = null) {
   if (!userId) return null;
 
@@ -529,29 +515,32 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
   const state = root?.aiContext || {};
   const staleSignal = rootSignalLooksStale(root);
   const stalePdf = rootPdfLooksStale(root);
-  const rootAttemptId = safeStr(state?.buildAttemptId).trim();
-  const hasAuthoritativeAttempt = !!rootAttemptId;
 
   const compatibleRun = isSignalRunCompatibleWithRoot(signalRun, root)
     ? normalizeSignalRun(signalRun)
     : null;
 
-  const authoritativeSignalComplete = !staleSignal && (
-    compatibleRun
-      ? !!compatibleRun.signalComplete
-      : (!hasAuthoritativeAttempt && safeStr(state?.status) === 'done')
-  );
+  const rootSignalComplete =
+    !staleSignal &&
+    !!state?.signalComplete &&
+    !!getRootAiSignalPayload(root) &&
+    safeStr(state?.status).trim().toLowerCase() === 'done' &&
+    safeStr(state?.stage).trim().toLowerCase() === 'completed';
 
-  const authoritativeSignalValidForPdf = !staleSignal && (
-    compatibleRun
-      ? !!compatibleRun.signalValidForPdf
-      : (!hasAuthoritativeAttempt && !!getRootAiSignalPayload(root) && authoritativeSignalComplete)
-  );
+  const rootSignalValidForPdf =
+    !staleSignal &&
+    !!state?.signalValidForPdf &&
+    !!getRootAiSignalPayload(root);
 
-  const signalPayload = (
-    staleSignal ||
-    (hasAuthoritativeAttempt && !authoritativeSignalComplete)
-  )
+  const authoritativeSignalComplete = compatibleRun
+    ? !!compatibleRun.signalComplete
+    : rootSignalComplete;
+
+  const authoritativeSignalValidForPdf = compatibleRun
+    ? !!compatibleRun.signalValidForPdf
+    : rootSignalValidForPdf;
+
+  const signalPayload = staleSignal
     ? null
     : getRootAiSignalPayload(root);
 
@@ -612,7 +601,7 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
       signalComplete,
       signalValidForPdf,
       signalReadyForPdf: uiFlags.signalReadyForPdf,
-      providerAgnostic: !!signalPayload?.providerAgnostic,
+      providerAgnostic: !!state?.encodedPayload?.providerAgnostic,
 
       usedOpenAI: compatibleRun ? !!compatibleRun?.usedOpenAI : !!state?.usedOpenAI,
       model: compatibleRun?.model || state?.model || null,
@@ -666,15 +655,19 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
 
 function buildSharedPayload(root, provider, signalRun = null) {
   const state = root?.aiContext || {};
-  const rootAttemptId = safeStr(state?.buildAttemptId).trim();
-  const hasAuthoritativeAttempt = !!rootAttemptId;
   const compatibleRun = isSignalRunCompatibleWithRoot(signalRun, root)
     ? normalizeSignalRun(signalRun)
     : null;
 
-  const signalComplete = hasAuthoritativeAttempt
+  const rootSignalComplete =
+    !!state?.signalComplete &&
+    !!getRootAiSignalPayload(root) &&
+    safeStr(state?.status).trim().toLowerCase() === 'done' &&
+    safeStr(state?.stage).trim().toLowerCase() === 'completed';
+
+  const signalComplete = compatibleRun
     ? !!compatibleRun?.signalComplete
-    : safeStr(state?.status).trim().toLowerCase() === 'done';
+    : rootSignalComplete;
 
   const payload = signalComplete
     ? (state?.signalPayload || state?.encodedPayload || null)
@@ -803,11 +796,6 @@ async function findUserByShareToken(token) {
   );
 }
 
-/**
- * POST /api/mcp/context/build
- * Manual/build endpoint. Mantiene compat actual.
- * Importante: este route sí puede disparar build manual.
- */
 router.post('/build', async (req, res) => {
   try {
     const userId = req.user?._id;
@@ -890,9 +878,6 @@ router.post('/build', async (req, res) => {
   }
 });
 
-/**
- * POST /api/mcp/context/pdf/build
- */
 router.post('/pdf/build', async (req, res) => {
   const userId = req.user?._id;
 
@@ -1010,11 +995,6 @@ router.post('/pdf/build', async (req, res) => {
   }
 });
 
-/**
- * GET /api/mcp/context/status
- * READ-ONLY.
- * No dispara rebuilds, no invalida, no crea attempts.
- */
 router.get('/status', async (req, res) => {
   try {
     const userId = req.user?._id;
@@ -1041,9 +1021,6 @@ router.get('/status', async (req, res) => {
   }
 });
 
-/**
- * GET /api/mcp/context/latest
- */
 router.get('/latest', async (req, res) => {
   try {
     const userId = req.user?._id;
@@ -1112,9 +1089,6 @@ router.get('/latest', async (req, res) => {
   }
 });
 
-/**
- * GET /api/mcp/context/pdf/download
- */
 router.get('/pdf/download', async (req, res) => {
   try {
     const userId = req.user?._id;
@@ -1176,9 +1150,6 @@ router.get('/pdf/download', async (req, res) => {
   }
 });
 
-/**
- * GET /api/mcp/context/pdf/status
- */
 router.get('/pdf/status', async (req, res) => {
   try {
     const userId = req.user?._id;
@@ -1209,7 +1180,16 @@ router.get('/pdf/status', async (req, res) => {
             : normalizePdfState(state?.pdf)
         );
 
-    const signalComplete = !staleSignal && !!authoritativeRun?.signalComplete;
+    const rootSignalComplete =
+      !staleSignal &&
+      !!state?.signalComplete &&
+      !!getRootAiSignalPayload(root) &&
+      safeStr(state?.status).trim().toLowerCase() === 'done' &&
+      safeStr(state?.stage).trim().toLowerCase() === 'completed';
+
+    const signalComplete = authoritativeRun
+      ? !!authoritativeRun?.signalComplete
+      : rootSignalComplete;
 
     const uiFlags = deriveUiFlags({
       signalPayload: staleSignal ? null : getRootAiSignalPayload(root),
@@ -1243,9 +1223,6 @@ router.get('/pdf/status', async (req, res) => {
   }
 });
 
-/**
- * POST /api/mcp/context/link
- */
 router.post('/link', async (req, res) => {
   try {
     const userId = req.user?._id;
@@ -1337,9 +1314,6 @@ router.post('/link', async (req, res) => {
   }
 });
 
-/**
- * GET /api/mcp/context/link
- */
 router.get('/link', async (req, res) => {
   try {
     const userId = req.user?._id;
@@ -1402,9 +1376,6 @@ router.get('/link', async (req, res) => {
   }
 });
 
-/**
- * DELETE /api/mcp/context/link
- */
 router.delete('/link', async (req, res) => {
   try {
     const userId = req.user?._id;
@@ -1456,9 +1427,6 @@ router.delete('/link', async (req, res) => {
   }
 });
 
-/**
- * POST /api/mcp/context/link/revoke
- */
 router.post('/link/revoke', async (req, res) => {
   try {
     const userId = req.user?._id;
@@ -1510,9 +1478,6 @@ router.post('/link/revoke', async (req, res) => {
   }
 });
 
-/**
- * GET /api/mcp/context/shared/:token
- */
 router.get('/shared/:token', async (req, res) => {
   try {
     const token = safeStr(req.params?.token).trim();
