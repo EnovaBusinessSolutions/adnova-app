@@ -2179,6 +2179,13 @@
             return value.charAt(0).toUpperCase() + value.slice(1);
         }
 
+        function humanReadableSessionLabel({ linkedUserLabel = '', sessionId = '' } = {}) {
+            const person = humanReadablePersonName(linkedUserLabel || '', 'Cliente');
+            if (linkedUserLabel) return `Sesión de ${person}`;
+            if (sessionId) return 'Sesión activa';
+            return 'Sesión';
+        }
+
         function normalizeAttributionChannel(channel) {
             const value = String(channel || '').trim().toLowerCase();
             if (value.includes('meta') || value.includes('facebook') || value.includes('instagram')) return 'meta';
@@ -4215,6 +4222,7 @@
                 const linkedUserLabel = resolvedIdentity.label;
                 const resolvedUserKey = resolvedIdentity.userKey || '';
                 const resolvedSessionId = resolvedIdentity.sessionId || String(sessionId || '');
+                const readableSession = humanReadableSessionLabel({ linkedUserLabel, sessionId: resolvedSessionId });
 
                 if (data.type === 'COLLECT') {
                     icon = 'fa-mouse-pointer';
@@ -4241,7 +4249,7 @@
                             <p class="text-xs text-gray-500 truncate">${detail || '-'}</p>
                             <div class="feed-extra mt-1">
                                 <p class="text-[11px] text-indigo-500">${buildSignalTextSimple(data.payload || {})}</p>
-                                <p class="text-[11px] text-indigo-600">${sessionId ? `s:${sessionId}` : 's:-'}</p>
+                                <p class="text-[11px] text-indigo-600">${readableSession}</p>
                                 ${linkedUserLabel ? `<p class="text-[11px] text-emerald-600">u: <button type="button" class="live-feed-user-link underline decoration-dotted cursor-pointer" data-user-key="${resolvedUserKey.replace(/"/g, '&quot;')}" data-session-id="${resolvedSessionId.replace(/"/g, '&quot;')}" data-user-name="${linkedUserLabel.replace(/"/g, '&quot;')}">${linkedUserLabel}</button></p>` : ''}
                                 <p class="text-[10px] text-gray-400">${formatTimeMx()}</p>
                             </div>
