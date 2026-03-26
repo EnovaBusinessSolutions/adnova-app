@@ -858,6 +858,116 @@
             box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
         }
 
+        .journey-meta-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+            margin-bottom: 0.2rem;
+        }
+
+        .journey-timeline {
+            position: relative;
+            max-height: 18.2rem;
+            overflow-y: auto;
+            padding: 0.25rem 0.1rem 0.2rem 1.35rem;
+            margin-top: 0.2rem;
+        }
+
+        .journey-timeline::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .journey-timeline::-webkit-scrollbar-thumb {
+            background: rgba(202, 138, 229, 0.34);
+            border-radius: 999px;
+        }
+
+        .journey-timeline::before {
+            content: "";
+            position: absolute;
+            left: 0.5rem;
+            top: 0.2rem;
+            bottom: 0.2rem;
+            width: 2px;
+            background: linear-gradient(180deg, rgba(202, 138, 229, 0.55), rgba(202, 138, 229, 0.1));
+        }
+
+        .journey-event {
+            position: relative;
+            border: 1px solid rgba(202, 138, 229, 0.24);
+            background: rgba(225, 216, 243, 0.07);
+            border-radius: 0.78rem;
+            padding: 0.48rem 0.56rem;
+            margin-bottom: 0.48rem;
+            transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
+        }
+
+        .journey-event::before {
+            content: "";
+            position: absolute;
+            left: -1.05rem;
+            top: 0.78rem;
+            width: 0.56rem;
+            height: 0.56rem;
+            border-radius: 999px;
+            background: #ca8ae5;
+            box-shadow: 0 0 0 4px rgba(202, 138, 229, 0.2);
+        }
+
+        .journey-event.is-google::before { background: #f59e0b; box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.22); }
+        .journey-event.is-meta::before { background: #60a5fa; box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.22); }
+        .journey-event.is-tiktok::before { background: #2dd4bf; box-shadow: 0 0 0 4px rgba(45, 212, 191, 0.22); }
+        .journey-event.is-organic::before { background: #4ade80; box-shadow: 0 0 0 4px rgba(74, 222, 128, 0.2); }
+
+        .journey-event:hover,
+        .journey-event:focus-within {
+            border-color: rgba(202, 138, 229, 0.52);
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.24);
+        }
+
+        .journey-event-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+        }
+
+        .journey-event-title {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            font-size: 0.84rem;
+            font-weight: 700;
+            color: var(--dash-text);
+        }
+
+        .journey-event-time {
+            font-size: 0.67rem;
+            color: var(--dash-soft);
+            letter-spacing: 0.04em;
+        }
+
+        .journey-event-detail {
+            margin-top: 0.32rem;
+            max-height: 0;
+            opacity: 0;
+            overflow: hidden;
+            transition: max-height 160ms ease, opacity 160ms ease;
+        }
+
+        .journey-event:hover .journey-event-detail,
+        .journey-event:focus-within .journey-event-detail {
+            max-height: 8rem;
+            opacity: 1;
+        }
+
+        .journey-event-detail p {
+            margin: 0.08rem 0;
+            font-size: 0.7rem;
+            color: var(--dash-muted);
+        }
+
         .journey-flow {
             display: flex;
             align-items: center;
@@ -2411,6 +2521,129 @@
             return signal;
         }
 
+        function normalizeEventNameHuman(rawName = '') {
+            const key = String(rawName || '').trim().toLowerCase();
+            if (key === 'page_view') return 'Page View';
+            if (key === 'view_item') return 'View Product';
+            if (key === 'add_to_cart') return 'Add to Cart';
+            if (key === 'begin_checkout') return 'Begin Checkout';
+            if (key === 'purchase') return 'Purchase';
+            if (key === 'user_logged_in' || key === 'user_login' || key === 'login') return 'Login';
+            if (key === 'lead' || key === 'generate_lead') return 'Lead';
+            return key ? key.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()) : 'Event';
+        }
+
+        function formatDurationCompact(seconds) {
+            const value = Number(seconds || 0);
+            if (!Number.isFinite(value) || value <= 0) return '<1s';
+            if (value < 60) return `${Math.round(value)}s`;
+            const mins = Math.floor(value / 60);
+            const secs = Math.round(value % 60);
+            return `${mins}m ${secs}s`;
+        }
+
+        function buildSessionTimelineEvents(sessionData = {}) {
+            const session = sessionData.session || {};
+            const events = Array.isArray(sessionData.events) ? sessionData.events : [];
+            if (!events.length) return [];
+
+            const sorted = events
+                .map((event) => ({
+                    ...event,
+                    _ts: new Date(event.createdAt || event.collectedAt || session.startedAt || 0).getTime(),
+                }))
+                .filter((event) => Number.isFinite(event._ts))
+                .sort((a, b) => a._ts - b._ts);
+
+            return sorted.map((event, index) => {
+                const next = sorted[index + 1];
+                const durSeconds = next ? Math.max(0, (next._ts - event._ts) / 1000) : Math.max(0, Number(session.sessionDurationSeconds || 0) - ((event._ts - sorted[0]._ts) / 1000));
+                const pagePath = normalizeJourneyPath(event.pageUrl || event.url || event.landingPageUrl || '');
+                const itemName = event.productName || event.productId || event.itemId || '';
+                const tone = resolveChannelTone(event.utmSource || session.utmSource, sessionData?.journey?.attribution?.platform || session.utmSource);
+
+                const detailLines = [
+                    `Stayed: ${formatDurationCompact(durSeconds)}`,
+                    pagePath && pagePath !== '-' ? `Page: ${pagePath}` : '',
+                    itemName ? `Item: ${itemName}` : '',
+                ].filter(Boolean);
+
+                return {
+                    icon: resolveChannelIcon(event.utmSource || session.utmSource, sessionData?.journey?.attribution?.platform || null),
+                    title: normalizeEventNameHuman(event.eventName || event.name),
+                    time: formatDateTimeMx(event.createdAt || event.collectedAt || null),
+                    detailLines,
+                    tone,
+                };
+            });
+        }
+
+        function buildPurchaseTimelineEvents(purchase = {}) {
+            const tone = resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform);
+            const landing = normalizeJourneyPath(purchase.landingPageUrl || purchase.attributionDebug?.payloadPageUrl || purchase.pageUrl || '');
+            const campaign = purchase.attributedCampaign || purchase.attributionDebug?.payloadUtmCampaign || '-';
+            const clickId = purchase.attributedClickId || '-';
+            const purchasedAt = formatRecentPurchaseDate(purchase);
+
+            const entries = [
+                {
+                    icon: resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform),
+                    title: 'Ad Click',
+                    time: purchasedAt,
+                    detailLines: [
+                        `Campaign: ${campaign}`,
+                        `Click ID: ${clickId}`,
+                    ],
+                    tone,
+                },
+            ];
+
+            if (landing && landing !== '-') {
+                entries.push({
+                    icon: 'fa-solid fa-door-open',
+                    title: 'Landing',
+                    time: purchasedAt,
+                    detailLines: [`Page: ${landing}`],
+                    tone,
+                });
+            }
+
+            entries.push({
+                icon: 'fa-solid fa-circle-check',
+                title: 'Purchase',
+                time: purchasedAt,
+                detailLines: [
+                    `Order: ${purchase.orderNumber || purchase.orderId || '-'}`,
+                    `Revenue: ${formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN')}`,
+                ],
+                tone: 'is-organic',
+            });
+
+            return entries;
+        }
+
+        function renderJourneyVerticalTimeline(events = []) {
+            if (!events.length) {
+                return '<p class="text-sm text-gray-500">Not enough journey events yet.</p>';
+            }
+
+            return `
+                <div class="journey-timeline">
+                    ${events.map((event) => `
+                        <article class="journey-event ${event.tone || ''}">
+                            <div class="journey-event-head">
+                                <span class="journey-event-title"><i class="${event.icon || 'fa-solid fa-circle'}"></i>${escapeHtml(event.title || 'Event')}</span>
+                                <span class="journey-event-time">${escapeHtml(event.time || '-')}</span>
+                            </div>
+                            <div class="journey-event-detail">
+                                ${(Array.isArray(event.detailLines) ? event.detailLines : []).slice(0, 3).map((line) => `<p>${escapeHtml(line)}</p>`).join('')}
+                            </div>
+                        </article>
+                    `).join('')}
+                </div>
+            `;
+        }
+
         function buildMinimalJourneyNodesFromSessionData(sessionData = {}) {
             const journey = sessionData.journey || {};
             const session = sessionData.session || {};
@@ -2421,74 +2654,63 @@
             const platform = journey.attribution?.platform || null;
             const confidence = Math.round(Number(journey.attribution?.confidence || 0) * 100);
             const leads = deriveJourneySignalsFromEvents(events).lead;
+            const userName = humanReadablePersonName(sessionData?.identifiedUser?.customerDisplayName || sessionData?.identifiedUser?.emailPreview || '', 'Customer');
+            const landing = normalizeJourneyPath(session.landingPageUrl || journey.entryPage || '');
+            const sourceAd = journey.attribution?.campaign || session.utmCampaign || 'No campaign';
+            const timelineEvents = buildSessionTimelineEvents(sessionData);
 
             return {
                 summary: {
                     leads,
                     confidence,
+                    userName,
+                    source: humanReadableChannel(channel),
+                    sourceAd,
+                    landing,
                 },
-                steps: [
-                {
-                    icon: resolveChannelIcon(channel, platform),
-                    title: 'Ad Click',
-                    sub: `${humanReadableChannel(channel)} · ${confidence}%`,
-                    tone: resolveChannelTone(channel, platform),
-                },
-                {
-                    icon: 'fa-solid fa-circle-check',
-                    title: 'Purchase',
-                    sub: metrics.purchase > 0 || orders.length > 0 ? `${orders.length || metrics.purchase} purchase(s)` : 'no purchase',
-                    tone: metrics.purchase > 0 || orders.length > 0 ? 'is-organic' : '',
-                },
-                ],
+                steps: [],
+                timelineEvents,
+                purchaseBubble: metrics.purchase > 0 || orders.length > 0 ? `${orders.length || metrics.purchase} purchase(s)` : 'no purchase',
+                adTone: resolveChannelTone(channel, platform),
             };
         }
 
         function buildMinimalJourneyNodesFromPurchase(purchase = {}) {
             const confidence = Math.round(Number(purchase.attributionConfidence || 0) * 100);
             const hasPurchase = Number(purchase.revenue || 0) > 0;
+            const userName = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || '', 'Customer');
+            const source = humanReadableChannel(purchase.attributedChannel);
+            const sourceAd = purchase.attributedCampaign || 'No campaign';
+            const landing = normalizeJourneyPath(purchase.landingPageUrl || purchase.attributionDebug?.payloadPageUrl || purchase.pageUrl || '');
             return {
                 summary: {
                     leads: null,
                     confidence,
+                    userName,
+                    source,
+                    sourceAd,
+                    landing,
                 },
-                steps: [
-                {
-                    icon: resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform),
-                    title: 'Ad Click',
-                    sub: `${humanReadableChannel(purchase.attributedChannel)} · ${confidence}%`,
-                    tone: resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform),
-                },
-                {
-                    icon: 'fa-solid fa-circle-check',
-                    title: 'Purchase',
-                    sub: hasPurchase ? formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN') : 'no revenue',
-                    tone: hasPurchase ? 'is-organic' : '',
-                },
-                ],
+                steps: [],
+                timelineEvents: buildPurchaseTimelineEvents(purchase),
+                purchaseBubble: hasPurchase ? formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN') : 'no revenue',
+                adTone: resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform),
             };
         }
 
-        function renderMinimalJourneyRail(steps = []) {
-            if (!steps.length) {
-                return '<p class="text-sm text-gray-500">Not enough signals to draw the journey yet.</p>';
-            }
-
+        function renderJourneyHeadlineBubbles(summary = {}, purchaseBubble = 'no purchase', adTone = '') {
             return `
                 <div class="journey-rail-wrap">
                     <div class="journey-rail-line"></div>
-                    <div class="journey-rail">
-                        ${steps.map((step, index) => `
-                            <button
-                                type="button"
-                                class="journey-node journey-anim ${step.tone || ''} ${index === 0 ? 'is-active' : ''}"
-                                style="animation-delay:${index * 75}ms"
-                                data-journey-node="${index}"
-                            >
-                                <span class="journey-node-title"><i class="${step.icon}"></i>${escapeHtml(step.title || 'Paso')}</span>
-                                <span class="journey-node-sub">${escapeHtml(step.sub || '-')}</span>
-                            </button>
-                        `).join('')}
+                    <div class="journey-rail" style="grid-template-columns: repeat(2, minmax(0, 1fr));">
+                        <div class="journey-node ${adTone || ''} is-active">
+                            <span class="journey-node-title"><i class="fa-solid fa-bullseye"></i>Ad Click</span>
+                            <span class="journey-node-sub">${escapeHtml(summary.source || '-')} · ${escapeHtml(String(summary.confidence ?? 0))}%</span>
+                        </div>
+                        <div class="journey-node is-organic is-active">
+                            <span class="journey-node-title"><i class="fa-solid fa-circle-check"></i>Purchase</span>
+                            <span class="journey-node-sub">${escapeHtml(purchaseBubble || 'no purchase')}</span>
+                        </div>
                     </div>
                 </div>
             `;
@@ -2538,7 +2760,6 @@
             const currentData = sessionExplorerState.currentData;
             if (sessionExplorerState.mode === 'session' && currentData) {
                 const journeyData = buildMinimalJourneyNodesFromSessionData(currentData);
-                const steps = Array.isArray(journeyData.steps) ? journeyData.steps : [];
                 const currentJourney = currentData.journey || {};
                 const currentSession = currentData.session || {};
                 const peers = Array.isArray(currentData.peers) ? currentData.peers : [];
@@ -2550,10 +2771,15 @@
                             <span class="journey-chip"><i class="fa-solid fa-route"></i>active</span>
                             <span class="text-xs text-gray-500">${formatDateTimeMx(currentSession.startedAt)}</span>
                         </div>
-                        <div class="flex items-center gap-2 flex-wrap">
+                        <div class="journey-meta-grid">
+                            <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(journeyData.summary?.userName || 'Customer')}</span>
+                            <span class="journey-chip"><i class="fa-solid fa-percent"></i>${Number(journeyData.summary?.confidence || 0)}%</span>
+                            <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(journeyData.summary?.sourceAd || 'No campaign')}</span>
+                            <span class="journey-chip"><i class="fa-solid fa-door-open"></i>${escapeHtml(journeyData.summary?.landing || '-')}</span>
                             <span class="journey-chip"><i class="fa-solid fa-circle-plus"></i>Leads ${Number(journeyData.summary?.leads || 0)}</span>
                         </div>
-                        ${renderMinimalJourneyRail(steps)}
+                        ${renderJourneyHeadlineBubbles(journeyData.summary, journeyData.purchaseBubble, journeyData.adTone)}
+                        ${renderJourneyVerticalTimeline(journeyData.timelineEvents)}
                         <div class="flex items-center gap-2 flex-wrap">
                             <span class="journey-chip ${resolveChannelTone(currentJourney.attribution?.channel, currentJourney.attribution?.platform)}"><i class="fa-solid fa-bullseye"></i>${escapeHtml(currentJourney.attribution?.channel || 'unattributed')}</span>
                         </div>
@@ -2609,7 +2835,6 @@
 
             const top = filteredJourneys[0].purchase;
             const topJourneyData = buildMinimalJourneyNodesFromPurchase(top);
-            const topSteps = Array.isArray(topJourneyData.steps) ? topJourneyData.steps : [];
 
             focusEl.innerHTML = `
                 <div class="journey-compact-card space-y-3">
@@ -2617,7 +2842,14 @@
                             <span class="journey-chip"><i class="fa-solid fa-star"></i>top</span>
                         <span class="text-xs text-gray-500">${formatRecentPurchaseDate(top)}</span>
                     </div>
-                    ${renderMinimalJourneyRail(topSteps)}
+                    <div class="journey-meta-grid">
+                        <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(topJourneyData.summary?.userName || 'Customer')}</span>
+                        <span class="journey-chip"><i class="fa-solid fa-percent"></i>${Number(topJourneyData.summary?.confidence || 0)}%</span>
+                        <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(topJourneyData.summary?.sourceAd || 'No campaign')}</span>
+                        <span class="journey-chip"><i class="fa-solid fa-door-open"></i>${escapeHtml(topJourneyData.summary?.landing || '-')}</span>
+                    </div>
+                    ${renderJourneyHeadlineBubbles(topJourneyData.summary, topJourneyData.purchaseBubble, topJourneyData.adTone)}
+                    ${renderJourneyVerticalTimeline(topJourneyData.timelineEvents)}
                 </div>
             `;
 
