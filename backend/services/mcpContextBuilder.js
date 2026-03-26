@@ -44,6 +44,7 @@ function safeStr(v) {
 }
 
 function toNum(v, fallback = 0) {
+  if (v == null || v === '') return fallback;
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
@@ -180,57 +181,40 @@ function stableHash(value) {
   return crypto.createHash('sha256').update(stableSerialize(value)).digest('hex');
 }
 
-function normalizeSourceIdentity(root, source) {
+function normalizeSourceConnectionIdentity(root, source) {
   const s = getSourceRootState(root, source);
 
   if (source === 'metaAds') {
     return {
       connected: !!s?.connected,
-      ready: !!s?.ready || String(s?.status || '').toLowerCase() === 'ready',
       accountId: safeStr(s?.accountId || '').trim() || null,
-      name: safeStr(s?.name || '').trim() || null,
-      currency: safeStr(s?.currency || '').trim() || null,
-      timezone: safeStr(s?.timezone || '').trim() || null,
-      lastError: safeStr(s?.lastError || '').trim() || null,
     };
   }
 
   if (source === 'googleAds') {
     return {
       connected: !!s?.connected,
-      ready: !!s?.ready || String(s?.status || '').toLowerCase() === 'ready',
       customerId: safeStr(s?.customerId || s?.accountId || '').trim() || null,
-      name: safeStr(s?.name || '').trim() || null,
-      currency: safeStr(s?.currency || '').trim() || null,
-      timezone: safeStr(s?.timezone || '').trim() || null,
-      lastError: safeStr(s?.lastError || '').trim() || null,
     };
   }
 
   if (source === 'ga4') {
     return {
       connected: !!s?.connected,
-      ready: !!s?.ready || String(s?.status || '').toLowerCase() === 'ready',
       propertyId: safeStr(s?.propertyId || '').trim() || null,
-      name: safeStr(s?.name || '').trim() || null,
-      currency: safeStr(s?.currency || '').trim() || null,
-      timezone: safeStr(s?.timezone || '').trim() || null,
-      lastError: safeStr(s?.lastError || '').trim() || null,
     };
   }
 
   return {
     connected: !!s?.connected,
-    ready: !!s?.ready || String(s?.status || '').toLowerCase() === 'ready',
-    lastError: safeStr(s?.lastError || '').trim() || null,
   };
 }
 
 function buildConnectionStateSummary(root) {
   return {
-    metaAds: normalizeSourceIdentity(root, 'metaAds'),
-    googleAds: normalizeSourceIdentity(root, 'googleAds'),
-    ga4: normalizeSourceIdentity(root, 'ga4'),
+    metaAds: normalizeSourceConnectionIdentity(root, 'metaAds'),
+    googleAds: normalizeSourceConnectionIdentity(root, 'googleAds'),
+    ga4: normalizeSourceConnectionIdentity(root, 'ga4'),
   };
 }
 
@@ -261,7 +245,7 @@ function buildArtifactFingerprintPayload({
   for (const source of sourceNames) {
     const state = sourceStates?.[source];
     const fromBase = unifiedBase?.sources?.[source];
-    const identity = normalizeSourceIdentity(root || {}, source);
+    const identity = normalizeSourceConnectionIdentity(root || {}, source);
 
     out.sources[source] = {
       connected: !!(fromBase?.connected ?? state?.connected ?? identity?.connected),
@@ -931,9 +915,14 @@ function buildUnifiedBaseContext({
   ga4Pack,
 }) {
   const sources = root?.sources || {};
+
   const metaState = sourceStates?.metaAds || null;
   const googleState = sourceStates?.googleAds || null;
   const ga4State = sourceStates?.ga4 || null;
+
+  const metaRootState = metaState?.rootState || sources?.metaAds || {};
+  const googleRootState = googleState?.rootState || sources?.googleAds || {};
+  const ga4RootState = ga4State?.rootState || sources?.ga4 || {};
 
   const sourceSnapshots = {
     metaAds: metaState?.snapshotId || null,
@@ -965,43 +954,66 @@ function buildUnifiedBaseContext({
     },
     sources: {
       metaAds: {
-        connected: !!(sources?.metaAds?.connected || metaState?.hasChunks),
-        ready: !!(sources?.metaAds?.ready || metaState?.usable),
+        connected: !!(metaRootState?.connected || metaState?.hasChunks),
+        ready: !!(metaRootState?.ready || metaState?.usable),
         usable: !!metaState?.usable,
-        accountId: sources?.metaAds?.accountId || null,
-        name: sources?.metaAds?.name || null,
-        currency: sources?.metaAds?.currency || null,
-        timezone: sources?.metaAds?.timezone || null,
+        accountId: metaRootState?.accountId || null,
+        name: metaRootState?.name || null,
+        currency: metaRootState?.currency || null,
+        timezone: metaRootState?.timezone || null,
         snapshotId: metaState?.snapshotId || null,
         chunkCount: toNum(metaState?.chunkCount, 0),
-        storageRangeDays: toNum(sources?.metaAds?.storageRangeDays) || toNum(sources?.metaAds?.rangeDays) || storageRangeDays || null,
-        contextDefaultRangeDays: toNum(sources?.metaAds?.contextDefaultRangeDays) || contextRangeDays || null,
+        storageRangeDays:
+          toNum(metaRootState?.storageRangeDays, 0) ||
+          toNum(metaRootState?.rangeDays, 0) ||
+          storageRangeDays ||
+          null,
+        contextDefaultRangeDays:
+          toNum(metaRootState?.contextDefaultRangeDays, 0) ||
+          contextRangeDays ||
+          null,
       },
+
       googleAds: {
-        connected: !!(sources?.googleAds?.connected || googleState?.hasChunks),
-        ready: !!(sources?.googleAds?.ready || googleState?.usable),
+        connected: !!(googleRootState?.connected || googleState?.hasChunks),
+        ready: !!(googleRootState?.ready || googleState?.usable),
         usable: !!googleState?.usable,
-        customerId: sources?.googleAds?.customerId || sources?.googleAds?.accountId || null,
-        name: sources?.googleAds?.name || null,
-        currency: sources?.googleAds?.currency || null,
-        timezone: sources?.googleAds?.timezone || null,
+        customerId: googleRootState?.customerId || googleRootState?.accountId || null,
+        name: googleRootState?.name || null,
+        currency: googleRootState?.currency || null,
+        timezone: googleRootState?.timezone || null,
         snapshotId: googleState?.snapshotId || null,
         chunkCount: toNum(googleState?.chunkCount, 0),
-        storageRangeDays: toNum(sources?.googleAds?.storageRangeDays) || toNum(sources?.googleAds?.rangeDays) || storageRangeDays || null,
-        contextDefaultRangeDays: toNum(sources?.googleAds?.contextDefaultRangeDays) || contextRangeDays || null,
+        storageRangeDays:
+          toNum(googleRootState?.storageRangeDays, 0) ||
+          toNum(googleRootState?.rangeDays, 0) ||
+          storageRangeDays ||
+          null,
+        contextDefaultRangeDays:
+          toNum(googleRootState?.contextDefaultRangeDays, 0) ||
+          contextRangeDays ||
+          null,
       },
+
       ga4: {
-        connected: !!(sources?.ga4?.connected || ga4State?.hasChunks),
-        ready: !!(sources?.ga4?.ready || ga4State?.usable),
+        connected: !!(ga4RootState?.connected || ga4State?.hasChunks),
+        ready: !!(ga4RootState?.ready || ga4State?.usable),
         usable: !!ga4State?.usable,
-        propertyId: sources?.ga4?.propertyId || null,
-        name: sources?.ga4?.name || null,
-        currency: sources?.ga4?.currency || null,
-        timezone: sources?.ga4?.timezone || null,
+        propertyId: ga4RootState?.propertyId || null,
+        name: ga4RootState?.name || null,
+        currency: ga4RootState?.currency || null,
+        timezone: ga4RootState?.timezone || null,
         snapshotId: ga4State?.snapshotId || null,
         chunkCount: toNum(ga4State?.chunkCount, 0),
-        storageRangeDays: toNum(sources?.ga4?.storageRangeDays) || toNum(sources?.ga4?.rangeDays) || storageRangeDays || null,
-        contextDefaultRangeDays: toNum(sources?.ga4?.contextDefaultRangeDays) || contextRangeDays || null,
+        storageRangeDays:
+          toNum(ga4RootState?.storageRangeDays, 0) ||
+          toNum(ga4RootState?.rangeDays, 0) ||
+          storageRangeDays ||
+          null,
+        contextDefaultRangeDays:
+          toNum(ga4RootState?.contextDefaultRangeDays, 0) ||
+          contextRangeDays ||
+          null,
       },
     },
     inputs: {
@@ -2139,54 +2151,58 @@ async function buildUnifiedContextForUser(userId, options = {}) {
   const ga4Pack = buildGa4Context(ga4Chunks, contextRangeDays);
 
   const latestRootForBase = await findRoot(userId);
-  if (safeStr(latestRootForBase?.aiContext?.buildAttemptId).trim() !== attemptId) {
-    await safeSignalRunFail(userId, attemptId, {
-      error: 'ATTEMPT_SUPERSEDED',
-      errorCode: 'ATTEMPT_SUPERSEDED',
-      errorStage: 'failed',
-      stage: 'failed',
-      progress: 100,
-      isCurrent: false,
-      supersededByAttemptId: attemptId,
-      hasSignal: false,
-      signalValidForPdf: false,
-      signalComplete: false,
-      hasSignal: !!(latestRootForBase?.aiContext?.signalPayload || latestRootForBase?.aiContext?.encodedPayload),
-      snapshotId: safeStr(latestRootForBase?.aiContext?.snapshotId || latestRootForBase?.latestSnapshotId).trim() || null,
-    });
-
-    return buildResultFromRoot(latestRootForBase, {
-      status: latestRootForBase?.aiContext?.status || 'processing',
-      progress: toNum(latestRootForBase?.aiContext?.progress, 35),
-      stage: latestRootForBase?.aiContext?.stage || 'compacting_sources',
-    });
-  }
-
-  const hydratedSourceStates = {
-    metaAds: hydratedMetaState,
-    googleAds: hydratedGoogleState,
-    ga4: hydratedGa4State,
-  };
-
-  const unifiedBase = buildUnifiedBaseContext({
-    root: latestRootForBase,
-    contextRangeDays,
-    storageRangeDays,
-    sourceStates: hydratedSourceStates,
-    metaPack,
-    googlePack,
-    ga4Pack,
+if (safeStr(latestRootForBase?.aiContext?.buildAttemptId).trim() !== attemptId) {
+  await safeSignalRunFail(userId, attemptId, {
+    error: 'ATTEMPT_SUPERSEDED',
+    errorCode: 'ATTEMPT_SUPERSEDED',
+    errorStage: 'failed',
+    stage: 'failed',
+    progress: 100,
+    isCurrent: false,
+    supersededByAttemptId: attemptId,
+    hasSignal: false,
+    signalValidForPdf: false,
+    signalComplete: false,
+    snapshotId: safeStr(latestRootForBase?.aiContext?.snapshotId || latestRootForBase?.latestSnapshotId).trim() || null,
   });
+
+  return buildResultFromRoot(latestRootForBase, {
+    status: latestRootForBase?.aiContext?.status || 'processing',
+    progress: toNum(latestRootForBase?.aiContext?.progress, 35),
+    stage: latestRootForBase?.aiContext?.stage || 'compacting_sources',
+  });
+}
+
+const hydratedSourceStates = {
+  metaAds: hydratedMetaState,
+  googleAds: hydratedGoogleState,
+  ga4: hydratedGa4State,
+};
+
+const finalStorageRangeDays =
+  getStorageRangeDaysFromRoot(latestRootForBase) ||
+  storageRangeDays ||
+  null;
+
+const unifiedBase = buildUnifiedBaseContext({
+  root: latestRootForBase,
+  contextRangeDays,
+  storageRangeDays: finalStorageRangeDays,
+  sourceStates: hydratedSourceStates,
+  metaPack,
+  googlePack,
+  ga4Pack,
+});
 
   const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase);
   const finalSourceFingerprint = buildArtifactFingerprint({
-    root: latestRootForBase,
-    sourceStates: hydratedSourceStates,
-    sourceSnapshots,
-    contextRangeDays,
-    storageRangeDays,
-    unifiedBase,
-  });
+  root: latestRootForBase,
+  sourceStates: hydratedSourceStates,
+  sourceSnapshots,
+  contextRangeDays,
+  storageRangeDays: finalStorageRangeDays,
+  unifiedBase,
+});
 
   const encodingResult = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
     ...(currentAi || {}),
@@ -2199,7 +2215,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
     sourceSnapshots,
     contextRangeDays,
-    storageRangeDays,
+    storageRangeDays: finalStorageRangeDays,
     unifiedBase,
     sourceFingerprint: finalSourceFingerprint,
     connectionFingerprint: finalConnectionFingerprint,
@@ -2223,7 +2239,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       progress: 65,
       snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
       contextRangeDays,
-      storageRangeDays,
+      storageRangeDays: finalStorageRangeDays,
       hasSignal: false,
       signalValidForPdf: false,
       usedOpenAI: false,
@@ -2257,7 +2273,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
       sourceSnapshots,
       contextRangeDays,
-      storageRangeDays,
+      storageRangeDays: finalStorageRangeDays,
       unifiedBase,
 
       // guardamos el draft, pero NO lo exponemos como signal final
@@ -2331,80 +2347,96 @@ async function buildUnifiedContextForUser(userId, options = {}) {
   }
 
   const finishedAtIso = nowIso();
-  const finalUpdate = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
-    ...(currentAi || {}),
-    status: 'done',
-    progress: 100,
-    stage: 'completed',
-    startedAt: currentAi?.startedAt || startedAt,
-    finishedAt: finishedAtIso,
-    buildAttemptId: attemptId,
-    snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
-    sourceSnapshots,
-    contextRangeDays,
-    storageRangeDays,
-    error: null,
-    unifiedBase,
-    encodedPayload: signalPayload,
-    signalPayload,
+const finalUpdate = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+  ...(currentAi || {}),
+  status: 'done',
+  progress: 100,
+  stage: 'completed',
+  startedAt: currentAi?.startedAt || startedAt,
+  finishedAt: finishedAtIso,
+  buildAttemptId: attemptId,
+  snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+  sourceSnapshots,
+  contextRangeDays,
+  storageRangeDays: finalStorageRangeDays,
+  error: null,
+
+  unifiedBase,
+  encodedPayload: signalPayload,
+  signalPayload,
+
+  sourceFingerprint: finalSourceFingerprint,
+  connectionFingerprint: finalConnectionFingerprint,
+  usedOpenAI: !!encoded.usedOpenAI,
+  model: encoded.model || null,
+  sourcesStatus,
+  usableSources,
+  pendingConnectedSources,
+
+  signalComplete: true,
+  signalValidForPdf: true,
+  signalReadyForPdf: true,
+
+  staleReason: null,
+  staleAt: null,
+  lastInvalidatedAt: null,
+  invalidatedByAttemptId: null,
+
+  pdf: emptyPdfState({
+    status: 'idle',
+    stage: 'idle',
+    progress: 0,
     sourceFingerprint: finalSourceFingerprint,
     connectionFingerprint: finalConnectionFingerprint,
-    usedOpenAI: !!encoded.usedOpenAI,
-    model: encoded.model || null,
-    sourcesStatus,
-    usableSources,
-    pendingConnectedSources,
-    pdf: emptyPdfState({
-      status: 'idle',
-      stage: 'idle',
-      progress: 0,
-      connectionFingerprint: finalConnectionFingerprint,
-    }),
-  }));
+    stale: false,
+    staleReason: null,
+  }),
+}));
 
   if (!finalUpdate?.skipped) {
     await safeSignalRunComplete(userId, attemptId, {
-      rootId: finalUpdate?.root?._id || latestRootForBase?._id || initialRoot?._id || null,
-      stage: 'completed',
-      startedAt: new Date(startedAt),
-      finishedAt: new Date(finishedAtIso),
-      snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
-      contextRangeDays,
-      storageRangeDays,
-      usedOpenAI: !!encoded.usedOpenAI,
-      model: encoded.model || null,
-      hasSignal: true,
-      signalValidForPdf: true,
-      sources: buildSignalSourcesPayload({
-        sourcesStatus,
-        sourceSnapshots,
-        usableSources,
-        pendingConnectedSources,
-      }),
-      meta: {
-        timedOut: !!readyState?.timedOut,
-        providerAgnostic: !!signalPayload?.providerAgnostic,
-        connectionFingerprint: finalConnectionFingerprint,
-        sourceFingerprint: finalSourceFingerprint,
-      },
-    });
+  rootId: finalUpdate?.root?._id || latestRootForBase?._id || initialRoot?._id || null,
+  stage: 'completed',
+  startedAt: new Date(startedAt),
+  finishedAt: new Date(finishedAtIso),
+  snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+  contextRangeDays,
+  storageRangeDays: finalStorageRangeDays,
+  usedOpenAI: !!encoded.usedOpenAI,
+  model: encoded.model || null,
+  hasSignal: true,
+  signalComplete: true,
+  signalValidForPdf: true,
+  sources: buildSignalSourcesPayload({
+    sourcesStatus,
+    sourceSnapshots,
+    usableSources,
+    pendingConnectedSources,
+  }),
+  meta: {
+    timedOut: !!readyState?.timedOut,
+    providerAgnostic: !!signalPayload?.providerAgnostic,
+    connectionFingerprint: finalConnectionFingerprint,
+    sourceFingerprint: finalSourceFingerprint,
+  },
+});
   }
 
   const freshRoot = finalUpdate?.root || await findRoot(userId);
-  return buildResultFromRoot(freshRoot, {
-    status: 'done',
-    progress: 100,
-    stage: 'completed',
-    sourceSnapshots,
-    contextRangeDays,
-    storageRangeDays,
-    usableSources,
-    pendingConnectedSources,
-    sources: sourcesStatus,
-    unifiedBase,
-    encodedPayload: signalPayload,
-    signalPayload,
-  });
+return buildResultFromRoot(freshRoot, {
+  status: 'done',
+  progress: 100,
+  stage: 'completed',
+  sourceSnapshots,
+  contextRangeDays,
+  storageRangeDays: finalStorageRangeDays,
+  usableSources,
+  pendingConnectedSources,
+  sources: sourcesStatus,
+  unifiedBase,
+  encodedPayload: signalPayload,
+  signalPayload,
+});
 }
 
 async function buildPdfForUser(userId) {
