@@ -2863,6 +2863,42 @@
             const source = humanReadableChannel(purchase.attributedChannel);
             const sourceAd = purchase.attributedCampaign || 'No campaign';
             const landing = normalizeJourneyPath(purchase.landingPageUrl || purchase.attributionDebug?.payloadPageUrl || purchase.pageUrl || '');
+            
+            // If purchase includes real events, build timeline from those events
+            let timelineEvents = buildPurchaseTimelineEvents(purchase);
+            if (Array.isArray(purchase.events) && purchase.events.length > 0) {
+                const realEvents = purchase.events
+                    .map((event) => ({
+                        ...event,
+                        _ts: new Date(event.createdAt || event.collectedAt || 0).getTime(),
+                    }))
+                    .filter((event) => Number.isFinite(event._ts))
+                    .sort((a, b) => a._ts - b._ts);
+                
+                if (realEvents.length > 0) {
+                    timelineEvents = realEvents.map((event, index) => {
+                        const next = realEvents[index + 1];
+                        const durSeconds = next ? Math.max(0, (next._ts - event._ts) / 1000) : 0;
+                        const pagePath = normalizeJourneyPath(event.pageUrl || event.url || '');
+                        const itemName = event.productName || event.productId || event.itemId || '';
+                        
+                        const detailLines = [
+                            durSeconds > 0 ? `Stayed: ${formatDurationCompact(durSeconds)}` : '',
+                            pagePath && pagePath !== '-' ? `Page: ${pagePath}` : '',
+                            itemName ? `Item: ${itemName}` : '',
+                        ].filter(Boolean);
+                        
+                        return {
+                            icon: resolveChannelIcon(event.utmSource || purchase.attributedChannel || '', purchase.attributedPlatform || null),
+                            title: normalizeEventNameHuman(event.eventName || event.name),
+                            time: formatDateTimeMx(event.createdAt || event.collectedAt || null),
+                            detailLines,
+                            tone: resolveChannelTone(event.utmSource || purchase.attributedChannel || '', purchase.attributedPlatform || null),
+                        };
+                    });
+                }
+            }
+            
             return {
                 summary: {
                     leads: null,
@@ -2873,7 +2909,7 @@
                     landing,
                 },
                 steps: [],
-                timelineEvents: buildPurchaseTimelineEvents(purchase),
+                timelineEvents,
                 purchaseBubble: hasPurchase ? formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN') : 'no revenue',
                 adTone: resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform),
             };
