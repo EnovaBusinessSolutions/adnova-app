@@ -1173,8 +1173,8 @@
                 </div>
                 <div class="flex items-center space-x-4">
                     <div class="flex items-center gap-2">
-                        <div id="shop-name" class="text-sm text-gray-500 font-medium">Cargando tienda...</div>
-                        <span id="shop-type-badge" class="journey-chip text-[10px] px-2 py-0.5">Tienda</span>
+                        <div id="shop-name" class="text-sm text-gray-500 font-medium">Loading store...</div>
+                        <span id="shop-type-badge" class="journey-chip text-[10px] px-2 py-0.5">Store</span>
                     </div>
                 </div>
             </div>
@@ -1188,44 +1188,44 @@
         <div class="dashboard-hero mb-8">
             <div class="flex gap-3 flex-wrap justify-start">
                 <div class="ops-control">
-                    <label for="date-preset" class="text-xs text-gray-500 mr-2">Rango</label>
+                    <label for="date-preset" class="text-xs text-gray-500 mr-2">Range</label>
                     <select id="date-preset" onchange="onDatePresetChange()" class="text-sm bg-transparent focus:outline-none">
-                        <option value="7d">7 dias</option>
-                        <option value="30d" selected>30 dias</option>
-                        <option value="90d">90 dias</option>
-                        <option value="365d">12 meses</option>
-                        <option value="all">Todo</option>
+                        <option value="7d">7 days</option>
+                        <option value="30d" selected>30 days</option>
+                        <option value="90d">90 days</option>
+                        <option value="365d">12 months</option>
+                        <option value="all">All</option>
                         <option value="custom">Custom</option>
                     </select>
                 </div>
                 <div class="ops-control">
-                    <label for="history-limit" class="text-xs text-gray-500 mr-2">Historial</label>
+                    <label for="history-limit" class="text-xs text-gray-500 mr-2">History</label>
                     <select id="history-limit" class="text-sm bg-transparent focus:outline-none">
                         <option value="50">50</option>
                         <option value="100" selected>100</option>
                         <option value="250">250</option>
                         <option value="500">500</option>
-                        <option value="all">Todo</option>
+                        <option value="all">All</option>
                     </select>
                 </div>
                 <div class="ops-control">
-                    <label for="start-date" class="text-xs text-gray-500 mr-2">Inicio</label>
+                    <label for="start-date" class="text-xs text-gray-500 mr-2">Start</label>
                     <input id="start-date" type="date" class="text-sm bg-transparent focus:outline-none" />
                 </div>
                 <div class="ops-control">
-                    <label for="end-date" class="text-xs text-gray-500 mr-2">Fin</label>
+                    <label for="end-date" class="text-xs text-gray-500 mr-2">End</label>
                     <input id="end-date" type="date" class="text-sm bg-transparent focus:outline-none" />
                 </div>
                 <div class="ops-control">
-                    <label for="attribution-model" class="text-xs text-gray-500 mr-2">Modelo</label>
+                    <label for="attribution-model" class="text-xs text-gray-500 mr-2">Model</label>
                     <select id="attribution-model" onchange="onAttributionModelChange()" class="text-sm bg-transparent focus:outline-none">
                         <option value="first_touch">First touch</option>
                         <option value="last_touch" selected>Last touch</option>
-                        <option value="linear">Lineal</option>
+                        <option value="linear">Linear</option>
                     </select>
                 </div>
                 <button onclick="fetchAnalytics()" class="ops-refresh-btn inline-flex items-center px-4 py-2 shadow-sm text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
-                    <i class="fas fa-sync-alt mr-2"></i> Actualizar
+                    <i class="fas fa-sync-alt mr-2"></i> Refresh
                 </button>
             </div>
         </div>
@@ -1235,7 +1235,7 @@
             <div class="dashboard-section-heading flex items-center justify-between mb-3">
                 <div>
                     <p class="panel-kicker">Core KPI</p>
-                    <h3 class="panel-title text-lg font-medium text-gray-900">Métricas clave</h3>
+                    <h3 class="panel-title text-lg font-medium text-gray-900">Key Metrics</h3>
                 </div>
                 <div class="flex items-center gap-2">
                     <button id="metric-carousel-prev" type="button" class="inline-flex items-center justify-center w-10 h-10 rounded-full border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">
@@ -1258,7 +1258,7 @@
                         </div>
                         <div class="ml-5 w-0 flex-1">
                             <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Ingresos Totales</dt>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Total Revenue</dt>
                                 <dd class="flex items-baseline">
                                     <div class="text-2xl font-semibold text-gray-900" id="total-revenue">$0.00</div>
                                 </dd>
@@ -1279,7 +1279,7 @@
                         </div>
                         <div class="ml-5 w-0 flex-1">
                             <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Pedidos Atribuidos</dt>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Attributed Orders</dt>
                                 <dd class="flex items-baseline">
                                     <div class="text-2xl font-semibold text-gray-900" id="total-orders">0</div>
                                 </dd>
@@ -1447,7 +1447,7 @@
                         </div>
                         <div class="ml-5 w-0 flex-1">
                             <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Órdenes sin atribución</dt>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Unattributed Orders</dt>
                                 <dd class="flex items-baseline">
                                     <div class="text-2xl font-semibold text-gray-900" id="unattributed-orders">0</div>
                                 </dd>
@@ -1468,7 +1468,7 @@
                         </div>
                         <div class="ml-5 w-0 flex-1">
                             <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Revenue sin atribuir</dt>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Unattributed Revenue</dt>
                                 <dd class="flex items-baseline">
                                     <div class="text-2xl font-semibold text-gray-900" id="unattributed-revenue">$0.00</div>
                                 </dd>
@@ -1488,11 +1488,11 @@
                 <div class="ops-panel live-feed-shell flex flex-col">
                     <div class="px-6 py-4 border-b border-gray-200 bg-gray-50 rounded-t-lg flex justify-between items-center">
                         <div>
-                            <p class="panel-kicker">Tiempo real</p>
+                            <p class="panel-kicker">Real time</p>
                             <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Live Feed</h3>
                         </div>
                         <span class="live-feed-badge inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium">
-                            En vivo
+                            Live
                         </span>
                     </div>
                     <div class="px-4 py-3 border-b border-gray-200 bg-gray-50" id="wp-online-card">
@@ -1500,12 +1500,12 @@
                             <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">WP Online</p>
                             <span id="wp-online-count" class="text-xs font-semibold text-indigo-600">0</span>
                         </div>
-                        <p id="wp-online-status" class="text-xs text-gray-500">Cargando estado de conexión...</p>
+                        <p id="wp-online-status" class="text-xs text-gray-500">Loading online status...</p>
                         <div id="wp-online-list" class="mt-2 space-y-2"></div>
                     </div>
                     <div class="flex-1 overflow-y-auto p-4 space-y-4" id="feed-container">
                         <div class="text-center text-gray-400 text-sm py-8" id="feed-placeholder">
-                            Esperando eventos...
+                            Waiting for events...
                         </div>
                     </div>
                 </div>
@@ -1517,9 +1517,9 @@
                         <div>
                             <p class="panel-kicker">Marketing Attribution</p>
                             <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Attribution Journey Center</h3>
-                            <p class="panel-subtitle text-sm mt-1">Ruta de conversión por sesión.</p>
+                            <p class="panel-subtitle text-sm mt-1">Conversion path by session.</p>
                             <div class="journey-channel-legend" id="journey-channel-legend" aria-label="Leyenda de canales">
-                                <button type="button" class="journey-chip journey-filter-channel is-active" data-channel="all"><i class="fa-solid fa-layer-group"></i>Todos</button>
+                                <button type="button" class="journey-chip journey-filter-channel is-active" data-channel="all"><i class="fa-solid fa-layer-group"></i>All</button>
                                 <button type="button" class="journey-chip journey-filter-channel is-meta" data-channel="meta"><i class="fa-brands fa-meta"></i>Meta</button>
                                 <button type="button" class="journey-chip journey-filter-channel is-google" data-channel="google"><i class="fa-brands fa-google"></i>Google</button>
                                 <button type="button" class="journey-chip journey-filter-channel is-tiktok" data-channel="tiktok"><i class="fa-brands fa-tiktok"></i>TikTok</button>
@@ -1529,11 +1529,11 @@
                     </div>
                     <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
                         <div class="session-visual-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Journey seleccionado</h4>
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Selected Journey</h4>
                             <div id="attribution-journey-focus" class="attribution-journey-focus space-y-4"></div>
                         </div>
                         <div class="session-pattern-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Journeys históricos de conversión</h4>
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Historical Conversion Journeys</h4>
                             <div id="attribution-journey-history" class="attribution-journey-history space-y-3"></div>
                         </div>
                     </div>
@@ -1549,7 +1549,7 @@
                         <p class="panel-kicker">Comercial</p>
                         <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Atribución por Canal</h3>
                     </div>
-                    <span id="attribution-model-badge" class="text-xs text-gray-500">Modelo: last touch</span>
+                    <span id="attribution-model-badge" class="text-xs text-gray-500">Model: last touch</span>
                 </div>
                 <div class="relative h-64">
                     <canvas id="attributionChart"></canvas>
@@ -1863,7 +1863,7 @@
             updatedAt: null,
             hasError: false,
         };
-        let currentStoreTypeLabel = 'Tienda';
+        let currentStoreTypeLabel = 'Store';
         let storeTypeSignals = {
             sawWordPressEndpoint: false,
             sawWordPressUsers: false,
@@ -1932,16 +1932,16 @@
             }
 
             const preset = document.getElementById('date-preset')?.value || '30d';
-            if (preset === '7d') label.textContent = 'Últimos 7 días';
-            else if (preset === '30d') label.textContent = 'Últimos 30 días';
-            else if (preset === '90d') label.textContent = 'Últimos 90 días';
-            else if (preset === '365d') label.textContent = 'Últimos 12 meses';
+            if (preset === '7d') label.textContent = 'Last 7 days';
+            else if (preset === '30d') label.textContent = 'Last 30 days';
+            else if (preset === '90d') label.textContent = 'Last 90 days';
+            else if (preset === '365d') label.textContent = 'Last 12 months';
             else if (preset === 'custom') {
                 const startValue = document.getElementById('start-date')?.value || '';
                 const endValue = document.getElementById('end-date')?.value || '';
-                label.textContent = startValue && endValue ? `${startValue} a ${endValue}` : 'Rango custom';
+                label.textContent = startValue && endValue ? `${startValue} to ${endValue}` : 'Custom range';
             } else {
-                label.textContent = 'Rango actual';
+                label.textContent = 'Current range';
             }
         }
 
@@ -2049,7 +2049,7 @@
             const palette = ['is-a', 'is-b', 'is-c', 'is-d'];
             listEl.innerHTML = users.map((user) => {
                 const colorClass = palette[Math.abs(hashString(user.id || user.customerId || user.customerName || 'x')) % palette.length];
-                const displayName = user.customerName || (user.customerId ? `Cliente #${user.customerId}` : 'Usuario sin nombre');
+                const displayName = user.customerName || (user.customerId ? `Customer #${user.customerId}` : 'Unnamed user');
                 const secondary = user.emailPreview || user.phonePreview || `ID: ${user.id}`;
                 const seenAt = user.lastSeenAt ? formatTimeMx(user.lastSeenAt) : '-';
                 const sessionText = Number(user.sessionCount || 0) > 0 ? `${user.sessionCount}s` : '0s';
@@ -2078,7 +2078,7 @@
                 button.addEventListener('click', () => {
                     const selectedUserKey = button.getAttribute('data-user-key') || '';
                     const selectedSessionId = button.getAttribute('data-session-id') || '';
-                    const selectedUserName = button.getAttribute('data-user-name') || 'Usuario';
+                    const selectedUserName = button.getAttribute('data-user-name') || 'User';
                     if (selectedUserKey) {
                         openUserExplorer(selectedUserKey, selectedUserName);
                         return;
@@ -2124,7 +2124,7 @@
 
         function mapStoreTypeLabel(rawType) {
             const value = String(rawType || '').trim().toLowerCase();
-            if (!value) return 'Tienda';
+            if (!value) return 'Store';
             if (value.includes('shopify') || value.includes('myshopify')) return 'Shopify';
             if (value.includes('woo') || value.includes('wordpress')) return 'WooCommerce';
             if (value.includes('magento')) return 'Magento';
@@ -2140,18 +2140,18 @@
 
         function resolveEffectiveStoreType(rawType, shopName = '') {
             const mapped = mapStoreTypeLabel(rawType);
-            if (mapped !== 'Custom' && mapped !== 'Tienda') return mapped;
+            if (mapped !== 'Custom' && mapped !== 'Store') return mapped;
 
             if (storeTypeSignals.sawWordPressEndpoint || storeTypeSignals.sawWordPressUsers) return 'WooCommerce';
             if (String(shopName || '').toLowerCase().includes('.myshopify.com')) return 'Shopify';
-            if (currentStoreTypeLabel && currentStoreTypeLabel !== 'Custom' && currentStoreTypeLabel !== 'Tienda') return currentStoreTypeLabel;
+            if (currentStoreTypeLabel && currentStoreTypeLabel !== 'Custom' && currentStoreTypeLabel !== 'Store') return currentStoreTypeLabel;
             return inferStoreTypeFromShopId(shopName);
         }
 
         function updateShopHeader(shopName, rawType) {
             const shopEl = document.getElementById('shop-name');
             const typeEl = document.getElementById('shop-type-badge');
-            if (shopEl) shopEl.textContent = shopName || 'Tienda desconocida';
+            if (shopEl) shopEl.textContent = shopName || 'Unknown store';
 
             if (rawType) currentStoreTypeLabel = resolveEffectiveStoreType(rawType, shopName || currentShopId || '');
             if (typeEl) typeEl.textContent = currentStoreTypeLabel;
@@ -2175,15 +2175,15 @@
             if (value.includes('meta') || value.includes('facebook') || value.includes('instagram')) return 'Meta';
             if (value.includes('google')) return 'Google';
             if (value.includes('tiktok')) return 'TikTok';
-            if (value.includes('organic')) return 'Orgánico';
+            if (value.includes('organic')) return 'Organic';
             return value.charAt(0).toUpperCase() + value.slice(1);
         }
 
         function humanReadableSessionLabel({ linkedUserLabel = '', sessionId = '' } = {}) {
-            const person = humanReadablePersonName(linkedUserLabel || '', 'Cliente');
-            if (linkedUserLabel) return `Sesión de ${person}`;
-            if (sessionId) return 'Sesión activa';
-            return 'Sesión';
+            const person = humanReadablePersonName(linkedUserLabel || '', 'Customer');
+            if (linkedUserLabel) return `Session for ${person}`;
+            if (sessionId) return 'Active session';
+            return 'Session';
         }
 
         function normalizeAttributionChannel(channel) {
@@ -2430,47 +2430,47 @@
                     tone: resolveChannelTone(channel, platform),
                     detailTone: resolveChannelTone(channel, platform),
                     detail: [
-                        { label: 'Canal', value: channel || '-' },
-                        { label: 'Campaña', value: journey.attribution?.campaign || session.utmCampaign || '-' },
+                        { label: 'Channel', value: channel || '-' },
+                        { label: 'Campaign', value: journey.attribution?.campaign || session.utmCampaign || '-' },
                         { label: 'Click ID', value: journey.attribution?.clickId ? String(journey.attribution.clickId).slice(0, 18) : '-' },
-                        { label: 'Confianza', value: `${confidence}%` },
+                        { label: 'Confidence', value: `${confidence}%` },
                     ],
                 },
                 {
                     icon: 'fa-solid fa-circle-plus',
                     title: 'Lead',
-                    sub: signals.lead > 0 ? `${signals.lead} eventos` : 'sin señal',
+                    sub: signals.lead > 0 ? `${signals.lead} events` : 'no signal',
                     tone: signals.lead > 0 ? 'is-meta' : '',
                     detailTone: signals.lead > 0 ? 'is-meta' : '',
                     detail: [
                         { label: 'Lead Events', value: String(signals.lead || 0) },
                         { label: 'Landing', value: normalizeJourneyPath(session.landingPageUrl) },
-                        { label: 'Primer evento', value: events[0]?.eventName || '-' },
-                        { label: 'Último evento', value: events[events.length - 1]?.eventName || '-' },
+                        { label: 'First event', value: events[0]?.eventName || '-' },
+                        { label: 'Last event', value: events[events.length - 1]?.eventName || '-' },
                     ],
                 },
                 {
                     icon: 'fa-solid fa-calendar-check',
                     title: 'Scheduled Call',
-                    sub: signals.call > 0 ? `${signals.call} señales` : 'no detectada',
+                    sub: signals.call > 0 ? `${signals.call} signals` : 'not detected',
                     tone: signals.call > 0 ? 'is-tiktok' : '',
                     detailTone: signals.call > 0 ? 'is-tiktok' : '',
                     detail: [
-                        { label: 'Señales Call', value: String(signals.call || 0) },
+                        { label: 'Call signals', value: String(signals.call || 0) },
                         { label: 'Session ID', value: String(session.sessionId || session.id || '-').slice(0, 18) },
-                        { label: 'Inicio', value: formatDateTimeMx(session.startedAt) },
-                        { label: 'Duración', value: session.durationSeconds ? `${Math.round(Number(session.durationSeconds))}s` : '-' },
+                        { label: 'Start', value: formatDateTimeMx(session.startedAt) },
+                        { label: 'Duration', value: session.durationSeconds ? `${Math.round(Number(session.durationSeconds))}s` : '-' },
                     ],
                 },
                 {
                     icon: 'fa-solid fa-circle-check',
                     title: 'Purchase',
-                    sub: metrics.purchase > 0 || orders.length > 0 ? `${orders.length || metrics.purchase} compra(s)` : 'sin compra',
+                    sub: metrics.purchase > 0 || orders.length > 0 ? `${orders.length || metrics.purchase} purchase(s)` : 'no purchase',
                     tone: metrics.purchase > 0 || orders.length > 0 ? 'is-organic' : '',
                     detailTone: metrics.purchase > 0 || orders.length > 0 ? 'is-organic' : '',
                     detail: [
                         { label: 'Revenue', value: formatCurrency(metrics.totalRevenue || 0) },
-                        { label: 'Órdenes', value: String(orders.length || 0) },
+                        { label: 'Orders', value: String(orders.length || 0) },
                         { label: 'ATC', value: String(metrics.addToCart || 0) },
                         { label: 'Checkout', value: String(metrics.beginCheckout || 0) },
                     ],
@@ -2489,49 +2489,49 @@
                     tone: resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform),
                     detailTone: resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform),
                     detail: [
-                        { label: 'Canal', value: purchase.attributedChannel || '-' },
-                        { label: 'Campaña', value: purchase.attributedCampaign || '-' },
+                        { label: 'Channel', value: purchase.attributedChannel || '-' },
+                        { label: 'Campaign', value: purchase.attributedCampaign || '-' },
                         { label: 'Click ID', value: purchase.attributedClickId ? String(purchase.attributedClickId).slice(0, 18) : '-' },
-                        { label: 'Confianza', value: `${confidence}%` },
+                        { label: 'Confidence', value: `${confidence}%` },
                     ],
                 },
                 {
                     icon: 'fa-solid fa-circle-plus',
                     title: 'Lead',
-                    sub: 'señal histórica',
+                    sub: 'historical signal',
                     tone: 'is-meta',
                     detailTone: 'is-meta',
                     detail: [
-                        { label: 'Pedido', value: purchase.orderNumber || purchase.orderId || '-' },
-                        { label: 'Cliente', value: purchase.customerName || purchase.email || '-' },
-                        { label: 'Fecha', value: formatRecentPurchaseDate(purchase) },
-                        { label: 'Fuente', value: purchase.attributedSource || '-' },
+                        { label: 'Order', value: purchase.orderNumber || purchase.orderId || '-' },
+                        { label: 'Customer', value: purchase.customerName || purchase.email || '-' },
+                        { label: 'Date', value: formatRecentPurchaseDate(purchase) },
+                        { label: 'Source', value: purchase.attributedSource || '-' },
                     ],
                 },
                 {
                     icon: 'fa-solid fa-calendar-check',
                     title: 'Scheduled Call',
-                    sub: 'n/a en histórico',
+                    sub: 'n/a in historical',
                     tone: '',
                     detailTone: '',
                     detail: [
-                        { label: 'Estado', value: 'No disponible en compra histórica' },
+                        { label: 'Status', value: 'Not available on historical purchase' },
                         { label: 'Split', value: Array.isArray(purchase.attributionSplits) ? `${purchase.attributionSplits.length} touchpoints` : '-' },
-                        { label: 'Plataforma', value: purchase.attributedPlatform || '-' },
-                        { label: 'Canal final', value: purchase.attributedChannel || '-' },
+                        { label: 'Platform', value: purchase.attributedPlatform || '-' },
+                        { label: 'Final channel', value: purchase.attributedChannel || '-' },
                     ],
                 },
                 {
                     icon: 'fa-solid fa-circle-check',
                     title: 'Purchase',
-                    sub: hasPurchase ? formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN') : 'sin revenue',
+                    sub: hasPurchase ? formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN') : 'no revenue',
                     tone: hasPurchase ? 'is-organic' : '',
                     detailTone: hasPurchase ? 'is-organic' : '',
                     detail: [
                         { label: 'Revenue', value: formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN') },
-                        { label: 'Orden', value: purchase.orderNumber || purchase.orderId || '-' },
+                        { label: 'Order', value: purchase.orderNumber || purchase.orderId || '-' },
                         { label: 'Score', value: String(scoreJourneySignal(purchase)) },
-                        { label: 'Confianza', value: `${confidence}%` },
+                        { label: 'Confidence', value: `${confidence}%` },
                     ],
                 },
             ];
@@ -2540,7 +2540,7 @@
         function renderJourneyNodeDetail(step) {
             const items = Array.isArray(step?.detail) ? step.detail.slice(0, 4) : [];
             if (!items.length) {
-                return '<p>Sin detalle disponible.</p>';
+                return '<p>No detail available.</p>';
             }
 
             return items.map((item) => `<p><strong>${escapeHtml(item.label)}:</strong> ${escapeHtml(item.value || '-')}</p>`).join('');
@@ -2548,7 +2548,7 @@
 
         function renderMinimalJourneyRail(steps = []) {
             if (!steps.length) {
-                return '<p class="text-sm text-gray-500">Sin señales suficientes para dibujar el journey todavía.</p>';
+                return '<p class="text-sm text-gray-500">Not enough signals to draw the journey yet.</p>';
             }
 
             return `
@@ -2642,12 +2642,12 @@
                 const currentJourney = currentData.journey || {};
                 const currentSession = currentData.session || {};
                 const peers = Array.isArray(currentData.peers) ? currentData.peers : [];
-                const currentPerson = humanReadablePersonName(currentData?.identifiedUser?.customerDisplayName || currentData?.identifiedUser?.emailPreview || 'Cliente');
+                const currentPerson = humanReadablePersonName(currentData?.identifiedUser?.customerDisplayName || currentData?.identifiedUser?.emailPreview || 'Customer');
 
                 focusEl.innerHTML = `
                     <div class="journey-compact-card space-y-3">
                         <div class="flex items-center justify-between gap-2 flex-wrap">
-                            <span class="journey-chip"><i class="fa-solid fa-route"></i>activa</span>
+                            <span class="journey-chip"><i class="fa-solid fa-route"></i>active</span>
                             <span class="text-xs text-gray-500">${formatDateTimeMx(currentSession.startedAt)}</span>
                         </div>
                         ${renderMinimalJourneyRail(steps)}
@@ -2661,17 +2661,17 @@
                 const historicalRows = peers.slice(0, 10).map((peer, index) => `
                     <button type="button" class="journey-compact-card w-full text-left hover:opacity-95" onclick="openSessionDetail('${peer.sessionId}')">
                         <div class="flex items-center justify-between gap-2">
-                            <p class="text-sm font-semibold text-gray-900">${escapeHtml(`Sesión ${index + 1} de ${currentPerson}`)}</p>
+                            <p class="text-sm font-semibold text-gray-900">${escapeHtml(`Session ${index + 1} for ${currentPerson}`)}</p>
                             <span class="text-xs text-gray-500">${formatDateTimeMx(peer.startedAt)}</span>
                         </div>
                         <div class="mt-2 flex items-center gap-2 flex-wrap">
-                            <span class="journey-chip"><i class="fa-solid fa-tags"></i>${escapeHtml(peer.utmCampaign || 'sin campaña')}</span>
-                            <span class="journey-chip"><i class="fa-solid fa-store"></i>${escapeHtml(peer.landingPageUrl ? new URL(peer.landingPageUrl, window.location.origin).pathname : 'sin landing')}</span>
+                            <span class="journey-chip"><i class="fa-solid fa-tags"></i>${escapeHtml(peer.utmCampaign || 'no campaign')}</span>
+                            <span class="journey-chip"><i class="fa-solid fa-store"></i>${escapeHtml(peer.landingPageUrl ? new URL(peer.landingPageUrl, window.location.origin).pathname : 'no landing')}</span>
                         </div>
                     </button>
                 `).join('');
 
-                historyEl.innerHTML = historicalRows || '<p class="text-sm text-gray-500">No hay sesiones históricas ligadas todavía para este usuario.</p>';
+                historyEl.innerHTML = historicalRows || '<p class="text-sm text-gray-500">No linked historical sessions yet for this user.</p>';
                 return;
             }
 
@@ -2700,8 +2700,8 @@
                 : byChannel.filter((row) => row.customerKey === attributionJourneyState.customer);
 
             if (!filteredJourneys.length) {
-                focusEl.innerHTML = '<p class="text-sm text-gray-500">Selecciona una sesión para ver su journey atribuido. Mientras tanto, aparecerán aquí las conversiones históricas con mejor señal.</p>';
-                historyEl.innerHTML = '<p class="text-sm text-gray-500">No hay conversiones para este filtro.</p>';
+                focusEl.innerHTML = '<p class="text-sm text-gray-500">Select a session to view its attributed journey. Historical conversions with the best signal will appear here.</p>';
+                historyEl.innerHTML = '<p class="text-sm text-gray-500">No conversions found for this filter.</p>';
                 return;
             }
 
@@ -2723,19 +2723,19 @@
                 <div class="journey-customer-bubbles">
                     ${customerOptions.map((customerKey) => `
                         <button type="button" class="journey-customer-bubble ${attributionJourneyState.customer === customerKey ? 'is-active' : ''}" data-customer="${escapeHtmlAttr(customerKey)}">
-                            ${escapeHtml(customerKey === 'all' ? 'Todos' : customerKey)}
+                            ${escapeHtml(customerKey === 'all' ? 'All' : customerKey)}
                         </button>
                     `).join('')}
                 </div>
             `;
 
             historyEl.innerHTML = `${customerBubbles}${filteredJourneys.slice(0, 16).map(({ purchase }, index) => {
-                const person = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || 'Cliente');
+                const person = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || 'Customer');
                 const channel = humanReadableChannel(purchase.attributedChannel);
                 return `
                 <div class="journey-compact-card">
                     <div class="flex items-center justify-between gap-2 flex-wrap">
-                        <p class="text-sm font-semibold text-gray-900">${escapeHtml(`${channel} ${index + 1} de ${person}`)}</p>
+                        <p class="text-sm font-semibold text-gray-900">${escapeHtml(`${channel} ${index + 1} for ${person}`)}</p>
                         <span class="text-xs text-gray-500">${formatRecentPurchaseDate(purchase)}</span>
                     </div>
                     <div class="mt-2 flex items-center gap-2 flex-wrap">
@@ -2768,7 +2768,7 @@
                     };
                     renderWordPressUsersOnlineState({
                         countText: '0',
-                        statusText: 'No hay usuarios conectados',
+                        statusText: 'No users connected',
                         statusClass: 'text-gray-500',
                         users: [],
                     });
@@ -2801,7 +2801,7 @@
                 };
                 renderWordPressUsersOnlineState({
                     countText: '!',
-                    statusText: 'No se pudo consultar usuarios conectados. Revisa /collect o la API de analytics.',
+                    statusText: 'Could not fetch online users. Check /collect or the analytics API.',
                     statusClass: 'text-rose-600',
                     users: [],
                 });
@@ -3824,7 +3824,7 @@
             const modelBadge = document.getElementById('attribution-model-badge');
             if (modelBadge) {
                 const model = summary.attributionModel || currentAttributionModel || 'last_touch';
-                modelBadge.textContent = `Modelo: ${model.replace('_', ' ')}`;
+                modelBadge.textContent = `Model: ${model.replace('_', ' ')}`;
             }
 
             document.getElementById('ph-events-received').textContent = (pixelHealth.eventsReceived || 0).toLocaleString();
@@ -4141,48 +4141,48 @@
         // --- LIVE FEED (SSE) ---
         function translateEventNameSimple(rawName) {
             const key = String(rawName || '').trim().toLowerCase();
-            if (key === 'page_view') return 'Vista de página';
-            if (key === 'view_item') return 'Vio producto';
-            if (key === 'add_to_cart') return 'Agregó al carrito';
-            if (key === 'begin_checkout') return 'Inició checkout';
-            if (key === 'purchase') return 'Compra';
-            if (key === 'user_logged_in' || key === 'user_login' || key === 'login') return 'Inicio de sesión';
-            if (key === 'connected') return 'Usuario conectado';
-            return String(rawName || 'Evento');
+            if (key === 'page_view') return 'Page view';
+            if (key === 'view_item') return 'Viewed product';
+            if (key === 'add_to_cart') return 'Added to cart';
+            if (key === 'begin_checkout') return 'Started checkout';
+            if (key === 'purchase') return 'Purchase';
+            if (key === 'user_logged_in' || key === 'user_login' || key === 'login') return 'User login';
+            if (key === 'connected') return 'User connected';
+            return String(rawName || 'Event');
         }
 
         function translateRawSourceSimple(value) {
             const key = String(value || '').trim().toLowerCase();
-            if (!key) return 'origen no detectado';
+            if (!key) return 'source not detected';
             if (key === 'pixel') return 'pixel';
             if (key === 'webhook') return 'webhook';
-            if (key === 'server') return 'servidor';
+            if (key === 'server') return 'server';
             return key;
         }
 
         function translateMatchTypeSimple(value) {
             const key = String(value || '').trim().toLowerCase();
-            if (!key) return 'sin tipo';
-            if (key === 'deterministic') return 'coincidencia exacta';
-            if (key === 'probabilistic') return 'coincidencia probable';
-            if (key === 'hybrid') return 'coincidencia mixta';
+            if (!key) return 'no type';
+            if (key === 'deterministic') return 'exact match';
+            if (key === 'probabilistic') return 'probable match';
+            if (key === 'hybrid') return 'hybrid match';
             return key;
         }
 
         function formatConfidenceSimple(value) {
             const n = Number(value);
-            if (!Number.isFinite(n)) return 'sin dato';
+            if (!Number.isFinite(n)) return 'no data';
             const pct = Math.max(0, Math.min(100, Math.round(n * 100)));
-            if (pct >= 85) return `${pct}% (alta)`;
-            if (pct >= 60) return `${pct}% (media)`;
-            return `${pct}% (baja)`;
+            if (pct >= 85) return `${pct}% (high)`;
+            if (pct >= 60) return `${pct}% (medium)`;
+            return `${pct}% (low)`;
         }
 
         function buildSignalTextSimple(payload = {}) {
             const source = translateRawSourceSimple(payload.rawSource);
             const match = translateMatchTypeSimple(payload.matchType);
             const confidence = formatConfidenceSimple(payload.confidenceScore);
-            return `${source} | ${match} | confianza ${confidence}`;
+            return `${source} | ${match} | confidence ${confidence}`;
         }
 
         function resolveLiveFeedUserLabel({ sessionId = null, userKey = null } = {}) {
@@ -4198,7 +4198,7 @@
             const liveFeedStatus = document.getElementById('live-feed-status');
 
             evtSource.onopen = function() {
-                if (liveFeedStatus) liveFeedStatus.textContent = 'Live Feed Activo';
+                if (liveFeedStatus) liveFeedStatus.textContent = 'Live Feed Active';
             };
 
             evtSource.onmessage = function(event) {
@@ -4227,15 +4227,15 @@
                 if (data.type === 'COLLECT') {
                     icon = 'fa-mouse-pointer';
                     color = 'text-blue-500';
-                    title = translateEventNameSimple(data.payload.eventName || data.payload.event_name || 'Evento');
+                    title = translateEventNameSimple(data.payload.eventName || data.payload.event_name || 'Event');
                     detail = data.payload.pageUrl ? new URL(data.payload.pageUrl).pathname : '';
                 } else if (data.type === 'WEBHOOK') {
                     icon = 'fa-server';
                     color = 'text-green-600';
-                    title = 'Orden Shopify';
-                    detail = data.payload?.orderId ? `Orden ${data.payload.orderId}` : 'Nueva orden procesada';
+                    title = 'Shopify Order';
+                    detail = data.payload?.orderId ? `Order ${data.payload.orderId}` : 'New order processed';
                 } else {
-                    title = translateEventNameSimple(data.type || 'Evento');
+                    title = translateEventNameSimple(data.type || 'Event');
                 }
 
                 el.classList.add('cursor-pointer', 'hover:bg-gray-100');
@@ -4266,7 +4266,7 @@
                         const feedSessionId = userButton.getAttribute('data-session-id') || '';
                         const feedUserName = userButton.getAttribute('data-user-name') || '';
                         if (feedUserKey) {
-                            openUserExplorer(feedUserKey, feedUserName || linkedUserLabel || 'Usuario');
+                            openUserExplorer(feedUserKey, feedUserName || linkedUserLabel || 'User');
                             return;
                         }
                         if (feedSessionId) openSessionDetail(feedSessionId);
@@ -4294,7 +4294,7 @@
 
             evtSource.onerror = function(err) {
                 console.error("EventSource failed:", err);
-                if (liveFeedStatus) liveFeedStatus.textContent = 'Live Feed reconectando...';
+                if (liveFeedStatus) liveFeedStatus.textContent = 'Live Feed reconnecting...';
             };
         }
 
