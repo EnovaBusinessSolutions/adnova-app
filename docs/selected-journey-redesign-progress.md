@@ -40,12 +40,15 @@
 - Added sticky mini-header inside the timeline:
   - Shows that the timeline is scrollable.
   - Displays current visible event count for quick orientation.
+- Added a live timeline mode switch for Selected Journey (session mode):
+  - `Condensed`: executive-friendly view with low-signal event compression.
+  - `Full`: raw event sequence for detailed analysis.
 
 ## Pending / Next checks
 - Validate final visual density on real data with many events.
 - Confirm whether dwell time heuristic matches business expectations.
 - Optional: tune condensation thresholds by store size (small vs high-traffic stores).
-- Optional: add toggle to switch between "Condensed" and "Full" timeline.
+- Optional: persist selected timeline mode per user/session.
 
 ## Notes
 - This file tracks implementation steps and remaining polish items for the Selected Journey redesign.

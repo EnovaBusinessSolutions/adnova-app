@@ -892,6 +892,35 @@
             backdrop-filter: blur(4px);
         }
 
+        .journey-mode-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.24rem;
+            border: 1px solid rgba(202, 138, 229, 0.2);
+            border-radius: 999px;
+            padding: 0.18rem;
+            background: rgba(225, 216, 243, 0.06);
+        }
+
+        .journey-mode-btn {
+            border: 0;
+            border-radius: 999px;
+            padding: 0.2rem 0.48rem;
+            font-size: 0.62rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--dash-soft);
+            background: transparent;
+            cursor: pointer;
+        }
+
+        .journey-mode-btn.is-active {
+            color: var(--dash-text);
+            background: rgba(202, 138, 229, 0.24);
+            border: 1px solid rgba(202, 138, 229, 0.35);
+        }
+
         .journey-timeline::-webkit-scrollbar {
             width: 8px;
         }
@@ -2001,6 +2030,7 @@
             channel: 'all',
             customer: 'all',
         };
+        let selectedJourneyTimelineMode = 'condensed';
         let sessionExplorerState = {
             mode: 'overview',
             overview: null,
@@ -2611,10 +2641,11 @@
             return { events: withSummary, dropped };
         }
 
-        function buildSessionTimelineEvents(sessionData = {}) {
+        function buildSessionTimelineEvents(sessionData = {}, options = {}) {
             const session = sessionData.session || {};
             const events = Array.isArray(sessionData.events) ? sessionData.events : [];
             if (!events.length) return [];
+            const mode = String(options.mode || 'condensed').toLowerCase();
 
             const sorted = events
                 .map((event) => ({
@@ -2624,8 +2655,7 @@
                 .filter((event) => Number.isFinite(event._ts))
                 .sort((a, b) => a._ts - b._ts);
 
-            const condensed = condenseSessionEvents(sorted);
-            const visible = condensed.events;
+            const visible = mode === 'full' ? sorted : condenseSessionEvents(sorted).events;
 
             return visible.map((event, index) => {
                 if (event.eventName === '__condensed__') {
@@ -2730,7 +2760,28 @@
             `;
         }
 
-        function buildMinimalJourneyNodesFromSessionData(sessionData = {}) {
+        function renderTimelineModeToggle(mode = 'condensed') {
+            return `
+                <div class="journey-mode-toggle" id="journey-mode-toggle">
+                    <button type="button" class="journey-mode-btn ${mode === 'condensed' ? 'is-active' : ''}" data-journey-mode="condensed">Condensed</button>
+                    <button type="button" class="journey-mode-btn ${mode === 'full' ? 'is-active' : ''}" data-journey-mode="full">Full</button>
+                </div>
+            `;
+        }
+
+        function wireTimelineModeToggle(container) {
+            if (!container) return;
+            container.querySelectorAll('[data-journey-mode]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    const mode = String(button.getAttribute('data-journey-mode') || 'condensed').toLowerCase();
+                    if (mode !== 'condensed' && mode !== 'full') return;
+                    selectedJourneyTimelineMode = mode;
+                    renderAttributionJourneyPanel();
+                });
+            });
+        }
+
+        function buildMinimalJourneyNodesFromSessionData(sessionData = {}, timelineMode = 'condensed') {
             const journey = sessionData.journey || {};
             const session = sessionData.session || {};
             const metrics = sessionData.metrics || {};
@@ -2743,7 +2794,7 @@
             const userName = humanReadablePersonName(sessionData?.identifiedUser?.customerDisplayName || sessionData?.identifiedUser?.emailPreview || '', 'Customer');
             const landing = normalizeJourneyPath(session.landingPageUrl || journey.entryPage || '');
             const sourceAd = journey.attribution?.campaign || session.utmCampaign || 'No campaign';
-            const timelineEvents = buildSessionTimelineEvents(sessionData);
+            const timelineEvents = buildSessionTimelineEvents(sessionData, { mode: timelineMode });
 
             return {
                 summary: {
@@ -2845,7 +2896,7 @@
 
             const currentData = sessionExplorerState.currentData;
             if (sessionExplorerState.mode === 'session' && currentData) {
-                const journeyData = buildMinimalJourneyNodesFromSessionData(currentData);
+                const journeyData = buildMinimalJourneyNodesFromSessionData(currentData, selectedJourneyTimelineMode);
                 const currentJourney = currentData.journey || {};
                 const currentSession = currentData.session || {};
                 const peers = Array.isArray(currentData.peers) ? currentData.peers : [];
@@ -2864,6 +2915,7 @@
                             <span class="journey-chip"><i class="fa-solid fa-door-open"></i>${escapeHtml(journeyData.summary?.landing || '-')}</span>
                             <span class="journey-chip"><i class="fa-solid fa-circle-plus"></i>Leads ${Number(journeyData.summary?.leads || 0)}</span>
                         </div>
+                        ${renderTimelineModeToggle(selectedJourneyTimelineMode)}
                         ${renderJourneyHeadlineBubbles(journeyData.summary, journeyData.purchaseBubble, journeyData.adTone)}
                         ${renderJourneyVerticalTimeline(journeyData.timelineEvents)}
                         <div class="flex items-center gap-2 flex-wrap">
@@ -2871,6 +2923,7 @@
                         </div>
                     </div>
                 `;
+                wireTimelineModeToggle(focusEl);
 
                 const historicalRows = peers.slice(0, 10).map((peer, index) => `
                     <button type="button" class="journey-compact-card w-full text-left hover:opacity-95" onclick="openSessionDetail('${peer.sessionId}')">
