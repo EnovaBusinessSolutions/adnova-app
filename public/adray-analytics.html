@@ -2916,7 +2916,6 @@
                             <span class="journey-chip"><i class="fa-solid fa-circle-plus"></i>Leads ${Number(journeyData.summary?.leads || 0)}</span>
                         </div>
                         ${renderTimelineModeToggle(selectedJourneyTimelineMode)}
-                        ${renderJourneyHeadlineBubbles(journeyData.summary, journeyData.purchaseBubble, journeyData.adTone)}
                         ${renderJourneyVerticalTimeline(journeyData.timelineEvents)}
                         <div class="flex items-center gap-2 flex-wrap">
                             <span class="journey-chip ${resolveChannelTone(currentJourney.attribution?.channel, currentJourney.attribution?.platform)}"><i class="fa-solid fa-bullseye"></i>${escapeHtml(currentJourney.attribution?.channel || 'unattributed')}</span>
@@ -2978,7 +2977,6 @@
             focusEl.innerHTML = `
                 <div class="journey-compact-card space-y-3">
                     <div class="flex items-center justify-between gap-2 flex-wrap">
-                            <span class="journey-chip"><i class="fa-solid fa-star"></i>top</span>
                         <span class="text-xs text-gray-500">${formatRecentPurchaseDate(top)}</span>
                     </div>
                     <div class="journey-meta-grid">
@@ -2987,7 +2985,6 @@
                         <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(topJourneyData.summary?.sourceAd || 'No campaign')}</span>
                         <span class="journey-chip"><i class="fa-solid fa-door-open"></i>${escapeHtml(topJourneyData.summary?.landing || '-')}</span>
                     </div>
-                    ${renderJourneyHeadlineBubbles(topJourneyData.summary, topJourneyData.purchaseBubble, topJourneyData.adTone)}
                     ${renderJourneyVerticalTimeline(topJourneyData.timelineEvents)}
                 </div>
             `;
