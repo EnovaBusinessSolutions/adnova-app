@@ -527,6 +527,19 @@
             background: rgba(225, 216, 243, 0.05) !important;
         }
 
+        #feed-container .feed-item .feed-extra {
+            max-height: 0;
+            opacity: 0;
+            overflow: hidden;
+            transition: max-height 180ms ease, opacity 180ms ease;
+        }
+
+        #feed-container .feed-item:hover .feed-extra,
+        #feed-container .feed-item:focus-within .feed-extra {
+            max-height: 7rem;
+            opacity: 1;
+        }
+
         .live-feed-shell {
             height: auto !important;
             max-height: none !important;
@@ -615,6 +628,20 @@
             color: #fef3c7;
             font-size: 0.72rem;
             font-weight: 600;
+        }
+
+        .wp-user-pill .wp-user-extra {
+            max-height: 0;
+            opacity: 0;
+            overflow: hidden;
+            transition: max-height 180ms ease, opacity 180ms ease;
+        }
+
+        .wp-user-pill:hover .wp-user-extra,
+        .wp-user-pill:focus-within .wp-user-extra {
+            max-height: 3.8rem;
+            opacity: 1;
+            margin-top: 0.18rem;
         }
 
         .wp-user-pill.is-a {
@@ -1426,7 +1453,7 @@
                     </div>
                     <div class="px-4 py-3 border-b border-gray-200 bg-gray-50" id="wp-online-card">
                         <div class="flex items-center justify-between gap-2 mb-2">
-                            <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Usuarios WordPress conectados ahora</p>
+                            <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">WP Online</p>
                             <span id="wp-online-count" class="text-xs font-semibold text-indigo-600">0</span>
                         </div>
                         <p id="wp-online-status" class="text-xs text-gray-500">Cargando estado de conexión...</p>
@@ -1446,7 +1473,7 @@
                         <div>
                             <p class="panel-kicker">Marketing Attribution</p>
                             <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Attribution Journey Center</h3>
-                            <p class="panel-subtitle text-sm mt-1">Visualiza cómo llegó cada conversión: clic, fuente, campaña y secuencia por sesión.</p>
+                            <p class="panel-subtitle text-sm mt-1">Ruta de conversión por sesión.</p>
                             <div class="journey-channel-legend" aria-label="Leyenda de canales">
                                 <span class="journey-chip is-meta"><i class="fa-brands fa-meta"></i>Meta</span>
                                 <span class="journey-chip is-google"><i class="fa-brands fa-google"></i>Google</span>
@@ -1969,7 +1996,7 @@
                 const displayName = user.customerName || (user.customerId ? `Cliente #${user.customerId}` : 'Usuario sin nombre');
                 const secondary = user.emailPreview || user.phonePreview || `ID: ${user.id}`;
                 const seenAt = user.lastSeenAt ? formatTimeMx(user.lastSeenAt) : '-';
-                const sessionText = Number(user.sessionCount || 0) > 0 ? `${user.sessionCount} sesión(es)` : 'Sin sesión ligada';
+                const sessionText = Number(user.sessionCount || 0) > 0 ? `${user.sessionCount}s` : '0s';
                 const userKey = resolveUserKeyFromOnlineUser(user);
                 const sessionId = resolvePrimarySessionIdFromOnlineUser(user);
 
@@ -1983,8 +2010,10 @@
                         data-user-name="${escapeHtmlAttr(displayName)}"
                     >
                         <p class="wp-user-name truncate">${displayName}</p>
-                        <p class="wp-user-meta truncate">${secondary}</p>
-                        <p class="wp-user-session mt-1">${sessionText} · Última actividad ${seenAt}</p>
+                        <div class="wp-user-extra">
+                            <p class="wp-user-meta truncate">${secondary}</p>
+                            <p class="wp-user-session mt-1">${sessionText} · ${seenAt}</p>
+                        </div>
                     </button>
                 `;
             }).join('');
@@ -2436,14 +2465,12 @@
                 focusEl.innerHTML = `
                     <div class="journey-compact-card space-y-3">
                         <div class="flex items-center justify-between gap-2 flex-wrap">
-                            <span class="journey-chip"><i class="fa-solid fa-route"></i>sesión activa</span>
+                            <span class="journey-chip"><i class="fa-solid fa-route"></i>activa</span>
                             <span class="text-xs text-gray-500">${formatDateTimeMx(currentSession.startedAt)}</span>
                         </div>
                         ${renderMinimalJourneyRail(steps)}
                         <div class="flex items-center gap-2 flex-wrap">
                             <span class="journey-chip ${resolveChannelTone(currentJourney.attribution?.channel, currentJourney.attribution?.platform)}"><i class="fa-solid fa-bullseye"></i>${escapeHtml(currentJourney.attribution?.channel || 'unattributed')}</span>
-                            <span class="journey-chip"><i class="fa-solid fa-signal"></i>conf ${Math.round(Number(currentJourney.attribution?.confidence || 0) * 100)}%</span>
-                            <span class="journey-chip"><i class="fa-solid fa-cash-register"></i>ordenes ${(Array.isArray(currentData.orders) ? currentData.orders.length : 0)}</span>
                         </div>
                     </div>
                 `;
@@ -2487,14 +2514,10 @@
             focusEl.innerHTML = `
                 <div class="journey-compact-card space-y-3">
                     <div class="flex items-center justify-between gap-2 flex-wrap">
-                        <span class="journey-chip"><i class="fa-solid fa-star"></i>mejor señal histórica</span>
+                            <span class="journey-chip"><i class="fa-solid fa-star"></i>top</span>
                         <span class="text-xs text-gray-500">${formatRecentPurchaseDate(top)}</span>
                     </div>
                     ${renderMinimalJourneyRail(topSteps)}
-                    <div class="flex items-center gap-2 flex-wrap">
-                        <span class="journey-chip"><i class="fa-solid fa-gauge"></i>score ${scoreJourneySignal(top)}</span>
-                        <span class="journey-chip"><i class="fa-solid fa-percent"></i>conf ${Math.round(Number(top.attributionConfidence || 0) * 100)}%</span>
-                    </div>
                 </div>
             `;
             wireJourneyRailInteractions(focusEl, topSteps);
@@ -2507,9 +2530,7 @@
                     </div>
                     <div class="mt-2 flex items-center gap-2 flex-wrap">
                         <span class="journey-chip ${resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform)}"><i class="${resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform)}"></i>${escapeHtml(purchase.attributedChannel || 'unattributed')}</span>
-                        <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(purchase.attributedCampaign || 'sin campaña')}</span>
                         <span class="journey-chip"><i class="fa-solid fa-sack-dollar"></i>${formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN')}</span>
-                        <span class="journey-chip"><i class="fa-solid fa-gauge-high"></i>${score}</span>
                     </div>
                 </div>
             `).join('');
@@ -3971,7 +3992,7 @@
                 if (data.type === 'PING') return;
 
                 const el = document.createElement('div');
-                el.className = 'bg-gray-50 p-3 rounded border-l-4 feed-item-enter border-indigo-500 shadow-sm text-sm';
+                el.className = 'feed-item bg-gray-50 p-3 rounded border-l-4 feed-item-enter border-indigo-500 shadow-sm text-sm';
                 
                 let icon = 'fa-info-circle';
                 let color = 'text-indigo-600';
@@ -4006,11 +4027,13 @@
                         </div>
                         <div class="ml-3 w-0 flex-1">
                             <p class="text-sm font-medium text-gray-900">${title}</p>
-                            <p class="text-xs text-gray-500 truncate">${detail}</p>
-                            <p class="text-[11px] text-indigo-500 mt-1">${buildSignalTextSimple(data.payload || {})}</p>
-                            <p class="text-[11px] text-indigo-600 mt-1">${sessionId ? `Sesion: ${sessionId}` : 'Sin sessionId'}</p>
-                            ${linkedUserLabel ? `<p class="text-[11px] text-emerald-600 mt-1">Usuario: <button type="button" class="live-feed-user-link underline decoration-dotted cursor-pointer" data-user-key="${resolvedUserKey.replace(/"/g, '&quot;')}" data-session-id="${resolvedSessionId.replace(/"/g, '&quot;')}" data-user-name="${linkedUserLabel.replace(/"/g, '&quot;')}">${linkedUserLabel}</button></p>` : ''}
-                            <p class="text-[10px] text-gray-400 mt-1">${formatTimeMx()}</p>
+                            <p class="text-xs text-gray-500 truncate">${detail || '-'}</p>
+                            <div class="feed-extra mt-1">
+                                <p class="text-[11px] text-indigo-500">${buildSignalTextSimple(data.payload || {})}</p>
+                                <p class="text-[11px] text-indigo-600">${sessionId ? `s:${sessionId}` : 's:-'}</p>
+                                ${linkedUserLabel ? `<p class="text-[11px] text-emerald-600">u: <button type="button" class="live-feed-user-link underline decoration-dotted cursor-pointer" data-user-key="${resolvedUserKey.replace(/"/g, '&quot;')}" data-session-id="${resolvedSessionId.replace(/"/g, '&quot;')}" data-user-name="${linkedUserLabel.replace(/"/g, '&quot;')}">${linkedUserLabel}</button></p>` : ''}
+                                <p class="text-[10px] text-gray-400">${formatTimeMx()}</p>
+                            </div>
                         </div>
                     </div>
                 `;
