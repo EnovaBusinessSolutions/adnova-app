@@ -1131,7 +1131,10 @@
                     </div>
                 </div>
                 <div class="flex items-center space-x-4">
-                    <div id="shop-name" class="text-sm text-gray-500 font-medium">Cargando tienda...</div>
+                    <div class="flex items-center gap-2">
+                        <div id="shop-name" class="text-sm text-gray-500 font-medium">Cargando tienda...</div>
+                        <span id="shop-type-badge" class="journey-chip text-[10px] px-2 py-0.5">Tienda</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1818,6 +1821,7 @@
             updatedAt: null,
             hasError: false,
         };
+        let currentStoreTypeLabel = 'Tienda';
         let sessionExplorerState = {
             mode: 'overview',
             overview: null,
@@ -1928,7 +1932,8 @@
 
             if (shopParam) {
                 currentShopId = shopParam;
-                document.getElementById('shop-name').textContent = shopParam;
+                const inferredType = shopParam.includes('.myshopify.com') ? 'shopify' : 'custom';
+                updateShopHeader(shopParam, inferredType);
                 console.log('Public analytics mode, shop:', shopParam);
                 
                 // Load data immediately
@@ -1949,8 +1954,9 @@
 
                 const user = data.user;
                 currentShopId = user.shop;
-                
-                document.getElementById('shop-name').textContent = user.shop || 'Tienda desconocida';
+
+                const inferredType = user.shopifyConnected ? 'shopify' : 'woocommerce';
+                updateShopHeader(user.shop || 'Tienda desconocida', inferredType);
 
                 // Load initial data
                 await fetchAnalytics();
@@ -2064,6 +2070,47 @@
             const sessions = Array.isArray(user.sessionIds) ? user.sessionIds : [];
             const first = String(sessions[0] || '').trim();
             return first || '';
+        }
+
+        function mapStoreTypeLabel(rawType) {
+            const value = String(rawType || '').trim().toLowerCase();
+            if (!value) return 'Tienda';
+            if (value.includes('shopify') || value.includes('myshopify')) return 'Shopify';
+            if (value.includes('woo') || value.includes('wordpress')) return 'WooCommerce';
+            if (value.includes('magento')) return 'Magento';
+            if (value.includes('custom')) return 'Custom';
+            return value.charAt(0).toUpperCase() + value.slice(1);
+        }
+
+        function updateShopHeader(shopName, rawType) {
+            const shopEl = document.getElementById('shop-name');
+            const typeEl = document.getElementById('shop-type-badge');
+            if (shopEl) shopEl.textContent = shopName || 'Tienda desconocida';
+
+            if (rawType) currentStoreTypeLabel = mapStoreTypeLabel(rawType);
+            if (typeEl) typeEl.textContent = currentStoreTypeLabel;
+        }
+
+        function humanReadablePersonName(rawName, fallback = 'Cliente') {
+            const value = String(rawName || '').trim();
+            if (!value || value === '-') return fallback;
+
+            const source = value.includes('@') ? value.split('@')[0] : value;
+            const clean = source.replace(/[._-]+/g, ' ').replace(/\s+/g, ' ').trim();
+            if (!clean) return fallback;
+
+            const first = clean.split(' ')[0] || fallback;
+            return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
+        }
+
+        function humanReadableChannel(channel) {
+            const value = String(channel || '').trim().toLowerCase();
+            if (!value) return 'Canal';
+            if (value.includes('meta') || value.includes('facebook') || value.includes('instagram')) return 'Meta';
+            if (value.includes('google')) return 'Google';
+            if (value.includes('tiktok')) return 'TikTok';
+            if (value.includes('organic')) return 'Orgánico';
+            return value.charAt(0).toUpperCase() + value.slice(1);
         }
 
         function resolveOnlineUserIdentity({ sessionId = null, userKey = null } = {}) {
@@ -2461,6 +2508,7 @@
                 const currentJourney = currentData.journey || {};
                 const currentSession = currentData.session || {};
                 const peers = Array.isArray(currentData.peers) ? currentData.peers : [];
+                const currentPerson = humanReadablePersonName(currentData?.identifiedUser?.customerDisplayName || currentData?.identifiedUser?.emailPreview || 'Cliente');
 
                 focusEl.innerHTML = `
                     <div class="journey-compact-card space-y-3">
@@ -2476,10 +2524,10 @@
                 `;
                 wireJourneyRailInteractions(focusEl, steps);
 
-                const historicalRows = peers.slice(0, 10).map((peer) => `
+                const historicalRows = peers.slice(0, 10).map((peer, index) => `
                     <button type="button" class="journey-compact-card w-full text-left hover:opacity-95" onclick="openSessionDetail('${peer.sessionId}')">
                         <div class="flex items-center justify-between gap-2">
-                            <p class="text-sm font-semibold text-gray-900">${escapeHtml(peer.sessionId || 'sesión')}</p>
+                            <p class="text-sm font-semibold text-gray-900">${escapeHtml(`Sesión ${index + 1} de ${currentPerson}`)}</p>
                             <span class="text-xs text-gray-500">${formatDateTimeMx(peer.startedAt)}</span>
                         </div>
                         <div class="mt-2 flex items-center gap-2 flex-wrap">
@@ -2522,10 +2570,13 @@
             `;
             wireJourneyRailInteractions(focusEl, topSteps);
 
-            historyEl.innerHTML = rankedJourneys.map(({ purchase, score }) => `
+            historyEl.innerHTML = rankedJourneys.map(({ purchase }, index) => {
+                const person = humanReadablePersonName(purchase.customerName || purchase.email || 'Cliente');
+                const channel = humanReadableChannel(purchase.attributedChannel);
+                return `
                 <div class="journey-compact-card">
                     <div class="flex items-center justify-between gap-2 flex-wrap">
-                        <p class="text-sm font-semibold text-gray-900">${escapeHtml(purchase.orderNumber || purchase.orderId || 'Orden')}</p>
+                        <p class="text-sm font-semibold text-gray-900">${escapeHtml(`${channel} ${index + 1} de ${person}`)}</p>
                         <span class="text-xs text-gray-500">${formatRecentPurchaseDate(purchase)}</span>
                     </div>
                     <div class="mt-2 flex items-center gap-2 flex-wrap">
@@ -2533,7 +2584,8 @@
                         <span class="journey-chip"><i class="fa-solid fa-sack-dollar"></i>${formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN')}</span>
                     </div>
                 </div>
-            `).join('');
+            `;
+            }).join('');
         }
 
         async function fetchWordPressUsersOnline() {
@@ -2553,7 +2605,7 @@
                     };
                     renderWordPressUsersOnlineState({
                         countText: '0',
-                        statusText: 'No hay usuarios WordPress conectados en los últimos 30 min.',
+                        statusText: 'No hay usuarios conectados',
                         statusClass: 'text-gray-500',
                         users: [],
                     });
@@ -2687,6 +2739,7 @@
             const summary = data?.summary || {};
             const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
             const storePlatform = String(summary.storePlatform || 'CUSTOM').toUpperCase();
+            if (currentShopId) updateShopHeader(currentShopId, storePlatform);
             const wooProfiles = profiles.filter((item) => item.profileType === 'woocommerce_customer').length;
             const orderLedProfiles = profiles.filter((item) => Number(item.orderCount || 0) > 0).length;
             const resolvedCustomerNames = Number(summary.resolvedCustomerNames || 0);
@@ -2901,7 +2954,7 @@
             console.info('[Session Explorer] open session detail', { shopId: currentShopId, sessionId });
             openSessionDetailPanel();
 
-            document.getElementById('session-detail-title').textContent = `Sesion ${sessionId}`;
+            document.getElementById('session-detail-title').textContent = 'Cargando sesión...';
             sessionExplorerState.currentSessionId = sessionId;
             sessionExplorerState.currentSessionStartedAt = null;
             sessionExplorerState.peers = [];
@@ -2969,6 +3022,7 @@
 
             const identifiedUser = data.identifiedUser || {};
             const linkedUserLabel = identifiedUser.customerDisplayName || identifiedUser.emailPreview || (identifiedUser.customerId ? `Woo #${identifiedUser.customerId}` : '-');
+            const linkedUserName = humanReadablePersonName(linkedUserLabel, 'Cliente');
 
             renderProfilePriorityBanner('session', {
                 profile,
@@ -2982,7 +3036,7 @@
                 data.commerceProfile?.topPairings || []
             );
 
-            document.getElementById('session-detail-title').textContent = `${profile.profileLabel || 'Perfil histórico'} · Sesion ${session.sessionId || '-'}`;
+            document.getElementById('session-detail-title').textContent = `${profile.profileLabel || 'Perfil histórico'} · Sesión de ${linkedUserName}`;
 
             document.getElementById('session-detail-metrics').innerHTML = [
                 { label: 'Eventos', value: metrics.totalEvents || 0 },
@@ -3060,11 +3114,11 @@
             renderSessionComparison();
 
             document.getElementById('session-detail-orders').innerHTML = orders.length
-                ? orders.map((order) => `
+                ? orders.map((order, index) => `
                     <div class="session-order-card rounded-lg p-3">
                         <div class="flex items-start justify-between gap-3">
                             <div>
-                                <p class="font-medium text-gray-900">${order.orderNumber || order.orderId || '-'}</p>
+                                <p class="font-medium text-gray-900">Pedido ${index + 1} de ${escapeHtml(linkedUserName)}</p>
                                 <p class="text-sm text-gray-500">${formatCurrencyWithCode(order.revenue || 0, order.currency || 'MXN')} · ${order.attributedChannel || 'unattributed'}</p>
                                 <p class="text-xs text-gray-400">${formatDateTimeMx(order.platformCreatedAt || order.createdAt)}</p>
                             </div>
@@ -3581,6 +3635,7 @@
         function renderDashboard(data) {
             // Metrics (Fix: match API structure)
             const summary = data.summary || { totalRevenue: 0, totalOrders: 0 };
+            if (currentShopId && summary?.storePlatform) updateShopHeader(currentShopId, summary.storePlatform);
             const pixelHealth = data.pixelHealth || {};
             const dataQuality = data.dataQuality || {};
             const integrationHealth = data.integrationHealth || {};
