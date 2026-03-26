@@ -641,6 +641,88 @@
             min-height: 18rem;
         }
 
+        .journey-rail-wrap {
+            position: relative;
+            padding: 0.9rem 0.4rem 0.35rem;
+        }
+
+        .journey-rail-line {
+            position: absolute;
+            left: 1.2rem;
+            right: 1.2rem;
+            top: 2.05rem;
+            height: 2px;
+            background: linear-gradient(90deg, rgba(202, 138, 229, 0.25), rgba(202, 138, 229, 0.6));
+            pointer-events: none;
+        }
+
+        .journey-rail {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+            gap: 0.65rem;
+            position: relative;
+            z-index: 1;
+        }
+
+        .journey-node {
+            border: 1px solid rgba(202, 138, 229, 0.26);
+            background: rgba(225, 216, 243, 0.08);
+            border-radius: 0.85rem;
+            min-height: 3.1rem;
+            padding: 0.52rem 0.56rem;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 0.16rem;
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+            transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+            cursor: pointer;
+        }
+
+        .journey-node:hover,
+        .journey-node.is-active {
+            transform: translateY(-2px);
+            border-color: rgba(202, 138, 229, 0.55);
+            box-shadow: 0 14px 28px rgba(0, 0, 0, 0.28);
+        }
+
+        .journey-node-title {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            font-size: 0.82rem;
+            font-weight: 700;
+            color: var(--dash-text);
+            line-height: 1.15;
+        }
+
+        .journey-node-sub {
+            font-size: 0.67rem;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--dash-soft);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .journey-node-detail {
+            margin-top: 0.7rem;
+            border: 1px solid rgba(202, 138, 229, 0.24);
+            background: rgba(225, 216, 243, 0.06);
+            border-radius: 0.8rem;
+            padding: 0.6rem 0.7rem;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.45rem;
+        }
+
+        .journey-node-detail p {
+            font-size: 0.71rem;
+            color: var(--dash-muted);
+            margin: 0;
+        }
+
         .attribution-journey-history {
             max-height: 22rem;
             overflow-y: auto;
@@ -766,6 +848,30 @@
                 opacity: 1;
                 transform: translateY(0) scale(1);
             }
+        }
+
+        .journey-node.is-google,
+        .journey-node-detail.is-google {
+            border-color: rgba(251, 191, 36, 0.45);
+            background: linear-gradient(135deg, rgba(180, 83, 9, 0.24), rgba(251, 191, 36, 0.1));
+        }
+
+        .journey-node.is-meta,
+        .journey-node-detail.is-meta {
+            border-color: rgba(96, 165, 250, 0.5);
+            background: linear-gradient(135deg, rgba(29, 78, 216, 0.24), rgba(96, 165, 250, 0.11));
+        }
+
+        .journey-node.is-tiktok,
+        .journey-node-detail.is-tiktok {
+            border-color: rgba(45, 212, 191, 0.5);
+            background: linear-gradient(135deg, rgba(13, 148, 136, 0.22), rgba(45, 212, 191, 0.1));
+        }
+
+        .journey-node.is-organic,
+        .journey-node-detail.is-organic {
+            border-color: rgba(134, 239, 172, 0.42);
+            background: linear-gradient(135deg, rgba(22, 101, 52, 0.2), rgba(74, 222, 128, 0.1));
         }
 
         .journey-arrow {
@@ -2107,46 +2213,212 @@
             return score;
         }
 
-        function buildJourneyStepsFromSessionData(sessionData = {}) {
+        function normalizeJourneyPath(urlLike) {
+            if (!urlLike) return '-';
+            try {
+                return new URL(urlLike, window.location.origin).pathname || '-';
+            } catch (_) {
+                return String(urlLike);
+            }
+        }
+
+        function deriveJourneySignalsFromEvents(events = []) {
+            const signal = { lead: 0, call: 0 };
+            if (!Array.isArray(events) || !events.length) return signal;
+
+            events.forEach((event) => {
+                const name = String(event.eventName || event.name || '').toLowerCase();
+                if (/lead|form|contact|registro|signup/.test(name)) signal.lead += 1;
+                if (/call|book|calendar|agendar|appointment/.test(name)) signal.call += 1;
+            });
+
+            return signal;
+        }
+
+        function buildMinimalJourneyNodesFromSessionData(sessionData = {}) {
             const journey = sessionData.journey || {};
             const session = sessionData.session || {};
             const metrics = sessionData.metrics || {};
-            const channel = journey.attribution?.channel || session.utmSource || 'unattributed';
+            const events = Array.isArray(sessionData.events) ? sessionData.events : [];
+            const orders = Array.isArray(sessionData.orders) ? sessionData.orders : [];
+            const channel = journey.attribution?.channel || session.utmSource || 'organic';
             const platform = journey.attribution?.platform || null;
+            const confidence = Math.round(Number(journey.attribution?.confidence || 0) * 100);
+            const signals = deriveJourneySignalsFromEvents(events);
 
-            const steps = [
+            return [
                 {
                     icon: resolveChannelIcon(channel, platform),
-                    label: `${channel}${platform ? ` · ${platform}` : ''}`,
+                    title: 'Ad Click',
+                    sub: channel,
                     tone: resolveChannelTone(channel, platform),
+                    detailTone: resolveChannelTone(channel, platform),
+                    detail: [
+                        { label: 'Canal', value: channel || '-' },
+                        { label: 'Campaña', value: journey.attribution?.campaign || session.utmCampaign || '-' },
+                        { label: 'Click ID', value: journey.attribution?.clickId ? String(journey.attribution.clickId).slice(0, 18) : '-' },
+                        { label: 'Confianza', value: `${confidence}%` },
+                    ],
                 },
-                { icon: 'fa-solid fa-link', label: journey.attribution?.clickId ? `click ${String(journey.attribution.clickId).slice(0, 12)}...` : 'sin click id' },
-                { icon: 'fa-solid fa-door-open', label: session.landingPageUrl ? `landing ${new URL(session.landingPageUrl, window.location.origin).pathname}` : 'landing n/a' },
-                { icon: 'fa-solid fa-cart-shopping', label: `ATC ${metrics.addToCart || 0}` },
-                { icon: 'fa-solid fa-credit-card', label: `Compra ${metrics.purchase || 0}` },
+                {
+                    icon: 'fa-solid fa-circle-plus',
+                    title: 'Lead',
+                    sub: signals.lead > 0 ? `${signals.lead} eventos` : 'sin señal',
+                    tone: signals.lead > 0 ? 'is-meta' : '',
+                    detailTone: signals.lead > 0 ? 'is-meta' : '',
+                    detail: [
+                        { label: 'Lead Events', value: String(signals.lead || 0) },
+                        { label: 'Landing', value: normalizeJourneyPath(session.landingPageUrl) },
+                        { label: 'Primer evento', value: events[0]?.eventName || '-' },
+                        { label: 'Último evento', value: events[events.length - 1]?.eventName || '-' },
+                    ],
+                },
+                {
+                    icon: 'fa-solid fa-calendar-check',
+                    title: 'Scheduled Call',
+                    sub: signals.call > 0 ? `${signals.call} señales` : 'no detectada',
+                    tone: signals.call > 0 ? 'is-tiktok' : '',
+                    detailTone: signals.call > 0 ? 'is-tiktok' : '',
+                    detail: [
+                        { label: 'Señales Call', value: String(signals.call || 0) },
+                        { label: 'Session ID', value: String(session.sessionId || session.id || '-').slice(0, 18) },
+                        { label: 'Inicio', value: formatDateTimeMx(session.startedAt) },
+                        { label: 'Duración', value: session.durationSeconds ? `${Math.round(Number(session.durationSeconds))}s` : '-' },
+                    ],
+                },
+                {
+                    icon: 'fa-solid fa-circle-check',
+                    title: 'Purchase',
+                    sub: metrics.purchase > 0 || orders.length > 0 ? `${orders.length || metrics.purchase} compra(s)` : 'sin compra',
+                    tone: metrics.purchase > 0 || orders.length > 0 ? 'is-organic' : '',
+                    detailTone: metrics.purchase > 0 || orders.length > 0 ? 'is-organic' : '',
+                    detail: [
+                        { label: 'Revenue', value: formatCurrency(metrics.totalRevenue || 0) },
+                        { label: 'Órdenes', value: String(orders.length || 0) },
+                        { label: 'ATC', value: String(metrics.addToCart || 0) },
+                        { label: 'Checkout', value: String(metrics.beginCheckout || 0) },
+                    ],
+                },
             ];
-
-            return steps;
         }
 
-        function renderJourneyFlow(steps = []) {
+        function buildMinimalJourneyNodesFromPurchase(purchase = {}) {
+            const confidence = Math.round(Number(purchase.attributionConfidence || 0) * 100);
+            const hasPurchase = Number(purchase.revenue || 0) > 0;
+            return [
+                {
+                    icon: resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform),
+                    title: 'Ad Click',
+                    sub: purchase.attributedChannel || 'unattributed',
+                    tone: resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform),
+                    detailTone: resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform),
+                    detail: [
+                        { label: 'Canal', value: purchase.attributedChannel || '-' },
+                        { label: 'Campaña', value: purchase.attributedCampaign || '-' },
+                        { label: 'Click ID', value: purchase.attributedClickId ? String(purchase.attributedClickId).slice(0, 18) : '-' },
+                        { label: 'Confianza', value: `${confidence}%` },
+                    ],
+                },
+                {
+                    icon: 'fa-solid fa-circle-plus',
+                    title: 'Lead',
+                    sub: 'señal histórica',
+                    tone: 'is-meta',
+                    detailTone: 'is-meta',
+                    detail: [
+                        { label: 'Pedido', value: purchase.orderNumber || purchase.orderId || '-' },
+                        { label: 'Cliente', value: purchase.customerName || purchase.email || '-' },
+                        { label: 'Fecha', value: formatRecentPurchaseDate(purchase) },
+                        { label: 'Fuente', value: purchase.attributedSource || '-' },
+                    ],
+                },
+                {
+                    icon: 'fa-solid fa-calendar-check',
+                    title: 'Scheduled Call',
+                    sub: 'n/a en histórico',
+                    tone: '',
+                    detailTone: '',
+                    detail: [
+                        { label: 'Estado', value: 'No disponible en compra histórica' },
+                        { label: 'Split', value: Array.isArray(purchase.attributionSplits) ? `${purchase.attributionSplits.length} touchpoints` : '-' },
+                        { label: 'Plataforma', value: purchase.attributedPlatform || '-' },
+                        { label: 'Canal final', value: purchase.attributedChannel || '-' },
+                    ],
+                },
+                {
+                    icon: 'fa-solid fa-circle-check',
+                    title: 'Purchase',
+                    sub: hasPurchase ? formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN') : 'sin revenue',
+                    tone: hasPurchase ? 'is-organic' : '',
+                    detailTone: hasPurchase ? 'is-organic' : '',
+                    detail: [
+                        { label: 'Revenue', value: formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN') },
+                        { label: 'Orden', value: purchase.orderNumber || purchase.orderId || '-' },
+                        { label: 'Score', value: String(scoreJourneySignal(purchase)) },
+                        { label: 'Confianza', value: `${confidence}%` },
+                    ],
+                },
+            ];
+        }
+
+        function renderJourneyNodeDetail(step) {
+            const items = Array.isArray(step?.detail) ? step.detail.slice(0, 4) : [];
+            if (!items.length) {
+                return '<p>Sin detalle disponible.</p>';
+            }
+
+            return items.map((item) => `<p><strong>${escapeHtml(item.label)}:</strong> ${escapeHtml(item.value || '-')}</p>`).join('');
+        }
+
+        function renderMinimalJourneyRail(steps = []) {
             if (!steps.length) {
                 return '<p class="text-sm text-gray-500">Sin señales suficientes para dibujar el journey todavía.</p>';
             }
 
-            return `<div class="journey-flow">${steps.map((step, index) => `
-                <span class="journey-step journey-anim ${step.tone || ''}" style="animation-delay:${index * 70}ms"><i class="${step.icon}"></i>${escapeHtml(step.label)}</span>
-                ${index < steps.length - 1 ? '<i class="fa-solid fa-chevron-right journey-arrow"></i>' : ''}
-            `).join('')}</div>`;
+            return `
+                <div class="journey-rail-wrap">
+                    <div class="journey-rail-line"></div>
+                    <div class="journey-rail">
+                        ${steps.map((step, index) => `
+                            <button
+                                type="button"
+                                class="journey-node journey-anim ${step.tone || ''} ${index === 0 ? 'is-active' : ''}"
+                                style="animation-delay:${index * 75}ms"
+                                data-journey-node="${index}"
+                            >
+                                <span class="journey-node-title"><i class="${step.icon}"></i>${escapeHtml(step.title || 'Paso')}</span>
+                                <span class="journey-node-sub">${escapeHtml(step.sub || '-')}</span>
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+                <div id="journey-node-detail" class="journey-node-detail ${steps[0]?.detailTone || ''}">${renderJourneyNodeDetail(steps[0])}</div>
+            `;
         }
 
-        function renderJourneySankey(steps = []) {
-            if (!steps.length) return '';
-            return `
-                <div class="journey-sankey">
-                    ${steps.map((step, index) => `<div class="journey-sankey-node journey-anim ${step.tone || ''}" style="animation-delay:${120 + (index * 55)}ms">${escapeHtml((step.label || '').split(' ')[0] || 'step')}</div>`).join('')}
-                </div>
-            `;
+        function wireJourneyRailInteractions(container, steps = []) {
+            if (!container || !Array.isArray(steps) || !steps.length) return;
+            const detailEl = container.querySelector('#journey-node-detail');
+            const nodeEls = Array.from(container.querySelectorAll('[data-journey-node]'));
+            if (!detailEl || !nodeEls.length) return;
+
+            const activate = (index) => {
+                const step = steps[index];
+                if (!step) return;
+                nodeEls.forEach((node) => node.classList.remove('is-active'));
+                const activeEl = nodeEls[index];
+                if (activeEl) activeEl.classList.add('is-active');
+                detailEl.className = `journey-node-detail ${step.detailTone || ''}`;
+                detailEl.innerHTML = renderJourneyNodeDetail(step);
+            };
+
+            nodeEls.forEach((node) => {
+                const idx = Number(node.getAttribute('data-journey-node'));
+                if (!Number.isFinite(idx)) return;
+                node.addEventListener('mouseenter', () => activate(idx));
+                node.addEventListener('focus', () => activate(idx));
+                node.addEventListener('click', () => activate(idx));
+            });
         }
 
         function renderAttributionJourneyPanel() {
@@ -2156,7 +2428,7 @@
 
             const currentData = sessionExplorerState.currentData;
             if (sessionExplorerState.mode === 'session' && currentData) {
-                const steps = buildJourneyStepsFromSessionData(currentData);
+                const steps = buildMinimalJourneyNodesFromSessionData(currentData);
                 const currentJourney = currentData.journey || {};
                 const currentSession = currentData.session || {};
                 const peers = Array.isArray(currentData.peers) ? currentData.peers : [];
@@ -2167,8 +2439,7 @@
                             <span class="journey-chip"><i class="fa-solid fa-route"></i>sesión activa</span>
                             <span class="text-xs text-gray-500">${formatDateTimeMx(currentSession.startedAt)}</span>
                         </div>
-                        ${renderJourneyFlow(steps)}
-                        ${renderJourneySankey(steps)}
+                        ${renderMinimalJourneyRail(steps)}
                         <div class="flex items-center gap-2 flex-wrap">
                             <span class="journey-chip ${resolveChannelTone(currentJourney.attribution?.channel, currentJourney.attribution?.platform)}"><i class="fa-solid fa-bullseye"></i>${escapeHtml(currentJourney.attribution?.channel || 'unattributed')}</span>
                             <span class="journey-chip"><i class="fa-solid fa-signal"></i>conf ${Math.round(Number(currentJourney.attribution?.confidence || 0) * 100)}%</span>
@@ -2176,6 +2447,7 @@
                         </div>
                     </div>
                 `;
+                wireJourneyRailInteractions(focusEl, steps);
 
                 const historicalRows = peers.slice(0, 10).map((peer) => `
                     <button type="button" class="journey-compact-card w-full text-left hover:opacity-95" onclick="openSessionDetail('${peer.sessionId}')">
@@ -2210,17 +2482,7 @@
             }
 
             const top = rankedJourneys[0].purchase;
-            const topSteps = [
-                {
-                    icon: resolveChannelIcon(top.attributedChannel, top.attributedPlatform),
-                    label: `${top.attributedChannel || 'unattributed'}${top.attributedPlatform ? ` · ${top.attributedPlatform}` : ''}`,
-                    tone: resolveChannelTone(top.attributedChannel, top.attributedPlatform),
-                },
-                { icon: 'fa-solid fa-link', label: top.attributedClickId ? `click ${String(top.attributedClickId).slice(0, 12)}...` : 'sin click id' },
-                { icon: 'fa-solid fa-bullhorn', label: top.attributedCampaign || 'sin campaña' },
-                { icon: 'fa-solid fa-bag-shopping', label: top.orderNumber || top.orderId || 'orden' },
-                { icon: 'fa-solid fa-sack-dollar', label: formatCurrencyWithCode(Number(top.revenue || 0), top.currency || 'MXN') },
-            ];
+            const topSteps = buildMinimalJourneyNodesFromPurchase(top);
 
             focusEl.innerHTML = `
                 <div class="journey-compact-card space-y-3">
@@ -2228,14 +2490,14 @@
                         <span class="journey-chip"><i class="fa-solid fa-star"></i>mejor señal histórica</span>
                         <span class="text-xs text-gray-500">${formatRecentPurchaseDate(top)}</span>
                     </div>
-                    ${renderJourneyFlow(topSteps)}
-                    ${renderJourneySankey(topSteps)}
+                    ${renderMinimalJourneyRail(topSteps)}
                     <div class="flex items-center gap-2 flex-wrap">
                         <span class="journey-chip"><i class="fa-solid fa-gauge"></i>score ${scoreJourneySignal(top)}</span>
                         <span class="journey-chip"><i class="fa-solid fa-percent"></i>conf ${Math.round(Number(top.attributionConfidence || 0) * 100)}%</span>
                     </div>
                 </div>
             `;
+            wireJourneyRailInteractions(focusEl, topSteps);
 
             historyEl.innerHTML = rankedJourneys.map(({ purchase, score }) => `
                 <div class="journey-compact-card">
