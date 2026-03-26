@@ -778,6 +778,50 @@
             text-transform: uppercase;
             letter-spacing: 0.08em;
             font-weight: 700;
+            position: relative;
+            cursor: help;
+        }
+
+        .journey-chip[data-tooltip]::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: var(--dash-text);
+            color: var(--dash-panel);
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 400;
+            white-space: nowrap;
+            margin-bottom: 0.5rem;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+            z-index: 10;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+            text-transform: none;
+            letter-spacing: normal;
+        }
+
+        .journey-chip[data-tooltip]::before {
+            content: '';
+            position: absolute;
+            bottom: calc(100% - 4px);
+            left: 50%;
+            transform: translateX(-50%);
+            border: 6px solid transparent;
+            border-top-color: var(--dash-text);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+            z-index: 10;
+        }
+
+        .journey-chip[data-tooltip]:hover::after,
+        .journey-chip[data-tooltip]:hover::before {
+            opacity: 1;
         }
 
         .journey-chip.is-google,
@@ -2744,7 +2788,7 @@
 
             return `
                 <div class="journey-timeline">
-                    <div class="journey-timeline-sticky"><i class="fa-solid fa-arrows-up-down"></i>Scroll events (${events.length})</div>
+                    <div class="journey-timeline-sticky"><i class="fa-solid fa-arrows-up-down"></i>${events.length} events</div>
                     ${events.map((event) => `
                         <article class="journey-event ${event.tone || ''}">
                             <div class="journey-event-head">
@@ -2905,20 +2949,20 @@
                 focusEl.innerHTML = `
                     <div class="journey-compact-card space-y-3">
                         <div class="flex items-center justify-between gap-2 flex-wrap">
-                            <span class="journey-chip"><i class="fa-solid fa-route"></i>active</span>
+                            <span class="journey-chip" data-tooltip="Current session status"><i class="fa-solid fa-route"></i>active</span>
                             <span class="text-xs text-gray-500">${formatDateTimeMx(currentSession.startedAt)}</span>
                         </div>
                         <div class="journey-meta-grid">
-                            <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(journeyData.summary?.userName || 'Customer')}</span>
-                            <span class="journey-chip"><i class="fa-solid fa-percent"></i>${Number(journeyData.summary?.confidence || 0)}%</span>
-                            <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(journeyData.summary?.sourceAd || 'No campaign')}</span>
-                            <span class="journey-chip"><i class="fa-solid fa-door-open"></i>${escapeHtml(journeyData.summary?.landing || '-')}</span>
-                            <span class="journey-chip"><i class="fa-solid fa-circle-plus"></i>Leads ${Number(journeyData.summary?.leads || 0)}</span>
+                            <span class="journey-chip" data-tooltip="Customer identifier from your system"><i class="fa-solid fa-user"></i>${escapeHtml(journeyData.summary?.userName || 'Customer')}</span>
+                            <span class="journey-chip" data-tooltip="Attribution confidence score"><i class="fa-solid fa-percent"></i>${Number(journeyData.summary?.confidence || 0)}%</span>
+                            <span class="journey-chip" data-tooltip="Campaign that led to conversion"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(journeyData.summary?.sourceAd || 'No campaign')}</span>
+                            <span class="journey-chip" data-tooltip="Initial landing page"><i class="fa-solid fa-door-open"></i>${escapeHtml(journeyData.summary?.landing || '-')}</span>
+                            <span class="journey-chip" data-tooltip="Generated leads count"><i class="fa-solid fa-circle-plus"></i>Leads ${Number(journeyData.summary?.leads || 0)}</span>
                         </div>
                         ${renderTimelineModeToggle(selectedJourneyTimelineMode)}
                         ${renderJourneyVerticalTimeline(journeyData.timelineEvents)}
                         <div class="flex items-center gap-2 flex-wrap">
-                            <span class="journey-chip ${resolveChannelTone(currentJourney.attribution?.channel, currentJourney.attribution?.platform)}"><i class="fa-solid fa-bullseye"></i>${escapeHtml(currentJourney.attribution?.channel || 'unattributed')}</span>
+                            <span class="journey-chip ${resolveChannelTone(currentJourney.attribution?.channel, currentJourney.attribution?.platform)}" data-tooltip="Traffic source channel"><i class="fa-solid fa-bullseye"></i>${escapeHtml(currentJourney.attribution?.channel || 'unattributed')}</span>
                         </div>
                     </div>
                 `;
@@ -2931,8 +2975,8 @@
                             <span class="text-xs text-gray-500">${formatDateTimeMx(peer.startedAt)}</span>
                         </div>
                         <div class="mt-2 flex items-center gap-2 flex-wrap">
-                            <span class="journey-chip"><i class="fa-solid fa-tags"></i>${escapeHtml(peer.utmCampaign || 'no campaign')}</span>
-                            <span class="journey-chip"><i class="fa-solid fa-store"></i>${escapeHtml(peer.landingPageUrl ? new URL(peer.landingPageUrl, window.location.origin).pathname : 'no landing')}</span>
+                            <span class="journey-chip" data-tooltip="Campaign name from session"><i class="fa-solid fa-tags"></i>${escapeHtml(peer.utmCampaign || 'no campaign')}</span>
+                            <span class="journey-chip" data-tooltip="Where user first landed"><i class="fa-solid fa-store"></i>${escapeHtml(peer.landingPageUrl ? new URL(peer.landingPageUrl, window.location.origin).pathname : 'no landing')}</span>
                         </div>
                     </button>
                 `).join('');
