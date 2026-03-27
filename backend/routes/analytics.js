@@ -2958,6 +2958,22 @@ router.get('/:account_id/session-explorer', async (req, res) => {
     });
   } catch (error) {
     console.error('[Analytics API] Session explorer overview error:', error);
+    if (isDatabaseConnectivityError(error)) {
+      return res.json({
+        degraded: true,
+        degradedReason: 'database_unreachable',
+        summary: {
+          storePlatform: 'CUSTOM',
+          totalProfiles: 0,
+          totalSessions: 0,
+          totalOrders: 0,
+          totalRevenue: 0,
+          resolvedCustomerNames: 0,
+          shopifyNameLookupActive: false,
+        },
+        profiles: [],
+      });
+    }
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
