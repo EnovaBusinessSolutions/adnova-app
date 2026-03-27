@@ -2060,6 +2060,14 @@
         let metricCarouselIndex = 0;
         let metricCarouselVisible = 4;
         let wpUsersPollTimer = null;
+        let wpUsersFetchInFlight = false;
+        let wpUsersLastFetchAt = 0;
+        const WP_USERS_FETCH_MIN_INTERVAL_MS = 45000;
+        const WP_USERS_POLL_INTERVAL_MS = 120000;
+        let analyticsFetchInFlight = false;
+        let overviewFetchInFlight = false;
+        let sessionOverviewLastLoadedAt = 0;
+        const SESSION_OVERVIEW_CACHE_TTL_MS = 120000;
         let wpUsersOnlineState = {
             users: [],
             updatedAt: null,
@@ -2230,7 +2238,19 @@
                 clearInterval(wpUsersPollTimer);
             }
             fetchWordPressUsersOnline();
-            wpUsersPollTimer = setInterval(fetchWordPressUsersOnline, 30000);
+            wpUsersPollTimer = setInterval(() => {
+                if (document.hidden) return;
+                fetchWordPressUsersOnline();
+            }, WP_USERS_POLL_INTERVAL_MS);
+
+            if (!window.__adrayVisibilityPollingBound) {
+                document.addEventListener('visibilitychange', () => {
+                    if (!document.hidden) {
+                        fetchWordPressUsersOnline();
+                    }
+                });
+                window.__adrayVisibilityPollingBound = true;
+            }
         }
 
         function renderWordPressUsersOnlineState({ countText, statusText, statusClass, users = [] }) {
@@ -3098,8 +3118,14 @@
             wireJourneyCustomerBubbles(historyEl);
         }
 
-        async function fetchWordPressUsersOnline() {
+        async function fetchWordPressUsersOnline(force = false) {
             if (!currentShopId) return;
+            if (wpUsersFetchInFlight) return;
+
+            const now = Date.now();
+            if (!force && (now - wpUsersLastFetchAt) < WP_USERS_FETCH_MIN_INTERVAL_MS) return;
+            wpUsersFetchInFlight = true;
+            wpUsersLastFetchAt = now;
 
             try {
                 const res = await fetch(`/api/analytics/${currentShopId}/wordpress-users-online?window_minutes=30&limit=6`);
@@ -3158,6 +3184,8 @@
                 if (sessionExplorerState.mode === 'overview' && sessionExplorerState.overview) {
                     renderProfilePriorityBanner('overview', sessionExplorerState.overview);
                 }
+            } finally {
+                wpUsersFetchInFlight = false;
             }
         }
 
@@ -3442,9 +3470,20 @@
 
         async function loadSessionExplorerOverview() {
             if (!currentShopId) return;
+            if (overviewFetchInFlight) return;
+            if (
+                sessionExplorerState.mode === 'overview'
+                && sessionExplorerState.overview
+                && (Date.now() - sessionOverviewLastLoadedAt) < SESSION_OVERVIEW_CACHE_TTL_MS
+            ) {
+                return;
+            }
+
+            overviewFetchInFlight = true;
             try {
                 const data = await fetchSessionExplorerOverviewData();
                 renderSessionExplorerOverview(data);
+                sessionOverviewLastLoadedAt = Date.now();
             } catch (error) {
                 document.getElementById('session-detail-title').textContent = 'Usuarios históricos';
                 document.getElementById('session-detail-metrics').innerHTML = '<div class="text-sm text-gray-500">No se pudo cargar el overview histórico.</div>';
@@ -3459,6 +3498,8 @@
                 document.getElementById('session-detail-affinity').innerHTML = '<p class="text-gray-500">-</p>';
                 renderPeerSessions([], null, {});
                 renderSessionComparison();
+            } finally {
+                overviewFetchInFlight = false;
             }
         }
 
@@ -4099,6 +4140,8 @@
         // --- FETCH ANALYTICS ---
         async function fetchAnalytics() {
             if (!currentShopId) return;
+            if (analyticsFetchInFlight) return;
+            analyticsFetchInFlight = true;
 
             try {
                 const modelSelect = document.getElementById('attribution-model');
@@ -4141,6 +4184,8 @@
             } catch (error) {
                 console.error('Analytics error:', error);
                 alert('Error cargando datos de analítica');
+            } finally {
+                analyticsFetchInFlight = false;
             }
         }
 
