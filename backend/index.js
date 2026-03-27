@@ -437,7 +437,7 @@ app.get("/api/public-config", (_req, res) => {
   res.json({ bookingUrl: process.env.BOOKING_URL || "" });
 });
 
-app.get("/api/health/db", async (_req, res) => {
+async function respondDbHealth(_req, res) {
   const databaseUrlRaw = String(process.env.DATABASE_URL || "").trim();
   let dbHost = null;
   let dbName = null;
@@ -481,7 +481,10 @@ app.get("/api/health/db", async (_req, res) => {
       serviceTime: new Date().toISOString(),
     });
   }
-});
+}
+
+app.get("/api/health/db", respondDbHealth);
+app.get("/health/db", respondDbHealth);
 
 /* =========================
  * Static / dashboard
