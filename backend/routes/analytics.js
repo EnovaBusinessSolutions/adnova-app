@@ -1704,6 +1704,7 @@ router.get('/:account_id', async (req, res) => {
       checkoutToken: ev.checkoutToken || null,
       sessionId: ev.sessionId || null,
       userKey: ev.userKey || null,
+      customerId: String(ev?.rawPayload?.customer_id || ev?.rawPayload?.customerId || '').trim() || null,
       revenue: Number(ev.revenue || 0),
       currency: ev.currency || 'MXN',
       items: [],
@@ -1739,6 +1740,7 @@ router.get('/:account_id', async (req, res) => {
               checkoutToken: true,
               attributionSnapshot: true,
               createdAt: true,
+              sessionId: true,
               userKey: true,
             },
           })
@@ -1782,6 +1784,7 @@ router.get('/:account_id', async (req, res) => {
     const conversionsWithAttribution = conversionInputs.map((conv) => {
       const checkout = conv.checkoutToken ? checkoutByToken.get(conv.checkoutToken) : null;
       const resolvedUserKey = conv.userKey || checkout?.userKey || null;
+      const resolvedSessionId = conv.sessionId || checkout?.sessionId || null;
       const conversionDate = new Date(conv.createdAt);
       const lookbackStart = subDays(conversionDate, ATTRIBUTION_LOOKBACK_DAYS);
 
@@ -1849,6 +1852,8 @@ router.get('/:account_id', async (req, res) => {
 
       return {
         ...conv,
+        userKey: resolvedUserKey,
+        sessionId: resolvedSessionId,
         attributedChannel: finalAttribution.primary.channel,
         attributedPlatform: finalAttribution.primary.platform,
         attributedCampaign: finalAttribution.primary.campaign || null,
