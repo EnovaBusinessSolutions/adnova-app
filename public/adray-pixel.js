@@ -412,6 +412,14 @@
     return typeof url === 'string' && /\/cart\/add(\.js)?(\?|$)/i.test(url);
   }
 
+  function isWooCartAddUrl(url) {
+    return typeof url === 'string' && (
+      /\/wc\/store\/cart\/add-item(\?|$)/i.test(url) ||
+      /[?&]wc-ajax=add_to_cart/i.test(url) ||
+      /[?&]add-to-cart=\d+/i.test(url)
+    );
+  }
+
   function isCheckoutUrl(url) {
     return typeof url === 'string' && /\/checkout(\?|$|\/)/i.test(url);
   }
@@ -488,8 +496,8 @@
       });
     }
     
-    // WooCommerce REST API: /wp-json/wc/store/cart/add-item
-    if (typeof url === "string" && url.includes("/wc/store/cart/add-item")) {
+    // WooCommerce: REST + wc-ajax + add-to-cart endpoints
+    if (isWooCartAddUrl(url)) {
        try {
          const clonedRes = response.clone();
          const data = await clonedRes.json();
@@ -498,7 +506,9 @@
              variant_id: data.items?.[0]?.variation_id ? String(data.items[0].variation_id) : null,
              cart_value: data.totals?.total_price ? parseFloat(data.totals.total_price) / 100 : null
          });
-       } catch (e) {}
+       } catch (e) {
+         sendEvent('add_to_cart', getProductContext());
+       }
     }
     
     return response;
@@ -534,6 +544,9 @@
             cart_value: null
           });
         }
+        if (isWooCartAddUrl(xhrUrl)) {
+          sendEvent('add_to_cart', getProductContext());
+        }
         if (isCheckoutUrl(xhrUrl)) {
           sendEvent("begin_checkout", {
             checkout_token: getCookie('cart') || getCookie('cart_sig') || null
@@ -544,7 +557,7 @@
     };
   })();
 
-  // 3.2 Shopify: form submit fallback (no AJAX themes)
+  // 3.2 Shopify + WooCommerce: form submit fallback (no AJAX themes)
   document.addEventListener('submit', function(ev) {
     try {
       const form = ev.target;
@@ -560,6 +573,15 @@
         });
       }
 
+      if (isWooCartAddUrl(action) || form.querySelector('[name="add-to-cart"]')) {
+        const wcProductId = form.querySelector('[name="add-to-cart"]')?.value || form.querySelector('[name="product_id"]')?.value || null;
+        const wcQty = Number(form.querySelector('[name="quantity"]')?.value || 1);
+        sendEvent('add_to_cart', {
+          product_id: wcProductId ? String(wcProductId) : (getProductContext().product_id || null),
+          quantity: Number.isFinite(wcQty) ? wcQty : 1
+        });
+      }
+
       if (isCheckoutUrl(action)) {
         sendEvent('begin_checkout', {
           checkout_token: getCookie('cart') || getCookie('cart_sig') || null
@@ -568,7 +590,7 @@
     } catch (_) {}
   }, true);
 
-  // 3.3 Shopify: checkout button/link click fallback
+  // 3.3 Shopify + WooCommerce: click fallback
   document.addEventListener('click', function(ev) {
     try {
       const target = ev.target;
@@ -585,6 +607,17 @@
         /checkout/i.test(name) ||
         /checkout/i.test(el.id || '') ||
         /checkout/i.test(el.className || '');
+
+      const likelyWooAddToCart =
+        /add_to_cart_button|single_add_to_cart_button/i.test(el.className || '') ||
+        /add-to-cart/i.test(name) ||
+        /add[-_]?to[-_]?cart/i.test(el.id || '') ||
+        isWooCartAddUrl(href || '') ||
+        isWooCartAddUrl(formAction);
+
+      if (likelyWooAddToCart) {
+        sendEvent('add_to_cart', getProductContext());
+      }
 
       if (likelyCheckout) {
         sendEvent('begin_checkout', {

@@ -87,6 +87,19 @@ function deriveGa4SessionSource(payload = {}) {
   return null;
 }
 
+function normalizeIncomingEventName(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return 'page_view';
+
+  if (['added_to_cart', 'cart_add', 'addtocart'].includes(normalized)) return 'add_to_cart';
+  if (['checkout_start', 'start_checkout'].includes(normalized)) return 'begin_checkout';
+  if (['order_complete', 'order_completed'].includes(normalized)) return 'purchase';
+  if (['user_login', 'login'].includes(normalized)) return 'user_logged_in';
+  if (['user_logout', 'logout'].includes(normalized)) return 'user_logged_out';
+
+  return normalized;
+}
+
 function parseAllowedAccountIds() {
   const raw = String(process.env.ADRAY_ALLOWED_ACCOUNT_IDS || '').trim();
   if (!raw) return null;
@@ -109,10 +122,11 @@ router.post('/', async (req, res) => {
   try {
     step = 'parse_payload';
     const payload = req.body;
+    const normalizedEventName = normalizeIncomingEventName(payload.event_name);
     // Support both account_id (new universal) and shop_id (legacy Shopify)
     const accountId = normalizeAccountId(payload.account_id || payload.shop_id);
     const platform = payload.platform || 'custom';
-    console.log(`\n[AdRay Collect] Received event '${payload.event_name}' for account: ${accountId} (platform: ${platform})`);
+    console.log(`\n[AdRay Collect] Received event '${normalizedEventName}' for account: ${accountId} (platform: ${platform})`);
 
     step = 'validate_account';
     if (!accountId) {
@@ -190,7 +204,7 @@ router.post('/', async (req, res) => {
       userKey,
       eventId,
       payload: {
-        eventName: payload.event_name,
+        eventName: normalizedEventName,
         timestamp: new Date().toISOString(),
         pageUrl: payload.page_url,
         platform,
@@ -206,7 +220,7 @@ router.post('/', async (req, res) => {
     });
 
     // 4. Handle begin_checkout special case
-    if (payload.event_name === 'begin_checkout' && payload.checkout_token) {
+    if (normalizedEventName === 'begin_checkout' && payload.checkout_token) {
       step = 'checkout_map_upsert';
       const attributionSnapshot = {
         utm_source: payload.utm_source,
@@ -250,7 +264,7 @@ router.post('/', async (req, res) => {
       accountId,
       sessionId,
       userKey,
-      eventName: payload.event_name,
+      eventName: normalizedEventName,
       pageType: payload.page_type,
       pageUrl: payload.page_url,
       productId: payload.product_id,
@@ -277,7 +291,7 @@ router.post('/', async (req, res) => {
       accountId,
       sessionId,
       userKey,
-      eventName: payload.event_name,
+      eventName: normalizedEventName,
       pageType: payload.page_type,
       pageUrl: payload.page_url,
       productId: payload.product_id,
@@ -299,7 +313,7 @@ router.post('/', async (req, res) => {
       accountId,
       sessionId,
       userKey,
-      eventName: payload.event_name,
+      eventName: normalizedEventName,
       rawPayload: payload,
       serverReceivedAt: new Date()
     };
@@ -323,7 +337,7 @@ router.post('/', async (req, res) => {
           sessionId,
           userKey,
           eventId,
-          eventName: payload.event_name,
+          eventName: normalizedEventName,
           collectPayload: payload,
         },
         error: String(eventPersistError?.message || eventPersistError || 'event persistence failed').slice(0, 1000)

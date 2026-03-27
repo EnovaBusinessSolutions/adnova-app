@@ -2105,6 +2105,11 @@
             byUserKey: new Map(),
             byName: [],
         };
+        let liveFeedIdentityState = {
+            bySessionId: new Map(),
+            byUserKey: new Map(),
+            byCustomerId: new Map(),
+        };
         let journeyProfileSearchDebounceTimer = null;
 
         function formatDateInputValue(date) {
@@ -2474,6 +2479,119 @@
                     || (matchedUser.customerId ? `Woo #${matchedUser.customerId}` : null),
                 userKey: resolveUserKeyFromOnlineUser(matchedUser) || normalizedUserKey,
                 sessionId: resolvePrimarySessionIdFromOnlineUser(matchedUser) || normalizedSessionId,
+            };
+        }
+
+        function buildIdentityLabel({ customerName = '', customerId = '', email = '', phone = '' } = {}) {
+            const normalizedName = String(customerName || '').trim();
+            if (normalizedName) return normalizedName;
+            const normalizedEmail = String(email || '').trim();
+            if (normalizedEmail) return normalizedEmail;
+            const normalizedPhone = String(phone || '').trim();
+            if (normalizedPhone) return normalizedPhone;
+            const normalizedCustomerId = String(customerId || '').trim();
+            if (normalizedCustomerId) return `Woo #${normalizedCustomerId}`;
+            return null;
+        }
+
+        function mergeLiveFeedIdentity(base = {}, incoming = {}) {
+            return {
+                customerId: String(base.customerId || incoming.customerId || '').trim(),
+                userKey: String(base.userKey || incoming.userKey || '').trim(),
+                sessionId: String(base.sessionId || incoming.sessionId || '').trim(),
+                customerName: String(base.customerName || incoming.customerName || '').trim(),
+                email: String(base.email || incoming.email || '').trim(),
+                phone: String(base.phone || incoming.phone || '').trim(),
+            };
+        }
+
+        function cacheLiveFeedIdentity(identity = {}) {
+            const enriched = mergeLiveFeedIdentity({}, identity);
+            const hasSignal = enriched.customerId || enriched.userKey || enriched.sessionId || enriched.customerName || enriched.email || enriched.phone;
+            if (!hasSignal) return;
+
+            if (enriched.sessionId) {
+                const prev = liveFeedIdentityState.bySessionId.get(enriched.sessionId) || {};
+                liveFeedIdentityState.bySessionId.set(enriched.sessionId, mergeLiveFeedIdentity(prev, enriched));
+            }
+            if (enriched.userKey) {
+                const prev = liveFeedIdentityState.byUserKey.get(enriched.userKey) || {};
+                liveFeedIdentityState.byUserKey.set(enriched.userKey, mergeLiveFeedIdentity(prev, enriched));
+            }
+            if (enriched.customerId) {
+                const prev = liveFeedIdentityState.byCustomerId.get(enriched.customerId) || {};
+                liveFeedIdentityState.byCustomerId.set(enriched.customerId, mergeLiveFeedIdentity(prev, enriched));
+            }
+        }
+
+        function resolveLiveFeedIdentity({ sessionId = null, userKey = null, payload = {} } = {}) {
+            const safeSessionId = String(sessionId || '').trim();
+            const safeUserKey = String(userKey || '').trim();
+            const normalizedPayload = payload && typeof payload === 'object' ? payload : {};
+
+            const payloadCustomerId = String(
+                normalizedPayload.customer_id
+                || normalizedPayload.customerId
+                || normalizedPayload?.customer?.id
+                || ''
+            ).trim();
+            const payloadName = String(
+                normalizedPayload.customer_name
+                || normalizedPayload.customer_display_name
+                || normalizedPayload.customerName
+                || normalizedPayload.customerDisplayName
+                || [normalizedPayload.customer_first_name, normalizedPayload.customer_last_name].filter(Boolean).join(' ')
+                || [normalizedPayload.customerFirstName, normalizedPayload.customerLastName].filter(Boolean).join(' ')
+                || [normalizedPayload.first_name, normalizedPayload.last_name].filter(Boolean).join(' ')
+                || [normalizedPayload.firstName, normalizedPayload.lastName].filter(Boolean).join(' ')
+                || normalizedPayload?.customer?.name
+                || normalizedPayload?.customer?.display_name
+                || normalizedPayload?.user_data?.name
+                || [normalizedPayload?.user_data?.fn, normalizedPayload?.user_data?.ln].filter(Boolean).join(' ')
+                || ''
+            ).trim();
+            const payloadEmail = String(normalizedPayload.email || normalizedPayload.customer_email || normalizedPayload?.user_data?.email || '').trim();
+            const payloadPhone = String(normalizedPayload.phone || normalizedPayload.customer_phone || normalizedPayload?.user_data?.phone || '').trim();
+
+            const onlineIdentity = resolveOnlineUserIdentity({ sessionId: safeSessionId, userKey: safeUserKey });
+            const onlineLabel = String(onlineIdentity?.label || '').trim();
+
+            const candidate = mergeLiveFeedIdentity(
+                {},
+                {
+                    sessionId: safeSessionId || onlineIdentity?.sessionId || '',
+                    userKey: safeUserKey || onlineIdentity?.userKey || '',
+                    customerId: payloadCustomerId,
+                    customerName: payloadName || onlineLabel,
+                    email: payloadEmail,
+                    phone: payloadPhone,
+                }
+            );
+
+            const bySession = candidate.sessionId ? (liveFeedIdentityState.bySessionId.get(candidate.sessionId) || {}) : {};
+            const byUser = candidate.userKey ? (liveFeedIdentityState.byUserKey.get(candidate.userKey) || {}) : {};
+            const byCustomer = candidate.customerId ? (liveFeedIdentityState.byCustomerId.get(candidate.customerId) || {}) : {};
+            const merged = mergeLiveFeedIdentity(mergeLiveFeedIdentity(bySession, byUser), mergeLiveFeedIdentity(byCustomer, candidate));
+
+            const label = buildIdentityLabel({
+                customerName: merged.customerName,
+                customerId: merged.customerId,
+                email: merged.email,
+                phone: merged.phone,
+            });
+
+            cacheLiveFeedIdentity({
+                ...merged,
+                customerName: merged.customerName || label || '',
+            });
+
+            return {
+                label,
+                sessionId: merged.sessionId || candidate.sessionId || safeSessionId,
+                userKey: merged.userKey || candidate.userKey || safeUserKey,
+                customerId: merged.customerId || payloadCustomerId || '',
+                email: merged.email || '',
+                phone: merged.phone || '',
             };
         }
         function renderProfilePriorityBanner(mode = 'overview', payload = {}) {
@@ -4761,10 +4879,12 @@
             const key = String(rawName || '').trim().toLowerCase();
             if (key === 'page_view') return 'Page view';
             if (key === 'view_item') return 'Viewed product';
-            if (key === 'add_to_cart') return 'Added to cart';
+            if (key === 'add_to_cart' || key === 'added_to_cart' || key === 'cart_add' || key === 'addtocart') return 'Added to cart';
+            if (key === 'view_cart') return 'Viewed cart';
             if (key === 'begin_checkout') return 'Started checkout';
             if (key === 'purchase') return 'Purchase';
             if (key === 'user_logged_in' || key === 'user_login' || key === 'login') return 'User login';
+            if (key === 'user_logged_out' || key === 'user_logout' || key === 'logout') return 'User logout';
             if (key === 'connected') return 'User connected';
             return String(rawName || 'Event');
         }
@@ -4836,7 +4956,7 @@
                 let detail = '';
                 const sessionId = data.sessionId || data.payload?.sessionId || null;
                 const userKey = data.userKey || data.payload?.userKey || null;
-                const resolvedIdentity = resolveOnlineUserIdentity({ sessionId, userKey });
+                const resolvedIdentity = resolveLiveFeedIdentity({ sessionId, userKey, payload: data.payload || {} });
                 const linkedUserLabel = resolvedIdentity.label;
                 const resolvedUserKey = resolvedIdentity.userKey || '';
                 const resolvedSessionId = resolvedIdentity.sessionId || String(sessionId || '');
