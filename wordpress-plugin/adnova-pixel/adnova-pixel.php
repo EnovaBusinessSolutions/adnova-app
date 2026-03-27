@@ -30,10 +30,10 @@ final class Adnova_Pixel_Plugin {
         add_action('wp_enqueue_scripts', array(__CLASS__, 'enqueue_pixel_script'), 100);
         add_action('wp_footer', array(__CLASS__, 'ensure_pixel_fallback_tag'), 999);
         add_filter('script_loader_tag', array(__CLASS__, 'inject_script_attributes'), 10, 3);
-        // Disable auto-update infrastructure to prevent HTTP blocking on slow backend
-        // add_filter('pre_set_site_transient_update_plugins', array(__CLASS__, 'inject_plugin_update'));
-        // add_filter('plugins_api', array(__CLASS__, 'plugins_api_handler'), 10, 3);
-        // add_filter('auto_update_plugin', array(__CLASS__, 'enable_auto_update'), 10, 2);
+        // Enable auto-update infrastructure
+        add_filter('pre_set_site_transient_update_plugins', array(__CLASS__, 'inject_plugin_update'));
+        add_filter('plugins_api', array(__CLASS__, 'plugins_api_handler'), 10, 3);
+        add_filter('auto_update_plugin', array(__CLASS__, 'enable_auto_update'), 10, 2);
         // WooCommerce: fire purchase on thank-you page
         add_action('woocommerce_thankyou', array(__CLASS__, 'on_woo_order_received'), 10, 1);
         // Server-side order capture even when thank-you is not rendered in browser.
