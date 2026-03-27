@@ -2993,6 +2993,15 @@
                 .replace(/\s+/g, ' ');
         }
 
+        function normalizeCustomerId(value) {
+            const normalized = String(value || '').trim();
+            if (!normalized) return '';
+            if (/^\d+(\.0+)?$/.test(normalized)) {
+                return String(parseInt(normalized, 10));
+            }
+            return normalized;
+        }
+
         function escapeInlineSingleQuotedJs(value) {
             return String(value || '')
                 .replace(/\\/g, '\\\\')
@@ -3005,7 +3014,7 @@
             const byName = [];
 
             profiles.forEach((profile) => {
-                const customerId = String(profile.customerId || '').trim();
+                const customerId = normalizeCustomerId(profile.customerId);
                 if (customerId && !byCustomerId.has(customerId)) byCustomerId.set(customerId, profile);
 
                 const userKeys = Array.isArray(profile.userKeys) ? profile.userKeys : [];
@@ -3026,7 +3035,7 @@
         }
 
         function createProfilePurchaseMatcher(profile = {}) {
-            const profileCustomerId = String(profile.customerId || '').trim();
+            const profileCustomerId = normalizeCustomerId(profile.customerId);
             const profileUserKeys = new Set(
                 (Array.isArray(profile.userKeys) ? profile.userKeys : [])
                     .map((k) => String(k || '').trim())
@@ -3035,7 +3044,7 @@
             const profileName = normalizeProfileName(profile.customerDisplayName || profile.profileLabel || '');
 
             return (purchase = {}) => {
-                const purchaseCustomerId = String(purchase.customerId || '').trim();
+                const purchaseCustomerId = normalizeCustomerId(purchase.customerId);
                 if (profileCustomerId && purchaseCustomerId && profileCustomerId === purchaseCustomerId) {
                     return true;
                 }
@@ -3084,7 +3093,7 @@
 
             const profiles = Array.isArray(wooProfilesState.profiles) ? wooProfilesState.profiles : [];
             const safeSessionId = String(sessionId || '').trim();
-            let safeCustomerId = String(customerId || '').trim();
+            let safeCustomerId = normalizeCustomerId(customerId);
             let safeUserKey = String(userKey || '').trim();
             let safeFallbackName = String(fallbackName || '').trim();
 
@@ -3103,7 +3112,7 @@
                 }) || null;
 
                 if (linkedPurchase) {
-                    if (!safeCustomerId) safeCustomerId = String(linkedPurchase.customerId || '').trim();
+                    if (!safeCustomerId) safeCustomerId = normalizeCustomerId(linkedPurchase.customerId);
                     if (!safeUserKey) safeUserKey = String(linkedPurchase.userKey || '').trim();
                     if (!safeFallbackName) safeFallbackName = String(resolvePurchaseCustomerName(linkedPurchase) || '').trim();
                 }
@@ -3195,12 +3204,29 @@
                 ? rankedJourneys
                 : rankedJourneys.filter((row) => row.channelKey === attributionJourneyState.channel);
 
+            const recentCustomerNamesById = new Map();
+            rankedJourneys.forEach(({ purchase }) => {
+                const customerId = normalizeCustomerId(purchase?.customerId);
+                const resolvedName = resolvePurchaseCustomerName(purchase);
+                if (customerId && resolvedName && !recentCustomerNamesById.has(customerId)) {
+                    recentCustomerNamesById.set(customerId, resolvedName);
+                }
+            });
+
+            const resolveProfileDisplayName = (profile = {}) => {
+                const customerId = normalizeCustomerId(profile.customerId);
+                return profile.customerDisplayName
+                    || (customerId ? recentCustomerNamesById.get(customerId) || null : null)
+                    || profile.profileLabel
+                    || (customerId ? `Woo #${customerId}` : 'Woo customer');
+            };
+
             const allWooProfiles = Array.isArray(wooProfilesState.profiles) ? wooProfilesState.profiles : [];
             const normalizedSearch = normalizeProfileName(attributionJourneyState.profileSearch || '');
             const visibleProfilesBase = allWooProfiles.filter((profile) => {
                 if (!normalizedSearch) return true;
                 const label = normalizeProfileName(profile.customerDisplayName || profile.profileLabel || '');
-                const customerId = String(profile.customerId || '').trim();
+                const customerId = normalizeCustomerId(profile.customerId);
                 return label.includes(normalizedSearch) || customerId.includes(normalizedSearch);
             });
 
@@ -3233,7 +3259,7 @@
                     focusEl.innerHTML = `
                         <div class="journey-compact-card space-y-3">
                             <div class="flex items-center justify-between gap-2 flex-wrap">
-                                <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(selectedProfile.customerDisplayName || selectedProfile.profileLabel || 'Woo customer')}</span>
+                                <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(resolveProfileDisplayName(selectedProfile))}</span>
                                 <span class="text-xs text-gray-500">${formatDateTimeMx(selectedProfile.lastSeenAt)}</span>
                             </div>
                             <div class="journey-meta-grid">
@@ -3254,7 +3280,7 @@
                     <div class="journey-compact-card space-y-3">
                         <div class="flex items-center justify-between gap-2 flex-wrap">
                             <span class="text-xs text-gray-500">${formatRecentPurchaseDate(top)}</span>
-                            <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(topJourneyData.summary?.userName || selectedProfile?.customerDisplayName || 'Customer')}</span>
+                            <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(topJourneyData.summary?.userName || (selectedProfile ? resolveProfileDisplayName(selectedProfile) : '') || 'Customer')}</span>
                         </div>
                         <div class="journey-meta-grid">
                             <span class="journey-chip"><i class="fa-solid fa-percent"></i>${Number(topJourneyData.summary?.confidence || 0)}%</span>
@@ -3280,7 +3306,7 @@
                         <button type="button" class="journey-customer-bubble ${attributionJourneyState.profileKey === 'all' ? 'is-active' : ''}" data-profile-key="all">All Woo profiles</button>
                         ${visibleProfiles.map((profile) => {
                             const active = String(attributionJourneyState.profileKey || 'all') === String(profile.profileKey || '');
-                            const label = profile.customerDisplayName || profile.profileLabel || `Woo #${profile.customerId || '?'}`;
+                            const label = resolveProfileDisplayName(profile);
                             return `<button type="button" class="journey-customer-bubble ${active ? 'is-active' : ''}" data-profile-key="${escapeHtmlAttr(profile.profileKey || '')}" title="${escapeHtmlAttr(label)} · ${Number(profile.orderCount || 0)} órdenes">${escapeHtml(label)}</button>`;
                         }).join('')}
                     </div>

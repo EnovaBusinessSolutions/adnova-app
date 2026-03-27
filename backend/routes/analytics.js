@@ -1690,7 +1690,7 @@ router.get('/:account_id', async (req, res) => {
       checkoutToken: order.checkoutToken || null,
       sessionId: order.sessionId || null,
       userKey: order.userKey || null,
-      customerId: order.customerId || null,
+      customerId: order.customerId || extractOrderCustomerId(order.attributionSnapshot) || null,
       emailHash: order.emailHash || null,
       phoneHash: order.phoneHash || null,
       revenue: Number(order.revenue || 0),
@@ -1702,7 +1702,7 @@ router.get('/:account_id', async (req, res) => {
       orderAttributionModel: order.attributionModel || null,
       wooSourceLabel: order?.attributionSnapshot?.woo_source_label || null,
       wooSourceType: order?.attributionSnapshot?.woo_source_type || null,
-      customerName: order?.attributionSnapshot?.customer_name || null,
+      customerName: extractOrderCustomerDisplayName(order.attributionSnapshot),
       payloadSnapshot: order.attributionSnapshot || null,
     }));
 
@@ -1735,7 +1735,8 @@ router.get('/:account_id', async (req, res) => {
         },
         wooSourceLabel: ev?.rawPayload?.woo_source_label || null,
         wooSourceType: ev?.rawPayload?.woo_source_type || null,
-        customerName: ev?.rawPayload?.user_data?.fn ? `${ev.rawPayload.user_data.fn} ${ev.rawPayload.user_data.ln || ''}`.trim() : null,
+        customerName: eventIdentity.customerDisplayName
+          || (ev?.rawPayload?.user_data?.fn ? `${ev.rawPayload.user_data.fn} ${ev.rawPayload.user_data.ln || ''}`.trim() : null),
       };
     });
 
@@ -2314,18 +2315,69 @@ function normalizeCustomerDisplayName(value) {
   return normalized;
 }
 
+function firstTruthyString(candidates = []) {
+  for (const value of candidates) {
+    const normalized = normalizeCustomerDisplayName(value);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function normalizeWooCustomerId(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return null;
+  if (['unknown', 'undefined', 'null', 'n/a', 'none', '-'].includes(normalized.toLowerCase())) return null;
+  return normalized;
+}
+
 function extractOrderCustomerDisplayName(attributionSnapshot) {
   const snapshot = attributionSnapshot && typeof attributionSnapshot === 'object'
     ? attributionSnapshot
     : {};
 
-  return normalizeCustomerDisplayName(
-    snapshot.customer_name
-    || snapshot.customer_display_name
-    || snapshot.display_name
-    || [snapshot.customer_first_name, snapshot.customer_last_name].filter(Boolean).join(' ')
-    || [snapshot.billing_first_name, snapshot.billing_last_name].filter(Boolean).join(' ')
-    || snapshot.billing_company
+  const customer = snapshot.customer && typeof snapshot.customer === 'object' ? snapshot.customer : {};
+  const billing = snapshot.billing && typeof snapshot.billing === 'object' ? snapshot.billing : {};
+  const shipping = snapshot.shipping && typeof snapshot.shipping === 'object' ? snapshot.shipping : {};
+
+  return firstTruthyString([
+    snapshot.customer_name,
+    snapshot.customer_display_name,
+    snapshot.display_name,
+    snapshot.customerName,
+    snapshot.customerDisplayName,
+    snapshot.displayName,
+    [snapshot.customer_first_name, snapshot.customer_last_name].filter(Boolean).join(' '),
+    [snapshot.customerFirstName, snapshot.customerLastName].filter(Boolean).join(' '),
+    [snapshot.billing_first_name, snapshot.billing_last_name].filter(Boolean).join(' '),
+    [snapshot.billingFirstName, snapshot.billingLastName].filter(Boolean).join(' '),
+    [customer.first_name, customer.last_name].filter(Boolean).join(' '),
+    [customer.firstName, customer.lastName].filter(Boolean).join(' '),
+    customer.name,
+    customer.display_name,
+    customer.displayName,
+    [billing.first_name, billing.last_name].filter(Boolean).join(' '),
+    [billing.firstName, billing.lastName].filter(Boolean).join(' '),
+    billing.company,
+    [shipping.first_name, shipping.last_name].filter(Boolean).join(' '),
+    [shipping.firstName, shipping.lastName].filter(Boolean).join(' '),
+    shipping.company,
+    snapshot.billing_company,
+    snapshot.billingCompany,
+  ]);
+}
+
+function extractOrderCustomerId(attributionSnapshot) {
+  const snapshot = attributionSnapshot && typeof attributionSnapshot === 'object'
+    ? attributionSnapshot
+    : {};
+  const customer = snapshot.customer && typeof snapshot.customer === 'object' ? snapshot.customer : {};
+
+  return normalizeWooCustomerId(
+    snapshot.customer_id
+    || snapshot.customerId
+    || customer.id
+    || customer.customer_id
+    || customer.customerId
   );
 }
 
@@ -2334,33 +2386,62 @@ function extractEventIdentity(rawPayload) {
     ? rawPayload
     : {};
 
+  const customer = payload.customer && typeof payload.customer === 'object' ? payload.customer : {};
+  const billing = payload.billing && typeof payload.billing === 'object' ? payload.billing : {};
+  const userData = payload.user_data && typeof payload.user_data === 'object' ? payload.user_data : {};
+
   const email = String(payload.email || payload.customer_email || '').trim().toLowerCase();
   const phone = String(payload.phone || payload.customer_phone || '').trim();
 
   return {
-    customerId: String(payload.customer_id || payload.customerId || '').trim() || null,
+    customerId: normalizeWooCustomerId(
+      payload.customer_id
+      || payload.customerId
+      || customer.id
+      || customer.customer_id
+      || customer.customerId
+      || userData.customer_id
+      || userData.customerId
+    ),
     emailHash: email ? hashPII(email) : null,
     phoneHash: phone ? hashPII(phone) : null,
     emailPreview: email || null,
     phonePreview: phone || null,
-    customerDisplayName: normalizeCustomerDisplayName(
-      payload.customer_name
-      || payload.customer_display_name
-      || [payload.customer_first_name, payload.customer_last_name].filter(Boolean).join(' ')
-      || payload.billing_company
-    ),
+    customerDisplayName: firstTruthyString([
+      payload.customer_name,
+      payload.customer_display_name,
+      payload.customerName,
+      payload.customerDisplayName,
+      payload.display_name,
+      payload.displayName,
+      [payload.customer_first_name, payload.customer_last_name].filter(Boolean).join(' '),
+      [payload.customerFirstName, payload.customerLastName].filter(Boolean).join(' '),
+      [payload.first_name, payload.last_name].filter(Boolean).join(' '),
+      [payload.firstName, payload.lastName].filter(Boolean).join(' '),
+      [customer.first_name, customer.last_name].filter(Boolean).join(' '),
+      [customer.firstName, customer.lastName].filter(Boolean).join(' '),
+      customer.name,
+      customer.display_name,
+      customer.displayName,
+      [billing.first_name, billing.last_name].filter(Boolean).join(' '),
+      [billing.firstName, billing.lastName].filter(Boolean).join(' '),
+      billing.company,
+      payload.billing_company,
+      payload.billingCompany,
+    ]),
   };
 }
 
 function buildIdentityProfileDescriptor({ customerId, emailHash, phoneHash, userKey, customerDisplayName }) {
+  const normalizedCustomerId = normalizeWooCustomerId(customerId);
   const normalizedCustomerDisplayName = normalizeCustomerDisplayName(customerDisplayName);
 
-  if (customerId) {
+  if (normalizedCustomerId) {
     return {
-      profileKey: `customer:${customerId}`,
+      profileKey: `customer:${normalizedCustomerId}`,
       profileType: 'woocommerce_customer',
       customerDisplayName: normalizedCustomerDisplayName,
-      profileLabel: normalizedCustomerDisplayName ? `${normalizedCustomerDisplayName} · Woo #${customerId}` : `Woo customer #${customerId}`,
+      profileLabel: normalizedCustomerDisplayName ? `${normalizedCustomerDisplayName} · Woo #${normalizedCustomerId}` : `Woo customer #${normalizedCustomerId}`,
     };
   }
 
