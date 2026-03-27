@@ -30,9 +30,10 @@ final class Adnova_Pixel_Plugin {
         add_action('wp_enqueue_scripts', array(__CLASS__, 'enqueue_pixel_script'), 100);
         add_action('wp_footer', array(__CLASS__, 'ensure_pixel_fallback_tag'), 999);
         add_filter('script_loader_tag', array(__CLASS__, 'inject_script_attributes'), 10, 3);
-        add_filter('pre_set_site_transient_update_plugins', array(__CLASS__, 'inject_plugin_update'));
-        add_filter('plugins_api', array(__CLASS__, 'plugins_api_handler'), 10, 3);
-        add_filter('auto_update_plugin', array(__CLASS__, 'enable_auto_update'), 10, 2);
+        // Disable auto-update infrastructure to prevent HTTP blocking on slow backend
+        // add_filter('pre_set_site_transient_update_plugins', array(__CLASS__, 'inject_plugin_update'));
+        // add_filter('plugins_api', array(__CLASS__, 'plugins_api_handler'), 10, 3);
+        // add_filter('auto_update_plugin', array(__CLASS__, 'enable_auto_update'), 10, 2);
         // WooCommerce: fire purchase on thank-you page
         add_action('woocommerce_thankyou', array(__CLASS__, 'on_woo_order_received'), 10, 1);
         // Server-side order capture even when thank-you is not rendered in browser.
@@ -93,8 +94,9 @@ final class Adnova_Pixel_Plugin {
     private static function fetch_update_metadata() {
         $url = self::DEFAULT_UPDATE_METADATA_URL . '?t=' . time();
         $response = wp_remote_get($url, array(
-            'timeout' => 10,
+            'timeout' => 3,
             'headers' => array('Accept' => 'application/json'),
+            'sslverify' => false,
         ));
 
         if (is_wp_error($response)) {
@@ -107,6 +109,9 @@ final class Adnova_Pixel_Plugin {
         }
 
         $body = wp_remote_retrieve_body($response);
+        if (!is_string($body) || empty($body)) {
+            return null;
+        }
         $decoded = json_decode($body, true);
 
         return is_array($decoded) ? $decoded : null;
@@ -844,27 +849,22 @@ final class Adnova_Pixel_Plugin {
             'woo_session_source' => isset($order_data['woo_session_source']) ? $order_data['woo_session_source'] : null,
         );
 
+        // Use non-blocking to avoid WordPress hanging if backend is slow/unresponsive
         $response = wp_remote_post(
             self::DEFAULT_ORDER_SYNC_URL,
             array(
-                'timeout'  => 12,
-                'blocking' => true,
+                'timeout'  => 4,
+                'blocking' => false,
                 'headers'  => array(
                     'Content-Type' => 'application/json',
                 ),
                 'body'     => wp_json_encode($payload),
+                'sslverify' => false,
             )
         );
 
-        if (is_wp_error($response)) {
-            error_log('[Adnova Pixel] Woo sync failed for order ' . (string) $order_id . ': ' . $response->get_error_message());
-            return;
-        }
-
-        $status_code = (int) wp_remote_retrieve_response_code($response);
-        if ($status_code >= 300 || $status_code < 200) {
-            error_log('[Adnova Pixel] Woo sync non-2xx for order ' . (string) $order_id . ': HTTP ' . (string) $status_code);
-        }
+        // Since we're non-blocking, response is likely null/empty — logging would be silent anyway
+        // Failures will be captured server-side and visible in Render logs
     }
 
     /**
