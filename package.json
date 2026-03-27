@@ -18,6 +18,7 @@
     "prisma:deploy": "prisma migrate deploy --schema=backend/prisma/schema.prisma",
     "prisma:push": "prisma db push --schema=backend/prisma/schema.prisma --skip-generate",
     "db:backfill:layer45": "node backend/scripts/backfill-layer45.js",
+    "db:wipe-tests": "node backend/scripts/wipe-test-orders.js",
     "db:pc:check": "node scripts/platform-connections-dedupe.js --check",
     "db:pc:dedupe": "node scripts/platform-connections-dedupe.js --apply"
   },
