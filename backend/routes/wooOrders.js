@@ -26,6 +26,23 @@ function normalizeAccountId(value) {
   }
 }
 
+function parseAllowedAccountIds() {
+  const raw = String(process.env.ADRAY_ALLOWED_ACCOUNT_IDS || '').trim();
+  if (!raw) return null;
+  const values = raw
+    .split(',')
+    .map((item) => normalizeAccountId(item) || String(item || '').trim().toLowerCase())
+    .filter(Boolean);
+  return values.length ? new Set(values) : null;
+}
+
+function isAccountAllowed(accountId) {
+  const allowed = parseAllowedAccountIds();
+  if (!allowed) return true;
+  const normalized = normalizeAccountId(accountId) || String(accountId || '').trim().toLowerCase();
+  return normalized ? allowed.has(normalized) : false;
+}
+
 function normalizeWooChannel(payload = {}) {
   const utmSource = String(payload.utm_source || '').trim().toLowerCase();
   const utmMedium = String(payload.utm_medium || '').trim().toLowerCase();
@@ -188,6 +205,10 @@ router.post('/woo/orders-sync', async (req, res) => {
 
     if (!accountId || !orderId) {
       return res.status(400).json({ success: false, error: 'account_id and order_id are required' });
+    }
+
+    if (!isAccountAllowed(accountId)) {
+      return res.json({ success: true, ignored: true, reason: 'account_not_allowed', accountId, orderId });
     }
 
     step = 'account_upsert';
