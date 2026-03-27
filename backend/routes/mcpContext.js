@@ -60,8 +60,8 @@ function stableHash(value) {
 
 /**
  * Compat / fallback connection fingerprint helpers.
- * These remain useful as secondary guards, but they are no longer
- * the primary authority for Signal/PDF freshness.
+ * These are SECONDARY only.
+ * Primary truth must come from aiContext fields written by the builder.
  */
 function normalizeSourceConnectionIdentityFromContainer(containerLike, source) {
   const container = containerLike || {};
@@ -108,18 +108,6 @@ function buildConnectionFingerprintFromContainer(container) {
   });
 }
 
-function buildHistoricalConnectionFingerprintFromUnifiedBase(root) {
-  const unifiedSources = root?.aiContext?.unifiedBase?.sources || {};
-  if (!unifiedSources || Object.keys(unifiedSources).length === 0) return '';
-  return buildConnectionFingerprintFromContainer(unifiedSources);
-}
-
-function buildAuthoritativeCurrentConnectionFingerprintFromRoot(root) {
-  const rootSources = root?.sources || {};
-  if (!rootSources || Object.keys(rootSources).length === 0) return '';
-  return buildConnectionFingerprintFromContainer(rootSources);
-}
-
 function getRootAiSignalPayload(root) {
   const state = root?.aiContext || {};
   return state?.signalPayload || state?.encodedPayload || null;
@@ -141,50 +129,40 @@ function getRootCurrentSourcesSnapshot(root) {
   return root?.aiContext?.currentSourcesSnapshot || null;
 }
 
-function deriveAuthoritativeCurrentSourceSnapshot(root) {
-  const sources = root?.sources || {};
-  const latestSnapshotId = safeStr(root?.latestSnapshotId || '').trim() || null;
-  const ai = root?.aiContext || {};
+function getStoredConnectionFingerprintFromRoot(root) {
+  const fromAi = safeStr(root?.aiContext?.connectionFingerprint || '').trim();
+  if (fromAi) return fromAi;
 
-  const out = {
-    version: 3,
-    latestSnapshotId,
-    contextRangeDays: toNum(ai?.contextRangeDays) || null,
-    storageRangeDays: toNum(ai?.storageRangeDays) || null,
-    sources: {
-      metaAds: {
-        connected: !!sources?.metaAds?.connected,
-        ready: !!sources?.metaAds?.ready,
-        usable: !!sources?.metaAds?.ready,
-        snapshotId: !!sources?.metaAds?.connected ? latestSnapshotId : null,
-        chunkCount: null,
-        accountId: safeStr(sources?.metaAds?.accountId || '').trim() || null,
-      },
-      googleAds: {
-        connected: !!sources?.googleAds?.connected,
-        ready: !!sources?.googleAds?.ready,
-        usable: !!sources?.googleAds?.ready,
-        snapshotId: !!sources?.googleAds?.connected ? latestSnapshotId : null,
-        chunkCount: null,
-        customerId: safeStr(sources?.googleAds?.customerId || sources?.googleAds?.accountId || '').trim() || null,
-      },
-      ga4: {
-        connected: !!sources?.ga4?.connected,
-        ready: !!sources?.ga4?.ready,
-        usable: !!sources?.ga4?.ready,
-        snapshotId: !!sources?.ga4?.connected ? latestSnapshotId : null,
-        chunkCount: null,
-        propertyId: safeStr(sources?.ga4?.propertyId || '').trim() || null,
-      },
-    },
-  };
+  const rootSources = root?.sources || {};
+  if (rootSources && Object.keys(rootSources).length > 0) {
+    return buildConnectionFingerprintFromContainer(rootSources);
+  }
 
-  return out;
+  return '';
 }
 
-function deriveAuthoritativeCurrentSourceFingerprintFromRoot(root) {
-  const snapshot = deriveAuthoritativeCurrentSourceSnapshot(root);
-  return stableHash(snapshot);
+function getCurrentConnectionFingerprintFromRoot(root) {
+  const rootSources = root?.sources || {};
+  if (rootSources && Object.keys(rootSources).length > 0) {
+    return buildConnectionFingerprintFromContainer(rootSources);
+  }
+  return '';
+}
+
+function deriveCurrentSourceFingerprintFromRoot(root) {
+  const explicit = getRootCurrentSourceFingerprint(root);
+  if (explicit) return explicit;
+
+  const snapshot = getRootCurrentSourcesSnapshot(root);
+  if (snapshot && typeof snapshot === 'object') {
+    try {
+      return stableHash(snapshot);
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  return '';
 }
 
 function getPdfConnectionFingerprint(pdf) {
@@ -199,48 +177,26 @@ function rootSignalLooksStale(root) {
   if (!root) return false;
 
   const state = root?.aiContext || {};
+
   if (state?.needsSignalRebuild === true) return true;
 
   const signalPayload = getRootAiSignalPayload(root);
   if (!signalPayload) return false;
 
-  const authoritativeCurrentConnectionFingerprint =
-    buildAuthoritativeCurrentConnectionFingerprintFromRoot(root);
+  const currentSourceFingerprint = deriveCurrentSourceFingerprintFromRoot(root);
+  const signalSourceFingerprint = getRootSignalSourceFingerprint(root);
 
-  const storedSignalConnectionFingerprint =
-    getRootSignalConnectionFingerprint(root);
-
-  if (
-    authoritativeCurrentConnectionFingerprint &&
-    storedSignalConnectionFingerprint &&
-    authoritativeCurrentConnectionFingerprint !== storedSignalConnectionFingerprint
-  ) {
-    return true;
+  // PRIMARY stale check: builder-managed source fingerprint delta.
+  if (currentSourceFingerprint && signalSourceFingerprint) {
+    return currentSourceFingerprint !== signalSourceFingerprint;
   }
 
-  const rootLatestSnapshotId = safeStr(root?.latestSnapshotId || '').trim();
-  const signalSnapshotId = safeStr(state?.snapshotId || '').trim();
+  // SECONDARY fallback only when source fingerprints are missing.
+  const currentConnectionFingerprint = getCurrentConnectionFingerprintFromRoot(root);
+  const storedSignalConnectionFingerprint = getRootSignalConnectionFingerprint(root);
 
-  if (
-    rootLatestSnapshotId &&
-    signalSnapshotId &&
-    rootLatestSnapshotId !== signalSnapshotId
-  ) {
-    return true;
-  }
-
-  const authoritativeCurrentSourceFingerprint =
-    deriveAuthoritativeCurrentSourceFingerprintFromRoot(root);
-
-  const storedSignalSourceFingerprint =
-    getRootSignalSourceFingerprint(root);
-
-  if (
-    authoritativeCurrentSourceFingerprint &&
-    storedSignalSourceFingerprint &&
-    authoritativeCurrentSourceFingerprint !== storedSignalSourceFingerprint
-  ) {
-    return true;
+  if (currentConnectionFingerprint && storedSignalConnectionFingerprint) {
+    return currentConnectionFingerprint !== storedSignalConnectionFingerprint;
   }
 
   return false;
@@ -258,43 +214,25 @@ function rootPdfLooksStale(root) {
 
   if (rootSignalLooksStale(root)) return true;
 
-  const authoritativeCurrentConnectionFingerprint =
-    buildAuthoritativeCurrentConnectionFingerprintFromRoot(root);
+  const currentSourceFingerprint = deriveCurrentSourceFingerprintFromRoot(root);
+  const signalSourceFingerprint = getRootSignalSourceFingerprint(root);
+  const pdfSourceFingerprint = getPdfSourceFingerprint(pdf);
 
-  const authoritativeCurrentSourceFingerprint =
-    deriveAuthoritativeCurrentSourceFingerprintFromRoot(root);
-
-  const signalSourceFingerprint =
-    getRootSignalSourceFingerprint(root);
-
-  const pdfConnectionFingerprint =
-    getPdfConnectionFingerprint(pdf);
-
-  const pdfSourceFingerprint =
-    getPdfSourceFingerprint(pdf);
-
-  if (
-    authoritativeCurrentConnectionFingerprint &&
-    pdfConnectionFingerprint &&
-    authoritativeCurrentConnectionFingerprint !== pdfConnectionFingerprint
-  ) {
-    return true;
+  // PRIMARY stale check for PDF: only if pdf/source fingerprints exist.
+  if (currentSourceFingerprint && pdfSourceFingerprint) {
+    return currentSourceFingerprint !== pdfSourceFingerprint;
   }
 
-  if (
-    authoritativeCurrentSourceFingerprint &&
-    pdfSourceFingerprint &&
-    authoritativeCurrentSourceFingerprint !== pdfSourceFingerprint
-  ) {
-    return true;
+  if (signalSourceFingerprint && pdfSourceFingerprint) {
+    return signalSourceFingerprint !== pdfSourceFingerprint;
   }
 
-  if (
-    signalSourceFingerprint &&
-    pdfSourceFingerprint &&
-    signalSourceFingerprint !== pdfSourceFingerprint
-  ) {
-    return true;
+  // SECONDARY fallback only if source fp is absent.
+  const currentConnectionFingerprint = getCurrentConnectionFingerprintFromRoot(root);
+  const pdfConnectionFingerprint = getPdfConnectionFingerprint(pdf);
+
+  if (currentConnectionFingerprint && pdfConnectionFingerprint) {
+    return currentConnectionFingerprint !== pdfConnectionFingerprint;
   }
 
   return false;
@@ -492,7 +430,7 @@ function isSignalRunCompatibleWithRoot(signalRun, root) {
     return false;
   }
 
-  const rootCurrentSourceFingerprint = deriveAuthoritativeCurrentSourceFingerprintFromRoot(root);
+  const rootCurrentSourceFingerprint = deriveCurrentSourceFingerprintFromRoot(root);
   const rootSignalSourceFingerprint = getRootSignalSourceFingerprint(root);
   const runSourceFingerprint = safeStr(signalRun?.meta?.sourceFingerprint || '').trim();
 
@@ -504,15 +442,10 @@ function isSignalRunCompatibleWithRoot(signalRun, root) {
     return false;
   }
 
-  const authoritativeCurrentConnectionFingerprint =
-    buildAuthoritativeCurrentConnectionFingerprintFromRoot(root);
+  const currentConnectionFingerprint = getCurrentConnectionFingerprintFromRoot(root);
   const runConnectionFingerprint = safeStr(signalRun?.meta?.connectionFingerprint || '').trim();
 
-  if (
-    authoritativeCurrentConnectionFingerprint &&
-    runConnectionFingerprint &&
-    authoritativeCurrentConnectionFingerprint !== runConnectionFingerprint
-  ) {
+  if (currentConnectionFingerprint && runConnectionFingerprint && currentConnectionFingerprint !== runConnectionFingerprint) {
     return false;
   }
 
@@ -597,8 +530,7 @@ function getVersionSeedFromRoot(root) {
   const signalPayload = state?.signalPayload || state?.encodedPayload || null;
 
   return (
-    safeStr(deriveAuthoritativeCurrentSourceFingerprintFromRoot(root)).trim() ||
-    safeStr(state?.currentSourceFingerprint).trim() ||
+    safeStr(deriveCurrentSourceFingerprintFromRoot(root)).trim() ||
     safeStr(state?.sourceFingerprint).trim() ||
     safeStr(state?.snapshotId).trim() ||
     safeStr(root?.latestSnapshotId).trim() ||
@@ -617,7 +549,6 @@ function chooseStatusValue(primary, fallback) {
 function hasAuthoritativeRunPdf(signalRun) {
   const pdf = signalRun?.pdf || null;
   const status = safeStr(pdf?.status).trim();
-
   return status === 'processing' || status === 'ready' || status === 'failed';
 }
 
@@ -631,6 +562,7 @@ function chooseAuthoritativePdfState(root, signalRun, staleSignal, stalePdf) {
     );
   }
 
+  // If root already has ready PDF, prefer it. It is usually the most up-to-date persisted state.
   if (rootPdf.status === 'ready') {
     return rootPdf;
   }
@@ -648,7 +580,6 @@ function deriveUiFlags({
   needSignalRebuild,
   needPdfRebuild,
   pdf,
-  currentSourceFingerprint,
   signalSourceFingerprint,
 }) {
   const pdfSourceFingerprint = safeStr(pdf?.sourceFingerprint || '').trim() || '';
@@ -703,17 +634,11 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
     ? normalizeSignalRun(signalRun)
     : null;
 
-  const authoritativeCurrentConnectionFingerprint =
-    buildAuthoritativeCurrentConnectionFingerprintFromRoot(root) || null;
+  const currentConnectionFingerprint = getCurrentConnectionFingerprintFromRoot(root) || null;
+  const storedConnectionFingerprint = getStoredConnectionFingerprintFromRoot(root) || null;
 
-  const historicalUnifiedConnectionFingerprint =
-    buildHistoricalConnectionFingerprintFromUnifiedBase(root) || null;
-
-  const authoritativeCurrentSourcesSnapshot =
-    deriveAuthoritativeCurrentSourceSnapshot(root);
-
-  const currentSourceFingerprint =
-    deriveAuthoritativeCurrentSourceFingerprintFromRoot(root) || null;
+  const currentSourcesSnapshot = getRootCurrentSourcesSnapshot(root) || null;
+  const currentSourceFingerprint = deriveCurrentSourceFingerprintFromRoot(root) || null;
 
   const signalSourceFingerprint =
     !staleSignal
@@ -754,13 +679,6 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
     !!stalePdf ||
     !!needSignalRebuild;
 
-  const rootPdf = needSignalRebuild || needPdfRebuild
-    ? makeStalePdfState(
-        state?.pdf,
-        needSignalRebuild ? 'STALE_SIGNAL' : 'STALE_PDF'
-      )
-    : normalizePdfState(state?.pdf);
-
   const pdf = chooseAuthoritativePdfState(root, compatibleRun, needSignalRebuild, needPdfRebuild);
 
   const shareEnabled =
@@ -789,7 +707,6 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
     needSignalRebuild,
     needPdfRebuild,
     pdf,
-    currentSourceFingerprint,
     signalSourceFingerprint,
   });
 
@@ -837,11 +754,10 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
         : [],
 
       sourceFingerprint: signalSourceFingerprint,
-      currentSourcesSnapshot: authoritativeCurrentSourcesSnapshot,
+      currentSourcesSnapshot: currentSourcesSnapshot,
       currentSourceFingerprint,
-      connectionFingerprint: safeStr(state?.connectionFingerprint).trim() || null,
-      authoritativeCurrentConnectionFingerprint,
-      historicalUnifiedConnectionFingerprint,
+      connectionFingerprint: storedConnectionFingerprint,
+      currentConnectionFingerprint,
 
       staleSignal: !!staleSignal,
       stalePdf: !!stalePdf,
@@ -923,7 +839,7 @@ function buildSharedPayload(root, provider, signalRun = null) {
       usedOpenAI: !!state?.usedOpenAI,
       model: state?.model || null,
       sourceFingerprint: safeStr(state?.sourceFingerprint || '').trim() || null,
-      currentSourceFingerprint: safeStr(deriveAuthoritativeCurrentSourceFingerprintFromRoot(root) || '').trim() || null,
+      currentSourceFingerprint: safeStr(deriveCurrentSourceFingerprintFromRoot(root) || '').trim() || null,
       connectionFingerprint: safeStr(state?.connectionFingerprint || '').trim() || null,
       buildAttemptId: compatibleRun?.buildAttemptId || state?.buildAttemptId || null,
       signalRunId: compatibleRun?.signalRunId || null,
@@ -1316,6 +1232,7 @@ router.get('/latest', async (req, res) => {
         sourceFingerprint: statusData?.sourceFingerprint || null,
         currentSourceFingerprint: statusData?.currentSourceFingerprint || null,
         connectionFingerprint: statusData?.connectionFingerprint || null,
+        currentConnectionFingerprint: statusData?.currentConnectionFingerprint || null,
         needSignalRebuild: !!statusData?.needSignalRebuild,
         needPdfRebuild: !!statusData?.needPdfRebuild,
       },
@@ -1429,7 +1346,6 @@ router.get('/pdf/status', async (req, res) => {
       needSignalRebuild,
       needPdfRebuild,
       pdf,
-      currentSourceFingerprint: deriveAuthoritativeCurrentSourceFingerprintFromRoot(root) || null,
       signalSourceFingerprint: getRootSignalSourceFingerprint(root) || null,
     });
 
@@ -1445,8 +1361,8 @@ router.get('/pdf/status', async (req, res) => {
         needsSignalRebuild: needSignalRebuild,
         needPdfRebuild,
         needsPdfRebuild: needPdfRebuild,
-        currentSourceFingerprint: deriveAuthoritativeCurrentSourceFingerprintFromRoot(root) || null,
-        currentSourcesSnapshot: deriveAuthoritativeCurrentSourceSnapshot(root),
+        currentSourceFingerprint: deriveCurrentSourceFingerprintFromRoot(root) || null,
+        currentSourcesSnapshot: getRootCurrentSourcesSnapshot(root) || null,
         pdfReady: uiFlags.pdfReady,
         pdfProcessing: uiFlags.pdfProcessing,
         pdfFailed: uiFlags.pdfFailed,
