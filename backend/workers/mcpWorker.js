@@ -12,6 +12,9 @@ const { collectGA4 } = require('../jobs/collect/googleAnalyticsCollector');
 
 const McpData = require('../models/McpData');
 const User = require('../models/User');
+const {
+  rebuildUnifiedContextForUser,
+} = require('../services/mcpContextBuilder');
 
 /* =========================
  * ENV + Connections
@@ -682,6 +685,56 @@ async function finalizeRootFromCollector({
   });
 }
 
+async function triggerSignalRebuildAfterCollect({
+  userId,
+  source,
+  snapshotId,
+  contextRangeDays,
+}) {
+  try {
+    console.log('[mcpWorker] signal rebuild:start', {
+      userId: String(userId),
+      source,
+      snapshotId,
+      contextRangeDays,
+    });
+
+    const rebuild = await rebuildUnifiedContextForUser(userId, {
+      explicitSnapshotId: snapshotId || null,
+      contextRangeDays: contextRangeDays || null,
+      forceRebuild: true,
+      reason: `source_collected:${String(source || 'unknown')}`,
+      requestedBy: 'worker:mcpWorker',
+      trigger: `worker:${String(source || 'unknown')}`,
+    });
+
+    console.log('[mcpWorker] signal rebuild:done', {
+      userId: String(userId),
+      source,
+      snapshotId,
+      status: rebuild?.data?.status || null,
+      stage: rebuild?.data?.stage || null,
+      progress: rebuild?.data?.progress || null,
+      signalComplete: !!rebuild?.data?.signalComplete,
+      signalReadyForPdf: !!rebuild?.data?.signalReadyForPdf,
+      usableSources: Array.isArray(rebuild?.data?.usableSources) ? rebuild.data.usableSources : [],
+      pendingConnectedSources: Array.isArray(rebuild?.data?.pendingConnectedSources)
+        ? rebuild.data.pendingConnectedSources
+        : [],
+    });
+
+    return rebuild;
+  } catch (err) {
+    console.error('[mcpWorker] signal rebuild failed', {
+      userId: String(userId),
+      source,
+      snapshotId,
+      error: err?.message || err,
+    });
+    throw err;
+  }
+}
+
 async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
   const snapshotId = makeSnapshotId();
 
@@ -751,11 +804,24 @@ async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
     extractedRoot,
   });
 
+  const rebuild = await triggerSignalRebuildAfterCollect({
+    userId,
+    source: 'metaAds',
+    snapshotId,
+    contextRangeDays: contextDays,
+  });
+
   return {
     ok: true,
     snapshotId,
     saved: (r.datasets || []).length,
     source: 'metaAds',
+    rebuild: {
+      status: rebuild?.data?.status || null,
+      stage: rebuild?.data?.stage || null,
+      signalComplete: !!rebuild?.data?.signalComplete,
+      signalReadyForPdf: !!rebuild?.data?.signalReadyForPdf,
+    },
   };
 }
 
@@ -827,11 +893,24 @@ async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, acc
     extractedRoot,
   });
 
+  const rebuild = await triggerSignalRebuildAfterCollect({
+    userId,
+    source: 'googleAds',
+    snapshotId,
+    contextRangeDays: contextDays,
+  });
+
   return {
     ok: true,
     snapshotId,
     saved: (r.datasets || []).length,
     source: 'googleAds',
+    rebuild: {
+      status: rebuild?.data?.status || null,
+      stage: rebuild?.data?.stage || null,
+      signalComplete: !!rebuild?.data?.signalComplete,
+      signalReadyForPdf: !!rebuild?.data?.signalReadyForPdf,
+    },
   };
 }
 
@@ -903,11 +982,24 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
     extractedRoot,
   });
 
+  const rebuild = await triggerSignalRebuildAfterCollect({
+    userId,
+    source: 'ga4',
+    snapshotId,
+    contextRangeDays: contextDays,
+  });
+
   return {
     ok: true,
     snapshotId,
     saved: (r.datasets || []).length,
     source: 'ga4',
+    rebuild: {
+      status: rebuild?.data?.status || null,
+      stage: rebuild?.data?.stage || null,
+      signalComplete: !!rebuild?.data?.signalComplete,
+      signalReadyForPdf: !!rebuild?.data?.signalReadyForPdf,
+    },
   };
 }
 
