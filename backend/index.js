@@ -437,6 +437,52 @@ app.get("/api/public-config", (_req, res) => {
   res.json({ bookingUrl: process.env.BOOKING_URL || "" });
 });
 
+app.get("/api/health/db", async (_req, res) => {
+  const databaseUrlRaw = String(process.env.DATABASE_URL || "").trim();
+  let dbHost = null;
+  let dbName = null;
+
+  if (databaseUrlRaw) {
+    try {
+      const parsed = new URL(databaseUrlRaw);
+      dbHost = parsed.hostname || null;
+      dbName = parsed.pathname ? parsed.pathname.replace(/^\//, "") : null;
+    } catch (_) {
+      dbHost = null;
+      dbName = null;
+    }
+  }
+
+  try {
+    await prisma.$queryRawUnsafe("SELECT 1");
+    return res.json({
+      ok: true,
+      database: {
+        connected: true,
+        host: dbHost,
+        name: dbName,
+      },
+      serviceTime: new Date().toISOString(),
+    });
+  } catch (error) {
+    const code = String(error?.code || "UNKNOWN");
+    const message = String(error?.message || "Database check failed");
+    return res.status(503).json({
+      ok: false,
+      database: {
+        connected: false,
+        host: dbHost,
+        name: dbName,
+      },
+      error: {
+        code,
+        message,
+      },
+      serviceTime: new Date().toISOString(),
+    });
+  }
+});
+
 /* =========================
  * Static / dashboard
  * ========================= */
