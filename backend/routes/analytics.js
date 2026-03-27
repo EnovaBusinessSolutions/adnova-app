@@ -1431,8 +1431,7 @@ router.get('/:account_id', async (req, res) => {
         sessionId: true,
         customerId: true,
         emailHash: true,
-        phoneHash: true,
-        rawPayload: true
+        phoneHash: true
       },
       orderBy: [
         { platformCreatedAt: 'desc' },
@@ -2542,8 +2541,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
         currency: true,
         createdAt: true,
         platformCreatedAt: true,
-        attributedChannel: true,
-        rawPayload: true
+        attributedChannel: true
       },
       orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
       take: 100,
@@ -2649,8 +2647,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
           currency: true,
           createdAt: true,
           platformCreatedAt: true,
-          attributedChannel: true,
-          rawPayload: true
+          attributedChannel: true
         },
         orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
         take: 250,
@@ -2927,8 +2924,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           lineItems: true,
           createdAt: true,
           platformCreatedAt: true,
-          attributedChannel: true,
-          rawPayload: true
+          attributedChannel: true
         },
         orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
         take: 250,
@@ -3027,8 +3023,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
             currency: true,
             createdAt: true,
             platformCreatedAt: true,
-            attributedChannel: true,
-            rawPayload: true
+            attributedChannel: true
           },
           orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
           take: 400,
@@ -3641,8 +3636,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
           createdAt: true,
           platformCreatedAt: true,
           attributedChannel: true,
-          attributionSnapshot: true,
-          rawPayload: true
+          attributionSnapshot: true
         },
         orderBy: { createdAt: 'desc' },
       }),
