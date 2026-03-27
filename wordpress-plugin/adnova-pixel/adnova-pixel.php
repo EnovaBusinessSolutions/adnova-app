@@ -570,9 +570,17 @@ final class Adnova_Pixel_Plugin {
             return;
         }
 
-        // Ignore admin/editor logins; we only care about storefront customer identity stitching.
+        // Skip admin/editor logins; track all other user roles (customer, subscriber, etc)
         $roles = is_array($user->roles) ? $user->roles : array();
-        if (!in_array('customer', $roles, true)) {
+        $exclude_roles = array('administrator', 'editor');
+        $has_excluded_role = false;
+        foreach ($exclude_roles as $excluded) {
+            if (in_array($excluded, $roles, true)) {
+                $has_excluded_role = true;
+                break;
+            }
+        }
+        if ($has_excluded_role) {
             return;
         }
 
@@ -619,8 +627,17 @@ final class Adnova_Pixel_Plugin {
             return;
         }
 
+        // Skip admin/editor logouts; track all other user roles
         $roles = is_array($user->roles) ? $user->roles : array();
-        if (!in_array('customer', $roles, true)) {
+        $exclude_roles = array('administrator', 'editor');
+        $has_excluded_role = false;
+        foreach ($exclude_roles as $excluded) {
+            if (in_array($excluded, $roles, true)) {
+                $has_excluded_role = true;
+                break;
+            }
+        }
+        if ($has_excluded_role) {
             return;
         }
 
