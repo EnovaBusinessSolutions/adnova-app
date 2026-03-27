@@ -1682,6 +1682,7 @@ router.get('/:account_id', async (req, res) => {
       checkoutToken: order.checkoutToken || null,
       sessionId: order.sessionId || null,
       userKey: order.userKey || null,
+      customerId: order.customerId || null,
       revenue: Number(order.revenue || 0),
       currency: order.currency || 'MXN',
       items: normalizeLineItems(order.lineItems),
@@ -1927,7 +1928,7 @@ router.get('/:account_id', async (req, res) => {
       });
     }
 
-    const recentPurchases = recentConversions.map((conv) => {
+    const recentPurchases = await Promise.all(recentConversions.map(async (conv) => {
       const key = `${conv.orderId || ''}::${conv.checkoutToken || ''}::${new Date(conv.createdAt).toISOString()}`;
       const detailed = detailedByKey.get(key);
       const normalizedItems = conv.source === 'orders'
@@ -1938,7 +1939,7 @@ router.get('/:account_id', async (req, res) => {
       const earliestTs = convTs - (JOURNEY_STITCH_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
       const latestTs = convTs + (15 * 60 * 1000);
 
-      const stitchedEvents = stitchedCandidateEvents
+      let stitchedEvents = stitchedCandidateEvents
         .filter((ev) => {
           const evTs = new Date(ev.createdAt).getTime();
           if (!Number.isFinite(evTs)) return false;
@@ -1948,10 +1949,53 @@ router.get('/:account_id', async (req, res) => {
           const byCheckout = Boolean(conv.checkoutToken && ev.checkoutToken && String(ev.checkoutToken) === String(conv.checkoutToken));
           const bySession = Boolean(conv.sessionId && ev.sessionId && String(ev.sessionId) === String(conv.sessionId));
           const byUser = Boolean(conv.userKey && ev.userKey && String(ev.userKey) === String(conv.userKey));
+          const eventIdentity = extractEventIdentity(ev.rawPayload || {});
+          const byCustomer = Boolean(conv.customerId && eventIdentity.customerId && String(eventIdentity.customerId) === String(conv.customerId));
 
-          return byOrder || byCheckout || bySession || byUser;
+          return byOrder || byCheckout || bySession || byUser || byCustomer;
         })
         .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
+      // Fallback: if stitching only found sparse purchase signals, try customer-id linkage.
+      if (stitchedEvents.length <= 2 && conv.customerId) {
+        try {
+          const customerLinkedEvents = await prisma.event.findMany({
+            where: {
+              accountId: account_id,
+              createdAt: {
+                gte: new Date(earliestTs),
+                lte: new Date(latestTs),
+              },
+              OR: [
+                { rawPayload: { path: ['customer_id'], equals: String(conv.customerId) } },
+                { rawPayload: { path: ['customerId'], equals: String(conv.customerId) } },
+              ],
+            },
+            select: {
+              eventId: true,
+              eventName: true,
+              createdAt: true,
+              collectedAt: true,
+              pageUrl: true,
+              productId: true,
+              orderId: true,
+              checkoutToken: true,
+              sessionId: true,
+              userKey: true,
+              rawPayload: true,
+            },
+            orderBy: { createdAt: 'asc' },
+            take: 300,
+          });
+
+          if (customerLinkedEvents.length) {
+            stitchedEvents = [...stitchedEvents, ...customerLinkedEvents]
+              .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+          }
+        } catch (_) {
+          // Ignore JSON-path incompatibilities and keep primary stitched timeline.
+        }
+      }
 
       const seenEventIds = new Set();
       const journeyEvents = stitchedEvents
@@ -1981,7 +2025,7 @@ router.get('/:account_id', async (req, res) => {
         items: normalizedItems,
         events: journeyEvents,
       };
-    });
+    }));
 
     // Recompute channel stats by selected attribution model over resolved conversions.
     Object.keys(channelStats).forEach((key) => {
