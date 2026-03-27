@@ -2010,6 +2010,10 @@ router.get('/:account_id', async (req, res) => {
       const earliestTs = convTs - journeyStitchLookbackMs;
       const latestTs = convTs + (15 * 60 * 1000);
 
+      const purchaseEventCandidates = stitchedCandidateEvents.filter(ev => Boolean(conv.orderId && ev.orderId && String(ev.orderId) === String(conv.orderId)) || Boolean(conv.checkoutToken && ev.checkoutToken && String(ev.checkoutToken) === String(conv.checkoutToken)));
+      const inferredSessionId = conv.sessionId || purchaseEventCandidates.find(e => e.sessionId)?.sessionId;
+      const inferredUserKey = conv.userKey || purchaseEventCandidates.find(e => e.userKey)?.userKey;
+
       let stitchedEvents = stitchedCandidateEvents
         .filter((ev) => {
           const evTs = new Date(ev.createdAt).getTime();
@@ -2018,8 +2022,8 @@ router.get('/:account_id', async (req, res) => {
 
           const byOrder = Boolean(conv.orderId && ev.orderId && String(ev.orderId) === String(conv.orderId));
           const byCheckout = Boolean(conv.checkoutToken && ev.checkoutToken && String(ev.checkoutToken) === String(conv.checkoutToken));
-          const bySession = Boolean(conv.sessionId && ev.sessionId && String(ev.sessionId) === String(conv.sessionId));
-          const byUser = Boolean(conv.userKey && ev.userKey && String(ev.userKey) === String(conv.userKey));
+          const bySession = Boolean(inferredSessionId && ev.sessionId && String(ev.sessionId) === String(inferredSessionId));
+          const byUser = Boolean(inferredUserKey && ev.userKey && String(ev.userKey) === String(inferredUserKey));
           const eventIdentity = extractEventIdentity(ev.rawPayload || {});
           const byCustomer = Boolean(conv.customerId && eventIdentity.customerId && String(eventIdentity.customerId) === String(conv.customerId));
 

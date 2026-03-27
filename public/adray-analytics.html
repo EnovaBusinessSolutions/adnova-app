@@ -2084,7 +2084,7 @@
         let wpUsersFetchInFlight = false;
         let wpUsersLastFetchAt = 0;
         const WP_USERS_FETCH_MIN_INTERVAL_MS = 15000;
-        const WP_USERS_POLL_INTERVAL_MS = 30000;
+        const WP_USERS_POLL_INTERVAL_MS = 3000;
         let analyticsFetchInFlight = false;
         let overviewFetchInFlight = false;
         let sessionOverviewLastLoadedAt = 0;
@@ -2859,7 +2859,7 @@
 
         function buildSessionTimelineEvents(sessionData = {}, options = {}) {
             const session = sessionData.session || {};
-            const events = Array.isArray(sessionData.events) ? sessionData.events : [];
+            const events = Array.isArray(sessionData.events) ? sessionData.events : (Array.isArray(sessionData.timeline) ? sessionData.timeline : []);
             if (!events.length) return [];
             const mode = String(options.mode || 'condensed').toLowerCase();
 
@@ -3001,7 +3001,7 @@
             const journey = sessionData.journey || {};
             const session = sessionData.session || {};
             const metrics = sessionData.metrics || {};
-            const events = Array.isArray(sessionData.events) ? sessionData.events : [];
+            const events = Array.isArray(sessionData.events) ? sessionData.events : (Array.isArray(sessionData.timeline) ? sessionData.timeline : []);
             const orders = Array.isArray(sessionData.orders) ? sessionData.orders : [];
             const channel = journey.attribution?.channel || session.utmSource || 'organic';
             const platform = journey.attribution?.platform || null;
