@@ -56,6 +56,39 @@ const PURCHASE_ALIASES = EVENT_BUCKET_ALIASES.purchase;
 const ATTRIBUTION_MODELS = new Set(['first_touch', 'last_touch', 'linear']);
 const ATTRIBUTION_LOOKBACK_DAYS = 30;
 const JOURNEY_STITCH_LOOKBACK_DAYS = 7;
+const ROUTE_RESPONSE_CACHE = new Map();
+const ROUTE_CACHE_MAX_ENTRIES = 300;
+
+function buildRouteCacheKey(routeName, req) {
+  const accountId = String(req?.params?.account_id || '-');
+  const query = String(req?.originalUrl || '').split('?')[1] || '';
+  return `${routeName}:${accountId}:${query}`;
+}
+
+function readRouteCache(cacheKey) {
+  const entry = ROUTE_RESPONSE_CACHE.get(cacheKey);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    ROUTE_RESPONSE_CACHE.delete(cacheKey);
+    return null;
+  }
+  return entry.payload;
+}
+
+function writeRouteCache(cacheKey, payload, ttlMs) {
+  if (!cacheKey || !payload || !Number.isFinite(ttlMs) || ttlMs <= 0) return;
+  ROUTE_RESPONSE_CACHE.set(cacheKey, {
+    payload,
+    expiresAt: Date.now() + ttlMs,
+  });
+
+  if (ROUTE_RESPONSE_CACHE.size <= ROUTE_CACHE_MAX_ENTRIES) return;
+  const now = Date.now();
+  for (const [key, value] of ROUTE_RESPONSE_CACHE.entries()) {
+    if (value.expiresAt <= now) ROUTE_RESPONSE_CACHE.delete(key);
+    if (ROUTE_RESPONSE_CACHE.size <= ROUTE_CACHE_MAX_ENTRIES) break;
+  }
+}
 
 function isDatabaseConnectivityError(error) {
   if (!error) return false;
@@ -1322,6 +1355,15 @@ router.get('/:account_id', async (req, res) => {
       ? 5000
       : Math.max(15, Math.min(1000, Number.parseInt(recentLimitRaw, 10) || 100));
 
+    const analyticsCacheKey = buildRouteCacheKey('analytics', req);
+    const cachedAnalytics = readRouteCache(analyticsCacheKey);
+    if (cachedAnalytics) {
+      return res.json({
+        ...cachedAnalytics,
+        cache: { hit: true, ttlMs: 120000 },
+      });
+    }
+
     // Default to last 30 days
     const startDate = allTime ? new Date(0) : (start ? startOfDay(new Date(start)) : startOfDay(subDays(new Date(), 30)));
     const endDate = end ? endOfDay(new Date(end)) : endOfDay(new Date());
@@ -1964,7 +2006,7 @@ router.get('/:account_id', async (req, res) => {
     const totalRevenueResolved = filteredOrders.length > 0 ? totalRevenue : purchaseRevenueFromEventsModeled;
 
     // 5. Return JSON
-    res.json({
+    const responsePayload = {
       summary: {
         totalRevenue: totalRevenueResolved,
         totalRevenueOrders: totalRevenue,
@@ -2011,7 +2053,10 @@ router.get('/:account_id', async (req, res) => {
       topProducts,
       recentPurchases,
       daily: Object.values(dailyMap) // sorted array by date
-    });
+    };
+
+    writeRouteCache(analyticsCacheKey, responsePayload, 120000);
+    res.json(responsePayload);
 
   } catch (error) {
     console.error('[Analytics API] Error:', error);
@@ -2393,6 +2438,14 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
     const { account_id } = req.params;
     const windowMinutes = Math.max(5, Math.min(180, Number.parseInt(String(req.query.window_minutes || '30'), 10) || 30));
     const limit = Math.max(5, Math.min(50, Number.parseInt(String(req.query.limit || '20'), 10) || 20));
+    const wpUsersCacheKey = buildRouteCacheKey('wordpress-users-online', req);
+    const cachedWpUsers = readRouteCache(wpUsersCacheKey);
+    if (cachedWpUsers) {
+      return res.json({
+        ...cachedWpUsers,
+        cache: { hit: true, ttlMs: 45000 },
+      });
+    }
     const since = new Date(Date.now() - windowMinutes * 60 * 1000);
     const loginAliases = EVENT_BUCKET_ALIASES.login.map((name) => normalizeEventName(name));
     const logoutAliases = EVENT_BUCKET_ALIASES.logout.map((name) => normalizeEventName(name));
@@ -2535,7 +2588,7 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
       })
       .slice(0, limit);
 
-    return res.json({
+    const responsePayload = {
       success: true,
       accountId: account_id,
       windowMinutes,
@@ -2544,7 +2597,10 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
       message: users.length
         ? `Se detectaron ${users.length} usuarios WordPress activos en la ventana reciente.`
         : 'No se detectaron usuarios WordPress conectados en la ventana reciente.',
-    });
+    };
+
+    writeRouteCache(wpUsersCacheKey, responsePayload, 45000);
+    return res.json(responsePayload);
   } catch (error) {
     console.error('[Analytics API] WordPress users online error:', error);
     return res.json({
@@ -2563,6 +2619,14 @@ router.get('/:account_id/session-explorer', async (req, res) => {
   try {
     const { account_id } = req.params;
     const limit = Math.max(5, Math.min(30, Number.parseInt(String(req.query.limit || '12'), 10) || 12));
+    const sessionExplorerCacheKey = buildRouteCacheKey('session-explorer', req);
+    const cachedSessionExplorer = readRouteCache(sessionExplorerCacheKey);
+    if (cachedSessionExplorer) {
+      return res.json({
+        ...cachedSessionExplorer,
+        cache: { hit: true, ttlMs: 120000 },
+      });
+    }
 
     const accountRecord = await prisma.account.findUnique({
       where: { accountId: account_id },
@@ -2944,7 +3008,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
       resolvedCustomerNames: hydratedProfiles.filter((item) => item.profileType === 'woocommerce_customer' && item.customerDisplayName).length,
     });
 
-    res.json({
+    const responsePayload = {
       summary: {
         storePlatform,
         totalProfiles: hydratedProfiles.length,
@@ -2955,7 +3019,10 @@ router.get('/:account_id/session-explorer', async (req, res) => {
         shopifyNameLookupActive: Boolean(shopifyContext?.shop && shopifyContext?.accessToken),
       },
       profiles: serializedProfiles,
-    });
+    };
+
+    writeRouteCache(sessionExplorerCacheKey, responsePayload, 120000);
+    res.json(responsePayload);
   } catch (error) {
     console.error('[Analytics API] Session explorer overview error:', error);
     if (isDatabaseConnectivityError(error)) {
