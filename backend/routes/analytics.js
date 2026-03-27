@@ -1664,6 +1664,7 @@ router.get('/:account_id', async (req, res) => {
         createdAt: true,
         orderId: true,
         checkoutToken: true,
+        sessionId: true,
         userKey: true,
         revenue: true,
         currency: true,
@@ -1679,6 +1680,7 @@ router.get('/:account_id', async (req, res) => {
       orderId: order.orderId,
       orderNumber: order.orderNumber || null,
       checkoutToken: order.checkoutToken || null,
+      sessionId: order.sessionId || null,
       userKey: order.userKey || null,
       revenue: Number(order.revenue || 0),
       currency: order.currency || 'MXN',
@@ -1699,6 +1701,7 @@ router.get('/:account_id', async (req, res) => {
       orderId: ev.orderId || null,
       orderNumber: null,
       checkoutToken: ev.checkoutToken || null,
+      sessionId: ev.sessionId || null,
       userKey: ev.userKey || null,
       revenue: Number(ev.revenue || 0),
       currency: ev.currency || 'MXN',
@@ -1881,6 +1884,7 @@ router.get('/:account_id', async (req, res) => {
     const recentConversions = modeledConversions.slice(0, recentLimit);
     const recentOrderIds = Array.from(new Set(recentConversions.map((c) => c.orderId).filter(Boolean)));
     const recentCheckoutTokens = Array.from(new Set(recentConversions.map((c) => c.checkoutToken).filter(Boolean)));
+    const recentSessionIds = Array.from(new Set(recentConversions.map((c) => c.sessionId).filter(Boolean)));
     const recentUserKeys = Array.from(new Set(recentConversions.map((c) => c.userKey).filter(Boolean)));
 
     const recentConversionTimes = recentConversions
@@ -1890,6 +1894,7 @@ router.get('/:account_id', async (req, res) => {
     const journeyEventOrFilters = [];
     if (recentOrderIds.length) journeyEventOrFilters.push({ orderId: { in: recentOrderIds } });
     if (recentCheckoutTokens.length) journeyEventOrFilters.push({ checkoutToken: { in: recentCheckoutTokens } });
+    if (recentSessionIds.length) journeyEventOrFilters.push({ sessionId: { in: recentSessionIds } });
     if (recentUserKeys.length) journeyEventOrFilters.push({ userKey: { in: recentUserKeys } });
 
     let stitchedCandidateEvents = [];
@@ -1914,6 +1919,7 @@ router.get('/:account_id', async (req, res) => {
           productId: true,
           orderId: true,
           checkoutToken: true,
+          sessionId: true,
           userKey: true,
           rawPayload: true,
         },
@@ -1940,9 +1946,10 @@ router.get('/:account_id', async (req, res) => {
 
           const byOrder = Boolean(conv.orderId && ev.orderId && String(ev.orderId) === String(conv.orderId));
           const byCheckout = Boolean(conv.checkoutToken && ev.checkoutToken && String(ev.checkoutToken) === String(conv.checkoutToken));
+          const bySession = Boolean(conv.sessionId && ev.sessionId && String(ev.sessionId) === String(conv.sessionId));
           const byUser = Boolean(conv.userKey && ev.userKey && String(ev.userKey) === String(conv.userKey));
 
-          return byOrder || byCheckout || byUser;
+          return byOrder || byCheckout || bySession || byUser;
         })
         .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
