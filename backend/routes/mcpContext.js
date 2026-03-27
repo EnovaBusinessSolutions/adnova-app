@@ -182,6 +182,11 @@ function isProcessingStatus(status) {
   return safeStr(status).trim().toLowerCase() === 'processing';
 }
 
+function isFailedStatus(status) {
+  return safeStr(status).trim().toLowerCase() === 'failed' ||
+    safeStr(status).trim().toLowerCase() === 'error';
+}
+
 function rootSignalLooksStale(root) {
   if (!root) return false;
 
@@ -299,7 +304,7 @@ function normalizePdfState(pdf) {
     version: toNum(state?.version, 1) || 1,
     sourceFingerprint: safeStr(state?.sourceFingerprint || '').trim() || null,
     connectionFingerprint: safeStr(state?.connectionFingerprint || '').trim() || null,
-    processingStartedAt: state?.processingStartedAt || null,
+    processingStartedAt: state?.processingStartedAt || state?.startedAt || null,
     processingHeartbeatAt: state?.processingHeartbeatAt || null,
     stale: !!state?.stale,
     staleReason: state?.staleReason || null,
@@ -319,6 +324,20 @@ function makeStalePdfState(pdf, reason = 'STALE_SIGNAL_OR_SOURCE_CHANGE') {
     error: null,
     stale: true,
     staleReason: reason,
+  };
+}
+
+function makeWaitingPdfState(pdf, stage = 'waiting_for_signal') {
+  const base = normalizePdfState(pdf);
+  return {
+    ...base,
+    status: 'idle',
+    stage,
+    progress: 0,
+    ready: false,
+    downloadUrl: null,
+    error: null,
+    stale: !!base.stale,
   };
 }
 
@@ -556,8 +575,219 @@ function hasAuthoritativeRunPdf(signalRun) {
   return status === 'processing' || status === 'ready' || status === 'failed';
 }
 
-function chooseAuthoritativePdfState(root, signalRun, staleSignal, stalePdf) {
+function resolveAuthoritativeSignalState(root, compatibleRun, staleSignal) {
+  const state = root?.aiContext || {};
+  const processingRun =
+    compatibleRun && isProcessingStatus(compatibleRun.status) && !compatibleRun.supersededAt
+      ? compatibleRun
+      : null;
+
+  const completedRun =
+    compatibleRun && isDoneCompleted(compatibleRun.status, compatibleRun.stage)
+      ? compatibleRun
+      : null;
+
+  const failedRun =
+    compatibleRun && isFailedStatus(compatibleRun.status)
+      ? compatibleRun
+      : null;
+
+  const rootPayload = !staleSignal ? getRootAiSignalPayload(root) : null;
+
+  const rootSignalComplete =
+    !staleSignal &&
+    !!state?.signalComplete &&
+    !!rootPayload &&
+    isDoneCompleted(state?.status, state?.stage);
+
+  const rootSignalValidForPdf =
+    !staleSignal &&
+    !!state?.signalValidForPdf &&
+    !!rootPayload;
+
+  if (processingRun) {
+    return {
+      authority: 'run_processing',
+      processing: true,
+      completed: false,
+      failed: false,
+
+      status: chooseStatusValue(processingRun?.status, 'processing'),
+      stage: chooseStatusValue(processingRun?.stage, 'processing'),
+      progress: toNum(processingRun?.progress, toNum(state?.progress, 0)),
+      startedAt: processingRun?.startedAt || state?.startedAt || null,
+      finishedAt: null,
+      snapshotId: processingRun?.snapshotId || state?.snapshotId || root?.latestSnapshotId || null,
+      contextRangeDays: processingRun?.contextRangeDays || toNum(state?.contextRangeDays) || null,
+      storageRangeDays: processingRun?.storageRangeDays || toNum(state?.storageRangeDays) || null,
+
+      signalPayload: null,
+      hasSignal: false,
+      signalComplete: false,
+      signalValidForPdf: false,
+
+      usedOpenAI: !!processingRun?.usedOpenAI || !!state?.usedOpenAI,
+      model: processingRun?.model || state?.model || null,
+      error: processingRun?.error || null,
+      buildAttemptId: processingRun?.buildAttemptId || state?.buildAttemptId || null,
+      signalRunId: processingRun?.signalRunId || null,
+
+      sourceSnapshots: processingRun?.sourceSnapshots || state?.sourceSnapshots || state?.unifiedBase?.sourceSnapshots || null,
+      sourcesStatus: processingRun?.sourcesStatus || state?.sourcesStatus || null,
+      connectedSources: Array.isArray(processingRun?.connectedSources) ? processingRun.connectedSources : [],
+      usableSources: Array.isArray(processingRun?.usableSources) ? processingRun.usableSources : (Array.isArray(state?.usableSources) ? state.usableSources : []),
+      pendingConnectedSources: Array.isArray(processingRun?.pendingConnectedSources) ? processingRun.pendingConnectedSources : (Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : []),
+      failedSources: Array.isArray(processingRun?.failedSources) ? processingRun.failedSources : [],
+
+      sourceFingerprint: safeStr(processingRun?.meta?.sourceFingerprint || '').trim() || null,
+      connectionFingerprint: safeStr(processingRun?.meta?.connectionFingerprint || '').trim() || null,
+    };
+  }
+
+  if (completedRun) {
+    const signalPayload = rootPayload;
+    const signalComplete = !!(rootSignalComplete || completedRun?.signalComplete);
+    const signalValidForPdf = !!signalPayload && !!(rootSignalValidForPdf || completedRun?.signalValidForPdf || signalComplete);
+
+    return {
+      authority: 'run_completed',
+      processing: false,
+      completed: signalComplete,
+      failed: false,
+
+      status: chooseStatusValue(state?.status, completedRun?.status || 'done'),
+      stage: chooseStatusValue(state?.stage, completedRun?.stage || 'completed'),
+      progress: toNum(state?.progress, completedRun?.progress || 100),
+      startedAt: state?.startedAt || completedRun?.startedAt || null,
+      finishedAt: state?.finishedAt || completedRun?.finishedAt || null,
+      snapshotId: state?.snapshotId || completedRun?.snapshotId || root?.latestSnapshotId || null,
+      contextRangeDays: completedRun?.contextRangeDays || toNum(state?.contextRangeDays) || null,
+      storageRangeDays: completedRun?.storageRangeDays || toNum(state?.storageRangeDays) || null,
+
+      signalPayload,
+      hasSignal: !!signalPayload,
+      signalComplete,
+      signalValidForPdf,
+
+      usedOpenAI: 'usedOpenAI' in completedRun ? !!completedRun.usedOpenAI : !!state?.usedOpenAI,
+      model: completedRun?.model || state?.model || null,
+      error: state?.error || completedRun?.error || null,
+      buildAttemptId: completedRun?.buildAttemptId || state?.buildAttemptId || null,
+      signalRunId: completedRun?.signalRunId || null,
+
+      sourceSnapshots: completedRun?.sourceSnapshots || state?.sourceSnapshots || state?.unifiedBase?.sourceSnapshots || null,
+      sourcesStatus: completedRun?.sourcesStatus || state?.sourcesStatus || null,
+      connectedSources: Array.isArray(completedRun?.connectedSources) ? completedRun.connectedSources : [],
+      usableSources: Array.isArray(completedRun?.usableSources) ? completedRun.usableSources : (Array.isArray(state?.usableSources) ? state.usableSources : []),
+      pendingConnectedSources: Array.isArray(completedRun?.pendingConnectedSources) ? completedRun.pendingConnectedSources : (Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : []),
+      failedSources: Array.isArray(completedRun?.failedSources) ? completedRun.failedSources : [],
+
+      sourceFingerprint:
+        safeStr(state?.sourceFingerprint || '').trim() ||
+        safeStr(completedRun?.meta?.sourceFingerprint || '').trim() ||
+        null,
+      connectionFingerprint:
+        safeStr(state?.connectionFingerprint || '').trim() ||
+        safeStr(completedRun?.meta?.connectionFingerprint || '').trim() ||
+        null,
+    };
+  }
+
+  if (failedRun) {
+    return {
+      authority: 'run_failed',
+      processing: false,
+      completed: false,
+      failed: true,
+
+      status: chooseStatusValue(failedRun?.status, 'failed'),
+      stage: chooseStatusValue(failedRun?.stage, failedRun?.errorStage || 'failed'),
+      progress: toNum(failedRun?.progress, toNum(state?.progress, 0)),
+      startedAt: failedRun?.startedAt || state?.startedAt || null,
+      finishedAt: failedRun?.finishedAt || failedRun?.failedAt || state?.finishedAt || null,
+      snapshotId: failedRun?.snapshotId || state?.snapshotId || root?.latestSnapshotId || null,
+      contextRangeDays: failedRun?.contextRangeDays || toNum(state?.contextRangeDays) || null,
+      storageRangeDays: failedRun?.storageRangeDays || toNum(state?.storageRangeDays) || null,
+
+      signalPayload: null,
+      hasSignal: false,
+      signalComplete: false,
+      signalValidForPdf: false,
+
+      usedOpenAI: !!failedRun?.usedOpenAI || !!state?.usedOpenAI,
+      model: failedRun?.model || state?.model || null,
+      error: failedRun?.error || state?.error || null,
+      buildAttemptId: failedRun?.buildAttemptId || state?.buildAttemptId || null,
+      signalRunId: failedRun?.signalRunId || null,
+
+      sourceSnapshots: failedRun?.sourceSnapshots || state?.sourceSnapshots || state?.unifiedBase?.sourceSnapshots || null,
+      sourcesStatus: failedRun?.sourcesStatus || state?.sourcesStatus || null,
+      connectedSources: Array.isArray(failedRun?.connectedSources) ? failedRun.connectedSources : [],
+      usableSources: Array.isArray(failedRun?.usableSources) ? failedRun.usableSources : (Array.isArray(state?.usableSources) ? state.usableSources : []),
+      pendingConnectedSources: Array.isArray(failedRun?.pendingConnectedSources) ? failedRun.pendingConnectedSources : (Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : []),
+      failedSources: Array.isArray(failedRun?.failedSources) ? failedRun.failedSources : [],
+
+      sourceFingerprint: safeStr(failedRun?.meta?.sourceFingerprint || '').trim() || null,
+      connectionFingerprint: safeStr(failedRun?.meta?.connectionFingerprint || '').trim() || null,
+    };
+  }
+
+  const needSignalRebuild = !!state?.needsSignalRebuild || !!staleSignal;
+  const signalPayload = needSignalRebuild ? null : rootPayload;
+  const signalComplete =
+    !needSignalRebuild &&
+    !!state?.signalComplete &&
+    !!signalPayload &&
+    isDoneCompleted(state?.status, state?.stage);
+
+  const signalValidForPdf =
+    !needSignalRebuild &&
+    !!signalPayload &&
+    (!!state?.signalValidForPdf || !!signalComplete);
+
+  return {
+    authority: 'root',
+    processing: false,
+    completed: signalComplete,
+    failed: isFailedStatus(state?.status),
+
+    status: chooseStatusValue(state?.status, signalComplete ? 'done' : 'idle'),
+    stage: chooseStatusValue(state?.stage, signalComplete ? 'completed' : 'idle'),
+    progress: toNum(state?.progress, signalComplete ? 100 : 0),
+    startedAt: state?.startedAt || null,
+    finishedAt: state?.finishedAt || null,
+    snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
+    contextRangeDays: toNum(state?.contextRangeDays) || null,
+    storageRangeDays: toNum(state?.storageRangeDays) || null,
+
+    signalPayload,
+    hasSignal: !!signalPayload,
+    signalComplete,
+    signalValidForPdf,
+
+    usedOpenAI: !!state?.usedOpenAI,
+    model: state?.model || null,
+    error: state?.error || null,
+    buildAttemptId: state?.buildAttemptId || null,
+    signalRunId: null,
+
+    sourceSnapshots: state?.sourceSnapshots || state?.unifiedBase?.sourceSnapshots || null,
+    sourcesStatus: state?.sourcesStatus || null,
+    connectedSources: [],
+    usableSources: Array.isArray(state?.usableSources) ? state.usableSources : [],
+    pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
+    failedSources: [],
+
+    sourceFingerprint: !needSignalRebuild ? (safeStr(state?.sourceFingerprint || '').trim() || null) : null,
+    connectionFingerprint: safeStr(state?.connectionFingerprint || '').trim() || null,
+  };
+}
+
+function chooseAuthoritativePdfState(root, signalRun, staleSignal, stalePdf, options = {}) {
   const rootPdf = normalizePdfState(root?.aiContext?.pdf);
+  const runPdf = normalizePdfState(signalRun?.pdf || null);
+  const signalProcessing = !!options?.signalProcessing;
+  const signalReadyForPdf = !!options?.signalReadyForPdf;
 
   if (staleSignal || stalePdf) {
     return makeStalePdfState(
@@ -566,20 +796,29 @@ function chooseAuthoritativePdfState(root, signalRun, staleSignal, stalePdf) {
     );
   }
 
-  if (rootPdf.status === 'ready') {
-    return rootPdf;
+  if (signalProcessing) {
+    return makeWaitingPdfState(runPdf.status !== 'idle' ? runPdf : rootPdf, 'waiting_for_signal');
+  }
+
+  if (!signalReadyForPdf) {
+    return makeWaitingPdfState(runPdf.status !== 'idle' ? runPdf : rootPdf, 'waiting_for_valid_signal');
   }
 
   if (hasAuthoritativeRunPdf(signalRun)) {
-    return normalizePdfState(signalRun.pdf);
+    return runPdf;
+  }
+
+  if (rootPdf.status === 'ready' || rootPdf.status === 'processing' || rootPdf.status === 'failed') {
+    return rootPdf;
   }
 
   return rootPdf;
 }
 
 function deriveUiFlags({
-  signalPayload,
-  signalComplete,
+  signalReadyForPdf,
+  signalProcessing,
+  signalFailed,
   needSignalRebuild,
   needPdfRebuild,
   pdf,
@@ -587,13 +826,8 @@ function deriveUiFlags({
 }) {
   const pdfSourceFingerprint = safeStr(pdf?.sourceFingerprint || '').trim() || '';
   const pdfReadyRaw = safeStr(pdf?.status) === 'ready';
-  const pdfProcessing = !needSignalRebuild && safeStr(pdf?.status) === 'processing';
-  const pdfFailed = !needSignalRebuild && safeStr(pdf?.status) === 'failed';
-
-  const signalReadyForPdf =
-    !needSignalRebuild &&
-    !!signalPayload &&
-    !!signalComplete;
+  const pdfProcessing = !signalProcessing && !needSignalRebuild && safeStr(pdf?.status) === 'processing';
+  const pdfFailed = !signalProcessing && !needSignalRebuild && safeStr(pdf?.status) === 'failed';
 
   const pdfFingerprintLooksAligned =
     !pdfSourceFingerprint ||
@@ -602,17 +836,21 @@ function deriveUiFlags({
 
   const pdfReady =
     !!pdfReadyRaw &&
+    !signalProcessing &&
     !needSignalRebuild &&
     !needPdfRebuild &&
+    !!signalReadyForPdf &&
     pdfFingerprintLooksAligned &&
     !pdf?.stale;
 
-  const canGeneratePdf = !!signalReadyForPdf && !pdfReady && !pdfProcessing;
+  const canGeneratePdf = !!signalReadyForPdf && !signalProcessing && !pdfReady && !pdfProcessing;
   const canDownloadPdf = !!pdfReady;
 
   const uiMode =
+    signalProcessing ? 'signal_building' :
     pdfReady ? 'pdf_ready' :
     pdfProcessing ? 'pdf_building' :
+    signalFailed ? 'signal_failed' :
     signalReadyForPdf ? 'signal_ready' :
     'signal_building';
 
@@ -637,64 +875,55 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
     ? normalizeSignalRun(signalRun)
     : null;
 
-  const processingRun =
-    compatibleRun && isProcessingStatus(compatibleRun.status)
-      ? compatibleRun
-      : null;
-
-  const completedRun =
-    compatibleRun &&
-    isDoneCompleted(compatibleRun.status, compatibleRun.stage)
-      ? compatibleRun
-      : null;
-
   const currentConnectionFingerprint = getCurrentConnectionFingerprintFromRoot(root) || null;
   const storedConnectionFingerprint = getStoredConnectionFingerprintFromRoot(root) || null;
 
   const currentSourcesSnapshot = getRootCurrentSourcesSnapshot(root) || null;
   const currentSourceFingerprint = deriveCurrentSourceFingerprintFromRoot(root) || null;
 
-  const signalSourceFingerprint =
-    !staleSignal
-      ? (safeStr(state?.sourceFingerprint || '').trim() || null)
-      : null;
+  const authoritativeSignal = resolveAuthoritativeSignalState(root, compatibleRun, staleSignal);
 
   const needSignalRebuild =
-    !!state?.needsSignalRebuild || !!staleSignal;
+    !!state?.needsSignalRebuild ||
+    !!staleSignal;
 
-  const rootSignalComplete =
+  const signalProcessing = !!authoritativeSignal?.processing;
+  const signalComplete = !!authoritativeSignal?.signalComplete;
+  const signalValidForPdf = !!authoritativeSignal?.signalValidForPdf;
+  const signalPayload = authoritativeSignal?.signalPayload || null;
+
+  const effectiveSignalSourceFingerprint =
+    safeStr(authoritativeSignal?.sourceFingerprint || '').trim() || null;
+
+  const signalReadyForPdf =
     !needSignalRebuild &&
-    !!state?.signalComplete &&
-    !!getRootAiSignalPayload(root) &&
-    isDoneCompleted(state?.status, state?.stage);
-
-  const rootSignalValidForPdf =
-    !needSignalRebuild &&
-    !!state?.signalValidForPdf &&
-    !!getRootAiSignalPayload(root);
-
-  const signalPayload = needSignalRebuild
-    ? null
-    : getRootAiSignalPayload(root);
-
-  const signalComplete =
-    !needSignalRebuild &&
-    (rootSignalComplete || !!completedRun?.signalComplete);
-
-  const signalValidForPdf =
-    !needSignalRebuild &&
-    (rootSignalValidForPdf || !!completedRun?.signalValidForPdf || !!signalComplete);
+    !signalProcessing &&
+    !!signalPayload &&
+    !!signalValidForPdf &&
+    !!signalComplete;
 
   const needPdfRebuild =
     !!state?.needsPdfRebuild ||
     !!stalePdf ||
-    !!needSignalRebuild;
+    !!needSignalRebuild ||
+    !!signalProcessing ||
+    !signalReadyForPdf;
 
-  const pdf = chooseAuthoritativePdfState(root, processingRun || completedRun, needSignalRebuild, needPdfRebuild);
+  const pdf = chooseAuthoritativePdfState(
+    root,
+    compatibleRun,
+    needSignalRebuild,
+    needPdfRebuild && !!stalePdf,
+    {
+      signalProcessing,
+      signalReadyForPdf,
+    }
+  );
 
   const shareEnabled =
     !!(shareState?.mcpShareEnabled && shareState?.mcpShareToken) &&
     !needSignalRebuild &&
+    !signalProcessing &&
     !!signalPayload;
 
   const shareToken = shareEnabled ? shareState?.mcpShareToken || null : null;
@@ -706,43 +935,28 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
     ? safeStr(shareState?.mcpShareVersionedUrl).trim() || null
     : null;
 
-  const status = chooseStatusValue(
-    processingRun?.status,
-    state?.status || completedRun?.status || 'idle'
-  );
-
-  const stage = chooseStatusValue(
-    processingRun?.stage,
-    state?.stage || completedRun?.stage || 'idle'
-  );
-
-  const progress = processingRun
-    ? toNum(processingRun?.progress, toNum(state?.progress, 0))
-    : toNum(state?.progress, completedRun?.progress || 0);
-
   const uiFlags = deriveUiFlags({
-    signalPayload,
-    signalComplete: signalValidForPdf || signalComplete,
+    signalReadyForPdf,
+    signalProcessing,
+    signalFailed: !!authoritativeSignal?.failed,
     needSignalRebuild,
     needPdfRebuild,
     pdf,
-    signalSourceFingerprint,
+    signalSourceFingerprint: effectiveSignalSourceFingerprint,
   });
-
-  const effectiveRunForSources = processingRun || completedRun || compatibleRun || null;
 
   return {
     ok: true,
     data: {
-      status,
-      progress,
-      stage,
-      startedAt: processingRun?.startedAt || state?.startedAt || completedRun?.startedAt || null,
-      finishedAt: state?.finishedAt || completedRun?.finishedAt || null,
-      snapshotId: processingRun?.snapshotId || state?.snapshotId || completedRun?.snapshotId || root?.latestSnapshotId || null,
-      sourceSnapshots: effectiveRunForSources?.sourceSnapshots || state?.sourceSnapshots || state?.unifiedBase?.sourceSnapshots || null,
-      contextRangeDays: effectiveRunForSources?.contextRangeDays || toNum(state?.contextRangeDays) || null,
-      storageRangeDays: effectiveRunForSources?.storageRangeDays || toNum(state?.storageRangeDays) || null,
+      status: authoritativeSignal?.status || 'idle',
+      progress: toNum(authoritativeSignal?.progress, 0),
+      stage: authoritativeSignal?.stage || 'idle',
+      startedAt: authoritativeSignal?.startedAt || null,
+      finishedAt: authoritativeSignal?.finishedAt || null,
+      snapshotId: authoritativeSignal?.snapshotId || root?.latestSnapshotId || null,
+      sourceSnapshots: authoritativeSignal?.sourceSnapshots || null,
+      contextRangeDays: authoritativeSignal?.contextRangeDays || null,
+      storageRangeDays: authoritativeSignal?.storageRangeDays || null,
 
       hasEncodedPayload: !needSignalRebuild && !!state?.encodedPayload,
       hasSignal: !!signalPayload,
@@ -752,27 +966,27 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
       signalReadyForPdf: uiFlags.signalReadyForPdf,
       providerAgnostic: !!state?.encodedPayload?.providerAgnostic,
 
-      usedOpenAI: effectiveRunForSources ? !!effectiveRunForSources?.usedOpenAI : !!state?.usedOpenAI,
-      model: effectiveRunForSources?.model || state?.model || null,
-      error: processingRun?.error || state?.error || null,
-      buildAttemptId: processingRun?.buildAttemptId || state?.buildAttemptId || completedRun?.buildAttemptId || null,
-      signalRunId: processingRun?.signalRunId || completedRun?.signalRunId || null,
+      usedOpenAI: !!authoritativeSignal?.usedOpenAI,
+      model: authoritativeSignal?.model || null,
+      error: authoritativeSignal?.error || null,
+      buildAttemptId: authoritativeSignal?.buildAttemptId || null,
+      signalRunId: authoritativeSignal?.signalRunId || null,
 
-      sources: effectiveRunForSources?.sourcesStatus || state?.sourcesStatus || null,
-      connectedSources: Array.isArray(effectiveRunForSources?.connectedSources)
-        ? effectiveRunForSources.connectedSources
+      sources: authoritativeSignal?.sourcesStatus || state?.sourcesStatus || null,
+      connectedSources: Array.isArray(authoritativeSignal?.connectedSources)
+        ? authoritativeSignal.connectedSources
         : [],
-      usableSources: Array.isArray(effectiveRunForSources?.usableSources)
-        ? effectiveRunForSources.usableSources
+      usableSources: Array.isArray(authoritativeSignal?.usableSources)
+        ? authoritativeSignal.usableSources
         : (Array.isArray(state?.usableSources) ? state.usableSources : []),
-      pendingConnectedSources: Array.isArray(effectiveRunForSources?.pendingConnectedSources)
-        ? effectiveRunForSources.pendingConnectedSources
+      pendingConnectedSources: Array.isArray(authoritativeSignal?.pendingConnectedSources)
+        ? authoritativeSignal.pendingConnectedSources
         : (Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : []),
-      failedSources: Array.isArray(effectiveRunForSources?.failedSources)
-        ? effectiveRunForSources.failedSources
+      failedSources: Array.isArray(authoritativeSignal?.failedSources)
+        ? authoritativeSignal.failedSources
         : [],
 
-      sourceFingerprint: signalSourceFingerprint,
+      sourceFingerprint: effectiveSignalSourceFingerprint,
       currentSourcesSnapshot,
       currentSourceFingerprint,
       connectionFingerprint: storedConnectionFingerprint,
@@ -786,8 +1000,8 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
       needsPdfRebuild: !!needPdfRebuild,
       effectiveSourcesChanged:
         !!currentSourceFingerprint &&
-        !!signalSourceFingerprint &&
-        currentSourceFingerprint !== signalSourceFingerprint,
+        !!effectiveSignalSourceFingerprint &&
+        currentSourceFingerprint !== effectiveSignalSourceFingerprint,
 
       hasPdf: uiFlags.pdfReady,
       pdfReady: uiFlags.pdfReady,
@@ -820,21 +1034,9 @@ function buildSharedPayload(root, provider, signalRun = null) {
     ? normalizeSignalRun(signalRun)
     : null;
 
-  const rootSignalComplete =
-    !!state?.signalComplete &&
-    !!getRootAiSignalPayload(root) &&
-    !rootSignalLooksStale(root) &&
-    isDoneCompleted(state?.status, state?.stage);
-
-  const completedRun =
-    compatibleRun && isDoneCompleted(compatibleRun.status, compatibleRun.stage)
-      ? compatibleRun
-      : null;
-
-  const signalComplete = rootSignalComplete || !!completedRun?.signalComplete;
-
-  const payload = signalComplete
-    ? (state?.signalPayload || state?.encodedPayload || null)
+  const authoritativeSignal = resolveAuthoritativeSignalState(root, compatibleRun, rootSignalLooksStale(root));
+  const payload = authoritativeSignal?.signalComplete
+    ? authoritativeSignal?.signalPayload || null
     : null;
 
   if (!payload) return null;
@@ -851,19 +1053,19 @@ function buildSharedPayload(root, provider, signalRun = null) {
       schema: payload?.schema || 'adray.encoded.context.v2',
       provider: provider || 'chatgpt',
       providerLabel: providerName,
-      snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
-      sourceSnapshots: state?.sourceSnapshots || payload?.sourceSnapshots || null,
-      generatedAt: state?.finishedAt || payload?.generatedAt || null,
-      contextRangeDays: toNum(state?.contextRangeDays) || null,
-      storageRangeDays: toNum(state?.storageRangeDays) || null,
+      snapshotId: authoritativeSignal?.snapshotId || state?.snapshotId || root?.latestSnapshotId || null,
+      sourceSnapshots: authoritativeSignal?.sourceSnapshots || payload?.sourceSnapshots || null,
+      generatedAt: authoritativeSignal?.finishedAt || payload?.generatedAt || null,
+      contextRangeDays: authoritativeSignal?.contextRangeDays || null,
+      storageRangeDays: authoritativeSignal?.storageRangeDays || null,
       providerAgnostic: !!payload?.providerAgnostic,
-      usedOpenAI: !!state?.usedOpenAI,
-      model: state?.model || null,
-      sourceFingerprint: safeStr(state?.sourceFingerprint || '').trim() || null,
+      usedOpenAI: !!authoritativeSignal?.usedOpenAI,
+      model: authoritativeSignal?.model || null,
+      sourceFingerprint: safeStr(authoritativeSignal?.sourceFingerprint || '').trim() || null,
       currentSourceFingerprint: safeStr(deriveCurrentSourceFingerprintFromRoot(root) || '').trim() || null,
-      connectionFingerprint: safeStr(state?.connectionFingerprint || '').trim() || null,
-      buildAttemptId: completedRun?.buildAttemptId || state?.buildAttemptId || null,
-      signalRunId: completedRun?.signalRunId || null,
+      connectionFingerprint: safeStr(authoritativeSignal?.connectionFingerprint || '').trim() || null,
+      buildAttemptId: authoritativeSignal?.buildAttemptId || null,
+      signalRunId: authoritativeSignal?.signalRunId || null,
     },
   };
 }
@@ -893,7 +1095,7 @@ async function syncUserVersionedLink(userId, preferredProvider = null) {
   const signalRun = await findPreferredSignalRunForUser(userId, latestRoot);
   const statusData = buildStatusResponse(latestRoot, null, signalRun)?.data || null;
 
-  if (!statusData?.signalComplete || !!statusData?.needSignalRebuild || rootSignalLooksStale(latestRoot)) {
+  if (!statusData?.signalComplete || !!statusData?.needSignalRebuild || !!statusData?.pdfProcessing || !!statusData?.signalRunId && statusData?.status === 'processing') {
     return user;
   }
 
@@ -1284,23 +1486,29 @@ router.get('/pdf/download', async (req, res) => {
     const authoritativeRun =
       isSignalRunCompatibleWithRoot(signalRun, root) ? signalRun : null;
 
-    const pdf = chooseAuthoritativePdfState(root, authoritativeRun, staleSignal, stalePdf);
+    const statusData = buildStatusResponse(root, null, authoritativeRun)?.data || null;
+    const pdf = statusData?.pdf || chooseAuthoritativePdfState(root, authoritativeRun, staleSignal, stalePdf, {
+      signalProcessing: false,
+      signalReadyForPdf: false,
+    });
 
     if (!pdf.ready) {
       return res.status(409).json({
         ok: false,
         error: staleSignal || stalePdf ? 'MCP_SIGNAL_PDF_STALE_REBUILD_REQUIRED' : 'MCP_SIGNAL_PDF_NOT_READY',
         data: {
-          status: signalRun?.status || state?.status || 'idle',
-          progress: signalRun ? signalRun.progress : (state?.progress || 0),
-          stage: signalRun?.stage || state?.stage || 'idle',
-          pendingConnectedSources: Array.isArray(signalRun?.pendingConnectedSources)
-            ? signalRun.pendingConnectedSources
-            : (Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : []),
-          staleSignal,
-          stalePdf,
-          needSignalRebuild: !!state?.needsSignalRebuild || staleSignal,
-          needPdfRebuild: !!state?.needsPdfRebuild || stalePdf || staleSignal,
+          status: statusData?.status || signalRun?.status || state?.status || 'idle',
+          progress: statusData?.progress || (signalRun ? signalRun.progress : (state?.progress || 0)),
+          stage: statusData?.stage || signalRun?.stage || state?.stage || 'idle',
+          pendingConnectedSources: Array.isArray(statusData?.pendingConnectedSources)
+            ? statusData.pendingConnectedSources
+            : (Array.isArray(signalRun?.pendingConnectedSources)
+              ? signalRun.pendingConnectedSources
+              : (Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [])),
+          staleSignal: !!statusData?.staleSignal,
+          stalePdf: !!statusData?.stalePdf,
+          needSignalRebuild: !!statusData?.needSignalRebuild,
+          needPdfRebuild: !!statusData?.needPdfRebuild,
           pdf,
         },
       });
@@ -1337,60 +1545,30 @@ router.get('/pdf/status', async (req, res) => {
     }
 
     const signalRun = await findPreferredSignalRunForUser(userId, root);
-    const state = root?.aiContext || {};
-    const staleSignal = rootSignalLooksStale(root);
-    const stalePdf = rootPdfLooksStale(root);
-
-    const authoritativeRun = isSignalRunCompatibleWithRoot(signalRun, root)
-      ? signalRun
-      : null;
-
-    const pdf = chooseAuthoritativePdfState(root, authoritativeRun, staleSignal, stalePdf);
-
-    const rootSignalComplete =
-      !staleSignal &&
-      !!state?.signalComplete &&
-      !!getRootAiSignalPayload(root) &&
-      isDoneCompleted(state?.status, state?.stage);
-
-    const signalComplete =
-      rootSignalComplete ||
-      !!(authoritativeRun && isDoneCompleted(authoritativeRun.status, authoritativeRun.stage) && authoritativeRun.signalComplete);
-
-    const needSignalRebuild = !!state?.needsSignalRebuild || !!staleSignal;
-    const needPdfRebuild = !!state?.needsPdfRebuild || !!stalePdf || !!needSignalRebuild;
-
-    const uiFlags = deriveUiFlags({
-      signalPayload: needSignalRebuild ? null : getRootAiSignalPayload(root),
-      signalComplete,
-      needSignalRebuild,
-      needPdfRebuild,
-      pdf,
-      signalSourceFingerprint: getRootSignalSourceFingerprint(root) || null,
-    });
+    const statusData = buildStatusResponse(root, null, signalRun)?.data || null;
 
     setNoCacheHeaders(res);
 
     return res.json({
       ok: true,
       data: {
-        ...pdf,
-        staleSignal,
-        stalePdf,
-        needSignalRebuild,
-        needsSignalRebuild: needSignalRebuild,
-        needPdfRebuild,
-        needsPdfRebuild: needPdfRebuild,
-        currentSourceFingerprint: deriveCurrentSourceFingerprintFromRoot(root) || null,
-        currentSourcesSnapshot: getRootCurrentSourcesSnapshot(root) || null,
-        pdfReady: uiFlags.pdfReady,
-        pdfProcessing: uiFlags.pdfProcessing,
-        pdfFailed: uiFlags.pdfFailed,
-        canGeneratePdf: uiFlags.canGeneratePdf,
-        canDownloadPdf: uiFlags.canDownloadPdf,
-        uiMode: uiFlags.uiMode,
-        signalRunId: authoritativeRun?.signalRunId || null,
-        buildAttemptId: authoritativeRun?.buildAttemptId || state?.buildAttemptId || null,
+        ...(statusData?.pdf || normalizePdfState(null)),
+        staleSignal: !!statusData?.staleSignal,
+        stalePdf: !!statusData?.stalePdf,
+        needSignalRebuild: !!statusData?.needSignalRebuild,
+        needsSignalRebuild: !!statusData?.needSignalRebuild,
+        needPdfRebuild: !!statusData?.needPdfRebuild,
+        needsPdfRebuild: !!statusData?.needPdfRebuild,
+        currentSourceFingerprint: statusData?.currentSourceFingerprint || deriveCurrentSourceFingerprintFromRoot(root) || null,
+        currentSourcesSnapshot: statusData?.currentSourcesSnapshot || getRootCurrentSourcesSnapshot(root) || null,
+        pdfReady: !!statusData?.pdfReady,
+        pdfProcessing: !!statusData?.pdfProcessing,
+        pdfFailed: !!statusData?.pdfFailed,
+        canGeneratePdf: !!statusData?.canGeneratePdf,
+        canDownloadPdf: !!statusData?.canDownloadPdf,
+        uiMode: statusData?.uiMode || 'signal_building',
+        signalRunId: statusData?.signalRunId || null,
+        buildAttemptId: statusData?.buildAttemptId || null,
       },
     });
   } catch (e) {
