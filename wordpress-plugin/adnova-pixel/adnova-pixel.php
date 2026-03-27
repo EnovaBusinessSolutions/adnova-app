@@ -34,8 +34,6 @@ final class Adnova_Pixel_Plugin {
         // add_filter('pre_set_site_transient_update_plugins', array(__CLASS__, 'inject_plugin_update'));
         // add_filter('plugins_api', array(__CLASS__, 'plugins_api_handler'), 10, 3);
         // add_filter('auto_update_plugin', array(__CLASS__, 'enable_auto_update'), 10, 2);
-        // REST endpoint for manual backfill trigger
-        add_action('rest_api_init', array(__CLASS__, 'register_rest_endpoints'));
         // WooCommerce: fire purchase on thank-you page
         add_action('woocommerce_thankyou', array(__CLASS__, 'on_woo_order_received'), 10, 1);
         // Server-side order capture even when thank-you is not rendered in browser.
@@ -91,42 +89,6 @@ final class Adnova_Pixel_Plugin {
 
     private static function get_plugin_basename() {
         return plugin_basename(__FILE__);
-    }
-
-    public static function register_rest_endpoints() {
-        register_rest_route('adnova/v1', '/backfill', array(
-            'methods' => 'GET',
-            'callback' => array(__CLASS__, 'rest_backfill_callback'),
-            'permission_callback' => '__return_true',
-        ));
-        register_rest_route('adnova/v1', '/status', array(
-            'methods' => 'GET',
-            'callback' => array(__CLASS__, 'rest_status_callback'),
-            'permission_callback' => '__return_true',
-        ));
-    }
-
-    public static function rest_backfill_callback() {
-        error_log('[Adnova Pixel] REST API backfill requested');
-        $started = self::backfill_recent_orders();
-        return array(
-            'success' => true,
-            'message' => 'Backfill triggered',
-            'processed' => $started ? 'yes' : 'no',
-            'site_id' => self::get_site_id(),
-            'version' => self::VERSION,
-        );
-    }
-
-    public static function rest_status_callback() {
-        return array(
-            'site_id' => self::get_site_id(),
-            'version' => self::VERSION,
-            'woocommerce_active' => function_exists('wc_get_orders'),
-            'script_url' => get_option(self::OPTION_SCRIPT_URL, self::DEFAULT_SCRIPT_URL),
-            'backfill_done' => get_option(self::OPTION_BACKFILL_DONE, 'never'),
-            'rest_url' => rest_url('adnova/v1/backfill'),
-        );
     }
 
     private static function fetch_update_metadata() {
@@ -642,34 +604,27 @@ final class Adnova_Pixel_Plugin {
             'email' => $email !== '' ? $email : null,
             'phone' => $phone !== '' ? $phone : null,
             'customer_name' => $full_name !== '' ? $full_name : null,
-            error_log('[Adnova Pixel] Backfill failed: WooCommerce not active');
-            return false;
-        }
-
-        $done_version = get_option(self::OPTION_BACKFILL_DONE, '');
-        if ($done_version === self::VERSION) {
-            error_log('[Adnova Pixel] Backfill skipped: already done for version ' . self::VERSION);
-            return false;
-        }
-
-        $orders = wc_get_orders(array(
-            'limit' => 100,
-            'orderby' => 'date',
-            'order' => 'DESC',
-            'status' => array('processing', 'completed', 'on-hold'),
-            'return' => 'ids',
+            'customer_first_name' => $first_name !== '' ? $first_name : null,
+            'customer_last_name' => $last_name !== '' ? $last_name : null,
+            'billing_company' => $company !== '' ? $company : null,
+            'page_type' => 'account',
+            'page_url' => $page_url,
+            'login_detected_from' => 'wp_login_hook',
         ));
+    }
 
-        $count = count($orders);
-        error_log('[Adnova Pixel] Starting backfill of ' . (string) $count . ' orders for site ' . self::get_site_id());
-
-        foreach ($orders as $order_id) {
-            self::sync_woo_order_to_backend($order_id);
+    public static function track_wp_logout_event() {
+        $user = wp_get_current_user();
+        if (!$user || !($user instanceof WP_User) || !$user->exists()) {
+            return;
         }
 
-        update_option(self::OPTION_BACKFILL_DONE, self::VERSION, false);
-        error_log('[Adnova Pixel] Backfill completed for version ' . self::VERSION);
-        return true
+        $roles = is_array($user->roles) ? $user->roles : array();
+        if (!in_array('customer', $roles, true)) {
+            return;
+        }
+
+        $session_id = null;
         if (isset($_COOKIE['__adray_session_id'])) {
             $session_id = sanitize_text_field(wp_unslash($_COOKIE['__adray_session_id']));
         }
