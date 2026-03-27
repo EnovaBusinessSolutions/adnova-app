@@ -1767,7 +1767,7 @@
             </div>
         </div>
 
-        <section id="session-detail-panel" class="mt-8">
+        <section id="session-detail-panel" class="hidden" aria-hidden="true">
             <div class="ops-panel overflow-hidden border border-gray-200">
                 <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between gap-4 flex-wrap">
                     <div>
@@ -2081,6 +2081,9 @@
         let attributionJourneyState = {
             channel: 'all',
             customer: 'all',
+            profileKey: 'all',
+            profileSearch: '',
+            profileSort: 'orders',
         };
         let selectedJourneyTimelineMode = 'condensed';
         let sessionExplorerState = {
@@ -2092,6 +2095,11 @@
             timeline: [],
             currentData: null,
             compareData: null,
+        };
+        let wooProfilesState = {
+            profiles: [],
+            loadedAt: 0,
+            loading: false,
         };
 
         function formatDateInputValue(date) {
@@ -2186,7 +2194,6 @@
         async function init() {
             initializeDateControls();
             initializeMetricCarousel();
-            initializeSessionDetailPanel();
 
             // Public mode: explicit shop in URL/localStorage/prompt
             const shopParam = resolvePublicShopId();
@@ -2286,6 +2293,7 @@
                         style="width:100%;text-align:left;"
                         data-user-key="${escapeHtmlAttr(userKey)}"
                         data-session-id="${escapeHtmlAttr(sessionId)}"
+                        data-customer-id="${escapeHtmlAttr(user.customerId || '')}"
                         data-user-name="${escapeHtmlAttr(displayName)}"
                     >
                         <p class="wp-user-name truncate">${displayName}</p>
@@ -2300,13 +2308,13 @@
             listEl.querySelectorAll('.wp-user-pill').forEach((button) => {
                 button.addEventListener('click', () => {
                     const selectedUserKey = button.getAttribute('data-user-key') || '';
-                    const selectedSessionId = button.getAttribute('data-session-id') || '';
+                    const selectedCustomerId = button.getAttribute('data-customer-id') || '';
                     const selectedUserName = button.getAttribute('data-user-name') || 'User';
-                    if (selectedUserKey) {
-                        openUserExplorer(selectedUserKey, selectedUserName);
-                        return;
-                    }
-                    if (selectedSessionId) openSessionDetail(selectedSessionId);
+                    focusJourneyProfile({
+                        userKey: selectedUserKey,
+                        customerId: selectedCustomerId,
+                        fallbackName: selectedUserName,
+                    });
                 });
             });
         }
@@ -2977,6 +2985,103 @@
             return humanReadablePersonName(customerRaw || 'Cliente', 'Cliente');
         }
 
+        function normalizeProfileName(value) {
+            return String(value || '')
+                .trim()
+                .toLowerCase()
+                .replace(/[._-]+/g, ' ')
+                .replace(/\s+/g, ' ');
+        }
+
+        function purchaseMatchesProfile(purchase = {}, profile = {}) {
+            const profileCustomerId = String(profile.customerId || '').trim();
+            const purchaseCustomerId = String(purchase.customerId || '').trim();
+            if (profileCustomerId && purchaseCustomerId && profileCustomerId === purchaseCustomerId) {
+                return true;
+            }
+
+            const profileUserKeys = Array.isArray(profile.userKeys) ? profile.userKeys.map((k) => String(k || '').trim()).filter(Boolean) : [];
+            const purchaseUserKey = String(purchase.userKey || '').trim();
+            if (purchaseUserKey && profileUserKeys.includes(purchaseUserKey)) {
+                return true;
+            }
+
+            const profileName = normalizeProfileName(profile.customerDisplayName || profile.profileLabel || '');
+            const purchaseName = normalizeProfileName(resolvePurchaseCustomerName(purchase));
+            if (profileName && purchaseName && (profileName === purchaseName || profileName.includes(purchaseName) || purchaseName.includes(profileName))) {
+                return true;
+            }
+
+            return false;
+        }
+
+        async function fetchJourneyWooProfiles(force = false) {
+            if (!currentShopId) return;
+            if (wooProfilesState.loading) return;
+            if (!force && wooProfilesState.profiles.length > 0 && (Date.now() - wooProfilesState.loadedAt) < SESSION_OVERVIEW_CACHE_TTL_MS) {
+                return;
+            }
+
+            wooProfilesState.loading = true;
+            try {
+                const res = await fetch(`/api/analytics/${currentShopId}/session-explorer?limit=500`);
+                if (!res.ok) throw new Error(`status_${res.status}`);
+                const data = await res.json();
+                const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
+                wooProfilesState.profiles = profiles.filter((profile) => String(profile.profileType || '').toLowerCase() === 'woocommerce_customer');
+                wooProfilesState.loadedAt = Date.now();
+            } catch (error) {
+                console.warn('[Journey] Could not load Woo profiles for attribution center', error);
+            } finally {
+                wooProfilesState.loading = false;
+            }
+        }
+
+        function focusJourneyProfile({ userKey = '', customerId = '', sessionId = '', fallbackName = '' } = {}) {
+            const profiles = Array.isArray(wooProfilesState.profiles) ? wooProfilesState.profiles : [];
+            const safeSessionId = String(sessionId || '').trim();
+            let safeCustomerId = String(customerId || '').trim();
+            let safeUserKey = String(userKey || '').trim();
+            let safeFallbackName = String(fallbackName || '').trim();
+
+            if (safeSessionId && (!safeCustomerId || !safeUserKey || !safeFallbackName)) {
+                const purchases = Array.isArray(recentPurchasesState) ? recentPurchasesState : [];
+                const linkedPurchase = purchases.find((purchase) => {
+                    const purchaseSessionId = String(purchase.sessionId || '').trim();
+                    if (purchaseSessionId && purchaseSessionId === safeSessionId) return true;
+                    const stitched = Array.isArray(purchase.stitchedEvents) ? purchase.stitchedEvents : [];
+                    return stitched.some((event) => String(event.sessionId || '').trim() === safeSessionId);
+                }) || null;
+
+                if (linkedPurchase) {
+                    if (!safeCustomerId) safeCustomerId = String(linkedPurchase.customerId || '').trim();
+                    if (!safeUserKey) safeUserKey = String(linkedPurchase.userKey || '').trim();
+                    if (!safeFallbackName) safeFallbackName = String(resolvePurchaseCustomerName(linkedPurchase) || '').trim();
+                }
+            }
+
+            let matched = null;
+            if (safeCustomerId) {
+                matched = profiles.find((profile) => String(profile.customerId || '').trim() === safeCustomerId) || null;
+            }
+            if (!matched && safeUserKey) {
+                matched = profiles.find((profile) => Array.isArray(profile.userKeys) && profile.userKeys.map((k) => String(k || '').trim()).includes(safeUserKey)) || null;
+            }
+            if (!matched && safeFallbackName) {
+                const targetName = normalizeProfileName(safeFallbackName);
+                matched = profiles.find((profile) => {
+                    const profileName = normalizeProfileName(profile.customerDisplayName || profile.profileLabel || '');
+                    return profileName && targetName && (profileName.includes(targetName) || targetName.includes(profileName));
+                }) || null;
+            }
+
+            attributionJourneyState.profileKey = matched?.profileKey || 'all';
+            if (matched?.customerDisplayName || safeFallbackName) {
+                attributionJourneyState.profileSearch = matched?.customerDisplayName || safeFallbackName;
+            }
+            renderAttributionJourneyPanel();
+        }
+
         function wireJourneyCustomerBubbles(container) {
             if (!container) return;
             container.querySelectorAll('.journey-customer-bubble').forEach((button) => {
@@ -3025,7 +3130,7 @@
                 wireTimelineModeToggle(focusEl);
 
                 const historicalRows = peers.slice(0, 10).map((peer, index) => `
-                    <button type="button" class="journey-compact-card w-full text-left hover:opacity-95" onclick="openSessionDetail('${peer.sessionId}')">
+                    <button type="button" class="journey-compact-card w-full text-left hover:opacity-95" onclick="focusJourneyProfile({ sessionId: '${peer.sessionId || ''}', fallbackName: '${currentPerson.replace(/'/g, "\\'")}' })">
                         <div class="flex items-center justify-between gap-2">
                             <p class="text-sm font-semibold text-gray-900">${escapeHtml(`Session ${index + 1} for ${currentPerson}`)}</p>
                             <span class="text-xs text-gray-500">${formatDateTimeMx(peer.startedAt)}</span>
@@ -3047,75 +3152,166 @@
                     purchase: p,
                     score: scoreJourneySignal(p),
                     channelKey: normalizeAttributionChannel(p.attributedChannel || p.attributedPlatform || ''),
-                    customerKey: buildCustomerBubbleLabel(p),
                 }))
-                .sort((a, b) => b.score - a.score)
-                .slice(0, 50);
+                .sort((a, b) => b.score - a.score);
 
             const byChannel = attributionJourneyState.channel === 'all'
                 ? rankedJourneys
                 : rankedJourneys.filter((row) => row.channelKey === attributionJourneyState.channel);
 
-            const customerOptions = ['all', ...Array.from(new Set(byChannel.map((row) => row.customerKey).filter(Boolean))).slice(0, 14)];
-            if (attributionJourneyState.customer !== 'all' && !customerOptions.includes(attributionJourneyState.customer)) {
-                attributionJourneyState.customer = 'all';
+            const allWooProfiles = Array.isArray(wooProfilesState.profiles) ? wooProfilesState.profiles : [];
+            const normalizedSearch = normalizeProfileName(attributionJourneyState.profileSearch || '');
+            const visibleProfilesBase = allWooProfiles.filter((profile) => {
+                if (!normalizedSearch) return true;
+                const label = normalizeProfileName(profile.customerDisplayName || profile.profileLabel || '');
+                const customerId = String(profile.customerId || '').trim();
+                return label.includes(normalizedSearch) || customerId.includes(normalizedSearch);
+            });
+
+            const visibleProfiles = visibleProfilesBase.slice().sort((a, b) => {
+                const mode = String(attributionJourneyState.profileSort || 'orders');
+                if (mode === 'revenue') return Number(b.totalRevenue || 0) - Number(a.totalRevenue || 0);
+                if (mode === 'recent') return new Date(b.lastSeenAt || 0).getTime() - new Date(a.lastSeenAt || 0).getTime();
+                return Number(b.orderCount || 0) - Number(a.orderCount || 0);
+            });
+
+            const availableProfileKeys = new Set(['all', ...visibleProfiles.map((profile) => String(profile.profileKey || '').trim()).filter(Boolean)]);
+            if (!availableProfileKeys.has(String(attributionJourneyState.profileKey || 'all'))) {
+                attributionJourneyState.profileKey = 'all';
             }
 
-            const filteredJourneys = attributionJourneyState.customer === 'all'
-                ? byChannel
-                : byChannel.filter((row) => row.customerKey === attributionJourneyState.customer);
+            const selectedProfile = visibleProfiles.find((profile) => String(profile.profileKey || '') === String(attributionJourneyState.profileKey || 'all')) || null;
+            const profileFilteredJourneys = selectedProfile
+                ? byChannel.filter(({ purchase }) => purchaseMatchesProfile(purchase, selectedProfile))
+                : byChannel;
 
-            if (!filteredJourneys.length) {
-                focusEl.innerHTML = '<p class="text-sm text-gray-500">Select a session to view its attributed journey. Historical conversions with the best signal will appear here.</p>';
-                historyEl.innerHTML = '<p class="text-sm text-gray-500">No conversions found for this filter.</p>';
+            if (!byChannel.length) {
+                focusEl.innerHTML = '<p class="text-sm text-gray-500">No conversion journeys found in this date range.</p>';
+                historyEl.innerHTML = '<p class="text-sm text-gray-500">No WooCommerce conversion profiles found yet.</p>';
                 return;
             }
 
-            const top = filteredJourneys[0].purchase;
-            const topJourneyData = buildMinimalJourneyNodesFromPurchase(top);
+            if (!profileFilteredJourneys.length) {
+                if (selectedProfile) {
+                    focusEl.innerHTML = `
+                        <div class="journey-compact-card space-y-3">
+                            <div class="flex items-center justify-between gap-2 flex-wrap">
+                                <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(selectedProfile.customerDisplayName || selectedProfile.profileLabel || 'Woo customer')}</span>
+                                <span class="text-xs text-gray-500">${formatDateTimeMx(selectedProfile.lastSeenAt)}</span>
+                            </div>
+                            <div class="journey-meta-grid">
+                                <span class="journey-chip"><i class="fa-solid fa-bag-shopping"></i>${Number(selectedProfile.orderCount || 0)} orders</span>
+                                <span class="journey-chip"><i class="fa-solid fa-chart-line"></i>${formatCurrency(Number(selectedProfile.totalRevenue || 0))}</span>
+                                <span class="journey-chip"><i class="fa-solid fa-clock"></i>${formatDateTimeMx(selectedProfile.lastOrderAt)}</span>
+                            </div>
+                            <p class="text-sm text-gray-500">This profile is detected, but there are no stitched purchase journeys in the current channel/date filter yet.</p>
+                        </div>
+                    `;
+                } else {
+                    focusEl.innerHTML = '<p class="text-sm text-gray-500">No stitched journeys for this filter.</p>';
+                }
+            } else {
+                const top = profileFilteredJourneys[0].purchase;
+                const topJourneyData = buildMinimalJourneyNodesFromPurchase(top);
+                focusEl.innerHTML = `
+                    <div class="journey-compact-card space-y-3">
+                        <div class="flex items-center justify-between gap-2 flex-wrap">
+                            <span class="text-xs text-gray-500">${formatRecentPurchaseDate(top)}</span>
+                            <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(topJourneyData.summary?.userName || selectedProfile?.customerDisplayName || 'Customer')}</span>
+                        </div>
+                        <div class="journey-meta-grid">
+                            <span class="journey-chip"><i class="fa-solid fa-percent"></i>${Number(topJourneyData.summary?.confidence || 0)}%</span>
+                            <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(topJourneyData.summary?.sourceAd || 'No campaign')}</span>
+                            <span class="journey-chip"><i class="fa-solid fa-door-open"></i>${escapeHtml(topJourneyData.summary?.landing || '-')}</span>
+                        </div>
+                        ${renderJourneyVerticalTimeline(topJourneyData.timelineEvents)}
+                    </div>
+                `;
+            }
 
-            focusEl.innerHTML = `
-                <div class="journey-compact-card space-y-3">
-                    <div class="flex items-center justify-between gap-2 flex-wrap">
-                        <span class="text-xs text-gray-500">${formatRecentPurchaseDate(top)}</span>
+            historyEl.innerHTML = `
+                <div class="space-y-3">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <input id="journey-profile-search" type="text" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white" placeholder="Buscar perfil Woo" value="${escapeHtmlAttr(attributionJourneyState.profileSearch || '')}">
+                        <select id="journey-profile-sort" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white">
+                            <option value="orders" ${attributionJourneyState.profileSort === 'orders' ? 'selected' : ''}>Mas órdenes</option>
+                            <option value="revenue" ${attributionJourneyState.profileSort === 'revenue' ? 'selected' : ''}>Mayor revenue</option>
+                            <option value="recent" ${attributionJourneyState.profileSort === 'recent' ? 'selected' : ''}>Mas reciente</option>
+                        </select>
                     </div>
-                    <div class="journey-meta-grid">
-                        <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(topJourneyData.summary?.userName || 'Customer')}</span>
-                        <span class="journey-chip"><i class="fa-solid fa-percent"></i>${Number(topJourneyData.summary?.confidence || 0)}%</span>
-                        <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(topJourneyData.summary?.sourceAd || 'No campaign')}</span>
-                        <span class="journey-chip"><i class="fa-solid fa-door-open"></i>${escapeHtml(topJourneyData.summary?.landing || '-')}</span>
+                    <div class="journey-customer-bubbles max-h-36 overflow-y-auto pr-1">
+                        <button type="button" class="journey-customer-bubble ${attributionJourneyState.profileKey === 'all' ? 'is-active' : ''}" data-profile-key="all">All Woo profiles</button>
+                        ${visibleProfiles.map((profile) => {
+                            const active = String(attributionJourneyState.profileKey || 'all') === String(profile.profileKey || '');
+                            const label = profile.customerDisplayName || profile.profileLabel || `Woo #${profile.customerId || '?'}`;
+                            return `<button type="button" class="journey-customer-bubble ${active ? 'is-active' : ''}" data-profile-key="${escapeHtmlAttr(profile.profileKey || '')}" title="${escapeHtmlAttr(label)} · ${Number(profile.orderCount || 0)} órdenes">${escapeHtml(label)}</button>`;
+                        }).join('')}
                     </div>
-                    ${renderJourneyVerticalTimeline(topJourneyData.timelineEvents)}
+                </div>
+                <div class="space-y-3 mt-3">
+                    ${profileFilteredJourneys.slice(0, 40).map(({ purchase }, index) => {
+                        const person = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || 'Customer');
+                        const channel = humanReadableChannel(purchase.attributedChannel);
+                        return `
+                        <button type="button" class="journey-compact-card w-full text-left hover:opacity-95" data-journey-order-id="${escapeHtmlAttr(purchase.orderId || '')}">
+                            <div class="flex items-center justify-between gap-2 flex-wrap">
+                                <p class="text-sm font-semibold text-gray-900">${escapeHtml(`${channel} ${index + 1} for ${person}`)}</p>
+                                <span class="text-xs text-gray-500">${formatRecentPurchaseDate(purchase)}</span>
+                            </div>
+                            <div class="mt-2 flex items-center gap-2 flex-wrap">
+                                <span class="journey-chip ${resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform)}"><i class="${resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform)}"></i>${escapeHtml(purchase.attributedChannel || 'unattributed')}</span>
+                                <span class="journey-chip"><i class="fa-solid fa-sack-dollar"></i>${formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN')}</span>
+                            </div>
+                        </button>`;
+                    }).join('') || '<p class="text-sm text-gray-500">No stitched purchases for this profile yet.</p>'}
                 </div>
             `;
 
-            const customerBubbles = `
-                <div class="journey-customer-bubbles">
-                    ${customerOptions.map((customerKey) => `
-                        <button type="button" class="journey-customer-bubble ${attributionJourneyState.customer === customerKey ? 'is-active' : ''}" data-customer="${escapeHtmlAttr(customerKey)}">
-                            ${escapeHtml(customerKey === 'all' ? 'All' : customerKey)}
-                        </button>
-                    `).join('')}
-                </div>
-            `;
+            const profileSearchInput = historyEl.querySelector('#journey-profile-search');
+            if (profileSearchInput) {
+                profileSearchInput.addEventListener('input', (event) => {
+                    attributionJourneyState.profileSearch = event.target.value || '';
+                    renderAttributionJourneyPanel();
+                });
+            }
 
-            historyEl.innerHTML = `${customerBubbles}${filteredJourneys.slice(0, 16).map(({ purchase }, index) => {
-                const person = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || 'Customer');
-                const channel = humanReadableChannel(purchase.attributedChannel);
-                return `
-                <div class="journey-compact-card">
-                    <div class="flex items-center justify-between gap-2 flex-wrap">
-                        <p class="text-sm font-semibold text-gray-900">${escapeHtml(`${channel} ${index + 1} for ${person}`)}</p>
-                        <span class="text-xs text-gray-500">${formatRecentPurchaseDate(purchase)}</span>
-                    </div>
-                    <div class="mt-2 flex items-center gap-2 flex-wrap">
-                        <span class="journey-chip ${resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform)}"><i class="${resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform)}"></i>${escapeHtml(purchase.attributedChannel || 'unattributed')}</span>
-                        <span class="journey-chip"><i class="fa-solid fa-sack-dollar"></i>${formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN')}</span>
-                    </div>
-                </div>
-            `;
-            }).join('')}`;
-            wireJourneyCustomerBubbles(historyEl);
+            const profileSortSelect = historyEl.querySelector('#journey-profile-sort');
+            if (profileSortSelect) {
+                profileSortSelect.addEventListener('change', (event) => {
+                    attributionJourneyState.profileSort = event.target.value || 'orders';
+                    renderAttributionJourneyPanel();
+                });
+            }
+
+            historyEl.querySelectorAll('[data-profile-key]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    attributionJourneyState.profileKey = button.getAttribute('data-profile-key') || 'all';
+                    renderAttributionJourneyPanel();
+                });
+            });
+
+            historyEl.querySelectorAll('[data-journey-order-id]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    const orderId = button.getAttribute('data-journey-order-id') || '';
+                    const row = profileFilteredJourneys.find((item) => String(item.purchase.orderId || '') === orderId);
+                    if (!row) return;
+                    const focused = buildMinimalJourneyNodesFromPurchase(row.purchase);
+                    focusEl.innerHTML = `
+                        <div class="journey-compact-card space-y-3">
+                            <div class="flex items-center justify-between gap-2 flex-wrap">
+                                <span class="text-xs text-gray-500">${formatRecentPurchaseDate(row.purchase)}</span>
+                                <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(focused.summary?.userName || 'Customer')}</span>
+                            </div>
+                            <div class="journey-meta-grid">
+                                <span class="journey-chip"><i class="fa-solid fa-percent"></i>${Number(focused.summary?.confidence || 0)}%</span>
+                                <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(focused.summary?.sourceAd || 'No campaign')}</span>
+                                <span class="journey-chip"><i class="fa-solid fa-door-open"></i>${escapeHtml(focused.summary?.landing || '-')}</span>
+                            </div>
+                            ${renderJourneyVerticalTimeline(focused.timelineEvents)}
+                        </div>
+                    `;
+                });
+            });
         }
 
         async function fetchWordPressUsersOnline(force = false) {
@@ -3463,7 +3659,7 @@
             document.querySelectorAll('.historical-profile-trigger').forEach((button) => {
                 button.addEventListener('click', () => {
                     const sessionId = button.getAttribute('data-session-id');
-                    if (sessionId) openSessionDetail(sessionId);
+                    if (sessionId) focusJourneyProfile({ sessionId });
                 });
             });
         }
@@ -3504,45 +3700,8 @@
         }
 
         async function openSessionDetail(sessionId) {
-            if (!currentShopId || !sessionId) return;
-            console.info('[Session Explorer] open session detail', { shopId: currentShopId, sessionId });
-            openSessionDetailPanel();
-
-            document.getElementById('session-detail-title').textContent = 'Cargando sesión...';
-            sessionExplorerState.currentSessionId = sessionId;
-            sessionExplorerState.currentSessionStartedAt = null;
-            sessionExplorerState.peers = [];
-            sessionExplorerState.timeline = [];
-            sessionExplorerState.currentData = null;
-            sessionExplorerState.compareData = null;
-            const peerList = document.getElementById('session-peer-list');
-            if (peerList) peerList.innerHTML = '<span class="text-sm text-gray-500">Buscando sesiones relacionadas...</span>';
-            renderSessionComparison();
-            document.getElementById('session-detail-metrics').innerHTML = '<div class="text-sm text-gray-500">Cargando métricas...</div>';
-            document.getElementById('session-detail-summary').innerHTML = '<p>Cargando resumen...</p>';
-            document.getElementById('session-detail-orders').innerHTML = '<p>Cargando órdenes...</p>';
-            document.getElementById('session-detail-attribution').innerHTML = '<p>Cargando atribución...</p>';
-            document.getElementById('session-detail-journey').innerHTML = '<p>Cargando path...</p>';
-            document.getElementById('session-detail-visual').innerHTML = '<p class="text-sm text-gray-500">Construyendo diagrama...</p>';
-            document.getElementById('session-detail-patterns').innerHTML = '<p class="text-sm text-gray-500">Buscando patrones...</p>';
-            document.getElementById('session-detail-timeline').innerHTML = '<p>Cargando timeline...</p>';
-            document.getElementById('session-detail-actions').innerHTML = '<p class="text-sm text-gray-500">Generando recomendaciones...</p>';
-            document.getElementById('session-detail-affinity').innerHTML = '<p class="text-sm text-gray-500">Analizando afinidad de compra...</p>';
-
-            try {
-                const data = await fetchSessionDetailData(sessionId);
-                renderSessionDetail(data);
-            } catch (error) {
-                document.getElementById('session-detail-summary').innerHTML = `<p class="text-red-600">${error.message}</p>`;
-                document.getElementById('session-detail-orders').innerHTML = '<p class="text-gray-500">-</p>';
-                document.getElementById('session-detail-attribution').innerHTML = '<p class="text-gray-500">-</p>';
-                document.getElementById('session-detail-journey').innerHTML = '<p class="text-gray-500">-</p>';
-                document.getElementById('session-detail-visual').innerHTML = '<p class="text-gray-500">-</p>';
-                document.getElementById('session-detail-patterns').innerHTML = '<p class="text-gray-500">-</p>';
-                document.getElementById('session-detail-timeline').innerHTML = '<p class="text-gray-500">-</p>';
-                document.getElementById('session-detail-actions').innerHTML = '<p class="text-gray-500">-</p>';
-                document.getElementById('session-detail-affinity').innerHTML = '<p class="text-gray-500">-</p>';
-            }
+            if (!sessionId) return;
+            focusJourneyProfile({ sessionId });
         }
 
         function renderSessionDetail(data) {
@@ -3709,7 +3868,7 @@
                 container.querySelectorAll('.historical-profile-chip').forEach((button) => {
                     button.addEventListener('click', () => {
                         const sessionId = button.getAttribute('data-session-id');
-                        if (sessionId) openSessionDetail(sessionId);
+                        if (sessionId) focusJourneyProfile({ sessionId });
                     });
                 });
 
@@ -3754,7 +3913,7 @@
             container.querySelectorAll('.session-peer-chip').forEach((button) => {
                 button.addEventListener('click', () => {
                     const sessionId = button.getAttribute('data-session-id');
-                    if (sessionId) openSessionDetail(sessionId);
+                    if (sessionId) focusJourneyProfile({ sessionId });
                 });
             });
 
@@ -3811,7 +3970,7 @@
             const buttonId = direction < 0 ? 'session-peer-prev' : 'session-peer-next';
             const button = document.getElementById(buttonId);
             const sessionId = button?.dataset?.targetSessionId || '';
-            if (sessionId) openSessionDetail(sessionId);
+            if (sessionId) focusJourneyProfile({ sessionId });
         }
 
         function renderSessionTimelineFromState() {
@@ -4175,11 +4334,8 @@
                 
                 const data = await res.json();
                 renderDashboard(data);
-                if (sessionExplorerState.currentSessionId) {
-                    await openSessionDetail(sessionExplorerState.currentSessionId);
-                } else {
-                    await loadSessionExplorerOverview();
-                }
+                await fetchJourneyWooProfiles();
+                renderAttributionJourneyPanel();
 
             } catch (error) {
                 console.error('Analytics error:', error);
@@ -4414,7 +4570,7 @@
                     <tr class="border-b border-gray-100 align-top">
                         <td class="py-3 pr-4 text-gray-700 whitespace-nowrap">${date}</td>
                         <td class="py-3 pr-4 text-gray-900 font-medium">${orderId}</td>
-                        <td class="py-3 pr-4 text-indigo-600 cursor-pointer hover:underline" onclick="openUserExplorer('${p.userKey || ''}', '${customerName.replace(/'/g, "\\'")}')">${customerName}</td>
+                        <td class="py-3 pr-4 text-indigo-600 cursor-pointer hover:underline" onclick="focusJourneyProfile({ userKey: '${String(p.userKey || '').replace(/'/g, "\\'")}', customerId: '${String(p.customerId || '').replace(/'/g, "\\'")}', fallbackName: '${customerName.replace(/'/g, "\\'")}' })">${customerName}</td>
                         <td class="py-3 pr-4 text-indigo-600 font-semibold whitespace-nowrap">${revenue}</td>
                         <td class="py-3 pr-4 text-gray-700">${itemsText}${extraCount}</td>
                         <td class="py-3 pr-4 text-gray-700 whitespace-nowrap"${debugTitle}>${attrText}</td>
@@ -4664,12 +4820,12 @@
                             openUserExplorer(feedUserKey, feedUserName || linkedUserLabel || 'User');
                             return;
                         }
-                        if (feedSessionId) openSessionDetail(feedSessionId);
+                        if (feedSessionId) focusJourneyProfile({ sessionId: feedSessionId, fallbackName: feedUserName || linkedUserLabel || 'User' });
                     });
                 }
 
                 if (sessionId) {
-                    el.addEventListener('click', () => openSessionDetail(sessionId));
+                    el.addEventListener('click', () => focusJourneyProfile({ sessionId, fallbackName: linkedUserLabel || 'User' }));
                 }
 
                 container.prepend(el);
@@ -4792,33 +4948,10 @@
 
 
 function openUserExplorer(userKey, fallbackName) {
-    if (!userKey) {
-        alert('No hay identificador de usuario (userKey) disponible para este registro.');
-        return;
-    }
-    
-    const backdrop = document.getElementById('user-explorer-backdrop');
-    const panel = document.getElementById('user-explorer-panel');
-
-    document.body.classList.add('overflow-hidden');
-    
-    backdrop.classList.remove('hidden');
-    setTimeout(() => { panel.classList.remove('translate-x-full'); panel.classList.add('translate-x-0'); }, 10);
-    
-    document.getElementById('ue-name').textContent = fallbackName && fallbackName !== '-' ? fallbackName : 'Cargando perfil...';
-    document.getElementById('ue-email').textContent = 'userKey: ' + userKey;
-    document.getElementById('ue-content').innerHTML = '<div class="flex justify-center items-center h-32"><svg class="animate-spin h-8 w-8 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg></div>';
-
-    fetch('/api/analytics/' + currentShopId + '/users/' + userKey + '/timeline')
-        .then(r => {
-            if (!r.ok) throw new Error('status_' + r.status);
-            return r.json();
-        })
-        .then(data => renderUserExplorer(data))
-        .catch(err => {
-            console.error(err);
-            document.getElementById('ue-content').innerHTML = '<p class="text-red-500">Error al cargar la cronolog&iacute;a.</p>';
-        });
+    focusJourneyProfile({
+        userKey: userKey || '',
+        fallbackName: fallbackName || 'Cliente',
+    });
 }
 
 function closeUserExplorer() {

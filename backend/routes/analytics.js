@@ -1393,6 +1393,14 @@ router.get('/:account_id', async (req, res) => {
     // Default to last 30 days
     const startDate = allTime ? new Date(0) : (start ? startOfDay(new Date(start)) : startOfDay(subDays(new Date(), 30)));
     const endDate = end ? endOfDay(new Date(end)) : endOfDay(new Date());
+    const periodDays = allTime
+      ? 365
+      : Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)) + 1);
+    const journeyStitchLookbackDays = Math.max(
+      JOURNEY_STITCH_LOOKBACK_DAYS,
+      Math.min(365, periodDays)
+    );
+    const journeyStitchLookbackMs = journeyStitchLookbackDays * 24 * 60 * 60 * 1000;
     const broadOrdersDateWhere = {
       OR: [
         { createdAt: { gte: startDate, lte: endDate } },
@@ -1908,7 +1916,7 @@ router.get('/:account_id', async (req, res) => {
       .filter((ts) => Number.isFinite(ts));
 
     if (recentConversionTimes.length) {
-      const earliestTs = Math.min(...recentConversionTimes) - (JOURNEY_STITCH_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+      const earliestTs = Math.min(...recentConversionTimes) - journeyStitchLookbackMs;
       const latestTs = Math.max(...recentConversionTimes) + (60 * 60 * 1000);
 
       const identityClauses = buildIdentityOrClauses({
@@ -1962,7 +1970,7 @@ router.get('/:account_id', async (req, res) => {
 
     let stitchedCandidateEvents = [];
     if (journeyEventOrFilters.length && recentConversionTimes.length) {
-      const earliestTs = Math.min(...recentConversionTimes) - (JOURNEY_STITCH_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+      const earliestTs = Math.min(...recentConversionTimes) - journeyStitchLookbackMs;
       const latestTs = Math.max(...recentConversionTimes) + (60 * 60 * 1000);
       stitchedCandidateEvents = await prisma.event.findMany({
         where: {
@@ -1998,7 +2006,7 @@ router.get('/:account_id', async (req, res) => {
         : (detailed ? normalizeLineItems(detailed.items) : conv.items);
 
       const convTs = new Date(conv.createdAt).getTime();
-      const earliestTs = convTs - (JOURNEY_STITCH_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+      const earliestTs = convTs - journeyStitchLookbackMs;
       const latestTs = convTs + (15 * 60 * 1000);
 
       let stitchedEvents = stitchedCandidateEvents
@@ -2757,7 +2765,7 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
 router.get('/:account_id/session-explorer', async (req, res) => {
   try {
     const { account_id } = req.params;
-    const limit = Math.max(5, Math.min(30, Number.parseInt(String(req.query.limit || '12'), 10) || 12));
+    const limit = Math.max(5, Math.min(500, Number.parseInt(String(req.query.limit || '120'), 10) || 120));
     const sessionExplorerCacheKey = buildRouteCacheKey('session-explorer', req);
     const cachedSessionExplorer = readRouteCache(sessionExplorerCacheKey);
     if (cachedSessionExplorer) {

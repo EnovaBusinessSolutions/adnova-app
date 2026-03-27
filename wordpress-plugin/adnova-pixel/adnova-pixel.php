@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.1.9
+ * Version: 1.2.0
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.1.9';
+    const VERSION = '1.2.0';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_BACKFILL_DONE = 'adnova_pixel_backfill_done';
@@ -77,14 +77,34 @@ final class Adnova_Pixel_Plugin {
             return;
         }
 
-        $done_version = get_option(self::OPTION_BACKFILL_DONE, '');
-        if ($done_version === self::VERSION) {
+        $done_marker = get_option(self::OPTION_BACKFILL_DONE, '');
+        if ($done_marker === self::get_backfill_marker()) {
             return;
         }
 
         if (!wp_next_scheduled('adnova_pixel_backfill_orders')) {
             wp_schedule_single_event(time() + 30, 'adnova_pixel_backfill_orders');
         }
+    }
+
+    private static function get_backfill_days() {
+        $raw = isset($_ENV['ADRAY_WOO_BACKFILL_DAYS']) ? $_ENV['ADRAY_WOO_BACKFILL_DAYS'] : getenv('ADRAY_WOO_BACKFILL_DAYS');
+        $raw = is_string($raw) ? trim($raw) : '';
+        if ($raw === '' || strtolower($raw) === 'default') {
+            return 365;
+        }
+        if (strtolower($raw) === 'all') {
+            return 0;
+        }
+        $days = (int) $raw;
+        if ($days <= 0) {
+            return 0;
+        }
+        return max(1, min(3650, $days));
+    }
+
+    private static function get_backfill_marker() {
+        return self::VERSION . ':days=' . self::get_backfill_days();
     }
 
     private static function get_plugin_basename() {
@@ -660,24 +680,58 @@ final class Adnova_Pixel_Plugin {
             return;
         }
 
-        $done_version = get_option(self::OPTION_BACKFILL_DONE, '');
-        if ($done_version === self::VERSION) {
+        $done_marker = get_option(self::OPTION_BACKFILL_DONE, '');
+        $target_marker = self::get_backfill_marker();
+        if ($done_marker === $target_marker) {
             return;
         }
 
-        $orders = wc_get_orders(array(
-            'limit' => 100,
-            'orderby' => 'date',
-            'order' => 'DESC',
-            'status' => array('processing', 'completed', 'on-hold'),
-            'return' => 'ids',
-        ));
-
-        foreach ($orders as $order_id) {
-            self::sync_woo_order_to_backend($order_id);
+        $days = self::get_backfill_days();
+        $created_after = null;
+        if ($days > 0) {
+            $created_after = gmdate('Y-m-d H:i:s', time() - ($days * DAY_IN_SECONDS));
         }
 
-        update_option(self::OPTION_BACKFILL_DONE, self::VERSION, false);
+        $all_statuses = function_exists('wc_get_order_statuses')
+            ? array_map(function ($status_key) {
+                return preg_replace('/^wc-/', '', (string) $status_key);
+            }, array_keys(wc_get_order_statuses()))
+            : array('pending', 'processing', 'completed', 'on-hold', 'refunded', 'cancelled', 'failed');
+
+        $per_page = 200;
+        $page = 1;
+        $max_pages = 200;
+
+        while ($page <= $max_pages) {
+            $query_args = array(
+                'limit' => $per_page,
+                'paged' => $page,
+                'orderby' => 'date',
+                'order' => 'DESC',
+                'status' => $all_statuses,
+                'return' => 'ids',
+            );
+
+            if ($created_after) {
+                $query_args['date_created'] = '>=' . $created_after;
+            }
+
+            $orders = wc_get_orders($query_args);
+            if (empty($orders)) {
+                break;
+            }
+
+            foreach ($orders as $order_id) {
+                self::sync_woo_order_to_backend($order_id);
+            }
+
+            if (count($orders) < $per_page) {
+                break;
+            }
+            $page++;
+        }
+
+        update_option(self::OPTION_BACKFILL_DONE, $target_marker, false);
     }
 
     private static function track_woo_order_purchase($order_id, $inject_browser) {
