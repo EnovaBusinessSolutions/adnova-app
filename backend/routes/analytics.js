@@ -1333,7 +1333,6 @@ router.get('/:account_id', async (req, res) => {
         platformCreatedAt: true,
         revenue: true,
         currency: true,
-        sessionId: true,
         attributedChannel: true,
         attributionSnapshot: true,
         confidenceScore: true,
@@ -1568,7 +1567,6 @@ router.get('/:account_id', async (req, res) => {
         createdAt: true,
         orderId: true,
         checkoutToken: true,
-        sessionId: true,
         userKey: true,
         revenue: true,
         currency: true,
@@ -1588,7 +1586,6 @@ router.get('/:account_id', async (req, res) => {
         createdAt: true,
         orderId: true,
         checkoutToken: true,
-        sessionId: true,
         userKey: true,
         revenue: true,
         currency: true,
@@ -1603,7 +1600,6 @@ router.get('/:account_id', async (req, res) => {
       storedAt: order.createdAt,
       orderId: order.orderId,
       orderNumber: order.orderNumber || null,
-      sessionId: order.sessionId || null,
       checkoutToken: order.checkoutToken || null,
       userKey: order.userKey || null,
       revenue: Number(order.revenue || 0),
@@ -1624,7 +1620,6 @@ router.get('/:account_id', async (req, res) => {
       createdAt: ev.createdAt,
       orderId: ev.orderId || null,
       orderNumber: null,
-      sessionId: ev.sessionId || null,
       checkoutToken: ev.checkoutToken || null,
       userKey: ev.userKey || null,
       revenue: Number(ev.revenue || 0),
@@ -1808,7 +1803,6 @@ router.get('/:account_id', async (req, res) => {
     const recentConversions = modeledConversions.slice(0, recentLimit);
     const recentOrderIds = Array.from(new Set(recentConversions.map((c) => c.orderId).filter(Boolean)));
     const recentCheckoutTokens = Array.from(new Set(recentConversions.map((c) => c.checkoutToken).filter(Boolean)));
-    const recentSessionIds = Array.from(new Set(recentConversions.map((c) => c.sessionId).filter(Boolean)));
     const recentUserKeys = Array.from(new Set(recentConversions.map((c) => c.userKey).filter(Boolean)));
 
     const recentConversionTimes = recentConversions
@@ -1818,7 +1812,6 @@ router.get('/:account_id', async (req, res) => {
     const journeyEventOrFilters = [];
     if (recentOrderIds.length) journeyEventOrFilters.push({ orderId: { in: recentOrderIds } });
     if (recentCheckoutTokens.length) journeyEventOrFilters.push({ checkoutToken: { in: recentCheckoutTokens } });
-    if (recentSessionIds.length) journeyEventOrFilters.push({ sessionId: { in: recentSessionIds } });
     if (recentUserKeys.length) journeyEventOrFilters.push({ userKey: { in: recentUserKeys } });
 
     let stitchedCandidateEvents = [];
@@ -1843,7 +1836,6 @@ router.get('/:account_id', async (req, res) => {
           productId: true,
           orderId: true,
           checkoutToken: true,
-          sessionId: true,
           userKey: true,
           rawPayload: true,
         },
@@ -1870,10 +1862,9 @@ router.get('/:account_id', async (req, res) => {
 
           const byOrder = Boolean(conv.orderId && ev.orderId && String(ev.orderId) === String(conv.orderId));
           const byCheckout = Boolean(conv.checkoutToken && ev.checkoutToken && String(ev.checkoutToken) === String(conv.checkoutToken));
-          const bySession = Boolean(conv.sessionId && ev.sessionId && String(ev.sessionId) === String(conv.sessionId));
           const byUser = Boolean(conv.userKey && ev.userKey && String(ev.userKey) === String(conv.userKey));
 
-          return byOrder || byCheckout || bySession || byUser;
+          return byOrder || byCheckout || byUser;
         })
         .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
@@ -1898,7 +1889,6 @@ router.get('/:account_id', async (req, res) => {
           utmSource: ev?.rawPayload?.utm_source || null,
           checkoutToken: ev.checkoutToken || null,
           orderId: ev.orderId || null,
-          sessionId: ev.sessionId || null,
         }));
 
       return {
@@ -2462,7 +2452,15 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
     });
   } catch (error) {
     console.error('[Analytics API] WordPress users online error:', error);
-    return res.status(500).json({ error: 'Internal Server Error' });
+    return res.json({
+      success: true,
+      accountId: req.params.account_id,
+      windowMinutes: Math.max(5, Math.min(180, Number.parseInt(String(req.query.window_minutes || '30'), 10) || 30)),
+      users: [],
+      totalUsers: 0,
+      degraded: true,
+      message: 'WordPress online users temporarily unavailable; returning empty list.',
+    });
   }
 });
 
