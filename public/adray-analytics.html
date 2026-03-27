@@ -4992,7 +4992,8 @@
                 } else if (data.type === 'WEBHOOK') {
                     icon = 'fa-server';
                     color = 'text-green-600';
-                    title = 'Shopify Order';
+                    const platformName = String(data.payload?.platform || '').toLowerCase();
+                    title = platformName.includes('woo') ? 'WooCommerce Order' : 'Shopify Order';
                     detail = data.payload?.orderId ? `Order ${data.payload.orderId}` : 'New order processed';
                 } else {
                     title = translateEventNameSimple(data.type || 'Event');

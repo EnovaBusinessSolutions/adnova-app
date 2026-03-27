@@ -329,26 +329,32 @@ router.post('/woo/orders-sync', async (req, res) => {
     }
 
     // Emit realtime dashboard signal for Woo sync events.
-    eventBus.emit('event', {
-      type: 'WEBHOOK',
-      accountId,
-      sessionId: order.sessionId || null,
-      userKey: order.userKey || null,
-      eventId: order.eventId || null,
-      payload: {
-        eventName: 'purchase',
-        platform: 'woocommerce',
-        orderId: order.orderId,
-        revenue: order.revenue,
-        currency: order.currency,
-        rawSource: payload.raw_source || 'api',
-        matchType: order.sessionId ? 'deterministic' : 'probabilistic',
-        confidenceScore: Number(order.confidenceScore || 0),
-        collectedAt: new Date().toISOString(),
-        timestamp: new Date().toISOString(),
-        source: 'woo_orders_sync',
-      }
-    });
+    // Skip emitting to the live dashboard if it's an old historic order from a backfill sync.
+    const platformCreatedAtObj = order.platformCreatedAt ? new Date(order.platformCreatedAt).getTime() : new Date().getTime();
+    const isRecentOrder = (new Date().getTime() - platformCreatedAtObj) < (1000 * 60 * 60 * 24); // 24 hours
+
+    if (isRecentOrder) {
+      eventBus.emit('event', {
+        type: 'WEBHOOK',
+        accountId,
+        sessionId: order.sessionId || null,
+        userKey: order.userKey || null,
+        eventId: order.eventId || null,
+        payload: {
+          eventName: 'purchase',
+          platform: 'woocommerce',
+          orderId: order.orderId,
+          revenue: order.revenue,
+          currency: order.currency,
+          rawSource: payload.raw_source || 'api',
+          matchType: order.sessionId ? 'deterministic' : 'probabilistic',
+          confidenceScore: Number(order.confidenceScore || 0),
+          collectedAt: new Date().toISOString(),
+          timestamp: order.platformCreatedAt ? new Date(order.platformCreatedAt).toISOString() : new Date().toISOString(),
+          source: 'woo_orders_sync',
+        }
+      });
+    }
 
     const rawSource = payload.raw_source || 'api';
     const matchType = order.sessionId ? 'deterministic' : 'probabilistic';
