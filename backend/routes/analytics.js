@@ -1683,6 +1683,8 @@ router.get('/:account_id', async (req, res) => {
       sessionId: order.sessionId || null,
       userKey: order.userKey || null,
       customerId: order.customerId || null,
+      emailHash: order.emailHash || null,
+      phoneHash: order.phoneHash || null,
       revenue: Number(order.revenue || 0),
       currency: order.currency || 'MXN',
       items: normalizeLineItems(order.lineItems),
@@ -1696,33 +1698,38 @@ router.get('/:account_id', async (req, res) => {
       payloadSnapshot: order.attributionSnapshot || null,
     }));
 
-    const conversionInputsFromEvents = purchaseEventsForModel.map((ev) => ({
-      source: 'events',
-      createdAt: ev.createdAt,
-      orderId: ev.orderId || null,
-      orderNumber: null,
-      checkoutToken: ev.checkoutToken || null,
-      sessionId: ev.sessionId || null,
-      userKey: ev.userKey || null,
-      customerId: String(ev?.rawPayload?.customer_id || ev?.rawPayload?.customerId || '').trim() || null,
-      revenue: Number(ev.revenue || 0),
-      currency: ev.currency || 'MXN',
-      items: [],
-      payloadSnapshot: {
-        utm_source: ev?.rawPayload?.utm_source || null,
-        utm_medium: ev?.rawPayload?.utm_medium || null,
-        utm_campaign: ev?.rawPayload?.utm_campaign || null,
-        utm_content: ev?.rawPayload?.utm_content || null,
-        utm_term: ev?.rawPayload?.utm_term || null,
-        referrer: ev?.rawPayload?.referrer || null,
-        gclid: ev?.rawPayload?.gclid || null,
-        fbclid: ev?.rawPayload?.fbclid || null,
-        ttclid: ev?.rawPayload?.ttclid || null,
-      },
-      wooSourceLabel: ev?.rawPayload?.woo_source_label || null,
-      wooSourceType: ev?.rawPayload?.woo_source_type || null,
-      customerName: ev?.rawPayload?.user_data?.fn ? `${ev.rawPayload.user_data.fn} ${ev.rawPayload.user_data.ln || ''}`.trim() : null,
-    }));
+    const conversionInputsFromEvents = purchaseEventsForModel.map((ev) => {
+      const eventIdentity = extractEventIdentity(ev?.rawPayload || {});
+      return {
+        source: 'events',
+        createdAt: ev.createdAt,
+        orderId: ev.orderId || null,
+        orderNumber: null,
+        checkoutToken: ev.checkoutToken || null,
+        sessionId: ev.sessionId || null,
+        userKey: ev.userKey || null,
+        customerId: eventIdentity.customerId || null,
+        emailHash: eventIdentity.emailHash || null,
+        phoneHash: eventIdentity.phoneHash || null,
+        revenue: Number(ev.revenue || 0),
+        currency: ev.currency || 'MXN',
+        items: [],
+        payloadSnapshot: {
+          utm_source: ev?.rawPayload?.utm_source || null,
+          utm_medium: ev?.rawPayload?.utm_medium || null,
+          utm_campaign: ev?.rawPayload?.utm_campaign || null,
+          utm_content: ev?.rawPayload?.utm_content || null,
+          utm_term: ev?.rawPayload?.utm_term || null,
+          referrer: ev?.rawPayload?.referrer || null,
+          gclid: ev?.rawPayload?.gclid || null,
+          fbclid: ev?.rawPayload?.fbclid || null,
+          ttclid: ev?.rawPayload?.ttclid || null,
+        },
+        wooSourceLabel: ev?.rawPayload?.woo_source_label || null,
+        wooSourceType: ev?.rawPayload?.woo_source_type || null,
+        customerName: ev?.rawPayload?.user_data?.fn ? `${ev.rawPayload.user_data.fn} ${ev.rawPayload.user_data.ln || ''}`.trim() : null,
+      };
+    });
 
     const conversionInputs = (filteredOrders.length > 0 ? conversionInputsFromOrders : conversionInputsFromEvents);
 
@@ -1890,12 +1897,62 @@ router.get('/:account_id', async (req, res) => {
     const recentConversions = modeledConversions.slice(0, recentLimit);
     const recentOrderIds = Array.from(new Set(recentConversions.map((c) => c.orderId).filter(Boolean)));
     const recentCheckoutTokens = Array.from(new Set(recentConversions.map((c) => c.checkoutToken).filter(Boolean)));
-    const recentSessionIds = Array.from(new Set(recentConversions.map((c) => c.sessionId).filter(Boolean)));
-    const recentUserKeys = Array.from(new Set(recentConversions.map((c) => c.userKey).filter(Boolean)));
+    let recentSessionIds = Array.from(new Set(recentConversions.map((c) => c.sessionId).filter(Boolean)));
+    let recentUserKeys = Array.from(new Set(recentConversions.map((c) => c.userKey).filter(Boolean)));
+    const recentCustomerIds = Array.from(new Set(recentConversions.map((c) => c.customerId).filter(Boolean)));
+    const recentEmailHashes = Array.from(new Set(recentConversions.map((c) => c.emailHash).filter(Boolean)));
+    const recentPhoneHashes = Array.from(new Set(recentConversions.map((c) => c.phoneHash).filter(Boolean)));
 
     const recentConversionTimes = recentConversions
       .map((c) => new Date(c.createdAt).getTime())
       .filter((ts) => Number.isFinite(ts));
+
+    if (recentConversionTimes.length) {
+      const earliestTs = Math.min(...recentConversionTimes) - (JOURNEY_STITCH_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+      const latestTs = Math.max(...recentConversionTimes) + (60 * 60 * 1000);
+
+      const identityClauses = buildIdentityOrClauses({
+        userKeys: recentUserKeys,
+        customerIds: recentCustomerIds,
+        emailHashes: recentEmailHashes,
+        phoneHashes: recentPhoneHashes,
+      });
+
+      if (identityClauses.length) {
+        const identityRowsForJourney = await prisma.identityGraph.findMany({
+          where: {
+            accountId: account_id,
+            OR: identityClauses,
+          },
+          select: {
+            userKey: true,
+          },
+          take: 800,
+        });
+
+        const graphUserKeys = identityRowsForJourney.map((row) => row.userKey).filter(Boolean);
+        recentUserKeys = Array.from(new Set([...recentUserKeys, ...graphUserKeys]));
+
+        if (recentUserKeys.length) {
+          const sessionsByIdentity = await prisma.session.findMany({
+            where: {
+              accountId: account_id,
+              userKey: { in: recentUserKeys },
+              startedAt: {
+                gte: new Date(earliestTs),
+                lte: new Date(latestTs),
+              },
+            },
+            select: {
+              sessionId: true,
+            },
+            take: 800,
+          });
+          const graphSessionIds = sessionsByIdentity.map((row) => row.sessionId).filter(Boolean);
+          recentSessionIds = Array.from(new Set([...recentSessionIds, ...graphSessionIds]));
+        }
+      }
+    }
 
     const journeyEventOrFilters = [];
     if (recentOrderIds.length) journeyEventOrFilters.push({ orderId: { in: recentOrderIds } });
