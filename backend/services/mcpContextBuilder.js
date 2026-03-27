@@ -928,17 +928,20 @@ async function waitForBuildableSources(userId, root, explicitSnapshotId, timeout
       return !!s?.connected && !s?.usable;
     });
 
-    if (usableSources.length > 0) {
-      return {
-        root: lastRoot,
-        preferredGlobalSnapshotId: preferredGlobalSnapshotId || null,
-        sourceStates: bySource,
-        candidateSources,
-        usableSources,
-        pendingConnectedSources,
-        timedOut: false,
-      };
-    }
+    const shouldWaitForPendingConnectedSources =
+  pendingConnectedSources.length > 0;
+
+if (usableSources.length > 0 && !shouldWaitForPendingConnectedSources) {
+  return {
+    root: lastRoot,
+    preferredGlobalSnapshotId: preferredGlobalSnapshotId || null,
+    sourceStates: bySource,
+    candidateSources,
+    usableSources,
+    pendingConnectedSources,
+    timedOut: false,
+  };
+}
 
     await sleep(BUILD_WAIT_POLL_MS);
   }
@@ -2248,87 +2251,100 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     throw err;
   }
 
-  if (pendingConnectedSources.length > 0 && usableSources.length === 0) {
-    const partialWait = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
-      ...(currentAi || {}),
+  if (pendingConnectedSources.length > 0) {
+  const partialWait = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
+    ...(currentAi || {}),
+    status: 'processing',
+    progress: usableSources.length > 0 ? 55 : 30,
+    stage: 'waiting_for_connected_sources',
+    startedAt: currentAi?.startedAt || startedAt,
+    finishedAt: null,
+    buildAttemptId: attemptId,
+    snapshotId:
+      sourceSnapshots.metaAds ||
+      sourceSnapshots.googleAds ||
+      sourceSnapshots.ga4 ||
+      preferredSnapshotId ||
+      null,
+    sourceSnapshots,
+    contextRangeDays,
+    storageRangeDays,
+    connectionFingerprint: effectiveConnectionFingerprint,
+    currentSourcesSnapshot: effectiveSourceContext.snapshot,
+    currentSourceFingerprint: effectiveSourceContext.fingerprint,
+    needsSignalRebuild: true,
+    needsPdfRebuild: true,
+    sourcesStatus,
+    usableSources,
+    pendingConnectedSources,
+    error: null,
+    signalComplete: false,
+    signalValidForPdf: false,
+    signalReadyForPdf: false,
+    unifiedBase: null,
+    encodedPayload: null,
+    signalPayload: null,
+    sourceFingerprint: null,
+    pdf: emptyPdfState({
+      status: 'idle',
+      stage: 'idle',
+      progress: 0,
+      connectionFingerprint: effectiveConnectionFingerprint,
+      sourceFingerprint: effectiveSourceContext.fingerprint,
+      stale: true,
+      staleReason: usableSources.length > 0
+        ? 'waiting_for_additional_connected_sources'
+        : 'waiting_for_connected_sources',
+    }),
+  }));
+
+  if (!partialWait?.skipped) {
+    await safeSignalRunMarkStage(userId, attemptId, {
+      rootId: partialWait?.root?._id || effectiveRoot?._id || initialRoot?._id || null,
       status: 'processing',
-      progress: 30,
       stage: 'waiting_for_connected_sources',
-      startedAt: currentAi?.startedAt || startedAt,
-      finishedAt: null,
-      buildAttemptId: attemptId,
+      progress: usableSources.length > 0 ? 55 : 30,
       snapshotId:
         sourceSnapshots.metaAds ||
         sourceSnapshots.googleAds ||
         sourceSnapshots.ga4 ||
         preferredSnapshotId ||
         null,
-      sourceSnapshots,
       contextRangeDays,
       storageRangeDays,
-      connectionFingerprint: effectiveConnectionFingerprint,
-      currentSourcesSnapshot: effectiveSourceContext.snapshot,
-      currentSourceFingerprint: effectiveSourceContext.fingerprint,
-      needsSignalRebuild: true,
-      needsPdfRebuild: true,
-      sourcesStatus,
-      usableSources,
-      pendingConnectedSources,
-      error: null,
-        pdf: emptyPdfState({
-        status: 'idle',
-        stage: 'idle',
-        progress: 0,
+      hasSignal: false,
+      signalValidForPdf: false,
+      signalComplete: false,
+      sources: buildSignalSourcesPayload({
+        sourcesStatus,
+        sourceSnapshots,
+        usableSources,
+        pendingConnectedSources,
+      }),
+      meta: {
+        timedOut: !!readyState?.timedOut,
+        reason: usableSources.length > 0
+          ? 'WAITING_FOR_ADDITIONAL_CONNECTED_SOURCES'
+          : 'WAITING_FOR_CONNECTED_SOURCES',
         connectionFingerprint: effectiveConnectionFingerprint,
         sourceFingerprint: effectiveSourceContext.fingerprint,
-        stale: true,
-        staleReason: 'partial_waiting_for_connected_sources',
-      }),
-    }));
-
-    if (!partialWait?.skipped) {
-      await safeSignalRunMarkStage(userId, attemptId, {
-        rootId: partialWait?.root?._id || effectiveRoot?._id || initialRoot?._id || null,
-        status: 'processing',
-        stage: 'waiting_for_connected_sources',
-        progress: 30,
-        snapshotId:
-          sourceSnapshots.metaAds ||
-          sourceSnapshots.googleAds ||
-          sourceSnapshots.ga4 ||
-          preferredSnapshotId ||
-          null,
-        contextRangeDays,
-        storageRangeDays,
-        hasSignal: false,
-        signalValidForPdf: false,
-        sources: buildSignalSourcesPayload({
-          sourcesStatus,
-          sourceSnapshots,
-          usableSources,
-          pendingConnectedSources,
-        }),
-        meta: {
-          timedOut: !!readyState?.timedOut,
-          reason: 'PARTIAL_WAITING_FOR_CONNECTED_SOURCES',
-          connectionFingerprint: effectiveConnectionFingerprint,
-        },
-      });
-    }
-
-    const finalRoot = partialWait?.root || await findRoot(userId);
-    return buildResultFromRoot(finalRoot, {
-      status: 'processing',
-      progress: 30,
-      stage: 'waiting_for_connected_sources',
-      sourceSnapshots,
-      contextRangeDays,
-      storageRangeDays,
-      usableSources,
-      pendingConnectedSources,
-      sources: sourcesStatus,
+      },
     });
   }
+
+  const finalRoot = partialWait?.root || await findRoot(userId);
+  return buildResultFromRoot(finalRoot, {
+    status: 'processing',
+    progress: usableSources.length > 0 ? 55 : 30,
+    stage: 'waiting_for_connected_sources',
+    sourceSnapshots,
+    contextRangeDays,
+    storageRangeDays,
+    usableSources,
+    pendingConnectedSources,
+    sources: sourcesStatus,
+  });
+}
 
     const compactingResult = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
     ...(currentAi || {}),
