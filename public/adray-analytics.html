@@ -2080,7 +2080,6 @@
         };
         let attributionJourneyState = {
             channel: 'all',
-            customer: 'all',
             profileKey: 'all',
             profileSearch: '',
             profileSort: 'orders',
@@ -2101,6 +2100,12 @@
             loadedAt: 0,
             loading: false,
         };
+        let journeyProfileLookupState = {
+            byCustomerId: new Map(),
+            byUserKey: new Map(),
+            byName: [],
+        };
+        let journeyProfileSearchDebounceTimer = null;
 
         function formatDateInputValue(date) {
             const year = date.getFullYear();
@@ -2974,15 +2979,10 @@
                 button.onclick = () => {
                     const selected = button.getAttribute('data-channel') || 'all';
                     attributionJourneyState.channel = selected;
-                    attributionJourneyState.customer = 'all';
+                    attributionJourneyState.profileKey = 'all';
                     renderAttributionJourneyPanel();
                 };
             });
-        }
-
-        function buildCustomerBubbleLabel(purchase = {}) {
-            const customerRaw = resolvePurchaseCustomerName(purchase);
-            return humanReadablePersonName(customerRaw || 'Cliente', 'Cliente');
         }
 
         function normalizeProfileName(value) {
@@ -2993,26 +2993,65 @@
                 .replace(/\s+/g, ' ');
         }
 
-        function purchaseMatchesProfile(purchase = {}, profile = {}) {
+        function escapeInlineSingleQuotedJs(value) {
+            return String(value || '')
+                .replace(/\\/g, '\\\\')
+                .replace(/'/g, "\\'");
+        }
+
+        function rebuildJourneyProfileLookup(profiles = []) {
+            const byCustomerId = new Map();
+            const byUserKey = new Map();
+            const byName = [];
+
+            profiles.forEach((profile) => {
+                const customerId = String(profile.customerId || '').trim();
+                if (customerId && !byCustomerId.has(customerId)) byCustomerId.set(customerId, profile);
+
+                const userKeys = Array.isArray(profile.userKeys) ? profile.userKeys : [];
+                userKeys.forEach((key) => {
+                    const normalized = String(key || '').trim();
+                    if (normalized && !byUserKey.has(normalized)) byUserKey.set(normalized, profile);
+                });
+
+                const normalizedName = normalizeProfileName(profile.customerDisplayName || profile.profileLabel || '');
+                if (normalizedName) byName.push({ normalizedName, profile });
+            });
+
+            journeyProfileLookupState = {
+                byCustomerId,
+                byUserKey,
+                byName,
+            };
+        }
+
+        function createProfilePurchaseMatcher(profile = {}) {
             const profileCustomerId = String(profile.customerId || '').trim();
-            const purchaseCustomerId = String(purchase.customerId || '').trim();
-            if (profileCustomerId && purchaseCustomerId && profileCustomerId === purchaseCustomerId) {
-                return true;
-            }
-
-            const profileUserKeys = Array.isArray(profile.userKeys) ? profile.userKeys.map((k) => String(k || '').trim()).filter(Boolean) : [];
-            const purchaseUserKey = String(purchase.userKey || '').trim();
-            if (purchaseUserKey && profileUserKeys.includes(purchaseUserKey)) {
-                return true;
-            }
-
+            const profileUserKeys = new Set(
+                (Array.isArray(profile.userKeys) ? profile.userKeys : [])
+                    .map((k) => String(k || '').trim())
+                    .filter(Boolean)
+            );
             const profileName = normalizeProfileName(profile.customerDisplayName || profile.profileLabel || '');
-            const purchaseName = normalizeProfileName(resolvePurchaseCustomerName(purchase));
-            if (profileName && purchaseName && (profileName === purchaseName || profileName.includes(purchaseName) || purchaseName.includes(profileName))) {
-                return true;
-            }
 
-            return false;
+            return (purchase = {}) => {
+                const purchaseCustomerId = String(purchase.customerId || '').trim();
+                if (profileCustomerId && purchaseCustomerId && profileCustomerId === purchaseCustomerId) {
+                    return true;
+                }
+
+                const purchaseUserKey = String(purchase.userKey || '').trim();
+                if (purchaseUserKey && profileUserKeys.has(purchaseUserKey)) {
+                    return true;
+                }
+
+                const purchaseName = normalizeProfileName(resolvePurchaseCustomerName(purchase));
+                if (profileName && purchaseName && (profileName === purchaseName || profileName.includes(purchaseName) || purchaseName.includes(profileName))) {
+                    return true;
+                }
+
+                return false;
+            };
         }
 
         async function fetchJourneyWooProfiles(force = false) {
@@ -3029,6 +3068,7 @@
                 const data = await res.json();
                 const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
                 wooProfilesState.profiles = profiles.filter((profile) => String(profile.profileType || '').toLowerCase() === 'woocommerce_customer');
+                rebuildJourneyProfileLookup(wooProfilesState.profiles);
                 wooProfilesState.loadedAt = Date.now();
             } catch (error) {
                 console.warn('[Journey] Could not load Woo profiles for attribution center', error);
@@ -3037,12 +3077,21 @@
             }
         }
 
-        function focusJourneyProfile({ userKey = '', customerId = '', sessionId = '', fallbackName = '' } = {}) {
+        async function focusJourneyProfile({ userKey = '', customerId = '', sessionId = '', fallbackName = '' } = {}) {
+            if (!wooProfilesState.profiles.length && !wooProfilesState.loading) {
+                await fetchJourneyWooProfiles();
+            }
+
             const profiles = Array.isArray(wooProfilesState.profiles) ? wooProfilesState.profiles : [];
             const safeSessionId = String(sessionId || '').trim();
             let safeCustomerId = String(customerId || '').trim();
             let safeUserKey = String(userKey || '').trim();
             let safeFallbackName = String(fallbackName || '').trim();
+
+            let matched = null;
+            if (safeSessionId) {
+                matched = profiles.find((profile) => String(profile.recentSessionId || '').trim() === safeSessionId) || null;
+            }
 
             if (safeSessionId && (!safeCustomerId || !safeUserKey || !safeFallbackName)) {
                 const purchases = Array.isArray(recentPurchasesState) ? recentPurchasesState : [];
@@ -3060,19 +3109,17 @@
                 }
             }
 
-            let matched = null;
-            if (safeCustomerId) {
-                matched = profiles.find((profile) => String(profile.customerId || '').trim() === safeCustomerId) || null;
+            if (!matched && safeCustomerId) {
+                matched = journeyProfileLookupState.byCustomerId.get(safeCustomerId) || null;
             }
             if (!matched && safeUserKey) {
-                matched = profiles.find((profile) => Array.isArray(profile.userKeys) && profile.userKeys.map((k) => String(k || '').trim()).includes(safeUserKey)) || null;
+                matched = journeyProfileLookupState.byUserKey.get(safeUserKey) || null;
             }
             if (!matched && safeFallbackName) {
                 const targetName = normalizeProfileName(safeFallbackName);
-                matched = profiles.find((profile) => {
-                    const profileName = normalizeProfileName(profile.customerDisplayName || profile.profileLabel || '');
-                    return profileName && targetName && (profileName.includes(targetName) || targetName.includes(profileName));
-                }) || null;
+                matched = journeyProfileLookupState.byName.find((entry) => {
+                    return targetName && (entry.normalizedName.includes(targetName) || targetName.includes(entry.normalizedName));
+                })?.profile || null;
             }
 
             attributionJourneyState.profileKey = matched?.profileKey || 'all';
@@ -3080,17 +3127,6 @@
                 attributionJourneyState.profileSearch = matched?.customerDisplayName || safeFallbackName;
             }
             renderAttributionJourneyPanel();
-        }
-
-        function wireJourneyCustomerBubbles(container) {
-            if (!container) return;
-            container.querySelectorAll('.journey-customer-bubble').forEach((button) => {
-                button.addEventListener('click', () => {
-                    const selected = button.getAttribute('data-customer') || 'all';
-                    attributionJourneyState.customer = selected;
-                    renderAttributionJourneyPanel();
-                });
-            });
         }
 
         function renderAttributionJourneyPanel() {
@@ -3130,7 +3166,7 @@
                 wireTimelineModeToggle(focusEl);
 
                 const historicalRows = peers.slice(0, 10).map((peer, index) => `
-                    <button type="button" class="journey-compact-card w-full text-left hover:opacity-95" onclick="focusJourneyProfile({ sessionId: '${peer.sessionId || ''}', fallbackName: '${currentPerson.replace(/'/g, "\\'")}' })">
+                    <button type="button" class="journey-compact-card w-full text-left hover:opacity-95" onclick="focusJourneyProfile({ sessionId: '${escapeInlineSingleQuotedJs(peer.sessionId || '')}', fallbackName: '${escapeInlineSingleQuotedJs(currentPerson)}' })">
                         <div class="flex items-center justify-between gap-2">
                             <p class="text-sm font-semibold text-gray-900">${escapeHtml(`Session ${index + 1} for ${currentPerson}`)}</p>
                             <span class="text-xs text-gray-500">${formatDateTimeMx(peer.startedAt)}</span>
@@ -3181,8 +3217,9 @@
             }
 
             const selectedProfile = visibleProfiles.find((profile) => String(profile.profileKey || '') === String(attributionJourneyState.profileKey || 'all')) || null;
+            const selectedProfileMatcher = selectedProfile ? createProfilePurchaseMatcher(selectedProfile) : null;
             const profileFilteredJourneys = selectedProfile
-                ? byChannel.filter(({ purchase }) => purchaseMatchesProfile(purchase, selectedProfile))
+                ? byChannel.filter(({ purchase }) => selectedProfileMatcher(purchase))
                 : byChannel;
 
             if (!byChannel.length) {
@@ -3270,8 +3307,12 @@
             const profileSearchInput = historyEl.querySelector('#journey-profile-search');
             if (profileSearchInput) {
                 profileSearchInput.addEventListener('input', (event) => {
-                    attributionJourneyState.profileSearch = event.target.value || '';
-                    renderAttributionJourneyPanel();
+                    const nextValue = event.target.value || '';
+                    if (journeyProfileSearchDebounceTimer) clearTimeout(journeyProfileSearchDebounceTimer);
+                    journeyProfileSearchDebounceTimer = setTimeout(() => {
+                        attributionJourneyState.profileSearch = nextValue;
+                        renderAttributionJourneyPanel();
+                    }, 120);
                 });
             }
 
@@ -4570,7 +4611,7 @@
                     <tr class="border-b border-gray-100 align-top">
                         <td class="py-3 pr-4 text-gray-700 whitespace-nowrap">${date}</td>
                         <td class="py-3 pr-4 text-gray-900 font-medium">${orderId}</td>
-                        <td class="py-3 pr-4 text-indigo-600 cursor-pointer hover:underline" onclick="focusJourneyProfile({ userKey: '${String(p.userKey || '').replace(/'/g, "\\'")}', customerId: '${String(p.customerId || '').replace(/'/g, "\\'")}', fallbackName: '${customerName.replace(/'/g, "\\'")}' })">${customerName}</td>
+                        <td class="py-3 pr-4 text-indigo-600 cursor-pointer hover:underline" onclick="focusJourneyProfile({ userKey: '${escapeInlineSingleQuotedJs(p.userKey || '')}', customerId: '${escapeInlineSingleQuotedJs(p.customerId || '')}', fallbackName: '${escapeInlineSingleQuotedJs(customerName)}' })">${customerName}</td>
                         <td class="py-3 pr-4 text-indigo-600 font-semibold whitespace-nowrap">${revenue}</td>
                         <td class="py-3 pr-4 text-gray-700">${itemsText}${extraCount}</td>
                         <td class="py-3 pr-4 text-gray-700 whitespace-nowrap"${debugTitle}>${attrText}</td>
