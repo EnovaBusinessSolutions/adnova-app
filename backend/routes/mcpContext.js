@@ -476,6 +476,28 @@ function isSignalRunCompatibleWithRoot(signalRun, root) {
   return true;
 }
 
+/**
+ * Relaxed acceptance for UI only:
+ * if a run is the current/active processing run, we should let it drive the UI
+ * even when its fingerprints still represent the NEXT state and the persisted root
+ * is still the PREVIOUS state.
+ */
+function isProspectiveProcessingRunForUi(signalRun) {
+  if (!signalRun) return false;
+  if (!isProcessingStatus(signalRun?.status)) return false;
+  if (signalRun?.supersededAt) return false;
+  if (signalRun?.supersededByAttemptId) return false;
+  if (!(signalRun?.isCurrent || safeStr(signalRun?.buildAttemptId).trim())) return false;
+  return true;
+}
+
+function isSignalRunAuthoritativeForUi(signalRun, root) {
+  if (!signalRun) return false;
+  if (isSignalRunCompatibleWithRoot(signalRun, root)) return true;
+  if (isProspectiveProcessingRunForUi(signalRun)) return true;
+  return false;
+}
+
 async function findPreferredSignalRunForUser(userId, root = null) {
   if (!userId) return null;
 
@@ -485,23 +507,23 @@ async function findPreferredSignalRunForUser(userId, root = null) {
 
   if (rootAttemptId) {
     const exact = await findSignalRunByAttempt(userId, rootAttemptId);
-    if (exact && isSignalRunCompatibleWithRoot(exact, effectiveRoot)) {
+    if (exact && isSignalRunAuthoritativeForUi(exact, effectiveRoot)) {
       return exact;
     }
   }
 
   const active = await findActiveSignalRunForUser(userId);
-  if (active && isSignalRunCompatibleWithRoot(active, effectiveRoot)) {
+  if (active && isSignalRunAuthoritativeForUi(active, effectiveRoot)) {
     return active;
   }
 
   const currentRun = await findCurrentSignalRunForUser(userId);
-  if (currentRun && isSignalRunCompatibleWithRoot(currentRun, effectiveRoot)) {
+  if (currentRun && isSignalRunAuthoritativeForUi(currentRun, effectiveRoot)) {
     return currentRun;
   }
 
   const latest = await findLatestSignalRunForUser(userId);
-  if (latest && isSignalRunCompatibleWithRoot(latest, effectiveRoot)) {
+  if (latest && isSignalRunAuthoritativeForUi(latest, effectiveRoot)) {
     return latest;
   }
 
@@ -575,21 +597,21 @@ function hasAuthoritativeRunPdf(signalRun) {
   return status === 'processing' || status === 'ready' || status === 'failed';
 }
 
-function resolveAuthoritativeSignalState(root, compatibleRun, staleSignal) {
+function resolveAuthoritativeSignalState(root, selectedRun, staleSignal) {
   const state = root?.aiContext || {};
   const processingRun =
-    compatibleRun && isProcessingStatus(compatibleRun.status) && !compatibleRun.supersededAt
-      ? compatibleRun
+    selectedRun && isProcessingStatus(selectedRun.status) && !selectedRun.supersededAt
+      ? selectedRun
       : null;
 
   const completedRun =
-    compatibleRun && isDoneCompleted(compatibleRun.status, compatibleRun.stage)
-      ? compatibleRun
+    selectedRun && isDoneCompleted(selectedRun.status, selectedRun.stage)
+      ? selectedRun
       : null;
 
   const failedRun =
-    compatibleRun && isFailedStatus(compatibleRun.status)
-      ? compatibleRun
+    selectedRun && isFailedStatus(selectedRun.status)
+      ? selectedRun
       : null;
 
   const rootPayload = !staleSignal ? getRootAiSignalPayload(root) : null;
@@ -783,9 +805,9 @@ function resolveAuthoritativeSignalState(root, compatibleRun, staleSignal) {
   };
 }
 
-function chooseAuthoritativePdfState(root, signalRun, staleSignal, stalePdf, options = {}) {
+function chooseAuthoritativePdfState(root, selectedRun, staleSignal, stalePdf, options = {}) {
   const rootPdf = normalizePdfState(root?.aiContext?.pdf);
-  const runPdf = normalizePdfState(signalRun?.pdf || null);
+  const runPdf = normalizePdfState(selectedRun?.pdf || null);
   const signalProcessing = !!options?.signalProcessing;
   const signalReadyForPdf = !!options?.signalReadyForPdf;
 
@@ -804,7 +826,7 @@ function chooseAuthoritativePdfState(root, signalRun, staleSignal, stalePdf, opt
     return makeWaitingPdfState(runPdf.status !== 'idle' ? runPdf : rootPdf, 'waiting_for_valid_signal');
   }
 
-  if (hasAuthoritativeRunPdf(signalRun)) {
+  if (hasAuthoritativeRunPdf(selectedRun)) {
     return runPdf;
   }
 
@@ -871,7 +893,7 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
   const staleSignal = rootSignalLooksStale(root);
   const stalePdf = rootPdfLooksStale(root);
 
-  const compatibleRun = isSignalRunCompatibleWithRoot(signalRun, root)
+  const selectedRun = isSignalRunAuthoritativeForUi(signalRun, root)
     ? normalizeSignalRun(signalRun)
     : null;
 
@@ -881,7 +903,7 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
   const currentSourcesSnapshot = getRootCurrentSourcesSnapshot(root) || null;
   const currentSourceFingerprint = deriveCurrentSourceFingerprintFromRoot(root) || null;
 
-  const authoritativeSignal = resolveAuthoritativeSignalState(root, compatibleRun, staleSignal);
+  const authoritativeSignal = resolveAuthoritativeSignalState(root, selectedRun, staleSignal);
 
   const needSignalRebuild =
     !!state?.needsSignalRebuild ||
@@ -911,7 +933,7 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
 
   const pdf = chooseAuthoritativePdfState(
     root,
-    compatibleRun,
+    selectedRun,
     needSignalRebuild,
     needPdfRebuild && !!stalePdf,
     {
@@ -1030,11 +1052,11 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
 
 function buildSharedPayload(root, provider, signalRun = null) {
   const state = root?.aiContext || {};
-  const compatibleRun = isSignalRunCompatibleWithRoot(signalRun, root)
+  const selectedRun = isSignalRunCompatibleWithRoot(signalRun, root)
     ? normalizeSignalRun(signalRun)
     : null;
 
-  const authoritativeSignal = resolveAuthoritativeSignalState(root, compatibleRun, rootSignalLooksStale(root));
+  const authoritativeSignal = resolveAuthoritativeSignalState(root, selectedRun, rootSignalLooksStale(root));
   const payload = authoritativeSignal?.signalComplete
     ? authoritativeSignal?.signalPayload || null
     : null;
@@ -1095,7 +1117,7 @@ async function syncUserVersionedLink(userId, preferredProvider = null) {
   const signalRun = await findPreferredSignalRunForUser(userId, latestRoot);
   const statusData = buildStatusResponse(latestRoot, null, signalRun)?.data || null;
 
-  if (!statusData?.signalComplete || !!statusData?.needSignalRebuild || !!statusData?.pdfProcessing || !!statusData?.signalRunId && statusData?.status === 'processing') {
+  if (!statusData?.signalComplete || !!statusData?.needSignalRebuild || !!statusData?.pdfProcessing || (!!statusData?.signalRunId && statusData?.status === 'processing')) {
     return user;
   }
 
@@ -1483,11 +1505,11 @@ router.get('/pdf/download', async (req, res) => {
     const staleSignal = rootSignalLooksStale(root);
     const stalePdf = rootPdfLooksStale(root);
 
-    const authoritativeRun =
+    const strictRun =
       isSignalRunCompatibleWithRoot(signalRun, root) ? signalRun : null;
 
-    const statusData = buildStatusResponse(root, null, authoritativeRun)?.data || null;
-    const pdf = statusData?.pdf || chooseAuthoritativePdfState(root, authoritativeRun, staleSignal, stalePdf, {
+    const statusData = buildStatusResponse(root, null, signalRun)?.data || null;
+    const pdf = statusData?.pdf || chooseAuthoritativePdfState(root, strictRun, staleSignal, stalePdf, {
       signalProcessing: false,
       signalReadyForPdf: false,
     });
