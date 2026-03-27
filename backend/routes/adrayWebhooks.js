@@ -65,6 +65,35 @@ function normalizeShopifyCustomerId(payload = {}) {
   return normalized || null;
 }
 
+function normalizeAccountId(value) {
+  if (!value) return null;
+  const raw = String(value).trim().toLowerCase();
+  if (!raw) return null;
+  try {
+    const host = new URL(raw.includes('://') ? raw : `https://${raw}`).hostname;
+    return host.replace(/^www\./, '');
+  } catch (_) {
+    return raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  }
+}
+
+function parseAllowedAccountIds() {
+  const raw = String(process.env.ADRAY_ALLOWED_ACCOUNT_IDS || '').trim();
+  if (!raw) return null;
+  const values = raw
+    .split(',')
+    .map((item) => normalizeAccountId(item) || String(item || '').trim().toLowerCase())
+    .filter(Boolean);
+  return values.length ? new Set(values) : null;
+}
+
+function isAccountAllowed(accountId) {
+  const allowed = parseAllowedAccountIds();
+  if (!allowed) return true;
+  const normalized = normalizeAccountId(accountId) || String(accountId || '').trim().toLowerCase();
+  return normalized ? allowed.has(normalized) : false;
+}
+
 function buildCheckoutAttributionSnapshot(payload = {}) {
   return {
     landing_site: payload.landing_site || null,
@@ -163,6 +192,11 @@ router.post('/orders-create', async (req, res) => {
 
   // Always return 200 to Shopify immediately
   res.status(200).send('OK');
+
+  if (!isAccountAllowed(accountId)) {
+    console.info(`[AdRay Webhook] Ignored webhook for non-allowed account: ${accountId}`);
+    return;
+  }
 
   try {
     const payload = JSON.parse(req.body.toString('utf8'));

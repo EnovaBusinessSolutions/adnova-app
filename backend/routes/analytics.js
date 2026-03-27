@@ -59,6 +59,23 @@ const JOURNEY_STITCH_LOOKBACK_DAYS = 7;
 const ROUTE_RESPONSE_CACHE = new Map();
 const ROUTE_CACHE_MAX_ENTRIES = 300;
 
+function parseAllowedAccountIds() {
+  const raw = String(process.env.ADRAY_ALLOWED_ACCOUNT_IDS || '').trim();
+  if (!raw) return null;
+  const values = raw
+    .split(',')
+    .map((item) => normalizeShopDomain(item) || String(item || '').trim().toLowerCase())
+    .filter(Boolean);
+  return values.length ? new Set(values) : null;
+}
+
+function isAccountAllowed(accountId) {
+  const allowed = parseAllowedAccountIds();
+  if (!allowed) return true;
+  const normalized = normalizeShopDomain(accountId) || String(accountId || '').trim().toLowerCase();
+  return normalized ? allowed.has(normalized) : false;
+}
+
 function buildRouteCacheKey(routeName, req) {
   const accountId = String(req?.params?.account_id || '-');
   const query = String(req?.originalUrl || '').split('?')[1] || '';
@@ -89,6 +106,15 @@ function writeRouteCache(cacheKey, payload, ttlMs) {
     if (ROUTE_RESPONSE_CACHE.size <= ROUTE_CACHE_MAX_ENTRIES) break;
   }
 }
+
+router.use('/:account_id', (req, res, next) => {
+  const accountId = req.params?.account_id;
+  if (isAccountAllowed(accountId)) return next();
+  return res.status(403).json({
+    error: 'Account not allowed in this deployment',
+    accountId,
+  });
+});
 
 function isDatabaseConnectivityError(error) {
   if (!error) return false;

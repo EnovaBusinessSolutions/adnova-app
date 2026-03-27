@@ -87,6 +87,23 @@ function deriveGa4SessionSource(payload = {}) {
   return null;
 }
 
+function parseAllowedAccountIds() {
+  const raw = String(process.env.ADRAY_ALLOWED_ACCOUNT_IDS || '').trim();
+  if (!raw) return null;
+  const values = raw
+    .split(',')
+    .map((item) => normalizeAccountId(item) || String(item || '').trim().toLowerCase())
+    .filter(Boolean);
+  return values.length ? new Set(values) : null;
+}
+
+function isAccountAllowed(accountId) {
+  const allowed = parseAllowedAccountIds();
+  if (!allowed) return true;
+  const normalized = normalizeAccountId(accountId) || String(accountId || '').trim().toLowerCase();
+  return normalized ? allowed.has(normalized) : false;
+}
+
 router.post('/', async (req, res) => {
   let step = 'init';
   try {
@@ -101,6 +118,11 @@ router.post('/', async (req, res) => {
     if (!accountId) {
       console.warn('[AdRay Collect] Rejected: account_id is required');
       return res.status(400).json({ success: false, error: 'account_id is required' });
+    }
+
+    if (!isAccountAllowed(accountId)) {
+      console.info(`[AdRay Collect] Ignored event for non-allowed account: ${accountId}`);
+      return res.json({ success: true, ignored: true, reason: 'account_not_allowed', accountId });
     }
 
     // 0. Ensure Account exists in DB (auto-provision for new accounts)
