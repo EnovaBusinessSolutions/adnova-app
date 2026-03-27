@@ -3062,7 +3062,8 @@ router.get('/:account_id/session-explorer', async (req, res) => {
     const orderSignalBySessionId = new Map();
     historicalOrders.forEach((order) => {
       const resolvedUserKey = order.userKey || checkoutByToken.get(order.checkoutToken || '')?.userKey || null;
-      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot);
+      const identity = resolvedUserKey ? (identityByUserKey.get(resolvedUserKey) || {}) : {};
+      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot) || identity.customerDisplayName || null;
       const signal = {
         customerId: order.customerId || null,
         emailHash: order.emailHash || null,
@@ -3103,7 +3104,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
     historicalOrders.forEach((order) => {
       const bridgedUserKey = order.userKey || checkoutByToken.get(order.checkoutToken || '')?.userKey || null;
       const identity = bridgedUserKey ? (identityByUserKey.get(bridgedUserKey) || {}) : {};
-      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot);
+      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot) || identity.customerDisplayName || null;
       const descriptor = buildIdentityProfileDescriptor({
         customerId: order.customerId || identity.customerId || null,
         emailHash: order.emailHash || identity.emailHash || null,

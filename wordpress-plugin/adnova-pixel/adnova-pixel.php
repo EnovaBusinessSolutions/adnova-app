@@ -50,7 +50,7 @@ final class Adnova_Pixel_Plugin {
         add_action('wp_footer', array(__CLASS__, 'inject_logged_in_customer_context'), 20);
         // Fallback for custom checkout flows/themes where woocommerce_thankyou is bypassed.
         add_action('wp_footer', array(__CLASS__, 'maybe_track_woo_order_received_fallback'), 1000);
-        add_action('adnova_pixel_backfill_orders', array(__CLASS__, 'backfill_recent_orders'));
+        add_action('adnova_pixel_backfill_orders', array(__CLASS__, 'backfill_recent_orders'), 10, 1);
         self::maybe_schedule_backfill();
     }
 
@@ -66,7 +66,7 @@ final class Adnova_Pixel_Plugin {
         self::send_activation_ping();
 
         if (!wp_next_scheduled('adnova_pixel_backfill_orders')) {
-            wp_schedule_single_event(time() + 30, 'adnova_pixel_backfill_orders');
+            wp_schedule_single_event(time() + 30, 'adnova_pixel_backfill_orders', array(1));
         }
 
         delete_site_transient('update_plugins');
@@ -83,7 +83,7 @@ final class Adnova_Pixel_Plugin {
         }
 
         if (!wp_next_scheduled('adnova_pixel_backfill_orders')) {
-            wp_schedule_single_event(time() + 30, 'adnova_pixel_backfill_orders');
+            wp_schedule_single_event(time() + 30, 'adnova_pixel_backfill_orders', array(1));
         }
     }
 
@@ -675,7 +675,7 @@ final class Adnova_Pixel_Plugin {
         ));
     }
 
-    public static function backfill_recent_orders() {
+    public static function backfill_recent_orders($page = 1) {
         if (!function_exists('wc_get_orders')) {
             return;
         }
@@ -698,40 +698,38 @@ final class Adnova_Pixel_Plugin {
             }, array_keys(wc_get_order_statuses()))
             : array('pending', 'processing', 'completed', 'on-hold', 'refunded', 'cancelled', 'failed');
 
-        $per_page = 200;
-        $page = 1;
-        $max_pages = 200;
+        $per_page = 50; // Safer chunk to prevent PHP timeout on large instances
 
-        while ($page <= $max_pages) {
-            $query_args = array(
-                'limit' => $per_page,
-                'paged' => $page,
-                'orderby' => 'date',
-                'order' => 'DESC',
-                'status' => $all_statuses,
-                'return' => 'ids',
-            );
+        $query_args = array(
+            'limit' => $per_page,
+            'paged' => $page,
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'status' => $all_statuses,
+            'return' => 'ids',
+        );
 
-            if ($created_after) {
-                $query_args['date_created'] = '>=' . $created_after;
-            }
-
-            $orders = wc_get_orders($query_args);
-            if (empty($orders)) {
-                break;
-            }
-
-            foreach ($orders as $order_id) {
-                self::sync_woo_order_to_backend($order_id);
-            }
-
-            if (count($orders) < $per_page) {
-                break;
-            }
-            $page++;
+        if ($created_after) {
+            $query_args['date_created'] = '>=' . $created_after;
         }
 
-        update_option(self::OPTION_BACKFILL_DONE, $target_marker, false);
+        $orders = wc_get_orders($query_args);
+        
+        if (empty($orders)) {
+            update_option(self::OPTION_BACKFILL_DONE, $target_marker, false);
+            return;
+        }
+
+        foreach ($orders as $order_id) {
+            self::sync_woo_order_to_backend($order_id);
+        }
+
+        if (count($orders) < $per_page) {
+            update_option(self::OPTION_BACKFILL_DONE, $target_marker, false);
+        } else {
+            // Schedule next page immediately for queue-safe processing
+            wp_schedule_single_event(time() + 10, 'adnova_pixel_backfill_orders', array($page + 1));
+        }
     }
 
     private static function track_woo_order_purchase($order_id, $inject_browser) {

@@ -2062,8 +2062,8 @@
         let wpUsersPollTimer = null;
         let wpUsersFetchInFlight = false;
         let wpUsersLastFetchAt = 0;
-        const WP_USERS_FETCH_MIN_INTERVAL_MS = 45000;
-        const WP_USERS_POLL_INTERVAL_MS = 120000;
+        const WP_USERS_FETCH_MIN_INTERVAL_MS = 15000;
+        const WP_USERS_POLL_INTERVAL_MS = 30000;
         let analyticsFetchInFlight = false;
         let overviewFetchInFlight = false;
         let sessionOverviewLastLoadedAt = 0;
@@ -3017,8 +3017,8 @@
             
             // If purchase includes real events, build timeline from those events
             let timelineEvents = buildPurchaseTimelineEvents(purchase);
-            if (Array.isArray(purchase.events) && purchase.events.length > 0) {
-                const realEvents = purchase.events
+            const availableEvents = purchase.events || purchase.stitchedEvents; if (Array.isArray(availableEvents) && availableEvents.length > 0) {
+                const realEvents = availableEvents
                     .map((event) => ({
                         ...event,
                         _ts: new Date(event.createdAt || event.collectedAt || 0).getTime(),
@@ -3413,8 +3413,8 @@
             historyEl.innerHTML = `
                 <div class="space-y-3">
                     <div class="flex items-center gap-2 flex-wrap">
-                        <input id="journey-profile-search" type="text" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white" placeholder="Buscar perfil Woo" value="${escapeHtmlAttr(attributionJourneyState.profileSearch || '')}">
-                        <select id="journey-profile-sort" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white">
+                        <input id="journey-profile-search" type="text" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white text-gray-900 placeholder-gray-500" placeholder="Buscar perfil Woo" value="${escapeHtmlAttr(attributionJourneyState.profileSearch || '')}">
+                        <select id="journey-profile-sort" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white text-gray-900">
                             <option value="orders" ${attributionJourneyState.profileSort === 'orders' ? 'selected' : ''}>Mas órdenes</option>
                             <option value="revenue" ${attributionJourneyState.profileSort === 'revenue' ? 'selected' : ''}>Mayor revenue</option>
                             <option value="recent" ${attributionJourneyState.profileSort === 'recent' ? 'selected' : ''}>Mas reciente</option>
@@ -4988,7 +4988,7 @@
                             <div class="feed-extra mt-1">
                                 <p class="text-[11px] text-indigo-500">${buildSignalTextSimple(data.payload || {})}</p>
                                 <p class="text-[11px] text-indigo-600">${readableSession}</p>
-                                ${linkedUserLabel ? `<p class="text-[11px] text-emerald-600">u: <button type="button" class="live-feed-user-link underline decoration-dotted cursor-pointer" data-user-key="${resolvedUserKey.replace(/"/g, '&quot;')}" data-session-id="${resolvedSessionId.replace(/"/g, '&quot;')}" data-user-name="${linkedUserLabel.replace(/"/g, '&quot;')}">${linkedUserLabel}</button></p>` : ''}
+                                ${linkedUserLabel ? `<p class="text-[11px] text-emerald-600">u: <button type="button" class="live-feed-user-link underline decoration-dotted cursor-pointer" data-user-key="${resolvedUserKey.replace(/"/g, '&quot;')}" data-session-id="${resolvedSessionId.replace(/"/g, '&quot;')}" data-user-name="${linkedUserLabel.replace(/"/g, '&quot;')}">${linkedUserLabel}</button></p>` : `<p class="text-[11px] text-gray-500 italic">No logged-in identity available</p>`}
                                 <p class="text-[10px] text-gray-400">${formatTimeMx()}</p>
                             </div>
                         </div>
