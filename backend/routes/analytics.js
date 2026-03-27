@@ -2212,7 +2212,10 @@ router.get('/:account_id', async (req, res) => {
       const { account_id } = req.params;
       const fallbackModelRaw = String(req.query.attribution_model || req.query.attributionModel || 'last_touch').toLowerCase();
       const fallbackAttributionModel = ATTRIBUTION_MODELS.has(fallbackModelRaw) ? fallbackModelRaw : 'last_touch';
-      const fallbackRecentLimit = Math.max(5, Math.min(300, Number.parseInt(String(req.query.recent_limit || req.query.recentLimit || '100'), 10) || 100));
+      const fallbackRecentLimitRaw = String(req.query.recent_limit || req.query.recentLimit || '100').toLowerCase();
+      const fallbackRecentLimit = fallbackRecentLimitRaw === 'all' 
+        ? 5000 
+        : Math.max(5, Math.min(300, Number.parseInt(fallbackRecentLimitRaw, 10) || 100));
       const now = new Date();
       const fallbackStart = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
 

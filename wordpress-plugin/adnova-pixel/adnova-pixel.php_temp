@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.2.2';
+    const VERSION = '1.2.1';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_BACKFILL_DONE = 'adnova_pixel_backfill_done';
@@ -698,51 +698,43 @@ final class Adnova_Pixel_Plugin {
             }, array_keys(wc_get_order_statuses()))
             : array('pending', 'processing', 'completed', 'on-hold', 'refunded', 'cancelled', 'failed');
 
-        $per_page = 50; // Safer chunk to prevent PHP timeout on large instances
-
+        $per_page$per_page = 50;
         $start_time = time();
         $max_execution_time = ini_get('max_execution_time') ? (int) ini_get('max_execution_time') : 30;
-        if ($max_execution_time <= 0) {
-            $max_execution_time = 60;
+        if ($max_execution_time <= 0) $max_execution_time = 60;
+        $time_limit = $max_execution_time - 10;
+
+        while (true) { to prevent PHP timeout on large instances
+
+        $query_args = array(
+            'limit' => $per_page,
+            'paged' => $page,
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'status' => $all_statuses,
+            'return' => 'ids',
+        );
+
+        if ($created_after) {
+            $query_args['date_created'] = '>=' . $created_after;
         }
-        $time_limit = max(5, $max_execution_time - 15);
 
-        while (true) {
-            $query_args = array(
-                'limit' => $per_page,
-                'paged' => $page,
-                'orderby' => 'date',
-                'order' => 'DESC',
-                'status' => $all_statuses,
-                'return' => 'ids',
-            );
+        $orders = wc_get_orders($query_args);
+        
+        if (empty($orders)) {
+            update_option(self::OPTION_BACKFILL_DONE, $target_marker, false);
+            return;
+        }
 
-            if ($created_after) {
-                $query_args['date_created'] = '>=' . $created_after;
-            }
+        foreach ($orders as $order_id) {
+            self::sync_woo_order_to_backend($order_id);
+        }
 
-            $orders = wc_get_orders($query_args);
-
-            if (empty($orders)) {
-                update_option(self::OPTION_BACKFILL_DONE, $target_marker, false);
-                return;
-            }
-
-            foreach ($orders as $order_id) {
-                self::sync_woo_order_to_backend($order_id);
-            }
-
-            if (count($orders) < $per_page) {
-                update_option(self::OPTION_BACKFILL_DONE, $target_marker, false);
-                return;
-            }
-            
-            if (time() - $start_time >= $time_limit) {
-                // Schedule next page if we're running out of time in the current PHP execution
-                wp_schedule_single_event(time() + 5, 'adnova_pixel_backfill_orders', array($page + 1));
-                return;
-            }
-            $page++;
+        if (count($orders) < $per_page) {
+            update_option(self::OPTION_BACKFILL_DONE, $target_marker, false);
+        } else {
+            // Schedule next page immediately for queue-safe processing
+            wp_schedule_single_event(time() + 10, 'adnova_pixel_backfill_orders', array($page + 1));
         }
     }
 
