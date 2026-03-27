@@ -1,6 +1,6 @@
 # AdRay / Adnova
 
-Last update: 2026-03-24
+Last update: 2026-03-27
 
 This is the only documentation file that should be treated as the source of truth for the repository. It consolidates the previous planning files, implementation notes, operational checklist, WordPress plugin readme, Shopify review guide, and frontend README boilerplate.
 
@@ -89,6 +89,26 @@ Notes from this same validation:
 
 - The recent purchases table currently applies a focused display correction for operator readability.
 - Woo sync payloads were also hardened to send and parse explicit creation time metadata for later cleanup of the UI-only adjustment if it becomes unnecessary.
+
+### Build summary (2026-03-27)
+
+What is already built and working in the current dashboard/pipeline baseline:
+
+- `Live Feed` runs over SSE (`/api/feed/:account_id`) and displays real-time `COLLECT` + `WEBHOOK` events.
+- Collector now persists identity/session/event with stable response flags and supports fallback storage for resilience.
+- Event-name normalization was hardened in collect ingestion to unify aliases (for example `added_to_cart`/`cart_add` -> `add_to_cart`).
+- Pixel runtime expanded Woo add-to-cart interception coverage (REST + `wc-ajax` + form submit + click/XHR fallback paths).
+- Historical profile explorer was consolidated into Attribution Journey-first UX with profile search/sort and profile-focus interactions.
+- Customer name extraction and customer-id normalization were improved in backend stitching for Woo profiles and recent purchases.
+
+### Next implementation steps (priority, 2026-03-27)
+
+1. Make `Live Feed` refresh online-user state on a fixed interval (polling) in addition to event-triggered refresh.
+2. Ensure every live event shows resolved user identity (name, email, phone, or customer id) and explicitly indicates when no logged-in identity is available.
+3. Make Woo sync fully complete for the selected period (no practical 100-order cap), including paginated/backfill strategy for very large stores with queue-safe processing.
+4. Ensure Historical Conversion Journey shows real user names instead of generic `Woo customer #xx` whenever any identity source can resolve the profile.
+5. Ensure Selected Journey renders full stitched event timeline for the selected user/session (not only `Ad Click` + `Purchase`).
+6. Fix Historical Conversion Journey user-filter input UX: black text on white input and verified functional filtering behavior.
 
 ## Scope and Deliverables
 
