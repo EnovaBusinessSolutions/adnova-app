@@ -28,6 +28,7 @@ final class Adnova_Pixel_Plugin {
     public static function init() {
         register_activation_hook(__FILE__, array(__CLASS__, 'on_activate'));
         add_action('wp_enqueue_scripts', array(__CLASS__, 'enqueue_pixel_script'), 100);
+        add_action('wp_footer', array(__CLASS__, 'ensure_pixel_fallback_tag'), 999);
         add_filter('script_loader_tag', array(__CLASS__, 'inject_script_attributes'), 10, 3);
         add_filter('pre_set_site_transient_update_plugins', array(__CLASS__, 'inject_plugin_update'));
         add_filter('plugins_api', array(__CLASS__, 'plugins_api_handler'), 10, 3);
@@ -197,7 +198,8 @@ final class Adnova_Pixel_Plugin {
             $script_url = self::DEFAULT_SCRIPT_URL;
         }
 
-        wp_register_script('adnova-pixel', $script_url, array(), self::VERSION, false);
+        // Load in footer to survive themes that skip or alter wp_head output.
+        wp_register_script('adnova-pixel', $script_url, array(), self::VERSION, true);
 
         // Inject logged-in Woo customer context BEFORE pixel execution.
         $user_payload = self::get_logged_in_customer_payload();
@@ -210,6 +212,31 @@ final class Adnova_Pixel_Plugin {
         }
 
         wp_enqueue_script('adnova-pixel');
+    }
+
+    public static function ensure_pixel_fallback_tag() {
+        if (is_admin()) {
+            return;
+        }
+
+        // If WordPress printed the script, no fallback is needed.
+        if (wp_script_is('adnova-pixel', 'done')) {
+            return;
+        }
+
+        $script_url = esc_url_raw(get_option(self::OPTION_SCRIPT_URL, self::DEFAULT_SCRIPT_URL));
+        if (!$script_url) {
+            $script_url = self::DEFAULT_SCRIPT_URL;
+        }
+
+        $site_id = self::get_site_id();
+        $user_payload = self::get_logged_in_customer_payload();
+
+        if (!empty($user_payload)) {
+            echo '<script>window.adnova_user_data=' . wp_json_encode($user_payload) . ';</script>';
+        }
+
+        echo '<script src="' . esc_url($script_url) . '" data-account-id="' . esc_attr($site_id) . '" data-site-id="' . esc_attr($site_id) . '" defer></script>';
     }
 
     public static function inject_script_attributes($tag, $handle, $src) {
@@ -815,17 +842,27 @@ final class Adnova_Pixel_Plugin {
             'woo_session_source' => isset($order_data['woo_session_source']) ? $order_data['woo_session_source'] : null,
         );
 
-        wp_remote_post(
+        $response = wp_remote_post(
             self::DEFAULT_ORDER_SYNC_URL,
             array(
-                'timeout'  => 8,
-                'blocking' => false,
+                'timeout'  => 12,
+                'blocking' => true,
                 'headers'  => array(
                     'Content-Type' => 'application/json',
                 ),
                 'body'     => wp_json_encode($payload),
             )
         );
+
+        if (is_wp_error($response)) {
+            error_log('[Adnova Pixel] Woo sync failed for order ' . (string) $order_id . ': ' . $response->get_error_message());
+            return;
+        }
+
+        $status_code = (int) wp_remote_retrieve_response_code($response);
+        if ($status_code >= 300 || $status_code < 200) {
+            error_log('[Adnova Pixel] Woo sync non-2xx for order ' . (string) $order_id . ': HTTP ' . (string) $status_code);
+        }
     }
 
     /**
