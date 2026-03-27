@@ -2871,7 +2871,7 @@
                 .filter((event) => Number.isFinite(event._ts))
                 .sort((a, b) => a._ts - b._ts);
 
-            const visible = mode === 'full' ? sorted : condenseSessionEvents(sorted).events;
+            const visible = sorted; // FORCED TO FULL BY REQUEST
 
             return visible.map((event, index) => {
                 if (event.eventName === '__condensed__') {

@@ -2631,7 +2631,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
     : [];
 
   const resolvedCustomerDisplayName = historicalOrders
-    .map((order) => extractOrderCustomerDisplayName(order.attributionSnapshot))
+    .map((order) => extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload))
     .find(Boolean)
     || latestIdentitySignal?.customerDisplayName
     || null;
@@ -2674,7 +2674,7 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
     if (cachedWpUsers) {
       return res.json({
         ...cachedWpUsers,
-        cache: { hit: true, ttlMs: 45000 },
+        cache: { hit: true, ttlMs: 2500 },
       });
     }
     const since = new Date(Date.now() - windowMinutes * 60 * 1000);
@@ -2830,7 +2830,7 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
         : 'No se detectaron usuarios WordPress conectados en la ventana reciente.',
     };
 
-    writeRouteCache(wpUsersCacheKey, responsePayload, 45000);
+    writeRouteCache(wpUsersCacheKey, responsePayload, 2500);
     return res.json(responsePayload);
   } catch (error) {
     console.error('[Analytics API] WordPress users online error:', error);
@@ -3066,7 +3066,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
     historicalOrders.forEach((order) => {
       const resolvedUserKey = order.userKey || checkoutByToken.get(order.checkoutToken || '')?.userKey || null;
       const identity = resolvedUserKey ? (identityByUserKey.get(resolvedUserKey) || {}) : {};
-      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot) || identity.customerDisplayName || null;
+      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload) || identity.customerDisplayName || null;
       const signal = {
         customerId: order.customerId || null,
         emailHash: order.emailHash || null,
@@ -3107,7 +3107,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
     historicalOrders.forEach((order) => {
       const bridgedUserKey = order.userKey || checkoutByToken.get(order.checkoutToken || '')?.userKey || null;
       const identity = bridgedUserKey ? (identityByUserKey.get(bridgedUserKey) || {}) : {};
-      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot) || identity.customerDisplayName || null;
+      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload) || identity.customerDisplayName || null;
       const descriptor = buildIdentityProfileDescriptor({
         customerId: order.customerId || identity.customerId || null,
         emailHash: order.emailHash || identity.emailHash || null,
@@ -4020,11 +4020,8 @@ router.get('/:account_id/users/:userKey/timeline', async (req, res) => {
     let customerPhoneHash = identity?.phoneHash || null;
 
     for (const order of orders) {
-       if (!customerName && order.attributionSnapshot && order.attributionSnapshot.customer_name) {
-           customerName = order.attributionSnapshot.customer_name;
-       }
-       if (!customerName && order.attributionSnapshot && order.attributionSnapshot.customer_first_name) {
-           customerName = order.attributionSnapshot.customer_first_name + (order.attributionSnapshot.customer_last_name ? ' ' + order.attributionSnapshot.customer_last_name : '');
+       if (!customerName) {
+           customerName = extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload?.billing || {});
        }
        if (order.emailHash && !customerEmailHash) customerEmailHash = order.emailHash;
        if (order.phoneHash && !customerPhoneHash) customerPhoneHash = order.phoneHash;
