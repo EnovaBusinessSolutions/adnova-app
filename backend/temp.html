@@ -1404,10 +1404,10 @@
                     <label for="history-limit" class="text-xs text-gray-500 mr-2">History</label>
                     <select id="history-limit" class="text-sm bg-transparent focus:outline-none">
                         <option value="50">50</option>
-                        <option value="100">100</option>
+                        <option value="100" selected>100</option>
                         <option value="250">250</option>
                         <option value="500">500</option>
-                        <option value="all" selected>All</option>
+                        <option value="all">All</option>
                     </select>
                 </div>
                 <div class="ops-control">
@@ -1471,28 +1471,7 @@
             </div>
             </div>
 
-<!-- Total Orders -->
-            <div class="metric-card-slide pr-5 box-border">
-            <div class="bg-white overflow-hidden shadow rounded-lg h-full">
-                <div class="p-5">
-                    <div class="flex items-center">
-                        <div class="flex-shrink-0 bg-teal-500 rounded-md p-3">
-                            <i class="fas fa-boxes text-white text-lg"></i>
-                        </div>
-                        <div class="ml-5 w-0 flex-1">
-                            <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Total Pedidos</dt>
-                                <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="total-orders">0</div>
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            </div>
-
-            <!-- Attributed Orders -->
+            <!-- Orders -->
             <div class="metric-card-slide pr-5 box-border">
             <div class="bg-white overflow-hidden shadow rounded-lg h-full">
                 <div class="p-5">
@@ -1502,9 +1481,9 @@
                         </div>
                         <div class="ml-5 w-0 flex-1">
                             <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Pedidos Atribuidos</dt>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Attributed Orders</dt>
                                 <dd class="flex items-baseline">
-                                    <div class="text-2xl font-semibold text-gray-900" id="attributed-orders">0</div>
+                                    <div class="text-2xl font-semibold text-gray-900" id="total-orders">0</div>
                                 </dd>
                             </dl>
                         </div>
@@ -4563,7 +4542,6 @@
             updateDateRangeLabel(summary);
             document.getElementById('total-revenue').textContent = formatCurrency(summary.totalRevenue);
             document.getElementById('total-orders').textContent = summary.totalOrders;
-              document.getElementById('attributed-orders').textContent = summary.attributedOrders;
             document.getElementById('total-sessions').textContent = (summary.totalSessions || 0).toLocaleString();
             document.getElementById('conversion-rate').textContent = formatPercent(summary.conversionRate || 0);
             document.getElementById('page-views').textContent = (summary.pageViews || 0).toLocaleString();
@@ -5301,8 +5279,6 @@ function renderUserExplorer(data) {
     </div>
 </body>
 </html>
-
-
 
 
 
