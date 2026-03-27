@@ -1427,7 +1427,12 @@ router.get('/:account_id', async (req, res) => {
         userKey: true,
         orderId: true,
         orderNumber: true,
-        lineItems: true
+        lineItems: true,
+        sessionId: true,
+        customerId: true,
+        emailHash: true,
+        phoneHash: true,
+        rawPayload: true
       },
       orderBy: [
         { platformCreatedAt: 'desc' },
@@ -1702,7 +1707,7 @@ router.get('/:account_id', async (req, res) => {
       orderAttributionModel: order.attributionModel || null,
       wooSourceLabel: order?.attributionSnapshot?.woo_source_label || null,
       wooSourceType: order?.attributionSnapshot?.woo_source_type || null,
-      customerName: extractOrderCustomerDisplayName(order.attributionSnapshot),
+      customerName: extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload),
       payloadSnapshot: order.attributionSnapshot || null,
     }));
 
@@ -1905,6 +1910,22 @@ router.get('/:account_id', async (req, res) => {
 
     const recentConversions = modeledConversions.slice(0, recentLimit);
     const recentOrderIds = Array.from(new Set(recentConversions.map((c) => c.orderId).filter(Boolean)));
+    
+    // WooCommerce fallback check: try to find sessionId/userKey from their events if missing from order
+    if (recentOrderIds.length > 0) {
+      const resolvingEvents = await prisma.event.findMany({
+        where: { accountId: account_id, orderId: { in: recentOrderIds } },
+        select: { orderId: true, sessionId: true, userKey: true }
+      });
+      resolvingEvents.forEach(ev => {
+        const rcList = recentConversions.filter(c => c.orderId === ev.orderId);
+        rcList.forEach(rc => {
+          if (!rc.sessionId && ev.sessionId) rc.sessionId = ev.sessionId;
+          if (!rc.userKey && ev.userKey) rc.userKey = ev.userKey;
+        });
+      });
+    }
+
     const recentCheckoutTokens = Array.from(new Set(recentConversions.map((c) => c.checkoutToken).filter(Boolean)));
     let recentSessionIds = Array.from(new Set(recentConversions.map((c) => c.sessionId).filter(Boolean)));
     let recentUserKeys = Array.from(new Set(recentConversions.map((c) => c.userKey).filter(Boolean)));
@@ -2207,7 +2228,7 @@ router.get('/:account_id', async (req, res) => {
       daily: Object.values(dailyMap) // sorted array by date
     };
 
-    writeRouteCache(analyticsCacheKey, responsePayload, 120000);
+    writeRouteCache(analyticsCacheKey, responsePayload, 10000);
     res.json(responsePayload);
 
   } catch (error) {
@@ -2522,6 +2543,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
         createdAt: true,
         platformCreatedAt: true,
         attributedChannel: true,
+        rawPayload: true
       },
       orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
       take: 100,
@@ -2628,6 +2650,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
           createdAt: true,
           platformCreatedAt: true,
           attributedChannel: true,
+          rawPayload: true
         },
         orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
         take: 250,
@@ -2902,10 +2925,10 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           revenue: true,
           currency: true,
           lineItems: true,
-          attributionSnapshot: true,
           createdAt: true,
           platformCreatedAt: true,
           attributedChannel: true,
+          rawPayload: true
         },
         orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
         take: 250,
@@ -3005,6 +3028,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
             createdAt: true,
             platformCreatedAt: true,
             attributedChannel: true,
+            rawPayload: true
           },
           orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
           take: 400,
@@ -3257,7 +3281,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
       profiles: serializedProfiles,
     };
 
-    writeRouteCache(sessionExplorerCacheKey, responsePayload, 120000);
+    writeRouteCache(sessionExplorerCacheKey, responsePayload, 10000);
     res.json(responsePayload);
   } catch (error) {
     console.error('[Analytics API] Session explorer overview error:', error);
@@ -3618,6 +3642,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
           platformCreatedAt: true,
           attributedChannel: true,
           attributionSnapshot: true,
+          rawPayload: true
         },
         orderBy: { createdAt: 'desc' },
       }),
