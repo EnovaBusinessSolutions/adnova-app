@@ -57,6 +57,16 @@ const ATTRIBUTION_MODELS = new Set(['first_touch', 'last_touch', 'linear']);
 const ATTRIBUTION_LOOKBACK_DAYS = 30;
 const JOURNEY_STITCH_LOOKBACK_DAYS = 7;
 
+function isDatabaseConnectivityError(error) {
+  if (!error) return false;
+  if (error.code === 'P1001') return true;
+  const message = String(error.message || '').toLowerCase();
+  return message.includes("can't reach database server")
+    || message.includes('database server')
+    || message.includes('connection refused')
+    || message.includes('timed out');
+}
+
 function toFiniteNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -2005,6 +2015,91 @@ router.get('/:account_id', async (req, res) => {
 
   } catch (error) {
     console.error('[Analytics API] Error:', error);
+    if (isDatabaseConnectivityError(error)) {
+      const { account_id } = req.params;
+      const fallbackModelRaw = String(req.query.attribution_model || req.query.attributionModel || 'last_touch').toLowerCase();
+      const fallbackAttributionModel = ATTRIBUTION_MODELS.has(fallbackModelRaw) ? fallbackModelRaw : 'last_touch';
+      const fallbackRecentLimit = Math.max(5, Math.min(300, Number.parseInt(String(req.query.recent_limit || req.query.recentLimit || '100'), 10) || 100));
+      const now = new Date();
+      const fallbackStart = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+
+      return res.json({
+        degraded: true,
+        degradedReason: 'database_unreachable',
+        summary: {
+          totalRevenue: 0,
+          totalRevenueOrders: 0,
+          totalRevenueEvents: 0,
+          revenueSource: 'events',
+          totalOrders: 0,
+          attributedRevenue: 0,
+          attributedOrders: 0,
+          unattributedOrders: 0,
+          unattributedRevenue: 0,
+          attributionModel: fallbackAttributionModel,
+          allTime: false,
+          startDate: fallbackStart.toISOString(),
+          endDate: now.toISOString(),
+          recentLimit: fallbackRecentLimit,
+          totalSessions: 0,
+          conversionRate: 0,
+          pageViews: 0,
+          viewItem: 0,
+          addToCart: 0,
+          beginCheckout: 0,
+          purchaseEvents: 0,
+          purchaseEventsRaw: 0,
+          purchaseOrders: 0,
+          totalEvents: 0,
+        },
+        dataQuality: {
+          revenueSource: 'events',
+          fallbackActive: true,
+          snapshotUpdatedAt: null,
+        },
+        integrationHealth: {
+          meta: { connected: false, status: 'DISCONNECTED', updatedAt: null },
+          google: { connected: false, status: 'DISCONNECTED', updatedAt: null },
+          tiktok: { connected: false, status: 'DISCONNECTED', updatedAt: null },
+        },
+        paidMedia: {
+          linked: false,
+          available: false,
+          reason: 'database_unreachable',
+          meta: { hasSnapshot: false, spend: null, revenue: null, clicks: null },
+          google: { hasSnapshot: false, spend: null, revenue: null, clicks: null },
+          blended: { spend: 0, revenue: 0, roas: null, currency: null },
+        },
+        events: {
+          page_view: 0,
+          view_item: 0,
+          add_to_cart: 0,
+          begin_checkout: 0,
+          purchase: 0,
+          other: 0,
+          total: 0,
+        },
+        pixelHealth: {
+          eventsReceived: 0,
+          purchaseSignals: 0,
+          orders: 0,
+          matchedOrders: 0,
+          orderMatchRate: 0,
+          purchaseSignalCoverage: 0,
+        },
+        channels: {
+          meta: { revenue: 0, orders: 0 },
+          google: { revenue: 0, orders: 0 },
+          tiktok: { revenue: 0, orders: 0 },
+          other: { revenue: 0, orders: 0 },
+          unattributed: { revenue: 0, orders: 0 },
+        },
+        topProducts: [],
+        recentPurchases: [],
+        daily: [],
+        accountId: account_id,
+      });
+    }
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
