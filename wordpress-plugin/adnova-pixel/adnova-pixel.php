@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.1.8
+ * Version: 1.1.9
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.1.8';
+    const VERSION = '1.1.9';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_BACKFILL_DONE = 'adnova_pixel_backfill_done';
@@ -37,8 +37,10 @@ final class Adnova_Pixel_Plugin {
         add_action('woocommerce_thankyou', array(__CLASS__, 'on_woo_order_received'), 10, 1);
         // Server-side order capture even when thank-you is not rendered in browser.
         add_action('woocommerce_payment_complete', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
+        add_action('woocommerce_checkout_order_processed', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         add_action('woocommerce_order_status_processing', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         add_action('woocommerce_order_status_completed', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
+        add_action('woocommerce_order_status_on-hold', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         add_action('woocommerce_order_status_refunded', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         add_action('woocommerce_order_refunded', array(__CLASS__, 'on_woo_order_refunded'), 10, 2);
         add_action('woocommerce_checkout_update_order_meta', array(__CLASS__, 'save_pixel_cookies_to_order'), 10, 1);
