@@ -2301,9 +2301,20 @@
                 if (data.authenticated) {
                     const user = data.user;
                     currentShopId = fromUrl || user.shop;
+                    
+                    // Si el usuario recién se registró y no tiene tienda guardada (ej. probando)
+                    if (!currentShopId) {
+                        currentShopId = (window.prompt('No detectamos tienda en tu cuenta. Ingresa el shop_id (ej. mi-tienda.myshopify.com) para visualizarla:') || '').trim();
+                    }
+
+                    if (!currentShopId) {
+                        alert('Se requiere el nombre/ID de una tienda para cargar los datos.');
+                        return;
+                    }
+
                     const inferredType = user.shopifyConnected ? 'shopify' : 'woocommerce';
                     
-                    updateShopHeader(currentShopId || 'Tienda', inferredType);
+                    updateShopHeader(currentShopId, inferredType);
                     console.log('Protected analytics mode, shop:', currentShopId);
 
                     // Load initial data
