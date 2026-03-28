@@ -376,7 +376,7 @@ async function resolveUserIdByConnectedAccountDocs(platformConnections = []) {
   return null;
 }
 
-async function resolvePaidMediaUserId({ accountId, domain, platformConnections = [] }) {
+async function resolvePaidMediaUserId({ accountId, domain, platformConnections = [], fallbackUserId = null }) {
   const candidates = Array.from(new Set([
     normalizeShopDomain(accountId),
     normalizeShopDomain(domain),
@@ -394,7 +394,7 @@ async function resolvePaidMediaUserId({ accountId, domain, platformConnections =
   const fromPlatformConnections = await resolveUserIdByPlatformConnections(platformConnections);
   if (fromPlatformConnections) return fromPlatformConnections;
 
-  return null;
+  return fallbackUserId;
 }
 
 async function resolveShopifyAdminContext(candidates = []) {
@@ -460,7 +460,7 @@ function buildPaidMediaSourceSummary({ sourceState, payload, snapshotId, revenue
   };
 }
 
-async function buildPaidMediaSummary({ accountId, domain, platformConnections = [] }) {
+async function buildPaidMediaSummary({ accountId, domain, platformConnections = [], fallbackUserId = null }) {
   console.log(`[PaidMedia] Starting buildPaidMediaSummary for accountId: ${accountId}, domain: ${domain}, connections: ${platformConnections?.length}`);
   const base = {
     linked: false,
@@ -482,7 +482,7 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
   }
 
   try {
-    const userId = await resolvePaidMediaUserId({ accountId, domain, platformConnections });
+    const userId = await resolvePaidMediaUserId({ accountId, domain, platformConnections, fallbackUserId });
     if (!userId) {
       console.warn(`[PaidMedia] No user ID resolved for ${accountId}`);
       return base;
