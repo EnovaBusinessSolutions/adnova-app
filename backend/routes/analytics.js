@@ -100,10 +100,20 @@ function writeRouteCache(cacheKey, payload, ttlMs) {
   });
 
   if (ROUTE_RESPONSE_CACHE.size <= ROUTE_CACHE_MAX_ENTRIES) return;
+  
   const now = Date.now();
   for (const [key, value] of ROUTE_RESPONSE_CACHE.entries()) {
     if (value.expiresAt <= now) ROUTE_RESPONSE_CACHE.delete(key);
-    if (ROUTE_RESPONSE_CACHE.size <= ROUTE_CACHE_MAX_ENTRIES) break;
+  }
+
+  if (ROUTE_RESPONSE_CACHE.size > ROUTE_CACHE_MAX_ENTRIES) {
+    const toDelete = ROUTE_RESPONSE_CACHE.size - ROUTE_CACHE_MAX_ENTRIES;
+    let deleted = 0;
+    for (const key of ROUTE_RESPONSE_CACHE.keys()) {
+      ROUTE_RESPONSE_CACHE.delete(key);
+      deleted++;
+      if (deleted >= toDelete) break;
+    }
   }
 }
 
@@ -1683,6 +1693,7 @@ router.get('/:account_id', async (req, res) => {
         rawPayload: true,
       },
       orderBy: { createdAt: 'desc' },
+      take: 2000,
     });
 
     const conversionInputsFromOrders = filteredOrders.map((order) => ({
@@ -2020,8 +2031,10 @@ router.get('/:account_id', async (req, res) => {
           userKey: true,
           rawPayload: true,
         },
-        orderBy: { createdAt: 'asc' },
+        orderBy: { createdAt: 'desc' },
+        take: 8000,
       });
+      stitchedCandidateEvents.reverse(); // put back to asc
     }
 
     const eventsByOrderId = new Map();
