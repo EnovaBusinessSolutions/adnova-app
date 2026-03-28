@@ -13,18 +13,24 @@ async function resolveOAuthUser(req) {
     accessToken: token,
     accessTokenExpiresAt: { $gt: new Date() },
     revoked: { $ne: true },
-  }).lean();
+  })
+    .select('userId scopes clientId')
+    .lean();
 
   if (!record?.userId) return null;
 
-  return record.userId;
+  return {
+    userId: record.userId,
+    scopes: Array.isArray(record.scopes) ? record.scopes : [],
+    clientId: record.clientId || null,
+  };
 }
 
 function requireOAuth() {
   return async (req, res, next) => {
     try {
-      const userId = await resolveOAuthUser(req);
-      if (!userId) {
+      const oauthContext = await resolveOAuthUser(req);
+      if (!oauthContext?.userId) {
         return res.status(401).json({
           error: true,
           error_code: 'UNAUTHORIZED',
@@ -33,7 +39,9 @@ function requireOAuth() {
           timestamp: new Date().toISOString(),
         });
       }
-      req._mcpUserId = userId;
+      req._mcpUserId = oauthContext.userId;
+      req._mcpScopes = oauthContext.scopes;
+      req._mcpClientId = oauthContext.clientId;
       next();
     } catch (err) {
       console.error('[oauth-middleware] error:', err);

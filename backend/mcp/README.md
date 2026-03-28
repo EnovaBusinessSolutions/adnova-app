@@ -8,7 +8,7 @@ Servidor MCP que expone 8 tools read-only para Meta Ads, Google Ads y Shopify.
 |------|-----------|
 | `POST /mcp` | Protocolo MCP (Streamable HTTP) |
 | `GET /oauth/authorize` | OAuth 2.0 - autorización |
-| `POST /oauth/token` | OAuth 2.0 - exchange / refresh token |
+| `POST /oauth/token` | OAuth 2.0 - authorization_code / token_exchange / refresh_token |
 | `POST /oauth/revoke` | OAuth 2.0 - revocación |
 | `GET /gpt/v1/account-info` | REST mirror |
 | `GET /gpt/v1/ad-performance` | REST mirror |
@@ -62,6 +62,34 @@ Variables opcionales: `MCP_OAUTH_CLIENT_ID` (default: adray-mcp-client), `MCP_OA
 2. `GET /oauth/authorize?client_id=adray-mcp-client&redirect_uri=https://httpbin.org/get&response_type=code&scope=read:ads_performance%20read:shopify_orders&state=xyz`
 3. Callback con `code` → intercambiar en `POST /oauth/token` con client_id, client_secret, code, redirect_uri
 4. Usar `access_token` como Bearer en MCP o REST
+
+### 4.1 Token Exchange (sesion Adray -> token MCP)
+
+`/oauth/token` soporta ahora `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` (alias `token_exchange`) para emitir un token MCP usando una sesion autenticada existente en Adray.
+
+Importante:
+- No se acepta `access_token` de Google/Meta/Shopify como bearer de MCP.
+- El exchange requiere sesion valida de Adray (cookie de sesion).
+- Los scopes emitidos quedan restringidos a los scopes permitidos por el `client_id`.
+
+Ejemplo:
+
+```bash
+curl -X POST "http://localhost:3000/oauth/token" \
+  -H "Content-Type: application/json" \
+  -b "connect.sid=<tu_cookie_de_sesion>" \
+  -d '{
+    "grant_type":"urn:ietf:params:oauth:grant-type:token-exchange",
+    "client_id":"adray-mcp-client",
+    "scope":"read:ads_performance read:shopify_orders"
+  }'
+```
+
+Respuesta esperada:
+- `access_token` MCP (Bearer para `/mcp` y `/gpt/v1/*`)
+- `refresh_token`
+- `scope` concedido
+- `issued_token_type=urn:ietf:params:oauth:token-type:access_token`
 
 ### 5. Cliente MCP (Claude / ChatGPT)
 Configurar MCP endpoint: `http://localhost:3000/mcp` (o `https://mcp.adray.ai/mcp` en producción).

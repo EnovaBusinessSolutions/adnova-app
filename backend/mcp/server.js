@@ -27,9 +27,12 @@ function createMcpRequestHandler(resolveUserId) {
     try {
       let mcpUserId = null;
       if (resolveUserId) {
-        mcpUserId = await resolveUserId(req);
-        if (mcpUserId) {
-          req._mcpUserId = mcpUserId;
+        const resolved = await resolveUserId(req);
+        if (resolved?.userId) {
+          req._mcpUserId = resolved.userId;
+          req._mcpScopes = resolved.scopes;
+          req._mcpClientId = resolved.clientId;
+          mcpUserId = resolved.userId;
         }
       }
 
