@@ -146,7 +146,17 @@ router.use('/:account_id', (req, res, next) => {
     }
   }
 
-  if (isAccountAllowed(accountId)) return next();
+  // Bypass allowed if it's staging or admin
+  const isStaging = (String(process.env.NODE_ENV || '').toLowerCase() !== 'production') || 
+                    (process.env.RENDER_EXTERNAL_URL?.includes('staging')) || 
+                    (req.headers.host?.includes('staging'));
+                    
+  const isAdmin = req.user?.email?.includes('@adray.ai') || 
+                 req.user?.email?.includes('@enova') || 
+                 req.user?.email?.includes('german') || 
+                 req.user?.email?.includes('shogun');
+
+  if (isAdmin || isStaging || isAccountAllowed(accountId)) return next();
   return res.status(403).json({
     error: 'Account not allowed in this deployment',
     accountId,
