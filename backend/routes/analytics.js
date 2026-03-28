@@ -1378,8 +1378,8 @@ router.get('/:account_id', async (req, res) => {
     const allTime = String(req.query.all_time || '0') === '1';
     const recentLimitRaw = String(req.query.recent_limit || '100').toLowerCase();
     const recentLimit = recentLimitRaw === 'all'
-      ? 5000
-      : Math.max(15, Math.min(1000, Number.parseInt(recentLimitRaw, 10) || 100));
+      ? 400
+      : Math.max(15, Math.min(400, Number.parseInt(recentLimitRaw, 10) || 100));
 
     const analyticsCacheKey = buildRouteCacheKey('analytics', req);
     const cachedAnalytics = readRouteCache(analyticsCacheKey);
@@ -1916,13 +1916,18 @@ router.get('/:account_id', async (req, res) => {
         where: { accountId: account_id, orderId: { in: recentOrderIds } },
         select: { orderId: true, sessionId: true, userKey: true }
       });
-      resolvingEvents.forEach(ev => {
-        const rcList = recentConversions.filter(c => c.orderId === ev.orderId);
-        rcList.forEach(rc => {
-          if (!rc.sessionId && ev.sessionId) rc.sessionId = ev.sessionId;
-          if (!rc.userKey && ev.userKey) rc.userKey = ev.userKey;
-        });
-      });
+      
+      const sessionByOrder = new Map();
+      const userKeyByOrder = new Map();
+      for (const ev of resolvingEvents) {
+        if (ev.sessionId && !sessionByOrder.has(ev.orderId)) sessionByOrder.set(ev.orderId, ev.sessionId);
+        if (ev.userKey && !userKeyByOrder.has(ev.orderId)) userKeyByOrder.set(ev.orderId, ev.userKey);
+      }
+      
+      for (const rc of recentConversions) {
+        if (!rc.sessionId && sessionByOrder.has(rc.orderId)) rc.sessionId = sessionByOrder.get(rc.orderId);
+        if (!rc.userKey && userKeyByOrder.has(rc.orderId)) rc.userKey = userKeyByOrder.get(rc.orderId);
+      }
     }
 
     const recentCheckoutTokens = Array.from(new Set(recentConversions.map((c) => c.checkoutToken).filter(Boolean)));
@@ -2019,6 +2024,29 @@ router.get('/:account_id', async (req, res) => {
       });
     }
 
+    const eventsByOrderId = new Map();
+    const eventsByCheckoutToken = new Map();
+    const eventsBySessionId = new Map();
+    const eventsByUserKey = new Map();
+    const eventsByCustomerId = new Map();
+    
+    for (const ev of stitchedCandidateEvents) {
+      const evTs = new Date(ev.createdAt).getTime();
+      if (!Number.isFinite(evTs)) continue;
+      ev._evTs = evTs;
+      if (ev.orderId) { const k = String(ev.orderId); if (!eventsByOrderId.has(k)) eventsByOrderId.set(k, []); eventsByOrderId.get(k).push(ev); }
+      if (ev.checkoutToken) { const k = String(ev.checkoutToken); if (!eventsByCheckoutToken.has(k)) eventsByCheckoutToken.set(k, []); eventsByCheckoutToken.get(k).push(ev); }
+      if (ev.sessionId) { const k = String(ev.sessionId); if (!eventsBySessionId.has(k)) eventsBySessionId.set(k, []); eventsBySessionId.get(k).push(ev); }
+      if (ev.userKey) { const k = String(ev.userKey); if (!eventsByUserKey.has(k)) eventsByUserKey.set(k, []); eventsByUserKey.get(k).push(ev); }
+      
+      const eventIdentity = extractEventIdentity(ev.rawPayload || {});
+      if (eventIdentity.customerId) {
+        const k = String(eventIdentity.customerId);
+        if (!eventsByCustomerId.has(k)) eventsByCustomerId.set(k, []);
+        eventsByCustomerId.get(k).push(ev);
+      }
+    }
+
     const recentPurchases = await Promise.all(recentConversions.map(async (conv) => {
       const key = `${conv.orderId || ''}::${conv.checkoutToken || ''}::${new Date(conv.createdAt).toISOString()}`;
       const detailed = detailedByKey.get(key);
@@ -2030,26 +2058,31 @@ router.get('/:account_id', async (req, res) => {
       const earliestTs = convTs - journeyStitchLookbackMs;
       const latestTs = convTs + (15 * 60 * 1000);
 
-      const purchaseEventCandidates = stitchedCandidateEvents.filter(ev => Boolean(conv.orderId && ev.orderId && String(ev.orderId) === String(conv.orderId)) || Boolean(conv.checkoutToken && ev.checkoutToken && String(ev.checkoutToken) === String(conv.checkoutToken)));
+      const purchaseEventCandidates = [
+        ...(conv.orderId ? (eventsByOrderId.get(String(conv.orderId)) || []) : []),
+        ...(conv.checkoutToken ? (eventsByCheckoutToken.get(String(conv.checkoutToken)) || []) : [])
+      ];
+      
       const inferredSessionId = conv.sessionId || purchaseEventCandidates.find(e => e.sessionId)?.sessionId;
       const inferredUserKey = conv.userKey || purchaseEventCandidates.find(e => e.userKey)?.userKey;
 
-      let stitchedEvents = stitchedCandidateEvents
-        .filter((ev) => {
-          const evTs = new Date(ev.createdAt).getTime();
-          if (!Number.isFinite(evTs)) return false;
-          if (evTs < earliestTs || evTs > latestTs) return false;
+      const rawStitched = [
+          ...(conv.orderId ? (eventsByOrderId.get(String(conv.orderId)) || []) : []),
+          ...(conv.checkoutToken ? (eventsByCheckoutToken.get(String(conv.checkoutToken)) || []) : []),
+          ...(inferredSessionId ? (eventsBySessionId.get(String(inferredSessionId)) || []) : []),
+          ...(inferredUserKey ? (eventsByUserKey.get(String(inferredUserKey)) || []) : []),
+          ...(conv.customerId ? (eventsByCustomerId.get(String(conv.customerId)) || []) : [])
+      ];
 
-          const byOrder = Boolean(conv.orderId && ev.orderId && String(ev.orderId) === String(conv.orderId));
-          const byCheckout = Boolean(conv.checkoutToken && ev.checkoutToken && String(ev.checkoutToken) === String(conv.checkoutToken));
-          const bySession = Boolean(inferredSessionId && ev.sessionId && String(ev.sessionId) === String(inferredSessionId));
-          const byUser = Boolean(inferredUserKey && ev.userKey && String(ev.userKey) === String(inferredUserKey));
-          const eventIdentity = extractEventIdentity(ev.rawPayload || {});
-          const byCustomer = Boolean(conv.customerId && eventIdentity.customerId && String(eventIdentity.customerId) === String(conv.customerId));
+      const uniqueEventsMap = new Map();
+      for (const ev of rawStitched) {
+          if (!uniqueEventsMap.has(ev.eventId) && ev._evTs >= earliestTs && ev._evTs <= latestTs) {
+             uniqueEventsMap.set(ev.eventId, ev);
+          }
+      }
 
-          return byOrder || byCheckout || bySession || byUser || byCustomer;
-        })
-        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      let stitchedEvents = Array.from(uniqueEventsMap.values())
+        .sort((a, b) => a._evTs - b._evTs);
 
       // Fallback: if stitching only found sparse purchase signals, try customer-id linkage.
       if (stitchedEvents.length <= 2 && conv.customerId) {
@@ -2237,8 +2270,8 @@ router.get('/:account_id', async (req, res) => {
       const fallbackModelRaw = String(req.query.attribution_model || req.query.attributionModel || 'last_touch').toLowerCase();
       const fallbackAttributionModel = ATTRIBUTION_MODELS.has(fallbackModelRaw) ? fallbackModelRaw : 'last_touch';
       const fallbackRecentLimitRaw = String(req.query.recent_limit || req.query.recentLimit || '100').toLowerCase();
-      const fallbackRecentLimit = fallbackRecentLimitRaw === 'all' 
-        ? 5000 
+      const fallbackRecentLimit = fallbackRecentLimitRaw === 'all'
+        ? 400
         : Math.max(5, Math.min(300, Number.parseInt(fallbackRecentLimitRaw, 10) || 100));
       const now = new Date();
       const fallbackStart = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
