@@ -1565,6 +1565,7 @@ router.get('/:account_id', async (req, res) => {
         accountId: account_id,
         domain: accountRecord?.domain || account_id,
         platformConnections,
+        fallbackUserId: req.user?._id || req.user?.id || null
       });
     } catch (paidMediaError) {
       warnings.push({
@@ -3552,6 +3553,7 @@ router.get('/:account_id/data-coverage', async (req, res) => {
       accountId: account_id,
       domain: accountRecord?.domain || account_id,
       platformConnections,
+      fallbackUserId: req.user?._id || req.user?.id || null
     });
 
     const isOk = (value) => value > 0;
