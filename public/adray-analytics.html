@@ -4949,6 +4949,27 @@
             return resolveOnlineUserIdentity({ sessionId, userKey }).label;
         }
 
+        let activeLiveFeedFilterSessionId = null;
+        function updateLiveFeedFilterVisuals() {
+            const container = document.getElementById('feed-container');
+            if (!container) return;
+            const items = container.querySelectorAll('.feed-item');
+            items.forEach(el => {
+                if (!activeLiveFeedFilterSessionId) {
+                    el.style.display = '';
+                    el.classList.remove('opacity-50');
+                } else {
+                    const sid = el.getAttribute('data-live-session-id');
+                    if (sid === activeLiveFeedFilterSessionId) {
+                        el.style.display = '';
+                        el.classList.remove('opacity-50');
+                    } else {
+                        el.style.display = 'none';
+                    }
+                }
+            });
+        }
+
         function connectLiveFeed() {
             if (!currentShopId) return;
 
@@ -4984,30 +5005,54 @@
                 const resolvedSessionId = resolvedIdentity.sessionId || String(sessionId || '');
                 const readableSession = humanReadableSessionLabel({ linkedUserLabel, sessionId: resolvedSessionId });
 
+                let isPurchaseEvent = false;
+
                 if (data.type === 'COLLECT') {
+                    const evtNameLow = String(data.payload.eventName || data.payload.event_name || '').toLowerCase();
                     icon = 'fa-mouse-pointer';
                     color = 'text-blue-500';
                     title = translateEventNameSimple(data.payload.eventName || data.payload.event_name || 'Event');
                     detail = data.payload.pageUrl ? new URL(data.payload.pageUrl).pathname : '';
+
+                    if (evtNameLow === 'purchase') {
+                        icon = 'fa-shopping-cart';
+                        color = 'text-yellow-600';
+                        isPurchaseEvent = true;
+                    }
                 } else if (data.type === 'WEBHOOK') {
                     icon = 'fa-server';
                     color = 'text-green-600';
                     const platformName = String(data.payload?.platform || '').toLowerCase();
                     title = platformName.includes('woo') ? 'WooCommerce Order' : 'Shopify Order';
                     detail = data.payload?.orderId ? `Order ${data.payload.orderId}` : 'New order processed';
+                    isPurchaseEvent = true;
                 } else {
                     title = translateEventNameSimple(data.type || 'Event');
+                    if (title.toLowerCase().includes('purchase')) isPurchaseEvent = true;
+                }
+
+                if (resolvedSessionId) {
+                    el.setAttribute('data-live-session-id', resolvedSessionId);
+                    if (activeLiveFeedFilterSessionId && activeLiveFeedFilterSessionId !== resolvedSessionId) {
+                        el.style.display = 'none';
+                    }
                 }
 
                 el.classList.add('cursor-pointer', 'hover:bg-gray-100');
+                if (isPurchaseEvent) {
+                    el.classList.remove('bg-gray-50', 'border-indigo-500');
+                    el.classList.add('bg-yellow-50', 'border-yellow-400');
+                }
+
                 el.innerHTML = `
                     <div class="flex items-start">
                         <div class="flex-shrink-0 pt-0.5">
                             <i class="fas ${icon} ${color}"></i>
                         </div>
                         <div class="ml-3 w-0 flex-1">
-                            <p class="text-sm font-medium text-gray-900">${title}</p>
-                            <p class="text-xs text-gray-500 truncate">${detail || '-'}</p>
+                            <p class="text-sm font-medium ${isPurchaseEvent ? 'text-yellow-900' : 'text-gray-900'}">${title}</p>
+                            ${linkedUserLabel ? `<p class="text-xs font-semibold text-indigo-700 truncate cursor-pointer live-feed-always-visible-user" title="Click para filtrar eventos de este usuario">${linkedUserLabel}</p>` : `<p class="text-xs text-gray-400 italic">Anónimo</p>`}
+                            <p class="text-xs ${isPurchaseEvent ? 'text-yellow-700' : 'text-gray-500'} truncate">${detail || '-'}</p>
                             <div class="feed-extra mt-1">
                                 <p class="text-[11px] text-indigo-500">${buildSignalTextSimple(data.payload || {})}</p>
                                 <p class="text-[11px] text-indigo-600">${readableSession}</p>
@@ -5018,19 +5063,31 @@
                     </div>
                 `;
 
+                const shortUserButton = el.querySelector('.live-feed-always-visible-user');
+                if (shortUserButton) {
+                    shortUserButton.addEventListener('click', (ev) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        if (activeLiveFeedFilterSessionId === resolvedSessionId) {
+                            activeLiveFeedFilterSessionId = null;
+                        } else {
+                            activeLiveFeedFilterSessionId = resolvedSessionId;
+                        }
+                        updateLiveFeedFilterVisuals();
+                    });
+                }
+
                 const userButton = el.querySelector('.live-feed-user-link');
                 if (userButton) {
                     userButton.addEventListener('click', (ev) => {
                         ev.preventDefault();
                         ev.stopPropagation();
-                        const feedUserKey = userButton.getAttribute('data-user-key') || '';
-                        const feedSessionId = userButton.getAttribute('data-session-id') || '';
-                        const feedUserName = userButton.getAttribute('data-user-name') || '';
-                        if (feedUserKey) {
-                            openUserExplorer(feedUserKey, feedUserName || linkedUserLabel || 'User');
-                            return;
+                        if (activeLiveFeedFilterSessionId === resolvedSessionId) {
+                            activeLiveFeedFilterSessionId = null;
+                        } else {
+                            activeLiveFeedFilterSessionId = resolvedSessionId;
                         }
-                        if (feedSessionId) focusJourneyProfile({ sessionId: feedSessionId, fallbackName: feedUserName || linkedUserLabel || 'User' });
+                        updateLiveFeedFilterVisuals();
                     });
                 }
 
