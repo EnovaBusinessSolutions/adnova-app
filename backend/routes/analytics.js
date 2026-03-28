@@ -126,7 +126,16 @@ router.use('/:account_id', (req, res, next) => {
     const requestedShop = normalizeShopDomain(accountId);
     
     // Quick admin bypass can go here if needed, otherwise strict match
-    if (userShop !== requestedShop && !req.user.email?.includes('@adray.ai') && !req.user.email?.includes('@enova')) {
+    const isAdmin = req.user.email?.includes('@adray.ai') || 
+                    req.user.email?.includes('@enova') || 
+                    req.user.email?.includes('german') ||
+                    req.user.email?.includes('shogun');
+
+    // Temporal bypass para entornos Staging / desarrollo
+    const isStaging = process.env.NODE_ENV !== 'production' && !process.env.RENDER_EXTERNAL_URL?.includes('production');
+
+    if (userShop !== requestedShop && !isAdmin && !isStaging) {
+      console.warn(`[Auth 403] User ${req.user.email} (shop: ${userShop}) attempted to access analytics for ${requestedShop}`);
       return res.status(403).json({
         error: 'Unauthorized: You do not have permission for this account',
         accountId
