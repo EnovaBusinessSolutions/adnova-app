@@ -1443,12 +1443,13 @@ router.get('/:account_id', async (req, res) => {
 
     const analyticsCacheKey = buildRouteCacheKey('analytics', req);
     const cachedAnalytics = readRouteCache(analyticsCacheKey);
-    if (cachedAnalytics) {
-      return res.json({
-        ...cachedAnalytics,
-        cache: { hit: true, ttlMs: 120000 },
-      });
-    }
+      if (cachedAnalytics && String(req.query.nocache) !== '1') {
+        console.log(`[Analytics API] Returning cached dashboard for ${account_id}`);
+        return res.json({
+          ...cachedAnalytics,
+          cache: { hit: true, ttlMs: 120000 },
+        });
+      }
 
     // Default to last 30 days
     const startDate = allTime ? new Date(0) : (start ? startOfDay(new Date(start)) : startOfDay(subDays(new Date(), 30)));
@@ -1745,7 +1746,7 @@ router.get('/:account_id', async (req, res) => {
         rawPayload: true,
       },
       orderBy: { createdAt: 'desc' },
-      take: 2000,
+      take: 400, // Reduced from 2000 to prevent OOM
     });
 
     const conversionInputsFromOrders = filteredOrders.map((order) => ({
