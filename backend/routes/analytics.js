@@ -2805,10 +2805,15 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
     const loginAliases = EVENT_BUCKET_ALIASES.login.map((name) => normalizeEventName(name));
     const logoutAliases = EVENT_BUCKET_ALIASES.logout.map((name) => normalizeEventName(name));
 
+    // Optimización crítica: Solo traer eventos de auth en la Query de base de datos para no desbordar la memoria (OOM)
+    // porque rawPayload puede ser inmenso en eventos tipo 'purchase' o 'page_view'.
+    const targetEventNames = [...EVENT_BUCKET_ALIASES.login, ...EVENT_BUCKET_ALIASES.logout];
+
     const recentEvents = await prisma.event.findMany({
       where: {
         accountId: account_id,
         createdAt: { gte: since },
+        eventName: { in: targetEventNames }
       },
       select: {
         eventName: true,
@@ -2818,7 +2823,7 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
         rawPayload: true,
       },
       orderBy: { createdAt: 'desc' },
-      take: 500,
+      take: 200,
     });
 
     const woocommerceEvents = recentEvents.filter((event) => {
@@ -2921,16 +2926,21 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
       userMap.set(dedupKey, existing);
     }
 
+    const sanitizeStr = (str, len = 70) => {
+      if (!str || typeof str !== 'string') return null;
+      return str.length > len ? str.substring(0, len) + '...' : str.trim();
+    };
+
     const users = Array.from(userMap.values())
       .filter((item) => item.lastAuthState !== 'logout')
       .map((item) => ({
-        id: item.id,
-        customerId: item.customerId,
-        customerName: item.customerName,
-        emailPreview: item.emailPreview,
-        phonePreview: item.phonePreview,
+        id: sanitizeStr(item.id, 100),
+        customerId: sanitizeStr(item.customerId, 50),
+        customerName: sanitizeStr(item.customerName, 80),
+        emailPreview: sanitizeStr(item.emailPreview, 80),
+        phonePreview: sanitizeStr(item.phonePreview, 50),
         sessionCount: item.sessionIds.size,
-        sessionIds: Array.from(item.sessionIds),
+        sessionIds: Array.from(item.sessionIds).slice(0, 5), // Only return max 5 sessions to keep JSON small
         lastLoginAt: item.lastLoginAt ? item.lastLoginAt.toISOString() : null,
         lastLogoutAt: item.lastLogoutAt ? item.lastLogoutAt.toISOString() : null,
         lastSeenAt: item.lastSeenAt ? item.lastSeenAt.toISOString() : null,
