@@ -461,6 +461,7 @@ function buildPaidMediaSourceSummary({ sourceState, payload, snapshotId, revenue
 }
 
 async function buildPaidMediaSummary({ accountId, domain, platformConnections = [] }) {
+  console.log(`[PaidMedia] Starting buildPaidMediaSummary for accountId: ${accountId}, domain: ${domain}, connections: ${platformConnections?.length}`);
   const base = {
     linked: false,
     available: false,
@@ -476,17 +477,24 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
   };
 
   if (!McpData || !formatMetaForLlmMini || !formatGoogleAdsForLlmMini) {
+    console.warn(`[PaidMedia] missing models or formatters for ${accountId}`);
     return { ...base, reason: 'marketing_models_unavailable' };
   }
 
   try {
     const userId = await resolvePaidMediaUserId({ accountId, domain, platformConnections });
-    if (!userId) return base;
+    if (!userId) {
+      console.warn(`[PaidMedia] No user ID resolved for ${accountId}`);
+      return base;
+    }
+    console.log(`[PaidMedia] Resolved userId: ${userId} for ${accountId}`);
 
     const rootDoc = await findMcpRoot(userId);
     if (!rootDoc) {
+      console.warn(`[PaidMedia] No root doc found for user ${userId} (${accountId})`);
       return { ...base, linked: true, reason: 'root_not_found' };
     }
+    console.log(`[PaidMedia] Found rootDoc for user ${userId}, snapshot ids meta=${rootDoc.latestSnapshotId} etc.`);
 
     const [metaSnapshotId, googleSnapshotId] = await Promise.all([
       findLatestSnapshotId(userId, 'metaAds', rootDoc),
@@ -498,8 +506,13 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
       findMcpChunks(userId, 'googleAds', googleSnapshotId, 'google.'),
     ]);
 
+    console.log(`[PaidMedia] Snapshot chunks fetched. Meta: ${metaChunks.length}, Google: ${googleChunks.length}`);
+
     const metaPayload = metaChunks.length ? formatMetaForLlmMini({ datasets: metaChunks, topCampaigns: 4 }) : null;
     const googlePayload = googleChunks.length ? formatGoogleAdsForLlmMini({ datasets: googleChunks, topCampaigns: 4 }) : null;
+
+    if (!metaPayload && metaChunks.length) console.warn('[PaidMedia] metaPayload returned null despite having chunks');
+    if (!googlePayload && googleChunks.length) console.warn('[PaidMedia] googlePayload returned null despite having chunks');
 
     const meta = buildPaidMediaSourceSummary({
       sourceState: rootDoc?.sources?.metaAds || null,
@@ -1461,6 +1474,8 @@ router.get('/:account_id', async (req, res) => {
         accountId: account_id,
         ...broadOrdersDateWhere,
       },
+      take: 4000,
+      orderBy: { createdAt: 'desc' },
       select: {
         createdAt: true,
         platformCreatedAt: true,
