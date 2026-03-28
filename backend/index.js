@@ -367,7 +367,8 @@ app.use(cookieParser());
 
 // ✅ AdRay Analytics & Realtime Feed (Phase 2)
 // sessionGuard removed for dashboard demo/access
-app.use("/api/analytics", require("./routes/analytics"));
+app.use("/api/analytics", ensureAuthenticated, require("./routes/analytics"));
+app.get("/analytics", ensureAuthenticated, (req, res) => res.sendFile(require('path').join(__dirname, "views/adray-analytics.html")));
 app.use("/api/feed", require("./routes/feed"));
 app.use('/api', wooOrdersRoutes);
 app.use('/api/platform-connections', require('./routes/platformConnections'));
@@ -1313,7 +1314,7 @@ async function sendAuthMe(req, res) {
 
   try {
     const u = await User.findById(req.user._id)
-      .select("name email plan subscription createdAt onboardingComplete")
+      .select("name email plan subscription createdAt onboardingComplete shop metaConnected googleConnected")
       .lean();
 
     if (!u) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
@@ -1323,6 +1324,7 @@ async function sendAuthMe(req, res) {
       id: String(u._id),
       email: u.email || null,
       name: u.name || null,
+      shop: u.shop || null,
       onboardingComplete: !!u.onboardingComplete,
       plan: u.plan || "gratis",
       createdAt: u.createdAt || null,
@@ -1359,7 +1361,7 @@ app.get("/api/me", async (req, res) => {
 
   try {
     const u = await User.findById(req.user._id)
-      .select("name email plan subscription createdAt onboardingComplete")
+      .select("name email plan subscription createdAt onboardingComplete shop metaConnected googleConnected")
       .lean();
 
     if (!u) return res.status(401).json({ authenticated: false });
@@ -1369,6 +1371,7 @@ app.get("/api/me", async (req, res) => {
       id: String(u._id),
       email: u.email || null,
       name: u.name || null,
+      shop: u.shop || null,
       onboardingComplete: !!u.onboardingComplete,
       plan: u.plan || "gratis",
       createdAt: u.createdAt || null,

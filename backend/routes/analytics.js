@@ -119,6 +119,21 @@ function writeRouteCache(cacheKey, payload, ttlMs) {
 
 router.use('/:account_id', (req, res, next) => {
   const accountId = req.params?.account_id;
+  
+  // Enforce session ownership if accessed via browser session
+  if (req.user) {
+    const userShop = req.user.shop ? normalizeShopDomain(req.user.shop) : null;
+    const requestedShop = normalizeShopDomain(accountId);
+    
+    // Quick admin bypass can go here if needed, otherwise strict match
+    if (userShop !== requestedShop && !req.user.email?.includes('@adray.ai') && !req.user.email?.includes('@enova')) {
+      return res.status(403).json({
+        error: 'Unauthorized: You do not have permission for this account',
+        accountId
+      });
+    }
+  }
+
   if (isAccountAllowed(accountId)) return next();
   return res.status(403).json({
     error: 'Account not allowed in this deployment',

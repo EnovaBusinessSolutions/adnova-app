@@ -2290,50 +2290,46 @@
             initializeDateControls();
             initializeMetricCarousel();
 
-            // Public mode: explicit shop in URL/localStorage/prompt
-            const shopParam = resolvePublicShopId();
-
-            if (shopParam) {
-                currentShopId = shopParam;
-                const inferredType = shopParam.includes('.myshopify.com') ? 'shopify' : 'custom';
-                updateShopHeader(shopParam, inferredType);
-                console.log('Public analytics mode, shop:', shopParam);
-                
-                // Load data immediately
-                await fetchAnalytics();
-                connectLiveFeed();
-                startWordPressUsersPolling();
-                return;
-            }
+            // Check URL purely for overrides (for admins or explicit intent)
+            const fromUrl = getShopIdFromUrl();
 
             try {
+                // Protect endpoint by looking for backend session first
                 const res = await fetch('/api/session');
                 const data = await res.json();
-                
-                if (!data.authenticated) {
-                    alert('No hay sesion. Agrega ?shop=tu_shop_id para acceder sin login.');
+
+                if (data.authenticated) {
+                    const user = data.user;
+                    currentShopId = fromUrl || user.shop;
+                    const inferredType = user.shopifyConnected ? 'shopify' : 'woocommerce';
+                    
+                    updateShopHeader(currentShopId || 'Tienda', inferredType);
+                    console.log('Protected analytics mode, shop:', currentShopId);
+
+                    // Load initial data
+                    await fetchAnalytics();
+                    connectLiveFeed();
+                    startWordPressUsersPolling();
                     return;
                 }
+            } catch (error) {
+                console.warn('Session API failed:', error);
+            }
 
-                const user = data.user;
-                currentShopId = user.shop;
+            // Fallback: public prompt
+            currentShopId = fromUrl;
+            if (!currentShopId) {
+                currentShopId = (window.prompt('Ingresa el shop_id (ej. mi-tienda.myshopify.com) para modo manual:') || '').trim();
+            }
 
-                const inferredType = user.shopifyConnected ? 'shopify' : 'woocommerce';
-                updateShopHeader(user.shop || 'Tienda desconocida', inferredType);
-
-                // Load initial data
+            if (currentShopId) {
+                const inferredType = currentShopId.includes('.myshopify.com') ? 'shopify' : 'custom';
+                updateShopHeader(currentShopId, inferredType);
                 await fetchAnalytics();
-
-                // Connect SSE
                 connectLiveFeed();
                 startWordPressUsersPolling();
-
-            } catch (error) {
-                console.error('Session check failed:', error);
-                alert('No se pudo validar sesion. Usa ?shop=tu_shop_id para modo publico.');
-            }
-        }
-
+            } else {
+                alert('No se indicó ninguna tienda. Sesión falló.');
         function startWordPressUsersPolling() {
             if (!currentShopId) return;
             if (wpUsersPollTimer) {
