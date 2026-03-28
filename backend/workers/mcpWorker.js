@@ -9,11 +9,12 @@ const IORedis = require('ioredis');
 const { collectMeta } = require('../jobs/collect/metaCollector');
 const { collectGoogle } = require('../jobs/collect/googleCollector');
 const { collectGA4 } = require('../jobs/collect/googleAnalyticsCollector');
+
+const McpData = require('../models/McpData');
+const User = require('../models/User');
 const {
   rebuildUnifiedContextForUser,
 } = require('../services/mcpContextBuilder');
-const McpData = require('../models/McpData');
-const User = require('../models/User');
 
 /* =========================
  * ENV + Connections
@@ -35,28 +36,10 @@ const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(
   365
 );
 
-const WORKER_CONTEXT_REBUILD_TIMEOUT_MS = clampInt(
-  process.env.MCP_WORKER_CONTEXT_REBUILD_TIMEOUT_MS || 15000,
-  3000,
-  120000
-);
-
 const WORKER_CONCURRENCY = clampInt(
   process.env.MCP_WORKER_CONCURRENCY || 1,
   1,
   10
-);
-
-const WORKER_CONTEXT_REBUILD_RETRIES = clampInt(
-  process.env.MCP_WORKER_CONTEXT_REBUILD_RETRIES || 2,
-  0,
-  5
-);
-
-const WORKER_CONTEXT_REBUILD_RETRY_DELAY_MS = clampInt(
-  process.env.MCP_WORKER_CONTEXT_REBUILD_RETRY_DELAY_MS || 2500,
-  250,
-  15000
 );
 
 if (!MONGO_URI) {
@@ -105,39 +88,6 @@ function estimateBytes(obj) {
   }
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isTransientMongoError(err) {
-  const msg = String(err?.message || err?.code || err || '').toLowerCase();
-
-  return (
-    msg.includes('timed out') ||
-    msg.includes('timeout') ||
-    msg.includes('mongo') ||
-    msg.includes('server selection') ||
-    msg.includes('econnreset') ||
-    msg.includes('socket') ||
-    msg.includes('topology') ||
-    msg.includes('connection')
-  );
-}
-
-async function ensureMongoConnected() {
-  if (mongoose.connection.readyState === 1) return;
-
-  console.warn('[mcpWorker] Mongo not ready before rebuild, reconnecting...', {
-    readyState: mongoose.connection.readyState,
-  });
-
-  try {
-    await mongoose.disconnect().catch(() => {});
-  } catch (_) {}
-
-  await connectMongo();
-}
-
 const sourceLocks = new Map();
 
 async function withSourceLock(lockKey, fn) {
@@ -161,41 +111,6 @@ async function withSourceLock(lockKey, fn) {
       sourceLocks.delete(lockKey);
     }
     release();
-  }
-}
-
-async function patchSourceRebuildFailure(userId, source, errorMessage) {
-  try {
-    await McpData.patchRootSource(userId, source, {
-      connected: true,
-      status: 'error',
-      ready: false,
-      lastError: errorMessage || 'CONTEXT_REBUILD_FAILED',
-    });
-  } catch (e) {
-    console.error('[mcpWorker] patchSourceRebuildFailure failed', {
-      userId: String(userId),
-      source,
-      error: e?.message || e,
-    });
-  }
-}
-
-async function patchSourceRebuildSuccess(userId, source) {
-  try {
-    await McpData.patchRootSource(userId, source, {
-      connected: true,
-      status: 'ready',
-      ready: true,
-      lastError: null,
-      lastSyncAt: new Date(),
-    });
-  } catch (e) {
-    console.error('[mcpWorker] patchSourceRebuildSuccess failed', {
-      userId: String(userId),
-      source,
-      error: e?.message || e,
-    });
   }
 }
 
@@ -770,97 +685,54 @@ async function finalizeRootFromCollector({
   });
 }
 
-async function triggerContextRebuildBestEffort({
+async function triggerSignalRebuildAfterCollect({
   userId,
   source,
   snapshotId,
   contextRangeDays,
 }) {
-  let lastFailure = null;
+  try {
+    console.log('[mcpWorker] signal rebuild:start', {
+      userId: String(userId),
+      source,
+      snapshotId,
+      contextRangeDays,
+    });
 
-  for (let attempt = 1; attempt <= WORKER_CONTEXT_REBUILD_RETRIES + 1; attempt += 1) {
-    try {
-      await ensureMongoConnected();
+    const rebuild = await rebuildUnifiedContextForUser(userId, {
+      explicitSnapshotId: snapshotId || null,
+      contextRangeDays: contextRangeDays || null,
+      forceRebuild: true,
+      reason: `source_collected:${String(source || 'unknown')}`,
+      requestedBy: 'worker:mcpWorker',
+      trigger: `worker:${String(source || 'unknown')}`,
+    });
 
-      console.log('[mcpWorker] context rebuild:start', {
-        userId: String(userId),
-        source,
-        snapshotId,
-        contextRangeDays: contextRangeDays || null,
-        timeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
-        attempt,
-        maxAttempts: WORKER_CONTEXT_REBUILD_RETRIES + 1,
-      });
+    console.log('[mcpWorker] signal rebuild:done', {
+      userId: String(userId),
+      source,
+      snapshotId,
+      status: rebuild?.data?.status || null,
+      stage: rebuild?.data?.stage || null,
+      progress: rebuild?.data?.progress || null,
+      signalComplete: !!rebuild?.data?.signalComplete,
+      signalReadyForPdf: !!rebuild?.data?.signalReadyForPdf,
+      usableSources: Array.isArray(rebuild?.data?.usableSources) ? rebuild.data.usableSources : [],
+      pendingConnectedSources: Array.isArray(rebuild?.data?.pendingConnectedSources)
+        ? rebuild.data.pendingConnectedSources
+        : [],
+    });
 
-      const result = await rebuildUnifiedContextForUser(userId, {
-        explicitSnapshotId: snapshotId || null,
-        contextRangeDays: contextRangeDays || null,
-        timeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
-        reason: `${safeString(source) || 'source'}_synced`,
-        requestedBy: 'mcpWorker',
-      });
-
-      console.log('[mcpWorker] context rebuild:done', {
-        userId: String(userId),
-        source,
-        snapshotId,
-        attempt,
-        status: result?.data?.status || null,
-        stage: result?.data?.stage || null,
-        sourceSnapshots: result?.data?.sourceSnapshots || null,
-        usableSources: result?.data?.usableSources || [],
-        pendingConnectedSources: result?.data?.pendingConnectedSources || [],
-      });
-
-      await patchSourceRebuildSuccess(userId, source);
-
-      return {
-        ok: true,
-        data: result?.data || null,
-      };
-    } catch (err) {
-      lastFailure = err;
-
-      const errorMsg = err?.message || err?.code || 'CONTEXT_REBUILD_FAILED';
-
-      console.warn('[mcpWorker] context rebuild failed', {
-        userId: String(userId),
-        source,
-        snapshotId,
-        attempt,
-        maxAttempts: WORKER_CONTEXT_REBUILD_RETRIES + 1,
-        error: errorMsg,
-        data: err?.data || null,
-      });
-
-      const shouldRetry =
-        attempt < WORKER_CONTEXT_REBUILD_RETRIES + 1 && isTransientMongoError(err);
-
-      if (shouldRetry) {
-        await sleep(WORKER_CONTEXT_REBUILD_RETRY_DELAY_MS * attempt);
-        continue;
-      }
-
-      await patchSourceRebuildFailure(userId, source, errorMsg);
-
-      return {
-        ok: false,
-        error: errorMsg,
-        data: err?.data || null,
-      };
-    }
+    return rebuild;
+  } catch (err) {
+    console.error('[mcpWorker] signal rebuild failed', {
+      userId: String(userId),
+      source,
+      snapshotId,
+      error: err?.message || err,
+    });
+    throw err;
   }
-
-  const finalError =
-    lastFailure?.message || lastFailure?.code || 'CONTEXT_REBUILD_FAILED';
-
-  await patchSourceRebuildFailure(userId, source, finalError);
-
-  return {
-    ok: false,
-    error: finalError,
-    data: lastFailure?.data || null,
-  };
 }
 
 async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
@@ -932,22 +804,24 @@ async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
     extractedRoot,
   });
 
-  const rebuild = await triggerContextRebuildBestEffort({
+  const rebuild = await triggerSignalRebuildAfterCollect({
     userId,
     source: 'metaAds',
     snapshotId,
     contextRangeDays: contextDays,
   });
 
-  if (!rebuild?.ok) {
-    throw new Error(rebuild?.error || 'META_CONTEXT_REBUILD_FAILED');
-  }
-
   return {
     ok: true,
     snapshotId,
     saved: (r.datasets || []).length,
-    contextRebuild: rebuild,
+    source: 'metaAds',
+    rebuild: {
+      status: rebuild?.data?.status || null,
+      stage: rebuild?.data?.stage || null,
+      signalComplete: !!rebuild?.data?.signalComplete,
+      signalReadyForPdf: !!rebuild?.data?.signalReadyForPdf,
+    },
   };
 }
 
@@ -1019,22 +893,24 @@ async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, acc
     extractedRoot,
   });
 
-  const rebuild = await triggerContextRebuildBestEffort({
+  const rebuild = await triggerSignalRebuildAfterCollect({
     userId,
     source: 'googleAds',
     snapshotId,
     contextRangeDays: contextDays,
   });
 
-  if (!rebuild?.ok) {
-    throw new Error(rebuild?.error || 'GOOGLEADS_CONTEXT_REBUILD_FAILED');
-  }
-
   return {
     ok: true,
     snapshotId,
     saved: (r.datasets || []).length,
-    contextRebuild: rebuild,
+    source: 'googleAds',
+    rebuild: {
+      status: rebuild?.data?.status || null,
+      stage: rebuild?.data?.stage || null,
+      signalComplete: !!rebuild?.data?.signalComplete,
+      signalReadyForPdf: !!rebuild?.data?.signalReadyForPdf,
+    },
   };
 }
 
@@ -1106,22 +982,24 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
     extractedRoot,
   });
 
-  const rebuild = await triggerContextRebuildBestEffort({
+  const rebuild = await triggerSignalRebuildAfterCollect({
     userId,
     source: 'ga4',
     snapshotId,
     contextRangeDays: contextDays,
   });
 
-  if (!rebuild?.ok) {
-    throw new Error(rebuild?.error || 'GA4_CONTEXT_REBUILD_FAILED');
-  }
-
   return {
     ok: true,
     snapshotId,
     saved: (r.datasets || []).length,
-    contextRebuild: rebuild,
+    source: 'ga4',
+    rebuild: {
+      status: rebuild?.data?.status || null,
+      stage: rebuild?.data?.stage || null,
+      signalComplete: !!rebuild?.data?.signalComplete,
+      signalReadyForPdf: !!rebuild?.data?.signalReadyForPdf,
+    },
   };
 }
 
@@ -1242,10 +1120,7 @@ async function boot() {
     prefix: BULLMQ_PREFIX,
     defaultStorageRangeDays: DEFAULT_STORAGE_RANGE_DAYS,
     defaultContextRangeDays: DEFAULT_CONTEXT_RANGE_DAYS,
-    workerContextRebuildTimeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
     workerConcurrency: WORKER_CONCURRENCY,
-    workerContextRebuildRetries: WORKER_CONTEXT_REBUILD_RETRIES,
-    workerContextRebuildRetryDelayMs: WORKER_CONTEXT_REBUILD_RETRY_DELAY_MS,
   });
 }
 
