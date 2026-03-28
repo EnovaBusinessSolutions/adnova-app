@@ -2340,7 +2340,10 @@
                 connectLiveFeed();
                 startWordPressUsersPolling();
             } else {
-                alert('No se indicó ninguna tienda. Sesión falló.');
+                alert('No se indico ninguna tienda. Sesion fallo');
+            }
+        }
+
         function startWordPressUsersPolling() {
             if (!currentShopId) return;
             if (wpUsersPollTimer) {
