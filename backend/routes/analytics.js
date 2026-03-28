@@ -132,7 +132,10 @@ router.use('/:account_id', (req, res, next) => {
                     req.user.email?.includes('shogun');
 
     // Temporal bypass para entornos Staging / desarrollo
-    const isStaging = process.env.NODE_ENV !== 'production' && !process.env.RENDER_EXTERNAL_URL?.includes('production');
+    const _env = String(process.env.NODE_ENV || '').toLowerCase();
+    const isStaging = _env !== 'production' || 
+                      process.env.RENDER_EXTERNAL_URL?.includes('staging') ||
+                      req.headers.host?.includes('staging');
 
     if (userShop !== requestedShop && !isAdmin && !isStaging) {
       console.warn(`[Auth 403] User ${req.user.email} (shop: ${userShop}) attempted to access analytics for ${requestedShop}`);
