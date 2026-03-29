@@ -20,7 +20,7 @@ async function testCollectors() {
 
   console.log('--- Iniciando Colector de META ---');
   try {
-    const metaResult = await collectMeta({ userId, rangeDays: 30 }); // Un mes
+    const metaResult = await collectMeta(userId, { rangeDays: 30 }); // Un mes
     console.log("META COLLECTOR RESULTADO:");
     console.log(JSON.stringify(metaResult, null, 2));
   } catch(e) {
@@ -29,7 +29,7 @@ async function testCollectors() {
 
   console.log('\n--- Iniciando Colector de GOOGLE ---');
   try {
-    const googleResult = await collectGoogle({ userId, rangeDays: 30 });
+    const googleResult = await collectGoogle(userId, { rangeDays: 30 });
     console.log("GOOGLE COLLECTOR RESULTADO:");
     console.log(JSON.stringify(googleResult, null, 2));
   } catch(e) {
