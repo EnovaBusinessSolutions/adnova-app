@@ -1994,22 +1994,29 @@
                         </div>
                     </div>
 
-                    <!-- Campaigns Table -->
-                    <div class="mt-6 hidden fade-in" id="google-campaigns-container">
-                        <h4 class="text-sm font-semibold text-gray-900 mb-3 border-b border-gray-100 pb-2">Top Google Ads Campaigns</h4>
-                        <div class="overflow-x-auto shadow-sm ring-1 ring-black ring-opacity-5 rounded-lg">
-                            <table class="min-w-full divide-y divide-gray-200">
-                                <thead style="background-color: var(--secondary-bg);">
+                    <!-- Paid Media Campaigns Table -->
+                    <div class="mt-6 hidden fade-in" id="pm-campaigns-container">
+                        <div class="flex items-center justify-between mb-3 border-b pb-2" style="border-color: var(--dash-border);">
+                            <h4 class="text-sm font-semibold" style="color: var(--dash-text);">Top Campaigns Performance</h4>
+                            <select id="pm-campaign-filter" onchange="renderUnifiedCampaigns()" class="text-xs focus:ring-0 cursor-pointer rounded" style="background: var(--dash-panel-soft); color: var(--dash-accent); border: 1px solid var(--dash-border); padding: 0.2rem 1.5rem 0.2rem 0.5rem; outline: none;">
+                                <option value="all">Todas (Blended)</option>
+                                <option value="meta">Meta Ads</option>
+                                <option value="google">Google Ads</option>
+                            </select>
+                        </div>
+                        <div class="overflow-x-auto shadow-sm rounded-lg" style="border: 1px solid var(--dash-border);">
+                            <table class="min-w-full" style="border-collapse: collapse;">
+                                <thead style="background: var(--dash-panel-soft); border-bottom: 1px solid var(--dash-border);">
                                     <tr>
-                                        <th scope="col" class="py-3 pl-4 pr-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Campaign</th>
-                                        <th scope="col" class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Spend</th>
-                                        <th scope="col" class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Rev</th>
-                                        <th scope="col" class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">ROAS</th>
-                                        <th scope="col" class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">CPA</th>
-                                        <th scope="col" class="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                        <th scope="col" class="py-3 pl-4 pr-3 text-left text-xs font-semibold uppercase tracking-wider" style="color: var(--dash-muted);">Campaña</th>
+                                        <th scope="col" class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider hidden md:table-cell" style="color: var(--dash-muted);">Plataforma</th>
+                                        <th scope="col" class="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider" style="color: var(--dash-muted);">Gasto</th>
+                                        <th scope="col" class="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider" style="color: var(--dash-muted);">Rev</th>
+                                        <th scope="col" class="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider" style="color: var(--dash-muted);">ROAS</th>
+                                        <th scope="col" class="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider" style="color: var(--dash-muted);">Estado</th>
                                     </tr>
                                 </thead>
-                                <tbody class="bg-white divide-y divide-gray-100" id="google-campaigns-tbody">
+                                <tbody style="background: var(--dash-panel-strong); color: var(--dash-text);" id="pm-campaigns-tbody">
                                     <!-- Rows will be injected via JS -->
                                 </tbody>
                             </table>
@@ -4782,7 +4789,27 @@
 
             renderPaidMediaSource('meta', paidMedia?.meta || {});
             renderPaidMediaSource('google', paidMedia?.google || {});
+
+            let unified = [];
+            const metaCamps = paidMedia?.meta?.campaigns || [];
+            const googleCamps = paidMedia?.google?.campaigns || [];
+            
+            metaCamps.forEach(c => {
+                c._platform = 'meta';
+                c._currency = paidMedia?.meta?.currency || 'MXN';
+                unified.push(c);
+            });
+            googleCamps.forEach(c => {
+                c._platform = 'google';
+                c._currency = paidMedia?.google?.currency || 'MXN';
+                unified.push(c);
+            });
+
+            globalPaidMediaCampaigns = unified;
+            renderUnifiedCampaigns();
         }
+
+        let globalPaidMediaCampaigns = [];
 
         function renderPaidMediaSource(prefix, sourceState) {
             const statusEl = document.getElementById(`pm-${prefix}-status`);
@@ -4814,59 +4841,69 @@
             } else {
                 syncEl.textContent = 'Sin snapshot asociado';
             }
-
-            if (prefix === 'google') {
-                renderGoogleCampaigns(sourceState?.campaigns || [], currency);
-            }
         }
 
-        function renderGoogleCampaigns(campaigns, currency) {
-            const container = document.getElementById('google-campaigns-container');
-            const tbody = document.getElementById('google-campaigns-tbody');
+        function renderUnifiedCampaigns() {
+            const container = document.getElementById('pm-campaigns-container');
+            const tbody = document.getElementById('pm-campaigns-tbody');
+            const filterValue = document.getElementById('pm-campaign-filter')?.value || 'all';
+
             if (!container || !tbody) return;
 
-            if (!campaigns || campaigns.length === 0) {
+            let filteredCamps = globalPaidMediaCampaigns;
+            if (filterValue !== 'all') {
+                filteredCamps = filteredCamps.filter(c => c._platform === filterValue);
+            }
+
+            if (!filteredCamps || filteredCamps.length === 0) {
                 container.classList.add('hidden');
                 return;
             }
 
-            // Muestra solo el top 10 basado en spend
-            const topCampaigns = campaigns
+            // Descending order by spend
+            const sortedCamps = filteredCamps
                 .sort((a, b) => (b.kpis?.spend || b.cost || 0) - (a.kpis?.spend || a.cost || 0))
-                .slice(0, 10);
+                .slice(0, 50);
 
-            tbody.innerHTML = topCampaigns.map(c => {
+            tbody.innerHTML = sortedCamps.map(c => {
                 const name = c.campaign_name || c.name || 'Desconocida';
+                const currency = c._currency;
                 const spend = c.kpis?.spend ?? c.cost ?? 0;
                 const rev = c.kpis?.purchase_value ?? c.kpis?.conversion_value ?? c.conv_value ?? 0;
                 const roas = c.kpis?.roas ?? c.roas ?? 0;
-                const cpa = c.kpis?.cpa ?? c.cpa ?? 0;
-                
-                // Determina status si es posible
+                const cpa = c.kpis?.cpa ?? c.cpa ?? c.cpp ?? 0;
+
+                const platformBadge = c._platform === 'meta' 
+                    ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium" style="background: rgba(124, 168, 255, 0.15); color: #7ca8ff; border: 1px solid rgba(124, 168, 255, 0.3);">Meta Ads</span>`
+                    : `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium" style="background: rgba(243, 199, 122, 0.15); color: #f3c77a; border: 1px solid rgba(243, 199, 122, 0.3);">Google Ads</span>`;
+
                 let statusBadge = '';
-                if (c.health === 'WINNER') statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Winner</span>';
-                else if (c.health === 'RISK') statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">Risk</span>';
-                else if (c.health === 'PROMISING') statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Promising</span>';
+                if (c.health === 'WINNER') statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(126, 240, 200, 0.15); color: var(--dash-success); border: 1px solid rgba(126, 240, 200, 0.3);">Winner</span>';
+                else if (c.health === 'RISK') statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(255, 100, 100, 0.15); color: #ff8888; border: 1px solid rgba(255, 100, 100, 0.3);">Risk</span>';
+                else if (c.health === 'PROMISING') statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" style="background: rgba(202, 138, 229, 0.15); color: var(--dash-accent); border: 1px solid rgba(202, 138, 229, 0.3);">Promesa</span>';
                 else {
-                    const mappedStatus = c.status === 'ENABLED' ? 'Active' : c.status === 'PAUSED' ? 'Paused' : c.status || '-';
-                    statusBadge = `<span class="text-xs text-gray-500">${mappedStatus}</span>`;
+                    const mappedStatus = c.status === 'ENABLED' || c.status === 'ACTIVE' ? 'Active' : c.status === 'PAUSED' ? 'Paused' : c.status || '-';
+                    statusBadge = `<span class="text-xs" style="color: var(--dash-muted);">${mappedStatus}</span>`;
                 }
 
                 return `
-                    <tr class="hover:bg-gray-50 transition-colors">
-                        <td class="whitespace-nowrap py-3 pl-4 pr-3 text-sm font-medium text-gray-900 overflow-hidden text-ellipsis max-w-[200px]" title="${name}">
+                    <tr style="border-top: 1px solid var(--dash-border); transition: background 0.15s ease;" onmouseover="this.style.background='var(--dash-panel-soft)'" onmouseout="this.style.background='transparent'">
+                        <td class="whitespace-nowrap py-3 pl-4 pr-3 text-sm font-medium overflow-hidden text-ellipsis max-w-[200px]" style="color: var(--dash-text);" title="${name}">
                             ${name}
                         </td>
-                        <td class="whitespace-nowrap px-3 py-3 text-sm text-gray-500 text-right">
+                        <td class="whitespace-nowrap px-3 py-3 text-sm text-left hidden md:table-cell">
+                            ${platformBadge}
+                        </td>
+                        <td class="whitespace-nowrap px-3 py-3 text-sm text-right" style="color: var(--dash-muted);">
                             ${formatCurrencyWithCode(spend, currency)}
                         </td>
-                        <td class="whitespace-nowrap px-3 py-3 text-sm text-gray-900 font-medium text-right">
+                        <td class="whitespace-nowrap px-3 py-3 text-sm font-medium text-right" style="color: var(--dash-text);">
                             ${formatCurrencyWithCode(rev, currency)}
                         </td>
-                        <td class="whitespace-nowrap px-3 py-3 text-sm ${roas >= 2 ? 'text-green-600' : roas < 1 && spend > 0 ? 'text-red-500' : 'text-gray-500'} font-semibold text-right">
+                        <td class="whitespace-nowrap px-3 py-3 text-sm font-semibold text-right ${roas >= 2 ? '' : roas < 1 && spend > 0 ? '' : ''}" style="color: ${roas >= 2 ? 'var(--dash-success)' : roas < 1 && spend > 0 ? '#ff8888' : 'var(--dash-soft)'};">
                             ${roas > 0 ? roas.toFixed(2) + 'x' : '-'}
                         </td>
-                        <td class="whitespace-nowrap px-3 py-3 text-sm text-gray-500 text-right">
+                        <td class="whitespace-nowrap px-3 py-3 text-sm text-right" style="color: var(--dash-muted);">
                             ${formatCurrencyWithCode(cpa, currency)}
                         </td>
                         <td class="whitespace-nowrap px-3 py-3 text-sm text-center">
