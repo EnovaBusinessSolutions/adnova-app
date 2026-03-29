@@ -496,6 +496,10 @@ app.use('/api/mcpjobs', sessionGuard, require('./routes/mcpjobs'));
 
 app.use('/api/mcp/context', require('./routes/mcpContext'));
 
+
+app.use('/api/daily-signal-delivery', sessionGuard, require('./routes/dailySignalDelivery'));
+app.use('/api/internal/daily-signal', require('./routes/internalDailySignal'));
+
 // MCP Server (Phase 1) - protocol endpoint + OAuth + REST mirror
 const { mountMcpRoutes } = require('./mcp/transport');
 mountMcpRoutes(app);
