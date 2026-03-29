@@ -511,6 +511,9 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
     const metaPayload = metaChunks.length ? formatMetaForLlmMini({ datasets: metaChunks, topCampaigns: 4 }) : null;
     const googlePayload = googleChunks.length ? formatGoogleAdsForLlmMini({ datasets: googleChunks, topCampaigns: 4 }) : null;
 
+    if (metaPayload) console.log(`[PaidMedia Debug] Meta Payload KPIs:`, JSON.stringify(metaPayload.headline_kpis));
+    if (googlePayload) console.log(`[PaidMedia Debug] Google Payload KPIs:`, JSON.stringify(googlePayload.headline_kpis));
+
     if (!metaPayload && metaChunks.length) console.warn('[PaidMedia] metaPayload returned null despite having chunks');
     if (!googlePayload && googleChunks.length) console.warn('[PaidMedia] googlePayload returned null despite having chunks');
 
