@@ -1268,29 +1268,40 @@
             overflow-x: auto;
             overflow-y: visible;
             scroll-behavior: smooth;
-            scrollbar-width: none;
-            -ms-overflow-style: none;
-            padding-bottom: 0.35rem;
+            /* scrollbar-width: none; */
+            /* -ms-overflow-style: none; */
+            padding-bottom: 0.8rem;
         }
 
         .metric-carousel-viewport::-webkit-scrollbar {
-            display: none;
+            height: 8px;
+        }
+        .metric-carousel-viewport::-webkit-scrollbar-track {
+            background: var(--dash-panel-soft);
+            border-radius: 8px;
+        }
+        .metric-carousel-viewport::-webkit-scrollbar-thumb {
+            background: var(--dash-soft);
+            border-radius: 8px;
+        }
+        .metric-carousel-viewport::-webkit-scrollbar-thumb:hover {
+            background: var(--dash-accent);
         }
 
         .metric-card-slide {
-            flex: 0 0 100%;
-            min-width: 100%;
+            flex: 0 0 75%;
+            min-width: 75%;
         }
         @media (min-width: 640px) {
             .metric-card-slide {
-                flex-basis: 50%;
-                min-width: 50%;
+                flex-basis: 33.333%;
+                min-width: 33.333%;
             }
         }
         @media (min-width: 1024px) {
             .metric-card-slide {
-                flex-basis: 25%;
-                min-width: 25%;
+                flex-basis: 16.666%;
+                min-width: 16.666%;
             }
         }
         .metric-carousel-track {
@@ -1438,14 +1449,6 @@
                 <div>
                     <p class="panel-kicker">Core KPI</p>
                     <h3 class="panel-title text-lg font-medium text-gray-900">Key Metrics</h3>
-                </div>
-                <div class="flex items-center gap-2">
-                    <button id="metric-carousel-prev" type="button" class="inline-flex items-center justify-center w-10 h-10 rounded-full border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">
-                        <i class="fas fa-chevron-left"></i>
-                    </button>
-                    <button id="metric-carousel-next" type="button" class="inline-flex items-center justify-center w-10 h-10 rounded-full border border-gray-300 bg-white text-gray-700 hover:bg-gray-50">
-                        <i class="fas fa-chevron-right"></i>
-                    </button>
                 </div>
             </div>
             <div id="metric-carousel-viewport" class="metric-carousel-viewport">
