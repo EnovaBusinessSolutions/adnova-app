@@ -194,6 +194,19 @@ app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
 /* =========================
+ * High-Throughput Public Routes
+ * (Bypassing Session/Passport overhead to prevent timeouts)
+ * ========================= */
+app.use("/collect", cookieParser(), express.json({ limit: "1mb" }), express.urlencoded({ extended: true }), collectRoutes);
+
+app.get('/adray-pixel.js', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+  return res.sendFile(path.join(__dirname, '../public/adray-pixel.js'));
+});
+
+/* =========================
  * Sesión y Passport
  * (ANTES de Stripe, webhooks y APIs)
  * ========================= */
@@ -374,9 +387,8 @@ app.use('/api', wooOrdersRoutes);
 app.use('/api/platform-connections', require('./routes/platformConnections'));
 app.use('/wp-plugin', wordpressPluginRoutes);
 
-// AdRay collect and platform routes
+// AdRay platform routes (collect bypassed session above)
 // Hotfix: bypass collect limiter while stabilizing production collect failures.
-app.use("/collect", collectRoutes);
 app.use("/api", sessionGuardAdrayPlatforms, adrayPlatformRoutes);
 
 /* =========================
@@ -1410,14 +1422,6 @@ app.use("/api/secure", verifySessionToken, secureRoutes);
 app.use("/api/dashboard", dashboardRoute);
 app.use("/api/shopConnection", require("./routes/shopConnection"));
 app.use("/api", subscribeRouter);
-
-// Explicit pixel route with cross-origin headers so external storefronts can load it.
-app.get('/adray-pixel.js', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
-  return res.sendFile(path.join(__dirname, '../public/adray-pixel.js'));
-});
 
 // Estáticos (públicos)
 app.use("/assets", express.static(path.join(__dirname, "../public/landing/assets")));
