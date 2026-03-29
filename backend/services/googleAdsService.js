@@ -674,30 +674,69 @@ async function fetchInsights({
     cpl: delta(kpis.cpl, prev.cpl),
   };
 
-  const payload = {
-    ok: true,
-    objective: ['ventas', 'alcance', 'leads'].includes(String(objective)) ? objective : 'ventas',
-    customer_id: cid,
-    range: { since, until },
-    prev_range: { since: prevSince, until: prevUntil },
-    is_partial: String(datePreset || '').toLowerCase() === 'today' && !!includeToday,
-    kpis,
-    deltas,
-    series,
-    currency,
-    locale: tz?.startsWith('Europe/') ? 'es-ES' : 'es-MX',
-    cachedAt: new Date().toISOString(),
-  };
+    const GAQL_CAMPAIGNS = `
+      SELECT
+        campaign.id,
+        campaign.name,
+        campaign.status,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.cost_micros,
+        metrics.conversions,
+        metrics.conversions_value
+      FROM campaign
+      WHERE segments.date BETWEEN '${since}' AND '${until}'
+      ORDER BY metrics.cost_micros DESC
+      LIMIT 50
+    `;
+    let campaigns = [];
+    try {
+      const campRows = await searchGAQLStream(token, cid, GAQL_CAMPAIGNS);
+      campaigns = campRows.map(r => {
+        const c = r.campaign || {};
+        const met = r.metrics || {};
+        const impressions = Number(met.impressions || 0);
+        const clicks = Number(met.clicks || 0);
+        const costMicros = met.costMicros ?? met.cost_micros ?? 0;
+        const cost = microsToUnit(costMicros);
+        const conversions = Number(met.conversions || 0);
+        const conv_value = Number(met.conversionsValue ?? met.conversions_value ?? 0);
+        
+        const ctr = impressions ? clicks / impressions : 0;
+        const cpc = clicks ? cost / clicks : 0;
+        const cpa = conversions ? cost / conversions : undefined;
+        const roas = cost ? conv_value / cost : undefined;
 
-  setCache(cacheKey, payload);
-  return payload;
-}
+        return {
+          id: c.id,
+          name: c.name,
+          status: c.status,
+          impressions,
+          clicks,
+          cost,
+          conversions,
+          conv_value,
+          ctr,
+          cpc,
+          cpa,
+          roas
+        };
+      });
+    } catch(err) {
+      console.error("[GAds] Error fetching campaigns for insights:", err.message);
+    }
 
-/* ========================================================================== *
- * 5) MCC (legacy)  ← REST
- * ========================================================================== */
-
-async function mccInviteCustomer({ accessToken, managerId, clientId }) {
+    const payload = {
+      ok: true,
+      objective: ['ventas', 'alcance', 'leads'].includes(String(objective)) ? objective : 'ventas',
+      customer_id: cid,
+      range: { since, until },
+      prev_range: { since: prevSince, until: prevUntil },
+      is_partial: String(datePreset || '').toLowerCase() === 'today' && !!includeToday,
+      kpis,
+      deltas,
+      series,
+      campaigns,
   const mid = normId(managerId);
   const cid = normId(clientId);
 
