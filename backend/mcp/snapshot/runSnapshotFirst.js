@@ -20,7 +20,23 @@ function loadQueueHelpers() {
 /** @type {Map<string, number>} */
 const lastRefreshEnqueueAt = new Map();
 
+function getMcpToolLogSampleRate() {
+  if (process.env.MCP_TOOL_LOG_SAMPLE_RATE !== undefined) {
+    const n = Number(process.env.MCP_TOOL_LOG_SAMPLE_RATE);
+    return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 1;
+  }
+  return process.env.NODE_ENV === 'production' ? 0.01 : 1;
+}
+
+function shouldLogMcpToolSource() {
+  const rate = getMcpToolLogSampleRate();
+  if (rate >= 1) return true;
+  if (rate <= 0) return false;
+  return Math.random() < rate;
+}
+
 function logMcpToolSource(payload) {
+  if (!shouldLogMcpToolSource()) return;
   try {
     console.log(
       JSON.stringify({
@@ -229,7 +245,10 @@ async function runSnapshotFirstTool(opts) {
           latency_ms: Date.now() - t0,
           snapshot_first: isSnapshotFirstEnabledForTool(opts.toolName) ? '1' : 'disabled',
         });
-        data = opts.emptyFallback();
+        data =
+          typeof opts.emptyFallback === 'function' && opts.emptyFallback.length >= 1
+            ? opts.emptyFallback(resolveErr)
+            : opts.emptyFallback();
       } else {
         throw resolveErr;
       }

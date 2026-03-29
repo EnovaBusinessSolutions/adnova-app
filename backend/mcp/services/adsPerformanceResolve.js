@@ -17,9 +17,9 @@ const TOOL_CH = 'get_channel_summary';
 const TOOL_DC = 'get_date_comparison';
 
 /** Respuesta estable cuando no hay snapshot y la API en vivo falla (p. ej. Google 403). */
-function emptyAdPerformance(channel, dateFrom, dateTo, granularity) {
+function emptyAdPerformance(channel, dateFrom, dateTo, granularity, liveError = null) {
   const gran = granularity || 'total';
-  return {
+  const base = {
     channel,
     spend: 0,
     impressions: 0,
@@ -32,10 +32,15 @@ function emptyAdPerformance(channel, dateFrom, dateTo, granularity) {
     date_to: dateTo,
     rows: gran && gran !== 'total' ? [] : [],
   };
+  if (liveError != null && liveError !== '') {
+    base.source_mode = 'live_error_fallback';
+    base.live_error = String(liveError);
+  }
+  return base;
 }
 
-function emptyCampaignPerformance(channel, dateFrom, dateTo, _limit, _status) {
-  return {
+function emptyCampaignPerformance(channel, dateFrom, dateTo, _limit, _status, liveError = null) {
+  const base = {
     channel,
     campaigns: [],
     total_spend: 0,
@@ -43,6 +48,11 @@ function emptyCampaignPerformance(channel, dateFrom, dateTo, _limit, _status) {
     date_from: dateFrom,
     date_to: dateTo,
   };
+  if (liveError != null && liveError !== '') {
+    base.source_mode = 'live_error_fallback';
+    base.live_error = String(liveError);
+  }
+  return base;
 }
 
 function round(n, d = 2) {
@@ -104,7 +114,7 @@ async function resolveAdPerformance(userId, channel, dateFrom, dateTo, granulari
       });
     } catch (e) {
       if (e?.code === 'ACCOUNT_NOT_CONNECTED') throw e;
-      return emptyAdPerformance('meta', dateFrom, dateTo, gran);
+      return emptyAdPerformance('meta', dateFrom, dateTo, gran, e?.message || e);
     }
   }
   try {
@@ -118,7 +128,7 @@ async function resolveAdPerformance(userId, channel, dateFrom, dateTo, granulari
     });
   } catch (e) {
     if (e?.code === 'ACCOUNT_NOT_CONNECTED') throw e;
-    return emptyAdPerformance('google', dateFrom, dateTo, gran);
+    return emptyAdPerformance('google', dateFrom, dateTo, gran, e?.message || e);
   }
 }
 
@@ -127,13 +137,13 @@ async function resolveAdPerformance(userId, channel, dateFrom, dateTo, granulari
  */
 async function resolveAdPerformanceAll(userId, dateFrom, dateTo, granularity) {
   const gran = granularity || 'total';
+  const [rMeta, rGoogle] = await Promise.allSettled([
+    resolveAdPerformance(userId, 'meta', dateFrom, dateTo, gran),
+    resolveAdPerformance(userId, 'google', dateFrom, dateTo, gran),
+  ]);
   const results = [];
-  try {
-    results.push(await resolveAdPerformance(userId, 'meta', dateFrom, dateTo, gran));
-  } catch {}
-  try {
-    results.push(await resolveAdPerformance(userId, 'google', dateFrom, dateTo, gran));
-  } catch {}
+  if (rMeta.status === 'fulfilled') results.push(rMeta.value);
+  if (rGoogle.status === 'fulfilled') results.push(rGoogle.value);
   return results;
 }
 
@@ -155,7 +165,7 @@ async function resolveCampaignPerformance(userId, channel, dateFrom, dateTo, lim
       });
     } catch (e) {
       if (e?.code === 'ACCOUNT_NOT_CONNECTED') throw e;
-      return emptyCampaignPerformance('meta', dateFrom, dateTo, lim, st);
+      return emptyCampaignPerformance('meta', dateFrom, dateTo, lim, st, e?.message || e);
     }
   }
   try {
@@ -167,8 +177,9 @@ async function resolveCampaignPerformance(userId, channel, dateFrom, dateTo, lim
         buildCampaignPerformanceSnapshot(userId, 'googleAds', 'google', dateFrom, dateTo, lim, st),
       execLive: () => googleAdapter.getCampaignPerformance(userId, dateFrom, dateTo, lim, st),
     });
-  } catch {
-    return emptyCampaignPerformance('google', dateFrom, dateTo, lim, st);
+  } catch (e) {
+    if (e?.code === 'ACCOUNT_NOT_CONNECTED') throw e;
+    return emptyCampaignPerformance('google', dateFrom, dateTo, lim, st, e?.message || e);
   }
 }
 
@@ -176,21 +187,53 @@ async function resolveChannelSummaryPayload(userId, dateFrom, dateTo) {
   const channels = [];
   const currencies = new Set();
 
-  try {
-    let meta;
-    try {
-      meta = await resolveSnapshotFirstData({
-        toolName: TOOL_CH,
-        userId,
-        refreshSource: 'metaAds',
-        buildSnapshot: () =>
-          buildAdPerformanceSnapshot(userId, 'metaAds', 'meta', dateFrom, dateTo, 'total'),
-        execLive: () => metaAdapter.getAdPerformance(userId, dateFrom, dateTo, 'total'),
-      });
-    } catch (e) {
-      if (e?.code === 'ACCOUNT_NOT_CONNECTED') throw e;
-      meta = emptyAdPerformance('meta', dateFrom, dateTo, 'total');
-    }
+  const [metaOutcome, googleOutcome] = await Promise.all([
+    (async () => {
+      try {
+        let meta;
+        try {
+          meta = await resolveSnapshotFirstData({
+            toolName: TOOL_CH,
+            userId,
+            refreshSource: 'metaAds',
+            buildSnapshot: () =>
+              buildAdPerformanceSnapshot(userId, 'metaAds', 'meta', dateFrom, dateTo, 'total'),
+            execLive: () => metaAdapter.getAdPerformance(userId, dateFrom, dateTo, 'total'),
+          });
+        } catch (e) {
+          if (e?.code === 'ACCOUNT_NOT_CONNECTED') throw e;
+          meta = emptyAdPerformance('meta', dateFrom, dateTo, 'total', e?.message || e);
+        }
+        return { ok: true, meta };
+      } catch {
+        return { ok: false };
+      }
+    })(),
+    (async () => {
+      try {
+        let google;
+        try {
+          google = await resolveSnapshotFirstData({
+            toolName: TOOL_CH,
+            userId,
+            refreshSource: 'googleAds',
+            buildSnapshot: () =>
+              buildAdPerformanceSnapshot(userId, 'googleAds', 'google', dateFrom, dateTo, 'total'),
+            execLive: () => googleAdapter.getAdPerformance(userId, dateFrom, dateTo, 'total'),
+          });
+        } catch (e) {
+          if (e?.code === 'ACCOUNT_NOT_CONNECTED') throw e;
+          google = emptyAdPerformance('google', dateFrom, dateTo, 'total', e?.message || e);
+        }
+        return { ok: true, google };
+      } catch {
+        return { ok: false };
+      }
+    })(),
+  ]);
+
+  if (metaOutcome.ok) {
+    const meta = metaOutcome.meta;
     channels.push({
       channel: 'meta',
       spend: meta.spend,
@@ -202,23 +245,10 @@ async function resolveChannelSummaryPayload(userId, dateFrom, dateTo) {
       currency: meta.currency,
     });
     currencies.add(meta.currency);
-  } catch {}
+  }
 
-  try {
-    let google;
-    try {
-      google = await resolveSnapshotFirstData({
-        toolName: TOOL_CH,
-        userId,
-        refreshSource: 'googleAds',
-        buildSnapshot: () =>
-          buildAdPerformanceSnapshot(userId, 'googleAds', 'google', dateFrom, dateTo, 'total'),
-        execLive: () => googleAdapter.getAdPerformance(userId, dateFrom, dateTo, 'total'),
-      });
-    } catch (e) {
-      if (e?.code === 'ACCOUNT_NOT_CONNECTED') throw e;
-      google = emptyAdPerformance('google', dateFrom, dateTo, 'total');
-    }
+  if (googleOutcome.ok) {
+    const google = googleOutcome.google;
     channels.push({
       channel: 'google',
       spend: google.spend,
@@ -230,7 +260,7 @@ async function resolveChannelSummaryPayload(userId, dateFrom, dateTo) {
       currency: google.currency,
     });
     currencies.add(google.currency);
-  } catch {}
+  }
 
   const totalSpend = channels.reduce((s, c) => s + c.spend, 0);
   for (const ch of channels) {
@@ -379,7 +409,8 @@ function adPerformanceSnapshotOpts(userId, channel, dateFrom, dateTo, gran) {
       buildSnapshot: () =>
         buildAdPerformanceSnapshot(userId, 'metaAds', 'meta', dateFrom, dateTo, g),
       execLive: () => metaAdapter.getAdPerformance(userId, dateFrom, dateTo, g),
-      emptyFallback: () => emptyAdPerformance('meta', dateFrom, dateTo, g),
+      emptyFallback: (err) =>
+        emptyAdPerformance('meta', dateFrom, dateTo, g, err?.message || err),
     };
   }
   return {
@@ -389,7 +420,8 @@ function adPerformanceSnapshotOpts(userId, channel, dateFrom, dateTo, gran) {
     buildSnapshot: () =>
       buildAdPerformanceSnapshot(userId, 'googleAds', 'google', dateFrom, dateTo, g),
     execLive: () => googleAdapter.getAdPerformance(userId, dateFrom, dateTo, g),
-    emptyFallback: () => emptyAdPerformance('google', dateFrom, dateTo, g),
+    emptyFallback: (err) =>
+      emptyAdPerformance('google', dateFrom, dateTo, g, err?.message || err),
   };
 }
 
@@ -404,7 +436,8 @@ function campaignPerformanceSnapshotOpts(userId, channel, dateFrom, dateTo, limi
       buildSnapshot: () =>
         buildCampaignPerformanceSnapshot(userId, 'metaAds', 'meta', dateFrom, dateTo, lim, st),
       execLive: () => metaAdapter.getCampaignPerformance(userId, dateFrom, dateTo, lim, st),
-      emptyFallback: () => emptyCampaignPerformance('meta', dateFrom, dateTo, lim, st),
+      emptyFallback: (err) =>
+        emptyCampaignPerformance('meta', dateFrom, dateTo, lim, st, err?.message || err),
     };
   }
   return {
@@ -414,7 +447,8 @@ function campaignPerformanceSnapshotOpts(userId, channel, dateFrom, dateTo, limi
     buildSnapshot: () =>
       buildCampaignPerformanceSnapshot(userId, 'googleAds', 'google', dateFrom, dateTo, lim, st),
     execLive: () => googleAdapter.getCampaignPerformance(userId, dateFrom, dateTo, lim, st),
-    emptyFallback: () => emptyCampaignPerformance('google', dateFrom, dateTo, lim, st),
+    emptyFallback: (err) =>
+      emptyCampaignPerformance('google', dateFrom, dateTo, lim, st, err?.message || err),
   };
 }
 
