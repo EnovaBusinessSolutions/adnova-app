@@ -29,7 +29,7 @@ async function testCollectors() {
 
   console.log('\n--- Iniciando Colector de GOOGLE ---');
   try {
-    const googleResult = await collectGoogle(userId, { rangeDays: 30, forceIds: ['2379904178'] });
+    const googleResult = process.env.GADS_AUDIT_MAX = '10'; await collectGoogle(userId, { rangeDays: 30 });
     console.log("GOOGLE COLLECTOR RESULTADO:");
     console.log(JSON.stringify(googleResult, null, 2));
   } catch(e) {
