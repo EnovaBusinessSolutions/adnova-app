@@ -551,11 +551,11 @@ async function accumulateCampaignBreakdowns({
     const costMicrosNum = Number(costMicros || 0);
 
     const base_conversions = Number(met.conversions || 0);
-    const all_conversions = Number(met.allConversions ?? met.all_conversions ?? 0);
+    const all_conversions = Number(met.allConversions ?? met.all_conversions ?? met.metrics?.all_conversions ?? 0);
     const conversions = Math.max(base_conversions, all_conversions);
 
     const base_conv_value = Number(met.conversionsValue ?? met.conversions_value ?? 0);
-    const all_conv_value = Number(met.allConversionsValue ?? met.all_conversions_value ?? 0);
+    const all_conv_value = Number(met.allConversionsValue ?? met.all_conversions_value ?? met.metrics?.all_conversions_value ?? 0);
     const conv_value = Math.max(base_conv_value, all_conv_value);
 
     const device = seg.device || 'UNSPECIFIED';
