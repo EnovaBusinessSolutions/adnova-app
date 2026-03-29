@@ -117,6 +117,11 @@ function isAccountAllowed(accountId) {
   return normalized ? allowed.has(normalized) : false;
 }
 
+// Intercept GET requests from crawlers (like Meta) immediately
+router.get('/', (req, res) => {
+  return res.status(200).send('OK');
+});
+
 router.post('/', async (req, res) => {
   let step = 'init';
   try {
