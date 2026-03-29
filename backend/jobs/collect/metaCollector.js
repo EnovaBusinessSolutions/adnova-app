@@ -226,6 +226,9 @@ const PURCHASE_ACTION_PRIORITY = [
   'offsite_conversion.fb_pixel_purchase',
   'omni_purchase',
   'purchase',
+  'offsite_conversion.custom.217343460920409',
+  'offsite_conversion', // Broad fallback
+  'lead',               // Oftentimes setups track purchases as leads
 ];
 
 function pickActionValue(list, priority) {
