@@ -2280,6 +2280,16 @@ router.get('/:account_id', async (req, res) => {
       : modeledConversions.reduce((acc, conv) => acc + Number(conv.revenue || 0), 0);
     const totalRevenueResolved = filteredOrders.length > 0 ? totalRevenue : purchaseRevenueFromEventsModeled;
 
+    // Fallback if DB lacks platform connections but MCP holds data
+    if (paidMedia?.meta?.hasSnapshot && integrationHealth.meta) {
+      integrationHealth.meta.connected = true;
+      integrationHealth.meta.status = 'ACTIVE';
+    }
+    if (paidMedia?.google?.hasSnapshot && integrationHealth.google) {
+      integrationHealth.google.connected = true;
+      integrationHealth.google.status = 'ACTIVE';
+    }
+
     // 5. Return JSON
     const responsePayload = {
       summary: {
