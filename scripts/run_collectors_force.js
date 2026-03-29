@@ -29,7 +29,7 @@ async function testCollectors() {
 
   console.log('\n--- Iniciando Colector de GOOGLE ---');
   try {
-    const googleResult = const User = require('../backend/models/User'); await User.updateOne({ _id: userId }, { selectedGoogleAccounts: ['2379904178'] }); await collectGoogle(userId, { rangeDays: 30 });
+    const User = require('../backend/models/User'); await User.updateOne({ _id: userId }, { selectedGoogleAccounts: ['2379904178'] }); const googleResult = await collectGoogle(userId, { rangeDays: 30 });
     console.log("GOOGLE COLLECTOR RESULTADO:");
     console.log(JSON.stringify(googleResult, null, 2));
   } catch(e) {
