@@ -1,9 +1,10 @@
 'use strict';
 
-const { z } = require('zod');
-const { validateDateRange } = require('../schemas/tool-schemas');
+const { validateDateRange, getChannelSummaryInput } = require('../schemas/tool-schemas');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { resolveChannelSummaryPayload } = require('../services/adsPerformanceResolve');
+const { resolveToolUserId } = require('../mcpContext');
+const { checkToolScopes } = require('../scopes');
 
 const TOOL_NAME = 'get_channel_summary';
 
@@ -11,15 +12,15 @@ function register(server, mcpUserId) {
   server.tool(
     TOOL_NAME,
     'Returns a side-by-side summary of performance across all connected ad channels for a given date range.',
-    {
-      date_from: z.string().describe('Start date (YYYY-MM-DD)'),
-      date_to: z.string().describe('End date (YYYY-MM-DD)'),
-    },
+    getChannelSummaryInput,
     { readOnlyHint: true },
     async (params, extra) => {
       try {
-        const userId = mcpUserId ?? extra?.userId ?? extra?.request?._mcpUserId;
+        const userId = resolveToolUserId(mcpUserId, extra);
         if (!userId) return createToolErrorResponse('UNAUTHORIZED', TOOL_NAME);
+
+        const sc = checkToolScopes(TOOL_NAME);
+        if (!sc.ok) return createToolErrorResponse(sc.code, TOOL_NAME, sc.detail);
 
         const rangeError = validateDateRange(params.date_from, params.date_to);
         if (rangeError) return createToolErrorResponse('DATE_RANGE_TOO_LARGE', TOOL_NAME, rangeError);

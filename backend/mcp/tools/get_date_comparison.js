@@ -1,9 +1,10 @@
 'use strict';
 
-const { z } = require('zod');
-const { validateDateRange } = require('../schemas/tool-schemas');
+const { validateDateRange, getDateComparisonInput } = require('../schemas/tool-schemas');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { resolveDateComparisonPayload } = require('../services/adsPerformanceResolve');
+const { resolveToolUserId } = require('../mcpContext');
+const { checkToolScopes } = require('../scopes');
 
 const TOOL_NAME = 'get_date_comparison';
 
@@ -11,18 +12,15 @@ function register(server, mcpUserId) {
   server.tool(
     TOOL_NAME,
     'Compares ad performance metrics between two date periods for a given channel.',
-    {
-      channel: z.enum(['meta', 'google', 'shopify', 'all']).describe('Channel to compare'),
-      period_a_from: z.string().describe('Start of baseline period (YYYY-MM-DD)'),
-      period_a_to: z.string().describe('End of baseline period (YYYY-MM-DD)'),
-      period_b_from: z.string().describe('Start of comparison period (YYYY-MM-DD)'),
-      period_b_to: z.string().describe('End of comparison period (YYYY-MM-DD)'),
-    },
+    getDateComparisonInput,
     { readOnlyHint: true },
     async (params, extra) => {
       try {
-        const userId = mcpUserId ?? extra?.userId ?? extra?.request?._mcpUserId;
+        const userId = resolveToolUserId(mcpUserId, extra);
         if (!userId) return createToolErrorResponse('UNAUTHORIZED', TOOL_NAME);
+
+        const sc = checkToolScopes(TOOL_NAME);
+        if (!sc.ok) return createToolErrorResponse(sc.code, TOOL_NAME, sc.detail);
 
         const errA = validateDateRange(params.period_a_from, params.period_a_to);
         if (errA) return createToolErrorResponse('DATE_RANGE_TOO_LARGE', TOOL_NAME, errA);

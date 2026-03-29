@@ -1,10 +1,11 @@
 'use strict';
 
-const { z } = require('zod');
-const { validateDateRange } = require('../schemas/tool-schemas');
+const { validateDateRange, getCampaignPerformanceInput } = require('../schemas/tool-schemas');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
 const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
 const { campaignPerformanceSnapshotOpts } = require('../services/adsPerformanceResolve');
+const { resolveToolUserId } = require('../mcpContext');
+const { checkToolScopes } = require('../scopes');
 
 const TOOL_NAME = 'get_campaign_performance';
 
@@ -12,18 +13,15 @@ function register(server, mcpUserId) {
   server.tool(
     TOOL_NAME,
     'Retrieves performance metrics broken down by campaign for a given ad channel and date range.',
-    {
-      channel: z.enum(['meta', 'google']).describe('Ad platform to query'),
-      date_from: z.string().describe('Start date (YYYY-MM-DD)'),
-      date_to: z.string().describe('End date (YYYY-MM-DD)'),
-      limit: z.number().int().min(1).max(50).optional().default(10).describe('Max campaigns to return'),
-      status: z.enum(['active', 'paused', 'all']).optional().default('all').describe('Filter by campaign status'),
-    },
+    getCampaignPerformanceInput,
     { readOnlyHint: true },
     async (params, extra) => {
       try {
-        const userId = mcpUserId ?? extra?.userId ?? extra?.request?._mcpUserId;
+        const userId = resolveToolUserId(mcpUserId, extra);
         if (!userId) return createToolErrorResponse('UNAUTHORIZED', TOOL_NAME);
+
+        const sc = checkToolScopes(TOOL_NAME);
+        if (!sc.ok) return createToolErrorResponse(sc.code, TOOL_NAME, sc.detail);
 
         const rangeError = validateDateRange(params.date_from, params.date_to);
         if (rangeError) return createToolErrorResponse('DATE_RANGE_TOO_LARGE', TOOL_NAME, rangeError);
