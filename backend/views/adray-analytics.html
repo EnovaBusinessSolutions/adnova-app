@@ -3388,6 +3388,12 @@
             const focusEl = document.getElementById('attribution-journey-focus');
             const historyEl = document.getElementById('attribution-journey-history');
             if (!focusEl || !historyEl) return;
+
+            const activeInput = document.activeElement && document.activeElement.id === 'journey-profile-search' ? document.activeElement : null;
+            const hadFocus = !!activeInput;
+            const selectionStart = hadFocus ? activeInput.selectionStart : null;
+            const selectionEnd = hadFocus ? activeInput.selectionEnd : null;
+
             wireJourneyChannelLegend();
 
             const currentData = sessionExplorerState.currentData;
@@ -3471,7 +3477,8 @@
             const normalizedSearch = normalizeProfileName(attributionJourneyState.profileSearch || '');
             const visibleProfilesBase = allWooProfiles.filter((profile) => {
                 if (!normalizedSearch) return true;
-                const label = normalizeProfileName(profile.customerDisplayName || profile.profileLabel || '');
+                const resolvedLabel = resolveProfileDisplayName(profile);
+                const label = normalizeProfileName(resolvedLabel || '');
                 const customerId = normalizeCustomerId(profile.customerId);
                 return label.includes(normalizedSearch) || customerId.includes(normalizedSearch);
             });
@@ -3541,7 +3548,7 @@
             historyEl.innerHTML = `
                 <div class="space-y-3">
                     <div class="flex items-center gap-2 flex-wrap">
-                        <input id="journey-profile-search" type="text" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white text-gray-900 placeholder-gray-500" placeholder="Buscar perfil Woo" value="${escapeHtmlAttr(attributionJourneyState.profileSearch || '')}">
+                        <input id="journey-profile-search" type="text" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white text-black placeholder-gray-500" style="color: black !important;" placeholder="Buscar perfil Woo" value="${escapeHtmlAttr(attributionJourneyState.profileSearch || '')}">
                         <select id="journey-profile-sort" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white text-gray-900">
                             <option value="orders" ${attributionJourneyState.profileSort === 'orders' ? 'selected' : ''}>Mas órdenes</option>
                             <option value="revenue" ${attributionJourneyState.profileSort === 'revenue' ? 'selected' : ''}>Mayor revenue</option>
@@ -3578,6 +3585,10 @@
 
             const profileSearchInput = historyEl.querySelector('#journey-profile-search');
             if (profileSearchInput) {
+                if (hadFocus) {
+                    profileSearchInput.focus();
+                    try { profileSearchInput.setSelectionRange(selectionStart, selectionEnd); } catch(e) {}
+                }
                 profileSearchInput.addEventListener('input', (event) => {
                     const nextValue = event.target.value || '';
                     if (journeyProfileSearchDebounceTimer) clearTimeout(journeyProfileSearchDebounceTimer);
