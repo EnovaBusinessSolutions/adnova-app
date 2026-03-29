@@ -737,6 +737,21 @@ async function fetchInsights({
       deltas,
       series,
       campaigns,
+      currency,
+      locale: tz?.startsWith('Europe/') ? 'es-ES' : 'es-MX',
+      cachedAt: new Date().toISOString(),
+    };
+
+    setCache(cacheKey, payload);
+    return payload;
+}
+
+
+/* ========================================================================== *
+ * 5) MCC (legacy)  ← REST
+ * ========================================================================== */
+
+async function mccInviteCustomer({ accessToken, managerId, clientId }) {
   const mid = normId(managerId);
   const cid = normId(clientId);
 
