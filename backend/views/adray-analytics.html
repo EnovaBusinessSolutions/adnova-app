@@ -1993,6 +1993,29 @@
                             <div class="mt-1 text-xs text-gray-400" id="pm-google-sync">Sin snapshot asociado</div>
                         </div>
                     </div>
+
+                    <!-- Campaigns Table -->
+                    <div class="mt-6 hidden fade-in" id="google-campaigns-container">
+                        <h4 class="text-sm font-semibold text-gray-900 mb-3 border-b border-gray-100 pb-2">Top Google Ads Campaigns</h4>
+                        <div class="overflow-x-auto shadow-sm ring-1 ring-black ring-opacity-5 rounded-lg">
+                            <table class="min-w-full divide-y divide-gray-200">
+                                <thead style="background-color: var(--secondary-bg);">
+                                    <tr>
+                                        <th scope="col" class="py-3 pl-4 pr-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Campaign</th>
+                                        <th scope="col" class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Spend</th>
+                                        <th scope="col" class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Rev</th>
+                                        <th scope="col" class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">ROAS</th>
+                                        <th scope="col" class="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">CPA</th>
+                                        <th scope="col" class="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="bg-white divide-y divide-gray-100" id="google-campaigns-tbody">
+                                    <!-- Rows will be injected via JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
                 </div>
 
                 <div class="ops-panel p-6">
@@ -4791,6 +4814,69 @@
             } else {
                 syncEl.textContent = 'Sin snapshot asociado';
             }
+
+            if (prefix === 'google') {
+                renderGoogleCampaigns(sourceState?.campaigns || [], currency);
+            }
+        }
+
+        function renderGoogleCampaigns(campaigns, currency) {
+            const container = document.getElementById('google-campaigns-container');
+            const tbody = document.getElementById('google-campaigns-tbody');
+            if (!container || !tbody) return;
+
+            if (!campaigns || campaigns.length === 0) {
+                container.classList.add('hidden');
+                return;
+            }
+
+            // Muestra solo el top 10 basado en spend
+            const topCampaigns = campaigns
+                .sort((a, b) => (b.kpis?.spend || b.cost || 0) - (a.kpis?.spend || a.cost || 0))
+                .slice(0, 10);
+
+            tbody.innerHTML = topCampaigns.map(c => {
+                const name = c.campaign_name || c.name || 'Desconocida';
+                const spend = c.kpis?.spend ?? c.cost ?? 0;
+                const rev = c.kpis?.purchase_value ?? c.kpis?.conversion_value ?? c.conv_value ?? 0;
+                const roas = c.kpis?.roas ?? c.roas ?? 0;
+                const cpa = c.kpis?.cpa ?? c.cpa ?? 0;
+                
+                // Determina status si es posible
+                let statusBadge = '';
+                if (c.health === 'WINNER') statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Winner</span>';
+                else if (c.health === 'RISK') statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">Risk</span>';
+                else if (c.health === 'PROMISING') statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Promising</span>';
+                else {
+                    const mappedStatus = c.status === 'ENABLED' ? 'Active' : c.status === 'PAUSED' ? 'Paused' : c.status || '-';
+                    statusBadge = `<span class="text-xs text-gray-500">${mappedStatus}</span>`;
+                }
+
+                return `
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="whitespace-nowrap py-3 pl-4 pr-3 text-sm font-medium text-gray-900 overflow-hidden text-ellipsis max-w-[200px]" title="${name}">
+                            ${name}
+                        </td>
+                        <td class="whitespace-nowrap px-3 py-3 text-sm text-gray-500 text-right">
+                            ${formatCurrencyWithCode(spend, currency)}
+                        </td>
+                        <td class="whitespace-nowrap px-3 py-3 text-sm text-gray-900 font-medium text-right">
+                            ${formatCurrencyWithCode(rev, currency)}
+                        </td>
+                        <td class="whitespace-nowrap px-3 py-3 text-sm ${roas >= 2 ? 'text-green-600' : roas < 1 && spend > 0 ? 'text-red-500' : 'text-gray-500'} font-semibold text-right">
+                            ${roas > 0 ? roas.toFixed(2) + 'x' : '-'}
+                        </td>
+                        <td class="whitespace-nowrap px-3 py-3 text-sm text-gray-500 text-right">
+                            ${formatCurrencyWithCode(cpa, currency)}
+                        </td>
+                        <td class="whitespace-nowrap px-3 py-3 text-sm text-center">
+                            ${statusBadge}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            container.classList.remove('hidden');
         }
 
         function renderRecentPurchases(purchases) {

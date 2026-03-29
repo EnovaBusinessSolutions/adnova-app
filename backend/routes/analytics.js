@@ -456,8 +456,9 @@ function buildPaidMediaSourceSummary({ sourceState, payload, snapshotId, revenue
     conversions: toFiniteNumber(kpis.purchases ?? kpis.conversions, 0),
     clicks: toFiniteNumber(kpis.link_clicks ?? kpis.clicks, 0),
     spendDeltaPct: toFiniteNumberOrNull(payload?.last7_vs_prev7?.spend_pct),
-    roasDelta: toFiniteNumberOrNull(payload?.last7_vs_prev7?.roas_diff),
-  };
+      roasDelta: toFiniteNumberOrNull(payload?.last7_vs_prev7?.roas_diff),
+      campaigns: payload?.top_campaigns || [],
+    };
 }
 
 async function buildPaidMediaSummary({ accountId, domain, platformConnections = [], fallbackUserId = null }) {
