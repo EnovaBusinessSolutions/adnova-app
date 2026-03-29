@@ -16,7 +16,7 @@ async function testCollectors() {
   console.log("✅ Conectado a MongoDB");
 
   // Reemplaza este userId por el de tu usuario admin/demo que estamos debuggeando
-  const userId = '67d1db0e4ed53de8f09d846c'; // ID base (Ajustalo al correcto de ser necesario)
+  const userId = '69c21ceefa3f5aff06abc9aa'; // ID base (Ajustalo al correcto de ser necesario)
 
   console.log('--- Iniciando Colector de META ---');
   try {
