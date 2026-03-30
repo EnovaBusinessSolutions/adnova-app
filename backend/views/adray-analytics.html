@@ -2754,9 +2754,11 @@
                 || normalizedPayload?.customer?.display_name
                 || normalizedPayload?.user_data?.name
                 || [normalizedPayload?.user_data?.fn, normalizedPayload?.user_data?.ln].filter(Boolean).join(' ')
+                || [normalizedPayload?.billing?.first_name, normalizedPayload?.billing?.last_name].filter(Boolean).join(' ')
+                || [normalizedPayload?.customer?.first_name, normalizedPayload?.customer?.last_name].filter(Boolean).join(' ')
                 || ''
             ).trim();
-            const payloadEmail = String(normalizedPayload.email || normalizedPayload.customer_email || normalizedPayload?.user_data?.email || '').trim();
+            const payloadEmail = String(normalizedPayload.email || normalizedPayload.customer_email || normalizedPayload?.user_data?.email || normalizedPayload?.billing?.email || normalizedPayload?.customer?.email || '').trim();
             const payloadPhone = String(normalizedPayload.phone || normalizedPayload.customer_phone || normalizedPayload?.user_data?.phone || '').trim();
 
             const onlineIdentity = resolveOnlineUserIdentity({ sessionId: safeSessionId, userKey: safeUserKey });
