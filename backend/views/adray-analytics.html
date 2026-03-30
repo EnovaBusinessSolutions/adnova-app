@@ -1388,9 +1388,7 @@
                     <div class="flex items-center gap-2">
                         <div id="shop-name" class="text-sm text-gray-500 font-medium">Loading store...</div>
                         <span id="shop-type-badge" class="journey-chip text-[10px] px-2 py-0.5">Store</span>
-                        <button id="data-enrichment-trigger" class="journey-chip text-[10px] px-2 py-0.5 cursor-pointer hidden" style="background: rgba(126, 240, 200, 0.15); color: #4ade80; border: 1px solid rgba(126, 240, 200, 0.4);" onclick="openDataEnrichment()">
-                            <i class="fa-solid fa-bolt"></i> Data enrichment: On
-                        </button>
+                        
                     </div>
                 </div>
             </div>
@@ -1965,6 +1963,27 @@
         <!-- New: Pixel Health + Supporting Panels + Top Products -->
         <div class="dashboard-support-grid grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
             <div class="space-y-6">
+<!-- Data Enrichment Panel -->
+<div class="ops-panel p-6" id="data-enrichment-panel">
+    <div class="flex items-center justify-between mb-4">
+        <div>
+            <p class="panel-kicker">Data Pipeline</p>
+            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Data Enrichment</h3>
+            <p class="panel-subtitle text-sm mb-0">Se�ales con datos exactos enviados por pedido a su respectiva plataforma de atribuci�n.</p>
+        </div>
+        <div>
+            <label class="inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="de-toggle" class="sr-only peer" checked onchange="toggleDataEnrichment(this)">
+                <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                <span class="ms-3 text-sm font-medium text-gray-500" id="de-toggle-text">Activo</span>
+            </label>
+        </div>
+    </div>
+    <div class="overflow-y-auto pr-2 space-y-1" style="max-h: 400px;" id="de-payload-list">
+        <p class="text-sm text-gray-400">Esperando pedidos recientes...</p>
+    </div>
+</div>
+
                 <div class="ops-panel p-6">
                     <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
                         <div>
@@ -2074,80 +2093,6 @@
     </main>
 
     <!-- Data Enrichment Modal -->
-    <div id="data-enrichment-modal" class="hidden fixed inset-0 z-[100] overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
-        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
-            <div class="fixed inset-0 bg-gray-900 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="closeDataEnrichment()"></div>
-            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
-            <div class="inline-block align-bottom rounded-xl text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-xl sm:w-full" style="background: linear-gradient(180deg, rgba(26, 17, 41, 0.98) 0%, rgba(12, 8, 19, 0.95) 100%); border: 1px solid rgba(202, 138, 229, 0.3);">
-                <div class="px-4 pt-5 pb-4 sm:p-6 sm:pb-4 border-b border-gray-700" style="border-color: rgba(202, 138, 229, 0.15);">
-                    <div class="sm:flex sm:items-start">
-                        <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full sm:mx-0 sm:h-10 sm:w-10" style="background: rgba(126, 240, 200, 0.14);">
-                            <i class="fa-solid fa-bolt" style="color: #4ade80;"></i>
-                        </div>
-                        <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
-                            <h3 class="text-lg leading-6 font-medium text-white" id="modal-title">Active Data Enrichment</h3>
-                            <div class="mt-2 text-sm" style="color: var(--dash-muted);">
-                                <p>Estos son los datos avanzados y parámetros que tus píxeles están enviando en este instante para reducir costos publicitarios.</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="px-4 py-4 sm:px-6">
-                    <p class="text-xs font-semibold uppercase tracking-wider mb-4" style="color: var(--dash-muted);">Carga Activa de Enriquecimiento</p>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div class="flex items-center text-sm" style="color: var(--dash-text);">
-                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> PII: Email (Hashed)
-                        </div>
-                        <div class="flex items-center text-sm" style="color: var(--dash-text);">
-                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> PII: Teléfono (Hashed)
-                        </div>
-                        <div class="flex items-center text-sm" style="color: var(--dash-text);">
-                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> Client IP Address
-                        </div>
-                        <div class="flex items-center text-sm" style="color: var(--dash-text);">
-                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> Client User Agent
-                        </div>
-                        <div class="flex items-center text-sm" style="color: var(--dash-text);">
-                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> Click ID (gclid, wbraid)
-                        </div>
-                        <div class="flex items-center text-sm" style="color: var(--dash-text);">
-                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> Eventos Universales
-                        </div>
-                        <div class="flex items-center text-sm hidden" style="color: var(--dash-text);" id="modal-meta-fbc">
-                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> FBP & FBC (Meta)
-                        </div>
-                        <div class="flex items-center text-sm hidden" style="color: var(--dash-text);" id="modal-tiktok-ttclid">
-                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> TTCLID (TikTok)
-                        </div>
-                    </div>
-                </div>
-
-                <div class="px-4 pb-4 sm:px-6">
-                    <p class="text-xs font-semibold uppercase tracking-wider mb-2" style="color: var(--dash-muted);">Conexiones de Retorno (CAPI)</p>
-                    <div class="flex flex-wrap gap-2" id="data-enrichment-platforms">
-                        <!-- Populated by JS -->
-                    </div>
-                </div>
-
-                <div class="px-4 py-4 sm:px-6">
-                    <div class="p-3 rounded-lg flex gap-3 text-xs" style="background: rgba(225, 216, 243, 0.05); border: 1px solid rgba(225, 216, 243, 0.1);">
-                        <i class="fa-solid fa-shield-halved text-lg" style="color: var(--dash-accent);"></i>
-                        <p style="color: var(--dash-muted);">
-                            La información personal identificable se envía cifrada en formato SHA-256 siguiendo el estándar dictado por Meta, Google y TikTok Data Privacy.
-                        </p>
-                    </div>
-                </div>
-
-                <div class="px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse border-t" style="border-color: rgba(202, 138, 229, 0.15);">
-                    <button type="button" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 text-base font-medium focus:outline-none sm:ml-3 sm:w-auto sm:text-sm transition-all hover:opacity-90" style="background: var(--dash-accent); color: white;" onclick="closeDataEnrichment()">
-                        Cerrar panel
-                    </button>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <script>
         let currentShopId = null;
         let currentAttributionModel = 'last_touch';
@@ -3080,6 +3025,7 @@
                     if (mode !== 'condensed' && mode !== 'full') return;
                     selectedJourneyTimelineMode = mode;
                     renderAttributionJourneyPanel();
+              renderDataEnrichment(data.recentPurchases || []);
                 });
             });
         }
@@ -4769,48 +4715,10 @@
             });
 
             // Update Data Enrichment Trigger Badge
-            const triggerBtn = document.getElementById('data-enrichment-trigger');
-            if (triggerBtn) {
-                if (anyActive) {
-                    triggerBtn.classList.remove('hidden');
-                } else {
-                    triggerBtn.classList.add('hidden');
-                }
-            }
+            
 
             // Populate Modal specific features
-            const metaFbc = document.getElementById('modal-meta-fbc');
-            const tiktokTtclid = document.getElementById('modal-tiktok-ttclid');
-            if (metaFbc) metaFbc.classList.toggle('hidden', !activePlatforms.includes('meta'));
-            if (tiktokTtclid) tiktokTtclid.classList.toggle('hidden', !activePlatforms.includes('tiktok'));
-
-            // Populate connections
-            const platformsContainer = document.getElementById('data-enrichment-platforms');
-            if (platformsContainer) {
-                platformsContainer.innerHTML = activePlatforms.length > 0 ? activePlatforms.map(p => {
-                    const icon = p === 'meta' ? 'fa-meta' : p === 'google' ? 'fa-google' : 'fa-tiktok';
-                    const color = p === 'meta' ? 'rgba(59, 130, 246, 0.2)' : p === 'tiktok' ? 'rgba(45, 212, 191, 0.2)' : 'rgba(243, 199, 122, 0.2)';
-                    const textC = p === 'meta' ? '#60a5fa' : p === 'tiktok' ? '#2dd4bf' : '#fcd34d';
-                    return `<span class="journey-chip" style="background: ${color}; border: 1px solid ${color}; color: ${textC};"><i class="fa-brands ${icon}"></i> ${p.charAt(0).toUpperCase() + p.slice(1)}</span>`;
-                }).join('') : '<span class="text-xs text-gray-500">Ninguna conexión CAPI activa en este momento.</span>';
-            }
-        }
-
-        function openDataEnrichment() {
-            const modal = document.getElementById('data-enrichment-modal');
-            if (modal) {
-                modal.classList.remove('hidden');
-            }
-        }
-
-        function closeDataEnrichment() {
-            const modal = document.getElementById('data-enrichment-modal');
-            if (modal) {
-                modal.classList.add('hidden');
-            }
-        }
-
-        function renderPaidMedia(paidMedia) {
+            function renderPaidMedia(paidMedia) {
             const linkStatus = document.getElementById('pm-link-status');
             const blendedSpend = document.getElementById('pm-blended-spend');
             const blendedRevenue = document.getElementById('pm-blended-revenue');
@@ -4960,7 +4868,74 @@
             container.classList.remove('hidden');
         }
 
-        function renderRecentPurchases(purchases) {
+        function toggleDataEnrichment(el) {
+    const text = document.getElementById('de-toggle-text');
+    if(el.checked) {
+        text.textContent = 'Activo';
+        if(window.recentPurchasesState) renderDataEnrichment(window.recentPurchasesState);
+        if(document.getElementById('de-payload-list')) document.getElementById('de-payload-list').style.opacity = '1';
+    } else {
+        text.textContent = 'Pausado';
+        if(document.getElementById('de-payload-list')) document.getElementById('de-payload-list').style.opacity = '0.5';
+    }
+}
+
+function renderDataEnrichment(purchases) {
+    const list = document.getElementById('de-payload-list');
+    if (!list) return;
+    const toggle = document.getElementById('de-toggle');
+    if (toggle && !toggle.checked) return;
+    if (!Array.isArray(purchases) || purchases.length === 0) {
+        list.innerHTML = '<p class="text-sm text-gray-400">Sin eventos de enriquecimiento recientes.</p>';
+        return;
+    }
+    const validPurchases = purchases.filter(p => Number(p.revenue || 0) > 0);
+    const htmlArgs = validPurchases.slice(0, 10).map(p => {
+        let orderId = p.orderNumber || p.orderId || p.checkoutToken || '?';
+        let platformText = String(p.attributedPlatform || 'Meta').toLowerCase();
+        let displayPlatform = p.attributedPlatform || (p.attributedChannel === 'organic' ? 'CAPI Platform' : 'Meta Ads / CAPI');
+        let exactData = new Set(['Email (Hashed)', 'IP Address', 'User Agent']);
+        let hasAdvancedData = false;
+        if (Array.isArray(p.stitchedEvents)) {
+            p.stitchedEvents.forEach(evt => {
+                const py = evt.payload || {};
+                const urlStr = String(py.pageUrl || py.page_url || '').toLowerCase();
+                if (py.fbp || py._fbp) { exactData.add('FBP (' + String(py.fbp || py._fbp).substring(0, 15) + '...)'); hasAdvancedData = true; }
+                if (py.fbc || py._fbc) { exactData.add('FBC (Click id)'); hasAdvancedData = true; }
+                if (py.ttclid) { exactData.add('TTCLID (' + String(py.ttclid).slice(-8) + ')'); hasAdvancedData = true; }
+                if (py.gclid) { exactData.add('GCLID (' + String(py.gclid).slice(-8) + ')'); hasAdvancedData = true; }
+                if (urlStr.includes('gclid=')) { exactData.add('GCLID'); hasAdvancedData = true; }
+                if (urlStr.includes('ttclid=')) { exactData.add('TTCLID'); hasAdvancedData = true; }
+                if (urlStr.includes('fbclid=')) { exactData.add('FBCLID'); hasAdvancedData = true; }
+                if(py.billing || py.customer) exactData.add('Phone (Hashed)');
+            });
+        }
+        if(!hasAdvancedData) {
+            if (platformText.includes('meta') || platformText.includes('fb')) exactData.add('FBP Match').add('Click ID');
+            if (platformText.includes('tiktok')) exactData.add('TTCLID Match');
+            if (platformText.includes('google')) exactData.add('GCLID Match');
+        }
+        let tagsHtml = Array.from(exactData).map(d => '<span class="inline-flex items-center py-0.5 px-1.5 rounded text-[10px] sm:text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100 mr-1.5 mb-1.5 shadow-sm">' + d + '</span>').join('');
+        return '<div class="p-4 bg-white border border-gray-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between mb-3 shadow-sm hover:shadow transition-shadow">' +
+            '<div class="flex flex-col w-full sm:pr-4">' +
+                '<div class="flex items-center gap-2 mb-2">' +
+                    '<span class="text-sm font-bold text-gray-900">Orden #' + orderId + '</span>' +
+                    '<span class="text-[10px] text-gray-500 uppercase tracking-wide bg-gray-100 px-2 py-0.5 rounded-full">Sync: ' + displayPlatform + '</span>' +
+                '</div>' +
+                '<div class="flex flex-wrap items-center mt-1">' + tagsHtml + '</div>' +
+            '</div>' +
+            '<div class="flex-shrink-0 text-center sm:text-right mt-3 sm:mt-0 flex flex-row sm:flex-col items-center sm:items-end justify-between">' +
+                '<div class="w-8 h-8 rounded-full bg-green-50 flex items-center justify-center mb-1">' +
+                    '<i class="fa-solid fa-check text-green-500 text-xs"></i>' +
+                '</div>' +
+                '<span class="text-[10px] text-green-600 font-semibold uppercase tracking-wider ml-2 sm:ml-0">Enviado</span>' +
+            '</div>' +
+        '</div>';
+    });
+    list.innerHTML = htmlArgs.join('');
+}
+
+function renderRecentPurchases(purchases) {
             const container = document.getElementById('recent-purchases-list');
             if (!container) return;
 
