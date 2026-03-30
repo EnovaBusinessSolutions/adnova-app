@@ -1840,7 +1840,7 @@
                 <div class="flex items-center justify-between mb-4">
                     <div>
                         <p class="panel-kicker">Comercial</p>
-                        <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Atribución por Canal</h3>
+                        <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Comparativa ROAS (AdNova vs Nativo)</h3>
                     </div>
                     <span id="attribution-model-badge" class="text-xs text-gray-500">Model: last touch</span>
                 </div>
@@ -4813,7 +4813,7 @@
             })).filter(d => d.revenue > 0);
 
             // Charts
-            renderAttributionChart(attributionData);
+            renderAttributionChart(attributionData, paidMedia);
             renderTrendChart(data.daily || []);
             renderTopProducts(data.topProducts || []);
             renderRecentPurchases(data.recentPurchases || []);
@@ -5142,51 +5142,99 @@
             }).join('');
         }
 
-        function renderAttributionChart(attributionData) {
+        function renderAttributionChart(attributionData, paidMedia = {}) {
             const ctx = document.getElementById('attributionChart').getContext('2d');
-            
-            const labels = attributionData.map(d => d.channel.toUpperCase());
-            const values = attributionData.map(d => d.revenue); // Use revenue for chart
-
 
             if (attributionChartInstance) attributionChartInstance.destroy();
 
-                attributionChartInstance = new Chart(ctx, {
-                type: 'doughnut',
+            // Comparar ROAS de AdNova vs Plataforma para los canales de pauta
+            const platforms = ['meta', 'google', 'tiktok'];
+            const labels = [];
+            const adnovaRoasData = [];
+            const platformRoasData = [];
+
+            platforms.forEach(p => {
+                const attrInfo = attributionData.find(d => d.channel.toLowerCase() === p) || { revenue: 0 };
+                const pmInfo = paidMedia[p] || {};
+                const spend = Number(pmInfo.spend) || 0;
+                
+                let adnovaRoas = 0;
+                if (spend > 0) {
+                    adnovaRoas = attrInfo.revenue / spend;
+                }
+                
+                let platformRoas = Number(pmInfo.roas) || 0;
+
+                if (spend > 0 || attrInfo.revenue > 0 || platformRoas > 0) {
+                    labels.push(p.charAt(0).toUpperCase() + p.slice(1));
+                    adnovaRoasData.push(Number(adnovaRoas.toFixed(2)));
+                    platformRoasData.push(Number(platformRoas.toFixed(2)));
+                }
+            });
+
+            // Fallback en caso de que no haya datos aún
+            if (labels.length === 0) {
+                labels.push('Meta', 'Google');
+                adnovaRoasData.push(0, 0);
+                platformRoasData.push(0, 0);
+            }
+
+            attributionChartInstance = new Chart(ctx, {
+                type: 'bar',
                 data: {
                     labels: labels,
-                    datasets: [{
-                        data: values,
-                        backgroundColor: [
-                            '#CA8AE5',
-                            '#7EF0C8',
-                            '#F3C77A',
-                            '#7CA8FF',
-                            '#A48BBE'
-                        ],
-                        borderWidth: 1,
-                        borderColor: 'rgba(8, 7, 13, 0.85)'
-                    }]
+                    datasets: [
+                        {
+                            label: 'AdNova ROAS',
+                            data: adnovaRoasData,
+                            backgroundColor: '#CA8AE5',
+                            borderColor: 'transparent',
+                            borderWidth: 1,
+                            borderRadius: 4
+                        },
+                        {
+                            label: 'Platform ROAS',
+                            data: platformRoasData,
+                            backgroundColor: '#7EF0C8',
+                            borderColor: 'transparent',
+                            borderWidth: 1,
+                            borderRadius: 4
+                        }
+                    ]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: 'rgba(200, 200, 200, 0.1)' },
+                            ticks: { color: '#6b7280' }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: { color: '#6b7280' }
+                        }
+                    },
                     plugins: {
                         legend: {
-                            position: 'right',
+                            position: 'top',
                             labels: {
-                                color: '#F4F1FF',
-                                boxWidth: 12,
-                                padding: 16,
-                            },
+                                color: '#374151',
+                                usePointStyle: true,
+                                padding: 15
+                            }
                         },
                         tooltip: {
                             backgroundColor: 'rgba(12, 8, 19, 0.95)',
                             titleColor: '#F4F1FF',
                             bodyColor: 'rgba(225, 216, 243, 0.9)',
-                            borderColor: 'rgba(202, 138, 229, 0.2)',
-                            borderWidth: 1,
-                        },
+                            callbacks: {
+                                label: function(context) {
+                                    return `${context.dataset.label}: ${context.parsed.y}x`;
+                                }
+                            }
+                        }
                     }
                 }
             });
