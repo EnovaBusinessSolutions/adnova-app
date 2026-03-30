@@ -5152,29 +5152,32 @@
             const adnovaRoasData = [];
             const platformRoasData = [];
 
-            platforms.forEach(p => {
-                const attrInfo = attributionData.find(d => d.channel.toLowerCase() === p) || { revenue: 0 };
-                const pmInfo = paidMedia[p] || {};
-                const spend = Number(pmInfo.spend) || 0;
-                
-                let adnovaRoas = 0;
-                if (spend > 0) {
-                    adnovaRoas = attrInfo.revenue / spend;
-                }
-                
-                let platformRoas = pmInfo.roas != null ? Number(pmInfo.roas) : (spend > 0 ? (Number(pmInfo.revenue)||0) / spend : 0);
+              console.log('=== START CHART DEBUG ===');
+              console.log('Attribution Data Built:', attributionData);
+              console.log('Paid Media Info received:', paidMedia);
 
-                if (spend > 0 || attrInfo.revenue > 0 || platformRoas > 0) {
-                    labels.push(p.charAt(0).toUpperCase() + p.slice(1));
-                    adnovaRoasData.push(Number(adnovaRoas.toFixed(2)));
-                    platformRoasData.push(Number(platformRoas.toFixed(2)));
-                }
-            });
+              platforms.forEach(p => {
+                  const attrInfo = attributionData.find(d => d.channel.toLowerCase() === p) || { revenue: 0 };
+                  const pmInfo = paidMedia[p] || {};
+                  const spend = Number(pmInfo.spend) || 0;
 
-            // Fallback en caso de que no haya datos aún
-            if (labels.length === 0) {
-                labels.push('Meta', 'Google');
-                adnovaRoasData.push(0, 0);
+                  let adnovaRoas = 0;
+                  if (spend > 0) {
+                      adnovaRoas = attrInfo.revenue / spend;
+                  }
+
+                  let platformRoas = pmInfo.roas != null ? Number(pmInfo.roas) : (spend > 0 ? (Number(pmInfo.revenue)||0) / spend : 0);
+
+                  console.log(`Evaluating '${p}' -> AdNova Rev: $${attrInfo.revenue}, Platform Spend: $${spend}, Platform Rev: $${pmInfo.revenue||0}, Platform ROAS reported: ${pmInfo.roas||0}`);
+                  console.log(`Calculated for chart -> AdNova ROAS: ${adnovaRoas.toFixed(2)}x, Platform ROAS: ${platformRoas.toFixed(2)}x`);
+
+                  if (spend > 0 || attrInfo.revenue > 0 || platformRoas > 0) {  
+                      labels.push(p.charAt(0).toUpperCase() + p.slice(1));      
+                      adnovaRoasData.push(Number(adnovaRoas.toFixed(2)));       
+                      platformRoasData.push(Number(platformRoas.toFixed(2)));   
+                  }
+              });
+              console.log('=== END CHART DEBUG ===');
                 platformRoasData.push(0, 0);
             }
 
