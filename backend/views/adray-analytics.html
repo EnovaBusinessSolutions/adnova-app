@@ -5531,7 +5531,7 @@
                                     <i class="${attrInfo.icon} text-[9px]"></i> ${attrInfo.text}
                                 </span>
                             </div>
-                            ${linkedUserLabel ? `<p class="text-xs font-semibold text-indigo-700 truncate cursor-pointer live-feed-always-visible-user mt-0.5" title="Click para filtrar eventos de este usuario">${linkedUserLabel}</p>` : `<p class="text-xs ${(isPurchaseEvent||isCartEvent)?\"!text-gray-600\":\"text-gray-400\"} italic mt-0.5">Anónimo</p>`}
+                            ${linkedUserLabel ? `<p class="text-xs font-semibold text-indigo-700 truncate cursor-pointer live-feed-always-visible-user mt-0.5" title="Click para filtrar eventos de este usuario">${linkedUserLabel}</p>` : `<p class="text-xs ${(isPurchaseEvent||isCartEvent)?'!text-gray-600':'text-gray-400'} italic mt-0.5">Anónimo</p>`}
                             <p class="text-xs ${detailColor} truncate mt-0.5">${detail || '-'}</p>
                             <div class="feed-extra mt-1">
                                 <p class="text-[11px] text-indigo-500">${buildSignalTextSimple(data.payload || {})}</p>
