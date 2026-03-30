@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1485,7 +1485,7 @@
                         </div>
                         <div class="ml-5 w-0 flex-1">
                             <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Total Pedidos</dt>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Total Orders</dt>
                                 <dd class="flex items-baseline">
                                     <div class="text-2xl font-semibold text-gray-900" id="total-orders">0</div>
                                 </dd>
@@ -1506,7 +1506,7 @@
                         </div>
                         <div class="ml-5 w-0 flex-1">
                             <dl>
-                                <dt class="text-sm font-medium text-gray-500 truncate">Pedidos Atribuidos</dt>
+                                <dt class="text-sm font-medium text-gray-500 truncate">Orders Atribuidos</dt>
                                 <dd class="flex items-baseline">
                                     <div class="text-2xl font-semibold text-gray-900" id="attributed-orders">0</div>
                                 </dd>
@@ -1837,8 +1837,8 @@
             <div class="ops-panel p-6 h-full">
                 <div class="flex items-center justify-between mb-4">
                     <div>
-                        <p class="panel-kicker">Comercial</p>
-                        <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Comparativa ROAS (AdNova vs Nativo)</h3>
+                        <p class="panel-kicker">Commercial</p>
+                        <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">ROAS Comparison (AdNova vs Native)</h3>
                     </div>
                     <span id="attribution-model-badge" class="text-xs text-gray-500">Model: last touch</span>
                 </div>
@@ -1848,8 +1848,8 @@
             </div>
 
             <div class="ops-panel p-6 h-full">
-                <p class="panel-kicker">Distribuci�n</p>
-                  <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Ingresos por Atribuci�n</h3>
+                <p class="panel-kicker">Distribution</p>
+                  <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Attributed Orders</h3>
                   <div class="relative h-64">
                       <canvas id="attributionPieChart"></canvas>
                   </div>
@@ -1860,9 +1860,9 @@
             <div class="ops-panel overflow-hidden border border-gray-200">
                 <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between gap-4 flex-wrap">
                     <div>
-                        <p class="panel-kicker">Exploración</p>
+                        <p class="panel-kicker">Exploration</p>
                         <h3 class="panel-title text-lg font-semibold text-gray-900">Session Explorer</h3>
-                        <p class="text-sm text-gray-500" id="session-detail-title">Usuarios históricos</p>
+                        <p class="text-sm text-gray-500" id="session-detail-title">Users históricos</p>
                     </div>
                     <div class="flex items-center gap-3">
                         <button id="session-detail-close" type="button" class="session-close-btn inline-flex items-center justify-center w-10 h-10 rounded-full text-gray-700 hover:bg-gray-50">
@@ -1913,7 +1913,7 @@
                         <div class="flex items-center justify-between gap-4 flex-wrap mb-4">
                             <div>
                                 <h4 class="text-sm font-semibold text-gray-900">Comparación lado a lado</h4>
-                                <p class="text-xs text-gray-500" id="session-compare-title">Selecciona una sesión relacionada para comparar.</p>
+                                <p class="text-xs text-gray-500" id="session-compare-title">Selecciona una sesión relacionada to compare.</p>
                             </div>
                             <button id="session-compare-clear" type="button" class="session-clear-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
                                 Limpiar comparación
@@ -1934,7 +1934,7 @@
                     </div>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Atribución y señales</h4>
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Attribution y signals</h4>
                             <div class="space-y-2 text-sm text-gray-600" id="session-detail-attribution"></div>
                         </div>
                         <div class="session-summary-card rounded-xl p-4">
@@ -1969,29 +1969,29 @@
         <div>
             <p class="panel-kicker">Data Pipeline</p>
             <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Data Enrichment</h3>
-            <p class="panel-subtitle text-sm mb-0">Se�ales con datos exactos enviados por pedido a su respectiva plataforma de atribuci�n.</p>
+            <p class="panel-subtitle text-sm mb-0">Accurate data signals sent per order to their respective attribution platform.</p>
         </div>
         <div>
             <label class="inline-flex items-center cursor-pointer">
                 <input type="checkbox" id="de-toggle" class="sr-only peer" checked onchange="toggleDataEnrichment(this)">
                 <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                <span class="ms-3 text-sm font-medium text-gray-500" id="de-toggle-text">Activo</span>
+                <span class="ms-3 text-sm font-medium text-gray-500" id="de-toggle-text">Active</span>
             </label>
         </div>
     </div>
     <div class="overflow-y-auto pr-2 space-y-1" style="max-h: 400px;" id="de-payload-list">
-        <p class="text-sm text-gray-400">Esperando pedidos recientes...</p>
+        <p class="text-sm text-gray-400">Waiting for recent orders...</p>
     </div>
 </div>
 
                 <div class="ops-panel p-6">
                     <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
                         <div>
-                            <p class="panel-kicker">Inversión</p>
+                            <p class="panel-kicker">Investment</p>
                             <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Paid Media</h3>
                             <p class="panel-subtitle text-sm mt-1">Compara gasto, revenue y ROAS para decidir si el tráfico está justificando la inversión.</p>
                         </div>
-                        <span id="pm-link-status" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Sin snapshot</span>
+                        <span id="pm-link-status" class="text-xs font-semibold uppercase tracking-wide text-gray-500">No snapshot</span>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div class="bg-gray-50 rounded-lg p-4">
@@ -2007,7 +2007,7 @@
                             <div class="mt-1 text-sm text-gray-500">Spend: <span id="pm-meta-spend">$0.00</span></div>
                             <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-meta-revenue">$0.00</span></div>
                             <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-meta-roas">-</span></div>
-                            <div class="mt-1 text-xs text-gray-400" id="pm-meta-sync">Sin snapshot asociado</div>
+                            <div class="mt-1 text-xs text-gray-400" id="pm-meta-sync">No snapshot asociado</div>
                         </div>
                         <div class="bg-gray-50 rounded-lg p-4">
                             <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Google Ads</div>
@@ -2015,7 +2015,7 @@
                             <div class="mt-1 text-sm text-gray-500">Spend: <span id="pm-google-spend">$0.00</span></div>
                             <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-google-revenue">$0.00</span></div>
                             <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-google-roas">-</span></div>
-                            <div class="mt-1 text-xs text-gray-400" id="pm-google-sync">Sin snapshot asociado</div>
+                            <div class="mt-1 text-xs text-gray-400" id="pm-google-sync">No snapshot asociado</div>
                         </div>
                     </div>
 
@@ -2041,8 +2041,8 @@
         <div class="mt-8 ops-panel p-6">
             <div class="flex items-center justify-between mb-4">
                 <div>
-                    <p class="panel-kicker">Auditoría</p>
-                    <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Detalle de compras recientes</h3>
+                    <p class="panel-kicker">Audit</p>
+                    <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Recent Purchase Details</h3>
                 </div>
                 <div class="flex items-center gap-3">
                     <select id="recent-purchases-filter" onchange="renderRecentPurchases(recentPurchasesState)" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white">
@@ -2064,19 +2064,19 @@
                         <option value="order_asc">Pedido asc</option>
                         <option value="order_desc">Pedido desc</option>
                     </select>
-                    <span class="text-xs text-gray-500">ingreso + productos + fuente + atribución</span>
+                    <span class="text-xs text-gray-500">ingreso + productos + fuente + attribution</span>
                 </div>
             </div>
             <div class="overflow-x-auto complete-orders-scroll">
                 <table class="min-w-full text-sm">
                     <thead>
                         <tr class="text-left text-gray-500 border-b">
-                            <th class="py-2 pr-4">Fecha</th>
+                            <th class="py-2 pr-4">Date</th>
                             <th class="py-2 pr-4">Pedido</th>
-                            <th class="py-2 pr-4">Usuario</th>
+                            <th class="py-2 pr-4">User</th>
                             <th class="py-2 pr-4">Ingreso</th>
-                            <th class="py-2 pr-4">Productos</th>
-                            <th class="py-2 pr-4">Atribución</th>
+                            <th class="py-2 pr-4">Products</th>
+                            <th class="py-2 pr-4">Attribution</th>
                             <th class="py-2 pr-4">Fuente</th>
                             <th class="py-2 pr-4">Debug</th>
                         </tr>
@@ -2464,7 +2464,7 @@
 
         function humanReadableChannel(channel) {
             const value = String(channel || '').trim().toLowerCase();
-            if (!value) return 'Canal';
+            if (!value) return 'Channel';
             if (value.includes('meta') || value.includes('facebook') || value.includes('instagram')) return 'Meta';
             if (value.includes('google')) return 'Google';
             if (value.includes('tiktok')) return 'TikTok';
@@ -2663,14 +2663,14 @@
                 const metrics = payload.metrics || {};
                 const compareHint = payload.patterns?.recommendedComparison?.sessionId
                     ? `Comparación recomendada: ${payload.patterns.recommendedComparison.sessionId}`
-                    : 'Abre una sesión relacionada para comparar comportamiento.';
+                    : 'Abre una sesión relacionada to compare comportamiento.';
 
                 el.innerHTML = `
                     <p class="focus-title">Prioridad Perfil + Sesión</p>
                     <p class="focus-copy">Esto es lo más crítico del dashboard: identificar al perfil, ver qué compra y comparar su recorrido contra otras sesiones.</p>
                     <div class="profile-focus-grid">
                         <div class="profile-focus-pill">
-                            <p class="label">Perfil actual</p>
+                            <p class="label">Current Profile</p>
                             <p class="value">${profile.profileLabel || '-'}</p>
                         </div>
                         <div class="profile-focus-pill">
@@ -2678,7 +2678,7 @@
                             <p class="value">${profile.historicalOrderCount || 0}</p>
                         </div>
                         <div class="profile-focus-pill">
-                            <p class="label">Sesiones relacionadas</p>
+                            <p class="label">Sessions relacionadas</p>
                             <p class="value">${payload.patterns?.peerSessionCount || 0}</p>
                         </div>
                     </div>
@@ -2738,8 +2738,8 @@
             const productHtml = Array.isArray(topProducts) && topProducts.length
                 ? topProducts.slice(0, 3).map((item) => `
                     <div class="session-side-card rounded-xl p-4">
-                        <p class="text-sm font-semibold text-gray-900">${item.name || 'Producto'}</p>
-                        <p class="mt-1 text-sm text-gray-600">${item.orderCount || 0} órdenes · ${item.units || 0} unidades · ${formatCurrency(item.revenue || 0)}</p>
+                        <p class="text-sm font-semibold text-gray-900">${item.name || 'Product'}</p>
+                        <p class="mt-1 text-sm text-gray-600">${item.orderCount || 0} orders · ${item.units || 0} unidades · ${formatCurrency(item.revenue || 0)}</p>
                     </div>
                 `).join('')
                 : '<p class="text-sm text-gray-500">Sin afinidad de compra suficiente todavía.</p>';
@@ -2749,7 +2749,7 @@
                     <div class="session-side-card rounded-xl p-4">
                         <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Bundles probables</p>
                         <div class="mt-2 space-y-1 text-sm text-gray-600">
-                            ${topPairings.slice(0, 2).map((pair) => `<p>${pair.primary} + ${pair.secondary} · ${pair.orders} órdenes</p>`).join('')}
+                            ${topPairings.slice(0, 2).map((pair) => `<p>${pair.primary} + ${pair.secondary} · ${pair.orders} orders</p>`).join('')}
                         </div>
                     </div>
                 `
@@ -3476,7 +3476,7 @@
                     <div class="flex items-center gap-2 flex-wrap">
                         <input id="journey-profile-search" type="text" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white text-black placeholder-gray-500" style="color: black !important;" placeholder="Buscar perfil Woo" value="${escapeHtmlAttr(attributionJourneyState.profileSearch || '')}">
                         <select id="journey-profile-sort" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white text-gray-900">
-                            <option value="orders" ${attributionJourneyState.profileSort === 'orders' ? 'selected' : ''}>Mas órdenes</option>
+                            <option value="orders" ${attributionJourneyState.profileSort === 'orders' ? 'selected' : ''}>Mas orders</option>
                             <option value="revenue" ${attributionJourneyState.profileSort === 'revenue' ? 'selected' : ''}>Mayor revenue</option>
                             <option value="recent" ${attributionJourneyState.profileSort === 'recent' ? 'selected' : ''}>Mas reciente</option>
                         </select>
@@ -3486,7 +3486,7 @@
                         ${visibleProfiles.map((profile) => {
                             const active = String(attributionJourneyState.profileKey || 'all') === String(profile.profileKey || '');
                             const label = resolveProfileDisplayName(profile);
-                            return `<button type="button" class="journey-customer-bubble ${active ? 'is-active' : ''}" data-profile-key="${escapeHtmlAttr(profile.profileKey || '')}" title="${escapeHtmlAttr(label)} · ${Number(profile.orderCount || 0)} órdenes">${escapeHtml(label)}</button>`;
+                            return `<button type="button" class="journey-customer-bubble ${active ? 'is-active' : ''}" data-profile-key="${escapeHtmlAttr(profile.profileKey || '')}" title="${escapeHtmlAttr(label)} · ${Number(profile.orderCount || 0)} orders">${escapeHtml(label)}</button>`;
                         }).join('')}
                     </div>
                 </div>
@@ -3736,21 +3736,21 @@
             const topLandings = profiles.filter((item) => item.lastLandingPageUrl).slice(0, 4);
             const isWooStore = storePlatform === 'WOOCOMMERCE';
             const titleText = isWooStore
-                ? 'Perfiles WooCommerce detectados por órdenes y sesiones web ligadas'
+                ? 'Perfiles WooCommerce detectados por orders y sesiones web ligadas'
                 : 'Perfiles históricos y sesiones web ligadas';
             const viewDescription = isWooStore
                 ? 'estos chips representan perfiles WooCommerce enriquecidos con sesiones web cuando el pixel logra ligarlas.'
-                : 'estos chips representan perfiles históricos detectados desde sesiones web y señales de identidad.';
+                : 'estos chips representan perfiles históricos detectados desde sesiones web y signals de identidad.';
             const orderDescription = isWooStore
-                ? 'en WooCommerce priorizamos perfiles con órdenes primero y luego la sesión web ligada más reciente.'
+                ? 'en WooCommerce priorizamos perfiles con orders primero y luego la sesión web ligada más reciente.'
                 : 'el listado prioriza perfiles con sesión web reciente ligada y después el resto del historial.';
             const nameDescription = isWooStore
                 ? (resolvedCustomerNames > 0
-                    ? `${resolvedCustomerNames} perfiles Woo ya traen nombre legible guardado desde la sincronización de órdenes.`
-                    : 'todavía no entran nombres legibles desde Woo en este corte; las órdenes antiguas pueden requerir resincronización para reemplazar IDs técnicos.')
+                    ? `${resolvedCustomerNames} perfiles Woo ya traen nombre legible guardado desde la synchronization de orders.`
+                    : 'todavía no entran nombres legibles desde Woo en este corte; las older orders may require resynchronization para reemplazar IDs technical.')
                 : (shopifyNameLookupActive
-                    ? `Shopify name lookup activo, ${resolvedCustomerNames} nombres resueltos en este corte.`
-                    : 'no hay token Shopify utilizable para resolver displayName, por eso sólo se muestra el perfil técnico.');
+                    ? `Shopify name lookup active, ${resolvedCustomerNames} names resolved in this batch.`
+                    : 'no hay token Shopify utilizable para resolver displayName, por eso sólo se muestra el perfil technical.');
 
             console.info('[Session Explorer] rendering overview', {
                 totalProfiles: profiles.length,
@@ -3794,8 +3794,8 @@
             document.getElementById('session-detail-title').textContent = titleText;
             document.getElementById('session-detail-metrics').innerHTML = [
                 { label: 'Perfiles', value: summary.totalProfiles || 0 },
-                { label: 'Sesiones recientes', value: summary.totalSessions || 0 },
-                { label: 'Órdenes históricas', value: summary.totalOrders || 0 },
+                { label: 'Sessions recientes', value: summary.totalSessions || 0 },
+                { label: 'Órdenes historical', value: summary.totalOrders || 0 },
                 { label: 'Revenue histórico', value: formatCurrency(summary.totalRevenue || 0) },
             ].map((item) => `
                 <div class="session-metric-card rounded-xl p-4">
@@ -3805,16 +3805,16 @@
             `).join('');
 
             document.getElementById('session-detail-summary').innerHTML = `
-                <p><strong>Estado:</strong> Explorador persistente en modo histórico.</p>
-                <p><strong>Plataforma detectada:</strong> ${storePlatform}</p>
+                <p><strong>Status:</strong> Explorador persistente en modo histórico.</p>
+                <p><strong>Platform detectada:</strong> ${storePlatform}</p>
                 <p><strong>Qué estás viendo:</strong> ${viewDescription}</p>
                 <p><strong>Perfiles Woo:</strong> ${wooProfiles} de ${profiles.length || 0}</p>
                 <p><strong>Perfiles con compras:</strong> ${orderLedProfiles}</p>
                 <p><strong>Perfil más reciente:</strong> ${topProfile?.profileLabel || '-'}</p>
-                <p><strong>Última actividad:</strong> ${formatDateTimeMx(topProfile?.lastSeenAt)}</p>
+                <p><strong>Last actividad:</strong> ${formatDateTimeMx(topProfile?.lastSeenAt)}</p>
                 <p><strong>Sesión recomendada:</strong> ${topProfile?.recentSessionId || '-'}</p>
                 <p><strong>Orden actual:</strong> ${orderDescription}</p>
-                <p><strong>Lectura:</strong> si ves "0 sesiones", la plataforma conoce ese cliente por órdenes, pero el pixel todavía no lo amarró a una sesión web capturada.</p>
+                <p><strong>Lectura:</strong> si ves "0 sesiones", la plataforma conoce ese cliente por orders, pero el pixel todavía no lo amarró a una sesión web capturada.</p>
                 <p><strong>Nombre del cliente:</strong> ${nameDescription}</p>
             `;
 
@@ -3824,7 +3824,7 @@
                         <div class="flex items-start justify-between gap-3">
                             <div>
                                 <p class="font-medium text-gray-900">${profile.profileLabel || 'Perfil histórico'}</p>
-                                <p class="text-sm text-gray-500">${profile.orderCount || 0} órdenes · ${profile.sessionCount || 0} sesiones${Number(profile.sessionCount || 0) === 0 ? ' · sin sesión web ligada' : ''}</p>
+                                <p class="text-sm text-gray-500">${profile.orderCount || 0} orders · ${profile.sessionCount || 0} sesiones${Number(profile.sessionCount || 0) === 0 ? ' · sin sesión web ligada' : ''}</p>
                                 <p class="text-xs text-gray-400">${profile.lastSeenAt ? formatDateTimeMx(profile.lastSeenAt) : 'Sin actividad reciente'}</p>
                             </div>
                             <div class="text-right">
@@ -3839,9 +3839,9 @@
             document.getElementById('session-detail-attribution').innerHTML = `
                 <p><strong>Woo customers:</strong> ${wooProfiles}</p>
                 <p><strong>Perfiles por email/hash:</strong> ${profiles.filter((item) => item.profileType === 'email_hash').length}</p>
-                <p><strong>Perfiles por teléfono/hash:</strong> ${profiles.filter((item) => item.profileType === 'phone_hash').length}</p>
+                <p><strong>Perfiles por phone/hash:</strong> ${profiles.filter((item) => item.profileType === 'phone_hash').length}</p>
                 <p><strong>Solo browser key:</strong> ${profiles.filter((item) => item.profileType === 'user_key').length}</p>
-                <p><strong>Señal útil:</strong> el backend ya mezcla sesiones, órdenes e identidad guardada y adapta la lectura al tipo de tienda detectado.</p>
+                <p><strong>Signal useful:</strong> el backend ya mezcla sesiones, orders e identidad guardada y adapta la lectura al tipo de tienda detectado.</p>
             `;
 
             document.getElementById('session-detail-journey').innerHTML = `
@@ -3852,10 +3852,10 @@
                         : '<p class="text-xs text-gray-500">Sin landings destacadas.</p>'}
                 </div>
                 <div>
-                    <p class="font-medium text-gray-900 mb-1">Campañas recientes</p>
+                    <p class="font-medium text-gray-900 mb-1">Campaigns recientes</p>
                     ${topCampaigns.length
                         ? topCampaigns.map((item) => `<p class="text-xs text-gray-600">${item.lastCampaign} · ${item.profileLabel}</p>`).join('')
-                        : '<p class="text-xs text-gray-500">Sin campañas recurrentes.</p>'}
+                        : '<p class="text-xs text-gray-500">Sin campaigns recurrentes.</p>'}
                 </div>
             `;
 
@@ -3864,7 +3864,7 @@
                     <div class="session-side-card rounded-xl p-4">
                         <p class="text-sm font-semibold text-gray-900">${profile.profileLabel || 'Perfil'}</p>
                         <p class="text-xs text-gray-500 mt-1">${profile.profileType || 'user_key'}</p>
-                        <p class="mt-3 text-sm text-gray-600">${profile.sessionCount || 0} sesiones · ${profile.orderCount || 0} órdenes</p>
+                        <p class="mt-3 text-sm text-gray-600">${profile.sessionCount || 0} sesiones · ${profile.orderCount || 0} orders</p>
                         <p class="text-sm text-indigo-600">${formatCurrency(profile.totalRevenue || 0)}</p>
                     </div>
                 `).join('')}</div>`
@@ -3876,12 +3876,12 @@
                     <p class="mt-1 text-sm text-gray-600">Empieza mostrando perfiles históricos y luego baja al detalle cuando eliges una sesión.</p>
                 </div>
                 <div class="session-pattern-item rounded-xl p-4">
-                    <p class="text-sm font-semibold text-gray-900">La identidad mezcla más señales</p>
+                    <p class="text-sm font-semibold text-gray-900">La identidad mezcla más signals</p>
                     <p class="mt-1 text-sm text-gray-600">Woo customer, email hash, phone hash y userKey ahora alimentan el contexto histórico.</p>
                 </div>
                 <div class="session-pattern-item rounded-xl p-4">
                     <p class="text-sm font-semibold text-gray-900">Uso recomendado</p>
-                    <p class="mt-1 text-sm text-gray-600">Abre primero un perfil con órdenes, luego compara sesiones relacionadas para detectar fricción o intención real.</p>
+                    <p class="mt-1 text-sm text-gray-600">Abre primero un perfil con orders, luego compara sesiones relacionadas para detectar friction o intención real.</p>
                 </div>
             `;
 
@@ -3891,7 +3891,7 @@
                         <div class="flex items-center justify-between gap-4">
                             <div>
                                 <p class="font-medium text-gray-900">${profile.profileLabel || 'Perfil histórico'}</p>
-                                <p class="text-xs text-gray-500">${profile.sessionCount || 0} sesiones · ${profile.orderCount || 0} órdenes</p>
+                                <p class="text-xs text-gray-500">${profile.sessionCount || 0} sesiones · ${profile.orderCount || 0} orders</p>
                             </div>
                             <div class="text-right">
                                 <p class="text-sm text-gray-700">${formatDateTimeMx(profile.lastSeenAt)}</p>
@@ -3900,7 +3900,7 @@
                         </div>
                     </div>
                 `).join('')
-                : '<p class="text-gray-500">No hay actividad histórica suficiente.</p>';
+                : '<p class="text-gray-500">No hay actividad historical suficiente.</p>';
 
             renderPeerSessions(profiles, null, {});
             updatePeerNavigation([], null);
@@ -3931,7 +3931,7 @@
                 renderSessionExplorerOverview(data);
                 sessionOverviewLastLoadedAt = Date.now();
             } catch (error) {
-                document.getElementById('session-detail-title').textContent = 'Usuarios históricos';
+                document.getElementById('session-detail-title').textContent = 'Users históricos';
                 document.getElementById('session-detail-metrics').innerHTML = '<div class="text-sm text-gray-500">No se pudo cargar el overview histórico.</div>';
                 document.getElementById('session-detail-summary').innerHTML = `<p class="text-red-600">${error.message}</p>`;
                 document.getElementById('session-detail-orders').innerHTML = '<p class="text-gray-500">-</p>';
@@ -4007,8 +4007,8 @@
                 { label: 'Page Views', value: metrics.pageViews || 0 },
                 { label: 'View Item', value: metrics.viewItem || 0 },
                 { label: 'Revenue', value: formatCurrency(metrics.revenue || 0) },
-                { label: 'Páginas únicas', value: metrics.uniquePages || 0 },
-                { label: 'Productos únicos', value: metrics.uniqueProducts || 0 },
+                { label: 'Pages unique', value: metrics.uniquePages || 0 },
+                { label: 'Products unique', value: metrics.uniqueProducts || 0 },
                 { label: 'Órdenes', value: metrics.orderCount || 0 },
             ].map((item) => `
                 <div class="session-metric-card rounded-xl p-4">
@@ -4020,7 +4020,7 @@
             document.getElementById('session-detail-summary').innerHTML = `
                 <p><strong>Perfil:</strong> ${profile.profileLabel || '-'}</p>
                 <p><strong>Tipo:</strong> ${profile.profileType || '-'}</p>
-                <p><strong>Usuario conectado:</strong> ${linkedUserLabel}</p>
+                <p><strong>User conectado:</strong> ${linkedUserLabel}</p>
                 <p><strong>Woo Customer ID:</strong> ${identifiedUser.customerId || '-'}</p>
                 <p><strong>Email identificado:</strong> ${identifiedUser.emailPreview || '-'}</p>
                 <p><strong>User Key:</strong> ${session.userKey || '-'}</p>
@@ -4028,7 +4028,7 @@
                 <p><strong>Último evento:</strong> ${formatDateTimeMx(session.lastEventAt)}</p>
                 <p><strong>Session End:</strong> ${formatDateTimeMx(session.sessionEndAt || session.lastEventAt)}</p>
                 <p><strong>Último login:</strong> ${identifiedUser.lastLoginAt ? formatDateTimeMx(identifiedUser.lastLoginAt) : '-'}</p>
-                <p><strong>Duración:</strong> ${formatDuration(session.sessionDurationSeconds || 0)}</p>
+                <p><strong>Duration:</strong> ${formatDuration(session.sessionDurationSeconds || 0)}</p>
                 <p><strong>Landing:</strong> ${session.landingPageUrl || '-'}</p>
                 <p><strong>UTM:</strong> ${(session.utmSource || '-') + ' / ' + (session.utmCampaign || '-')}</p>
                 <p><strong>GA4 Session Source:</strong> ${session.ga4SessionSource || '-'}</p>
@@ -4036,14 +4036,14 @@
                 <p><strong>IP Hash:</strong> ${session.ipHash ? `${String(session.ipHash).slice(0, 10)}...` : '-'}</p>
                 <p><strong>Funnel:</strong> PV ${metrics.pageViews || 0} · VI ${metrics.viewItem || 0} · ATC ${metrics.addToCart || 0} · BC ${metrics.beginCheckout || 0} · P ${metrics.purchase || 0}</p>
                 <p><strong>Otras sesiones del mismo usuario:</strong> ${patterns.peerSessionCount || 0}</p>
-                <p><strong>Sesiones trazadas totales:</strong> ${patterns.totalTrackedSessions || ((patterns.peerSessionCount || 0) + 1)}</p>
-                <p><strong>Órdenes históricas del perfil:</strong> ${profile.historicalOrderCount || 0}</p>
+                <p><strong>Sessions trazadas totales:</strong> ${patterns.totalTrackedSessions || ((patterns.peerSessionCount || 0) + 1)}</p>
+                <p><strong>Órdenes historical del perfil:</strong> ${profile.historicalOrderCount || 0}</p>
             `;
 
             document.getElementById('session-detail-attribution').innerHTML = `
-                <p><strong>Canal:</strong> ${journey.attribution?.channel || 'unattributed'}</p>
-                <p><strong>Plataforma:</strong> ${journey.attribution?.platform || '-'}</p>
-                <p><strong>Campaña:</strong> ${journey.attribution?.campaign || '-'}</p>
+                <p><strong>Channel:</strong> ${journey.attribution?.channel || 'unattributed'}</p>
+                <p><strong>Platform:</strong> ${journey.attribution?.platform || '-'}</p>
+                <p><strong>Campaign:</strong> ${journey.attribution?.campaign || '-'}</p>
                 <p><strong>Click ID:</strong> ${journey.attribution?.clickId || '-'}</p>
                 <p><strong>Confianza:</strong> ${formatPercent(journey.attribution?.confidence || 0)}</p>
                 <p><strong>Fuente:</strong> ${journey.attribution?.source || 'none'}</p>
@@ -4056,13 +4056,13 @@
                     <p><strong>Salida:</strong> ${journey.exitPage || '-'}</p>
                 </div>
                 <div>
-                    <p class="font-medium text-gray-900 mb-1">Páginas destacadas</p>
+                    <p class="font-medium text-gray-900 mb-1">Pages destacadas</p>
                     ${pages.length
                         ? pages.map((page) => `<p class="text-xs text-gray-600 truncate">${page.url} · ${page.hits} hits</p>`).join('')
                         : '<p class="text-xs text-gray-500">Sin páginas registradas.</p>'}
                 </div>
                 <div>
-                    <p class="font-medium text-gray-900 mb-1">Productos tocados</p>
+                    <p class="font-medium text-gray-900 mb-1">Products tocados</p>
                     ${products.length
                         ? products.map((product) => `<p class="text-xs text-gray-600">${product.productId} · ${product.events} eventos</p>`).join('')
                         : '<p class="text-xs text-gray-500">Sin productos registrados.</p>'}
@@ -4085,11 +4085,11 @@
                                 <p class="text-sm text-gray-500">${formatCurrencyWithCode(order.revenue || 0, order.currency || 'MXN')} · ${order.attributedChannel || 'unattributed'}</p>
                                 <p class="text-xs text-gray-400">${formatDateTimeMx(order.platformCreatedAt || order.createdAt)}</p>
                             </div>
-                            <span class="text-[11px] uppercase tracking-wide ${order.isCurrentSession ? 'session-positive-copy' : 'session-meta-copy'}">${order.isCurrentSession ? 'sesion actual' : 'histórico'}</span>
+                            <span class="text-[11px] uppercase tracking-wide ${order.isCurrentSession ? 'session-positive-copy' : 'session-meta-copy'}">${order.isCurrentSession ? 'current session' : 'histórico'}</span>
                         </div>
                     </div>
                 `).join('')
-                : '<p class="text-gray-500">Sin órdenes ligadas a este perfil.</p>';
+                : '<p class="text-gray-500">Sin orders ligadas a este perfil.</p>';
 
             renderSessionTimelineFromState();
         }
@@ -4111,7 +4111,7 @@
                     <button type="button" data-session-id="${profile.recentSessionId || ''}" class="session-peer-pill historical-profile-chip inline-flex items-center gap-2 px-3 py-2 rounded-full text-sm text-gray-700 ${profile.recentSessionId ? '' : 'opacity-60 cursor-not-allowed'}" ${profile.recentSessionId ? '' : 'disabled'}>
                         <span class="font-semibold">${profile.profileLabel || 'Perfil histórico'}</span>
                         <span class="text-xs text-gray-500">${profile.sessionCount || 0} sesiones</span>
-                        <span class="text-xs text-gray-400">${profile.orderCount || 0} órdenes</span>
+                        <span class="text-xs text-gray-400">${profile.orderCount || 0} orders</span>
                     </button>
                 `).join('');
 
@@ -4123,7 +4123,7 @@
                 });
 
                 const note = document.getElementById('session-compare-recommended-note');
-                if (note) note.textContent = 'Estos chips son perfiles históricos. Si alguno muestra 0 sesiones, Woo lo identificó por órdenes pero el pixel aún no ligó navegación web a ese cliente.';
+                if (note) note.textContent = 'Estos chips son perfiles históricos. Si alguno muestra 0 sesiones, Woo lo identificó por orders pero el pixel aún no ligó navegación web a ese cliente.';
                 return;
             }
 
@@ -4230,7 +4230,7 @@
 
             const formatSessionEventLabel = (event) => {
                 if (event.bucket === 'login') return 'Inicio de sesión';
-                if (event.eventName === 'add_to_cart') return 'Agregó al carrito';
+                if (event.eventName === 'add_to_cart') return 'Added to cart';
                 if (event.eventName === 'begin_checkout') return 'Inició checkout';
                 if (event.eventName === 'view_item') return 'View item';
                 if (event.eventName === 'page_view') return 'Page view';
@@ -4240,7 +4240,7 @@
 
             const formatSessionEventDetail = (event) => {
                 if (event.bucket === 'login') {
-                    return event.customerName || event.customerEmail || event.customerId || 'Usuario identificado';
+                    return event.customerName || event.customerEmail || event.customerId || 'User identificado';
                 }
                 return event.pageUrl || event.productId || event.orderId || '-';
             };
@@ -4334,7 +4334,7 @@
 
             if (!currentData || !compareData) {
                 panel.classList.add('hidden');
-                title.textContent = 'Selecciona una sesión relacionada para comparar.';
+                title.textContent = 'Selecciona una sesión relacionada to compare.';
                 content.innerHTML = '';
                 return;
             }
@@ -4346,7 +4346,7 @@
             const compareMetrics = compareData.metrics || {};
             const metricRows = [
                 { label: 'Eventos', current: Number(currentMetrics.totalEvents || 0), compare: Number(compareMetrics.totalEvents || 0) },
-                { label: 'Duración', current: Number(currentData.session?.sessionDurationSeconds || 0), compare: Number(compareData.session?.sessionDurationSeconds || 0), formatter: formatDuration },
+                { label: 'Duration', current: Number(currentData.session?.sessionDurationSeconds || 0), compare: Number(compareData.session?.sessionDurationSeconds || 0), formatter: formatDuration },
                 { label: 'View Item', current: Number(currentMetrics.viewItem || 0), compare: Number(compareMetrics.viewItem || 0) },
                 { label: 'Add To Cart', current: Number(currentMetrics.addToCart || 0), compare: Number(compareMetrics.addToCart || 0) },
                 { label: 'Checkout', current: Number(currentMetrics.beginCheckout || 0), compare: Number(compareMetrics.beginCheckout || 0) },
@@ -4427,16 +4427,16 @@
             const insights = [];
 
             if (Number(currentMetrics.beginCheckout || 0) > Number(compareMetrics.beginCheckout || 0)) {
-                insights.push('La sesión actual empuja más al checkout que la comparada.');
+                insights.push('La current session empuja más al checkout que la comparada.');
             }
             if (Number(currentMetrics.purchase || 0) < Number(compareMetrics.purchase || 0)) {
                 insights.push('La sesión comparada convierte mejor al final del funnel.');
             }
             if (Number(currentMetrics.viewItem || 0) > Number(compareMetrics.viewItem || 0) && Number(currentMetrics.addToCart || 0) === 0) {
-                insights.push('La actual explora más productos, pero no transforma esa exploración en intención.');
+                insights.push('La actual explora más productos, pero no transforma esa exploration en intención.');
             }
             if (Number(currentData.session?.sessionDurationSeconds || 0) > Number(compareData.session?.sessionDurationSeconds || 0)) {
-                insights.push('La actual dura más; vale revisar si eso significa más interés o más fricción.');
+                insights.push('La actual dura más; vale revisar si eso significa más interés o más friction.');
             }
             if (!insights.length) {
                 insights.push('Ambas sesiones se comportan de forma parecida; no hay una desviación fuerte en el recorrido.');
@@ -4495,7 +4495,7 @@
                     <div class="session-pattern-item rounded-xl p-4">
                         <p class="text-sm font-semibold text-gray-900">${card.title || '-'}</p>
                         <p class="mt-1 text-sm text-gray-600">${card.detail || '-'}</p>
-                        <p class="session-positive-copy mt-2 text-xs font-medium uppercase tracking-wide">Aplicación sugerida</p>
+                        <p class="session-positive-copy mt-2 text-xs font-medium uppercase tracking-wide">Application sugerida</p>
                         <p class="session-positive-copy text-sm">${card.action || '-'}</p>
                     </div>
                 `).join('')
@@ -4530,7 +4530,7 @@
                         </div>
                     </div>
                     <div class="session-side-card rounded-xl p-4">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Campañas frecuentes</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Campaigns frecuentes</p>
                         <div class="mt-2 space-y-1 text-sm text-gray-600">
                             ${topCampaigns.length
                                 ? topCampaigns.map((item) => `<p>${item.campaign} · ${item.sessions} sesiones</p>`).join('')
@@ -4678,14 +4678,14 @@
             }
 
             container.innerHTML = products.slice(0, 10).map((p, idx) => {
-                const name = p.name || p.title || p.id || 'Producto sin nombre';
+                const name = p.name || p.title || p.id || 'Unnamed product';
                 const units = Number(p.units || 0);
                 const revenue = Number(p.revenue || 0);
                 return `
                     <div class="flex items-center justify-between border border-gray-100 rounded-lg p-3">
                         <div>
                             <p class="text-sm font-semibold text-gray-900">#${idx + 1} ${name}</p>
-                            <p class="text-xs text-gray-500">Unidades: ${units.toLocaleString()}</p>
+                            <p class="text-xs text-gray-500">Units: ${units.toLocaleString()}</p>
                         </div>
                         <p class="text-sm font-bold text-indigo-600">${formatCurrency(revenue)}</p>
                     </div>
@@ -4711,7 +4711,7 @@
                 }
 
                 statusEl.textContent = status === 'ACTIVE' ? 'ACTIVE' : status;
-                updatedEl.textContent = state.updatedAt ? `Actualizado: ${formatDateTimeMx(state.updatedAt)}` : 'Sin conexión registrada';
+                updatedEl.textContent = state.updatedAt ? `Updated: ${formatDateTimeMx(state.updatedAt)}` : 'Sin conexión registrada';
             });
 
             // Update Data Enrichment Trigger Badge
@@ -4726,9 +4726,9 @@
             const blendedMeta = document.getElementById('pm-blended-meta');
 
             if (linkStatus) {
-                if (paidMedia?.available) linkStatus.textContent = 'Snapshot activo';
-                else if (paidMedia?.linked) linkStatus.textContent = 'Sin snapshot';
-                else linkStatus.textContent = 'No vinculado';
+                if (paidMedia?.available) linkStatus.textContent = 'Snapshot active';
+                else if (paidMedia?.linked) linkStatus.textContent = 'No snapshot';
+                else linkStatus.textContent = 'Not linked';
             }
 
             const blendedCurrency = paidMedia?.blended?.currency || paidMedia?.meta?.currency || paidMedia?.google?.currency || 'MXN';
@@ -4736,8 +4736,8 @@
             if (blendedRevenue) blendedRevenue.textContent = formatCurrencyWithCode(paidMedia?.blended?.revenue || 0, blendedCurrency);
             if (blendedRoas) blendedRoas.textContent = formatRoas(paidMedia?.blended?.roas);
             if (blendedMeta) blendedMeta.textContent = paidMedia?.available
-                ? 'Resumen agregado desde snapshots MCP'
-                : 'Visible cuando el shop queda vinculado al snapshot de marketing';
+                ? 'Aggregated summary from MCP snapshots'
+                : 'Visible when the shop is linked to the marketing snapshot';
 
             renderPaidMediaSource('meta', paidMedia?.meta || {});
             renderPaidMediaSource('google', paidMedia?.google || {});
@@ -4791,7 +4791,7 @@
             } else if (sourceState?.connected) {
                 syncEl.textContent = 'Conectado, pero sin snapshot usable todavía';
             } else {
-                syncEl.textContent = 'Sin snapshot asociado';
+                syncEl.textContent = 'No snapshot asociado';
             }
         }
 
@@ -4871,11 +4871,11 @@
         function toggleDataEnrichment(el) {
     const text = document.getElementById('de-toggle-text');
     if(el.checked) {
-        text.textContent = 'Activo';
+        text.textContent = 'Active';
         if(window.recentPurchasesState) renderDataEnrichment(window.recentPurchasesState);
         if(document.getElementById('de-payload-list')) document.getElementById('de-payload-list').style.opacity = '1';
     } else {
-        text.textContent = 'Pausado';
+        text.textContent = 'Paused';
         if(document.getElementById('de-payload-list')) document.getElementById('de-payload-list').style.opacity = '0.5';
     }
 }
@@ -4972,7 +4972,7 @@ function renderRecentPurchases(purchases) {
                 const revenue = formatCurrencyWithCode(Number(p.revenue || 0), p.currency || 'MXN');
                 const items = Array.isArray(p.items) ? p.items : [];
                 const itemsText = items.length
-                    ? items.slice(0, 2).map((i) => `${i.name || 'Producto'} x${Number(i.quantity || 1)}`).join(' · ')
+                    ? items.slice(0, 2).map((i) => `${i.name || 'Product'} x${Number(i.quantity || 1)}`).join(' · ')
                     : 'Sin items';
                 const extraCount = items.length > 2 ? ` +${items.length - 2} más` : '';
                 const sourceLabel = p.source === 'orders' ? 'Woo Orders Sync' : 'Pixel Events';
@@ -5024,7 +5024,7 @@ function renderRecentPurchases(purchases) {
 
             if (attributionChartInstance) attributionChartInstance.destroy();
 
-            // Comparar ROAS de AdNova vs Plataforma para los canales de pauta
+            // Comparar ROAS de AdNova vs Platform para los canales de pauta
             const platforms = ['meta', 'google', 'tiktok'];
             const labels = [];
             const adnovaRoasData = [];
@@ -5142,9 +5142,9 @@ function renderRecentPurchases(purchases) {
             };
             
             for (const [channel, stats] of Object.entries(attributionData || {})) {
-                if (channel.toLowerCase() === 'unattributed' && (stats.revenue || 0) === 0) continue;
+                if (channel.toLowerCase() === 'unattributed' && (stats.orders || 0) === 0) continue;
                 labels.push(channel.toUpperCase());
-                values.push(stats.revenue || 0);
+                values.push(stats.orders || 0);
                 backgroundColors.push(colorsMap[channel.toLowerCase()] || 'rgba(156, 163, 175, 0.8)');
             }
 
@@ -5170,7 +5170,7 @@ function renderRecentPurchases(purchases) {
                             callbacks: {
                                 label: function(context) {
                                     let value = context.raw || 0;
-                                    return ' ' + new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(value);
+                                    return ' ' + value + (value === 1 ? ' order' : ' orders');
                                 }
                             }
                         }
@@ -5266,7 +5266,7 @@ function renderRecentPurchases(purchases) {
                 }
                 return { text: 'Google Ads', icon: 'fa-brands fa-google', color: '!text-purple-700', bg: 'bg-orange-100' };
             }
-            if (ref.includes('google')) return { text: 'Búsqueda Orgánica', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
+            if (ref.includes('google')) return { text: 'Organic Search', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
             if (ref.includes('facebook') || ref.includes('instagram')) return { text: 'Meta Orgánico', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
             if (ref.includes('tiktok')) return { text: 'TikTok Orgánico', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
             
@@ -5596,7 +5596,7 @@ function renderUserExplorer(data) {
     const { user, summary = {}, sessions = [], events = [], orders = [] } = data;
     
     if (user.name) document.getElementById('ue-name').textContent = user.name;
-    else document.getElementById('ue-name').textContent = 'Usuario An\u00f3nimo';
+    else document.getElementById('ue-name').textContent = 'User An\u00f3nimo';
     
     const stitchedText = Array.isArray(user.stitchedUserKeys) && user.stitchedUserKeys.length
         ? ' stitchedKeys: ' + user.stitchedUserKeys.length
@@ -5615,12 +5615,12 @@ function renderUserExplorer(data) {
 
     const summaryHtml =
         '<div class="grid grid-cols-2 gap-3 mb-5">' +
-            '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Ingresos</p><p class="text-sm font-semibold text-indigo-700">' + formatCurrency(Number(summary.totalRevenue || 0)) + '</p></div>' +
-            '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Compras</p><p class="text-sm font-semibold text-gray-900">' + Number(summary.totalOrders || 0) + '</p></div>' +
-            '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Sesiones</p><p class="text-sm font-semibold text-gray-900">' + Number(summary.totalSessions || 0) + '</p></div>' +
-            '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Carritos</p><p class="text-sm font-semibold text-gray-900">' + Number(summary.totalAddToCart || 0) + '</p></div>' +
-            '<div class="bg-white border border-gray-200 rounded-lg p-3 col-span-2"><p class="text-[11px] uppercase tracking-wide text-gray-500">Atribución stitchada</p>' +
-                (attributionRows || '<p class="text-sm text-gray-500">Sin atribución consolidada todavía.</p>') +
+            '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Revenue</p><p class="text-sm font-semibold text-indigo-700">' + formatCurrency(Number(summary.totalRevenue || 0)) + '</p></div>' +
+            '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Purchases</p><p class="text-sm font-semibold text-gray-900">' + Number(summary.totalOrders || 0) + '</p></div>' +
+            '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Sessions</p><p class="text-sm font-semibold text-gray-900">' + Number(summary.totalSessions || 0) + '</p></div>' +
+            '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Carts</p><p class="text-sm font-semibold text-gray-900">' + Number(summary.totalAddToCart || 0) + '</p></div>' +
+            '<div class="bg-white border border-gray-200 rounded-lg p-3 col-span-2"><p class="text-[11px] uppercase tracking-wide text-gray-500">Attribution stitchada</p>' +
+                (attributionRows || '<p class="text-sm text-gray-500">Sin attribution consolidada todavía.</p>') +
             '</div>' +
         '</div>';
 
@@ -5641,7 +5641,7 @@ function renderUserExplorer(data) {
     timeline.sort((a,b) => b.time - a.time);
     
     if (timeline.length === 0) {
-        document.getElementById('ue-content').innerHTML = '<p class="text-gray-500">No hay eventos registrados para este usuario.</p>';
+        document.getElementById('ue-content').innerHTML = '<p class="text-gray-500">No events registered for this user.</p>';
         return;
     }
 
@@ -5654,7 +5654,7 @@ function renderUserExplorer(data) {
                 '<div class="absolute -left-2 top-1.5 p-1.5 rounded-full bg-indigo-500 border-4 border-gray-900 shadow-sm ring-1 ring-indigo-500/30"></div>' +
                 '<p class="text-xs text-indigo-600 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Nueva Sesi\u00f3n</p>' +
                 '<div class="bg-gray-50 rounded-lg p-3 text-sm text-gray-700 border border-gray-200">' +
-                    '<p><strong>Origen:</strong> ' + (s.utmSource || s.referrer || '(direct)') + ' / ' + (s.utmMedium || '(none)') + '</p>' +
+                    '<p><strong>Source:</strong> ' + (s.utmSource || s.referrer || '(direct)') + ' / ' + (s.utmMedium || '(none)') + '</p>' +
                     (s.utmCampaign ? '<p><strong>Campa\u00f1a:</strong> ' + s.utmCampaign + '</p>' : '') +
                     (s.landingPageUrl ? '<p class="truncate"><strong>Landing:</strong> ' + s.landingPageUrl + '</p>' : '') +
                 '</div>' +
@@ -5664,9 +5664,9 @@ function renderUserExplorer(data) {
             const revStr = new Intl.NumberFormat('es-MX', { style: 'currency', currency: o.currency || 'MXN' }).format(Number(o.revenue || 0));
             html += '<div class="relative pl-6">' +
                 '<div class="absolute -left-2 top-1.5 p-1.5 rounded-full bg-emerald-500 border-4 border-gray-900 shadow-sm ring-1 ring-emerald-500/30"></div>' +
-                '<p class="text-xs text-emerald-600 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Compra (' + revStr + ')</p>' +
+                '<p class="text-xs text-emerald-600 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Purchase (' + revStr + ')</p>' +
                 '<div class="bg-gray-50 rounded-lg p-3 text-sm text-gray-800 border border-gray-200">' +
-                    '<p><strong>Pedido:</strong> #' + (o.orderNumber || o.orderId) + '</p>' +
+                    '<p><strong>Order:</strong> #' + (o.orderNumber || o.orderId) + '</p>' +
                     '<p><strong>Atribuci\u00f3n (\u00daltimo Clic):</strong> ' + (o.attributedChannel || 'unattributed') + '</p>' +
                 '</div>' +
             '</div>';
@@ -5696,7 +5696,7 @@ function renderUserExplorer(data) {
     <div id="user-explorer-panel" class="fixed inset-y-0 right-0 max-w-md w-full h-screen max-h-screen shadow-2xl transform translate-x-full transition-transform duration-300 ease-in-out z-50 flex flex-col pointer-events-auto">
         <div class="ue-header px-6 py-4 flex justify-between items-center z-10">
             <div>
-                <p class="panel-kicker">Recorrido del Cliente</p>
+                <p class="panel-kicker">Customer Journey</p>
                 <h2 class="panel-title text-xl leading-6 font-medium text-gray-900" id="ue-name">Cargando...</h2>
                 <p class="text-xs text-gray-500 mt-1 font-mono" id="ue-email">...</p>
             </div>
