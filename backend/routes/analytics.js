@@ -2536,8 +2536,10 @@ function extractEventIdentity(rawPayload) {
   const billing = payload.billing && typeof payload.billing === 'object' ? payload.billing : {};
   const userData = payload.user_data && typeof payload.user_data === 'object' ? payload.user_data : {};
 
-  const email = String(payload.email || payload.customer_email || '').trim().toLowerCase();
-  const phone = String(payload.phone || payload.customer_phone || '').trim();
+  const emailCandidate = payload.email || payload.customer_email || billing.email || customer.email || userData.email || '';
+    const email = String(emailCandidate).trim().toLowerCase();
+    const phoneCandidate = payload.phone || payload.customer_phone || billing.phone || customer.phone || userData.phone || '';
+    const phone = String(phoneCandidate).trim();
 
   return {
     customerId: normalizeWooCustomerId(
