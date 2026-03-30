@@ -1646,9 +1646,15 @@ router.get('/:account_id', async (req, res) => {
       const effectiveOrderDate = order.platformCreatedAt || order.createdAt;
       const rev = order.revenue || 0;
       totalRevenue += rev;
-      
+
       // Channel normalization
       let ch = normalizeChannelForStats(order.attributedChannel);
+
+      if (channelStats[ch]) {
+        channelStats[ch].revenue += rev;
+        channelStats[ch].orders += 1;
+      } else {
+        channelStats.other.revenue += rev;
         channelStats.other.orders += 1;
       }
 
