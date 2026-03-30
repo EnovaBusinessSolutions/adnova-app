@@ -46,6 +46,17 @@ function requireInternalCronKey(req, res, next) {
     safeStr(req.get('x-cron-key')).trim() ||
     safeStr(req.query?.key).trim();
 
+    console.log('[internalDailySignal/auth]', {
+  path: req.originalUrl,
+  hasExpected: !!expected,
+  hasProvided: !!provided,
+  expectedLength: expected ? expected.length : 0,
+  providedLength: provided ? provided.length : 0,
+  matches: !!provided && !!expected && provided === expected,
+  providedPreview: provided ? `${provided.slice(0, 6)}...${provided.slice(-4)}` : null,
+  expectedPreview: expected ? `${expected.slice(0, 6)}...${expected.slice(-4)}` : null,
+ });
+
   if (!provided || provided !== expected) {
     return res.status(401).json({
       ok: false,
