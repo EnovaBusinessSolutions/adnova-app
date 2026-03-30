@@ -4879,6 +4879,7 @@
 }
 
 function renderDataEnrichment(purchases) {
+    console.log('[Data Enrichment] Initializing render. Source purchases:', purchases);
     const list = document.getElementById('de-payload-list');
     if (!list) return;
     const toggle = document.getElementById('de-toggle');
@@ -4887,7 +4888,8 @@ function renderDataEnrichment(purchases) {
         list.innerHTML = '<p class="text-sm text-gray-400">Sin eventos de enriquecimiento recientes.</p>';
         return;
     }
-    const validPurchases = purchases.filter(p => Number(p.revenue || 0) > 0);
+    const validPurchases = purchases.filter(p => p.orderNumber || p.orderId || p.checkoutToken || p._id || p.id);
+    console.log('[Data Enrichment] Valid purchases to display:', validPurchases.length);
     const htmlArgs = validPurchases.slice(0, 10).map(p => {
         let orderId = p.orderNumber || p.orderId || p.checkoutToken || '?';
         let platformText = String(p.attributedPlatform || 'Meta').toLowerCase();
