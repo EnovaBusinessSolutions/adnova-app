@@ -2000,109 +2000,10 @@
                         </div>
                     </div>
 
-                    <!-- Paid Media Campaigns Table -->
-                    <div class="mt-6 hidden fade-in" id="pm-campaigns-container">
-                        <div class="flex items-center justify-between mb-3 border-b pb-2" style="border-color: var(--dash-border);">
-                            <h4 class="text-sm font-semibold" style="color: var(--dash-text);">Top Campaigns Performance</h4>
-                            <select id="pm-campaign-filter" onchange="renderUnifiedCampaigns()" class="text-xs focus:ring-0 cursor-pointer rounded" style="background: var(--dash-panel-soft); color: var(--dash-accent); border: 1px solid var(--dash-border); padding: 0.2rem 1.5rem 0.2rem 0.5rem; outline: none;">
-                                <option value="all">Todas (Blended)</option>
-                                <option value="meta">Meta Ads</option>
-                                <option value="google">Google Ads</option>
-                            </select>
-                        </div>
-                        <div class="overflow-x-auto shadow-sm rounded-lg" style="border: 1px solid var(--dash-border);">
-                            <table class="min-w-full" style="border-collapse: collapse;">
-                                <thead style="background: var(--dash-panel-soft); border-bottom: 1px solid var(--dash-border);">
-                                    <tr>
-                                        <th scope="col" class="py-3 pl-4 pr-3 text-left text-xs font-semibold uppercase tracking-wider" style="color: var(--dash-muted);">Campaña</th>
-                                        <th scope="col" class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider hidden md:table-cell" style="color: var(--dash-muted);">Plataforma</th>
-                                        <th scope="col" class="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider" style="color: var(--dash-muted);">Gasto</th>
-                                        <th scope="col" class="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider" style="color: var(--dash-muted);">Rev</th>
-                                        <th scope="col" class="px-3 py-3 text-right text-xs font-semibold uppercase tracking-wider" style="color: var(--dash-muted);">ROAS</th>
-                                        <th scope="col" class="px-3 py-3 text-center text-xs font-semibold uppercase tracking-wider" style="color: var(--dash-muted);">Estado</th>
-                                    </tr>
-                                </thead>
-                                <tbody style="background: var(--dash-panel-strong); color: var(--dash-text);" id="pm-campaigns-tbody">
-                                    <!-- Rows will be injected via JS -->
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
+                    
 
                 </div>
 
-                <div class="ops-panel p-6">
-                    <p class="panel-kicker">Instrumentación</p>
-                    <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Pixel Health</h3>
-                    <p class="panel-subtitle text-sm mb-4">Valida si el tracking está enviando suficiente señal para confiar en la lectura comercial.</p>
-                    <div class="grid grid-cols-2 gap-4 mb-4">
-                        <div class="bg-gray-50 rounded-lg p-3">
-                            <p class="text-xs text-gray-500">Eventos recibidos</p>
-                            <p class="text-xl font-semibold text-gray-900" id="ph-events-received">0</p>
-                        </div>
-                        <div class="bg-gray-50 rounded-lg p-3">
-                            <p class="text-xs text-gray-500">Señales de purchase</p>
-                            <p class="text-xl font-semibold text-gray-900" id="ph-purchase-signals">0</p>
-                        </div>
-                        <div class="bg-gray-50 rounded-lg p-3">
-                            <p class="text-xs text-gray-500">Órdenes matcheadas</p>
-                            <p class="text-xl font-semibold text-gray-900" id="ph-matched-orders">0</p>
-                        </div>
-                        <div class="bg-gray-50 rounded-lg p-3">
-                            <p class="text-xs text-gray-500">Order Match Rate</p>
-                            <p class="text-xl font-semibold text-gray-900" id="ph-order-match-rate">0%</p>
-                        </div>
-                    </div>
-                    <div class="bg-gray-50 rounded-lg p-3">
-                        <p class="text-xs text-gray-500">Purchase Signal Coverage</p>
-                        <p class="text-xl font-semibold text-gray-900" id="ph-purchase-coverage">0%</p>
-                    </div>
-                </div>
-
-                <div class="ops-panel p-6">
-                    <p class="panel-kicker">Confianza</p>
-                    <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Data Quality</h3>
-                    <p class="panel-subtitle text-sm mb-4">Mide si el dashboard está leyendo desde la mejor fuente posible o si entró en fallback.</p>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div class="bg-gray-50 rounded-lg p-4">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Revenue Source</div>
-                            <div class="mt-2 text-lg font-semibold text-gray-900" id="dq-revenue-source">-</div>
-                            <div class="mt-1 text-sm text-gray-500">Fuente usada para el revenue del dashboard.</div>
-                        </div>
-                        <div class="bg-gray-50 rounded-lg p-4">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Fallback Mode</div>
-                            <div class="mt-2 text-lg font-semibold text-gray-900" id="dq-fallback-active">-</div>
-                            <div class="mt-1 text-sm text-gray-500">Indica si el dashboard está usando eventos por falta de órdenes.</div>
-                        </div>
-                        <div class="bg-gray-50 rounded-lg p-4">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Snapshot Freshness</div>
-                            <div class="mt-2 text-lg font-semibold text-gray-900" id="dq-snapshot-updated">-</div>
-                            <div class="mt-1 text-sm text-gray-500">Última actualización del snapshot del merchant.</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="ops-panel p-6">
-                    <p class="panel-kicker">Conectividad</p>
-                    <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Integration Health</h3>
-                    <p class="panel-subtitle text-sm mb-4">Confirma qué integraciones están activas y cuándo fue su última señal útil.</p>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div class="bg-gray-50 rounded-lg p-4">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Meta Health</div>
-                            <div class="mt-2 text-lg font-semibold text-gray-900" id="ih-meta-status">-</div>
-                            <div class="mt-1 text-sm text-gray-500" id="ih-meta-updated">-</div>
-                        </div>
-                        <div class="bg-gray-50 rounded-lg p-4">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Google Health</div>
-                            <div class="mt-2 text-lg font-semibold text-gray-900" id="ih-google-status">-</div>
-                            <div class="mt-1 text-sm text-gray-500" id="ih-google-updated">-</div>
-                        </div>
-                        <div class="bg-gray-50 rounded-lg p-4">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">TikTok Health</div>
-                            <div class="mt-2 text-lg font-semibold text-gray-900" id="ih-tiktok-status">-</div>
-                            <div class="mt-1 text-sm text-gray-500" id="ih-tiktok-updated">-</div>
-                        </div>
-                    </div>
                 </div>
 
             </div>
@@ -4785,9 +4686,9 @@
                 document.getElementById('tiktok-spend').textContent = formatCurrency(paidMedia?.tiktok?.spend || 0);
             }
 
-            document.getElementById('dq-revenue-source').textContent = (dataQuality.revenueSource || '-').toUpperCase();
-            document.getElementById('dq-fallback-active').textContent = dataQuality.fallbackActive ? 'ACTIVO' : 'NO';
-            document.getElementById('dq-snapshot-updated').textContent = formatDateTimeMx(dataQuality.snapshotUpdatedAt);
+            
+            
+            
             renderIntegrationHealth(integrationHealth);
             renderPaidMedia(paidMedia);
 
@@ -4797,11 +4698,11 @@
                 modelBadge.textContent = `Model: ${model.replace('_', ' ')}`;
             }
 
-            document.getElementById('ph-events-received').textContent = (pixelHealth.eventsReceived || 0).toLocaleString();
-            document.getElementById('ph-purchase-signals').textContent = (pixelHealth.purchaseSignals || 0).toLocaleString();
-            document.getElementById('ph-matched-orders').textContent = (pixelHealth.matchedOrders || 0).toLocaleString();
-            document.getElementById('ph-order-match-rate').textContent = formatPercent(pixelHealth.orderMatchRate || 0);
-            document.getElementById('ph-purchase-coverage').textContent = formatPercent(pixelHealth.purchaseSignalCoverage || 0);
+            
+            
+            
+            
+            
             
             // Channel Metrics (Fix: API returns object, map to array)
             const channels = data.channels || {};
