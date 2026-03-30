@@ -1850,8 +1850,11 @@
             <div class="ops-panel p-6 h-full">
                 <p class="panel-kicker">Distribution</p>
                   <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Attributed Orders</h3>
-                  <div class="relative h-64">
-                      <canvas id="attributionPieChart"></canvas>
+                  <div class="relative h-64 flex items-center justify-between">
+                      <div class="w-2/3 h-full relative">
+                          <canvas id="attributionPieChart"></canvas>
+                      </div>
+                      <div id="pieChartLegend" class="w-1/3 flex flex-col justify-center space-y-3 pl-4 overflow-y-auto max-h-full"></div>
                   </div>
             </div>
         </div>
@@ -5125,27 +5128,76 @@ function renderRecentPurchases(purchases) {
         }
 
         
-        function renderAttributionPieChart(attributionData) {
+        
+        function renderAttributionPieChart(attributionArray) {
             const ctx = document.getElementById('attributionPieChart')?.getContext('2d');
             if (!ctx) return;
             
             const labels = [];
             const values = [];
             const backgroundColors = [];
+            const iconMap = {
+                'meta': 'fa-brands fa-meta',
+                'google': 'fa-brands fa-google',
+                'tiktok': 'fa-brands fa-tiktok',
+                'klaviyo': 'fa-solid fa-envelope',
+                'organic': 'fa-solid fa-globe',
+                'direct': 'fa-solid fa-globe',
+                'unattributed': 'fa-solid fa-question'
+            };
             const colorsMap = {
                 'meta': 'rgba(66, 103, 178, 0.8)',
                 'google': 'rgba(219, 68, 55, 0.8)',
-                'tiktok': 'rgba(0, 0, 0, 0.8)',
+                'tiktok': 'rgba(255, 255, 255, 0.8)', // Better visibility for tiktok pie chunk
                 'klaviyo': 'rgba(123, 222, 187, 0.8)',
-                'organic/direct': 'rgba(156, 163, 175, 0.8)',
-                'unattributed': 'rgba(229, 231, 235, 0.8)'
+                'organic': 'rgba(134, 239, 172, 0.8)',
+                'direct': 'rgba(134, 239, 172, 0.8)',
+                'organic/direct': 'rgba(134, 239, 172, 0.8)',
+                'unattributed': 'rgba(156, 163, 175, 0.4)'
             };
             
-            for (const [channel, stats] of Object.entries(attributionData || {})) {
-                if (channel.toLowerCase() === 'unattributed' && (stats.orders || 0) === 0) continue;
-                labels.push(channel.toUpperCase());
+            let legendHtml = '';
+            
+            // attributionArray is an array of objects: { channel, revenue, orders }
+            const dataToIterate = Array.isArray(attributionArray) ? attributionArray : [];
+
+            for (const stats of dataToIterate) {
+                const channelRaw = String(stats.channel || 'unattributed').toLowerCase();
+                // Determine base key for styling (klaviyo, organic, etc)
+                let cKey = channelRaw;
+                if (channelRaw.includes('organic') || channelRaw.includes('direct')) cKey = 'organic';
+                if (channelRaw.includes('facebook') || channelRaw.includes('meta') || channelRaw.includes('ig')) cKey = 'meta';
+
+                if (cKey === 'unattributed' && (stats.orders || 0) === 0) continue;
+                if ((stats.orders || 0) === 0 && (stats.revenue || 0) === 0) continue;
+
+                let displayName = channelRaw.toUpperCase();
+                if (cKey === 'organic') displayName = 'ORGANIC';
+
+                labels.push(displayName);
                 values.push(stats.orders || 0);
-                backgroundColors.push(colorsMap[channel.toLowerCase()] || 'rgba(156, 163, 175, 0.8)');
+
+                const hexColor = colorsMap[cKey] || colorsMap[channelRaw] || 'rgba(156, 163, 175, 0.8)';
+                backgroundColors.push(hexColor);
+                
+                const icon = iconMap[cKey] || iconMap[channelRaw] || 'fa-solid fa-circle';
+                
+                legendHtml += `
+                    <div class="flex items-center text-gray-300">
+                        <div class="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full mr-2" style="background: ${hexColor.replace('0.8', '0.2')}">
+                            <i class="${icon} text-xs" style="color: ${hexColor.replace('0.8', '1')}"></i>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-sm font-medium truncate text-gray-200">${displayName}</p>
+                            <p class="text-xs text-indigo-300">${stats.orders} ${stats.orders === 1 ? 'order' : 'orders'}</p>
+                        </div>
+                    </div>
+                `;
+            }
+
+            const legendContainer = document.getElementById('pieChartLegend');
+            if (legendContainer) {
+                legendContainer.innerHTML = legendHtml || '<p class="text-xs text-gray-500">No data</p>';
             }
 
             if (attributionPieChartInstance) attributionPieChartInstance.destroy();
@@ -5157,16 +5209,22 @@ function renderRecentPurchases(purchases) {
                     datasets: [{
                         data: values,
                         backgroundColor: backgroundColors,
-                        borderWidth: 1
+                        borderWidth: 1,
+                        borderColor: '#120c1d'
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    cutout: '65%',
+                    cutout: '70%',
                     plugins: {
-                        legend: { position: 'right' },
+                        legend: { display: false },
                         tooltip: {
+                            backgroundColor: 'rgba(18, 12, 29, 0.95)',
+                            titleColor: '#f4f1ff',
+                            bodyColor: '#e1d8f3',
+                            borderColor: 'rgba(202, 138, 229, 0.3)',
+                            borderWidth: 1,
                             callbacks: {
                                 label: function(context) {
                                     let value = context.raw || 0;
