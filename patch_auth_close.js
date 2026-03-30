@@ -1,0 +1,1 @@
+const fs = require('fs'); let auth = fs.readFileSync('backend/auth.js', 'utf8'); auth = auth.replace('} // Serializaci\u00f3n', '}\n\n// Serializaci\u00f3n'); fs.writeFileSync('backend/auth.js', auth);  

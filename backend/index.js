@@ -592,20 +592,16 @@ app.use("/api/onboarding/status", sessionGuard, require("./routes/onboardingStat
 
 app.use('/api/onboarding', require('./routes/onboardingReset'));
 
-try { app.use('/api/mcpjobs', sessionGuard, require('./routes/mcpjobs')); } catch (e) { console.error("⚠️ Failed to load mcpjobs", e); }
-  try { app.use('/api/mcp/context', require('./routes/mcpContext')); } catch (e) { console.error("⚠️ Failed to load mcpContext", e); }
-  try { app.use('/api/daily-signal-delivery', sessionGuard, require('./routes/dailySignalDelivery')); } catch (e) { console.error("⚠️ Failed to load daily-signal", e); }
-  try { app.use('/api/internal/daily-signal', require('./routes/internalDailySignal')); } catch (e) { console.error("⚠️ Failed to load internal-daily-signal", e); }
+app.use('/api/mcpjobs', sessionGuard, require('./routes/mcpjobs'));
+
+app.use('/api/mcp/context', require('./routes/mcpContext'));
 
 // MCP Server (Phase 1) - protocol endpoint + OAuth + REST mirror
-  try {
-    const { mountMcpRoutes } = require('./mcp/transport');
-    mountMcpRoutes(app);
-    app.use('/oauth', require('./mcp/auth/oauth-server'));
-    app.use('/gpt/v1', require('./mcp/rest/router'));
-  } catch (err) {
-    console.error("⚠️ Error loading MCP routes, skipping:", err);
-  }
+const { mountMcpRoutes } = require('./mcp/transport');
+mountMcpRoutes(app);
+app.use('/oauth', require('./mcp/auth/oauth-server'));
+app.use('/gpt/v1', require('./mcp/rest/router'));
+
 /* =========================
  * ✅ Integraciones: DISCONNECT (E2E)
  * ========================= */

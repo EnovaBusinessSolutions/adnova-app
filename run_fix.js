@@ -1,0 +1,1 @@
+const fs = require('fs'); let HTML = fs.readFileSync('backend/views/adray-analytics.html', 'utf8'); HTML = HTML.replace(/\\\\\\x22!text-gray-600\\\\\\x22/g, \" !text-gray-600 "\).replace(/\\\\\\x22text-gray-400\\\\\\x22/g, \text-gray-400\); fs.writeFileSync('backend/views/adray-analytics.html', HTML);  ; node run_fix.js ; del run_fix.js

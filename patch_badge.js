@@ -1,0 +1,1 @@
+const fs = require('fs'); let html = fs.readFileSync('backend/views/adray-analytics.html', 'utf8'); html = html.replace(/color: 'text-purple-700'/g, "color: '!text-purple-700'"); fs.writeFileSync('backend/views/adray-analytics.html', html); console.log('Replaced successfully');

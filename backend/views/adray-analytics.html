@@ -4421,7 +4421,7 @@
                             <div>
                                 <p class="font-medium text-gray-900">${formatSessionEventLabel(event)}</p>
                                 <p class="text-xs text-gray-500">${formatSessionEventDetail(event)}</p>
-                                <p class="text-[11px] text-indigo-500 mt-1">${formatLayer6Meta(event) || '-'}</p>
+                                <p class="text-[11px] !text-indigo-500 mt-1">${formatLayer6Meta(event) || '-'}</p>
                             </div>
                             <div class="text-right">
                                 <p class="text-sm text-gray-700">${formatTimeMx(event.createdAt)}</p>
@@ -5472,22 +5472,22 @@
                 if (data.type === 'COLLECT') {
                     const evtNameLow = String(data.payload.eventName || data.payload.event_name || '').toLowerCase();
                     icon = 'fa-mouse-pointer';
-                    color = 'text-blue-500';
+                    color = '!text-blue-500';
                     title = translateEventNameSimple(data.payload.eventName || data.payload.event_name || 'Event');
                     detail = data.payload.pageUrl ? new URL(data.payload.pageUrl).pathname : '';
 
                     if (evtNameLow === 'purchase') {
                         icon = 'fa-shopping-cart';
-                        color = 'text-gray-900';
+                        color = '!text-gray-900';
                         isPurchaseEvent = true;
                     } else if (evtNameLow === 'add_to_cart') {
                         icon = 'fa-cart-plus';
-                        color = 'text-gray-900';
+                        color = '!text-gray-900';
                         isCartEvent = true;
                     }
                 } else if (data.type === 'WEBHOOK') {
                     icon = 'fa-server';
-                    color = 'text-gray-900';
+                    color = '!text-gray-900';
                     const platformName = String(data.payload?.platform || '').toLowerCase();
                     title = platformName.includes('woo') ? 'WooCommerce Order' : 'Shopify Order';
                     detail = data.payload?.orderId ? `Order ${data.payload.orderId}` : 'New order processed';
@@ -5496,7 +5496,7 @@
                     title = translateEventNameSimple(data.type || 'Event');     
                     if (title.toLowerCase().includes('purchase')) {
                         isPurchaseEvent = true;
-                        color = 'text-gray-900';
+                        color = '!text-gray-900';
                     }
                 }
 
@@ -5531,11 +5531,11 @@
                                     <i class="${attrInfo.icon} text-[9px]"></i> ${attrInfo.text}
                                 </span>
                             </div>
-                            ${linkedUserLabel ? `<p class="text-xs font-semibold text-indigo-700 truncate cursor-pointer live-feed-always-visible-user mt-0.5" title="Click para filtrar eventos de este usuario">${linkedUserLabel}</p>` : `<p class="text-xs ${(isPurchaseEvent||isCartEvent)?'!text-gray-600':'text-gray-400'} italic mt-0.5">Anónimo</p>`}
+                            ${linkedUserLabel ? `<p class="text-xs font-semibold !text-indigo-700 truncate cursor-pointer live-feed-always-visible-user mt-0.5" title="Click para filtrar eventos de este usuario">${linkedUserLabel}</p>` : `<p class="text-xs ${(isPurchaseEvent||isCartEvent)?'!text-gray-600':'text-gray-400'} italic mt-0.5">Anónimo</p>`}
                             <p class="text-xs ${detailColor} truncate mt-0.5">${detail || '-'}</p>
                             <div class="feed-extra mt-1">
-                                <p class="text-[11px] text-indigo-500">${buildSignalTextSimple(data.payload || {})}</p>
-                                <p class="text-[11px] text-indigo-600">${readableSession}</p>
+                                <p class="text-[11px] !text-indigo-500">${buildSignalTextSimple(data.payload || {})}</p>
+                                <p class="text-[11px] !text-indigo-600">${readableSession}</p>
                                 ${linkedUserLabel ? `<p class="text-[11px] text-emerald-600">u: <button type="button" class="live-feed-user-link underline decoration-dotted cursor-pointer" data-user-key="${resolvedUserKey.replace(/"/g, '&quot;')}" data-session-id="${resolvedSessionId.replace(/"/g, '&quot;')}" data-user-name="${linkedUserLabel.replace(/"/g, '&quot;')}">${linkedUserLabel}</button></p>` : `<p class="text-[11px] text-gray-500 italic">No logged-in identity available</p>`}
                                 <p class="text-[10px] text-gray-400">${formatTimeMx()}</p>
                             </div>
