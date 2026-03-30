@@ -46,16 +46,17 @@ function requireInternalCronKey(req, res, next) {
     safeStr(req.get('x-cron-key')).trim() ||
     safeStr(req.query?.key).trim();
 
-    console.log('[internalDailySignal/auth]', {
-  path: req.originalUrl,
-  hasExpected: !!expected,
-  hasProvided: !!provided,
-  expectedLength: expected ? expected.length : 0,
-  providedLength: provided ? provided.length : 0,
-  matches: !!provided && !!expected && provided === expected,
-  providedPreview: provided ? `${provided.slice(0, 6)}...${provided.slice(-4)}` : null,
-  expectedPreview: expected ? `${expected.slice(0, 6)}...${expected.slice(-4)}` : null,
- });
+  console.log('[internalDailySignal/auth]', {
+    path: req.originalUrl,
+    method: req.method,
+    hasExpected: !!expected,
+    hasProvided: !!provided,
+    expectedLength: expected ? expected.length : 0,
+    providedLength: provided ? provided.length : 0,
+    matches: !!provided && !!expected && provided === expected,
+    providedPreview: provided ? `${provided.slice(0, 6)}...${provided.slice(-4)}` : null,
+    expectedPreview: expected ? `${expected.slice(0, 6)}...${expected.slice(-4)}` : null,
+  });
 
   if (!provided || provided !== expected) {
     return res.status(401).json({
@@ -91,31 +92,18 @@ router.get('/health', async (_req, res) => {
 });
 
 router.post('/run', async (req, res) => {
-  try {
-    const result = await runDailySignalDeliveryBatch({
-      now: new Date(),
-      trigger: 'cron',
-      reason: 'daily_signal_cron_run',
-      force: toBool(req.body?.force),
-      allowRetrySameDay: toBool(req.body?.allowRetrySameDay),
-      respectSchedule: 'respectSchedule' in (req.body || {})
-        ? toBool(req.body?.respectSchedule)
-        : true,
-      windowMinutes: resolveWindowMinutes(req.body, 20),
-    });
+  console.log('[internalDailySignal/run] reached', {
+    method: req.method,
+    url: req.originalUrl,
+    body: req.body,
+    contentType: req.get('content-type') || null,
+  });
 
-    setNoCacheHeaders(res);
-    return res.json({
-      ok: true,
-      data: result,
-    });
-  } catch (err) {
-    console.error('[internalDailySignal/run] error:', err);
-    return res.status(500).json({
-      ok: false,
-      error: 'INTERNAL_DAILY_SIGNAL_RUN_FAILED',
-    });
-  }
+  setNoCacheHeaders(res);
+  return res.json({
+    ok: true,
+    debug: 'RUN_ROUTE_REACHED',
+  });
 });
 
 router.post('/run-all', async (req, res) => {
