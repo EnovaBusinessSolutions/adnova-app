@@ -5178,7 +5178,11 @@
                   }
               });
               console.log('=== END CHART DEBUG ===');
-                platformRoasData.push(0, 0);
+
+              // Fallback en caso de que no haya datos aún
+              if (labels.length === 0) {
+                  labels.push('Meta', 'Google');
+                  adnovaRoasData.push(0, 0);
             }
 
             attributionChartInstance = new Chart(ctx, {
