@@ -1744,13 +1744,7 @@ router.get('/:account_id', async (req, res) => {
       take: recentLimit,
     });
 
-    const purchaseEventsForModel = await prisma.event.findMany({
-      where: {
-        accountId: account_id,
-        createdAt: { gte: startDate, lte: endDate },
-        eventName: { in: PURCHASE_ALIASES },
-      },
-      select: {
+    const purchaseEventsForModel = await prisma.event.findMany({ where: { accountId: account_id, createdAt: { gte: startDate, lte: endDate }, eventName: { in: PURCHASE_ALIASES }, }, take: 4000, orderBy: { createdAt: 'desc' }, select: {
         createdAt: true,
         orderId: true,
         checkoutToken: true,
@@ -2100,7 +2094,7 @@ router.get('/:account_id', async (req, res) => {
           rawPayload: true,
         },
         orderBy: { createdAt: 'desc' },
-        take: 8000,
+        take: 1500,
       });
       stitchedCandidateEvents.reverse(); // put back to asc
     }
