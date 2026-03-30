@@ -1848,11 +1848,11 @@
             </div>
 
             <div class="ops-panel p-6 h-full">
-                <p class="panel-kicker">Ritmo</p>
-                <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Tendencia Diaria</h3>
-                <div class="relative h-64">
-                    <canvas id="trendChart"></canvas>
-                </div>
+                <p class="panel-kicker">Distribuci�n</p>
+                  <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Ingresos por Atribuci�n</h3>
+                  <div class="relative h-64">
+                      <canvas id="attributionPieChart"></canvas>
+                  </div>
             </div>
         </div>
 
@@ -2097,7 +2097,7 @@
         let currentShopId = null;
         let currentAttributionModel = 'last_touch';
         let attributionChartInstance = null;
-        let trendChartInstance = null;
+        let attributionPieChartInstance = null;
         let recentPurchasesState = [];
         let metricCarouselIndex = 0;
         let metricCarouselVisible = 4;
@@ -4662,7 +4662,7 @@
 
             // Charts
             renderAttributionChart(attributionData, paidMedia);
-            renderTrendChart(data.daily || []);
+            renderAttributionPieChart(attributionData);
             renderTopProducts(data.topProducts || []);
             renderRecentPurchases(data.recentPurchases || []);
             renderAttributionJourneyPanel();
@@ -4715,7 +4715,7 @@
             });
 
             // Update Data Enrichment Trigger Badge
-            
+        }
 
             // Populate Modal specific features
             function renderPaidMedia(paidMedia) {
@@ -5124,59 +5124,56 @@ function renderRecentPurchases(purchases) {
             });
         }
 
-        function renderTrendChart(dailyData) {
-            const ctx = document.getElementById('trendChart').getContext('2d');
+        
+        function renderAttributionPieChart(attributionData) {
+            const ctx = document.getElementById('attributionPieChart')?.getContext('2d');
+            if (!ctx) return;
             
-            // Sort by date just in case
-            dailyData.sort((a, b) => new Date(a.date) - new Date(b.date));
+            const labels = [];
+            const values = [];
+            const backgroundColors = [];
+            const colorsMap = {
+                'meta': 'rgba(66, 103, 178, 0.8)',
+                'google': 'rgba(219, 68, 55, 0.8)',
+                'tiktok': 'rgba(0, 0, 0, 0.8)',
+                'klaviyo': 'rgba(123, 222, 187, 0.8)',
+                'organic/direct': 'rgba(156, 163, 175, 0.8)',
+                'unattributed': 'rgba(229, 231, 235, 0.8)'
+            };
+            
+            for (const [channel, stats] of Object.entries(attributionData || {})) {
+                if (channel.toLowerCase() === 'unattributed' && (stats.revenue || 0) === 0) continue;
+                labels.push(channel.toUpperCase());
+                values.push(stats.revenue || 0);
+                backgroundColors.push(colorsMap[channel.toLowerCase()] || 'rgba(156, 163, 175, 0.8)');
+            }
 
-            const labels = dailyData.map(d => new Date(d.date).toLocaleDateString());
-            const values = dailyData.map(d => d.revenue);
+            if (attributionPieChartInstance) attributionPieChartInstance.destroy();
 
-            if (trendChartInstance) trendChartInstance.destroy();
-
-            trendChartInstance = new Chart(ctx, {
-                type: 'line',
+            attributionPieChartInstance = new Chart(ctx, {
+                type: 'doughnut',
                 data: {
                     labels: labels,
                     datasets: [{
-                        label: 'Ingresos',
                         data: values,
-                        borderColor: '#CA8AE5',
-                        backgroundColor: 'rgba(202, 138, 229, 0.14)',
-                        tension: 0.3,
-                        fill: true,
-                        pointRadius: 3,
-                        pointHoverRadius: 4,
-                        pointBackgroundColor: '#F4F1FF',
-                        pointBorderColor: '#CA8AE5'
+                        backgroundColor: backgroundColors,
+                        borderWidth: 1
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    scales: {
-                        x: {
-                            ticks: { color: 'rgba(225, 216, 243, 0.72)' },
-                            grid: { color: 'rgba(202, 138, 229, 0.08)' },
-                        },
-                        y: {
-                            beginAtZero: true,
-                            ticks: { color: 'rgba(225, 216, 243, 0.72)' },
-                            grid: { color: 'rgba(202, 138, 229, 0.08)' },
-                        }
-                    },
+                    cutout: '65%',
                     plugins: {
-                        legend: {
-                            labels: { color: '#F4F1FF' },
-                        },
+                        legend: { position: 'right' },
                         tooltip: {
-                            backgroundColor: 'rgba(12, 8, 19, 0.95)',
-                            titleColor: '#F4F1FF',
-                            bodyColor: 'rgba(225, 216, 243, 0.9)',
-                            borderColor: 'rgba(202, 138, 229, 0.2)',
-                            borderWidth: 1,
-                        },
+                            callbacks: {
+                                label: function(context) {
+                                    let value = context.raw || 0;
+                                    return ' ' + new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(value);
+                                }
+                            }
+                        }
                     }
                 }
             });
