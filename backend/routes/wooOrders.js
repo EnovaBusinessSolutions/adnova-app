@@ -49,19 +49,22 @@ function normalizeWooChannel(payload = {}) {
   const wooSourceLabel = String(payload.woo_source_label || '').trim().toLowerCase();
   const wooSourceType = String(payload.woo_source_type || '').trim().toLowerCase();
 
-  if (utmSource === 'google') return 'google';
+  const isPaidGoogle = utmMedium === 'cpc' || utmMedium === 'paid_search' || payload.gclid || wooSourceLabel.includes('cpc') || wooSourceLabel.includes('ads');
+
+  if (utmSource === 'google') return isPaidGoogle ? 'google' : 'organic';
   if (utmSource === 'facebook' || utmSource === 'instagram') return 'meta';
   if (utmSource === 'tiktok') return 'tiktok';
   if (utmSource === 'yahoo' || utmSource === 'bing') return 'other';
 
   if (utmMedium === 'paid_search') return 'google';
+  if (utmMedium === 'organic') return 'organic';
   if (utmMedium === 'paid_social') {
     if (utmSource === 'tiktok') return 'tiktok';
     return 'meta';
   }
 
   if (wooSourceLabel.includes('google')) {
-    return 'google';
+    return isPaidGoogle ? 'google' : 'organic';
   }
   if (wooSourceLabel.includes('yahoo') || wooSourceLabel.includes('bing') || wooSourceLabel.includes('referido')) {
     return 'other';

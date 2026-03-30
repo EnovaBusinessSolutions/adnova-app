@@ -668,10 +668,16 @@ function stitchSnapshotAttributionForAccount(snapshot = {}, accountId) {
 
 function normalizeChannelForStats(channelRaw) {
   let ch = String(channelRaw || 'unattributed').toLowerCase();
-  if (ch === 'facebook' || ch === 'instagram' || ch === 'paid_social') ch = 'meta';
-  if (ch === 'paid_search') ch = 'google';
-  if (ch !== 'meta' && ch !== 'google' && ch !== 'tiktok' && ch !== 'unattributed') ch = 'other';
-  return ch;
+  
+  if (ch === 'facebook' || ch === 'instagram' || ch === 'paid_social') return 'meta';
+  if (ch === 'paid_search' || ch === 'google_ads' || ch === 'cpc') return 'google';
+  if (ch === 'organic_search' || ch === 'organic' || ch === 'google_organic') return 'organic';
+  
+  if (ch === 'meta' || ch === 'google' || ch === 'tiktok' || ch === 'organic' || ch === 'unattributed') {
+    return ch;
+  }
+  
+  return 'other';
 }
 
 function compactSessionPath(timeline = []) {
@@ -1333,10 +1339,13 @@ function deriveWooFallbackAttribution(rawPayload = {}) {
   const sourceLabel = String(rawPayload?.woo_source_label || '').trim();
   const sourceType = String(rawPayload?.woo_source_type || '').trim().toLowerCase();
   const utmSource = String(rawPayload?.utm_source || '').trim().toLowerCase();
+  const utmMedium = String(rawPayload?.utm_medium || '').trim().toLowerCase();
+  
+  const isPaidGoogle = utmMedium === 'cpc' || utmMedium === 'paid_search' || rawPayload?.gclid || sourceLabel.toLowerCase().includes('cpc') || sourceLabel.toLowerCase().includes('ads');
 
   if (utmSource === 'google') {
     return {
-      channel: 'google',
+      channel: isPaidGoogle ? 'google' : 'organic',
       platform: 'google',
       confidence: 0.6,
       source: 'woo_fallback',
@@ -1365,7 +1374,7 @@ function deriveWooFallbackAttribution(rawPayload = {}) {
     const normalized = sourceLabel.toLowerCase();
     if (normalized.includes('google')) {
       return {
-        channel: 'google',
+        channel: isPaidGoogle ? 'google' : 'organic',
         platform: 'google',
         confidence: 0.55,
         source: 'woo_fallback',
@@ -1610,6 +1619,7 @@ router.get('/:account_id', async (req, res) => {
       meta: { revenue: 0, orders: 0 },
       google: { revenue: 0, orders: 0 },
       tiktok: { revenue: 0, orders: 0 },
+      organic: { revenue: 0, orders: 0 },
       other: { revenue: 0, orders: 0 },
       unattributed: { revenue: 0, orders: 0 }
     };
@@ -1638,14 +1648,7 @@ router.get('/:account_id', async (req, res) => {
       totalRevenue += rev;
       
       // Channel normalization
-      let ch = (order.attributedChannel || 'unattributed').toLowerCase();
-      if (ch === 'facebook' || ch === 'instagram') ch = 'meta';
-
-      if (channelStats[ch]) {
-        channelStats[ch].revenue += rev;
-        channelStats[ch].orders += 1;
-      } else {
-        channelStats.other.revenue += rev;
+      let ch = normalizeChannelForStats(order.attributedChannel);
         channelStats.other.orders += 1;
       }
 
@@ -2425,6 +2428,7 @@ router.get('/:account_id', async (req, res) => {
           meta: { revenue: 0, orders: 0 },
           google: { revenue: 0, orders: 0 },
           tiktok: { revenue: 0, orders: 0 },
+          organic: { revenue: 0, orders: 0 },
           other: { revenue: 0, orders: 0 },
           unattributed: { revenue: 0, orders: 0 },
         },
