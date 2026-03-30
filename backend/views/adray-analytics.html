@@ -3023,7 +3023,6 @@
                     if (mode !== 'condensed' && mode !== 'full') return;
                     selectedJourneyTimelineMode = mode;
                     renderAttributionJourneyPanel();
-              renderDataEnrichment(data.recentPurchases || []);
                 });
             });
         }
@@ -4663,6 +4662,7 @@
             renderAttributionPieChart(attributionData);
             renderTopProducts(data.topProducts || []);
             renderRecentPurchases(data.recentPurchases || []);
+            renderDataEnrichment(data.recentPurchases || []);
             renderAttributionJourneyPanel();
         }
 
