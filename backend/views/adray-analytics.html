@@ -2920,22 +2920,21 @@
         }
 
         function resolveChannelIcon(channel, platform) {
-            const key = String(platform || channel || '').toLowerCase();
+            const key = String(channel + ' ' + platform).toLowerCase();        
+            if (key.includes('organic') || key.includes('referral') || key.includes('direct')) return 'fa-solid fa-globe';
             if (key.includes('google') || key.includes('search')) return 'fa-brands fa-google';
             if (key.includes('facebook') || key.includes('meta') || key.includes('instagram')) return 'fa-brands fa-meta';
             if (key.includes('tiktok')) return 'fa-brands fa-tiktok';
             if (key.includes('email')) return 'fa-solid fa-envelope';
-            if (key.includes('organic') || key.includes('referral')) return 'fa-solid fa-globe';
             return 'fa-solid fa-bullseye';
         }
 
         function resolveChannelTone(channel, platform) {
-            const key = String(platform || channel || '').toLowerCase();
+            const key = String(channel + ' ' + platform).toLowerCase();        
+            if (key.includes('organic') || key.includes('referral') || key.includes('direct')) return 'is-organic';
             if (key.includes('google') || key.includes('search')) return 'is-google';
             if (key.includes('facebook') || key.includes('meta') || key.includes('instagram')) return 'is-meta';
             if (key.includes('tiktok')) return 'is-tiktok';
-            if (key.includes('organic') || key.includes('referral') || key.includes('direct')) return 'is-organic';
-            return '';
         }
 
         function scoreJourneySignal(purchase = {}) {
