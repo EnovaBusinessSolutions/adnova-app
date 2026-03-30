@@ -4894,41 +4894,69 @@ function renderDataEnrichment(purchases) {
         let orderId = p.orderNumber || p.orderId || p.checkoutToken || '?';
         let platformText = String(p.attributedPlatform || 'Meta').toLowerCase();
         let displayPlatform = p.attributedPlatform || (p.attributedChannel === 'organic' ? 'CAPI Platform' : 'Meta Ads / CAPI');
-        let exactData = new Set(['Email (Hashed)', 'IP Address', 'User Agent']);
+        
+        let exactData = new Map();
+        
+        let clientIp = 'Unknown Client IP';
+        let userAgent = 'Unknown User Agent';
+        let emailVal = 'Unknown Email';
+        
+        if (p.customerIpAddress || p.ip_address || p.client_ip) clientIp = p.customerIpAddress || p.ip_address || p.client_ip;
+        if (p.customerUserAgent || p.user_agent || p.userAgent) userAgent = p.customerUserAgent || p.user_agent || p.userAgent;
+        if (p.user_email || p.email) emailVal = p.user_email || p.email;
+        else if (p.contact_email) emailVal = p.contact_email;
+        else if (p.customer && p.customer.email) emailVal = p.customer.email;
+
+        exactData.set('Email (Hashed)', emailVal);
+        exactData.set('IP Address', clientIp);
+        exactData.set('User Agent', userAgent);
+
         let hasAdvancedData = false;
         if (Array.isArray(p.stitchedEvents)) {
             p.stitchedEvents.forEach(evt => {
                 const py = evt.payload || {};
                 const urlStr = String(py.pageUrl || py.page_url || '').toLowerCase();
-                if (py.fbp || py._fbp) { exactData.add('FBP (' + String(py.fbp || py._fbp).substring(0, 15) + '...)'); hasAdvancedData = true; }
-                if (py.fbc || py._fbc) { exactData.add('FBC (Click id)'); hasAdvancedData = true; }
-                if (py.ttclid) { exactData.add('TTCLID (' + String(py.ttclid).slice(-8) + ')'); hasAdvancedData = true; }
-                if (py.gclid) { exactData.add('GCLID (' + String(py.gclid).slice(-8) + ')'); hasAdvancedData = true; }
-                if (urlStr.includes('gclid=')) { exactData.add('GCLID'); hasAdvancedData = true; }
-                if (urlStr.includes('ttclid=')) { exactData.add('TTCLID'); hasAdvancedData = true; }
-                if (urlStr.includes('fbclid=')) { exactData.add('FBCLID'); hasAdvancedData = true; }
-                if(py.billing || py.customer) exactData.add('Phone (Hashed)');
+                if (py.fbp || py._fbp) { exactData.set('FBP', String(py.fbp || py._fbp)); hasAdvancedData = true; }
+                if (py.fbc || py._fbc) { exactData.set('FBC (Click id)', String(py.fbc || py._fbc)); hasAdvancedData = true; }
+                if (py.ttclid) { exactData.set('TTCLID', String(py.ttclid)); hasAdvancedData = true; }
+                if (py.gclid) { exactData.set('GCLID', String(py.gclid)); hasAdvancedData = true; }
+                if (urlStr.includes('gclid=')) { exactData.set('GCLID Match', urlStr.split('gclid=')[1].split('&')[0]); hasAdvancedData = true; }
+                if (urlStr.includes('ttclid=')) { exactData.set('TTCLID Match', urlStr.split('ttclid=')[1].split('&')[0]); hasAdvancedData = true; }
+                if (urlStr.includes('fbclid=')) { exactData.set('FBCLID Match', urlStr.split('fbclid=')[1].split('&')[0]); hasAdvancedData = true; }
+                
+                if (py.customer_email || py.user_email) exactData.set('Email (Hashed)', py.customer_email || py.user_email);
+                if (py.client_ip_address) exactData.set('IP Address', py.client_ip_address);
+                if (py.client_user_agent) exactData.set('User Agent', py.client_user_agent);
+                if(py.billing || py.customer) { 
+                    const phone = (py.billing && py.billing.phone) || (py.customer && py.customer.phone);
+                    if (phone) exactData.set('Phone (Hashed)', phone); 
+                }
             });
         }
         if(!hasAdvancedData) {
-            if (platformText.includes('meta') || platformText.includes('fb')) exactData.add('FBP Match').add('Click ID');
-            if (platformText.includes('tiktok')) exactData.add('TTCLID Match');
-            if (platformText.includes('google')) exactData.add('GCLID Match');
+            if (platformText.includes('meta') || platformText.includes('fb')) { exactData.set('FBP Match', 'Automated CAPI'); exactData.set('Click ID', 'Automated CAPI'); }
+            if (platformText.includes('tiktok')) exactData.set('TTCLID Match', 'Automated CAPI'); 
+            if (platformText.includes('google')) exactData.set('GCLID Match', 'Automated CAPI');  
         }
-        let tagsHtml = Array.from(exactData).map(d => '<span class="inline-flex items-center py-0.5 px-1.5 rounded text-[10px] sm:text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100 mr-1.5 mb-1.5 shadow-sm">' + d + '</span>').join('');
-        return '<div class="p-4 bg-white border border-gray-200 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between mb-3 shadow-sm hover:shadow transition-shadow">' +
+
+        let tagsHtml = Array.from(exactData.entries()).map(([k, v]) => {
+            const safeVal = String(v).replace(/"/g, '&quot;');
+            return `<span title="${safeVal}" class="inline-flex items-center py-0.5 px-1.5 rounded text-[10px] sm:text-xs font-medium bg-indigo-500 bg-opacity-20 text-indigo-200 border border-indigo-500 border-opacity-30 mr-1.5 mb-1.5 shadow-sm cursor-help transition-all hover:bg-opacity-40">${k}</span>`;
+        }).join('');
+
+        return '<div class="p-4 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between mb-3 shadow-sm hover:shadow transition-shadow" style="background-color: rgba(43, 31, 68, 0.6); border: 1px solid rgba(202, 138, 229, 0.15);">' +
             '<div class="flex flex-col w-full sm:pr-4">' +
                 '<div class="flex items-center gap-2 mb-2">' +
-                    '<span class="text-sm font-bold text-gray-900">Orden #' + orderId + '</span>' +
-                    '<span class="text-[10px] text-gray-500 uppercase tracking-wide bg-gray-100 px-2 py-0.5 rounded-full">Sync: ' + displayPlatform + '</span>' +
+                    '<span class="text-sm font-bold" style="color: #f8fafc !important;">Orden #' + orderId + '</span>' +
+                    '<span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full" style="background-color: rgba(255,255,255,0.05); color: #CA8AE5;">Sync: ' + displayPlatform + '</span>' +
                 '</div>' +
                 '<div class="flex flex-wrap items-center mt-1">' + tagsHtml + '</div>' +
             '</div>' +
             '<div class="flex-shrink-0 text-center sm:text-right mt-3 sm:mt-0 flex flex-row sm:flex-col items-center sm:items-end justify-between">' +
-                '<div class="w-8 h-8 rounded-full bg-green-50 flex items-center justify-center mb-1">' +
-                    '<i class="fa-solid fa-check text-green-500 text-xs"></i>' +
+                '<div class="w-8 h-8 rounded-full flex items-center justify-center mb-1" style="background-color: rgba(34, 197, 94, 0.1);">' +
+                    '<i class="fa-solid fa-check text-xs" style="color: #4ade80;"></i>' +
                 '</div>' +
-                '<span class="text-[10px] text-green-600 font-semibold uppercase tracking-wider ml-2 sm:ml-0">Enviado</span>' +
+                '<span class="text-[10px] font-semibold uppercase tracking-wider ml-2 sm:ml-0" style="color: #4ade80;">Enviado</span>' +
             '</div>' +
         '</div>';
     });
