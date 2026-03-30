@@ -4907,32 +4907,40 @@ function renderDataEnrichment(purchases) {
         else if (p.contact_email) emailVal = p.contact_email;
         else if (p.customer && p.customer.email) emailVal = p.customer.email;
 
-        exactData.set('Email (Hashed)', emailVal);
-        exactData.set('IP Address', clientIp);
-        exactData.set('User Agent', userAgent);
+        // Try extracting early if hashes exist
+        if (p.emailHash && emailVal === 'Unknown Email') emailVal = p.emailHash;
 
         let hasAdvancedData = false;
-        if (Array.isArray(p.stitchedEvents)) {
-            p.stitchedEvents.forEach(evt => {
-                const py = evt.payload || {};
-                const urlStr = String(py.pageUrl || py.page_url || '').toLowerCase();
-                if (py.fbp || py._fbp) { exactData.set('FBP', String(py.fbp || py._fbp)); hasAdvancedData = true; }
-                if (py.fbc || py._fbc) { exactData.set('FBC (Click id)', String(py.fbc || py._fbc)); hasAdvancedData = true; }
-                if (py.ttclid) { exactData.set('TTCLID', String(py.ttclid)); hasAdvancedData = true; }
-                if (py.gclid) { exactData.set('GCLID', String(py.gclid)); hasAdvancedData = true; }
-                if (urlStr.includes('gclid=')) { exactData.set('GCLID Match', urlStr.split('gclid=')[1].split('&')[0]); hasAdvancedData = true; }
-                if (urlStr.includes('ttclid=')) { exactData.set('TTCLID Match', urlStr.split('ttclid=')[1].split('&')[0]); hasAdvancedData = true; }
-                if (urlStr.includes('fbclid=')) { exactData.set('FBCLID Match', urlStr.split('fbclid=')[1].split('&')[0]); hasAdvancedData = true; }
-                
-                if (py.customer_email || py.user_email) exactData.set('Email (Hashed)', py.customer_email || py.user_email);
-                if (py.client_ip_address) exactData.set('IP Address', py.client_ip_address);
-                if (py.client_user_agent) exactData.set('User Agent', py.client_user_agent);
-                if(py.billing || py.customer) { 
-                    const phone = (py.billing && py.billing.phone) || (py.customer && py.customer.phone);
-                    if (phone) exactData.set('Phone (Hashed)', phone); 
-                }
-            });
-        }
+        let eventsArray = Array.isArray(p.events) ? p.events : (Array.isArray(p.stitchedEvents) ? p.stitchedEvents : []);
+        
+        eventsArray.forEach(evt => {
+            const py = evt.payload || evt.rawPayload || evt; // Check py, rawPayload, or flattened evt
+            const urlStr = String(py.pageUrl || py.page_url || '').toLowerCase();
+            
+            if (py.fbp || py._fbp) { exactData.set('FBP', String(py.fbp || py._fbp)); hasAdvancedData = true; }
+            if (py.fbc || py._fbc) { exactData.set('FBC (Click id)', String(py.fbc || py._fbc)); hasAdvancedData = true; }
+            if (py.ttclid) { exactData.set('TTCLID', String(py.ttclid)); hasAdvancedData = true; }
+            if (py.gclid) { exactData.set('GCLID', String(py.gclid)); hasAdvancedData = true; }
+            if (py.clickId || py.click_id) { exactData.set('Click ID', String(py.clickId || py.click_id)); hasAdvancedData = true; }
+            
+            if (urlStr.includes('gclid=')) { exactData.set('GCLID Match', urlStr.split('gclid=')[1].split('&')[0]); hasAdvancedData = true; }
+            if (urlStr.includes('ttclid=')) { exactData.set('TTCLID Match', urlStr.split('ttclid=')[1].split('&')[0]); hasAdvancedData = true; }
+            if (urlStr.includes('fbclid=')) { exactData.set('FBCLID Match', urlStr.split('fbclid=')[1].split('&')[0]); hasAdvancedData = true; }
+            
+            if (py.customerEmail || py.customer_email || py.user_email || py.email) emailVal = py.customerEmail || py.customer_email || py.user_email || py.email;
+            if (py.clientIp || py.client_ip_address || py.ip_address || py.ip) clientIp = py.clientIp || py.client_ip_address || py.ip_address || py.ip;
+            if (py.userAgent || py.client_user_agent || py.user_agent) userAgent = py.userAgent || py.client_user_agent || py.user_agent;
+            
+            if(py.billing || py.customer) { 
+                const phone = (py.billing && py.billing.phone) || (py.customer && py.customer.phone);
+                if (phone) exactData.set('Phone (Hashed)', phone); 
+            }
+        });
+
+        if (emailVal !== 'Unknown Email') exactData.set('Email (Hashed)', emailVal);
+        if (clientIp !== 'Unknown Client IP') exactData.set('IP Address', clientIp);
+        if (userAgent !== 'Unknown User Agent') exactData.set('User Agent', userAgent);
+
         if(!hasAdvancedData) {
             if (platformText.includes('meta') || platformText.includes('fb')) { exactData.set('FBP Match', 'Automated CAPI'); exactData.set('Click ID', 'Automated CAPI'); }
             if (platformText.includes('tiktok')) exactData.set('TTCLID Match', 'Automated CAPI'); 

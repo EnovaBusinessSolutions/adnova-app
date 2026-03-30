@@ -2221,6 +2221,14 @@ router.get('/:account_id', async (req, res) => {
           utmSource: ev?.rawPayload?.utm_source || null,
           checkoutToken: ev.checkoutToken || null,
           orderId: ev.orderId || null,
+          fbp: ev?.rawPayload?.fbp || ev?.rawPayload?._fbp || ev?.rawPayload?.user_data?.fbp || null,
+          fbc: ev?.rawPayload?.fbc || ev?.rawPayload?._fbc || ev?.rawPayload?.user_data?.fbc || null,
+          ttclid: ev?.rawPayload?.ttclid || ev?.rawPayload?.user_data?.ttclid || null,
+          gclid: ev?.rawPayload?.gclid || ev?.rawPayload?.user_data?.gclid || null,
+          clickId: ev?.rawPayload?.click_id || null,
+          customerEmail: ev?.rawPayload?.user_data?.em || ev?.rawPayload?.customer_email || ev?.rawPayload?.user_email || ev?.rawPayload?.email || null,
+          clientIp: ev?.rawPayload?.user_data?.client_ip_address || ev?.rawPayload?.client_ip_address || ev?.rawPayload?.client_ip || ev?.rawPayload?.ip || null,
+          userAgent: ev?.rawPayload?.user_data?.client_user_agent || ev?.rawPayload?.client_user_agent || ev?.rawPayload?.user_agent || null,
         }));
 
       return {
