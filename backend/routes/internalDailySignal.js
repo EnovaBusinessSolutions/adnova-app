@@ -99,11 +99,34 @@ router.post('/run', async (req, res) => {
     contentType: req.get('content-type') || null,
   });
 
-  setNoCacheHeaders(res);
-  return res.json({
-    ok: true,
-    debug: 'RUN_ROUTE_REACHED',
-  });
+  try {
+    const result = await runDailySignalDeliveryBatch({
+      now: new Date(),
+      trigger: 'cron',
+      reason: 'daily_signal_cron_run',
+      force: toBool(req.body?.force),
+      allowRetrySameDay: toBool(req.body?.allowRetrySameDay),
+      respectSchedule: 'respectSchedule' in (req.body || {})
+        ? toBool(req.body?.respectSchedule)
+        : true,
+      windowMinutes: resolveWindowMinutes(req.body, 20),
+    });
+
+    console.log('[internalDailySignal/run] batch result', result);
+
+    setNoCacheHeaders(res);
+    return res.json({
+      ok: true,
+      data: result,
+    });
+  } catch (err) {
+    console.error('[internalDailySignal/run] error:', err);
+    return res.status(500).json({
+      ok: false,
+      error: 'INTERNAL_DAILY_SIGNAL_RUN_FAILED',
+      message: err?.message || 'Unknown error',
+    });
+  }
 });
 
 router.post('/run-all', async (req, res) => {
