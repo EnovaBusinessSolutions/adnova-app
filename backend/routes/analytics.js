@@ -1649,6 +1649,7 @@ router.get('/:account_id', async (req, res) => {
 
       // Channel normalization
       let ch = normalizeChannelForStats(order.attributedChannel);
+      if (ch === 'google' && !String(order.orderAttributionSnapshot?.utm_medium || '').match(/cpc|paid_search|ads/i) && !String(order.wooSourceLabel || '').match(/cpc|ads/i) && !order.orderAttributionSnapshot?.gclid) { ch = 'organic'; }
 
       if (channelStats[ch]) {
         channelStats[ch].revenue += rev;
@@ -1926,7 +1927,7 @@ router.get('/:account_id', async (req, res) => {
       const orderStoredAttribution = (conv.source === 'orders' && conv.orderAttributedChannel && conv.orderAttributedChannel !== 'unattributed')
         ? {
             primary: {
-              channel: conv.orderAttributedChannel,
+              channel: (conv.orderAttributedChannel === 'google' && !String(conv.orderAttributionSnapshot?.utm_medium || '').match(/cpc|paid_search|ads/i) && !String(conv.wooSourceLabel || '').match(/cpc|ads/i) && !conv.orderAttributionSnapshot?.gclid) ? 'organic' : normalizeChannelForStats(conv.orderAttributedChannel),
               platform: conv?.wooSourceLabel || conv?.orderAttributionSnapshot?.utm_source || conv.orderAttributedChannel,
               campaign: conv?.orderAttributionSnapshot?.utm_campaign || null,
               adset: conv?.orderAttributionSnapshot?.utm_content || null,
@@ -1935,7 +1936,7 @@ router.get('/:account_id', async (req, res) => {
               confidence: Number(conv.orderAttributionConfidence || 0.75),
               source: String(conv.orderAttributionModel || '').startsWith('woo_') ? 'woo_fallback' : 'orders_sync',
             },
-            splits: [{ channel: conv.orderAttributedChannel, weight: 1 }],
+            splits: [{ channel: (conv.orderAttributedChannel === 'google' && !String(conv.orderAttributionSnapshot?.utm_medium || '').match(/cpc|paid_search|ads/i) && !String(conv.wooSourceLabel || '').match(/cpc|ads/i) && !conv.orderAttributionSnapshot?.gclid) ? 'organic' : normalizeChannelForStats(conv.orderAttributedChannel), weight: 1 }],
             isAttributed: true,
           }
         : null;
