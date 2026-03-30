@@ -5162,7 +5162,7 @@
                     adnovaRoas = attrInfo.revenue / spend;
                 }
                 
-                let platformRoas = Number(pmInfo.roas) || 0;
+                let platformRoas = pmInfo.roas != null ? Number(pmInfo.roas) : (spend > 0 ? (Number(pmInfo.revenue)||0) / spend : 0);
 
                 if (spend > 0 || attrInfo.revenue > 0 || platformRoas > 0) {
                     labels.push(p.charAt(0).toUpperCase() + p.slice(1));
@@ -5373,25 +5373,25 @@
             if (hasFbclid || source.includes('facebook') || source.includes('instagram') || source.includes('meta')) {
                 let badgeTxt = (medium.includes('organic') && !hasFbclid) ? 'Meta Orgánico' : 'Meta Ads';
                 let icon = (medium.includes('organic') && !hasFbclid) ? 'fa-solid fa-globe' : 'fa-brands fa-meta';
-                return { text: badgeTxt, icon: icon, color: 'text-blue-700', bg: 'bg-blue-100' };
+                return { text: badgeTxt, icon: icon, color: 'text-purple-700', bg: 'bg-blue-100' };
             }
             if (hasTtclid || source.includes('tiktok')) {
-                return { text: 'TikTok', icon: 'fa-brands fa-tiktok', color: 'text-teal-700', bg: 'bg-teal-100' };
+                return { text: 'TikTok', icon: 'fa-brands fa-tiktok', color: 'text-purple-700', bg: 'bg-teal-100' };
             }
             if (hasGclid || medium.includes('cpc') || source.includes('google') || source.includes('ads')) {
                 if (medium.includes('organic') || (!hasGclid && !medium.includes('cpc') && !medium.includes('paid'))) {
-                    return { text: 'Google Orgánico', icon: 'fa-solid fa-globe', color: 'text-emerald-700', bg: 'bg-emerald-100' };
+                    return { text: 'Google Orgánico', icon: 'fa-solid fa-globe', color: 'text-purple-700', bg: 'bg-emerald-100' };
                 }
-                return { text: 'Google Ads', icon: 'fa-brands fa-google', color: 'text-orange-700', bg: 'bg-orange-100' };
+                return { text: 'Google Ads', icon: 'fa-brands fa-google', color: 'text-purple-700', bg: 'bg-orange-100' };
             }
-            if (ref.includes('google')) return { text: 'Búsqueda Orgánica', icon: 'fa-solid fa-globe', color: 'text-emerald-700', bg: 'bg-emerald-100' };
-            if (ref.includes('facebook') || ref.includes('instagram')) return { text: 'Meta Orgánico', icon: 'fa-solid fa-globe', color: 'text-emerald-700', bg: 'bg-emerald-100' };
-            if (ref.includes('tiktok')) return { text: 'TikTok Orgánico', icon: 'fa-solid fa-globe', color: 'text-emerald-700', bg: 'bg-emerald-100' };
+            if (ref.includes('google')) return { text: 'Búsqueda Orgánica', icon: 'fa-solid fa-globe', color: 'text-purple-700', bg: 'bg-emerald-100' };
+            if (ref.includes('facebook') || ref.includes('instagram')) return { text: 'Meta Orgánico', icon: 'fa-solid fa-globe', color: 'text-purple-700', bg: 'bg-emerald-100' };
+            if (ref.includes('tiktok')) return { text: 'TikTok Orgánico', icon: 'fa-solid fa-globe', color: 'text-purple-700', bg: 'bg-emerald-100' };
             
-            if (source && source !== 'null' && source !== 'undefined') return { text: source.charAt(0).toUpperCase() + source.slice(1), icon: 'fa-solid fa-link', color: 'text-indigo-700', bg: 'bg-indigo-100' };
-            if (ref && !ref.includes(location.hostname)) return { text: 'Referido', icon: 'fa-solid fa-link', color: 'text-indigo-700', bg: 'bg-indigo-100' };
+            if (source && source !== 'null' && source !== 'undefined') return { text: source.charAt(0).toUpperCase() + source.slice(1), icon: 'fa-solid fa-link', color: 'text-purple-700', bg: 'bg-indigo-100' };
+            if (ref && !ref.includes(location.hostname)) return { text: 'Referido', icon: 'fa-solid fa-link', color: 'text-purple-700', bg: 'bg-indigo-100' };
 
-            return { text: 'Directo', icon: 'fa-solid fa-bolt', color: 'text-gray-600', bg: 'bg-gray-200' };
+            return { text: 'Directo', icon: 'fa-solid fa-bolt', color: 'text-purple-700', bg: 'bg-gray-200' };
         }
 
         let activeLiveFeedFilterSessionId = null;
