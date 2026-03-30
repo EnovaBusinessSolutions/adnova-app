@@ -1964,30 +1964,8 @@
         </section>
 
         <!-- New: Pixel Health + Supporting Panels + Top Products -->
-        <div class="dashboard-support-grid grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
-            <div class="space-y-6">
-<!-- Data Enrichment Panel -->
-<div class="ops-panel p-6" id="data-enrichment-panel">
-    <div class="flex items-center justify-between mb-4">
-        <div>
-            <p class="panel-kicker">Data Pipeline</p>
-            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Data Enrichment</h3>
-            <p class="panel-subtitle text-sm mb-0">Accurate data signals sent per order to their respective attribution platform.</p>
-        </div>
-        <div>
-            <label class="inline-flex items-center cursor-pointer">
-                <input type="checkbox" id="de-toggle" class="sr-only peer" checked onchange="toggleDataEnrichment(this)">
-                <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                <span class="ms-3 text-sm font-medium text-gray-500" id="de-toggle-text">Active</span>
-            </label>
-        </div>
-    </div>
-    <div class="overflow-y-auto pr-2 space-y-1" style="max-h: 400px;" id="de-payload-list">
-        <p class="text-sm text-gray-400">Waiting for recent orders...</p>
-    </div>
-</div>
-
-                <div class="ops-panel p-6">
+<div class="dashboard-support-grid grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
+    <div class="ops-panel p-6">
                     <div class="flex items-center justify-between mb-4 gap-3 flex-wrap">
                         <div>
                             <p class="panel-kicker">Investment</p>
@@ -2022,15 +2000,30 @@
                         </div>
                     </div>
 
-                    
+    <!-- Data Enrichment Panel -->
+<div class="ops-panel p-6" id="data-enrichment-panel">
+    <div class="flex items-center justify-between mb-4">
+        <div>
+            <p class="panel-kicker">Data Pipeline</p>
+            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Data Enrichment</h3>
+            <p class="panel-subtitle text-sm mb-0">Accurate data signals sent per order to their respective attribution platform.</p>
+        </div>
+        <div>
+            <label class="inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="de-toggle" class="sr-only peer" checked onchange="toggleDataEnrichment(this)">
+                <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                <span class="ms-3 text-sm font-medium text-gray-500" id="de-toggle-text">Active</span>
+            </label>
+        </div>
+    </div>
+    <div class="overflow-y-auto pr-2 space-y-1" style="max-h: 400px;" id="de-payload-list">
+        <p class="text-sm text-gray-400">Waiting for recent orders...</p>
+    </div>
+</div>
+</div>
 
-                </div>
-
-                </div>
-
-            </div>
-
-            <div class="ops-panel p-6">
+<div class="mt-8">
+    <div class="ops-panel p-6">
                 <p class="panel-kicker">Merchandising</p>
                 <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Top Products</h3>
                 <p class="panel-subtitle text-sm mb-4">Ubica rápido qué catálogo concentra unidades e ingreso dentro del rango actual.</p>
@@ -2038,9 +2031,8 @@
                     <p class="text-sm text-gray-400">Sin datos de productos todavía.</p>
                 </div>
             </div>
-        </div>
-
-        <!-- New: Recent Purchases Detail -->
+</div>
+<!-- New: Recent Purchases Detail -->
         <div class="mt-8 ops-panel p-6">
             <div class="flex items-center justify-between mb-4">
                 <div>
