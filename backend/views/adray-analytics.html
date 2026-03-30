@@ -1388,6 +1388,9 @@
                     <div class="flex items-center gap-2">
                         <div id="shop-name" class="text-sm text-gray-500 font-medium">Loading store...</div>
                         <span id="shop-type-badge" class="journey-chip text-[10px] px-2 py-0.5">Store</span>
+                        <button id="data-enrichment-trigger" class="journey-chip text-[10px] px-2 py-0.5 cursor-pointer hidden" style="background: rgba(126, 240, 200, 0.15); color: #4ade80; border: 1px solid rgba(126, 240, 200, 0.4);" onclick="openDataEnrichment()">
+                            <i class="fa-solid fa-bolt"></i> Data enrichment: On
+                        </button>
                     </div>
                 </div>
             </div>
@@ -2168,6 +2171,81 @@
         </div>
 
     </main>
+
+    <!-- Data Enrichment Modal -->
+    <div id="data-enrichment-modal" class="hidden fixed inset-0 z-[100] overflow-y-auto" aria-labelledby="modal-title" role="dialog" aria-modal="true">
+        <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 bg-gray-900 bg-opacity-75 transition-opacity" aria-hidden="true" onclick="closeDataEnrichment()"></div>
+            <span class="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+            <div class="inline-block align-bottom rounded-xl text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-xl sm:w-full" style="background: linear-gradient(180deg, rgba(26, 17, 41, 0.98) 0%, rgba(12, 8, 19, 0.95) 100%); border: 1px solid rgba(202, 138, 229, 0.3);">
+                <div class="px-4 pt-5 pb-4 sm:p-6 sm:pb-4 border-b border-gray-700" style="border-color: rgba(202, 138, 229, 0.15);">
+                    <div class="sm:flex sm:items-start">
+                        <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full sm:mx-0 sm:h-10 sm:w-10" style="background: rgba(126, 240, 200, 0.14);">
+                            <i class="fa-solid fa-bolt" style="color: #4ade80;"></i>
+                        </div>
+                        <div class="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
+                            <h3 class="text-lg leading-6 font-medium text-white" id="modal-title">Active Data Enrichment</h3>
+                            <div class="mt-2 text-sm" style="color: var(--dash-muted);">
+                                <p>Estos son los datos avanzados y parámetros que tus píxeles están enviando en este instante para reducir costos publicitarios.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="px-4 py-4 sm:px-6">
+                    <p class="text-xs font-semibold uppercase tracking-wider mb-4" style="color: var(--dash-muted);">Carga Activa de Enriquecimiento</p>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div class="flex items-center text-sm" style="color: var(--dash-text);">
+                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> PII: Email (Hashed)
+                        </div>
+                        <div class="flex items-center text-sm" style="color: var(--dash-text);">
+                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> PII: Teléfono (Hashed)
+                        </div>
+                        <div class="flex items-center text-sm" style="color: var(--dash-text);">
+                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> Client IP Address
+                        </div>
+                        <div class="flex items-center text-sm" style="color: var(--dash-text);">
+                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> Client User Agent
+                        </div>
+                        <div class="flex items-center text-sm" style="color: var(--dash-text);">
+                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> Click ID (gclid, wbraid)
+                        </div>
+                        <div class="flex items-center text-sm" style="color: var(--dash-text);">
+                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> Eventos Universales
+                        </div>
+                        <div class="flex items-center text-sm hidden" style="color: var(--dash-text);" id="modal-meta-fbc">
+                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> FBP & FBC (Meta)
+                        </div>
+                        <div class="flex items-center text-sm hidden" style="color: var(--dash-text);" id="modal-tiktok-ttclid">
+                            <i class="fa-solid fa-check-circle mr-2" style="color: #4ade80;"></i> TTCLID (TikTok)
+                        </div>
+                    </div>
+                </div>
+
+                <div class="px-4 pb-4 sm:px-6">
+                    <p class="text-xs font-semibold uppercase tracking-wider mb-2" style="color: var(--dash-muted);">Conexiones de Retorno (CAPI)</p>
+                    <div class="flex flex-wrap gap-2" id="data-enrichment-platforms">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+
+                <div class="px-4 py-4 sm:px-6">
+                    <div class="p-3 rounded-lg flex gap-3 text-xs" style="background: rgba(225, 216, 243, 0.05); border: 1px solid rgba(225, 216, 243, 0.1);">
+                        <i class="fa-solid fa-shield-halved text-lg" style="color: var(--dash-accent);"></i>
+                        <p style="color: var(--dash-muted);">
+                            La información personal identificable se envía cifrada en formato SHA-256 siguiendo el estándar dictado por Meta, Google y TikTok Data Privacy.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse border-t" style="border-color: rgba(202, 138, 229, 0.15);">
+                    <button type="button" class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 text-base font-medium focus:outline-none sm:ml-3 sm:w-auto sm:text-sm transition-all hover:opacity-90" style="background: var(--dash-accent); color: white;" onclick="closeDataEnrichment()">
+                        Cerrar panel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script>
         let currentShopId = null;
@@ -4769,15 +4847,65 @@
 
         function renderIntegrationHealth(integrationHealth) {
             const platforms = ['meta', 'google', 'tiktok'];
+            let anyActive = false;
+            const activePlatforms = [];
+
             platforms.forEach((platform) => {
                 const statusEl = document.getElementById(`ih-${platform}-status`);
                 const updatedEl = document.getElementById(`ih-${platform}-updated`);
                 if (!statusEl || !updatedEl) return;
                 const state = integrationHealth?.[platform] || {};
                 const status = String(state.status || 'DISCONNECTED').toUpperCase();
+                
+                if (status === 'ACTIVE') {
+                    anyActive = true;
+                    activePlatforms.push(platform);
+                }
+
                 statusEl.textContent = status === 'ACTIVE' ? 'ACTIVE' : status;
                 updatedEl.textContent = state.updatedAt ? `Actualizado: ${formatDateTimeMx(state.updatedAt)}` : 'Sin conexión registrada';
             });
+
+            // Update Data Enrichment Trigger Badge
+            const triggerBtn = document.getElementById('data-enrichment-trigger');
+            if (triggerBtn) {
+                if (anyActive) {
+                    triggerBtn.classList.remove('hidden');
+                } else {
+                    triggerBtn.classList.add('hidden');
+                }
+            }
+
+            // Populate Modal specific features
+            const metaFbc = document.getElementById('modal-meta-fbc');
+            const tiktokTtclid = document.getElementById('modal-tiktok-ttclid');
+            if (metaFbc) metaFbc.classList.toggle('hidden', !activePlatforms.includes('meta'));
+            if (tiktokTtclid) tiktokTtclid.classList.toggle('hidden', !activePlatforms.includes('tiktok'));
+
+            // Populate connections
+            const platformsContainer = document.getElementById('data-enrichment-platforms');
+            if (platformsContainer) {
+                platformsContainer.innerHTML = activePlatforms.length > 0 ? activePlatforms.map(p => {
+                    const icon = p === 'meta' ? 'fa-meta' : p === 'google' ? 'fa-google' : 'fa-tiktok';
+                    const color = p === 'meta' ? 'rgba(59, 130, 246, 0.2)' : p === 'tiktok' ? 'rgba(45, 212, 191, 0.2)' : 'rgba(243, 199, 122, 0.2)';
+                    const textC = p === 'meta' ? '#60a5fa' : p === 'tiktok' ? '#2dd4bf' : '#fcd34d';
+                    return `<span class="journey-chip" style="background: ${color}; border: 1px solid ${color}; color: ${textC};"><i class="fa-brands ${icon}"></i> ${p.charAt(0).toUpperCase() + p.slice(1)}</span>`;
+                }).join('') : '<span class="text-xs text-gray-500">Ninguna conexión CAPI activa en este momento.</span>';
+            }
+        }
+
+        function openDataEnrichment() {
+            const modal = document.getElementById('data-enrichment-modal');
+            if (modal) {
+                modal.classList.remove('hidden');
+            }
+        }
+
+        function closeDataEnrichment() {
+            const modal = document.getElementById('data-enrichment-modal');
+            if (modal) {
+                modal.classList.add('hidden');
+            }
         }
 
         function renderPaidMedia(paidMedia) {
