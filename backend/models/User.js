@@ -125,10 +125,10 @@ const dailySignalDeliverySchema = new mongoose.Schema(
 
     sendHour: {
       type: Number,
-      default: 15,
+      default: 5,
       min: 0,
       max: 23,
-      set: (v) => clampInt(v, 0, 23, 15),
+      set: (v) => clampInt(v, 0, 23, 5),
     },
 
     sendMinute: {
@@ -452,7 +452,7 @@ userSchema.pre('save', function (next) {
     }
 
     if ('sendHour' in this.dailySignalDelivery) {
-      this.dailySignalDelivery.sendHour = clampInt(this.dailySignalDelivery.sendHour, 0, 23, 15);
+      this.dailySignalDelivery.sendHour = clampInt(this.dailySignalDelivery.sendHour, 0, 23, 5);
     }
 
     if ('sendMinute' in this.dailySignalDelivery) {
@@ -516,22 +516,35 @@ userSchema.statics.enableDailySignalDelivery = async function (
   {
     email = null,
     timezone = 'America/Mexico_City',
-    sendHour = 15,
+    sendHour = 5,
     sendMinute = 0,
   } = {}
 ) {
   const now = new Date();
+
+  const current = await this.findById(userId)
+    .select('email dailySignalDelivery')
+    .lean();
+
+  if (!current?._id) return null;
+
+  const existingOptedInAt = current?.dailySignalDelivery?.optedInAt || null;
+  const resolvedEmail =
+    normEmail(email) ||
+    normEmail(current?.dailySignalDelivery?.email) ||
+    normEmail(current?.email) ||
+    null;
 
   return this.findByIdAndUpdate(
     userId,
     {
       $set: {
         'dailySignalDelivery.enabled': true,
-        'dailySignalDelivery.email': normEmail(email),
+        'dailySignalDelivery.email': resolvedEmail,
         'dailySignalDelivery.timezone': normTimezone(timezone),
-        'dailySignalDelivery.sendHour': clampInt(sendHour, 0, 23, 15),
+        'dailySignalDelivery.sendHour': clampInt(sendHour, 0, 23, 5),
         'dailySignalDelivery.sendMinute': clampInt(sendMinute, 0, 59, 0),
-        'dailySignalDelivery.optedInAt': now,
+        'dailySignalDelivery.optedInAt': existingOptedInAt || now,
         'dailySignalDelivery.optedOutAt': null,
         'dailySignalDelivery.lastError': null,
         'dailySignalDelivery.lastErrorAt': null,

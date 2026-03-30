@@ -20,6 +20,11 @@ function toBool(v) {
   return s === '1' || s === 'true' || s === 'yes' || s === 'y' || s === 'on';
 }
 
+function toInt(v, fallback) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.trunc(n) : fallback;
+}
+
 function setNoCacheHeaders(res) {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0');
   res.set('Pragma', 'no-cache');
@@ -51,6 +56,11 @@ function requireInternalCronKey(req, res, next) {
   return next();
 }
 
+function resolveWindowMinutes(body = {}, fallback = 20) {
+  const n = toInt(body?.windowMinutes, fallback);
+  return Math.max(0, Math.min(180, n));
+}
+
 router.use(requireInternalCronKey);
 
 router.get('/health', async (_req, res) => {
@@ -61,6 +71,10 @@ router.get('/health', async (_req, res) => {
       service: 'internalDailySignal',
       configured: !!safeStr(process.env.DAILY_SIGNAL_CRON_KEY).trim(),
       now: new Date().toISOString(),
+      defaultTimezone: 'America/Mexico_City',
+      defaultSendHour: 5,
+      defaultSendMinute: 0,
+      recommendedCronTime: '05:00 America/Mexico_City',
     },
   });
 });
@@ -76,9 +90,7 @@ router.post('/run', async (req, res) => {
       respectSchedule: 'respectSchedule' in (req.body || {})
         ? toBool(req.body?.respectSchedule)
         : true,
-      windowMinutes: req.body?.windowMinutes != null
-        ? Number(req.body.windowMinutes)
-        : 20,
+      windowMinutes: resolveWindowMinutes(req.body, 20),
     });
 
     setNoCacheHeaders(res);
@@ -91,6 +103,34 @@ router.post('/run', async (req, res) => {
     return res.status(500).json({
       ok: false,
       error: 'INTERNAL_DAILY_SIGNAL_RUN_FAILED',
+    });
+  }
+});
+
+router.post('/run-all', async (req, res) => {
+  try {
+    const result = await runDailySignalDeliveryBatch({
+      now: new Date(),
+      trigger: 'cron',
+      reason: 'daily_signal_cron_run_all',
+      force: toBool(req.body?.force),
+      allowRetrySameDay: toBool(req.body?.allowRetrySameDay),
+      respectSchedule: 'respectSchedule' in (req.body || {})
+        ? toBool(req.body?.respectSchedule)
+        : true,
+      windowMinutes: resolveWindowMinutes(req.body, 20),
+    });
+
+    setNoCacheHeaders(res);
+    return res.json({
+      ok: true,
+      data: result,
+    });
+  } catch (err) {
+    console.error('[internalDailySignal/run-all] error:', err);
+    return res.status(500).json({
+      ok: false,
+      error: 'INTERNAL_DAILY_SIGNAL_RUN_ALL_FAILED',
     });
   }
 });
@@ -114,9 +154,7 @@ router.post('/run/:userId', async (req, res) => {
       respectSchedule: 'respectSchedule' in (req.body || {})
         ? toBool(req.body?.respectSchedule)
         : false,
-      windowMinutes: req.body?.windowMinutes != null
-        ? Number(req.body.windowMinutes)
-        : 20,
+      windowMinutes: resolveWindowMinutes(req.body, 20),
     });
 
     setNoCacheHeaders(res);

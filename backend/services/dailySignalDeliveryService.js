@@ -45,6 +45,28 @@ function fileLooksReady(pdf = {}) {
   );
 }
 
+function hasExistingReadyPdf(root = null) {
+  const pdf = root?.aiContext?.pdf || {};
+  return !!(
+    safeStr(pdf?.status).trim() === 'ready' &&
+    safeStr(pdf?.localPath).trim() &&
+    safeStr(pdf?.generatedAt).trim()
+  );
+}
+
+function getPdfArtifactFromRoot(root = null) {
+  const pdf = root?.aiContext?.pdf || {};
+  return {
+    fileName: pdf?.fileName || null,
+    mimeType: pdf?.mimeType || 'application/pdf',
+    localPath: pdf?.localPath || null,
+    downloadUrl: pdf?.downloadUrl || null,
+    sizeBytes: toNum(pdf?.sizeBytes, 0),
+    pageCount: toNum(pdf?.pageCount, 0) || null,
+    renderer: pdf?.renderer || null,
+  };
+}
+
 function getZonedParts(date = new Date(), timezone = 'America/Mexico_City') {
   const d = date instanceof Date ? date : new Date(date);
   const tz = normTimezone(timezone);
@@ -83,13 +105,13 @@ function buildDateKeyForTimezone(date = new Date(), timezone = 'America/Mexico_C
 function isWithinScheduleWindow({
   now = new Date(),
   timezone = 'America/Mexico_City',
-  sendHour = 15,
+  sendHour = 5,
   sendMinute = 0,
   windowMinutes = 20,
 } = {}) {
   const p = getZonedParts(now, timezone);
   const currentMinutes = p.hour * 60 + p.minute;
-  const scheduledMinutes = toNum(sendHour, 15) * 60 + toNum(sendMinute, 0);
+  const scheduledMinutes = toNum(sendHour, 5) * 60 + toNum(sendMinute, 0);
   return Math.abs(currentMinutes - scheduledMinutes) <= Math.max(0, toNum(windowMinutes, 20));
 }
 
@@ -166,7 +188,7 @@ async function getDailyDeliveryUser(userId) {
 
 function evaluateUserEligibility(user, options = {}) {
   const timezone = normTimezone(user?.dailySignalDelivery?.timezone);
-  const sendHour = toNum(user?.dailySignalDelivery?.sendHour, 15);
+  const sendHour = toNum(user?.dailySignalDelivery?.sendHour, 5);
   const sendMinute = toNum(user?.dailySignalDelivery?.sendMinute, 0);
   const recipientEmail = resolveRecipientEmail(user);
 
@@ -287,6 +309,59 @@ async function runDailySignalDeliveryForUser(userId, options = {}) {
 
   const attemptedAt = new Date();
 
+  let root = await findRoot(user._id);
+  const existingPdf = getPdfArtifactFromRoot(root);
+  const firstPdfReady = hasExistingReadyPdf(root);
+
+  if (!firstPdfReady) {
+    await DailySignalDeliveryRun.upsertForDay({
+      userId: user._id,
+      dateKey,
+      trigger,
+      reason,
+      status: 'skipped',
+      email: {
+        to: recipientEmail,
+        provider: 'resend',
+      },
+      pdf: existingPdf,
+      attemptedAt,
+      meta: buildRunMeta({
+        force,
+        timezone,
+        scheduledHour: toNum(user?.dailySignalDelivery?.sendHour, 5),
+        scheduledMinute: toNum(user?.dailySignalDelivery?.sendMinute, 0),
+        skipReason: 'FIRST_PDF_NOT_READY',
+      }),
+    });
+
+    await DailySignalDeliveryRun.markSkipped(user._id, dateKey, {
+      attemptedAt,
+      skippedAt: new Date(),
+      reason: 'FIRST_PDF_NOT_READY',
+      errorCode: 'FIRST_PDF_NOT_READY',
+      meta: buildRunMeta({
+        pdfStatus: root?.aiContext?.pdf?.status || null,
+        pdfGeneratedAt: root?.aiContext?.pdf?.generatedAt || null,
+      }),
+    });
+
+    await markUserDeliveryStatus(user._id, {
+      status: 'scheduled',
+      lastAttemptAt: attemptedAt,
+      lastErrorAt: null,
+      lastError: null,
+    });
+
+    return buildPublicResult(true, {
+      skipped: true,
+      code: 'FIRST_PDF_NOT_READY',
+      message: 'User has not completed the first PDF yet',
+      userId: String(user._id),
+      dateKey,
+    });
+  }
+
   await DailySignalDeliveryRun.upsertForDay({
     userId: user._id,
     dateKey,
@@ -297,12 +372,14 @@ async function runDailySignalDeliveryForUser(userId, options = {}) {
       to: recipientEmail,
       provider: 'resend',
     },
+    pdf: existingPdf,
     attemptedAt,
     meta: buildRunMeta({
       force,
       timezone,
-      scheduledHour: toNum(user?.dailySignalDelivery?.sendHour, 15),
+      scheduledHour: toNum(user?.dailySignalDelivery?.sendHour, 5),
       scheduledMinute: toNum(user?.dailySignalDelivery?.sendMinute, 0),
+      firstPdfReady: true,
     }),
   });
 
@@ -313,13 +390,18 @@ async function runDailySignalDeliveryForUser(userId, options = {}) {
     lastError: null,
   });
 
-  let root = null;
   let signalRun = null;
   let buildAttemptId = null;
 
   try {
     await DailySignalDeliveryRun.markStatus(user._id, dateKey, {
       status: 'building_signal',
+      rootId: root?._id || null,
+      snapshotId: root?.aiContext?.snapshotId || root?.latestSnapshotId || null,
+      sourceFingerprint: root?.aiContext?.sourceFingerprint || null,
+      connectionFingerprint: root?.aiContext?.connectionFingerprint || null,
+      email: { to: recipientEmail, provider: 'resend' },
+      pdf: existingPdf,
       attemptedAt,
     });
 
@@ -347,6 +429,7 @@ async function runDailySignalDeliveryForUser(userId, options = {}) {
         sourceFingerprint: root?.aiContext?.sourceFingerprint || null,
         connectionFingerprint: root?.aiContext?.connectionFingerprint || null,
         email: { to: recipientEmail, provider: 'resend' },
+        pdf: getPdfArtifactFromRoot(root),
         attemptedAt,
         error: errorCode,
         errorCode,
@@ -380,6 +463,7 @@ async function runDailySignalDeliveryForUser(userId, options = {}) {
       sourceFingerprint: root?.aiContext?.sourceFingerprint || null,
       connectionFingerprint: root?.aiContext?.connectionFingerprint || null,
       email: { to: recipientEmail, provider: 'resend' },
+      pdf: getPdfArtifactFromRoot(root),
       attemptedAt,
     });
 
@@ -407,15 +491,7 @@ async function runDailySignalDeliveryForUser(userId, options = {}) {
         sourceFingerprint: root?.aiContext?.sourceFingerprint || null,
         connectionFingerprint: root?.aiContext?.connectionFingerprint || null,
         email: { to: recipientEmail, provider: 'resend' },
-        pdf: {
-          fileName: pdf?.fileName || null,
-          mimeType: pdf?.mimeType || 'application/pdf',
-          localPath: pdf?.localPath || null,
-          downloadUrl: pdf?.downloadUrl || null,
-          sizeBytes: toNum(pdf?.sizeBytes, 0),
-          pageCount: toNum(pdf?.pageCount, 0) || null,
-          renderer: pdf?.renderer || null,
-        },
+        pdf: getPdfArtifactFromRoot(root),
         attemptedAt,
         error: errorCode,
         errorCode,
@@ -449,15 +525,7 @@ async function runDailySignalDeliveryForUser(userId, options = {}) {
       sourceFingerprint: root?.aiContext?.sourceFingerprint || null,
       connectionFingerprint: root?.aiContext?.connectionFingerprint || null,
       email: { to: recipientEmail, provider: 'resend' },
-      pdf: {
-        fileName: pdf?.fileName || null,
-        mimeType: pdf?.mimeType || 'application/pdf',
-        localPath: pdf?.localPath || null,
-        downloadUrl: pdf?.downloadUrl || null,
-        sizeBytes: toNum(pdf?.sizeBytes, 0),
-        pageCount: toNum(pdf?.pageCount, 0) || null,
-        renderer: pdf?.renderer || null,
-      },
+      pdf: getPdfArtifactFromRoot(root),
       attemptedAt,
     });
 
@@ -498,15 +566,7 @@ async function runDailySignalDeliveryForUser(userId, options = {}) {
           subject: mail?.subject || null,
           from: mail?.from || null,
         },
-        pdf: {
-          fileName: pdf?.fileName || null,
-          mimeType: pdf?.mimeType || 'application/pdf',
-          localPath: pdf?.localPath || null,
-          downloadUrl: pdf?.downloadUrl || null,
-          sizeBytes: toNum(pdf?.sizeBytes, 0),
-          pageCount: toNum(pdf?.pageCount, 0) || null,
-          renderer: pdf?.renderer || null,
-        },
+        pdf: getPdfArtifactFromRoot(root),
         attemptedAt,
         error: errorMessage,
         errorCode,
@@ -547,15 +607,7 @@ async function runDailySignalDeliveryForUser(userId, options = {}) {
         from: mail?.from || null,
         subject: mail?.subject || null,
       },
-      pdf: {
-        fileName: pdf?.fileName || null,
-        mimeType: pdf?.mimeType || 'application/pdf',
-        localPath: pdf?.localPath || null,
-        downloadUrl: pdf?.downloadUrl || null,
-        sizeBytes: toNum(pdf?.sizeBytes, 0),
-        pageCount: toNum(pdf?.pageCount, 0) || null,
-        renderer: pdf?.renderer || null,
-      },
+      pdf: getPdfArtifactFromRoot(root),
       attemptedAt,
       sentAt,
       meta: buildRunMeta({
@@ -582,9 +634,9 @@ async function runDailySignalDeliveryForUser(userId, options = {}) {
       recipientEmail,
       messageId: mail?.messageId || null,
       pdf: {
-        fileName: pdf?.fileName || null,
-        localPath: pdf?.localPath || null,
-        sizeBytes: toNum(pdf?.sizeBytes, 0),
+        fileName: root?.aiContext?.pdf?.fileName || null,
+        localPath: root?.aiContext?.pdf?.localPath || null,
+        sizeBytes: toNum(root?.aiContext?.pdf?.sizeBytes, 0),
       },
     });
   } catch (err) {
@@ -594,7 +646,7 @@ async function runDailySignalDeliveryForUser(userId, options = {}) {
 
     try {
       const freshRoot = root || await findRoot(user?._id);
-      const pdf = freshRoot?.aiContext?.pdf || {};
+      const pdf = getPdfArtifactFromRoot(freshRoot);
 
       signalRun = signalRun || await getCurrentSignalRun(user?._id, buildAttemptId);
 
@@ -609,15 +661,7 @@ async function runDailySignalDeliveryForUser(userId, options = {}) {
           to: recipientEmail,
           provider: 'resend',
         },
-        pdf: {
-          fileName: pdf?.fileName || null,
-          mimeType: pdf?.mimeType || 'application/pdf',
-          localPath: pdf?.localPath || null,
-          downloadUrl: pdf?.downloadUrl || null,
-          sizeBytes: toNum(pdf?.sizeBytes, 0),
-          pageCount: toNum(pdf?.pageCount, 0) || null,
-          renderer: pdf?.renderer || null,
-        },
+        pdf,
         attemptedAt,
         failedAt: failAt,
         error: errorMessage,
@@ -723,7 +767,7 @@ async function getDailySignalDeliveryStatusForUser(userId, options = {}) {
       enabled: !!user?.dailySignalDelivery?.enabled,
       email: resolveRecipientEmail(user),
       timezone,
-      sendHour: toNum(user?.dailySignalDelivery?.sendHour, 15),
+      sendHour: toNum(user?.dailySignalDelivery?.sendHour, 5),
       sendMinute: toNum(user?.dailySignalDelivery?.sendMinute, 0),
       status: safeStr(user?.dailySignalDelivery?.status).trim() || 'idle',
       optedInAt: user?.dailySignalDelivery?.optedInAt || null,
