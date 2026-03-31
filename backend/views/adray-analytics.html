@@ -1806,10 +1806,8 @@
                 <div class="ops-panel p-6">
                     <div class="flex items-start justify-between gap-4 flex-wrap mb-4">
                         <div>
-                            <p class="panel-kicker">Marketing Attribution</p>
-                            <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Attribution Journey Center</h3>
-                            <p class="panel-subtitle text-sm mt-1">Conversion path by session.</p>
-                            <div class="journey-channel-legend" id="journey-channel-legend" aria-label="Leyenda de canales">
+                            <h3 class="panel-title text-lg leading-6 font-medium" style="color: #f8fafc;">Conversion paths</h3>
+                            <div class="journey-channel-legend mt-3" id="journey-channel-legend" aria-label="Leyenda de canales">
                                 <button type="button" class="journey-chip journey-filter-channel is-active" data-channel="all"><i class="fa-solid fa-layer-group"></i>All</button>
                                 <button type="button" class="journey-chip journey-filter-channel is-meta" data-channel="meta"><i class="fa-brands fa-meta"></i>Meta</button>
                                 <button type="button" class="journey-chip journey-filter-channel is-google" data-channel="google"><i class="fa-brands fa-google"></i>Google</button>
@@ -1819,13 +1817,13 @@
                         </div>
                     </div>
                     <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                        <div class="session-visual-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Selected Journey</h4>
-                            <div id="attribution-journey-focus" class="attribution-journey-focus space-y-4"></div>
-                        </div>
                         <div class="session-pattern-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Historical Conversion Journeys</h4>
+                            <h4 class="text-sm font-semibold mb-3" style="color: #e2e8f0;">Historical Conversion Journeys</h4>
                             <div id="attribution-journey-history" class="attribution-journey-history space-y-3"></div>
+                        </div>
+                        <div class="session-visual-card rounded-xl p-4">
+                            <h4 class="text-sm font-semibold mb-3" style="color: #e2e8f0;">Selected Journey</h4>
+                            <div id="attribution-journey-focus" class="attribution-journey-focus space-y-4"></div>
                         </div>
                     </div>
                 </div>
