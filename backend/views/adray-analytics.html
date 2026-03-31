@@ -3362,7 +3362,11 @@
                     score: scoreJourneySignal(p),
                     channelKey: normalizeAttributionChannel(p.attributedChannel || p.attributedPlatform || ''),
                 }))
-                .sort((a, b) => b.score - a.score);
+                .sort((a, b) => {
+                    const tsA = new Date(a.purchase.platformCreatedAt || a.purchase.createdAt || 0).getTime();
+                    const tsB = new Date(b.purchase.platformCreatedAt || b.purchase.createdAt || 0).getTime();
+                    return tsB - tsA;
+                });
 
             const byChannel = attributionJourneyState.channel === 'all'
                 ? rankedJourneys
