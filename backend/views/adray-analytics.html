@@ -5646,7 +5646,7 @@ function renderRecentPurchases(purchases) {
             if (!rawTs) return '-';
             const d = new Date(rawTs);
             if (Number.isNaN(d.getTime())) return '-';
-            d.setHours(d.getHours() + 6);
+            // se restaron las 6 horas que se sumaban previamente
             return formatDateTimeMx(d);
         }
 
