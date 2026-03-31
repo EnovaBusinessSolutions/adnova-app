@@ -5214,9 +5214,11 @@ function renderRecentPurchases(purchases) {
 
                 const hexColor = colorsMap[cKey] || colorsMap[channelRaw] || 'rgba(156, 163, 175, 0.8)';
                 backgroundColors.push(hexColor);
-                
+
                 const icon = iconMap[cKey] || iconMap[channelRaw] || 'fa-solid fa-circle';
                 
+                const formattedOrders = Number.isInteger(stats.orders) ? stats.orders : Number(stats.orders).toFixed(1);
+
                 legendHtml += `
                     <div class="flex items-center text-gray-300">
                         <div class="flex-shrink-0 w-6 h-6 flex items-center justify-center rounded-full mr-2" style="background: ${hexColor.replace('0.8', '0.2')}">
@@ -5224,7 +5226,7 @@ function renderRecentPurchases(purchases) {
                         </div>
                         <div class="flex-1 min-w-0">
                             <p class="text-sm font-medium truncate text-gray-200">${displayName}</p>
-                            <p class="text-xs text-indigo-300">${stats.orders} ${stats.orders === 1 ? 'order' : 'orders'}</p>
+                            <p class="text-xs text-indigo-300">${formattedOrders} ${stats.orders === 1 ? 'order' : 'orders'}</p>
                         </div>
                     </div>
                 `;
