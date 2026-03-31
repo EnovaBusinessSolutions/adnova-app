@@ -4652,6 +4652,14 @@
             // Channel Metrics (Fix: API returns object, map to array)
             const channels = data.channels || {};
 
+            // Combine unattributed into other
+            if (channels.unattributed) {
+                if (!channels.other) channels.other = { revenue: 0, orders: 0 };
+                channels.other.revenue += channels.unattributed.revenue || 0;
+                channels.other.orders += channels.unattributed.orders || 0;
+                delete channels.unattributed;
+            }
+
             // Transform for chart
             const attributionData = Object.entries(channels).map(([key, val]) => ({
                 channel: key,
