@@ -1433,9 +1433,11 @@
                 <div class="ops-control">
                     <label for="attribution-model" class="text-xs text-gray-500 mr-2">Model</label>
                     <select id="attribution-model" onchange="onAttributionModelChange()" class="text-sm bg-transparent focus:outline-none">
-                        <option value="first_touch">First touch</option>
-                        <option value="last_touch" selected>Last touch</option>
+                        <option value="last_touch" selected>LastClick</option>
+                        <option value="first_touch">FirstClick</option>
                         <option value="linear">Linear</option>
+                        <option value="meta">Meta</option>
+                        <option value="google_ads">GoogleAds</option>
                     </select>
                 </div>
                 <button onclick="fetchAnalytics()" class="ops-refresh-btn inline-flex items-center px-4 py-2 shadow-sm text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
@@ -1830,7 +1832,7 @@
                         <p class="panel-kicker">Commercial</p>
                         <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">ROAS Comparison (AdNova vs Native)</h3>
                     </div>
-                    <span id="attribution-model-badge" class="text-xs text-gray-500">Model: last touch</span>
+                    <span id="attribution-model-badge" class="text-xs text-gray-500">Model: LastClick</span>
                 </div>
                 <div class="relative h-64">
                     <canvas id="attributionChart"></canvas>
@@ -4631,7 +4633,14 @@
             const modelBadge = document.getElementById('attribution-model-badge');
             if (modelBadge) {
                 const model = summary.attributionModel || currentAttributionModel || 'last_touch';
-                modelBadge.textContent = `Model: ${model.replace('_', ' ')}`;
+                const modelDisplay = {
+                    'last_touch': 'LastClick',
+                    'first_touch': 'FirstClick',
+                    'linear': 'Linear',
+                    'meta': 'Meta',
+                    'google_ads': 'GoogleAds'
+                }[model] || model.replace('_', ' ');
+                modelBadge.textContent = `Model: ${modelDisplay}`;
             }
 
             

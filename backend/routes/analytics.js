@@ -53,7 +53,7 @@ const EVENT_BUCKET_ALIASES = {
 };
 
 const PURCHASE_ALIASES = EVENT_BUCKET_ALIASES.purchase;
-const ATTRIBUTION_MODELS = new Set(['first_touch', 'last_touch', 'linear']);
+const ATTRIBUTION_MODELS = new Set(['first_touch', 'last_touch', 'linear', 'meta', 'google_ads']);
 const ATTRIBUTION_LOOKBACK_DAYS = 30;
 const JOURNEY_STITCH_LOOKBACK_DAYS = 7;
 const ROUTE_RESPONSE_CACHE = new Map();
@@ -1271,6 +1271,34 @@ function resolveConversionAttribution({ model, touchpoints }) {
       splits,
       isAttributed: true,
     };
+  }
+
+  if (model === 'meta' || model === 'google_ads') {
+    const targetChannel = model === 'meta' ? 'meta' : 'google';
+    const specificTouch = valid.slice().reverse().find(t => normalizeChannelForStats(t.attribution.channel) === targetChannel);
+    if (specificTouch) {
+      const attr = specificTouch.attribution;
+      return {
+        primary: {
+          channel: targetChannel,
+          platform: attr.platform || null,
+          campaign: attr.campaign || null,
+          adset: attr.adset || null,
+          ad: attr.ad || null,
+          clickId: attr.clickId || null,
+          confidence: Number(attr.confidence || 0),
+          source: model,
+        },
+        splits: [{ channel: targetChannel, weight: 1 }],
+        isAttributed: true,
+      };
+    } else {
+      return {
+        primary: { channel: 'unattributed', platform: null, campaign: null, adset: null, ad: null, clickId: null, confidence: 0, source: 'none' },
+        splits: [{ channel: 'unattributed', weight: 1 }],
+        isAttributed: false,
+      };
+    }
   }
 
   const last = valid[valid.length - 1].attribution;
