@@ -9,11 +9,12 @@ const IORedis = require('ioredis');
 const { collectMeta } = require('../jobs/collect/metaCollector');
 const { collectGoogle } = require('../jobs/collect/googleCollector');
 const { collectGA4 } = require('../jobs/collect/googleAnalyticsCollector');
+
+const McpData = require('../models/McpData');
+const User = require('../models/User');
 const {
   rebuildUnifiedContextForUser,
 } = require('../services/mcpContextBuilder');
-const McpData = require('../models/McpData');
-const User = require('../models/User');
 
 /* =========================
  * ENV + Connections
@@ -35,10 +36,10 @@ const DEFAULT_CONTEXT_RANGE_DAYS = clampInt(
   365
 );
 
-const WORKER_CONTEXT_REBUILD_TIMEOUT_MS = clampInt(
-  process.env.MCP_WORKER_CONTEXT_REBUILD_TIMEOUT_MS || 15000,
-  3000,
-  120000
+const WORKER_CONCURRENCY = clampInt(
+  process.env.MCP_WORKER_CONCURRENCY || 1,
+  1,
+  10
 );
 
 if (!MONGO_URI) {
@@ -84,6 +85,32 @@ function estimateBytes(obj) {
     return Buffer.byteLength(JSON.stringify(obj ?? null), 'utf8');
   } catch {
     return 0;
+  }
+}
+
+const sourceLocks = new Map();
+
+async function withSourceLock(lockKey, fn) {
+  while (true) {
+    const existing = sourceLocks.get(lockKey);
+    if (!existing) break;
+    await existing;
+  }
+
+  let release;
+  const ownLock = new Promise((resolve) => {
+    release = resolve;
+  });
+
+  sourceLocks.set(lockKey, ownLock);
+
+  try {
+    return await fn();
+  } finally {
+    if (sourceLocks.get(lockKey) === ownLock) {
+      sourceLocks.delete(lockKey);
+    }
+    release();
   }
 }
 
@@ -658,58 +685,53 @@ async function finalizeRootFromCollector({
   });
 }
 
-async function triggerContextRebuildBestEffort({
+async function triggerSignalRebuildAfterCollect({
   userId,
   source,
   snapshotId,
   contextRangeDays,
 }) {
   try {
-    console.log('[mcpWorker] context rebuild:start', {
+    console.log('[mcpWorker] signal rebuild:start', {
       userId: String(userId),
       source,
       snapshotId,
-      contextRangeDays: contextRangeDays || null,
-      timeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
+      contextRangeDays,
     });
 
-    const result = await rebuildUnifiedContextForUser(userId, {
+    const rebuild = await rebuildUnifiedContextForUser(userId, {
       explicitSnapshotId: snapshotId || null,
       contextRangeDays: contextRangeDays || null,
-      timeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
-      reason: `${safeString(source) || 'source'}_synced`,
-      requestedBy: 'mcpWorker',
+      forceRebuild: true,
+      reason: `source_collected:${String(source || 'unknown')}`,
+      requestedBy: 'worker:mcpWorker',
+      trigger: `worker:${String(source || 'unknown')}`,
     });
 
-    console.log('[mcpWorker] context rebuild:done', {
+    console.log('[mcpWorker] signal rebuild:done', {
       userId: String(userId),
       source,
       snapshotId,
-      status: result?.data?.status || null,
-      stage: result?.data?.stage || null,
-      sourceSnapshots: result?.data?.sourceSnapshots || null,
-      usableSources: result?.data?.usableSources || [],
-      pendingConnectedSources: result?.data?.pendingConnectedSources || [],
+      status: rebuild?.data?.status || null,
+      stage: rebuild?.data?.stage || null,
+      progress: rebuild?.data?.progress || null,
+      signalComplete: !!rebuild?.data?.signalComplete,
+      signalReadyForPdf: !!rebuild?.data?.signalReadyForPdf,
+      usableSources: Array.isArray(rebuild?.data?.usableSources) ? rebuild.data.usableSources : [],
+      pendingConnectedSources: Array.isArray(rebuild?.data?.pendingConnectedSources)
+        ? rebuild.data.pendingConnectedSources
+        : [],
     });
 
-    return {
-      ok: true,
-      data: result?.data || null,
-    };
+    return rebuild;
   } catch (err) {
-    console.warn('[mcpWorker] context rebuild failed (best effort)', {
+    console.error('[mcpWorker] signal rebuild failed', {
       userId: String(userId),
       source,
       snapshotId,
-      error: err?.message || err?.code || err,
-      data: err?.data || null,
+      error: err?.message || err,
     });
-
-    return {
-      ok: false,
-      error: err?.message || err?.code || 'CONTEXT_REBUILD_FAILED',
-      data: err?.data || null,
-    };
+    throw err;
   }
 }
 
@@ -782,7 +804,7 @@ async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
     extractedRoot,
   });
 
-  const rebuild = await triggerContextRebuildBestEffort({
+  const rebuild = await triggerSignalRebuildAfterCollect({
     userId,
     source: 'metaAds',
     snapshotId,
@@ -793,7 +815,13 @@ async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
     ok: true,
     snapshotId,
     saved: (r.datasets || []).length,
-    contextRebuild: rebuild,
+    source: 'metaAds',
+    rebuild: {
+      status: rebuild?.data?.status || null,
+      stage: rebuild?.data?.stage || null,
+      signalComplete: !!rebuild?.data?.signalComplete,
+      signalReadyForPdf: !!rebuild?.data?.signalReadyForPdf,
+    },
   };
 }
 
@@ -865,7 +893,7 @@ async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, acc
     extractedRoot,
   });
 
-  const rebuild = await triggerContextRebuildBestEffort({
+  const rebuild = await triggerSignalRebuildAfterCollect({
     userId,
     source: 'googleAds',
     snapshotId,
@@ -876,7 +904,13 @@ async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, acc
     ok: true,
     snapshotId,
     saved: (r.datasets || []).length,
-    contextRebuild: rebuild,
+    source: 'googleAds',
+    rebuild: {
+      status: rebuild?.data?.status || null,
+      stage: rebuild?.data?.stage || null,
+      signalComplete: !!rebuild?.data?.signalComplete,
+      signalReadyForPdf: !!rebuild?.data?.signalReadyForPdf,
+    },
   };
 }
 
@@ -948,7 +982,7 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
     extractedRoot,
   });
 
-  const rebuild = await triggerContextRebuildBestEffort({
+  const rebuild = await triggerSignalRebuildAfterCollect({
     userId,
     source: 'ga4',
     snapshotId,
@@ -959,7 +993,13 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
     ok: true,
     snapshotId,
     saved: (r.datasets || []).length,
-    contextRebuild: rebuild,
+    source: 'ga4',
+    rebuild: {
+      status: rebuild?.data?.status || null,
+      stage: rebuild?.data?.stage || null,
+      signalComplete: !!rebuild?.data?.signalComplete,
+      signalReadyForPdf: !!rebuild?.data?.signalReadyForPdf,
+    },
   };
 }
 
@@ -969,12 +1009,19 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
 async function connectMongo() {
   mongoose.set('bufferCommands', false);
 
+  if (mongoose.connection.readyState === 1) {
+    return mongoose.connection;
+  }
+
   await mongoose.connect(MONGO_URI, {
-    serverSelectionTimeoutMS: 20_000,
-    socketTimeoutMS: 45_000,
+    serverSelectionTimeoutMS: 20000,
+    socketTimeoutMS: 45000,
+    maxPoolSize: 10,
+    minPoolSize: 1,
   });
 
   console.log('[mcpWorker] Mongo connected');
+  return mongoose.connection;
 }
 
 /* =========================
@@ -1009,39 +1056,42 @@ async function boot() {
       if (!userId) throw new Error('MISSING_USER_ID');
 
       const effectiveContextRangeDays = contextRangeDays || rangeDays || null;
+      const lockKey = `${String(userId)}:${String(source || 'unknown')}`;
 
-      if (source === 'metaAds') {
-        return await runMetaJob({
-          userId,
-          storageRangeDays,
-          contextRangeDays: effectiveContextRangeDays,
-        });
-      }
+      return await withSourceLock(lockKey, async () => {
+        if (source === 'metaAds') {
+          return await runMetaJob({
+            userId,
+            storageRangeDays,
+            contextRangeDays: effectiveContextRangeDays,
+          });
+        }
 
-      if (source === 'googleAds') {
-        return await runGoogleAdsJob({
-          userId,
-          storageRangeDays,
-          contextRangeDays: effectiveContextRangeDays,
-          accountId,
-        });
-      }
+        if (source === 'googleAds') {
+          return await runGoogleAdsJob({
+            userId,
+            storageRangeDays,
+            contextRangeDays: effectiveContextRangeDays,
+            accountId,
+          });
+        }
 
-      if (source === 'ga4') {
-        return await runGa4Job({
-          userId,
-          storageRangeDays,
-          contextRangeDays: effectiveContextRangeDays,
-          propertyId,
-        });
-      }
+        if (source === 'ga4') {
+          return await runGa4Job({
+            userId,
+            storageRangeDays,
+            contextRangeDays: effectiveContextRangeDays,
+            propertyId,
+          });
+        }
 
-      throw new Error(`UNSUPPORTED_SOURCE:${source}`);
+        throw new Error(`UNSUPPORTED_SOURCE:${source}`);
+      });
     },
     {
       connection,
       prefix: BULLMQ_PREFIX,
-      concurrency: 2,
+      concurrency: WORKER_CONCURRENCY,
     }
   );
 
@@ -1070,7 +1120,7 @@ async function boot() {
     prefix: BULLMQ_PREFIX,
     defaultStorageRangeDays: DEFAULT_STORAGE_RANGE_DAYS,
     defaultContextRangeDays: DEFAULT_CONTEXT_RANGE_DAYS,
-    workerContextRebuildTimeoutMs: WORKER_CONTEXT_REBUILD_TIMEOUT_MS,
+    workerConcurrency: WORKER_CONCURRENCY,
   });
 }
 

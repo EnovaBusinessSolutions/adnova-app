@@ -53,6 +53,36 @@ function normSimpleString(v = '') {
   return s || null;
 }
 
+function normEmail(v = '') {
+  const s = String(v || '').trim().toLowerCase();
+  return s || null;
+}
+
+function normTimezone(v = '') {
+  const s = String(v || '').trim();
+  return s || 'America/Mexico_City';
+}
+
+function normDailyStatus(v = '') {
+  const s = String(v || '').trim().toLowerCase();
+  const allowed = new Set([
+    'idle',
+    'scheduled',
+    'building_signal',
+    'building_pdf',
+    'sending',
+    'sent',
+    'failed',
+  ]);
+  return allowed.has(s) ? s : 'idle';
+}
+
+function clampInt(n, min, max, fallback) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(x)));
+}
+
 /* ---------------- sub-schema de suscripción (Stripe) ---------------- */
 const subscriptionSchema = new mongoose.Schema(
   {
@@ -69,6 +99,65 @@ const subscriptionSchema = new mongoose.Schema(
     lastCfdiId: { type: String },
     lastCfdiTotal: { type: Number },
     lastStripeInvoice: { type: String },
+  },
+  { _id: false }
+);
+
+/* ---------------- sub-schema de delivery diario Signal/PDF ---------------- */
+const dailySignalDeliverySchema = new mongoose.Schema(
+  {
+    enabled: { type: Boolean, default: false, index: true },
+
+    email: {
+      type: String,
+      default: null,
+      trim: true,
+      lowercase: true,
+      set: normEmail,
+    },
+
+    timezone: {
+      type: String,
+      default: 'America/Mexico_City',
+      trim: true,
+      set: normTimezone,
+    },
+
+    sendHour: {
+      type: Number,
+      default: 5,
+      min: 0,
+      max: 23,
+      set: (v) => clampInt(v, 0, 23, 5),
+    },
+
+    sendMinute: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 59,
+      set: (v) => clampInt(v, 0, 59, 0),
+    },
+
+    optedInAt: { type: Date, default: null },
+    optedOutAt: { type: Date, default: null },
+
+    lastAttemptAt: { type: Date, default: null },
+    lastSentAt: { type: Date, default: null },
+    lastErrorAt: { type: Date, default: null },
+
+    lastError: {
+      type: String,
+      default: null,
+      set: normSimpleString,
+    },
+
+    status: {
+      type: String,
+      enum: ['idle', 'scheduled', 'building_signal', 'building_pdf', 'sending', 'sent', 'failed'],
+      default: 'idle',
+      set: normDailyStatus,
+    },
   },
   { _id: false }
 );
@@ -254,6 +343,12 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
+    // === Daily Signal Delivery ===
+    dailySignalDelivery: {
+      type: dailySignalDeliverySchema,
+      default: () => ({}),
+    },
+
     // Recuperación y planes
     resetPasswordToken: { type: String },
     resetPasswordExpires: { type: Date },
@@ -282,6 +377,14 @@ userSchema.index({ welcomeEmailSent: 1, createdAt: -1 });
 userSchema.index({ mcpShareToken: 1 }, { sparse: true });
 userSchema.index({ mcpShareEnabled: 1, mcpShareToken: 1 }, { sparse: true });
 userSchema.index({ mcpShareEnabled: 1, mcpShareProvider: 1 }, { sparse: true });
+
+// Daily Signal Delivery
+userSchema.index({ 'dailySignalDelivery.enabled': 1 });
+userSchema.index({
+  'dailySignalDelivery.enabled': 1,
+  'dailySignalDelivery.sendHour': 1,
+  'dailySignalDelivery.sendMinute': 1,
+});
 
 /* ---------------- hooks ---------------- */
 userSchema.pre('save', function (next) {
@@ -335,6 +438,36 @@ userSchema.pre('save', function (next) {
     this.mcpShareSnapshotId = normSimpleString(this.mcpShareSnapshotId);
   }
 
+  if (this.isModified('dailySignalDelivery')) {
+    if (!this.dailySignalDelivery) {
+      this.dailySignalDelivery = {};
+    }
+
+    if ('email' in this.dailySignalDelivery) {
+      this.dailySignalDelivery.email = normEmail(this.dailySignalDelivery.email);
+    }
+
+    if ('timezone' in this.dailySignalDelivery) {
+      this.dailySignalDelivery.timezone = normTimezone(this.dailySignalDelivery.timezone);
+    }
+
+    if ('sendHour' in this.dailySignalDelivery) {
+      this.dailySignalDelivery.sendHour = clampInt(this.dailySignalDelivery.sendHour, 0, 23, 5);
+    }
+
+    if ('sendMinute' in this.dailySignalDelivery) {
+      this.dailySignalDelivery.sendMinute = clampInt(this.dailySignalDelivery.sendMinute, 0, 59, 0);
+    }
+
+    if ('lastError' in this.dailySignalDelivery) {
+      this.dailySignalDelivery.lastError = normSimpleString(this.dailySignalDelivery.lastError);
+    }
+
+    if ('status' in this.dailySignalDelivery) {
+      this.dailySignalDelivery.status = normDailyStatus(this.dailySignalDelivery.status);
+    }
+  }
+
   if (this.isModified('plan')) {
     this.planStartedAt = new Date();
   }
@@ -376,6 +509,92 @@ userSchema.statics.setSelectedGA4Properties = async function (userId, propertyId
     }
   );
   return normalized;
+};
+
+userSchema.statics.enableDailySignalDelivery = async function (
+  userId,
+  {
+    email = null,
+    timezone = 'America/Mexico_City',
+    sendHour = 5,
+    sendMinute = 0,
+  } = {}
+) {
+  const now = new Date();
+
+  const current = await this.findById(userId)
+    .select('email dailySignalDelivery')
+    .lean();
+
+  if (!current?._id) return null;
+
+  const existingOptedInAt = current?.dailySignalDelivery?.optedInAt || null;
+  const resolvedEmail =
+    normEmail(email) ||
+    normEmail(current?.dailySignalDelivery?.email) ||
+    normEmail(current?.email) ||
+    null;
+
+  return this.findByIdAndUpdate(
+    userId,
+    {
+      $set: {
+        'dailySignalDelivery.enabled': true,
+        'dailySignalDelivery.email': resolvedEmail,
+        'dailySignalDelivery.timezone': normTimezone(timezone),
+        'dailySignalDelivery.sendHour': clampInt(sendHour, 0, 23, 5),
+        'dailySignalDelivery.sendMinute': clampInt(sendMinute, 0, 59, 0),
+        'dailySignalDelivery.optedInAt': existingOptedInAt || now,
+        'dailySignalDelivery.optedOutAt': null,
+        'dailySignalDelivery.lastError': null,
+        'dailySignalDelivery.lastErrorAt': null,
+        'dailySignalDelivery.status': 'scheduled',
+      },
+    },
+    { new: true }
+  );
+};
+
+userSchema.statics.disableDailySignalDelivery = async function (userId) {
+  const now = new Date();
+
+  return this.findByIdAndUpdate(
+    userId,
+    {
+      $set: {
+        'dailySignalDelivery.enabled': false,
+        'dailySignalDelivery.optedOutAt': now,
+        'dailySignalDelivery.status': 'idle',
+      },
+    },
+    { new: true }
+  );
+};
+
+userSchema.statics.markDailySignalDeliveryStatus = async function (
+  userId,
+  {
+    status = 'idle',
+    lastAttemptAt,
+    lastSentAt,
+    lastErrorAt,
+    lastError,
+  } = {}
+) {
+  const $set = {
+    'dailySignalDelivery.status': normDailyStatus(status),
+  };
+
+  if (lastAttemptAt !== undefined) $set['dailySignalDelivery.lastAttemptAt'] = lastAttemptAt || null;
+  if (lastSentAt !== undefined) $set['dailySignalDelivery.lastSentAt'] = lastSentAt || null;
+  if (lastErrorAt !== undefined) $set['dailySignalDelivery.lastErrorAt'] = lastErrorAt || null;
+  if (lastError !== undefined) $set['dailySignalDelivery.lastError'] = normSimpleString(lastError);
+
+  return this.findByIdAndUpdate(
+    userId,
+    { $set },
+    { new: true }
+  );
 };
 
 module.exports = mongoose.model('User', userSchema);
