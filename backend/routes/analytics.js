@@ -315,7 +315,10 @@ async function resolveUserIdByPlatformConnections(platformConnections = []) {
   const rootDoc = await McpData.findOne({
     kind: 'root',
     $or: orClauses,
-      latestSnapshotId: { $ne: null }
+    latestSnapshotId: { $ne: null }
+  })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .lean();
 
   return rootDoc?.userId || null;
 }
