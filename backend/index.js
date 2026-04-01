@@ -121,6 +121,12 @@ app.use("/api/cron", require("./routes/cronEmails"));
 const PORT = process.env.PORT || 3000;
 const APP_URL = (process.env.APP_URL || "https://adray.ai").replace(/\/$/, "");
 
+/** Landing Next (submódulo `landing-adray`): export estático en `landing-adray/out` */
+const LANDING_ADRAY_OUT = path.join(__dirname, "../landing-adray/out");
+function hasLandingAdrayBuild() {
+  return fs.existsSync(path.join(LANDING_ADRAY_OUT, "index.html"));
+}
+
 /* =========================
  * Seguridad y performance
  * ========================= */
@@ -862,6 +868,9 @@ app.get("/", (req, res) => {
       ? res.redirect("/dashboard")
       : res.redirect("/onboarding");
   }
+  if (hasLandingAdrayBuild()) {
+    return res.sendFile(path.join(LANDING_ADRAY_OUT, "index.html"));
+  }
   return res.sendFile(path.join(__dirname, "../public/landing/index.html"));
 });
 
@@ -1424,6 +1433,10 @@ app.use("/api/shopConnection", require("./routes/shopConnection"));
 app.use("/api", subscribeRouter);
 
 // Estáticos (públicos)
+// Landing Next (export): `/_next`, páginas HTML, etc. (antes de /public)
+if (hasLandingAdrayBuild()) {
+  app.use(express.static(LANDING_ADRAY_OUT, { index: false }));
+}
 app.use("/assets", express.static(path.join(__dirname, "../public/landing/assets")));
 app.use("/assets", express.static(path.join(__dirname, "../public/support/assets")));
 app.use("/assets", express.static(path.join(__dirname, "../public/plans/assets")));
