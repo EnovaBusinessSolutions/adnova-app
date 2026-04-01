@@ -3024,7 +3024,7 @@
                     ${events.map((event) => `
                         <article class="journey-event ${event.tone || ''}">
                             <div class="journey-event-head">
-                                <span class="journey-event-title"><i class="${event.icon || 'fa-solid fa-circle'}"></i>${escapeHtml(event.title || 'Event')}</span>
+                                <span class="journey-event-title"><i class="${event.icon || 'fa-solid fa-circle'}"></i>${event.title || 'Event'}</span>
                                 <span class="journey-event-time">${escapeHtml(event.time || '-')}</span>
                             </div>
                             <div class="journey-event-detail">
