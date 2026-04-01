@@ -2757,6 +2757,18 @@
                 .replace(/'/g, '&#039;');
         }
 
+        function resolveEventIcon(eventNameRaw) {
+            const name = String(eventNameRaw || '').toLowerCase();
+            if (name.includes('page_view') || name === 'pageview') return 'fa-solid fa-eye';
+            if (name.includes('view_item') || name === 'view item') return 'fa-solid fa-box-open';
+            if (name.includes('add_to_cart') || name === 'add to cart') return 'fa-solid fa-cart-shopping';
+            if (name.includes('begin_checkout') || name === 'begin checkout') return 'fa-solid fa-credit-card';
+            if (name.includes('purchase')) return 'fa-solid fa-bag-shopping';
+            if (name.includes('login') || name === 'user_logged_in') return 'fa-solid fa-user-check';
+            if (name.includes('lead') || name === 'generate_lead') return 'fa-solid fa-envelope-open-text';
+            return 'fa-solid fa-globe';
+        }
+
         function resolveChannelIcon(channel, platform) {
             const key = String(channel + ' ' + platform).toLowerCase();        
             if (key.includes('organic') || key.includes('referral') || key.includes('direct')) return 'fa-solid fa-globe';
@@ -2948,7 +2960,7 @@
                 const baseTitle = normalizeEventNameHuman(event.eventName || event.name);
 
                 return {
-                    icon: resolveChannelIcon(event.utmSource || session.utmSource, sessionData?.journey?.attribution?.platform || null),
+                    icon: resolveEventIcon(event.eventName || event.name),
                     title: durSeconds > 0 ? `${baseTitle} <span class="text-gray-400 text-[0.8rem] ml-1 absolute right-24" style="margin-left: 0.5rem; font-weight: 500;">${formatDurationCompact(durSeconds)}</span>` : baseTitle,
                     time: formatDateTimeMx(event.createdAt || event.collectedAt || null),
                     detailLines,
@@ -3112,7 +3124,7 @@
                         const baseTitle = normalizeEventNameHuman(event.eventName || event.name);
 
                         return {
-                            icon: resolveChannelIcon(event.utmSource || purchase.attributedChannel || '', purchase.attributedPlatform || null),
+                            icon: resolveEventIcon(event.eventName || event.name),
                             title: durSeconds > 0 ? `${baseTitle} <span class="text-gray-400 text-[0.8rem]" style="margin-left: 0.5rem; font-weight: 500;">${formatDurationCompact(durSeconds)}</span>` : baseTitle,
                             time: formatDateTimeMx(event.createdAt || event.collectedAt || null),
                             detailLines,
