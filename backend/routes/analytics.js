@@ -496,72 +496,160 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
   }
 
   try {
-    const userId = await resolvePaidMediaUserId({ accountId, domain, platformConnections, fallbackUserId });
-    if (!userId) {
-      console.warn(`[PaidMedia] No user ID resolved for ${accountId}`);
+    const toIdKey = (value) => {
+      if (!value) return null;
+      try {
+        return String(value);
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const loadPaidMediaForUser = async (userId) => {
+      const rootDoc = await findMcpRoot(userId);
+      if (!rootDoc) {
+        console.warn(`[PaidMedia] No root doc found for user ${userId} (${accountId})`);
+        return null;
+      }
+
+      console.log(`[PaidMedia] Found rootDoc for user ${userId}, snapshot ids meta=${rootDoc.latestSnapshotId} etc.`);
+
+      const [metaSnapshotId, googleSnapshotId] = await Promise.all([
+        findLatestSnapshotId(userId, 'metaAds', rootDoc),
+        findLatestSnapshotId(userId, 'googleAds', rootDoc),
+      ]);
+
+      const [metaChunks, googleChunks] = await Promise.all([
+        findMcpChunks(userId, 'metaAds', metaSnapshotId, 'meta.'),
+        findMcpChunks(userId, 'googleAds', googleSnapshotId, 'google.'),
+      ]);
+
+      console.log(`[PaidMedia] Snapshot chunks fetched for user ${userId}. Meta: ${metaChunks.length}, Google: ${googleChunks.length}`);
+
+      const metaPayload = metaChunks.length ? formatMetaForLlmMini({ datasets: metaChunks, topCampaigns: 4 }) : null;
+      const googlePayload = googleChunks.length ? formatGoogleAdsForLlmMini({ datasets: googleChunks, topCampaigns: 4 }) : null;
+
+      if (metaPayload) console.log(`[PaidMedia Debug] Meta Payload KPIs (${userId}):`, JSON.stringify(metaPayload.headline_kpis));
+      if (googlePayload) console.log(`[PaidMedia Debug] Google Payload KPIs (${userId}):`, JSON.stringify(googlePayload.headline_kpis));
+
+      if (!metaPayload && metaChunks.length) console.warn(`[PaidMedia] metaPayload returned null despite having chunks for user ${userId}`);
+      if (!googlePayload && googleChunks.length) console.warn(`[PaidMedia] googlePayload returned null despite having chunks for user ${userId}`);
+
+      const meta = buildPaidMediaSourceSummary({
+        sourceState: rootDoc?.sources?.metaAds || null,
+        payload: metaPayload,
+        snapshotId: metaSnapshotId,
+        revenueKey: 'purchase_value',
+      });
+
+      const google = buildPaidMediaSourceSummary({
+        sourceState: rootDoc?.sources?.googleAds || null,
+        payload: googlePayload,
+        snapshotId: googleSnapshotId,
+        revenueKey: 'conversion_value',
+      });
+
+      const blendedSpend = meta.spend + google.spend;
+      const blendedRevenue = meta.revenue + google.revenue;
+      const hasAnySnapshot = meta.hasSnapshot || google.hasSnapshot;
+
+      const summary = {
+        linked: true,
+        available: hasAnySnapshot,
+        reason: hasAnySnapshot ? null : 'snapshots_not_found',
+        meta,
+        google,
+        blended: {
+          spend: blendedSpend,
+          revenue: blendedRevenue,
+          roas: blendedSpend > 0 ? Number((blendedRevenue / blendedSpend).toFixed(2)) : null,
+          currency: meta.currency || google.currency || null,
+        },
+      };
+
+      // Higher score means better data quality for dashboard consistency.
+      const score =
+        (meta.hasSnapshot ? 10 : 0) +
+        (google.hasSnapshot ? 10 : 0) +
+        (meta.spend > 0 ? 40 : 0) +
+        (google.spend > 0 ? 40 : 0) +
+        (meta.ready ? 5 : 0) +
+        (google.ready ? 5 : 0) +
+        (blendedSpend > 0 ? 25 : 0);
+
+      return { userId: toIdKey(userId), summary, score };
+    };
+
+    const candidates = Array.from(new Set([
+      normalizeShopDomain(accountId),
+      normalizeShopDomain(domain),
+    ].filter(Boolean)));
+
+    const resolvedUserId = await resolvePaidMediaUserId({ accountId, domain, platformConnections, fallbackUserId });
+    console.log(`[PaidMedia] Resolved userId: ${resolvedUserId || 'none'} for ${accountId}`);
+
+    const candidateUserIds = [];
+    const seenUserIds = new Set();
+    const pushCandidate = (value) => {
+      const key = toIdKey(value);
+      if (!key || seenUserIds.has(key)) return;
+      seenUserIds.add(key);
+      candidateUserIds.push(key);
+    };
+
+    pushCandidate(resolvedUserId);
+    pushCandidate(fallbackUserId);
+
+    if (ShopConnections && candidates.length) {
+      const linkedShopUsers = await ShopConnections.find({
+        shop: { $in: candidates },
+        matchedToUserId: { $ne: null },
+      })
+        .select('matchedToUserId')
+        .lean();
+
+      linkedShopUsers.forEach((doc) => pushCandidate(doc?.matchedToUserId));
+    }
+
+    if (User && candidates.length) {
+      const usersByShop = await User.find({
+        shop: { $in: candidates },
+      })
+        .select('_id')
+        .lean();
+
+      usersByShop.forEach((doc) => pushCandidate(doc?._id));
+    }
+
+    if (!candidateUserIds.length) {
+      console.warn(`[PaidMedia] No user ID candidates found for ${accountId}`);
       return base;
     }
-    console.log(`[PaidMedia] Resolved userId: ${userId} for ${accountId}`);
 
-    const rootDoc = await findMcpRoot(userId);
-    if (!rootDoc) {
-      console.warn(`[PaidMedia] No root doc found for user ${userId} (${accountId})`);
+    let best = null;
+    for (const candidateUserId of candidateUserIds) {
+      const result = await loadPaidMediaForUser(candidateUserId);
+      if (!result) continue;
+
+      if (!best || result.score > best.score) {
+        best = result;
+      }
+
+      if (result.summary?.blended?.spend > 0) {
+        best = result;
+        break;
+      }
+    }
+
+    if (!best) {
       return { ...base, linked: true, reason: 'root_not_found' };
     }
-    console.log(`[PaidMedia] Found rootDoc for user ${userId}, snapshot ids meta=${rootDoc.latestSnapshotId} etc.`);
 
-    const [metaSnapshotId, googleSnapshotId] = await Promise.all([
-      findLatestSnapshotId(userId, 'metaAds', rootDoc),
-      findLatestSnapshotId(userId, 'googleAds', rootDoc),
-    ]);
+    if (resolvedUserId && String(best.userId) !== String(resolvedUserId)) {
+      console.log(`[PaidMedia] Using fallback user ${best.userId} (primary ${resolvedUserId}) for shop ${accountId}`);
+    }
 
-    const [metaChunks, googleChunks] = await Promise.all([
-      findMcpChunks(userId, 'metaAds', metaSnapshotId, 'meta.'),
-      findMcpChunks(userId, 'googleAds', googleSnapshotId, 'google.'),
-    ]);
-
-    console.log(`[PaidMedia] Snapshot chunks fetched. Meta: ${metaChunks.length}, Google: ${googleChunks.length}`);
-
-    const metaPayload = metaChunks.length ? formatMetaForLlmMini({ datasets: metaChunks, topCampaigns: 4 }) : null;
-    const googlePayload = googleChunks.length ? formatGoogleAdsForLlmMini({ datasets: googleChunks, topCampaigns: 4 }) : null;
-
-    if (metaPayload) console.log(`[PaidMedia Debug] Meta Payload KPIs:`, JSON.stringify(metaPayload.headline_kpis));
-    if (googlePayload) console.log(`[PaidMedia Debug] Google Payload KPIs:`, JSON.stringify(googlePayload.headline_kpis));
-
-    if (!metaPayload && metaChunks.length) console.warn('[PaidMedia] metaPayload returned null despite having chunks');
-    if (!googlePayload && googleChunks.length) console.warn('[PaidMedia] googlePayload returned null despite having chunks');
-
-    const meta = buildPaidMediaSourceSummary({
-      sourceState: rootDoc?.sources?.metaAds || null,
-      payload: metaPayload,
-      snapshotId: metaSnapshotId,
-      revenueKey: 'purchase_value',
-    });
-
-    const google = buildPaidMediaSourceSummary({
-      sourceState: rootDoc?.sources?.googleAds || null,
-      payload: googlePayload,
-      snapshotId: googleSnapshotId,
-      revenueKey: 'conversion_value',
-    });
-
-    const blendedSpend = meta.spend + google.spend;
-    const blendedRevenue = meta.revenue + google.revenue;
-    const hasAnySnapshot = meta.hasSnapshot || google.hasSnapshot;
-
-    return {
-      linked: true,
-      available: hasAnySnapshot,
-      reason: hasAnySnapshot ? null : 'snapshots_not_found',
-      meta,
-      google,
-      blended: {
-        spend: blendedSpend,
-        revenue: blendedRevenue,
-        roas: blendedSpend > 0 ? Number((blendedRevenue / blendedSpend).toFixed(2)) : null,
-        currency: meta.currency || google.currency || null,
-      },
-    };
+    return best.summary;
   } catch (error) {
     console.error('[Analytics API] Paid media summary error:', error);
     return { ...base, reason: 'lookup_failed' };
