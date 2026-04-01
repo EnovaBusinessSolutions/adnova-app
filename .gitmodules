@@ -16,4 +16,4 @@
 	branch = main
 [submodule "landing-adray"]
 	path = landing-adray
-	url = git@github.com:NSPG13/Landing-adray.git
+	url = https://github.com/NSPG13/Landing-adray.git
