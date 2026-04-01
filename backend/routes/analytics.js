@@ -315,9 +315,7 @@ async function resolveUserIdByPlatformConnections(platformConnections = []) {
   const rootDoc = await McpData.findOne({
     kind: 'root',
     $or: orClauses,
-  })
-    .sort({ updatedAt: -1, createdAt: -1 })
-    .lean();
+      latestSnapshotId: { $ne: null }
 
   return rootDoc?.userId || null;
 }
@@ -381,6 +379,18 @@ async function resolvePaidMediaUserId({ accountId, domain, platformConnections =
     normalizeShopDomain(accountId),
     normalizeShopDomain(domain),
   ].filter(Boolean)));
+
+  // If the logged-in user actually has their own root doc connected to this account, use it first to ensure data consistency
+  if (fallbackUserId && Array.isArray(platformConnections) && platformConnections.length > 0) {
+    const rootDoc = await findMcpRoot(fallbackUserId);
+    if (rootDoc?.sources) {
+      const hasMetaMatch = rootDoc.sources.metaAds?.accountId && platformConnections.some(c => String(c.platform || '').toUpperCase() === 'META' && normalizeMetaAccountId(c.adAccountId) === rootDoc.sources.metaAds.accountId);
+      const hasGoogleMatch = rootDoc.sources.googleAds?.customerId && platformConnections.some(c => String(c.platform || '').toUpperCase() === 'GOOGLE' && normalizeGoogleCustomerId(c.adAccountId) === rootDoc.sources.googleAds.customerId);
+      if (hasMetaMatch || hasGoogleMatch) {
+         return fallbackUserId;
+      }
+    }
+  }
 
   const fromPlatformConnections = await resolveUserIdByPlatformConnections(platformConnections);
   if (fromPlatformConnections) return fromPlatformConnections;
