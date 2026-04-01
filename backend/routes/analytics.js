@@ -233,7 +233,10 @@ async function findMcpRoot(userId) {
 
 async function findLatestSnapshotId(userId, source, rootDoc) {
   if (!McpData || !userId) return null;
-  if (rootDoc?.latestSnapshotId) return rootDoc.latestSnapshotId;
+  if (rootDoc?.latestSnapshotId) {
+    console.log(`[PaidMedia Trace] latestSnapshotId from root user=${userId} source=${source} snapshot=${rootDoc.latestSnapshotId}`);
+    return rootDoc.latestSnapshotId;
+  }
 
   const datasetPrefix = source === 'googleAds' ? '^google\\.' : '^meta\\.';
   const latestChunk = await McpData.findOne({
@@ -244,6 +247,7 @@ async function findLatestSnapshotId(userId, source, rootDoc) {
     .sort({ updatedAt: -1, createdAt: -1 })
     .lean();
 
+  console.log(`[PaidMedia Trace] latestSnapshotId from chunks user=${userId} source=${source} snapshot=${latestChunk?.snapshotId || 'none'} dataset=${latestChunk?.dataset || 'n/a'}`);
   return latestChunk?.snapshotId || null;
 }
 
@@ -259,7 +263,13 @@ async function findMcpChunks(userId, source, snapshotId, datasetPrefix) {
     .sort({ createdAt: 1, updatedAt: 1 })
     .lean();
 
-  return docs.filter(isChunkMcpDoc);
+  const chunks = docs.filter(isChunkMcpDoc);
+  console.log(`[PaidMedia Trace] findMcpChunks user=${userId} source=${source} snapshot=${snapshotId} prefix=${datasetPrefix} count=${chunks.length}`);
+  if (chunks.length) {
+    console.log('[PaidMedia Trace] chunk datasets:', chunks.map((d) => d?.dataset).filter(Boolean).slice(0, 20));
+  }
+
+  return chunks;
 }
 
 async function resolveUserIdByShopConnection(candidates) {
@@ -383,6 +393,14 @@ async function resolvePaidMediaUserId({ accountId, domain, platformConnections =
     normalizeShopDomain(domain),
   ].filter(Boolean)));
 
+  console.log(`[PaidMedia Trace] resolvePaidMediaUserId account=${accountId} domain=${domain} fallbackUserId=${fallbackUserId || 'none'}`);
+  console.log('[PaidMedia Trace] resolve candidates:', candidates);
+  console.log('[PaidMedia Trace] incoming platformConnections:', (platformConnections || []).map((conn) => ({
+    platform: conn?.platform || null,
+    status: conn?.status || null,
+    adAccountId: conn?.adAccountId || null,
+  })));
+
   // If the logged-in user actually has their own root doc connected to this account, use it first to ensure data consistency
   if (fallbackUserId && Array.isArray(platformConnections) && platformConnections.length > 0) {
     const rootDoc = await findMcpRoot(fallbackUserId);
@@ -390,23 +408,29 @@ async function resolvePaidMediaUserId({ accountId, domain, platformConnections =
       const hasMetaMatch = rootDoc.sources.metaAds?.accountId && platformConnections.some(c => String(c.platform || '').toUpperCase() === 'META' && normalizeMetaAccountId(c.adAccountId) === rootDoc.sources.metaAds.accountId);
       const hasGoogleMatch = rootDoc.sources.googleAds?.customerId && platformConnections.some(c => String(c.platform || '').toUpperCase() === 'GOOGLE' && normalizeGoogleCustomerId(c.adAccountId) === rootDoc.sources.googleAds.customerId);
       if (hasMetaMatch || hasGoogleMatch) {
+         console.log(`[PaidMedia Trace] resolvePaidMediaUserId matched fallbackUserId via root/source match user=${fallbackUserId}`);
          return fallbackUserId;
       }
     }
   }
 
   const fromPlatformConnections = await resolveUserIdByPlatformConnections(platformConnections);
+  console.log(`[PaidMedia Trace] resolver fromPlatformConnections => ${fromPlatformConnections || 'none'}`);
   if (fromPlatformConnections) return fromPlatformConnections;
 
   const fromConnectedAccounts = await resolveUserIdByConnectedAccountDocs(platformConnections);
+  console.log(`[PaidMedia Trace] resolver fromConnectedAccounts => ${fromConnectedAccounts || 'none'}`);
   if (fromConnectedAccounts) return fromConnectedAccounts;
 
   const fromShopConnection = await resolveUserIdByShopConnection(candidates);
+  console.log(`[PaidMedia Trace] resolver fromShopConnection => ${fromShopConnection || 'none'}`);
   if (fromShopConnection) return fromShopConnection;
 
   const fromUserShop = await resolveUserIdByUserShop(candidates);
+  console.log(`[PaidMedia Trace] resolver fromUserShop => ${fromUserShop || 'none'}`);
   if (fromUserShop) return fromUserShop;
 
+  console.log(`[PaidMedia Trace] resolver fallback to req.user => ${fallbackUserId || 'none'}`);
   return fallbackUserId;
 }
 
@@ -476,6 +500,12 @@ function buildPaidMediaSourceSummary({ sourceState, payload, snapshotId, revenue
 
 async function buildPaidMediaSummary({ accountId, domain, platformConnections = [], fallbackUserId = null }) {
   console.log(`[PaidMedia] Starting buildPaidMediaSummary for accountId: ${accountId}, domain: ${domain}, connections: ${platformConnections?.length}`);
+  console.log('[PaidMedia Trace] platformConnections payload:', (platformConnections || []).map((conn) => ({
+    platform: conn?.platform || null,
+    status: conn?.status || null,
+    adAccountId: conn?.adAccountId || null,
+    updatedAt: conn?.updatedAt || null,
+  })));
   const base = {
     linked: false,
     available: false,
@@ -513,11 +543,30 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
       }
 
       console.log(`[PaidMedia] Found rootDoc for user ${userId}, snapshot ids meta=${rootDoc.latestSnapshotId} etc.`);
+      console.log('[PaidMedia Trace] root sources:', {
+        userId: String(userId),
+        meta: {
+          status: rootDoc?.sources?.metaAds?.status || null,
+          connected: rootDoc?.sources?.metaAds?.connected || false,
+          ready: rootDoc?.sources?.metaAds?.ready || false,
+          accountId: rootDoc?.sources?.metaAds?.accountId || null,
+          selectedAccountId: rootDoc?.sources?.metaAds?.selectedAccountId || null,
+        },
+        google: {
+          status: rootDoc?.sources?.googleAds?.status || null,
+          connected: rootDoc?.sources?.googleAds?.connected || false,
+          ready: rootDoc?.sources?.googleAds?.ready || false,
+          customerId: rootDoc?.sources?.googleAds?.customerId || null,
+          selectedCustomerId: rootDoc?.sources?.googleAds?.selectedCustomerId || null,
+        },
+      });
 
       const [metaSnapshotId, googleSnapshotId] = await Promise.all([
         findLatestSnapshotId(userId, 'metaAds', rootDoc),
         findLatestSnapshotId(userId, 'googleAds', rootDoc),
       ]);
+
+      console.log(`[PaidMedia Trace] resolved snapshots for user ${userId}: meta=${metaSnapshotId || 'none'}, google=${googleSnapshotId || 'none'}`);
 
       const [metaChunks, googleChunks] = await Promise.all([
         findMcpChunks(userId, 'metaAds', metaSnapshotId, 'meta.'),
@@ -531,6 +580,18 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
 
       if (metaPayload) console.log(`[PaidMedia Debug] Meta Payload KPIs (${userId}):`, JSON.stringify(metaPayload.headline_kpis));
       if (googlePayload) console.log(`[PaidMedia Debug] Google Payload KPIs (${userId}):`, JSON.stringify(googlePayload.headline_kpis));
+
+      const compactCampaign = (campaign) => ({
+        id: campaign?.id || campaign?.campaign_id || null,
+        name: campaign?.name || campaign?.campaign_name || campaign?.campaign || null,
+        status: campaign?.status || null,
+        spend: toFiniteNumber(campaign?.spend ?? campaign?.cost ?? 0, 0),
+        revenue: toFiniteNumber(campaign?.purchase_value ?? campaign?.conversion_value ?? campaign?.revenue ?? 0, 0),
+        roas: toFiniteNumberOrNull(campaign?.roas),
+      });
+
+      console.log('[PaidMedia Trace] top meta campaigns:', (metaPayload?.top_campaigns || []).slice(0, 5).map(compactCampaign));
+      console.log('[PaidMedia Trace] top google campaigns:', (googlePayload?.top_campaigns || []).slice(0, 5).map(compactCampaign));
 
       if (!metaPayload && metaChunks.length) console.warn(`[PaidMedia] metaPayload returned null despite having chunks for user ${userId}`);
       if (!googlePayload && googleChunks.length) console.warn(`[PaidMedia] googlePayload returned null despite having chunks for user ${userId}`);
@@ -577,6 +638,16 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
         (google.ready ? 5 : 0) +
         (blendedSpend > 0 ? 25 : 0);
 
+      console.log('[PaidMedia Trace] candidate score:', {
+        userId: String(userId),
+        score,
+        metaSpend: meta.spend,
+        googleSpend: google.spend,
+        blendedSpend,
+        metaHasSnapshot: meta.hasSnapshot,
+        googleHasSnapshot: google.hasSnapshot,
+      });
+
       return { userId: toIdKey(userId), summary, score };
     };
 
@@ -621,6 +692,8 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
       usersByShop.forEach((doc) => pushCandidate(doc?._id));
     }
 
+    console.log('[PaidMedia Trace] candidate user ids (ordered):', candidateUserIds);
+
     if (!candidateUserIds.length) {
       console.warn(`[PaidMedia] No user ID candidates found for ${accountId}`);
       return base;
@@ -637,6 +710,7 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
 
       if (result.summary?.blended?.spend > 0) {
         best = result;
+        console.log(`[PaidMedia Trace] stopping candidate scan early with spend>0 user=${candidateUserId}`);
         break;
       }
     }
