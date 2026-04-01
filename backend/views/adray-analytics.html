@@ -2957,7 +2957,10 @@
                     itemName ? `Item: ${itemName}` : '',
                 ].filter(Boolean);
 
-                const baseTitle = normalizeEventNameHuman(event.eventName || event.name);
+                let baseTitle = normalizeEventNameHuman(event.eventName || event.name);
+                if (baseTitle === 'Page View' && pagePath && pagePath !== '-') {
+                    baseTitle = pagePath.replace(/^\/|\/$/g, '') || 'home';
+                }
 
                 const timeStr = formatDateTimeMx(event.createdAt || event.collectedAt || null);
                 let displayTime = timeStr;
