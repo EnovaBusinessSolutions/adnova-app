@@ -271,6 +271,12 @@ const publicCSPHelmet = helmet({
       ],
 
       /**
+       * MEDIA (audio/video: <video src>, <audio src>)
+       * default-src 'self' no cubre orígenes externos sin media-src explícito.
+       */
+      mediaSrc: ["'self'", 'https://pikaso.cdnpk.net', 'https://*.cdnpk.net'],
+
+      /**
        * FRAMES
        */
       frameSrc: [
