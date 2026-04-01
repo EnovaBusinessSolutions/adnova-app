@@ -2959,10 +2959,20 @@
 
                 const baseTitle = normalizeEventNameHuman(event.eventName || event.name);
 
+                const timeStr = formatDateTimeMx(event.createdAt || event.collectedAt || null);
+                let displayTime = timeStr;
+                if (index > 0) {
+                    const prev = visible[index - 1];
+                    const prevTimeStr = formatDateTimeMx(prev.createdAt || prev.collectedAt || null);
+                    if (timeStr === prevTimeStr) {
+                        displayTime = '';
+                    }
+                }
+
                 return {
                     icon: resolveEventIcon(event.eventName || event.name),
                     title: durSeconds > 0 ? `${baseTitle} <span class="text-gray-400 text-[0.8rem] ml-1 absolute right-24" style="margin-left: 0.5rem; font-weight: 500;">${formatDurationCompact(durSeconds)}</span>` : baseTitle,
-                    time: formatDateTimeMx(event.createdAt || event.collectedAt || null),
+                    time: displayTime,
                     detailLines,
                     tone,
                 };
@@ -3025,7 +3035,7 @@
                         <article class="journey-event ${event.tone || ''}">
                             <div class="journey-event-head">
                                 <span class="journey-event-title"><i class="${event.icon || 'fa-solid fa-circle'}"></i>${event.title || 'Event'}</span>
-                                <span class="journey-event-time">${escapeHtml(event.time || '-')}</span>
+                                ${event.time ? `<span class="journey-event-time">${escapeHtml(event.time)}</span>` : ''}
                             </div>
                             <div class="journey-event-detail">
                                 ${(Array.isArray(event.detailLines) ? event.detailLines : []).slice(0, 3).map((line) => `<p>${escapeHtml(line)}</p>`).join('')}
@@ -3123,10 +3133,20 @@
 
                         const baseTitle = normalizeEventNameHuman(event.eventName || event.name);
 
+                        const timeStr = formatDateTimeMx(event.createdAt || event.collectedAt || null);
+                        let displayTime = timeStr;
+                        if (index > 0) {
+                            const prev = realEvents[index - 1];
+                            const prevTimeStr = formatDateTimeMx(prev.createdAt || prev.collectedAt || null);
+                            if (timeStr === prevTimeStr) {
+                                displayTime = '';
+                            }
+                        }
+
                         return {
                             icon: resolveEventIcon(event.eventName || event.name),
                             title: durSeconds > 0 ? `${baseTitle} <span class="text-gray-400 text-[0.8rem]" style="margin-left: 0.5rem; font-weight: 500;">${formatDurationCompact(durSeconds)}</span>` : baseTitle,
-                            time: formatDateTimeMx(event.createdAt || event.collectedAt || null),
+                            time: displayTime,
                             detailLines,
                             tone: resolveChannelTone(event.utmSource || purchase.attributedChannel || '', purchase.attributedPlatform || null),
                         };
