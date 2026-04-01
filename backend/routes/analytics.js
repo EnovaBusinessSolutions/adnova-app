@@ -1,6 +1,7 @@
 
 const express = require('express');
 const router = express.Router();
+const axios = require('axios');
 const prisma = require('../utils/prismaClient');
 const { startOfDay, endOfDay, subDays, eachDayOfInterval, format } = require('date-fns');
 const { getCustomerDisplayNames } = require('../services/shopifyService');
@@ -15,6 +16,7 @@ let formatMetaForLlmMini = null;
 let formatGoogleAdsForLlmMini = null;
 let enqueueMetaCollectBestEffort = null;
 let enqueueGoogleAdsCollectBestEffort = null;
+let googleAdsService = null;
 
 try {
   McpData = require('../models/McpData');
@@ -46,6 +48,10 @@ try {
 
 try {
   ({ enqueueMetaCollectBestEffort, enqueueGoogleAdsCollectBestEffort } = require('../queues/mcpQueue'));
+} catch (_) {}
+
+try {
+  googleAdsService = require('../services/googleAdsService');
 } catch (_) {}
 
 const EVENT_BUCKET_ALIASES = {
@@ -506,6 +512,214 @@ function buildPaidMediaSourceSummary({ sourceState, payload, snapshotId, revenue
     };
 }
 
+function formatYmd(dateValue) {
+  const dt = dateValue instanceof Date ? dateValue : new Date(dateValue || Date.now());
+  if (Number.isNaN(dt.getTime())) return format(new Date(), 'yyyy-MM-dd');
+  return format(dt, 'yyyy-MM-dd');
+}
+
+function pickMetaValueByPriority(items = [], priorities = []) {
+  if (!Array.isArray(items)) return 0;
+  for (const key of priorities) {
+    const found = items.find((entry) => String(entry?.action_type || '') === key);
+    const value = Number(found?.value || 0);
+    if (Number.isFinite(value) && value !== 0) return value;
+  }
+  return 0;
+}
+
+async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
+  if (!MetaAccount) return null;
+
+  const metaDoc = await MetaAccount.findOne({
+    $or: [{ user: userId }, { userId }],
+  })
+    .select('+access_token +token +longlivedToken +accessToken +longLivedToken defaultAccountId ad_accounts adAccounts selectedAccountIds')
+    .lean();
+
+  if (!metaDoc) return null;
+
+  const accessToken =
+    metaDoc?.access_token ||
+    metaDoc?.token ||
+    metaDoc?.longlivedToken ||
+    metaDoc?.accessToken ||
+    metaDoc?.longLivedToken ||
+    null;
+
+  if (!accessToken) return null;
+
+  const adAccounts = Array.isArray(metaDoc?.ad_accounts)
+    ? metaDoc.ad_accounts
+    : Array.isArray(metaDoc?.adAccounts)
+      ? metaDoc.adAccounts
+      : [];
+
+  const selectedAccountId = Array.isArray(metaDoc?.selectedAccountIds) && metaDoc.selectedAccountIds.length
+    ? normalizeMetaAccountId(metaDoc.selectedAccountIds[0])
+    : null;
+
+  const defaultAccountId = normalizeMetaAccountId(metaDoc?.defaultAccountId);
+  const listAccountId = normalizeMetaAccountId(adAccounts?.[0]?.id || adAccounts?.[0]?.account_id || null);
+  const accountId = selectedAccountId || defaultAccountId || listAccountId;
+  if (!accountId) return null;
+
+  const since = formatYmd(startDate);
+  const until = formatYmd(endDate);
+  const fbVersion = process.env.FACEBOOK_API_VERSION || 'v23.0';
+  const graphBase = `https://graph.facebook.com/${fbVersion}`;
+
+  const paramsBase = {
+    access_token: accessToken,
+    time_range: JSON.stringify({ since, until }),
+    action_report_time: 'conversion',
+    use_unified_attribution_setting: true,
+  };
+
+  const accountInsightsRes = await axios.get(`${graphBase}/act_${accountId}/insights`, {
+    params: {
+      ...paramsBase,
+      level: 'account',
+      limit: 1,
+      fields: 'spend,clicks,impressions,actions,action_values,purchase_roas',
+    },
+  });
+
+  const accountRow = Array.isArray(accountInsightsRes?.data?.data) ? accountInsightsRes.data.data[0] : null;
+  const spend = toFiniteNumber(accountRow?.spend, 0);
+  const revenue = toFiniteNumber(
+    pickMetaValueByPriority(accountRow?.action_values || [], [
+      'omni_purchase',
+      'offsite_conversion.fb_pixel_purchase',
+      'onsite_conversion.purchase',
+      'purchase',
+    ]),
+    0
+  );
+
+  let currency = null;
+  try {
+    const accountInfoRes = await axios.get(`${graphBase}/act_${accountId}`, {
+      params: {
+        access_token: accessToken,
+        fields: 'currency,account_id,name',
+      },
+    });
+    currency = accountInfoRes?.data?.currency || null;
+  } catch (_) {}
+
+  let campaigns = [];
+  try {
+    const campaignInsightsRes = await axios.get(`${graphBase}/act_${accountId}/insights`, {
+      params: {
+        ...paramsBase,
+        level: 'campaign',
+        limit: 10,
+        fields: 'campaign_id,campaign_name,spend,clicks,impressions,actions,action_values,purchase_roas',
+      },
+    });
+
+    campaigns = (Array.isArray(campaignInsightsRes?.data?.data) ? campaignInsightsRes.data.data : []).map((row) => {
+      const campaignRevenue = toFiniteNumber(
+        pickMetaValueByPriority(row?.action_values || [], [
+          'omni_purchase',
+          'offsite_conversion.fb_pixel_purchase',
+          'onsite_conversion.purchase',
+          'purchase',
+        ]),
+        0
+      );
+      const campaignSpend = toFiniteNumber(row?.spend, 0);
+      return {
+        id: row?.campaign_id || null,
+        name: row?.campaign_name || null,
+        spend: campaignSpend,
+        revenue: campaignRevenue,
+        roas: campaignSpend > 0 ? Number((campaignRevenue / campaignSpend).toFixed(2)) : null,
+        status: null,
+      };
+    });
+  } catch (campaignErr) {
+    console.warn('[PaidMedia Direct] Meta campaign fetch failed:', campaignErr?.message || campaignErr);
+  }
+
+  const roas = spend > 0 ? Number((revenue / spend).toFixed(2)) : null;
+  return {
+    provider: 'meta',
+    accountId,
+    snapshotId: `direct_meta_${Date.now()}`,
+    spend,
+    revenue,
+    roas,
+    clicks: toFiniteNumber(accountRow?.clicks, 0),
+    conversions: toFiniteNumber(pickMetaValueByPriority(accountRow?.actions || [], ['purchase', 'omni_purchase']), 0),
+    currency: currency || 'MXN',
+    campaigns,
+  };
+}
+
+async function fetchGooglePaidMediaDirect({ userId, startDate, endDate }) {
+  if (!GoogleAccount || !googleAdsService?.fetchInsights) return null;
+
+  const googleDoc = await GoogleAccount.findOne({
+    $or: [{ user: userId }, { userId }],
+  })
+    .select('+accessToken +refreshToken selectedCustomerIds defaultCustomerId customers ad_accounts objective')
+    .lean();
+
+  if (!googleDoc) return null;
+
+  const selectedCustomerId = Array.isArray(googleDoc?.selectedCustomerIds) && googleDoc.selectedCustomerIds.length
+    ? normalizeGoogleCustomerId(googleDoc.selectedCustomerIds[0])
+    : null;
+  const defaultCustomerId = normalizeGoogleCustomerId(googleDoc?.defaultCustomerId);
+  const customerList = Array.isArray(googleDoc?.ad_accounts) && googleDoc.ad_accounts.length
+    ? googleDoc.ad_accounts
+    : (Array.isArray(googleDoc?.customers) ? googleDoc.customers : []);
+  const listCustomerId = normalizeGoogleCustomerId(customerList?.[0]?.id || null);
+  const customerId = selectedCustomerId || defaultCustomerId || listCustomerId;
+  if (!customerId) return null;
+
+  const start = startDate instanceof Date ? startDate : new Date(startDate || Date.now());
+  const end = endDate instanceof Date ? endDate : new Date(endDate || Date.now());
+  const rangeDays = Math.max(1, Math.min(90, Math.round((end.getTime() - start.getTime()) / 86400000) + 1));
+
+  const payload = await googleAdsService.fetchInsights({
+    googleAccount: googleDoc,
+    customerId,
+    range: rangeDays,
+    includeToday: true,
+    objective: googleDoc?.objective || 'ventas',
+  });
+
+  const spend = toFiniteNumber(payload?.kpis?.cost, 0);
+  const revenue = toFiniteNumber(payload?.kpis?.conv_value, 0);
+  const roas = payload?.kpis?.roas != null ? toFiniteNumberOrNull(payload?.kpis?.roas) : (spend > 0 ? Number((revenue / spend).toFixed(2)) : null);
+  const campaigns = Array.isArray(payload?.campaigns)
+    ? payload.campaigns.slice(0, 10).map((campaign) => ({
+        id: campaign?.id || null,
+        name: campaign?.name || null,
+        spend: toFiniteNumber(campaign?.cost, 0),
+        revenue: toFiniteNumber(campaign?.conv_value, 0),
+        roas: toFiniteNumberOrNull(campaign?.roas),
+        status: campaign?.status || null,
+      }))
+    : [];
+
+  return {
+    provider: 'google',
+    customerId,
+    snapshotId: `direct_google_${Date.now()}`,
+    spend,
+    revenue,
+    roas,
+    clicks: toFiniteNumber(payload?.kpis?.clicks, 0),
+    conversions: toFiniteNumber(payload?.kpis?.conversions, 0),
+    currency: payload?.currency || 'MXN',
+    campaigns,
+  };
+}
+
 function shouldDebouncePaidMediaSync(userId, source) {
   const key = `${String(userId || '')}:${String(source || '')}`;
   if (!key || key === ':') return true;
@@ -595,7 +809,7 @@ async function triggerPaidMediaAutoSyncIfNeeded({ userId, accountId, summary, ro
   }
 }
 
-async function buildPaidMediaSummary({ accountId, domain, platformConnections = [], fallbackUserId = null }) {
+async function buildPaidMediaSummary({ accountId, domain, platformConnections = [], fallbackUserId = null, startDate = null, endDate = null }) {
   console.log(`[PaidMedia] Starting buildPaidMediaSummary for accountId: ${accountId}, domain: ${domain}, connections: ${platformConnections?.length}`);
   console.log('[PaidMedia Trace] platformConnections payload:', (platformConnections || []).map((conn) => ({
     platform: conn?.platform || null,
@@ -706,6 +920,96 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
         snapshotId: googleSnapshotId,
         revenueKey: 'conversion_value',
       });
+
+      const shouldTryMetaDirect = Boolean(
+        meta.connected &&
+        (
+          !meta.hasSnapshot ||
+          meta.status === 'QUEUED' ||
+          meta.spend <= 0
+        )
+      );
+
+      const shouldTryGoogleDirect = Boolean(
+        google.connected &&
+        (
+          !google.hasSnapshot ||
+          google.status === 'QUEUED' ||
+          google.spend <= 0
+        )
+      );
+
+      if (shouldTryMetaDirect) {
+        try {
+          const metaDirect = await fetchMetaPaidMediaDirect({
+            userId,
+            startDate: startDate || subDays(new Date(), 30),
+            endDate: endDate || new Date(),
+          });
+
+          if (metaDirect) {
+            console.log('[PaidMedia Direct] meta fallback result:', {
+              userId: String(userId),
+              accountId: metaDirect.accountId,
+              spend: metaDirect.spend,
+              revenue: metaDirect.revenue,
+              campaigns: (metaDirect.campaigns || []).length,
+            });
+
+            if (metaDirect.spend > meta.spend || !meta.hasSnapshot) {
+              meta.spend = metaDirect.spend;
+              meta.revenue = metaDirect.revenue;
+              meta.roas = metaDirect.roas;
+              meta.clicks = metaDirect.clicks;
+              meta.conversions = metaDirect.conversions;
+              meta.currency = metaDirect.currency || meta.currency;
+              meta.hasSnapshot = true;
+              meta.snapshotId = metaDirect.snapshotId;
+              meta.campaigns = metaDirect.campaigns || [];
+              meta.ready = true;
+              meta.status = 'READY';
+            }
+          }
+        } catch (metaDirectError) {
+          console.warn('[PaidMedia Direct] meta fallback failed:', metaDirectError?.message || metaDirectError);
+        }
+      }
+
+      if (shouldTryGoogleDirect) {
+        try {
+          const googleDirect = await fetchGooglePaidMediaDirect({
+            userId,
+            startDate: startDate || subDays(new Date(), 30),
+            endDate: endDate || new Date(),
+          });
+
+          if (googleDirect) {
+            console.log('[PaidMedia Direct] google fallback result:', {
+              userId: String(userId),
+              customerId: googleDirect.customerId,
+              spend: googleDirect.spend,
+              revenue: googleDirect.revenue,
+              campaigns: (googleDirect.campaigns || []).length,
+            });
+
+            if (googleDirect.spend > google.spend || !google.hasSnapshot) {
+              google.spend = googleDirect.spend;
+              google.revenue = googleDirect.revenue;
+              google.roas = googleDirect.roas;
+              google.clicks = googleDirect.clicks;
+              google.conversions = googleDirect.conversions;
+              google.currency = googleDirect.currency || google.currency;
+              google.hasSnapshot = true;
+              google.snapshotId = googleDirect.snapshotId;
+              google.campaigns = googleDirect.campaigns || [];
+              google.ready = true;
+              google.status = 'READY';
+            }
+          }
+        } catch (googleDirectError) {
+          console.warn('[PaidMedia Direct] google fallback failed:', googleDirectError?.message || googleDirectError);
+        }
+      }
 
       const blendedSpend = meta.spend + google.spend;
       const blendedRevenue = meta.revenue + google.revenue;
@@ -1885,7 +2189,9 @@ router.get('/:account_id', async (req, res) => {
         accountId: account_id,
         domain: accountRecord?.domain || account_id,
         platformConnections,
-        fallbackUserId: req.user?._id || req.user?.id || null
+        fallbackUserId: req.user?._id || req.user?.id || null,
+        startDate,
+        endDate,
       });
     } catch (paidMediaError) {
       warnings.push({
@@ -3899,7 +4205,9 @@ router.get('/:account_id/data-coverage', async (req, res) => {
       accountId: account_id,
       domain: accountRecord?.domain || account_id,
       platformConnections,
-      fallbackUserId: req.user?._id || req.user?.id || null
+      fallbackUserId: req.user?._id || req.user?.id || null,
+      startDate: since,
+      endDate: new Date(),
     });
 
     const isOk = (value) => value > 0;
