@@ -23,25 +23,42 @@ export function renderLogin() {
 
     <div class="login-container">
       <div class="login-card">
-        <div class="logo">Adray</div>
-        <div class="subtitle">Optimización de marketing con IA</div>
+        <div class="login-eyebrow">
+          <span class="login-eyebrow-dot"></span>
+          Marketing intelligence for the generative era
+        </div>
 
-        <h2 class="login-heading">Bienvenido de nuevo</h2>
+        <div class="login-brand-row">
+          <div class="login-brand-mark" aria-hidden="true"></div>
+          <div class="logo">Adray</div>
+        </div>
+
+        <div class="subtitle">
+          Your reconciled marketing data, packed and ready for AI.
+        </div>
+
+        <h1 class="login-heading">Welcome back</h1>
+
+        <p class="login-description">
+          Sign in to access your connected data sources, signal workflows, and AI-ready insights.
+        </p>
 
         <form id="login-form" novalidate>
           <div class="input-group">
-            <label class="input-label" for="email">Correo electrónico</label>
+            <label class="input-label" for="email">Email</label>
             <input
               id="email"
               class="input"
               type="email"
-              placeholder="tu@correo.com"
+              placeholder="you@company.com"
               autocomplete="email"
             />
           </div>
 
           <div class="input-group">
-            <label class="input-label" for="password">Contraseña</label>
+            <div class="input-label-row">
+              <label class="input-label" for="password">Password</label>
+            </div>
 
             <div class="password-wrap">
               <input
@@ -56,7 +73,7 @@ export function renderLogin() {
                 id="toggle-password"
                 class="toggle-password"
                 type="button"
-                aria-label="Mostrar/Ocultar contraseña"
+                aria-label="Show or hide password"
                 aria-pressed="false"
               >
                 <span class="eye-icon" aria-hidden="true"></span>
@@ -68,17 +85,17 @@ export function renderLogin() {
 
           <p id="login-message" class="login-message" aria-live="polite"></p>
 
-          <button id="submit-btn" class="btn" type="submit">Iniciar sesión</button>
+          <button id="submit-btn" class="btn" type="submit">Sign in</button>
         </form>
 
         <div class="register-wrapper">
           <button id="register-btn" class="btn btn-secondary" type="button">
-            Registrarse
+            Create account
           </button>
         </div>
 
         <div class="divider">
-          <span class="divider-text">CONTINÚA CON</span>
+          <span class="divider-text">OR CONTINUE WITH</span>
         </div>
 
         <div class="social-buttons">
@@ -101,8 +118,8 @@ export function renderLogin() {
         </div>
 
         <p class="forgot-password">
-          ¿Olvidaste tu contraseña?
-          <a href="/recuperar.html" class="recovery-link">Recupérala aquí</a>
+          Forgot your password?
+          <a href="/recuperar.html" class="recovery-link">Recover it here</a>
         </p>
       </div>
     </div>
@@ -139,7 +156,7 @@ function setSubmitting(isSubmitting: boolean) {
 
   if (btn) {
     btn.disabled = isSubmitting
-    btn.textContent = isSubmitting ? 'Procesando...' : 'Iniciar sesión'
+    btn.textContent = isSubmitting ? 'Signing in...' : 'Sign in'
   }
 
   if (googleBtn) googleBtn.disabled = isSubmitting
@@ -204,7 +221,7 @@ async function bindLoginEvents() {
       (document.querySelector('#password') as HTMLInputElement | null)?.value ?? ''
 
     if (!email || !password) {
-      showMessage('Ingresa tu correo y contraseña.')
+      showMessage('Enter your email and password.')
       return
     }
 
@@ -212,7 +229,7 @@ async function bindLoginEvents() {
     const turnstileToken = captchaVisible ? getTurnstileToken() : ''
 
     if (captchaVisible && !turnstileToken) {
-      showMessage('Completa la verificación de seguridad para continuar.')
+      showMessage('Complete the security verification to continue.')
       return
     }
 
@@ -227,7 +244,7 @@ async function bindLoginEvents() {
 
         const ok = await waitForSessionAndRedirect()
         if (!ok) {
-          showMessage('Iniciaste sesión, pero no se pudo validar la sesión.')
+          showMessage('You signed in, but the session could not be confirmed.')
         }
         return
       }
@@ -236,10 +253,10 @@ async function bindLoginEvents() {
         try {
           await showCaptcha()
           resetTurnstile()
-          showMessage('Verificación requerida. Completa el captcha para continuar.')
+          showMessage('Verification required. Complete the captcha to continue.')
         } catch (captchaError) {
           console.error('[login] captcha error:', captchaError)
-          showMessage('No se pudo cargar la verificación de seguridad. Recarga la página.')
+          showMessage('Security verification could not be loaded. Refresh the page and try again.')
         }
         return
       }
@@ -247,7 +264,7 @@ async function bindLoginEvents() {
       showMessage(getLoginErrorMessage(res, data))
     } catch (error) {
       console.error(error)
-      showMessage('Error al conectar con el servidor.')
+      showMessage('Could not connect to the server.')
     } finally {
       inFlight = false
       setSubmitting(false)
@@ -270,7 +287,7 @@ function handleVerifiedNotice() {
   const params = new URLSearchParams(window.location.search)
   if (params.get('verified') !== '1') return
 
-  showMessage('✅ Correo verificado. Ya puedes iniciar sesión.', true)
+  showMessage('Email verified. You can sign in now.', true)
 
   params.delete('verified')
   const clean =

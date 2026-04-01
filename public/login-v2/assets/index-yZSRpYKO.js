@@ -5,25 +5,42 @@
 
     <div class="login-container">
       <div class="login-card">
-        <div class="logo">Adray</div>
-        <div class="subtitle">Optimización de marketing con IA</div>
+        <div class="login-eyebrow">
+          <span class="login-eyebrow-dot"></span>
+          Marketing intelligence for the generative era
+        </div>
 
-        <h2 class="login-heading">Bienvenido de nuevo</h2>
+        <div class="login-brand-row">
+          <div class="login-brand-mark" aria-hidden="true"></div>
+          <div class="logo">Adray</div>
+        </div>
+
+        <div class="subtitle">
+          Your reconciled marketing data, packed and ready for AI.
+        </div>
+
+        <h1 class="login-heading">Welcome back</h1>
+
+        <p class="login-description">
+          Sign in to access your connected data sources, signal workflows, and AI-ready insights.
+        </p>
 
         <form id="login-form" novalidate>
           <div class="input-group">
-            <label class="input-label" for="email">Correo electrónico</label>
+            <label class="input-label" for="email">Email</label>
             <input
               id="email"
               class="input"
               type="email"
-              placeholder="tu@correo.com"
+              placeholder="you@company.com"
               autocomplete="email"
             />
           </div>
 
           <div class="input-group">
-            <label class="input-label" for="password">Contraseña</label>
+            <div class="input-label-row">
+              <label class="input-label" for="password">Password</label>
+            </div>
 
             <div class="password-wrap">
               <input
@@ -38,7 +55,7 @@
                 id="toggle-password"
                 class="toggle-password"
                 type="button"
-                aria-label="Mostrar/Ocultar contraseña"
+                aria-label="Show or hide password"
                 aria-pressed="false"
               >
                 <span class="eye-icon" aria-hidden="true"></span>
@@ -50,17 +67,17 @@
 
           <p id="login-message" class="login-message" aria-live="polite"></p>
 
-          <button id="submit-btn" class="btn" type="submit">Iniciar sesión</button>
+          <button id="submit-btn" class="btn" type="submit">Sign in</button>
         </form>
 
         <div class="register-wrapper">
           <button id="register-btn" class="btn btn-secondary" type="button">
-            Registrarse
+            Create account
           </button>
         </div>
 
         <div class="divider">
-          <span class="divider-text">CONTINÚA CON</span>
+          <span class="divider-text">OR CONTINUE WITH</span>
         </div>
 
         <div class="social-buttons">
@@ -83,11 +100,11 @@
         </div>
 
         <p class="forgot-password">
-          ¿Olvidaste tu contraseña?
-          <a href="/recuperar.html" class="recovery-link">Recupérala aquí</a>
+          Forgot your password?
+          <a href="/recuperar.html" class="recovery-link">Recover it here</a>
         </p>
       </div>
     </div>
-  `,D(),T(),E(),O(),k()}function S(e,t=!1){let n=document.querySelector(`#login-message`);n&&(n.textContent=e,n.style.display=`block`,n.style.color=t?`#e9d5ff`:`#fda4af`)}function C(){let e=document.querySelector(`#login-message`);e&&(e.textContent=``,e.style.display=`none`)}function w(e){let t=document.querySelector(`#submit-btn`),n=document.querySelector(`#google-btn`),r=document.querySelector(`#register-btn`);t&&(t.disabled=e,t.textContent=e?`Procesando...`:`Iniciar sesión`),n&&(n.disabled=e),r&&(r.disabled=e)}function T(){let e=document.querySelector(`#register-btn`),t=document.querySelector(`#google-btn`);e&&e.addEventListener(`click`,()=>{window.location.href=`/register.html`}),t&&t.addEventListener(`click`,()=>{window.location.href=`/auth/google/login`})}function E(){let e=document.querySelector(`#password`),t=document.querySelector(`#toggle-password`);!e||!t||t.addEventListener(`click`,()=>{let n=e.type===`password`;e.type=n?`text`:`password`,t.setAttribute(`aria-pressed`,String(n)),t.classList.toggle(`is-visible`,n),e.focus({preventScroll:!0});try{let t=e.value.length;e.setSelectionRange(t,t)}catch{}})}async function D(){let e=document.querySelector(`#login-form`);if(!e)return;let t=!1;e.addEventListener(`submit`,async e=>{if(e.preventDefault(),t)return;C();let n=document.querySelector(`#email`)?.value.trim().toLowerCase()||``,r=document.querySelector(`#password`)?.value??``;if(!n||!r){S(`Ingresa tu correo y contraseña.`);return}let i=h(),c=i?m():``;if(i&&!c){S(`Completa la verificación de seguridad para continuar.`);return}t=!0,w(!0);try{let{res:e,data:t}=await l(n,r,c||void 0);if(e.ok&&a(t)||e.ok&&t?.redirect){_(),await d()||S(`Iniciaste sesión, pero no se pudo validar la sesión.`);return}if(o(e,t)){try{await b(),v(),S(`Verificación requerida. Completa el captcha para continuar.`)}catch(e){console.error(`[login] captcha error:`,e),S(`No se pudo cargar la verificación de seguridad. Recarga la página.`)}return}S(s(e,t))}catch(e){console.error(e),S(`Error al conectar con el servidor.`)}finally{t=!1,w(!1)}})}async function O(){try{let e=await u();e&&(e.authenticated||e.ok)&&window.location.replace(`/dashboard/`)}catch{}}function k(){let e=new URLSearchParams(window.location.search);if(e.get(`verified`)!==`1`)return;S(`✅ Correo verificado. Ya puedes iniciar sesión.`,!0),e.delete(`verified`);let t=window.location.pathname+(e.toString()?`?${e.toString()}`:``)+window.location.hash;window.history.replaceState({},document.title,t)}document.querySelector(`#app`).innerHTML=`
+  `,D(),T(),E(),O(),k()}function S(e,t=!1){let n=document.querySelector(`#login-message`);n&&(n.textContent=e,n.style.display=`block`,n.style.color=t?`#e9d5ff`:`#fda4af`)}function C(){let e=document.querySelector(`#login-message`);e&&(e.textContent=``,e.style.display=`none`)}function w(e){let t=document.querySelector(`#submit-btn`),n=document.querySelector(`#google-btn`),r=document.querySelector(`#register-btn`);t&&(t.disabled=e,t.textContent=e?`Signing in...`:`Sign in`),n&&(n.disabled=e),r&&(r.disabled=e)}function T(){let e=document.querySelector(`#register-btn`),t=document.querySelector(`#google-btn`);e&&e.addEventListener(`click`,()=>{window.location.href=`/register.html`}),t&&t.addEventListener(`click`,()=>{window.location.href=`/auth/google/login`})}function E(){let e=document.querySelector(`#password`),t=document.querySelector(`#toggle-password`);!e||!t||t.addEventListener(`click`,()=>{let n=e.type===`password`;e.type=n?`text`:`password`,t.setAttribute(`aria-pressed`,String(n)),t.classList.toggle(`is-visible`,n),e.focus({preventScroll:!0});try{let t=e.value.length;e.setSelectionRange(t,t)}catch{}})}async function D(){let e=document.querySelector(`#login-form`);if(!e)return;let t=!1;e.addEventListener(`submit`,async e=>{if(e.preventDefault(),t)return;C();let n=document.querySelector(`#email`)?.value.trim().toLowerCase()||``,r=document.querySelector(`#password`)?.value??``;if(!n||!r){S(`Enter your email and password.`);return}let i=h(),c=i?m():``;if(i&&!c){S(`Complete the security verification to continue.`);return}t=!0,w(!0);try{let{res:e,data:t}=await l(n,r,c||void 0);if(e.ok&&a(t)||e.ok&&t?.redirect){_(),await d()||S(`You signed in, but the session could not be confirmed.`);return}if(o(e,t)){try{await b(),v(),S(`Verification required. Complete the captcha to continue.`)}catch(e){console.error(`[login] captcha error:`,e),S(`Security verification could not be loaded. Refresh the page and try again.`)}return}S(s(e,t))}catch(e){console.error(e),S(`Could not connect to the server.`)}finally{t=!1,w(!1)}})}async function O(){try{let e=await u();e&&(e.authenticated||e.ok)&&window.location.replace(`/dashboard/`)}catch{}}function k(){let e=new URLSearchParams(window.location.search);if(e.get(`verified`)!==`1`)return;S(`Email verified. You can sign in now.`,!0),e.delete(`verified`);let t=window.location.pathname+(e.toString()?`?${e.toString()}`:``)+window.location.hash;window.history.replaceState({},document.title,t)}document.querySelector(`#app`).innerHTML=`
   <div id="login-root"></div>
 `,x();
