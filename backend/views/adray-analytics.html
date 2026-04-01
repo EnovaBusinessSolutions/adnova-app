@@ -2795,6 +2795,29 @@
             }
         }
 
+        function dedupeAdjacentIdenticalEvents(eventsArray = []) {
+            if (!Array.isArray(eventsArray) || eventsArray.length === 0) return [];
+            const result = [];
+            let current = eventsArray[0];
+            for (let i = 1; i < eventsArray.length; i++) {
+                const ev = eventsArray[i];
+                const nameCurrent = String(current.eventName || current.name || '').toLowerCase();
+                const nameNext = String(ev.eventName || ev.name || '').toLowerCase();
+                const pathCurrent = normalizeJourneyPath(current.pageUrl || current.url || current.landingPageUrl || '');
+                const pathNext = normalizeJourneyPath(ev.pageUrl || ev.url || ev.landingPageUrl || '');
+                
+                // Si el evento tiene el mismo nombre y exactamente el mismo path que el anterior, lo omitimos para sumar su duración al evento original
+                if (nameCurrent === nameNext && pathCurrent === pathNext) {
+                    continue; 
+                }
+                
+                result.push(current);
+                current = ev;
+            }
+            result.push(current);
+            return result;
+        }
+
         function deriveJourneySignalsFromEvents(events = []) {
             const signal = { lead: 0, call: 0 };
             if (!Array.isArray(events) || !events.length) return signal;
@@ -2885,13 +2908,15 @@
             if (!events.length) return [];
             const mode = String(options.mode || 'condensed').toLowerCase();
 
-            const sorted = events
+            const sortedRaw = events
                 .map((event) => ({
                     ...event,
                     _ts: new Date(event.createdAt || event.collectedAt || session.startedAt || 0).getTime(),
                 }))
                 .filter((event) => Number.isFinite(event._ts))
                 .sort((a, b) => a._ts - b._ts);
+                
+            const sorted = dedupeAdjacentIdenticalEvents(sortedRaw);
 
             const visible = sorted; // FORCED TO FULL BY REQUEST
 
@@ -3061,14 +3086,16 @@
             // If purchase includes real events, build timeline from those events
             let timelineEvents = buildPurchaseTimelineEvents(purchase);
             const availableEvents = purchase.events || purchase.stitchedEvents; if (Array.isArray(availableEvents) && availableEvents.length > 0) {
-                const realEvents = availableEvents
+                let realEvents = availableEvents
                     .map((event) => ({
                         ...event,
                         _ts: new Date(event.createdAt || event.collectedAt || 0).getTime(),
                     }))
                     .filter((event) => Number.isFinite(event._ts))
                     .sort((a, b) => a._ts - b._ts);
-                
+                    
+                realEvents = dedupeAdjacentIdenticalEvents(realEvents);
+
                 if (realEvents.length > 0) {
                     timelineEvents = realEvents.map((event, index) => {
                         const next = realEvents[index + 1];
