@@ -18,25 +18,34 @@ export function renderLogin() {
 
   root.innerHTML = `
     <div class="background">
+      <div class="background-base"></div>
       <div class="background-grid"></div>
-      <div class="background-glow"></div>
+      <div class="background-noise"></div>
+
+      <div class="background-aurora aurora-1"></div>
+      <div class="background-aurora aurora-2"></div>
+      <div class="background-aurora aurora-3"></div>
+
+      <div class="background-glow glow-top"></div>
+      <div class="background-glow glow-left"></div>
+      <div class="background-glow glow-right"></div>
+      <div class="background-glow glow-bottom"></div>
+
       <div class="background-orbit orbit-1"></div>
       <div class="background-orbit orbit-2"></div>
       <div class="background-orbit orbit-3"></div>
+
       <div class="vertical-line"></div>
+      <div class="horizontal-line"></div>
     </div>
 
     <div class="login-container">
       <div class="login-card">
         <div class="login-card-glow" aria-hidden="true"></div>
         <div class="login-card-noise" aria-hidden="true"></div>
+        <div class="login-card-aurora" aria-hidden="true"></div>
 
-        <div class="login-topbar">
-          <div class="login-brand-row">
-            <div class="login-brand-mark" aria-hidden="true"></div>
-            <div class="logo">Adray</div>
-          </div>
-
+        <div class="login-topbar login-topbar--minimal">
           <div class="login-chip">
             <span class="login-chip-dot"></span>
             AI-ready access
@@ -87,7 +96,7 @@ export function renderLogin() {
 
           <p id="login-message" class="login-message" aria-live="polite"></p>
 
-          <button id="submit-btn" class="btn" type="submit">Sign in</button>
+          <button id="submit-btn" class="btn btn-primary" type="submit">Sign in</button>
         </form>
 
         <div class="register-wrapper">
@@ -140,7 +149,7 @@ function showMessage(text: string, isOk = false) {
 
   box.textContent = text
   box.style.display = 'block'
-  box.style.color = isOk ? '#ecf2ff' : '#fda4af'
+  box.style.color = isOk ? '#f3f0ff' : '#fda4af'
 }
 
 function hideMessage() {
@@ -292,6 +301,7 @@ function handleVerifiedNotice() {
   showMessage('Email verified. You can sign in now.', true)
 
   params.delete('verified')
+
   const clean =
     window.location.pathname +
     (params.toString() ? `?${params.toString()}` : '') +
