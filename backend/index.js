@@ -770,7 +770,7 @@ app.get("/", (req, res) => {
 });
 
 app.get("/login", (_req, res) => {
-  res.sendFile(path.join(__dirname, "../public/login.html"));
+  res.sendFile(path.join(__dirname, "../public/login-v2/index.html"));
 });
 
 app.get("/onboarding", ensureNotOnboarded, async (req, res) => {
