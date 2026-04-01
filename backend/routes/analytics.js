@@ -382,17 +382,17 @@ async function resolvePaidMediaUserId({ accountId, domain, platformConnections =
     normalizeShopDomain(domain),
   ].filter(Boolean)));
 
+  const fromPlatformConnections = await resolveUserIdByPlatformConnections(platformConnections);
+  if (fromPlatformConnections) return fromPlatformConnections;
+
+  const fromConnectedAccounts = await resolveUserIdByConnectedAccountDocs(platformConnections);
+  if (fromConnectedAccounts) return fromConnectedAccounts;
+
   const fromShopConnection = await resolveUserIdByShopConnection(candidates);
   if (fromShopConnection) return fromShopConnection;
 
   const fromUserShop = await resolveUserIdByUserShop(candidates);
   if (fromUserShop) return fromUserShop;
-
-  const fromConnectedAccounts = await resolveUserIdByConnectedAccountDocs(platformConnections);
-  if (fromConnectedAccounts) return fromConnectedAccounts;
-
-  const fromPlatformConnections = await resolveUserIdByPlatformConnections(platformConnections);
-  if (fromPlatformConnections) return fromPlatformConnections;
 
   return fallbackUserId;
 }
