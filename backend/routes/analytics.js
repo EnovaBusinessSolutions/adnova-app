@@ -1568,7 +1568,7 @@ router.get('/:account_id', async (req, res) => {
       }),
       prisma.platformConnection.findMany({
         where: { accountId: account_id },
-        select: { platform: true, status: true, updatedAt: true },
+        select: { platform: true, status: true, updatedAt: true, adAccountId: true },
       }),
       prisma.account.findUnique({
         where: { accountId: account_id },
@@ -3613,7 +3613,7 @@ router.get('/:account_id/data-coverage', async (req, res) => {
       safeCount('orders.created_at', () => prisma.order.count({ where: orderBaseWhere })),
 
       safeFindUnique('account.domain', () => prisma.account.findUnique({ where: { accountId: account_id }, select: { domain: true } }), null),
-      safeFindMany('platform_connections.list', () => prisma.platformConnection.findMany({ where: { accountId: account_id }, select: { platform: true, status: true } }), []),
+      safeFindMany('platform_connections.list', () => prisma.platformConnection.findMany({ where: { accountId: account_id }, select: { platform: true, status: true, adAccountId: true } }), []),
     ]);
 
     const paidMedia = await buildPaidMediaSummary({
