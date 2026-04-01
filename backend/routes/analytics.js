@@ -13,6 +13,8 @@ let MetaAccount = null;
 let GoogleAccount = null;
 let formatMetaForLlmMini = null;
 let formatGoogleAdsForLlmMini = null;
+let enqueueMetaCollectBestEffort = null;
+let enqueueGoogleAdsCollectBestEffort = null;
 
 try {
   McpData = require('../models/McpData');
@@ -42,6 +44,10 @@ try {
   ({ formatGoogleAdsForLlmMini } = require('../jobs/transform/googleAdsLlmFormatter'));
 } catch (_) {}
 
+try {
+  ({ enqueueMetaCollectBestEffort, enqueueGoogleAdsCollectBestEffort } = require('../queues/mcpQueue'));
+} catch (_) {}
+
 const EVENT_BUCKET_ALIASES = {
   page_view: ['page_view', 'pageview', 'view_page'],
   view_item: ['view_item', 'product_view', 'view_product', 'product_detail_view'],
@@ -58,6 +64,8 @@ const ATTRIBUTION_LOOKBACK_DAYS = 30;
 const JOURNEY_STITCH_LOOKBACK_DAYS = 7;
 const ROUTE_RESPONSE_CACHE = new Map();
 const ROUTE_CACHE_MAX_ENTRIES = 300;
+const PAID_MEDIA_SYNC_DEBOUNCE = new Map();
+const PAID_MEDIA_SYNC_DEBOUNCE_MS = 10 * 60 * 1000;
 
 function parseAllowedAccountIds() {
   const raw = String(process.env.ADRAY_ALLOWED_ACCOUNT_IDS || '').trim();
@@ -498,6 +506,95 @@ function buildPaidMediaSourceSummary({ sourceState, payload, snapshotId, revenue
     };
 }
 
+function shouldDebouncePaidMediaSync(userId, source) {
+  const key = `${String(userId || '')}:${String(source || '')}`;
+  if (!key || key === ':') return true;
+
+  const now = Date.now();
+  const prev = PAID_MEDIA_SYNC_DEBOUNCE.get(key) || 0;
+  if (now - prev < PAID_MEDIA_SYNC_DEBOUNCE_MS) {
+    return true;
+  }
+
+  PAID_MEDIA_SYNC_DEBOUNCE.set(key, now);
+  return false;
+}
+
+async function triggerPaidMediaAutoSyncIfNeeded({ userId, accountId, summary, rootDoc }) {
+  if (!userId || !summary || !rootDoc?.sources) return;
+
+  const userIdStr = String(userId);
+  const metaState = rootDoc.sources?.metaAds || {};
+  const googleState = rootDoc.sources?.googleAds || {};
+
+  const metaNeedsSync = Boolean(
+    summary?.meta?.connected &&
+    (
+      !summary?.meta?.hasSnapshot ||
+      summary?.meta?.status === 'QUEUED' ||
+      summary?.meta?.spend <= 0
+    )
+  );
+
+  const googleNeedsSync = Boolean(
+    summary?.google?.connected &&
+    (
+      !summary?.google?.hasSnapshot ||
+      summary?.google?.status === 'QUEUED' ||
+      summary?.google?.spend <= 0
+    )
+  );
+
+  console.log('[PaidMedia Trace] auto-sync decision:', {
+    userId: userIdStr,
+    accountId,
+    metaNeedsSync,
+    googleNeedsSync,
+    metaStatus: summary?.meta?.status || null,
+    googleStatus: summary?.google?.status || null,
+    metaHasSnapshot: summary?.meta?.hasSnapshot || false,
+    googleHasSnapshot: summary?.google?.hasSnapshot || false,
+  });
+
+  if (metaNeedsSync && enqueueMetaCollectBestEffort && !shouldDebouncePaidMediaSync(userIdStr, 'metaAds')) {
+    const metaAccountId =
+      metaState?.selectedAccountId ||
+      metaState?.accountId ||
+      null;
+
+    const metaEnqueue = await enqueueMetaCollectBestEffort({
+      userId: userIdStr,
+      metaAccountId,
+      rangeDays: 60,
+      reason: 'paid_media_auto_sync',
+      trigger: 'analytics_paid_media',
+      forceFull: false,
+      extra: { accountId },
+    });
+
+    console.log('[PaidMedia Trace] meta auto-sync enqueue result:', metaEnqueue);
+  }
+
+  if (googleNeedsSync && enqueueGoogleAdsCollectBestEffort && !shouldDebouncePaidMediaSync(userIdStr, 'googleAds')) {
+    const googleAccountId =
+      googleState?.selectedCustomerId ||
+      googleState?.customerId ||
+      null;
+
+    const googleEnqueue = await enqueueGoogleAdsCollectBestEffort({
+      userId: userIdStr,
+      accountId: googleAccountId,
+      rangeDays: 60,
+      reason: 'paid_media_auto_sync',
+      trigger: 'analytics_paid_media',
+      forceFull: false,
+      extra: { accountId },
+    });
+
+    console.log('[PaidMedia Trace] google auto-sync enqueue result:', googleEnqueue);
+  }
+}
+
 async function buildPaidMediaSummary({ accountId, domain, platformConnections = [], fallbackUserId = null }) {
   console.log(`[PaidMedia] Starting buildPaidMediaSummary for accountId: ${accountId}, domain: ${domain}, connections: ${platformConnections?.length}`);
   console.log('[PaidMedia Trace] platformConnections payload:', (platformConnections || []).map((conn) => ({
@@ -648,7 +745,7 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
         googleHasSnapshot: google.hasSnapshot,
       });
 
-      return { userId: toIdKey(userId), summary, score };
+      return { userId: toIdKey(userId), summary, score, rootDoc };
     };
 
     const candidates = Array.from(new Set([
@@ -722,6 +819,13 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
     if (resolvedUserId && String(best.userId) !== String(resolvedUserId)) {
       console.log(`[PaidMedia] Using fallback user ${best.userId} (primary ${resolvedUserId}) for shop ${accountId}`);
     }
+
+    await triggerPaidMediaAutoSyncIfNeeded({
+      userId: best.userId,
+      accountId,
+      summary: best.summary,
+      rootDoc: best.rootDoc,
+    });
 
     return best.summary;
   } catch (error) {
