@@ -1,29 +1,31 @@
 (function(){let e=document.createElement(`link`).relList;if(e&&e.supports&&e.supports(`modulepreload`))return;for(let e of document.querySelectorAll(`link[rel="modulepreload"]`))n(e);new MutationObserver(e=>{for(let t of e)if(t.type===`childList`)for(let e of t.addedNodes)e.tagName===`LINK`&&e.rel===`modulepreload`&&n(e)}).observe(document,{childList:!0,subtree:!0});function t(e){let t={};return e.integrity&&(t.integrity=e.integrity),e.referrerPolicy&&(t.referrerPolicy=e.referrerPolicy),e.crossOrigin===`use-credentials`?t.credentials=`include`:e.crossOrigin===`anonymous`?t.credentials=`omit`:t.credentials=`same-origin`,t}function n(e){if(e.ep)return;e.ep=!0;let n=t(e);fetch(e.href,n)}})();var e=[`/api/login`,`/login`,`/api/auth/login`];function t(e){return String(e||``).trim().toLowerCase()}function n(e){return String(e||``)}function r(e,r,i){let a={email:t(e),password:n(r)};return i&&String(i).trim()&&(a.turnstileToken=String(i).trim()),a}async function i(e){if((e.headers.get(`content-type`)||``).toLowerCase().includes(`application/json`))try{return await e.json()}catch{return null}try{let t=await e.text();return t?{success:e.ok,ok:e.ok,message:t}:null}catch{return null}}function a(e){return e?e.success===!0||e.ok===!0||e.authenticated===!0:!1}function o(e,t){return!!(t?.requiresCaptcha===!0||t?.code===`TURNSTILE_REQUIRED_OR_FAILED`||t?.code===`TURNSTILE_FAILED`||Array.isArray(t?.errorCodes)&&t.errorCodes.length>0||e.status===429&&t?.requiresCaptcha)}function s(e,t){return t?.message?t.message:t?.error?t.error:e.status===401?`Correo o contraseña incorrectos.`:e.status===403?`Tu correo aún no está verificado. Revisa tu bandeja de entrada.`:e.status===400?`No se pudo iniciar sesión.`:e.status>=500?`Error del servidor.`:`No se pudo iniciar sesión (HTTP ${e.status}).`}async function c(e,t,n,a){let o=r(t,n,a),s=await fetch(e,{method:`POST`,headers:{"Content-Type":`application/json`},credentials:`include`,cache:`no-store`,body:JSON.stringify(o)});return{res:s,data:await i(s),endpoint:e}}async function l(t,n,r){let i=null;for(let a of e){let e=await c(a,t,n,r);if(i=e,!(e.res.status===404||e.res.status===405))return e}if(i)return i;throw Error(`No se encontró un endpoint de login disponible.`)}async function u(){let e=await fetch(`/api/session`,{credentials:`include`,cache:`no-store`});if(!e.ok)return null;try{return await e.json()}catch{return null}}async function d(){let e=0;for(;e<12;){let t=await u();if(t&&(t.authenticated||t.ok))return window.location.href=`/dashboard/`,!0;await new Promise(e=>setTimeout(e,250)),e++}return!1}var f=null;function p(){return(document.querySelector(`meta[name="turnstile-site-key"]`)?.getAttribute(`content`)||``).trim()||(document.body?.dataset?.turnstileSitekey||``).trim()||(window.TURNSTILE_SITE_KEY||``).trim()||``}function m(){return(document.querySelector(`input[name="cf-turnstile-response"]`)?.value||``).trim()}function h(){let e=document.getElementById(`turnstile-wrap`);return e?e.style.display!==`none`:!1}function g(){let e=document.getElementById(`turnstile-wrap`);if(e)return e;let t=document.getElementById(`login-form`)||document.querySelector(`form`);e=document.createElement(`div`),e.id=`turnstile-wrap`,e.style.display=`none`,e.style.marginTop=`12px`,e.style.marginBottom=`8px`,e.style.justifyContent=`center`,e.style.alignItems=`center`,e.style.width=`100%`;let n=t?.querySelector(`button[type="submit"]`);return t&&n?.parentElement?n.parentElement.insertBefore(e,n):t?t.appendChild(e):document.body.appendChild(e),e}function _(){let e=document.getElementById(`turnstile-wrap`);e&&(e.style.display=`none`)}function v(){try{f==null?window.turnstile?.reset?.():window.turnstile?.reset?.(f)}catch{}}async function y(){return new Promise((e,t)=>{try{if(window.turnstile&&typeof window.turnstile.render==`function`){e();return}if(document.querySelector(`script[src*="challenges.cloudflare.com/turnstile/v0/api.js"]`)){let n=0,r=window.setInterval(()=>{if(n+=1,window.turnstile&&typeof window.turnstile.render==`function`){window.clearInterval(r),e();return}n>50&&(window.clearInterval(r),t(Error(`Turnstile script no expuso window.turnstile a tiempo.`)))},100);return}let n=document.createElement(`script`);n.src=`https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit`,n.async=!0,n.defer=!0,n.onload=()=>{let n=0,r=window.setInterval(()=>{if(n+=1,window.turnstile&&typeof window.turnstile.render==`function`){window.clearInterval(r),e();return}n>50&&(window.clearInterval(r),t(Error(`Turnstile script cargó pero no expuso window.turnstile.`)))},100)},n.onerror=()=>t(Error(`No se pudo cargar Turnstile.`)),document.head.appendChild(n)}catch(e){t(e instanceof Error?e:Error(`Error cargando Turnstile.`))}})}async function b(){let e=p();if(!e)throw Error(`Falta configurar el Site Key de Turnstile.`);let t=g();t.style.display=`flex`,t.innerHTML=``;let n=document.createElement(`div`);n.id=`cf-turnstile-slot`,t.appendChild(n),await y(),f=window.turnstile?.render(n,{sitekey:e,size:`normal`,theme:`auto`,appearance:`always`,callback:()=>{},"expired-callback":()=>{try{f!=null&&window.turnstile?.reset?.(f)}catch{}},"error-callback":()=>{try{f!=null&&window.turnstile?.reset?.(f)}catch{}}})??null}function x(){let e=document.querySelector(`#login-root`);e.innerHTML=`
     <div class="background">
+      <div class="background-grid"></div>
+      <div class="background-glow"></div>
+      <div class="background-orbit orbit-1"></div>
+      <div class="background-orbit orbit-2"></div>
+      <div class="background-orbit orbit-3"></div>
       <div class="vertical-line"></div>
     </div>
 
     <div class="login-container">
       <div class="login-card">
-        <div class="login-eyebrow">
-          <span class="login-eyebrow-dot"></span>
-          Marketing intelligence for the generative era
+        <div class="login-card-glow" aria-hidden="true"></div>
+        <div class="login-card-noise" aria-hidden="true"></div>
+
+        <div class="login-topbar">
+          <div class="login-brand-row">
+            <div class="login-brand-mark" aria-hidden="true"></div>
+            <div class="logo">Adray</div>
+          </div>
+
+          <div class="login-chip">
+            <span class="login-chip-dot"></span>
+            AI-ready access
+          </div>
         </div>
 
-        <div class="login-brand-row">
-          <div class="login-brand-mark" aria-hidden="true"></div>
-          <div class="logo">Adray</div>
-        </div>
-
-        <div class="subtitle">
-          Your reconciled marketing data, packed and ready for AI.
-        </div>
-
-        <h1 class="login-heading">Welcome back</h1>
-
-        <p class="login-description">
-          Sign in to access your connected data sources, signal workflows, and AI-ready insights.
-        </p>
+        <h1 class="login-heading">Sign in</h1>
 
         <form id="login-form" novalidate>
           <div class="input-group">
@@ -77,7 +79,7 @@
         </div>
 
         <div class="divider">
-          <span class="divider-text">OR CONTINUE WITH</span>
+          <span class="divider-text">OR</span>
         </div>
 
         <div class="social-buttons">
@@ -100,11 +102,11 @@
         </div>
 
         <p class="forgot-password">
-          Forgot your password?
+          Forgot password?
           <a href="/recuperar.html" class="recovery-link">Recover it here</a>
         </p>
       </div>
     </div>
-  `,D(),T(),E(),O(),k()}function S(e,t=!1){let n=document.querySelector(`#login-message`);n&&(n.textContent=e,n.style.display=`block`,n.style.color=t?`#e9d5ff`:`#fda4af`)}function C(){let e=document.querySelector(`#login-message`);e&&(e.textContent=``,e.style.display=`none`)}function w(e){let t=document.querySelector(`#submit-btn`),n=document.querySelector(`#google-btn`),r=document.querySelector(`#register-btn`);t&&(t.disabled=e,t.textContent=e?`Signing in...`:`Sign in`),n&&(n.disabled=e),r&&(r.disabled=e)}function T(){let e=document.querySelector(`#register-btn`),t=document.querySelector(`#google-btn`);e&&e.addEventListener(`click`,()=>{window.location.href=`/register.html`}),t&&t.addEventListener(`click`,()=>{window.location.href=`/auth/google/login`})}function E(){let e=document.querySelector(`#password`),t=document.querySelector(`#toggle-password`);!e||!t||t.addEventListener(`click`,()=>{let n=e.type===`password`;e.type=n?`text`:`password`,t.setAttribute(`aria-pressed`,String(n)),t.classList.toggle(`is-visible`,n),e.focus({preventScroll:!0});try{let t=e.value.length;e.setSelectionRange(t,t)}catch{}})}async function D(){let e=document.querySelector(`#login-form`);if(!e)return;let t=!1;e.addEventListener(`submit`,async e=>{if(e.preventDefault(),t)return;C();let n=document.querySelector(`#email`)?.value.trim().toLowerCase()||``,r=document.querySelector(`#password`)?.value??``;if(!n||!r){S(`Enter your email and password.`);return}let i=h(),c=i?m():``;if(i&&!c){S(`Complete the security verification to continue.`);return}t=!0,w(!0);try{let{res:e,data:t}=await l(n,r,c||void 0);if(e.ok&&a(t)||e.ok&&t?.redirect){_(),await d()||S(`You signed in, but the session could not be confirmed.`);return}if(o(e,t)){try{await b(),v(),S(`Verification required. Complete the captcha to continue.`)}catch(e){console.error(`[login] captcha error:`,e),S(`Security verification could not be loaded. Refresh the page and try again.`)}return}S(s(e,t))}catch(e){console.error(e),S(`Could not connect to the server.`)}finally{t=!1,w(!1)}})}async function O(){try{let e=await u();e&&(e.authenticated||e.ok)&&window.location.replace(`/dashboard/`)}catch{}}function k(){let e=new URLSearchParams(window.location.search);if(e.get(`verified`)!==`1`)return;S(`Email verified. You can sign in now.`,!0),e.delete(`verified`);let t=window.location.pathname+(e.toString()?`?${e.toString()}`:``)+window.location.hash;window.history.replaceState({},document.title,t)}document.querySelector(`#app`).innerHTML=`
+  `,D(),T(),E(),O(),k()}function S(e,t=!1){let n=document.querySelector(`#login-message`);n&&(n.textContent=e,n.style.display=`block`,n.style.color=t?`#ecf2ff`:`#fda4af`)}function C(){let e=document.querySelector(`#login-message`);e&&(e.textContent=``,e.style.display=`none`)}function w(e){let t=document.querySelector(`#submit-btn`),n=document.querySelector(`#google-btn`),r=document.querySelector(`#register-btn`);t&&(t.disabled=e,t.textContent=e?`Signing in...`:`Sign in`),n&&(n.disabled=e),r&&(r.disabled=e)}function T(){let e=document.querySelector(`#register-btn`),t=document.querySelector(`#google-btn`);e&&e.addEventListener(`click`,()=>{window.location.href=`/register.html`}),t&&t.addEventListener(`click`,()=>{window.location.href=`/auth/google/login`})}function E(){let e=document.querySelector(`#password`),t=document.querySelector(`#toggle-password`);!e||!t||t.addEventListener(`click`,()=>{let n=e.type===`password`;e.type=n?`text`:`password`,t.setAttribute(`aria-pressed`,String(n)),t.classList.toggle(`is-visible`,n),e.focus({preventScroll:!0});try{let t=e.value.length;e.setSelectionRange(t,t)}catch{}})}async function D(){let e=document.querySelector(`#login-form`);if(!e)return;let t=!1;e.addEventListener(`submit`,async e=>{if(e.preventDefault(),t)return;C();let n=document.querySelector(`#email`)?.value.trim().toLowerCase()||``,r=document.querySelector(`#password`)?.value??``;if(!n||!r){S(`Enter your email and password.`);return}let i=h(),c=i?m():``;if(i&&!c){S(`Complete the security verification to continue.`);return}t=!0,w(!0);try{let{res:e,data:t}=await l(n,r,c||void 0);if(e.ok&&a(t)||e.ok&&t?.redirect){_(),await d()||S(`You signed in, but the session could not be confirmed.`);return}if(o(e,t)){try{await b(),v(),S(`Verification required. Complete the captcha to continue.`)}catch(e){console.error(`[login] captcha error:`,e),S(`Security verification could not be loaded. Refresh the page and try again.`)}return}S(s(e,t))}catch(e){console.error(e),S(`Could not connect to the server.`)}finally{t=!1,w(!1)}})}async function O(){try{let e=await u();e&&(e.authenticated||e.ok)&&window.location.replace(`/dashboard/`)}catch{}}function k(){let e=new URLSearchParams(window.location.search);if(e.get(`verified`)!==`1`)return;S(`Email verified. You can sign in now.`,!0),e.delete(`verified`);let t=window.location.pathname+(e.toString()?`?${e.toString()}`:``)+window.location.hash;window.history.replaceState({},document.title,t)}document.querySelector(`#app`).innerHTML=`
   <div id="login-root"></div>
 `,x();

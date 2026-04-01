@@ -18,30 +18,32 @@ export function renderLogin() {
 
   root.innerHTML = `
     <div class="background">
+      <div class="background-grid"></div>
+      <div class="background-glow"></div>
+      <div class="background-orbit orbit-1"></div>
+      <div class="background-orbit orbit-2"></div>
+      <div class="background-orbit orbit-3"></div>
       <div class="vertical-line"></div>
     </div>
 
     <div class="login-container">
       <div class="login-card">
-        <div class="login-eyebrow">
-          <span class="login-eyebrow-dot"></span>
-          Marketing intelligence for the generative era
+        <div class="login-card-glow" aria-hidden="true"></div>
+        <div class="login-card-noise" aria-hidden="true"></div>
+
+        <div class="login-topbar">
+          <div class="login-brand-row">
+            <div class="login-brand-mark" aria-hidden="true"></div>
+            <div class="logo">Adray</div>
+          </div>
+
+          <div class="login-chip">
+            <span class="login-chip-dot"></span>
+            AI-ready access
+          </div>
         </div>
 
-        <div class="login-brand-row">
-          <div class="login-brand-mark" aria-hidden="true"></div>
-          <div class="logo">Adray</div>
-        </div>
-
-        <div class="subtitle">
-          Your reconciled marketing data, packed and ready for AI.
-        </div>
-
-        <h1 class="login-heading">Welcome back</h1>
-
-        <p class="login-description">
-          Sign in to access your connected data sources, signal workflows, and AI-ready insights.
-        </p>
+        <h1 class="login-heading">Sign in</h1>
 
         <form id="login-form" novalidate>
           <div class="input-group">
@@ -95,7 +97,7 @@ export function renderLogin() {
         </div>
 
         <div class="divider">
-          <span class="divider-text">OR CONTINUE WITH</span>
+          <span class="divider-text">OR</span>
         </div>
 
         <div class="social-buttons">
@@ -118,7 +120,7 @@ export function renderLogin() {
         </div>
 
         <p class="forgot-password">
-          Forgot your password?
+          Forgot password?
           <a href="/recuperar.html" class="recovery-link">Recover it here</a>
         </p>
       </div>
@@ -138,7 +140,7 @@ function showMessage(text: string, isOk = false) {
 
   box.textContent = text
   box.style.display = 'block'
-  box.style.color = isOk ? '#e9d5ff' : '#fda4af'
+  box.style.color = isOk ? '#ecf2ff' : '#fda4af'
 }
 
 function hideMessage() {
