@@ -1980,7 +1980,14 @@
                             <div class="mt-1 text-sm text-gray-500">Spend: <span id="pm-meta-spend">$0.00</span></div>
                             <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-meta-revenue">$0.00</span></div>
                             <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-meta-roas">-</span></div>
+                            <div class="mt-1 text-xs text-gray-500">Cuenta conectada: <span id="pm-meta-account" class="font-medium">-</span></div>
+                            <div class="mt-1 text-xs text-gray-500">Campaña principal: <span id="pm-meta-campaign" class="font-medium">-</span></div>
                             <div class="mt-1 text-xs text-gray-400" id="pm-meta-sync">No snapshot asociado</div>
+                            <div class="mt-2 flex items-center gap-2">
+                                <select id="pm-meta-account-select" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white flex-1"></select>
+                                <button id="pm-meta-account-apply" class="text-xs font-semibold px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50">Cambiar</button>
+                            </div>
+                            <div class="mt-1 text-[11px] text-gray-400" id="pm-meta-account-feedback"></div>
                         </div>
                         <div class="bg-gray-50 rounded-lg p-4">
                             <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Google Ads</div>
@@ -1988,7 +1995,14 @@
                             <div class="mt-1 text-sm text-gray-500">Spend: <span id="pm-google-spend">$0.00</span></div>
                             <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-google-revenue">$0.00</span></div>
                             <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-google-roas">-</span></div>
+                            <div class="mt-1 text-xs text-gray-500">Cuenta conectada: <span id="pm-google-account" class="font-medium">-</span></div>
+                            <div class="mt-1 text-xs text-gray-500">Campaña principal: <span id="pm-google-campaign" class="font-medium">-</span></div>
                             <div class="mt-1 text-xs text-gray-400" id="pm-google-sync">No snapshot asociado</div>
+                            <div class="mt-2 flex items-center gap-2">
+                                <select id="pm-google-account-select" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white flex-1"></select>
+                                <button id="pm-google-account-apply" class="text-xs font-semibold px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50">Cambiar</button>
+                            </div>
+                            <div class="mt-1 text-[11px] text-gray-400" id="pm-google-account-feedback"></div>
                         </div>
                     </div>
     </div> <!-- Close Paid Media Panel -->
@@ -4807,7 +4821,128 @@
         }
 
             // Populate Modal specific features
-            function renderPaidMedia(paidMedia) {
+        let globalPaidMediaCampaigns = [];
+        const paidMediaSelectorState = {
+            meta: { loading: false, loaded: false, accounts: [], defaultId: null },
+            google: { loading: false, loaded: false, accounts: [], defaultId: null },
+        };
+
+        function normalizePaidMediaAccountId(platform, value) {
+            const raw = String(value || '').trim();
+            if (!raw) return '';
+            if (platform === 'meta') return raw.replace(/^act_/, '');
+            if (platform === 'google') return raw.replace(/^customers\//, '').replace(/[^\d]/g, '');
+            return raw;
+        }
+
+        function getPaidMediaAccountsEndpoint(platform) {
+            return platform === 'meta' ? '/api/meta/insights/accounts' : '/api/google/ads/insights/accounts';
+        }
+
+        function getPaidMediaSelectionEndpoint(platform) {
+            return platform === 'meta' ? '/api/meta/insights/accounts/selection' : '/api/google/ads/insights/accounts/selection';
+        }
+
+        function formatConnectedAccountLabel(sourceState) {
+            const accountId = sourceState?.connectedResourceId || '';
+            const accountName = sourceState?.connectedResourceName || '';
+            if (accountName && accountId) return `${accountName} (${accountId})`;
+            if (accountName) return accountName;
+            if (accountId) return accountId;
+            return 'No seleccionada';
+        }
+
+        function formatActiveCampaignLabel(sourceState) {
+            const campaignName = sourceState?.activeCampaignName || sourceState?.campaigns?.[0]?.name || sourceState?.campaigns?.[0]?.campaign_name || '';
+            const campaignId = sourceState?.activeCampaignId || sourceState?.campaigns?.[0]?.id || sourceState?.campaigns?.[0]?.campaign_id || '';
+            if (campaignName && campaignId) return `${campaignName} (${campaignId})`;
+            if (campaignName) return campaignName;
+            if (campaignId) return campaignId;
+            return 'Sin campaña dominante';
+        }
+
+        async function ensurePaidMediaSelector(platform, sourceState) {
+            const state = paidMediaSelectorState[platform];
+            if (!state) return;
+
+            const selectEl = document.getElementById(`pm-${platform}-account-select`);
+            const feedbackEl = document.getElementById(`pm-${platform}-account-feedback`);
+            if (!selectEl) return;
+
+            if (!state.loaded && !state.loading) {
+                state.loading = true;
+                try {
+                    const res = await fetch(getPaidMediaAccountsEndpoint(platform));
+                    const body = await res.json().catch(() => ({}));
+                    const accounts = Array.isArray(body?.accounts) ? body.accounts : [];
+
+                    state.accounts = accounts.map((acc) => ({
+                        id: normalizePaidMediaAccountId(platform, acc?.id),
+                        name: String(acc?.name || acc?.descriptiveName || acc?.descriptive_name || acc?.id || '').trim(),
+                    })).filter((acc) => acc.id);
+
+                    state.defaultId = normalizePaidMediaAccountId(platform, body?.defaultAccountId || body?.defaultCustomerId || '');
+                    state.loaded = true;
+                } catch (err) {
+                    console.warn(`[PaidMedia UI] Failed to load ${platform} accounts`, err);
+                    state.accounts = [];
+                    state.defaultId = '';
+                    state.loaded = true;
+                } finally {
+                    state.loading = false;
+                }
+            }
+
+            const currentId = normalizePaidMediaAccountId(platform, sourceState?.connectedResourceId || '');
+            const selectedValue = currentId || state.defaultId || '';
+
+            const optionsHtml = state.accounts.length
+                ? state.accounts.map((acc) => `<option value="${acc.id}">${acc.name || acc.id}</option>`).join('')
+                : '<option value="">Sin cuentas disponibles</option>';
+
+            selectEl.innerHTML = optionsHtml;
+            selectEl.disabled = state.accounts.length === 0;
+            if (selectedValue) selectEl.value = selectedValue;
+            if (feedbackEl) {
+                feedbackEl.textContent = state.accounts.length
+                    ? `Puedes cambiar la cuenta conectada para ${platform === 'meta' ? 'Meta Ads' : 'Google Ads'}.`
+                    : 'No hay cuentas disponibles para seleccionar.';
+            }
+        }
+
+        async function applyPaidMediaAccountSelection(platform) {
+            const selectEl = document.getElementById(`pm-${platform}-account-select`);
+            const feedbackEl = document.getElementById(`pm-${platform}-account-feedback`);
+            const applyBtn = document.getElementById(`pm-${platform}-account-apply`);
+            if (!selectEl || !selectEl.value) return;
+
+            try {
+                if (applyBtn) applyBtn.disabled = true;
+                if (feedbackEl) feedbackEl.textContent = 'Aplicando selección...';
+
+                const selectedId = normalizePaidMediaAccountId(platform, selectEl.value);
+                const res = await fetch(getPaidMediaSelectionEndpoint(platform), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ accountIds: [selectedId] }),
+                });
+
+                const body = await res.json().catch(() => ({}));
+                if (!res.ok || body?.ok === false) {
+                    throw new Error(body?.error || `No se pudo actualizar ${platform}`);
+                }
+
+                if (feedbackEl) feedbackEl.textContent = 'Selección aplicada. Refrescando métricas...';
+                await fetchAnalytics();
+            } catch (err) {
+                console.error(`[PaidMedia UI] Selection update failed for ${platform}`, err);
+                if (feedbackEl) feedbackEl.textContent = `Error al actualizar: ${err?.message || err}`;
+            } finally {
+                if (applyBtn) applyBtn.disabled = false;
+            }
+        }
+
+        function renderPaidMedia(paidMedia) {
             const linkStatus = document.getElementById('pm-link-status');
             const blendedSpend = document.getElementById('pm-blended-spend');
             const blendedRevenue = document.getElementById('pm-blended-revenue');
@@ -4824,23 +4959,42 @@
             if (blendedSpend) blendedSpend.textContent = formatCurrencyWithCode(paidMedia?.blended?.spend || 0, blendedCurrency);
             if (blendedRevenue) blendedRevenue.textContent = formatCurrencyWithCode(paidMedia?.blended?.revenue || 0, blendedCurrency);
             if (blendedRoas) blendedRoas.textContent = formatRoas(paidMedia?.blended?.roas);
-            if (blendedMeta) blendedMeta.textContent = paidMedia?.available
-                ? 'Aggregated summary from MCP snapshots'
-                : 'Visible when the shop is linked to the marketing snapshot';
+
+            const anyDirectOrigin = ['meta', 'google'].some((platform) => paidMedia?.[platform]?.dataOrigin === 'direct_api');
+            if (blendedMeta) blendedMeta.textContent = anyDirectOrigin
+                ? 'Datos con fallback API directa en tiempo real'
+                : (paidMedia?.available
+                    ? 'Aggregated summary from MCP snapshots'
+                    : 'Visible when the shop is linked to the marketing snapshot');
 
             renderPaidMediaSource('meta', paidMedia?.meta || {});
             renderPaidMediaSource('google', paidMedia?.google || {});
 
+            const metaApplyBtn = document.getElementById('pm-meta-account-apply');
+            if (metaApplyBtn && !metaApplyBtn.dataset.bound) {
+                metaApplyBtn.addEventListener('click', () => applyPaidMediaAccountSelection('meta'));
+                metaApplyBtn.dataset.bound = '1';
+            }
+
+            const googleApplyBtn = document.getElementById('pm-google-account-apply');
+            if (googleApplyBtn && !googleApplyBtn.dataset.bound) {
+                googleApplyBtn.addEventListener('click', () => applyPaidMediaAccountSelection('google'));
+                googleApplyBtn.dataset.bound = '1';
+            }
+
+            void ensurePaidMediaSelector('meta', paidMedia?.meta || {});
+            void ensurePaidMediaSelector('google', paidMedia?.google || {});
+
             let unified = [];
             const metaCamps = paidMedia?.meta?.campaigns || [];
             const googleCamps = paidMedia?.google?.campaigns || [];
-            
-            metaCamps.forEach(c => {
+
+            metaCamps.forEach((c) => {
                 c._platform = 'meta';
                 c._currency = paidMedia?.meta?.currency || 'MXN';
                 unified.push(c);
             });
-            googleCamps.forEach(c => {
+            googleCamps.forEach((c) => {
                 c._platform = 'google';
                 c._currency = paidMedia?.google?.currency || 'MXN';
                 unified.push(c);
@@ -4850,14 +5004,14 @@
             renderUnifiedCampaigns();
         }
 
-        let globalPaidMediaCampaigns = [];
-
         function renderPaidMediaSource(prefix, sourceState) {
             const statusEl = document.getElementById(`pm-${prefix}-status`);
             const spendEl = document.getElementById(`pm-${prefix}-spend`);
             const revenueEl = document.getElementById(`pm-${prefix}-revenue`);
             const roasEl = document.getElementById(`pm-${prefix}-roas`);
             const syncEl = document.getElementById(`pm-${prefix}-sync`);
+            const accountEl = document.getElementById(`pm-${prefix}-account`);
+            const campaignEl = document.getElementById(`pm-${prefix}-campaign`);
             if (!statusEl || !spendEl || !revenueEl || !roasEl || !syncEl) return;
 
             const currency = sourceState?.currency || 'MXN';
@@ -4869,8 +5023,12 @@
             spendEl.textContent = formatCurrencyWithCode(sourceState?.spend || 0, currency);
             revenueEl.textContent = formatCurrencyWithCode(sourceState?.revenue || 0, currency);
             roasEl.textContent = formatRoas(sourceState?.roas);
+            if (accountEl) accountEl.textContent = formatConnectedAccountLabel(sourceState);
+            if (campaignEl) campaignEl.textContent = formatActiveCampaignLabel(sourceState);
 
-            if (sourceState?.hasSnapshot) {
+            if (sourceState?.dataOrigin === 'direct_api') {
+                syncEl.textContent = 'Datos en vivo por API directa';
+            } else if (sourceState?.hasSnapshot) {
                 const spendDelta = sourceState?.spendDeltaPct;
                 const roasDelta = sourceState?.roasDelta;
                 const deltaBits = [];

@@ -1011,6 +1011,26 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
         }
       }
 
+      meta.connectedResourceId = String(
+        rootDoc?.sources?.metaAds?.selectedAccountId ||
+        rootDoc?.sources?.metaAds?.accountId ||
+        ''
+      ) || null;
+      meta.connectedResourceName = rootDoc?.sources?.metaAds?.name || null;
+      meta.activeCampaignId = meta?.campaigns?.[0]?.id || meta?.campaigns?.[0]?.campaign_id || null;
+      meta.activeCampaignName = meta?.campaigns?.[0]?.name || meta?.campaigns?.[0]?.campaign_name || null;
+      meta.dataOrigin = String(meta?.snapshotId || '').startsWith('direct_meta_') ? 'direct_api' : 'mcp_snapshot';
+
+      google.connectedResourceId = String(
+        rootDoc?.sources?.googleAds?.selectedCustomerId ||
+        rootDoc?.sources?.googleAds?.customerId ||
+        ''
+      ) || null;
+      google.connectedResourceName = rootDoc?.sources?.googleAds?.name || null;
+      google.activeCampaignId = google?.campaigns?.[0]?.id || google?.campaigns?.[0]?.campaign_id || null;
+      google.activeCampaignName = google?.campaigns?.[0]?.name || google?.campaigns?.[0]?.campaign_name || null;
+      google.dataOrigin = String(google?.snapshotId || '').startsWith('direct_google_') ? 'direct_api' : 'mcp_snapshot';
+
       const blendedSpend = meta.spend + google.spend;
       const blendedRevenue = meta.revenue + google.revenue;
       const hasAnySnapshot = meta.hasSnapshot || google.hasSnapshot;
@@ -1072,25 +1092,30 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
     pushCandidate(resolvedUserId);
     pushCandidate(fallbackUserId);
 
-    if (ShopConnections && candidates.length) {
-      const linkedShopUsers = await ShopConnections.find({
-        shop: { $in: candidates },
-        matchedToUserId: { $ne: null },
-      })
-        .select('matchedToUserId')
-        .lean();
+    const allowCrossUserPaidMedia = String(process.env.ADRAY_ALLOW_CROSS_USER_PAID_MEDIA || '0') === '1';
+    if (allowCrossUserPaidMedia) {
+      if (ShopConnections && candidates.length) {
+        const linkedShopUsers = await ShopConnections.find({
+          shop: { $in: candidates },
+          matchedToUserId: { $ne: null },
+        })
+          .select('matchedToUserId')
+          .lean();
 
-      linkedShopUsers.forEach((doc) => pushCandidate(doc?.matchedToUserId));
-    }
+        linkedShopUsers.forEach((doc) => pushCandidate(doc?.matchedToUserId));
+      }
 
-    if (User && candidates.length) {
-      const usersByShop = await User.find({
-        shop: { $in: candidates },
-      })
-        .select('_id')
-        .lean();
+      if (User && candidates.length) {
+        const usersByShop = await User.find({
+          shop: { $in: candidates },
+        })
+          .select('_id')
+          .lean();
 
-      usersByShop.forEach((doc) => pushCandidate(doc?._id));
+        usersByShop.forEach((doc) => pushCandidate(doc?._id));
+      }
+    } else {
+      console.log('[PaidMedia Trace] Cross-user fallback disabled (ADRAY_ALLOW_CROSS_USER_PAID_MEDIA != 1).');
     }
 
     console.log('[PaidMedia Trace] candidate user ids (ordered):', candidateUserIds);
