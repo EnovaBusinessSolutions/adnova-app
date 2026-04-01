@@ -2958,6 +2958,7 @@
                 ].filter(Boolean);
 
                 let baseTitle = normalizeEventNameHuman(event.eventName || event.name);
+                let originalEventName = baseTitle;
                 const rawName = String(event.eventName || event.name || '').toLowerCase();
                 if (rawName === 'page_view' && pagePath && pagePath !== '-') {
                     baseTitle = pagePath.replace(/^\/|\/$/g, '') || 'home';
@@ -2969,7 +2970,7 @@
                     const prev = visible[index - 1];
                     const prevTimeStr = formatDateTimeMx(prev.createdAt || prev.collectedAt || null);
                     if (timeStr === prevTimeStr) {
-                        displayTime = '';
+                        displayTime = '...';
                     }
                 }
 
@@ -2977,6 +2978,8 @@
                     icon: resolveEventIcon(event.eventName || event.name),
                     title: durSeconds > 0 ? `${baseTitle} <span class="text-gray-400 text-[0.8rem] ml-1 absolute right-24" style="margin-left: 0.5rem; font-weight: 500;">${formatDurationCompact(durSeconds)}</span>` : baseTitle,
                     time: displayTime,
+                    fullTime: timeStr,
+                    originalName: originalEventName,
                     detailLines,
                     tone,
                 };
@@ -2994,7 +2997,9 @@
                 {
                     icon: resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform),
                     title: 'Ad Click',
+                    originalName: 'Ad Click',
                     time: purchasedAt,
+                    fullTime: purchasedAt,
                     detailLines: [
                         `Campaign: ${campaign}`,
                         `Click ID: ${clickId}`,
@@ -3007,7 +3012,9 @@
                 entries.push({
                     icon: 'fa-solid fa-door-open',
                     title: 'Landing',
+                    originalName: 'Landing',
                     time: purchasedAt,
+                    fullTime: purchasedAt,
                     detailLines: [`Page: ${landing}`],
                     tone,
                 });
@@ -3016,7 +3023,9 @@
             entries.push({
                 icon: 'fa-solid fa-circle-check',
                 title: 'Purchase',
+                originalName: 'Purchase',
                 time: purchasedAt,
+                fullTime: purchasedAt,
                 detailLines: [
                     `Order: ${purchase.orderNumber || purchase.orderId || '-'}`,
                     `Revenue: ${formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN')}`,
@@ -3039,9 +3048,9 @@
                         <article class="journey-event ${event.tone || ''}">
                             <div class="journey-event-head">
                                 <span class="journey-event-title"><i class="${event.icon || 'fa-solid fa-circle'}"></i>${event.title || 'Event'}</span>
-                                ${event.time ? `<span class="journey-event-time">${escapeHtml(event.time)}</span>` : ''}
                             </div>
                             <div class="journey-event-detail">
+                                ${event.originalName ? `<p class="font-semibold text-gray-700 mb-1">${escapeHtml(event.originalName)} · ${escapeHtml(event.fullTime || event.time)}</p>` : (event.time ? `<p class="font-semibold text-gray-700 mb-1">${escapeHtml(event.fullTime || event.time)}</p>` : '')}
                                 ${(Array.isArray(event.detailLines) ? event.detailLines : []).slice(0, 3).map((line) => `<p>${escapeHtml(line)}</p>`).join('')}
                             </div>
                         </article>
@@ -3136,6 +3145,7 @@
                         ].filter(Boolean);
 
                         let baseTitle = normalizeEventNameHuman(event.eventName || event.name);
+                        let originalEventName = baseTitle;
                         const rawName = String(event.eventName || event.name || '').toLowerCase();
                         if (rawName === 'page_view' && pagePath && pagePath !== '-') {
                             baseTitle = pagePath.replace(/^\/|\/$/g, '') || 'home';
@@ -3147,7 +3157,7 @@
                             const prev = realEvents[index - 1];
                             const prevTimeStr = formatDateTimeMx(prev.createdAt || prev.collectedAt || null);
                             if (timeStr === prevTimeStr) {
-                                displayTime = '';
+                                displayTime = '...';
                             }
                         }
 
@@ -3155,6 +3165,8 @@
                             icon: resolveEventIcon(event.eventName || event.name),
                             title: durSeconds > 0 ? `${baseTitle} <span class="text-gray-400 text-[0.8rem]" style="margin-left: 0.5rem; font-weight: 500;">${formatDurationCompact(durSeconds)}</span>` : baseTitle,
                             time: displayTime,
+                            fullTime: timeStr,
+                            originalName: originalEventName,
                             detailLines,
                             tone: resolveChannelTone(event.utmSource || purchase.attributedChannel || '', purchase.attributedPlatform || null),
                         };
