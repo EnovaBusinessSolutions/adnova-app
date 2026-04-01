@@ -2958,7 +2958,8 @@
                 ].filter(Boolean);
 
                 let baseTitle = normalizeEventNameHuman(event.eventName || event.name);
-                if (baseTitle === 'Page View' && pagePath && pagePath !== '-') {
+                const rawName = String(event.eventName || event.name || '').toLowerCase();
+                if (rawName === 'page_view' && pagePath && pagePath !== '-') {
                     baseTitle = pagePath.replace(/^\/|\/$/g, '') || 'home';
                 }
 
@@ -3134,7 +3135,11 @@
                             itemName ? `Item: ${itemName}` : '',
                         ].filter(Boolean);
 
-                        const baseTitle = normalizeEventNameHuman(event.eventName || event.name);
+                        let baseTitle = normalizeEventNameHuman(event.eventName || event.name);
+                        const rawName = String(event.eventName || event.name || '').toLowerCase();
+                        if (rawName === 'page_view' && pagePath && pagePath !== '-') {
+                            baseTitle = pagePath.replace(/^\/|\/$/g, '') || 'home';
+                        }
 
                         const timeStr = formatDateTimeMx(event.createdAt || event.collectedAt || null);
                         let displayTime = timeStr;
