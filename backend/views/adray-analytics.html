@@ -1976,8 +1976,8 @@
                             <div class="mt-1 text-xs text-gray-500">Cuenta conectada: <span id="pm-meta-account" class="font-medium">-</span></div>
                             <div class="mt-1 text-xs text-gray-500">Campaña principal: <span id="pm-meta-campaign" class="font-medium">-</span></div>
                             <div class="mt-1 text-xs text-gray-400" id="pm-meta-sync">Sin datos live todavía</div>
-                            <div class="mt-2 flex items-center gap-2">
-                                <select id="pm-meta-account-select" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white flex-1"></select>
+                            <div class="mt-2 flex flex-col items-start gap-2">
+                                <select id="pm-meta-account-select" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white w-full"></select>
                                 <button id="pm-meta-account-apply" class="text-xs font-semibold px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50">Cambiar</button>
                             </div>
                             <div class="mt-1 text-[11px] text-gray-400" id="pm-meta-account-feedback"></div>
@@ -1991,8 +1991,8 @@
                             <div class="mt-1 text-xs text-gray-500">Cuenta conectada: <span id="pm-google-account" class="font-medium">-</span></div>
                             <div class="mt-1 text-xs text-gray-500">Campaña principal: <span id="pm-google-campaign" class="font-medium">-</span></div>
                             <div class="mt-1 text-xs text-gray-400" id="pm-google-sync">Sin datos live todavía</div>
-                            <div class="mt-2 flex items-center gap-2">
-                                <select id="pm-google-account-select" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white flex-1"></select>
+                            <div class="mt-2 flex flex-col items-start gap-2">
+                                <select id="pm-google-account-select" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white w-full"></select>
                                 <button id="pm-google-account-apply" class="text-xs font-semibold px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50">Cambiar</button>
                             </div>
                             <div class="mt-1 text-[11px] text-gray-400" id="pm-google-account-feedback"></div>
@@ -4898,7 +4898,7 @@
             if (selectedValue) selectEl.value = selectedValue;
             if (feedbackEl) {
                 feedbackEl.textContent = state.accounts.length
-                    ? `Puedes cambiar la cuenta conectada para ${platform === 'meta' ? 'Meta Ads' : 'Google Ads'}.`
+                    ? ''
                     : 'No hay cuentas disponibles para seleccionar.';
             }
         }
@@ -5005,9 +5005,9 @@
 
             if (sourceState?.connected && sourceState?.ready) {
                 if (sourceState?.rangeUsed?.fallbackUsed) {
-                    syncEl.textContent = `Datos en vivo por API directa (fallback ${sourceState?.rangeUsed?.since || ''} a ${sourceState?.rangeUsed?.until || ''})`;
+                    syncEl.textContent = `Fallback ${sourceState?.rangeUsed?.since || ''} a ${sourceState?.rangeUsed?.until || ''}`;
                 } else {
-                    syncEl.textContent = 'Datos en vivo por API directa';
+                    syncEl.textContent = '';
                 }
             } else if (sourceState?.connected) {
                 syncEl.textContent = 'Conectado, esperando respuesta de API';
