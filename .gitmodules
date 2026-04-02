@@ -14,3 +14,6 @@
 	path = bookcall-src
 	url = https://github.com/EnovaBusinessSolutions/bookcall-adnova.git
 	branch = main
+[submodule "landing-adray"]
+	path = landing-adray
+	url = https://github.com/NSPG13/Landing-adray.git
