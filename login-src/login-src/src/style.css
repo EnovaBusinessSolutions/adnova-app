@@ -2,13 +2,14 @@
   margin: 0;
   padding: 0;
   box-sizing: border-box;
-  font-family: Inter, system-ui, sans-serif;
 }
 
 :root {
   color-scheme: dark;
 
-  /* Dashboard-aligned palette */
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* Dashboard + landing aligned palette */
   --bg: #050507;
   --bg-2: #09090d;
   --bg-3: #111118;
@@ -36,7 +37,7 @@
   --input-border-focus: rgba(181, 92, 255, 0.9);
 
   --accent-1: #ffffff;
-  --accent-2: #d7c2ff;
+  --accent-2: #e9dbff;
   --accent-3: #b55cff;
   --accent-4: #c87cff;
   --accent-5: #4fe3c1;
@@ -59,10 +60,19 @@ body {
   min-height: 100%;
 }
 
+body,
+input,
+button,
+textarea {
+  font-family: var(--font-ui);
+}
+
 body {
   background: var(--bg);
   color: var(--text);
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* ===== BACKGROUND ===== */
@@ -318,7 +328,6 @@ body {
   will-change: transform, opacity;
 }
 
-/* capa 1: partículas pequeñas muy repartidas */
 .background-grid::before {
   width: 3px;
   height: 3px;
@@ -340,7 +349,6 @@ body {
   animation: driftParticlesA 26s ease-in-out infinite;
 }
 
-/* capa 2: partículas medianas */
 .background-grid::after {
   width: 4px;
   height: 4px;
@@ -360,7 +368,6 @@ body {
   animation: driftParticlesB 32s ease-in-out infinite;
 }
 
-/* capa 3: partículas tenues flotando por el centro */
 .background-noise::before {
   width: 2px;
   height: 2px;
@@ -378,7 +385,6 @@ body {
   animation: driftParticlesC 36s linear infinite;
 }
 
-/* capa 4: pequeñas motas luminosas abajo */
 .background-noise::after {
   width: 2px;
   height: 2px;
@@ -598,7 +604,6 @@ body {
   isolation: isolate;
 }
 
-/* contour only */
 .login-card::before {
   content: '';
   position: absolute;
@@ -700,7 +705,7 @@ body {
   align-items: center;
   justify-content: flex-end;
   gap: 14px;
-  margin-bottom: 18px;
+  margin-bottom: 20px;
   min-height: 42px;
 }
 
@@ -718,15 +723,15 @@ body {
 
 .login-brand-icon-wrap {
   position: relative;
-  width: 52px;
-  height: 52px;
-  border-radius: 17px;
+  width: 54px;
+  height: 54px;
+  border-radius: 18px;
   display: grid;
   place-items: center;
   background:
-    linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.018)),
+    linear-gradient(180deg, rgba(255,255,255,0.065), rgba(255,255,255,0.018)),
     rgba(255,255,255,0.012);
-  border: 1px solid rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.09);
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,0.04),
     0 10px 24px rgba(0,0,0,0.22),
@@ -755,7 +760,7 @@ body {
   content: '';
   position: absolute;
   inset: 1px;
-  border-radius: 16px;
+  border-radius: 17px;
   background:
     linear-gradient(180deg, rgba(18, 14, 28, 0.94) 0%, rgba(10, 10, 16, 0.98) 100%);
   z-index: 0;
@@ -764,31 +769,29 @@ body {
 .login-brand-icon {
   position: relative;
   z-index: 1;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   display: block;
   object-fit: contain;
   image-rendering: auto;
   filter:
-    drop-shadow(0 0 10px rgba(255,255,255,0.18))
-    drop-shadow(0 0 12px rgba(181, 92, 255, 0.20));
+    drop-shadow(0 0 10px rgba(255,255,255,0.16))
+    drop-shadow(0 0 12px rgba(181, 92, 255, 0.18));
 }
 
 /* ===== TYPOGRAPHY ===== */
 
 .login-heading {
-  font-size: 52px;
-  line-height: 0.94;
-  font-weight: 700;
-  letter-spacing: -0.055em;
+  font-size: clamp(3rem, 5vw, 4.1rem);
+  line-height: 0.92;
+  font-weight: 600;
+  letter-spacing: -0.065em;
   color: #ffffff;
   margin-bottom: 24px;
-  max-width: 360px;
+  max-width: 350px;
   text-wrap: balance;
   text-shadow: 0 0 18px rgba(181, 92, 255, 0.08);
 }
-
-/* ===== FORM ===== */
 
 #login-form {
   width: 100%;
@@ -808,11 +811,11 @@ body {
 .input-label {
   display: block;
   margin-bottom: 9px;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 16px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: rgba(215, 206, 229, 0.82);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: rgba(222, 214, 235, 0.74);
   text-transform: uppercase;
 }
 
@@ -827,6 +830,8 @@ body {
     rgba(255,255,255,0.01);
   color: white;
   font-size: 14px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
   transition:
     border-color 0.18s ease,
     background-color 0.18s ease,
@@ -836,7 +841,7 @@ body {
 }
 
 .input::placeholder {
-  color: rgba(177, 168, 194, 0.38);
+  color: rgba(177, 168, 194, 0.42);
 }
 
 .input:hover {
@@ -956,6 +961,7 @@ body {
   margin: 8px 0 14px 0;
   font-size: 13px;
   line-height: 18px;
+  font-weight: 500;
   color: var(--danger);
   min-height: 18px;
 }
@@ -968,11 +974,12 @@ body {
   border-radius: 20px;
   background:
     radial-gradient(circle at 50% 0%, rgba(255,255,255,0.18), transparent 34%),
-    linear-gradient(90deg, #f7f1ff 0%, #d7c2ff 42%, #b55cff 100%);
+    linear-gradient(90deg, #f8f4ff 0%, #ddcbff 42%, #b55cff 100%);
   border: 1px solid rgba(255,255,255,0.12);
-  color: #0f0a16;
+  color: #100a17;
   font-size: 15px;
-  font-weight: 800;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   cursor: pointer;
   transition:
     transform 0.16s ease,
@@ -1013,6 +1020,7 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: none;
   color: rgba(239, 234, 245, 0.94);
+  font-weight: 600;
 }
 
 .btn-secondary:hover {
@@ -1053,8 +1061,8 @@ body {
   padding: 0 12px;
   background: rgba(13, 10, 21, 0.78);
   color: rgba(177, 168, 194, 0.62);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 600;
   letter-spacing: 0.24em;
 }
 
@@ -1081,10 +1089,11 @@ body {
   box-sizing: border-box;
   color: #ece7f7;
   cursor: pointer;
-  font-family: 'Roboto', Arial, sans-serif;
+  font-family: var(--font-ui);
   font-size: 14px;
+  font-weight: 500;
   height: 40px;
-  letter-spacing: 0.25px;
+  letter-spacing: -0.01em;
   outline: none;
   overflow: hidden;
   padding: 0 12px;
@@ -1123,7 +1132,7 @@ body {
 
 .gsi-material-button .gsi-material-button-contents {
   flex-grow: 1;
-  font-family: 'Roboto', Arial, sans-serif;
+  font-family: var(--font-ui);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1180,15 +1189,16 @@ body {
 .forgot-password {
   margin-top: 14px;
   text-align: center;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 20px;
+  font-weight: 400;
   color: rgba(177, 168, 194, 0.66);
 }
 
 .recovery-link {
   color: #f0ebf8;
   text-decoration: none;
-  font-weight: 700;
+  font-weight: 600;
   transition: color 0.18s ease, opacity 0.18s ease;
 }
 
@@ -1316,7 +1326,7 @@ body {
 
   .login-heading {
     font-size: 38px;
-    line-height: 0.96;
+    line-height: 0.95;
     margin-bottom: 18px;
     max-width: 280px;
   }
@@ -1327,7 +1337,7 @@ body {
 
   .input-label {
     margin-bottom: 8px;
-    font-size: 11px;
+    font-size: 10.5px;
   }
 
   .input {
@@ -1378,7 +1388,7 @@ body {
 
   .forgot-password {
     margin-top: 13px;
-    font-size: 13px;
+    font-size: 12.5px;
     line-height: 18px;
   }
 }
@@ -1443,6 +1453,6 @@ body {
   }
 
   .forgot-password {
-    font-size: 12.5px;
+    font-size: 12px;
   }
 }

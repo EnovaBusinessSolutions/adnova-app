@@ -28,14 +28,15 @@
         <div class="login-card-aurora" aria-hidden="true"></div>
 
         <div class="login-topbar login-topbar--minimal">
-          <div class="login-brand-icon-wrap" aria-hidden="true">
-            <img
-  src="/login-src/assets/adray-icon.png"
-  alt=""
-  class="login-brand-icon"
-/>
-          </div>
-        </div>
+  <div class="login-brand-icon-wrap" aria-hidden="true">
+    <img
+      src="/assets/adray-icon.png"
+      alt="Adray"
+      class="login-brand-icon"
+      decoding="async"
+    />
+  </div>
+</div>
 
         <h1 class="login-heading">Login to your account</h1>
 
