@@ -22,29 +22,29 @@
         }
 
         :root {
-            --dash-bg: #050508;
-            --dash-panel: rgba(18, 12, 29, 0.9);
-            --dash-panel-strong: rgba(30, 19, 47, 0.96);
-            --dash-panel-soft: rgba(225, 216, 243, 0.06);
-            --dash-border: rgba(202, 138, 229, 0.18);
-            --dash-border-strong: rgba(202, 138, 229, 0.3);
-            --dash-text: #f4f1ff;
-            --dash-muted: rgba(225, 216, 243, 0.72);
-            --dash-soft: rgba(225, 216, 243, 0.52);
-            --dash-accent: #ca8ae5;
-            --dash-accent-strong: #b55cff;
+            --dash-bg: #0b0b0d;
+            --dash-panel: rgba(21, 18, 26, 0.96);
+            --dash-panel-strong: rgba(31, 24, 40, 0.98);
+            --dash-panel-soft: rgba(255, 255, 255, 0.03);
+            --dash-border: rgba(44, 37, 48, 0.96);
+            --dash-border-strong: rgba(181, 92, 255, 0.24);
+            --dash-text: #e5d3ff;
+            --dash-muted: #9a8ca8;
+            --dash-soft: #b095e4;
+            --dash-accent: #b55cff;
+            --dash-accent-strong: #9d5bff;
             --dash-success: #7ef0c8;
             --dash-warning: #f3c77a;
-            --dash-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
-            --dash-radius: 22px;
+            --dash-shadow: 0 24px 60px rgba(0, 0, 0, 0.34);
+            --dash-radius: 28px;
         }
 
         body.adray-dashboard {
             font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             background:
-                radial-gradient(1200px 700px at 8% -10%, rgba(181, 92, 255, 0.18), transparent 60%),
-                radial-gradient(900px 520px at 100% 0%, rgba(62, 40, 111, 0.42), transparent 55%),
-                linear-gradient(180deg, #08070d 0%, #050508 100%);
+                radial-gradient(1200px 560px at 8% -10%, rgba(181, 92, 255, 0.13), transparent 58%),
+                radial-gradient(900px 520px at 100% 0%, rgba(157, 91, 255, 0.08), transparent 52%),
+                linear-gradient(180deg, #0b0b0d 0%, #050508 100%);
             color: var(--dash-text);
             min-height: 100vh;
         }
@@ -58,13 +58,14 @@
                 linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
                 linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
             background-size: 48px 48px;
-            mask-image: radial-gradient(circle at center, rgba(0,0,0,0.55), transparent 92%);
-            opacity: 0.22;
+            mask-image: radial-gradient(circle at center, rgba(0,0,0,0.45), transparent 92%);
+            opacity: 0.1;
         }
 
         .dashboard-shell {
             position: relative;
             z-index: 1;
+            width: 100%;
         }
 
         .dashboard-section-heading {
@@ -82,11 +83,11 @@
         }
 
         .dashboard-hero {
-            background: linear-gradient(135deg, rgba(32, 21, 51, 0.98) 0%, rgba(14, 9, 24, 0.96) 100%);
+            background: linear-gradient(180deg, rgba(21, 18, 26, 0.96) 0%, rgba(15, 12, 20, 0.94) 100%);
             border: 1px solid var(--dash-border-strong);
-            border-radius: 30px;
+            border-radius: 34px;
             box-shadow: var(--dash-shadow);
-            padding: 1.5rem;
+            padding: 1.65rem 1.75rem;
         }
 
         .dashboard-kicker,
@@ -94,7 +95,7 @@
             font-size: 0.72rem;
             letter-spacing: 0.18em;
             text-transform: uppercase;
-            color: var(--dash-accent);
+            color: var(--dash-soft);
             font-weight: 700;
         }
 
@@ -234,31 +235,50 @@
         }
 
         .panel-title {
-            font-size: 1.18rem;
+            font-size: 1.35rem;
+        }
+
+        .brand-mark {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.72rem 1.1rem;
+            border-radius: 14px;
+            border: 1px solid rgba(181, 92, 255, 0.14);
+            background: rgba(44, 37, 48, 0.62);
+            color: #e8b8ff !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+            line-height: 1;
+        }
+
+        .brand-mark span {
+            color: var(--dash-muted) !important;
         }
 
         .ops-control {
             display: inline-flex;
             align-items: center;
             gap: 0.6rem;
-            border-radius: 16px;
-            border: 1px solid var(--dash-border);
-            background: rgba(225, 216, 243, 0.04);
+            border-radius: 18px;
+            border: 1px solid rgba(181, 92, 255, 0.18);
+            background: rgba(44, 37, 48, 0.48);
             color: var(--dash-text);
-            padding: 0.72rem 0.95rem;
-            backdrop-filter: blur(10px);
+            padding: 0.85rem 1.1rem;
+            backdrop-filter: blur(14px);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
         }
 
         .ops-refresh-btn {
-            border: 1px solid rgba(202, 138, 229, 0.28);
-            border-radius: 16px;
-            background: linear-gradient(135deg, rgba(202, 138, 229, 0.2) 0%, rgba(181, 92, 255, 0.16) 100%);
-            color: var(--dash-text);
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+            border: 1px solid rgba(181, 92, 255, 0.2);
+            border-radius: 18px;
+            background: linear-gradient(135deg, rgba(181, 92, 255, 0.22) 0%, rgba(157, 91, 255, 0.14) 100%);
+            color: #f4edff;
+            box-shadow: 0 16px 30px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255,255,255,0.05);
         }
 
         .ops-refresh-btn:hover {
-            background: linear-gradient(135deg, rgba(202, 138, 229, 0.28) 0%, rgba(181, 92, 255, 0.22) 100%);
+            background: linear-gradient(135deg, rgba(181, 92, 255, 0.34) 0%, rgba(157, 91, 255, 0.24) 100%);
+            border-color: rgba(181, 92, 255, 0.34);
         }
 
         .live-feed-badge {
@@ -274,8 +294,8 @@
         .adray-dashboard #session-detail-panel > div {
             display: block !important;
             position: relative;
-            background: linear-gradient(180deg, rgba(26, 17, 41, 0.95) 0%, rgba(12, 8, 19, 0.92) 100%) !important;
-            border: 1px solid var(--dash-border) !important;
+            background: linear-gradient(180deg, rgba(31, 24, 40, 0.92) 0%, rgba(18, 14, 24, 0.98) 100%) !important;
+            border: 1px solid rgba(181, 92, 255, 0.12) !important;
             border-radius: var(--dash-radius) !important;
             box-shadow: var(--dash-shadow) !important;
             backdrop-filter: blur(12px);
@@ -318,13 +338,16 @@
         }
 
         .adray-dashboard .ops-subpanel,
+        .adray-dashboard .ops-panel .bg-white,
         .adray-dashboard #session-detail-panel .bg-gray-50,
+        .adray-dashboard #session-detail-panel .bg-white,
         .adray-dashboard #session-detail-panel .bg-slate-50,
         .adray-dashboard #session-detail-panel .bg-indigo-50,
         .adray-dashboard #session-detail-panel .bg-amber-50,
         .adray-dashboard #session-detail-panel .bg-emerald-50,
         .adray-dashboard #session-detail-panel .bg-cyan-50,
-        .adray-dashboard .ops-panel .bg-gray-50 {
+        .adray-dashboard .ops-panel .bg-gray-50,
+        #user-explorer-panel .bg-white {
             background: var(--dash-panel-soft) !important;
             border-color: rgba(202, 138, 229, 0.12) !important;
         }
@@ -435,9 +458,10 @@
         }
 
         .adray-dashboard nav {
-            background: rgba(8, 7, 13, 0.72) !important;
-            border-bottom: 1px solid rgba(202, 138, 229, 0.14) !important;
-            backdrop-filter: blur(16px);
+            background: rgba(17, 14, 24, 0.92) !important;
+            border-bottom: 1px solid rgba(181, 92, 255, 0.12) !important;
+            box-shadow: 0 18px 40px rgba(0, 0, 0, 0.22);
+            backdrop-filter: blur(18px);
         }
 
         .dashboard-hero select,
@@ -455,8 +479,8 @@
         .dashboard-hero select,
         .ops-panel select,
         #session-detail-panel select {
-            background: rgba(12, 8, 19, 0.9) !important;
-            border: 1px solid rgba(202, 138, 229, 0.28) !important;
+            background: rgba(17, 14, 24, 0.92) !important;
+            border: 1px solid rgba(181, 92, 255, 0.18) !important;
             color: var(--dash-text) !important;
             box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
         }
@@ -475,6 +499,27 @@
         #session-detail-panel select,
         #session-detail-panel input[type="date"] {
             background: transparent;
+        }
+
+        .dashboard-hero input[type="text"],
+        .dashboard-hero input[type="search"],
+        .ops-panel input[type="text"],
+        .ops-panel input[type="search"],
+        .ops-panel input[type="number"],
+        #session-detail-panel input[type="text"],
+        #session-detail-panel input[type="search"],
+        #user-explorer-panel input[type="text"] {
+            background: rgba(17, 14, 24, 0.92) !important;
+            border: 1px solid rgba(181, 92, 255, 0.18) !important;
+            color: var(--dash-text) !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+        }
+
+        .dashboard-hero input::placeholder,
+        .ops-panel input::placeholder,
+        #session-detail-panel input::placeholder,
+        #user-explorer-panel input::placeholder {
+            color: var(--dash-muted) !important;
         }
 
         .ops-panel button.bg-white,
@@ -1243,7 +1288,21 @@
         }
 
         .adray-dashboard .metric-card-slide .flex-shrink-0 {
+            border-radius: 14px !important;
             box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
+        }
+
+        .feed-item {
+            background: rgba(36, 28, 49, 0.72) !important;
+            border: 1px solid rgba(181, 92, 255, 0.12) !important;
+            border-left-width: 3px !important;
+            border-radius: 18px !important;
+            box-shadow: none !important;
+        }
+
+        .feed-item .live-feed-user-link,
+        .feed-item .live-feed-always-visible-user {
+            color: var(--dash-accent) !important;
         }
 
         .adray-dashboard canvas {
@@ -1300,8 +1359,8 @@
         }
         @media (min-width: 1024px) {
             .metric-card-slide {
-                flex-basis: 16.666%;
-                min-width: 16.666%;
+                flex-basis: 25%;
+                min-width: 25%;
             }
         }
         .metric-carousel-track {
@@ -1318,7 +1377,7 @@
             right: -18px;
             width: 24px;
             height: 2px;
-            background: linear-gradient(90deg, #818cf8 0%, #c7d2fe 100%);
+            background: linear-gradient(90deg, rgba(181, 92, 255, 0.9) 0%, rgba(157, 91, 255, 0.72) 100%);
         }
         .pattern-rate-bar > span {
             transition: width 0.35s ease;
@@ -1376,12 +1435,12 @@
 <body class="adray-dashboard min-h-screen">
 
     <!-- Navbar -->
-    <nav class="bg-white border-b border-gray-200 sticky top-0 z-50">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <nav class="sticky top-0 z-50">
+        <div class="w-full px-4 sm:px-6 lg:px-10">
             <div class="flex justify-between h-16">
                 <div class="flex">
                     <div class="flex-shrink-0 flex items-center">
-                        <span class="brand-mark text-xl font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-md">AdRay <span class="text-gray-500 font-normal text-sm">Analytics</span></span>
+                        <span class="brand-mark text-xl font-bold">AdRay <span class="font-normal text-sm">Analytics</span></span>
                     </div>
                 </div>
                 <div class="flex items-center space-x-4">
@@ -1415,7 +1474,7 @@
     </nav>
 
     <!-- Main Content -->
-    <main class="dashboard-shell max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <main class="dashboard-shell w-full px-4 sm:px-6 lg:px-10 py-8">
         
         <!-- Header & Controls -->
         <div class="dashboard-hero mb-8">
@@ -3811,8 +3870,8 @@
             historyEl.innerHTML = `
                 <div class="space-y-3">
                     <div class="flex items-center gap-2 flex-wrap">
-                        <input id="journey-profile-search" type="text" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white text-black placeholder-gray-500" style="color: black !important;" placeholder="Buscar perfil Woo" value="${escapeHtmlAttr(attributionJourneyState.profileSearch || '')}">
-                        <select id="journey-profile-sort" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white text-gray-900">
+                        <input id="journey-profile-search" type="text" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white" placeholder="Buscar perfil Woo" value="${escapeHtmlAttr(attributionJourneyState.profileSearch || '')}">
+                        <select id="journey-profile-sort" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white">
                             <option value="orders" ${attributionJourneyState.profileSort === 'orders' ? 'selected' : ''}>Mas orders</option>
                             <option value="revenue" ${attributionJourneyState.profileSort === 'revenue' ? 'selected' : ''}>Mayor revenue</option>
                             <option value="recent" ${attributionJourneyState.profileSort === 'recent' ? 'selected' : ''}>Mas reciente</option>
