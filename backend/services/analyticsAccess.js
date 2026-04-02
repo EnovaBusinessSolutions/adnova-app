@@ -215,7 +215,19 @@ async function findPlatformMatchedAccounts(metaAccountIds, googleAccountIds) {
 
 async function listAuthorizedAnalyticsShopsForUser(userId) {
   if (!userId) {
-    return { defaultShop: null, defaultShopSource: null, shops: [] };
+    return {
+      defaultShop: null,
+      defaultShopSource: null,
+      shops: [],
+      debug: {
+        userId: null,
+        userShop: null,
+        matchedShopConnections: [],
+        metaAccountIds: [],
+        googleAccountIds: [],
+        platformMatches: [],
+      },
+    };
   }
 
   const { userDoc, metaDoc, googleDoc, matchedShopDocs } = await loadUserAccessDocs(userId);
@@ -280,6 +292,28 @@ async function listAuthorizedAnalyticsShopsForUser(userId) {
       ...entry,
       isDefault: index === 0,
     })),
+    debug: {
+      userId: String(userId),
+      userShop: normalizeShopDomain(userDoc?.shop || '') || null,
+      shopifyConnected: !!userDoc?.shopifyConnected,
+      matchedShopConnections: matchedShopDocs.map((doc) => ({
+        shop: normalizeShopDomain(doc?.shop || '') || null,
+        hasAccessToken: !!doc?.accessToken,
+        installedAt: doc?.installedAt ? new Date(doc.installedAt).toISOString() : null,
+      })),
+      metaAccountIds,
+      googleAccountIds,
+      platformMatches: platformMatches.map((row) => ({
+        accountId: normalizeShopDomain(row?.accountId || row?.account?.accountId || '') || null,
+        domain: normalizeShopDomain(row?.account?.domain || '') || null,
+        accountPlatform: String(row?.account?.platform || '').trim() || null,
+        platform: String(row?.platform || '').trim() || null,
+        adAccountId: String(row?.adAccountId || '').trim() || null,
+        status: String(row?.status || '').trim() || null,
+        updatedAt: row?.updatedAt ? new Date(row.updatedAt).toISOString() : null,
+      })),
+      resolvedShops: shops.map(({ _score, ...entry }) => entry),
+    },
   };
 }
 

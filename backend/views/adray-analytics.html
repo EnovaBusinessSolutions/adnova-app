@@ -2233,6 +2233,14 @@
         const MAX_KNOWN_SHOPS = 12;
         let authorizedShopOptions = [];
 
+        function logAnalyticsDebug(message, payload = {}) {
+            try {
+                console.log(`[AdRay Analytics] ${message}`, payload);
+            } catch (error) {
+                // noop
+            }
+        }
+
         function formatDateInputValue(date) {
             const year = date.getFullYear();
             const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -2403,6 +2411,11 @@
                 const body = await res.json().catch(() => ({}));
 
                 if (!res.ok || body?.ok === false) {
+                    logAnalyticsDebug('authorized shops response not ok', {
+                        ok: res.ok,
+                        status: res.status,
+                        body,
+                    });
                     authorizedShopOptions = [];
                     return { shops: [], defaultShop: '' };
                 }
@@ -2421,6 +2434,16 @@
                 authorizedShopOptions = shops;
                 shops.forEach((item) => registerKnownShop(item.shop, item.type));
 
+                logAnalyticsDebug('authorized shops response', {
+                    ok: res.ok,
+                    defaultShop: body?.defaultShop || null,
+                    shops: shops.map((item) => ({
+                        shop: item.shop,
+                        type: item.type,
+                        isDefault: item.isDefault,
+                    })),
+                });
+
                 const defaultShop = normalizeShopId(
                     body?.defaultShop ||
                     shops.find((item) => item.isDefault)?.shop ||
@@ -2431,6 +2454,9 @@
                 return { shops, defaultShop };
             } catch (error) {
                 console.warn('Authorized shops API failed:', error);
+                logAnalyticsDebug('authorized shops request failed', {
+                    message: error?.message || String(error || ''),
+                });
                 authorizedShopOptions = [];
                 return { shops: [], defaultShop: '' };
             }
@@ -2596,6 +2622,15 @@
                 // Protect endpoint by looking for backend session first
                 const res = await fetch('/api/session');
                 const data = await res.json();
+                logAnalyticsDebug('session response', {
+                    ok: res.ok,
+                    authenticated: !!data?.authenticated,
+                    sessionShop: data?.user?.shop || null,
+                    resolvedShop: data?.user?.resolvedShop || null,
+                    authorizedAnalyticsShops: Array.isArray(data?.user?.authorizedAnalyticsShops)
+                        ? data.user.authorizedAnalyticsShops.map((item) => item?.shop || null)
+                        : [],
+                });
 
                 if (data.authenticated) {
                     const user = data.user || {};
@@ -2616,10 +2651,25 @@
                     currentShopId = fromUrl || fromStorage || sessionShop || defaultAuthorizedShop;
 
                     if (authorizedShopSet.size && currentShopId && !authorizedShopSet.has(currentShopId)) {
+                        logAnalyticsDebug('selected shop not authorized, falling back', {
+                            fromUrl,
+                            fromStorage,
+                            sessionShop,
+                            currentShopId,
+                            defaultAuthorizedShop,
+                            authorizedShops: authorizedShops.map((item) => item.shop),
+                        });
                         currentShopId = defaultAuthorizedShop || sessionShop || '';
                     }
                     
                     if (!currentShopId) {
+                        logAnalyticsDebug('no currentShopId after protected init', {
+                            fromUrl,
+                            fromStorage,
+                            sessionShop,
+                            defaultAuthorizedShop,
+                            authorizedShops: authorizedShops.map((item) => item.shop),
+                        });
                         updateShopHeader('Select store', 'store');
                         renderShopSwitcherOptions(authorizedShops.length ? authorizedShops : (sessionShop ? [{ shop: sessionShop, type: sessionType }] : []));
                         return;
@@ -2632,7 +2682,14 @@
                     updateShopHeader(currentShopId, inferredType);
                     replaceCurrentShopInUrl(currentShopId);
                     notifyParentShopChanged(currentShopId, inferredType);
-                    console.log('Protected analytics mode, shop:', currentShopId);
+                    logAnalyticsDebug('protected analytics mode resolved', {
+                        fromUrl,
+                        fromStorage,
+                        sessionShop,
+                        defaultAuthorizedShop,
+                        currentShopId,
+                        inferredType,
+                    });
 
                     // Load initial data
                     await fetchAnalytics();
@@ -2653,11 +2710,19 @@
                 updateShopHeader(currentShopId, inferredType);
                 replaceCurrentShopInUrl(currentShopId);
                 notifyParentShopChanged(currentShopId, inferredType);
+                logAnalyticsDebug('public fallback mode resolved', {
+                    currentShopId,
+                    inferredType,
+                });
                 await fetchAnalytics();
                 connectLiveFeed();
                 startWordPressUsersPolling();
                 loadSessionExplorerOverview();
             } else {
+                logAnalyticsDebug('public fallback mode has no shop', {
+                    fromUrl,
+                    fromStorage,
+                });
                 updateShopHeader('Select store', 'store');
                 renderShopSwitcherOptions();
             }
@@ -5004,7 +5069,15 @@
 
         // --- FETCH ANALYTICS ---
         async function fetchAnalytics() {
-            if (!currentShopId) return;
+            if (!currentShopId) {
+                logAnalyticsDebug('fetchAnalytics skipped because currentShopId is empty', {
+                    currentShopId,
+                    urlShop: getShopIdFromUrl(),
+                    storedShop: readStoredShopId(),
+                    authorizedShops: authorizedShopOptions.map((item) => item.shop),
+                });
+                return;
+            }
             if (analyticsFetchInFlight) return;
             analyticsFetchInFlight = true;
 
@@ -5034,6 +5107,10 @@
                 }
 
                 const query = `?${queryParams.toString()}`;
+                logAnalyticsDebug('fetchAnalytics request', {
+                    currentShopId,
+                    query,
+                });
                 const res = await fetch(`/api/analytics/${currentShopId}${query}`);
                 
                 if (!res.ok) throw new Error('Failed to fetch analytics');

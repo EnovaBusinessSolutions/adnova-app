@@ -1333,6 +1333,27 @@ app.get("/api/session", async (req, res) => {
       resolvedShopSource = analyticsAccess.defaultShopSource || 'analytics_access';
     }
 
+    console.log("[Attribution Debug][/api/session]", {
+      userId: String(u._id),
+      email: u.email || null,
+      sessionUserShop: req.user?.shop || null,
+      persistedUserShop: u.shop || null,
+      resolvedShop: resolvedShop || null,
+      resolvedShopSource: resolvedShopSource || null,
+      shopifyConnected: resolvedShopifyConnected,
+      authorizedAnalyticsShopCount: Array.isArray(analyticsAccess?.shops) ? analyticsAccess.shops.length : 0,
+      authorizedAnalyticsShops: Array.isArray(analyticsAccess?.shops)
+        ? analyticsAccess.shops.map((entry) => ({
+            shop: entry.shop,
+            type: entry.type,
+            sources: entry.sources,
+            matchPlatforms: entry.matchPlatforms,
+            isDefault: entry.isDefault,
+          }))
+        : [],
+      resolverDebug: analyticsAccess?.debug || null,
+    });
+
     return res.json({
       authenticated: true,
       user: {

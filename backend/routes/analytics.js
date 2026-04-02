@@ -143,6 +143,23 @@ router.get('/shops', async (req, res) => {
 
   try {
     const access = await listAuthorizedAnalyticsShopsForUser(req.user._id);
+    console.log('[Attribution Debug][/api/analytics/shops]', {
+      userId: String(req.user._id),
+      email: req.user?.email || null,
+      defaultShop: access.defaultShop || null,
+      defaultShopSource: access.defaultShopSource || null,
+      shopCount: Array.isArray(access.shops) ? access.shops.length : 0,
+      shops: Array.isArray(access.shops)
+        ? access.shops.map((entry) => ({
+            shop: entry.shop,
+            type: entry.type,
+            sources: entry.sources,
+            matchPlatforms: entry.matchPlatforms,
+            isDefault: entry.isDefault,
+          }))
+        : [],
+      resolverDebug: access.debug || null,
+    });
     return res.json({
       ok: true,
       defaultShop: access.defaultShop || null,
