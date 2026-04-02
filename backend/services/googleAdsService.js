@@ -79,23 +79,23 @@ async function resolveAccessToken(source) {
     return source;
   }
 
-  // Caso 2: objeto con accessToken todavía válido (no validamos expiración aquí)
+  // Caso 2: objeto con refreshToken → pedir access_token nuevo (preferido)
+  const rt = source.refreshToken || source.refresh_token;
+  if (rt) {
+    oauthClient.setCredentials({ refresh_token: rt });
+    const { token } = await oauthClient.getAccessToken();
+    if (!token) {
+      throw new Error('resolveAccessToken: failed to obtain access token from Google refresh token');
+    }
+    return token;
+  }
+
+  // Caso 3: fallback a accessToken guardado si no hay refreshToken
   if (source.accessToken) {
     return source.accessToken;
   }
 
-  // Caso 3: objeto con refreshToken → pedimos access_token a Google
-  const rt = source.refreshToken || source.refresh_token;
-  if (!rt) {
-    throw new Error('resolveAccessToken: no refreshToken available');
-  }
-
-  oauthClient.setCredentials({ refresh_token: rt });
-  const { token } = await oauthClient.getAccessToken();
-  if (!token) {
-    throw new Error('resolveAccessToken: failed to obtain access token from Google');
-  }
-  return token;
+  throw new Error('resolveAccessToken: no refreshToken or accessToken available');
 }
 
 /* =========================
