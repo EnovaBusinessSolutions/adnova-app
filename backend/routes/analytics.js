@@ -5,6 +5,10 @@ const axios = require('axios');
 const crypto = require('crypto');
 const prisma = require('../utils/prismaClient');
 const { startOfDay, endOfDay, subDays, eachDayOfInterval, format } = require('date-fns');
+const {
+  isAnalyticsShopAuthorizedForUser,
+  listAuthorizedAnalyticsShopsForUser,
+} = require('../services/analyticsAccess');
 const { getCustomerDisplayNames } = require('../services/shopifyService');
 const { hashPII } = require('../utils/encryption');
 
@@ -132,7 +136,31 @@ function writeRouteCache(cacheKey, payload, ttlMs) {
   }
 }
 
-router.use('/:account_id', (req, res, next) => {
+router.get('/shops', async (req, res) => {
+  if (!req.user?._id) {
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
+  }
+
+  try {
+    const access = await listAuthorizedAnalyticsShopsForUser(req.user._id);
+    return res.json({
+      ok: true,
+      defaultShop: access.defaultShop || null,
+      defaultShopSource: access.defaultShopSource || null,
+      shops: Array.isArray(access.shops) ? access.shops : [],
+    });
+  } catch (error) {
+    console.error('[Analytics shops] Failed to resolve authorized shops:', error?.message || error);
+    return res.status(500).json({
+      ok: false,
+      error: 'Failed to resolve authorized shops',
+      shops: [],
+      defaultShop: null,
+    });
+  }
+});
+
+router.use('/:account_id', async (req, res, next) => {
   const accountId = req.params?.account_id;
   
   // Enforce session ownership if accessed via browser session
@@ -152,7 +180,17 @@ router.use('/:account_id', (req, res, next) => {
                       process.env.RENDER_EXTERNAL_URL?.includes('staging') ||
                       req.headers.host?.includes('staging');
 
-    if (userShop !== requestedShop && !isAdmin && !isStaging) {
+    let authorized = userShop === requestedShop;
+
+    if (!authorized && requestedShop && !isAdmin && !isStaging) {
+      try {
+        authorized = await isAnalyticsShopAuthorizedForUser(req.user._id, requestedShop);
+      } catch (error) {
+        console.warn('[Analytics auth] Authorized shop lookup failed:', error?.message || error);
+      }
+    }
+
+    if (!authorized && !isAdmin && !isStaging) {
       console.warn(`[Auth 403] User ${req.user.email} (shop: ${userShop}) attempted to access analytics for ${requestedShop}`);
       return res.status(403).json({
         error: 'Unauthorized: You do not have permission for this account',

@@ -2231,6 +2231,7 @@
         const SHOP_STORAGE_KEY = 'adray_analytics_shop';
         const KNOWN_SHOPS_STORAGE_KEY = 'adray_analytics_known_shops';
         const MAX_KNOWN_SHOPS = 12;
+        let authorizedShopOptions = [];
 
         function formatDateInputValue(date) {
             const year = date.getFullYear();
@@ -2375,12 +2376,16 @@
         }
 
         function getKnownShopOptions(extraItems = []) {
-            const merged = [...extraItems, ...readKnownShops()];
+            const merged = [...extraItems, ...authorizedShopOptions, ...readKnownShops()];
             const byShop = new Map();
+            const allowedShops = authorizedShopOptions.length
+                ? new Set(authorizedShopOptions.map((item) => normalizeShopId(item?.shop)).filter(Boolean))
+                : null;
 
             merged.forEach((item) => {
                 const shop = normalizeShopId(item?.shop);
                 if (!shop || byShop.has(shop)) return;
+                if (allowedShops && !allowedShops.has(shop)) return;
 
                 byShop.set(shop, {
                     shop,
@@ -2390,6 +2395,45 @@
             });
 
             return Array.from(byShop.values());
+        }
+
+        async function fetchAuthorizedShopOptions() {
+            try {
+                const res = await fetch('/api/analytics/shops');
+                const body = await res.json().catch(() => ({}));
+
+                if (!res.ok || body?.ok === false) {
+                    authorizedShopOptions = [];
+                    return { shops: [], defaultShop: '' };
+                }
+
+                const shops = Array.isArray(body?.shops)
+                    ? body.shops
+                        .map((item) => ({
+                            shop: normalizeShopId(item?.shop),
+                            type: mapStoreTypeLabel(item?.type || inferStoreTypeFromShopId(item?.shop)),
+                            isDefault: !!item?.isDefault,
+                            lastSeenAt: String(item?.updatedAt || ''),
+                        }))
+                        .filter((item) => item.shop)
+                    : [];
+
+                authorizedShopOptions = shops;
+                shops.forEach((item) => registerKnownShop(item.shop, item.type));
+
+                const defaultShop = normalizeShopId(
+                    body?.defaultShop ||
+                    shops.find((item) => item.isDefault)?.shop ||
+                    shops[0]?.shop ||
+                    ''
+                );
+
+                return { shops, defaultShop };
+            } catch (error) {
+                console.warn('Authorized shops API failed:', error);
+                authorizedShopOptions = [];
+                return { shops: [], defaultShop: '' };
+            }
         }
 
         function buildAnalyticsUrlForShop(shopName) {
@@ -2463,7 +2507,7 @@
             if (!options.length) {
                 optionsEl.innerHTML = `
                     <div class="rounded-2xl border border-dashed border-[#3B3052] bg-[#171320] px-4 py-5 text-sm text-[#A792C0]">
-                        No stores available yet. Open analytics with a <span class="font-mono text-[#F4ECFF]">?shop=...</span> first.
+                        No authorized stores are available for this session yet.
                     </div>
                 `;
                 return;
@@ -2557,22 +2601,37 @@
                     const user = data.user || {};
                     const sessionShop = normalizeShopId(user.shop);
                     const sessionType = user.shopifyConnected ? 'shopify' : 'woocommerce';
+                    const authorizedPayload = await fetchAuthorizedShopOptions();
+                    const authorizedShops = Array.isArray(authorizedPayload.shops) ? authorizedPayload.shops : [];
+                    const authorizedShopSet = new Set(
+                        authorizedShops.map((item) => normalizeShopId(item.shop)).filter(Boolean)
+                    );
+                    const defaultAuthorizedShop = normalizeShopId(
+                        authorizedPayload.defaultShop ||
+                        authorizedShops.find((item) => item.isDefault)?.shop ||
+                        ''
+                    );
 
                     if (sessionShop) registerKnownShop(sessionShop, sessionType);
-                    currentShopId = fromUrl || fromStorage || sessionShop;
+                    currentShopId = fromUrl || fromStorage || sessionShop || defaultAuthorizedShop;
+
+                    if (authorizedShopSet.size && currentShopId && !authorizedShopSet.has(currentShopId)) {
+                        currentShopId = defaultAuthorizedShop || sessionShop || '';
+                    }
                     
                     if (!currentShopId) {
                         updateShopHeader('Select store', 'store');
-                        renderShopSwitcherOptions(sessionShop ? [{ shop: sessionShop, type: sessionType }] : []);
+                        renderShopSwitcherOptions(authorizedShops.length ? authorizedShops : (sessionShop ? [{ shop: sessionShop, type: sessionType }] : []));
                         return;
                     }
 
-                    const inferredType = currentShopId === sessionShop
-                        ? sessionType
-                        : inferStoreTypeFromShopId(currentShopId);
+                    const selectedShop = authorizedShops.find((item) => item.shop === currentShopId);
+                    const inferredType = selectedShop?.type ||
+                        (currentShopId === sessionShop ? sessionType : inferStoreTypeFromShopId(currentShopId));
                     
                     updateShopHeader(currentShopId, inferredType);
                     replaceCurrentShopInUrl(currentShopId);
+                    notifyParentShopChanged(currentShopId, inferredType);
                     console.log('Protected analytics mode, shop:', currentShopId);
 
                     // Load initial data
@@ -2593,6 +2652,7 @@
                 const inferredType = currentShopId.includes('.myshopify.com') ? 'shopify' : 'custom';
                 updateShopHeader(currentShopId, inferredType);
                 replaceCurrentShopInUrl(currentShopId);
+                notifyParentShopChanged(currentShopId, inferredType);
                 await fetchAnalytics();
                 connectLiveFeed();
                 startWordPressUsersPolling();

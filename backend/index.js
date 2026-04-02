@@ -28,6 +28,7 @@ const compression = require("compression");
 require("./auth"); // inicializa passport (estrategia Google + serialize/deserialize)
 
 const User = require("./models/User");
+const { listAuthorizedAnalyticsShopsForUser } = require("./services/analyticsAccess");
 const {
   sendVerifyEmail,
   sendWelcomeEmail,
@@ -1299,6 +1300,11 @@ app.get("/api/session", async (req, res) => {
 
     if (!u) return res.status(401).json({ authenticated: false });
 
+    const analyticsAccess = await listAuthorizedAnalyticsShopsForUser(u._id).catch((error) => {
+      console.warn("/api/session analytics access lookup failed:", error?.message || error);
+      return { defaultShop: null, defaultShopSource: null, shops: [] };
+    });
+
     let resolvedShop = String(u.shop || req.user?.shop || '').trim();
     let resolvedShopSource = resolvedShop ? 'user' : null;
     let resolvedShopifyConnected = !!u.shopifyConnected;
@@ -1322,6 +1328,11 @@ app.get("/api/session", async (req, res) => {
       }
     }
 
+    if (!resolvedShop && analyticsAccess?.defaultShop) {
+      resolvedShop = String(analyticsAccess.defaultShop).trim();
+      resolvedShopSource = analyticsAccess.defaultShopSource || 'analytics_access';
+    }
+
     return res.json({
       authenticated: true,
       user: {
@@ -1343,6 +1354,7 @@ app.get("/api/session", async (req, res) => {
         createdAt: u.createdAt || null,
         plan: u.plan || "gratis",
         subscription: u.subscription || null,
+        authorizedAnalyticsShops: Array.isArray(analyticsAccess?.shops) ? analyticsAccess.shops : [],
       },
 
       intercom: buildIntercomPayload(u),
