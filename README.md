@@ -900,7 +900,7 @@ Current dashboard status from live review:
 - Manual Woo validation also confirmed Home -> Tienda attribution persistence and operator-readable timezone in recent purchases.
 
 - Layer 1 analytics now has an embedded entry point at `/dashboard/attribution`, reusing the existing `/analytics` experience inside the main dashboard shell instead of leaving it as a separate dashboard.
-- Desktop and mobile dashboard navigation now expose that embedded attribution view with a lightweight wrapper, while store switching happens inside `backend/views/adray-analytics.html` from the top-right store chip.
+- Desktop and mobile dashboard navigation now expose that embedded attribution view as a full-bleed iframe inside the main shell, while store switching happens inside `backend/views/adray-analytics.html` from the top-right store chip.
 - The current store selector is frontend-only on purpose: it shows the session shop plus shops already seen in the same browser via URL or local storage, not a backend catalog of every pixel-enabled store yet.
 
 ### Current development focus
