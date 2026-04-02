@@ -1385,10 +1385,29 @@
                     </div>
                 </div>
                 <div class="flex items-center space-x-4">
-                    <div class="flex items-center gap-2">
-                        <div id="shop-name" class="text-sm text-gray-500 font-medium">Loading store...</div>
-                        <span id="shop-type-badge" class="journey-chip text-[10px] px-2 py-0.5">Store</span>
-                        
+                    <div id="shop-switcher" class="relative">
+                        <button
+                            id="shop-switcher-button"
+                            type="button"
+                            class="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-2 text-left shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50/40"
+                            aria-haspopup="true"
+                            aria-expanded="false"
+                        >
+                            <span id="shop-name" class="text-sm text-gray-500 font-medium">Loading store...</span>
+                            <span id="shop-type-badge" class="journey-chip text-[10px] px-2 py-0.5">Store</span>
+                            <i class="fa-solid fa-chevron-down text-[10px] text-gray-400"></i>
+                        </button>
+
+                        <div
+                            id="shop-switcher-menu"
+                            class="absolute right-0 top-full z-50 mt-2 hidden w-80 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl"
+                        >
+                            <div class="border-b border-gray-100 px-4 py-3">
+                                <p class="text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-400">Store selector</p>
+                                <p class="mt-1 text-xs text-gray-500">Shows stores already known in this browser or session.</p>
+                            </div>
+                            <div id="shop-switcher-options" class="max-h-72 overflow-y-auto p-2"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -2150,6 +2169,9 @@
             byCustomerId: new Map(),
         };
         let journeyProfileSearchDebounceTimer = null;
+        const SHOP_STORAGE_KEY = 'adray_analytics_shop';
+        const KNOWN_SHOPS_STORAGE_KEY = 'adray_analytics_known_shops';
+        const MAX_KNOWN_SHOPS = 12;
 
         function formatDateInputValue(date) {
             const year = date.getFullYear();
@@ -2223,29 +2245,249 @@
             ).trim();
         }
 
+        function normalizeShopId(value) {
+            return String(value || '').trim();
+        }
+
+        function readLocalStorageValue(key) {
+            try {
+                return localStorage.getItem(key) || '';
+            } catch (error) {
+                return '';
+            }
+        }
+
+        function writeLocalStorageValue(key, value) {
+            try {
+                localStorage.setItem(key, value);
+            } catch (error) {
+                // noop
+            }
+        }
+
+        function readStoredShopId() {
+            return normalizeShopId(readLocalStorageValue(SHOP_STORAGE_KEY));
+        }
+
+        function persistCurrentShopId(shopName) {
+            const normalized = normalizeShopId(shopName);
+            if (!normalized) return;
+            writeLocalStorageValue(SHOP_STORAGE_KEY, normalized);
+        }
+
+        function readKnownShops() {
+            try {
+                const raw = readLocalStorageValue(KNOWN_SHOPS_STORAGE_KEY);
+                const parsed = raw ? JSON.parse(raw) : [];
+                if (!Array.isArray(parsed)) return [];
+
+                return parsed
+                    .map((item) => ({
+                        shop: normalizeShopId(item?.shop),
+                        type: mapStoreTypeLabel(item?.type),
+                        lastSeenAt: String(item?.lastSeenAt || ''),
+                    }))
+                    .filter((item) => item.shop);
+            } catch (error) {
+                return [];
+            }
+        }
+
+        function writeKnownShops(items) {
+            try {
+                localStorage.setItem(KNOWN_SHOPS_STORAGE_KEY, JSON.stringify(items.slice(0, MAX_KNOWN_SHOPS)));
+            } catch (error) {
+                // noop
+            }
+        }
+
+        function registerKnownShop(shopName, rawType) {
+            const normalized = normalizeShopId(shopName);
+            if (!normalized) return;
+
+            const nextEntry = {
+                shop: normalized,
+                type: mapStoreTypeLabel(rawType || inferStoreTypeFromShopId(normalized)),
+                lastSeenAt: new Date().toISOString(),
+            };
+
+            const deduped = readKnownShops().filter((item) => item.shop !== normalized);
+            writeKnownShops([nextEntry, ...deduped]);
+        }
+
+        function getKnownShopOptions(extraItems = []) {
+            const merged = [...extraItems, ...readKnownShops()];
+            const byShop = new Map();
+
+            merged.forEach((item) => {
+                const shop = normalizeShopId(item?.shop);
+                if (!shop || byShop.has(shop)) return;
+
+                byShop.set(shop, {
+                    shop,
+                    type: mapStoreTypeLabel(item?.type || inferStoreTypeFromShopId(shop)),
+                    lastSeenAt: String(item?.lastSeenAt || ''),
+                });
+            });
+
+            return Array.from(byShop.values());
+        }
+
+        function buildAnalyticsUrlForShop(shopName) {
+            const url = new URL(window.location.href);
+            const normalized = normalizeShopId(shopName);
+            if (normalized) url.searchParams.set('shop', normalized);
+            else url.searchParams.delete('shop');
+            url.searchParams.delete('shopId');
+            url.searchParams.delete('store');
+            return url.toString();
+        }
+
+        function replaceCurrentShopInUrl(shopName) {
+            const nextUrl = buildAnalyticsUrlForShop(shopName);
+            window.history.replaceState({}, '', nextUrl);
+        }
+
+        function closeShopSwitcher() {
+            const menu = document.getElementById('shop-switcher-menu');
+            const button = document.getElementById('shop-switcher-button');
+            if (menu) menu.classList.add('hidden');
+            if (button) button.setAttribute('aria-expanded', 'false');
+        }
+
+        function toggleShopSwitcher(forceOpen) {
+            const menu = document.getElementById('shop-switcher-menu');
+            const button = document.getElementById('shop-switcher-button');
+            if (!menu || !button) return;
+
+            const shouldOpen = typeof forceOpen === 'boolean' ? forceOpen : menu.classList.contains('hidden');
+            menu.classList.toggle('hidden', !shouldOpen);
+            button.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+        }
+
+        function notifyParentShopChanged(shopName, rawType) {
+            try {
+                if (window.parent && window.parent !== window) {
+                    window.parent.postMessage(
+                        {
+                            type: 'adray:analytics:shop-changed',
+                            shop: normalizeShopId(shopName),
+                            storeType: mapStoreTypeLabel(rawType || inferStoreTypeFromShopId(shopName)),
+                        },
+                        window.location.origin
+                    );
+                }
+            } catch (error) {
+                console.warn('Unable to notify parent about shop change:', error);
+            }
+        }
+
+        function navigateToSelectedShop(shopName, rawType) {
+            const normalized = normalizeShopId(shopName);
+            if (!normalized || normalized === currentShopId) {
+                closeShopSwitcher();
+                return;
+            }
+
+            registerKnownShop(normalized, rawType);
+            persistCurrentShopId(normalized);
+            notifyParentShopChanged(normalized, rawType);
+            closeShopSwitcher();
+            window.location.assign(buildAnalyticsUrlForShop(normalized));
+        }
+
+        function renderShopSwitcherOptions(extraItems = []) {
+            const optionsEl = document.getElementById('shop-switcher-options');
+            if (!optionsEl) return;
+
+            const options = getKnownShopOptions(extraItems);
+            if (!options.length) {
+                optionsEl.innerHTML = `
+                    <div class="rounded-2xl border border-dashed border-gray-200 px-4 py-5 text-sm text-gray-500">
+                        No stores available yet. Open analytics with a <span class="font-mono text-gray-700">?shop=...</span> first.
+                    </div>
+                `;
+                return;
+            }
+
+            optionsEl.innerHTML = options.map((item) => {
+                const isActive = item.shop === currentShopId;
+                return `
+                    <button
+                        type="button"
+                        class="flex w-full items-center justify-between rounded-2xl border px-3 py-3 text-left transition ${isActive ? 'border-indigo-200 bg-indigo-50' : 'border-transparent hover:border-gray-200 hover:bg-gray-50'}"
+                        data-shop-option="${escapeHtmlAttr(item.shop)}"
+                        data-shop-type="${escapeHtmlAttr(item.type)}"
+                    >
+                        <span class="min-w-0 pr-3">
+                            <span class="block truncate text-sm font-semibold text-gray-900">${escapeHtml(item.shop)}</span>
+                            <span class="mt-1 inline-flex items-center gap-2 text-xs text-gray-500">
+                                <span class="journey-chip text-[10px] px-2 py-0.5">${escapeHtml(item.type)}</span>
+                                ${isActive ? '<span class="font-medium text-indigo-600">Active</span>' : '<span>Open analytics for this store</span>'}
+                            </span>
+                        </span>
+                        <i class="fa-solid fa-arrow-up-right-from-square text-xs ${isActive ? 'text-indigo-500' : 'text-gray-300'}"></i>
+                    </button>
+                `;
+            }).join('');
+
+            optionsEl.querySelectorAll('[data-shop-option]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    navigateToSelectedShop(
+                        button.getAttribute('data-shop-option') || '',
+                        button.getAttribute('data-shop-type') || ''
+                    );
+                });
+            });
+        }
+
+        function initializeShopSwitcher() {
+            const root = document.getElementById('shop-switcher');
+            const button = document.getElementById('shop-switcher-button');
+            if (!root || !button) return;
+
+            button.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                toggleShopSwitcher();
+            });
+
+            document.addEventListener('click', (event) => {
+                if (!root.contains(event.target)) closeShopSwitcher();
+            });
+
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape') closeShopSwitcher();
+            });
+
+            renderShopSwitcherOptions();
+        }
+
         function resolvePublicShopId() {
             const fromUrl = getShopIdFromUrl();
             if (fromUrl) {
-                localStorage.setItem('adray_analytics_shop', fromUrl);
+                persistCurrentShopId(fromUrl);
                 return fromUrl;
             }
 
-            const fromStorage = (localStorage.getItem('adray_analytics_shop') || '').trim();
+            const fromStorage = readStoredShopId();
             if (fromStorage) return fromStorage;
 
-            const typed = (window.prompt('Ingresa el shop_id para ver el dashboard de pixel:') || '').trim();
-            if (!typed) return null;
-            localStorage.setItem('adray_analytics_shop', typed);
-            return typed;
+            return null;
         }
 
         // --- AUTH & INIT ---
         async function init() {
             initializeDateControls();
             initializeMetricCarousel();
+            initializeShopSwitcher();
 
             // Check URL purely for overrides (for admins or explicit intent)
             const fromUrl = getShopIdFromUrl();
+            const fromStorage = readStoredShopId();
+
+            if (fromUrl) registerKnownShop(fromUrl, inferStoreTypeFromShopId(fromUrl));
+            if (fromStorage) registerKnownShop(fromStorage, inferStoreTypeFromShopId(fromStorage));
 
             try {
                 // Protect endpoint by looking for backend session first
@@ -2253,48 +2495,52 @@
                 const data = await res.json();
 
                 if (data.authenticated) {
-                    const user = data.user;
-                    currentShopId = fromUrl || user.shop;
-                    
-                    // Si el usuario recién se registró y no tiene tienda guardada (ej. probando)
-                    if (!currentShopId) {
-                        currentShopId = (window.prompt('No detectamos tienda en tu cuenta. Ingresa el shop_id (ej. mi-tienda.myshopify.com) para visualizarla:') || '').trim();
-                    }
+                    const user = data.user || {};
+                    const sessionShop = normalizeShopId(user.shop);
+                    const sessionType = user.shopifyConnected ? 'shopify' : 'woocommerce';
 
+                    if (sessionShop) registerKnownShop(sessionShop, sessionType);
+                    currentShopId = fromUrl || fromStorage || sessionShop;
+                    
                     if (!currentShopId) {
-                        alert('Se requiere el nombre/ID de una tienda para cargar los datos.');
+                        updateShopHeader('Select store', 'store');
+                        renderShopSwitcherOptions(sessionShop ? [{ shop: sessionShop, type: sessionType }] : []);
                         return;
                     }
 
-                    const inferredType = user.shopifyConnected ? 'shopify' : 'woocommerce';
+                    const inferredType = currentShopId === sessionShop
+                        ? sessionType
+                        : inferStoreTypeFromShopId(currentShopId);
                     
                     updateShopHeader(currentShopId, inferredType);
+                    replaceCurrentShopInUrl(currentShopId);
                     console.log('Protected analytics mode, shop:', currentShopId);
 
                     // Load initial data
                     await fetchAnalytics();
                     connectLiveFeed();
                     startWordPressUsersPolling();
+                    loadSessionExplorerOverview();
                     return;
                 }
             } catch (error) {
                 console.warn('Session API failed:', error);
             }
 
-            // Fallback: public prompt
-            currentShopId = fromUrl;
-            if (!currentShopId) {
-                currentShopId = (window.prompt('Ingresa el shop_id (ej. mi-tienda.myshopify.com) para modo manual:') || '').trim();
-            }
+            // Fallback: browser-known shop only
+            currentShopId = resolvePublicShopId();
 
             if (currentShopId) {
                 const inferredType = currentShopId.includes('.myshopify.com') ? 'shopify' : 'custom';
                 updateShopHeader(currentShopId, inferredType);
+                replaceCurrentShopInUrl(currentShopId);
                 await fetchAnalytics();
                 connectLiveFeed();
                 startWordPressUsersPolling();
+                loadSessionExplorerOverview();
             } else {
-                alert('No se indico ninguna tienda. Sesion fallo');
+                updateShopHeader('Select store', 'store');
+                renderShopSwitcherOptions();
             }
         }
 
@@ -2441,10 +2687,21 @@
         function updateShopHeader(shopName, rawType) {
             const shopEl = document.getElementById('shop-name');
             const typeEl = document.getElementById('shop-type-badge');
-            if (shopEl) shopEl.textContent = shopName || 'Unknown store';
+            if (shopEl) shopEl.textContent = shopName || 'Select store';
 
             if (rawType) currentStoreTypeLabel = resolveEffectiveStoreType(rawType, shopName || currentShopId || '');
             if (typeEl) typeEl.textContent = currentStoreTypeLabel;
+
+            if (shopName && shopName !== 'Select store') {
+                registerKnownShop(shopName, currentStoreTypeLabel);
+                persistCurrentShopId(shopName);
+            }
+
+            renderShopSwitcherOptions(
+                shopName && shopName !== 'Select store'
+                    ? [{ shop: shopName, type: currentStoreTypeLabel }]
+                    : []
+            );
         }
 
         function humanReadablePersonName(rawName, fallback = 'Cliente') {
