@@ -6,6 +6,7 @@ let User = null;
 let ShopConnections = null;
 let MetaAccount = null;
 let GoogleAccount = null;
+let McpData = null;
 
 try {
   User = require('../models/User');
@@ -21,6 +22,10 @@ try {
 
 try {
   GoogleAccount = require('../models/GoogleAccount');
+} catch (_) {}
+
+try {
+  McpData = require('../models/McpData');
 } catch (_) {}
 
 function uniqueStrings(values = []) {
@@ -111,6 +116,7 @@ function bumpShopEntry(entry, input = {}) {
     else if (input.source === 'user') entry.score += 1000;
     else if (input.source === 'platform_connection') entry.score += 250;
     else if (input.source === 'platform_token_match') entry.score += 700;
+    else if (input.source === 'mcp_root_source_name') entry.score += 900;
   }
 
   if (input.platformMatch) {
@@ -246,6 +252,96 @@ async function findPlatformMatchedAccounts(metaAccountIds, googleAccountIds, met
   }
 }
 
+async function findMcpRootMatchedAccounts(userId, metaAccountIds, googleAccountIds) {
+  if (!McpData || !userId) return { matches: [], rootSources: null };
+
+  try {
+    const rootDoc = await McpData.findOne({ userId, kind: 'root' })
+      .select('sources')
+      .lean();
+
+    const rootSources = rootDoc?.sources || null;
+    if (!rootSources || typeof rootSources !== 'object') {
+      return { matches: [], rootSources: null };
+    }
+
+    const sourceCandidates = [];
+
+    const metaRootAccountId = normalizeMetaAccountId(rootSources?.metaAds?.accountId || '');
+    if (metaRootAccountId && metaAccountIds.includes(metaRootAccountId)) {
+      const normalizedName = normalizeShopDomain(rootSources?.metaAds?.name || '');
+      if (normalizedName) {
+        sourceCandidates.push({
+          shopLike: normalizedName,
+          platform: 'META',
+          sourceName: 'metaAds',
+          sourceAccountId: metaRootAccountId,
+        });
+      }
+    }
+
+    const googleRootCustomerId = normalizeGoogleCustomerId(rootSources?.googleAds?.customerId || '');
+    if (googleRootCustomerId && googleAccountIds.includes(googleRootCustomerId)) {
+      const normalizedName = normalizeShopDomain(rootSources?.googleAds?.name || '');
+      if (normalizedName) {
+        sourceCandidates.push({
+          shopLike: normalizedName,
+          platform: 'GOOGLE',
+          sourceName: 'googleAds',
+          sourceAccountId: googleRootCustomerId,
+        });
+      }
+    }
+
+    if (!sourceCandidates.length) {
+      return { matches: [], rootSources };
+    }
+
+    const lookupValues = uniqueStrings(sourceCandidates.map((entry) => entry.shopLike));
+    const accounts = await prisma.account.findMany({
+      where: {
+        OR: [
+          { accountId: { in: lookupValues } },
+          { domain: { in: lookupValues } },
+        ],
+      },
+      select: {
+        accountId: true,
+        domain: true,
+        platform: true,
+        updatedAt: true,
+      },
+    });
+
+    const accountByValue = new Map();
+    accounts.forEach((account) => {
+      const accountId = normalizeShopDomain(account.accountId || '');
+      const domain = normalizeShopDomain(account.domain || '');
+      if (accountId) accountByValue.set(accountId, account);
+      if (domain) accountByValue.set(domain, account);
+    });
+
+    const matches = sourceCandidates
+      .map((candidate) => {
+        const account = accountByValue.get(candidate.shopLike);
+        if (!account) return null;
+        return {
+          account,
+          platform: candidate.platform,
+          sourceName: candidate.sourceName,
+          sourceAccountId: candidate.sourceAccountId,
+          matchReason: 'mcp_root_source_name',
+        };
+      })
+      .filter(Boolean);
+
+    return { matches, rootSources };
+  } catch (error) {
+    console.warn('[analyticsAccess] mcp root shop lookup failed:', error?.message || error);
+    return { matches: [], rootSources: null };
+  }
+}
+
 async function listAuthorizedAnalyticsShopsForUser(userId) {
   if (!userId) {
     return {
@@ -288,6 +384,8 @@ async function listAuthorizedAnalyticsShopsForUser(userId) {
   const metaTokens = collectMetaTokens(metaDoc);
   const googleTokens = collectGoogleTokens(googleDoc);
   const platformMatches = await findPlatformMatchedAccounts(metaAccountIds, googleAccountIds, metaTokens, googleTokens);
+  const mcpRootMatchResult = await findMcpRootMatchedAccounts(userId, metaAccountIds, googleAccountIds);
+  const mcpRootMatches = Array.isArray(mcpRootMatchResult?.matches) ? mcpRootMatchResult.matches : [];
 
   platformMatches.forEach((row) => {
     const platformName = String(row?.platform || '').trim().toUpperCase();
@@ -321,6 +419,16 @@ async function listAuthorizedAnalyticsShopsForUser(userId) {
     });
 
     row.__matchReason = matchReason;
+  });
+
+  mcpRootMatches.forEach((row) => {
+    addShopCandidate(candidates, {
+      shop: row?.account?.accountId || row?.account?.domain || '',
+      type: row?.account?.platform || '',
+      source: 'mcp_root_source_name',
+      platformMatch: row?.platform || '',
+      updatedAt: row?.account?.updatedAt || null,
+    });
   });
 
   const shops = Array.from(candidates.values())
@@ -373,6 +481,17 @@ async function listAuthorizedAnalyticsShopsForUser(userId) {
         status: String(row?.status || '').trim() || null,
         matchReason: row?.__matchReason || 'unknown',
         updatedAt: row?.updatedAt ? new Date(row.updatedAt).toISOString() : null,
+      })),
+      mcpRootSources: mcpRootMatchResult?.rootSources || null,
+      mcpRootMatches: mcpRootMatches.map((row) => ({
+        accountId: normalizeShopDomain(row?.account?.accountId || '') || null,
+        domain: normalizeShopDomain(row?.account?.domain || '') || null,
+        accountPlatform: String(row?.account?.platform || '').trim() || null,
+        platform: String(row?.platform || '').trim() || null,
+        sourceName: String(row?.sourceName || '').trim() || null,
+        sourceAccountId: String(row?.sourceAccountId || '').trim() || null,
+        matchReason: row?.matchReason || 'unknown',
+        updatedAt: row?.account?.updatedAt ? new Date(row.account.updatedAt).toISOString() : null,
       })),
       resolvedShops: shops.map(({ _score, ...entry }) => entry),
     },
