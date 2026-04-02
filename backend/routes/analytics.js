@@ -598,6 +598,13 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
   const accountId = selectedAccountId || defaultAccountId || listAccountId;
   if (!accountId) return null;
 
+  const docAccounts = adAccounts.map((entry) => ({
+    accountId: normalizeMetaAccountId(entry?.id || entry?.account_id || null),
+    name: entry?.name || entry?.account_name || null,
+    status: entry?.account_status ?? entry?.configured_status ?? null,
+    currency: entry?.currency || entry?.account_currency || null,
+  })).filter((entry) => entry.accountId);
+
   const since = formatYmd(startDate);
   const until = formatYmd(endDate);
   const fbVersion = process.env.FACEBOOK_API_VERSION || 'v23.0';
@@ -617,10 +624,47 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
   console.log('[PaidMedia Direct] meta request context:', {
     userId: String(userId),
     accountId,
+    selectedAccountId,
+    defaultAccountId,
+    listAccountId,
     since,
     until,
     hasAppSecretProof: Boolean(appSecretProof),
+    docAccounts,
   });
+
+  let accessibleAccounts = [];
+  try {
+    const meAccountsRes = await axios.get(`${graphBase}/me/adaccounts`, {
+      params: {
+        access_token: accessToken,
+        ...(appSecretProof ? { appsecret_proof: appSecretProof } : {}),
+        fields: 'account_id,name,account_status,currency,timezone_name,amount_spent',
+        limit: 100,
+      },
+    });
+    accessibleAccounts = (Array.isArray(meAccountsRes?.data?.data) ? meAccountsRes.data.data : []).map((entry) => ({
+      accountId: normalizeMetaAccountId(entry?.account_id || null),
+      name: entry?.name || null,
+      status: entry?.account_status ?? null,
+      currency: entry?.currency || null,
+      timezone: entry?.timezone_name || null,
+      amountSpentLifetime: toFiniteNumber(entry?.amount_spent, 0),
+    })).filter((entry) => entry.accountId);
+
+    console.log('[PaidMedia Direct] meta accessible accounts:', accessibleAccounts);
+
+    const selectedAccessible = accessibleAccounts.find((entry) => entry.accountId === accountId);
+    if (!selectedAccessible) {
+      console.warn('[PaidMedia Direct] Selected account is not present in /me/adaccounts list', { accountId });
+    }
+  } catch (meAccountsErr) {
+    console.warn('[PaidMedia Direct] Could not fetch /me/adaccounts for diagnostics:', {
+      status: meAccountsErr?.response?.status || null,
+      message: meAccountsErr?.message || String(meAccountsErr),
+      detail: meAccountsErr?.response?.data || null,
+    });
+  }
 
   let accountInsightsRes = null;
   try {
@@ -629,7 +673,7 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
         ...paramsBase,
         level: 'account',
         limit: 1,
-        fields: 'spend,clicks,impressions,actions,action_values,purchase_roas',
+        fields: 'date_start,date_stop,spend,clicks,impressions,actions,action_values,purchase_roas',
       },
     });
   } catch (error) {
@@ -643,6 +687,20 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
 
   const accountRows = Array.isArray(accountInsightsRes?.data?.data) ? accountInsightsRes.data.data : [];
   const accountRow = accountRows[0] || null;
+  console.log('[PaidMedia Direct] Meta account insights rows:', {
+    accountId,
+    since,
+    until,
+    rows: accountRows.length,
+    firstRow: accountRow ? {
+      date_start: accountRow?.date_start || null,
+      date_stop: accountRow?.date_stop || null,
+      spend: accountRow?.spend || null,
+      clicks: accountRow?.clicks || null,
+      impressions: accountRow?.impressions || null,
+    } : null,
+  });
+
   let spend = toFiniteNumber(accountRow?.spend, 0);
   let revenue = toFiniteNumber(
     pickMetaValueByPriority(accountRow?.action_values || [], [
@@ -687,6 +745,18 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
     });
 
     campaigns = mapMetaCampaignRows(Array.isArray(campaignInsightsRes?.data?.data) ? campaignInsightsRes.data.data : []);
+    console.log('[PaidMedia Direct] Meta campaign insights rows:', {
+      accountId,
+      since,
+      until,
+      rows: campaigns.length,
+      top: campaigns.slice(0, 3).map((campaign) => ({
+        id: campaign?.id || null,
+        name: campaign?.name || null,
+        spend: campaign?.spend || 0,
+        revenue: campaign?.revenue || 0,
+      })),
+    });
   } catch (campaignErr) {
     console.warn('[PaidMedia Direct] Meta campaign fetch failed:', {
       status: campaignErr?.response?.status || null,
@@ -723,10 +793,23 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
             ...fallbackParamsBase,
             level: 'account',
             limit: 1,
-            fields: 'spend,clicks,impressions,actions,action_values,purchase_roas',
+            fields: 'date_start,date_stop,spend,clicks,impressions,actions,action_values,purchase_roas',
           },
         });
         const fallbackAccountRow = Array.isArray(fallbackAccountRes?.data?.data) ? fallbackAccountRes.data.data[0] : null;
+        console.log('[PaidMedia Direct] Meta fallback account row:', {
+          accountId,
+          fallbackSince,
+          until,
+          row: fallbackAccountRow ? {
+            date_start: fallbackAccountRow?.date_start || null,
+            date_stop: fallbackAccountRow?.date_stop || null,
+            spend: fallbackAccountRow?.spend || null,
+            clicks: fallbackAccountRow?.clicks || null,
+            impressions: fallbackAccountRow?.impressions || null,
+          } : null,
+        });
+
         const fallbackSpend = toFiniteNumber(fallbackAccountRow?.spend, 0);
         const fallbackRevenue = toFiniteNumber(
           pickMetaValueByPriority(fallbackAccountRow?.action_values || [], [
@@ -747,6 +830,18 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
           },
         });
         const fallbackCampaigns = mapMetaCampaignRows(Array.isArray(fallbackCampaignRes?.data?.data) ? fallbackCampaignRes.data.data : []);
+        console.log('[PaidMedia Direct] Meta fallback campaign rows:', {
+          accountId,
+          fallbackSince,
+          until,
+          rows: fallbackCampaigns.length,
+          top: fallbackCampaigns.slice(0, 3).map((campaign) => ({
+            id: campaign?.id || null,
+            name: campaign?.name || null,
+            spend: campaign?.spend || 0,
+            revenue: campaign?.revenue || 0,
+          })),
+        });
 
         let resolvedFallbackSpend = fallbackSpend;
         let resolvedFallbackRevenue = fallbackRevenue;
@@ -784,6 +879,15 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
   }
 
   const roas = spend > 0 ? Number((revenue / spend).toFixed(2)) : null;
+  console.log('[PaidMedia Direct] Meta resolved payload:', {
+    accountId,
+    spend,
+    revenue,
+    roas,
+    campaigns: campaigns.length,
+    range: { since: effectiveSince, until: effectiveUntil, fallbackUsed: rangeFallbackUsed },
+  });
+
   return {
     provider: 'meta',
     accountId,
