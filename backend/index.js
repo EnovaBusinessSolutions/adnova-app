@@ -114,6 +114,7 @@ app.use("/api/cron", require("./routes/cronEmails"));
 
 const PORT = process.env.PORT || 3000;
 const APP_URL = (process.env.APP_URL || "https://adray.ai").replace(/\/$/, "");
+const LANDING_PUBLIC = path.join(__dirname, "../public/landing");
 
 /* =========================
  * Seguridad y performance
@@ -766,8 +767,11 @@ app.get("/", (req, res) => {
       ? res.redirect("/dashboard")
       : res.redirect("/onboarding");
   }
-  return res.sendFile(path.join(__dirname, "../public/landing/index.html"));
+  return res.sendFile(path.join(LANDING_PUBLIC, "index.html"));
 });
+
+// Compat: la landing antigua (saas-landing) exponía /start
+app.get("/start", (_req, res) => res.redirect(302, "/"));
 
 app.get("/login", (_req, res) => {
   res.sendFile(path.join(__dirname, "../public/login-v2/index.html"));
@@ -1355,6 +1359,12 @@ app.get('/adray-pixel.js', (req, res) => {
 });
 
 // Estáticos (públicos)
+// Landing Next (export en public/landing: /_next, rutas, etc.)
+app.use(
+  express.static(LANDING_PUBLIC, {
+    maxAge: process.env.NODE_ENV === "production" ? "1d" : 0,
+  })
+);
 app.use("/assets", express.static(path.join(__dirname, "../public/landing/assets")));
 app.use("/assets", express.static(path.join(__dirname, "../public/support/assets")));
 app.use("/assets", express.static(path.join(__dirname, "../public/plans/assets")));
