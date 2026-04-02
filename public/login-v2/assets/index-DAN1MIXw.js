@@ -28,13 +28,16 @@
         <div class="login-card-aurora" aria-hidden="true"></div>
 
         <div class="login-topbar login-topbar--minimal">
-          <div class="login-chip">
-            <span class="login-chip-dot"></span>
-            AI-ready access
+          <div class="login-brand-icon-wrap" aria-hidden="true">
+            <img
+              src="/assets/adray-icon.png"
+              alt=""
+              class="login-brand-icon"
+            />
           </div>
         </div>
 
-        <h1 class="login-heading">Sign in</h1>
+        <h1 class="login-heading">Login to your account</h1>
 
         <form id="login-form" novalidate>
           <div class="input-group">
