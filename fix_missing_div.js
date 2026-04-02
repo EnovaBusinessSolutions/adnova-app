@@ -1,1 +1,0 @@
-const fs = require('fs'); let html = fs.readFileSync('backend/views/adray-analytics.html', 'utf8'); html = html.replace(/<\/div>\r?\n\r?\n(<div class="dashboard-support-grid grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8 mb-8">)/, '</div>\n</div>\n\n'); fs.writeFileSync('backend/views/adray-analytics.html', html);
