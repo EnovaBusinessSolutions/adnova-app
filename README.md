@@ -771,6 +771,69 @@ npm i
 npm run dev
 ```
 
+### Dashboard deploy workflow (`dashboard-src` submodule)
+
+`dashboard-src` is a Git submodule. Dashboard UI changes are not deployed only by pushing the root repo; the submodule commit must exist in its own remote first, and then the root repo must point to that commit.
+
+Current serving behavior:
+
+- Backend serves `dashboard-src/dist` when it exists.
+- If `dashboard-src/dist` does not exist, backend falls back to `public/dashboard`.
+- `dashboard-src/dist` is ignored by Git in the submodule, so it should not be committed.
+- Current `render.yaml` does not run `npm run build` or `npm run build:dashboard` during the web build, so automatic staging deploys only reflect dashboard UI changes if Render is also building the dashboard assets.
+
+Rules:
+
+- Do not commit `.env`.
+- Do not commit `dashboard-src/dist`.
+- Commit and push the submodule first.
+- Commit and push the root repo second.
+
+Exact command flow for dashboard changes:
+
+```sh
+cd dashboard-src
+git status
+git branch --show-current
+```
+
+If `git branch --show-current` prints nothing, the submodule is in detached HEAD. Create a real branch first:
+
+```sh
+git switch -c my-dashboard-branch
+```
+
+Then commit and push the dashboard changes:
+
+```sh
+git add src/App.tsx src/components/Sidebar.tsx src/components/MobileBottomNav.tsx src/pages/AttributionEmbed.tsx
+git commit -m "Add attribution embed view"
+git push -u origin my-dashboard-branch
+```
+
+Then return to the root repo and push the submodule pointer plus any root files such as `README.md`:
+
+```sh
+cd ..
+git add dashboard-src README.md
+git commit -m "Embed Layer 1 dashboard"
+git push origin german/dev
+```
+
+Recommended local smoke test before pushing:
+
+```sh
+npm --prefix dashboard-src ci
+npm --prefix dashboard-src run build
+npm start
+```
+
+Then open:
+
+```text
+http://localhost:3000/dashboard/attribution
+```
+
 ## Immediate Engineering Actions
 
 1. Resolve `/collect` `500` first.
