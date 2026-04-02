@@ -598,6 +598,7 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
   );
 
   let currency = null;
+  let accountName = null;
   try {
     const accountInfoRes = await axios.get(`${graphBase}/act_${accountId}`, {
       params: {
@@ -606,6 +607,7 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
       },
     });
     currency = accountInfoRes?.data?.currency || null;
+    accountName = accountInfoRes?.data?.name || null;
   } catch (_) {}
 
   let campaigns = [];
@@ -647,6 +649,7 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
   return {
     provider: 'meta',
     accountId,
+    accountName,
     snapshotId: `direct_meta_${Date.now()}`,
     spend,
     revenue,
@@ -679,6 +682,8 @@ async function fetchGooglePaidMediaDirect({ userId, startDate, endDate }) {
   const listCustomerId = normalizeGoogleCustomerId(customerList?.[0]?.id || null);
   const customerId = selectedCustomerId || defaultCustomerId || listCustomerId;
   if (!customerId) return null;
+  const connectedCustomer = customerList.find((entry) => normalizeGoogleCustomerId(entry?.id || '') === customerId) || null;
+  const customerName = connectedCustomer?.name || connectedCustomer?.descriptiveName || connectedCustomer?.descriptive_name || null;
 
   const start = startDate instanceof Date ? startDate : new Date(startDate || Date.now());
   const end = endDate instanceof Date ? endDate : new Date(endDate || Date.now());
@@ -709,6 +714,7 @@ async function fetchGooglePaidMediaDirect({ userId, startDate, endDate }) {
   return {
     provider: 'google',
     customerId,
+    customerName,
     snapshotId: `direct_google_${Date.now()}`,
     spend,
     revenue,
@@ -810,19 +816,37 @@ async function triggerPaidMediaAutoSyncIfNeeded({ userId, accountId, summary, ro
 }
 
 async function buildPaidMediaSummary({ accountId, domain, platformConnections = [], fallbackUserId = null, startDate = null, endDate = null }) {
-  console.log(`[PaidMedia] Starting buildPaidMediaSummary for accountId: ${accountId}, domain: ${domain}, connections: ${platformConnections?.length}`);
-  console.log('[PaidMedia Trace] platformConnections payload:', (platformConnections || []).map((conn) => ({
-    platform: conn?.platform || null,
-    status: conn?.status || null,
-    adAccountId: conn?.adAccountId || null,
-    updatedAt: conn?.updatedAt || null,
-  })));
+  console.log(`[PaidMedia] Starting buildPaidMediaSummary for accountId: ${accountId}, domain: ${domain}, mode=direct_api_only`);
+
+  const sourceTemplate = () => ({
+    connected: false,
+    ready: false,
+    status: 'DISCONNECTED',
+    hasSnapshot: false,
+    snapshotId: null,
+    currency: null,
+    lastSyncAt: null,
+    spend: 0,
+    revenue: 0,
+    roas: null,
+    conversions: 0,
+    clicks: 0,
+    spendDeltaPct: null,
+    roasDelta: null,
+    campaigns: [],
+    connectedResourceId: null,
+    connectedResourceName: null,
+    activeCampaignId: null,
+    activeCampaignName: null,
+    dataOrigin: 'direct_api',
+  });
+
   const base = {
     linked: false,
     available: false,
     reason: 'not_linked',
-    meta: buildPaidMediaSourceSummary({ sourceState: null, payload: null, snapshotId: null, revenueKey: 'purchase_value' }),
-    google: buildPaidMediaSourceSummary({ sourceState: null, payload: null, snapshotId: null, revenueKey: 'conversion_value' }),
+    meta: sourceTemplate(),
+    google: sourceTemplate(),
     blended: {
       spend: 0,
       revenue: 0,
@@ -831,332 +855,167 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
     },
   };
 
-  if (!McpData || !formatMetaForLlmMini || !formatGoogleAdsForLlmMini) {
-    console.warn(`[PaidMedia] missing models or formatters for ${accountId}`);
-    return { ...base, reason: 'marketing_models_unavailable' };
+  const userId = fallbackUserId ? String(fallbackUserId) : null;
+  if (!userId) {
+    console.warn(`[PaidMedia] No authenticated user context for ${accountId}`);
+    return { ...base, reason: 'user_not_resolved' };
   }
 
+  const start = startDate instanceof Date ? startDate : subDays(new Date(), 30);
+  const end = endDate instanceof Date ? endDate : new Date();
+
   try {
-    const toIdKey = (value) => {
-      if (!value) return null;
+    const [metaDoc, googleDoc] = await Promise.all([
+      MetaAccount
+        ? MetaAccount.findOne({ $or: [{ user: userId }, { userId }] })
+            .select('+access_token +token +longlivedToken +accessToken +longLivedToken selectedAccountIds defaultAccountId ad_accounts adAccounts')
+            .lean()
+        : null,
+      GoogleAccount
+        ? GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] })
+            .select('+accessToken +refreshToken selectedCustomerIds defaultCustomerId ad_accounts customers')
+            .lean()
+        : null,
+    ]);
+
+    const metaToken =
+      metaDoc?.access_token ||
+      metaDoc?.token ||
+      metaDoc?.longlivedToken ||
+      metaDoc?.accessToken ||
+      metaDoc?.longLivedToken ||
+      null;
+
+    const metaAccounts = Array.isArray(metaDoc?.ad_accounts)
+      ? metaDoc.ad_accounts
+      : Array.isArray(metaDoc?.adAccounts)
+        ? metaDoc.adAccounts
+        : [];
+    const metaSelectedId = Array.isArray(metaDoc?.selectedAccountIds) && metaDoc.selectedAccountIds.length
+      ? normalizeMetaAccountId(metaDoc.selectedAccountIds[0])
+      : null;
+    const metaDefaultId = normalizeMetaAccountId(metaDoc?.defaultAccountId);
+    const metaListId = normalizeMetaAccountId(metaAccounts?.[0]?.id || metaAccounts?.[0]?.account_id || null);
+    const metaConnectedId = metaSelectedId || metaDefaultId || metaListId;
+    const metaConnectedAccount = metaAccounts.find((entry) => normalizeMetaAccountId(entry?.id || entry?.account_id || '') === metaConnectedId) || null;
+    const metaConnectedName = metaConnectedAccount?.name || metaConnectedAccount?.account_name || null;
+    const metaConnected = Boolean(metaToken && metaConnectedId);
+
+    const googleToken = googleDoc?.accessToken || googleDoc?.refreshToken || null;
+    const googleAccounts = Array.isArray(googleDoc?.ad_accounts) && googleDoc.ad_accounts.length
+      ? googleDoc.ad_accounts
+      : (Array.isArray(googleDoc?.customers) ? googleDoc.customers : []);
+    const googleSelectedId = Array.isArray(googleDoc?.selectedCustomerIds) && googleDoc.selectedCustomerIds.length
+      ? normalizeGoogleCustomerId(googleDoc.selectedCustomerIds[0])
+      : null;
+    const googleDefaultId = normalizeGoogleCustomerId(googleDoc?.defaultCustomerId);
+    const googleListId = normalizeGoogleCustomerId(googleAccounts?.[0]?.id || null);
+    const googleConnectedId = googleSelectedId || googleDefaultId || googleListId;
+    const googleConnectedAccount = googleAccounts.find((entry) => normalizeGoogleCustomerId(entry?.id || '') === googleConnectedId) || null;
+    const googleConnectedName = googleConnectedAccount?.name || googleConnectedAccount?.descriptiveName || googleConnectedAccount?.descriptive_name || null;
+    const googleConnected = Boolean(googleToken && googleConnectedId);
+
+    const summary = {
+      ...base,
+      linked: metaConnected || googleConnected,
+      reason: (metaConnected || googleConnected) ? 'live_data_unavailable' : 'not_linked',
+      meta: {
+        ...base.meta,
+        connected: metaConnected,
+        status: metaConnected ? 'CONNECTED' : 'DISCONNECTED',
+        connectedResourceId: metaConnectedId || null,
+        connectedResourceName: metaConnectedName || null,
+      },
+      google: {
+        ...base.google,
+        connected: googleConnected,
+        status: googleConnected ? 'CONNECTED' : 'DISCONNECTED',
+        connectedResourceId: googleConnectedId || null,
+        connectedResourceName: googleConnectedName || null,
+      },
+    };
+
+    let metaLive = null;
+    if (metaConnected) {
       try {
-        return String(value);
-      } catch (_) {
-        return null;
+        metaLive = await fetchMetaPaidMediaDirect({ userId, startDate: start, endDate: end });
+      } catch (metaDirectError) {
+        console.warn('[PaidMedia Direct] meta live fetch failed:', metaDirectError?.message || metaDirectError);
       }
+    }
+
+    if (metaLive) {
+      summary.meta.connected = true;
+      summary.meta.ready = true;
+      summary.meta.status = 'LIVE';
+      summary.meta.hasSnapshot = true;
+      summary.meta.snapshotId = metaLive.snapshotId;
+      summary.meta.currency = metaLive.currency || null;
+      summary.meta.spend = metaLive.spend;
+      summary.meta.revenue = metaLive.revenue;
+      summary.meta.roas = metaLive.roas;
+      summary.meta.conversions = metaLive.conversions;
+      summary.meta.clicks = metaLive.clicks;
+      summary.meta.campaigns = metaLive.campaigns || [];
+      summary.meta.connectedResourceId = metaLive.accountId || summary.meta.connectedResourceId;
+      summary.meta.connectedResourceName = metaLive.accountName || summary.meta.connectedResourceName;
+      summary.meta.activeCampaignId = summary.meta.campaigns?.[0]?.id || null;
+      summary.meta.activeCampaignName = summary.meta.campaigns?.[0]?.name || null;
+    }
+
+    let googleLive = null;
+    if (googleConnected) {
+      try {
+        googleLive = await fetchGooglePaidMediaDirect({ userId, startDate: start, endDate: end });
+      } catch (googleDirectError) {
+        console.warn('[PaidMedia Direct] google live fetch failed:', googleDirectError?.message || googleDirectError);
+      }
+    }
+
+    if (googleLive) {
+      summary.google.connected = true;
+      summary.google.ready = true;
+      summary.google.status = 'LIVE';
+      summary.google.hasSnapshot = true;
+      summary.google.snapshotId = googleLive.snapshotId;
+      summary.google.currency = googleLive.currency || null;
+      summary.google.spend = googleLive.spend;
+      summary.google.revenue = googleLive.revenue;
+      summary.google.roas = googleLive.roas;
+      summary.google.conversions = googleLive.conversions;
+      summary.google.clicks = googleLive.clicks;
+      summary.google.campaigns = googleLive.campaigns || [];
+      summary.google.connectedResourceId = googleLive.customerId || summary.google.connectedResourceId;
+      summary.google.connectedResourceName = googleLive.customerName || summary.google.connectedResourceName;
+      summary.google.activeCampaignId = summary.google.campaigns?.[0]?.id || null;
+      summary.google.activeCampaignName = summary.google.campaigns?.[0]?.name || null;
+    }
+
+    const blendedSpend = Number(summary.meta.spend || 0) + Number(summary.google.spend || 0);
+    const blendedRevenue = Number(summary.meta.revenue || 0) + Number(summary.google.revenue || 0);
+    summary.blended = {
+      spend: blendedSpend,
+      revenue: blendedRevenue,
+      roas: blendedSpend > 0 ? Number((blendedRevenue / blendedSpend).toFixed(2)) : null,
+      currency: summary.meta.currency || summary.google.currency || null,
     };
 
-    const loadPaidMediaForUser = async (userId) => {
-      const rootDoc = await findMcpRoot(userId);
-      if (!rootDoc) {
-        console.warn(`[PaidMedia] No root doc found for user ${userId} (${accountId})`);
-        return null;
-      }
+    const hasLiveData = Boolean(metaLive || googleLive);
+    summary.available = hasLiveData;
+    summary.reason = summary.linked ? (hasLiveData ? null : 'live_data_unavailable') : 'not_linked';
 
-      console.log(`[PaidMedia] Found rootDoc for user ${userId}, snapshot ids meta=${rootDoc.latestSnapshotId} etc.`);
-      console.log('[PaidMedia Trace] root sources:', {
-        userId: String(userId),
-        meta: {
-          status: rootDoc?.sources?.metaAds?.status || null,
-          connected: rootDoc?.sources?.metaAds?.connected || false,
-          ready: rootDoc?.sources?.metaAds?.ready || false,
-          accountId: rootDoc?.sources?.metaAds?.accountId || null,
-          selectedAccountId: rootDoc?.sources?.metaAds?.selectedAccountId || null,
-        },
-        google: {
-          status: rootDoc?.sources?.googleAds?.status || null,
-          connected: rootDoc?.sources?.googleAds?.connected || false,
-          ready: rootDoc?.sources?.googleAds?.ready || false,
-          customerId: rootDoc?.sources?.googleAds?.customerId || null,
-          selectedCustomerId: rootDoc?.sources?.googleAds?.selectedCustomerId || null,
-        },
-      });
-
-      const [metaSnapshotId, googleSnapshotId] = await Promise.all([
-        findLatestSnapshotId(userId, 'metaAds', rootDoc),
-        findLatestSnapshotId(userId, 'googleAds', rootDoc),
-      ]);
-
-      console.log(`[PaidMedia Trace] resolved snapshots for user ${userId}: meta=${metaSnapshotId || 'none'}, google=${googleSnapshotId || 'none'}`);
-
-      const [metaChunks, googleChunks] = await Promise.all([
-        findMcpChunks(userId, 'metaAds', metaSnapshotId, 'meta.'),
-        findMcpChunks(userId, 'googleAds', googleSnapshotId, 'google.'),
-      ]);
-
-      console.log(`[PaidMedia] Snapshot chunks fetched for user ${userId}. Meta: ${metaChunks.length}, Google: ${googleChunks.length}`);
-
-      const metaPayload = metaChunks.length ? formatMetaForLlmMini({ datasets: metaChunks, topCampaigns: 4 }) : null;
-      const googlePayload = googleChunks.length ? formatGoogleAdsForLlmMini({ datasets: googleChunks, topCampaigns: 4 }) : null;
-
-      if (metaPayload) console.log(`[PaidMedia Debug] Meta Payload KPIs (${userId}):`, JSON.stringify(metaPayload.headline_kpis));
-      if (googlePayload) console.log(`[PaidMedia Debug] Google Payload KPIs (${userId}):`, JSON.stringify(googlePayload.headline_kpis));
-
-      const compactCampaign = (campaign) => ({
-        id: campaign?.id || campaign?.campaign_id || null,
-        name: campaign?.name || campaign?.campaign_name || campaign?.campaign || null,
-        status: campaign?.status || null,
-        spend: toFiniteNumber(campaign?.spend ?? campaign?.cost ?? 0, 0),
-        revenue: toFiniteNumber(campaign?.purchase_value ?? campaign?.conversion_value ?? campaign?.revenue ?? 0, 0),
-        roas: toFiniteNumberOrNull(campaign?.roas),
-      });
-
-      console.log('[PaidMedia Trace] top meta campaigns:', (metaPayload?.top_campaigns || []).slice(0, 5).map(compactCampaign));
-      console.log('[PaidMedia Trace] top google campaigns:', (googlePayload?.top_campaigns || []).slice(0, 5).map(compactCampaign));
-
-      if (!metaPayload && metaChunks.length) console.warn(`[PaidMedia] metaPayload returned null despite having chunks for user ${userId}`);
-      if (!googlePayload && googleChunks.length) console.warn(`[PaidMedia] googlePayload returned null despite having chunks for user ${userId}`);
-
-      const meta = buildPaidMediaSourceSummary({
-        sourceState: rootDoc?.sources?.metaAds || null,
-        payload: metaPayload,
-        snapshotId: metaSnapshotId,
-        revenueKey: 'purchase_value',
-      });
-
-      const google = buildPaidMediaSourceSummary({
-        sourceState: rootDoc?.sources?.googleAds || null,
-        payload: googlePayload,
-        snapshotId: googleSnapshotId,
-        revenueKey: 'conversion_value',
-      });
-
-      const shouldTryMetaDirect = Boolean(
-        meta.connected &&
-        (
-          !meta.hasSnapshot ||
-          meta.status === 'QUEUED' ||
-          meta.spend <= 0
-        )
-      );
-
-      const shouldTryGoogleDirect = Boolean(
-        google.connected &&
-        (
-          !google.hasSnapshot ||
-          google.status === 'QUEUED' ||
-          google.spend <= 0
-        )
-      );
-
-      if (shouldTryMetaDirect) {
-        try {
-          const metaDirect = await fetchMetaPaidMediaDirect({
-            userId,
-            startDate: startDate || subDays(new Date(), 30),
-            endDate: endDate || new Date(),
-          });
-
-          if (metaDirect) {
-            console.log('[PaidMedia Direct] meta fallback result:', {
-              userId: String(userId),
-              accountId: metaDirect.accountId,
-              spend: metaDirect.spend,
-              revenue: metaDirect.revenue,
-              campaigns: (metaDirect.campaigns || []).length,
-            });
-
-            if (metaDirect.spend > meta.spend || !meta.hasSnapshot) {
-              meta.spend = metaDirect.spend;
-              meta.revenue = metaDirect.revenue;
-              meta.roas = metaDirect.roas;
-              meta.clicks = metaDirect.clicks;
-              meta.conversions = metaDirect.conversions;
-              meta.currency = metaDirect.currency || meta.currency;
-              meta.hasSnapshot = true;
-              meta.snapshotId = metaDirect.snapshotId;
-              meta.campaigns = metaDirect.campaigns || [];
-              meta.ready = true;
-              meta.status = 'READY';
-            }
-          }
-        } catch (metaDirectError) {
-          console.warn('[PaidMedia Direct] meta fallback failed:', metaDirectError?.message || metaDirectError);
-        }
-      }
-
-      if (shouldTryGoogleDirect) {
-        try {
-          const googleDirect = await fetchGooglePaidMediaDirect({
-            userId,
-            startDate: startDate || subDays(new Date(), 30),
-            endDate: endDate || new Date(),
-          });
-
-          if (googleDirect) {
-            console.log('[PaidMedia Direct] google fallback result:', {
-              userId: String(userId),
-              customerId: googleDirect.customerId,
-              spend: googleDirect.spend,
-              revenue: googleDirect.revenue,
-              campaigns: (googleDirect.campaigns || []).length,
-            });
-
-            if (googleDirect.spend > google.spend || !google.hasSnapshot) {
-              google.spend = googleDirect.spend;
-              google.revenue = googleDirect.revenue;
-              google.roas = googleDirect.roas;
-              google.clicks = googleDirect.clicks;
-              google.conversions = googleDirect.conversions;
-              google.currency = googleDirect.currency || google.currency;
-              google.hasSnapshot = true;
-              google.snapshotId = googleDirect.snapshotId;
-              google.campaigns = googleDirect.campaigns || [];
-              google.ready = true;
-              google.status = 'READY';
-            }
-          }
-        } catch (googleDirectError) {
-          console.warn('[PaidMedia Direct] google fallback failed:', googleDirectError?.message || googleDirectError);
-        }
-      }
-
-      meta.connectedResourceId = String(
-        rootDoc?.sources?.metaAds?.selectedAccountId ||
-        rootDoc?.sources?.metaAds?.accountId ||
-        ''
-      ) || null;
-      meta.connectedResourceName = rootDoc?.sources?.metaAds?.name || null;
-      meta.activeCampaignId = meta?.campaigns?.[0]?.id || meta?.campaigns?.[0]?.campaign_id || null;
-      meta.activeCampaignName = meta?.campaigns?.[0]?.name || meta?.campaigns?.[0]?.campaign_name || null;
-      meta.dataOrigin = String(meta?.snapshotId || '').startsWith('direct_meta_') ? 'direct_api' : 'mcp_snapshot';
-
-      google.connectedResourceId = String(
-        rootDoc?.sources?.googleAds?.selectedCustomerId ||
-        rootDoc?.sources?.googleAds?.customerId ||
-        ''
-      ) || null;
-      google.connectedResourceName = rootDoc?.sources?.googleAds?.name || null;
-      google.activeCampaignId = google?.campaigns?.[0]?.id || google?.campaigns?.[0]?.campaign_id || null;
-      google.activeCampaignName = google?.campaigns?.[0]?.name || google?.campaigns?.[0]?.campaign_name || null;
-      google.dataOrigin = String(google?.snapshotId || '').startsWith('direct_google_') ? 'direct_api' : 'mcp_snapshot';
-
-      const blendedSpend = meta.spend + google.spend;
-      const blendedRevenue = meta.revenue + google.revenue;
-      const hasAnySnapshot = meta.hasSnapshot || google.hasSnapshot;
-
-      const summary = {
-        linked: true,
-        available: hasAnySnapshot,
-        reason: hasAnySnapshot ? null : 'snapshots_not_found',
-        meta,
-        google,
-        blended: {
-          spend: blendedSpend,
-          revenue: blendedRevenue,
-          roas: blendedSpend > 0 ? Number((blendedRevenue / blendedSpend).toFixed(2)) : null,
-          currency: meta.currency || google.currency || null,
-        },
-      };
-
-      // Higher score means better data quality for dashboard consistency.
-      const score =
-        (meta.hasSnapshot ? 10 : 0) +
-        (google.hasSnapshot ? 10 : 0) +
-        (meta.spend > 0 ? 40 : 0) +
-        (google.spend > 0 ? 40 : 0) +
-        (meta.ready ? 5 : 0) +
-        (google.ready ? 5 : 0) +
-        (blendedSpend > 0 ? 25 : 0);
-
-      console.log('[PaidMedia Trace] candidate score:', {
-        userId: String(userId),
-        score,
-        metaSpend: meta.spend,
-        googleSpend: google.spend,
-        blendedSpend,
-        metaHasSnapshot: meta.hasSnapshot,
-        googleHasSnapshot: google.hasSnapshot,
-      });
-
-      return { userId: toIdKey(userId), summary, score, rootDoc };
-    };
-
-    const candidates = Array.from(new Set([
-      normalizeShopDomain(accountId),
-      normalizeShopDomain(domain),
-    ].filter(Boolean)));
-
-    const resolvedUserId = await resolvePaidMediaUserId({ accountId, domain, platformConnections, fallbackUserId });
-    console.log(`[PaidMedia] Resolved userId: ${resolvedUserId || 'none'} for ${accountId}`);
-
-    const candidateUserIds = [];
-    const seenUserIds = new Set();
-    const pushCandidate = (value) => {
-      const key = toIdKey(value);
-      if (!key || seenUserIds.has(key)) return;
-      seenUserIds.add(key);
-      candidateUserIds.push(key);
-    };
-
-    pushCandidate(resolvedUserId);
-    pushCandidate(fallbackUserId);
-
-    const allowCrossUserPaidMedia = String(process.env.ADRAY_ALLOW_CROSS_USER_PAID_MEDIA || '0') === '1';
-    if (allowCrossUserPaidMedia) {
-      if (ShopConnections && candidates.length) {
-        const linkedShopUsers = await ShopConnections.find({
-          shop: { $in: candidates },
-          matchedToUserId: { $ne: null },
-        })
-          .select('matchedToUserId')
-          .lean();
-
-        linkedShopUsers.forEach((doc) => pushCandidate(doc?.matchedToUserId));
-      }
-
-      if (User && candidates.length) {
-        const usersByShop = await User.find({
-          shop: { $in: candidates },
-        })
-          .select('_id')
-          .lean();
-
-        usersByShop.forEach((doc) => pushCandidate(doc?._id));
-      }
-    } else {
-      console.log('[PaidMedia Trace] Cross-user fallback disabled (ADRAY_ALLOW_CROSS_USER_PAID_MEDIA != 1).');
-    }
-
-    console.log('[PaidMedia Trace] candidate user ids (ordered):', candidateUserIds);
-
-    if (!candidateUserIds.length) {
-      console.warn(`[PaidMedia] No user ID candidates found for ${accountId}`);
-      return base;
-    }
-
-    let best = null;
-    for (const candidateUserId of candidateUserIds) {
-      const result = await loadPaidMediaForUser(candidateUserId);
-      if (!result) continue;
-
-      if (!best || result.score > best.score) {
-        best = result;
-      }
-
-      if (result.summary?.blended?.spend > 0) {
-        best = result;
-        console.log(`[PaidMedia Trace] stopping candidate scan early with spend>0 user=${candidateUserId}`);
-        break;
-      }
-    }
-
-    if (!best) {
-      return { ...base, linked: true, reason: 'root_not_found' };
-    }
-
-    if (resolvedUserId && String(best.userId) !== String(resolvedUserId)) {
-      console.log(`[PaidMedia] Using fallback user ${best.userId} (primary ${resolvedUserId}) for shop ${accountId}`);
-    }
-
-    await triggerPaidMediaAutoSyncIfNeeded({
-      userId: best.userId,
+    console.log('[PaidMedia Trace] direct-only summary:', {
+      userId,
       accountId,
-      summary: best.summary,
-      rootDoc: best.rootDoc,
+      linked: summary.linked,
+      available: summary.available,
+      metaConnected: summary.meta.connected,
+      metaSpend: summary.meta.spend,
+      googleConnected: summary.google.connected,
+      googleSpend: summary.google.spend,
     });
 
-    return best.summary;
+    return summary;
   } catch (error) {
     console.error('[Analytics API] Paid media summary error:', error);
     return { ...base, reason: 'lookup_failed' };

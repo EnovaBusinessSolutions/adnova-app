@@ -1964,7 +1964,7 @@
                             <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Paid Media</h3>
                             <p class="panel-subtitle text-sm mt-1">Compara gasto, revenue y ROAS para decidir si el tráfico está justificando la inversión.</p>
                         </div>
-                        <span id="pm-link-status" class="text-xs font-semibold uppercase tracking-wide text-gray-500">No snapshot</span>
+                        <span id="pm-link-status" class="text-xs font-semibold uppercase tracking-wide text-gray-500">No conectado</span>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="bg-gray-50 rounded-lg p-4">
@@ -1975,7 +1975,7 @@
                             <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-meta-roas">-</span></div>
                             <div class="mt-1 text-xs text-gray-500">Cuenta conectada: <span id="pm-meta-account" class="font-medium">-</span></div>
                             <div class="mt-1 text-xs text-gray-500">Campaña principal: <span id="pm-meta-campaign" class="font-medium">-</span></div>
-                            <div class="mt-1 text-xs text-gray-400" id="pm-meta-sync">No snapshot asociado</div>
+                            <div class="mt-1 text-xs text-gray-400" id="pm-meta-sync">Sin datos live todavía</div>
                             <div class="mt-2 flex items-center gap-2">
                                 <select id="pm-meta-account-select" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white flex-1"></select>
                                 <button id="pm-meta-account-apply" class="text-xs font-semibold px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50">Cambiar</button>
@@ -1990,7 +1990,7 @@
                             <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-google-roas">-</span></div>
                             <div class="mt-1 text-xs text-gray-500">Cuenta conectada: <span id="pm-google-account" class="font-medium">-</span></div>
                             <div class="mt-1 text-xs text-gray-500">Campaña principal: <span id="pm-google-campaign" class="font-medium">-</span></div>
-                            <div class="mt-1 text-xs text-gray-400" id="pm-google-sync">No snapshot asociado</div>
+                            <div class="mt-1 text-xs text-gray-400" id="pm-google-sync">Sin datos live todavía</div>
                             <div class="mt-2 flex items-center gap-2">
                                 <select id="pm-google-account-select" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white flex-1"></select>
                                 <button id="pm-google-account-apply" class="text-xs font-semibold px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50">Cambiar</button>
@@ -4937,28 +4937,12 @@
 
         function renderPaidMedia(paidMedia) {
             const linkStatus = document.getElementById('pm-link-status');
-            const blendedSpend = document.getElementById('pm-blended-spend');
-            const blendedRevenue = document.getElementById('pm-blended-revenue');
-            const blendedRoas = document.getElementById('pm-blended-roas');
-            const blendedMeta = document.getElementById('pm-blended-meta');
 
             if (linkStatus) {
-                if (paidMedia?.available) linkStatus.textContent = 'Snapshot active';
-                else if (paidMedia?.linked) linkStatus.textContent = 'No snapshot';
-                else linkStatus.textContent = 'Not linked';
+                if (paidMedia?.available) linkStatus.textContent = 'API activa';
+                else if (paidMedia?.linked) linkStatus.textContent = 'Conectado sin datos';
+                else linkStatus.textContent = 'No conectado';
             }
-
-            const blendedCurrency = paidMedia?.blended?.currency || paidMedia?.meta?.currency || paidMedia?.google?.currency || 'MXN';
-            if (blendedSpend) blendedSpend.textContent = formatCurrencyWithCode(paidMedia?.blended?.spend || 0, blendedCurrency);
-            if (blendedRevenue) blendedRevenue.textContent = formatCurrencyWithCode(paidMedia?.blended?.revenue || 0, blendedCurrency);
-            if (blendedRoas) blendedRoas.textContent = formatRoas(paidMedia?.blended?.roas);
-
-            const anyDirectOrigin = ['meta', 'google'].some((platform) => paidMedia?.[platform]?.dataOrigin === 'direct_api');
-            if (blendedMeta) blendedMeta.textContent = anyDirectOrigin
-                ? 'Datos con fallback API directa en tiempo real'
-                : (paidMedia?.available
-                    ? 'Aggregated summary from MCP snapshots'
-                    : 'Visible when the shop is linked to the marketing snapshot');
 
             renderPaidMediaSource('meta', paidMedia?.meta || {});
             renderPaidMediaSource('google', paidMedia?.google || {});
@@ -5009,7 +4993,7 @@
 
             const currency = sourceState?.currency || 'MXN';
             let statusLabel = 'Desconectado';
-            if (sourceState?.hasSnapshot) statusLabel = 'Snapshot listo';
+            if (sourceState?.connected && sourceState?.ready) statusLabel = 'API activa';
             else if (sourceState?.connected) statusLabel = 'Conectado';
 
             statusEl.textContent = statusLabel;
@@ -5019,19 +5003,12 @@
             if (accountEl) accountEl.textContent = formatConnectedAccountLabel(sourceState);
             if (campaignEl) campaignEl.textContent = formatActiveCampaignLabel(sourceState);
 
-            if (sourceState?.dataOrigin === 'direct_api') {
+            if (sourceState?.connected && sourceState?.ready) {
                 syncEl.textContent = 'Datos en vivo por API directa';
-            } else if (sourceState?.hasSnapshot) {
-                const spendDelta = sourceState?.spendDeltaPct;
-                const roasDelta = sourceState?.roasDelta;
-                const deltaBits = [];
-                if (typeof spendDelta === 'number') deltaBits.push(`Spend 7d: ${spendDelta.toFixed(1)}%`);
-                if (typeof roasDelta === 'number') deltaBits.push(`ROAS Δ: ${roasDelta.toFixed(2)}`);
-                syncEl.textContent = deltaBits.length ? deltaBits.join(' · ') : 'Snapshot MCP disponible';
             } else if (sourceState?.connected) {
-                syncEl.textContent = 'Conectado, pero sin snapshot usable todavía';
+                syncEl.textContent = 'Conectado, esperando respuesta de API';
             } else {
-                syncEl.textContent = 'No snapshot asociado';
+                syncEl.textContent = 'No conectado';
             }
         }
 
