@@ -1389,22 +1389,22 @@
                         <button
                             id="shop-switcher-button"
                             type="button"
-                            class="flex items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-2 text-left shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50/40"
+                            class="flex items-center gap-2 rounded-full border border-[#3B3052] bg-[#161220] px-3 py-2 text-left text-[#F4ECFF] shadow-[0_12px_30px_rgba(0,0,0,0.28)] transition hover:border-[#5F4A84] hover:bg-[#1C1628]"
                             aria-haspopup="true"
                             aria-expanded="false"
                         >
-                            <span id="shop-name" class="text-sm text-gray-500 font-medium">Loading store...</span>
+                            <span id="shop-name" class="text-sm font-medium text-[#F4ECFF]">Loading store...</span>
                             <span id="shop-type-badge" class="journey-chip text-[10px] px-2 py-0.5">Store</span>
-                            <i class="fa-solid fa-chevron-down text-[10px] text-gray-400"></i>
+                            <i class="fa-solid fa-chevron-down text-[10px] text-[#BBA5D6]"></i>
                         </button>
 
                         <div
                             id="shop-switcher-menu"
-                            class="absolute right-0 top-full z-50 mt-2 hidden w-80 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl"
+                            class="absolute right-0 top-full z-50 mt-2 hidden w-80 overflow-hidden rounded-2xl border border-[#30243F] bg-[#130F1D] shadow-[0_24px_60px_rgba(0,0,0,0.42)]"
                         >
-                            <div class="border-b border-gray-100 px-4 py-3">
-                                <p class="text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-400">Store selector</p>
-                                <p class="mt-1 text-xs text-gray-500">Shows stores already known in this browser or session.</p>
+                            <div class="border-b border-[#2B2139] px-4 py-3">
+                                <p class="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#A792C0]">Store selector</p>
+                                <p class="mt-1 text-xs text-[#8F7EA8]">Shows stores already known in this browser or session.</p>
                             </div>
                             <div id="shop-switcher-options" class="max-h-72 overflow-y-auto p-2"></div>
                         </div>
@@ -2403,8 +2403,8 @@
             const options = getKnownShopOptions(extraItems);
             if (!options.length) {
                 optionsEl.innerHTML = `
-                    <div class="rounded-2xl border border-dashed border-gray-200 px-4 py-5 text-sm text-gray-500">
-                        No stores available yet. Open analytics with a <span class="font-mono text-gray-700">?shop=...</span> first.
+                    <div class="rounded-2xl border border-dashed border-[#3B3052] bg-[#171320] px-4 py-5 text-sm text-[#A792C0]">
+                        No stores available yet. Open analytics with a <span class="font-mono text-[#F4ECFF]">?shop=...</span> first.
                     </div>
                 `;
                 return;
@@ -2415,18 +2415,18 @@
                 return `
                     <button
                         type="button"
-                        class="flex w-full items-center justify-between rounded-2xl border px-3 py-3 text-left transition ${isActive ? 'border-indigo-200 bg-indigo-50' : 'border-transparent hover:border-gray-200 hover:bg-gray-50'}"
+                        class="flex w-full items-center justify-between rounded-2xl border px-3 py-3 text-left transition ${isActive ? 'border-[#5F4A84] bg-[#1C1628]' : 'border-transparent hover:border-[#3B3052] hover:bg-[#181321]'}"
                         data-shop-option="${escapeHtmlAttr(item.shop)}"
                         data-shop-type="${escapeHtmlAttr(item.type)}"
                     >
                         <span class="min-w-0 pr-3">
-                            <span class="block truncate text-sm font-semibold text-gray-900">${escapeHtml(item.shop)}</span>
-                            <span class="mt-1 inline-flex items-center gap-2 text-xs text-gray-500">
+                            <span class="block truncate text-sm font-semibold text-[#F4ECFF]">${escapeHtml(item.shop)}</span>
+                            <span class="mt-1 inline-flex items-center gap-2 text-xs text-[#A792C0]">
                                 <span class="journey-chip text-[10px] px-2 py-0.5">${escapeHtml(item.type)}</span>
-                                ${isActive ? '<span class="font-medium text-indigo-600">Active</span>' : '<span>Open analytics for this store</span>'}
+                                ${isActive ? '<span class="font-medium text-[#D8B4FE]">Active</span>' : '<span>Open analytics for this store</span>'}
                             </span>
                         </span>
-                        <i class="fa-solid fa-arrow-up-right-from-square text-xs ${isActive ? 'text-indigo-500' : 'text-gray-300'}"></i>
+                        <i class="fa-solid fa-arrow-up-right-from-square text-xs ${isActive ? 'text-[#D8B4FE]' : 'text-[#6E5A87]'}"></i>
                     </button>
                 `;
             }).join('');
