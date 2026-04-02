@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
+const crypto = require('crypto');
 const prisma = require('../utils/prismaClient');
 const { startOfDay, endOfDay, subDays, eachDayOfInterval, format } = require('date-fns');
 const { getCustomerDisplayNames } = require('../services/shopifyService');
@@ -528,6 +529,16 @@ function pickMetaValueByPriority(items = [], priorities = []) {
   return 0;
 }
 
+function buildMetaAppSecretProof(accessToken) {
+  const appSecret = String(process.env.FACEBOOK_APP_SECRET || '').trim();
+  if (!appSecret || !accessToken) return null;
+  try {
+    return crypto.createHmac('sha256', appSecret).update(accessToken).digest('hex');
+  } catch (_) {
+    return null;
+  }
+}
+
 async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
   if (!MetaAccount) return null;
 
@@ -568,6 +579,7 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
   const until = formatYmd(endDate);
   const fbVersion = process.env.FACEBOOK_API_VERSION || 'v23.0';
   const graphBase = `https://graph.facebook.com/${fbVersion}`;
+  const appSecretProof = buildMetaAppSecretProof(accessToken);
 
   const paramsBase = {
     access_token: accessToken,
@@ -575,19 +587,41 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
     action_report_time: 'conversion',
     use_unified_attribution_setting: true,
   };
+  if (appSecretProof) {
+    paramsBase.appsecret_proof = appSecretProof;
+  }
 
-  const accountInsightsRes = await axios.get(`${graphBase}/act_${accountId}/insights`, {
-    params: {
-      ...paramsBase,
-      level: 'account',
-      limit: 1,
-      fields: 'spend,clicks,impressions,actions,action_values,purchase_roas',
-    },
+  console.log('[PaidMedia Direct] meta request context:', {
+    userId: String(userId),
+    accountId,
+    since,
+    until,
+    hasAppSecretProof: Boolean(appSecretProof),
   });
 
-  const accountRow = Array.isArray(accountInsightsRes?.data?.data) ? accountInsightsRes.data.data[0] : null;
-  const spend = toFiniteNumber(accountRow?.spend, 0);
-  const revenue = toFiniteNumber(
+  let accountInsightsRes = null;
+  try {
+    accountInsightsRes = await axios.get(`${graphBase}/act_${accountId}/insights`, {
+      params: {
+        ...paramsBase,
+        level: 'account',
+        limit: 1,
+        fields: 'spend,clicks,impressions,actions,action_values,purchase_roas',
+      },
+    });
+  } catch (error) {
+    const status = error?.response?.status || null;
+    const detail = error?.response?.data || error?.message || error;
+    const wrapped = new Error(`[meta account insights] ${status || 'ERR'}: ${error?.message || 'failed'}`);
+    wrapped.status = status;
+    wrapped.data = detail;
+    throw wrapped;
+  }
+
+  const accountRows = Array.isArray(accountInsightsRes?.data?.data) ? accountInsightsRes.data.data : [];
+  const accountRow = accountRows[0] || null;
+  let spend = toFiniteNumber(accountRow?.spend, 0);
+  let revenue = toFiniteNumber(
     pickMetaValueByPriority(accountRow?.action_values || [], [
       'omni_purchase',
       'offsite_conversion.fb_pixel_purchase',
@@ -597,12 +631,17 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
     0
   );
 
+  if (!accountRows.length) {
+    console.warn('[PaidMedia Direct] Meta account insights returned no rows for range', { accountId, since, until });
+  }
+
   let currency = null;
   let accountName = null;
   try {
     const accountInfoRes = await axios.get(`${graphBase}/act_${accountId}`, {
       params: {
         access_token: accessToken,
+        ...(appSecretProof ? { appsecret_proof: appSecretProof } : {}),
         fields: 'currency,account_id,name',
       },
     });
@@ -642,7 +681,23 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
       };
     });
   } catch (campaignErr) {
-    console.warn('[PaidMedia Direct] Meta campaign fetch failed:', campaignErr?.message || campaignErr);
+    console.warn('[PaidMedia Direct] Meta campaign fetch failed:', {
+      status: campaignErr?.response?.status || null,
+      message: campaignErr?.message || String(campaignErr),
+      detail: campaignErr?.response?.data || null,
+    });
+  }
+
+  if (spend <= 0 && campaigns.length > 0) {
+    const campaignSpendSum = campaigns.reduce((acc, campaign) => acc + toFiniteNumber(campaign?.spend, 0), 0);
+    const campaignRevenueSum = campaigns.reduce((acc, campaign) => acc + toFiniteNumber(campaign?.revenue, 0), 0);
+    if (campaignSpendSum > 0) {
+      spend = Number(campaignSpendSum.toFixed(2));
+      if (revenue <= 0 && campaignRevenueSum > 0) {
+        revenue = Number(campaignRevenueSum.toFixed(2));
+      }
+      console.log('[PaidMedia Direct] Meta spend derived from campaign rows:', { accountId, spend, revenue });
+    }
   }
 
   const roas = spend > 0 ? Number((revenue / spend).toFixed(2)) : null;
@@ -940,7 +995,11 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
       try {
         metaLive = await fetchMetaPaidMediaDirect({ userId, startDate: start, endDate: end });
       } catch (metaDirectError) {
-        console.warn('[PaidMedia Direct] meta live fetch failed:', metaDirectError?.message || metaDirectError);
+        console.warn('[PaidMedia Direct] meta live fetch failed:', {
+          message: metaDirectError?.message || String(metaDirectError),
+          status: metaDirectError?.status || metaDirectError?.response?.status || null,
+          detail: metaDirectError?.data || metaDirectError?.response?.data || null,
+        });
       }
     }
 
