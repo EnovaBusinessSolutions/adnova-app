@@ -1299,18 +1299,43 @@ app.get("/api/session", async (req, res) => {
 
     if (!u) return res.status(401).json({ authenticated: false });
 
+    let resolvedShop = String(u.shop || req.user?.shop || '').trim();
+    let resolvedShopSource = resolvedShop ? 'user' : null;
+    let resolvedShopifyConnected = !!u.shopifyConnected;
+
+    if (!resolvedShop && ShopConnections) {
+      const linkedShop = await ShopConnections.findOne({
+        matchedToUserId: u._id,
+        shop: { $exists: true, $ne: '' },
+      })
+        .sort({ installedAt: -1 })
+        .select('shop accessToken')
+        .lean();
+
+      if (linkedShop?.shop) {
+        resolvedShop = String(linkedShop.shop).trim();
+        resolvedShopSource = 'shop_connection';
+      }
+
+      if (linkedShop?.accessToken) {
+        resolvedShopifyConnected = true;
+      }
+    }
+
     return res.json({
       authenticated: true,
       user: {
         _id: u._id,
         name: u.name || null,
         email: u.email,
-        shop: u.shop,
+        shop: resolvedShop || null,
+        resolvedShop: resolvedShop || null,
+        resolvedShopSource,
         onboardingComplete: !!u.onboardingComplete,
 
         googleConnected: !!u.googleConnected,
         metaConnected: !!u.metaConnected,
-        shopifyConnected: !!u.shopifyConnected,
+        shopifyConnected: resolvedShopifyConnected,
 
         googleObjective: u.googleObjective || null,
         metaObjective: u.metaObjective || null,
