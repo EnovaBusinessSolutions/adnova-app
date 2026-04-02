@@ -1,6 +1,6 @@
 # AdRay / Adnova
 
-Last update: 2026-03-27
+Last update: 2026-04-01
 
 This is the only documentation file that should be treated as the source of truth for the repository. It consolidates the previous planning files, implementation notes, operational checklist, WordPress plugin readme, Shopify review guide, and frontend README boilerplate.
 
@@ -836,11 +836,15 @@ Current dashboard status from live review:
 - Manual Woo attribution validation completed on 2026-03-13 with successful campaign persistence (`Google · brand-test`) and checkout login stitching.
 - Manual Woo validation also confirmed Home -> Tienda attribution persistence and operator-readable timezone in recent purchases.
 
+- Layer 1 analytics now has an embedded entry point at `/dashboard/attribution`, reusing the existing `/analytics` experience inside the main dashboard shell instead of leaving it as a separate dashboard.
+- Desktop and mobile dashboard navigation now expose that embedded attribution view, with explicit `shop` override support to avoid iframe prompts when the account context is incomplete.
+
 ### Current development focus
 
 - Run the pending Woo multi-touch validation after the 31-minute cooldown and record how `first_touch`, `last_touch`, and `linear` redistribute the same conversion.
 - Start Shopify pixel validation in staging, beginning with browser event capture and then checkout/purchase continuity.
 - Keep refining the persistent `Session Explorer` only after those platform-validation checkpoints are documented.
+- If the embedded attribution view stays stable, the next optional cleanup is migrating the highest-value widgets from `backend/views/adray-analytics.html` into native `dashboard-src` components gradually instead of in one rewrite.
 
 ## Attribution Next Steps
 
