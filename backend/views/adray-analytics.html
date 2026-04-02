@@ -4865,7 +4865,7 @@
             if (!state.loaded && !state.loading) {
                 state.loading = true;
                 try {
-                    const res = await fetch(getPaidMediaAccountsEndpoint(platform));
+                    const res = await fetch(`${getPaidMediaAccountsEndpoint(platform)}?all=1`);
                     const body = await res.json().catch(() => ({}));
                     const accounts = Array.isArray(body?.accounts) ? body.accounts : [];
 
@@ -5004,7 +5004,11 @@
             if (campaignEl) campaignEl.textContent = formatActiveCampaignLabel(sourceState);
 
             if (sourceState?.connected && sourceState?.ready) {
-                syncEl.textContent = 'Datos en vivo por API directa';
+                if (sourceState?.rangeUsed?.fallbackUsed) {
+                    syncEl.textContent = `Datos en vivo por API directa (fallback ${sourceState?.rangeUsed?.since || ''} a ${sourceState?.rangeUsed?.until || ''})`;
+                } else {
+                    syncEl.textContent = 'Datos en vivo por API directa';
+                }
             } else if (sourceState?.connected) {
                 syncEl.textContent = 'Conectado, esperando respuesta de API';
             } else {

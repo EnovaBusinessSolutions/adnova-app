@@ -529,6 +529,29 @@ function pickMetaValueByPriority(items = [], priorities = []) {
   return 0;
 }
 
+function mapMetaCampaignRows(rows = []) {
+  return (Array.isArray(rows) ? rows : []).map((row) => {
+    const campaignRevenue = toFiniteNumber(
+      pickMetaValueByPriority(row?.action_values || [], [
+        'omni_purchase',
+        'offsite_conversion.fb_pixel_purchase',
+        'onsite_conversion.purchase',
+        'purchase',
+      ]),
+      0
+    );
+    const campaignSpend = toFiniteNumber(row?.spend, 0);
+    return {
+      id: row?.campaign_id || null,
+      name: row?.campaign_name || null,
+      spend: campaignSpend,
+      revenue: campaignRevenue,
+      roas: campaignSpend > 0 ? Number((campaignRevenue / campaignSpend).toFixed(2)) : null,
+      status: null,
+    };
+  });
+}
+
 function buildMetaAppSecretProof(accessToken) {
   const appSecret = String(process.env.FACEBOOK_APP_SECRET || '').trim();
   if (!appSecret || !accessToken) return null;
@@ -650,6 +673,9 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
   } catch (_) {}
 
   let campaigns = [];
+  let effectiveSince = since;
+  let effectiveUntil = until;
+  let rangeFallbackUsed = false;
   try {
     const campaignInsightsRes = await axios.get(`${graphBase}/act_${accountId}/insights`, {
       params: {
@@ -660,26 +686,7 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
       },
     });
 
-    campaigns = (Array.isArray(campaignInsightsRes?.data?.data) ? campaignInsightsRes.data.data : []).map((row) => {
-      const campaignRevenue = toFiniteNumber(
-        pickMetaValueByPriority(row?.action_values || [], [
-          'omni_purchase',
-          'offsite_conversion.fb_pixel_purchase',
-          'onsite_conversion.purchase',
-          'purchase',
-        ]),
-        0
-      );
-      const campaignSpend = toFiniteNumber(row?.spend, 0);
-      return {
-        id: row?.campaign_id || null,
-        name: row?.campaign_name || null,
-        spend: campaignSpend,
-        revenue: campaignRevenue,
-        roas: campaignSpend > 0 ? Number((campaignRevenue / campaignSpend).toFixed(2)) : null,
-        status: null,
-      };
-    });
+    campaigns = mapMetaCampaignRows(Array.isArray(campaignInsightsRes?.data?.data) ? campaignInsightsRes.data.data : []);
   } catch (campaignErr) {
     console.warn('[PaidMedia Direct] Meta campaign fetch failed:', {
       status: campaignErr?.response?.status || null,
@@ -700,6 +707,82 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
     }
   }
 
+  if (spend <= 0 && campaigns.length === 0) {
+    const fallbackSince = formatYmd(subDays(endDate instanceof Date ? endDate : new Date(), 365));
+    if (fallbackSince !== since) {
+      console.log('[PaidMedia Direct] Meta range fallback to 12 months:', { accountId, from: since, to: until, fallbackSince });
+
+      const fallbackParamsBase = {
+        ...paramsBase,
+        time_range: JSON.stringify({ since: fallbackSince, until }),
+      };
+
+      try {
+        const fallbackAccountRes = await axios.get(`${graphBase}/act_${accountId}/insights`, {
+          params: {
+            ...fallbackParamsBase,
+            level: 'account',
+            limit: 1,
+            fields: 'spend,clicks,impressions,actions,action_values,purchase_roas',
+          },
+        });
+        const fallbackAccountRow = Array.isArray(fallbackAccountRes?.data?.data) ? fallbackAccountRes.data.data[0] : null;
+        const fallbackSpend = toFiniteNumber(fallbackAccountRow?.spend, 0);
+        const fallbackRevenue = toFiniteNumber(
+          pickMetaValueByPriority(fallbackAccountRow?.action_values || [], [
+            'omni_purchase',
+            'offsite_conversion.fb_pixel_purchase',
+            'onsite_conversion.purchase',
+            'purchase',
+          ]),
+          0
+        );
+
+        const fallbackCampaignRes = await axios.get(`${graphBase}/act_${accountId}/insights`, {
+          params: {
+            ...fallbackParamsBase,
+            level: 'campaign',
+            limit: 10,
+            fields: 'campaign_id,campaign_name,spend,clicks,impressions,actions,action_values,purchase_roas',
+          },
+        });
+        const fallbackCampaigns = mapMetaCampaignRows(Array.isArray(fallbackCampaignRes?.data?.data) ? fallbackCampaignRes.data.data : []);
+
+        let resolvedFallbackSpend = fallbackSpend;
+        let resolvedFallbackRevenue = fallbackRevenue;
+        if (resolvedFallbackSpend <= 0 && fallbackCampaigns.length > 0) {
+          resolvedFallbackSpend = Number(fallbackCampaigns.reduce((acc, campaign) => acc + toFiniteNumber(campaign?.spend, 0), 0).toFixed(2));
+          if (resolvedFallbackRevenue <= 0) {
+            resolvedFallbackRevenue = Number(fallbackCampaigns.reduce((acc, campaign) => acc + toFiniteNumber(campaign?.revenue, 0), 0).toFixed(2));
+          }
+        }
+
+        if (resolvedFallbackSpend > 0 || fallbackCampaigns.length > 0) {
+          spend = resolvedFallbackSpend;
+          revenue = resolvedFallbackRevenue;
+          campaigns = fallbackCampaigns;
+          effectiveSince = fallbackSince;
+          effectiveUntil = until;
+          rangeFallbackUsed = true;
+          console.log('[PaidMedia Direct] Meta fallback produced data:', {
+            accountId,
+            spend,
+            revenue,
+            campaigns: campaigns.length,
+            effectiveSince,
+            effectiveUntil,
+          });
+        }
+      } catch (fallbackErr) {
+        console.warn('[PaidMedia Direct] Meta 12m fallback failed:', {
+          status: fallbackErr?.response?.status || null,
+          message: fallbackErr?.message || String(fallbackErr),
+          detail: fallbackErr?.response?.data || null,
+        });
+      }
+    }
+  }
+
   const roas = spend > 0 ? Number((revenue / spend).toFixed(2)) : null;
   return {
     provider: 'meta',
@@ -713,6 +796,11 @@ async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
     conversions: toFiniteNumber(pickMetaValueByPriority(accountRow?.actions || [], ['purchase', 'omni_purchase']), 0),
     currency: currency || 'MXN',
     campaigns,
+    rangeUsed: {
+      since: effectiveSince,
+      until: effectiveUntil,
+      fallbackUsed: rangeFallbackUsed,
+    },
   };
 }
 
@@ -778,6 +866,11 @@ async function fetchGooglePaidMediaDirect({ userId, startDate, endDate }) {
     conversions: toFiniteNumber(payload?.kpis?.conversions, 0),
     currency: payload?.currency || 'MXN',
     campaigns,
+    rangeUsed: {
+      since: payload?.range?.since || null,
+      until: payload?.range?.until || null,
+      fallbackUsed: false,
+    },
   };
 }
 
@@ -1020,6 +1113,7 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
       summary.meta.connectedResourceName = metaLive.accountName || summary.meta.connectedResourceName;
       summary.meta.activeCampaignId = summary.meta.campaigns?.[0]?.id || null;
       summary.meta.activeCampaignName = summary.meta.campaigns?.[0]?.name || null;
+      summary.meta.rangeUsed = metaLive.rangeUsed || null;
     }
 
     let googleLive = null;
@@ -1048,6 +1142,7 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
       summary.google.connectedResourceName = googleLive.customerName || summary.google.connectedResourceName;
       summary.google.activeCampaignId = summary.google.campaigns?.[0]?.id || null;
       summary.google.activeCampaignName = summary.google.campaigns?.[0]?.name || null;
+      summary.google.rangeUsed = googleLive.rangeUsed || null;
     }
 
     const blendedSpend = Number(summary.meta.spend || 0) + Number(summary.google.spend || 0);
