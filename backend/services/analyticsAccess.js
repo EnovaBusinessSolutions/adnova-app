@@ -110,6 +110,7 @@ function bumpShopEntry(entry, input = {}) {
     if (input.source === 'shop_connection') entry.score += 1200;
     else if (input.source === 'user') entry.score += 1000;
     else if (input.source === 'platform_connection') entry.score += 250;
+    else if (input.source === 'platform_token_match') entry.score += 700;
   }
 
   if (input.platformMatch) {
@@ -145,12 +146,12 @@ async function loadUserAccessDocs(userId) {
       : Promise.resolve(null),
     MetaAccount
       ? MetaAccount.findOne({ $or: [{ user: userId }, { userId }] })
-          .select('selectedAccountIds defaultAccountId ad_accounts adAccounts')
+          .select('+access_token +token +accessToken +longLivedToken +longlivedToken selectedAccountIds defaultAccountId ad_accounts adAccounts')
           .lean()
       : Promise.resolve(null),
     GoogleAccount
       ? GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] })
-          .select('selectedCustomerIds defaultCustomerId ad_accounts customers')
+          .select('+accessToken selectedCustomerIds defaultCustomerId ad_accounts customers')
           .lean()
       : Promise.resolve(null),
     ShopConnections
@@ -171,7 +172,23 @@ async function loadUserAccessDocs(userId) {
   };
 }
 
-async function findPlatformMatchedAccounts(metaAccountIds, googleAccountIds) {
+function collectMetaTokens(metaDoc) {
+  return uniqueStrings([
+    metaDoc?.longLivedToken || '',
+    metaDoc?.longlivedToken || '',
+    metaDoc?.access_token || '',
+    metaDoc?.accessToken || '',
+    metaDoc?.token || '',
+  ]);
+}
+
+function collectGoogleTokens(googleDoc) {
+  return uniqueStrings([
+    googleDoc?.accessToken || '',
+  ]);
+}
+
+async function findPlatformMatchedAccounts(metaAccountIds, googleAccountIds, metaTokens, googleTokens) {
   const orClauses = [];
 
   if (metaAccountIds.length) {
@@ -182,11 +199,27 @@ async function findPlatformMatchedAccounts(metaAccountIds, googleAccountIds) {
     });
   }
 
+  if (metaTokens.length) {
+    orClauses.push({
+      platform: 'META',
+      status: 'ACTIVE',
+      accessToken: { in: metaTokens },
+    });
+  }
+
   if (googleAccountIds.length) {
     orClauses.push({
       platform: 'GOOGLE',
       status: 'ACTIVE',
       adAccountId: { in: googleAccountIds },
+    });
+  }
+
+  if (googleTokens.length) {
+    orClauses.push({
+      platform: 'GOOGLE',
+      status: 'ACTIVE',
+      accessToken: { in: googleTokens },
     });
   }
 
@@ -252,16 +285,42 @@ async function listAuthorizedAnalyticsShopsForUser(userId) {
 
   const metaAccountIds = collectMetaAccountIds(metaDoc, userDoc);
   const googleAccountIds = collectGoogleAccountIds(googleDoc, userDoc);
-  const platformMatches = await findPlatformMatchedAccounts(metaAccountIds, googleAccountIds);
+  const metaTokens = collectMetaTokens(metaDoc);
+  const googleTokens = collectGoogleTokens(googleDoc);
+  const platformMatches = await findPlatformMatchedAccounts(metaAccountIds, googleAccountIds, metaTokens, googleTokens);
 
   platformMatches.forEach((row) => {
+    const platformName = String(row?.platform || '').trim().toUpperCase();
+    const normalizedAdAccountId = platformName === 'META'
+      ? normalizeMetaAccountId(row?.adAccountId)
+      : platformName === 'GOOGLE'
+        ? normalizeGoogleCustomerId(row?.adAccountId)
+        : String(row?.adAccountId || '').trim();
+    const matchedByAdAccount = platformName === 'META'
+      ? metaAccountIds.includes(normalizedAdAccountId)
+      : platformName === 'GOOGLE'
+        ? googleAccountIds.includes(normalizedAdAccountId)
+        : false;
+    const matchedByToken = platformName === 'META'
+      ? metaTokens.includes(String(row?.accessToken || '').trim())
+      : platformName === 'GOOGLE'
+        ? googleTokens.includes(String(row?.accessToken || '').trim())
+        : false;
+    const matchReason = matchedByAdAccount
+      ? 'ad_account_id'
+      : matchedByToken
+        ? 'access_token'
+        : 'unknown';
+
     addShopCandidate(candidates, {
       shop: row?.account?.accountId || row?.accountId || row?.account?.domain || '',
       type: row?.account?.platform || '',
-      source: 'platform_connection',
+      source: matchedByToken ? 'platform_token_match' : 'platform_connection',
       platformMatch: row?.platform || '',
       updatedAt: row?.updatedAt || row?.account?.updatedAt || null,
     });
+
+    row.__matchReason = matchReason;
   });
 
   const shops = Array.from(candidates.values())
@@ -296,13 +355,15 @@ async function listAuthorizedAnalyticsShopsForUser(userId) {
       userId: String(userId),
       userShop: normalizeShopDomain(userDoc?.shop || '') || null,
       shopifyConnected: !!userDoc?.shopifyConnected,
-      matchedShopConnections: matchedShopDocs.map((doc) => ({
-        shop: normalizeShopDomain(doc?.shop || '') || null,
-        hasAccessToken: !!doc?.accessToken,
-        installedAt: doc?.installedAt ? new Date(doc.installedAt).toISOString() : null,
-      })),
+        matchedShopConnections: matchedShopDocs.map((doc) => ({
+          shop: normalizeShopDomain(doc?.shop || '') || null,
+          hasAccessToken: !!doc?.accessToken,
+          installedAt: doc?.installedAt ? new Date(doc.installedAt).toISOString() : null,
+        })),
       metaAccountIds,
       googleAccountIds,
+      metaTokenCount: metaTokens.length,
+      googleTokenCount: googleTokens.length,
       platformMatches: platformMatches.map((row) => ({
         accountId: normalizeShopDomain(row?.accountId || row?.account?.accountId || '') || null,
         domain: normalizeShopDomain(row?.account?.domain || '') || null,
@@ -310,6 +371,7 @@ async function listAuthorizedAnalyticsShopsForUser(userId) {
         platform: String(row?.platform || '').trim() || null,
         adAccountId: String(row?.adAccountId || '').trim() || null,
         status: String(row?.status || '').trim() || null,
+        matchReason: row?.__matchReason || 'unknown',
         updatedAt: row?.updatedAt ? new Date(row.updatedAt).toISOString() : null,
       })),
       resolvedShops: shops.map(({ _score, ...entry }) => entry),
