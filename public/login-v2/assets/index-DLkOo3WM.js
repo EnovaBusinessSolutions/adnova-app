@@ -30,10 +30,10 @@
         <div class="login-topbar login-topbar--minimal">
           <div class="login-brand-icon-wrap" aria-hidden="true">
             <img
-              src="/assets/adray-icon.png"
-              alt=""
-              class="login-brand-icon"
-            />
+  src="/login-src/assets/adray-icon.png"
+  alt=""
+  class="login-brand-icon"
+/>
           </div>
         </div>
 
