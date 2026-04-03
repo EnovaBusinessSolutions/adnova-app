@@ -12,6 +12,7 @@ import {
   resetTurnstile,
   showCaptcha,
 } from './turnstile'
+import adrayIcon from './assets/adray-icon.png'
 
 export function renderLogin() {
   const root = document.querySelector('#login-root') as HTMLDivElement
@@ -48,7 +49,7 @@ export function renderLogin() {
         <div class="login-topbar login-topbar--minimal">
   <div class="login-brand-icon-wrap" aria-hidden="true">
     <img
-      src="/assets/adray-icon.png"
+      src="${adrayIcon}"
       alt="Adray"
       class="login-brand-icon"
       decoding="async"

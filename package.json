@@ -5,7 +5,9 @@
   "main": "backend/index.js",
   "scripts": {
     "start": "node backend/index.js",
+    "dev:landing": "npm --prefix landing-adray run dev",
     "build:landing": "npm --prefix landing-adray ci && npm --prefix landing-adray run build && node scripts/sync-landing.cjs",
+    "build:landing:sync": "npm --prefix landing-adray run build && node scripts/sync-landing.cjs",
     "build:dashboard": "npm --prefix dashboard-src ci && npm --prefix dashboard-src run build",
     "build": "npm run build:landing && npm run build:dashboard && npm run prisma:generate",
     "test": "jest backend/mcp/__tests__/ --verbose",
