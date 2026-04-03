@@ -416,7 +416,7 @@ app.post("/api/register", requireTurnstileAlways, async (req, res) => {
     return res.status(201).json({
       success: true,
       message: "Usuario registrado. Revisa tu correo para verificar tu cuenta.",
-      confirmUrl: `/confirmation.html?email=${encodeURIComponent(user.email)}`,
+      confirmUrl: `/confirmation?email=${encodeURIComponent(user.email)}`,
     });
   } catch (err) {
     if (err && err.code === 11000) {
@@ -1017,7 +1017,7 @@ app.get("/", (req, res) => {
 // Compat: la landing antigua (saas-landing) exponía /start
 app.get("/start", (_req, res) => res.redirect(302, "/"));
 
-app.get(["/login", "/getstarted"], (_req, res) => {
+app.get(["/login", "/getstarted", "/confirmation"], (_req, res) => {
   res.sendFile(path.join(__dirname, "../public/login-v2/index.html"));
 });
 

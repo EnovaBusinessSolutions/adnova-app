@@ -276,6 +276,96 @@
         </div>
       </div>
     </div>
-  `,R(),F(),I(`#password`,`#toggle-password`),I(`#confirm-password`,`#toggle-confirm-password`),z(),L())}function M(e,t=!1){let n=document.querySelector(`#getstarted-message`);n&&(n.textContent=e,n.style.display=`block`,n.style.color=t?`#f3f0ff`:`#fda4af`)}function N(){let e=document.querySelector(`#getstarted-message`);e&&(e.textContent=``,e.style.display=`none`)}function P(e){let t=document.querySelector(`#submit-btn`),n=document.querySelector(`#google-btn`),r=document.querySelector(`#login-btn`);t&&(t.disabled=e,t.textContent=e?`Creating account...`:`Create account`),n&&(n.disabled=e),r&&(r.disabled=e)}function F(){let e=document.querySelector(`#login-btn`),t=document.querySelector(`#google-btn`);e&&e.addEventListener(`click`,()=>{window.location.href=`/login`}),t&&t.addEventListener(`click`,()=>{window.location.href=`/auth/google/login`})}function I(e,t){let n=document.querySelector(e),r=document.querySelector(t);!n||!r||r.addEventListener(`click`,()=>{let e=n.type===`password`;n.type=e?`text`:`password`,r.setAttribute(`aria-pressed`,String(e)),r.classList.toggle(`is-visible`,e),n.focus({preventScroll:!0});try{let e=n.value.length;n.setSelectionRange(e,e)}catch{}})}async function L(){try{await b(),v()}catch(e){console.error(`[getstarted] captcha error:`,e),M(`Security verification could not be loaded. Refresh the page and try again.`)}}function R(){let e=document.querySelector(`#getstarted-form`);if(!e)return;let t=!1;e.addEventListener(`submit`,async e=>{if(e.preventDefault(),t)return;N();let n=document.querySelector(`#name`)?.value.trim()||``,r=document.querySelector(`#email`)?.value.trim().toLowerCase()||``,i=document.querySelector(`#password`)?.value??``,a=document.querySelector(`#confirm-password`)?.value??``;if(!n||!r||!i||!a){M(`Complete all fields to continue.`);return}if(n.length<2){M(`Enter your full name.`);return}if(i.length<8){M(`Password must be at least 8 characters.`);return}if(i!==a){M(`Passwords do not match.`);return}let o=m();if(!o){M(`Complete the security verification to continue.`);return}t=!0,P(!0);try{let e=await fetch(`/api/register`,{method:`POST`,headers:{"Content-Type":`application/json`},credentials:`include`,body:JSON.stringify({name:n,email:r,password:i,turnstileToken:o})}),t=await B(e),a=!!(t?.success??t?.ok);if(e.ok&&a){try{window.gtag?.(`event`,`sign_up`,{method:`email`})}catch{}_(),M(t.message||`Account created successfully. Check your email to verify your account.`,!0);let e=t.confirmUrl||`/confirmation.html?email=${encodeURIComponent(r)}`;window.setTimeout(()=>{window.location.href=e},900);return}(t?.code===`TURNSTILE_FAILED`||t?.code===`TURNSTILE_REQUIRED_OR_FAILED`||Array.isArray(t?.errorCodes)&&t.errorCodes.length>0||e.status===400)&&v(),M(t?.message||t?.error||(e.status===409?`This email is already registered.`:`Could not create your account. Please try again.`))}catch(e){console.error(e),v(),M(`Could not connect to the server.`)}finally{t=!1,P(!1)}})}async function z(){try{let e=await u();e&&(e.authenticated||e.ok)&&window.location.replace(`/dashboard/`)}catch{}}async function B(e){try{return await e.json()}catch{return{}}}document.querySelector(`#app`).innerHTML=`
+  `,R(),F(),I(`#password`,`#toggle-password`),I(`#confirm-password`,`#toggle-confirm-password`),z(),L())}function M(e,t=!1){let n=document.querySelector(`#getstarted-message`);n&&(n.textContent=e,n.style.display=`block`,n.style.color=t?`#f3f0ff`:`#fda4af`)}function N(){let e=document.querySelector(`#getstarted-message`);e&&(e.textContent=``,e.style.display=`none`)}function P(e){let t=document.querySelector(`#submit-btn`),n=document.querySelector(`#google-btn`),r=document.querySelector(`#login-btn`);t&&(t.disabled=e,t.textContent=e?`Creating account...`:`Create account`),n&&(n.disabled=e),r&&(r.disabled=e)}function F(){let e=document.querySelector(`#login-btn`),t=document.querySelector(`#google-btn`);e&&e.addEventListener(`click`,()=>{window.location.href=`/login`}),t&&t.addEventListener(`click`,()=>{window.location.href=`/auth/google/login`})}function I(e,t){let n=document.querySelector(e),r=document.querySelector(t);!n||!r||r.addEventListener(`click`,()=>{let e=n.type===`password`;n.type=e?`text`:`password`,r.setAttribute(`aria-pressed`,String(e)),r.classList.toggle(`is-visible`,e),n.focus({preventScroll:!0});try{let e=n.value.length;n.setSelectionRange(e,e)}catch{}})}async function L(){try{await b(),v()}catch(e){console.error(`[getstarted] captcha error:`,e),M(`Security verification could not be loaded. Refresh the page and try again.`)}}function R(){let e=document.querySelector(`#getstarted-form`);if(!e)return;let t=!1;e.addEventListener(`submit`,async e=>{if(e.preventDefault(),t)return;N();let n=document.querySelector(`#name`)?.value.trim()||``,r=document.querySelector(`#email`)?.value.trim().toLowerCase()||``,i=document.querySelector(`#password`)?.value??``,a=document.querySelector(`#confirm-password`)?.value??``;if(!n||!r||!i||!a){M(`Complete all fields to continue.`);return}if(n.length<2){M(`Enter your full name.`);return}if(i.length<8){M(`Password must be at least 8 characters.`);return}if(i!==a){M(`Passwords do not match.`);return}let o=m();if(!o){M(`Complete the security verification to continue.`);return}t=!0,P(!0);try{let e=await fetch(`/api/register`,{method:`POST`,headers:{"Content-Type":`application/json`},credentials:`include`,body:JSON.stringify({name:n,email:r,password:i,turnstileToken:o})}),t=await B(e),a=!!(t?.success??t?.ok);if(e.ok&&a){try{window.gtag?.(`event`,`sign_up`,{method:`email`})}catch{}_(),M(t.message||`Account created successfully. Check your email to verify your account.`,!0);let e=t.confirmUrl||`/confirmation.html?email=${encodeURIComponent(r)}`;window.setTimeout(()=>{window.location.href=e},900);return}(t?.code===`TURNSTILE_FAILED`||t?.code===`TURNSTILE_REQUIRED_OR_FAILED`||Array.isArray(t?.errorCodes)&&t.errorCodes.length>0||e.status===400)&&v(),M(t?.message||t?.error||(e.status===409?`This email is already registered.`:`Could not create your account. Please try again.`))}catch(e){console.error(e),v(),M(`Could not connect to the server.`)}finally{t=!1,P(!1)}})}async function z(){try{let e=await u();e&&(e.authenticated||e.ok)&&window.location.replace(`/dashboard/`)}catch{}}async function B(e){try{return await e.json()}catch{return{}}}function V(){let e=document.querySelector(`#login-root`);if(!e)return;let t=U();e.innerHTML=`
+    <div class="background">
+      <div class="background-base"></div>
+      <div class="background-grid"></div>
+      <div class="background-noise"></div>
+
+      <div class="background-aurora aurora-1"></div>
+      <div class="background-aurora aurora-2"></div>
+      <div class="background-aurora aurora-3"></div>
+
+      <div class="background-glow glow-top"></div>
+      <div class="background-glow glow-left"></div>
+      <div class="background-glow glow-right"></div>
+      <div class="background-glow glow-bottom"></div>
+
+      <div class="background-orbit orbit-1"></div>
+      <div class="background-orbit orbit-2"></div>
+      <div class="background-orbit orbit-3"></div>
+
+      <div class="vertical-line"></div>
+      <div class="horizontal-line"></div>
+    </div>
+
+    <div class="login-container">
+      <div class="login-card confirmation-card">
+        <div class="login-card-glow" aria-hidden="true"></div>
+        <div class="login-card-noise" aria-hidden="true"></div>
+        <div class="login-card-aurora" aria-hidden="true"></div>
+
+        <div class="login-topbar login-topbar--minimal">
+          <div class="login-brand-icon-wrap" aria-hidden="true">
+            <img
+              src="${x}"
+              alt="Adray"
+              class="login-brand-icon"
+              decoding="async"
+            />
+          </div>
+        </div>
+
+        <div class="confirmation-shell">
+          <div class="confirmation-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" class="confirmation-icon-svg">
+              <path
+                d="M3.75 7.5L10.94 12.533c.636.445.954.667 1.291.753a2.25 2.25 0 0 0 1.038 0c.337-.086.655-.308 1.291-.753L21.75 7.5"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+              <path
+                d="M6.45 19.5h11.1c1.68 0 2.52 0 3.162-.327a3 3 0 0 0 1.311-1.311c.327-.642.327-1.482.327-3.162V9.3c0-1.68 0-2.52-.327-3.162a3 3 0 0 0-1.311-1.311C20.07 4.5 19.23 4.5 17.55 4.5H6.45c-1.68 0-2.52 0-3.162.327a3 3 0 0 0-1.311 1.311C1.65 6.78 1.65 7.62 1.65 9.3v5.4c0 1.68 0 2.52.327 3.162a3 3 0 0 0 1.311 1.311C3.93 19.5 4.77 19.5 6.45 19.5Z"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </div>
+
+          <h1 class="login-heading confirmation-heading">Confirm your email</h1>
+
+          <div class="confirmation-copy">
+            <p class="confirmation-lead">
+              We sent a verification link to your email address.
+            </p>
+
+            ${t?`<p class="confirmation-email">${G(t)}</p>`:``}
+
+            <p class="confirmation-body">
+              Check your inbox and click the verification link to activate your account.
+            </p>
+
+            <p class="confirmation-footnote">
+              If you don’t see it, check your spam or promotions folder.
+            </p>
+          </div>
+
+          <div class="confirmation-actions">
+            <button id="open-mail-btn" class="btn btn-primary" type="button">
+              Open email
+            </button>
+
+            <button id="go-login-btn" class="btn btn-secondary" type="button">
+              Go to login
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `,H()}function H(){let e=document.querySelector(`#open-mail-btn`),t=document.querySelector(`#go-login-btn`);e&&e.addEventListener(`click`,()=>{let e=W(U());if(e){window.open(e,`_blank`,`noopener,noreferrer`);return}window.location.href=`/login`}),t&&t.addEventListener(`click`,()=>{window.location.href=`/login`})}function U(){return(new URLSearchParams(window.location.search).get(`email`)||``).trim()}function W(e){let t=e.toLowerCase();return!t||t.includes(`@gmail.com`)||t.includes(`@googlemail.com`)?`https://mail.google.com`:t.includes(`@outlook.com`)||t.includes(`@hotmail.com`)||t.includes(`@live.com`)||t.includes(`@msn.com`)?`https://outlook.live.com/mail/`:t.includes(`@icloud.com`)||t.includes(`@me.com`)||t.includes(`@mac.com`)?`https://www.icloud.com/mail`:t.includes(`@yahoo.com`)?`https://mail.yahoo.com`:``}function G(e){return e.replaceAll(`&`,`&amp;`).replaceAll(`<`,`&lt;`).replaceAll(`>`,`&gt;`).replaceAll(`"`,`&quot;`).replaceAll(`'`,`&#39;`)}document.querySelector(`#app`).innerHTML=`
   <div id="login-root"></div>
-`,(window.location.pathname.replace(/\/+$/,``)||`/`)===`/getstarted`?j():S();
+`;var K=window.location.pathname.replace(/\/+$/,``)||`/`;K===`/getstarted`?j():K===`/confirmation`?V():S();
