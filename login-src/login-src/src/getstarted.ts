@@ -1,21 +1,8 @@
-import {
-  backendWantsCaptcha,
-  getLoginErrorMessage,
-  isSuccessPayload,
-  postLogin,
-} from './auth'
-import { getSession, waitForSessionAndRedirect } from './session'
-import {
-  getTurnstileToken,
-  hasVisibleCaptcha,
-  hideCaptcha,
-  resetTurnstile,
-  showCaptcha,
-} from './turnstile'
 import adrayIcon from './assets/adray-icon.png'
 
-export function renderLogin() {
-  const root = document.querySelector('#login-root') as HTMLDivElement
+export function renderGetStarted() {
+  const root = document.querySelector('#login-root') as HTMLDivElement | null
+  if (!root) return
 
   root.innerHTML = `
     <div class="background">
@@ -47,19 +34,19 @@ export function renderLogin() {
         <div class="login-card-aurora" aria-hidden="true"></div>
 
         <div class="login-topbar login-topbar--minimal">
-  <div class="login-brand-icon-wrap" aria-hidden="true">
-    <img
-      src="${adrayIcon}"
-      alt="Adray"
-      class="login-brand-icon"
-      decoding="async"
-    />
-  </div>
-</div>
+          <div class="login-brand-icon-wrap" aria-hidden="true">
+            <img
+              src="${adrayIcon}"
+              alt="Adray"
+              class="login-brand-icon"
+              decoding="async"
+            />
+          </div>
+        </div>
 
-        <h1 class="login-heading">Login to your account</h1>
+        <h1 class="login-heading">Create free account</h1>
 
-        <form id="login-form" novalidate>
+        <form id="getstarted-form" novalidate>
           <div class="input-group">
             <label class="input-label" for="email">Email</label>
             <input
@@ -82,7 +69,7 @@ export function renderLogin() {
                 class="input input-password"
                 type="password"
                 placeholder="••••••••"
-                autocomplete="current-password"
+                autocomplete="new-password"
               />
 
               <button
@@ -97,16 +84,16 @@ export function renderLogin() {
             </div>
           </div>
 
-          <div id="turnstile-wrap"></div>
+          <p id="getstarted-message" class="login-message" aria-live="polite"></p>
 
-          <p id="login-message" class="login-message" aria-live="polite"></p>
-
-          <button id="submit-btn" class="btn btn-primary" type="submit">Sign in</button>
+          <button id="submit-btn" class="btn btn-primary" type="submit">
+            Create account
+          </button>
         </form>
 
         <div class="register-wrapper">
-          <button id="register-btn" class="btn btn-secondary" type="button">
-            Create account
+          <button id="login-btn" class="btn btn-secondary" type="button">
+            Login
           </button>
         </div>
 
@@ -132,24 +119,17 @@ export function renderLogin() {
             </div>
           </button>
         </div>
-
-        <p class="forgot-password">
-          Forgot password?
-          <a href="/recuperar.html" class="recovery-link">Recover it here</a>
-        </p>
       </div>
     </div>
   `
 
-  bindLoginEvents()
+  bindGetStartedEvents()
   bindSecondaryActions()
   bindPasswordToggle()
-  checkExistingSession()
-  handleVerifiedNotice()
 }
 
 function showMessage(text: string, isOk = false) {
-  const box = document.querySelector('#login-message') as HTMLParagraphElement | null
+  const box = document.querySelector('#getstarted-message') as HTMLParagraphElement | null
   if (!box) return
 
   box.textContent = text
@@ -158,7 +138,7 @@ function showMessage(text: string, isOk = false) {
 }
 
 function hideMessage() {
-  const box = document.querySelector('#login-message') as HTMLParagraphElement | null
+  const box = document.querySelector('#getstarted-message') as HTMLParagraphElement | null
   if (!box) return
 
   box.textContent = ''
@@ -168,24 +148,24 @@ function hideMessage() {
 function setSubmitting(isSubmitting: boolean) {
   const btn = document.querySelector('#submit-btn') as HTMLButtonElement | null
   const googleBtn = document.querySelector('#google-btn') as HTMLButtonElement | null
-  const registerBtn = document.querySelector('#register-btn') as HTMLButtonElement | null
+  const loginBtn = document.querySelector('#login-btn') as HTMLButtonElement | null
 
   if (btn) {
     btn.disabled = isSubmitting
-    btn.textContent = isSubmitting ? 'Signing in...' : 'Sign in'
+    btn.textContent = isSubmitting ? 'Creating account...' : 'Create account'
   }
 
   if (googleBtn) googleBtn.disabled = isSubmitting
-  if (registerBtn) registerBtn.disabled = isSubmitting
+  if (loginBtn) loginBtn.disabled = isSubmitting
 }
 
 function bindSecondaryActions() {
-  const registerBtn = document.querySelector('#register-btn') as HTMLButtonElement | null
+  const loginBtn = document.querySelector('#login-btn') as HTMLButtonElement | null
   const googleBtn = document.querySelector('#google-btn') as HTMLButtonElement | null
 
-  if (registerBtn) {
-    registerBtn.addEventListener('click', () => {
-      window.location.href = '/getstarted'
+  if (loginBtn) {
+    loginBtn.addEventListener('click', () => {
+      window.location.href = '/login'
     })
   }
 
@@ -218,8 +198,8 @@ function bindPasswordToggle() {
   })
 }
 
-async function bindLoginEvents() {
-  const form = document.querySelector('#login-form') as HTMLFormElement | null
+function bindGetStartedEvents() {
+  const form = document.querySelector('#getstarted-form') as HTMLFormElement | null
   if (!form) return
 
   let inFlight = false
@@ -241,76 +221,28 @@ async function bindLoginEvents() {
       return
     }
 
-    const captchaVisible = hasVisibleCaptcha()
-    const turnstileToken = captchaVisible ? getTurnstileToken() : ''
-
-    if (captchaVisible && !turnstileToken) {
-      showMessage('Complete the security verification to continue.')
-      return
-    }
-
     inFlight = true
     setSubmitting(true)
 
     try {
-      const { res, data } = await postLogin(email, password, turnstileToken || undefined)
+      /**
+       * Fase 1:
+       * Por ahora este panel nuevo funciona como entrypoint UX y
+       * redirige al flujo actual de registro legacy con los datos precargados.
+       *
+       * Más adelante, si quieres, aquí conectamos el endpoint real de signup.
+       */
+      const params = new URLSearchParams()
+      params.set('email', email)
+      params.set('password', password)
 
-      if ((res.ok && isSuccessPayload(data)) || (res.ok && !!data?.redirect)) {
-        hideCaptcha()
-
-        const ok = await waitForSessionAndRedirect()
-        if (!ok) {
-          showMessage('You signed in, but the session could not be confirmed.')
-        }
-        return
-      }
-
-      if (backendWantsCaptcha(res, data)) {
-        try {
-          await showCaptcha()
-          resetTurnstile()
-          showMessage('Verification required. Complete the captcha to continue.')
-        } catch (captchaError) {
-          console.error('[login] captcha error:', captchaError)
-          showMessage('Security verification could not be loaded. Refresh the page and try again.')
-        }
-        return
-      }
-
-      showMessage(getLoginErrorMessage(res, data))
+      window.location.href = `/register.html?${params.toString()}`
     } catch (error) {
       console.error(error)
-      showMessage('Could not connect to the server.')
+      showMessage('Could not continue to account creation.')
     } finally {
       inFlight = false
       setSubmitting(false)
     }
   })
-}
-
-async function checkExistingSession() {
-  try {
-    const session = await getSession()
-    if (session && (session.authenticated || session.ok)) {
-      window.location.replace('/dashboard/')
-    }
-  } catch {
-    // noop
-  }
-}
-
-function handleVerifiedNotice() {
-  const params = new URLSearchParams(window.location.search)
-  if (params.get('verified') !== '1') return
-
-  showMessage('Email verified. You can sign in now.', true)
-
-  params.delete('verified')
-
-  const clean =
-    window.location.pathname +
-    (params.toString() ? `?${params.toString()}` : '') +
-    window.location.hash
-
-  window.history.replaceState({}, document.title, clean)
 }
