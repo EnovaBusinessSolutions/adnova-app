@@ -317,8 +317,8 @@
         </div>
 
         <div class="confirmation-shell">
-          <div class="confirmation-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" class="confirmation-icon-svg">
+          <div class="confirmation-badge" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" class="confirmation-badge-svg">
               <path
                 d="M3.75 7.5L10.94 12.533c.636.445.954.667 1.291.753a2.25 2.25 0 0 0 1.038 0c.337-.086.655-.308 1.291-.753L21.75 7.5"
                 stroke="currentColor"
@@ -336,21 +336,23 @@
             </svg>
           </div>
 
-          <h1 class="login-heading confirmation-heading">Confirm your email</h1>
-
           <div class="confirmation-copy">
+            <p class="confirmation-kicker">EMAIL VERIFICATION</p>
+
+            <h1 class="confirmation-title">Confirm your email</h1>
+
             <p class="confirmation-lead">
               We sent a verification link to your email address.
             </p>
 
-            ${t?`<p class="confirmation-email">${G(t)}</p>`:``}
+            ${t?`<div class="confirmation-email-pill">${G(t)}</div>`:``}
 
             <p class="confirmation-body">
-              Check your inbox and click the verification link to activate your account.
+              Open your inbox and click the verification link to activate your account and continue.
             </p>
 
             <p class="confirmation-footnote">
-              If you don’t see it, check your spam or promotions folder.
+              If you don’t see it, check your spam, promotions, or junk folder.
             </p>
           </div>
 
