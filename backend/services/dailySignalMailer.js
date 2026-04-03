@@ -126,6 +126,65 @@ function extractSummary(signalPayload = null) {
   };
 }
 
+function buildHowToUsePrompt() {
+  return [
+    'Analyze this 60-day marketing dataset and act as a senior performance marketer.',
+    'What’s working, what’s not, and why? Break it down by channel, campaign, and audience.',
+    'Identify the top drivers of performance (top ~20%) and the biggest inefficiencies or wasted spend.',
+    'Recommend exactly how to reallocate budget to maximize ROI over the next 30 days (include % shifts).',
+    'Highlight what I should scale immediately (campaigns, audiences, creatives) and any risks to watch.',
+    'Provide a clear, prioritized 2-week action plan to improve results.',
+    'Keep the output concise, structured, and focused on actionable insights.',
+  ].join('\n');
+}
+
+function buildBulletList(items = [], bulletColor = '#8b5cf6') {
+  if (!Array.isArray(items) || !items.length) {
+    return '';
+  }
+
+  return `
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;">
+      ${items.map((item) => `
+        <tr>
+          <td valign="top" style="width:18px;padding:0 0 10px 0;font-size:14px;line-height:24px;color:${bulletColor};">•</td>
+          <td valign="top" style="padding:0 0 10px 0;font-size:14px;line-height:24px;color:#dbe4ff;">
+            ${escapeHtml(item)}
+          </td>
+        </tr>
+      `).join('')}
+    </table>
+  `.trim();
+}
+
+function buildSectionCard({
+  eyebrow = '',
+  eyebrowColor = '#c4b5fd',
+  title = '',
+  bodyHtml = '',
+  marginBottom = 18,
+} = {}) {
+  return `
+    <div style="margin:0 0 ${marginBottom}px 0;padding:20px 20px 18px 20px;border-radius:20px;background:linear-gradient(180deg, rgba(20,18,32,0.94) 0%, rgba(11,11,18,0.98) 100%);border:1px solid rgba(255,255,255,0.08);box-shadow:inset 0 1px 0 rgba(255,255,255,0.03);">
+      ${
+        eyebrow
+          ? `<div style="margin:0 0 8px 0;font-size:11px;line-height:1.2;font-weight:800;letter-spacing:0.16em;text-transform:uppercase;color:${eyebrowColor};">
+              ${escapeHtml(eyebrow)}
+            </div>`
+          : ''
+      }
+      ${
+        title
+          ? `<div style="margin:0 0 10px 0;font-size:20px;line-height:1.25;font-weight:800;color:#ffffff;">
+              ${escapeHtml(title)}
+            </div>`
+          : ''
+      }
+      ${bodyHtml}
+    </div>
+  `.trim();
+}
+
 function buildEmailHtml({
   user = null,
   signalPayload = null,
@@ -147,18 +206,59 @@ function buildEmailHtml({
 
   const formattedDate = formatDateForSubject(reportDate || new Date());
   const dashboardUrl = normSimpleString(appUrl) || normSimpleString(process.env.APP_URL) || 'https://adray.ai';
+  const howToUsePrompt = buildHowToUsePrompt();
 
-  const positivesHtml = positives.length
-    ? `<ul style="margin:10px 0 0 18px;padding:0;color:#d1d5db;">
-${positives.map((item) => `<li style="margin:0 0 8px 0;">${escapeHtml(item)}</li>`).join('\n')}
-</ul>`
-    : `<p style="margin:10px 0 0 0;color:#9ca3af;">Your latest report includes refreshed channel-level positives and opportunities.</p>`;
+  const introBodyHtml = `
+    <div style="font-size:15px;line-height:26px;color:#dbe4ff;">
+      <p style="margin:0 0 14px 0;">
+        Download the attached PDF and drop it into any AI you already use for daily work:
+        <span style="color:#ffffff;font-weight:700;">ChatGPT, Claude, Gemini, Grok, Copilot or DeepSeek</span>.
+      </p>
+      <p style="margin:0 0 14px 0;">
+        Once it is inside your AI chatbot, you can ask questions about your campaigns, spend, strategy, optimization ideas, reporting, budget allocation and next actions.
+      </p>
+      <p style="margin:0 0 16px 0;">
+        For the best result, use the prompt below together with your Signal PDF:
+      </p>
+    </div>
 
-  const actionsHtml = actions.length
-    ? `<ul style="margin:10px 0 0 18px;padding:0;color:#d1d5db;">
-${actions.map((item) => `<li style="margin:0 0 8px 0;">${escapeHtml(item)}</li>`).join('\n')}
-</ul>`
-    : `<p style="margin:10px 0 0 0;color:#9ca3af;">Open the attached PDF to review your updated priorities and next actions.</p>`;
+    <div style="margin:0 0 16px 0;padding:18px 18px 16px 18px;border-radius:18px;background:linear-gradient(180deg, rgba(12,12,18,0.98) 0%, rgba(7,8,13,1) 100%);border:1px solid rgba(181,92,255,0.20);box-shadow:0 0 0 1px rgba(181,92,255,0.06) inset;">
+      <div style="margin:0 0 10px 0;font-size:11px;line-height:1.2;font-weight:800;letter-spacing:0.16em;text-transform:uppercase;color:#8b5cf6;">
+        Recommended Prompt
+      </div>
+      <div style="white-space:pre-line;font-size:14px;line-height:24px;color:#f3f4f6;">
+        ${escapeHtml(howToUsePrompt)}
+      </div>
+    </div>
+
+    <div style="font-size:14px;line-height:24px;color:#b9c4dc;">
+      If you want a more dynamic and real-time use of your data, you can also go to
+      <a href="${escapeHtml(dashboardUrl)}" style="color:#c4b5fd;text-decoration:none;font-weight:700;">Adray</a>
+      and set up an MCP connector to Claude or ChatGPT.
+    </div>
+  `;
+
+  const summaryBodyHtml = `
+    <div style="font-size:15px;line-height:26px;color:#e7ecf7;">
+      ${escapeHtml(executiveSummary || businessState || 'Your latest Adray report has been generated successfully and attached to this email.')}
+    </div>
+  `;
+
+  const positivesBodyHtml = positives.length
+    ? buildBulletList(positives, '#4fe3c1')
+    : `<div style="font-size:14px;line-height:24px;color:#b9c4dc;">Your latest report includes refreshed channel-level positives and opportunities.</div>`;
+
+  const actionsBodyHtml = actions.length
+    ? buildBulletList(actions, '#f472b6')
+    : `<div style="font-size:14px;line-height:24px;color:#b9c4dc;">Open the attached PDF to review your updated priorities and next actions.</div>`;
+
+  const crossChannelBodyHtml = crossChannelStory
+    ? `
+      <div style="font-size:14px;line-height:24px;color:#dbe4ff;">
+        ${escapeHtml(crossChannelStory)}
+      </div>
+    `
+    : '';
 
   return `
 <!doctype html>
@@ -168,76 +268,101 @@ ${actions.map((item) => `<li style="margin:0 0 8px 0;">${escapeHtml(item)}</li>`
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Adray Daily Signal</title>
   </head>
-  <body style="margin:0;padding:0;background:#0b1020;font-family:Inter,Arial,sans-serif;color:#ffffff;">
-    <div style="width:100%;background:#0b1020;padding:32px 12px;">
-      <div style="max-width:680px;margin:0 auto;background:linear-gradient(180deg,rgba(17,24,39,1),rgba(7,11,22,1));border:1px solid rgba(255,255,255,0.08);border-radius:24px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,0.45);">
-        <div style="padding:28px 28px 18px 28px;border-bottom:1px solid rgba(255,255,255,0.08);background:radial-gradient(circle at top left, rgba(124,58,237,0.35), transparent 38%), radial-gradient(circle at top right, rgba(59,130,246,0.22), transparent 30%);">
-          <div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;color:#c4b5fd;font-weight:800;margin-bottom:10px;">
-            Adray AI · Daily Signal
-          </div>
-          <h1 style="margin:0;font-size:30px;line-height:1.15;font-weight:900;color:#ffffff;">
-            Your updated Signal report is ready
-          </h1>
-          <p style="margin:14px 0 0 0;font-size:15px;line-height:1.7;color:#cbd5e1;">
-            Hi ${escapeHtml(name)}, here is your refreshed daily Signal and PDF report for ${escapeHtml(formattedDate)}.
-          </p>
-        </div>
+  <body style="margin:0;padding:0;background:#05070b;font-family:Inter,Arial,sans-serif;color:#ffffff;">
+    <div style="width:100%;margin:0;padding:28px 10px;background:
+      radial-gradient(circle at top left, rgba(181,92,255,0.10), transparent 26%),
+      radial-gradient(circle at top right, rgba(79,227,193,0.08), transparent 22%),
+      linear-gradient(180deg, #060608 0%, #09090d 38%, #050507 100%);
+    ">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;width:100%;">
+        <tr>
+          <td align="center">
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse:separate;width:100%;max-width:700px;background:linear-gradient(180deg, rgba(17,14,28,0.98) 0%, rgba(8,9,14,1) 100%);border:1px solid rgba(255,255,255,0.08);border-radius:28px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,0.42);">
+              <tr>
+                <td style="padding:0;">
+                  <div style="padding:30px 28px 22px 28px;border-bottom:1px solid rgba(255,255,255,0.08);background:
+                    radial-gradient(circle at top left, rgba(181,92,255,0.22), transparent 36%),
+                    radial-gradient(circle at top right, rgba(79,227,193,0.10), transparent 26%),
+                    linear-gradient(180deg, rgba(20,17,34,0.98) 0%, rgba(14,14,24,0.94) 100%);
+                  ">
+                    <div style="margin:0 0 10px 0;font-size:11px;line-height:1.2;font-weight:800;letter-spacing:0.20em;text-transform:uppercase;color:#c4b5fd;">
+                      Adray AI · Daily Signal
+                    </div>
 
-        <div style="padding:24px 28px;">
-          <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:18px;padding:18px 18px 16px 18px;margin-bottom:16px;">
-            <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#93c5fd;font-weight:800;margin-bottom:8px;">
-              Executive Summary
-            </div>
-            <div style="font-size:15px;line-height:1.75;color:#e5e7eb;">
-              ${escapeHtml(executiveSummary || businessState || 'Your latest Adray report has been generated successfully and attached to this email.')}
-            </div>
-          </div>
+                    <div style="margin:0 0 8px 0;font-size:34px;line-height:1.12;font-weight:900;color:#ffffff;">
+                      Your updated Signal report is ready
+                    </div>
 
-          <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:18px;padding:18px 18px 16px 18px;margin-bottom:16px;">
-            <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#86efac;font-weight:800;margin-bottom:8px;">
-              Key Positives
-            </div>
-            ${positivesHtml}
-          </div>
+                    <div style="font-size:15px;line-height:26px;color:#d3dcef;">
+                      Hi ${escapeHtml(name)}, here is your refreshed daily Signal and PDF report for ${escapeHtml(formattedDate)}.
+                    </div>
+                  </div>
+                </td>
+              </tr>
 
-          <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:18px;padding:18px 18px 16px 18px;margin-bottom:20px;">
-            <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#f9a8d4;font-weight:800;margin-bottom:8px;">
-              Priority Actions
-            </div>
-            ${actionsHtml}
-          </div>
+              <tr>
+                <td style="padding:24px 22px 10px 22px;">
+                  ${buildSectionCard({
+                    eyebrow: 'How to use your Signal PDF',
+                    eyebrowColor: '#c4b5fd',
+                    bodyHtml: introBodyHtml,
+                    marginBottom: 18,
+                  })}
 
-          ${
-            crossChannelStory
-              ? `
-          <div style="margin-bottom:20px;">
-            <div style="font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#c4b5fd;font-weight:800;margin-bottom:8px;">
-              Cross-Channel Story
-            </div>
-            <div style="font-size:14px;line-height:1.75;color:#cbd5e1;">
-              ${escapeHtml(crossChannelStory)}
-            </div>
-          </div>
-          `
-              : ''
-          }
+                  ${buildSectionCard({
+                    eyebrow: 'Executive Summary',
+                    eyebrowColor: '#93c5fd',
+                    bodyHtml: summaryBodyHtml,
+                    marginBottom: 18,
+                  })}
 
-          <div style="text-align:center;margin-top:28px;">
-            <a
-              href="${escapeHtml(dashboardUrl)}"
-              style="display:inline-block;text-decoration:none;background:linear-gradient(90deg,#7c3aed,#3b82f6);color:#ffffff;font-weight:800;font-size:14px;padding:14px 22px;border-radius:14px;"
-            >
-              Open Adray
-            </a>
-          </div>
-        </div>
+                  ${buildSectionCard({
+                    eyebrow: 'Key Positives',
+                    eyebrowColor: '#4fe3c1',
+                    bodyHtml: positivesBodyHtml,
+                    marginBottom: 18,
+                  })}
 
-        <div style="padding:18px 28px 26px 28px;border-top:1px solid rgba(255,255,255,0.08);">
-          <p style="margin:0;font-size:12px;line-height:1.7;color:#94a3b8;">
-            This email was generated automatically by Adray AI. Your updated PDF report is attached to this message.
-          </p>
-        </div>
-      </div>
+                  ${buildSectionCard({
+                    eyebrow: 'Priority Actions',
+                    eyebrowColor: '#f472b6',
+                    bodyHtml: actionsBodyHtml,
+                    marginBottom: crossChannelStory ? 18 : 12,
+                  })}
+
+                  ${
+                    crossChannelStory
+                      ? buildSectionCard({
+                          eyebrow: 'Cross-Channel Story',
+                          eyebrowColor: '#c4b5fd',
+                          bodyHtml: crossChannelBodyHtml,
+                          marginBottom: 14,
+                        })
+                      : ''
+                  }
+
+                  <div style="padding:10px 0 24px 0;text-align:center;">
+                    <a
+                      href="${escapeHtml(dashboardUrl)}"
+                      style="display:inline-block;padding:14px 24px;border-radius:16px;background:linear-gradient(135deg, #8b5cf6 0%, #b55cff 48%, #4fe3c1 100%);color:#ffffff;text-decoration:none;font-size:14px;line-height:20px;font-weight:800;box-shadow:0 12px 30px rgba(101,66,214,0.34);"
+                    >
+                      Open Adray
+                    </a>
+                  </div>
+                </td>
+              </tr>
+
+              <tr>
+                <td style="padding:18px 28px 26px 28px;border-top:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);">
+                  <div style="font-size:12px;line-height:22px;color:#8fa0bd;">
+                    This email was generated automatically by Adray AI. Your updated PDF report is attached to this message.
+                  </div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
     </div>
   </body>
 </html>
@@ -265,11 +390,19 @@ function buildEmailText({
 
   const formattedDate = formatDateForSubject(reportDate || new Date());
   const dashboardUrl = normSimpleString(appUrl) || normSimpleString(process.env.APP_URL) || 'https://adray.ai';
+  const howToUsePrompt = buildHowToUsePrompt();
 
   return [
     `Hi ${name},`,
     '',
     `Your refreshed Adray Daily Signal report for ${formattedDate} is ready.`,
+    '',
+    'How to use your Signal PDF:',
+    'Download the attached PDF and upload it into any AI you use for daily work: ChatGPT, Claude, Gemini, Grok, Copilot or DeepSeek.',
+    'Once it is inside your AI chatbot, you can ask questions about campaigns, spend, strategy, optimization, reporting and budget allocation.',
+    '',
+    'Recommended prompt:',
+    howToUsePrompt,
     '',
     executiveSummary || businessState || 'Your latest Signal + PDF has been generated successfully.',
     '',

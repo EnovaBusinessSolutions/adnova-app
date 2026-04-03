@@ -404,7 +404,6 @@ function buildSignalPdfHtml(model) {
     ? model.connectedSources.join(' · ')
     : 'No sources';
 
-  const prompts = compactArray(model.promptHints, 3);
   const signalText = model.signalText || 'Signal not available.';
   const snapshotLabel = safeStr(model.snapshotId || 'n/a');
   const generatedDateLabel = safeStr(model.generatedDateLong || '');
@@ -418,26 +417,30 @@ function buildSignalPdfHtml(model) {
 <title>${escapeHtml(model.workspaceName)} Signal PDF</title>
 <style>
   :root{
-    --bg:#04050a;
-    --bg-2:#070812;
-    --panel:#090b13;
-    --panel-2:#0c0f19;
-    --panel-3:#0b0d16;
-    --line:#2b2358;
-    --line-2:#6c4dff;
-    --line-soft:rgba(167,122,255,.18);
-    --text:#f2f4ff;
-    --muted:#97a0c8;
-    --muted-2:#6f79a8;
-    --purple:#a96cff;
-    --purple-2:#d8b0ff;
-    --purple-3:#7e59ff;
-    --mint:#71f0cf;
-    --mint-2:#96ffe5;
-    --danger:#ff8ab7;
-    --grid:rgba(111,89,255,.16);
-    --grid-2:rgba(169,108,255,.08);
-    --glow:rgba(169,108,255,.18);
+    --bg:#060608;
+    --bg-2:#09090d;
+    --panel:#0d0b14;
+    --panel-2:#120f1d;
+    --panel-3:#0b0a12;
+    --line:rgba(181,92,255,.26);
+    --line-strong:rgba(200,124,255,.48);
+    --line-soft:rgba(255,255,255,.06);
+    --text:#f7f4ff;
+    --muted:#b7abcf;
+    --muted-2:#8a7ea8;
+    --purple:#b55cff;
+    --purple-2:#c87cff;
+    --purple-3:#8f56ff;
+    --cyan:#4fe3c1;
+    --cyan-2:#94fff0;
+    --grid:rgba(181,92,255,.10);
+    --grid-2:rgba(79,227,193,.05);
+    --glow:rgba(181,92,255,.18);
+    --shadow:0 24px 80px rgba(0,0,0,.34);
+    --title-fill:#d7b0ff;
+    --title-shadow:#8f56ff;
+    --title-outline:#2b1643;
+    --title-outline-2:#160d26;
   }
 
   *{ box-sizing:border-box; }
@@ -454,65 +457,95 @@ function buildSignalPdfHtml(model) {
 
   body{
     background:
-      radial-gradient(circle at 12% 8%, rgba(169,108,255,.15), transparent 22%),
-      radial-gradient(circle at 88% 10%, rgba(113,240,207,.08), transparent 18%),
-      linear-gradient(180deg, #04050a 0%, #080913 100%);
+      radial-gradient(900px 340px at 10% 0%, rgba(181,92,255,.10), transparent 56%),
+      radial-gradient(760px 260px at 90% 8%, rgba(79,227,193,.06), transparent 54%),
+      linear-gradient(180deg, #060608 0%, #09090d 38%, #050507 100%);
   }
 
   .mono{
     font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   }
 
-  .cover-page{
-    min-height:100vh;
-    padding:16mm 15mm 14mm;
+  .cover-page,
+  .signal-page{
     position:relative;
     overflow:hidden;
     background:
-      radial-gradient(circle at 12% 8%, rgba(169,108,255,.14), transparent 20%),
-      radial-gradient(circle at 85% 8%, rgba(113,240,207,.06), transparent 16%),
-      linear-gradient(180deg, #04050a 0%, #080913 100%);
+      radial-gradient(780px 280px at 12% 8%, rgba(181,92,255,.10), transparent 42%),
+      radial-gradient(540px 220px at 86% 10%, rgba(79,227,193,.05), transparent 36%),
+      linear-gradient(180deg, #060608 0%, #09090d 38%, #050507 100%);
   }
 
-  .cover-page::before{
+  .cover-page{
+    min-height:100vh;
+    padding:16mm 15mm 14mm;
+  }
+
+  .signal-page{
+    min-height:100vh;
+    padding:16mm 15mm 16mm;
+  }
+
+  .cover-page::before,
+  .signal-page::before{
     content:"";
     position:absolute;
     inset:0;
     background-image:
       radial-gradient(var(--grid) 1px, transparent 1px);
     background-size:18px 18px;
-    opacity:.9;
+    opacity:.95;
     pointer-events:none;
   }
 
-  .cover-page::after{
+  .cover-page::after,
+  .signal-page::after{
     content:"";
     position:absolute;
     inset:0;
     background:
-      linear-gradient(180deg, transparent 0%, rgba(122,93,255,.03) 100%);
+      linear-gradient(180deg, rgba(255,255,255,.012), transparent 22%, rgba(181,92,255,.025) 100%);
     pointer-events:none;
   }
 
-  .cover-shell{
+  .cover-shell,
+  .signal-shell{
     position:relative;
     z-index:1;
-    min-height:264mm;
-    border:1px solid rgba(132,101,255,.45);
     background:
-      linear-gradient(180deg, rgba(7,9,15,.92) 0%, rgba(6,8,14,.97) 100%);
+      linear-gradient(180deg, rgba(18,14,28,.92) 0%, rgba(10,10,16,.96) 100%);
+    border:1px solid var(--line);
     box-shadow:
-      0 0 0 1px rgba(169,108,255,.06) inset,
-      0 0 90px rgba(108,77,255,.10);
+      inset 0 1px 0 rgba(255,255,255,.03),
+      0 0 0 1px rgba(255,255,255,.02),
+      0 0 72px rgba(181,92,255,.07),
+      var(--shadow);
+  }
+
+  .cover-shell{
+    min-height:264mm;
     padding:12mm 12mm 10mm;
+  }
+
+  .signal-shell{
+    padding:12mm 11mm 11mm;
+  }
+
+  .top-rule,
+  .signal-top-rule{
+    width:100%;
+    background:linear-gradient(90deg, rgba(200,124,255,.96), rgba(79,227,193,.72));
+    box-shadow:0 0 16px rgba(181,92,255,.22);
   }
 
   .top-rule{
     height:3px;
-    width:100%;
-    background:linear-gradient(90deg, rgba(216,176,255,.95), rgba(169,108,255,.92));
-    box-shadow:0 0 16px rgba(169,108,255,.25);
-    margin-bottom:12px;
+    margin-bottom:14px;
+  }
+
+  .signal-top-rule{
+    height:2px;
+    margin-bottom:14px;
   }
 
   .brand-wrap{
@@ -525,28 +558,59 @@ function buildSignalPdfHtml(model) {
   .brand-left{
     display:flex;
     flex-direction:column;
-    gap:6px;
+    gap:8px;
   }
 
   .brand-main{
-    font-size:52px;
-    line-height:.92;
+    position:relative;
+    display:inline-block;
+    font-size:58px;
+    line-height:.88;
     letter-spacing:.06em;
     text-transform:uppercase;
-    color:#c5a0ff;
-    font-weight:800;
-    text-shadow:0 0 18px rgba(169,108,255,.18);
+    font-weight:900;
+    color:var(--title-fill);
+    text-shadow:
+      1px 0 0 var(--title-outline),
+      0 1px 0 var(--title-outline),
+      -1px 0 0 var(--title-outline),
+      0 -1px 0 var(--title-outline),
+      3px 3px 0 var(--title-shadow),
+      6px 6px 0 var(--title-outline-2),
+      9px 9px 0 rgba(143,86,255,.22);
+  }
+
+  .brand-main::before,
+  .brand-main::after{
+    content:attr(data-text);
+    position:absolute;
+    inset:0;
+    pointer-events:none;
+    color:transparent;
+    text-shadow:none;
+  }
+
+  .brand-main::before{
+    -webkit-text-stroke:1px rgba(215,176,255,.85);
+    transform:translate(5px,5px);
+    opacity:.95;
+  }
+
+  .brand-main::after{
+    -webkit-text-stroke:1px rgba(43,22,67,.95);
+    transform:translate(9px,9px);
+    opacity:.9;
   }
 
   .brand-sub{
     font-size:9px;
-    letter-spacing:.20em;
+    letter-spacing:.22em;
     text-transform:uppercase;
-    color:#7d6bb5;
+    color:var(--muted-2);
   }
 
   .brand-sub span{
-    color:#5d6898;
+    color:#6b6193;
   }
 
   .top-right{
@@ -560,7 +624,7 @@ function buildSignalPdfHtml(model) {
     font-size:10px;
     letter-spacing:.18em;
     text-transform:uppercase;
-    color:#7b86b5;
+    color:#9e92bd;
   }
 
   .status-chip{
@@ -568,25 +632,27 @@ function buildSignalPdfHtml(model) {
     align-items:center;
     gap:8px;
     padding:8px 14px;
-    border:1px solid rgba(113,240,207,.26);
-    color:var(--mint-2);
+    border:1px solid rgba(79,227,193,.22);
+    color:var(--cyan-2);
     font-size:10px;
     letter-spacing:.20em;
     text-transform:uppercase;
-    background:rgba(113,240,207,.05);
-    box-shadow:0 0 18px rgba(113,240,207,.05) inset;
+    background:rgba(79,227,193,.05);
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,.02),
+      0 0 20px rgba(79,227,193,.05);
   }
 
   .status-dot{
     width:7px;
     height:7px;
     border-radius:50%;
-    background:var(--mint);
-    box-shadow:0 0 12px rgba(113,240,207,.55);
+    background:var(--cyan);
+    box-shadow:0 0 12px rgba(79,227,193,.55);
   }
 
   .report-chip-row{
-    margin-top:18px;
+    margin-top:20px;
     display:flex;
     justify-content:space-between;
     align-items:center;
@@ -596,35 +662,37 @@ function buildSignalPdfHtml(model) {
   .report-chip{
     display:inline-flex;
     align-items:center;
-    min-height:34px;
+    min-height:36px;
     padding:0 16px;
     border-radius:4px;
-    background:linear-gradient(180deg, #b892ff 0%, #a678ff 100%);
-    color:#130d20;
+    background:linear-gradient(135deg, #d7a7ff 0%, #b55cff 55%, #8f56ff 100%);
+    color:#12091f;
     font-size:12px;
-    font-weight:800;
+    font-weight:900;
     letter-spacing:.16em;
     text-transform:uppercase;
-    box-shadow:0 0 20px rgba(169,108,255,.20);
+    box-shadow:0 12px 30px rgba(181,92,255,.18);
   }
 
   .report-side{
     font-size:10px;
-    color:#6f79a8;
+    color:#8e84ae;
     letter-spacing:.18em;
     text-transform:uppercase;
   }
 
   .workspace-block{
     margin-top:16px;
-    border:1px solid rgba(132,101,255,.30);
-    background:rgba(11,13,22,.74);
-    padding:12px 16px;
-    min-height:78px;
+    border:1px solid var(--line);
+    background:
+      linear-gradient(180deg, rgba(15,11,24,.88) 0%, rgba(11,10,18,.94) 100%);
+    padding:14px 16px;
+    min-height:82px;
     display:flex;
     align-items:center;
     justify-content:space-between;
     gap:14px;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.02);
   }
 
   .workspace-left{
@@ -633,7 +701,7 @@ function buildSignalPdfHtml(model) {
 
   .workspace-label{
     font-size:9px;
-    color:#7280b8;
+    color:#9a8fba;
     text-transform:uppercase;
     letter-spacing:.18em;
     margin-bottom:10px;
@@ -651,7 +719,7 @@ function buildSignalPdfHtml(model) {
     display:inline-flex;
     align-items:center;
     gap:8px;
-    color:var(--mint);
+    color:var(--cyan);
     font-size:11px;
     letter-spacing:.16em;
     text-transform:uppercase;
@@ -662,8 +730,8 @@ function buildSignalPdfHtml(model) {
     width:9px;
     height:9px;
     border-radius:50%;
-    background:var(--mint);
-    box-shadow:0 0 12px rgba(113,240,207,.55);
+    background:var(--cyan);
+    box-shadow:0 0 12px rgba(79,227,193,.55);
   }
 
   .stats-grid{
@@ -674,15 +742,17 @@ function buildSignalPdfHtml(model) {
   }
 
   .stat{
-    border:1px solid rgba(132,101,255,.24);
-    background:rgba(11,13,22,.74);
-    min-height:86px;
-    padding:10px 12px;
+    border:1px solid rgba(181,92,255,.18);
+    background:
+      linear-gradient(180deg, rgba(14,11,22,.88) 0%, rgba(9,9,15,.95) 100%);
+    min-height:88px;
+    padding:11px 12px;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.02);
   }
 
   .stat-label{
     font-size:9px;
-    color:#7180b7;
+    color:#9a8fba;
     text-transform:uppercase;
     letter-spacing:.16em;
     margin-bottom:10px;
@@ -690,8 +760,8 @@ function buildSignalPdfHtml(model) {
 
   .stat-value{
     font-size:18px;
-    font-weight:800;
-    color:#f5f6ff;
+    font-weight:900;
+    color:#f7f4ff;
     line-height:1.1;
     word-break:break-word;
   }
@@ -699,104 +769,63 @@ function buildSignalPdfHtml(model) {
   .stat-note{
     margin-top:8px;
     font-size:8px;
-    color:#6c78a8;
+    color:#81769f;
     text-transform:uppercase;
     letter-spacing:.16em;
   }
 
   .stat-note.good{
-    color:var(--mint);
+    color:var(--cyan);
   }
 
   .section-label{
     margin:18px 0 10px;
     font-size:11px;
-    color:#8b97cc;
+    color:#a999ce;
     text-transform:uppercase;
     letter-spacing:.16em;
-  }
-
-  .prompt-list{
-    display:flex;
-    flex-direction:column;
-    gap:10px;
-  }
-
-  .prompt-card{
-    border:1px solid rgba(132,101,255,.24);
-    background:rgba(9,11,20,.76);
-    padding:10px 12px 9px;
-    position:relative;
-  }
-
-  .prompt-card::before{
-    content:"";
-    position:absolute;
-    left:0;
-    top:0;
-    bottom:0;
-    width:4px;
-    background:linear-gradient(180deg, rgba(180,134,255,.90), rgba(138,101,255,.55));
-  }
-
-  .prompt-head{
-    font-size:9px;
-    text-transform:uppercase;
-    letter-spacing:.16em;
-    color:#7f8bc2;
-    margin-bottom:8px;
-  }
-
-  .prompt-body{
-    font-size:15px;
-    line-height:1.42;
-    color:#f0f3ff;
-  }
-
-  .prompt-foot{
-    margin-top:8px;
-    font-size:8px;
-    color:#6672a8;
-    letter-spacing:.14em;
-    text-transform:uppercase;
   }
 
   .how-to{
     display:grid;
-    gap:7px;
-    margin-top:4px;
+    gap:8px;
+    margin-top:14px;
+    border:1px solid rgba(181,92,255,.18);
+    background:
+      linear-gradient(180deg, rgba(13,11,20,.74) 0%, rgba(9,9,14,.90) 100%);
+    padding:12px 14px;
   }
 
   .how-step{
     display:flex;
     gap:12px;
     align-items:flex-start;
-    color:#dce2ff;
+    color:#e8e2f7;
     font-size:12px;
-    line-height:1.42;
+    line-height:1.45;
   }
 
   .how-step .num{
     width:22px;
     flex:0 0 22px;
-    color:#8b98cf;
+    color:#a394c8;
   }
 
   .cover-footer{
     margin-top:20px;
     padding-top:12px;
-    border-top:1px solid rgba(132,101,255,.20);
+    border-top:1px solid rgba(181,92,255,.16);
     display:flex;
     justify-content:space-between;
     gap:12px;
     font-size:8px;
-    color:#6f7cb0;
+    color:#877ca4;
     text-transform:uppercase;
     letter-spacing:.15em;
   }
 
   .cover-footer strong{
-    color:#b79cff;
+    color:#d0a8ff;
     font-weight:700;
   }
 
@@ -805,49 +834,13 @@ function buildSignalPdfHtml(model) {
     break-before:page;
   }
 
-  .signal-page{
-    min-height:100vh;
-    padding:16mm 15mm 16mm;
-    position:relative;
-    overflow:hidden;
-    background:
-      radial-gradient(circle at 12% 8%, rgba(169,108,255,.08), transparent 20%),
-      linear-gradient(180deg, #04050a 0%, #080913 100%);
-  }
-
-  .signal-page::before{
-    content:"";
-    position:absolute;
-    inset:0;
-    background-image:
-      radial-gradient(rgba(111,89,255,.12) 1px, transparent 1px);
-    background-size:18px 18px;
-    opacity:.75;
-    pointer-events:none;
-  }
-
-  .signal-shell{
-    position:relative;
-    z-index:1;
-    border:1px solid rgba(132,101,255,.24);
-    background:rgba(8,10,17,.95);
-    padding:12mm 11mm 11mm;
-  }
-
-  .signal-top-rule{
-    height:2px;
-    width:100%;
-    background:linear-gradient(90deg, rgba(184,146,255,.95), rgba(122,93,255,.88));
-    margin-bottom:12px;
-  }
-
   .signal-head{
     margin-bottom:16px;
   }
 
   .signal-kicker{
     font-size:10px;
-    color:#8996cb;
+    color:#a999ce;
     text-transform:uppercase;
     letter-spacing:.18em;
     margin-bottom:8px;
@@ -856,15 +849,15 @@ function buildSignalPdfHtml(model) {
   .signal-title{
     font-size:28px;
     line-height:1.05;
-    font-weight:800;
-    color:#f3f5ff;
+    font-weight:900;
+    color:#f7f4ff;
     margin:0;
     letter-spacing:-.03em;
   }
 
   .signal-sub{
     margin-top:8px;
-    color:#909bc9;
+    color:#a79bc6;
     font-size:12px;
     line-height:1.58;
   }
@@ -880,18 +873,20 @@ function buildSignalPdfHtml(model) {
     display:inline-flex;
     align-items:center;
     padding:6px 10px;
-    border:1px solid rgba(132,101,255,.20);
+    border:1px solid rgba(181,92,255,.18);
     background:rgba(255,255,255,.02);
-    color:#92a0d5;
+    color:#c1b7dc;
     font-size:9px;
     letter-spacing:.12em;
     text-transform:uppercase;
   }
 
   .signal-box{
-    border:1px solid rgba(132,101,255,.18);
-    background:linear-gradient(180deg, rgba(11,13,22,.95), rgba(8,10,16,.95));
+    border:1px solid rgba(181,92,255,.16);
+    background:
+      linear-gradient(180deg, rgba(11,11,18,.96), rgba(8,8,13,.98));
     padding:14px;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.02);
   }
 
   .signal-pre{
@@ -901,7 +896,7 @@ function buildSignalPdfHtml(model) {
     overflow-wrap:anywhere;
     font-size:10.4px;
     line-height:1.66;
-    color:#e9edff;
+    color:#f1edfb;
   }
 
   @page{
@@ -917,7 +912,7 @@ function buildSignalPdfHtml(model) {
 
       <div class="brand-wrap">
         <div class="brand-left">
-          <div class="brand-main mono">ADRAY</div>
+          <div class="brand-main mono" data-text="ADRAY">ADRAY</div>
           <div class="brand-sub mono">Marketing intelligence <span>·</span> Generative era</div>
         </div>
 
@@ -972,25 +967,13 @@ function buildSignalPdfHtml(model) {
         </div>
       </div>
 
-      <div class="section-label mono">// Here are 3 recommended prompts for your data</div>
-
-      <div class="prompt-list">
-        ${prompts.map((prompt, idx) => `
-          <div class="prompt-card">
-            <div class="prompt-head mono">${idx === 0 ? 'Optimization' : idx === 1 ? 'Budget' : 'Report'}</div>
-            <div class="prompt-body">"${escapeHtml(prompt)}"</div>
-            <div class="prompt-foot mono">attach this pdf · paste · send</div>
-          </div>
-        `).join('')}
-      </div>
-
       <div class="section-label mono" style="margin-top:18px;">// How to use</div>
 
       <div class="how-to">
         <div class="how-step"><span class="num mono">01</span><span>Open Claude, ChatGPT, Gemini, Grok or DeepSeek.</span></div>
         <div class="how-step"><span class="num mono">02</span><span>Attach this PDF to your conversation.</span></div>
-        <div class="how-step"><span class="num mono">03</span><span>Copy a prompt above and send it.</span></div>
-        <div class="how-step"><span class="num mono">04</span><span>Ask follow-up questions in plain language.</span></div>
+        <div class="how-step"><span class="num mono">03</span><span>Ask direct questions about performance, spend, ROAS, inefficiencies or next actions.</span></div>
+        <div class="how-step"><span class="num mono">04</span><span>Use the full Signal page below as the raw source for deeper analysis.</span></div>
       </div>
 
       <div class="cover-footer mono">
