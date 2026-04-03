@@ -30,7 +30,7 @@
         <div class="login-topbar login-topbar--minimal">
   <div class="login-brand-icon-wrap" aria-hidden="true">
     <img
-      src="/assets/adray-icon.png"
+      src="/adray-icon.png"
       alt="Adray"
       class="login-brand-icon"
       decoding="async"
