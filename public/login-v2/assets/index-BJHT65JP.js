@@ -164,6 +164,17 @@
 
         <form id="getstarted-form" novalidate>
           <div class="input-group">
+            <label class="input-label" for="name">Full name</label>
+            <input
+              id="name"
+              class="input"
+              type="text"
+              placeholder="Your full name"
+              autocomplete="name"
+            />
+          </div>
+
+          <div class="input-group">
             <label class="input-label" for="email">Email</label>
             <input
               id="email"
@@ -184,7 +195,7 @@
                 id="password"
                 class="input input-password"
                 type="password"
-                placeholder="••••••••"
+                placeholder="At least 8 characters"
                 autocomplete="new-password"
               />
 
@@ -199,6 +210,34 @@
               </button>
             </div>
           </div>
+
+          <div class="input-group">
+            <div class="input-label-row">
+              <label class="input-label" for="confirm-password">Confirm password</label>
+            </div>
+
+            <div class="password-wrap">
+              <input
+                id="confirm-password"
+                class="input input-password"
+                type="password"
+                placeholder="Repeat your password"
+                autocomplete="new-password"
+              />
+
+              <button
+                id="toggle-confirm-password"
+                class="toggle-password"
+                type="button"
+                aria-label="Show or hide confirm password"
+                aria-pressed="false"
+              >
+                <span class="eye-icon" aria-hidden="true"></span>
+              </button>
+            </div>
+          </div>
+
+          <div id="turnstile-wrap"></div>
 
           <p id="getstarted-message" class="login-message" aria-live="polite"></p>
 
@@ -237,6 +276,6 @@
         </div>
       </div>
     </div>
-  `,L(),F(),I())}function M(e,t=!1){let n=document.querySelector(`#getstarted-message`);n&&(n.textContent=e,n.style.display=`block`,n.style.color=t?`#f3f0ff`:`#fda4af`)}function N(){let e=document.querySelector(`#getstarted-message`);e&&(e.textContent=``,e.style.display=`none`)}function P(e){let t=document.querySelector(`#submit-btn`),n=document.querySelector(`#google-btn`),r=document.querySelector(`#login-btn`);t&&(t.disabled=e,t.textContent=e?`Creating account...`:`Create account`),n&&(n.disabled=e),r&&(r.disabled=e)}function F(){let e=document.querySelector(`#login-btn`),t=document.querySelector(`#google-btn`);e&&e.addEventListener(`click`,()=>{window.location.href=`/login`}),t&&t.addEventListener(`click`,()=>{window.location.href=`/auth/google/login`})}function I(){let e=document.querySelector(`#password`),t=document.querySelector(`#toggle-password`);!e||!t||t.addEventListener(`click`,()=>{let n=e.type===`password`;e.type=n?`text`:`password`,t.setAttribute(`aria-pressed`,String(n)),t.classList.toggle(`is-visible`,n),e.focus({preventScroll:!0});try{let t=e.value.length;e.setSelectionRange(t,t)}catch{}})}function L(){let e=document.querySelector(`#getstarted-form`);if(!e)return;let t=!1;e.addEventListener(`submit`,async e=>{if(e.preventDefault(),t)return;N();let n=document.querySelector(`#email`)?.value.trim().toLowerCase()||``,r=document.querySelector(`#password`)?.value??``;if(!n||!r){M(`Enter your email and password.`);return}t=!0,P(!0);try{let e=new URLSearchParams;e.set(`email`,n),e.set(`password`,r),window.location.href=`/register.html?${e.toString()}`}catch(e){console.error(e),M(`Could not continue to account creation.`)}finally{t=!1,P(!1)}})}document.querySelector(`#app`).innerHTML=`
+  `,R(),F(),I(`#password`,`#toggle-password`),I(`#confirm-password`,`#toggle-confirm-password`),z(),L())}function M(e,t=!1){let n=document.querySelector(`#getstarted-message`);n&&(n.textContent=e,n.style.display=`block`,n.style.color=t?`#f3f0ff`:`#fda4af`)}function N(){let e=document.querySelector(`#getstarted-message`);e&&(e.textContent=``,e.style.display=`none`)}function P(e){let t=document.querySelector(`#submit-btn`),n=document.querySelector(`#google-btn`),r=document.querySelector(`#login-btn`);t&&(t.disabled=e,t.textContent=e?`Creating account...`:`Create account`),n&&(n.disabled=e),r&&(r.disabled=e)}function F(){let e=document.querySelector(`#login-btn`),t=document.querySelector(`#google-btn`);e&&e.addEventListener(`click`,()=>{window.location.href=`/login`}),t&&t.addEventListener(`click`,()=>{window.location.href=`/auth/google/login`})}function I(e,t){let n=document.querySelector(e),r=document.querySelector(t);!n||!r||r.addEventListener(`click`,()=>{let e=n.type===`password`;n.type=e?`text`:`password`,r.setAttribute(`aria-pressed`,String(e)),r.classList.toggle(`is-visible`,e),n.focus({preventScroll:!0});try{let e=n.value.length;n.setSelectionRange(e,e)}catch{}})}async function L(){try{await b(),v()}catch(e){console.error(`[getstarted] captcha error:`,e),M(`Security verification could not be loaded. Refresh the page and try again.`)}}function R(){let e=document.querySelector(`#getstarted-form`);if(!e)return;let t=!1;e.addEventListener(`submit`,async e=>{if(e.preventDefault(),t)return;N();let n=document.querySelector(`#name`)?.value.trim()||``,r=document.querySelector(`#email`)?.value.trim().toLowerCase()||``,i=document.querySelector(`#password`)?.value??``,a=document.querySelector(`#confirm-password`)?.value??``;if(!n||!r||!i||!a){M(`Complete all fields to continue.`);return}if(n.length<2){M(`Enter your full name.`);return}if(i.length<8){M(`Password must be at least 8 characters.`);return}if(i!==a){M(`Passwords do not match.`);return}let o=m();if(!o){M(`Complete the security verification to continue.`);return}t=!0,P(!0);try{let e=await fetch(`/api/register`,{method:`POST`,headers:{"Content-Type":`application/json`},credentials:`include`,body:JSON.stringify({name:n,email:r,password:i,turnstileToken:o})}),t=await B(e),a=!!(t?.success??t?.ok);if(e.ok&&a){try{window.gtag?.(`event`,`sign_up`,{method:`email`})}catch{}_(),M(t.message||`Account created successfully. Check your email to verify your account.`,!0);let e=t.confirmUrl||`/confirmation.html?email=${encodeURIComponent(r)}`;window.setTimeout(()=>{window.location.href=e},900);return}(t?.code===`TURNSTILE_FAILED`||t?.code===`TURNSTILE_REQUIRED_OR_FAILED`||Array.isArray(t?.errorCodes)&&t.errorCodes.length>0||e.status===400)&&v(),M(t?.message||t?.error||(e.status===409?`This email is already registered.`:`Could not create your account. Please try again.`))}catch(e){console.error(e),v(),M(`Could not connect to the server.`)}finally{t=!1,P(!1)}})}async function z(){try{let e=await u();e&&(e.authenticated||e.ok)&&window.location.replace(`/dashboard/`)}catch{}}async function B(e){try{return await e.json()}catch{return{}}}document.querySelector(`#app`).innerHTML=`
   <div id="login-root"></div>
 `,(window.location.pathname.replace(/\/+$/,``)||`/`)===`/getstarted`?j():S();

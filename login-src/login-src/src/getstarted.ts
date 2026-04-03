@@ -1,4 +1,21 @@
+import { getSession } from './session'
+import {
+  getTurnstileToken,
+  hideCaptcha,
+  resetTurnstile,
+  showCaptcha,
+} from './turnstile'
 import adrayIcon from './assets/adray-icon.png'
+
+type RegisterResponse = {
+  success?: boolean
+  ok?: boolean
+  message?: string
+  error?: string
+  confirmUrl?: string
+  code?: string
+  errorCodes?: string[]
+}
 
 export function renderGetStarted() {
   const root = document.querySelector('#login-root') as HTMLDivElement | null
@@ -48,6 +65,17 @@ export function renderGetStarted() {
 
         <form id="getstarted-form" novalidate>
           <div class="input-group">
+            <label class="input-label" for="name">Full name</label>
+            <input
+              id="name"
+              class="input"
+              type="text"
+              placeholder="Your full name"
+              autocomplete="name"
+            />
+          </div>
+
+          <div class="input-group">
             <label class="input-label" for="email">Email</label>
             <input
               id="email"
@@ -68,7 +96,7 @@ export function renderGetStarted() {
                 id="password"
                 class="input input-password"
                 type="password"
-                placeholder="••••••••"
+                placeholder="At least 8 characters"
                 autocomplete="new-password"
               />
 
@@ -83,6 +111,34 @@ export function renderGetStarted() {
               </button>
             </div>
           </div>
+
+          <div class="input-group">
+            <div class="input-label-row">
+              <label class="input-label" for="confirm-password">Confirm password</label>
+            </div>
+
+            <div class="password-wrap">
+              <input
+                id="confirm-password"
+                class="input input-password"
+                type="password"
+                placeholder="Repeat your password"
+                autocomplete="new-password"
+              />
+
+              <button
+                id="toggle-confirm-password"
+                class="toggle-password"
+                type="button"
+                aria-label="Show or hide confirm password"
+                aria-pressed="false"
+              >
+                <span class="eye-icon" aria-hidden="true"></span>
+              </button>
+            </div>
+          </div>
+
+          <div id="turnstile-wrap"></div>
 
           <p id="getstarted-message" class="login-message" aria-live="polite"></p>
 
@@ -125,7 +181,10 @@ export function renderGetStarted() {
 
   bindGetStartedEvents()
   bindSecondaryActions()
-  bindPasswordToggle()
+  bindPasswordToggle('#password', '#toggle-password')
+  bindPasswordToggle('#confirm-password', '#toggle-confirm-password')
+  checkExistingSession()
+  void mountCaptcha()
 }
 
 function showMessage(text: string, isOk = false) {
@@ -176,9 +235,9 @@ function bindSecondaryActions() {
   }
 }
 
-function bindPasswordToggle() {
-  const input = document.querySelector('#password') as HTMLInputElement | null
-  const toggle = document.querySelector('#toggle-password') as HTMLButtonElement | null
+function bindPasswordToggle(inputSelector: string, toggleSelector: string) {
+  const input = document.querySelector(inputSelector) as HTMLInputElement | null
+  const toggle = document.querySelector(toggleSelector) as HTMLButtonElement | null
 
   if (!input || !toggle) return
 
@@ -198,6 +257,16 @@ function bindPasswordToggle() {
   })
 }
 
+async function mountCaptcha() {
+  try {
+    await showCaptcha()
+    resetTurnstile()
+  } catch (error) {
+    console.error('[getstarted] captcha error:', error)
+    showMessage('Security verification could not be loaded. Refresh the page and try again.')
+  }
+}
+
 function bindGetStartedEvents() {
   const form = document.querySelector('#getstarted-form') as HTMLFormElement | null
   if (!form) return
@@ -210,14 +279,41 @@ function bindGetStartedEvents() {
 
     hideMessage()
 
+    const name =
+      (document.querySelector('#name') as HTMLInputElement | null)?.value.trim() || ''
+
     const email =
       (document.querySelector('#email') as HTMLInputElement | null)?.value.trim().toLowerCase() || ''
 
     const password =
       (document.querySelector('#password') as HTMLInputElement | null)?.value ?? ''
 
-    if (!email || !password) {
-      showMessage('Enter your email and password.')
+    const confirmPassword =
+      (document.querySelector('#confirm-password') as HTMLInputElement | null)?.value ?? ''
+
+    if (!name || !email || !password || !confirmPassword) {
+      showMessage('Complete all fields to continue.')
+      return
+    }
+
+    if (name.length < 2) {
+      showMessage('Enter your full name.')
+      return
+    }
+
+    if (password.length < 8) {
+      showMessage('Password must be at least 8 characters.')
+      return
+    }
+
+    if (password !== confirmPassword) {
+      showMessage('Passwords do not match.')
+      return
+    }
+
+    const turnstileToken = getTurnstileToken()
+    if (!turnstileToken) {
+      showMessage('Complete the security verification to continue.')
       return
     }
 
@@ -225,24 +321,92 @@ function bindGetStartedEvents() {
     setSubmitting(true)
 
     try {
-      /**
-       * Fase 1:
-       * Por ahora este panel nuevo funciona como entrypoint UX y
-       * redirige al flujo actual de registro legacy con los datos precargados.
-       *
-       * Más adelante, si quieres, aquí conectamos el endpoint real de signup.
-       */
-      const params = new URLSearchParams()
-      params.set('email', email)
-      params.set('password', password)
+      const res = await fetch('/api/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          name,
+          email,
+          password,
+          turnstileToken,
+        }),
+      })
 
-      window.location.href = `/register.html?${params.toString()}`
+      const data = (await safeJson(res)) as RegisterResponse
+      const success = Boolean(data?.success ?? data?.ok)
+
+      if (res.ok && success) {
+        try {
+          ;(window as Window & { gtag?: (...args: unknown[]) => void }).gtag?.('event', 'sign_up', {
+            method: 'email',
+          })
+        } catch {
+          // noop
+        }
+
+        hideCaptcha()
+        showMessage(
+          data.message || 'Account created successfully. Check your email to verify your account.',
+          true,
+        )
+
+        const nextUrl =
+          data.confirmUrl ||
+          `/confirmation.html?email=${encodeURIComponent(email)}`
+
+        window.setTimeout(() => {
+          window.location.href = nextUrl
+        }, 900)
+
+        return
+      }
+
+      const isTurnstileFailure =
+        data?.code === 'TURNSTILE_FAILED' ||
+        data?.code === 'TURNSTILE_REQUIRED_OR_FAILED' ||
+        (Array.isArray(data?.errorCodes) && data.errorCodes.length > 0) ||
+        res.status === 400
+
+      if (isTurnstileFailure) {
+        resetTurnstile()
+      }
+
+      showMessage(
+        data?.message ||
+          data?.error ||
+          (res.status === 409
+            ? 'This email is already registered.'
+            : 'Could not create your account. Please try again.'),
+      )
     } catch (error) {
       console.error(error)
-      showMessage('Could not continue to account creation.')
+      resetTurnstile()
+      showMessage('Could not connect to the server.')
     } finally {
       inFlight = false
       setSubmitting(false)
     }
   })
+}
+
+async function checkExistingSession() {
+  try {
+    const session = await getSession()
+    if (session && (session.authenticated || session.ok)) {
+      window.location.replace('/dashboard/')
+    }
+  } catch {
+    // noop
+  }
+}
+
+async function safeJson(res: Response) {
+  try {
+    return await res.json()
+  } catch {
+    return {}
+  }
 }
