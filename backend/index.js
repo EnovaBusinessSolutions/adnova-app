@@ -773,7 +773,7 @@ app.get("/", (req, res) => {
 // Compat: la landing antigua (saas-landing) exponía /start
 app.get("/start", (_req, res) => res.redirect(302, "/"));
 
-app.get("/login", (_req, res) => {
+app.get(["/login", "/getstarted"], (_req, res) => {
   res.sendFile(path.join(__dirname, "../public/login-v2/index.html"));
 });
 
