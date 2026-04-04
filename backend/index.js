@@ -573,6 +573,48 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
   }
 });
 
+app.get("/api/auth/verify-email", async (req, res) => {
+  try {
+    const token = String(req.query.token || "").trim();
+    if (!token) return res.status(400).send("Token faltante");
+
+    const tokenHash = hashToken(token);
+
+    const user = await User.findOne({
+      verifyEmailTokenHash: tokenHash,
+      verifyEmailExpires: { $gt: new Date() },
+    });
+
+    if (!user) {
+      return res
+        .status(400)
+        .send(
+          "El enlace de verificación es inválido o expiró. Solicita uno nuevo."
+        );
+    }
+
+    user.emailVerified = true;
+    user.verifyEmailTokenHash = undefined;
+    user.verifyEmailExpires = undefined;
+    await user.save();
+
+    try {
+      await trackEvent({
+        name: "email_verified",
+        userId: user._id,
+        dedupeKey: `email_verified:${user._id}`,
+        ts: new Date(),
+        props: { method: "email_link" },
+      });
+    } catch {}
+
+    return res.redirect(302, "/login?verified=1");
+  } catch (err) {
+    console.error("❌ verify-email:", err);
+    return res.status(500).send("Error al verificar el correo");
+  }
+});
+
 // ✅ AdRay Analytics & Realtime Feed (Phase 2)
 // sessionGuard removed for dashboard demo/access
 app.use("/api/analytics", require("./routes/analytics"));  
@@ -585,7 +627,7 @@ app.use('/wp-plugin', wordpressPluginRoutes);
 app.use("/collect", rateLimitCollect, collectRoutes);
 app.use('/api/internal/daily-signal', require('./routes/internalDailySignal'));
 app.use("/api", sessionGuard, adrayPlatformRoutes);                             
-
+                      
 /* =========================
  * Pixel auditor (usa JSON)
  * ========================= */
@@ -1164,49 +1206,6 @@ function riskClear(req, email) {
   loginRiskStore.delete(riskKey(req, email));
 }
 
-
-
-app.get("/api/auth/verify-email", async (req, res) => {
-  try {
-    const token = String(req.query.token || "").trim();
-    if (!token) return res.status(400).send("Token faltante");
-
-    const tokenHash = hashToken(token);
-
-    const user = await User.findOne({
-      verifyEmailTokenHash: tokenHash,
-      verifyEmailExpires: { $gt: new Date() },
-    });
-
-    if (!user) {
-      return res
-        .status(400)
-        .send(
-          "El enlace de verificación es inválido o expiró. Solicita uno nuevo."
-        );
-    }
-
-    user.emailVerified = true;
-    user.verifyEmailTokenHash = undefined;
-    user.verifyEmailExpires = undefined;
-    await user.save();
-
-    try {
-      await trackEvent({
-        name: "email_verified",
-        userId: user._id,
-        dedupeKey: `email_verified:${user._id}`,
-        ts: new Date(),
-        props: { method: "email_link" },
-      });
-    } catch {}
-
-    return res.redirect(302, "/login?verified=1");
-  } catch (err) {
-    console.error("❌ verify-email:", err);
-    return res.status(500).send("Error al verificar el correo");
-  }
-});
 
 
 app.get("/api/session", async (req, res) => {
