@@ -488,6 +488,13 @@ async function findPreferredSignalRunForUser(userId, root = null) {
     if (exact && isSignalRunCompatibleWithRoot(exact, effectiveRoot)) {
       return exact;
     }
+
+    /**
+     * Si el root ya publicó el buildAttemptId vigente pero el run aún no fue sembrado
+     * (ventana transitoria normal), NO debemos hacer fallback a runs viejos.
+     * Esto evita saltos ready -> processing -> ready por mezcla de intentos.
+     */
+    return null;
   }
 
   const active = await findActiveSignalRunForUser(userId);
@@ -577,6 +584,48 @@ function hasAuthoritativeRunPdf(signalRun) {
 
 function resolveAuthoritativeSignalState(root, compatibleRun, staleSignal) {
   const state = root?.aiContext || {};
+  const rootAttemptId = safeStr(state?.buildAttemptId).trim();
+  const rootIsProcessing = isProcessingStatus(state?.status);
+
+  if (rootIsProcessing && rootAttemptId) {
+    return {
+      authority: 'root_processing',
+      processing: true,
+      completed: false,
+      failed: false,
+
+      status: chooseStatusValue(state?.status, 'processing'),
+      stage: chooseStatusValue(state?.stage, 'processing'),
+      progress: toNum(state?.progress, 0),
+      startedAt: state?.startedAt || null,
+      finishedAt: null,
+      snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
+      contextRangeDays: toNum(state?.contextRangeDays) || null,
+      storageRangeDays: toNum(state?.storageRangeDays) || null,
+
+      signalPayload: null,
+      hasSignal: false,
+      signalComplete: false,
+      signalValidForPdf: false,
+
+      usedOpenAI: !!state?.usedOpenAI,
+      model: state?.model || null,
+      error: null,
+      buildAttemptId: rootAttemptId,
+      signalRunId: compatibleRun?.buildAttemptId === rootAttemptId ? (compatibleRun?.signalRunId || null) : null,
+
+      sourceSnapshots: state?.sourceSnapshots || state?.unifiedBase?.sourceSnapshots || null,
+      sourcesStatus: state?.sourcesStatus || null,
+      connectedSources: Array.isArray(state?.connectedSources) ? state.connectedSources : [],
+      usableSources: Array.isArray(state?.usableSources) ? state.usableSources : [],
+      pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
+      failedSources: [],
+
+      sourceFingerprint: null,
+      connectionFingerprint: safeStr(state?.connectionFingerprint || '').trim() || null,
+    };
+  }
+
   const processingRun =
     compatibleRun && isProcessingStatus(compatibleRun.status) && !compatibleRun.supersededAt
       ? compatibleRun
@@ -867,13 +916,26 @@ function deriveUiFlags({
 
 function buildStatusResponse(root, shareState = null, signalRun = null) {
   const state = root?.aiContext || {};
+  const rootAttemptId = safeStr(state?.buildAttemptId).trim() || null;
+  const rootIsProcessing = isProcessingStatus(state?.status);
+  const rootCompleted = isDoneCompleted(state?.status, state?.stage);
 
   const staleSignal = rootSignalLooksStale(root);
   const stalePdf = rootPdfLooksStale(root);
 
-  const compatibleRun = isSignalRunCompatibleWithRoot(signalRun, root)
+  const maybeRun = isSignalRunCompatibleWithRoot(signalRun, root)
     ? normalizeSignalRun(signalRun)
     : null;
+
+  /**
+   * Autoridad estricta por intento:
+   * - Si root está en processing y ya tiene buildAttemptId, solo aceptamos el run de ese intento.
+   * - Nunca dejamos que un run viejo "gane" durante un rebuild.
+   */
+  const compatibleRun =
+    rootIsProcessing && rootAttemptId
+      ? (safeStr(maybeRun?.buildAttemptId).trim() === rootAttemptId ? maybeRun : null)
+      : maybeRun;
 
   const currentConnectionFingerprint = getCurrentConnectionFingerprintFromRoot(root) || null;
   const storedConnectionFingerprint = getStoredConnectionFingerprintFromRoot(root) || null;
@@ -885,6 +947,7 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
 
   const needSignalRebuild =
     !!state?.needsSignalRebuild ||
+    (rootIsProcessing && !!rootAttemptId && !rootCompleted) ||
     !!staleSignal;
 
   const signalProcessing = !!authoritativeSignal?.processing;
