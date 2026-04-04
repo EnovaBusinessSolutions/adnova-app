@@ -211,14 +211,17 @@ function buildEmailHtml({
   const introBodyHtml = `
     <div style="font-size:15px;line-height:26px;color:#dbe4ff;">
       <p style="margin:0 0 14px 0;">
+        Hi ${escapeHtml(name)}, here is your daily Signal for ${escapeHtml(formattedDate)}.
+      </p>
+      <p style="margin:0 0 14px 0;">
         Download the attached PDF and drop it into any AI you already use for daily work:
         <span style="color:#ffffff;font-weight:700;">ChatGPT, Claude, Gemini, Grok, Copilot or DeepSeek</span>.
       </p>
-      <p style="margin:0 0 14px 0;">
-        Once it is inside your AI chatbot, you can ask questions about your campaigns, spend, strategy, optimization ideas, reporting, budget allocation and next actions.
+      <p style="margin:0 0 16px 0;">
+        Once it is inside your AI chatbot, you can ask questions about your campaigns, spend, strategy, optimization ideas, reporting, budget allocation and recommended changes to implement.
       </p>
       <p style="margin:0 0 16px 0;">
-        For the best result, use the prompt below together with your Signal PDF:
+        Not sure where to start? Try this prompt:
       </p>
     </div>
 
@@ -294,7 +297,7 @@ function buildEmailHtml({
                     </div>
 
                     <div style="font-size:15px;line-height:26px;color:#d3dcef;">
-                      Hi ${escapeHtml(name)}, here is your refreshed daily Signal and PDF report for ${escapeHtml(formattedDate)}.
+                      Hi ${escapeHtml(name)}, here is your daily Signal for ${escapeHtml(formattedDate)}.
                     </div>
                   </div>
                 </td>
@@ -393,15 +396,14 @@ function buildEmailText({
   const howToUsePrompt = buildHowToUsePrompt();
 
   return [
-    `Hi ${name},`,
-    '',
-    `Your refreshed Adray Daily Signal report for ${formattedDate} is ready.`,
+    `Hi ${name}, here is your daily Signal for ${formattedDate}.`,
     '',
     'How to use your Signal PDF:',
-    'Download the attached PDF and upload it into any AI you use for daily work: ChatGPT, Claude, Gemini, Grok, Copilot or DeepSeek.',
-    'Once it is inside your AI chatbot, you can ask questions about campaigns, spend, strategy, optimization, reporting and budget allocation.',
+    'Download the attached PDF and drop it into any AI you already use for daily work: ChatGPT, Claude, Gemini, Grok, Copilot or DeepSeek.',
     '',
-    'Recommended prompt:',
+    'Once it is inside your AI, you can ask questions about your campaigns, spend, strategy, optimization ideas, reporting, budget allocation and recommended changes to implement.',
+    '',
+    'Not sure where to start? Try this prompt:',
     howToUsePrompt,
     '',
     executiveSummary || businessState || 'Your latest Signal + PDF has been generated successfully.',
