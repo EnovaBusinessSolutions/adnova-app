@@ -235,9 +235,9 @@ function buildEmailHtml({
     </div>
 
     <div style="font-size:14px;line-height:24px;color:#b9c4dc;">
-      If you want a more dynamic and real-time use of your data, you can also go to
+      To unlock a more dynamic, real-time workflow, go to
       <a href="${escapeHtml(dashboardUrl)}" style="color:#c4b5fd;text-decoration:none;font-weight:700;">Adray</a>
-      and set up an MCP connector to Claude or ChatGPT.
+      and connect your Signal data directly to Claude or ChatGPT through Adray’s MCP integration.
     </div>
   `;
 
