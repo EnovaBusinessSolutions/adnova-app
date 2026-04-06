@@ -439,39 +439,63 @@ function welcomeEmail({
   const displayName = safeName(name, email);
 
   const heroIntroHtml = `
-    ${textBlock(`Hi <strong style="color:#FFFFFF">${escapeHtml(displayName)}</strong>, your workspace is ready.`, 10, 'center', '#D3DCEF', 16, 27)}
-    ${textBlock(`Connect your data, finish setup, and start turning performance into intelligence.`, 0, 'center', '#B8C3DA', 15, 25)}
+    ${textBlock(`Hi <strong style="color:#FFFFFF">${escapeHtml(displayName)}</strong> — your account is ready, and your workspace is set up.`, 0, 'center', '#D3DCEF', 16, 27)}
   `;
 
   const contentHtml = `
     ${buildSectionCard({
-      eyebrow: 'Get started',
-      title: 'Your next step',
+      eyebrow: 'Welcome to Adray',
+      bodyHtml: `
+        ${textBlock(`Adray helps you turn your marketing data into clear, actionable signals.`, 16, 'left', '#DBE4FF', 15, 25)}
+        ${textBlock(`Connect your data sources, and we’ll handle the rest—normalizing, structuring, and preparing your data so it’s ready for analysis from day one.`, 0, 'left', '#D7E0F3', 15, 25)}
+      `,
+      marginBottom: 16,
+      compact: true,
+    })}
+
+    ${buildSectionCard({
+      eyebrow: 'What to do next',
       bodyHtml: `
         ${buildBulletList(
           [
-            'Sign in to your Adray workspace',
-            'Complete your onboarding',
-            'Connect your data sources',
+            'Sign in to your AdRay workspace',
+            'Complete onboarding and account setup',
+            'Connect your marketing data sources',
+            'Start analyzing your data with confidence',
           ],
           '#4FE3C1'
         )}
-        <div class="mobile-full mobile-center" style="text-align:left;padding-top:6px;">
-          ${ctaButton(loginUrl, 'Go to Adray')}
+      `,
+      marginBottom: 16,
+      compact: true,
+    })}
+
+    ${buildSectionCard({
+      eyebrow: 'You’re ready to go',
+      bodyHtml: `
+        ${textBlock(`Everything is set up—connect your data and start exploring your signals.`, 16, 'left', '#D7E0F3', 15, 25)}
+        <div class="mobile-full mobile-center" style="text-align:left;">
+          ${ctaButton(loginUrl, 'Go to AdRay')}
         </div>
       `,
       marginBottom: 16,
+      compact: true,
     })}
 
-    <div style="padding:2px 2px 6px 2px;">
-      ${textBlock(`Welcome aboard.<br class="mobile-hide-br"> — The Adray team`, 0, 'center', '#DBE4FF', 14, 24)}
-      ${supportLine(supportEmail)}
-    </div>
+    ${buildSectionCard({
+      eyebrow: 'From the team',
+      bodyHtml: `
+        ${textBlock(`We’re glad you’re here.<br>— The Adray Team`, 0, 'left', '#DBE4FF', 15, 25)}
+        ${supportLine(supportEmail, 'left')}
+      `,
+      marginBottom: 8,
+      compact: true,
+    })}
   `;
 
   return wrapEmail({
     title: `Welcome to ${brand}`,
-    preheader: `Your ${brand} account is ready.`,
+    preheader: `Your ${brand} account is ready and your workspace is set up.`,
     badgeText: 'Welcome',
     headerEyebrow: `${brand} · Welcome`,
     heroTitle: `Welcome to ${brand}`,
