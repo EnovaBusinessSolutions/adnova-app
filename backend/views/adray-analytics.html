@@ -83,11 +83,15 @@
         }
 
         .dashboard-hero {
+            position: sticky;
+            top: 1rem;
+            z-index: 30;
             background: linear-gradient(180deg, rgba(21, 18, 26, 0.96) 0%, rgba(15, 12, 20, 0.94) 100%);
             border: 1px solid var(--dash-border-strong);
             border-radius: 34px;
             box-shadow: var(--dash-shadow);
             padding: 1.65rem 1.75rem;
+            backdrop-filter: blur(18px);
         }
 
         .dashboard-kicker,
