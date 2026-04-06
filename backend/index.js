@@ -385,19 +385,317 @@ app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+/* =========================
+ * Auth básica (email/pass)
+ * ========================= */
+
+app.post("/api/register", requireTurnstileAlways, async (req, res) => {
+  try {
+    let { name, email, password } = req.body || {};
+
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Nombre, correo y contraseña son requeridos",
+      });
+    }
+
+    name = String(name).trim();
+    email = String(email).trim().toLowerCase();
+
+    if (name.length < 2 || name.length > 60) {
+      return res.status(400).json({
+        success: false,
+        message: "El nombre debe tener entre 2 y 60 caracteres",
+      });
+    }
+
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRe.test(email)) {
+      return res.status(400).json({ success: false, message: "Correo inválido" });
+    }
+    if (String(password).length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "La contraseña debe tener al menos 8 caracteres",
+      });
+    }
+
+    const exists = await User.findOne({ email });
+    if (exists) {
+      return res
+        .status(409)
+        .json({ success: false, message: "El email ya está registrado" });
+    }
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    const verifyToken = makeVerifyToken();
+    const verifyTokenHash = hashToken(verifyToken);
+    const verifyExpires = new Date(
+      Date.now() + VERIFY_TTL_HOURS * 60 * 60 * 1000
+    );
+
+    const user = await User.create({
+      name,
+      email,
+      password: hashed,
+
+      emailVerified: false,
+      verifyEmailTokenHash: verifyTokenHash,
+      verifyEmailExpires: verifyExpires,
+    });
+
+    try {
+      await trackEvent({
+        name: "user_signed_up",
+        userId: user._id,
+        dedupeKey: `user_signed_up:${user._id}`,
+        props: { method: "email" },
+      });
+    } catch {}
+
+    try {
+      await sendVerifyEmail({
+        userId: user._id,
+        toEmail: user.email,
+        token: verifyToken,
+        name: user.name,
+      });
+    } catch (mailErr) {
+      console.error(
+        "✉️  Email verificación falló (registro OK):",
+        mailErr?.message || mailErr
+      );
+    }
+
+    return res.status(201).json({
+      success: true,
+      message: "Usuario registrado. Revisa tu correo para verificar tu cuenta.",
+      confirmUrl: `/confirmation?email=${encodeURIComponent(user.email)}`,
+    });
+  } catch (err) {
+    if (err && err.code === 11000) {
+      return res
+        .status(409)
+        .json({ success: false, message: "El email ya está registrado" });
+    }
+    console.error("❌ Error al registrar usuario:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Error interno al registrar" });
+  }
+});
+
+
+/* =========================
+ * ✅ FORGOT PASSWORD (E2E)
+ * ========================= */
+const RESET_TTL_MINUTES = Number(process.env.RESET_PASSWORD_TTL_MINUTES || 30);
+
+function makeResetToken() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+app.post("/api/forgot-password", requireTurnstileAlways, async (req, res) => {
+  try {
+    const email = String(req.body?.email || "").trim().toLowerCase();
+
+    const safeOk = () => res.json({ ok: true });
+
+    if (!email) return safeOk();
+
+    const user = await User.findOne({ email })
+      .select("_id email name emailVerified")
+      .lean();
+
+    if (!user) return safeOk();
+    if (user.emailVerified === false) return safeOk();
+
+    const resetToken = makeResetToken();
+    const resetTokenHash = hashToken(resetToken);
+    const resetExpires = new Date(Date.now() + RESET_TTL_MINUTES * 60 * 1000);
+
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          resetPasswordTokenHash: resetTokenHash,
+          resetPasswordExpires: resetExpires,
+        },
+      }
+    );
+
+    try {
+      await sendResetPasswordEmail({
+        userId: user._id,
+        toEmail: user.email,
+        name: user.name || (user.email ? user.email.split("@")[0] : "Usuario"),
+        token: resetToken,
+      });
+    } catch (mailErr) {
+      console.error(
+        "✉️ Reset email falló (forgot OK):",
+        mailErr?.message || mailErr
+      );
+    }
+
+    return safeOk();
+  } catch (e) {
+    console.error("❌ /api/forgot-password:", e);
+    return res.json({ ok: true });
+  }
+});
+
+app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => {
+  try {
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const password = String(req.body?.password || "");
+
+    if (!email || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Ingresa tu correo y contraseña." });
+    }
+
+    const risk = riskGet(req, email);
+    if (risk.requiresCaptcha) {
+      const token =
+        String(req.body?.turnstileToken || "").trim() ||
+        String(req.body?.["cf-turnstile-response"] || "").trim() ||
+        String(req.headers?.["x-turnstile-token"] || "").trim();
+
+      const { ok, data } = await verifyTurnstile(token, getClientIp(req));
+      if (!ok) {
+        return res.status(400).json({
+          success: false,
+          ok: false,
+          requiresCaptcha: true,
+          code: "TURNSTILE_REQUIRED_OR_FAILED",
+          errorCodes: data?.["error-codes"] || [],
+          message: "Verificación requerida. Completa el captcha para continuar.",
+        });
+      }
+    }
+
+    const user = await User.findOne({ email }).select("+password +emailVerified");
+
+    if (!user || !user.password) {
+      const rr = riskFail(req, email);
+      return res.status(401).json({
+        success: false,
+        message: "Correo o contraseña incorrectos.",
+        requiresCaptcha: rr.requiresCaptcha,
+      });
+    }
+
+    if (user.emailVerified === false) {
+      return res.status(403).json({
+        success: false,
+        message: "Tu correo aún no está verificado. Revisa tu bandeja de entrada.",
+      });
+    }
+
+    const okPass = await bcrypt.compare(password, user.password);
+    if (!okPass) {
+      const rr = riskFail(req, email);
+      return res.status(401).json({
+        success: false,
+        message: "Correo o contraseña incorrectos.",
+        requiresCaptcha: rr.requiresCaptcha,
+      });
+    }
+
+    riskClear(req, email);
+
+    req.login(user, async (err) => {
+      if (err) return next(err);
+
+      try {
+        await trackEvent({
+          name: "user_logged_in",
+          userId: user._id,
+          ts: new Date(),
+          props: { method: "email" },
+        });
+      } catch {}
+
+      const redirect = user.onboardingComplete ? "/dashboard" : "/onboarding";
+      return res.json({ success: true, redirect });
+    });
+  } catch (err) {
+    console.error("❌ /api/login error:", err);
+    return res.status(500).json({ success: false, message: "Error del servidor" });
+  }
+});
+
+app.get("/api/auth/verify-email", async (req, res) => {
+  try {
+    const token = String(req.query.token || "").trim();
+    if (!token) return res.status(400).send("Token faltante");
+
+    const tokenHash = hashToken(token);
+
+    const user = await User.findOne({
+      verifyEmailTokenHash: tokenHash,
+      verifyEmailExpires: { $gt: new Date() },
+    });
+
+    if (!user) {
+      return res
+        .status(400)
+        .send(
+          "El enlace de verificación es inválido o expiró. Solicita uno nuevo."
+        );
+    }
+
+    user.emailVerified = true;
+    user.verifyEmailTokenHash = undefined;
+    user.verifyEmailExpires = undefined;
+    await user.save();
+
+    try {
+      await trackEvent({
+        name: "email_verified",
+        userId: user._id,
+        dedupeKey: `email_verified:${user._id}`,
+        ts: new Date(),
+        props: { method: "email_link" },
+      });
+    } catch {}
+
+    return res.redirect(302, "/login?verified=1");
+  } catch (err) {
+    console.error("❌ verify-email:", err);
+    return res.status(500).send("Error al verificar el correo");
+  }
+});
+
 // ✅ AdRay Analytics & Realtime Feed (Phase 2)
 // sessionGuard removed for dashboard demo/access
+<<<<<<< Updated upstream
 app.use("/api/analytics", ensureAuthenticated, require("./routes/analytics"));
 app.get("/analytics", ensureAuthenticated, (req, res) => res.sendFile(require('path').join(__dirname, "views/adray-analytics.html")));
+=======
+app.use("/api/analytics", require("./routes/analytics"));  
+>>>>>>> Stashed changes
 app.use("/api/feed", require("./routes/feed"));
 app.use('/api', wooOrdersRoutes);
 app.use('/api/platform-connections', require('./routes/platformConnections'));
 app.use('/wp-plugin', wordpressPluginRoutes);
 
+<<<<<<< Updated upstream
 // AdRay platform routes (collect bypassed session above)
 // Hotfix: bypass collect limiter while stabilizing production collect failures.
 app.use("/api", sessionGuardAdrayPlatforms, adrayPlatformRoutes);
 
+=======
+// AdRay collect and platform routes
+app.use("/collect", rateLimitCollect, collectRoutes);
+app.use('/api/internal/daily-signal', require('./routes/internalDailySignal'));
+app.use("/api", sessionGuard, adrayPlatformRoutes);                             
+                      
+>>>>>>> Stashed changes
 /* =========================
  * Pixel auditor (usa JSON)
  * ========================= */
@@ -872,8 +1170,16 @@ app.get("/", (req, res) => {
   return res.sendFile(path.join(__dirname, "../public/landing/index.html"));
 });
 
+<<<<<<< Updated upstream
 app.get("/login", (_req, res) => {
   res.sendFile(path.join(__dirname, "../public/login.html"));
+=======
+// Compat: la landing antigua (saas-landing) exponía /start
+app.get("/start", (_req, res) => res.redirect(302, "/"));
+
+app.get(["/login", "/getstarted", "/confirmation"], (_req, res) => {
+  res.sendFile(path.join(__dirname, "../public/login-v2/index.html"));
+>>>>>>> Stashed changes
 });
 
 app.get("/onboarding", ensureNotOnboarded, async (req, res) => {
@@ -1018,10 +1324,8 @@ function riskClear(req, email) {
   loginRiskStore.delete(riskKey(req, email));
 }
 
-/* =========================
- * Auth básica (email/pass)
- * ========================= */
 
+<<<<<<< Updated upstream
 app.post("/api/register", async (req, res) => {
   try {
     let { name, email, password } = req.body || {};
@@ -1282,6 +1586,8 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
     return res.status(500).json({ success: false, message: "Error del servidor" });
   }
 });
+=======
+>>>>>>> Stashed changes
 
 app.get("/api/session", async (req, res) => {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
