@@ -37,7 +37,7 @@ const {
 // ✅ NEW: Analytics Events (no rompe si falla)
 const { trackEvent } = require("./services/trackEvent");
 
-// ✅ Turnstile
+// ✅ Turnstile (main: middleware centralizado)
 const requireTurnstileAlways = require("./middlewares/requireTurnstileAlways");
 const { verifyTurnstile } = require("./services/turnstile");
 
@@ -651,16 +651,15 @@ app.get("/api/auth/verify-email", async (req, res) => {
 
 // ✅ AdRay Analytics & Realtime Feed (Phase 2)
 // sessionGuard removed for dashboard demo/access
-app.use("/api/analytics", require("./routes/analytics"));  
+app.use("/api/analytics", require("./routes/analytics"));
 app.use("/api/feed", require("./routes/feed"));
 app.use('/api', wooOrdersRoutes);
 app.use('/api/platform-connections', require('./routes/platformConnections'));
 app.use('/wp-plugin', wordpressPluginRoutes);
 
-// AdRay collect ya está montado arriba (con rateLimitCollect). Señal interna y plataformas:
+// AdRay collect ya está montado arriba (con rateLimitCollect). Señal interna y plataformas (main):
 app.use('/api/internal/daily-signal', require('./routes/internalDailySignal'));
-app.use("/api", sessionGuard, adrayPlatformRoutes);                             
-                      
+app.use("/api", sessionGuard, adrayPlatformRoutes);
 /* =========================
  * Pixel auditor (usa JSON)
  * ========================= */
