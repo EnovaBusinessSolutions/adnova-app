@@ -1,23 +1,28 @@
 'use strict';
 
-const { OAuth2Client } = require('google-auth-library');
-
 let GoogleAccount, googleAdsService;
 try { GoogleAccount = require('../../models/GoogleAccount'); } catch { GoogleAccount = null; }
 try { googleAdsService = require('../../services/googleAdsService'); } catch { googleAdsService = null; }
 
-const DEV_TOKEN = process.env.GOOGLE_ADS_DEVELOPER_TOKEN || process.env.GOOGLE_DEVELOPER_TOKEN || '';
 const LOGIN_CID = (process.env.GOOGLE_LOGIN_CUSTOMER_ID || '').replace(/[^\d]/g, '');
-const ADS_VER = (process.env.GADS_API_VERSION || 'v18').trim();
-const ADS_HOST = 'https://googleads.googleapis.com';
-
-const OAUTH_CLIENT_ID = process.env.GOOGLE_ADS_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '';
-const OAUTH_CLIENT_SECRET = process.env.GOOGLE_ADS_CLIENT_SECRET || process.env.GOOGLE_CLIENT_SECRET || '';
 
 function toNum(v) { return Number(v || 0) || 0; }
 function safeDiv(n, d) { return d ? n / d : 0; }
 function round(n, d = 2) { return Number(Number(n || 0).toFixed(d)); }
 function normId(s) { return String(s || '').replace(/[^\d]/g, ''); }
+
+function assertSearchStream() {
+  if (!googleAdsService?.searchGAQLStream) {
+    const e = new Error('GOOGLE_ADS_SERVICE_UNAVAILABLE');
+    e.code = 'GOOGLE_ADS_SERVICE_UNAVAILABLE';
+    throw e;
+  }
+}
+
+/** Token source for googleAdsService.searchGAQLStream (reintentos login-customer-id / LOGIN_CID). */
+function adsTokenSource(creds) {
+  return { refreshToken: creds.refreshToken, accessToken: creds.accessToken };
+}
 
 async function resolveGoogleCredentials(userId) {
   if (!GoogleAccount) return null;
@@ -45,41 +50,11 @@ async function resolveGoogleCredentials(userId) {
   };
 }
 
-async function getAccessToken(refreshToken) {
-  if (googleAdsService?.resolveAccessToken) {
-    return googleAdsService.resolveAccessToken({ refreshToken });
-  }
-  const client = new OAuth2Client(OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET);
-  client.setCredentials({ refresh_token: refreshToken });
-  const { token } = await client.getAccessToken();
-  return token;
-}
-
-async function queryGaql(accessToken, customerId, loginCustomerId, gaql) {
-  const axios = require('axios');
-  const url = `${ADS_HOST}/${ADS_VER}/customers/${customerId}/googleAds:searchStream`;
-  const headers = {
-    Authorization: `Bearer ${accessToken}`,
-    'developer-token': DEV_TOKEN,
-    'Content-Type': 'application/json',
-  };
-  if (loginCustomerId) headers['login-customer-id'] = loginCustomerId;
-
-  const { data } = await axios.post(url, { query: gaql }, { headers, timeout: 30000 });
-  const rows = [];
-  if (Array.isArray(data)) {
-    for (const batch of data) {
-      if (Array.isArray(batch.results)) rows.push(...batch.results);
-    }
-  }
-  return rows;
-}
-
 async function getAdPerformance(userId, dateFrom, dateTo, granularity) {
   const creds = await resolveGoogleCredentials(userId);
   if (!creds?.refreshToken) throw Object.assign(new Error('ACCOUNT_NOT_CONNECTED'), { code: 'ACCOUNT_NOT_CONNECTED' });
+  assertSearchStream();
 
-  const accessToken = await getAccessToken(creds.refreshToken);
   const segmentClause = granularity && granularity !== 'total'
     ? ', segments.date' : '';
 
@@ -93,7 +68,7 @@ async function getAdPerformance(userId, dateFrom, dateTo, granularity) {
     WHERE segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
   `;
 
-  const rows = await queryGaql(accessToken, creds.customerId, creds.loginCustomerId, gaql);
+  const rows = await googleAdsService.searchGAQLStream(adsTokenSource(creds), creds.customerId, gaql);
 
   if (!rows.length) {
     return {
@@ -139,56 +114,112 @@ async function getAdPerformance(userId, dateFrom, dateTo, granularity) {
   };
 }
 
+/** GAQL WHERE for listing campaigns by delivery status (no segments.date — evita omitir activas sin tráfico en el rango). */
+function campaignIdentityStatusWhere(status) {
+  if (status === 'active') return "campaign.status = 'ENABLED'";
+  if (status === 'paused') return "campaign.status = 'PAUSED'";
+  return "campaign.status != 'REMOVED'";
+}
+
+const CAMPAIGN_IDENTITY_PAGE = 500;
+
+function aggregateGoogleCampaignMetricRows(rows) {
+  const byId = new Map();
+  for (const r of rows) {
+    const c = r.campaign || {};
+    const id = String(c.id || '').trim();
+    if (!id) continue;
+    const m = r.metrics || {};
+    const spend = toNum(m.costMicros) / 1_000_000;
+    const cur = byId.get(id) || {
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      conversions: 0,
+      convValue: 0,
+    };
+    cur.spend += spend;
+    cur.impressions += toNum(m.impressions);
+    cur.clicks += toNum(m.clicks);
+    cur.conversions += toNum(m.conversions);
+    cur.convValue += toNum(m.conversionsValue);
+    byId.set(id, cur);
+  }
+  return byId;
+}
+
 async function getCampaignPerformance(userId, dateFrom, dateTo, limit = 10, status = 'all') {
   const creds = await resolveGoogleCredentials(userId);
   if (!creds?.refreshToken) throw Object.assign(new Error('ACCOUNT_NOT_CONNECTED'), { code: 'ACCOUNT_NOT_CONNECTED' });
+  assertSearchStream();
 
-  const accessToken = await getAccessToken(creds.refreshToken);
+  const source = adsTokenSource(creds);
+  const lim = Math.min(Math.max(1, Number(limit) || 10), 50);
+  const statusWhere = campaignIdentityStatusWhere(status);
 
-  let statusFilter = '';
-  if (status === 'active') statusFilter = "AND campaign.status = 'ENABLED'";
-  else if (status === 'paused') statusFilter = "AND campaign.status = 'PAUSED'";
-
-  const gaql = `
-    SELECT
-      campaign.id, campaign.name, campaign.status,
-      metrics.cost_micros, metrics.impressions, metrics.clicks,
-      metrics.ctr, metrics.conversions, metrics.conversions_value
+  const identityGaql = `
+    SELECT campaign.id, campaign.name, campaign.status
     FROM campaign
-    WHERE segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
-      ${statusFilter}
-    ORDER BY metrics.cost_micros DESC
-    LIMIT ${Math.min(limit, 50)}
+    WHERE ${statusWhere}
+    ORDER BY campaign.id
+    LIMIT ${CAMPAIGN_IDENTITY_PAGE}
   `;
 
-  const rows = await queryGaql(accessToken, creds.customerId, creds.loginCustomerId, gaql);
+  const metricsGaql = `
+    SELECT
+      campaign.id,
+      metrics.cost_micros, metrics.impressions, metrics.clicks,
+      metrics.conversions, metrics.conversions_value
+    FROM campaign
+    WHERE segments.date BETWEEN '${dateFrom}' AND '${dateTo}'
+  `;
 
-  const campaigns = rows.map(r => {
-    const m = r.metrics || {};
+  const [identityRows, metricRows] = await Promise.all([
+    googleAdsService.searchGAQLStream(source, creds.customerId, identityGaql),
+    googleAdsService.searchGAQLStream(source, creds.customerId, metricsGaql),
+  ]);
+
+  const metricsById = aggregateGoogleCampaignMetricRows(metricRows);
+  const statusMap = { ENABLED: 'active', PAUSED: 'paused', REMOVED: 'archived' };
+
+  const campaigns = [];
+  const seen = new Set();
+  for (const r of identityRows) {
     const c = r.campaign || {};
-    const spend = toNum(m.costMicros) / 1_000_000;
-    const conversions = toNum(m.conversions);
-    const convValue = toNum(m.conversionsValue);
-    const statusMap = { ENABLED: 'active', PAUSED: 'paused', REMOVED: 'archived' };
-    return {
-      campaign_id: String(c.id || ''),
+    const id = String(c.id || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const m = metricsById.get(id) || {
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      conversions: 0,
+      convValue: 0,
+    };
+    const spend = round(m.spend);
+    const conversions = round(m.conversions);
+    const convValue = round(m.convValue);
+    campaigns.push({
+      campaign_id: id,
       campaign_name: c.name || '',
       status: statusMap[c.status] || 'unknown',
-      spend: round(spend),
-      impressions: toNum(m.impressions),
-      clicks: toNum(m.clicks),
-      ctr: round(toNum(m.ctr) * 100),
-      conversions: round(conversions),
+      spend,
+      impressions: m.impressions,
+      clicks: m.clicks,
+      ctr: round(safeDiv(m.clicks, m.impressions) * 100),
+      conversions,
       cost_per_conversion: round(safeDiv(spend, conversions)),
       roas_reported: round(safeDiv(convValue, spend)),
-    };
-  });
+    });
+  }
 
-  const totalSpend = campaigns.reduce((s, c) => s + c.spend, 0);
+  campaigns.sort((a, b) => b.spend - a.spend);
+  const sliced = campaigns.slice(0, lim);
+  const totalSpend = sliced.reduce((s, c) => s + c.spend, 0);
 
   return {
     channel: 'google',
-    campaigns,
+    campaigns: sliced,
     total_spend: round(totalSpend),
     currency: creds.currency,
     date_from: dateFrom,
@@ -199,8 +230,7 @@ async function getCampaignPerformance(userId, dateFrom, dateTo, limit = 10, stat
 async function getAdsetPerformance(userId, campaignId, dateFrom, dateTo) {
   const creds = await resolveGoogleCredentials(userId);
   if (!creds?.refreshToken) throw Object.assign(new Error('ACCOUNT_NOT_CONNECTED'), { code: 'ACCOUNT_NOT_CONNECTED' });
-
-  const accessToken = await getAccessToken(creds.refreshToken);
+  assertSearchStream();
 
   const gaql = `
     SELECT
@@ -214,7 +244,7 @@ async function getAdsetPerformance(userId, campaignId, dateFrom, dateTo) {
     ORDER BY metrics.cost_micros DESC
   `;
 
-  const rows = await queryGaql(accessToken, creds.customerId, creds.loginCustomerId, gaql);
+  const rows = await googleAdsService.searchGAQLStream(adsTokenSource(creds), creds.customerId, gaql);
 
   const adsets = rows.map(r => {
     const m = r.metrics || {};

@@ -42,6 +42,10 @@ const OAuthClientSchema = new mongoose.Schema(
     name: { type: String, required: true },
     redirectUris: { type: [String], default: [] },
     scopes: { type: [String], default: ['read:ads_performance', 'read:shopify_orders'] },
+    grantsAllowed: {
+      type: [String],
+      default: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:token-exchange'],
+    },
     active: { type: Boolean, default: true },
   },
   { collection: 'oauth_clients', timestamps: true }
@@ -56,7 +60,14 @@ async function main() {
     if (existing) {
       await OAuthClient.updateOne(
         { clientId },
-        { $set: { clientSecret, redirectUris, active: true } }
+        {
+          $set: {
+            clientSecret,
+            redirectUris,
+            active: true,
+            grantsAllowed: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:token-exchange'],
+          },
+        }
       );
       console.log('Cliente OAuth actualizado:', clientId);
     } else {
@@ -66,6 +77,7 @@ async function main() {
         name: 'Adray MCP / GPT Client',
         redirectUris,
         scopes: ['read:ads_performance', 'read:shopify_orders'],
+        grantsAllowed: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:token-exchange'],
         active: true,
       });
       console.log('Cliente OAuth creado:', clientId);

@@ -497,7 +497,9 @@ async function accumulateCampaignBreakdowns({
       metrics.clicks,
       metrics.cost_micros,
       metrics.conversions,
-      metrics.conversions_value
+      metrics.conversions_value,
+      metrics.all_conversions,
+      metrics.all_conversions_value
     FROM campaign
     WHERE
       segments.date BETWEEN '${since}' AND '${until}'
@@ -548,8 +550,13 @@ async function accumulateCampaignBreakdowns({
     const costMicros = met.costMicros ?? met.cost_micros ?? 0;
     const costMicrosNum = Number(costMicros || 0);
 
-    const conversions = Number(met.conversions || 0);
-    const conv_value = Number(met.conversionsValue ?? met.conversions_value ?? 0);
+    const base_conversions = Number(met.conversions || 0);
+    const all_conversions = Number(met.allConversions ?? met.all_conversions ?? row?.metrics?.all_conversions ?? 0);
+    const conversions = Math.max(base_conversions, all_conversions);
+
+    const base_conv_value = Number(met.conversionsValue ?? met.conversions_value ?? 0);
+    const all_conv_value = Number(met.allConversionsValue ?? met.all_conversions_value ?? row?.metrics?.all_conversions_value ?? 0);
+    const conv_value = Math.max(base_conv_value, all_conv_value);
 
     const device = seg.device || 'UNSPECIFIED';
     const network = seg.adNetworkType || seg.ad_network_type || 'UNSPECIFIED';

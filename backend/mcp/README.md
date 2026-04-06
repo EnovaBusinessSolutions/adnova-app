@@ -8,7 +8,7 @@ Servidor MCP que expone 8 tools read-only para Meta Ads, Google Ads y Shopify.
 |------|-----------|
 | `POST /mcp` | Protocolo MCP (Streamable HTTP) |
 | `GET /oauth/authorize` | OAuth 2.0 - autorización |
-| `POST /oauth/token` | OAuth 2.0 - exchange / refresh token |
+| `POST /oauth/token` | OAuth 2.0 - authorization_code / token_exchange / refresh_token |
 | `POST /oauth/revoke` | OAuth 2.0 - revocación |
 | `GET /gpt/v1/account-info` | REST mirror |
 | `GET /gpt/v1/ad-performance` | REST mirror |
@@ -35,7 +35,14 @@ npm run test:mcp
 npm start
 ```
 
+### Staging (smoke contra Render)
+
+Guía paso a paso: [docs/MCP_TESTING_AND_GPT_GUIDE.md](../../docs/MCP_TESTING_AND_GPT_GUIDE.md) §8. Con token OAuth: `npm run mcp:smoke:staging` (variables `MCP_STAGING_BASE_URL`, `MCP_ACCESS_TOKEN`).
+
 ### 3. REST mirror (requiere OAuth token)
+
+`ad-performance`, `campaign-performance`, `channel-summary` y `date-comparison` usan el mismo módulo que las tools MCP ([`services/adsPerformanceResolve.js`](./services/adsPerformanceResolve.js)): con `MCP_SNAPSHOT_FIRST_ENABLED=true` leen primero **Mongo `mcpdata`** y hacen fallback a la API si hace falta.
+
 ```bash
 curl -H "Authorization: Bearer <access_token>" "http://localhost:3000/gpt/v1/account-info"
 ```
@@ -56,9 +63,55 @@ Variables opcionales: `MCP_OAUTH_CLIENT_ID` (default: adray-mcp-client), `MCP_OA
 3. Callback con `code` → intercambiar en `POST /oauth/token` con client_id, client_secret, code, redirect_uri
 4. Usar `access_token` como Bearer en MCP o REST
 
+### 4.1 Token Exchange (sesion Adray -> token MCP)
+
+`/oauth/token` soporta ahora `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` (alias `token_exchange`) para emitir un token MCP usando una sesion autenticada existente en Adray.
+
+Importante:
+- No se acepta `access_token` de Google/Meta/Shopify como bearer de MCP.
+- El exchange requiere sesion valida de Adray (cookie de sesion).
+- Los scopes emitidos quedan restringidos a los scopes permitidos por el `client_id`.
+
+Ejemplo:
+
+```bash
+curl -X POST "http://localhost:3000/oauth/token" \
+  -H "Content-Type: application/json" \
+  -b "connect.sid=<tu_cookie_de_sesion>" \
+  -d '{
+    "grant_type":"urn:ietf:params:oauth:grant-type:token-exchange",
+    "client_id":"adray-mcp-client",
+    "scope":"read:ads_performance read:shopify_orders"
+  }'
+```
+
+Respuesta esperada:
+- `access_token` MCP (Bearer para `/mcp` y `/gpt/v1/*`)
+- `refresh_token`
+- `scope` concedido
+- `issued_token_type=urn:ietf:params:oauth:token-type:access_token`
+
 ### 5. Cliente MCP (Claude / ChatGPT)
 Configurar MCP endpoint: `http://localhost:3000/mcp` (o `https://mcp.adray.ai/mcp` en producción).
 Usar el `access_token` OAuth en el transporte.
+
+## Snapshot-first (mcpdata) — opcional
+
+Las tools de Meta/Google pueden leer primero datos ya recolectados en `mcpdata` (datasets `*.daily_trends_ai` o `*.history.daily_account_totals`) y usar la API en vivo solo si hace falta (snapshot fresco → sin llamar a la API; snapshot obsoleto → intentar live y, si falla, devolver snapshot).
+
+**Kill-switch:** por defecto está desactivado.
+
+| Variable | Descripción |
+|----------|-------------|
+| `MCP_SNAPSHOT_FIRST_ENABLED` | `true` / `1` para activar |
+| `MCP_SNAPSHOT_FIRST_TOOLS` | Lista separada por comas (ej. `get_ad_performance,get_campaign_performance`). Vacío = todas las tools contempladas |
+| `MCP_SNAPSHOT_MAX_AGE_MIN` | Minutos para considerar el snapshot “fresco” (default 360) |
+| `MCP_SNAPSHOT_BACKGROUND_REFRESH` | Si `true`, tras `live_fallback` encola recolección MCP (requiere `REDIS_URL`) |
+| `MCP_SNAPSHOT_REFRESH_DEBOUNCE_MS` | Mínimo entre encolados por usuario+fuente (default 300000) |
+
+Si no hay snapshot y la API en vivo falla (p. ej. Google 403), las tools de ads devuelven **métricas en cero** y log `source_mode`: `live_error_no_snapshot` o `empty_fallback` (no `INTERNAL_ERROR`), salvo `ACCOUNT_NOT_CONNECTED`.
+
+Logs estructurados: líneas JSON con `mcp_tool_source: true`, `source_mode` (`snapshot_fresh` \| `snapshot_stale` vía live \| `live` \| `live_fallback` \| `live_error_no_snapshot` \| `empty_fallback` \| `error`), `latency_ms`, `snapshot_id` cuando aplica.
 
 ## Tools Phase 1
 - `get_account_info` – cuentas conectadas

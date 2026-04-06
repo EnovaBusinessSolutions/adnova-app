@@ -1,6 +1,6 @@
 # AdRay / Adnova
 
-Last update: 2026-03-13
+Last update: 2026-04-01
 
 This is the only documentation file that should be treated as the source of truth for the repository. It consolidates the previous planning files, implementation notes, operational checklist, WordPress plugin readme, Shopify review guide, and frontend README boilerplate.
 
@@ -25,6 +25,10 @@ Build and run a platform-agnostic attribution pipeline for Shopify, WooCommerce,
 - WooCommerce client distribution: WordPress plugin under `wordpress-plugin/adnova-pixel`.
 - Frontend apps: multiple Vite + React + TypeScript + shadcn-ui + Tailwind projects generated from Lovable.
 
+### Staging vs producción (OAuth, Render, Cloudflare)
+
+Checklist operativa y variables por entorno: [docs/STAGING_PRODUCTION.md](docs/STAGING_PRODUCTION.md).
+
 ## Current Status
 
 ### Frontend note
@@ -45,26 +49,22 @@ Build and run a platform-agnostic attribution pipeline for Shopify, WooCommerce,
 - Attribution stitching, merchant snapshot updates, and failed job logging are implemented.
 - WooCommerce attribution flow was validated end-to-end in staging on 2026-03-13, including checkout login stitching and attributed order persistence.
 
-### Active incident
+### Collector status (2026-03-23)
 
-`POST /collect` has been observed returning `500 Internal Server Error` in production even while the pixel asset itself loads correctly.
+- Staging collector health is stable.
+- Latest live tests returned `success: true`, `event_persisted: true`, `session_persisted: true`, `fallback_stored: false`.
+- Data coverage endpoint is stable and no longer returning `500`/degraded Prisma errors for staging.
+- Historical backfill for Layer 4 and Layer 5 session source is automated at service startup.
 
-Most likely root causes, in priority order:
+Current production guidance:
 
-1. Production database schema drift between deployed Prisma client and actual DB schema.
-2. Missing or invalid environment variables such as `DATABASE_URL`, `REDIS_URL`, or `ENCRYPTION_KEY`.
-3. Runtime DB connectivity issues.
-4. Payload shape mismatches between browser sender and collector expectations.
-
-Immediate containment:
-
-- Keep the pixel loading to validate traffic flow.
-- Treat production event flow as non-persistent until `/collect` is consistently returning `2xx`.
-- Do not trust attribution analysis until collector stability is restored.
+1. Keep monitoring `POST /collect` response flags during rollout.
+2. Treat production as healthy only when the same flags above are observed in production traffic.
+3. If flags regress, inspect `failed_jobs` rows with `collect_` job types first.
 
 ### Latest staging validation (2026-03-13)
 
-Validated sample order from manual operator test:
+Validated sample orders from manual operator tests:
 
 - Timestamp captured in dashboard: `13/3/2026, 8:12:57 a.m.`
 - Order: `66308`
@@ -74,17 +74,41 @@ Validated sample order from manual operator test:
 - Attribution shown: `Google · brand-test`
 - Source shown: `Woo Orders Sync`
 - Debug shown: `woo=Google | utm=google | campaign=brand-test`
+- Home -> Tienda persistence test: `13/3/2026, 8:48:58 a.m.`, order `66310`, attribution `Google · home_to_store_test`, source `Woo Orders Sync`
 
 Validation result:
 
 - Attribution and campaign persistence: OK.
 - Woo checkout login stitching: OK.
+- Homepage landing -> store navigation -> purchase attribution persistence: OK.
 - End-to-end Woo flow in staging: OK.
+- Live Feed now shows connected user labels when the event can be resolved against WordPress online users: OK.
+- Recent purchases timezone now matches business expectation in the purchases table used by operators: OK.
 
-Known issue from this same test:
+Notes from this same validation:
 
-- Dashboard timestamp is offset from operator local time (example observed: around `2:00 p.m.` local displayed as `8:12 a.m.`).
-- Timezone normalization remains pending.
+- The recent purchases table currently applies a focused display correction for operator readability.
+- Woo sync payloads were also hardened to send and parse explicit creation time metadata for later cleanup of the UI-only adjustment if it becomes unnecessary.
+
+### Build summary (2026-03-27)
+
+What is already built and working in the current dashboard/pipeline baseline:
+
+- `Live Feed` runs over SSE (`/api/feed/:account_id`) and displays real-time `COLLECT` + `WEBHOOK` events.
+- Collector now persists identity/session/event with stable response flags and supports fallback storage for resilience.
+- Event-name normalization was hardened in collect ingestion to unify aliases (for example `added_to_cart`/`cart_add` -> `add_to_cart`).
+- Pixel runtime expanded Woo add-to-cart interception coverage (REST + `wc-ajax` + form submit + click/XHR fallback paths).
+- Historical profile explorer was consolidated into Attribution Journey-first UX with profile search/sort and profile-focus interactions.
+- Customer name extraction and customer-id normalization were improved in backend stitching for Woo profiles and recent purchases.
+
+### Next implementation steps (priority, 2026-03-27)
+
+1. Make `Live Feed` refresh online-user state on a fixed interval (polling) in addition to event-triggered refresh.
+2. Ensure every live event shows resolved user identity (name, email, phone, or customer id) and explicitly indicates when no logged-in identity is available.
+3. Make Woo sync fully complete for the selected period (no practical 100-order cap), including paginated/backfill strategy for very large stores with queue-safe processing.
+4. Ensure Historical Conversion Journey shows real user names instead of generic `Woo customer #xx` whenever any identity source can resolve the profile.
+5. Ensure Selected Journey renders full stitched event timeline for the selected user/session (not only `Ad Click` + `Purchase`).
+6. Fix Historical Conversion Journey user-filter input UX: black text on white input and verified functional filtering behavior.
 
 ## Scope and Deliverables
 
@@ -154,12 +178,71 @@ The original planning spec described a shop-centric version of the same pipeline
 
 The current implementation uses an `account_id`-centric model with partial legacy `shop_id` fallback in some paths.
 
+## Phase 1 Data Coverage Audit (datos-pixel.md)
+
+Reference reviewed: `datos-pixel.md` (March 2026). The list below maps requested Phase 1 fields against current implementation.
+
+### Layer 1: Identity anchors
+
+- `user_key`: YES. Persisted in `identity_graph`, `events`, `sessions`, and used in `orders` when available.
+- `email_hash`: PARTIAL. Persisted in `identity_graph` and `orders` when payload/webhook includes email; not guaranteed from all Shopify pixel events.
+- `phone_hash`: PARTIAL. Persisted in `identity_graph` and `orders` when payload/webhook includes phone; not guaranteed from all Shopify pixel events.
+- `customer_id`: PARTIAL. Persisted when present in browser payload or ecommerce order payload; not guaranteed on anonymous browser events.
+
+### Layer 2: Session events
+
+- `session_id`: YES. Persisted in `sessions` and `events`.
+- `utm_source`, `utm_medium`, `utm_campaign`: YES. Persisted in `sessions` and checkout attribution snapshots.
+- `fingerprint_hash`: YES. Persisted in `identity_graph`.
+- `ip_hash`: YES. Persisted as hashed value in identity/session/event write paths.
+- `page_events[]`: PARTIAL. Events are persisted row-by-row in `events`, not as one array field in `sessions`.
+- `session_start_at`: YES (`sessions.started_at`).
+- `session_end_at`: PARTIAL (`sessions.last_event_at` works as last activity, but no explicit immutable end marker).
+
+### Layer 3: Touchpoints and click IDs
+
+- `fbclid`, `gclid`, `ttclid`: YES. Persisted in `identity_graph`, `sessions`, and attribution snapshots when available.
+- `event_id` server-generated: YES. Generated server-side in collector/webhooks/order sync paths.
+- `landing_page`: PARTIAL. Field exists (`sessions.landing_page_url`) but still depends on sender payload consistency.
+- `referrer`: YES. Persisted in `sessions` and attribution snapshots when provided.
+
+### Layer 4: Order truth
+
+- `order_id`: YES. Stored in `orders.order_id`.
+- `gross_revenue`: YES (`orders.revenue` from platform order payload).
+- `refund_amount`: PARTIAL. Dedicated field now exists and is updated from Shopify `orders-updated` and Woo sync when payloads include it.
+- `chargeback_flag`: PARTIAL. Dedicated field now exists and is updated from webhook payload heuristics, but still needs disputes API parity.
+- `orders_count` stamp at purchase time: PARTIAL. Field now exists and is written from order payloads when present, but not guaranteed for all stores/payload variants.
+- `checkout_token`: YES. Stored in `checkout_session_map` and `orders`, used as stitch key.
+- `customer_id` on order: YES when provided by platform payload.
+- `created_at` (platform order creation time): YES (`orders.platform_created_at`).
+
+### Layer 5: Platform daily pull
+
+- `meta_spend`, `meta_impressions`: YES (available in MCP adapters/chunks and channel summary paths).
+- `meta_reported_conv_value`: PARTIAL (available in MCP campaign payloads as conversion value/ROAS context, not yet standardized as one canonical DB field in Prisma).
+- `google_spend`, `google_clicks`: YES (available in MCP adapters/chunks and channel summary paths).
+- `ga4_session_source`: NO (not found as canonical persisted field in current MCP models/routes).
+
+### Layer 6: Raw enrichment on every event
+
+- `confidence_score`: YES (event-level field now persisted from identity resolution output in collect path).
+- `match_type` (`deterministic` / `probabilistic`): YES (event-level field now persisted in collect path).
+- `raw_source` (`pixel` / `webhook` / `api`): PARTIAL (dedicated event field now exists and is written in collect; webhook/api parity still needs full rollout).
+- `collected_at`: PARTIAL (dedicated event field now exists and is written in collect; other ingestion paths still need harmonization).
+
+### Critical stitch status
+
+- `checkout_token -> session_id` at checkout time: YES for browser `begin_checkout` path (`POST /collect`) via `checkout_session_map` upsert.
+- Shopify `checkouts/create` webhook currently backfills with `unknown` session and user when browser context is missing (good fallback, but weaker than browser begin_checkout mapping).
+
 ## Confirmed Endpoints
 
 ### Core pipeline
 
 - `POST /collect`
 - `POST /webhooks/shopify/orders-create`
+- `POST /webhooks/shopify/orders-updated`
 - `POST /webhooks/shopify/checkouts-create`
 - `POST /api/woo/orders-sync`
 
@@ -279,7 +362,7 @@ The merchant snapshot is intended to summarize:
 - Meta CAPI is still partial or placeholder in current code.
 - Rate limit key still prioritizes legacy `shop_id` instead of `account_id` in non-Shopify traffic.
 - `ENCRYPTION_KEY` fallback behavior is unsafe for production if it regenerates on restart.
-- Dashboard timezone display can be offset from operator local time; requires normalization policy and UI/backend alignment.
+- Time handling is now acceptable for operator review in the recent purchases table, but the long-term cleanup is still to converge Woo source timestamps and dashboard rendering into one unambiguous policy.
 
 ### P2
 
@@ -301,7 +384,11 @@ The merchant snapshot is intended to summarize:
 1. Implement full Meta CAPI send.
 2. Verify Google conversions listing and upload behavior with real ad accounts after latest backend changes.
 3. Add missing browser fields consistently: `utm_content`, `utm_term`, `landing_page_url`, and `view_item`.
-4. Ensure request IP is used for better fingerprint confidence.
+4. Finish sender coverage so pixel payloads consistently include identity and landing fields across Shopify and Woo.
+5. Extend `raw_source` and `collected_at` to every ingestion path, not only collect.
+6. Add disputes API parity to harden `chargeback_flag` beyond webhook heuristics.
+7. Enforce immutable `orders_count` stamping policy at first order-ingestion write.
+8. Define one canonical persisted field for GA4 session source/medium in MCP or analytics storage.
 
 ### Phase 3: consolidate platform behavior
 
@@ -341,7 +428,7 @@ The dashboard is considered complete when all are true:
 - Meta CAPI is still placeholder in `backend/services/capiFanout.js`.
 - Google conversions listing was upgraded from stub to real retrieval path in `backend/routes/adrayPlatforms.js`; pending final validation with fully connected production-like accounts.
 - Dashboard still has revenue fallback to purchase events when synced orders are incomplete.
-- Dashboard timezone display needs normalization validation (operator local time vs configured dashboard timezone).
+- Recent purchases timezone has already been validated visually in staging after the focused dashboard adjustment; full source-level time normalization should still be re-checked with fresh Woo orders after plugin rollout.
 
 ### Terminal variables
 
@@ -684,6 +771,69 @@ npm i
 npm run dev
 ```
 
+### Dashboard deploy workflow (`dashboard-src` submodule)
+
+`dashboard-src` is a Git submodule. Dashboard UI changes are not deployed only by pushing the root repo; the submodule commit must exist in its own remote first, and then the root repo must point to that commit.
+
+Current serving behavior:
+
+- Backend serves `dashboard-src/dist` when it exists.
+- If `dashboard-src/dist` does not exist, backend falls back to `public/dashboard`.
+- `dashboard-src/dist` is ignored by Git in the submodule, so it should not be committed.
+- Current `render.yaml` does not run `npm run build` or `npm run build:dashboard` during the web build, so automatic staging deploys only reflect dashboard UI changes if Render is also building the dashboard assets.
+
+Rules:
+
+- Do not commit `.env`.
+- Do not commit `dashboard-src/dist`.
+- Commit and push the submodule first.
+- Commit and push the root repo second.
+
+Exact command flow for dashboard changes:
+
+```sh
+cd dashboard-src
+git status
+git branch --show-current
+```
+
+If `git branch --show-current` prints nothing, the submodule is in detached HEAD. Create a real branch first:
+
+```sh
+git switch -c my-dashboard-branch
+```
+
+Then commit and push the dashboard changes:
+
+```sh
+git add src/App.tsx src/components/Sidebar.tsx src/components/MobileBottomNav.tsx src/pages/AttributionEmbed.tsx
+git commit -m "Add attribution embed view"
+git push -u origin my-dashboard-branch
+```
+
+Then return to the root repo and push the submodule pointer plus any root files such as `README.md`:
+
+```sh
+cd ..
+git add dashboard-src README.md
+git commit -m "Embed Layer 1 dashboard"
+git push origin german/dev
+```
+
+Recommended local smoke test before pushing:
+
+```sh
+npm --prefix dashboard-src ci
+npm --prefix dashboard-src run build
+npm start
+```
+
+Then open:
+
+```text
+http://localhost:3000/dashboard/attribution
+```
+
 ## Immediate Engineering Actions
 
 1. Resolve `/collect` `500` first.
@@ -718,12 +868,13 @@ Current dashboard status from live review:
 
 1. Session intelligence now includes a recommended comparison shortcut plus longitudinal reading across many sessions, but still needs deeper operator workflows once real usage reveals the most valuable shortcuts.
 2. Paid media resolution now tries `MetaAccount` and `GoogleAccount` ownership too, but some accounts can still miss a usable `user -> McpData` path if historical onboarding data is incomplete.
-3. Timezone rendering must be aligned to business-operational expectation to avoid confusion during incident/debug analysis.
+3. Shopify pixel behavior still needs the same practical validation that WooCommerce already passed: browser capture, checkout continuity, purchase visibility, and attribution persistence.
 
 ### Execution order
 
 1. Observe how operators use the new suggested comparison and longitudinal cards, then refine the next review shortcuts around the most common decisions.
 2. Keep expanding the bridge between public `account_id` and marketing snapshots so every eligible account resolves paid media automatically.
+3. Start staged Shopify pixel validation to confirm collection, checkout linkage, and purchase reflection without regressing embedded-app session behavior.
 
 ### Completed dashboard steps
 
@@ -746,12 +897,18 @@ Current dashboard status from live review:
 - Paid Media block now degrades safely to `No vinculado` or `Sin snapshot` when the marketing mapping is missing.
 - Paid Media resolution now tries multiple bridges: `ShopConnections.matchedToUserId`, `User.shop`, `MetaAccount`, `GoogleAccount`, and `PlatformConnection.adAccountId -> McpData.sources`.
 - Manual Woo attribution validation completed on 2026-03-13 with successful campaign persistence (`Google · brand-test`) and checkout login stitching.
+- Manual Woo validation also confirmed Home -> Tienda attribution persistence and operator-readable timezone in recent purchases.
+
+- Layer 1 analytics now has an embedded entry point at `/dashboard/attribution`, reusing the existing `/analytics` experience inside the main dashboard shell instead of leaving it as a separate dashboard.
+- Desktop and mobile dashboard navigation now expose that embedded attribution view as a full-bleed iframe inside the main shell, while store switching happens inside `backend/views/adray-analytics.html` from the top-right store chip.
+- The current store selector is frontend-only on purpose: it shows the session shop plus shops already seen in the same browser via URL or local storage, not a backend catalog of every pixel-enabled store yet.
 
 ### Current development focus
 
-- Refine the persistent `Session Explorer` using real operator feedback on the suggested comparison flow and longitudinal summaries.
-- Continue improving session-level understanding of what a user did during a visit, including funnel steps, attribution, and path quality.
-- Automatic resolution of paid media snapshots for all eligible accounts, not only already-linked Shopify shops.
+- Run the pending Woo multi-touch validation after the 31-minute cooldown and record how `first_touch`, `last_touch`, and `linear` redistribute the same conversion.
+- Start Shopify pixel validation in staging, beginning with browser event capture and then checkout/purchase continuity.
+- Keep refining the persistent `Session Explorer` only after those platform-validation checkpoints are documented.
+- If the embedded attribution view stays stable, the next optional cleanup is migrating the highest-value widgets from `backend/views/adray-analytics.html` into native `dashboard-src` components gradually instead of in one rewrite.
 
 ## Attribution Next Steps
 
@@ -764,7 +921,8 @@ This section is the working checklist for everything still pending to make attri
 3. Verify Google conversion upload end-to-end with a real connected account, valid `gclid`, and valid conversion action.
 4. Remove production dependence on the unsafe `ENCRYPTION_KEY` fallback.
 5. Confirm rate limiting keys resolve by `account_id` for public non-Shopify traffic.
-6. Fix timezone mismatch in dashboard timestamps and validate with local operator time.
+6. Complete the pending Woo multi-touch proof and archive screenshot or row-level evidence for `first_touch`, `last_touch`, and `linear`.
+7. Start equivalent Shopify pixel validation so Woo and Shopify have the same minimum evidence bar.
 
 ### Attribution data validation
 
@@ -793,6 +951,7 @@ This section is the working checklist for everything still pending to make attri
 1. Re-run the same account with `first_touch`, `last_touch`, and `linear`.
 2. Confirm channel revenue and order allocation actually changes when multiple touchpoints exist.
 3. Confirm the dashboard badge, chart totals, and recent purchases are aligned to the selected model.
+4. Use the already validated Home -> Tienda path as the control case, then compare against the multi-touch case.
 
 ### Evidence required before calling attribution usable
 
@@ -802,6 +961,8 @@ This section is the working checklist for everything still pending to make attri
 4. At least one real order with UTM-only attribution.
 5. At least one real order that correctly falls back to Woo source metadata.
 6. A reviewed sample of unattributed orders with documented reason.
+7. At least one Shopify browser session with visible pixel events from landing to checkout.
+8. At least one Shopify purchase reflected end-to-end if the staging store allows completing the order.
 
 ### Manual operator checks in dashboard
 
@@ -849,6 +1010,24 @@ Use this exact sequence when validating a WooCommerce account.
 4. Check whether the order has an attribution snapshot.
 5. Record the failure mode before changing code.
 
+### Test 6: Shopify pixel smoke test
+
+1. Install or confirm the custom pixel in the Shopify staging store.
+2. Open the storefront in an incognito window with a tagged URL containing at least `utm_source`, `utm_medium`, and `utm_campaign`.
+3. Verify `page_view` reaches `POST /collect` and appears in `Live Feed`.
+4. Visit a product page and verify `view_item` appears.
+5. Add to cart and verify `add_to_cart` appears.
+6. Start checkout and verify `begin_checkout` plus `checkout_token` persistence.
+7. If the store permits it, complete a test purchase and verify the order later appears in recent purchases with channel and campaign context.
+8. If purchase is not possible, stop at checkout and at minimum confirm that the session and checkout linkage persisted.
+
+## Immediate Next Tests
+
+1. Finish the Woo multi-touch test after the 31-minute wait using the exact Meta session A and Google session B links already defined.
+2. Capture the resulting order row under `last_touch`, then switch to `first_touch` and `linear` and compare channel redistribution.
+3. Start the Shopify smoke test with `page_view -> view_item -> add_to_cart -> begin_checkout` before attempting purchase.
+4. If Shopify events appear correctly in `Live Feed`, move to purchase validation and then compare recent purchases output against Woo behavior.
+
 ## User-Assisted Validation Steps
 
 When asking a human operator to test attribution, use this sequence.
@@ -877,6 +1056,219 @@ If a login state is involved, repeat the same flow once logged in and once logge
 
 - Keep it because it now reliably shows incoming `COLLECT` and `WEBHOOK` events in near real time.
 - Revisit only if operators stop using it or if persisted activity proves more useful than live observability.
+
+## WooCommerce Plugin Focus (Phase 1)
+
+This section is the technical path to ship missing Phase 1 data by updating only the Woo plugin and validating DB persistence.
+
+### Woo fields still missing or partial
+
+- `email_hash` and `phone_hash` at checkout typing-time (pre-submit): still partial. Current flow hashes reliably at order/login time, but not at first checkout field interaction.
+- `session_end_at` explicit close marker: still partial (current fallback is `sessions.last_event_at`).
+- `page_events[]` session array: still partial (events are persisted row-by-row in `events`).
+- `ga4_session_source` canonical field in analytics storage: still missing as dedicated persisted field.
+- `chargeback_flag` from a dedicated disputes source: still partial (current signal is webhook/order-meta heuristic).
+
+### Already implemented in plugin/backend for Woo
+
+- Plugin now sends `refund_amount`, `orders_count`, `chargeback_flag`, `raw_source`, and `collected_at` in Woo order sync payloads.
+- Plugin triggers re-sync on refund hook (`woocommerce_order_refunded`) so order lifecycle changes reach backend.
+- Woo sync backend now persists those fields and parses `chargeback_flag` safely.
+- Pixel now captures checkout email/phone on `blur`/`change`, sends deterministic `email_hash` and `phone_hash` in `identity_signal`, and backend identity resolution now consumes those hashes for deterministic matching.
+
+### Technical rollout steps (plugin-only update path)
+
+1. Publish plugin package version `1.1.8` in the plugin update endpoint used by Woo stores.
+2. In Woo admin, run plugin update and confirm installed version is `1.1.8`.
+3. Run Prisma migration in backend before tests so new columns exist:
+  - `identity_graph.ip_hash`
+  - `sessions.ip_hash`
+  - `events.raw_source`, `events.match_type`, `events.confidence_score`, `events.ip_hash`, `events.collected_at`
+  - `orders.refund_amount`, `orders.chargeback_flag`, `orders.orders_count`
+4. Trigger one normal order and one refund in Woo staging.
+5. Confirm plugin sends new payload keys by inspecting request body to `/api/woo/orders-sync`.
+6. Validate DB rows for that `order_id` contain `refund_amount`, `orders_count`, and `chargeback_flag`.
+7. Validate dashboard recent purchases and attribution remain stable after plugin upgrade.
+
+### DB confirmation checklist (Woo)
+
+1. New order row has expected values in `orders`:
+  - `refund_amount` (0 for non-refunded order)
+  - `orders_count` (customer order count snapshot)
+  - `chargeback_flag` (false unless dispute markers detected)
+2. Refunded order re-sync updates `refund_amount` > 0.
+3. Events from collect still store `raw_source`, `match_type`, `confidence_score`, `ip_hash`, and `collected_at`.
+4. `POST /collect` response should now be reviewed with persistence flags:
+  - `event_persisted`
+  - `session_persisted`
+  - `fallback_stored` (true only when payload had to be stored in `failed_jobs` as safety fallback)
+
+### Current collect resilience status (staging)
+
+- Real-time `Live Feed` ingestion for `identity_signal` is working in staging.
+- Collector fallback into `failed_jobs` remains active as a safety net, but current staging behavior shows canonical persistence working.
+
+Latest live evidence (2026-03-22):
+
+- Earlier validation (before schema alignment) showed degraded persistence:
+  - `success: true`
+  - `event_persisted: false`
+  - `session_persisted: false`
+  - `fallback_stored: true`
+- Latest validation (after alignment) confirms healthy canonical persistence:
+  - `success: true`
+  - `event_persisted: true`
+  - `session_persisted: true`
+  - `fallback_stored: false`
+- Interpretation: browser collection, realtime flow, and canonical persistence into `events`/`sessions` are now aligned in staging.
+
+### Completion criteria for this task
+
+1. Run one live checkout test in staging (logged-in Woo flow).
+2. Confirm at least one `identity_signal` appears in `Live Feed`.
+3. Confirm `POST /collect` returns:
+  - `success: true`
+  - `event_persisted: true`
+  - `session_persisted: true`
+  - `fallback_stored: false`
+4. If step 3 fails, inspect `failed_jobs` rows with `job_type` starting with `collect_` and complete DB migration/alignment before re-test.
+
+Current task state:
+
+- Completed.
+- Done: checkout identity capture + realtime feed validation + canonical DB persistence confirmation.
+- Result: completion criteria satisfied with `event_persisted: true`, `session_persisted: true`, `fallback_stored: false`.
+
+### Operator runbook to unblock Prisma push
+
+Run from the Render shell (or any environment pointing to staging `DATABASE_URL`):
+
+1. `npm run db:pc:check`
+2. If duplicates are reported, run `npm run db:pc:dedupe`
+3. Re-run `npm run db:pc:check` and confirm zero duplicates
+4. Run `npm run prisma:push -- --accept-data-loss`
+5. Re-test one live checkout and verify collect response flags:
+  - `event_persisted: true`
+  - `session_persisted: true`
+  - `fallback_stored: false`
+
+Safety note:
+
+- `db:pc:dedupe` creates a full backup table named `platform_connections_backup_YYYYMMDD_HHMMSS` before deleting duplicates.
+
+### Phase 1 data coverage verification (all layers)
+
+Use this endpoint to validate field-by-field coverage against `datos-pixel.md`:
+
+- `GET /api/analytics/:account_id/data-coverage?days=30`
+
+Example:
+
+- `GET /api/analytics/shogun.mx/data-coverage?days=30`
+
+Response includes:
+
+- `totals` (events/sessions/orders/identities/checkoutMaps)
+- `layers` (Layer 1 to Layer 6 + critical stitch)
+- `missing` (list of fields currently not covered in the selected window)
+
+Interpretation rule:
+
+- Task is complete for Phase 1 when `missing` is empty, except fields intentionally marked as not yet exposed canonically (for example `meta_impressions` if MCP/API normalization is pending).
+
+### Latest measured coverage snapshot (staging, 2026-03-24)
+
+Observed after deploy + live collect and Ads pull test:
+
+- `POST /collect`: persisted correctly (`event_persisted=true`, `session_persisted=true`, `fallback_stored=false`).
+- Coverage endpoint: stable and returning `success=true`.
+- Layer 1, Layer 2, Layer 3, Layer 4, Layer 6, and critical stitch: operationally covered in current staging window.
+- Meta pull executed successfully in staging worker (`collectMeta ok=true`, datasets stored and status ready).
+- Google Ads pull executed successfully in staging worker (`collectGoogle ok=true`, datasets stored and status ready).
+- `GET /api/mcpdata/meta/status` and `GET /api/mcpdata/google-ads/status` returned `ready=true` and `chunkCount>0`.
+- Remaining item in coverage is API canonical exposure detail for `meta_impressions`; this does not block Layer 1 contractual acceptance because pull datasets are already present.
+
+What this means:
+
+- Core pixel/webhook/session/order identity infrastructure is complete for Phase 1 collection.
+- Ads operational pull path is validated in staging for Meta and Google.
+- Remaining hardening is implementation hygiene (for example, non-blocking root update conflict after chunk upsert) and API field normalization, not contractual Layer 1 scope gap.
+
+### What is still required to collect 100% of datos-pixel.md
+
+1. Enable/verify Meta Ads connector pull and persist campaign daily metrics.
+2. Enable/verify Google Ads connector pull and persist campaign daily metrics.
+3. Standardize one canonical storage path for `meta_impressions` and `meta_reported_conv_value` used by coverage API.
+4. Run daily pull job at least once with non-empty campaign activity in the selected window.
+5. Re-run coverage and confirm `missing` becomes empty.
+
+### Layer 1 Foundation acceptance (payment checkpoint)
+
+Scope used for acceptance is `layer1.md` (Custom Pixel + revenue truth + stitching base + Ads connections and basic pull), excluding explicit out-of-scope Phase 2 items.
+
+Status summary (2026-03-24):
+
+- Completed: Custom Pixel, collector, revenue truth, base stitching, onboarding/health observability.
+- Completed: Ads pull operational evidence in staging (Meta + Google chunks created with `ready=true`).
+- Out of scope by contract and therefore not required for this checkpoint: Phase 2 MCP server exposure, advanced dedup/scoring, server-side CAPI fanout parity.
+
+Required evidence for Layer 1 payment checkpoint (fulfilled in staging):
+
+1. Worker active for MCP pulls.
+2. Meta account connected and selected for pilot user.
+3. Google Ads account connected and selected for pilot user.
+4. Pull executed with datasets/chunks created for both sources.
+5. Status endpoints show `ready=true` and non-zero `chunkCount` for Meta and Google Ads.
+
+Operational commands and endpoints:
+
+- Trigger immediate pull for connected sources (authenticated):
+  - `POST /api/mcpdata/collect-now`
+  - Body example: `{ "sources": ["metaAds", "googleAds", "ga4"], "rangeDays": 60, "forceFull": true }`
+- Validate source status:
+  - `GET /api/mcpdata/meta/status`
+  - `GET /api/mcpdata/google-ads/status`
+  - `GET /api/mcpdata/ga4/status`
+- Validate contractual Layer 1 coverage outcome:
+  - `GET /api/analytics/:account_id/data-coverage?days=30`
+
+Acceptance rule for Ads block (Layer 1):
+
+- Pass when Meta and Google both show recent pull evidence (`chunkCount > 0`) and dashboard/status show connected + ready state.
+
+### Delivery statement (ready to send)
+
+Layer 1 Foundation was delivered according to the contracted scope in `layer1.md`.
+
+Delivered:
+
+1. Custom Pixel V1 capture and collector pipeline.
+2. Revenue truth read-only sync and baseline health.
+3. Session-checkout-order stitching base.
+4. Pixel Health / Match Rate / onboarding validation flow.
+5. Meta and Google Ads connection verification and basic pull execution with stored datasets.
+
+Out of scope and not included in this acceptance (as stated in contract):
+
+1. Phase 2 advanced dedup/reconciliation/scoring/backfill.
+2. Full MCP server exposure for third-party AI consumers.
+3. Full server-side events parity rollout (Meta CAPI, Google Enhanced Conversions, TikTok Events API).
+
+Commercial checkpoint result:
+
+- Layer 1 payment checkpoint: PASS (staging evidence available).
+
+### Final test checklist (operator)
+
+1. Send one live browser event and verify collect response persistence flags.
+2. Trigger one purchase flow and verify order truth fields in coverage remain green.
+3. Run Meta/Google daily pulls and verify non-zero platform metrics.
+4. Verify `GET /api/analytics/:account_id/data-coverage?days=30` returns `missing: []`.
+
+### Next implementation after plugin rollout
+
+1. Introduce explicit session close policy (`session_end_at`) with inactivity timeout or checkout terminal event.
+2. Add dedicated disputes integration for `chargeback_flag` instead of heuristic status/meta inference.
 
 ## Final Rule
 

@@ -1,6 +1,15 @@
 // backend/index.js
 require("dotenv").config();
 
+// Render inyecta RENDER_EXTERNAL_URL: sin esto, OAuth puede apuntar al default (adray.ai) en staging.
+(function bootstrapAppUrlFromRender() {
+  if (String(process.env.APP_URL || "").trim()) return;
+  const renderUrl = String(process.env.RENDER_EXTERNAL_URL || "").trim();
+  if (!renderUrl) return;
+  const withProto = /^https?:\/\//i.test(renderUrl) ? renderUrl : `https://${renderUrl}`;
+  process.env.APP_URL = withProto.replace(/\/$/, "");
+})();
+
 const express = require("express");
 const session = require("express-session");
 const ConnectMongo = require("connect-mongo"); // ✅ NEW (Node 22 safe)
@@ -18,6 +27,7 @@ const compression = require("compression");
 require("./auth"); // inicializa passport (estrategia Google + serialize/deserialize)
 
 const User = require("./models/User");
+const { listAuthorizedAnalyticsShopsForUser } = require("./services/analyticsAccess");
 const {
   sendVerifyEmail,
   sendWelcomeEmail,
@@ -27,7 +37,7 @@ const {
 // ✅ NEW: Analytics Events (no rompe si falla)
 const { trackEvent } = require("./services/trackEvent");
 
-// ✅ Turnstile
+// ✅ Turnstile (main: middleware centralizado)
 const requireTurnstileAlways = require("./middlewares/requireTurnstileAlways");
 const { verifyTurnstile } = require("./services/turnstile");
 
@@ -115,6 +125,10 @@ app.use("/api/cron", require("./routes/cronEmails"));
 const PORT = process.env.PORT || 3000;
 const APP_URL = (process.env.APP_URL || "https://adray.ai").replace(/\/$/, "");
 const LANDING_PUBLIC = path.join(__dirname, "../public/landing");
+const LANDING_ADRAY_OUT = path.join(__dirname, "../landing-adray/out");
+function hasLandingAdrayBuild() {
+  return fs.existsSync(path.join(LANDING_ADRAY_OUT, "index.html"));
+}
 
 /* =========================
  * Seguridad y performance
@@ -187,6 +201,26 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
+
+/* =========================
+ * Alto rendimiento: pixel /collect y script público antes de sesión
+ * (mantiene rateLimitCollect de main para la señal / anti-abuso)
+ * ========================= */
+app.use(
+  "/collect",
+  cookieParser(),
+  express.json({ limit: "1mb" }),
+  express.urlencoded({ extended: true }),
+  rateLimitCollect,
+  collectRoutes
+);
+
+app.get("/adray-pixel.js", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.setHeader("Content-Type", "text/javascript; charset=utf-8");
+  return res.sendFile(path.join(__dirname, "../public/adray-pixel.js"));
+});
 
 /* =========================
  * Sesión y Passport
@@ -617,17 +651,15 @@ app.get("/api/auth/verify-email", async (req, res) => {
 
 // ✅ AdRay Analytics & Realtime Feed (Phase 2)
 // sessionGuard removed for dashboard demo/access
-app.use("/api/analytics", require("./routes/analytics"));  
+app.use("/api/analytics", require("./routes/analytics"));
 app.use("/api/feed", require("./routes/feed"));
 app.use('/api', wooOrdersRoutes);
 app.use('/api/platform-connections', require('./routes/platformConnections'));
 app.use('/wp-plugin', wordpressPluginRoutes);
 
-// AdRay collect and platform routes
-app.use("/collect", rateLimitCollect, collectRoutes);
+// AdRay collect ya está montado arriba (con rateLimitCollect). Señal interna y plataformas (main):
 app.use('/api/internal/daily-signal', require('./routes/internalDailySignal'));
-app.use("/api", sessionGuard, adrayPlatformRoutes);                             
-                      
+app.use("/api", sessionGuard, adrayPlatformRoutes);
 /* =========================
  * Pixel auditor (usa JSON)
  * ========================= */
@@ -1053,7 +1085,10 @@ app.get("/", (req, res) => {
       ? res.redirect("/dashboard")
       : res.redirect("/onboarding");
   }
-  return res.sendFile(path.join(LANDING_PUBLIC, "index.html"));
+  const landingIndex = hasLandingAdrayBuild()
+    ? path.join(LANDING_ADRAY_OUT, "index.html")
+    : path.join(LANDING_PUBLIC, "index.html");
+  return res.sendFile(landingIndex);
 });
 
 // Compat: la landing antigua (saas-landing) exponía /start
@@ -1222,6 +1257,13 @@ app.get("/api/session", async (req, res) => {
 
     if (!u) return res.status(401).json({ authenticated: false });
 
+    const analyticsAccess = await listAuthorizedAnalyticsShopsForUser(u._id).catch(
+      (error) => {
+        console.warn("/api/session analytics access lookup failed:", error?.message || error);
+        return null;
+      }
+    );
+
     return res.json({
       authenticated: true,
       user: {
@@ -1244,6 +1286,12 @@ app.get("/api/session", async (req, res) => {
       },
 
       intercom: buildIntercomPayload(u),
+      authorizedAnalyticsShops: Array.isArray(analyticsAccess?.shops)
+        ? analyticsAccess.shops
+        : [],
+      defaultAnalyticsShop: analyticsAccess?.defaultShop || null,
+      defaultAnalyticsShopSource: analyticsAccess?.defaultShopSource || null,
+      analyticsAccessDebug: analyticsAccess?.debug || null,
     });
   } catch (e) {
     console.error("/api/session error:", e);
@@ -1352,14 +1400,6 @@ app.use("/api/secure", verifySessionToken, secureRoutes);
 app.use("/api/dashboard", dashboardRoute);
 app.use("/api/shopConnection", require("./routes/shopConnection"));
 app.use("/api", subscribeRouter);
-
-// Explicit pixel route with cross-origin headers so external storefronts can load it.
-app.get('/adray-pixel.js', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
-  return res.sendFile(path.join(__dirname, '../public/adray-pixel.js'));
-});
 
 // Estáticos (públicos)
 // Landing Next (export en public/landing: /_next, rutas, etc.)

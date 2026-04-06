@@ -1,8 +1,14 @@
 
 const express = require('express');
 const router = express.Router();
+const axios = require('axios');
+const crypto = require('crypto');
 const prisma = require('../utils/prismaClient');
 const { startOfDay, endOfDay, subDays, eachDayOfInterval, format } = require('date-fns');
+const {
+  isAnalyticsShopAuthorizedForUser,
+  listAuthorizedAnalyticsShopsForUser,
+} = require('../services/analyticsAccess');
 const { getCustomerDisplayNames } = require('../services/shopifyService');
 const { hashPII } = require('../utils/encryption');
 
@@ -13,6 +19,9 @@ let MetaAccount = null;
 let GoogleAccount = null;
 let formatMetaForLlmMini = null;
 let formatGoogleAdsForLlmMini = null;
+let enqueueMetaCollectBestEffort = null;
+let enqueueGoogleAdsCollectBestEffort = null;
+let googleAdsService = null;
 
 try {
   McpData = require('../models/McpData');
@@ -42,6 +51,14 @@ try {
   ({ formatGoogleAdsForLlmMini } = require('../jobs/transform/googleAdsLlmFormatter'));
 } catch (_) {}
 
+try {
+  ({ enqueueMetaCollectBestEffort, enqueueGoogleAdsCollectBestEffort } = require('../queues/mcpQueue'));
+} catch (_) {}
+
+try {
+  googleAdsService = require('../services/googleAdsService');
+} catch (_) {}
+
 const EVENT_BUCKET_ALIASES = {
   page_view: ['page_view', 'pageview', 'view_page'],
   view_item: ['view_item', 'product_view', 'view_product', 'product_detail_view'],
@@ -53,8 +70,178 @@ const EVENT_BUCKET_ALIASES = {
 };
 
 const PURCHASE_ALIASES = EVENT_BUCKET_ALIASES.purchase;
-const ATTRIBUTION_MODELS = new Set(['first_touch', 'last_touch', 'linear']);
+const ATTRIBUTION_MODELS = new Set(['first_touch', 'last_touch', 'linear', 'meta', 'google_ads']);
 const ATTRIBUTION_LOOKBACK_DAYS = 30;
+const JOURNEY_STITCH_LOOKBACK_DAYS = 7;
+const ROUTE_RESPONSE_CACHE = new Map();
+const ROUTE_CACHE_MAX_ENTRIES = 300;
+const PAID_MEDIA_SYNC_DEBOUNCE = new Map();
+const PAID_MEDIA_SYNC_DEBOUNCE_MS = 10 * 60 * 1000;
+
+function parseAllowedAccountIds() {
+  const raw = String(process.env.ADRAY_ALLOWED_ACCOUNT_IDS || '').trim();
+  if (!raw) return null;
+  const values = raw
+    .split(',')
+    .map((item) => normalizeShopDomain(item) || String(item || '').trim().toLowerCase())
+    .filter(Boolean);
+  return values.length ? new Set(values) : null;
+}
+
+function isAccountAllowed(accountId) {
+  const allowed = parseAllowedAccountIds();
+  if (!allowed) return true;
+  const normalized = normalizeShopDomain(accountId) || String(accountId || '').trim().toLowerCase();
+  return normalized ? allowed.has(normalized) : false;
+}
+
+function buildRouteCacheKey(routeName, req) {
+  const accountId = String(req?.params?.account_id || '-');
+  const query = String(req?.originalUrl || '').split('?')[1] || '';
+  return `${routeName}:${accountId}:${query}`;
+}
+
+function readRouteCache(cacheKey) {
+  const entry = ROUTE_RESPONSE_CACHE.get(cacheKey);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    ROUTE_RESPONSE_CACHE.delete(cacheKey);
+    return null;
+  }
+  return entry.payload;
+}
+
+function writeRouteCache(cacheKey, payload, ttlMs) {
+  if (!cacheKey || !payload || !Number.isFinite(ttlMs) || ttlMs <= 0) return;
+  ROUTE_RESPONSE_CACHE.set(cacheKey, {
+    payload,
+    expiresAt: Date.now() + ttlMs,
+  });
+
+  if (ROUTE_RESPONSE_CACHE.size <= ROUTE_CACHE_MAX_ENTRIES) return;
+  
+  const now = Date.now();
+  for (const [key, value] of ROUTE_RESPONSE_CACHE.entries()) {
+    if (value.expiresAt <= now) ROUTE_RESPONSE_CACHE.delete(key);
+  }
+
+  if (ROUTE_RESPONSE_CACHE.size > ROUTE_CACHE_MAX_ENTRIES) {
+    const toDelete = ROUTE_RESPONSE_CACHE.size - ROUTE_CACHE_MAX_ENTRIES;
+    let deleted = 0;
+    for (const key of ROUTE_RESPONSE_CACHE.keys()) {
+      ROUTE_RESPONSE_CACHE.delete(key);
+      deleted++;
+      if (deleted >= toDelete) break;
+    }
+  }
+}
+
+router.get('/shops', async (req, res) => {
+  if (!req.user?._id) {
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
+  }
+
+  try {
+    const access = await listAuthorizedAnalyticsShopsForUser(req.user._id);
+    console.log('[Attribution Debug][/api/analytics/shops]', {
+      userId: String(req.user._id),
+      email: req.user?.email || null,
+      defaultShop: access.defaultShop || null,
+      defaultShopSource: access.defaultShopSource || null,
+      shopCount: Array.isArray(access.shops) ? access.shops.length : 0,
+      shops: Array.isArray(access.shops)
+        ? access.shops.map((entry) => ({
+            shop: entry.shop,
+            type: entry.type,
+            sources: entry.sources,
+            matchPlatforms: entry.matchPlatforms,
+            isDefault: entry.isDefault,
+          }))
+        : [],
+      resolverDebug: access.debug || null,
+    });
+    return res.json({
+      ok: true,
+      defaultShop: access.defaultShop || null,
+      defaultShopSource: access.defaultShopSource || null,
+      shops: Array.isArray(access.shops) ? access.shops : [],
+    });
+  } catch (error) {
+    console.error('[Analytics shops] Failed to resolve authorized shops:', error?.message || error);
+    return res.status(500).json({
+      ok: false,
+      error: 'Failed to resolve authorized shops',
+      shops: [],
+      defaultShop: null,
+    });
+  }
+});
+
+router.use('/:account_id', async (req, res, next) => {
+  const accountId = req.params?.account_id;
+  
+  // Enforce session ownership if accessed via browser session
+  if (req.user) {
+    const userShop = req.user.shop ? normalizeShopDomain(req.user.shop) : null;
+    const requestedShop = normalizeShopDomain(accountId);
+    
+    // Quick admin bypass can go here if needed, otherwise strict match
+    const isAdmin = req.user.email?.includes('@adray.ai') || 
+                    req.user.email?.includes('@enova') || 
+                    req.user.email?.includes('german') ||
+                    req.user.email?.includes('shogun');
+
+    // Temporal bypass para entornos Staging / desarrollo
+    const _env = String(process.env.NODE_ENV || '').toLowerCase();
+    const isStaging = _env !== 'production' || 
+                      process.env.RENDER_EXTERNAL_URL?.includes('staging') ||
+                      req.headers.host?.includes('staging');
+
+    let authorized = userShop === requestedShop;
+
+    if (!authorized && requestedShop && !isAdmin && !isStaging) {
+      try {
+        authorized = await isAnalyticsShopAuthorizedForUser(req.user._id, requestedShop);
+      } catch (error) {
+        console.warn('[Analytics auth] Authorized shop lookup failed:', error?.message || error);
+      }
+    }
+
+    if (!authorized && !isAdmin && !isStaging) {
+      console.warn(`[Auth 403] User ${req.user.email} (shop: ${userShop}) attempted to access analytics for ${requestedShop}`);
+      return res.status(403).json({
+        error: 'Unauthorized: You do not have permission for this account',
+        accountId
+      });
+    }
+  }
+
+  // Bypass allowed if it's staging or admin
+  const isStaging = (String(process.env.NODE_ENV || '').toLowerCase() !== 'production') || 
+                    (process.env.RENDER_EXTERNAL_URL?.includes('staging')) || 
+                    (req.headers.host?.includes('staging'));
+                    
+  const isAdmin = req.user?.email?.includes('@adray.ai') || 
+                 req.user?.email?.includes('@enova') || 
+                 req.user?.email?.includes('german') || 
+                 req.user?.email?.includes('shogun');
+
+  if (isAdmin || isStaging || isAccountAllowed(accountId)) return next();
+  return res.status(403).json({
+    error: 'Account not allowed in this deployment',
+    accountId,
+  });
+});
+
+function isDatabaseConnectivityError(error) {
+  if (!error) return false;
+  if (error.code === 'P1001') return true;
+  const message = String(error.message || '').toLowerCase();
+  return message.includes("can't reach database server")
+    || message.includes('database server')
+    || message.includes('connection refused')
+    || message.includes('timed out');
+}
 
 function toFiniteNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -116,7 +303,10 @@ async function findMcpRoot(userId) {
 
 async function findLatestSnapshotId(userId, source, rootDoc) {
   if (!McpData || !userId) return null;
-  if (rootDoc?.latestSnapshotId) return rootDoc.latestSnapshotId;
+  if (rootDoc?.latestSnapshotId) {
+    console.log(`[PaidMedia Trace] latestSnapshotId from root user=${userId} source=${source} snapshot=${rootDoc.latestSnapshotId}`);
+    return rootDoc.latestSnapshotId;
+  }
 
   const datasetPrefix = source === 'googleAds' ? '^google\\.' : '^meta\\.';
   const latestChunk = await McpData.findOne({
@@ -127,6 +317,7 @@ async function findLatestSnapshotId(userId, source, rootDoc) {
     .sort({ updatedAt: -1, createdAt: -1 })
     .lean();
 
+  console.log(`[PaidMedia Trace] latestSnapshotId from chunks user=${userId} source=${source} snapshot=${latestChunk?.snapshotId || 'none'} dataset=${latestChunk?.dataset || 'n/a'}`);
   return latestChunk?.snapshotId || null;
 }
 
@@ -142,7 +333,13 @@ async function findMcpChunks(userId, source, snapshotId, datasetPrefix) {
     .sort({ createdAt: 1, updatedAt: 1 })
     .lean();
 
-  return docs.filter(isChunkMcpDoc);
+  const chunks = docs.filter(isChunkMcpDoc);
+  console.log(`[PaidMedia Trace] findMcpChunks user=${userId} source=${source} snapshot=${snapshotId} prefix=${datasetPrefix} count=${chunks.length}`);
+  if (chunks.length) {
+    console.log('[PaidMedia Trace] chunk datasets:', chunks.map((d) => d?.dataset).filter(Boolean).slice(0, 20));
+  }
+
+  return chunks;
 }
 
 async function resolveUserIdByShopConnection(candidates) {
@@ -198,6 +395,7 @@ async function resolveUserIdByPlatformConnections(platformConnections = []) {
   const rootDoc = await McpData.findOne({
     kind: 'root',
     $or: orClauses,
+    latestSnapshotId: { $ne: null }
   })
     .sort({ updatedAt: -1, createdAt: -1 })
     .lean();
@@ -259,25 +457,51 @@ async function resolveUserIdByConnectedAccountDocs(platformConnections = []) {
   return null;
 }
 
-async function resolvePaidMediaUserId({ accountId, domain, platformConnections = [] }) {
+async function resolvePaidMediaUserId({ accountId, domain, platformConnections = [], fallbackUserId = null }) {
   const candidates = Array.from(new Set([
     normalizeShopDomain(accountId),
     normalizeShopDomain(domain),
   ].filter(Boolean)));
 
+  console.log(`[PaidMedia Trace] resolvePaidMediaUserId account=${accountId} domain=${domain} fallbackUserId=${fallbackUserId || 'none'}`);
+  console.log('[PaidMedia Trace] resolve candidates:', candidates);
+  console.log('[PaidMedia Trace] incoming platformConnections:', (platformConnections || []).map((conn) => ({
+    platform: conn?.platform || null,
+    status: conn?.status || null,
+    adAccountId: conn?.adAccountId || null,
+  })));
+
+  // If the logged-in user actually has their own root doc connected to this account, use it first to ensure data consistency
+  if (fallbackUserId && Array.isArray(platformConnections) && platformConnections.length > 0) {
+    const rootDoc = await findMcpRoot(fallbackUserId);
+    if (rootDoc?.sources) {
+      const hasMetaMatch = rootDoc.sources.metaAds?.accountId && platformConnections.some(c => String(c.platform || '').toUpperCase() === 'META' && normalizeMetaAccountId(c.adAccountId) === rootDoc.sources.metaAds.accountId);
+      const hasGoogleMatch = rootDoc.sources.googleAds?.customerId && platformConnections.some(c => String(c.platform || '').toUpperCase() === 'GOOGLE' && normalizeGoogleCustomerId(c.adAccountId) === rootDoc.sources.googleAds.customerId);
+      if (hasMetaMatch || hasGoogleMatch) {
+         console.log(`[PaidMedia Trace] resolvePaidMediaUserId matched fallbackUserId via root/source match user=${fallbackUserId}`);
+         return fallbackUserId;
+      }
+    }
+  }
+
+  const fromPlatformConnections = await resolveUserIdByPlatformConnections(platformConnections);
+  console.log(`[PaidMedia Trace] resolver fromPlatformConnections => ${fromPlatformConnections || 'none'}`);
+  if (fromPlatformConnections) return fromPlatformConnections;
+
+  const fromConnectedAccounts = await resolveUserIdByConnectedAccountDocs(platformConnections);
+  console.log(`[PaidMedia Trace] resolver fromConnectedAccounts => ${fromConnectedAccounts || 'none'}`);
+  if (fromConnectedAccounts) return fromConnectedAccounts;
+
   const fromShopConnection = await resolveUserIdByShopConnection(candidates);
+  console.log(`[PaidMedia Trace] resolver fromShopConnection => ${fromShopConnection || 'none'}`);
   if (fromShopConnection) return fromShopConnection;
 
   const fromUserShop = await resolveUserIdByUserShop(candidates);
+  console.log(`[PaidMedia Trace] resolver fromUserShop => ${fromUserShop || 'none'}`);
   if (fromUserShop) return fromUserShop;
 
-  const fromConnectedAccounts = await resolveUserIdByConnectedAccountDocs(platformConnections);
-  if (fromConnectedAccounts) return fromConnectedAccounts;
-
-  const fromPlatformConnections = await resolveUserIdByPlatformConnections(platformConnections);
-  if (fromPlatformConnections) return fromPlatformConnections;
-
-  return null;
+  console.log(`[PaidMedia Trace] resolver fallback to req.user => ${fallbackUserId || 'none'}`);
+  return fallbackUserId;
 }
 
 async function resolveShopifyAdminContext(candidates = []) {
@@ -339,17 +563,597 @@ function buildPaidMediaSourceSummary({ sourceState, payload, snapshotId, revenue
     conversions: toFiniteNumber(kpis.purchases ?? kpis.conversions, 0),
     clicks: toFiniteNumber(kpis.link_clicks ?? kpis.clicks, 0),
     spendDeltaPct: toFiniteNumberOrNull(payload?.last7_vs_prev7?.spend_pct),
-    roasDelta: toFiniteNumberOrNull(payload?.last7_vs_prev7?.roas_diff),
+      roasDelta: toFiniteNumberOrNull(payload?.last7_vs_prev7?.roas_diff),
+      campaigns: payload?.top_campaigns || [],
+    };
+}
+
+function formatYmd(dateValue) {
+  const dt = dateValue instanceof Date ? dateValue : new Date(dateValue || Date.now());
+  if (Number.isNaN(dt.getTime())) return format(new Date(), 'yyyy-MM-dd');
+  return format(dt, 'yyyy-MM-dd');
+}
+
+function pickMetaValueByPriority(items = [], priorities = []) {
+  if (!Array.isArray(items)) return 0;
+  for (const key of priorities) {
+    const found = items.find((entry) => String(entry?.action_type || '') === key);
+    const value = Number(found?.value || 0);
+    if (Number.isFinite(value) && value !== 0) return value;
+  }
+  return 0;
+}
+
+function mapMetaCampaignRows(rows = []) {
+  return (Array.isArray(rows) ? rows : []).map((row) => {
+    const campaignRevenue = toFiniteNumber(
+      pickMetaValueByPriority(row?.action_values || [], [
+        'omni_purchase',
+        'offsite_conversion.fb_pixel_purchase',
+        'onsite_conversion.purchase',
+        'purchase',
+      ]),
+      0
+    );
+    const campaignSpend = toFiniteNumber(row?.spend, 0);
+    return {
+      id: row?.campaign_id || null,
+      name: row?.campaign_name || null,
+      spend: campaignSpend,
+      revenue: campaignRevenue,
+      roas: campaignSpend > 0 ? Number((campaignRevenue / campaignSpend).toFixed(2)) : null,
+      status: null,
+    };
+  });
+}
+
+function buildMetaAppSecretProof(accessToken) {
+  const appSecret = String(process.env.FACEBOOK_APP_SECRET || '').trim();
+  if (!appSecret || !accessToken) return null;
+  try {
+    return crypto.createHmac('sha256', appSecret).update(accessToken).digest('hex');
+  } catch (_) {
+    return null;
+  }
+}
+
+async function fetchMetaPaidMediaDirect({ userId, startDate, endDate }) {
+  if (!MetaAccount) return null;
+
+  const metaDoc = await MetaAccount.findOne({
+    $or: [{ user: userId }, { userId }],
+  })
+    .select('+access_token +token +longlivedToken +accessToken +longLivedToken defaultAccountId ad_accounts adAccounts selectedAccountIds')
+    .lean();
+
+  if (!metaDoc) return null;
+
+  const accessToken =
+    metaDoc?.access_token ||
+    metaDoc?.token ||
+    metaDoc?.longlivedToken ||
+    metaDoc?.accessToken ||
+    metaDoc?.longLivedToken ||
+    null;
+
+  if (!accessToken) return null;
+
+  const adAccounts = Array.isArray(metaDoc?.ad_accounts)
+    ? metaDoc.ad_accounts
+    : Array.isArray(metaDoc?.adAccounts)
+      ? metaDoc.adAccounts
+      : [];
+
+  const selectedAccountId = Array.isArray(metaDoc?.selectedAccountIds) && metaDoc.selectedAccountIds.length
+    ? normalizeMetaAccountId(metaDoc.selectedAccountIds[0])
+    : null;
+
+  const defaultAccountId = normalizeMetaAccountId(metaDoc?.defaultAccountId);
+  const listAccountId = normalizeMetaAccountId(adAccounts?.[0]?.id || adAccounts?.[0]?.account_id || null);
+  const accountId = selectedAccountId || defaultAccountId || listAccountId;
+  if (!accountId) return null;
+
+  const docAccounts = adAccounts.map((entry) => ({
+    accountId: normalizeMetaAccountId(entry?.id || entry?.account_id || null),
+    name: entry?.name || entry?.account_name || null,
+    status: entry?.account_status ?? entry?.configured_status ?? null,
+    currency: entry?.currency || entry?.account_currency || null,
+  })).filter((entry) => entry.accountId);
+
+  const since = formatYmd(startDate);
+  const until = formatYmd(endDate);
+  const fbVersion = process.env.FACEBOOK_API_VERSION || 'v23.0';
+  const graphBase = `https://graph.facebook.com/${fbVersion}`;
+  const appSecretProof = buildMetaAppSecretProof(accessToken);
+
+  const paramsBase = {
+    access_token: accessToken,
+    time_range: JSON.stringify({ since, until }),
+    action_report_time: 'conversion',
+    use_unified_attribution_setting: true,
+  };
+  if (appSecretProof) {
+    paramsBase.appsecret_proof = appSecretProof;
+  }
+
+  console.log('[PaidMedia Direct] meta request context:', {
+    userId: String(userId),
+    accountId,
+    selectedAccountId,
+    defaultAccountId,
+    listAccountId,
+    since,
+    until,
+    hasAppSecretProof: Boolean(appSecretProof),
+    docAccounts,
+  });
+
+  let accessibleAccounts = [];
+  try {
+    const meAccountsRes = await axios.get(`${graphBase}/me/adaccounts`, {
+      params: {
+        access_token: accessToken,
+        ...(appSecretProof ? { appsecret_proof: appSecretProof } : {}),
+        fields: 'account_id,name,account_status,currency,timezone_name,amount_spent',
+        limit: 100,
+      },
+    });
+    accessibleAccounts = (Array.isArray(meAccountsRes?.data?.data) ? meAccountsRes.data.data : []).map((entry) => ({
+      accountId: normalizeMetaAccountId(entry?.account_id || null),
+      name: entry?.name || null,
+      status: entry?.account_status ?? null,
+      currency: entry?.currency || null,
+      timezone: entry?.timezone_name || null,
+      amountSpentLifetime: toFiniteNumber(entry?.amount_spent, 0),
+    })).filter((entry) => entry.accountId);
+
+    console.log('[PaidMedia Direct] meta accessible accounts:', accessibleAccounts);
+
+    const selectedAccessible = accessibleAccounts.find((entry) => entry.accountId === accountId);
+    if (!selectedAccessible) {
+      console.warn('[PaidMedia Direct] Selected account is not present in /me/adaccounts list', { accountId });
+    }
+  } catch (meAccountsErr) {
+    console.warn('[PaidMedia Direct] Could not fetch /me/adaccounts for diagnostics:', {
+      status: meAccountsErr?.response?.status || null,
+      message: meAccountsErr?.message || String(meAccountsErr),
+      detail: meAccountsErr?.response?.data || null,
+    });
+  }
+
+  let accountInsightsRes = null;
+  try {
+    accountInsightsRes = await axios.get(`${graphBase}/act_${accountId}/insights`, {
+      params: {
+        ...paramsBase,
+        level: 'account',
+        limit: 1,
+        fields: 'date_start,date_stop,spend,clicks,impressions,actions,action_values,purchase_roas',
+      },
+    });
+  } catch (error) {
+    const status = error?.response?.status || null;
+    const detail = error?.response?.data || error?.message || error;
+    const wrapped = new Error(`[meta account insights] ${status || 'ERR'}: ${error?.message || 'failed'}`);
+    wrapped.status = status;
+    wrapped.data = detail;
+    throw wrapped;
+  }
+
+  const accountRows = Array.isArray(accountInsightsRes?.data?.data) ? accountInsightsRes.data.data : [];
+  const accountRow = accountRows[0] || null;
+  console.log('[PaidMedia Direct] Meta account insights rows:', {
+    accountId,
+    since,
+    until,
+    rows: accountRows.length,
+    firstRow: accountRow ? {
+      date_start: accountRow?.date_start || null,
+      date_stop: accountRow?.date_stop || null,
+      spend: accountRow?.spend || null,
+      clicks: accountRow?.clicks || null,
+      impressions: accountRow?.impressions || null,
+    } : null,
+  });
+
+  let spend = toFiniteNumber(accountRow?.spend, 0);
+  let revenue = toFiniteNumber(
+    pickMetaValueByPriority(accountRow?.action_values || [], [
+      'omni_purchase',
+      'offsite_conversion.fb_pixel_purchase',
+      'onsite_conversion.purchase',
+      'purchase',
+    ]),
+    0
+  );
+
+  if (!accountRows.length) {
+    console.warn('[PaidMedia Direct] Meta account insights returned no rows for range', { accountId, since, until });
+  }
+
+  let currency = null;
+  let accountName = null;
+  try {
+    const accountInfoRes = await axios.get(`${graphBase}/act_${accountId}`, {
+      params: {
+        access_token: accessToken,
+        ...(appSecretProof ? { appsecret_proof: appSecretProof } : {}),
+        fields: 'currency,account_id,name',
+      },
+    });
+    currency = accountInfoRes?.data?.currency || null;
+    accountName = accountInfoRes?.data?.name || null;
+  } catch (_) {}
+
+  let campaigns = [];
+  let effectiveSince = since;
+  let effectiveUntil = until;
+  let rangeFallbackUsed = false;
+  try {
+    const campaignInsightsRes = await axios.get(`${graphBase}/act_${accountId}/insights`, {
+      params: {
+        ...paramsBase,
+        level: 'campaign',
+        limit: 10,
+        fields: 'campaign_id,campaign_name,spend,clicks,impressions,actions,action_values,purchase_roas',
+      },
+    });
+
+    campaigns = mapMetaCampaignRows(Array.isArray(campaignInsightsRes?.data?.data) ? campaignInsightsRes.data.data : []);
+    console.log('[PaidMedia Direct] Meta campaign insights rows:', {
+      accountId,
+      since,
+      until,
+      rows: campaigns.length,
+      top: campaigns.slice(0, 3).map((campaign) => ({
+        id: campaign?.id || null,
+        name: campaign?.name || null,
+        spend: campaign?.spend || 0,
+        revenue: campaign?.revenue || 0,
+      })),
+    });
+  } catch (campaignErr) {
+    console.warn('[PaidMedia Direct] Meta campaign fetch failed:', {
+      status: campaignErr?.response?.status || null,
+      message: campaignErr?.message || String(campaignErr),
+      detail: campaignErr?.response?.data || null,
+    });
+  }
+
+  if (spend <= 0 && campaigns.length > 0) {
+    const campaignSpendSum = campaigns.reduce((acc, campaign) => acc + toFiniteNumber(campaign?.spend, 0), 0);
+    const campaignRevenueSum = campaigns.reduce((acc, campaign) => acc + toFiniteNumber(campaign?.revenue, 0), 0);
+    if (campaignSpendSum > 0) {
+      spend = Number(campaignSpendSum.toFixed(2));
+      if (revenue <= 0 && campaignRevenueSum > 0) {
+        revenue = Number(campaignRevenueSum.toFixed(2));
+      }
+      console.log('[PaidMedia Direct] Meta spend derived from campaign rows:', { accountId, spend, revenue });
+    }
+  }
+
+  if (spend <= 0 && campaigns.length === 0) {
+    const fallbackSince = formatYmd(subDays(endDate instanceof Date ? endDate : new Date(), 365));
+    if (fallbackSince !== since) {
+      console.log('[PaidMedia Direct] Meta range fallback to 12 months:', { accountId, from: since, to: until, fallbackSince });
+
+      const fallbackParamsBase = {
+        ...paramsBase,
+        time_range: JSON.stringify({ since: fallbackSince, until }),
+      };
+
+      try {
+        const fallbackAccountRes = await axios.get(`${graphBase}/act_${accountId}/insights`, {
+          params: {
+            ...fallbackParamsBase,
+            level: 'account',
+            limit: 1,
+            fields: 'date_start,date_stop,spend,clicks,impressions,actions,action_values,purchase_roas',
+          },
+        });
+        const fallbackAccountRow = Array.isArray(fallbackAccountRes?.data?.data) ? fallbackAccountRes.data.data[0] : null;
+        console.log('[PaidMedia Direct] Meta fallback account row:', {
+          accountId,
+          fallbackSince,
+          until,
+          row: fallbackAccountRow ? {
+            date_start: fallbackAccountRow?.date_start || null,
+            date_stop: fallbackAccountRow?.date_stop || null,
+            spend: fallbackAccountRow?.spend || null,
+            clicks: fallbackAccountRow?.clicks || null,
+            impressions: fallbackAccountRow?.impressions || null,
+          } : null,
+        });
+
+        const fallbackSpend = toFiniteNumber(fallbackAccountRow?.spend, 0);
+        const fallbackRevenue = toFiniteNumber(
+          pickMetaValueByPriority(fallbackAccountRow?.action_values || [], [
+            'omni_purchase',
+            'offsite_conversion.fb_pixel_purchase',
+            'onsite_conversion.purchase',
+            'purchase',
+          ]),
+          0
+        );
+
+        const fallbackCampaignRes = await axios.get(`${graphBase}/act_${accountId}/insights`, {
+          params: {
+            ...fallbackParamsBase,
+            level: 'campaign',
+            limit: 10,
+            fields: 'campaign_id,campaign_name,spend,clicks,impressions,actions,action_values,purchase_roas',
+          },
+        });
+        const fallbackCampaigns = mapMetaCampaignRows(Array.isArray(fallbackCampaignRes?.data?.data) ? fallbackCampaignRes.data.data : []);
+        console.log('[PaidMedia Direct] Meta fallback campaign rows:', {
+          accountId,
+          fallbackSince,
+          until,
+          rows: fallbackCampaigns.length,
+          top: fallbackCampaigns.slice(0, 3).map((campaign) => ({
+            id: campaign?.id || null,
+            name: campaign?.name || null,
+            spend: campaign?.spend || 0,
+            revenue: campaign?.revenue || 0,
+          })),
+        });
+
+        let resolvedFallbackSpend = fallbackSpend;
+        let resolvedFallbackRevenue = fallbackRevenue;
+        if (resolvedFallbackSpend <= 0 && fallbackCampaigns.length > 0) {
+          resolvedFallbackSpend = Number(fallbackCampaigns.reduce((acc, campaign) => acc + toFiniteNumber(campaign?.spend, 0), 0).toFixed(2));
+          if (resolvedFallbackRevenue <= 0) {
+            resolvedFallbackRevenue = Number(fallbackCampaigns.reduce((acc, campaign) => acc + toFiniteNumber(campaign?.revenue, 0), 0).toFixed(2));
+          }
+        }
+
+        if (resolvedFallbackSpend > 0 || fallbackCampaigns.length > 0) {
+          spend = resolvedFallbackSpend;
+          revenue = resolvedFallbackRevenue;
+          campaigns = fallbackCampaigns;
+          effectiveSince = fallbackSince;
+          effectiveUntil = until;
+          rangeFallbackUsed = true;
+          console.log('[PaidMedia Direct] Meta fallback produced data:', {
+            accountId,
+            spend,
+            revenue,
+            campaigns: campaigns.length,
+            effectiveSince,
+            effectiveUntil,
+          });
+        }
+      } catch (fallbackErr) {
+        console.warn('[PaidMedia Direct] Meta 12m fallback failed:', {
+          status: fallbackErr?.response?.status || null,
+          message: fallbackErr?.message || String(fallbackErr),
+          detail: fallbackErr?.response?.data || null,
+        });
+      }
+    }
+  }
+
+  const roas = spend > 0 ? Number((revenue / spend).toFixed(2)) : null;
+  console.log('[PaidMedia Direct] Meta resolved payload:', {
+    accountId,
+    spend,
+    revenue,
+    roas,
+    campaigns: campaigns.length,
+    range: { since: effectiveSince, until: effectiveUntil, fallbackUsed: rangeFallbackUsed },
+  });
+
+  return {
+    provider: 'meta',
+    accountId,
+    accountName,
+    snapshotId: `direct_meta_${Date.now()}`,
+    spend,
+    revenue,
+    roas,
+    clicks: toFiniteNumber(accountRow?.clicks, 0),
+    conversions: toFiniteNumber(pickMetaValueByPriority(accountRow?.actions || [], ['purchase', 'omni_purchase']), 0),
+    currency: currency || 'MXN',
+    campaigns,
+    rangeUsed: {
+      since: effectiveSince,
+      until: effectiveUntil,
+      fallbackUsed: rangeFallbackUsed,
+    },
   };
 }
 
-async function buildPaidMediaSummary({ accountId, domain, platformConnections = [] }) {
+async function fetchGooglePaidMediaDirect({ userId, startDate, endDate }) {
+  if (!GoogleAccount || !googleAdsService?.fetchInsights) return null;
+
+  const googleDoc = await GoogleAccount.findOne({
+    $or: [{ user: userId }, { userId }],
+  })
+    .select('+accessToken +refreshToken selectedCustomerIds defaultCustomerId customers ad_accounts objective')
+    .lean();
+
+  if (!googleDoc) return null;
+
+  const selectedCustomerId = Array.isArray(googleDoc?.selectedCustomerIds) && googleDoc.selectedCustomerIds.length
+    ? normalizeGoogleCustomerId(googleDoc.selectedCustomerIds[0])
+    : null;
+  const defaultCustomerId = normalizeGoogleCustomerId(googleDoc?.defaultCustomerId);
+  const customerList = Array.isArray(googleDoc?.ad_accounts) && googleDoc.ad_accounts.length
+    ? googleDoc.ad_accounts
+    : (Array.isArray(googleDoc?.customers) ? googleDoc.customers : []);
+  const listCustomerId = normalizeGoogleCustomerId(customerList?.[0]?.id || null);
+  const customerId = selectedCustomerId || defaultCustomerId || listCustomerId;
+  if (!customerId) return null;
+  const connectedCustomer = customerList.find((entry) => normalizeGoogleCustomerId(entry?.id || '') === customerId) || null;
+  const customerName = connectedCustomer?.name || connectedCustomer?.descriptiveName || connectedCustomer?.descriptive_name || null;
+
+  const start = startDate instanceof Date ? startDate : new Date(startDate || Date.now());
+  const end = endDate instanceof Date ? endDate : new Date(endDate || Date.now());
+  const rangeDays = Math.max(1, Math.min(90, Math.round((end.getTime() - start.getTime()) / 86400000) + 1));
+
+  const payload = await googleAdsService.fetchInsights({
+    googleAccount: googleDoc,
+    customerId,
+    range: rangeDays,
+    includeToday: true,
+    objective: googleDoc?.objective || 'ventas',
+  });
+
+  const spend = toFiniteNumber(payload?.kpis?.cost, 0);
+  const revenue = toFiniteNumber(payload?.kpis?.conv_value, 0);
+  const roas = payload?.kpis?.roas != null ? toFiniteNumberOrNull(payload?.kpis?.roas) : (spend > 0 ? Number((revenue / spend).toFixed(2)) : null);
+  const campaigns = Array.isArray(payload?.campaigns)
+    ? payload.campaigns.slice(0, 10).map((campaign) => ({
+        id: campaign?.id || null,
+        name: campaign?.name || null,
+        spend: toFiniteNumber(campaign?.cost, 0),
+        revenue: toFiniteNumber(campaign?.conv_value, 0),
+        roas: toFiniteNumberOrNull(campaign?.roas),
+        status: campaign?.status || null,
+      }))
+    : [];
+
+  return {
+    provider: 'google',
+    customerId,
+    customerName,
+    snapshotId: `direct_google_${Date.now()}`,
+    spend,
+    revenue,
+    roas,
+    clicks: toFiniteNumber(payload?.kpis?.clicks, 0),
+    conversions: toFiniteNumber(payload?.kpis?.conversions, 0),
+    currency: payload?.currency || 'MXN',
+    campaigns,
+    rangeUsed: {
+      since: payload?.range?.since || null,
+      until: payload?.range?.until || null,
+      fallbackUsed: false,
+    },
+  };
+}
+
+function shouldDebouncePaidMediaSync(userId, source) {
+  const key = `${String(userId || '')}:${String(source || '')}`;
+  if (!key || key === ':') return true;
+
+  const now = Date.now();
+  const prev = PAID_MEDIA_SYNC_DEBOUNCE.get(key) || 0;
+  if (now - prev < PAID_MEDIA_SYNC_DEBOUNCE_MS) {
+    return true;
+  }
+
+  PAID_MEDIA_SYNC_DEBOUNCE.set(key, now);
+  return false;
+}
+
+async function triggerPaidMediaAutoSyncIfNeeded({ userId, accountId, summary, rootDoc }) {
+  if (!userId || !summary || !rootDoc?.sources) return;
+
+  const userIdStr = String(userId);
+  const metaState = rootDoc.sources?.metaAds || {};
+  const googleState = rootDoc.sources?.googleAds || {};
+
+  const metaNeedsSync = Boolean(
+    summary?.meta?.connected &&
+    (
+      !summary?.meta?.hasSnapshot ||
+      summary?.meta?.status === 'QUEUED' ||
+      summary?.meta?.spend <= 0
+    )
+  );
+
+  const googleNeedsSync = Boolean(
+    summary?.google?.connected &&
+    (
+      !summary?.google?.hasSnapshot ||
+      summary?.google?.status === 'QUEUED' ||
+      summary?.google?.spend <= 0
+    )
+  );
+
+  console.log('[PaidMedia Trace] auto-sync decision:', {
+    userId: userIdStr,
+    accountId,
+    metaNeedsSync,
+    googleNeedsSync,
+    metaStatus: summary?.meta?.status || null,
+    googleStatus: summary?.google?.status || null,
+    metaHasSnapshot: summary?.meta?.hasSnapshot || false,
+    googleHasSnapshot: summary?.google?.hasSnapshot || false,
+  });
+
+  if (metaNeedsSync && enqueueMetaCollectBestEffort && !shouldDebouncePaidMediaSync(userIdStr, 'metaAds')) {
+    const metaAccountId =
+      metaState?.selectedAccountId ||
+      metaState?.accountId ||
+      null;
+
+    const metaEnqueue = await enqueueMetaCollectBestEffort({
+      userId: userIdStr,
+      metaAccountId,
+      rangeDays: 60,
+      reason: 'paid_media_auto_sync',
+      trigger: 'analytics_paid_media',
+      forceFull: false,
+      extra: { accountId },
+    });
+
+    console.log('[PaidMedia Trace] meta auto-sync enqueue result:', metaEnqueue);
+  }
+
+  if (googleNeedsSync && enqueueGoogleAdsCollectBestEffort && !shouldDebouncePaidMediaSync(userIdStr, 'googleAds')) {
+    const googleAccountId =
+      googleState?.selectedCustomerId ||
+      googleState?.customerId ||
+      null;
+
+    const googleEnqueue = await enqueueGoogleAdsCollectBestEffort({
+      userId: userIdStr,
+      accountId: googleAccountId,
+      rangeDays: 60,
+      reason: 'paid_media_auto_sync',
+      trigger: 'analytics_paid_media',
+      forceFull: false,
+      extra: { accountId },
+    });
+
+    console.log('[PaidMedia Trace] google auto-sync enqueue result:', googleEnqueue);
+  }
+}
+
+async function buildPaidMediaSummary({ accountId, domain, platformConnections = [], fallbackUserId = null, startDate = null, endDate = null }) {
+  console.log(`[PaidMedia] Starting buildPaidMediaSummary for accountId: ${accountId}, domain: ${domain}, mode=direct_api_only`);
+
+  const sourceTemplate = () => ({
+    connected: false,
+    ready: false,
+    status: 'DISCONNECTED',
+    hasSnapshot: false,
+    snapshotId: null,
+    currency: null,
+    lastSyncAt: null,
+    spend: 0,
+    revenue: 0,
+    roas: null,
+    conversions: 0,
+    clicks: 0,
+    spendDeltaPct: null,
+    roasDelta: null,
+    campaigns: [],
+    connectedResourceId: null,
+    connectedResourceName: null,
+    activeCampaignId: null,
+    activeCampaignName: null,
+    dataOrigin: 'direct_api',
+  });
+
   const base = {
     linked: false,
     available: false,
     reason: 'not_linked',
-    meta: buildPaidMediaSourceSummary({ sourceState: null, payload: null, snapshotId: null, revenueKey: 'purchase_value' }),
-    google: buildPaidMediaSourceSummary({ sourceState: null, payload: null, snapshotId: null, revenueKey: 'conversion_value' }),
+    meta: sourceTemplate(),
+    google: sourceTemplate(),
     blended: {
       spend: 0,
       revenue: 0,
@@ -358,63 +1162,173 @@ async function buildPaidMediaSummary({ accountId, domain, platformConnections = 
     },
   };
 
-  if (!McpData || !formatMetaForLlmMini || !formatGoogleAdsForLlmMini) {
-    return { ...base, reason: 'marketing_models_unavailable' };
+  const userId = fallbackUserId ? String(fallbackUserId) : null;
+  if (!userId) {
+    console.warn(`[PaidMedia] No authenticated user context for ${accountId}`);
+    return { ...base, reason: 'user_not_resolved' };
   }
 
+  const start = startDate instanceof Date ? startDate : subDays(new Date(), 30);
+  const end = endDate instanceof Date ? endDate : new Date();
+
   try {
-    const userId = await resolvePaidMediaUserId({ accountId, domain, platformConnections });
-    if (!userId) return base;
-
-    const rootDoc = await findMcpRoot(userId);
-    if (!rootDoc) {
-      return { ...base, linked: true, reason: 'root_not_found' };
-    }
-
-    const [metaSnapshotId, googleSnapshotId] = await Promise.all([
-      findLatestSnapshotId(userId, 'metaAds', rootDoc),
-      findLatestSnapshotId(userId, 'googleAds', rootDoc),
+    const [metaDoc, googleDoc] = await Promise.all([
+      MetaAccount
+        ? MetaAccount.findOne({ $or: [{ user: userId }, { userId }] })
+            .select('+access_token +token +longlivedToken +accessToken +longLivedToken selectedAccountIds defaultAccountId ad_accounts adAccounts')
+            .lean()
+        : null,
+      GoogleAccount
+        ? GoogleAccount.findOne({ $or: [{ user: userId }, { userId }] })
+            .select('+accessToken +refreshToken selectedCustomerIds defaultCustomerId ad_accounts customers')
+            .lean()
+        : null,
     ]);
 
-    const [metaChunks, googleChunks] = await Promise.all([
-      findMcpChunks(userId, 'metaAds', metaSnapshotId, 'meta.'),
-      findMcpChunks(userId, 'googleAds', googleSnapshotId, 'google.'),
-    ]);
+    const metaToken =
+      metaDoc?.access_token ||
+      metaDoc?.token ||
+      metaDoc?.longlivedToken ||
+      metaDoc?.accessToken ||
+      metaDoc?.longLivedToken ||
+      null;
 
-    const metaPayload = metaChunks.length ? formatMetaForLlmMini({ datasets: metaChunks, topCampaigns: 4 }) : null;
-    const googlePayload = googleChunks.length ? formatGoogleAdsForLlmMini({ datasets: googleChunks, topCampaigns: 4 }) : null;
+    const metaAccounts = Array.isArray(metaDoc?.ad_accounts)
+      ? metaDoc.ad_accounts
+      : Array.isArray(metaDoc?.adAccounts)
+        ? metaDoc.adAccounts
+        : [];
+    const metaSelectedId = Array.isArray(metaDoc?.selectedAccountIds) && metaDoc.selectedAccountIds.length
+      ? normalizeMetaAccountId(metaDoc.selectedAccountIds[0])
+      : null;
+    const metaDefaultId = normalizeMetaAccountId(metaDoc?.defaultAccountId);
+    const metaListId = normalizeMetaAccountId(metaAccounts?.[0]?.id || metaAccounts?.[0]?.account_id || null);
+    const metaConnectedId = metaSelectedId || metaDefaultId || metaListId;
+    const metaConnectedAccount = metaAccounts.find((entry) => normalizeMetaAccountId(entry?.id || entry?.account_id || '') === metaConnectedId) || null;
+    const metaConnectedName = metaConnectedAccount?.name || metaConnectedAccount?.account_name || null;
+    const metaConnected = Boolean(metaToken && metaConnectedId);
 
-    const meta = buildPaidMediaSourceSummary({
-      sourceState: rootDoc?.sources?.metaAds || null,
-      payload: metaPayload,
-      snapshotId: metaSnapshotId,
-      revenueKey: 'purchase_value',
-    });
+    const googleToken = googleDoc?.accessToken || googleDoc?.refreshToken || null;
+    const googleAccounts = Array.isArray(googleDoc?.ad_accounts) && googleDoc.ad_accounts.length
+      ? googleDoc.ad_accounts
+      : (Array.isArray(googleDoc?.customers) ? googleDoc.customers : []);
+    const googleSelectedId = Array.isArray(googleDoc?.selectedCustomerIds) && googleDoc.selectedCustomerIds.length
+      ? normalizeGoogleCustomerId(googleDoc.selectedCustomerIds[0])
+      : null;
+    const googleDefaultId = normalizeGoogleCustomerId(googleDoc?.defaultCustomerId);
+    const googleListId = normalizeGoogleCustomerId(googleAccounts?.[0]?.id || null);
+    const googleConnectedId = googleSelectedId || googleDefaultId || googleListId;
+    const googleConnectedAccount = googleAccounts.find((entry) => normalizeGoogleCustomerId(entry?.id || '') === googleConnectedId) || null;
+    const googleConnectedName = googleConnectedAccount?.name || googleConnectedAccount?.descriptiveName || googleConnectedAccount?.descriptive_name || null;
+    const googleConnected = Boolean(googleToken && googleConnectedId);
 
-    const google = buildPaidMediaSourceSummary({
-      sourceState: rootDoc?.sources?.googleAds || null,
-      payload: googlePayload,
-      snapshotId: googleSnapshotId,
-      revenueKey: 'conversion_value',
-    });
-
-    const blendedSpend = meta.spend + google.spend;
-    const blendedRevenue = meta.revenue + google.revenue;
-    const hasAnySnapshot = meta.hasSnapshot || google.hasSnapshot;
-
-    return {
-      linked: true,
-      available: hasAnySnapshot,
-      reason: hasAnySnapshot ? null : 'snapshots_not_found',
-      meta,
-      google,
-      blended: {
-        spend: blendedSpend,
-        revenue: blendedRevenue,
-        roas: blendedSpend > 0 ? Number((blendedRevenue / blendedSpend).toFixed(2)) : null,
-        currency: meta.currency || google.currency || null,
+    const summary = {
+      ...base,
+      linked: metaConnected || googleConnected,
+      reason: (metaConnected || googleConnected) ? 'live_data_unavailable' : 'not_linked',
+      meta: {
+        ...base.meta,
+        connected: metaConnected,
+        status: metaConnected ? 'CONNECTED' : 'DISCONNECTED',
+        connectedResourceId: metaConnectedId || null,
+        connectedResourceName: metaConnectedName || null,
+      },
+      google: {
+        ...base.google,
+        connected: googleConnected,
+        status: googleConnected ? 'CONNECTED' : 'DISCONNECTED',
+        connectedResourceId: googleConnectedId || null,
+        connectedResourceName: googleConnectedName || null,
       },
     };
+
+    let metaLive = null;
+    if (metaConnected) {
+      try {
+        metaLive = await fetchMetaPaidMediaDirect({ userId, startDate: start, endDate: end });
+      } catch (metaDirectError) {
+        console.warn('[PaidMedia Direct] meta live fetch failed:', {
+          message: metaDirectError?.message || String(metaDirectError),
+          status: metaDirectError?.status || metaDirectError?.response?.status || null,
+          detail: metaDirectError?.data || metaDirectError?.response?.data || null,
+        });
+      }
+    }
+
+    if (metaLive) {
+      summary.meta.connected = true;
+      summary.meta.ready = true;
+      summary.meta.status = 'LIVE';
+      summary.meta.hasSnapshot = true;
+      summary.meta.snapshotId = metaLive.snapshotId;
+      summary.meta.currency = metaLive.currency || null;
+      summary.meta.spend = metaLive.spend;
+      summary.meta.revenue = metaLive.revenue;
+      summary.meta.roas = metaLive.roas;
+      summary.meta.conversions = metaLive.conversions;
+      summary.meta.clicks = metaLive.clicks;
+      summary.meta.campaigns = metaLive.campaigns || [];
+      summary.meta.connectedResourceId = metaLive.accountId || summary.meta.connectedResourceId;
+      summary.meta.connectedResourceName = metaLive.accountName || summary.meta.connectedResourceName;
+      summary.meta.activeCampaignId = summary.meta.campaigns?.[0]?.id || null;
+      summary.meta.activeCampaignName = summary.meta.campaigns?.[0]?.name || null;
+      summary.meta.rangeUsed = metaLive.rangeUsed || null;
+    }
+
+    let googleLive = null;
+    if (googleConnected) {
+      try {
+        googleLive = await fetchGooglePaidMediaDirect({ userId, startDate: start, endDate: end });
+      } catch (googleDirectError) {
+        console.warn('[PaidMedia Direct] google live fetch failed:', googleDirectError?.message || googleDirectError);
+      }
+    }
+
+    if (googleLive) {
+      summary.google.connected = true;
+      summary.google.ready = true;
+      summary.google.status = 'LIVE';
+      summary.google.hasSnapshot = true;
+      summary.google.snapshotId = googleLive.snapshotId;
+      summary.google.currency = googleLive.currency || null;
+      summary.google.spend = googleLive.spend;
+      summary.google.revenue = googleLive.revenue;
+      summary.google.roas = googleLive.roas;
+      summary.google.conversions = googleLive.conversions;
+      summary.google.clicks = googleLive.clicks;
+      summary.google.campaigns = googleLive.campaigns || [];
+      summary.google.connectedResourceId = googleLive.customerId || summary.google.connectedResourceId;
+      summary.google.connectedResourceName = googleLive.customerName || summary.google.connectedResourceName;
+      summary.google.activeCampaignId = summary.google.campaigns?.[0]?.id || null;
+      summary.google.activeCampaignName = summary.google.campaigns?.[0]?.name || null;
+      summary.google.rangeUsed = googleLive.rangeUsed || null;
+    }
+
+    const blendedSpend = Number(summary.meta.spend || 0) + Number(summary.google.spend || 0);
+    const blendedRevenue = Number(summary.meta.revenue || 0) + Number(summary.google.revenue || 0);
+    summary.blended = {
+      spend: blendedSpend,
+      revenue: blendedRevenue,
+      roas: blendedSpend > 0 ? Number((blendedRevenue / blendedSpend).toFixed(2)) : null,
+      currency: summary.meta.currency || summary.google.currency || null,
+    };
+
+    const hasLiveData = Boolean(metaLive || googleLive);
+    summary.available = hasLiveData;
+    summary.reason = summary.linked ? (hasLiveData ? null : 'live_data_unavailable') : 'not_linked';
+
+    console.log('[PaidMedia Trace] direct-only summary:', {
+      userId,
+      accountId,
+      linked: summary.linked,
+      available: summary.available,
+      metaConnected: summary.meta.connected,
+      metaSpend: summary.meta.spend,
+      googleConnected: summary.google.connected,
+      googleSpend: summary.google.spend,
+    });
+
+    return summary;
   } catch (error) {
     console.error('[Analytics API] Paid media summary error:', error);
     return { ...base, reason: 'lookup_failed' };
@@ -534,10 +1448,16 @@ function stitchSnapshotAttributionForAccount(snapshot = {}, accountId) {
 
 function normalizeChannelForStats(channelRaw) {
   let ch = String(channelRaw || 'unattributed').toLowerCase();
-  if (ch === 'facebook' || ch === 'instagram' || ch === 'paid_social') ch = 'meta';
-  if (ch === 'paid_search') ch = 'google';
-  if (ch !== 'meta' && ch !== 'google' && ch !== 'tiktok' && ch !== 'unattributed') ch = 'other';
-  return ch;
+  
+  if (ch === 'facebook' || ch === 'instagram' || ch === 'paid_social') return 'meta';
+  if (ch === 'paid_search' || ch === 'google_ads' || ch === 'cpc') return 'google';
+  if (ch === 'organic_search' || ch === 'organic' || ch === 'google_organic') return 'organic';
+  
+  if (ch === 'meta' || ch === 'google' || ch === 'tiktok' || ch === 'organic' || ch === 'unattributed') {
+    return ch;
+  }
+  
+  return 'other';
 }
 
 function compactSessionPath(timeline = []) {
@@ -1133,6 +2053,34 @@ function resolveConversionAttribution({ model, touchpoints }) {
     };
   }
 
+  if (model === 'meta' || model === 'google_ads') {
+    const targetChannel = model === 'meta' ? 'meta' : 'google';
+    const specificTouch = valid.slice().reverse().find(t => normalizeChannelForStats(t.attribution.channel) === targetChannel);
+    if (specificTouch) {
+      const attr = specificTouch.attribution;
+      return {
+        primary: {
+          channel: targetChannel,
+          platform: attr.platform || null,
+          campaign: attr.campaign || null,
+          adset: attr.adset || null,
+          ad: attr.ad || null,
+          clickId: attr.clickId || null,
+          confidence: Number(attr.confidence || 0),
+          source: model,
+        },
+        splits: [{ channel: targetChannel, weight: 1 }],
+        isAttributed: true,
+      };
+    } else {
+      return {
+        primary: { channel: 'unattributed', platform: null, campaign: null, adset: null, ad: null, clickId: null, confidence: 0, source: 'none' },
+        splits: [{ channel: 'unattributed', weight: 1 }],
+        isAttributed: false,
+      };
+    }
+  }
+
   const last = valid[valid.length - 1].attribution;
   const channel = normalizeChannelForStats(last.channel);
   return {
@@ -1199,10 +2147,13 @@ function deriveWooFallbackAttribution(rawPayload = {}) {
   const sourceLabel = String(rawPayload?.woo_source_label || '').trim();
   const sourceType = String(rawPayload?.woo_source_type || '').trim().toLowerCase();
   const utmSource = String(rawPayload?.utm_source || '').trim().toLowerCase();
+  const utmMedium = String(rawPayload?.utm_medium || '').trim().toLowerCase();
+  
+  const isPaidGoogle = utmMedium === 'cpc' || utmMedium === 'paid_search' || rawPayload?.gclid || sourceLabel.toLowerCase().includes('cpc') || sourceLabel.toLowerCase().includes('ads');
 
   if (utmSource === 'google') {
     return {
-      channel: 'google',
+      channel: isPaidGoogle ? 'google' : 'organic',
       platform: 'google',
       confidence: 0.6,
       source: 'woo_fallback',
@@ -1231,7 +2182,7 @@ function deriveWooFallbackAttribution(rawPayload = {}) {
     const normalized = sourceLabel.toLowerCase();
     if (normalized.includes('google')) {
       return {
-        channel: 'google',
+        channel: isPaidGoogle ? 'google' : 'organic',
         platform: 'google',
         confidence: 0.55,
         source: 'woo_fallback',
@@ -1308,12 +2259,30 @@ router.get('/:account_id', async (req, res) => {
     const allTime = String(req.query.all_time || '0') === '1';
     const recentLimitRaw = String(req.query.recent_limit || '100').toLowerCase();
     const recentLimit = recentLimitRaw === 'all'
-      ? 5000
-      : Math.max(15, Math.min(1000, Number.parseInt(recentLimitRaw, 10) || 100));
+      ? 400
+      : Math.max(15, Math.min(400, Number.parseInt(recentLimitRaw, 10) || 100));
+
+    const analyticsCacheKey = buildRouteCacheKey('analytics', req);
+    const cachedAnalytics = readRouteCache(analyticsCacheKey);
+      if (cachedAnalytics && String(req.query.nocache) !== '1') {
+        console.log(`[Analytics API] Returning cached dashboard for ${account_id}`);
+        return res.json({
+          ...cachedAnalytics,
+          cache: { hit: true, ttlMs: 120000 },
+        });
+      }
 
     // Default to last 30 days
     const startDate = allTime ? new Date(0) : (start ? startOfDay(new Date(start)) : startOfDay(subDays(new Date(), 30)));
     const endDate = end ? endOfDay(new Date(end)) : endOfDay(new Date());
+    const periodDays = allTime
+      ? 365
+      : Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)) + 1);
+    const journeyStitchLookbackDays = Math.max(
+      JOURNEY_STITCH_LOOKBACK_DAYS,
+      Math.min(365, periodDays)
+    );
+    const journeyStitchLookbackMs = journeyStitchLookbackDays * 24 * 60 * 60 * 1000;
     const broadOrdersDateWhere = {
       OR: [
         { createdAt: { gte: startDate, lte: endDate } },
@@ -1327,6 +2296,8 @@ router.get('/:account_id', async (req, res) => {
         accountId: account_id,
         ...broadOrdersDateWhere,
       },
+      take: 4000,
+      orderBy: { createdAt: 'desc' },
       select: {
         createdAt: true,
         platformCreatedAt: true,
@@ -1340,7 +2311,11 @@ router.get('/:account_id', async (req, res) => {
         userKey: true,
         orderId: true,
         orderNumber: true,
-        lineItems: true
+        lineItems: true,
+        sessionId: true,
+        customerId: true,
+        emailHash: true,
+        phoneHash: true
       },
       orderBy: [
         { platformCreatedAt: 'desc' },
@@ -1373,7 +2348,7 @@ router.get('/:account_id', async (req, res) => {
       }),
       prisma.platformConnection.findMany({
         where: { accountId: account_id },
-        select: { platform: true, status: true, updatedAt: true },
+        select: { platform: true, status: true, updatedAt: true, adAccountId: true },
       }),
       prisma.account.findUnique({
         where: { accountId: account_id },
@@ -1397,11 +2372,30 @@ router.get('/:account_id', async (req, res) => {
       };
     });
 
-    const paidMedia = await buildPaidMediaSummary({
-      accountId: account_id,
-      domain: accountRecord?.domain || account_id,
-      platformConnections,
-    });
+    let paidMedia = {
+      linked: false,
+      available: false,
+      reason: 'lookup_skipped',
+      meta: { hasSnapshot: false, spend: null, revenue: null, clicks: null },
+      google: { hasSnapshot: false, spend: null, revenue: null, clicks: null },
+      blended: { spend: 0, revenue: 0, roas: null, currency: null },
+    };
+
+    try {
+      paidMedia = await buildPaidMediaSummary({
+        accountId: account_id,
+        domain: accountRecord?.domain || account_id,
+        platformConnections,
+        fallbackUserId: req.user?._id || req.user?.id || null,
+        startDate,
+        endDate,
+      });
+    } catch (paidMediaError) {
+      warnings.push({
+        label: 'paid_media.summary',
+        error: String(paidMediaError?.message || paidMediaError),
+      });
+    }
 
     // 3. Fetch Events in range (for pixel activity visibility)
     const groupedEvents = await prisma.event.groupBy({
@@ -1435,6 +2429,7 @@ router.get('/:account_id', async (req, res) => {
       meta: { revenue: 0, orders: 0 },
       google: { revenue: 0, orders: 0 },
       tiktok: { revenue: 0, orders: 0 },
+      organic: { revenue: 0, orders: 0 },
       other: { revenue: 0, orders: 0 },
       unattributed: { revenue: 0, orders: 0 }
     };
@@ -1461,10 +2456,10 @@ router.get('/:account_id', async (req, res) => {
       const effectiveOrderDate = order.platformCreatedAt || order.createdAt;
       const rev = order.revenue || 0;
       totalRevenue += rev;
-      
+
       // Channel normalization
-      let ch = (order.attributedChannel || 'unattributed').toLowerCase();
-      if (ch === 'facebook' || ch === 'instagram') ch = 'meta';
+      let ch = normalizeChannelForStats(order.attributedChannel);
+      if (ch === 'google' && !String(order.orderAttributionSnapshot?.utm_medium || '').match(/cpc|paid_search|ads/i) && !String(order.wooSourceLabel || '').match(/cpc|ads/i) && !order.orderAttributionSnapshot?.gclid) { ch = 'organic'; }
 
       if (channelStats[ch]) {
         channelStats[ch].revenue += rev;
@@ -1559,22 +2554,18 @@ router.get('/:account_id', async (req, res) => {
       take: recentLimit,
     });
 
-    const purchaseEventsForModel = await prisma.event.findMany({
-      where: {
-        accountId: account_id,
-        createdAt: { gte: startDate, lte: endDate },
-        eventName: { in: PURCHASE_ALIASES },
-      },
-      select: {
+    const purchaseEventsForModel = await prisma.event.findMany({ where: { accountId: account_id, createdAt: { gte: startDate, lte: endDate }, eventName: { in: PURCHASE_ALIASES }, }, take: 4000, orderBy: { createdAt: 'desc' }, select: {
         createdAt: true,
         orderId: true,
         checkoutToken: true,
+        sessionId: true,
         userKey: true,
         revenue: true,
         currency: true,
         rawPayload: true,
       },
       orderBy: { createdAt: 'desc' },
+      take: 400, // Reduced from 2000 to prevent OOM
     });
 
     const conversionInputsFromOrders = filteredOrders.map((order) => ({
@@ -1584,7 +2575,11 @@ router.get('/:account_id', async (req, res) => {
       orderId: order.orderId,
       orderNumber: order.orderNumber || null,
       checkoutToken: order.checkoutToken || null,
+      sessionId: order.sessionId || null,
       userKey: order.userKey || null,
+      customerId: order.customerId || extractOrderCustomerId(order.attributionSnapshot) || null,
+      emailHash: order.emailHash || null,
+      phoneHash: order.phoneHash || null,
       revenue: Number(order.revenue || 0),
       currency: order.currency || 'MXN',
       items: normalizeLineItems(order.lineItems),
@@ -1594,35 +2589,43 @@ router.get('/:account_id', async (req, res) => {
       orderAttributionModel: order.attributionModel || null,
       wooSourceLabel: order?.attributionSnapshot?.woo_source_label || null,
       wooSourceType: order?.attributionSnapshot?.woo_source_type || null,
-      customerName: order?.attributionSnapshot?.customer_name || null,
+      customerName: extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload),
       payloadSnapshot: order.attributionSnapshot || null,
     }));
 
-    const conversionInputsFromEvents = purchaseEventsForModel.map((ev) => ({
-      source: 'events',
-      createdAt: ev.createdAt,
-      orderId: ev.orderId || null,
-      orderNumber: null,
-      checkoutToken: ev.checkoutToken || null,
-      userKey: ev.userKey || null,
-      revenue: Number(ev.revenue || 0),
-      currency: ev.currency || 'MXN',
-      items: [],
-      payloadSnapshot: {
-        utm_source: ev?.rawPayload?.utm_source || null,
-        utm_medium: ev?.rawPayload?.utm_medium || null,
-        utm_campaign: ev?.rawPayload?.utm_campaign || null,
-        utm_content: ev?.rawPayload?.utm_content || null,
-        utm_term: ev?.rawPayload?.utm_term || null,
-        referrer: ev?.rawPayload?.referrer || null,
-        gclid: ev?.rawPayload?.gclid || null,
-        fbclid: ev?.rawPayload?.fbclid || null,
-        ttclid: ev?.rawPayload?.ttclid || null,
-      },
-      wooSourceLabel: ev?.rawPayload?.woo_source_label || null,
-      wooSourceType: ev?.rawPayload?.woo_source_type || null,
-      customerName: ev?.rawPayload?.user_data?.fn ? `${ev.rawPayload.user_data.fn} ${ev.rawPayload.user_data.ln || ''}`.trim() : null,
-    }));
+    const conversionInputsFromEvents = purchaseEventsForModel.map((ev) => {
+      const eventIdentity = extractEventIdentity(ev?.rawPayload || {});
+      return {
+        source: 'events',
+        createdAt: ev.createdAt,
+        orderId: ev.orderId || null,
+        orderNumber: null,
+        checkoutToken: ev.checkoutToken || null,
+        sessionId: ev.sessionId || null,
+        userKey: ev.userKey || null,
+        customerId: eventIdentity.customerId || null,
+        emailHash: eventIdentity.emailHash || null,
+        phoneHash: eventIdentity.phoneHash || null,
+        revenue: Number(ev.revenue || 0),
+        currency: ev.currency || 'MXN',
+        items: [],
+        payloadSnapshot: {
+          utm_source: ev?.rawPayload?.utm_source || null,
+          utm_medium: ev?.rawPayload?.utm_medium || null,
+          utm_campaign: ev?.rawPayload?.utm_campaign || null,
+          utm_content: ev?.rawPayload?.utm_content || null,
+          utm_term: ev?.rawPayload?.utm_term || null,
+          referrer: ev?.rawPayload?.referrer || null,
+          gclid: ev?.rawPayload?.gclid || null,
+          fbclid: ev?.rawPayload?.fbclid || null,
+          ttclid: ev?.rawPayload?.ttclid || null,
+        },
+        wooSourceLabel: ev?.rawPayload?.woo_source_label || null,
+        wooSourceType: ev?.rawPayload?.woo_source_type || null,
+        customerName: eventIdentity.customerDisplayName
+          || (ev?.rawPayload?.user_data?.fn ? `${ev.rawPayload.user_data.fn} ${ev.rawPayload.user_data.ln || ''}`.trim() : null),
+      };
+    });
 
     const conversionInputs = (filteredOrders.length > 0 ? conversionInputsFromOrders : conversionInputsFromEvents);
 
@@ -1640,6 +2643,7 @@ router.get('/:account_id', async (req, res) => {
               checkoutToken: true,
               attributionSnapshot: true,
               createdAt: true,
+              sessionId: true,
               userKey: true,
             },
           })
@@ -1683,6 +2687,7 @@ router.get('/:account_id', async (req, res) => {
     const conversionsWithAttribution = conversionInputs.map((conv) => {
       const checkout = conv.checkoutToken ? checkoutByToken.get(conv.checkoutToken) : null;
       const resolvedUserKey = conv.userKey || checkout?.userKey || null;
+      const resolvedSessionId = conv.sessionId || checkout?.sessionId || null;
       const conversionDate = new Date(conv.createdAt);
       const lookbackStart = subDays(conversionDate, ATTRIBUTION_LOOKBACK_DAYS);
 
@@ -1726,7 +2731,7 @@ router.get('/:account_id', async (req, res) => {
       const orderStoredAttribution = (conv.source === 'orders' && conv.orderAttributedChannel && conv.orderAttributedChannel !== 'unattributed')
         ? {
             primary: {
-              channel: conv.orderAttributedChannel,
+              channel: (conv.orderAttributedChannel === 'google' && !String(conv.orderAttributionSnapshot?.utm_medium || '').match(/cpc|paid_search|ads/i) && !String(conv.wooSourceLabel || '').match(/cpc|ads/i) && !conv.orderAttributionSnapshot?.gclid) ? 'organic' : normalizeChannelForStats(conv.orderAttributedChannel),
               platform: conv?.wooSourceLabel || conv?.orderAttributionSnapshot?.utm_source || conv.orderAttributedChannel,
               campaign: conv?.orderAttributionSnapshot?.utm_campaign || null,
               adset: conv?.orderAttributionSnapshot?.utm_content || null,
@@ -1735,7 +2740,7 @@ router.get('/:account_id', async (req, res) => {
               confidence: Number(conv.orderAttributionConfidence || 0.75),
               source: String(conv.orderAttributionModel || '').startsWith('woo_') ? 'woo_fallback' : 'orders_sync',
             },
-            splits: [{ channel: conv.orderAttributedChannel, weight: 1 }],
+            splits: [{ channel: (conv.orderAttributedChannel === 'google' && !String(conv.orderAttributionSnapshot?.utm_medium || '').match(/cpc|paid_search|ads/i) && !String(conv.wooSourceLabel || '').match(/cpc|ads/i) && !conv.orderAttributionSnapshot?.gclid) ? 'organic' : normalizeChannelForStats(conv.orderAttributedChannel), weight: 1 }],
             isAttributed: true,
           }
         : null;
@@ -1750,6 +2755,8 @@ router.get('/:account_id', async (req, res) => {
 
       return {
         ...conv,
+        userKey: resolvedUserKey,
+        sessionId: resolvedSessionId,
         attributedChannel: finalAttribution.primary.channel,
         attributedPlatform: finalAttribution.primary.platform,
         attributedCampaign: finalAttribution.primary.campaign || null,
@@ -1783,15 +2790,263 @@ router.get('/:account_id', async (req, res) => {
       ? conversionsWithAttribution
       : dedupeEventConversions(conversionsWithAttribution);
 
-    const recentPurchases = modeledConversions.slice(0, recentLimit).map((conv) => {
-      if (conv.source === 'orders') return conv;
+    const recentConversions = modeledConversions.slice(0, recentLimit);
+    const recentOrderIds = Array.from(new Set(recentConversions.map((c) => c.orderId).filter(Boolean)));
+    
+    // WooCommerce fallback check: try to find sessionId/userKey from their events if missing from order
+    if (recentOrderIds.length > 0) {
+      const resolvingEvents = await prisma.event.findMany({
+        where: { accountId: account_id, orderId: { in: recentOrderIds } },
+        select: { orderId: true, sessionId: true, userKey: true }
+      });
+      
+      const sessionByOrder = new Map();
+      const userKeyByOrder = new Map();
+      for (const ev of resolvingEvents) {
+        if (ev.sessionId && !sessionByOrder.has(ev.orderId)) sessionByOrder.set(ev.orderId, ev.sessionId);
+        if (ev.userKey && !userKeyByOrder.has(ev.orderId)) userKeyByOrder.set(ev.orderId, ev.userKey);
+      }
+      
+      for (const rc of recentConversions) {
+        if (!rc.sessionId && sessionByOrder.has(rc.orderId)) rc.sessionId = sessionByOrder.get(rc.orderId);
+        if (!rc.userKey && userKeyByOrder.has(rc.orderId)) rc.userKey = userKeyByOrder.get(rc.orderId);
+      }
+    }
+
+    const recentCheckoutTokens = Array.from(new Set(recentConversions.map((c) => c.checkoutToken).filter(Boolean)));
+    let recentSessionIds = Array.from(new Set(recentConversions.map((c) => c.sessionId).filter(Boolean)));
+    let recentUserKeys = Array.from(new Set(recentConversions.map((c) => c.userKey).filter(Boolean)));
+    const recentCustomerIds = Array.from(new Set(recentConversions.map((c) => c.customerId).filter(Boolean)));
+    const recentEmailHashes = Array.from(new Set(recentConversions.map((c) => c.emailHash).filter(Boolean)));
+    const recentPhoneHashes = Array.from(new Set(recentConversions.map((c) => c.phoneHash).filter(Boolean)));
+
+    const recentConversionTimes = recentConversions
+      .map((c) => new Date(c.createdAt).getTime())
+      .filter((ts) => Number.isFinite(ts));
+
+    if (recentConversionTimes.length) {
+      const earliestTs = Math.min(...recentConversionTimes) - journeyStitchLookbackMs;
+      const latestTs = Math.max(...recentConversionTimes) + (60 * 60 * 1000);
+
+      const identityClauses = buildIdentityOrClauses({
+        userKeys: recentUserKeys,
+        customerIds: recentCustomerIds,
+        emailHashes: recentEmailHashes,
+        phoneHashes: recentPhoneHashes,
+      });
+
+      if (identityClauses.length) {
+        const identityRowsForJourney = await prisma.identityGraph.findMany({
+          where: {
+            accountId: account_id,
+            OR: identityClauses,
+          },
+          select: {
+            userKey: true,
+          },
+          take: 800,
+        });
+
+        const graphUserKeys = identityRowsForJourney.map((row) => row.userKey).filter(Boolean);
+        recentUserKeys = Array.from(new Set([...recentUserKeys, ...graphUserKeys]));
+
+        if (recentUserKeys.length) {
+          const sessionsByIdentity = await prisma.session.findMany({
+            where: {
+              accountId: account_id,
+              userKey: { in: recentUserKeys },
+              startedAt: {
+                gte: new Date(earliestTs),
+                lte: new Date(latestTs),
+              },
+            },
+            select: {
+              sessionId: true,
+            },
+            take: 800,
+          });
+          const graphSessionIds = sessionsByIdentity.map((row) => row.sessionId).filter(Boolean);
+          recentSessionIds = Array.from(new Set([...recentSessionIds, ...graphSessionIds]));
+        }
+      }
+    }
+
+    const journeyEventOrFilters = [];
+    if (recentOrderIds.length) journeyEventOrFilters.push({ orderId: { in: recentOrderIds } });
+    if (recentCheckoutTokens.length) journeyEventOrFilters.push({ checkoutToken: { in: recentCheckoutTokens } });
+    if (recentSessionIds.length) journeyEventOrFilters.push({ sessionId: { in: recentSessionIds } });
+    if (recentUserKeys.length) journeyEventOrFilters.push({ userKey: { in: recentUserKeys } });
+
+    let stitchedCandidateEvents = [];
+    if (journeyEventOrFilters.length && recentConversionTimes.length) {
+      const earliestTs = Math.min(...recentConversionTimes) - journeyStitchLookbackMs;
+      const latestTs = Math.max(...recentConversionTimes) + (60 * 60 * 1000);
+      stitchedCandidateEvents = await prisma.event.findMany({
+        where: {
+          accountId: account_id,
+          createdAt: {
+            gte: new Date(earliestTs),
+            lte: new Date(latestTs),
+          },
+          OR: journeyEventOrFilters,
+        },
+        select: {
+          eventId: true,
+          eventName: true,
+          createdAt: true,
+          collectedAt: true,
+          pageUrl: true,
+          productId: true,
+          orderId: true,
+          checkoutToken: true,
+          sessionId: true,
+          userKey: true,
+          rawPayload: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 1500,
+      });
+      stitchedCandidateEvents.reverse(); // put back to asc
+    }
+
+    const eventsByOrderId = new Map();
+    const eventsByCheckoutToken = new Map();
+    const eventsBySessionId = new Map();
+    const eventsByUserKey = new Map();
+    const eventsByCustomerId = new Map();
+    
+    for (const ev of stitchedCandidateEvents) {
+      const evTs = new Date(ev.createdAt).getTime();
+      if (!Number.isFinite(evTs)) continue;
+      ev._evTs = evTs;
+      if (ev.orderId) { const k = String(ev.orderId); if (!eventsByOrderId.has(k)) eventsByOrderId.set(k, []); eventsByOrderId.get(k).push(ev); }
+      if (ev.checkoutToken) { const k = String(ev.checkoutToken); if (!eventsByCheckoutToken.has(k)) eventsByCheckoutToken.set(k, []); eventsByCheckoutToken.get(k).push(ev); }
+      if (ev.sessionId) { const k = String(ev.sessionId); if (!eventsBySessionId.has(k)) eventsBySessionId.set(k, []); eventsBySessionId.get(k).push(ev); }
+      if (ev.userKey) { const k = String(ev.userKey); if (!eventsByUserKey.has(k)) eventsByUserKey.set(k, []); eventsByUserKey.get(k).push(ev); }
+      
+      const eventIdentity = extractEventIdentity(ev.rawPayload || {});
+      if (eventIdentity.customerId) {
+        const k = String(eventIdentity.customerId);
+        if (!eventsByCustomerId.has(k)) eventsByCustomerId.set(k, []);
+        eventsByCustomerId.get(k).push(ev);
+      }
+    }
+
+    const recentPurchases = await Promise.all(recentConversions.map(async (conv) => {
       const key = `${conv.orderId || ''}::${conv.checkoutToken || ''}::${new Date(conv.createdAt).toISOString()}`;
       const detailed = detailedByKey.get(key);
+      const normalizedItems = conv.source === 'orders'
+        ? conv.items
+        : (detailed ? normalizeLineItems(detailed.items) : conv.items);
+
+      const convTs = new Date(conv.createdAt).getTime();
+      const earliestTs = convTs - journeyStitchLookbackMs;
+      const latestTs = convTs + (15 * 60 * 1000);
+
+      const purchaseEventCandidates = [
+        ...(conv.orderId ? (eventsByOrderId.get(String(conv.orderId)) || []) : []),
+        ...(conv.checkoutToken ? (eventsByCheckoutToken.get(String(conv.checkoutToken)) || []) : [])
+      ];
+      
+      const inferredSessionId = conv.sessionId || purchaseEventCandidates.find(e => e.sessionId)?.sessionId;
+      const inferredUserKey = conv.userKey || purchaseEventCandidates.find(e => e.userKey)?.userKey;
+
+      const rawStitched = [
+          ...(conv.orderId ? (eventsByOrderId.get(String(conv.orderId)) || []) : []),
+          ...(conv.checkoutToken ? (eventsByCheckoutToken.get(String(conv.checkoutToken)) || []) : []),
+          ...(inferredSessionId ? (eventsBySessionId.get(String(inferredSessionId)) || []) : []),
+          ...(inferredUserKey ? (eventsByUserKey.get(String(inferredUserKey)) || []) : []),
+          ...(conv.customerId ? (eventsByCustomerId.get(String(conv.customerId)) || []) : [])
+      ];
+
+      const uniqueEventsMap = new Map();
+      for (const ev of rawStitched) {
+          if (!uniqueEventsMap.has(ev.eventId) && ev._evTs >= earliestTs && ev._evTs <= latestTs) {
+             uniqueEventsMap.set(ev.eventId, ev);
+          }
+      }
+
+      let stitchedEvents = Array.from(uniqueEventsMap.values())
+        .sort((a, b) => a._evTs - b._evTs);
+
+      // Fallback: if stitching only found sparse purchase signals, try customer-id linkage.
+      if (stitchedEvents.length <= 2 && conv.customerId) {
+        try {
+          const customerLinkedEvents = await prisma.event.findMany({
+            where: {
+              accountId: account_id,
+              createdAt: {
+                gte: new Date(earliestTs),
+                lte: new Date(latestTs),
+              },
+              OR: [
+                { rawPayload: { path: ['customer_id'], equals: String(conv.customerId) } },
+                { rawPayload: { path: ['customerId'], equals: String(conv.customerId) } },
+              ],
+            },
+            select: {
+              eventId: true,
+              eventName: true,
+              createdAt: true,
+              collectedAt: true,
+              pageUrl: true,
+              productId: true,
+              orderId: true,
+              checkoutToken: true,
+              sessionId: true,
+              userKey: true,
+              rawPayload: true,
+            },
+            orderBy: { createdAt: 'asc' },
+            take: 300,
+          });
+
+          if (customerLinkedEvents.length) {
+            stitchedEvents = [...stitchedEvents, ...customerLinkedEvents]
+              .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+          }
+        } catch (_) {
+          // Ignore JSON-path incompatibilities and keep primary stitched timeline.
+        }
+      }
+
+      const seenEventIds = new Set();
+      const journeyEvents = stitchedEvents
+        .filter((ev) => {
+          const uniqueKey = String(ev.eventId || `${ev.eventName || 'event'}:${new Date(ev.createdAt).toISOString()}`);
+          if (seenEventIds.has(uniqueKey)) return false;
+          seenEventIds.add(uniqueKey);
+          return true;
+        })
+        .slice(0, 120)
+        .map((ev) => ({
+          eventId: ev.eventId,
+          eventName: ev.eventName,
+          createdAt: ev.createdAt,
+          collectedAt: ev.collectedAt || null,
+          pageUrl: ev.pageUrl || null,
+          productId: ev.productId || null,
+          productName: ev?.rawPayload?.product_name || ev?.rawPayload?.item_name || ev?.rawPayload?.name || null,
+          itemId: ev?.rawPayload?.item_id || ev?.rawPayload?.product_id || null,
+          utmSource: ev?.rawPayload?.utm_source || null,
+          checkoutToken: ev.checkoutToken || null,
+          orderId: ev.orderId || null,
+          fbp: ev?.rawPayload?.fbp || ev?.rawPayload?._fbp || ev?.rawPayload?.user_data?.fbp || null,
+          fbc: ev?.rawPayload?.fbc || ev?.rawPayload?._fbc || ev?.rawPayload?.user_data?.fbc || null,
+          ttclid: ev?.rawPayload?.ttclid || ev?.rawPayload?.user_data?.ttclid || null,
+          gclid: ev?.rawPayload?.gclid || ev?.rawPayload?.user_data?.gclid || null,
+          clickId: ev?.rawPayload?.click_id || null,
+          customerEmail: ev?.rawPayload?.user_data?.em || ev?.rawPayload?.customer_email || ev?.rawPayload?.user_email || ev?.rawPayload?.email || null,
+          clientIp: ev?.rawPayload?.user_data?.client_ip_address || ev?.rawPayload?.client_ip_address || ev?.rawPayload?.client_ip || ev?.rawPayload?.ip || null,
+          userAgent: ev?.rawPayload?.user_data?.client_user_agent || ev?.rawPayload?.client_user_agent || ev?.rawPayload?.user_agent || null,
+        }));
+
       return {
         ...conv,
-        items: detailed ? normalizeLineItems(detailed.items) : conv.items,
+        items: normalizedItems,
+        events: journeyEvents,
       };
-    });
+    }));
 
     // Recompute channel stats by selected attribution model over resolved conversions.
     Object.keys(channelStats).forEach((key) => {
@@ -1848,8 +3103,18 @@ router.get('/:account_id', async (req, res) => {
       : modeledConversions.reduce((acc, conv) => acc + Number(conv.revenue || 0), 0);
     const totalRevenueResolved = filteredOrders.length > 0 ? totalRevenue : purchaseRevenueFromEventsModeled;
 
+    // Fallback if DB lacks platform connections but MCP holds data
+    if (paidMedia?.meta?.hasSnapshot && integrationHealth.meta) {
+      integrationHealth.meta.connected = true;
+      integrationHealth.meta.status = 'ACTIVE';
+    }
+    if (paidMedia?.google?.hasSnapshot && integrationHealth.google) {
+      integrationHealth.google.connected = true;
+      integrationHealth.google.status = 'ACTIVE';
+    }
+
     // 5. Return JSON
-    res.json({
+    const responsePayload = {
       summary: {
         totalRevenue: totalRevenueResolved,
         totalRevenueOrders: totalRevenue,
@@ -1896,10 +3161,102 @@ router.get('/:account_id', async (req, res) => {
       topProducts,
       recentPurchases,
       daily: Object.values(dailyMap) // sorted array by date
-    });
+    };
+
+    writeRouteCache(analyticsCacheKey, responsePayload, 10000);
+    res.json(responsePayload);
 
   } catch (error) {
     console.error('[Analytics API] Error:', error);
+    if (isDatabaseConnectivityError(error)) {
+      const { account_id } = req.params;
+      const fallbackModelRaw = String(req.query.attribution_model || req.query.attributionModel || 'last_touch').toLowerCase();
+      const fallbackAttributionModel = ATTRIBUTION_MODELS.has(fallbackModelRaw) ? fallbackModelRaw : 'last_touch';
+      const fallbackRecentLimitRaw = String(req.query.recent_limit || req.query.recentLimit || '100').toLowerCase();
+      const fallbackRecentLimit = fallbackRecentLimitRaw === 'all'
+        ? 400
+        : Math.max(5, Math.min(300, Number.parseInt(fallbackRecentLimitRaw, 10) || 100));
+      const now = new Date();
+      const fallbackStart = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+
+      return res.json({
+        degraded: true,
+        degradedReason: 'database_unreachable',
+        summary: {
+          totalRevenue: 0,
+          totalRevenueOrders: 0,
+          totalRevenueEvents: 0,
+          revenueSource: 'events',
+          totalOrders: 0,
+          attributedRevenue: 0,
+          attributedOrders: 0,
+          unattributedOrders: 0,
+          unattributedRevenue: 0,
+          attributionModel: fallbackAttributionModel,
+          allTime: false,
+          startDate: fallbackStart.toISOString(),
+          endDate: now.toISOString(),
+          recentLimit: fallbackRecentLimit,
+          totalSessions: 0,
+          conversionRate: 0,
+          pageViews: 0,
+          viewItem: 0,
+          addToCart: 0,
+          beginCheckout: 0,
+          purchaseEvents: 0,
+          purchaseEventsRaw: 0,
+          purchaseOrders: 0,
+          totalEvents: 0,
+        },
+        dataQuality: {
+          revenueSource: 'events',
+          fallbackActive: true,
+          snapshotUpdatedAt: null,
+        },
+        integrationHealth: {
+          meta: { connected: false, status: 'DISCONNECTED', updatedAt: null },
+          google: { connected: false, status: 'DISCONNECTED', updatedAt: null },
+          tiktok: { connected: false, status: 'DISCONNECTED', updatedAt: null },
+        },
+        paidMedia: {
+          linked: false,
+          available: false,
+          reason: 'database_unreachable',
+          meta: { hasSnapshot: false, spend: null, revenue: null, clicks: null },
+          google: { hasSnapshot: false, spend: null, revenue: null, clicks: null },
+          blended: { spend: 0, revenue: 0, roas: null, currency: null },
+        },
+        events: {
+          page_view: 0,
+          view_item: 0,
+          add_to_cart: 0,
+          begin_checkout: 0,
+          purchase: 0,
+          other: 0,
+          total: 0,
+        },
+        pixelHealth: {
+          eventsReceived: 0,
+          purchaseSignals: 0,
+          orders: 0,
+          matchedOrders: 0,
+          orderMatchRate: 0,
+          purchaseSignalCoverage: 0,
+        },
+        channels: {
+          meta: { revenue: 0, orders: 0 },
+          google: { revenue: 0, orders: 0 },
+          tiktok: { revenue: 0, orders: 0 },
+          organic: { revenue: 0, orders: 0 },
+          other: { revenue: 0, orders: 0 },
+          unattributed: { revenue: 0, orders: 0 },
+        },
+        topProducts: [],
+        recentPurchases: [],
+        daily: [],
+        accountId: account_id,
+      });
+    }
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
@@ -1922,18 +3279,69 @@ function normalizeCustomerDisplayName(value) {
   return normalized;
 }
 
+function firstTruthyString(candidates = []) {
+  for (const value of candidates) {
+    const normalized = normalizeCustomerDisplayName(value);
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function normalizeWooCustomerId(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return null;
+  if (['unknown', 'undefined', 'null', 'n/a', 'none', '-'].includes(normalized.toLowerCase())) return null;
+  return normalized;
+}
+
 function extractOrderCustomerDisplayName(attributionSnapshot) {
   const snapshot = attributionSnapshot && typeof attributionSnapshot === 'object'
     ? attributionSnapshot
     : {};
 
-  return normalizeCustomerDisplayName(
-    snapshot.customer_name
-    || snapshot.customer_display_name
-    || snapshot.display_name
-    || [snapshot.customer_first_name, snapshot.customer_last_name].filter(Boolean).join(' ')
-    || [snapshot.billing_first_name, snapshot.billing_last_name].filter(Boolean).join(' ')
-    || snapshot.billing_company
+  const customer = snapshot.customer && typeof snapshot.customer === 'object' ? snapshot.customer : {};
+  const billing = snapshot.billing && typeof snapshot.billing === 'object' ? snapshot.billing : {};
+  const shipping = snapshot.shipping && typeof snapshot.shipping === 'object' ? snapshot.shipping : {};
+
+  return firstTruthyString([
+    snapshot.customer_name,
+    snapshot.customer_display_name,
+    snapshot.display_name,
+    snapshot.customerName,
+    snapshot.customerDisplayName,
+    snapshot.displayName,
+    [snapshot.customer_first_name, snapshot.customer_last_name].filter(Boolean).join(' '),
+    [snapshot.customerFirstName, snapshot.customerLastName].filter(Boolean).join(' '),
+    [snapshot.billing_first_name, snapshot.billing_last_name].filter(Boolean).join(' '),
+    [snapshot.billingFirstName, snapshot.billingLastName].filter(Boolean).join(' '),
+    [customer.first_name, customer.last_name].filter(Boolean).join(' '),
+    [customer.firstName, customer.lastName].filter(Boolean).join(' '),
+    customer.name,
+    customer.display_name,
+    customer.displayName,
+    [billing.first_name, billing.last_name].filter(Boolean).join(' '),
+    [billing.firstName, billing.lastName].filter(Boolean).join(' '),
+    billing.company,
+    [shipping.first_name, shipping.last_name].filter(Boolean).join(' '),
+    [shipping.firstName, shipping.lastName].filter(Boolean).join(' '),
+    shipping.company,
+    snapshot.billing_company,
+    snapshot.billingCompany,
+  ]);
+}
+
+function extractOrderCustomerId(attributionSnapshot) {
+  const snapshot = attributionSnapshot && typeof attributionSnapshot === 'object'
+    ? attributionSnapshot
+    : {};
+  const customer = snapshot.customer && typeof snapshot.customer === 'object' ? snapshot.customer : {};
+
+  return normalizeWooCustomerId(
+    snapshot.customer_id
+    || snapshot.customerId
+    || customer.id
+    || customer.customer_id
+    || customer.customerId
   );
 }
 
@@ -1942,33 +3350,64 @@ function extractEventIdentity(rawPayload) {
     ? rawPayload
     : {};
 
-  const email = String(payload.email || payload.customer_email || '').trim().toLowerCase();
-  const phone = String(payload.phone || payload.customer_phone || '').trim();
+  const customer = payload.customer && typeof payload.customer === 'object' ? payload.customer : {};
+  const billing = payload.billing && typeof payload.billing === 'object' ? payload.billing : {};
+  const userData = payload.user_data && typeof payload.user_data === 'object' ? payload.user_data : {};
+
+  const emailCandidate = payload.email || payload.customer_email || billing.email || customer.email || userData.email || '';
+    const email = String(emailCandidate).trim().toLowerCase();
+    const phoneCandidate = payload.phone || payload.customer_phone || billing.phone || customer.phone || userData.phone || '';
+    const phone = String(phoneCandidate).trim();
 
   return {
-    customerId: String(payload.customer_id || payload.customerId || '').trim() || null,
+    customerId: normalizeWooCustomerId(
+      payload.customer_id
+      || payload.customerId
+      || customer.id
+      || customer.customer_id
+      || customer.customerId
+      || userData.customer_id
+      || userData.customerId
+    ),
     emailHash: email ? hashPII(email) : null,
     phoneHash: phone ? hashPII(phone) : null,
     emailPreview: email || null,
     phonePreview: phone || null,
-    customerDisplayName: normalizeCustomerDisplayName(
-      payload.customer_name
-      || payload.customer_display_name
-      || [payload.customer_first_name, payload.customer_last_name].filter(Boolean).join(' ')
-      || payload.billing_company
-    ),
+    customerDisplayName: firstTruthyString([
+      payload.customer_name,
+      payload.customer_display_name,
+      payload.customerName,
+      payload.customerDisplayName,
+      payload.display_name,
+      payload.displayName,
+      [payload.customer_first_name, payload.customer_last_name].filter(Boolean).join(' '),
+      [payload.customerFirstName, payload.customerLastName].filter(Boolean).join(' '),
+      [payload.first_name, payload.last_name].filter(Boolean).join(' '),
+      [payload.firstName, payload.lastName].filter(Boolean).join(' '),
+      [customer.first_name, customer.last_name].filter(Boolean).join(' '),
+      [customer.firstName, customer.lastName].filter(Boolean).join(' '),
+      customer.name,
+      customer.display_name,
+      customer.displayName,
+      [billing.first_name, billing.last_name].filter(Boolean).join(' '),
+      [billing.firstName, billing.lastName].filter(Boolean).join(' '),
+      billing.company,
+      payload.billing_company,
+      payload.billingCompany,
+    ]),
   };
 }
 
 function buildIdentityProfileDescriptor({ customerId, emailHash, phoneHash, userKey, customerDisplayName }) {
+  const normalizedCustomerId = normalizeWooCustomerId(customerId);
   const normalizedCustomerDisplayName = normalizeCustomerDisplayName(customerDisplayName);
 
-  if (customerId) {
+  if (normalizedCustomerId) {
     return {
-      profileKey: `customer:${customerId}`,
+      profileKey: `customer:${normalizedCustomerId}`,
       profileType: 'woocommerce_customer',
       customerDisplayName: normalizedCustomerDisplayName,
-      profileLabel: normalizedCustomerDisplayName ? `${normalizedCustomerDisplayName} · Woo #${customerId}` : `Woo customer #${customerId}`,
+      profileLabel: normalizedCustomerDisplayName ? `${normalizedCustomerDisplayName} · Woo #${normalizedCustomerId}` : `Woo customer #${normalizedCustomerId}`,
     };
   }
 
@@ -2041,7 +3480,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
         currency: true,
         createdAt: true,
         platformCreatedAt: true,
-        attributedChannel: true,
+        attributedChannel: true
       },
       orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
       take: 100,
@@ -2147,7 +3586,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
           currency: true,
           createdAt: true,
           platformCreatedAt: true,
-          attributedChannel: true,
+          attributedChannel: true
         },
         orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
         take: 250,
@@ -2155,7 +3594,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
     : [];
 
   const resolvedCustomerDisplayName = historicalOrders
-    .map((order) => extractOrderCustomerDisplayName(order.attributionSnapshot))
+    .map((order) => extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload))
     .find(Boolean)
     || latestIdentitySignal?.customerDisplayName
     || null;
@@ -2193,14 +3632,27 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
     const { account_id } = req.params;
     const windowMinutes = Math.max(5, Math.min(180, Number.parseInt(String(req.query.window_minutes || '30'), 10) || 30));
     const limit = Math.max(5, Math.min(50, Number.parseInt(String(req.query.limit || '20'), 10) || 20));
+    const wpUsersCacheKey = buildRouteCacheKey('wordpress-users-online', req);
+    const cachedWpUsers = readRouteCache(wpUsersCacheKey);
+    if (cachedWpUsers) {
+      return res.json({
+        ...cachedWpUsers,
+        cache: { hit: true, ttlMs: 2500 },
+      });
+    }
     const since = new Date(Date.now() - windowMinutes * 60 * 1000);
     const loginAliases = EVENT_BUCKET_ALIASES.login.map((name) => normalizeEventName(name));
     const logoutAliases = EVENT_BUCKET_ALIASES.logout.map((name) => normalizeEventName(name));
+
+    // Optimización crítica: Solo traer eventos de auth en la Query de base de datos para no desbordar la memoria (OOM)
+    // porque rawPayload puede ser inmenso en eventos tipo 'purchase' o 'page_view'.
+    const targetEventNames = [...EVENT_BUCKET_ALIASES.login, ...EVENT_BUCKET_ALIASES.logout];
 
     const recentEvents = await prisma.event.findMany({
       where: {
         accountId: account_id,
         createdAt: { gte: since },
+        eventName: { in: targetEventNames }
       },
       select: {
         eventName: true,
@@ -2210,7 +3662,7 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
         rawPayload: true,
       },
       orderBy: { createdAt: 'desc' },
-      take: 500,
+      take: 200,
     });
 
     const woocommerceEvents = recentEvents.filter((event) => {
@@ -2313,16 +3765,21 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
       userMap.set(dedupKey, existing);
     }
 
+    const sanitizeStr = (str, len = 70) => {
+      if (!str || typeof str !== 'string') return null;
+      return str.length > len ? str.substring(0, len) + '...' : str.trim();
+    };
+
     const users = Array.from(userMap.values())
       .filter((item) => item.lastAuthState !== 'logout')
       .map((item) => ({
-        id: item.id,
-        customerId: item.customerId,
-        customerName: item.customerName,
-        emailPreview: item.emailPreview,
-        phonePreview: item.phonePreview,
+        id: sanitizeStr(item.id, 100),
+        customerId: sanitizeStr(item.customerId, 50),
+        customerName: sanitizeStr(item.customerName, 80),
+        emailPreview: sanitizeStr(item.emailPreview, 80),
+        phonePreview: sanitizeStr(item.phonePreview, 50),
         sessionCount: item.sessionIds.size,
-        sessionIds: Array.from(item.sessionIds),
+        sessionIds: Array.from(item.sessionIds).slice(0, 5), // Only return max 5 sessions to keep JSON small
         lastLoginAt: item.lastLoginAt ? item.lastLoginAt.toISOString() : null,
         lastLogoutAt: item.lastLogoutAt ? item.lastLogoutAt.toISOString() : null,
         lastSeenAt: item.lastSeenAt ? item.lastSeenAt.toISOString() : null,
@@ -2335,7 +3792,7 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
       })
       .slice(0, limit);
 
-    return res.json({
+    const responsePayload = {
       success: true,
       accountId: account_id,
       windowMinutes,
@@ -2344,17 +3801,36 @@ router.get('/:account_id/wordpress-users-online', async (req, res) => {
       message: users.length
         ? `Se detectaron ${users.length} usuarios WordPress activos en la ventana reciente.`
         : 'No se detectaron usuarios WordPress conectados en la ventana reciente.',
-    });
+    };
+
+    writeRouteCache(wpUsersCacheKey, responsePayload, 2500);
+    return res.json(responsePayload);
   } catch (error) {
     console.error('[Analytics API] WordPress users online error:', error);
-    return res.status(500).json({ error: 'Internal Server Error' });
+    return res.json({
+      success: true,
+      accountId: req.params.account_id,
+      windowMinutes: Math.max(5, Math.min(180, Number.parseInt(String(req.query.window_minutes || '30'), 10) || 30)),
+      users: [],
+      totalUsers: 0,
+      degraded: true,
+      message: 'WordPress online users temporarily unavailable; returning empty list.',
+    });
   }
 });
 
 router.get('/:account_id/session-explorer', async (req, res) => {
   try {
     const { account_id } = req.params;
-    const limit = Math.max(5, Math.min(30, Number.parseInt(String(req.query.limit || '12'), 10) || 12));
+    const limit = Math.max(5, Math.min(500, Number.parseInt(String(req.query.limit || '120'), 10) || 120));
+    const sessionExplorerCacheKey = buildRouteCacheKey('session-explorer', req);
+    const cachedSessionExplorer = readRouteCache(sessionExplorerCacheKey);
+    if (cachedSessionExplorer) {
+      return res.json({
+        ...cachedSessionExplorer,
+        cache: { hit: true, ttlMs: 120000 },
+      });
+    }
 
     const accountRecord = await prisma.account.findUnique({
       where: { accountId: account_id },
@@ -2395,10 +3871,9 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           revenue: true,
           currency: true,
           lineItems: true,
-          attributionSnapshot: true,
           createdAt: true,
           platformCreatedAt: true,
-          attributedChannel: true,
+          attributedChannel: true
         },
         orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
         take: 250,
@@ -2497,7 +3972,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
             currency: true,
             createdAt: true,
             platformCreatedAt: true,
-            attributedChannel: true,
+            attributedChannel: true
           },
           orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
           take: 400,
@@ -2562,7 +4037,8 @@ router.get('/:account_id/session-explorer', async (req, res) => {
     const orderSignalBySessionId = new Map();
     historicalOrders.forEach((order) => {
       const resolvedUserKey = order.userKey || checkoutByToken.get(order.checkoutToken || '')?.userKey || null;
-      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot);
+      const identity = resolvedUserKey ? (identityByUserKey.get(resolvedUserKey) || {}) : {};
+      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload) || identity.customerDisplayName || null;
       const signal = {
         customerId: order.customerId || null,
         emailHash: order.emailHash || null,
@@ -2603,7 +4079,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
     historicalOrders.forEach((order) => {
       const bridgedUserKey = order.userKey || checkoutByToken.get(order.checkoutToken || '')?.userKey || null;
       const identity = bridgedUserKey ? (identityByUserKey.get(bridgedUserKey) || {}) : {};
-      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot);
+      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload) || identity.customerDisplayName || null;
       const descriptor = buildIdentityProfileDescriptor({
         customerId: order.customerId || identity.customerId || null,
         emailHash: order.emailHash || identity.emailHash || null,
@@ -2736,7 +4212,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
       resolvedCustomerNames: hydratedProfiles.filter((item) => item.profileType === 'woocommerce_customer' && item.customerDisplayName).length,
     });
 
-    res.json({
+    const responsePayload = {
       summary: {
         storePlatform,
         totalProfiles: hydratedProfiles.length,
@@ -2747,10 +4223,297 @@ router.get('/:account_id/session-explorer', async (req, res) => {
         shopifyNameLookupActive: Boolean(shopifyContext?.shop && shopifyContext?.accessToken),
       },
       profiles: serializedProfiles,
-    });
+    };
+
+    writeRouteCache(sessionExplorerCacheKey, responsePayload, 10000);
+    res.json(responsePayload);
   } catch (error) {
     console.error('[Analytics API] Session explorer overview error:', error);
+    if (isDatabaseConnectivityError(error)) {
+      return res.json({
+        degraded: true,
+        degradedReason: 'database_unreachable',
+        summary: {
+          storePlatform: 'CUSTOM',
+          totalProfiles: 0,
+          totalSessions: 0,
+          totalOrders: 0,
+          totalRevenue: 0,
+          resolvedCustomerNames: 0,
+          shopifyNameLookupActive: false,
+        },
+        profiles: [],
+      });
+    }
     res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+/**
+ * GET /api/analytics/:account_id/data-coverage
+ * Audits Phase 1 data coverage (datos-pixel.md) for a given account.
+ */
+router.get('/:account_id/data-coverage', async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const days = Math.max(1, Math.min(90, Number.parseInt(String(req.query.days || '30'), 10) || 30));
+    const since = subDays(new Date(), days);
+    const warnings = [];
+
+    const isSchemaDriftError = (error) => {
+      if (!error) return false;
+      if (error.code === 'P2022') return true;
+      const msg = String(error.message || '').toLowerCase();
+      return msg.includes('does not exist') || (msg.includes('column') && msg.includes('exist'));
+    };
+
+    const safeCount = async (label, queryBuilder) => {
+      try {
+        return await queryBuilder();
+      } catch (error) {
+        if (isSchemaDriftError(error)) {
+          warnings.push({ label, error: String(error?.message || error) });
+          return 0;
+        }
+        throw error;
+      }
+    };
+
+    const safeFindUnique = async (label, queryBuilder, fallback = null) => {
+      try {
+        return await queryBuilder();
+      } catch (error) {
+        if (isSchemaDriftError(error)) {
+          warnings.push({ label, error: String(error?.message || error) });
+          return fallback;
+        }
+        throw error;
+      }
+    };
+
+    const safeFindMany = async (label, queryBuilder, fallback = []) => {
+      try {
+        return await queryBuilder();
+      } catch (error) {
+        if (isSchemaDriftError(error)) {
+          warnings.push({ label, error: String(error?.message || error) });
+          return fallback;
+        }
+        throw error;
+      }
+    };
+
+    const eventBaseWhere = {
+      accountId: account_id,
+      createdAt: { gte: since },
+    };
+
+    const sessionBaseWhere = {
+      accountId: account_id,
+      startedAt: { gte: since },
+    };
+
+    const orderBaseWhere = {
+      accountId: account_id,
+      OR: [
+        { createdAt: { gte: since } },
+        { platformCreatedAt: { gte: since } },
+      ],
+    };
+
+    const [
+      totalEvents,
+      totalSessions,
+      totalOrders,
+      totalIdentity,
+      totalCheckoutMaps,
+      eventsRawSource,
+      eventsMatchType,
+      eventsConfidence,
+      eventsCollectedAt,
+      sessionsUtmSource,
+      sessionsUtmMedium,
+      sessionsUtmCampaign,
+      sessionsLanding,
+      sessionsReferrer,
+      sessionsIpHash,
+      sessionsGa4Source,
+      sessionsEndAt,
+      sessionsFbclid,
+      sessionsGclid,
+      sessionsTtclid,
+      identityFingerprint,
+      identityEmail,
+      identityPhone,
+      identityCustomer,
+      ordersCheckoutToken,
+      ordersCustomer,
+      ordersEmail,
+      ordersPhone,
+      ordersRefund,
+      ordersChargeback,
+      ordersCountStamped,
+      ordersPlatformCreated,
+      accountRecord,
+      platformConnections,
+    ] = await Promise.all([
+      safeCount('events.total', () => prisma.event.count({ where: eventBaseWhere })),
+      safeCount('sessions.total', () => prisma.session.count({ where: sessionBaseWhere })),
+      safeCount('orders.total', () => prisma.order.count({ where: orderBaseWhere })),
+      safeCount('identity.total', () => prisma.identityGraph.count({ where: { accountId: account_id } })),
+      safeCount('checkout_map.total', () => prisma.checkoutSessionMap.count({ where: { accountId: account_id, createdAt: { gte: since } } })),
+
+      safeCount('events.raw_source', () => prisma.event.count({ where: { ...eventBaseWhere, rawSource: { not: null } } })),
+      safeCount('events.match_type', () => prisma.event.count({ where: { ...eventBaseWhere, matchType: { not: null } } })),
+      safeCount('events.confidence_score', () => prisma.event.count({ where: { ...eventBaseWhere, confidenceScore: { not: null } } })),
+      safeCount('events.collected_at', () => prisma.event.count({ where: { ...eventBaseWhere, collectedAt: { not: null } } })),
+
+      safeCount('sessions.utm_source', () => prisma.session.count({ where: { ...sessionBaseWhere, utmSource: { not: null } } })),
+      safeCount('sessions.utm_medium', () => prisma.session.count({ where: { ...sessionBaseWhere, utmMedium: { not: null } } })),
+      safeCount('sessions.utm_campaign', () => prisma.session.count({ where: { ...sessionBaseWhere, utmCampaign: { not: null } } })),
+      safeCount('sessions.landing_page', () => prisma.session.count({ where: { ...sessionBaseWhere, landingPageUrl: { not: null } } })),
+      safeCount('sessions.referrer', () => prisma.session.count({ where: { ...sessionBaseWhere, referrer: { not: null } } })),
+      safeCount('sessions.ip_hash', () => prisma.session.count({ where: { ...sessionBaseWhere, ipHash: { not: null } } })),
+      safeCount('sessions.ga4_session_source', () => prisma.session.count({ where: { ...sessionBaseWhere, ga4SessionSource: { not: null } } })),
+      safeCount('sessions.session_end_at', () => prisma.session.count({ where: { ...sessionBaseWhere, sessionEndAt: { not: null } } })),
+      safeCount('sessions.fbclid', () => prisma.session.count({ where: { ...sessionBaseWhere, fbclid: { not: null } } })),
+      safeCount('sessions.gclid', () => prisma.session.count({ where: { ...sessionBaseWhere, gclid: { not: null } } })),
+      safeCount('sessions.ttclid', () => prisma.session.count({ where: { ...sessionBaseWhere, ttclid: { not: null } } })),
+
+      safeCount('identity.fingerprint_hash', () => prisma.identityGraph.count({ where: { accountId: account_id, fingerprintHash: { not: null } } })),
+      safeCount('identity.email_hash', () => prisma.identityGraph.count({ where: { accountId: account_id, emailHash: { not: null } } })),
+      safeCount('identity.phone_hash', () => prisma.identityGraph.count({ where: { accountId: account_id, phoneHash: { not: null } } })),
+      safeCount('identity.customer_id', () => prisma.identityGraph.count({ where: { accountId: account_id, customerId: { not: null } } })),
+
+      safeCount('orders.checkout_token', () => prisma.order.count({ where: { ...orderBaseWhere, checkoutToken: { not: null } } })),
+      safeCount('orders.customer_id', () => prisma.order.count({ where: { ...orderBaseWhere, customerId: { not: null } } })),
+      safeCount('orders.email_hash', () => prisma.order.count({ where: { ...orderBaseWhere, emailHash: { not: null } } })),
+      safeCount('orders.phone_hash', () => prisma.order.count({ where: { ...orderBaseWhere, phoneHash: { not: null } } })),
+      safeCount('orders.refund_amount', () => prisma.order.count({ where: { ...orderBaseWhere, refundAmount: { gt: 0 } } })),
+      safeCount('orders.chargeback_flag', () => prisma.order.count({ where: { ...orderBaseWhere, chargebackFlag: true } })),
+      safeCount('orders.orders_count', () => prisma.order.count({ where: { ...orderBaseWhere, ordersCount: { not: null } } })),
+      safeCount('orders.created_at', () => prisma.order.count({ where: orderBaseWhere })),
+
+      safeFindUnique('account.domain', () => prisma.account.findUnique({ where: { accountId: account_id }, select: { domain: true } }), null),
+      safeFindMany('platform_connections.list', () => prisma.platformConnection.findMany({ where: { accountId: account_id }, select: { platform: true, status: true, adAccountId: true } }), []),
+    ]);
+
+    const paidMedia = await buildPaidMediaSummary({
+      accountId: account_id,
+      domain: accountRecord?.domain || account_id,
+      platformConnections,
+      fallbackUserId: req.user?._id || req.user?.id || null,
+      startDate: since,
+      endDate: new Date(),
+    });
+
+    const isOk = (value) => value > 0;
+    const ratio = (value, total) => (total > 0 ? Number((value / total).toFixed(4)) : null);
+
+    const layers = {
+      layer1_identity_anchors: {
+        user_key: { ok: totalEvents > 0 || totalSessions > 0, sampleCount: Math.max(totalEvents, totalSessions) },
+        email_hash: { ok: isOk(identityEmail) || isOk(ordersEmail), identityCount: identityEmail, orderCount: ordersEmail },
+        phone_hash: { ok: isOk(identityPhone) || isOk(ordersPhone), identityCount: identityPhone, orderCount: ordersPhone },
+        customer_id: { ok: isOk(identityCustomer) || isOk(ordersCustomer), identityCount: identityCustomer, orderCount: ordersCustomer },
+      },
+      layer2_session_events: {
+        session_id: { ok: totalSessions > 0, count: totalSessions },
+        utm_source: { ok: isOk(sessionsUtmSource), count: sessionsUtmSource, ratio: ratio(sessionsUtmSource, totalSessions) },
+        utm_medium: { ok: isOk(sessionsUtmMedium), count: sessionsUtmMedium, ratio: ratio(sessionsUtmMedium, totalSessions) },
+        utm_campaign: { ok: isOk(sessionsUtmCampaign), count: sessionsUtmCampaign, ratio: ratio(sessionsUtmCampaign, totalSessions) },
+        fingerprint_hash: { ok: isOk(identityFingerprint), count: identityFingerprint, ratio: ratio(identityFingerprint, totalIdentity) },
+        ip_hash: { ok: isOk(sessionsIpHash), count: sessionsIpHash, ratio: ratio(sessionsIpHash, totalSessions) },
+        page_events: { ok: totalEvents > 0, count: totalEvents, note: 'Stored as event rows in events table.' },
+        session_start_at: { ok: totalSessions > 0, count: totalSessions },
+        session_end_at: { ok: isOk(sessionsEndAt), count: sessionsEndAt, ratio: ratio(sessionsEndAt, totalSessions) },
+      },
+      layer3_touchpoints_click_ids: {
+        fbclid: { ok: isOk(sessionsFbclid), count: sessionsFbclid },
+        gclid: { ok: isOk(sessionsGclid), count: sessionsGclid },
+        ttclid: { ok: isOk(sessionsTtclid), count: sessionsTtclid },
+        event_id: { ok: totalEvents > 0, count: totalEvents },
+        landing_page: { ok: isOk(sessionsLanding), count: sessionsLanding, ratio: ratio(sessionsLanding, totalSessions) },
+        referrer: { ok: isOk(sessionsReferrer), count: sessionsReferrer, ratio: ratio(sessionsReferrer, totalSessions) },
+      },
+      layer4_order_truth: {
+        order_id: { ok: totalOrders > 0, count: totalOrders },
+        gross_revenue: { ok: totalOrders > 0, count: totalOrders },
+        refund_amount: { ok: totalOrders > 0, withRefunds: ordersRefund, note: 'Can be zero for most orders.' },
+        chargeback_flag: { ok: totalOrders > 0, withChargeback: ordersChargeback, note: 'May remain zero if disputes are absent.' },
+        orders_count: { ok: isOk(ordersCountStamped), count: ordersCountStamped, ratio: ratio(ordersCountStamped, totalOrders) },
+        checkout_token: { ok: isOk(ordersCheckoutToken) || totalCheckoutMaps > 0, orderCount: ordersCheckoutToken, mapCount: totalCheckoutMaps },
+        customer_id: { ok: isOk(ordersCustomer), count: ordersCustomer, ratio: ratio(ordersCustomer, totalOrders) },
+        created_at: { ok: isOk(ordersPlatformCreated), count: ordersPlatformCreated, ratio: ratio(ordersPlatformCreated, totalOrders) },
+      },
+      layer5_platform_signals_daily_pull: {
+        meta_spend: { ok: Boolean(paidMedia?.meta?.hasSnapshot), value: paidMedia?.meta?.spend ?? null },
+        meta_impressions: { ok: false, note: 'Not exposed as canonical field in this API yet.' },
+        meta_reported_conv_value: { ok: Boolean(paidMedia?.meta?.hasSnapshot), value: paidMedia?.meta?.revenue ?? null },
+        google_spend: { ok: Boolean(paidMedia?.google?.hasSnapshot), value: paidMedia?.google?.spend ?? null },
+        google_clicks: { ok: Boolean(paidMedia?.google?.hasSnapshot), value: paidMedia?.google?.clicks ?? null },
+        ga4_session_source: { ok: isOk(sessionsGa4Source), count: sessionsGa4Source, ratio: ratio(sessionsGa4Source, totalSessions) },
+      },
+      layer6_raw_enrichment_every_event: {
+        confidence_score: { ok: isOk(eventsConfidence), count: eventsConfidence, ratio: ratio(eventsConfidence, totalEvents) },
+        match_type: { ok: isOk(eventsMatchType), count: eventsMatchType, ratio: ratio(eventsMatchType, totalEvents) },
+        raw_source: { ok: isOk(eventsRawSource), count: eventsRawSource, ratio: ratio(eventsRawSource, totalEvents) },
+        collected_at: { ok: isOk(eventsCollectedAt), count: eventsCollectedAt, ratio: ratio(eventsCollectedAt, totalEvents) },
+      },
+      critical_stitch: {
+        checkout_token_to_session_id: {
+          ok: totalCheckoutMaps > 0,
+          count: totalCheckoutMaps,
+          note: 'Stored in checkout_session_map and enriched from collect/checkouts-create webhooks.',
+        },
+      },
+    };
+
+    const missing = [];
+    Object.entries(layers).forEach(([layerName, fields]) => {
+      Object.entries(fields).forEach(([fieldName, state]) => {
+        if (state && state.ok === false) {
+          missing.push(`${layerName}.${fieldName}`);
+        }
+      });
+    });
+
+    return res.json({
+      success: true,
+      accountId: account_id,
+      windowDays: days,
+      since: since.toISOString(),
+      warnings,
+      totals: {
+        events: totalEvents,
+        sessions: totalSessions,
+        orders: totalOrders,
+        identities: totalIdentity,
+        checkoutMaps: totalCheckoutMaps,
+      },
+      layers,
+      missing,
+    });
+  } catch (error) {
+    console.error('[Analytics API] data-coverage error:', error);
+    return res.status(200).json({
+      success: false,
+      degraded: true,
+      error: 'Data coverage failed, returned degraded response',
+      details: String(error?.message || error),
+      accountId: req.params?.account_id || null,
+      windowDays: Number.parseInt(String(req.query?.days || '30'), 10) || 30,
+      totals: {
+        events: 0,
+        sessions: 0,
+        orders: 0,
+        identities: 0,
+        checkoutMaps: 0,
+      },
+      layers: {},
+      missing: [],
+      warnings: [{ label: 'data_coverage.endpoint', error: String(error?.message || error) }],
+    });
   }
 });
 
@@ -2766,6 +4529,8 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         userKey: true,
         startedAt: true,
         lastEventAt: true,
+        sessionEndAt: true,
+        ga4SessionSource: true,
         utmSource: true,
         utmMedium: true,
         utmCampaign: true,
@@ -2773,6 +4538,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         utmTerm: true,
         referrer: true,
         landingPageUrl: true,
+        ipHash: true,
         fbclid: true,
         gclid: true,
         ttclid: true,
@@ -2792,6 +4558,11 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
           eventId: true,
           eventName: true,
           createdAt: true,
+          collectedAt: true,
+          rawSource: true,
+          matchType: true,
+          confidenceScore: true,
+          ipHash: true,
           pageUrl: true,
           pageType: true,
           productId: true,
@@ -2817,7 +4588,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
           createdAt: true,
           platformCreatedAt: true,
           attributedChannel: true,
-          attributionSnapshot: true,
+          attributionSnapshot: true
         },
         orderBy: { createdAt: 'desc' },
       }),
@@ -2959,6 +4730,11 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         eventName: event.eventName,
         bucket,
         createdAt: event.createdAt,
+        collectedAt: event.collectedAt || null,
+        rawSource: event.rawSource || null,
+        matchType: event.matchType || null,
+        confidenceScore: event.confidenceScore,
+        ipHash: event.ipHash || null,
         pageUrl: event.pageUrl,
         pageType: event.pageType,
         productId: event.productId,
@@ -3031,6 +4807,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
     res.json({
       session: {
         ...session,
+        sessionEndAt: session.sessionEndAt || session.lastEventAt || null,
         sessionDurationSeconds,
       },
       metrics,
@@ -3107,41 +4884,110 @@ router.get('/:account_id/users/:userKey/timeline', async (req, res) => {
   try {
     const { account_id, userKey } = req.params;
 
-    // Fetch user identity data
-    const identity = await prisma.identityGraph.findFirst({
+    const seedIdentityRows = await prisma.identityGraph.findMany({
       where: { accountId: account_id, userKey },
       select: {
-        fbp: true,
-        fbc: true,
+        userKey: true,
+        customerId: true,
         emailHash: true,
         phoneHash: true,
-        fingerprintHash: true,
-        firstSeenAt: true,
-        lastSeenAt: true,
-        deviceCount: true,
-        confidenceScore: true,
       },
-      orderBy: { lastSeenAt: 'desc' }
     });
 
-    // Fetch all sessions for this user
-    const sessions = await prisma.session.findMany({
-      where: { accountId: account_id, userKey },
-      orderBy: { startedAt: 'desc' }
+    const seedUserKeys = collectUniqueStrings([userKey, ...seedIdentityRows.map((row) => row.userKey)]);
+    const seedCustomerIds = collectUniqueStrings(seedIdentityRows.map((row) => row.customerId));
+    const seedEmailHashes = collectUniqueStrings(seedIdentityRows.map((row) => row.emailHash));
+    const seedPhoneHashes = collectUniqueStrings(seedIdentityRows.map((row) => row.phoneHash));
+
+    const sharedIdentityClauses = buildIdentityOrClauses({
+      userKeys: seedUserKeys,
+      customerIds: seedCustomerIds,
+      emailHashes: seedEmailHashes,
+      phoneHashes: seedPhoneHashes,
     });
 
-    // Fetch all events for this user (max 1000 to prevent overload)
-    const events = await prisma.event.findMany({
-      where: { accountId: account_id, userKey },
-      orderBy: { createdAt: 'desc' },
-      take: 1000
+    const sharedIdentityRows = sharedIdentityClauses.length
+      ? await prisma.identityGraph.findMany({
+          where: {
+            accountId: account_id,
+            OR: sharedIdentityClauses,
+          },
+          select: {
+            userKey: true,
+            customerId: true,
+            emailHash: true,
+            phoneHash: true,
+            fbp: true,
+            fbc: true,
+            fingerprintHash: true,
+            firstSeenAt: true,
+            lastSeenAt: true,
+            deviceCount: true,
+            confidenceScore: true,
+          },
+        })
+      : [];
+
+    const finalUserKeys = collectUniqueStrings([
+      ...seedUserKeys,
+      ...sharedIdentityRows.map((row) => row.userKey),
+    ]);
+    const finalCustomerIds = collectUniqueStrings([
+      ...seedCustomerIds,
+      ...sharedIdentityRows.map((row) => row.customerId),
+    ]);
+    const finalEmailHashes = collectUniqueStrings([
+      ...seedEmailHashes,
+      ...sharedIdentityRows.map((row) => row.emailHash),
+    ]);
+    const finalPhoneHashes = collectUniqueStrings([
+      ...seedPhoneHashes,
+      ...sharedIdentityRows.map((row) => row.phoneHash),
+    ]);
+
+    const orderClauses = buildIdentityOrClauses({
+      userKeys: finalUserKeys,
+      customerIds: finalCustomerIds,
+      emailHashes: finalEmailHashes,
+      phoneHashes: finalPhoneHashes,
     });
 
-    // Fetch all orders for this user
-    const orders = await prisma.order.findMany({
-      where: { accountId: account_id, userKey },
-      orderBy: { createdAt: 'desc' }
-    });
+    const [sessions, events, orders] = await Promise.all([
+      finalUserKeys.length
+        ? prisma.session.findMany({
+            where: {
+              accountId: account_id,
+              userKey: { in: finalUserKeys },
+            },
+            orderBy: { startedAt: 'desc' },
+            take: 250,
+          })
+        : Promise.resolve([]),
+      finalUserKeys.length
+        ? prisma.event.findMany({
+            where: {
+              accountId: account_id,
+              userKey: { in: finalUserKeys },
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 2000,
+          })
+        : Promise.resolve([]),
+      orderClauses.length
+        ? prisma.order.findMany({
+            where: {
+              accountId: account_id,
+              OR: orderClauses,
+            },
+            orderBy: [{ platformCreatedAt: 'desc' }, { createdAt: 'desc' }],
+            take: 500,
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const identity = sharedIdentityRows
+      .slice()
+      .sort((a, b) => new Date(b.lastSeenAt || 0).getTime() - new Date(a.lastSeenAt || 0).getTime())[0] || null;
 
     // Since customer name might be in order's attributionSnapshot, let's try to extract it
     let customerName = null;
@@ -3149,24 +4995,70 @@ router.get('/:account_id/users/:userKey/timeline', async (req, res) => {
     let customerPhoneHash = identity?.phoneHash || null;
 
     for (const order of orders) {
-       if (!customerName && order.attributionSnapshot && order.attributionSnapshot.customer_name) {
-           customerName = order.attributionSnapshot.customer_name;
-       }
-       if (!customerName && order.attributionSnapshot && order.attributionSnapshot.customer_first_name) {
-           customerName = order.attributionSnapshot.customer_first_name + (order.attributionSnapshot.customer_last_name ? ' ' + order.attributionSnapshot.customer_last_name : '');
+       if (!customerName) {
+           customerName = extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload?.billing || {});
        }
        if (order.emailHash && !customerEmailHash) customerEmailHash = order.emailHash;
        if (order.phoneHash && !customerPhoneHash) customerPhoneHash = order.phoneHash;
     }
 
+    const profileDescriptor = buildIdentityProfileDescriptor({
+      customerId: finalCustomerIds[0] || null,
+      emailHash: finalEmailHashes[0] || null,
+      phoneHash: finalPhoneHashes[0] || null,
+      userKey: finalUserKeys[0] || userKey || null,
+      customerDisplayName: customerName,
+    });
+
+    const attributionStats = orders.reduce((acc, order) => {
+      const channel = normalizeChannelForStats(order?.attributedChannel || 'unattributed');
+      const revenue = Number(order?.revenue || 0);
+      if (!acc[channel]) acc[channel] = { orders: 0, revenue: 0 };
+      acc[channel].orders += 1;
+      acc[channel].revenue += revenue;
+      return acc;
+    }, {});
+
+    const eventMetrics = events.reduce((acc, event) => {
+      const bucket = resolveEventBucket(event.eventName);
+      acc.total += 1;
+      if (bucket === 'add_to_cart') acc.addToCart += 1;
+      if (bucket === 'begin_checkout') acc.beginCheckout += 1;
+      if (bucket === 'purchase') acc.purchaseEvents += 1;
+      return acc;
+    }, { total: 0, addToCart: 0, beginCheckout: 0, purchaseEvents: 0 });
+
+    const totalRevenue = orders.reduce((sum, order) => sum + Number(order.revenue || 0), 0);
+    const firstSeenAt = sessions.length ? sessions[sessions.length - 1].startedAt : (identity?.firstSeenAt || null);
+    const lastSeenAt = sessions[0]?.lastEventAt || sessions[0]?.startedAt || identity?.lastSeenAt || null;
+
     res.json({
       success: true,
       user: {
         userKey,
+        stitchedUserKeys: finalUserKeys,
+        stitchedCustomerIds: finalCustomerIds,
+        stitchedEmailHashes: finalEmailHashes,
+        stitchedPhoneHashes: finalPhoneHashes,
+        profileKey: profileDescriptor.profileKey,
+        profileType: profileDescriptor.profileType,
+        profileLabel: profileDescriptor.profileLabel,
         name: customerName,
         emailHash: customerEmailHash,
         phoneHash: customerPhoneHash,
-        identity
+        identity,
+      },
+      summary: {
+        firstSeenAt,
+        lastSeenAt,
+        totalSessions: sessions.length,
+        totalEvents: eventMetrics.total,
+        totalOrders: orders.length,
+        totalRevenue,
+        totalAddToCart: eventMetrics.addToCart,
+        totalBeginCheckout: eventMetrics.beginCheckout,
+        totalPurchaseEvents: eventMetrics.purchaseEvents,
+        attribution: attributionStats,
       },
       sessions,
       events,

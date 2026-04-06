@@ -3,7 +3,7 @@
  * Plugin Name: Adnova Pixel
  * Plugin URI: https://adnova.ai
  * Description: Instala automaticamente el pixel de Adnova en tu sitio WordPress y usa el dominio como Site ID.
- * Version: 1.1.7
+ * Version: 1.2.3
  * Author: Adnova
  * License: GPL-2.0-or-later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -15,7 +15,7 @@ if (!defined('ABSPATH')) {
 }
 
 final class Adnova_Pixel_Plugin {
-    const VERSION = '1.1.7';
+    const VERSION = '1.2.3';
     const OPTION_SCRIPT_URL = 'adnova_pixel_script_url';
     const OPTION_SITE_ID = 'adnova_pixel_site_id';
     const OPTION_BACKFILL_DONE = 'adnova_pixel_backfill_done';
@@ -28,7 +28,9 @@ final class Adnova_Pixel_Plugin {
     public static function init() {
         register_activation_hook(__FILE__, array(__CLASS__, 'on_activate'));
         add_action('wp_enqueue_scripts', array(__CLASS__, 'enqueue_pixel_script'), 100);
+        add_action('wp_footer', array(__CLASS__, 'ensure_pixel_fallback_tag'), 999);
         add_filter('script_loader_tag', array(__CLASS__, 'inject_script_attributes'), 10, 3);
+        // Enable auto-update infrastructure
         add_filter('pre_set_site_transient_update_plugins', array(__CLASS__, 'inject_plugin_update'));
         add_filter('plugins_api', array(__CLASS__, 'plugins_api_handler'), 10, 3);
         add_filter('auto_update_plugin', array(__CLASS__, 'enable_auto_update'), 10, 2);
@@ -36,15 +38,19 @@ final class Adnova_Pixel_Plugin {
         add_action('woocommerce_thankyou', array(__CLASS__, 'on_woo_order_received'), 10, 1);
         // Server-side order capture even when thank-you is not rendered in browser.
         add_action('woocommerce_payment_complete', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
+        add_action('woocommerce_checkout_order_processed', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         add_action('woocommerce_order_status_processing', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
         add_action('woocommerce_order_status_completed', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
+        add_action('woocommerce_order_status_on-hold', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
+        add_action('woocommerce_order_status_refunded', array(__CLASS__, 'on_woo_order_server_side'), 10, 1);
+        add_action('woocommerce_order_refunded', array(__CLASS__, 'on_woo_order_refunded'), 10, 2);
         add_action('woocommerce_checkout_update_order_meta', array(__CLASS__, 'save_pixel_cookies_to_order'), 10, 1);
         add_action('wp_login', array(__CLASS__, 'track_wp_login_event'), 10, 2);
         add_action('wp_logout', array(__CLASS__, 'track_wp_logout_event'));
         add_action('wp_footer', array(__CLASS__, 'inject_logged_in_customer_context'), 20);
         // Fallback for custom checkout flows/themes where woocommerce_thankyou is bypassed.
         add_action('wp_footer', array(__CLASS__, 'maybe_track_woo_order_received_fallback'), 1000);
-        add_action('adnova_pixel_backfill_orders', array(__CLASS__, 'backfill_recent_orders'));
+        add_action('adnova_pixel_backfill_orders', array(__CLASS__, 'backfill_recent_orders'), 10, 1);
         self::maybe_schedule_backfill();
     }
 
@@ -60,7 +66,7 @@ final class Adnova_Pixel_Plugin {
         self::send_activation_ping();
 
         if (!wp_next_scheduled('adnova_pixel_backfill_orders')) {
-            wp_schedule_single_event(time() + 30, 'adnova_pixel_backfill_orders');
+            wp_schedule_single_event(time() + 30, 'adnova_pixel_backfill_orders', array(1));
         }
 
         delete_site_transient('update_plugins');
@@ -71,14 +77,34 @@ final class Adnova_Pixel_Plugin {
             return;
         }
 
-        $done_version = get_option(self::OPTION_BACKFILL_DONE, '');
-        if ($done_version === self::VERSION) {
+        $done_marker = get_option(self::OPTION_BACKFILL_DONE, '');
+        if ($done_marker === self::get_backfill_marker()) {
             return;
         }
 
         if (!wp_next_scheduled('adnova_pixel_backfill_orders')) {
-            wp_schedule_single_event(time() + 30, 'adnova_pixel_backfill_orders');
+            wp_schedule_single_event(time() + 30, 'adnova_pixel_backfill_orders', array(1));
         }
+    }
+
+    private static function get_backfill_days() {
+        $raw = isset($_ENV['ADRAY_WOO_BACKFILL_DAYS']) ? $_ENV['ADRAY_WOO_BACKFILL_DAYS'] : getenv('ADRAY_WOO_BACKFILL_DAYS');
+        $raw = is_string($raw) ? trim($raw) : '';
+        if ($raw === '' || strtolower($raw) === 'default') {
+            return 365;
+        }
+        if (strtolower($raw) === 'all') {
+            return 0;
+        }
+        $days = (int) $raw;
+        if ($days <= 0) {
+            return 0;
+        }
+        return max(1, min(3650, $days));
+    }
+
+    private static function get_backfill_marker() {
+        return self::VERSION . ':days=' . self::get_backfill_days();
     }
 
     private static function get_plugin_basename() {
@@ -88,8 +114,9 @@ final class Adnova_Pixel_Plugin {
     private static function fetch_update_metadata() {
         $url = self::DEFAULT_UPDATE_METADATA_URL . '?t=' . time();
         $response = wp_remote_get($url, array(
-            'timeout' => 10,
+            'timeout' => 3,
             'headers' => array('Accept' => 'application/json'),
+            'sslverify' => false,
         ));
 
         if (is_wp_error($response)) {
@@ -102,6 +129,9 @@ final class Adnova_Pixel_Plugin {
         }
 
         $body = wp_remote_retrieve_body($response);
+        if (!is_string($body) || empty($body)) {
+            return null;
+        }
         $decoded = json_decode($body, true);
 
         return is_array($decoded) ? $decoded : null;
@@ -195,7 +225,8 @@ final class Adnova_Pixel_Plugin {
             $script_url = self::DEFAULT_SCRIPT_URL;
         }
 
-        wp_register_script('adnova-pixel', $script_url, array(), self::VERSION, false);
+        // Load in footer to survive themes that skip or alter wp_head output.
+        wp_register_script('adnova-pixel', $script_url, array(), self::VERSION, true);
 
         // Inject logged-in Woo customer context BEFORE pixel execution.
         $user_payload = self::get_logged_in_customer_payload();
@@ -208,6 +239,31 @@ final class Adnova_Pixel_Plugin {
         }
 
         wp_enqueue_script('adnova-pixel');
+    }
+
+    public static function ensure_pixel_fallback_tag() {
+        if (is_admin()) {
+            return;
+        }
+
+        // If WordPress printed the script, no fallback is needed.
+        if (wp_script_is('adnova-pixel', 'done')) {
+            return;
+        }
+
+        $script_url = esc_url_raw(get_option(self::OPTION_SCRIPT_URL, self::DEFAULT_SCRIPT_URL));
+        if (!$script_url) {
+            $script_url = self::DEFAULT_SCRIPT_URL;
+        }
+
+        $site_id = self::get_site_id();
+        $user_payload = self::get_logged_in_customer_payload();
+
+        if (!empty($user_payload)) {
+            echo '<script>window.adnova_user_data=' . wp_json_encode($user_payload) . ';</script>';
+        }
+
+        echo '<script src="' . esc_url($script_url) . '" data-account-id="' . esc_attr($site_id) . '" data-site-id="' . esc_attr($site_id) . '" defer></script>';
     }
 
     public static function inject_script_attributes($tag, $handle, $src) {
@@ -501,6 +557,21 @@ final class Adnova_Pixel_Plugin {
         self::track_woo_order_purchase($order_id, false);
     }
 
+    public static function on_woo_order_refunded($order_id, $refund_id = 0) {
+        if (!$order_id) {
+            return;
+        }
+
+        self::sync_woo_order_to_backend((int) $order_id);
+        self::send_server_side_event('order_refunded', array(
+            'order_id' => (string) $order_id,
+            'refund_id' => $refund_id ? (string) $refund_id : null,
+            'raw_source' => 'plugin_server',
+            'page_type' => 'checkout',
+            'page_url' => home_url('/mi-cuenta/orders/'),
+        ));
+    }
+
     public static function save_pixel_cookies_to_order($order_id) {
         $order = wc_get_order($order_id);
         if ($order) {
@@ -519,9 +590,17 @@ final class Adnova_Pixel_Plugin {
             return;
         }
 
-        // Ignore admin/editor logins; we only care about storefront customer identity stitching.
+        // Skip admin/editor logins; track all other user roles (customer, subscriber, etc)
         $roles = is_array($user->roles) ? $user->roles : array();
-        if (!in_array('customer', $roles, true)) {
+        $exclude_roles = array('administrator', 'editor');
+        $has_excluded_role = false;
+        foreach ($exclude_roles as $excluded) {
+            if (in_array($excluded, $roles, true)) {
+                $has_excluded_role = true;
+                break;
+            }
+        }
+        if ($has_excluded_role) {
             return;
         }
 
@@ -568,8 +647,17 @@ final class Adnova_Pixel_Plugin {
             return;
         }
 
+        // Skip admin/editor logouts; track all other user roles
         $roles = is_array($user->roles) ? $user->roles : array();
-        if (!in_array('customer', $roles, true)) {
+        $exclude_roles = array('administrator', 'editor');
+        $has_excluded_role = false;
+        foreach ($exclude_roles as $excluded) {
+            if (in_array($excluded, $roles, true)) {
+                $has_excluded_role = true;
+                break;
+            }
+        }
+        if ($has_excluded_role) {
             return;
         }
 
@@ -587,29 +675,75 @@ final class Adnova_Pixel_Plugin {
         ));
     }
 
-    public static function backfill_recent_orders() {
+    public static function backfill_recent_orders($page = 1) {
         if (!function_exists('wc_get_orders')) {
             return;
         }
 
-        $done_version = get_option(self::OPTION_BACKFILL_DONE, '');
-        if ($done_version === self::VERSION) {
+        $done_marker = get_option(self::OPTION_BACKFILL_DONE, '');
+        $target_marker = self::get_backfill_marker();
+        if ($done_marker === $target_marker) {
             return;
         }
 
-        $orders = wc_get_orders(array(
-            'limit' => 100,
-            'orderby' => 'date',
-            'order' => 'DESC',
-            'status' => array('processing', 'completed', 'on-hold'),
-            'return' => 'ids',
-        ));
-
-        foreach ($orders as $order_id) {
-            self::sync_woo_order_to_backend($order_id);
+        $days = self::get_backfill_days();
+        $created_after = null;
+        if ($days > 0) {
+            $created_after = gmdate('Y-m-d H:i:s', time() - ($days * DAY_IN_SECONDS));
         }
 
-        update_option(self::OPTION_BACKFILL_DONE, self::VERSION, false);
+        $all_statuses = function_exists('wc_get_order_statuses')
+            ? array_map(function ($status_key) {
+                return preg_replace('/^wc-/', '', (string) $status_key);
+            }, array_keys(wc_get_order_statuses()))
+            : array('pending', 'processing', 'completed', 'on-hold', 'refunded', 'cancelled', 'failed');
+
+        $per_page = 50; // Safer chunk to prevent PHP timeout on large instances
+
+        $start_time = time();
+        $max_execution_time = ini_get('max_execution_time') ? (int) ini_get('max_execution_time') : 30;
+        if ($max_execution_time <= 0) {
+            $max_execution_time = 60;
+        }
+        $time_limit = max(5, $max_execution_time - 15);
+
+        while (true) {
+            $query_args = array(
+                'limit' => $per_page,
+                'paged' => $page,
+                'orderby' => 'date',
+                'order' => 'DESC',
+                'status' => $all_statuses,
+                'return' => 'ids',
+            );
+
+            if ($created_after) {
+                $query_args['date_created'] = '>=' . $created_after;
+            }
+
+            $orders = wc_get_orders($query_args);
+
+            if (empty($orders)) {
+                update_option(self::OPTION_BACKFILL_DONE, $target_marker, false);
+                return;
+            }
+
+            foreach ($orders as $order_id) {
+                self::sync_woo_order_to_backend($order_id);
+            }
+
+            if (count($orders) < $per_page) {
+                update_option(self::OPTION_BACKFILL_DONE, $target_marker, false);
+                return;
+            }
+            
+            if (time() - $start_time >= $time_limit) {
+                // Schedule next page if we're running out of time in the current PHP execution
+                wp_schedule_single_event(time() + 5, 'adnova_pixel_backfill_orders', array($page + 1));
+                return;
+            }
+            $page++;
+        }
     }
 
     private static function track_woo_order_purchase($order_id, $inject_browser) {
@@ -673,6 +807,7 @@ final class Adnova_Pixel_Plugin {
         // Server-side backup: fires even if the browser blocks the pixel
         self::send_server_side_event('purchase', array(
             'event_id'       => 'srv_wc_' . $order_id,
+            'raw_source'     => 'plugin_server',
             'page_url'       => $order->get_checkout_order_received_url(),
             'page_type'      => 'checkout',
             'order_id'       => $order_data['order_id'],
@@ -691,6 +826,7 @@ final class Adnova_Pixel_Plugin {
             'ttclid'         => isset($order_data['ttclid']) ? $order_data['ttclid'] : null,
             'woo_source_label' => isset($order_data['woo_source_label']) ? $order_data['woo_source_label'] : null,
             'woo_source_type'  => isset($order_data['woo_source_type']) ? $order_data['woo_source_type'] : null,
+            'woo_session_source' => isset($order_data['woo_session_source']) ? $order_data['woo_session_source'] : null,
         ));
 
         $order->update_meta_data('_adnova_purchase_sent', gmdate('c'));
@@ -741,6 +877,13 @@ final class Adnova_Pixel_Plugin {
         }
 
         $customer_identity = self::get_order_customer_identity($order);
+        $customer_id_value = $order->get_customer_id();
+        $orders_count = null;
+        if ($customer_id_value && function_exists('wc_get_customer_order_count')) {
+            $orders_count = (int) wc_get_customer_order_count($customer_id_value);
+        }
+        $refund_amount = (float) $order->get_total_refunded();
+        $chargeback_flag = self::detect_chargeback_flag($order);
         $order_created_at = $order->get_date_created();
         $order_created_at_local = $order_created_at ? $order_created_at->date('c') : gmdate('c');
         $order_created_at_gmt = $order_created_at ? $order_created_at->setTimezone(new DateTimeZone('UTC'))->format('c') : gmdate('c');
@@ -750,10 +893,13 @@ final class Adnova_Pixel_Plugin {
             'account_id' => self::get_site_id(),
             'session_id' => $order->get_meta('_adray_session_id') ? $order->get_meta('_adray_session_id') : null,
             'user_key' => $order->get_meta('_adray_visitor_id') ? $order->get_meta('_adray_visitor_id') : null,
+            'raw_source' => 'plugin_order_sync',
+            'collected_at' => gmdate('c'),
             'order_id' => $order_data['order_id'],
             'order_number' => (string) $order->get_order_number(),
             'checkout_token' => isset($order_data['checkout_token']) ? $order_data['checkout_token'] : null,
-            'customer_id' => $order->get_customer_id() ? (string) $order->get_customer_id() : null,
+            'customer_id' => $customer_id_value ? (string) $customer_id_value : null,
+            'orders_count' => $orders_count,
             'customer_name' => $customer_identity['customer_name'],
             'customer_first_name' => $customer_identity['customer_first_name'],
             'customer_last_name' => $customer_identity['customer_last_name'],
@@ -765,6 +911,8 @@ final class Adnova_Pixel_Plugin {
             'discount_total' => (float) $order->get_discount_total(),
             'shipping_total' => (float) $order->get_shipping_total(),
             'tax_total' => (float) $order->get_total_tax(),
+            'refund_amount' => $refund_amount,
+            'chargeback_flag' => $chargeback_flag,
             'currency' => isset($order_data['currency']) ? $order_data['currency'] : $order->get_currency(),
             'items' => isset($order_data['items']) ? $order_data['items'] : array(),
             'created_at' => $order_created_at_local,
@@ -781,19 +929,25 @@ final class Adnova_Pixel_Plugin {
             'ttclid' => isset($order_data['ttclid']) ? $order_data['ttclid'] : null,
             'woo_source_label' => isset($order_data['woo_source_label']) ? $order_data['woo_source_label'] : null,
             'woo_source_type' => isset($order_data['woo_source_type']) ? $order_data['woo_source_type'] : null,
+            'woo_session_source' => isset($order_data['woo_session_source']) ? $order_data['woo_session_source'] : null,
         );
 
-        wp_remote_post(
+        // Use non-blocking to avoid WordPress hanging if backend is slow/unresponsive
+        $response = wp_remote_post(
             self::DEFAULT_ORDER_SYNC_URL,
             array(
-                'timeout'  => 8,
+                'timeout'  => 4,
                 'blocking' => false,
                 'headers'  => array(
                     'Content-Type' => 'application/json',
                 ),
                 'body'     => wp_json_encode($payload),
+                'sslverify' => false,
             )
         );
+
+        // Since we're non-blocking, response is likely null/empty — logging would be silent anyway
+        // Failures will be captured server-side and visible in Render logs
     }
 
     /**
@@ -837,6 +991,7 @@ final class Adnova_Pixel_Plugin {
                 'platform'   => 'woocommerce',
                 'event_name' => $event_name,
                 'page_url'   => home_url('/'),
+                'raw_source' => 'plugin_server',
             ),
             $extra
         );
@@ -860,6 +1015,39 @@ final class Adnova_Pixel_Plugin {
             'page_type'      => 'home',
             'plugin_version' => self::VERSION,
         ));
+    }
+
+    private static function detect_chargeback_flag($order) {
+        if (!$order) {
+            return false;
+        }
+
+        $status = strtolower((string) $order->get_status());
+        $status_markers = array('chargeback', 'dispute', 'fraud');
+        foreach ($status_markers as $marker) {
+            if (strpos($status, $marker) !== false) {
+                return true;
+            }
+        }
+
+        $meta_keys = array(
+            '_stripe_dispute_status',
+            '_wcpay_dispute_status',
+            '_paypal_dispute_status',
+            '_adnova_chargeback_flag',
+        );
+
+        foreach ($meta_keys as $meta_key) {
+            $value = strtolower((string) $order->get_meta($meta_key, true));
+            if ($value === '') {
+                continue;
+            }
+            if (strpos($value, 'chargeback') !== false || strpos($value, 'dispute') !== false || strpos($value, 'lost') !== false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
 

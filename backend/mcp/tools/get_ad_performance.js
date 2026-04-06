@@ -1,28 +1,27 @@
 'use strict';
 
-const { z } = require('zod');
-const { getAdPerformanceInput, validateDateRange } = require('../schemas/tool-schemas');
-const metaAdapter = require('../adapters/meta');
-const googleAdapter = require('../adapters/google');
+const { validateDateRange, getAdPerformanceInput } = require('../schemas/tool-schemas');
 const { createToolResponse, createToolErrorResponse } = require('../schemas/errors');
+const { runSnapshotFirstTool } = require('../snapshot/runSnapshotFirst');
+const { resolveAdPerformance, adPerformanceSnapshotOpts } = require('../services/adsPerformanceResolve');
+const { resolveToolUserId } = require('../mcpContext');
+const { checkToolScopes } = require('../scopes');
 
 const TOOL_NAME = 'get_ad_performance';
 
-function register(server) {
+function register(server, mcpUserId) {
   server.tool(
     TOOL_NAME,
     'Retrieves ad performance metrics (spend, impressions, clicks, CTR, CPC, CPM) for a given channel and date range.',
-    {
-      channel: z.enum(['meta', 'google', 'all']).describe('Ad platform to query'),
-      date_from: z.string().describe('Start date (YYYY-MM-DD)'),
-      date_to: z.string().describe('End date (YYYY-MM-DD)'),
-      granularity: z.enum(['day', 'week', 'month', 'total']).optional().default('total').describe('Time breakdown'),
-    },
+    getAdPerformanceInput,
     { readOnlyHint: true },
     async (params, extra) => {
       try {
-        const userId = extra?.userId || extra?.request?._mcpUserId;
+        const userId = resolveToolUserId(mcpUserId, extra);
         if (!userId) return createToolErrorResponse('UNAUTHORIZED', TOOL_NAME);
+
+        const sc = checkToolScopes(TOOL_NAME);
+        if (!sc.ok) return createToolErrorResponse(sc.code, TOOL_NAME, sc.detail);
 
         const rangeError = validateDateRange(params.date_from, params.date_to);
         if (rangeError) return createToolErrorResponse('DATE_RANGE_TOO_LARGE', TOOL_NAME, rangeError);
@@ -30,19 +29,19 @@ function register(server) {
         const gran = params.granularity || 'total';
 
         if (params.channel === 'all') {
+          const [rMeta, rGoogle] = await Promise.allSettled([
+            resolveAdPerformance(userId, 'meta', params.date_from, params.date_to, gran),
+            resolveAdPerformance(userId, 'google', params.date_from, params.date_to, gran),
+          ]);
           const results = [];
-          try { results.push(await metaAdapter.getAdPerformance(userId, params.date_from, params.date_to, gran)); } catch {}
-          try { results.push(await googleAdapter.getAdPerformance(userId, params.date_from, params.date_to, gran)); } catch {}
+          if (rMeta.status === 'fulfilled') results.push(rMeta.value);
+          if (rGoogle.status === 'fulfilled') results.push(rGoogle.value);
           return createToolResponse(results);
         }
 
-        if (params.channel === 'meta') {
-          const data = await metaAdapter.getAdPerformance(userId, params.date_from, params.date_to, gran);
-          return createToolResponse(data);
-        }
-
-        const data = await googleAdapter.getAdPerformance(userId, params.date_from, params.date_to, gran);
-        return createToolResponse(data);
+        return runSnapshotFirstTool(
+          adPerformanceSnapshotOpts(userId, params.channel, params.date_from, params.date_to, gran)
+        );
       } catch (err) {
         console.error(`[${TOOL_NAME}] error:`, err);
         const code = err.code || 'INTERNAL_ERROR';
