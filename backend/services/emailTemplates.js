@@ -58,6 +58,7 @@ function brandWordmark() {
 }
 
 function sectionKicker(text, align = 'center', color = '#C4B5FD', marginBottom = 10) {
+  if (!text) return '';
   return `
     <div style="
       margin:0 0 ${marginBottom}px 0;
@@ -265,8 +266,7 @@ function wrapEmail({
 }) {
   const safeTitle = escapeHtml(title || 'Adray');
   const safePreheader = escapeHtml(preheader || '');
-  const badge = escapeHtml(badgeText || 'Update');
-  const eyebrow = escapeHtml(headerEyebrow || 'Adray AI');
+  const eyebrow = escapeHtml(headerEyebrow || '');
 
   return `<!doctype html>
 <html lang="en">
@@ -328,9 +328,6 @@ function wrapEmail({
                     <tr>
                       <td valign="middle">
                         ${brandWordmark()}
-                      </td>
-                      <td align="right" valign="middle" style="font-size:11px;line-height:1.2;font-weight:800;letter-spacing:0.16em;text-transform:uppercase;color:#C4B5FD;">
-                        ${badge}
                       </td>
                     </tr>
                   </table>
@@ -419,8 +416,8 @@ function verifyEmail({
   return wrapEmail({
     title: `Verify your email · ${brand}`,
     preheader: `Confirm your email to activate your ${brand} account.`,
-    badgeText: 'Verification',
-    headerEyebrow: `${brand} · Verification`,
+    badgeText: '',
+    headerEyebrow: '',
     heroTitle: 'Confirm your email',
     heroIntroHtml,
     contentHtml,
@@ -496,8 +493,8 @@ function welcomeEmail({
   return wrapEmail({
     title: `Welcome to ${brand}`,
     preheader: `Your ${brand} account is ready and your workspace is set up.`,
-    badgeText: 'Welcome',
-    headerEyebrow: `${brand} · Welcome`,
+    badgeText: '',
+    headerEyebrow: '',
     heroTitle: `Welcome to ${brand}`,
     heroIntroHtml,
     contentHtml,
@@ -553,8 +550,8 @@ function resetPasswordEmail({
   return wrapEmail({
     title: `Reset password · ${brand}`,
     preheader: `Reset your password securely. This link expires in 1 hour.`,
-    badgeText: 'Recovery',
-    headerEyebrow: `${brand} · Recovery`,
+    badgeText: '',
+    headerEyebrow: '',
     heroTitle: 'Reset your password',
     heroIntroHtml,
     contentHtml,
@@ -610,8 +607,8 @@ function auditReadyEmail({
   return wrapEmail({
     title: 'Your audit is ready',
     preheader: 'Your Adray audit is ready to review.',
-    badgeText: 'Audit',
-    headerEyebrow: `${brand} · Audit`,
+    badgeText: '',
+    headerEyebrow: '',
     heroTitle: 'Your audit is ready',
     heroIntroHtml,
     contentHtml,
@@ -681,8 +678,8 @@ function dailyFollowupCallEmail({
   return wrapEmail({
     title: 'Let’s do a quick onboarding call',
     preheader: 'Book a quick 10-minute call to review setup and get started faster.',
-    badgeText: 'Follow-up',
-    headerEyebrow: `${brand} · Follow-up`,
+    badgeText: '',
+    headerEyebrow: '',
     heroTitle: 'Let’s get you fully set up',
     heroIntroHtml,
     contentHtml,
