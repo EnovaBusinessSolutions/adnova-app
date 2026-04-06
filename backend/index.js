@@ -38,6 +38,70 @@ const {
 // ✅ NEW: Analytics Events (no rompe si falla)
 const { trackEvent } = require("./services/trackEvent");
 
+// Turnstile fallback local:
+// - if no secret is configured, do not block staging/startup
+// - if a secret exists, validate the submitted token against Cloudflare
+const TURNSTILE_SECRET = String(
+  process.env.TURNSTILE_SECRET ||
+  process.env.CLOUDFLARE_TURNSTILE_SECRET ||
+  ""
+).trim();
+
+async function verifyTurnstile(token, remoteip) {
+  const normalizedToken = String(token || "").trim();
+
+  if (!TURNSTILE_SECRET) {
+    return { ok: true, data: { skipped: true, reason: "missing_secret" } };
+  }
+
+  if (!normalizedToken) {
+    return { ok: false, data: { "error-codes": ["missing-input-response"] } };
+  }
+
+  try {
+    const body = new URLSearchParams({
+      secret: TURNSTILE_SECRET,
+      response: normalizedToken,
+    });
+    if (remoteip) body.set("remoteip", String(remoteip));
+
+    const response = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+
+    const data = await response.json().catch(() => ({}));
+    return { ok: Boolean(data?.success), data };
+  } catch (error) {
+    return {
+      ok: false,
+      data: { "error-codes": ["turnstile-request-failed"], message: error?.message || String(error) },
+    };
+  }
+}
+
+async function requireTurnstileAlways(req, res, next) {
+  if (!TURNSTILE_SECRET) return next();
+
+  const token =
+    String(req.body?.turnstileToken || "").trim() ||
+    String(req.body?.["cf-turnstile-response"] || "").trim() ||
+    String(req.headers?.["x-turnstile-token"] || "").trim();
+
+  const { ok, data } = await verifyTurnstile(token, getClientIp(req));
+  if (ok) return next();
+
+  return res.status(400).json({
+    success: false,
+    ok: false,
+    requiresCaptcha: true,
+    code: "TURNSTILE_REQUIRED_OR_FAILED",
+    errorCodes: data?.["error-codes"] || [],
+    message: "Verificación requerida. Completa el captcha para continuar.",
+  });
+}
+
 /* =========================
  * Modelos para Integraciones (Disconnect)
  * (cargan con fallback para NO romper si cambia el schema)
