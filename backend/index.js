@@ -869,9 +869,6 @@ app.get("/", (req, res) => {
       ? res.redirect("/dashboard")
       : res.redirect("/onboarding");
   }
-  if (hasLandingAdrayBuild()) {
-    return res.sendFile(path.join(LANDING_ADRAY_OUT, "index.html"));
-  }
   return res.sendFile(path.join(__dirname, "../public/landing/index.html"));
 });
 
@@ -1491,6 +1488,8 @@ app.use("/api/shopConnection", require("./routes/shopConnection"));
 app.use("/api", subscribeRouter);
 
 // Estáticos (públicos)
+// Servir landing pública con prefijo consistente (/landing/*).
+app.use("/landing", express.static(path.join(__dirname, "../public/landing")));
 // Landing Next (export): `/_next`, páginas HTML, etc. (antes de /public)
 if (hasLandingAdrayBuild()) {
   app.use(express.static(LANDING_ADRAY_OUT, { index: false }));
