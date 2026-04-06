@@ -5560,10 +5560,10 @@ function renderDataEnrichment(purchases) {
 }
 
 function renderRecentPurchases(purchases) {
+            recentPurchasesState = Array.isArray(purchases) ? purchases.slice() : [];
+
             const container = document.getElementById('recent-purchases-list');
             if (!container) return;
-
-            recentPurchasesState = Array.isArray(purchases) ? purchases.slice() : [];
 
             const filterValue = document.getElementById('recent-purchases-filter')?.value || 'all';
             const limitValue = Number.parseInt(document.getElementById('recent-purchases-limit')?.value || '100', 10) || 100;
