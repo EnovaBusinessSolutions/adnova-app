@@ -1,8 +1,7 @@
 // backend/index.js
 require("dotenv").config();
 
-// Render inyecta RENDER_EXTERNAL_URL con la URL pública del servicio.
-// Si APP_URL no está definida, Passport/Google OAuth usarían el default (adray.ai) y el login falla en staging.
+// Render inyecta RENDER_EXTERNAL_URL: sin esto, OAuth puede apuntar al default (adray.ai) en staging.
 (function bootstrapAppUrlFromRender() {
   if (String(process.env.APP_URL || "").trim()) return;
   const renderUrl = String(process.env.RENDER_EXTERNAL_URL || "").trim();
@@ -37,6 +36,10 @@ const {
 
 // ✅ NEW: Analytics Events (no rompe si falla)
 const { trackEvent } = require("./services/trackEvent");
+
+// ✅ Turnstile
+const requireTurnstileAlways = require("./middlewares/requireTurnstileAlways");
+const { verifyTurnstile } = require("./services/turnstile");
 
 /* =========================
  * Modelos para Integraciones (Disconnect)
@@ -121,8 +124,7 @@ app.use("/api/cron", require("./routes/cronEmails"));
 
 const PORT = process.env.PORT || 3000;
 const APP_URL = (process.env.APP_URL || "https://adray.ai").replace(/\/$/, "");
-
-/** Landing Next (submódulo `landing-adray`): export estático en `landing-adray/out` */
+const LANDING_PUBLIC = path.join(__dirname, "../public/landing");
 const LANDING_ADRAY_OUT = path.join(__dirname, "../landing-adray/out");
 function hasLandingAdrayBuild() {
   return fs.existsSync(path.join(LANDING_ADRAY_OUT, "index.html"));
@@ -201,16 +203,23 @@ app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
 /* =========================
- * High-Throughput Public Routes
- * (Bypassing Session/Passport overhead to prevent timeouts)
+ * Alto rendimiento: pixel /collect y script público antes de sesión
+ * (mantiene rateLimitCollect de main para la señal / anti-abuso)
  * ========================= */
-app.use("/collect", cookieParser(), express.json({ limit: "1mb" }), express.urlencoded({ extended: true }), collectRoutes);
+app.use(
+  "/collect",
+  cookieParser(),
+  express.json({ limit: "1mb" }),
+  express.urlencoded({ extended: true }),
+  rateLimitCollect,
+  collectRoutes
+);
 
-app.get('/adray-pixel.js', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
-  return res.sendFile(path.join(__dirname, '../public/adray-pixel.js'));
+app.get("/adray-pixel.js", (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.setHeader("Content-Type", "text/javascript; charset=utf-8");
+  return res.sendFile(path.join(__dirname, "../public/adray-pixel.js"));
 });
 
 /* =========================
@@ -266,37 +275,6 @@ function ensureNotOnboarded(req, res, next) {
 function sessionGuard(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
   return res.status(401).json({ error: "No hay sesión" });
-}
-
-/**
- * sessionGuard aplicado a /api antes de adrayPlatformRoutes: debe permitir rutas públicas
- * (registro, login, verify-email, session, webhooks…). Si no, esas rutas nunca se alcanzan
- * porque están declaradas más abajo en el archivo.
- */
-function sessionGuardAdrayPlatforms(req, res, next) {
-  if (req.isAuthenticated && req.isAuthenticated()) return next();
-  if (req.method === "OPTIONS") return next();
-
-  const raw = String(req.originalUrl || req.url || "").split("?")[0];
-  const afterApi = raw.replace(/^\/api/, "") || "/";
-
-  const publicGet = new Set([
-    "/auth/verify-email",
-    "/session",
-    "/public-config",
-  ]);
-  const publicPost = new Set([
-    "/register",
-    "/forgot-password",
-    "/login",
-    "/auth/login",
-    "/stripe/webhook",
-  ]);
-
-  if (req.method === "GET" && publicGet.has(afterApi)) return next();
-  if (req.method === "POST" && publicPost.has(afterApi)) return next();
-
-  return sessionGuard(req, res, next);
 }
 
 function isIframeRequest(req) {
@@ -673,29 +651,16 @@ app.get("/api/auth/verify-email", async (req, res) => {
 
 // ✅ AdRay Analytics & Realtime Feed (Phase 2)
 // sessionGuard removed for dashboard demo/access
-<<<<<<< Updated upstream
-app.use("/api/analytics", ensureAuthenticated, require("./routes/analytics"));
-app.get("/analytics", ensureAuthenticated, (req, res) => res.sendFile(require('path').join(__dirname, "views/adray-analytics.html")));
-=======
 app.use("/api/analytics", require("./routes/analytics"));  
->>>>>>> Stashed changes
 app.use("/api/feed", require("./routes/feed"));
 app.use('/api', wooOrdersRoutes);
 app.use('/api/platform-connections', require('./routes/platformConnections'));
 app.use('/wp-plugin', wordpressPluginRoutes);
 
-<<<<<<< Updated upstream
-// AdRay platform routes (collect bypassed session above)
-// Hotfix: bypass collect limiter while stabilizing production collect failures.
-app.use("/api", sessionGuardAdrayPlatforms, adrayPlatformRoutes);
-
-=======
-// AdRay collect and platform routes
-app.use("/collect", rateLimitCollect, collectRoutes);
+// AdRay collect ya está montado arriba (con rateLimitCollect). Señal interna y plataformas:
 app.use('/api/internal/daily-signal', require('./routes/internalDailySignal'));
 app.use("/api", sessionGuard, adrayPlatformRoutes);                             
                       
->>>>>>> Stashed changes
 /* =========================
  * Pixel auditor (usa JSON)
  * ========================= */
@@ -754,55 +719,6 @@ app.get("/agendar", (_req, res) => {
 app.get("/api/public-config", (_req, res) => {
   res.json({ bookingUrl: process.env.BOOKING_URL || "" });
 });
-
-async function respondDbHealth(_req, res) {
-  const databaseUrlRaw = String(process.env.DATABASE_URL || "").trim();
-  let dbHost = null;
-  let dbName = null;
-
-  if (databaseUrlRaw) {
-    try {
-      const parsed = new URL(databaseUrlRaw);
-      dbHost = parsed.hostname || null;
-      dbName = parsed.pathname ? parsed.pathname.replace(/^\//, "") : null;
-    } catch (_) {
-      dbHost = null;
-      dbName = null;
-    }
-  }
-
-  try {
-    await prisma.$queryRawUnsafe("SELECT 1");
-    return res.json({
-      ok: true,
-      database: {
-        connected: true,
-        host: dbHost,
-        name: dbName,
-      },
-      serviceTime: new Date().toISOString(),
-    });
-  } catch (error) {
-    const code = String(error?.code || "UNKNOWN");
-    const message = String(error?.message || "Database check failed");
-    return res.status(503).json({
-      ok: false,
-      database: {
-        connected: false,
-        host: dbHost,
-        name: dbName,
-      },
-      error: {
-        code,
-        message,
-      },
-      serviceTime: new Date().toISOString(),
-    });
-  }
-}
-
-app.get("/api/health/db", respondDbHealth);
-app.get("/health/db", respondDbHealth);
 
 /* =========================
  * Static / dashboard
@@ -900,6 +816,9 @@ app.use('/api/onboarding', require('./routes/onboardingReset'));
 app.use('/api/mcpjobs', sessionGuard, require('./routes/mcpjobs'));
 
 app.use('/api/mcp/context', require('./routes/mcpContext'));
+
+
+app.use('/api/daily-signal-delivery', sessionGuard, require('./routes/dailySignalDelivery'));
 
 // MCP Server (Phase 1) - protocol endpoint + OAuth + REST mirror
 const { mountMcpRoutes } = require('./mcp/transport');
@@ -1167,19 +1086,17 @@ app.get("/", (req, res) => {
       ? res.redirect("/dashboard")
       : res.redirect("/onboarding");
   }
-  return res.sendFile(path.join(__dirname, "../public/landing/index.html"));
+  const landingIndex = hasLandingAdrayBuild()
+    ? path.join(LANDING_ADRAY_OUT, "index.html")
+    : path.join(LANDING_PUBLIC, "index.html");
+  return res.sendFile(landingIndex);
 });
 
-<<<<<<< Updated upstream
-app.get("/login", (_req, res) => {
-  res.sendFile(path.join(__dirname, "../public/login.html"));
-=======
 // Compat: la landing antigua (saas-landing) exponía /start
 app.get("/start", (_req, res) => res.redirect(302, "/"));
 
 app.get(["/login", "/getstarted", "/confirmation"], (_req, res) => {
   res.sendFile(path.join(__dirname, "../public/login-v2/index.html"));
->>>>>>> Stashed changes
 });
 
 app.get("/onboarding", ensureNotOnboarded, async (req, res) => {
@@ -1276,9 +1193,10 @@ function buildIntercomPayload(u) {
 }
 
 /* =========================
- * Login risk store (intentos fallidos; sin captcha — Turnstile retirado)
+ * Turnstile Risk Store (Login)
  * ========================= */
 const LOGIN_RISK_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_RISK_MAX_FAILS = Number(process.env.LOGIN_RISK_MAX_FAILS || 3);
 
 const loginRiskStore = new Map();
 
@@ -1300,7 +1218,7 @@ function riskGet(req, email) {
     return { fails: 0, requiresCaptcha: false };
   }
   const fails = v?.fails || 0;
-  return { fails, requiresCaptcha: false };
+  return { fails, requiresCaptcha: fails >= LOGIN_RISK_MAX_FAILS };
 }
 
 function riskFail(req, email) {
@@ -1317,7 +1235,7 @@ function riskFail(req, email) {
 
   loginRiskStore.set(key, { fails, expiresAt: now + LOGIN_RISK_WINDOW_MS });
 
-  return { fails, requiresCaptcha: false };
+  return { fails, requiresCaptcha: fails >= LOGIN_RISK_MAX_FAILS };
 }
 
 function riskClear(req, email) {
@@ -1325,269 +1243,6 @@ function riskClear(req, email) {
 }
 
 
-<<<<<<< Updated upstream
-app.post("/api/register", async (req, res) => {
-  try {
-    let { name, email, password } = req.body || {};
-
-    if (!name || !email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "Nombre, correo y contraseña son requeridos",
-      });
-    }
-
-    name = String(name).trim();
-    email = String(email).trim().toLowerCase();
-
-    if (name.length < 2 || name.length > 60) {
-      return res.status(400).json({
-        success: false,
-        message: "El nombre debe tener entre 2 y 60 caracteres",
-      });
-    }
-
-    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRe.test(email)) {
-      return res.status(400).json({ success: false, message: "Correo inválido" });
-    }
-    if (String(password).length < 8) {
-      return res.status(400).json({
-        success: false,
-        message: "La contraseña debe tener al menos 8 caracteres",
-      });
-    }
-
-    const exists = await User.findOne({ email });
-    if (exists) {
-      return res
-        .status(409)
-        .json({ success: false, message: "El email ya está registrado" });
-    }
-
-    const hashed = await bcrypt.hash(password, 10);
-
-    const verifyToken = makeVerifyToken();
-    const verifyTokenHash = hashToken(verifyToken);
-    const verifyExpires = new Date(
-      Date.now() + VERIFY_TTL_HOURS * 60 * 60 * 1000
-    );
-
-    const user = await User.create({
-      name,
-      email,
-      password: hashed,
-
-      emailVerified: false,
-      verifyEmailTokenHash: verifyTokenHash,
-      verifyEmailExpires: verifyExpires,
-    });
-
-    try {
-      await trackEvent({
-        name: "user_signed_up",
-        userId: user._id,
-        dedupeKey: `user_signed_up:${user._id}`,
-        props: { method: "email" },
-      });
-    } catch {}
-
-    try {
-      await sendVerifyEmail({
-        userId: user._id,
-        toEmail: user.email,
-        token: verifyToken,
-        name: user.name,
-      });
-    } catch (mailErr) {
-      console.error(
-        "✉️  Email verificación falló (registro OK):",
-        mailErr?.message || mailErr
-      );
-    }
-
-    return res.status(201).json({
-      success: true,
-      message: "Usuario registrado. Revisa tu correo para verificar tu cuenta.",
-      confirmUrl: `/confirmation.html?email=${encodeURIComponent(user.email)}`,
-    });
-  } catch (err) {
-    if (err && err.code === 11000) {
-      return res
-        .status(409)
-        .json({ success: false, message: "El email ya está registrado" });
-    }
-    console.error("❌ Error al registrar usuario:", err);
-    return res
-      .status(500)
-      .json({ success: false, message: "Error interno al registrar" });
-  }
-});
-
-app.get("/api/auth/verify-email", async (req, res) => {
-  try {
-    const token = String(req.query.token || "").trim();
-    if (!token) return res.status(400).send("Token faltante");
-
-    const tokenHash = hashToken(token);
-
-    const user = await User.findOne({
-      verifyEmailTokenHash: tokenHash,
-      verifyEmailExpires: { $gt: new Date() },
-    });
-
-    if (!user) {
-      return res
-        .status(400)
-        .send(
-          "El enlace de verificación es inválido o expiró. Solicita uno nuevo."
-        );
-    }
-
-    user.emailVerified = true;
-    user.verifyEmailTokenHash = undefined;
-    user.verifyEmailExpires = undefined;
-    await user.save();
-
-    try {
-      await trackEvent({
-        name: "email_verified",
-        userId: user._id,
-        dedupeKey: `email_verified:${user._id}`,
-        ts: new Date(),
-        props: { method: "email_link" },
-      });
-    } catch {}
-
-    return res.redirect(302, "/login?verified=1");
-  } catch (err) {
-    console.error("❌ verify-email:", err);
-    return res.status(500).send("Error al verificar el correo");
-  }
-});
-
-/* =========================
- * ✅ FORGOT PASSWORD (E2E)
- * ========================= */
-const RESET_TTL_MINUTES = Number(process.env.RESET_PASSWORD_TTL_MINUTES || 30);
-
-function makeResetToken() {
-  return crypto.randomBytes(32).toString("hex");
-}
-
-app.post("/api/forgot-password", async (req, res) => {
-  try {
-    const email = String(req.body?.email || "").trim().toLowerCase();
-
-    const safeOk = () => res.json({ ok: true });
-
-    if (!email) return safeOk();
-
-    const user = await User.findOne({ email })
-      .select("_id email name emailVerified")
-      .lean();
-
-    if (!user) return safeOk();
-    if (user.emailVerified === false) return safeOk();
-
-    const resetToken = makeResetToken();
-    const resetTokenHash = hashToken(resetToken);
-    const resetExpires = new Date(Date.now() + RESET_TTL_MINUTES * 60 * 1000);
-
-    await User.updateOne(
-      { _id: user._id },
-      {
-        $set: {
-          resetPasswordTokenHash: resetTokenHash,
-          resetPasswordExpires: resetExpires,
-        },
-      }
-    );
-
-    try {
-      await sendResetPasswordEmail({
-        userId: user._id,
-        toEmail: user.email,
-        name: user.name || (user.email ? user.email.split("@")[0] : "Usuario"),
-        token: resetToken,
-      });
-    } catch (mailErr) {
-      console.error(
-        "✉️ Reset email falló (forgot OK):",
-        mailErr?.message || mailErr
-      );
-    }
-
-    return safeOk();
-  } catch (e) {
-    console.error("❌ /api/forgot-password:", e);
-    return res.json({ ok: true });
-  }
-});
-
-app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => {
-  try {
-    const email = String(req.body?.email || "").trim().toLowerCase();
-    const password = String(req.body?.password || "");
-
-    if (!email || !password) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Ingresa tu correo y contraseña." });
-    }
-
-    const user = await User.findOne({ email }).select("+password +emailVerified");
-
-    if (!user || !user.password) {
-      const rr = riskFail(req, email);
-      return res.status(401).json({
-        success: false,
-        message: "Correo o contraseña incorrectos.",
-        requiresCaptcha: rr.requiresCaptcha,
-      });
-    }
-
-    if (user.emailVerified === false) {
-      return res.status(403).json({
-        success: false,
-        message: "Tu correo aún no está verificado. Revisa tu bandeja de entrada.",
-      });
-    }
-
-    const okPass = await bcrypt.compare(password, user.password);
-    if (!okPass) {
-      const rr = riskFail(req, email);
-      return res.status(401).json({
-        success: false,
-        message: "Correo o contraseña incorrectos.",
-        requiresCaptcha: rr.requiresCaptcha,
-      });
-    }
-
-    riskClear(req, email);
-
-    req.login(user, async (err) => {
-      if (err) return next(err);
-
-      try {
-        await trackEvent({
-          name: "user_logged_in",
-          userId: user._id,
-          ts: new Date(),
-          props: { method: "email" },
-        });
-      } catch {}
-
-      const redirect = user.onboardingComplete ? "/dashboard" : "/onboarding";
-      return res.json({ success: true, redirect });
-    });
-  } catch (err) {
-    console.error("❌ /api/login error:", err);
-    return res.status(500).json({ success: false, message: "Error del servidor" });
-  }
-});
-=======
->>>>>>> Stashed changes
 
 app.get("/api/session", async (req, res) => {
   if (!req.isAuthenticated || !req.isAuthenticated()) {
@@ -1603,59 +1258,12 @@ app.get("/api/session", async (req, res) => {
 
     if (!u) return res.status(401).json({ authenticated: false });
 
-    const analyticsAccess = await listAuthorizedAnalyticsShopsForUser(u._id).catch((error) => {
-      console.warn("/api/session analytics access lookup failed:", error?.message || error);
-      return { defaultShop: null, defaultShopSource: null, shops: [] };
-    });
-
-    let resolvedShop = String(u.shop || req.user?.shop || '').trim();
-    let resolvedShopSource = resolvedShop ? 'user' : null;
-    let resolvedShopifyConnected = !!u.shopifyConnected;
-
-    if (!resolvedShop && ShopConnections) {
-      const linkedShop = await ShopConnections.findOne({
-        matchedToUserId: u._id,
-        shop: { $exists: true, $ne: '' },
-      })
-        .sort({ installedAt: -1 })
-        .select('shop accessToken')
-        .lean();
-
-      if (linkedShop?.shop) {
-        resolvedShop = String(linkedShop.shop).trim();
-        resolvedShopSource = 'shop_connection';
+    const analyticsAccess = await listAuthorizedAnalyticsShopsForUser(u._id).catch(
+      (error) => {
+        console.warn("/api/session analytics access lookup failed:", error?.message || error);
+        return null;
       }
-
-      if (linkedShop?.accessToken) {
-        resolvedShopifyConnected = true;
-      }
-    }
-
-    if (!resolvedShop && analyticsAccess?.defaultShop) {
-      resolvedShop = String(analyticsAccess.defaultShop).trim();
-      resolvedShopSource = analyticsAccess.defaultShopSource || 'analytics_access';
-    }
-
-    console.log("[Attribution Debug][/api/session]", {
-      userId: String(u._id),
-      email: u.email || null,
-      sessionUserShop: req.user?.shop || null,
-      persistedUserShop: u.shop || null,
-      resolvedShop: resolvedShop || null,
-      resolvedShopSource: resolvedShopSource || null,
-      shopifyConnected: resolvedShopifyConnected,
-      authorizedAnalyticsShopCount: Array.isArray(analyticsAccess?.shops) ? analyticsAccess.shops.length : 0,
-      authorizedAnalyticsShops: Array.isArray(analyticsAccess?.shops)
-        ? analyticsAccess.shops.map((entry) => ({
-            shop: entry.shop,
-            type: entry.type,
-            sources: entry.sources,
-            matchPlatforms: entry.matchPlatforms,
-            isDefault: entry.isDefault,
-          }))
-        : [],
-      resolverDebug: analyticsAccess?.debug || null,
-    });
+    );
 
     return res.json({
       authenticated: true,
@@ -1663,14 +1271,12 @@ app.get("/api/session", async (req, res) => {
         _id: u._id,
         name: u.name || null,
         email: u.email,
-        shop: resolvedShop || null,
-        resolvedShop: resolvedShop || null,
-        resolvedShopSource,
+        shop: u.shop,
         onboardingComplete: !!u.onboardingComplete,
 
         googleConnected: !!u.googleConnected,
         metaConnected: !!u.metaConnected,
-        shopifyConnected: resolvedShopifyConnected,
+        shopifyConnected: !!u.shopifyConnected,
 
         googleObjective: u.googleObjective || null,
         metaObjective: u.metaObjective || null,
@@ -1678,10 +1284,15 @@ app.get("/api/session", async (req, res) => {
         createdAt: u.createdAt || null,
         plan: u.plan || "gratis",
         subscription: u.subscription || null,
-        authorizedAnalyticsShops: Array.isArray(analyticsAccess?.shops) ? analyticsAccess.shops : [],
       },
 
       intercom: buildIntercomPayload(u),
+      authorizedAnalyticsShops: Array.isArray(analyticsAccess?.shops)
+        ? analyticsAccess.shops
+        : [],
+      defaultAnalyticsShop: analyticsAccess?.defaultShop || null,
+      defaultAnalyticsShopSource: analyticsAccess?.defaultShopSource || null,
+      analyticsAccessDebug: analyticsAccess?.debug || null,
     });
   } catch (e) {
     console.error("/api/session error:", e);
@@ -1696,7 +1307,7 @@ async function sendAuthMe(req, res) {
 
   try {
     const u = await User.findById(req.user._id)
-      .select("name email plan subscription createdAt onboardingComplete shop metaConnected googleConnected")
+      .select("name email plan subscription createdAt onboardingComplete")
       .lean();
 
     if (!u) return res.status(401).json({ ok: false, error: "UNAUTHENTICATED" });
@@ -1706,7 +1317,6 @@ async function sendAuthMe(req, res) {
       id: String(u._id),
       email: u.email || null,
       name: u.name || null,
-      shop: u.shop || null,
       onboardingComplete: !!u.onboardingComplete,
       plan: u.plan || "gratis",
       createdAt: u.createdAt || null,
@@ -1743,7 +1353,7 @@ app.get("/api/me", async (req, res) => {
 
   try {
     const u = await User.findById(req.user._id)
-      .select("name email plan subscription createdAt onboardingComplete shop metaConnected googleConnected")
+      .select("name email plan subscription createdAt onboardingComplete")
       .lean();
 
     if (!u) return res.status(401).json({ authenticated: false });
@@ -1753,7 +1363,6 @@ app.get("/api/me", async (req, res) => {
       id: String(u._id),
       email: u.email || null,
       name: u.name || null,
-      shop: u.shop || null,
       onboardingComplete: !!u.onboardingComplete,
       plan: u.plan || "gratis",
       createdAt: u.createdAt || null,
@@ -1794,12 +1403,12 @@ app.use("/api/shopConnection", require("./routes/shopConnection"));
 app.use("/api", subscribeRouter);
 
 // Estáticos (públicos)
-// Servir landing pública con prefijo consistente (/landing/*).
-app.use("/landing", express.static(path.join(__dirname, "../public/landing")));
-// Landing Next (export): `/_next`, páginas HTML, etc. (antes de /public)
-if (hasLandingAdrayBuild()) {
-  app.use(express.static(LANDING_ADRAY_OUT, { index: false }));
-}
+// Landing Next (export en public/landing: /_next, rutas, etc.)
+app.use(
+  express.static(LANDING_PUBLIC, {
+    maxAge: process.env.NODE_ENV === "production" ? "1d" : 0,
+  })
+);
 app.use("/assets", express.static(path.join(__dirname, "../public/landing/assets")));
 app.use("/assets", express.static(path.join(__dirname, "../public/support/assets")));
 app.use("/assets", express.static(path.join(__dirname, "../public/plans/assets")));

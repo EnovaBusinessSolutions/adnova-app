@@ -2,11 +2,11 @@ services:
   - type: web
     name: adnova-ai
     env: node
-    buildCommand: npm cache clean --force && rm -rf /opt/render/.cache/_cacache && npm ci && npx prisma generate --schema=backend/prisma/schema.prisma
+    buildCommand: npm cache clean --force && rm -rf /opt/render/.cache/_cacache && npm ci && npm run build:landing && npx prisma generate --schema=backend/prisma/schema.prisma
     startCommand: npm run prisma:push && npm run db:backfill:layer45 && node backend/index.js
     envVars:
       - key: NODE_VERSION
-        value: 18
+        value: 20
 
   - type: worker
     name: adnova-ai-mcp-worker
@@ -15,4 +15,4 @@ services:
     startCommand: npm run worker:mcp
     envVars:
       - key: NODE_VERSION
-        value: 18
+        value: 20
