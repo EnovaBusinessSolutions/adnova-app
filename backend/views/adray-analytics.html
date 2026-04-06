@@ -1434,51 +1434,37 @@
 </head>
 <body class="adray-dashboard min-h-screen">
 
-    <!-- Navbar -->
-    <nav class="sticky top-0 z-50">
-        <div class="w-full px-4 sm:px-6 lg:px-10">
-            <div class="flex justify-between h-16">
-                <div class="flex">
-                    <div class="flex-shrink-0 flex items-center">
-                        <span class="brand-mark text-xl font-bold">AdRay <span class="font-normal text-sm">Analytics</span></span>
-                    </div>
-                </div>
-                <div class="flex items-center space-x-4">
-                    <div id="shop-switcher" class="relative">
-                        <button
-                            id="shop-switcher-button"
-                            type="button"
-                            class="flex items-center gap-2 rounded-full border border-[#3B3052] bg-[#161220] px-3 py-2 text-left text-[#F4ECFF] shadow-[0_12px_30px_rgba(0,0,0,0.28)] transition hover:border-[#5F4A84] hover:bg-[#1C1628]"
-                            aria-haspopup="true"
-                            aria-expanded="false"
-                        >
-                            <span id="shop-name" class="text-sm font-medium text-[#F4ECFF]">Loading store...</span>
-                            <span id="shop-type-badge" class="journey-chip text-[10px] px-2 py-0.5">Store</span>
-                            <i class="fa-solid fa-chevron-down text-[10px] text-[#BBA5D6]"></i>
-                        </button>
-
-                        <div
-                            id="shop-switcher-menu"
-                            class="absolute right-0 top-full z-50 mt-2 hidden w-80 overflow-hidden rounded-2xl border border-[#30243F] bg-[#130F1D] shadow-[0_24px_60px_rgba(0,0,0,0.42)]"
-                        >
-                            <div class="border-b border-[#2B2139] px-4 py-3">
-                                <p class="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#A792C0]">Store selector</p>
-                                <p class="mt-1 text-xs text-[#8F7EA8]">Shows stores already known in this browser or session.</p>
-                            </div>
-                            <div id="shop-switcher-options" class="max-h-72 overflow-y-auto p-2"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </nav>
-
     <!-- Main Content -->
     <main class="dashboard-shell w-full px-4 sm:px-6 lg:px-10 py-8">
         
         <!-- Header & Controls -->
         <div class="dashboard-hero mb-8">
             <div class="flex gap-3 flex-wrap justify-start">
+                <div class="ops-control relative" id="shop-switcher">
+                    <label class="text-xs text-gray-500 mr-2">Store</label>
+                    <button
+                        id="shop-switcher-button"
+                        type="button"
+                        class="flex items-center gap-2 text-left text-sm bg-transparent focus:outline-none"
+                        aria-haspopup="true"
+                        aria-expanded="false"
+                    >
+                        <span id="shop-name" class="font-medium text-[#F4ECFF]">Loading store...</span>
+                        <span id="shop-type-badge" class="journey-chip text-[10px] px-2 py-0.5">Store</span>
+                        <i class="fa-solid fa-chevron-down text-[10px] text-[#BBA5D6]"></i>
+                    </button>
+
+                    <div
+                        id="shop-switcher-menu"
+                        class="absolute left-0 top-full z-50 mt-2 hidden w-80 overflow-hidden rounded-2xl border border-[#30243F] bg-[#130F1D] shadow-[0_24px_60px_rgba(0,0,0,0.42)]"
+                    >
+                        <div class="border-b border-[#2B2139] px-4 py-3">
+                            <p class="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#A792C0]">Store selector</p>
+                            <p class="mt-1 text-xs text-[#8F7EA8]">Shows stores already known in this browser or session.</p>
+                        </div>
+                        <div id="shop-switcher-options" class="max-h-72 overflow-y-auto p-2"></div>
+                    </div>
+                </div>
                 <div class="ops-control">
                     <label for="date-preset" class="text-xs text-gray-500 mr-2">Range</label>
                     <select id="date-preset" onchange="onDatePresetChange()" class="text-sm bg-transparent focus:outline-none">
@@ -1490,16 +1476,7 @@
                         <option value="custom">Custom</option>
                     </select>
                 </div>
-                <div class="ops-control">
-                    <label for="history-limit" class="text-xs text-gray-500 mr-2">History</label>
-                    <select id="history-limit" class="text-sm bg-transparent focus:outline-none">
-                        <option value="50">50</option>
-                        <option value="100">100</option>
-                        <option value="250">250</option>
-                        <option value="500">500</option>
-                        <option value="all" selected>All</option>
-                    </select>
-                </div>
+                <input id="history-limit" type="hidden" value="all" />
                 <div class="ops-control">
                     <label for="start-date" class="text-xs text-gray-500 mr-2">Start</label>
                     <input id="start-date" type="date" class="text-sm bg-transparent focus:outline-none" />
@@ -2098,71 +2075,6 @@
         <p class="text-sm text-gray-400">Waiting for recent orders...</p>
     </div>
 </div>
-</div>
-
-<div class="dashboard-support-grid grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8 mb-8">
-<!-- Recent Purchases Panel -->
-    <div class="ops-panel p-6 overflow-hidden">
-            <div class="flex items-center justify-between mb-4">
-                <div>
-                    <p class="panel-kicker">Audit</p>
-                    <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Recent Purchase Details</h3>
-                </div>
-                <div class="flex items-center gap-3">
-                    <select id="recent-purchases-filter" onchange="renderRecentPurchases(recentPurchasesState)" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white">
-                        <option value="all">Todas</option>
-                        <option value="orders">Woo Orders</option>
-                        <option value="events">Pixel Events</option>
-                    </select>
-                    <select id="recent-purchases-limit" onchange="renderRecentPurchases(recentPurchasesState)" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white">
-                        <option value="5">5 pedidos</option>
-                        <option value="10">10 pedidos</option>
-                        <option value="50">50 pedidos</option>
-                        <option value="100" selected>100 pedidos</option>
-                    </select>
-                    <select id="recent-purchases-sort" onchange="renderRecentPurchases(recentPurchasesState)" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white">
-                        <option value="date_desc">Mas recientes</option>
-                        <option value="date_asc">Mas antiguas</option>
-                        <option value="revenue_desc">Mayor ingreso</option>
-                        <option value="revenue_asc">Menor ingreso</option>
-                        <option value="order_asc">Pedido asc</option>
-                        <option value="order_desc">Pedido desc</option>
-                    </select>
-                    <span class="text-xs text-gray-500">ingreso + productos + fuente + attribution</span>
-                </div>
-            </div>
-            <div class="overflow-x-auto complete-orders-scroll">
-                <table class="min-w-full text-sm">
-                    <thead>
-                        <tr class="text-left text-gray-500 border-b">
-                            <th class="py-2 pr-4">Date</th>
-                            <th class="py-2 pr-4">Pedido</th>
-                            <th class="py-2 pr-4">User</th>
-                            <th class="py-2 pr-4">Ingreso</th>
-                            <th class="py-2 pr-4">Products</th>
-                            <th class="py-2 pr-4">Attribution</th>
-                            <th class="py-2 pr-4">Fuente</th>
-                            <th class="py-2 pr-4">Debug</th>
-                        </tr>
-                    </thead>
-                    <tbody id="recent-purchases-list">
-                        <tr>
-                            <td colspan="8" class="py-6 text-center text-gray-400">Sin compras todavía.</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-    </div> <!-- Close Recent Purchases Panel -->
-
-<!-- Top Products Panel -->
-    <div class="ops-panel p-6">
-                <p class="panel-kicker">Merchandising</p>
-                <h3 class="panel-title text-lg leading-6 font-medium text-gray-900 mb-1">Top Products</h3>
-                <p class="panel-subtitle text-sm mb-4">Ubica rápido qué catálogo concentra unidades e ingreso dentro del rango actual.</p>
-                <div class="space-y-3 pr-2 overflow-y-auto" style="max-height: 400px;" id="top-products-list">
-                    <p class="text-sm text-gray-400">Sin datos de productos todavía.</p>
-                </div>
-            </div>
 </div>
 
 </main>
@@ -5091,7 +5003,7 @@
                 const allTime = preset === 'all';
                 const startValue = document.getElementById('start-date')?.value || '';
                 const endValue = document.getElementById('end-date')?.value || '';
-                const historyLimit = document.getElementById('history-limit')?.value || '100';
+                const historyLimit = document.getElementById('history-limit')?.value || 'all';
                 
                 const queryParams = new URLSearchParams();
                 queryParams.set('attribution_model', currentAttributionModel);
@@ -5648,10 +5560,10 @@ function renderDataEnrichment(purchases) {
 }
 
 function renderRecentPurchases(purchases) {
+            recentPurchasesState = Array.isArray(purchases) ? purchases.slice() : [];
+
             const container = document.getElementById('recent-purchases-list');
             if (!container) return;
-
-            recentPurchasesState = Array.isArray(purchases) ? purchases.slice() : [];
 
             const filterValue = document.getElementById('recent-purchases-filter')?.value || 'all';
             const limitValue = Number.parseInt(document.getElementById('recent-purchases-limit')?.value || '100', 10) || 100;
