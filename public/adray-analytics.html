@@ -592,19 +592,57 @@
         .live-feed-shell {
             height: auto !important;
             max-height: none !important;
-            min-height: auto !important;
-            align-self: flex-start;
+            min-height: 0 !important;
+            align-self: stretch;
             overflow: hidden;
         }
 
         #feed-container {
-            max-height: 26rem;
+            flex: 1 1 auto;
+            min-height: 0;
+            max-height: none;
             overflow-y: auto;
         }
 
         #feed-container {
             overflow-y: auto !important;
             overscroll-behavior: contain;
+        }
+
+        .dashboard-top-row > * {
+            min-width: 0;
+            min-height: 0;
+        }
+
+        .conversion-paths-shell {
+            display: flex !important;
+            flex-direction: column;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        .conversion-paths-grid {
+            flex: 1 1 auto;
+            height: 100%;
+            min-height: 0;
+            align-items: stretch;
+            grid-auto-rows: minmax(0, 1fr);
+        }
+
+        .conversion-paths-grid > * {
+            min-height: 0;
+        }
+
+        .conversion-split-panel {
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .conversion-split-panel > h4 {
+            flex-shrink: 0;
         }
 
         .complete-orders-scroll {
@@ -714,7 +752,12 @@
         }
 
         .attribution-journey-focus {
-            min-height: 18rem;
+            flex: 1 1 auto;
+            min-height: 0;
+            max-height: none;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            padding-right: 0.25rem;
         }
 
         .journey-rail-wrap {
@@ -800,16 +843,21 @@
         }
 
         .attribution-journey-history {
-            max-height: 22rem;
+            flex: 1 1 auto;
+            min-height: 0;
+            max-height: none;
             overflow-y: auto;
+            overscroll-behavior: contain;
             padding-right: 0.25rem;
         }
 
-        .attribution-journey-history::-webkit-scrollbar {
+        .attribution-journey-history::-webkit-scrollbar,
+        .attribution-journey-focus::-webkit-scrollbar {
             width: 8px;
         }
 
-        .attribution-journey-history::-webkit-scrollbar-thumb {
+        .attribution-journey-history::-webkit-scrollbar-thumb,
+        .attribution-journey-focus::-webkit-scrollbar-thumb {
             background: rgba(202, 138, 229, 0.35);
             border-radius: 999px;
         }
@@ -1705,6 +1753,17 @@
             }
         }
 
+        @media (min-width: 1024px) {
+            .dashboard-top-row {
+                height: clamp(38rem, 74vh, 48rem);
+            }
+
+            .dashboard-top-row .ops-panel {
+                height: 100% !important;
+                min-height: 0 !important;
+            }
+        }
+
         .adray-dashboard .metric-pill {
             display: inline-flex;
             align-items: center;
@@ -2273,7 +2332,7 @@
         </div>
 
         <!-- Top Row: Live Feed + Recommendations -->
-        <div class="dashboard-section-grid grid grid-cols-1 lg:grid-cols-3 gap-8 items-stretch">
+        <div class="dashboard-top-row dashboard-section-grid grid grid-cols-1 lg:grid-cols-3 gap-8 items-stretch">
             <div class="lg:col-span-1 h-full">
                 <div class="ops-panel live-feed-shell flex h-full flex-col">
                     <div class="px-6 py-4 border-b border-gray-200 bg-gray-50 rounded-t-lg flex justify-between items-center">
@@ -2294,7 +2353,7 @@
             </div>
 
             <div class="lg:col-span-2 h-full">
-                <div class="ops-panel h-full p-6">
+                <div class="ops-panel conversion-paths-shell h-full p-6">
                     <div class="flex items-start justify-between gap-4 flex-wrap mb-4">
                         <div>
                             <h3 class="panel-title text-lg leading-6 font-medium" style="color: #f8fafc;">Conversion paths</h3>
@@ -2307,12 +2366,12 @@
                             </div>
                         </div>
                     </div>
-                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                        <div class="session-pattern-card rounded-xl p-4">
+                    <div class="conversion-paths-grid grid grid-cols-1 xl:grid-cols-2 gap-6">
+                        <div class="session-pattern-card conversion-split-panel rounded-xl p-4">
                             <h4 class="text-sm font-semibold mb-3" style="color: #e2e8f0;">Historical Conversion Journeys</h4>
                             <div id="attribution-journey-history" class="attribution-journey-history space-y-3"></div>
                         </div>
-                        <div class="session-visual-card rounded-xl p-4">
+                        <div class="session-visual-card conversion-split-panel rounded-xl p-4">
                             <h4 class="text-sm font-semibold mb-3" style="color: #e2e8f0;">Selected Journey</h4>
                             <div id="attribution-journey-focus" class="attribution-journey-focus space-y-4"></div>
                         </div>
