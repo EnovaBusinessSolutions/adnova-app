@@ -2580,6 +2580,7 @@ router.get('/:account_id', async (req, res) => {
       customerId: order.customerId || extractOrderCustomerId(order.attributionSnapshot) || null,
       emailHash: order.emailHash || null,
       phoneHash: order.phoneHash || null,
+      browserFingerprintHash: hashBrowserId(order?.attributionSnapshot?.browser_id || null),
       revenue: Number(order.revenue || 0),
       currency: order.currency || 'MXN',
       items: normalizeLineItems(order.lineItems),
@@ -2606,6 +2607,7 @@ router.get('/:account_id', async (req, res) => {
         customerId: eventIdentity.customerId || null,
         emailHash: eventIdentity.emailHash || null,
         phoneHash: eventIdentity.phoneHash || null,
+        browserFingerprintHash: eventIdentity.browserFingerprintHash || null,
         revenue: Number(ev.revenue || 0),
         currency: ev.currency || 'MXN',
         items: [],
@@ -2819,6 +2821,7 @@ router.get('/:account_id', async (req, res) => {
     const recentCustomerIds = Array.from(new Set(recentConversions.map((c) => c.customerId).filter(Boolean)));
     const recentEmailHashes = Array.from(new Set(recentConversions.map((c) => c.emailHash).filter(Boolean)));
     const recentPhoneHashes = Array.from(new Set(recentConversions.map((c) => c.phoneHash).filter(Boolean)));
+    const recentFingerprintHashes = Array.from(new Set(recentConversions.map((c) => c.browserFingerprintHash).filter(Boolean)));
 
     const recentConversionTimes = recentConversions
       .map((c) => new Date(c.createdAt).getTime())
@@ -2833,6 +2836,7 @@ router.get('/:account_id', async (req, res) => {
         customerIds: recentCustomerIds,
         emailHashes: recentEmailHashes,
         phoneHashes: recentPhoneHashes,
+        fingerprintHashes: recentFingerprintHashes,
       });
 
       if (identityClauses.length) {
@@ -2843,6 +2847,7 @@ router.get('/:account_id', async (req, res) => {
           },
           select: {
             userKey: true,
+            fingerprintHash: true,
           },
           take: 800,
         });
@@ -3345,6 +3350,16 @@ function extractOrderCustomerId(attributionSnapshot) {
   );
 }
 
+function normalizeBrowserId(value) {
+  const normalized = String(value || '').trim();
+  return normalized || null;
+}
+
+function hashBrowserId(value) {
+  const normalized = normalizeBrowserId(value);
+  return normalized ? hashPII(`browser:${normalized}`) : null;
+}
+
 function extractEventIdentity(rawPayload) {
   const payload = rawPayload && typeof rawPayload === 'object'
     ? rawPayload
@@ -3371,6 +3386,7 @@ function extractEventIdentity(rawPayload) {
     ),
     emailHash: email ? hashPII(email) : null,
     phoneHash: phone ? hashPII(phone) : null,
+    browserFingerprintHash: hashBrowserId(payload.browser_id || payload.visitor_id || payload.browserId || payload.visitorId),
     emailPreview: email || null,
     phonePreview: phone || null,
     customerDisplayName: firstTruthyString([
@@ -3434,7 +3450,17 @@ function buildIdentityProfileDescriptor({ customerId, emailHash, phoneHash, user
   };
 }
 
-function buildIdentityOrClauses({ userKeys = [], customerIds = [], emailHashes = [], phoneHashes = [] }) {
+function buildIdentityOrClauses({ userKeys = [], customerIds = [], emailHashes = [], phoneHashes = [], fingerprintHashes = [] }) {
+  const clauses = [];
+  if (userKeys.length) clauses.push({ userKey: { in: userKeys } });
+  if (customerIds.length) clauses.push({ customerId: { in: customerIds } });
+  if (emailHashes.length) clauses.push({ emailHash: { in: emailHashes } });
+  if (phoneHashes.length) clauses.push({ phoneHash: { in: phoneHashes } });
+  if (fingerprintHashes.length) clauses.push({ fingerprintHash: { in: fingerprintHashes } });
+  return clauses;
+}
+
+function buildOrderIdentityOrClauses({ userKeys = [], customerIds = [], emailHashes = [], phoneHashes = [] }) {
   const clauses = [];
   if (userKeys.length) clauses.push({ userKey: { in: userKeys } });
   if (customerIds.length) clauses.push({ customerId: { in: customerIds } });
@@ -3518,12 +3544,17 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
     ...seedOrders.map((item) => item.phoneHash),
     ...seedIdentityRows.map((item) => item.phoneHash),
   ]);
+  const seedFingerprintHashes = collectUniqueStrings([
+    ...eventIdentitySignals.map((item) => item.browserFingerprintHash),
+    ...seedIdentityRows.map((item) => item.fingerprintHash),
+  ]);
 
   const sharedIdentityClauses = buildIdentityOrClauses({
     userKeys: seedUserKeys,
     customerIds: seedCustomerIds,
     emailHashes: seedEmailHashes,
     phoneHashes: seedPhoneHashes,
+    fingerprintHashes: seedFingerprintHashes,
   });
 
   const sharedIdentityRows = sharedIdentityClauses.length
@@ -3537,6 +3568,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
           customerId: true,
           emailHash: true,
           phoneHash: true,
+          fingerprintHash: true,
           lastSeenAt: true,
         },
       })
@@ -3558,8 +3590,12 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
     ...seedPhoneHashes,
     ...sharedIdentityRows.map((item) => item.phoneHash),
   ]);
+  const finalFingerprintHashes = collectUniqueStrings([
+    ...seedFingerprintHashes,
+    ...sharedIdentityRows.map((item) => item.fingerprintHash),
+  ]);
 
-  const historicalOrderClauses = buildIdentityOrClauses({
+  const historicalOrderClauses = buildOrderIdentityOrClauses({
     userKeys: finalUserKeys,
     customerIds: finalCustomerIds,
     emailHashes: finalEmailHashes,
@@ -3612,6 +3648,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
     customerIds: finalCustomerIds,
     emailHashes: finalEmailHashes,
     phoneHashes: finalPhoneHashes,
+    fingerprintHashes: finalFingerprintHashes,
     profile: profileDescriptor,
     identifiedUser: {
       customerId: finalCustomerIds[0] || latestIdentitySignal?.customerId || null,
@@ -3946,7 +3983,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
       ...identityRows.map((item) => item.phoneHash),
     ]);
 
-    const orderClauses = buildIdentityOrClauses({
+    const orderClauses = buildOrderIdentityOrClauses({
       userKeys: resolvedUserKeys,
       customerIds: resolvedCustomerIds,
       emailHashes: resolvedEmailHashes,
@@ -4891,6 +4928,7 @@ router.get('/:account_id/users/:userKey/timeline', async (req, res) => {
         customerId: true,
         emailHash: true,
         phoneHash: true,
+        fingerprintHash: true,
       },
     });
 
@@ -4898,12 +4936,14 @@ router.get('/:account_id/users/:userKey/timeline', async (req, res) => {
     const seedCustomerIds = collectUniqueStrings(seedIdentityRows.map((row) => row.customerId));
     const seedEmailHashes = collectUniqueStrings(seedIdentityRows.map((row) => row.emailHash));
     const seedPhoneHashes = collectUniqueStrings(seedIdentityRows.map((row) => row.phoneHash));
+    const seedFingerprintHashes = collectUniqueStrings(seedIdentityRows.map((row) => row.fingerprintHash));
 
     const sharedIdentityClauses = buildIdentityOrClauses({
       userKeys: seedUserKeys,
       customerIds: seedCustomerIds,
       emailHashes: seedEmailHashes,
       phoneHashes: seedPhoneHashes,
+      fingerprintHashes: seedFingerprintHashes,
     });
 
     const sharedIdentityRows = sharedIdentityClauses.length
@@ -4944,8 +4984,12 @@ router.get('/:account_id/users/:userKey/timeline', async (req, res) => {
       ...seedPhoneHashes,
       ...sharedIdentityRows.map((row) => row.phoneHash),
     ]);
+    const finalFingerprintHashes = collectUniqueStrings([
+      ...seedFingerprintHashes,
+      ...sharedIdentityRows.map((row) => row.fingerprintHash),
+    ]);
 
-    const orderClauses = buildIdentityOrClauses({
+    const orderClauses = buildOrderIdentityOrClauses({
       userKeys: finalUserKeys,
       customerIds: finalCustomerIds,
       emailHashes: finalEmailHashes,

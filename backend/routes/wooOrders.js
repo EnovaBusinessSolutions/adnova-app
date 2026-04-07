@@ -101,6 +101,18 @@ function parseBooleanSafe(value) {
   return false;
 }
 
+function normalizeBrowserId(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return null;
+  if (normalized.length < 8 || normalized.length > 128) return null;
+  return normalized;
+}
+
+function hashBrowserId(value) {
+  const normalized = normalizeBrowserId(value);
+  return normalized ? hashPII(`browser:${normalized}`) : null;
+}
+
 function hasExplicitTimezone(value) {
   return /([zZ]|[+\-]\d{2}:\d{2})$/.test(String(value || '').trim());
 }
@@ -240,8 +252,28 @@ router.post('/woo/orders-sync', async (req, res) => {
 
     const emailHash = typeof hashPII === 'function' ? hashPII(payload.customer_email) : null;
     const phoneHash = typeof hashPII === 'function' ? hashPII(payload.customer_phone) : null;
+    const browserId = normalizeBrowserId(payload.browser_id || null);
+    const browserFingerprintHash = hashBrowserId(browserId);
+    let resolvedUserKey = payload.user_key || (checkoutMap ? checkoutMap.userKey : null);
+    let resolvedSessionId = payload.session_id || (checkoutMap ? checkoutMap.sessionId : null);
+
+    if (!resolvedUserKey && browserFingerprintHash) {
+      const browserIdentity = await prisma.identityGraph.findFirst({
+        where: {
+          accountId,
+          fingerprintHash: browserFingerprintHash,
+        },
+        orderBy: { lastSeenAt: 'desc' },
+        select: { userKey: true },
+      }).catch(() => null);
+
+      if (browserIdentity?.userKey) {
+        resolvedUserKey = browserIdentity.userKey;
+      }
+    }
 
     const attributionSnapshot = {
+      browser_id: browserId,
       utm_source: payload.utm_source || null,
       utm_medium: payload.utm_medium || null,
       utm_campaign: payload.utm_campaign || null,
@@ -275,8 +307,8 @@ router.post('/woo/orders-sync', async (req, res) => {
       orderNumber: String(payload.order_number || payload.order_id),
       accountId,
       checkoutToken,
-      userKey: payload.user_key || (checkoutMap ? checkoutMap.userKey : null),
-      sessionId: payload.session_id || (checkoutMap ? checkoutMap.sessionId : null),
+      userKey: resolvedUserKey,
+      sessionId: resolvedSessionId,
       customerId,
       emailHash,
       phoneHash,

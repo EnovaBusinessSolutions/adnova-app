@@ -578,6 +578,9 @@ final class Adnova_Pixel_Plugin {
             if (isset($_COOKIE['__adray_session_id'])) {
                 $order->update_meta_data('_adray_session_id', sanitize_text_field(wp_unslash($_COOKIE['__adray_session_id'])));
             }
+            if (isset($_COOKIE['__adray_browser_id'])) {
+                $order->update_meta_data('_adray_browser_id', sanitize_text_field(wp_unslash($_COOKIE['__adray_browser_id'])));
+            }
             if (isset($_COOKIE['__adray_visitor_id'])) {
                 $order->update_meta_data('_adray_visitor_id', sanitize_text_field(wp_unslash($_COOKIE['__adray_visitor_id'])));
             }
@@ -628,6 +631,7 @@ final class Adnova_Pixel_Plugin {
 
         self::send_server_side_event('user_logged_in', array(
             'session_id' => $session_id,
+            'browser_id' => isset($_COOKIE['__adray_browser_id']) ? sanitize_text_field(wp_unslash($_COOKIE['__adray_browser_id'])) : null,
             'customer_id' => (string) $user->ID,
             'email' => $email !== '' ? $email : null,
             'phone' => $phone !== '' ? $phone : null,
@@ -668,6 +672,7 @@ final class Adnova_Pixel_Plugin {
 
         self::send_server_side_event('user_logged_out', array(
             'session_id' => $session_id,
+            'browser_id' => isset($_COOKIE['__adray_browser_id']) ? sanitize_text_field(wp_unslash($_COOKIE['__adray_browser_id'])) : null,
             'customer_id' => (string) $user->ID,
             'page_type' => 'account',
             'page_url' => esc_url_raw(home_url('/mi-cuenta/')),
@@ -810,6 +815,7 @@ final class Adnova_Pixel_Plugin {
             'raw_source'     => 'plugin_server',
             'page_url'       => $order->get_checkout_order_received_url(),
             'page_type'      => 'checkout',
+            'browser_id'     => $order->get_meta('_adray_browser_id') ? $order->get_meta('_adray_browser_id') : null,
             'order_id'       => $order_data['order_id'],
             'revenue'        => $order_data['revenue'],
             'currency'       => $order_data['currency'],
@@ -892,7 +898,8 @@ final class Adnova_Pixel_Plugin {
         $payload = array(
             'account_id' => self::get_site_id(),
             'session_id' => $order->get_meta('_adray_session_id') ? $order->get_meta('_adray_session_id') : null,
-            'user_key' => $order->get_meta('_adray_visitor_id') ? $order->get_meta('_adray_visitor_id') : null,
+            'browser_id' => $order->get_meta('_adray_browser_id') ? $order->get_meta('_adray_browser_id') : null,
+            'user_key' => null,
             'raw_source' => 'plugin_order_sync',
             'collected_at' => gmdate('c'),
             'order_id' => $order_data['order_id'],

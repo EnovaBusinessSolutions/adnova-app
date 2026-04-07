@@ -47,6 +47,24 @@
     return 'adray_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
   }
 
+  function getOrCreateBrowserId() {
+    var key = '__adray_browser_id';
+    var legacyKey = '__adray_visitor_id';
+    var existing = safeStorageGet(window.localStorage, key)
+      || safeStorageGet(window.localStorage, legacyKey)
+      || getCookie(key)
+      || getCookie(legacyKey);
+
+    var id = existing || generateId();
+
+    safeStorageSet(window.localStorage, key, id);
+    safeStorageSet(window.localStorage, legacyKey, id);
+    document.cookie = key + "=" + id + "; path=/; max-age=63072000; SameSite=Lax";
+    document.cookie = legacyKey + "=" + id + "; path=/; max-age=63072000; SameSite=Lax";
+
+    return id;
+  }
+
   function getOrCreateSessionId() {
     var key = '__adray_session_id';
     var existing = safeStorageGet(window.sessionStorage, key);
@@ -360,6 +378,7 @@
     const payload = {
       account_id: getAccountId(),
       session_id: getOrCreateSessionId(),
+      browser_id: getOrCreateBrowserId(),
       platform: detectPlatform(),
       event_name: eventName,
       page_url: window.location.href,
