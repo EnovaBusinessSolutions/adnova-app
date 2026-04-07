@@ -11,6 +11,9 @@ const McpData = require('../models/McpData');
 const User = require('../models/User');
 const SignalData = require('../models/SignalData');
 const {
+  isEncodedSignalPayloadBuildableForPdf,
+} = require('../services/signalEncoder');
+const {
   findRoot,
   buildUnifiedContextForUser,
   buildPdfForUser,
@@ -108,9 +111,24 @@ function buildConnectionFingerprintFromContainer(container) {
   });
 }
 
-function getRootAiSignalPayload(root) {
+function getRootHumanSignalPayload(root) {
   const state = root?.aiContext || {};
-  return state?.signalPayload || state?.encodedPayload || null;
+  return state?.signal?.payload || state?.signalPayload || null;
+}
+
+function getRootEncodedSignalPayload(root) {
+  const state = root?.aiContext || {};
+  return state?.signal?.encodedPayload || state?.encodedPayload || null;
+}
+
+function getPreferredSignalPayloadForPdf(root) {
+  const encodedPayload = getRootEncodedSignalPayload(root);
+  if (encodedPayload) return { kind: 'encoded', payload: encodedPayload };
+
+  const humanPayload = getRootHumanSignalPayload(root);
+  if (humanPayload) return { kind: 'human_fallback', payload: humanPayload };
+
+  return { kind: null, payload: null };
 }
 
 function getRootSignalConnectionFingerprint(root) {
@@ -194,8 +212,10 @@ function rootSignalLooksStale(root) {
 
   if (state?.needsSignalRebuild === true) return true;
 
-  const signalPayload = getRootAiSignalPayload(root);
-  if (!signalPayload) return false;
+  const hasAnySignalPayload =
+    !!getRootEncodedSignalPayload(root) ||
+    !!getRootHumanSignalPayload(root);
+  if (!hasAnySignalPayload) return false;
 
   const currentSourceFingerprint = deriveCurrentSourceFingerprintFromRoot(root);
   const signalSourceFingerprint = getRootSignalSourceFingerprint(root);
@@ -524,6 +544,8 @@ async function findLatestContextRootForUser(userId) {
     $or: [
       { 'aiContext.signalPayload': { $exists: true, $ne: null } },
       { 'aiContext.encodedPayload': { $exists: true, $ne: null } },
+      { 'aiContext.signal.payload': { $exists: true, $ne: null } },
+      { 'aiContext.signal.encodedPayload': { $exists: true, $ne: null } },
     ],
   }).sort({
     'aiContext.finishedAt': -1,
@@ -557,7 +579,8 @@ async function findPreferredContextRootForUser(userId) {
 
 function getVersionSeedFromRoot(root) {
   const state = root?.aiContext || {};
-  const signalPayload = state?.signalPayload || state?.encodedPayload || null;
+  const encodedSignalPayload = getRootEncodedSignalPayload(root);
+  const humanSignalPayload = getRootHumanSignalPayload(root);
 
   return (
     safeStr(deriveCurrentSourceFingerprintFromRoot(root)).trim() ||
@@ -565,7 +588,8 @@ function getVersionSeedFromRoot(root) {
     safeStr(state?.snapshotId).trim() ||
     safeStr(root?.latestSnapshotId).trim() ||
     safeStr(state?.finishedAt).trim() ||
-    safeStr(signalPayload?.generatedAt).trim() ||
+    safeStr(encodedSignalPayload?.generatedAt).trim() ||
+    safeStr(humanSignalPayload?.generatedAt).trim() ||
     safeStr(root?.updatedAt).trim() ||
     String(Date.now())
   );
@@ -604,7 +628,9 @@ function resolveAuthoritativeSignalState(root, compatibleRun, staleSignal) {
       storageRangeDays: toNum(state?.storageRangeDays) || null,
 
       signalPayload: null,
+      encodedPayload: null,
       hasSignal: false,
+      hasEncodedPayload: false,
       signalComplete: false,
       signalValidForPdf: false,
 
@@ -641,18 +667,19 @@ function resolveAuthoritativeSignalState(root, compatibleRun, staleSignal) {
       ? compatibleRun
       : null;
 
-  const rootPayload = !staleSignal ? getRootAiSignalPayload(root) : null;
+  const rootHumanPayload = !staleSignal ? getRootHumanSignalPayload(root) : null;
+  const rootEncodedPayload = !staleSignal ? getRootEncodedSignalPayload(root) : null;
 
   const rootSignalComplete =
     !staleSignal &&
     !!state?.signalComplete &&
-    !!rootPayload &&
+    !!rootEncodedPayload &&
     isDoneCompleted(state?.status, state?.stage);
 
   const rootSignalValidForPdf =
     !staleSignal &&
     !!state?.signalValidForPdf &&
-    !!rootPayload;
+    !!rootEncodedPayload;
 
   if (processingRun) {
     return {
@@ -671,7 +698,9 @@ function resolveAuthoritativeSignalState(root, compatibleRun, staleSignal) {
       storageRangeDays: processingRun?.storageRangeDays || toNum(state?.storageRangeDays) || null,
 
       signalPayload: null,
+      encodedPayload: null,
       hasSignal: false,
+      hasEncodedPayload: false,
       signalComplete: false,
       signalValidForPdf: false,
 
@@ -694,9 +723,10 @@ function resolveAuthoritativeSignalState(root, compatibleRun, staleSignal) {
   }
 
   if (completedRun) {
-    const signalPayload = rootPayload;
+    const signalPayload = rootHumanPayload;
+    const encodedPayload = rootEncodedPayload;
     const signalComplete = !!(rootSignalComplete || completedRun?.signalComplete);
-    const signalValidForPdf = !!signalPayload && !!(rootSignalValidForPdf || completedRun?.signalValidForPdf || signalComplete);
+    const signalValidForPdf = !!encodedPayload && !!(rootSignalValidForPdf || completedRun?.signalValidForPdf || signalComplete);
 
     return {
       authority: 'run_completed',
@@ -714,7 +744,9 @@ function resolveAuthoritativeSignalState(root, compatibleRun, staleSignal) {
       storageRangeDays: completedRun?.storageRangeDays || toNum(state?.storageRangeDays) || null,
 
       signalPayload,
+      encodedPayload,
       hasSignal: !!signalPayload,
+      hasEncodedPayload: !!encodedPayload,
       signalComplete,
       signalValidForPdf,
 
@@ -759,7 +791,9 @@ function resolveAuthoritativeSignalState(root, compatibleRun, staleSignal) {
       storageRangeDays: failedRun?.storageRangeDays || toNum(state?.storageRangeDays) || null,
 
       signalPayload: null,
+      encodedPayload: null,
       hasSignal: false,
+      hasEncodedPayload: false,
       signalComplete: false,
       signalValidForPdf: false,
 
@@ -782,16 +816,17 @@ function resolveAuthoritativeSignalState(root, compatibleRun, staleSignal) {
   }
 
   const needSignalRebuild = !!state?.needsSignalRebuild || !!staleSignal;
-  const signalPayload = needSignalRebuild ? null : rootPayload;
+  const signalPayload = needSignalRebuild ? null : rootHumanPayload;
+  const encodedPayload = needSignalRebuild ? null : rootEncodedPayload;
   const signalComplete =
     !needSignalRebuild &&
     !!state?.signalComplete &&
-    !!signalPayload &&
+    !!encodedPayload &&
     isDoneCompleted(state?.status, state?.stage);
 
   const signalValidForPdf =
     !needSignalRebuild &&
-    !!signalPayload &&
+    !!encodedPayload &&
     (!!state?.signalValidForPdf || !!signalComplete);
 
   return {
@@ -810,7 +845,9 @@ function resolveAuthoritativeSignalState(root, compatibleRun, staleSignal) {
     storageRangeDays: toNum(state?.storageRangeDays) || null,
 
     signalPayload,
+    encodedPayload,
     hasSignal: !!signalPayload,
+    hasEncodedPayload: !!encodedPayload,
     signalComplete,
     signalValidForPdf,
 
@@ -954,6 +991,10 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
   const signalComplete = !!authoritativeSignal?.signalComplete;
   const signalValidForPdf = !!authoritativeSignal?.signalValidForPdf;
   const signalPayload = authoritativeSignal?.signalPayload || null;
+  const encodedPayload = authoritativeSignal?.encodedPayload || getRootEncodedSignalPayload(root) || null;
+  const preferredPayloadForPdf = encodedPayload || signalPayload || null;
+  const preferredPayloadKind = encodedPayload ? 'encoded' : (signalPayload ? 'human_fallback' : null);
+  const encodedPayloadBuildable = isEncodedSignalPayloadBuildableForPdf(encodedPayload);
 
   const effectiveSignalSourceFingerprint =
     safeStr(authoritativeSignal?.sourceFingerprint || '').trim() || null;
@@ -961,7 +1002,8 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
   const signalReadyForPdf =
     !needSignalRebuild &&
     !signalProcessing &&
-    !!signalPayload &&
+    !!encodedPayload &&
+    !!encodedPayloadBuildable &&
     !!signalValidForPdf &&
     !!signalComplete;
 
@@ -987,7 +1029,7 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
     !!(shareState?.mcpShareEnabled && shareState?.mcpShareToken) &&
     !needSignalRebuild &&
     !signalProcessing &&
-    !!signalPayload;
+    !!preferredPayloadForPdf;
 
   const shareToken = shareEnabled ? shareState?.mcpShareToken || null : null;
   const shareProvider = normalizeProvider(shareState?.mcpShareProvider || 'chatgpt');
@@ -1021,13 +1063,15 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
       contextRangeDays: authoritativeSignal?.contextRangeDays || null,
       storageRangeDays: authoritativeSignal?.storageRangeDays || null,
 
-      hasEncodedPayload: !needSignalRebuild && !!state?.encodedPayload,
+      hasEncodedPayload: !needSignalRebuild && !!encodedPayload,
+      hasHumanSignalPayload: !needSignalRebuild && !!signalPayload,
       hasSignal: !!signalPayload,
-      signalReady: !!signalPayload,
+      signalReady: !!preferredPayloadForPdf,
       signalComplete,
       signalValidForPdf,
       signalReadyForPdf: uiFlags.signalReadyForPdf,
-      providerAgnostic: !!state?.encodedPayload?.providerAgnostic,
+      preferredPayloadForPdf: preferredPayloadKind,
+      providerAgnostic: !!encodedPayload?.providerAgnostic,
 
       usedOpenAI: !!authoritativeSignal?.usedOpenAI,
       model: authoritativeSignal?.model || null,
@@ -1099,7 +1143,11 @@ function buildSharedPayload(root, provider, signalRun = null) {
 
   const authoritativeSignal = resolveAuthoritativeSignalState(root, compatibleRun, rootSignalLooksStale(root));
   const payload = authoritativeSignal?.signalComplete
-    ? authoritativeSignal?.signalPayload || null
+    ? (
+      authoritativeSignal?.encodedPayload ||
+      authoritativeSignal?.signalPayload ||
+      null
+    )
     : null;
 
   if (!payload) return null;
@@ -1472,9 +1520,10 @@ router.get('/latest', async (req, res) => {
     const state = root?.aiContext || {};
     const staleSignal = rootSignalLooksStale(root);
     const statusData = buildStatusResponse(root, null, signalRun)?.data || {};
-    const signalPayload = statusData?.signalComplete
-      ? getRootAiSignalPayload(root)
-      : null;
+    const preferredPayload = statusData?.signalComplete
+      ? getPreferredSignalPayloadForPdf(root)
+      : { payload: null, kind: null };
+    const signalPayload = preferredPayload?.payload || null;
 
     if (!signalPayload || !statusData?.signalComplete || !!statusData?.needSignalRebuild) {
       return res.status(409).json({
@@ -1508,6 +1557,7 @@ router.get('/latest', async (req, res) => {
         generatedAt: statusData?.finishedAt || state?.finishedAt || null,
         hasPdf: !!statusData?.hasPdf,
         signalReadyForPdf: !!statusData?.signalReadyForPdf,
+        preferredPayloadForPdf: preferredPayload?.kind || statusData?.preferredPayloadForPdf || null,
         pdfReady: !!statusData?.pdfReady,
         pdfProcessing: !!statusData?.pdfProcessing,
         canGeneratePdf: !!statusData?.canGeneratePdf,
