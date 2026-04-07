@@ -9,6 +9,7 @@ const {
   verifyEmail,
   auditReadyEmail,
   dailyFollowupCallEmail,
+  getEmailInlineAttachments,
 } = require('./emailTemplates');
 
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
@@ -177,6 +178,7 @@ async function sendVerifyEmail({ userId, toEmail, token, name } = {}) {
       subject,
       text: `Confirm your email to activate your account: ${verifyUrl}`,
       html,
+      attachments: getEmailInlineAttachments(),
     });
 
     if (DEBUG_EMAIL) console.log('[emailService] verify sent:', { to, messageId: info?.messageId });
@@ -247,6 +249,7 @@ async function sendWelcomeEmail(input) {
         `— Adray Team\n` +
         `Support: support@adray.ai`,
       html,
+      attachments: getEmailInlineAttachments(),
     });
 
     if (DEBUG_EMAIL) console.log('[emailService] welcome sent:', { to, messageId: info?.messageId });
@@ -320,6 +323,7 @@ async function sendAuditReadyEmail({ userId, toEmail, name, origin = 'panel', jo
         `— Adray Team\n` +
         `Support: support@adray.ai`,
       html,
+      attachments: getEmailInlineAttachments(),
     });
 
     if (DEBUG_EMAIL) console.log('[emailService] audit-ready sent:', { to, messageId: info?.messageId, key });
@@ -418,6 +422,7 @@ async function sendDailyFollowupCallEmail({
         `Book here: ${url}\n\n` +
         `Best,\n${operatorName}\nAdray AI\nhttps://adray.ai`,
       html,
+      attachments: getEmailInlineAttachments(),
     });
 
     if (DEBUG_EMAIL) {
@@ -514,6 +519,7 @@ async function sendResetPasswordEmail(arg1, arg2, arg3) {
       subject,
       text: `Hi ${finalName}. To reset your password, visit: ${resetUrl}`,
       html,
+      attachments: getEmailInlineAttachments(),
     });
 
     if (DEBUG_EMAIL) console.log('[emailService] reset sent:', { to, messageId: info?.messageId });
@@ -560,11 +566,19 @@ async function sendTestEmail() {
   const to = process.env.SMTP_TEST_TO || process.env.SMTP_USER;
 
   try {
+    const attachments = getEmailInlineAttachments();
     const info = await sendMail({
       to,
       subject: 'SMTP Test · Adray',
       text: 'This is a test email from /__mail/test',
-      html: `<p>SMTP test OK — ${new Date().toISOString()}</p><p>From: ${FROM}</p><p>To: ${to}</p>`,
+      html:
+        `<p>SMTP test OK — ${new Date().toISOString()}</p>` +
+        `<p>From: ${FROM}</p>` +
+        `<p>To: ${to}</p>` +
+        (attachments.length
+          ? `<p><img src="cid:adray-logo" alt="Adray" width="28" height="28" style="display:block;border:0;outline:none;text-decoration:none;"></p>`
+          : `<p>Inline logo attachment not available on this server.</p>`),
+      attachments,
     });
 
     if (DEBUG_EMAIL) console.log('[emailService] test sent:', { to, messageId: info?.messageId });

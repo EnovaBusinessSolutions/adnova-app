@@ -3,9 +3,9 @@
 const fs = require('fs');
 const path = require('path');
 
-const APP_BASE_URL = String(process.env.APP_BASE_URL || process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
 const LEGAL_BRAND_NAME = 'Adray, Inc.';
 const EMAIL_BRAND_ICON_FILENAME = 'adray-icon.png';
+const EMAIL_BRAND_ICON_CID = 'adray-logo';
 
 function escapeHtml(s = '') {
   return String(s)
@@ -32,47 +32,36 @@ function safeUrl(url = '') {
   return s;
 }
 
-function resolveEmailBrandIconSrc() {
+function resolveEmailBrandIconPath() {
   const candidatePaths = [
     path.join(__dirname, '../public/branding', EMAIL_BRAND_ICON_FILENAME),
     path.join(__dirname, '../public/assets', EMAIL_BRAND_ICON_FILENAME),
-    path.join(__dirname, '../../dashboard-src/src/assets', EMAIL_BRAND_ICON_FILENAME),
-    path.join(__dirname, '../../dashboard-src/public/assets', EMAIL_BRAND_ICON_FILENAME),
   ];
 
   for (const absPath of candidatePaths) {
     try {
-      if (fs.existsSync(absPath)) {
-        const ext = path.extname(absPath).toLowerCase();
-        const mime =
-          ext === '.png'
-            ? 'image/png'
-            : ext === '.jpg' || ext === '.jpeg'
-              ? 'image/jpeg'
-              : ext === '.gif'
-                ? 'image/gif'
-                : 'application/octet-stream';
-
-        const base64 = fs.readFileSync(absPath).toString('base64');
-        if (base64) return `data:${mime};base64,${base64}`;
-      }
+      if (fs.existsSync(absPath)) return absPath;
     } catch (_) {}
   }
 
-  return `${APP_BASE_URL}/branding/${EMAIL_BRAND_ICON_FILENAME}`;
+  return null;
 }
 
-const EMAIL_BRAND_ICON_SRC = resolveEmailBrandIconSrc();
+const EMAIL_BRAND_ICON_PATH = resolveEmailBrandIconPath();
 
 function brandWordmark() {
-  const iconSrc = escapeHtml(EMAIL_BRAND_ICON_SRC);
+  if (!EMAIL_BRAND_ICON_PATH) {
+    return `
+      <div style="display:block;width:28px;height:28px;line-height:28px;font-size:0;">&nbsp;</div>
+    `;
+  }
 
   return `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0">
       <tr>
         <td valign="middle">
           <img
-            src="${iconSrc}"
+            src="cid:${EMAIL_BRAND_ICON_CID}"
             alt="Adray"
             width="28"
             height="28"
@@ -279,6 +268,20 @@ function footerHtml(brand = LEGAL_BRAND_NAME, privacyUrl = 'https://adray.ai/pri
   return `© ${year} ${escapeHtml(brand)} · <a href="${escapeHtml(
     privacyUrl
   )}" style="color:#C4B5FD;text-decoration:none;font-weight:700;">Privacy Policy</a>`;
+}
+
+function getEmailInlineAttachments() {
+  if (!EMAIL_BRAND_ICON_PATH) return [];
+
+  return [
+    {
+      filename: EMAIL_BRAND_ICON_FILENAME,
+      path: EMAIL_BRAND_ICON_PATH,
+      cid: EMAIL_BRAND_ICON_CID,
+      contentDisposition: 'inline',
+      contentType: 'image/png',
+    },
+  ];
 }
 
 function wrapEmail({
@@ -720,4 +723,5 @@ module.exports = {
   verifyEmail,
   auditReadyEmail,
   dailyFollowupCallEmail,
+  getEmailInlineAttachments,
 };
