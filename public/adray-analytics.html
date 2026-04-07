@@ -780,36 +780,46 @@
         .live-feed-scroll-wrap {
             flex: 1 1 auto;
             min-height: 0;
-            display: flex;
             position: relative;
             overflow-x: hidden;
             overflow-y: auto;
             overscroll-behavior: contain;
             overscroll-behavior-y: contain;
-            scrollbar-gutter: stable both-edges;
+            scrollbar-gutter: stable;
             -webkit-overflow-scrolling: touch;
-            scrollbar-width: none;
+            padding-right: 0.25rem;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(202, 138, 229, 0.38) transparent;
         }
 
         #feed-container {
             display: flex;
             flex-direction: column;
-            flex: 1 1 auto;
             width: 100%;
             gap: 1rem;
-            min-height: 100%;
+            min-height: 0;
             overflow-x: hidden;
             overflow-y: visible;
-            padding: 1rem 0.5rem 1rem 1rem;
+            padding: 1rem 0.35rem 1rem 1rem;
             touch-action: pan-y;
         }
 
         .live-feed-scroll-wrap::-webkit-scrollbar {
-            width: 0;
-            height: 0;
+            width: 8px;
+            height: 8px;
+        }
+
+        .live-feed-scroll-wrap::-webkit-scrollbar-thumb {
+            background: rgba(202, 138, 229, 0.38);
+            border-radius: 999px;
+        }
+
+        .live-feed-scroll-wrap::-webkit-scrollbar-track {
+            background: transparent;
         }
 
         .live-feed-scrollbar {
+            display: none;
             position: absolute;
             top: 1rem;
             right: 0.42rem;
