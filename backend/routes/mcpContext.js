@@ -32,6 +32,23 @@ function toNum(v, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function uniqStrings(values, limit = 25) {
+  const out = [];
+  const seen = new Set();
+
+  for (const value of Array.isArray(values) ? values : []) {
+    const normalized = safeStr(value).trim();
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(normalized);
+    if (out.length >= limit) break;
+  }
+
+  return out;
+}
+
 function nowDate() {
   return new Date();
 }
@@ -129,6 +146,38 @@ function getPreferredSignalPayloadForPdf(root) {
   if (humanPayload) return { kind: 'human_fallback', payload: humanPayload };
 
   return { kind: null, payload: null };
+}
+
+function isHumanSignalPayloadBuildableForPdf(signalPayload) {
+  if (!signalPayload || typeof signalPayload !== 'object') return false;
+
+  const summary = signalPayload?.summary || {};
+  const block =
+    safeStr(signalPayload?.llm_context_block).trim() ||
+    safeStr(signalPayload?.llm_context_block_mini).trim();
+  const executive = safeStr(summary?.executive_summary).trim();
+  const business = safeStr(summary?.business_state).trim();
+
+  if (!block || block.length < 80) return false;
+  if (!executive && !business) return false;
+
+  return true;
+}
+
+function deriveSourceNamesByFlag(sourcesStatus, flag) {
+  if (!sourcesStatus || typeof sourcesStatus !== 'object') return [];
+  return Object.entries(sourcesStatus)
+    .filter(([, state]) => !!state?.[flag])
+    .map(([name]) => safeStr(name).trim())
+    .filter(Boolean);
+}
+
+function deriveSourceNamesWithError(sourcesStatus) {
+  if (!sourcesStatus || typeof sourcesStatus !== 'object') return [];
+  return Object.entries(sourcesStatus)
+    .filter(([, state]) => !!state?.lastError)
+    .map(([name]) => safeStr(name).trim())
+    .filter(Boolean);
 }
 
 function getRootSignalConnectionFingerprint(root) {
@@ -1052,9 +1101,15 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
   const signalValidForPdf = !!authoritativeSignal?.signalValidForPdf;
   const signalPayload = authoritativeSignal?.signalPayload || null;
   const encodedPayload = authoritativeSignal?.encodedPayload || getRootEncodedSignalPayload(root) || null;
-  const preferredPayloadForPdf = encodedPayload || signalPayload || null;
-  const preferredPayloadKind = encodedPayload ? 'encoded' : (signalPayload ? 'human_fallback' : null);
   const encodedPayloadBuildable = isEncodedSignalPayloadBuildableForPdf(encodedPayload);
+  const humanPayloadBuildable = isHumanSignalPayloadBuildableForPdf(signalPayload);
+  const hasBuildablePdfPayload = encodedPayloadBuildable || humanPayloadBuildable;
+  const preferredPayloadForPdf = encodedPayloadBuildable
+    ? encodedPayload
+    : (humanPayloadBuildable ? signalPayload : null);
+  const preferredPayloadKind = encodedPayloadBuildable
+    ? 'encoded'
+    : (humanPayloadBuildable ? 'human_fallback' : null);
 
   const effectiveSignalSourceFingerprint =
     safeStr(authoritativeSignal?.sourceFingerprint || '').trim() || null;
@@ -1062,8 +1117,7 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
   const signalReadyForPdf =
     !needSignalRebuild &&
     !signalProcessing &&
-    !!encodedPayload &&
-    !!encodedPayloadBuildable &&
+    !!hasBuildablePdfPayload &&
     !!signalValidForPdf &&
     !!signalComplete;
 
@@ -1120,6 +1174,25 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
     needPdfRebuild,
   });
 
+  const effectiveSourcesStatus = authoritativeSignal?.sourcesStatus || state?.sourcesStatus || null;
+  const connectedSources = uniqStrings([
+    ...(Array.isArray(authoritativeSignal?.connectedSources) ? authoritativeSignal.connectedSources : []),
+    ...deriveSourceNamesByFlag(effectiveSourcesStatus, 'connected'),
+  ], 25);
+  const usableSources = uniqStrings([
+    ...(Array.isArray(authoritativeSignal?.usableSources) ? authoritativeSignal.usableSources : []),
+    ...(Array.isArray(state?.usableSources) ? state.usableSources : []),
+    ...deriveSourceNamesByFlag(effectiveSourcesStatus, 'usable'),
+  ], 25);
+  const pendingConnectedSources = uniqStrings([
+    ...(Array.isArray(authoritativeSignal?.pendingConnectedSources) ? authoritativeSignal.pendingConnectedSources : []),
+    ...(Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : []),
+  ], 25);
+  const failedSources = uniqStrings([
+    ...(Array.isArray(authoritativeSignal?.failedSources) ? authoritativeSignal.failedSources : []),
+    ...deriveSourceNamesWithError(effectiveSourcesStatus),
+  ], 25);
+
   return {
     ok: true,
     data: {
@@ -1149,19 +1222,11 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
       buildAttemptId: authoritativeSignal?.buildAttemptId || null,
       signalRunId: authoritativeSignal?.signalRunId || null,
 
-      sources: authoritativeSignal?.sourcesStatus || state?.sourcesStatus || null,
-      connectedSources: Array.isArray(authoritativeSignal?.connectedSources)
-        ? authoritativeSignal.connectedSources
-        : [],
-      usableSources: Array.isArray(authoritativeSignal?.usableSources)
-        ? authoritativeSignal.usableSources
-        : (Array.isArray(state?.usableSources) ? state.usableSources : []),
-      pendingConnectedSources: Array.isArray(authoritativeSignal?.pendingConnectedSources)
-        ? authoritativeSignal.pendingConnectedSources
-        : (Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : []),
-      failedSources: Array.isArray(authoritativeSignal?.failedSources)
-        ? authoritativeSignal.failedSources
-        : [],
+      sources: effectiveSourcesStatus,
+      connectedSources,
+      usableSources,
+      pendingConnectedSources,
+      failedSources,
 
       sourceFingerprint: effectiveSignalSourceFingerprint,
       currentSourcesSnapshot,
