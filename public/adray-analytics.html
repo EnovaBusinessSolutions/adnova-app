@@ -1113,6 +1113,7 @@
             font-size: 0.84rem;
             font-weight: 700;
             color: var(--dash-text);
+            flex-wrap: wrap;
         }
 
         .journey-event-time {
@@ -1187,6 +1188,223 @@
         .journey-event-icon[data-tooltip]:hover::after,
         .journey-event-icon[data-tooltip]:hover::before {
             opacity: 1;
+        }
+
+        .journey-event-session-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.16rem 0.46rem;
+            border-radius: 999px;
+            border: 1px solid rgba(202, 138, 229, 0.24);
+            background: rgba(225, 216, 243, 0.08);
+            color: rgba(232, 223, 247, 0.88);
+            font-size: 0.61rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        .journey-event.session-marker {
+            background: transparent;
+            border: none;
+            box-shadow: none;
+            margin-bottom: 0.5rem;
+            padding: 0 0 0.85rem 1.35rem;
+        }
+
+        .journey-event.session-marker::before {
+            left: -0.1rem;
+            top: 0.4rem;
+            bottom: -0.2rem;
+            width: 2px;
+            height: auto;
+            border-radius: 999px;
+            background: rgba(202, 138, 229, 0.28);
+            box-shadow: none;
+        }
+
+        .journey-event.session-marker:hover,
+        .journey-event.session-marker:focus-within,
+        .journey-event.session-gap:hover,
+        .journey-event.session-gap:focus-within {
+            transform: none;
+            box-shadow: none;
+        }
+
+        .journey-event.session-marker .journey-event-title {
+            width: fit-content;
+            padding: 0.26rem 0.56rem;
+            border-radius: 999px;
+            border: 1px solid rgba(202, 138, 229, 0.24);
+            background: rgba(225, 216, 243, 0.08);
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .journey-event.session-marker .journey-event-detail,
+        .journey-event.session-gap .journey-event-detail {
+            max-height: 8rem;
+            opacity: 1;
+        }
+
+        .journey-event.session-marker.is-google .journey-event-title {
+            border-color: rgba(251, 191, 36, 0.38);
+            background: linear-gradient(135deg, rgba(146, 64, 14, 0.22), rgba(225, 216, 243, 0.06));
+        }
+
+        .journey-event.session-marker.is-meta .journey-event-title {
+            border-color: rgba(96, 165, 250, 0.4);
+            background: linear-gradient(135deg, rgba(30, 64, 175, 0.22), rgba(225, 216, 243, 0.06));
+        }
+
+        .journey-event.session-marker.is-tiktok .journey-event-title {
+            border-color: rgba(45, 212, 191, 0.4);
+            background: linear-gradient(135deg, rgba(13, 148, 136, 0.22), rgba(225, 216, 243, 0.06));
+        }
+
+        .journey-event.session-marker.is-organic .journey-event-title {
+            border-color: rgba(134, 239, 172, 0.34);
+            background: linear-gradient(135deg, rgba(22, 101, 52, 0.2), rgba(225, 216, 243, 0.06));
+        }
+
+        .journey-event.session-gap {
+            background: transparent;
+            border: none;
+            box-shadow: none;
+            padding: 0 0 0.75rem;
+            margin-bottom: 0.35rem;
+        }
+
+        .journey-event.session-gap::before {
+            display: none;
+        }
+
+        .journey-event.session-gap .journey-event-head {
+            justify-content: center;
+        }
+
+        .journey-event.session-gap .journey-event-title {
+            justify-content: center;
+            color: rgba(202, 138, 229, 0.9);
+            font-size: 0.7rem;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .journey-event.session-gap .journey-event-detail {
+            margin-top: 0.18rem;
+            text-align: center;
+        }
+
+        .journey-session-marker {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            gap: 0.32rem;
+            margin: 0.08rem 0 0.7rem;
+            padding: 0 0 0.95rem 1.45rem;
+            background: transparent;
+        }
+
+        .journey-session-marker::before {
+            content: "";
+            position: absolute;
+            left: 0.4rem;
+            top: 0.35rem;
+            bottom: -0.25rem;
+            width: 2px;
+            border-radius: 999px;
+            background: rgba(202, 138, 229, 0.28);
+        }
+
+        .journey-session-marker-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.6rem;
+            flex-wrap: wrap;
+        }
+
+        .journey-session-marker-title {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.42rem;
+            width: fit-content;
+            padding: 0.26rem 0.56rem;
+            border-radius: 999px;
+            border: 1px solid rgba(202, 138, 229, 0.24);
+            background: rgba(225, 216, 243, 0.08);
+            color: var(--dash-text);
+            font-size: 0.8rem;
+            font-weight: 800;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+
+        .journey-session-marker-time {
+            color: var(--dash-soft);
+            font-size: 0.68rem;
+        }
+
+        .journey-session-marker-copy {
+            margin-top: 0;
+            color: var(--dash-muted);
+            font-size: 0.72rem;
+            line-height: 1.45;
+        }
+
+        .journey-session-gap {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.45rem;
+            margin: 0.1rem 0 0.72rem;
+            color: rgba(202, 138, 229, 0.9);
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .journey-session-marker.is-google {
+            color: rgba(251, 191, 36, 0.92);
+        }
+
+        .journey-session-marker.is-google::before,
+        .journey-session-marker.is-google .journey-session-marker-title {
+            border-color: rgba(251, 191, 36, 0.38);
+            background: linear-gradient(135deg, rgba(146, 64, 14, 0.22), rgba(225, 216, 243, 0.06));
+        }
+
+        .journey-session-marker.is-meta {
+            color: rgba(147, 197, 253, 0.92);
+        }
+
+        .journey-session-marker.is-meta::before,
+        .journey-session-marker.is-meta .journey-session-marker-title {
+            border-color: rgba(96, 165, 250, 0.4);
+            background: linear-gradient(135deg, rgba(30, 64, 175, 0.22), rgba(225, 216, 243, 0.06));
+        }
+
+        .journey-session-marker.is-tiktok {
+            color: rgba(153, 246, 228, 0.92);
+        }
+
+        .journey-session-marker.is-tiktok::before,
+        .journey-session-marker.is-tiktok .journey-session-marker-title {
+            border-color: rgba(45, 212, 191, 0.4);
+            background: linear-gradient(135deg, rgba(13, 148, 136, 0.22), rgba(225, 216, 243, 0.06));
+        }
+
+        .journey-session-marker.is-organic {
+            color: rgba(134, 239, 172, 0.92);
+        }
+
+        .journey-session-marker.is-organic::before,
+        .journey-session-marker.is-organic .journey-session-marker-title {
+            border-color: rgba(134, 239, 172, 0.34);
+            background: linear-gradient(135deg, rgba(22, 101, 52, 0.2), rgba(225, 216, 243, 0.06));
         }
 
         .journey-flow {
@@ -3939,6 +4157,99 @@
             };
         }
 
+        function formatJourneySessionGapLabel(seconds = 0) {
+            const value = Math.max(0, Number(seconds || 0));
+            if (!Number.isFinite(value) || value <= 0) return 'Returns moments later';
+            if (value >= 86400) {
+                const days = Math.max(1, Math.round(value / 86400));
+                return `Returns ${days} day${days === 1 ? '' : 's'} later`;
+            }
+            if (value >= 3600) {
+                const hours = Math.max(1, Math.round(value / 3600));
+                return `Returns ${hours} hour${hours === 1 ? '' : 's'} later`;
+            }
+            if (value >= 60) {
+                const minutes = Math.max(1, Math.round(value / 60));
+                return `Returns ${minutes} minute${minutes === 1 ? '' : 's'} later`;
+            }
+            const secs = Math.max(1, Math.round(value));
+            return `Returns ${secs} second${secs === 1 ? '' : 's'} later`;
+        }
+
+        function buildPurchaseSessionTimelineEvents(events = [], story = {}) {
+            const baseEvents = Array.isArray(events) ? events.map((event) => ({ ...event })) : [];
+            const groups = Array.isArray(story.groups) ? story.groups : [];
+            if (!baseEvents.length || !groups.length) return baseEvents;
+
+            const timeline = [];
+            let cursor = 0;
+
+            groups.forEach((group, index) => {
+                const sessionLabel = group.label || `Session ${index + 1}`;
+                const requestedCount = Math.max(0, Number(group.eventCount || 0));
+                const sessionEvents = baseEvents.slice(cursor, cursor + requestedCount).map((event) => ({
+                    ...event,
+                    sessionLabel,
+                    sessionTooltip: `${sessionLabel} stitched from ${group.touchpoint?.label || 'the strongest recovered touchpoint'}.`,
+                }));
+
+                if (!sessionEvents.length) return;
+
+                const entryLabel = group.entryPage && group.entryPage !== '-' ? `Entry ${group.entryPage}` : 'No landing captured';
+                const copyParts = [
+                    group.touchpoint?.label || 'Unknown source',
+                    `${Number(group.eventCount || 0)} events`,
+                    entryLabel,
+                ].filter(Boolean);
+
+                timeline.push({
+                    type: 'session_marker',
+                    kindClass: 'session-marker',
+                    label: sessionLabel,
+                    title: sessionLabel,
+                    originalName: sessionLabel,
+                    time: group.timeLabel || '-',
+                    fullTime: group.timeLabel || '-',
+                    tone: group.tone || '',
+                    icon: group.icon || 'fa-solid fa-route',
+                    detailLines: [copyParts.join(' · ')],
+                    copy: copyParts.join(' · '),
+                    tooltip: group.touchpoint?.reason || `${sessionLabel} starts here.`,
+                });
+                timeline.push(...sessionEvents);
+
+                cursor += sessionEvents.length;
+
+                const nextGroup = groups[index + 1] || null;
+                if (nextGroup) {
+                    const gapSeconds = Math.max(0, (new Date(nextGroup.startedAt).getTime() - new Date(group.endedAt).getTime()) / 1000);
+                    timeline.push({
+                        type: 'session_gap',
+                        kindClass: 'session-gap',
+                        label: formatJourneySessionGapLabel(gapSeconds),
+                        title: formatJourneySessionGapLabel(gapSeconds),
+                        originalName: 'Session Gap',
+                        time: nextGroup.timeLabel || '-',
+                        fullTime: nextGroup.timeLabel || '-',
+                        icon: 'fa-solid fa-arrow-down',
+                        detailLines: [`Next stitched block: ${nextGroup.label || `Session ${index + 2}`}`],
+                        tooltip: `Gap between ${sessionLabel} and ${nextGroup.label || `Session ${index + 2}`}.`,
+                    });
+                }
+            });
+
+            if (cursor < baseEvents.length) {
+                const fallbackLabel = groups[groups.length - 1]?.label || `Session ${groups.length || 1}`;
+                timeline.push(...baseEvents.slice(cursor).map((event) => ({
+                    ...event,
+                    sessionLabel: event.sessionLabel || fallbackLabel,
+                    sessionTooltip: event.sessionTooltip || `${fallbackLabel} stitched block.`,
+                })));
+            }
+
+            return timeline;
+        }
+
         function renderJourneySessionStory(story = {}, purchase = {}) {
             const groups = Array.isArray(story.groups) ? story.groups : [];
             const orderLabel = purchase.orderNumber || purchase.orderId || purchase.checkoutToken || '-';
@@ -4043,10 +4354,9 @@
                     <div class="journey-meta-grid">
                         <span class="journey-chip" data-tooltip="Confidence level of the stitched attribution for this purchase."><i class="fa-solid fa-percent"></i>${Number(journeyData.summary?.confidence || 0)}%</span>
                         <span class="journey-chip" data-tooltip="Attributed campaign or the best campaign label recovered so far."><i class="fa-solid fa-bullhorn"></i>${escapeHtml(journeyData.summary?.sourceAd || 'No campaign')}</span>
-                        <span class="journey-chip" data-tooltip="Initial landing page captured for this stitched journey. Check console logs tagged [Journey Landing] for raw candidates."><i class="fa-solid fa-door-open"></i>${escapeHtml(journeyData.summary?.landing || 'No landing captured')}</span>
+                        <span class="journey-chip" data-tooltip="Initial landing page captured for this stitched journey."><i class="fa-solid fa-door-open"></i>${escapeHtml(journeyData.summary?.landing || 'No landing captured')}</span>
                         <span class="journey-chip" data-tooltip="How many stitched sessions currently support this purchase path."><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
                     </div>
-                    ${renderJourneySessionStory(journeyData.sessionStory, purchase)}
                     ${renderTimelineModeToggle(selectedJourneyTimelineMode)}
                     ${renderJourneyVerticalTimeline(journeyData.timelineEvents)}
                 </div>
@@ -4058,13 +4368,16 @@
                 return '<p class="text-sm text-gray-500">Not enough journey events yet.</p>';
             }
 
+            const actualEventCount = events.filter((event) => event.type !== 'session_marker' && event.type !== 'session_gap').length;
+
             return `
                 <div class="journey-timeline">
-                    <div class="journey-timeline-sticky"><i class="fa-solid fa-arrows-up-down"></i>${events.length} events</div>
+                    <div class="journey-timeline-sticky"><i class="fa-solid fa-arrows-up-down"></i>${actualEventCount} events</div>
                     ${events.map((event) => `
-                        <article class="journey-event ${event.tone || ''}" data-tooltip="${escapeHtmlAttr(event.tooltip || describeJourneyTone(event.tone || ''))}" title="${escapeHtmlAttr(event.tooltip || describeJourneyTone(event.tone || ''))}">
+                        <article class="journey-event ${event.kindClass || ''} ${event.tone || ''}" data-tooltip="${escapeHtmlAttr(event.tooltip || describeJourneyTone(event.tone || ''))}" title="${escapeHtmlAttr(event.tooltip || describeJourneyTone(event.tone || ''))}">
                             <div class="journey-event-head">
                                 <span class="journey-event-title"><span class="journey-event-icon" data-tooltip="${escapeHtmlAttr(event.tooltip || event.originalName || event.title || 'Event')}"><i class="${event.icon || 'fa-solid fa-circle'}"></i></span>${event.title || 'Event'}</span>
+                                ${event.sessionLabel ? `<span class="journey-event-session-chip" data-tooltip="${escapeHtmlAttr(event.sessionTooltip || `This event belongs to ${event.sessionLabel}.`)}" title="${escapeHtmlAttr(event.sessionTooltip || `This event belongs to ${event.sessionLabel}.`)}"><i class="fa-solid fa-layer-group"></i>${escapeHtml(event.sessionLabel)}</span>` : ''}
                             </div>
                             <div class="journey-event-detail">
                                 ${event.originalName ? `<p class="font-semibold text-gray-700 mb-1">${escapeHtml(event.originalName)} · ${escapeHtml(event.fullTime || event.time)}</p>` : (event.time ? `<p class="font-semibold text-gray-700 mb-1">${escapeHtml(event.fullTime || event.time)}</p>` : '')}
@@ -4192,6 +4505,8 @@
                             tone: resolveChannelTone(event.utmSource || purchase.attributedChannel || '', purchase.attributedPlatform || null),
                         };
                     });
+
+                    timelineEvents = buildPurchaseSessionTimelineEvents(timelineEvents, sessionStory);
                 }
             }
             
