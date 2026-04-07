@@ -1724,140 +1724,460 @@ async function updateRootAiContextForAttempt(userId, attemptId, updater) {
   return { skipped: false, reason: null, root: updated };
 }
 
-function buildResultFromRoot(root, fallback = {}) {
-  const state = root?.aiContext || {};
-  const pdf = state?.pdf || {};
+function uniqStringsSafe(arr, max = 25) {
+  return uniqStrings(Array.isArray(arr) ? arr : [], max);
+}
 
-  const readiness = deriveSignalReadinessFromAi(
-    state,
-    fallback.signalPayload || null
-  );
+function deriveSourceNamesByFlagFromState(sourcesStatus, flag) {
+  if (!sourcesStatus || typeof sourcesStatus !== 'object') return [];
+  return Object.entries(sourcesStatus)
+    .filter(([, state]) => !!state?.[flag])
+    .map(([name]) => safeStr(name).trim())
+    .filter(Boolean);
+}
 
-  const signalPayload = readiness.signalPayload;
-  const encodedPayload = readiness.encodedPayload;
-  const signalReadyForPdf = readiness.signalReadyForPdf;
-  const signalComplete = readiness.signalComplete;
-  const signalValidForPdf = readiness.signalValidForPdf;
+function deriveSourceNamesWithErrorFromState(sourcesStatus) {
+  if (!sourcesStatus || typeof sourcesStatus !== 'object') return [];
+  return Object.entries(sourcesStatus)
+    .filter(([, state]) => !!state?.lastError)
+    .map(([name]) => safeStr(name).trim())
+    .filter(Boolean);
+}
+
+function normalizePdfArtifactForRuntime(pdf = {}) {
+  return {
+    status: safeStr(pdf?.status || 'idle').trim().toLowerCase() || 'idle',
+    stage: safeStr(pdf?.stage || 'idle').trim() || 'idle',
+    progress: toNum(pdf?.progress, 0),
+    ready: safeStr(pdf?.status).trim().toLowerCase() === 'ready',
+    fileName: pdf?.fileName || null,
+    mimeType: pdf?.mimeType || 'application/pdf',
+    storageKey: pdf?.storageKey || null,
+    localPath: pdf?.localPath || null,
+    downloadUrl: pdf?.downloadUrl || null,
+    generatedAt: pdf?.generatedAt || null,
+    sizeBytes: toNum(pdf?.sizeBytes, 0),
+    pageCount: toNum(pdf?.pageCount, 0) || null,
+    renderer: pdf?.renderer || null,
+    version: toNum(pdf?.version, 1) || 1,
+    sourceFingerprint: safeStr(pdf?.sourceFingerprint || '').trim() || null,
+    connectionFingerprint: safeStr(pdf?.connectionFingerprint || '').trim() || null,
+    processingStartedAt: pdf?.processingStartedAt || null,
+    processingHeartbeatAt: pdf?.processingHeartbeatAt || null,
+    stale: !!pdf?.stale,
+    staleReason: pdf?.staleReason || null,
+    error: pdf?.error || null,
+  };
+}
+
+function toLegacyUiMode(runtime) {
+  const signalStatus = safeStr(runtime?.signal?.status).trim().toLowerCase();
+  const pdfStatus = safeStr(runtime?.pdf?.status).trim().toLowerCase();
+
+  if (signalStatus === 'processing') return 'signal_building';
+  if (signalStatus === 'stale') return 'signal_rebuild_required';
+  if (pdfStatus === 'processing') return 'pdf_building';
+  if (pdfStatus === 'failed') return 'pdf_failed';
+  if (pdfStatus === 'stale') return 'pdf_rebuild_required';
+  if (signalStatus === 'ready' && pdfStatus === 'ready') return 'pdf_ready';
+  if (signalStatus === 'ready') return 'signal_ready';
+  return 'signal_not_ready';
+}
+
+function toLegacyPdfBuildState(runtime) {
+  const signalStatus = safeStr(runtime?.signal?.status).trim().toLowerCase();
+  const pdfStatus = safeStr(runtime?.pdf?.status).trim().toLowerCase();
+
+  if (signalStatus === 'processing') return 'signal_building';
+  if (signalStatus === 'stale') return 'signal_rebuild_required';
+  if (signalStatus !== 'ready') return 'signal_not_ready';
+  if (pdfStatus === 'ready') return 'pdf_ready';
+  if (pdfStatus === 'processing') return 'pdf_processing';
+  if (pdfStatus === 'failed') return 'pdf_failed';
+  if (pdfStatus === 'stale') return 'pdf_rebuild_required';
+  return 'pdf_buildable';
+}
+
+function toLegacyTopLevelSignalStatus(runtime) {
+  const signalStatus = safeStr(runtime?.signal?.status).trim().toLowerCase();
+
+  if (signalStatus === 'processing') return 'processing';
+  if (signalStatus === 'ready') return 'done';
+  if (signalStatus === 'failed') return 'error';
+  return 'idle';
+}
+
+function buildCanonicalRuntimeFromRoot(root, fallback = {}) {
+  const ai = root?.aiContext || {};
+  const readiness = deriveSignalReadinessFromAi(ai, fallback.signalPayload || null);
+
+  const signalPayload = readiness.signalPayload || null;
+  const encodedPayload = readiness.encodedPayload || fallback.encodedPayload || null;
+
+  const rawPdf = normalizePdfArtifactForRuntime(ai?.pdf || emptyPdfState());
+  const currentConnectionFingerprint = buildConnectionFingerprint(root || {});
+  const signalConnectionFingerprint = deriveConnectionFingerprintFromAi(ai) || null;
+  const signalSourceFingerprint = deriveSignalFingerprintFromAi(ai) || null;
 
   const currentSourceFingerprint =
-    safeStr(state?.currentSourceFingerprint || '').trim() ||
+    safeStr(ai?.currentSourceFingerprint || '').trim() ||
     safeStr(fallback?.currentSourceFingerprint || '').trim() ||
+    signalSourceFingerprint ||
     null;
 
-  const signalSourceFingerprint =
-    safeStr(state?.sourceFingerprint || '').trim() ||
-    null;
+  const effectiveSourcesStatus = ai?.sourcesStatus || fallback?.sources || null;
 
-  const pdfSourceFingerprint =
-    safeStr(pdf?.sourceFingerprint || '').trim() ||
-    null;
+  const connectedSources = uniqStringsSafe([
+    ...(Array.isArray(ai?.connectedSources) ? ai.connectedSources : []),
+    ...deriveSourceNamesByFlagFromState(effectiveSourcesStatus, 'connected'),
+    ...Object.keys(root?.sources || {}).filter((name) => !!root?.sources?.[name]?.connected),
+  ]);
 
-  const pdfReady = pdf?.status === 'ready';
-  const pdfProcessing = pdf?.status === 'processing';
-  const pdfFailed = pdf?.status === 'failed';
-  const signalProcessing = safeStr(state?.status).trim().toLowerCase() === 'processing';
-  const needSignalRebuild = !!state?.needsSignalRebuild;
-  const needPdfRebuild = !!state?.needsPdfRebuild;
+  const usableSources = uniqStringsSafe([
+    ...(Array.isArray(ai?.usableSources) ? ai.usableSources : []),
+    ...deriveSourceNamesByFlagFromState(effectiveSourcesStatus, 'usable'),
+  ]);
 
-  const pdfAligned =
-    !!pdfReady &&
-    !!currentSourceFingerprint &&
+  const pendingConnectedSources = uniqStringsSafe([
+    ...(Array.isArray(ai?.pendingConnectedSources) ? ai.pendingConnectedSources : []),
+  ]);
+
+  const failedSources = uniqStringsSafe([
+    ...(Array.isArray(ai?.failedSources) ? ai.failedSources : []),
+    ...deriveSourceNamesWithErrorFromState(effectiveSourcesStatus),
+  ]);
+
+  const signalLooksStaleByFingerprint =
     !!signalSourceFingerprint &&
-    !!pdfSourceFingerprint &&
-    currentSourceFingerprint === signalSourceFingerprint &&
-    currentSourceFingerprint === pdfSourceFingerprint &&
-    !pdf?.stale;
+    !!currentSourceFingerprint &&
+    signalSourceFingerprint !== currentSourceFingerprint;
 
-  const canGeneratePdf = !!signalReadyForPdf && !pdfAligned && !pdfProcessing;
-  const canDownloadPdf = !!pdfAligned;
-  const uiMode =
-    signalProcessing ? 'signal_building' :
-    pdfAligned ? 'pdf_ready' :
-    pdfProcessing ? 'pdf_building' :
-    safeStr(state?.status).trim().toLowerCase() === 'failed' ? 'signal_failed' :
-    signalReadyForPdf ? 'signal_ready' :
-    'signal_building';
-  const pdfBuildState = derivePdfBuildState({
-    signalProcessing,
-    needSignalRebuild,
-    signalReadyForPdf,
-    pdfReady: pdfAligned,
-    pdfProcessing,
-    pdfFailed,
-    needPdfRebuild,
-  });
+  const signalLooksStaleByConnection =
+    !!signalConnectionFingerprint &&
+    !!currentConnectionFingerprint &&
+    signalConnectionFingerprint !== currentConnectionFingerprint;
+
+  const staleSignal =
+    !!ai?.needsSignalRebuild ||
+    !!signalLooksStaleByFingerprint ||
+    !!signalLooksStaleByConnection;
+
+  const signalRawStatus = safeStr(ai?.status).trim().toLowerCase();
+  let signalStatus = 'idle';
+
+  if (signalRawStatus === 'processing') {
+    signalStatus = 'processing';
+  } else if (signalRawStatus === 'failed' || signalRawStatus === 'error') {
+    signalStatus = 'failed';
+  } else if (staleSignal && (signalPayload || encodedPayload)) {
+    signalStatus = 'stale';
+  } else if (readiness.signalReadyForPdf) {
+    signalStatus = 'ready';
+  } else {
+    signalStatus = 'idle';
+  }
+
+  const pdfFingerprintMismatch =
+    !!rawPdf?.sourceFingerprint &&
+    !!currentSourceFingerprint &&
+    rawPdf.sourceFingerprint !== currentSourceFingerprint;
+
+  const pdfConnectionMismatch =
+    !!rawPdf?.connectionFingerprint &&
+    !!currentConnectionFingerprint &&
+    rawPdf.connectionFingerprint !== currentConnectionFingerprint;
+
+  const stalePdf =
+    !!ai?.needsPdfRebuild ||
+    !!rawPdf?.stale ||
+    staleSignal ||
+    pdfFingerprintMismatch ||
+    pdfConnectionMismatch;
+
+  let pdfStatus = 'idle';
+
+  if (signalStatus !== 'ready') {
+    pdfStatus = 'blocked_by_signal';
+  } else if (rawPdf?.status === 'processing' && isRecentPdfProcessingState(rawPdf)) {
+    pdfStatus = 'processing';
+  } else if (
+    rawPdf?.status === 'ready' &&
+    !stalePdf &&
+    pdfMatchesSignal(rawPdf, ai) &&
+    pdfFileExists(rawPdf)
+  ) {
+    pdfStatus = 'ready';
+  } else if (rawPdf?.status === 'failed') {
+    pdfStatus = 'failed';
+  } else if (stalePdf) {
+    pdfStatus = 'stale';
+  } else {
+    pdfStatus = 'idle';
+  }
+
+  const canRetrySignal =
+    signalStatus === 'failed' ||
+    signalStatus === 'stale' ||
+    (signalStatus === 'idle' && (connectedSources.length > 0 || usableSources.length > 0));
+
+  const canGeneratePdf =
+    signalStatus === 'ready' &&
+    pdfStatus !== 'ready' &&
+    pdfStatus !== 'processing';
+
+  const canDownloadPdf = pdfStatus === 'ready';
+
+  const shouldPoll =
+    signalStatus === 'processing' ||
+    pdfStatus === 'processing' ||
+    signalStatus === 'stale';
+
+  const pollIntervalMs =
+    signalStatus === 'processing' || pdfStatus === 'processing'
+      ? 1200
+      : signalStatus === 'stale'
+      ? 1100
+      : 4000;
+
+  let uiMode = 'empty';
+  let heroChip = 'Preparing your Signal';
+  let title = 'Preparing your Signal';
+  let description = 'We’re aligning your connected data before generating your Signal.';
+  let tip = 'The frontend should only represent this backend state.';
+
+  if (signalStatus === 'processing' && staleSignal) {
+    uiMode = 'rebuilding_after_source_change';
+    heroChip = 'Source change detected';
+    title = 'Rebuilding your Signal';
+    description = 'We detected a source change and we are rebuilding your Signal so the PDF matches the latest connected data.';
+    tip = 'Wait until the backend marks the Signal as ready again.';
+  } else if (signalStatus === 'processing') {
+    uiMode = 'signal_processing';
+    heroChip = 'Preparing your Signal';
+    title = 'Your data is being turned into intelligence';
+    description = 'We’re collecting, compacting and encoding your connected marketing sources into one Signal.';
+    tip = pendingConnectedSources.length > 0
+      ? `Waiting for: ${pendingConnectedSources.join(', ')}`
+      : 'The backend is still building the Signal.';
+  } else if (pdfStatus === 'processing') {
+    uiMode = 'pdf_processing';
+    heroChip = 'Generating your PDF';
+    title = 'Your PDF is being generated';
+    description = 'The Signal is ready and the backend is rendering the PDF artifact.';
+    tip = 'The PDF depends 100% on the current Signal.';
+  } else if (pdfStatus === 'ready') {
+    uiMode = 'pdf_ready';
+    heroChip = 'Your Signal and PDF are ready';
+    title = 'Your PDF is ready';
+    description = 'The current PDF is aligned with the latest Signal fingerprint.';
+    tip = 'You can safely download the current PDF.';
+  } else if (signalStatus === 'ready') {
+    uiMode = 'signal_ready';
+    heroChip = 'Your Signal is ready';
+    title = 'Your Signal is ready';
+    description = pdfStatus === 'stale'
+      ? 'Your previous PDF is outdated for the current Signal. Generate a fresh PDF.'
+      : 'You can now generate your PDF.';
+    tip = pdfStatus === 'stale'
+      ? 'Generate a new PDF so it matches the latest Signal.'
+      : 'The Signal is valid and buildable for PDF.';
+  } else if (signalStatus === 'failed' || pdfStatus === 'failed') {
+    uiMode = 'failed';
+    heroChip = 'Build failed';
+    title = 'Something failed';
+    description = rawPdf?.error || ai?.error || 'The backend marked the flow as failed.';
+    tip = 'Retry the Signal build from the backend action.';
+  }
+
+  return {
+    version: 1,
+    effectiveSources: {
+      fingerprint: currentSourceFingerprint,
+      snapshot: ai?.currentSourcesSnapshot || fallback?.currentSourcesSnapshot || null,
+      connected: connectedSources,
+      usable: usableSources,
+      pending: pendingConnectedSources,
+      failed: failedSources,
+      changedSinceLastSignal:
+        !!signalSourceFingerprint &&
+        !!currentSourceFingerprint &&
+        signalSourceFingerprint !== currentSourceFingerprint,
+    },
+
+    signal: {
+      status: signalStatus,
+      stage: safeStr(ai?.stage || fallback?.stage || 'idle').trim() || 'idle',
+      progress: toNum(ai?.progress, fallback?.progress || 0),
+      buildAttemptId: ai?.buildAttemptId || null,
+      signalRunId: ai?.signalRunId || null,
+      sourceFingerprint: signalSourceFingerprint,
+      connectionFingerprint: signalConnectionFingerprint,
+      startedAt: ai?.startedAt || null,
+      finishedAt: ai?.finishedAt || null,
+      error: ai?.error || null,
+      payload: signalPayload,
+      encodedPayload,
+      complete: signalStatus === 'ready' && !!readiness.signalComplete,
+      validForPdf: signalStatus === 'ready' && !!readiness.signalValidForPdf,
+      buildableForPdf: signalStatus === 'ready' && !!readiness.signalReadyForPdf,
+    },
+
+    pdf: {
+      status: pdfStatus,
+      stage:
+        pdfStatus === 'blocked_by_signal'
+          ? 'waiting_for_signal'
+          : safeStr(rawPdf?.stage || 'idle').trim() || 'idle',
+      progress: pdfStatus === 'ready' ? 100 : toNum(rawPdf?.progress, 0),
+      sourceFingerprint: rawPdf?.sourceFingerprint || null,
+      connectionFingerprint: rawPdf?.connectionFingerprint || null,
+      dependsOnSignalAttemptId: ai?.buildAttemptId || null,
+      startedAt: rawPdf?.processingStartedAt || null,
+      finishedAt: rawPdf?.generatedAt || null,
+      error: pdfStatus === 'failed' ? (rawPdf?.error || null) : null,
+      fileName: pdfStatus === 'ready' ? rawPdf?.fileName || null : null,
+      mimeType: rawPdf?.mimeType || 'application/pdf',
+      storageKey: pdfStatus === 'ready' ? rawPdf?.storageKey || null : null,
+      localPath: pdfStatus === 'ready' ? rawPdf?.localPath || null : null,
+      downloadUrl: pdfStatus === 'ready' ? rawPdf?.downloadUrl || null : null,
+      generatedAt: pdfStatus === 'ready' ? rawPdf?.generatedAt || null : null,
+      sizeBytes: pdfStatus === 'ready' ? toNum(rawPdf?.sizeBytes, 0) : 0,
+      pageCount: pdfStatus === 'ready' ? (toNum(rawPdf?.pageCount, 0) || null) : null,
+      renderer: pdfStatus === 'ready' ? rawPdf?.renderer || null : null,
+      ready: pdfStatus === 'ready',
+      stale: pdfStatus === 'stale',
+      staleReason:
+        pdfStatus === 'stale'
+          ? (rawPdf?.staleReason || 'STALE_SIGNAL_OR_SOURCE_CHANGE')
+          : null,
+    },
+
+    actions: {
+      canRetrySignal,
+      canGeneratePdf,
+      canDownloadPdf,
+      shouldPoll,
+      pollIntervalMs,
+    },
+
+    ui: {
+      mode: uiMode,
+      heroChip,
+      title,
+      description,
+      tip,
+    },
+  };
+}
+
+function buildResultFromRoot(root, fallback = {}) {
+  const state = root?.aiContext || {};
+  const runtime = buildCanonicalRuntimeFromRoot(root, fallback);
+
+  const signalPayload = runtime?.signal?.payload || null;
+  const encodedPayload = runtime?.signal?.encodedPayload || null;
+  const pdf = runtime?.pdf || {};
+  const legacyUiMode = toLegacyUiMode(runtime);
+  const legacyPdfBuildState = toLegacyPdfBuildState(runtime);
+  const legacyTopStatus = toLegacyTopLevelSignalStatus(runtime);
 
   return {
     ok: true,
     root,
+    runtime,
     unifiedBase: state?.unifiedBase || fallback.unifiedBase || null,
-    encodedPayload: encodedPayload || fallback.encodedPayload || null,
+    encodedPayload,
     signalPayload,
     pdf,
     data: {
-      status: state?.status || fallback.status || 'idle',
-      progress: toNum(state?.progress, fallback.progress || 0),
-      stage: state?.stage || fallback.stage || 'idle',
+      runtime,
+
+      effectiveSources: runtime?.effectiveSources || null,
+      signal: runtime?.signal || null,
+      pdf: runtime?.pdf || null,
+      actions: runtime?.actions || null,
+      ui: runtime?.ui || null,
+
+      status: legacyTopStatus,
+      progress: toNum(runtime?.signal?.progress, 0),
+      stage: runtime?.signal?.stage || 'idle',
+      startedAt: runtime?.signal?.startedAt || null,
+      finishedAt: runtime?.signal?.finishedAt || null,
       snapshotId: state?.snapshotId || fallback.snapshotId || root?.latestSnapshotId || null,
       sourceSnapshots: state?.sourceSnapshots || fallback.sourceSnapshots || null,
       contextRangeDays: toNum(state?.contextRangeDays) || fallback.contextRangeDays || null,
       storageRangeDays: toNum(state?.storageRangeDays) || fallback.storageRangeDays || null,
-      usedOpenAI: !!state?.usedOpenAI,
-      model: state?.model || null,
+
       hasEncodedPayload: !!encodedPayload,
+      hasHumanSignalPayload: !!signalPayload,
       hasSignal: !!signalPayload,
-      signalComplete,
-      signalValidForPdf,
-      signalReadyForPdf,
+      signalReady: !!runtime?.signal?.buildableForPdf,
+      signalComplete: !!runtime?.signal?.complete,
+      signalValidForPdf: !!runtime?.signal?.validForPdf,
+      signalReadyForPdf: !!runtime?.signal?.buildableForPdf,
+      preferredPayloadForPdf: encodedPayload ? 'encoded' : (signalPayload ? 'human_fallback' : null),
       providerAgnostic: !!encodedPayload?.providerAgnostic,
 
-      usableSources: Array.isArray(state?.usableSources) ? state.usableSources : (fallback.usableSources || []),
-      pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : (fallback.pendingConnectedSources || []),
+      usedOpenAI: !!state?.usedOpenAI,
+      model: state?.model || null,
+      error: runtime?.signal?.error || null,
+      buildAttemptId: runtime?.signal?.buildAttemptId || null,
+      signalRunId: runtime?.signal?.signalRunId || null,
+
       sources: state?.sourcesStatus || fallback.sources || null,
+      connectedSources: runtime?.effectiveSources?.connected || [],
+      usableSources: runtime?.effectiveSources?.usable || [],
+      pendingConnectedSources: runtime?.effectiveSources?.pending || [],
+      failedSources: runtime?.effectiveSources?.failed || [],
 
-      sourceFingerprint: signalSourceFingerprint,
-      currentSourcesSnapshot: state?.currentSourcesSnapshot || fallback?.currentSourcesSnapshot || null,
-      currentSourceFingerprint,
-      connectionFingerprint: safeStr(state?.connectionFingerprint || '').trim() || null,
+      sourceFingerprint: runtime?.signal?.sourceFingerprint || null,
+      currentSourcesSnapshot: runtime?.effectiveSources?.snapshot || null,
+      currentSourceFingerprint: runtime?.effectiveSources?.fingerprint || null,
+      connectionFingerprint: runtime?.signal?.connectionFingerprint || buildConnectionFingerprint(root || {}),
+      currentConnectionFingerprint: buildConnectionFingerprint(root || {}),
 
-      needsSignalRebuild: !!state?.needsSignalRebuild,
-      needsPdfRebuild: !!state?.needsPdfRebuild,
-      needSignalRebuild,
-      needPdfRebuild,
+      staleSignal: runtime?.signal?.status === 'stale',
+      stalePdf: runtime?.pdf?.status === 'stale',
+      needSignalRebuild: runtime?.signal?.status === 'stale',
+      needsSignalRebuild: runtime?.signal?.status === 'stale',
+      needPdfRebuild: runtime?.pdf?.status === 'stale',
+      needsPdfRebuild: runtime?.pdf?.status === 'stale',
+      effectiveSourcesChanged: !!runtime?.effectiveSources?.changedSinceLastSignal,
 
-      hasPdf: pdfAligned,
-      pdfReady,
-      pdfProcessing,
-      pdfFailed,
-      canGeneratePdf,
-      canDownloadPdf,
-      uiMode,
-      pdfBuildState,
+      hasPdf: runtime?.pdf?.status === 'ready',
+      pdfReady: runtime?.pdf?.status === 'ready',
+      pdfProcessing: runtime?.pdf?.status === 'processing',
+      pdfFailed: runtime?.pdf?.status === 'failed',
+      canGeneratePdf: !!runtime?.actions?.canGeneratePdf,
+      canDownloadPdf: !!runtime?.actions?.canDownloadPdf,
+      uiMode: legacyUiMode,
+      pdfBuildState: legacyPdfBuildState,
 
       pdf: {
-        status: pdf?.status || 'idle',
-        stage: pdf?.stage || 'idle',
-        progress: toNum(pdf?.progress, 0),
-        ready: pdfReady,
-        fileName: pdf?.fileName || null,
-        mimeType: pdf?.mimeType || 'application/pdf',
-        downloadUrl: pdf?.downloadUrl || null,
-        generatedAt: pdf?.generatedAt || null,
-        sizeBytes: toNum(pdf?.sizeBytes, 0),
-        pageCount: toNum(pdf?.pageCount, 0) || null,
-        renderer: pdf?.renderer || null,
-        sourceFingerprint: pdfSourceFingerprint,
-        connectionFingerprint: safeStr(pdf?.connectionFingerprint || '').trim() || null,
-        processingStartedAt: pdf?.processingStartedAt || null,
-        processingHeartbeatAt: pdf?.processingHeartbeatAt || null,
-        stale: !!pdf?.stale,
-        staleReason: pdf?.staleReason || null,
-        error: pdf?.error || null,
+        status:
+          runtime?.pdf?.status === 'blocked_by_signal'
+            ? 'idle'
+            : (runtime?.pdf?.status || 'idle'),
+        stage: runtime?.pdf?.stage || 'idle',
+        progress: toNum(runtime?.pdf?.progress, 0),
+        ready: runtime?.pdf?.status === 'ready',
+        fileName: runtime?.pdf?.fileName || null,
+        mimeType: runtime?.pdf?.mimeType || 'application/pdf',
+        storageKey: runtime?.pdf?.storageKey || null,
+        localPath: runtime?.pdf?.localPath || null,
+        downloadUrl: runtime?.pdf?.downloadUrl || null,
+        generatedAt: runtime?.pdf?.generatedAt || null,
+        sizeBytes: toNum(runtime?.pdf?.sizeBytes, 0),
+        pageCount: toNum(runtime?.pdf?.pageCount, 0) || null,
+        renderer: runtime?.pdf?.renderer || null,
+        sourceFingerprint: runtime?.pdf?.sourceFingerprint || null,
+        connectionFingerprint: runtime?.pdf?.connectionFingerprint || null,
+        processingStartedAt: runtime?.pdf?.startedAt || null,
+        processingHeartbeatAt: runtime?.pdf?.startedAt || null,
+        stale: runtime?.pdf?.status === 'stale',
+        staleReason: runtime?.pdf?.staleReason || null,
+        error: runtime?.pdf?.error || null,
       },
-
-      error: state?.error || null,
-      buildAttemptId: state?.buildAttemptId || null,
-      signalRunId: state?.signalRunId || null,
     },
   };
 }
@@ -3337,5 +3657,7 @@ module.exports = {
   buildPdfForUser,
   rebuildUnifiedContextForUser,
   sourceStateSummaryForStatus,
+  buildCanonicalRuntimeFromRoot,
+  buildResultFromRoot,
   makeShareToken,
 };
