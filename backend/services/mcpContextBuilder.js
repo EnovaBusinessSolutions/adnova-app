@@ -620,13 +620,16 @@ function deriveSignalReadinessFromAi(ai = {}, fallbackSignalPayload = null) {
     null;
   const payloadBuildable = isSignalPayloadBuildableForPdf(signalPayload);
   const encodedPayloadBuildable = isEncodedSignalPayloadBuildableForPdf(encodedPayload);
+  const hasBuildablePayload = encodedPayloadBuildable || payloadBuildable;
 
   const signalComplete =
     status === 'done' &&
     stage === 'completed' &&
-    encodedPayloadBuildable;
+    !!(encodedPayload || signalPayload);
 
-  const signalValidForPdf = signalComplete;
+  const signalValidForPdf =
+    !!ai?.signalValidForPdf ||
+    (signalComplete && hasBuildablePayload);
 
   return {
     signalPayload,
@@ -635,7 +638,7 @@ function deriveSignalReadinessFromAi(ai = {}, fallbackSignalPayload = null) {
     encodedPayloadBuildable,
     signalComplete,
     signalValidForPdf,
-    signalReadyForPdf: signalValidForPdf,
+    signalReadyForPdf: signalValidForPdf && hasBuildablePayload,
   };
 }
 
