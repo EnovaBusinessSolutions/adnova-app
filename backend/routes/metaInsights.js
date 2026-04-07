@@ -518,6 +518,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
     const doc = await loadMetaAccount(req.user._id);
     const list = normalizeAccountsList(doc || {});
     const availableIds = list.map(a => normActId(a.id || a.account_id)).filter(Boolean);
+    const includeAll = String(req.query.all || req.query.include_all || '0') === '1';
 
     let accounts = list.map((a) => {
       const raw = String(a.id || a.account_id || '').replace(/^act_/, '');
@@ -536,14 +537,14 @@ router.get('/accounts', requireAuth, async (req, res) => {
     const requiredSelection = availableIds.length > MAX_BY_RULE && selected.length === 0;
 
     // Si hay selección, filtramos
-    if (selected.length > 0) {
+    if (!includeAll && selected.length > 0) {
       const allow = new Set(selected.map(normActId));
       accounts = accounts.filter(a => allow.has(normActId(a.id)));
     }
 
     // Ajustar default si quedó fuera del filtro
     let defaultAccountId = (doc && doc.defaultAccountId) || accounts[0]?.id || null;
-    if (selected.length > 0 && defaultAccountId && !selected.includes(normActId(defaultAccountId))) {
+    if (!includeAll && selected.length > 0 && defaultAccountId && !selected.includes(normActId(defaultAccountId))) {
       defaultAccountId = accounts[0]?.id || null;
       if (defaultAccountId) {
         await MetaAccount.updateOne(
@@ -553,7 +554,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
       }
     }
 
-    return res.json({ ok: true, accounts, defaultAccountId, requiredSelection });
+    return res.json({ ok: true, accounts, defaultAccountId, requiredSelection, selectedAccountIds: selected });
   } catch (e) {
     console.error('meta/insights/accounts error:', e);
     return res.json({ ok: true, accounts: [], defaultAccountId: null, requiredSelection: false });

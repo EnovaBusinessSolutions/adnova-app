@@ -185,7 +185,7 @@ function bindSecondaryActions() {
 
   if (registerBtn) {
     registerBtn.addEventListener('click', () => {
-      window.location.href = '/register.html'
+      window.location.href = '/getstarted'
     })
   }
 

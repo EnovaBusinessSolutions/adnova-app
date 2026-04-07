@@ -7,6 +7,7 @@ const { google } = require('googleapis');
 const mongoose = require('mongoose');
 
 const { discoverAndEnrich, selfTest } = require('../services/googleAdsService');
+const { collectGoogle } = require('../jobs/collect/googleCollector');
 
 const router = express.Router();
 
@@ -14,6 +15,7 @@ const User = require('../models/User');
 const Audit = require('../models/Audit');
 
 const { deleteAuditsForUserSources } = require('../services/auditCleanup');
+const McpData = require('../models/McpData');
 
 const {
   enqueueGoogleAdsCollectBestEffort,
@@ -906,6 +908,50 @@ await enqueueGoogleAdsAfterConnectBestEffort(req, {
   accountId: adsMcpAccountId,
   reason: 'google_ads_oauth_callback',
 });
+
+        // Bootstrap best-effort: poblar mcpdata con google.daily_trends_ai para que el usuario
+        // pueda leer campañas desde DB sin depender únicamente del worker/queue.
+        // No bloquea el redirect del callback.
+        void (async () => {
+          try {
+            const userId = req?.user?._id;
+            if (!userId || !adsMcpAccountId) return;
+
+            const bootstrapSnapshotId = `snap_bootstrap_google_${Date.now()}`;
+            const r = await collectGoogle(userId, {
+              account_id: adsMcpAccountId,
+              rangeDays: 120,
+              storageRangeDays: 30,
+              buildHistoricalDatasets: false,
+              historyIncludeCampaignDaily: false,
+            });
+
+            if (!r?.ok || !Array.isArray(r?.datasets)) return;
+
+            const dailyDs = r.datasets.filter((ds) => ds?.dataset === 'google.daily_trends_ai');
+            if (!dailyDs.length) return;
+
+            for (const ds of dailyDs) {
+              await McpData.upsertChunk({
+                userId,
+                snapshotId: bootstrapSnapshotId,
+                source: ds.source,
+                dataset: ds.dataset,
+                range: ds.range,
+                data: ds.data,
+                stats: ds.stats,
+              });
+            }
+
+            console.log('[googleConnect] bootstrap google.daily_trends_ai saved', {
+              userId: String(userId),
+              snapshotId: bootstrapSnapshotId,
+              chunks: dailyDs.length,
+            });
+          } catch (e) {
+            console.warn('[googleConnect] bootstrap google failed (best-effort):', e?.message || e);
+          }
+        })();
 
         try {
           const st = await selfTest(ga);

@@ -1,2 +1,4 @@
 {
+  "typescript.tsdk": "landing-adray/node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true
 }
