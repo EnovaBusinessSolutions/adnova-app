@@ -896,7 +896,7 @@
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.2s ease;
-            z-index: 10;
+            z-index: 2147483646;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
             text-transform: none;
             letter-spacing: normal;
@@ -913,7 +913,7 @@
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.2s ease;
-            z-index: 10;
+            z-index: 2147483646;
         }
 
         .journey-chip[data-tooltip]:hover::after,
@@ -1111,7 +1111,7 @@
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.16s ease;
-            z-index: 12;
+            z-index: 2147483646;
             box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
             text-transform: none;
             letter-spacing: normal;
@@ -1214,7 +1214,7 @@
             pointer-events: none;
             transition: opacity 0.18s ease;
             box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
-            z-index: 20;
+            z-index: 2147483646;
             text-transform: none;
             letter-spacing: normal;
         }
@@ -1230,7 +1230,7 @@
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.18s ease;
-            z-index: 20;
+            z-index: 2147483646;
         }
 
         .journey-event-icon[data-tooltip]:hover::after,
@@ -1251,6 +1251,54 @@
             letter-spacing: 0.08em;
             text-transform: uppercase;
             font-weight: 700;
+        }
+
+        .journey-event-session-chip[data-tooltip] {
+            position: relative;
+            cursor: help;
+        }
+
+        .journey-event-session-chip[data-tooltip]::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: calc(100% + 0.45rem);
+            left: 50%;
+            transform: translateX(-50%);
+            max-width: min(18rem, calc(100vw - 4rem));
+            background: var(--dash-text);
+            color: var(--dash-panel);
+            padding: 0.45rem 0.65rem;
+            border-radius: 0.55rem;
+            font-size: 0.72rem;
+            font-weight: 500;
+            line-height: 1.4;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.18s ease;
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+            z-index: 2147483646;
+            text-transform: none;
+            letter-spacing: normal;
+            white-space: normal;
+        }
+
+        .journey-event-session-chip[data-tooltip]::before {
+            content: '';
+            position: absolute;
+            bottom: calc(100% + 0.08rem);
+            left: 50%;
+            transform: translateX(-50%);
+            border: 6px solid transparent;
+            border-top-color: var(--dash-text);
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.18s ease;
+            z-index: 2147483646;
+        }
+
+        .journey-event-session-chip[data-tooltip]:hover::after,
+        .journey-event-session-chip[data-tooltip]:hover::before {
+            opacity: 1;
         }
 
         .journey-event.session-marker {
@@ -3788,6 +3836,7 @@
                 eventName: '__condensed__',
                 createdAt: compact[insertAt - 1]?.createdAt || compact[insertAt - 1]?.collectedAt || null,
                 _ts: compact[insertAt - 1]?._ts || Date.now(),
+                _sessionGroupIndex: compact[insertAt - 1]?._sessionGroupIndex,
                 _detailLines: [`Skipped ${dropped} low-signal events to keep this readable.`],
             };
 
@@ -3811,7 +3860,7 @@
                 
             const sorted = dedupeAdjacentIdenticalEvents(sortedRaw);
 
-            const visible = sorted; // FORCED TO FULL BY REQUEST
+            const visible = mode === 'full' ? sorted : condenseSessionEvents(sorted).events;
 
             return visible.map((event, index) => {
                 if (event.eventName === '__condensed__') {
@@ -4245,29 +4294,27 @@
             return `Returns ${secs} second${secs === 1 ? '' : 's'} later`;
         }
 
-        function buildPurchaseSessionTimelineEvents(events = [], story = {}) {
+        function buildPurchaseSessionTimelineEvents(events = [], story = {}, options = {}) {
             const baseEvents = Array.isArray(events) ? events.map((event) => ({ ...event })) : [];
             const groups = Array.isArray(story.groups) ? story.groups : [];
             if (!baseEvents.length || !groups.length) return baseEvents;
 
+            const mode = String(options.mode || 'condensed').toLowerCase();
             const timeline = [];
-            let cursor = 0;
 
             groups.forEach((group, index) => {
                 const sessionLabel = group.label || `Session ${index + 1}`;
-                const requestedCount = Math.max(0, Number(group.eventCount || 0));
-                const sessionEvents = baseEvents.slice(cursor, cursor + requestedCount).map((event) => ({
+                const sessionEvents = baseEvents.filter((event) => Number(event.sessionGroupIndex ?? event._sessionGroupIndex) === index).map((event) => ({
                     ...event,
                     sessionLabel,
                     sessionTooltip: `${sessionLabel} stitched from ${group.touchpoint?.label || 'the strongest recovered touchpoint'}.`,
                 }));
 
-                if (!sessionEvents.length) return;
-
                 const entryLabel = group.entryPage && group.entryPage !== '-' ? `Entry ${group.entryPage}` : 'No landing captured';
+                const visibleEventCount = sessionEvents.filter((event) => event.type !== 'session_gap' && event.type !== 'session_marker').length;
                 const copyParts = [
                     group.touchpoint?.label || 'Unknown source',
-                    `${Number(group.eventCount || 0)} events`,
+                    mode === 'full' ? `${Number(group.eventCount || 0)} events` : `${visibleEventCount}/${Number(group.eventCount || 0)} events shown`,
                     entryLabel,
                 ].filter(Boolean);
 
@@ -4287,8 +4334,6 @@
                 });
                 timeline.push(...sessionEvents);
 
-                cursor += sessionEvents.length;
-
                 const nextGroup = groups[index + 1] || null;
                 if (nextGroup) {
                     const gapSeconds = Math.max(0, (new Date(nextGroup.startedAt).getTime() - new Date(group.endedAt).getTime()) / 1000);
@@ -4306,15 +4351,6 @@
                     });
                 }
             });
-
-            if (cursor < baseEvents.length) {
-                const fallbackLabel = groups[groups.length - 1]?.label || `Session ${groups.length || 1}`;
-                timeline.push(...baseEvents.slice(cursor).map((event) => ({
-                    ...event,
-                    sessionLabel: event.sessionLabel || fallbackLabel,
-                    sessionTooltip: event.sessionTooltip || `${fallbackLabel} stitched block.`,
-                })));
-            }
 
             return timeline;
         }
@@ -4412,7 +4448,7 @@
         }
 
         function renderFocusedPurchaseJourneyCard(purchase = {}, displayName = '') {
-            const journeyData = buildMinimalJourneyNodesFromPurchase(purchase);
+            const journeyData = buildMinimalJourneyNodesFromPurchase(purchase, selectedJourneyTimelineMode);
             const sessionCount = Number(journeyData.sessionStory?.totalSessions || countPurchaseJourneySessions(purchase) || 0);
             return `
                 <div class="journey-compact-card space-y-4">
@@ -4510,7 +4546,7 @@
             };
         }
 
-        function buildMinimalJourneyNodesFromPurchase(purchase = {}) {
+        function buildMinimalJourneyNodesFromPurchase(purchase = {}, timelineMode = 'condensed') {
             const confidence = Math.round(Number(purchase.attributionConfidence || 0) * 100);
             const hasPurchase = Number(purchase.revenue || 0) > 0;
             const userName = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || '', 'Customer');
@@ -4535,8 +4571,37 @@
                 realEvents = dedupeAdjacentIdenticalEvents(realEvents);
 
                 if (realEvents.length > 0) {
-                    timelineEvents = realEvents.map((event, index) => {
-                        const next = realEvents[index + 1];
+                    let groupCursor = 0;
+                    (Array.isArray(sessionStory.groups) ? sessionStory.groups : []).forEach((group, groupIndex) => {
+                        const takeCount = Math.max(0, Number(group.eventCount || 0));
+                        for (let offset = 0; offset < takeCount; offset += 1) {
+                            if (realEvents[groupCursor + offset]) {
+                                realEvents[groupCursor + offset]._sessionGroupIndex = groupIndex;
+                            }
+                        }
+                        groupCursor += takeCount;
+                    });
+
+                    const sourceEvents = timelineMode === 'full'
+                        ? realEvents
+                        : condenseSessionEvents(realEvents).events;
+
+                    timelineEvents = sourceEvents.map((event, index) => {
+                        if (event.eventName === '__condensed__') {
+                            return {
+                                icon: 'fa-solid fa-filter',
+                                tooltip: 'Low-signal events were condensed in this view. Switch to Full to inspect everything.',
+                                title: 'Condensed events',
+                                time: '-',
+                                fullTime: '-',
+                                originalName: 'Condensed events',
+                                detailLines: event._detailLines || [],
+                                tone: '',
+                                sessionGroupIndex: Number(event._sessionGroupIndex),
+                            };
+                        }
+
+                        const next = sourceEvents[index + 1];
                         const durSeconds = next ? Math.max(0, (next._ts - event._ts) / 1000) : 0;
                         const pagePath = normalizeJourneyPath(event.pageUrl || event.url || '');
                         const itemName = event.productName || event.productId || event.itemId || '';
@@ -4572,10 +4637,11 @@
                             originalName: originalEventName,
                             detailLines,
                             tone: resolveChannelTone(event.utmSource || purchase.attributedChannel || '', purchase.attributedPlatform || null),
+                            sessionGroupIndex: Number(event._sessionGroupIndex),
                         };
                     });
 
-                    timelineEvents = buildPurchaseSessionTimelineEvents(timelineEvents, sessionStory);
+                    timelineEvents = buildPurchaseSessionTimelineEvents(timelineEvents, sessionStory, { mode: timelineMode });
                 }
             }
             
