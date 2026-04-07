@@ -1806,6 +1806,16 @@
             color: var(--dash-accent) !important;
         }
 
+        .feed-item.is-commerce-highlight .live-feed-event-icon,
+        .feed-item.is-commerce-highlight .live-feed-event-title {
+            color: #d9b8ff !important;
+            text-shadow: 0 0 18px rgba(181, 92, 255, 0.18);
+        }
+
+        .feed-item.is-commerce-highlight .live-feed-event-title {
+            font-weight: 800 !important;
+        }
+
         .adray-dashboard canvas {
             filter: saturate(1.05);
         }
@@ -7087,13 +7097,17 @@ function renderRecentPurchases(purchases) {
                     el.classList.add('bg-blue-50', 'border-blue-400');      
                 }
 
-                const titleColor = (isPurchaseEvent || isCartEvent) ? '!text-gray-900 font-bold' : 'text-gray-200 font-medium';
+                if (isPurchaseEvent || isCartEvent) {
+                    el.classList.add('is-commerce-highlight');
+                }
+
+                const titleColor = (isPurchaseEvent || isCartEvent) ? 'live-feed-event-title font-bold' : 'live-feed-event-title text-gray-200 font-medium';
                 const detailColor = (isPurchaseEvent || isCartEvent) ? '!text-gray-800' : 'text-gray-400';
 
                 el.innerHTML = `
                     <div class="flex items-start">
                         <div class="flex-shrink-0 pt-0.5">
-                            <i class="fas ${icon} ${color}"></i>
+                            <i class="fas ${icon} ${color} live-feed-event-icon"></i>
                         </div>
                         <div class="ml-3 w-0 flex-1">
                             <div class="flex justify-between items-start">
