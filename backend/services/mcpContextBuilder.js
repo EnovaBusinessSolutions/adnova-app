@@ -1827,7 +1827,7 @@ function buildCanonicalRuntimeFromRoot(root, fallback = {}) {
 
   const effectiveSourcesStatus = ai?.sourcesStatus || fallback?.sources || null;
 
-  const connectedSources = uniqStringsSafe([
+    const connectedSources = uniqStringsSafe([
     ...(Array.isArray(ai?.connectedSources) ? ai.connectedSources : []),
     ...deriveSourceNamesByFlagFromState(effectiveSourcesStatus, 'connected'),
     ...Object.keys(root?.sources || {}).filter((name) => !!root?.sources?.[name]?.connected),
@@ -1840,12 +1840,32 @@ function buildCanonicalRuntimeFromRoot(root, fallback = {}) {
 
   const pendingConnectedSources = uniqStringsSafe([
     ...(Array.isArray(ai?.pendingConnectedSources) ? ai.pendingConnectedSources : []),
+    ...Object.entries(root?.sources || {})
+      .filter(([name, sourceState]) => {
+        if (!sourceState?.connected) return false;
+
+        const statusState = effectiveSourcesStatus?.[name] || null;
+        const statusUsable = !!statusState?.usable;
+        const aiUsable = usableSources.includes(name);
+
+        return !statusUsable && !aiUsable;
+      })
+      .map(([name]) => name),
+    ...Object.entries(effectiveSourcesStatus || {})
+      .filter(([name, sourceState]) => {
+        if (!sourceState?.connected) return false;
+        if (sourceState?.usable) return false;
+        return !usableSources.includes(name);
+      })
+      .map(([name]) => name),
   ]);
 
   const failedSources = uniqStringsSafe([
     ...(Array.isArray(ai?.failedSources) ? ai.failedSources : []),
     ...deriveSourceNamesWithErrorFromState(effectiveSourcesStatus),
   ]);
+
+  const hasPendingConnectedSources = pendingConnectedSources.length > 0;
 
   const signalLooksStaleByFingerprint =
     !!signalSourceFingerprint &&
@@ -1862,13 +1882,15 @@ function buildCanonicalRuntimeFromRoot(root, fallback = {}) {
     !!signalLooksStaleByFingerprint ||
     !!signalLooksStaleByConnection;
 
-  const signalRawStatus = safeStr(ai?.status).trim().toLowerCase();
+    const signalRawStatus = safeStr(ai?.status).trim().toLowerCase();
   let signalStatus = 'idle';
 
   if (signalRawStatus === 'processing') {
     signalStatus = 'processing';
   } else if (signalRawStatus === 'failed' || signalRawStatus === 'error') {
     signalStatus = 'failed';
+  } else if (hasPendingConnectedSources) {
+    signalStatus = 'processing';
   } else if (staleSignal && (signalPayload || encodedPayload)) {
     signalStatus = 'stale';
   } else if (readiness.signalReadyForPdf) {
@@ -1915,13 +1937,14 @@ function buildCanonicalRuntimeFromRoot(root, fallback = {}) {
     pdfStatus = 'idle';
   }
 
-  const canRetrySignal =
+    const canRetrySignal =
     signalStatus === 'failed' ||
     signalStatus === 'stale' ||
     (signalStatus === 'idle' && (connectedSources.length > 0 || usableSources.length > 0));
 
   const canGeneratePdf =
     signalStatus === 'ready' &&
+    !hasPendingConnectedSources &&
     pdfStatus !== 'ready' &&
     pdfStatus !== 'processing';
 
@@ -1930,7 +1953,8 @@ function buildCanonicalRuntimeFromRoot(root, fallback = {}) {
   const shouldPoll =
     signalStatus === 'processing' ||
     pdfStatus === 'processing' ||
-    signalStatus === 'stale';
+    signalStatus === 'stale' ||
+    hasPendingConnectedSources;
 
   const pollIntervalMs =
     signalStatus === 'processing' || pdfStatus === 'processing'
@@ -1945,7 +1969,13 @@ function buildCanonicalRuntimeFromRoot(root, fallback = {}) {
   let description = 'We’re aligning your connected data before generating your Signal.';
   let tip = 'The frontend should only represent this backend state.';
 
-  if (signalStatus === 'processing' && staleSignal) {
+    if (hasPendingConnectedSources && (staleSignal || effectiveSourcesStatus)) {
+    uiMode = 'rebuilding_after_source_change';
+    heroChip = 'Source change detected';
+    title = 'Rebuilding your Signal';
+    description = 'A newly connected source is not fully incorporated yet, so we are rebuilding your Signal before unlocking PDF generation.';
+    tip = `Waiting for: ${pendingConnectedSources.join(', ')}`;
+  } else if (signalStatus === 'processing' && staleSignal) {
     uiMode = 'rebuilding_after_source_change';
     heroChip = 'Source change detected';
     title = 'Rebuilding your Signal';
@@ -1998,10 +2028,13 @@ function buildCanonicalRuntimeFromRoot(root, fallback = {}) {
       usable: usableSources,
       pending: pendingConnectedSources,
       failed: failedSources,
-      changedSinceLastSignal:
-        !!signalSourceFingerprint &&
-        !!currentSourceFingerprint &&
-        signalSourceFingerprint !== currentSourceFingerprint,
+            changedSinceLastSignal:
+        hasPendingConnectedSources ||
+        (
+          !!signalSourceFingerprint &&
+          !!currentSourceFingerprint &&
+          signalSourceFingerprint !== currentSourceFingerprint
+        ),
     },
 
     signal: {
@@ -3203,6 +3236,26 @@ async function buildPdfForUser(userId) {
     !!currentSourceFingerprint &&
     !!signalFingerprint &&
     currentSourceFingerprint !== signalFingerprint;
+
+    const runtimeBeforePdf = buildCanonicalRuntimeFromRoot(root);
+  const runtimePendingConnectedSources = Array.isArray(runtimeBeforePdf?.effectiveSources?.pending)
+    ? runtimeBeforePdf.effectiveSources.pending
+    : [];
+
+  if (runtimePendingConnectedSources.length > 0) {
+    const rebuildResult = await buildUnifiedContextForUser(userId, {
+      forceRebuild: true,
+      reason: 'pending_connected_sources_before_pdf',
+      requestedBy: 'pdf_guard',
+      trigger: 'pdf_guard',
+    });
+
+    return buildResultFromRoot(rebuildResult?.root || await findRoot(userId), {
+      status: 'processing',
+      progress: toNum(rebuildResult?.data?.progress, 20),
+      stage: rebuildResult?.data?.stage || 'waiting_for_connected_sources',
+    });
+  }  
 
   const signalLooksStaleByConnection =
     !!signalConnectionFingerprint &&
