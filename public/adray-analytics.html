@@ -823,6 +823,8 @@
             transition: opacity 160ms ease, transform 160ms ease;
             pointer-events: auto;
             z-index: 4;
+            touch-action: none;
+            user-select: none;
         }
 
         .live-feed-scrollbar.is-visible {
@@ -841,6 +843,8 @@
             box-shadow: 0 4px 16px rgba(126, 240, 200, 0.28);
             cursor: grab;
             transition: background 120ms ease;
+            touch-action: none;
+            user-select: none;
         }
 
         .live-feed-scroll-thumb.is-dragging {
@@ -7676,6 +7680,15 @@ function renderRecentPurchases(purchases) {
             wrap.addEventListener('scroll', scheduleLiveFeedScrollbarSync, { passive: true });
             window.addEventListener('resize', scheduleLiveFeedScrollbarSync);
 
+            const proxyWheelToWrap = (event) => {
+                event.preventDefault();
+                wrap.scrollTop += event.deltaY;
+                scheduleLiveFeedScrollbarSync();
+            };
+
+            rail.addEventListener('wheel', proxyWheelToWrap, { passive: false });
+            thumb.addEventListener('wheel', proxyWheelToWrap, { passive: false });
+
             if ('ResizeObserver' in window) {
                 liveFeedScrollbarResizeObserver = new ResizeObserver(() => {
                     scheduleLiveFeedScrollbarSync();
@@ -7751,6 +7764,25 @@ function renderRecentPurchases(purchases) {
             scheduleLiveFeedScrollbarSync();
         }
 
+        function preserveLiveFeedPositionAfterPrepend(wrap, previousScrollTop, previousScrollHeight, stickToTop) {
+            if (!wrap) return;
+
+            requestAnimationFrame(() => {
+                const nextScrollHeight = Math.max(0, wrap.scrollHeight || 0);
+                const growth = Math.max(0, nextScrollHeight - previousScrollHeight);
+
+                if (stickToTop) {
+                    wrap.scrollTop = 0;
+                } else if (growth > 0) {
+                    wrap.scrollTop = previousScrollTop + growth;
+                } else {
+                    wrap.scrollTop = previousScrollTop;
+                }
+
+                scheduleLiveFeedScrollbarSync();
+            });
+        }
+
         function resolveLiveFeedProductLabel(payload = {}) {
             const itemCandidate = Array.isArray(payload.items) ? (payload.items[0] || {}) : {};
             const label = [
@@ -7808,6 +7840,10 @@ function renderRecentPurchases(purchases) {
 
             evtSource.onmessage = function(event) {
                 if (placeholder) placeholder.style.display = 'none';
+
+                const previousScrollTop = Number(wrap?.scrollTop || 0);
+                const previousScrollHeight = Number(wrap?.scrollHeight || 0);
+                const isBrowsingOlderEvents = previousScrollTop > 24;
 
                 const data = JSON.parse(event.data);
 
@@ -7953,7 +7989,6 @@ function renderRecentPurchases(purchases) {
                 }
 
                 container.prepend(el);
-                scheduleLiveFeedScrollbarSync();
 
                 if (data.type === 'COLLECT') {
                     const eventName = String(data.payload?.eventName || data.payload?.event_name || '').toLowerCase();
@@ -7966,7 +8001,13 @@ function renderRecentPurchases(purchases) {
                 if (container.children.length > 50) {
                     container.lastElementChild.remove();
                 }
-                scheduleLiveFeedScrollbarSync();
+
+                preserveLiveFeedPositionAfterPrepend(
+                    wrap,
+                    previousScrollTop,
+                    previousScrollHeight,
+                    !isBrowsingOlderEvents
+                );
             };
 
             evtSource.onerror = function(err) {
