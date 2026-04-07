@@ -601,12 +601,30 @@
             flex: 1 1 auto;
             min-height: 0;
             max-height: none;
-            overflow-y: auto;
+            overflow-y: scroll;
         }
 
         #feed-container {
-            overflow-y: auto !important;
+            overflow-y: scroll !important;
             overscroll-behavior: contain;
+            scrollbar-gutter: stable;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(126, 240, 200, 0.55) rgba(255, 255, 255, 0.04);
+        }
+
+        #feed-container::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        #feed-container::-webkit-scrollbar-thumb {
+            background: rgba(126, 240, 200, 0.45);
+            border-radius: 999px;
+        }
+
+        #feed-container::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 999px;
         }
 
         .dashboard-top-row > * {
@@ -1856,8 +1874,8 @@
 
         .feed-item.is-commerce-highlight .live-feed-event-icon,
         .feed-item.is-commerce-highlight .live-feed-event-title {
-            color: #d9b8ff !important;
-            text-shadow: 0 0 18px rgba(181, 92, 255, 0.18);
+            color: #8ff5cb !important;
+            text-shadow: 0 0 18px rgba(126, 240, 200, 0.18);
         }
 
         .feed-item.is-commerce-highlight .live-feed-event-title {
@@ -1866,12 +1884,12 @@
 
         .feed-item.is-commerce-highlight .live-feed-secondary,
         .feed-item.is-commerce-highlight .live-feed-detail {
-            color: #cdb3f7 !important;
+            color: #baf7de !important;
         }
 
         .feed-item.is-commerce-highlight .live-feed-always-visible-user,
         .feed-item.is-commerce-highlight p.text-xs.italic {
-            color: #cdb3f7 !important;
+            color: #baf7de !important;
         }
 
         .adray-dashboard canvas {
@@ -7100,20 +7118,21 @@ function renderRecentPurchases(purchases) {
 
             if (label) return label;
 
-            const fallbackId = [
-                payload.product_id,
-                payload.productId,
-                payload.item_id,
-                payload.itemId,
-                itemCandidate.product_id,
-                itemCandidate.productId,
-                itemCandidate.item_id,
-                itemCandidate.itemId,
-            ]
-                .map((value) => String(value || '').trim())
-                .find(Boolean);
+            const pageUrl = String(payload.pageUrl || payload.page_url || payload.url || '').trim();
+            if (pageUrl) {
+                try {
+                    const pathname = new URL(pageUrl, window.location.origin).pathname || '';
+                    const segments = pathname.split('/').filter(Boolean);
+                    const last = segments[segments.length - 1] || '';
+                    const humanized = last
+                        .replace(/[-_]+/g, ' ')
+                        .replace(/\b\w/g, (m) => m.toUpperCase())
+                        .trim();
+                    if (humanized && !/^\d+$/.test(humanized)) return humanized;
+                } catch (_) {}
+            }
 
-            return fallbackId ? `Product ${fallbackId}` : '';
+            return '';
         }
 
         function connectLiveFeed() {

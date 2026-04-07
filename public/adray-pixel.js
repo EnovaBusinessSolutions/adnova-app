@@ -443,11 +443,39 @@
     return typeof url === 'string' && /\/checkout(\?|$|\/)/i.test(url);
   }
 
-  function detectProductName() {
+  function detectProductName(sourceEl = null) {
     try {
       const shopifyTitle = window.ShopifyAnalytics?.meta?.product?.title;
       if (typeof shopifyTitle === 'string' && shopifyTitle.trim()) return shopifyTitle.trim();
     } catch (_) {}
+
+    if (sourceEl && sourceEl.closest) {
+      const containers = [
+        sourceEl.closest('[data-product_name]'),
+        sourceEl.closest('[data-product-name]'),
+        sourceEl.closest('[data-product-id]'),
+        sourceEl.closest('[data-product_id]'),
+        sourceEl.closest('.product'),
+        sourceEl.closest('.product-card'),
+        sourceEl.closest('.product-item'),
+        sourceEl.closest('.card-product'),
+        sourceEl.closest('form'),
+      ].filter(Boolean);
+
+      for (const container of containers) {
+        try {
+          const ownDataName = container.getAttribute?.('data-product_name') || container.getAttribute?.('data-product-name') || '';
+          if (ownDataName && ownDataName.trim()) return ownDataName.trim();
+
+          const child = container.querySelector?.('[data-product_name],[data-product-name],.product_title,.product-title,.product__title,.product-card__title,.woocommerce-loop-product__title,h1,h2,h3,a[title]');
+          if (child) {
+            const childDataName = child.getAttribute?.('data-product_name') || child.getAttribute?.('data-product-name') || child.getAttribute?.('title') || '';
+            const childText = childDataName || child.textContent || '';
+            if (typeof childText === 'string' && childText.trim()) return childText.trim();
+          }
+        } catch (_) {}
+      }
+    }
 
     const candidates = [
       '[data-product_name]',
@@ -478,10 +506,10 @@
     return null;
   }
 
-  function getProductContext() {
+  function getProductContext(sourceEl = null) {
     let productId = null;
     let variantId = null;
-    let productName = detectProductName();
+    let productName = detectProductName(sourceEl);
 
     try {
       const shopifyMeta = window.ShopifyAnalytics?.meta?.product;
@@ -577,12 +605,13 @@
   // 3. WooCommerce: AJAX add to cart (fallback for classic themes)
   if (typeof jQuery !== 'undefined') {
     jQuery(document.body).on('added_to_cart', function(event, fragments, cart_hash, $button) {
+      const buttonEl = $button && $button[0] ? $button[0] : null;
       const productId = $button ? $button.data('product_id') : null;
       const productName = $button ? ($button.data('product_name') || $button.data('product-name')) : null;
       const quantity = $button ? $button.data('quantity') : 1;
       sendEvent("add_to_cart", {
         product_id: productId ? String(productId) : null,
-        product_name: productName ? String(productName) : (detectProductName() || null),
+        product_name: productName ? String(productName) : (detectProductName(buttonEl) || null),
         quantity: quantity
       });
     });
@@ -631,7 +660,7 @@
         const qty = Number(form.querySelector('[name="quantity"]')?.value || 1);
         sendEvent('add_to_cart', {
           product_id: productId ? String(productId) : null,
-          product_name: detectProductName(),
+          product_name: detectProductName(form),
           quantity: Number.isFinite(qty) ? qty : 1
         });
       }
@@ -639,9 +668,10 @@
       if (isWooCartAddUrl(action) || form.querySelector('[name="add-to-cart"]')) {
         const wcProductId = form.querySelector('[name="add-to-cart"]')?.value || form.querySelector('[name="product_id"]')?.value || null;
         const wcQty = Number(form.querySelector('[name="quantity"]')?.value || 1);
+        const ctx = getProductContext(form);
         sendEvent('add_to_cart', {
-          product_id: wcProductId ? String(wcProductId) : (getProductContext().product_id || null),
-          product_name: getProductContext().product_name || null,
+          product_id: wcProductId ? String(wcProductId) : (ctx.product_id || null),
+          product_name: ctx.product_name || null,
           quantity: Number.isFinite(wcQty) ? wcQty : 1
         });
       }
@@ -680,7 +710,7 @@
         isWooCartAddUrl(formAction);
 
       if (likelyWooAddToCart) {
-        sendEvent('add_to_cart', getProductContext());
+        sendEvent('add_to_cart', getProductContext(el));
       }
 
       if (likelyCheckout) {
