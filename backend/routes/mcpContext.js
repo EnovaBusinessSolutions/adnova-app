@@ -1089,7 +1089,6 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
       hasHumanSignalPayload: !needSignalRebuild && !!signalPayload,
       hasSignal: !!signalPayload,
       signalReady: !!preferredPayloadForPdf,
-      signalProcessing: !!signalProcessing,
       signalComplete,
       signalValidForPdf,
       signalReadyForPdf: uiFlags.signalReadyForPdf,
