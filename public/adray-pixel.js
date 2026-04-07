@@ -443,15 +443,52 @@
     return typeof url === 'string' && /\/checkout(\?|$|\/)/i.test(url);
   }
 
+  function detectProductName() {
+    try {
+      const shopifyTitle = window.ShopifyAnalytics?.meta?.product?.title;
+      if (typeof shopifyTitle === 'string' && shopifyTitle.trim()) return shopifyTitle.trim();
+    } catch (_) {}
+
+    const candidates = [
+      '[data-product_name]',
+      '[data-product-name]',
+      'h1.product_title',
+      '.product_title',
+      '.product-single__title',
+      '.product__title',
+      'main h1',
+      'h1'
+    ];
+
+    for (const selector of candidates) {
+      try {
+        const el = document.querySelector(selector);
+        if (!el) continue;
+        const dataName = el.getAttribute('data-product_name') || el.getAttribute('data-product-name') || '';
+        const text = dataName || el.textContent || '';
+        if (typeof text === 'string' && text.trim()) return text.trim();
+      } catch (_) {}
+    }
+
+    try {
+      const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute('content') || '';
+      if (ogTitle.trim()) return ogTitle.trim();
+    } catch (_) {}
+
+    return null;
+  }
+
   function getProductContext() {
     let productId = null;
     let variantId = null;
+    let productName = detectProductName();
 
     try {
       const shopifyMeta = window.ShopifyAnalytics?.meta?.product;
       if (shopifyMeta) {
         productId = shopifyMeta.id ? String(shopifyMeta.id) : productId;
         variantId = shopifyMeta.selectedVariantId ? String(shopifyMeta.selectedVariantId) : variantId;
+        productName = shopifyMeta.title ? String(shopifyMeta.title) : productName;
       }
     } catch (_) {}
 
@@ -467,10 +504,12 @@
         const wcButton = document.querySelector('[data-product_id]');
         const wcId = wcButton ? wcButton.getAttribute('data-product_id') : null;
         if (wcId) productId = String(wcId);
+        const wcName = wcButton ? (wcButton.getAttribute('data-product_name') || wcButton.getAttribute('data-product-name')) : null;
+        if (!productName && wcName) productName = String(wcName);
       }
     } catch (_) {}
 
-    return { product_id: productId, variant_id: variantId };
+    return { product_id: productId, variant_id: variantId, product_name: productName || null };
   }
 
   // === PLATFORM-SPECIFIC EVENT INTERCEPTORS ===
@@ -503,6 +542,7 @@
          sendEvent("add_to_cart", {
              product_id: data.product_id ? String(data.product_id) : null,
              variant_id: data.variant_id ? String(data.variant_id) : null,
+             product_name: data.product_title || data.title || data.name || null,
              cart_value: data.price ? data.price / 100 : null
          });
        } catch (e) {}
@@ -523,6 +563,7 @@
          sendEvent("add_to_cart", {
              product_id: data.items?.[0]?.id ? String(data.items[0].id) : null,
              variant_id: data.items?.[0]?.variation_id ? String(data.items[0].variation_id) : null,
+             product_name: data.items?.[0]?.name || data.items?.[0]?.title || null,
              cart_value: data.totals?.total_price ? parseFloat(data.totals.total_price) / 100 : null
          });
        } catch (e) {
@@ -537,9 +578,11 @@
   if (typeof jQuery !== 'undefined') {
     jQuery(document.body).on('added_to_cart', function(event, fragments, cart_hash, $button) {
       const productId = $button ? $button.data('product_id') : null;
+      const productName = $button ? ($button.data('product_name') || $button.data('product-name')) : null;
       const quantity = $button ? $button.data('quantity') : 1;
       sendEvent("add_to_cart", {
         product_id: productId ? String(productId) : null,
+        product_name: productName ? String(productName) : (detectProductName() || null),
         quantity: quantity
       });
     });
@@ -588,6 +631,7 @@
         const qty = Number(form.querySelector('[name="quantity"]')?.value || 1);
         sendEvent('add_to_cart', {
           product_id: productId ? String(productId) : null,
+          product_name: detectProductName(),
           quantity: Number.isFinite(qty) ? qty : 1
         });
       }
@@ -597,6 +641,7 @@
         const wcQty = Number(form.querySelector('[name="quantity"]')?.value || 1);
         sendEvent('add_to_cart', {
           product_id: wcProductId ? String(wcProductId) : (getProductContext().product_id || null),
+          product_name: getProductContext().product_name || null,
           quantity: Number.isFinite(wcQty) ? wcQty : 1
         });
       }
