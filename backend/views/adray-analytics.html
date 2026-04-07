@@ -1043,6 +1043,38 @@
             transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
         }
 
+        .journey-event[data-tooltip] {
+            cursor: help;
+        }
+
+        .journey-event[data-tooltip]::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: calc(100% + 0.45rem);
+            left: 1rem;
+            max-width: min(18rem, calc(100vw - 4rem));
+            background-color: var(--dash-text);
+            color: var(--dash-panel);
+            padding: 0.5rem 0.7rem;
+            border-radius: 0.55rem;
+            font-size: 0.72rem;
+            font-weight: 500;
+            line-height: 1.4;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.16s ease;
+            z-index: 12;
+            box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+            text-transform: none;
+            letter-spacing: normal;
+            white-space: normal;
+        }
+
+        .journey-event[data-tooltip]:hover::after,
+        .journey-event[data-tooltip]:focus-within::after {
+            opacity: 1;
+        }
+
         .journey-event::before {
             content: "";
             position: absolute;
@@ -3332,11 +3364,21 @@
         }
 
         function resolveChannelTone(channel, platform) {
-            const key = String(channel + ' ' + platform).toLowerCase();        
-            if (key.includes('organic') || key.includes('referral') || key.includes('direct')) return 'is-organic';
-            if (key.includes('google') || key.includes('search')) return 'is-google';
-            if (key.includes('facebook') || key.includes('meta') || key.includes('instagram')) return 'is-meta';
-            if (key.includes('tiktok')) return 'is-tiktok';
+            const rawChannel = String(channel || '').trim().toLowerCase();
+            const normalizedChannel = normalizeAttributionChannel(rawChannel);
+            if (rawChannel.includes('other') || rawChannel.includes('unattributed')) return '';
+            if (normalizedChannel === 'organic') return 'is-organic';
+            if (normalizedChannel === 'google') return 'is-google';
+            if (normalizedChannel === 'meta') return 'is-meta';
+            if (normalizedChannel === 'tiktok') return 'is-tiktok';
+
+            const rawPlatform = String(platform || '').trim().toLowerCase();
+            const normalizedPlatform = normalizeAttributionChannel(rawPlatform);
+            if (normalizedPlatform === 'organic') return 'is-organic';
+            if (normalizedPlatform === 'google') return 'is-google';
+            if (normalizedPlatform === 'meta') return 'is-meta';
+            if (normalizedPlatform === 'tiktok') return 'is-tiktok';
+            return '';
         }
 
         function scoreJourneySignal(purchase = {}) {
@@ -3533,14 +3575,16 @@
                     fullTime: timeStr,
                     originalName: originalEventName,
                     detailLines,
+                    tooltip: `${describeJourneyTone(tone)} ${originalEventName}${pagePath && pagePath !== '-' ? ` on ${pagePath}` : ''}`.trim(),
                     tone,
                 };
             });
         }
 
-        function buildPurchaseTimelineEvents(purchase = {}) {
+        function buildPurchaseTimelineEvents(purchase = {}, options = {}) {
             const tone = resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform);
-            const landing = normalizeJourneyPath(purchase.landingPageUrl || purchase.attributionDebug?.payloadPageUrl || purchase.pageUrl || '');
+            const landingInfo = options.landingInfo || resolvePurchaseLandingInfo(purchase, options.events || []);
+            const landing = landingInfo.landing;
             const campaign = purchase.attributedCampaign || purchase.attributionDebug?.payloadUtmCampaign || '-';
             const clickId = purchase.attributedClickId || '-';
             const purchasedAt = formatRecentPurchaseDate(purchase);
@@ -3556,6 +3600,7 @@
                         `Campaign: ${campaign}`,
                         `Click ID: ${clickId}`,
                     ],
+                    tooltip: `Primary attribution touchpoint. ${humanReadableChannel(purchase.attributedChannel || 'unattributed')} ${campaign && campaign !== '-' ? `campaign ${campaign}` : 'source'}${clickId && clickId !== '-' ? ` with click id ${shortenJourneyIdentifier(clickId)}` : ''}.`,
                     tone,
                 },
             ];
@@ -3568,6 +3613,7 @@
                     time: purchasedAt,
                     fullTime: purchasedAt,
                     detailLines: [`Page: ${landing}`],
+                    tooltip: `First landing page captured for this stitched journey from ${landingInfo.chosenSource || 'the stitched events'}.`,
                     tone,
                 });
             }
@@ -3582,6 +3628,7 @@
                     `Order: ${purchase.orderNumber || purchase.orderId || '-'}`,
                     `Revenue: ${formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN')}`,
                 ],
+                tooltip: 'Final conversion event used as the anchor for backward stitching.',
                 tone: 'is-organic',
             });
 
@@ -3602,11 +3649,60 @@
             return formatDurationCompact(value);
         }
 
+        function describeJourneyTone(tone = '') {
+            if (tone === 'is-google') return 'Google touchpoint inferred for this event.';
+            if (tone === 'is-meta') return 'Meta touchpoint inferred for this event.';
+            if (tone === 'is-tiktok') return 'TikTok touchpoint inferred for this event.';
+            if (tone === 'is-organic') return 'Organic, direct, or referral touchpoint inferred for this event.';
+            return 'No clear channel was detected for this event yet.';
+        }
+
         function shortenJourneyIdentifier(value = '') {
             const raw = String(value || '').trim();
             if (!raw) return '';
             if (raw.length <= 10) return raw;
             return `${raw.slice(0, 4)}...${raw.slice(-4)}`;
+        }
+
+        function resolvePurchaseLandingInfo(purchase = {}, events = []) {
+            const safeEvents = Array.isArray(events) ? events : [];
+            const firstEventWithPage = safeEvents.find((event) => {
+                const payload = getJourneyEventPayload(event);
+                return event?.pageUrl || event?.url || payload?.pageUrl || payload?.page_url || payload?.url;
+            }) || null;
+
+            const candidates = [
+                { label: 'purchase.landingPageUrl', value: purchase.landingPageUrl || '' },
+                { label: 'attributionDebug.payloadPageUrl', value: purchase.attributionDebug?.payloadPageUrl || '' },
+                { label: 'purchase.pageUrl', value: purchase.pageUrl || '' },
+                { label: 'first stitched event pageUrl', value: firstEventWithPage?.pageUrl || firstEventWithPage?.url || '' },
+                { label: 'first stitched payload pageUrl', value: (() => {
+                    const payload = getJourneyEventPayload(firstEventWithPage || {});
+                    return payload.pageUrl || payload.page_url || payload.url || '';
+                })() },
+            ];
+
+            const chosenCandidate = candidates.find((candidate) => String(candidate.value || '').trim()) || null;
+            const landing = chosenCandidate ? normalizeJourneyPath(chosenCandidate.value) : '-';
+            const landingDisplay = landing && landing !== '-' ? landing : 'No landing captured';
+            const orderRef = purchase.orderNumber || purchase.orderId || purchase.checkoutToken || 'unknown';
+
+            console.info('[Journey Landing]', {
+                orderRef,
+                chosenSource: chosenCandidate?.label || 'none',
+                landing: landingDisplay,
+                candidates: candidates.map((candidate) => ({
+                    source: candidate.label,
+                    value: candidate.value || null,
+                    normalizedPath: candidate.value ? normalizeJourneyPath(candidate.value) : null,
+                })),
+            });
+
+            return {
+                landing,
+                landingDisplay,
+                chosenSource: chosenCandidate?.label || '',
+            };
         }
 
         function resolveJourneyReferrerLabel(referrer = '') {
@@ -3859,8 +3955,8 @@
                             <p class="journey-session-summary-title">Conversion Story</p>
                             <p class="journey-session-summary-copy">${escapeHtml(stitchedSummary)}</p>
                             <div class="journey-meta-grid mt-3">
-                                <span class="journey-chip"><i class="fa-solid fa-sack-dollar"></i>${escapeHtml(revenue)}</span>
-                                <span class="journey-chip"><i class="fa-solid fa-clock"></i>${escapeHtml(purchaseTime)}</span>
+                                <span class="journey-chip" data-tooltip="Revenue from the anchor purchase."><i class="fa-solid fa-sack-dollar"></i>${escapeHtml(revenue)}</span>
+                                <span class="journey-chip" data-tooltip="Time when the anchor purchase was recorded."><i class="fa-solid fa-clock"></i>${escapeHtml(purchaseTime)}</span>
                             </div>
                         </div>
                     </div>
@@ -3873,10 +3969,10 @@
                         <p class="journey-session-summary-title">Conversion Story</p>
                         <p class="journey-session-summary-copy">${escapeHtml(stitchedSummary)}</p>
                         <div class="journey-meta-grid mt-3">
-                            <span class="journey-chip"><i class="fa-solid fa-layer-group"></i>${Number(story.totalSessions || 0)} sessions</span>
-                            <span class="journey-chip"><i class="fa-solid fa-bolt"></i>${Number(story.totalEvents || 0)} events</span>
-                            <span class="journey-chip"><i class="fa-solid fa-clock-rotate-left"></i>${escapeHtml(story.totalSpanLabel || '<1m')}</span>
-                            <span class="journey-chip"><i class="fa-solid fa-sack-dollar"></i>${escapeHtml(revenue)}</span>
+                            <span class="journey-chip" data-tooltip="How many stitched sessions were linked to this conversion."><i class="fa-solid fa-layer-group"></i>${Number(story.totalSessions || 0)} sessions</span>
+                            <span class="journey-chip" data-tooltip="How many stitched events support the journey reconstruction."><i class="fa-solid fa-bolt"></i>${Number(story.totalEvents || 0)} events</span>
+                            <span class="journey-chip" data-tooltip="Elapsed time from the first stitched session to the purchase anchor."><i class="fa-solid fa-clock-rotate-left"></i>${escapeHtml(story.totalSpanLabel || '<1m')}</span>
+                            <span class="journey-chip" data-tooltip="Revenue from the final purchase anchor."><i class="fa-solid fa-sack-dollar"></i>${escapeHtml(revenue)}</span>
                         </div>
                     </div>
                     <div class="journey-session-stack">
@@ -3891,18 +3987,18 @@
                                         <span class="journey-session-label">${escapeHtml(group.label)}</span>
                                         <span class="journey-session-time">${escapeHtml(group.timeLabel || '-')}</span>
                                     </div>
-                                    <div class="journey-session-touchpoint ${group.tone || ''}">
+                                    <div class="journey-session-touchpoint ${group.tone || ''}" title="${escapeHtmlAttr(group.touchpoint?.reason || 'No source metadata')}" data-tooltip="${escapeHtmlAttr(group.touchpoint?.reason || 'No source metadata')}">
                                         <span class="journey-session-touchpoint-title"><i class="${group.icon || 'fa-solid fa-route'}"></i>${escapeHtml(group.touchpoint?.label || 'Session touchpoint')}</span>
                                         <span class="journey-session-touchpoint-sub">${escapeHtml(group.touchpoint?.subLabel || group.touchpoint?.reason || 'No source metadata')}</span>
                                     </div>
                                     <div class="journey-session-kpis">
-                                        <span class="journey-chip"><i class="fa-solid fa-wave-square"></i>${Number(group.eventCount || 0)} events</span>
-                                        <span class="journey-chip"><i class="fa-solid fa-door-open"></i>${escapeHtml(group.entryPage || '-')}</span>
-                                        <span class="journey-chip"><i class="fa-solid fa-timer"></i>${escapeHtml(group.durationLabel || '<1m')}</span>
-                                        ${group.sessionIdShort ? `<span class="journey-chip"><i class="fa-solid fa-fingerprint"></i>${escapeHtml(group.sessionIdShort)}</span>` : ''}
+                                        <span class="journey-chip" data-tooltip="How many events were stitched inside this session block."><i class="fa-solid fa-wave-square"></i>${Number(group.eventCount || 0)} events</span>
+                                        <span class="journey-chip" data-tooltip="First page captured for this stitched session."><i class="fa-solid fa-door-open"></i>${escapeHtml(group.entryPage || '-')}</span>
+                                        <span class="journey-chip" data-tooltip="Observed duration of this stitched session block."><i class="fa-solid fa-timer"></i>${escapeHtml(group.durationLabel || '<1m')}</span>
+                                        ${group.sessionIdShort ? `<span class="journey-chip" data-tooltip="Session identifier shortened for readability."><i class="fa-solid fa-fingerprint"></i>${escapeHtml(group.sessionIdShort)}</span>` : ''}
                                     </div>
                                     <p class="journey-session-copy">${escapeHtml(group.stitchedCopy || '')}</p>
-                                    ${group.eventNames.length ? `<div class="journey-session-kpis">${group.eventNames.map((name) => `<span class="journey-chip"><i class="fa-solid fa-check"></i>${escapeHtml(name)}</span>`).join('')}</div>` : ''}
+                                    ${group.eventNames.length ? `<div class="journey-session-kpis">${group.eventNames.map((name) => `<span class="journey-chip" data-tooltip="Detected event inside this session block."><i class="fa-solid fa-check"></i>${escapeHtml(name)}</span>`).join('')}</div>` : ''}
                                 </article>
                                 <div class="journey-session-arrow">
                                     <i class="fa-solid fa-arrow-down"></i>
@@ -3915,13 +4011,13 @@
                                 <span class="journey-session-label">Purchase Anchor</span>
                                 <span class="journey-session-time">${escapeHtml(purchaseTime)}</span>
                             </div>
-                            <div class="journey-session-touchpoint is-organic">
+                            <div class="journey-session-touchpoint is-organic" title="Final conversion event used to anchor attribution and stitch backward." data-tooltip="Final conversion event used to anchor attribution and stitch backward.">
                                 <span class="journey-session-touchpoint-title"><i class="fa-solid fa-bag-shopping"></i>Order #${escapeHtml(orderLabel)}</span>
                                 <span class="journey-session-touchpoint-sub">${escapeHtml(revenue)} · ${escapeHtml(humanReadableChannel(purchase.attributedChannel || 'unattributed'))}</span>
                             </div>
                             <div class="journey-session-kpis">
-                                <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(purchase.attributedCampaign || 'No campaign')}</span>
-                                ${purchase.attributedClickId ? `<span class="journey-chip"><i class="fa-solid fa-link"></i>${escapeHtml(shortenJourneyIdentifier(purchase.attributedClickId))}</span>` : ''}
+                                <span class="journey-chip" data-tooltip="Campaign attributed to the final purchase."><i class="fa-solid fa-bullhorn"></i>${escapeHtml(purchase.attributedCampaign || 'No campaign')}</span>
+                                ${purchase.attributedClickId ? `<span class="journey-chip" data-tooltip="Click identifier linked to the final attributed touchpoint."><i class="fa-solid fa-link"></i>${escapeHtml(shortenJourneyIdentifier(purchase.attributedClickId))}</span>` : ''}
                             </div>
                             <p class="journey-session-copy">This is the final conversion event. Attribution is resolved here, then the stitch walks backward through the sessions above.</p>
                         </article>
@@ -3942,13 +4038,13 @@
                 <div class="journey-compact-card space-y-4">
                     <div class="flex items-center justify-between gap-2 flex-wrap">
                         <span class="text-xs text-gray-500">${formatRecentPurchaseDate(purchase)}</span>
-                        <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(journeyData.summary?.userName || displayName || 'Customer')}</span>
+                        <span class="journey-chip" data-tooltip="Resolved user or customer label for this stitched purchase journey."><i class="fa-solid fa-user"></i>${escapeHtml(journeyData.summary?.userName || displayName || 'Customer')}</span>
                     </div>
                     <div class="journey-meta-grid">
-                        <span class="journey-chip"><i class="fa-solid fa-percent"></i>${Number(journeyData.summary?.confidence || 0)}%</span>
-                        <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(journeyData.summary?.sourceAd || 'No campaign')}</span>
-                        <span class="journey-chip"><i class="fa-solid fa-door-open"></i>${escapeHtml(journeyData.summary?.landing || '-')}</span>
-                        <span class="journey-chip"><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
+                        <span class="journey-chip" data-tooltip="Confidence level of the stitched attribution for this purchase."><i class="fa-solid fa-percent"></i>${Number(journeyData.summary?.confidence || 0)}%</span>
+                        <span class="journey-chip" data-tooltip="Attributed campaign or the best campaign label recovered so far."><i class="fa-solid fa-bullhorn"></i>${escapeHtml(journeyData.summary?.sourceAd || 'No campaign')}</span>
+                        <span class="journey-chip" data-tooltip="Initial landing page captured for this stitched journey. Check console logs tagged [Journey Landing] for raw candidates."><i class="fa-solid fa-door-open"></i>${escapeHtml(journeyData.summary?.landing || 'No landing captured')}</span>
+                        <span class="journey-chip" data-tooltip="How many stitched sessions currently support this purchase path."><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
                     </div>
                     ${renderJourneySessionStory(journeyData.sessionStory, purchase)}
                     ${renderTimelineModeToggle(selectedJourneyTimelineMode)}
@@ -3966,7 +4062,7 @@
                 <div class="journey-timeline">
                     <div class="journey-timeline-sticky"><i class="fa-solid fa-arrows-up-down"></i>${events.length} events</div>
                     ${events.map((event) => `
-                        <article class="journey-event ${event.tone || ''}">
+                        <article class="journey-event ${event.tone || ''}" data-tooltip="${escapeHtmlAttr(event.tooltip || describeJourneyTone(event.tone || ''))}" title="${escapeHtmlAttr(event.tooltip || describeJourneyTone(event.tone || ''))}">
                             <div class="journey-event-head">
                                 <span class="journey-event-title"><span class="journey-event-icon" data-tooltip="${escapeHtmlAttr(event.tooltip || event.originalName || event.title || 'Event')}"><i class="${event.icon || 'fa-solid fa-circle'}"></i></span>${event.title || 'Event'}</span>
                             </div>
@@ -4038,12 +4134,14 @@
             const userName = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || '', 'Customer');
             const source = humanReadableChannel(purchase.attributedChannel);
             const sourceAd = purchase.attributedCampaign || 'No campaign';
-            const landing = normalizeJourneyPath(purchase.landingPageUrl || purchase.attributionDebug?.payloadPageUrl || purchase.pageUrl || '');
+            const availableEvents = Array.isArray(purchase.events) ? purchase.events : (Array.isArray(purchase.stitchedEvents) ? purchase.stitchedEvents : []);
+            const landingInfo = resolvePurchaseLandingInfo(purchase, availableEvents);
+            const landing = landingInfo.landingDisplay;
             const sessionStory = buildPurchaseSessionStory(purchase);
             
             // If purchase includes real events, build timeline from those events
-            let timelineEvents = buildPurchaseTimelineEvents(purchase);
-            const availableEvents = purchase.events || purchase.stitchedEvents; if (Array.isArray(availableEvents) && availableEvents.length > 0) {
+            let timelineEvents = buildPurchaseTimelineEvents(purchase, { landingInfo, events: availableEvents });
+            if (Array.isArray(availableEvents) && availableEvents.length > 0) {
                 let realEvents = availableEvents
                     .map((event) => ({
                         ...event,
@@ -4085,7 +4183,7 @@
 
                         return {
                             icon: resolveEventIcon(event.eventName || event.name),
-                            tooltip: originalEventName || baseTitle,
+                            tooltip: `${describeJourneyTone(resolveChannelTone(event.utmSource || purchase.attributedChannel || '', purchase.attributedPlatform || null))} ${originalEventName || baseTitle}${pagePath && pagePath !== '-' ? ` on ${pagePath}` : ''}`.trim(),
                             title: durSeconds > 0 ? `${baseTitle} <span class="text-gray-400 text-[0.8rem]" style="margin-left: 0.5rem; font-weight: 500;">${formatDurationCompact(durSeconds)}</span>` : baseTitle,
                             time: displayTime,
                             fullTime: timeStr,
