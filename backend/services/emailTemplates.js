@@ -1,5 +1,9 @@
 'use strict';
 
+const APP_BASE_URL = String(process.env.APP_BASE_URL || process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
+const EMAIL_BRAND_ICON_URL = `${APP_BASE_URL}/branding/adray-email-icon.png`;
+const LEGAL_BRAND_NAME = 'Adray, Inc.';
+
 function escapeHtml(s = '') {
   return String(s)
     .replaceAll('&', '&amp;')
@@ -25,32 +29,20 @@ function safeUrl(url = '') {
   return s;
 }
 
-function brandMarkSvg(size = 22) {
-  return `
-    <svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-      <path d="M12 2.75L13.94 8.06L19.25 10L13.94 11.94L12 17.25L10.06 11.94L4.75 10L10.06 8.06L12 2.75Z" fill="#B55CFF"/>
-    </svg>
-  `;
-}
-
 function brandWordmark() {
+  const iconUrl = escapeHtml(safeUrl(EMAIL_BRAND_ICON_URL));
+
   return `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0">
       <tr>
-        <td valign="middle" style="padding-right:10px;">
-          ${brandMarkSvg(18)}
-        </td>
         <td valign="middle">
-          <div style="
-            font-size:13px;
-            line-height:13px;
-            letter-spacing:.20em;
-            font-weight:900;
-            color:#F8F7FF;
-            text-transform:uppercase;
-          ">
-            ADRAY
-          </div>
+          <img
+            src="${iconUrl}"
+            alt="Adray"
+            width="24"
+            height="24"
+            style="display:block;width:24px;height:24px;border:0;outline:none;text-decoration:none;"
+          />
         </td>
       </tr>
     </table>
@@ -247,7 +239,7 @@ function supportLine(email, align = 'center') {
   `;
 }
 
-function footerHtml(brand = 'Adray, Inc.', privacyUrl = 'https://adray.ai/privacy') {
+function footerHtml(brand = LEGAL_BRAND_NAME, privacyUrl = 'https://adray.ai/privacy') {
   const year = new Date().getFullYear();
   return `© ${year} ${escapeHtml(brand)} · <a href="${escapeHtml(
     privacyUrl
@@ -421,7 +413,7 @@ function verifyEmail({
     heroTitle: 'Confirm your email',
     heroIntroHtml,
     contentHtml,
-    footerHtml: footerHtml(brand, privacyUrl),
+    footerHtml: footerHtml(LEGAL_BRAND_NAME, privacyUrl),
   });
 }
 
@@ -498,7 +490,7 @@ function welcomeEmail({
     heroTitle: `Welcome to ${brand}`,
     heroIntroHtml,
     contentHtml,
-    footerHtml: footerHtml(brand, privacyUrl),
+    footerHtml: footerHtml(LEGAL_BRAND_NAME, privacyUrl),
   });
 }
 
@@ -555,7 +547,7 @@ function resetPasswordEmail({
     heroTitle: 'Reset your password',
     heroIntroHtml,
     contentHtml,
-    footerHtml: footerHtml(brand, privacyUrl),
+    footerHtml: footerHtml(LEGAL_BRAND_NAME, privacyUrl),
   });
 }
 
@@ -612,7 +604,7 @@ function auditReadyEmail({
     heroTitle: 'Your audit is ready',
     heroIntroHtml,
     contentHtml,
-    footerHtml: footerHtml(brand, privacyUrl),
+    footerHtml: footerHtml(LEGAL_BRAND_NAME, privacyUrl),
   });
 }
 
@@ -683,7 +675,7 @@ function dailyFollowupCallEmail({
     heroTitle: 'Let’s get you fully set up',
     heroIntroHtml,
     contentHtml,
-    footerHtml: footerHtml(brand, privacyUrl),
+    footerHtml: footerHtml(LEGAL_BRAND_NAME, privacyUrl),
   });
 }
 
