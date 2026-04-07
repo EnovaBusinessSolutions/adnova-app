@@ -36,6 +36,11 @@ const PUPPETEER_HEADLESS_MODE =
 const PUPPETEER_LAUNCH_TIMEOUT_MS = Number(process.env.PUPPETEER_LAUNCH_TIMEOUT_MS || 90000);
 const PUPPETEER_RENDER_TIMEOUT_MS = Number(process.env.PUPPETEER_RENDER_TIMEOUT_MS || 90000);
 
+const {
+  extractEncodedSignalText,
+  isEncodedSignalPayloadBuildableForPdf,
+} = require('./signalEncoder');
+
 function safeStr(v) {
   return v == null ? '' : String(v);
 }
@@ -285,8 +290,17 @@ function buildPromptHints(signalPayload) {
   ], 6);
 }
 
-function resolveSignalSections(signalPayload) {
-  const summary = signalPayload?.summary || {};
+function resolveSignalSections(signalPayload, encodedPayload) {
+  const summaryFromSignal = signalPayload?.summary && typeof signalPayload.summary === 'object'
+    ? signalPayload.summary
+    : {};
+  const summaryFromEncoded = encodedPayload?.signal?.summary && typeof encodedPayload.signal.summary === 'object'
+    ? encodedPayload.signal.summary
+    : {};
+  const summary =
+    Object.keys(summaryFromSignal).length > 0
+      ? summaryFromSignal
+      : summaryFromEncoded;
   const prompts = buildPromptHints(signalPayload);
 
   return {
@@ -300,18 +314,30 @@ function resolveSignalSections(signalPayload) {
   };
 }
 
-function buildLineage(root, signalPayload) {
+function buildLineage(root, signalPayload, encodedPayload) {
   const ai = root?.aiContext || {};
+  const signalNode = ai?.signal || {};
   const contextWindow =
+    encodedPayload?.contextWindow ||
     signalPayload?.contextWindow ||
+    signalNode?.encodedPayload?.contextWindow ||
+    signalNode?.payload?.contextWindow ||
     ai?.signalPayload?.contextWindow ||
     ai?.encodedPayload?.contextWindow ||
     null;
 
-  const sourceSnapshots = ai?.sourceSnapshots || signalPayload?.sourceSnapshots || null;
+  const sourceSnapshots =
+    ai?.sourceSnapshots ||
+    signalPayload?.sourceSnapshots ||
+    encodedPayload?.lineage?.sourceSnapshots ||
+    null;
 
   return {
-    generatedAt: ai?.finishedAt || signalPayload?.generatedAt || nowIso(),
+    generatedAt:
+      encodedPayload?.generatedAt ||
+      ai?.finishedAt ||
+      signalPayload?.generatedAt ||
+      nowIso(),
     contextRangeDays: toNum(ai?.contextRangeDays) || toNum(contextWindow?.rangeDays) || null,
     storageRangeDays: toNum(ai?.storageRangeDays) || toNum(contextWindow?.storageRangeDays) || null,
     snapshotId: safeStr(ai?.snapshotId || root?.latestSnapshotId || '').trim() || null,
@@ -346,20 +372,66 @@ function validateSignalPayloadForPdf(signalPayload) {
   }
 }
 
-function buildSignalPdfModel({ userId, root, signalPayload, user = null }) {
-  validateSignalPayloadForPdf(signalPayload);
+function validateEncodedSignalPayloadForPdf(encodedPayload) {
+  if (!encodedPayload || typeof encodedPayload !== 'object') {
+    const err = new Error('SIGNAL_PDF_MISSING_ENCODED_PAYLOAD');
+    err.code = 'SIGNAL_PDF_MISSING_ENCODED_PAYLOAD';
+    throw err;
+  }
+
+  if (!isEncodedSignalPayloadBuildableForPdf(encodedPayload)) {
+    const err = new Error('SIGNAL_PDF_INVALID_ENCODED_PAYLOAD');
+    err.code = 'SIGNAL_PDF_INVALID_ENCODED_PAYLOAD';
+    throw err;
+  }
+}
+
+function buildSignalPdfModel({ userId, root, signalPayload, encodedPayload, user = null }) {
+  const humanValidationError = (() => {
+    try {
+      validateSignalPayloadForPdf(signalPayload);
+      return null;
+    } catch (err) {
+      return err;
+    }
+  })();
+
+  const encodedValidationError = (() => {
+    try {
+      validateEncodedSignalPayloadForPdf(encodedPayload);
+      return null;
+    } catch (err) {
+      return err;
+    }
+  })();
+
+  if (humanValidationError && encodedValidationError) {
+    const err = new Error('SIGNAL_PDF_INVALID_SIGNAL_INPUTS');
+    err.code = 'SIGNAL_PDF_INVALID_SIGNAL_INPUTS';
+    err.meta = {
+      humanCode: humanValidationError?.code || null,
+      encodedCode: encodedValidationError?.code || null,
+    };
+    throw err;
+  }
 
   const workspaceName = getWorkspaceName({ root, signalPayload, user });
   const connectedSources = getConnectedSources(root, signalPayload);
-  const sections = resolveSignalSections(signalPayload);
-  const lineage = buildLineage(root, signalPayload);
+  const sections = resolveSignalSections(signalPayload, encodedPayload);
+  const lineage = buildLineage(root, signalPayload, encodedPayload);
 
-  const signalText =
+  const encodedText = extractEncodedSignalText(encodedPayload);
+  const humanText =
     safeStr(signalPayload?.llm_context_block).trim() ||
     safeStr(signalPayload?.llm_context_block_mini).trim() ||
     safeStr(signalPayload?.encoded_context).trim() ||
     safeStr(signalPayload?.signal).trim() ||
     '';
+
+  const signalText =
+    encodedText ||
+    humanText;
+  const textSource = encodedText ? 'encoded_payload' : 'signal_payload_fallback';
 
   const promptHints = compactArray(sections.prompts, 3);
 
@@ -389,6 +461,7 @@ function buildSignalPdfModel({ userId, root, signalPayload, user = null }) {
     promptHints,
     rollingWindowLabel,
     signalText,
+    textSource,
   };
 }
 
@@ -991,9 +1064,9 @@ function buildSignalPdfHtml(model) {
 
       <div class="signal-head">
         <div class="signal-kicker mono">Full Signal</div>
-        <h1 class="signal-title">Plain text source for LLMs</h1>
+        <h1 class="signal-title">Encoded signal source for LLMs</h1>
         <div class="signal-sub">
-          This section contains the raw Signal in plain text so AI models can read it more easily.
+          This section is encoded-first for model consumption, with legacy plain-signal fallback when needed.
         </div>
       </div>
 
@@ -1361,6 +1434,7 @@ async function generateSignalPdfForUser({
   userId,
   root,
   signalPayload,
+  encodedPayload = null,
   user = null,
 } = {}) {
   if (!userId) {
@@ -1376,6 +1450,18 @@ async function generateSignalPdfForUser({
   }
 
   const ai = root?.aiContext || {};
+  const signalNode = ai?.signal || {};
+  const effectiveSignalPayload =
+    signalPayload ||
+    signalNode?.payload ||
+    ai?.signalPayload ||
+    null;
+  const effectiveEncodedPayload =
+    encodedPayload ||
+    signalNode?.encodedPayload ||
+    ai?.encodedPayload ||
+    null;
+
   console.log('[signalPdfBuilder] generateSignalPdfForUser start', {
     userId: safeStr(userId),
     buildAttemptId: safeStr(ai?.buildAttemptId),
@@ -1384,7 +1470,13 @@ async function generateSignalPdfForUser({
     pendingConnectedSources: Array.isArray(ai?.pendingConnectedSources) ? ai.pendingConnectedSources : [],
   });
 
-  const model = buildSignalPdfModel({ userId, root, signalPayload, user });
+  const model = buildSignalPdfModel({
+    userId,
+    root,
+    signalPayload: effectiveSignalPayload,
+    encodedPayload: effectiveEncodedPayload,
+    user,
+  });
 
   ensureDirSync(SIGNAL_PDF_STORAGE_DIR);
 
@@ -1406,6 +1498,7 @@ async function generateSignalPdfForUser({
       workspaceName: model.workspaceName,
       sourceCount: model.sourceCount,
       signalTextLength: safeStr(model.signalText).length,
+      textSource: model.textSource,
       htmlLength: safeStr(html).length,
       outputPath,
     });
