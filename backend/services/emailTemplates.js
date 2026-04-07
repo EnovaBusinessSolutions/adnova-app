@@ -1,8 +1,11 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 const APP_BASE_URL = String(process.env.APP_BASE_URL || process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
-const EMAIL_BRAND_ICON_URL = `${APP_BASE_URL}/branding/adray-email-icon.png`;
 const LEGAL_BRAND_NAME = 'Adray, Inc.';
+const EMAIL_BRAND_ICON_FILENAME = 'adray-icon.png';
 
 function escapeHtml(s = '') {
   return String(s)
@@ -29,19 +32,51 @@ function safeUrl(url = '') {
   return s;
 }
 
+function resolveEmailBrandIconSrc() {
+  const candidatePaths = [
+    path.join(__dirname, '../public/branding', EMAIL_BRAND_ICON_FILENAME),
+    path.join(__dirname, '../public/assets', EMAIL_BRAND_ICON_FILENAME),
+    path.join(__dirname, '../../dashboard-src/src/assets', EMAIL_BRAND_ICON_FILENAME),
+    path.join(__dirname, '../../dashboard-src/public/assets', EMAIL_BRAND_ICON_FILENAME),
+  ];
+
+  for (const absPath of candidatePaths) {
+    try {
+      if (fs.existsSync(absPath)) {
+        const ext = path.extname(absPath).toLowerCase();
+        const mime =
+          ext === '.png'
+            ? 'image/png'
+            : ext === '.jpg' || ext === '.jpeg'
+              ? 'image/jpeg'
+              : ext === '.gif'
+                ? 'image/gif'
+                : 'application/octet-stream';
+
+        const base64 = fs.readFileSync(absPath).toString('base64');
+        if (base64) return `data:${mime};base64,${base64}`;
+      }
+    } catch (_) {}
+  }
+
+  return `${APP_BASE_URL}/branding/${EMAIL_BRAND_ICON_FILENAME}`;
+}
+
+const EMAIL_BRAND_ICON_SRC = resolveEmailBrandIconSrc();
+
 function brandWordmark() {
-  const iconUrl = escapeHtml(safeUrl(EMAIL_BRAND_ICON_URL));
+  const iconSrc = escapeHtml(EMAIL_BRAND_ICON_SRC);
 
   return `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0">
       <tr>
         <td valign="middle">
           <img
-            src="${iconUrl}"
+            src="${iconSrc}"
             alt="Adray"
-            width="24"
-            height="24"
-            style="display:block;width:24px;height:24px;border:0;outline:none;text-decoration:none;"
+            width="28"
+            height="28"
+            style="display:block;width:28px;height:28px;border:0;outline:none;text-decoration:none;"
           />
         </td>
       </tr>
