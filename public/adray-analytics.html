@@ -4566,10 +4566,58 @@
                 reason,
                 campaign,
                 clickId,
+                referrerLabel,
+                utmSource,
+                utmMedium,
                 tone,
                 icon,
                 subLabel,
             };
+        }
+
+        function buildJourneySessionAttributionSentence(group = {}, options = {}) {
+            const touchpoint = group.touchpoint || {};
+            const sessionLabel = String(options.sessionLabel || group.label || 'This session').trim();
+            const entryPage = group.entryPage && group.entryPage !== '-' ? group.entryPage : '';
+            const campaign = String(touchpoint.campaign || '').trim();
+            const clickId = String(touchpoint.clickId || '').trim();
+            const referrerLabel = String(touchpoint.referrerLabel || '').trim();
+            const channelLabel = String(touchpoint.label || 'Direct').trim();
+            const actionCopy = String(group.actionCopy || '').trim();
+            const lowerLabel = channelLabel.toLowerCase();
+
+            let intro = `${sessionLabel} opened directly because no new ad click or campaign was captured before the return`;
+            if (clickId && campaign) {
+                intro = `${sessionLabel} opened after a ${channelLabel} click from campaign ${campaign} (${shortenJourneyIdentifier(clickId)})`;
+            } else if (clickId) {
+                intro = `${sessionLabel} opened after a ${channelLabel} click (${shortenJourneyIdentifier(clickId)})`;
+            } else if (campaign) {
+                intro = `${sessionLabel} opened through ${channelLabel} campaign ${campaign}`;
+            } else if (referrerLabel) {
+                intro = `${sessionLabel} opened from ${channelLabel} traffic coming from ${referrerLabel}`;
+            } else if (lowerLabel.includes('direct')) {
+                intro = `${sessionLabel} opened directly because no new ad click or campaign was captured before the return`;
+            } else if (lowerLabel.includes('referral')) {
+                intro = `${sessionLabel} opened from a referral source`;
+            } else if (lowerLabel.includes('organic')) {
+                intro = `${sessionLabel} opened through ${channelLabel} with no paid click id captured`;
+            } else if (lowerLabel.includes('inferred')) {
+                intro = `${sessionLabel} was inferred from the final purchase attribution when this session had no fresh source metadata`;
+            } else {
+                intro = `${sessionLabel} opened through ${channelLabel}`;
+            }
+
+            const landingCopy = entryPage ? `, landing on ${entryPage}` : ', returning to the site';
+            const actionSentence = actionCopy ? ` ${actionCopy}` : '';
+            return `${intro}${landingCopy}.${actionSentence}`.trim();
+        }
+
+        function buildJourneyReturnConnectorSentence(nextGroup = {}) {
+            if (!nextGroup || typeof nextGroup !== 'object') return 'The user returned and continued the stitched journey.';
+            const sentence = buildJourneySessionAttributionSentence(nextGroup, {
+                sessionLabel: nextGroup.label || 'The next session',
+            });
+            return sentence.replace(/^Session \d+\s+/i, 'The user ');
         }
 
         function summarizeJourneyGroupActions(events = []) {
@@ -4659,7 +4707,12 @@
                 else if (containsCart) actionCopy = 'Added product(s) to cart.';
                 else if (containsLogin) actionCopy = 'User identified with a login event.';
 
-                const stitchedCopy = `${touchpoint.label} brought the user to ${entryPage !== '-' ? entryPage : 'the site'}. ${actionCopy}`;
+                const stitchedCopy = buildJourneySessionAttributionSentence({
+                    label: `Session ${index + 1}`,
+                    entryPage,
+                    touchpoint,
+                    actionCopy,
+                });
 
                 return {
                     label: `Session ${index + 1}`,
@@ -4679,6 +4732,7 @@
                     icon: touchpoint.icon || 'fa-solid fa-route',
                     sessionIdShort: shortenJourneyIdentifier(group.sessionId),
                     userKeyShort: shortenJourneyIdentifier(group.userKey),
+                    actionCopy,
                     stitchedCopy,
                 };
             });
@@ -4725,24 +4779,17 @@
             const groups = Array.isArray(story.groups) ? story.groups : [];
             if (!baseEvents.length || !groups.length) return baseEvents;
 
-            const mode = String(options.mode || 'condensed').toLowerCase();
             const timeline = [];
 
             groups.forEach((group, index) => {
                 const sessionLabel = group.label || `Session ${index + 1}`;
-                const sessionEvents = baseEvents.filter((event) => Number(event.sessionGroupIndex ?? event._sessionGroupIndex) === index).map((event) => ({
-                    ...event,
-                    sessionLabel,
-                    sessionTooltip: `${sessionLabel} stitched from ${group.touchpoint?.label || 'the strongest recovered touchpoint'}.`,
-                }));
-
-                const entryLabel = group.entryPage && group.entryPage !== '-' ? `Entry ${group.entryPage}` : 'No landing captured';
-                const visibleEventCount = sessionEvents.filter((event) => event.type !== 'session_gap' && event.type !== 'session_marker').length;
-                const copyParts = [
-                    group.touchpoint?.label || 'Unknown source',
-                    mode === 'full' ? `${Number(group.eventCount || 0)} events` : `${visibleEventCount}/${Number(group.eventCount || 0)} events shown`,
-                    entryLabel,
-                ].filter(Boolean);
+                const sessionEvents = baseEvents
+                    .filter((event) => Number(event.sessionGroupIndex ?? event._sessionGroupIndex) === index)
+                    .map((event) => ({
+                        ...event,
+                        sessionLabel,
+                    }));
+                const attributionSentence = buildJourneySessionAttributionSentence(group);
 
                 timeline.push({
                     type: 'session_marker',
@@ -4754,9 +4801,8 @@
                     fullTime: group.timeLabel || '-',
                     tone: group.tone || '',
                     icon: group.icon || 'fa-solid fa-route',
-                    detailLines: [copyParts.join(' · ')],
-                    copy: copyParts.join(' · '),
-                    tooltip: group.touchpoint?.reason || `${sessionLabel} starts here.`,
+                    detailLines: [attributionSentence],
+                    copy: attributionSentence,
                 });
                 timeline.push(...sessionEvents);
 
@@ -4772,8 +4818,7 @@
                         time: nextGroup.timeLabel || '-',
                         fullTime: nextGroup.timeLabel || '-',
                         icon: 'fa-solid fa-arrow-down',
-                        detailLines: [`Next stitched block: ${nextGroup.label || `Session ${index + 2}`}`],
-                        tooltip: `Gap between ${sessionLabel} and ${nextGroup.label || `Session ${index + 2}`}.`,
+                        detailLines: [buildJourneyReturnConnectorSentence(nextGroup)],
                     });
                 }
             });
@@ -4905,13 +4950,13 @@
                 <div class="journey-timeline">
                     <div class="journey-timeline-sticky"><i class="fa-solid fa-arrows-up-down"></i>${actualEventCount} events</div>
                     ${events.map((event) => `
-                        <article class="journey-event ${event.kindClass || ''} ${event.tone || ''}" data-tooltip="${escapeHtmlAttr(event.tooltip || describeJourneyTone(event.tone || ''))}" title="${escapeHtmlAttr(event.tooltip || describeJourneyTone(event.tone || ''))}">
+                        <article class="journey-event ${event.kindClass || ''} ${event.tone || ''}">
                             <div class="journey-event-head">
-                                <span class="journey-event-title"><span class="journey-event-icon" data-tooltip="${escapeHtmlAttr(event.tooltip || event.originalName || event.title || 'Event')}"><i class="${event.icon || 'fa-solid fa-circle'}"></i></span>${event.title || 'Event'}</span>
-                                ${event.sessionLabel ? `<span class="journey-event-session-chip" data-tooltip="${escapeHtmlAttr(event.sessionTooltip || `This event belongs to ${event.sessionLabel}.`)}" title="${escapeHtmlAttr(event.sessionTooltip || `This event belongs to ${event.sessionLabel}.`)}"><i class="fa-solid fa-layer-group"></i>${escapeHtml(event.sessionLabel)}</span>` : ''}
+                                <span class="journey-event-title"><span class="journey-event-icon"><i class="${event.icon || 'fa-solid fa-circle'}"></i></span>${event.title || 'Event'}</span>
+                                ${event.sessionLabel ? `<span class="journey-event-session-chip"><i class="fa-solid fa-layer-group"></i>${escapeHtml(event.sessionLabel)}</span>` : ''}
                             </div>
                             <div class="journey-event-detail">
-                                ${event.originalName ? `<p class="font-semibold text-gray-700 mb-1">${escapeHtml(event.originalName)} · ${escapeHtml(event.fullTime || event.time)}</p>` : (event.time ? `<p class="font-semibold text-gray-700 mb-1">${escapeHtml(event.fullTime || event.time)}</p>` : '')}
+                                ${event.originalName ? `<p class="font-semibold text-gray-700 mb-1">${escapeHtml(event.originalName)} - ${escapeHtml(event.fullTime || event.time)}</p>` : (event.time ? `<p class="font-semibold text-gray-700 mb-1">${escapeHtml(event.fullTime || event.time)}</p>` : '')}
                                 ${(Array.isArray(event.detailLines) ? event.detailLines : []).slice(0, 3).map((line) => `<p>${escapeHtml(line)}</p>`).join('')}
                             </div>
                         </article>
