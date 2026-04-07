@@ -781,14 +781,14 @@
             flex: 1 1 auto;
             min-height: 0;
             display: flex;
+            position: relative;
             overflow-x: hidden;
-            overflow-y: scroll;
+            overflow-y: auto;
             overscroll-behavior: contain;
             overscroll-behavior-y: contain;
             scrollbar-gutter: stable both-edges;
             -webkit-overflow-scrolling: touch;
-            scrollbar-width: auto;
-            scrollbar-color: rgba(126, 240, 200, 0.72) rgba(255, 255, 255, 0.06);
+            scrollbar-width: none;
         }
 
         #feed-container {
@@ -805,17 +805,63 @@
         }
 
         .live-feed-scroll-wrap::-webkit-scrollbar {
+            width: 0;
+            height: 0;
+        }
+
+        .live-feed-scrollbar {
+            position: absolute;
+            top: 1rem;
+            right: 0.42rem;
+            bottom: 1rem;
             width: 12px;
-        }
-
-        .live-feed-scroll-wrap::-webkit-scrollbar-thumb {
-            background: rgba(126, 240, 200, 0.58);
             border-radius: 999px;
-            border: 2px solid rgba(16, 13, 21, 0.92);
+            background: rgba(255, 255, 255, 0.06);
+            box-shadow: inset 0 0 0 1px rgba(126, 240, 200, 0.1);
+            opacity: 0;
+            transform: translateX(4px);
+            transition: opacity 160ms ease, transform 160ms ease;
+            pointer-events: auto;
+            z-index: 4;
         }
 
-        .live-feed-scroll-wrap::-webkit-scrollbar-track {
-            background: rgba(255, 255, 255, 0.05);
+        .live-feed-scrollbar.is-visible {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .live-feed-scroll-thumb {
+            position: absolute;
+            left: 2px;
+            right: 2px;
+            top: 0;
+            min-height: 42px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, rgba(126, 240, 200, 0.95) 0%, rgba(106, 223, 187, 0.78) 100%);
+            box-shadow: 0 4px 16px rgba(126, 240, 200, 0.28);
+            cursor: grab;
+            transition: background 120ms ease;
+        }
+
+        .live-feed-scroll-thumb.is-dragging {
+            cursor: grabbing;
+            background: linear-gradient(180deg, rgba(153, 245, 215, 0.98) 0%, rgba(126, 240, 200, 0.88) 100%);
+        }
+
+        .live-feed-scrollbar.is-hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .live-feed-scroll-wrap:hover .live-feed-scrollbar,
+        .live-feed-scroll-wrap:focus-within .live-feed-scrollbar {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .live-feed-scrollbar-track {
+            position: absolute;
+            inset: 0;
             border-radius: 999px;
         }
 
@@ -2690,11 +2736,15 @@
                             Live
                         </span>
                     </div>
-                    <div class="live-feed-scroll-wrap">
+                    <div class="live-feed-scroll-wrap" id="live-feed-scroll-wrap">
                         <div id="feed-container">
                             <div class="text-center text-gray-400 text-sm py-8" id="feed-placeholder">
                                 Waiting for events...
                             </div>
+                        </div>
+                        <div class="live-feed-scrollbar is-hidden" id="live-feed-scrollbar" aria-hidden="true">
+                            <div class="live-feed-scrollbar-track"></div>
+                            <div class="live-feed-scroll-thumb" id="live-feed-scroll-thumb"></div>
                         </div>
                     </div>
                 </div>
@@ -3516,6 +3566,7 @@
             initializeMetricCarousel();
             initializeShopSwitcher();
             initializeGlobalTooltipPortal();
+            initializeLiveFeedScrollbar();
             setAnalyticsLoadingState(true, {
                 mode: 'boot',
                 title: 'Connecting your store',
@@ -7551,6 +7602,9 @@ function renderRecentPurchases(purchases) {
         }
 
         let activeLiveFeedFilterSessionId = null;
+        let liveFeedScrollbarRaf = null;
+        let liveFeedScrollbarResizeObserver = null;
+        let liveFeedScrollbarMutationObserver = null;
         function updateLiveFeedFilterVisuals() {
             const container = document.getElementById('feed-container');
             if (!container) return;
@@ -7569,6 +7623,132 @@ function renderRecentPurchases(purchases) {
                     }
                 }
             });
+            scheduleLiveFeedScrollbarSync();
+        }
+
+        function getLiveFeedScrollbarElements() {
+            const wrap = document.getElementById('live-feed-scroll-wrap');
+            const container = document.getElementById('feed-container');
+            const rail = document.getElementById('live-feed-scrollbar');
+            const thumb = document.getElementById('live-feed-scroll-thumb');
+            return { wrap, container, rail, thumb };
+        }
+
+        function syncLiveFeedScrollbar() {
+            liveFeedScrollbarRaf = null;
+            const { wrap, container, rail, thumb } = getLiveFeedScrollbarElements();
+            if (!wrap || !container || !rail || !thumb) return;
+
+            const maxScroll = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+            if (maxScroll <= 1) {
+                rail.classList.add('is-hidden');
+                thumb.style.height = '0px';
+                thumb.style.transform = 'translateY(0px)';
+                return;
+            }
+
+            rail.classList.remove('is-hidden');
+
+            const railHeight = rail.clientHeight || Math.max(1, wrap.clientHeight - 32);
+            const thumbHeight = Math.max(42, Math.round((wrap.clientHeight / wrap.scrollHeight) * railHeight));
+            const maxThumbY = Math.max(0, railHeight - thumbHeight);
+            const progress = maxScroll > 0 ? (wrap.scrollTop / maxScroll) : 0;
+            const thumbY = Math.round(maxThumbY * progress);
+
+            thumb.style.height = `${thumbHeight}px`;
+            thumb.style.transform = `translateY(${thumbY}px)`;
+        }
+
+        function scheduleLiveFeedScrollbarSync() {
+            if (liveFeedScrollbarRaf) cancelAnimationFrame(liveFeedScrollbarRaf);
+            liveFeedScrollbarRaf = requestAnimationFrame(syncLiveFeedScrollbar);
+        }
+
+        function initializeLiveFeedScrollbar() {
+            const { wrap, container, rail, thumb } = getLiveFeedScrollbarElements();
+            if (!wrap || !container || !rail || !thumb) return;
+            if (wrap.dataset.scrollbarReady === '1') {
+                scheduleLiveFeedScrollbarSync();
+                return;
+            }
+
+            wrap.dataset.scrollbarReady = '1';
+            wrap.addEventListener('scroll', scheduleLiveFeedScrollbarSync, { passive: true });
+            window.addEventListener('resize', scheduleLiveFeedScrollbarSync);
+
+            if ('ResizeObserver' in window) {
+                liveFeedScrollbarResizeObserver = new ResizeObserver(() => {
+                    scheduleLiveFeedScrollbarSync();
+                });
+                liveFeedScrollbarResizeObserver.observe(wrap);
+                liveFeedScrollbarResizeObserver.observe(container);
+            }
+
+            if ('MutationObserver' in window) {
+                liveFeedScrollbarMutationObserver = new MutationObserver(() => {
+                    scheduleLiveFeedScrollbarSync();
+                });
+                liveFeedScrollbarMutationObserver.observe(container, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                });
+            }
+
+            let dragState = null;
+
+            const stopDrag = () => {
+                dragState = null;
+                thumb.classList.remove('is-dragging');
+            };
+
+            thumb.addEventListener('pointerdown', (event) => {
+                event.preventDefault();
+                const railRect = rail.getBoundingClientRect();
+                const thumbRect = thumb.getBoundingClientRect();
+                dragState = {
+                    pointerId: event.pointerId,
+                    startY: event.clientY,
+                    startThumbY: thumbRect.top - railRect.top,
+                };
+                thumb.classList.add('is-dragging');
+                if (thumb.setPointerCapture) thumb.setPointerCapture(event.pointerId);
+            });
+
+            thumb.addEventListener('pointermove', (event) => {
+                if (!dragState || event.pointerId !== dragState.pointerId) return;
+                event.preventDefault();
+                const railHeight = rail.clientHeight || 1;
+                const thumbHeight = thumb.offsetHeight || 0;
+                const maxThumbY = Math.max(0, railHeight - thumbHeight);
+                const nextThumbY = Math.min(
+                    maxThumbY,
+                    Math.max(0, dragState.startThumbY + (event.clientY - dragState.startY))
+                );
+                const maxScroll = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+                wrap.scrollTop = maxThumbY > 0 ? (nextThumbY / maxThumbY) * maxScroll : 0;
+                scheduleLiveFeedScrollbarSync();
+            });
+
+            thumb.addEventListener('pointerup', stopDrag);
+            thumb.addEventListener('pointercancel', stopDrag);
+            thumb.addEventListener('lostpointercapture', stopDrag);
+
+            rail.addEventListener('pointerdown', (event) => {
+                if (event.target === thumb) return;
+                const railRect = rail.getBoundingClientRect();
+                const thumbHeight = thumb.offsetHeight || 0;
+                const maxThumbY = Math.max(0, railRect.height - thumbHeight);
+                const clickY = event.clientY - railRect.top - (thumbHeight / 2);
+                const targetThumbY = Math.min(maxThumbY, Math.max(0, clickY));
+                const maxScroll = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+                wrap.scrollTo({
+                    top: maxThumbY > 0 ? (targetThumbY / maxThumbY) * maxScroll : 0,
+                    behavior: 'smooth',
+                });
+            });
+
+            scheduleLiveFeedScrollbarSync();
         }
 
         function resolveLiveFeedProductLabel(payload = {}) {
@@ -7613,10 +7793,14 @@ function renderRecentPurchases(purchases) {
             if (!currentShopId) return;
 
             const evtSource = new EventSource(`/api/feed/${currentShopId}`);
+            const wrap = document.getElementById('live-feed-scroll-wrap');
             const container = document.getElementById('feed-container');
             const placeholder = document.getElementById('feed-placeholder');
             const liveFeedStatus = document.getElementById('live-feed-status');
               const recentOrders = new Set();
+
+            initializeLiveFeedScrollbar();
+            scheduleLiveFeedScrollbarSync();
 
             evtSource.onopen = function() {
                 if (liveFeedStatus) liveFeedStatus.textContent = 'Live Feed Active';
@@ -7769,6 +7953,7 @@ function renderRecentPurchases(purchases) {
                 }
 
                 container.prepend(el);
+                scheduleLiveFeedScrollbarSync();
 
                 if (data.type === 'COLLECT') {
                     const eventName = String(data.payload?.eventName || data.payload?.event_name || '').toLowerCase();
@@ -7781,12 +7966,15 @@ function renderRecentPurchases(purchases) {
                 if (container.children.length > 50) {
                     container.lastElementChild.remove();
                 }
+                scheduleLiveFeedScrollbarSync();
             };
 
             evtSource.onerror = function(err) {
                 console.error("EventSource failed:", err);
                 if (liveFeedStatus) liveFeedStatus.textContent = 'Live Feed reconnecting...';
             };
+
+            wrap?.addEventListener('mouseenter', scheduleLiveFeedScrollbarSync, { passive: true });
         }
 
         // --- UTILS ---
