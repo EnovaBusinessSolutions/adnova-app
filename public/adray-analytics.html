@@ -2755,12 +2755,12 @@
                     <div class="flex items-start justify-between gap-4 flex-wrap mb-4">
                         <div>
                             <h3 class="panel-title text-lg leading-6 font-medium" style="color: #f8fafc;">Conversion paths</h3>
-                            <div class="journey-channel-legend mt-3" id="journey-channel-legend" aria-label="Leyenda de canales">
+                            <div class="journey-channel-legend mt-3" id="journey-channel-legend" aria-label="Channel legend">
                                 <button type="button" class="journey-chip journey-filter-channel is-active" data-channel="all"><i class="fa-solid fa-layer-group"></i>All</button>
                                 <button type="button" class="journey-chip journey-filter-channel is-meta" data-channel="meta"><i class="fa-brands fa-meta"></i>Meta</button>
                                 <button type="button" class="journey-chip journey-filter-channel is-google" data-channel="google"><i class="fa-brands fa-google"></i>Google</button>
                                 <button type="button" class="journey-chip journey-filter-channel is-tiktok" data-channel="tiktok"><i class="fa-brands fa-tiktok"></i>TikTok</button>
-                                <button type="button" class="journey-chip journey-filter-channel is-organic" data-channel="organic"><i class="fa-solid fa-globe"></i>Orgánico</button>
+                                <button type="button" class="journey-chip journey-filter-channel is-organic" data-channel="organic"><i class="fa-solid fa-globe"></i>Organic</button>
                             </div>
                         </div>
                     </div>
@@ -2811,7 +2811,7 @@
                     <div>
                         <p class="panel-kicker">Exploration</p>
                         <h3 class="panel-title text-lg font-semibold text-gray-900">Session Explorer</h3>
-                        <p class="text-sm text-gray-500" id="session-detail-title">Users históricos</p>
+                        <p class="text-sm text-gray-500" id="session-detail-title">Historical users</p>
                     </div>
                     <div class="flex items-center gap-3">
                         <button id="session-detail-close" type="button" class="session-close-btn inline-flex items-center justify-center w-10 h-10 rounded-full text-gray-700 hover:bg-gray-50">
@@ -2823,49 +2823,49 @@
                     <div id="profile-priority-banner" class="profile-priority-banner"></div>
                     <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
                         <div class="session-pattern-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Recomendaciones accionables</h4>
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Actionable recommendations</h4>
                             <div class="space-y-4" id="session-detail-actions"></div>
                         </div>
                         <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Qué suele comprar</h4>
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">What they usually buy</h4>
                             <div class="space-y-4" id="session-detail-affinity"></div>
                         </div>
                     </div>
                     <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
                         <div class="flex items-center gap-2 flex-wrap">
                             <button id="session-peer-prev" type="button" class="session-toolbar-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
-                                <i class="fas fa-chevron-left mr-2"></i> Sesión previa
+                                <i class="fas fa-chevron-left mr-2"></i> Previous session
                             </button>
                             <button id="session-peer-next" type="button" class="session-toolbar-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
-                                Siguiente sesión <i class="fas fa-chevron-right ml-2"></i>
+                                Next session <i class="fas fa-chevron-right ml-2"></i>
                             </button>
                             <button id="session-compare-recommended" type="button" class="session-compare-trigger hidden inline-flex items-center px-3 py-2 rounded-lg text-sm text-indigo-700 hover:bg-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed">
-                                <i class="fas fa-sparkles mr-2"></i> Comparación sugerida
+                                <i class="fas fa-sparkles mr-2"></i> Suggested comparison
                             </button>
                         </div>
                         <div class="flex items-center gap-2 flex-wrap">
                             <label for="session-timeline-filter" class="text-xs uppercase tracking-wide text-gray-500">Timeline</label>
                             <select id="session-timeline-filter" class="session-filter-select text-sm rounded-lg px-3 py-2 bg-white">
-                                <option value="all">Todos</option>
+                                <option value="all">All</option>
                                 <option value="funnel">Funnel</option>
                                 <option value="commerce">Commerce</option>
-                                <option value="content">Contenido</option>
+                                <option value="content">Content</option>
                             </select>
                         </div>
                     </div>
                     <div>
-                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Perfiles y sesiones relacionadas</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Profiles and related sessions</p>
                         <div id="session-peer-list" class="flex flex-wrap gap-2"></div>
                         <p id="session-compare-recommended-note" class="mt-2 text-xs text-gray-500"></p>
                     </div>
                     <div id="session-compare-panel" class="session-compare-panel hidden rounded-2xl p-5">
                         <div class="flex items-center justify-between gap-4 flex-wrap mb-4">
                             <div>
-                                <h4 class="text-sm font-semibold text-gray-900">Comparación lado a lado</h4>
-                                <p class="text-xs text-gray-500" id="session-compare-title">Selecciona una sesión relacionada to compare.</p>
+                                <h4 class="text-sm font-semibold text-gray-900">Side-by-side comparison</h4>
+                                <p class="text-xs text-gray-500" id="session-compare-title">Select a related session to compare.</p>
                             </div>
                             <button id="session-compare-clear" type="button" class="session-clear-btn inline-flex items-center px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-                                Limpiar comparación
+                                Clear comparison
                             </button>
                         </div>
                         <div id="session-compare-content" class="space-y-4"></div>
@@ -2873,36 +2873,36 @@
                     <div class="grid grid-cols-1 md:grid-cols-4 gap-4" id="session-detail-metrics"></div>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Resumen</h4>
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Summary</h4>
                             <div class="space-y-2 text-sm text-gray-600" id="session-detail-summary"></div>
                         </div>
                         <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Órdenes del perfil</h4>
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Profile orders</h4>
                             <div class="space-y-2 text-sm text-gray-600" id="session-detail-orders"></div>
                         </div>
                     </div>
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Attribution y signals</h4>
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Attribution and signals</h4>
                             <div class="space-y-2 text-sm text-gray-600" id="session-detail-attribution"></div>
                         </div>
                         <div class="session-summary-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Path y productos</h4>
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Path and products</h4>
                             <div class="space-y-3 text-sm text-gray-600" id="session-detail-journey"></div>
                         </div>
                     </div>
                     <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
                         <div class="session-visual-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Mapa visual de la sesión</h4>
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Session visual map</h4>
                             <div id="session-detail-visual" class="flex flex-wrap gap-6 items-start"></div>
                         </div>
                         <div class="session-pattern-card rounded-xl p-4">
-                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Patrones y próximos pasos</h4>
+                            <h4 class="text-sm font-semibold text-gray-900 mb-3">Patterns and next steps</h4>
                             <div class="space-y-4" id="session-detail-patterns"></div>
                         </div>
                     </div>
                     <div class="session-summary-card rounded-xl p-4">
-                        <h4 class="text-sm font-semibold text-gray-900 mb-3">Timeline de eventos</h4>
+                        <h4 class="text-sm font-semibold text-gray-900 mb-3">Event timeline</h4>
                         <div class="space-y-3" id="session-detail-timeline"></div>
                     </div>
                 </div>
@@ -2916,9 +2916,9 @@
                         <div>
                             <p class="panel-kicker">Investment</p>
                             <h3 class="panel-title text-lg leading-6 font-medium text-gray-900">Paid Media</h3>
-                            <p class="panel-subtitle text-sm mt-1">Compara gasto, revenue y ROAS para decidir si el tráfico está justificando la inversión.</p>
+                            <p class="panel-subtitle text-sm mt-1">Compare spend, revenue, and ROAS to decide whether traffic is justifying the investment.</p>
                         </div>
-                        <span id="pm-link-status" class="text-xs font-semibold uppercase tracking-wide text-gray-500">No conectado</span>
+                        <span id="pm-link-status" class="text-xs font-semibold uppercase tracking-wide text-gray-500">Not connected</span>
                     </div>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="bg-gray-50 rounded-lg p-4">
@@ -2927,12 +2927,12 @@
                             <div class="mt-1 text-sm text-gray-500">Spend: <span id="pm-meta-spend">$0.00</span></div>
                             <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-meta-revenue">$0.00</span></div>
                             <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-meta-roas">-</span></div>
-                            <div class="mt-1 text-xs text-gray-500">Cuenta conectada: <span id="pm-meta-account" class="font-medium">-</span></div>
-                            <div class="mt-1 text-xs text-gray-500">Campaña principal: <span id="pm-meta-campaign" class="font-medium">-</span></div>
-                            <div class="mt-1 text-xs text-gray-400" id="pm-meta-sync">Sin datos live todavía</div>
+                            <div class="mt-1 text-xs text-gray-500">Connected account: <span id="pm-meta-account" class="font-medium">-</span></div>
+                            <div class="mt-1 text-xs text-gray-500">Primary campaign: <span id="pm-meta-campaign" class="font-medium">-</span></div>
+                            <div class="mt-1 text-xs text-gray-400" id="pm-meta-sync">No live data yet</div>
                             <div class="mt-2 flex flex-col items-start gap-2">
                                 <select id="pm-meta-account-select" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white w-full"></select>
-                                <button id="pm-meta-account-apply" class="text-xs font-semibold px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50">Cambiar</button>
+                                <button id="pm-meta-account-apply" class="text-xs font-semibold px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50">Change</button>
                             </div>
                             <div class="mt-1 text-[11px] text-gray-400" id="pm-meta-account-feedback"></div>
                         </div>
@@ -2942,12 +2942,12 @@
                             <div class="mt-1 text-sm text-gray-500">Spend: <span id="pm-google-spend">$0.00</span></div>
                             <div class="mt-1 text-sm text-gray-500">Revenue: <span id="pm-google-revenue">$0.00</span></div>
                             <div class="mt-1 text-sm text-gray-500">ROAS: <span id="pm-google-roas">-</span></div>
-                            <div class="mt-1 text-xs text-gray-500">Cuenta conectada: <span id="pm-google-account" class="font-medium">-</span></div>
-                            <div class="mt-1 text-xs text-gray-500">Campaña principal: <span id="pm-google-campaign" class="font-medium">-</span></div>
-                            <div class="mt-1 text-xs text-gray-400" id="pm-google-sync">Sin datos live todavía</div>
+                            <div class="mt-1 text-xs text-gray-500">Connected account: <span id="pm-google-account" class="font-medium">-</span></div>
+                            <div class="mt-1 text-xs text-gray-500">Primary campaign: <span id="pm-google-campaign" class="font-medium">-</span></div>
+                            <div class="mt-1 text-xs text-gray-400" id="pm-google-sync">No live data yet</div>
                             <div class="mt-2 flex flex-col items-start gap-2">
                                 <select id="pm-google-account-select" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white w-full"></select>
-                                <button id="pm-google-account-apply" class="text-xs font-semibold px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50">Cambiar</button>
+                                <button id="pm-google-account-apply" class="text-xs font-semibold px-2 py-1 rounded-md border border-gray-300 bg-white hover:bg-gray-50">Change</button>
                             </div>
                             <div class="mt-1 text-[11px] text-gray-400" id="pm-google-account-feedback"></div>
                         </div>
@@ -4063,28 +4063,28 @@
                 const profile = payload.profile || {};
                 const metrics = payload.metrics || {};
                 const compareHint = payload.patterns?.recommendedComparison?.sessionId
-                    ? `Comparación recomendada: ${payload.patterns.recommendedComparison.sessionId}`
-                    : 'Abre una sesión relacionada to compare comportamiento.';
+                    ? `Suggested comparison: ${payload.patterns.recommendedComparison.sessionId}`
+                    : 'Open a related session to compare behavior.';
 
                 el.innerHTML = `
-                    <p class="focus-title">Prioridad Perfil + Sesión</p>
-                    <p class="focus-copy">Esto es lo más crítico del dashboard: identificar al perfil, ver qué compra y comparar su recorrido contra otras sesiones.</p>
+                    <p class="focus-title">Profile + Session Priority</p>
+                    <p class="focus-copy">This is the most critical part of the dashboard: identify the profile, see what they buy, and compare their journey against other sessions.</p>
                     <div class="profile-focus-grid">
                         <div class="profile-focus-pill">
                             <p class="label">Current Profile</p>
                             <p class="value">${profile.profileLabel || '-'}</p>
                         </div>
                         <div class="profile-focus-pill">
-                            <p class="label">Órdenes del perfil</p>
+                            <p class="label">Profile orders</p>
                             <p class="value">${profile.historicalOrderCount || 0}</p>
                         </div>
                         <div class="profile-focus-pill">
-                            <p class="label">Sessions relacionadas</p>
+                            <p class="label">Related sessions</p>
                             <p class="value">${payload.patterns?.peerSessionCount || 0}</p>
                         </div>
                     </div>
                     <p class="focus-copy">${compareHint}</p>
-                    <p class="focus-copy">Conectados ahora: ${connectedCount}${connectedNames ? ` · ${connectedNames}` : ''}.</p>
+                    <p class="focus-copy">Connected now: ${connectedCount}${connectedNames ? ` · ${connectedNames}` : ''}.</p>
                 `;
                 return;
             }
@@ -4095,41 +4095,41 @@
                 .slice()
                 .sort((a, b) => Number(b.totalRevenue || 0) - Number(a.totalRevenue || 0))
                 .slice(0, 2)
-                .map((p) => `${p.profileLabel || 'Perfil'} (${formatCurrency(p.totalRevenue || 0)})`)
+                .map((p) => `${p.profileLabel || 'Profile'} (${formatCurrency(p.totalRevenue || 0)})`)
                 .join(' · ');
 
             el.innerHTML = `
-                <p class="focus-title">Centro de Perfiles</p>
-                <p class="focus-copy">Haz foco aquí para decisiones de negocio: quién está conectado ahora, qué suelen comprar y cómo comparan contra perfiles históricos.</p>
+                <p class="focus-title">Profile Center</p>
+                <p class="focus-copy">Focus here for business decisions: who is connected now, what they usually buy, and how they compare against historical profiles.</p>
                 <div class="profile-focus-grid">
                     <div class="profile-focus-pill">
-                        <p class="label">Conectados ahora</p>
+                        <p class="label">Connected now</p>
                         <p class="value">${connectedCount}</p>
                     </div>
                     <div class="profile-focus-pill">
-                        <p class="label">Perfiles históricos</p>
+                        <p class="label">Historical profiles</p>
                         <p class="value">${summary.totalProfiles || 0}</p>
                     </div>
                     <div class="profile-focus-pill">
-                        <p class="label">Revenue histórico</p>
+                        <p class="label">Historical revenue</p>
                         <p class="value">${formatCurrency(summary.totalRevenue || 0)}</p>
                     </div>
                 </div>
-                <p class="focus-copy">Top compradores: ${topBuyers || 'Sin suficientes datos todavía.'}</p>
-                <p class="focus-copy">Conectados detectados: ${connectedNames || (wpUsersOnlineState.hasError ? 'Error al consultar estado online.' : 'Sin usuarios conectados recientes.')}</p>
+                <p class="focus-copy">Top buyers: ${topBuyers || 'Not enough data yet.'}</p>
+                <p class="focus-copy">Detected connected users: ${connectedNames || (wpUsersOnlineState.hasError ? 'Error checking online status.' : 'No recently connected users.')}</p>
             `;
         }
 
         function renderActionCards(recommendations = []) {
             if (!Array.isArray(recommendations) || !recommendations.length) {
-                return '<p class="text-sm text-gray-500">Todavía no hay recomendaciones accionables.</p>';
+                return '<p class="text-sm text-gray-500">There are no actionable recommendations yet.</p>';
             }
 
             return recommendations.slice(0, 2).map((item) => `
                 <div class="session-pattern-item rounded-xl p-4">
-                    <p class="text-sm font-semibold text-gray-900">${item.title || 'Recomendación'}</p>
+                    <p class="text-sm font-semibold text-gray-900">${item.title || 'Recommendation'}</p>
                     <p class="mt-1 text-sm text-gray-600">${item.detail || '-'}</p>
-                    <p class="session-positive-copy mt-2 text-xs font-medium uppercase tracking-wide">Acción inmediata</p>
+                    <p class="session-positive-copy mt-2 text-xs font-medium uppercase tracking-wide">Immediate action</p>
                     <p class="session-positive-copy text-sm">${item.action || '-'}</p>
                 </div>
             `).join('');
@@ -4140,15 +4140,15 @@
                 ? topProducts.slice(0, 3).map((item) => `
                     <div class="session-side-card rounded-xl p-4">
                         <p class="text-sm font-semibold text-gray-900">${item.name || 'Product'}</p>
-                        <p class="mt-1 text-sm text-gray-600">${item.orderCount || 0} orders · ${item.units || 0} unidades · ${formatCurrency(item.revenue || 0)}</p>
+                        <p class="mt-1 text-sm text-gray-600">${item.orderCount || 0} orders · ${item.units || 0} units · ${formatCurrency(item.revenue || 0)}</p>
                     </div>
                 `).join('')
-                : '<p class="text-sm text-gray-500">Sin afinidad de compra suficiente todavía.</p>';
+                : '<p class="text-sm text-gray-500">Not enough purchase affinity yet.</p>';
 
             const pairingHtml = Array.isArray(topPairings) && topPairings.length
                 ? `
                     <div class="session-side-card rounded-xl p-4">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Bundles probables</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Likely bundles</p>
                         <div class="mt-2 space-y-1 text-sm text-gray-600">
                             ${topPairings.slice(0, 2).map((pair) => `<p>${pair.primary} + ${pair.secondary} · ${pair.orders} orders</p>`).join('')}
                         </div>
@@ -4239,7 +4239,7 @@
                 const pathCurrent = normalizeJourneyPath(current.pageUrl || current.url || current.landingPageUrl || '');
                 const pathNext = normalizeJourneyPath(ev.pageUrl || ev.url || ev.landingPageUrl || '');
                 
-                // Si el evento tiene el mismo nombre y exactamente el mismo path que el anterior, lo omitimos para sumar su duración al evento original
+                // If the event has the same name and exactly the same path as the previous one, skip it and keep the original event as the retained step
                 if (nameCurrent === nameNext && pathCurrent === pathNext) {
                     continue; 
                 }
@@ -5546,7 +5546,7 @@
             historyEl.innerHTML = `
                 <div class="space-y-3">
                     <div class="flex items-center gap-2 flex-wrap">
-                        <input id="journey-profile-search" type="text" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white" placeholder="Buscar perfil Woo" value="${escapeHtmlAttr(attributionJourneyState.profileSearch || '')}">
+                        <input id="journey-profile-search" type="text" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white" placeholder="Search Woo profile" value="${escapeHtmlAttr(attributionJourneyState.profileSearch || '')}">
                         <select id="journey-profile-sort" class="text-xs border border-gray-300 rounded-md px-2 py-1 bg-white">
                             <option value="orders" ${attributionJourneyState.profileSort === 'orders' ? 'selected' : ''}>Mas orders</option>
                             <option value="revenue" ${attributionJourneyState.profileSort === 'revenue' ? 'selected' : ''}>Mayor revenue</option>
@@ -5768,7 +5768,7 @@
 
         async function fetchSessionExplorerOverviewData() {
             const res = await fetch(`/api/analytics/${currentShopId}/session-explorer?limit=12`);
-            if (!res.ok) throw new Error('No se pudo cargar el historial del explorador');
+            if (!res.ok) throw new Error('Could not load explorer history');
             const data = await res.json();
             console.info('[Session Explorer] overview payload', {
                 shopId: currentShopId,
@@ -5797,21 +5797,21 @@
             const topLandings = profiles.filter((item) => item.lastLandingPageUrl).slice(0, 4);
             const isWooStore = storePlatform === 'WOOCOMMERCE';
             const titleText = isWooStore
-                ? 'Perfiles WooCommerce detectados por orders y sesiones web ligadas'
-                : 'Perfiles históricos y sesiones web ligadas';
+                ? 'WooCommerce profiles detected through orders and linked web sessions'
+                : 'Historical profiles and linked web sessions';
             const viewDescription = isWooStore
-                ? 'estos chips representan perfiles WooCommerce enriquecidos con sesiones web cuando el pixel logra ligarlas.'
-                : 'estos chips representan perfiles históricos detectados desde sesiones web y signals de identidad.';
+                ? 'These chips represent WooCommerce profiles enriched with web sessions when the pixel successfully links them.'
+                : 'These chips represent historical profiles detected from web sessions and identity signals.';
             const orderDescription = isWooStore
-                ? 'en WooCommerce priorizamos perfiles con orders primero y luego la sesión web ligada más reciente.'
-                : 'el listado prioriza perfiles con sesión web reciente ligada y después el resto del historial.';
+                ? 'In WooCommerce we prioritize profiles with orders first and then the most recent linked web session.'
+                : 'This list prioritizes profiles with a recent linked web session and then the rest of the history.';
             const nameDescription = isWooStore
                 ? (resolvedCustomerNames > 0
-                    ? `${resolvedCustomerNames} perfiles Woo ya traen nombre legible guardado desde la synchronization de orders.`
-                    : 'todavía no entran nombres legibles desde Woo en este corte; las older orders may require resynchronization para reemplazar IDs technical.')
+                    ? `${resolvedCustomerNames} Woo profiles already include readable names saved from order synchronization.`
+                    : 'Readable Woo names are not available in this batch yet; older orders may require resynchronization to replace technical IDs.')
                 : (shopifyNameLookupActive
                     ? `Shopify name lookup active, ${resolvedCustomerNames} names resolved in this batch.`
-                    : 'no hay token Shopify utilizable para resolver displayName, por eso sólo se muestra el perfil technical.');
+                    : 'There is no usable Shopify token to resolve displayName, so only the technical profile is shown.');
 
             console.info('[Session Explorer] rendering overview', {
                 totalProfiles: profiles.length,
@@ -5854,10 +5854,10 @@
 
             document.getElementById('session-detail-title').textContent = titleText;
             document.getElementById('session-detail-metrics').innerHTML = [
-                { label: 'Perfiles', value: summary.totalProfiles || 0 },
-                { label: 'Sessions recientes', value: summary.totalSessions || 0 },
-                { label: 'Órdenes historical', value: summary.totalOrders || 0 },
-                { label: 'Revenue histórico', value: formatCurrency(summary.totalRevenue || 0) },
+                { label: 'Profiles', value: summary.totalProfiles || 0 },
+                { label: 'Recent sessions', value: summary.totalSessions || 0 },
+                { label: 'Historical orders', value: summary.totalOrders || 0 },
+                { label: 'Historical revenue', value: formatCurrency(summary.totalRevenue || 0) },
             ].map((item) => `
                 <div class="session-metric-card rounded-xl p-4">
                     <div class="text-xs uppercase tracking-wide text-gray-500">${item.label}</div>
@@ -5866,17 +5866,17 @@
             `).join('');
 
             document.getElementById('session-detail-summary').innerHTML = `
-                <p><strong>Status:</strong> Explorador persistente en modo histórico.</p>
-                <p><strong>Platform detectada:</strong> ${storePlatform}</p>
-                <p><strong>Qué estás viendo:</strong> ${viewDescription}</p>
-                <p><strong>Perfiles Woo:</strong> ${wooProfiles} de ${profiles.length || 0}</p>
-                <p><strong>Perfiles con compras:</strong> ${orderLedProfiles}</p>
-                <p><strong>Perfil más reciente:</strong> ${topProfile?.profileLabel || '-'}</p>
-                <p><strong>Last actividad:</strong> ${formatDateTimeMx(topProfile?.lastSeenAt)}</p>
-                <p><strong>Sesión recomendada:</strong> ${topProfile?.recentSessionId || '-'}</p>
-                <p><strong>Orden actual:</strong> ${orderDescription}</p>
-                <p><strong>Lectura:</strong> si ves "0 sesiones", la plataforma conoce ese cliente por orders, pero el pixel todavía no lo amarró a una sesión web capturada.</p>
-                <p><strong>Nombre del cliente:</strong> ${nameDescription}</p>
+                <p><strong>Status:</strong> Persistent explorer in historical mode.</p>
+                <p><strong>Detected platform:</strong> ${storePlatform}</p>
+                <p><strong>What you are seeing:</strong> ${viewDescription}</p>
+                <p><strong>Woo profiles:</strong> ${wooProfiles} of ${profiles.length || 0}</p>
+                <p><strong>Profiles with purchases:</strong> ${orderLedProfiles}</p>
+                <p><strong>Most recent profile:</strong> ${topProfile?.profileLabel || '-'}</p>
+                <p><strong>Last activity:</strong> ${formatDateTimeMx(topProfile?.lastSeenAt)}</p>
+                <p><strong>Suggested session:</strong> ${topProfile?.recentSessionId || '-'}</p>
+                <p><strong>Current order:</strong> ${orderDescription}</p>
+                <p><strong>Readout:</strong> if you see "0 sessions," the platform knows that customer through orders, but the pixel still has not linked them to a captured web session.</p>
+                <p><strong>Customer name:</strong> ${nameDescription}</p>
             `;
 
             document.getElementById('session-detail-orders').innerHTML = profiles.length
@@ -5884,65 +5884,65 @@
                     <div class="session-order-card rounded-lg p-3">
                         <div class="flex items-start justify-between gap-3">
                             <div>
-                                <p class="font-medium text-gray-900">${profile.profileLabel || 'Perfil histórico'}</p>
-                                <p class="text-sm text-gray-500">${profile.orderCount || 0} orders · ${profile.sessionCount || 0} sesiones${Number(profile.sessionCount || 0) === 0 ? ' · sin sesión web ligada' : ''}</p>
-                                <p class="text-xs text-gray-400">${profile.lastSeenAt ? formatDateTimeMx(profile.lastSeenAt) : 'Sin actividad reciente'}</p>
+                                <p class="font-medium text-gray-900">${profile.profileLabel || 'Historical profile'}</p>
+                                <p class="text-sm text-gray-500">${profile.orderCount || 0} orders · ${profile.sessionCount || 0} sessions${Number(profile.sessionCount || 0) === 0 ? ' · without a linked web session' : ''}</p>
+                                <p class="text-xs text-gray-400">${profile.lastSeenAt ? formatDateTimeMx(profile.lastSeenAt) : 'No recent activity'}</p>
                             </div>
                             <div class="text-right">
                                 <p class="text-sm font-semibold text-indigo-600">${formatCurrency(profile.totalRevenue || 0)}</p>
-                                ${profile.recentSessionId ? `<button type="button" class="session-compare-pill historical-profile-trigger inline-flex items-center px-2 py-1 mt-2 text-xs" data-session-id="${profile.recentSessionId}">Abrir sesión</button>` : ''}
+                                ${profile.recentSessionId ? `<button type="button" class="session-compare-pill historical-profile-trigger inline-flex items-center px-2 py-1 mt-2 text-xs" data-session-id="${profile.recentSessionId}">Open session</button>` : ''}
                             </div>
                         </div>
                     </div>
                 `).join('')
-                : '<p class="text-gray-500">Todavía no hay perfiles históricos suficientes.</p>';
+                : '<p class="text-gray-500">There are not enough historical profiles yet.</p>';
 
             document.getElementById('session-detail-attribution').innerHTML = `
                 <p><strong>Woo customers:</strong> ${wooProfiles}</p>
-                <p><strong>Perfiles por email/hash:</strong> ${profiles.filter((item) => item.profileType === 'email_hash').length}</p>
-                <p><strong>Perfiles por phone/hash:</strong> ${profiles.filter((item) => item.profileType === 'phone_hash').length}</p>
-                <p><strong>Solo browser key:</strong> ${profiles.filter((item) => item.profileType === 'user_key').length}</p>
-                <p><strong>Signal useful:</strong> el backend ya mezcla sesiones, orders e identidad guardada y adapta la lectura al tipo de tienda detectado.</p>
+                <p><strong>Profiles by email hash:</strong> ${profiles.filter((item) => item.profileType === 'email_hash').length}</p>
+                <p><strong>Profiles by phone hash:</strong> ${profiles.filter((item) => item.profileType === 'phone_hash').length}</p>
+                <p><strong>Browser key only:</strong> ${profiles.filter((item) => item.profileType === 'user_key').length}</p>
+                <p><strong>Signal useful:</strong> the backend already blends sessions, orders, and stored identity and adapts the readout to the detected store type.</p>
             `;
 
             document.getElementById('session-detail-journey').innerHTML = `
                 <div>
-                    <p class="font-medium text-gray-900 mb-1">Landings recientes</p>
+                    <p class="font-medium text-gray-900 mb-1">Recent landings</p>
                     ${topLandings.length
                         ? topLandings.map((item) => `<p class="text-xs text-gray-600 truncate">${item.lastLandingPageUrl} · ${item.profileLabel}</p>`).join('')
-                        : '<p class="text-xs text-gray-500">Sin landings destacadas.</p>'}
+                        : '<p class="text-xs text-gray-500">No highlighted landings.</p>'}
                 </div>
                 <div>
-                    <p class="font-medium text-gray-900 mb-1">Campaigns recientes</p>
+                    <p class="font-medium text-gray-900 mb-1">Recent campaigns</p>
                     ${topCampaigns.length
                         ? topCampaigns.map((item) => `<p class="text-xs text-gray-600">${item.lastCampaign} · ${item.profileLabel}</p>`).join('')
-                        : '<p class="text-xs text-gray-500">Sin campaigns recurrentes.</p>'}
+                        : '<p class="text-xs text-gray-500">No recurring campaigns.</p>'}
                 </div>
             `;
 
             document.getElementById('session-detail-visual').innerHTML = profiles.length
                 ? `<div class="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">${profiles.slice(0, 4).map((profile) => `
                     <div class="session-side-card rounded-xl p-4">
-                        <p class="text-sm font-semibold text-gray-900">${profile.profileLabel || 'Perfil'}</p>
+                        <p class="text-sm font-semibold text-gray-900">${profile.profileLabel || 'Profile'}</p>
                         <p class="text-xs text-gray-500 mt-1">${profile.profileType || 'user_key'}</p>
-                        <p class="mt-3 text-sm text-gray-600">${profile.sessionCount || 0} sesiones · ${profile.orderCount || 0} orders</p>
+                        <p class="mt-3 text-sm text-gray-600">${profile.sessionCount || 0} sessions · ${profile.orderCount || 0} orders</p>
                         <p class="text-sm text-indigo-600">${formatCurrency(profile.totalRevenue || 0)}</p>
                     </div>
                 `).join('')}</div>`
-                : '<p class="text-sm text-gray-500">Sin perfiles para visualizar todavía.</p>';
+                : '<p class="text-sm text-gray-500">No profiles to visualize yet.</p>';
 
             document.getElementById('session-detail-patterns').innerHTML = `
                 <div class="session-pattern-item rounded-xl p-4">
-                    <p class="text-sm font-semibold text-gray-900">El explorador ya no depende de una sola sesión</p>
-                    <p class="mt-1 text-sm text-gray-600">Empieza mostrando perfiles históricos y luego baja al detalle cuando eliges una sesión.</p>
+                    <p class="text-sm font-semibold text-gray-900">The explorer no longer depends on a single session</p>
+                    <p class="mt-1 text-sm text-gray-600">It starts by showing historical profiles and then drills into the details when you choose a session.</p>
                 </div>
                 <div class="session-pattern-item rounded-xl p-4">
-                    <p class="text-sm font-semibold text-gray-900">La identidad mezcla más signals</p>
-                    <p class="mt-1 text-sm text-gray-600">Woo customer, email hash, phone hash y userKey ahora alimentan el contexto histórico.</p>
+                    <p class="text-sm font-semibold text-gray-900">Identity now blends more signals</p>
+                    <p class="mt-1 text-sm text-gray-600">Woo customer, email hash, phone hash, and userKey now feed the historical context.</p>
                 </div>
                 <div class="session-pattern-item rounded-xl p-4">
-                    <p class="text-sm font-semibold text-gray-900">Uso recomendado</p>
-                    <p class="mt-1 text-sm text-gray-600">Abre primero un perfil con orders, luego compara sesiones relacionadas para detectar friction o intención real.</p>
+                    <p class="text-sm font-semibold text-gray-900">Recommended use</p>
+                    <p class="mt-1 text-sm text-gray-600">Open a profile with orders first, then compare related sessions to detect friction or real intent.</p>
                 </div>
             `;
 
@@ -5951,8 +5951,8 @@
                     <div class="session-timeline-item rounded-lg p-3">
                         <div class="flex items-center justify-between gap-4">
                             <div>
-                                <p class="font-medium text-gray-900">${profile.profileLabel || 'Perfil histórico'}</p>
-                                <p class="text-xs text-gray-500">${profile.sessionCount || 0} sesiones · ${profile.orderCount || 0} orders</p>
+                                <p class="font-medium text-gray-900">${profile.profileLabel || 'Historical profile'}</p>
+                                <p class="text-xs text-gray-500">${profile.sessionCount || 0} sessions · ${profile.orderCount || 0} orders</p>
                             </div>
                             <div class="text-right">
                                 <p class="text-sm text-gray-700">${formatDateTimeMx(profile.lastSeenAt)}</p>
@@ -5961,7 +5961,7 @@
                         </div>
                     </div>
                 `).join('')
-                : '<p class="text-gray-500">No hay actividad historical suficiente.</p>';
+                : '<p class="text-gray-500">There is not enough historical activity yet.</p>';
 
             renderPeerSessions(profiles, null, {});
             updatePeerNavigation([], null);
@@ -5992,8 +5992,8 @@
                 renderSessionExplorerOverview(data);
                 sessionOverviewLastLoadedAt = Date.now();
             } catch (error) {
-                document.getElementById('session-detail-title').textContent = 'Users históricos';
-                document.getElementById('session-detail-metrics').innerHTML = '<div class="text-sm text-gray-500">No se pudo cargar el overview histórico.</div>';
+                document.getElementById('session-detail-title').textContent = 'Historical users';
+                document.getElementById('session-detail-metrics').innerHTML = '<div class="text-sm text-gray-500">Could not load the historical overview.</div>';
                 document.getElementById('session-detail-summary').innerHTML = `<p class="text-red-600">${error.message}</p>`;
                 document.getElementById('session-detail-orders').innerHTML = '<p class="text-gray-500">-</p>';
                 document.getElementById('session-detail-attribution').innerHTML = '<p class="text-gray-500">-</p>';
@@ -6060,7 +6060,7 @@
                 data.commerceProfile?.topPairings || []
             );
 
-            document.getElementById('session-detail-title').textContent = `${profile.profileLabel || 'Perfil histórico'} · Sesión de ${linkedUserName}`;
+            document.getElementById('session-detail-title').textContent = `${profile.profileLabel || 'Historical profile'} · Session for ${linkedUserName}`;
 
             document.getElementById('session-detail-metrics').innerHTML = [
                 { label: 'Eventos', value: metrics.totalEvents || 0 },
@@ -6070,7 +6070,7 @@
                 { label: 'Revenue', value: formatCurrency(metrics.revenue || 0) },
                 { label: 'Pages unique', value: metrics.uniquePages || 0 },
                 { label: 'Products unique', value: metrics.uniqueProducts || 0 },
-                { label: 'Órdenes', value: metrics.orderCount || 0 },
+                { label: 'Orders', value: metrics.orderCount || 0 },
             ].map((item) => `
                 <div class="session-metric-card rounded-xl p-4">
                     <div class="text-xs uppercase tracking-wide text-gray-500">${item.label}</div>
@@ -6079,16 +6079,16 @@
             `).join('');
 
             document.getElementById('session-detail-summary').innerHTML = `
-                <p><strong>Perfil:</strong> ${profile.profileLabel || '-'}</p>
-                <p><strong>Tipo:</strong> ${profile.profileType || '-'}</p>
-                <p><strong>User conectado:</strong> ${linkedUserLabel}</p>
+                <p><strong>Profile:</strong> ${profile.profileLabel || '-'}</p>
+                <p><strong>Type:</strong> ${profile.profileType || '-'}</p>
+                <p><strong>Connected user:</strong> ${linkedUserLabel}</p>
                 <p><strong>Woo Customer ID:</strong> ${identifiedUser.customerId || '-'}</p>
-                <p><strong>Email identificado:</strong> ${identifiedUser.emailPreview || '-'}</p>
+                <p><strong>Identified email:</strong> ${identifiedUser.emailPreview || '-'}</p>
                 <p><strong>User Key:</strong> ${session.userKey || '-'}</p>
-                <p><strong>Inicio:</strong> ${formatDateTimeMx(session.startedAt)}</p>
-                <p><strong>Último evento:</strong> ${formatDateTimeMx(session.lastEventAt)}</p>
+                <p><strong>Start:</strong> ${formatDateTimeMx(session.startedAt)}</p>
+                <p><strong>Latest event:</strong> ${formatDateTimeMx(session.lastEventAt)}</p>
                 <p><strong>Session End:</strong> ${formatDateTimeMx(session.sessionEndAt || session.lastEventAt)}</p>
-                <p><strong>Último login:</strong> ${identifiedUser.lastLoginAt ? formatDateTimeMx(identifiedUser.lastLoginAt) : '-'}</p>
+                <p><strong>Latest login:</strong> ${identifiedUser.lastLoginAt ? formatDateTimeMx(identifiedUser.lastLoginAt) : '-'}</p>
                 <p><strong>Duration:</strong> ${formatDuration(session.sessionDurationSeconds || 0)}</p>
                 <p><strong>Landing:</strong> ${session.landingPageUrl || '-'}</p>
                 <p><strong>UTM:</strong> ${(session.utmSource || '-') + ' / ' + (session.utmCampaign || '-')}</p>
@@ -6096,9 +6096,9 @@
                 <p><strong>Referrer:</strong> ${session.referrer || '-'}</p>
                 <p><strong>IP Hash:</strong> ${session.ipHash ? `${String(session.ipHash).slice(0, 10)}...` : '-'}</p>
                 <p><strong>Funnel:</strong> PV ${metrics.pageViews || 0} · VI ${metrics.viewItem || 0} · ATC ${metrics.addToCart || 0} · BC ${metrics.beginCheckout || 0} · P ${metrics.purchase || 0}</p>
-                <p><strong>Otras sesiones del mismo usuario:</strong> ${patterns.peerSessionCount || 0}</p>
+                <p><strong>Other sessions from the same user:</strong> ${patterns.peerSessionCount || 0}</p>
                 <p><strong>Sessions trazadas totales:</strong> ${patterns.totalTrackedSessions || ((patterns.peerSessionCount || 0) + 1)}</p>
-                <p><strong>Órdenes historical del perfil:</strong> ${profile.historicalOrderCount || 0}</p>
+                <p><strong>Historical profile orders:</strong> ${profile.historicalOrderCount || 0}</p>
             `;
 
             document.getElementById('session-detail-attribution').innerHTML = `
@@ -6117,16 +6117,16 @@
                     <p><strong>Salida:</strong> ${journey.exitPage || '-'}</p>
                 </div>
                 <div>
-                    <p class="font-medium text-gray-900 mb-1">Pages destacadas</p>
+                    <p class="font-medium text-gray-900 mb-1">Highlighted pages</p>
                     ${pages.length
                         ? pages.map((page) => `<p class="text-xs text-gray-600 truncate">${page.url} · ${page.hits} hits</p>`).join('')
-                        : '<p class="text-xs text-gray-500">Sin páginas registradas.</p>'}
+                        : '<p class="text-xs text-gray-500">No pages recorded.</p>'}
                 </div>
                 <div>
-                    <p class="font-medium text-gray-900 mb-1">Products tocados</p>
+                    <p class="font-medium text-gray-900 mb-1">Touched products</p>
                     ${products.length
-                        ? products.map((product) => `<p class="text-xs text-gray-600">${product.productId} · ${product.events} eventos</p>`).join('')
-                        : '<p class="text-xs text-gray-500">Sin productos registrados.</p>'}
+                        ? products.map((product) => `<p class="text-xs text-gray-600">${product.productId} · ${product.events} events</p>`).join('')
+                        : '<p class="text-xs text-gray-500">No products recorded.</p>'}
                 </div>
             `;
 
@@ -6146,11 +6146,11 @@
                                 <p class="text-sm text-gray-500">${formatCurrencyWithCode(order.revenue || 0, order.currency || 'MXN')} · ${order.attributedChannel || 'unattributed'}</p>
                                 <p class="text-xs text-gray-400">${formatDateTimeMx(order.platformCreatedAt || order.createdAt)}</p>
                             </div>
-                            <span class="text-[11px] uppercase tracking-wide ${order.isCurrentSession ? 'session-positive-copy' : 'session-meta-copy'}">${order.isCurrentSession ? 'current session' : 'histórico'}</span>
+                            <span class="text-[11px] uppercase tracking-wide ${order.isCurrentSession ? 'session-positive-copy' : 'session-meta-copy'}">${order.isCurrentSession ? 'current session' : 'historical'}</span>
                         </div>
                     </div>
                 `).join('')
-                : '<p class="text-gray-500">Sin orders ligadas a este perfil.</p>';
+                : '<p class="text-gray-500">No orders linked to this profile.</p>';
 
             renderSessionTimelineFromState();
         }
@@ -6162,16 +6162,16 @@
 
             if (sessionExplorerState.mode === 'overview') {
                 if (!Array.isArray(peers) || peers.length === 0) {
-                    container.innerHTML = '<span class="text-sm text-gray-500">No hay perfiles históricos todavía.</span>';
+                    container.innerHTML = '<span class="text-sm text-gray-500">There are no historical profiles yet.</span>';
                     const note = document.getElementById('session-compare-recommended-note');
-                    if (note) note.textContent = 'Cuando aparezcan perfiles con actividad, podrás abrir su sesión más reciente desde aquí.';
+                    if (note) note.textContent = 'When profiles with activity appear, you will be able to open their most recent session from here.';
                     return;
                 }
 
                 container.innerHTML = peers.map((profile) => `
                     <button type="button" data-session-id="${profile.recentSessionId || ''}" class="session-peer-pill historical-profile-chip inline-flex items-center gap-2 px-3 py-2 rounded-full text-sm text-gray-700 ${profile.recentSessionId ? '' : 'opacity-60 cursor-not-allowed'}" ${profile.recentSessionId ? '' : 'disabled'}>
-                        <span class="font-semibold">${profile.profileLabel || 'Perfil histórico'}</span>
-                        <span class="text-xs text-gray-500">${profile.sessionCount || 0} sesiones</span>
+                        <span class="font-semibold">${profile.profileLabel || 'Historical profile'}</span>
+                        <span class="text-xs text-gray-500">${profile.sessionCount || 0} sessions</span>
                         <span class="text-xs text-gray-400">${profile.orderCount || 0} orders</span>
                     </button>
                 `).join('');
@@ -6184,7 +6184,7 @@
                 });
 
                 const note = document.getElementById('session-compare-recommended-note');
-                if (note) note.textContent = 'Estos chips son perfiles históricos. Si alguno muestra 0 sesiones, Woo lo identificó por orders pero el pixel aún no ligó navegación web a ese cliente.';
+                if (note) note.textContent = 'These chips are historical profiles. If one shows 0 sessions, Woo identified it through orders but the pixel has not linked web navigation to that customer yet.';
                 return;
             }
 
@@ -6196,7 +6196,7 @@
             ` : '';
 
             if (!Array.isArray(peers) || peers.length === 0) {
-                container.innerHTML = currentChip || '<span class="text-sm text-gray-500">No hay otras sesiones relacionadas todavía.</span>';
+                container.innerHTML = currentChip || '<span class="text-sm text-gray-500">There are no other related sessions yet.</span>';
                 return;
             }
 
@@ -6212,7 +6212,7 @@
                         <button type="button" data-session-id="${peer.sessionId}" class="session-peer-chip inline-flex items-center gap-2 hover:text-indigo-700">
                             <span class="font-semibold">${peer.sessionId}</span>
                             <span class="text-xs text-gray-500">${formatDateTimeMx(peer.startedAt)}</span>
-                            <span class="text-xs text-gray-400">${badges.join(' · ') || 'Navegación'}</span>
+                            <span class="text-xs text-gray-400">${badges.join(' · ') || 'Browsing'}</span>
                         </button>
                         <button type="button" data-compare-session-id="${peer.sessionId}" class="session-compare-pill session-compare-chip inline-flex items-center px-2 py-1 text-xs text-slate-700 hover:bg-slate-200">
                             Comparar
@@ -6247,14 +6247,14 @@
                 button.classList.add('hidden');
                 button.removeAttribute('data-session-id');
                 note.textContent = patterns?.peerSessionCount
-                    ? 'No hay una comparación recomendada clara todavía; usa las sesiones relacionadas para revisar manualmente.'
-                    : 'Todavía no hay sesiones relacionadas suficientes para recomendar una comparación.';
+                    ? 'There is no clear recommended comparison yet; use the related sessions to review manually.'
+                    : 'There are not enough related sessions yet to recommend a comparison.';
                 return;
             }
 
             button.classList.remove('hidden');
             button.setAttribute('data-session-id', recommendation.sessionId);
-            note.textContent = `${recommendation.headline || 'Comparación sugerida'}: ${recommendation.reason || 'Abrir una sesión relacionada con mejor valor analítico.'}`;
+            note.textContent = `${recommendation.headline || 'Suggested comparison'}: ${recommendation.reason || 'Open a related session with better analytical value.'}`;
         }
 
         function updatePeerNavigation(peers, currentSessionId) {
@@ -6290,18 +6290,18 @@
             if (!container) return;
 
             const formatSessionEventLabel = (event) => {
-                if (event.bucket === 'login') return 'Inicio de sesión';
+                if (event.bucket === 'login') return 'Login';
                 if (event.eventName === 'add_to_cart') return 'Added to cart';
-                if (event.eventName === 'begin_checkout') return 'Inició checkout';
+                if (event.eventName === 'begin_checkout') return 'Started checkout';
                 if (event.eventName === 'view_item') return 'View item';
                 if (event.eventName === 'page_view') return 'Page view';
-                if (event.eventName === 'purchase') return 'Compra';
+                if (event.eventName === 'purchase') return 'Purchase';
                 return event.eventName || '-';
             };
 
             const formatSessionEventDetail = (event) => {
                 if (event.bucket === 'login') {
-                    return event.customerName || event.customerEmail || event.customerId || 'User identificado';
+                    return event.customerName || event.customerEmail || event.customerId || 'Identified user';
                 }
                 return event.pageUrl || event.productId || event.orderId || '-';
             };
@@ -6340,12 +6340,12 @@
                         </div>
                     </div>
                 `).join('')
-                : '<p class="text-gray-500">No hay eventos para ese filtro.</p>';
+                : '<p class="text-gray-500">There are no events for that filter.</p>';
         }
 
         async function fetchSessionDetailData(sessionId) {
             const res = await fetch(`/api/analytics/${currentShopId}/sessions/${encodeURIComponent(sessionId)}`);
-            if (!res.ok) throw new Error('No se pudo cargar la sesión');
+            if (!res.ok) throw new Error('Could not load the session');
             const data = await res.json();
             console.debug('[Session Explorer] raw session detail payload', {
                 sessionId,
@@ -6366,7 +6366,7 @@
                 renderSessionComparison();
             } catch (_) {
                 sessionExplorerState.compareData = null;
-                renderSessionComparison('No se pudo cargar la sesión de comparación.');
+                renderSessionComparison('Could not load the comparison session.');
             } finally {
                 triggerButton?.removeAttribute('disabled');
             }
@@ -6389,24 +6389,24 @@
             if (errorMessage) {
                 panel.classList.remove('hidden');
                 title.textContent = errorMessage;
-                content.innerHTML = '<p class="text-sm text-red-600">No se pudo construir la comparación.</p>';
+                content.innerHTML = '<p class="text-sm text-red-600">Could not build the comparison.</p>';
                 return;
             }
 
             if (!currentData || !compareData) {
                 panel.classList.add('hidden');
-                title.textContent = 'Selecciona una sesión relacionada to compare.';
+                title.textContent = 'Select a related session to compare.';
                 content.innerHTML = '';
                 return;
             }
 
             panel.classList.remove('hidden');
-            title.textContent = `Actual ${currentData.session?.sessionId || '-'} vs ${compareData.session?.sessionId || '-'}`;
+                title.textContent = `Current ${currentData.session?.sessionId || '-'} vs ${compareData.session?.sessionId || '-'}`;
 
             const currentMetrics = currentData.metrics || {};
             const compareMetrics = compareData.metrics || {};
             const metricRows = [
-                { label: 'Eventos', current: Number(currentMetrics.totalEvents || 0), compare: Number(compareMetrics.totalEvents || 0) },
+                { label: 'Events', current: Number(currentMetrics.totalEvents || 0), compare: Number(compareMetrics.totalEvents || 0) },
                 { label: 'Duration', current: Number(currentData.session?.sessionDurationSeconds || 0), compare: Number(compareData.session?.sessionDurationSeconds || 0), formatter: formatDuration },
                 { label: 'View Item', current: Number(currentMetrics.viewItem || 0), compare: Number(compareMetrics.viewItem || 0) },
                 { label: 'Add To Cart', current: Number(currentMetrics.addToCart || 0), compare: Number(compareMetrics.addToCart || 0) },
@@ -6427,11 +6427,11 @@
                                 <div class="mt-2 flex items-end justify-between gap-4">
                                     <div>
                                         <p class="text-lg font-semibold text-gray-900">${currentValue}</p>
-                                        <p class="text-xs text-gray-500">Actual</p>
+                                        <p class="text-xs text-gray-500">Current</p>
                                     </div>
                                     <div class="text-right">
                                         <p class="text-lg font-semibold text-slate-600">${compareValue}</p>
-                                        <p class="text-xs text-gray-500">Comparada</p>
+                                        <p class="text-xs text-gray-500">Compared</p>
                                     </div>
                                 </div>
                                 <p class="mt-2 text-xs ${delta > 0 ? 'session-positive-copy' : delta < 0 ? 'session-warning-copy' : 'session-meta-copy'}">Delta: ${deltaText}</p>
@@ -6460,7 +6460,7 @@
 
             return `
                 <div class="session-summary-card rounded-xl p-4">
-                    <p class="text-sm font-semibold text-gray-900 mb-3">Funnel comparado</p>
+                    <p class="text-sm font-semibold text-gray-900 mb-3">Compared funnel</p>
                     <div class="space-y-3">
                         ${steps.map((step) => {
                             const maxValue = Math.max(step.current, step.compare, 1);
@@ -6468,7 +6468,7 @@
                                 <div>
                                     <div class="flex items-center justify-between text-xs text-gray-600 mb-1">
                                         <span>${step.label}</span>
-                                        <span>Actual ${step.current} / Comparada ${step.compare}</span>
+                                        <span>Current ${step.current} / Compared ${step.compare}</span>
                                     </div>
                                     <div class="space-y-1">
                                         <div class="pattern-rate-bar h-2 rounded-full overflow-hidden"><span class="session-compare-current-bar block h-full" style="width:${Math.round((step.current / maxValue) * 100)}%"></span></div>
@@ -6488,24 +6488,24 @@
             const insights = [];
 
             if (Number(currentMetrics.beginCheckout || 0) > Number(compareMetrics.beginCheckout || 0)) {
-                insights.push('La current session empuja más al checkout que la comparada.');
+                insights.push('The current session pushes toward checkout more than the compared one.');
             }
             if (Number(currentMetrics.purchase || 0) < Number(compareMetrics.purchase || 0)) {
-                insights.push('La sesión comparada convierte mejor al final del funnel.');
+                insights.push('The compared session converts better at the end of the funnel.');
             }
             if (Number(currentMetrics.viewItem || 0) > Number(compareMetrics.viewItem || 0) && Number(currentMetrics.addToCart || 0) === 0) {
-                insights.push('La actual explora más productos, pero no transforma esa exploration en intención.');
+                insights.push('The current session explores more products, but does not turn that exploration into intent.');
             }
             if (Number(currentData.session?.sessionDurationSeconds || 0) > Number(compareData.session?.sessionDurationSeconds || 0)) {
-                insights.push('La actual dura más; vale revisar si eso significa más interés o más friction.');
+                insights.push('The current session lasts longer; it is worth checking whether that means more interest or more friction.');
             }
             if (!insights.length) {
-                insights.push('Ambas sesiones se comportan de forma parecida; no hay una desviación fuerte en el recorrido.');
+                insights.push('Both sessions behave similarly; there is no strong deviation in the journey.');
             }
 
             return `
                 <div class="session-summary-card rounded-xl p-4">
-                    <p class="text-sm font-semibold text-gray-900 mb-3">Lectura rápida</p>
+                    <p class="text-sm font-semibold text-gray-900 mb-3">Quick read</p>
                     <div class="space-y-2 text-sm text-gray-700">
                         ${insights.map((item) => `<p>${item}</p>`).join('')}
                     </div>
@@ -6526,14 +6526,14 @@
                         <p class="mt-2 text-sm font-semibold text-gray-900">${step.label}</p>
                     </div>
                 `).join('')}</div>`
-                : '<p class="text-sm text-gray-500">Sin pasos suficientes para dibujar el recorrido.</p>';
+                : '<p class="text-sm text-gray-500">There are not enough steps to draw the journey.</p>';
 
             const barsHtml = comparison.length
                 ? `<div class="space-y-3 mt-5">${comparison.map((item) => `
                     <div>
                         <div class="flex items-center justify-between text-xs text-gray-600 mb-1">
                             <span>${item.label}</span>
-                            <span>${Math.round(Number(item.peerRate || 0) * 100)}% en otras sesiones</span>
+                            <span>${Math.round(Number(item.peerRate || 0) * 100)}% in other sessions</span>
                         </div>
                         <div class="pattern-rate-bar h-2 rounded-full bg-gray-200 overflow-hidden">
                             <span class="block h-full ${item.current ? 'bg-emerald-500' : 'bg-amber-400'}" style="width:${Math.max(4, Math.round(Number(item.peerRate || 0) * 100))}%"></span>
@@ -6556,22 +6556,22 @@
                     <div class="session-pattern-item rounded-xl p-4">
                         <p class="text-sm font-semibold text-gray-900">${card.title || '-'}</p>
                         <p class="mt-1 text-sm text-gray-600">${card.detail || '-'}</p>
-                        <p class="session-positive-copy mt-2 text-xs font-medium uppercase tracking-wide">Application sugerida</p>
+                        <p class="session-positive-copy mt-2 text-xs font-medium uppercase tracking-wide">Suggested application</p>
                         <p class="session-positive-copy text-sm">${card.action || '-'}</p>
                     </div>
                 `).join('')
-                : '<p class="text-sm text-gray-500">Sin patrones suficientes todavía.</p>';
+                : '<p class="text-sm text-gray-500">There are not enough patterns yet.</p>';
 
             const longitudinalHtml = longitudinalCards.length
                 ? `
                     <div>
-                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Lectura longitudinal</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Longitudinal read</p>
                         <div class="space-y-3">
                             ${longitudinalCards.map((card) => `
                                 <div class="session-side-card rounded-xl p-4">
                                     <p class="text-sm font-semibold text-gray-900">${card.title || '-'}</p>
                                     <p class="mt-1 text-sm text-gray-600">${card.detail || '-'}</p>
-                                    <p class="session-accent-copy mt-2 text-xs font-medium uppercase tracking-wide">Cómo usarlo</p>
+                                    <p class="session-accent-copy mt-2 text-xs font-medium uppercase tracking-wide">How to use it</p>
                                     <p class="session-accent-copy text-sm">${card.action || '-'}</p>
                                 </div>
                             `).join('')}
@@ -6583,24 +6583,24 @@
             const sideNotes = `
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div class="session-side-card rounded-xl p-4">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Landings recurrentes</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Recurring landings</p>
                         <div class="mt-2 space-y-1 text-sm text-gray-600">
                             ${topLandingPages.length
-                                ? topLandingPages.map((item) => `<p class="truncate">${item.url} · ${item.sessions} sesiones</p>`).join('')
-                                : '<p>Sin suficiente historial.</p>'}
+                                ? topLandingPages.map((item) => `<p class="truncate">${item.url} · ${item.sessions} sessions</p>`).join('')
+                                : '<p>Not enough history yet.</p>'}
                         </div>
                     </div>
                     <div class="session-side-card rounded-xl p-4">
-                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Campaigns frecuentes</p>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Frequent campaigns</p>
                         <div class="mt-2 space-y-1 text-sm text-gray-600">
                             ${topCampaigns.length
-                                ? topCampaigns.map((item) => `<p>${item.campaign} · ${item.sessions} sesiones</p>`).join('')
-                                : '<p>Sin campaña dominante.</p>'}
+                                ? topCampaigns.map((item) => `<p>${item.campaign} · ${item.sessions} sessions</p>`).join('')
+                                : '<p>No dominant campaign.</p>'}
                         </div>
                     </div>
                 </div>
                 <div class="text-xs text-gray-500">
-                    Promedio en otras sesiones: ${patterns.avgEvents || 0} eventos · ${formatDuration(patterns.avgDurationSeconds || 0)}${patterns.averageGapHours ? ` · separación media ${patterns.averageGapHours}h` : ''}
+                    Average across other sessions: ${patterns.avgEvents || 0} events · ${formatDuration(patterns.avgDurationSeconds || 0)}${patterns.averageGapHours ? ` · average gap ${patterns.averageGapHours}h` : ''}
                 </div>
             `;
 
@@ -6678,7 +6678,7 @@
             } catch (error) {
                 console.error('Analytics error:', error);
                 setAnalyticsLoadingState(false);
-                alert('Error cargando datos de analítica');
+                alert('Error loading analytics data');
             } finally {
                 analyticsFetchInFlight = false;
             }
@@ -6778,7 +6778,7 @@
             if (!container) return;
 
             if (!Array.isArray(products) || products.length === 0) {
-                container.innerHTML = '<p class="text-sm text-gray-400">Sin datos de productos todavía.</p>';
+                container.innerHTML = '<p class="text-sm text-gray-400">No product data yet.</p>';
                 return;
             }
 
@@ -6816,7 +6816,7 @@
                 }
 
                 statusEl.textContent = status === 'ACTIVE' ? 'ACTIVE' : status;
-                updatedEl.textContent = state.updatedAt ? `Updated: ${formatDateTimeMx(state.updatedAt)}` : 'Sin conexión registrada';
+                updatedEl.textContent = state.updatedAt ? `Updated: ${formatDateTimeMx(state.updatedAt)}` : 'No connection recorded';
             });
 
             // Update Data Enrichment Trigger Badge
@@ -6860,7 +6860,7 @@
             if (campaignName && campaignId) return `${campaignName} (${campaignId})`;
             if (campaignName) return campaignName;
             if (campaignId) return campaignId;
-            return 'Sin campaña dominante';
+            return 'No dominant campaign';
         }
 
         async function ensurePaidMediaSelector(platform, sourceState) {
@@ -6900,7 +6900,7 @@
 
             const optionsHtml = state.accounts.length
                 ? state.accounts.map((acc) => `<option value="${acc.id}">${acc.name || acc.id}</option>`).join('')
-                : '<option value="">Sin cuentas disponibles</option>';
+                : '<option value="">No accounts available</option>';
 
             selectEl.innerHTML = optionsHtml;
             selectEl.disabled = state.accounts.length === 0;
@@ -6908,7 +6908,7 @@
             if (feedbackEl) {
                 feedbackEl.textContent = state.accounts.length
                     ? ''
-                    : 'No hay cuentas disponibles para seleccionar.';
+                    : 'No accounts available to select.';
             }
         }
 
@@ -6920,7 +6920,7 @@
 
             try {
                 if (applyBtn) applyBtn.disabled = true;
-                if (feedbackEl) feedbackEl.textContent = 'Aplicando selección...';
+                if (feedbackEl) feedbackEl.textContent = 'Applying selection...';
 
                 const selectedId = normalizePaidMediaAccountId(platform, selectEl.value);
                 const res = await fetch(getPaidMediaSelectionEndpoint(platform), {
@@ -6931,14 +6931,14 @@
 
                 const body = await res.json().catch(() => ({}));
                 if (!res.ok || body?.ok === false) {
-                    throw new Error(body?.error || `No se pudo actualizar ${platform}`);
+                    throw new Error(body?.error || `Could not update ${platform}`);
                 }
 
-                if (feedbackEl) feedbackEl.textContent = 'Selección aplicada. Refrescando métricas...';
+                if (feedbackEl) feedbackEl.textContent = 'Selection applied. Refreshing metrics...';
                 await fetchAnalytics();
             } catch (err) {
                 console.error(`[PaidMedia UI] Selection update failed for ${platform}`, err);
-                if (feedbackEl) feedbackEl.textContent = `Error al actualizar: ${err?.message || err}`;
+                if (feedbackEl) feedbackEl.textContent = `Update error: ${err?.message || err}`;
             } finally {
                 if (applyBtn) applyBtn.disabled = false;
             }
@@ -6948,9 +6948,9 @@
             const linkStatus = document.getElementById('pm-link-status');
 
             if (linkStatus) {
-                if (paidMedia?.available) linkStatus.textContent = 'API activa';
-                else if (paidMedia?.linked) linkStatus.textContent = 'Conectado sin datos';
-                else linkStatus.textContent = 'No conectado';
+                if (paidMedia?.available) linkStatus.textContent = 'API active';
+                else if (paidMedia?.linked) linkStatus.textContent = 'Connected without data';
+                else linkStatus.textContent = 'Not connected';
             }
 
             renderPaidMediaSource('meta', paidMedia?.meta || {});
@@ -7001,9 +7001,9 @@
             if (!statusEl || !spendEl || !revenueEl || !roasEl || !syncEl) return;
 
             const currency = sourceState?.currency || 'MXN';
-            let statusLabel = 'Desconectado';
-            if (sourceState?.connected && sourceState?.ready) statusLabel = 'API activa';
-            else if (sourceState?.connected) statusLabel = 'Conectado';
+            let statusLabel = 'Disconnected';
+            if (sourceState?.connected && sourceState?.ready) statusLabel = 'API active';
+            else if (sourceState?.connected) statusLabel = 'Connected';
 
             statusEl.textContent = statusLabel;
             spendEl.textContent = formatCurrencyWithCode(sourceState?.spend || 0, currency);
@@ -7014,14 +7014,14 @@
 
             if (sourceState?.connected && sourceState?.ready) {
                 if (sourceState?.rangeUsed?.fallbackUsed) {
-                    syncEl.textContent = `Fallback ${sourceState?.rangeUsed?.since || ''} a ${sourceState?.rangeUsed?.until || ''}`;
+                    syncEl.textContent = `Fallback ${sourceState?.rangeUsed?.since || ''} to ${sourceState?.rangeUsed?.until || ''}`;
                 } else {
                     syncEl.textContent = '';
                 }
             } else if (sourceState?.connected) {
-                syncEl.textContent = 'Conectado, esperando respuesta de API';
+                syncEl.textContent = 'Connected, waiting for API response';
             } else {
-                syncEl.textContent = 'No conectado';
+                syncEl.textContent = 'Not connected';
             }
         }
 
@@ -7117,7 +7117,7 @@ function renderDataEnrichment(purchases) {
     const toggle = document.getElementById('de-toggle');
     if (toggle && !toggle.checked) return;
     if (!Array.isArray(purchases) || purchases.length === 0) {
-        list.innerHTML = '<p class="text-sm text-gray-400">Sin eventos de enriquecimiento recientes.</p>';
+        list.innerHTML = '<p class="text-sm text-gray-400">No recent enrichment events.</p>';
         return;
     }
     const validPurchases = purchases.filter(p => p.orderNumber || p.orderId || p.checkoutToken || p._id || p.id);
@@ -7227,7 +7227,7 @@ function renderRecentPurchases(purchases) {
             });
 
             if (!Array.isArray(filtered) || filtered.length === 0) {
-                container.innerHTML = '<tr><td colspan="8" class="py-6 text-center text-gray-400">Sin compras todavía.</td></tr>';
+                container.innerHTML = '<tr><td colspan="8" class="py-6 text-center text-gray-400">No purchases yet.</td></tr>';
                 return;
             }
 
@@ -7241,8 +7241,8 @@ function renderRecentPurchases(purchases) {
                 const items = Array.isArray(p.items) ? p.items : [];
                 const itemsText = items.length
                     ? items.slice(0, 2).map((i) => `${i.name || 'Product'} x${Number(i.quantity || 1)}`).join(' · ')
-                    : 'Sin items';
-                const extraCount = items.length > 2 ? ` +${items.length - 2} más` : '';
+                    : 'No items';
+                const extraCount = items.length > 2 ? ` +${items.length - 2} more` : '';
                 const sourceLabel = p.source === 'orders' ? 'Woo Orders Sync' : 'Pixel Events';
                 const attrChannel = p.attributedChannel || 'unattributed';
                 const attrPlatform = p.attributedPlatform || '-';
@@ -7325,7 +7325,7 @@ function renderRecentPurchases(purchases) {
               });
               console.log('=== END CHART DEBUG ===');
 
-              // Fallback en caso de que no haya datos aún
+              // Fallback in case there is no data yet
               if (labels.length === 0) {
                   labels.push('Meta', 'Google');
                   adnovaRoasData.push(0, 0);
@@ -7578,7 +7578,7 @@ function renderRecentPurchases(purchases) {
             }
 
             if (hasFbclid || source.includes('facebook') || source.includes('instagram') || source.includes('meta')) {
-                let badgeTxt = (medium.includes('organic') && !hasFbclid) ? 'Meta Orgánico' : 'Meta Ads';
+                let badgeTxt = (medium.includes('organic') && !hasFbclid) ? 'Meta Organic' : 'Meta Ads';
                 let icon = (medium.includes('organic') && !hasFbclid) ? 'fa-solid fa-globe' : 'fa-brands fa-meta';
                 return { text: badgeTxt, icon: icon, color: '!text-purple-700', bg: 'bg-blue-100' };
             }
@@ -7587,18 +7587,18 @@ function renderRecentPurchases(purchases) {
             }
             if (hasGclid || medium.includes('cpc') || source.includes('google') || source.includes('ads')) {
                 if (medium.includes('organic') || (!hasGclid && !medium.includes('cpc') && !medium.includes('paid'))) {
-                    return { text: 'Google Orgánico', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
+                    return { text: 'Google Organic', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
                 }
                 return { text: 'Google Ads', icon: 'fa-brands fa-google', color: '!text-purple-700', bg: 'bg-orange-100' };
             }
             if (ref.includes('google')) return { text: 'Organic Search', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
-            if (ref.includes('facebook') || ref.includes('instagram')) return { text: 'Meta Orgánico', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
-            if (ref.includes('tiktok')) return { text: 'TikTok Orgánico', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
+            if (ref.includes('facebook') || ref.includes('instagram')) return { text: 'Meta Organic', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
+            if (ref.includes('tiktok')) return { text: 'TikTok Organic', icon: 'fa-solid fa-globe', color: '!text-purple-700', bg: 'bg-emerald-100' };
             
             if (source && source !== 'null' && source !== 'undefined') return { text: source.charAt(0).toUpperCase() + source.slice(1), icon: 'fa-solid fa-link', color: '!text-purple-700', bg: 'bg-indigo-100' };
-            if (ref && !ref.includes(location.hostname)) return { text: 'Referido', icon: 'fa-solid fa-link', color: '!text-purple-700', bg: 'bg-indigo-100' };
+            if (ref && !ref.includes(location.hostname)) return { text: 'Referral', icon: 'fa-solid fa-link', color: '!text-purple-700', bg: 'bg-indigo-100' };
 
-            return { text: 'Directo', icon: 'fa-solid fa-bolt', color: '!text-purple-700', bg: 'bg-gray-200' };
+            return { text: 'Direct', icon: 'fa-solid fa-bolt', color: '!text-purple-700', bg: 'bg-gray-200' };
         }
 
         let activeLiveFeedFilterSessionId = null;
@@ -7908,7 +7908,7 @@ function renderRecentPurchases(purchases) {
                                     <i class="${attrInfo.icon} text-[9px]"></i> ${attrInfo.text}
                                 </span>
                             </div>
-                            ${linkedUserLabel ? `<p class="text-xs font-semibold !text-indigo-700 truncate cursor-pointer live-feed-always-visible-user mt-0.5" title="Click para filtrar eventos de este usuario">${linkedUserLabel}</p>` : `<p class="text-xs ${(isPurchaseEvent||isCartEvent)?'!text-gray-600':'text-gray-400'} italic mt-0.5">Anónimo</p>`}
+                            ${linkedUserLabel ? `<p class="text-xs font-semibold !text-indigo-700 truncate cursor-pointer live-feed-always-visible-user mt-0.5" title="Click to filter this user's events">${linkedUserLabel}</p>` : `<p class="text-xs ${(isPurchaseEvent||isCartEvent)?'!text-gray-600':'text-gray-400'} italic mt-0.5">Anonymous</p>`}
                             <p class="text-xs ${detailColor} truncate mt-0.5">${detail || '-'}</p>
                             <div class="feed-extra mt-1">
                                 <p class="text-[11px] !text-indigo-500">${buildSignalTextSimple(data.payload || {})}</p>
@@ -7985,7 +7985,7 @@ function renderRecentPurchases(purchases) {
             const d = value instanceof Date ? value : new Date(value);
             if (Number.isNaN(d.getTime())) return '-';
 
-            const parts = new Intl.DateTimeFormat('es-MX', {
+            const parts = new Intl.DateTimeFormat('en-US', {
                 timeZone: DASHBOARD_TIMEZONE,
                 day: 'numeric',
                 month: 'short',
@@ -7993,7 +7993,7 @@ function renderRecentPurchases(purchases) {
             }).formatToParts(d);
 
             const day = parts.find((p) => p.type === 'day')?.value || '';
-            const month = (parts.find((p) => p.type === 'month')?.value || '').replace('.', '').toLowerCase();
+            const month = (parts.find((p) => p.type === 'month')?.value || '').replace('.', '');
             const year = parts.find((p) => p.type === 'year')?.value || '';
             if (!day || !month || !year) return '-';
             return `${day} ${month} ${year}`;
@@ -8003,7 +8003,7 @@ function renderRecentPurchases(purchases) {
             if (!value) return '-';
             const d = value instanceof Date ? value : new Date(value);
             if (Number.isNaN(d.getTime())) return '-';
-            return new Intl.DateTimeFormat('es-MX', {
+            return new Intl.DateTimeFormat('en-US', {
                 timeZone: DASHBOARD_TIMEZONE,
                 hour: '2-digit',
                 minute: '2-digit',
@@ -8026,15 +8026,15 @@ function renderRecentPurchases(purchases) {
         }
 
         function formatCurrency(value) {
-            return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(value);
+            return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'MXN' }).format(value);
         }
 
         function formatCurrencyWithCode(value, currencyCode) {
             const code = currencyCode || 'MXN';
             try {
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: code }).format(value || 0);
+                return new Intl.NumberFormat('en-US', { style: 'currency', currency: code }).format(value || 0);
             } catch (_) {
-                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(value || 0);
+                return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'MXN' }).format(value || 0);
             }
         }
 
@@ -8114,8 +8114,8 @@ function renderUserExplorer(data) {
         .sort((a, b) => Number(b[1]?.revenue || 0) - Number(a[1]?.revenue || 0))
         .slice(0, 4)
         .map(([channel, stats]) => {
-            const rev = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(stats?.revenue || 0));
-            return '<p><strong>' + channel.toUpperCase() + ':</strong> ' + Number(stats?.orders || 0) + ' compras · ' + rev + '</p>';
+            const rev = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'MXN' }).format(Number(stats?.revenue || 0));
+            return '<p><strong>' + channel.toUpperCase() + ':</strong> ' + Number(stats?.orders || 0) + ' purchases · ' + rev + '</p>';
         })
         .join('');
 
@@ -8125,8 +8125,8 @@ function renderUserExplorer(data) {
             '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Purchases</p><p class="text-sm font-semibold text-gray-900">' + Number(summary.totalOrders || 0) + '</p></div>' +
             '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Sessions</p><p class="text-sm font-semibold text-gray-900">' + Number(summary.totalSessions || 0) + '</p></div>' +
             '<div class="bg-white border border-gray-200 rounded-lg p-3"><p class="text-[11px] uppercase tracking-wide text-gray-500">Carts</p><p class="text-sm font-semibold text-gray-900">' + Number(summary.totalAddToCart || 0) + '</p></div>' +
-            '<div class="bg-white border border-gray-200 rounded-lg p-3 col-span-2"><p class="text-[11px] uppercase tracking-wide text-gray-500">Attribution stitchada</p>' +
-                (attributionRows || '<p class="text-sm text-gray-500">Sin attribution consolidada todavía.</p>') +
+            '<div class="bg-white border border-gray-200 rounded-lg p-3 col-span-2"><p class="text-[11px] uppercase tracking-wide text-gray-500">Stitched attribution</p>' +
+                (attributionRows || '<p class="text-sm text-gray-500">No consolidated attribution yet.</p>') +
             '</div>' +
         '</div>';
 
@@ -8167,7 +8167,7 @@ function renderUserExplorer(data) {
             '</div>';
         } else if (item.type === 'order') {
             const o = item.data;
-            const revStr = new Intl.NumberFormat('es-MX', { style: 'currency', currency: o.currency || 'MXN' }).format(Number(o.revenue || 0));
+            const revStr = new Intl.NumberFormat('en-US', { style: 'currency', currency: o.currency || 'MXN' }).format(Number(o.revenue || 0));
             html += '<div class="relative pl-6">' +
                 '<div class="absolute -left-2 top-1.5 p-1.5 rounded-full bg-emerald-500 border-4 border-gray-900 shadow-sm ring-1 ring-emerald-500/30"></div>' +
                 '<p class="text-xs text-emerald-600 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Purchase (' + revStr + ')</p>' +
