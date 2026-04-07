@@ -652,6 +652,47 @@ function resolveAuthoritativeSignalState(root, compatibleRun, staleSignal) {
     };
   }
 
+  if (staleSignal || !!state?.needsSignalRebuild) {
+    return {
+      authority: 'stale_rebuild_required',
+      processing: false,
+      completed: false,
+      failed: false,
+
+      status: chooseStatusValue(state?.status, 'idle'),
+      stage: chooseStatusValue(state?.stage, 'awaiting_rebuild'),
+      progress: 0,
+      startedAt: null,
+      finishedAt: null,
+      snapshotId: state?.snapshotId || root?.latestSnapshotId || null,
+      contextRangeDays: toNum(state?.contextRangeDays) || null,
+      storageRangeDays: toNum(state?.storageRangeDays) || null,
+
+      signalPayload: null,
+      encodedPayload: null,
+      hasSignal: false,
+      hasEncodedPayload: false,
+      signalComplete: false,
+      signalValidForPdf: false,
+
+      usedOpenAI: !!state?.usedOpenAI,
+      model: state?.model || null,
+      error: null,
+      buildAttemptId: null,
+      signalRunId: null,
+
+      sourceSnapshots: state?.sourceSnapshots || state?.unifiedBase?.sourceSnapshots || null,
+      sourcesStatus: state?.sourcesStatus || null,
+      connectedSources: [],
+      usableSources: Array.isArray(state?.usableSources) ? state.usableSources : [],
+      pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : [],
+      failedSources: [],
+
+      sourceFingerprint: null,
+      connectionFingerprint: safeStr(state?.connectionFingerprint || '').trim() || null,
+    };
+  }
+
   const processingRun =
     compatibleRun && isProcessingStatus(compatibleRun.status) && !compatibleRun.supersededAt
       ? compatibleRun
@@ -951,6 +992,25 @@ function deriveUiFlags({
   };
 }
 
+function derivePdfBuildState({
+  signalProcessing,
+  needSignalRebuild,
+  signalReadyForPdf,
+  pdfReady,
+  pdfProcessing,
+  pdfFailed,
+  needPdfRebuild,
+}) {
+  if (signalProcessing) return 'signal_building';
+  if (needSignalRebuild) return 'signal_rebuild_required';
+  if (!signalReadyForPdf) return 'signal_not_ready';
+  if (pdfReady) return 'pdf_ready';
+  if (pdfProcessing) return 'pdf_processing';
+  if (pdfFailed) return 'pdf_failed';
+  if (needPdfRebuild) return 'pdf_rebuild_required';
+  return 'pdf_buildable';
+}
+
 function buildStatusResponse(root, shareState = null, signalRun = null) {
   const state = root?.aiContext || {};
   const rootAttemptId = safeStr(state?.buildAttemptId).trim() || null;
@@ -1050,6 +1110,16 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
     signalSourceFingerprint: effectiveSignalSourceFingerprint,
   });
 
+  const pdfBuildState = derivePdfBuildState({
+    signalProcessing,
+    needSignalRebuild,
+    signalReadyForPdf: uiFlags.signalReadyForPdf,
+    pdfReady: uiFlags.pdfReady,
+    pdfProcessing: uiFlags.pdfProcessing,
+    pdfFailed: uiFlags.pdfFailed,
+    needPdfRebuild,
+  });
+
   return {
     ok: true,
     data: {
@@ -1117,6 +1187,7 @@ function buildStatusResponse(root, shareState = null, signalRun = null) {
       canGeneratePdf: uiFlags.canGeneratePdf,
       canDownloadPdf: uiFlags.canDownloadPdf,
       uiMode: uiFlags.uiMode,
+      pdfBuildState,
 
       pdf,
 
@@ -1391,6 +1462,7 @@ router.post('/pdf/build', async (req, res) => {
           canGeneratePdf: false,
           canDownloadPdf: false,
           uiMode: 'signal_building',
+          pdfBuildState: 'signal_rebuild_required',
           needSignalRebuild: true,
           needPdfRebuild: true,
         },
@@ -1427,10 +1499,24 @@ router.post('/pdf/build', async (req, res) => {
 
     const freshRoot = await findPreferredContextRootForUser(userId);
     const freshRun = await findPreferredSignalRunForUser(userId, freshRoot);
+    const finalPayload = resultData || buildStatusResponse(freshRoot, null, freshRun)?.data || null;
+
+    if (
+      finalPayload &&
+      (
+        finalPayload?.pdfProcessing ||
+        !finalPayload?.pdfReady
+      )
+    ) {
+      return res.status(202).json({
+        ok: true,
+        data: finalPayload,
+      });
+    }
 
     return res.json({
       ok: true,
-      data: resultData || buildStatusResponse(freshRoot, null, freshRun)?.data || null,
+      data: finalPayload,
     });
   } catch (e) {
     console.error('[mcp/context/pdf/build] error:', e);
@@ -1465,6 +1551,7 @@ router.post('/pdf/build', async (req, res) => {
           canGeneratePdf: false,
           canDownloadPdf: false,
           uiMode: 'signal_building',
+          pdfBuildState: 'signal_rebuild_required',
           needSignalRebuild: true,
           needPdfRebuild: true,
         },

@@ -639,6 +639,25 @@ function deriveSignalReadinessFromAi(ai = {}, fallbackSignalPayload = null) {
   };
 }
 
+function derivePdfBuildState({
+  signalProcessing,
+  needSignalRebuild,
+  signalReadyForPdf,
+  pdfReady,
+  pdfProcessing,
+  pdfFailed,
+  needPdfRebuild,
+}) {
+  if (signalProcessing) return 'signal_building';
+  if (needSignalRebuild) return 'signal_rebuild_required';
+  if (!signalReadyForPdf) return 'signal_not_ready';
+  if (pdfReady) return 'pdf_ready';
+  if (pdfProcessing) return 'pdf_processing';
+  if (pdfFailed) return 'pdf_failed';
+  if (needPdfRebuild) return 'pdf_rebuild_required';
+  return 'pdf_buildable';
+}
+
 function buildSignalSourcesPayload({
   sourcesStatus = null,
   sourceSnapshots = null,
@@ -1733,6 +1752,9 @@ function buildResultFromRoot(root, fallback = {}) {
   const pdfReady = pdf?.status === 'ready';
   const pdfProcessing = pdf?.status === 'processing';
   const pdfFailed = pdf?.status === 'failed';
+  const signalProcessing = safeStr(state?.status).trim().toLowerCase() === 'processing';
+  const needSignalRebuild = !!state?.needsSignalRebuild;
+  const needPdfRebuild = !!state?.needsPdfRebuild;
 
   const pdfAligned =
     !!pdfReady &&
@@ -1745,6 +1767,22 @@ function buildResultFromRoot(root, fallback = {}) {
 
   const canGeneratePdf = !!signalReadyForPdf && !pdfAligned && !pdfProcessing;
   const canDownloadPdf = !!pdfAligned;
+  const uiMode =
+    signalProcessing ? 'signal_building' :
+    pdfAligned ? 'pdf_ready' :
+    pdfProcessing ? 'pdf_building' :
+    safeStr(state?.status).trim().toLowerCase() === 'failed' ? 'signal_failed' :
+    signalReadyForPdf ? 'signal_ready' :
+    'signal_building';
+  const pdfBuildState = derivePdfBuildState({
+    signalProcessing,
+    needSignalRebuild,
+    signalReadyForPdf,
+    pdfReady: pdfAligned,
+    pdfProcessing,
+    pdfFailed,
+    needPdfRebuild,
+  });
 
   return {
     ok: true,
@@ -1781,6 +1819,8 @@ function buildResultFromRoot(root, fallback = {}) {
 
       needsSignalRebuild: !!state?.needsSignalRebuild,
       needsPdfRebuild: !!state?.needsPdfRebuild,
+      needSignalRebuild,
+      needPdfRebuild,
 
       hasPdf: pdfAligned,
       pdfReady,
@@ -1788,6 +1828,8 @@ function buildResultFromRoot(root, fallback = {}) {
       pdfFailed,
       canGeneratePdf,
       canDownloadPdf,
+      uiMode,
+      pdfBuildState,
 
       pdf: {
         status: pdf?.status || 'idle',
@@ -1812,6 +1854,7 @@ function buildResultFromRoot(root, fallback = {}) {
 
       error: state?.error || null,
       buildAttemptId: state?.buildAttemptId || null,
+      signalRunId: state?.signalRunId || null,
     },
   };
 }
@@ -1841,6 +1884,8 @@ async function markContextStale(userId, reason = 'source_updated', extra = {}) {
           status: 'idle',
           stage: 'awaiting_rebuild',
           progress: 0,
+          buildAttemptId: null,
+          signalRunId: null,
           staleReason: safeStr(reason) || 'source_updated',
           staleAt: nowIso(),
           error: null,
