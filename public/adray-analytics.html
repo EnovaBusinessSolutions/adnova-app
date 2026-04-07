@@ -939,6 +939,41 @@
             opacity: 1;
         }
 
+        body.adray-dashboard.tooltip-portal-ready .journey-chip[data-tooltip]::after,
+        body.adray-dashboard.tooltip-portal-ready .journey-chip[data-tooltip]::before,
+        body.adray-dashboard.tooltip-portal-ready .journey-event[data-tooltip]::after,
+        body.adray-dashboard.tooltip-portal-ready .journey-event-icon[data-tooltip]::after,
+        body.adray-dashboard.tooltip-portal-ready .journey-event-icon[data-tooltip]::before,
+        body.adray-dashboard.tooltip-portal-ready .journey-event-session-chip[data-tooltip]::after,
+        body.adray-dashboard.tooltip-portal-ready .journey-event-session-chip[data-tooltip]::before {
+            display: none !important;
+        }
+
+        #adray-global-tooltip {
+            position: fixed;
+            left: 0;
+            top: 0;
+            max-width: min(22rem, calc(100vw - 1rem));
+            padding: 0.55rem 0.72rem;
+            border-radius: 0.6rem;
+            background: var(--dash-text);
+            color: var(--dash-panel);
+            font-size: 0.75rem;
+            font-weight: 500;
+            line-height: 1.4;
+            box-shadow: 0 16px 36px rgba(0, 0, 0, 0.3);
+            pointer-events: none;
+            opacity: 0;
+            transform: translate3d(0, 0, 0);
+            transition: opacity 0.12s ease;
+            z-index: 2147483647;
+            white-space: normal;
+        }
+
+        #adray-global-tooltip.is-visible {
+            opacity: 1;
+        }
+
         .journey-chip.is-google,
         .journey-step.is-google {
             border-color: rgba(251, 191, 36, 0.5);
@@ -3091,6 +3126,105 @@
             renderShopSwitcherOptions();
         }
 
+        let activeTooltipTarget = null;
+        let globalTooltipEl = null;
+
+        function ensureGlobalTooltipEl() {
+            if (globalTooltipEl && document.body.contains(globalTooltipEl)) return globalTooltipEl;
+            globalTooltipEl = document.createElement('div');
+            globalTooltipEl.id = 'adray-global-tooltip';
+            globalTooltipEl.setAttribute('role', 'tooltip');
+            document.body.appendChild(globalTooltipEl);
+            return globalTooltipEl;
+        }
+
+        function positionGlobalTooltip(target) {
+            const tooltip = ensureGlobalTooltipEl();
+            if (!target) return;
+
+            tooltip.style.left = '0px';
+            tooltip.style.top = '0px';
+            tooltip.style.visibility = 'hidden';
+            tooltip.classList.add('is-visible');
+
+            const rect = target.getBoundingClientRect();
+            const pad = 10;
+            const tooltipRect = tooltip.getBoundingClientRect();
+            const maxLeft = Math.max(pad, window.innerWidth - tooltipRect.width - pad);
+            const centeredLeft = rect.left + (rect.width / 2) - (tooltipRect.width / 2);
+            const left = Math.min(maxLeft, Math.max(pad, centeredLeft));
+
+            let top = rect.top - tooltipRect.height - 10;
+            if (top < pad) {
+                top = Math.min(window.innerHeight - tooltipRect.height - pad, rect.bottom + 10);
+            }
+
+            tooltip.style.left = `${left}px`;
+            tooltip.style.top = `${Math.max(pad, top)}px`;
+            tooltip.style.visibility = 'visible';
+        }
+
+        function showGlobalTooltip(target) {
+            const tooltipText = String(target?.getAttribute('data-tooltip') || '').trim();
+            if (!tooltipText) return hideGlobalTooltip();
+            activeTooltipTarget = target;
+            const tooltip = ensureGlobalTooltipEl();
+            tooltip.textContent = tooltipText;
+            tooltip.classList.add('is-visible');
+            positionGlobalTooltip(target);
+        }
+
+        function hideGlobalTooltip() {
+            activeTooltipTarget = null;
+            if (!globalTooltipEl) return;
+            globalTooltipEl.classList.remove('is-visible');
+            globalTooltipEl.style.visibility = 'hidden';
+        }
+
+        function initializeGlobalTooltipPortal() {
+            if (document.body?.dataset?.adrayTooltipPortal === 'ready') return;
+            ensureGlobalTooltipEl();
+            if (document.body) {
+                document.body.dataset.adrayTooltipPortal = 'ready';
+                document.body.classList.add('tooltip-portal-ready');
+            }
+
+            document.addEventListener('mouseover', (event) => {
+                const target = event.target instanceof Element ? event.target.closest('[data-tooltip]') : null;
+                if (!target) return;
+                showGlobalTooltip(target);
+            });
+
+            document.addEventListener('mouseout', (event) => {
+                if (!activeTooltipTarget) return;
+                const next = event.relatedTarget instanceof Element ? event.relatedTarget.closest('[data-tooltip]') : null;
+                if (next === activeTooltipTarget) return;
+                if (next) {
+                    showGlobalTooltip(next);
+                    return;
+                }
+                hideGlobalTooltip();
+            });
+
+            document.addEventListener('focusin', (event) => {
+                const target = event.target instanceof Element ? event.target.closest('[data-tooltip]') : null;
+                if (!target) return;
+                showGlobalTooltip(target);
+            });
+
+            document.addEventListener('focusout', () => {
+                hideGlobalTooltip();
+            });
+
+            document.addEventListener('scroll', () => {
+                if (activeTooltipTarget) positionGlobalTooltip(activeTooltipTarget);
+            }, true);
+
+            window.addEventListener('resize', () => {
+                if (activeTooltipTarget) positionGlobalTooltip(activeTooltipTarget);
+            });
+        }
+
         function resolvePublicShopId() {
             const fromUrl = getShopIdFromUrl();
             if (fromUrl) {
@@ -3109,6 +3243,7 @@
             initializeDateControls();
             initializeMetricCarousel();
             initializeShopSwitcher();
+            initializeGlobalTooltipPortal();
 
             // Check URL purely for overrides (for admins or explicit intent)
             const fromUrl = getShopIdFromUrl();
