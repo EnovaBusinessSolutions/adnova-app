@@ -37,6 +37,10 @@
             --dash-warning: #f3c77a;
             --dash-shadow: 0 24px 60px rgba(0, 0, 0, 0.34);
             --dash-radius: 28px;
+            --dash-scrollbar-size: 8px;
+            --dash-scrollbar-track: rgba(255, 255, 255, 0.06);
+            --dash-scrollbar-thumb: rgba(181, 92, 255, 0.52);
+            --dash-scrollbar-thumb-hover: rgba(181, 92, 255, 0.78);
         }
 
         body.adray-dashboard {
@@ -47,6 +51,33 @@
                 linear-gradient(180deg, #0b0b0d 0%, #050508 100%);
             color: var(--dash-text);
             min-height: 100vh;
+        }
+
+        body.adray-dashboard,
+        body.adray-dashboard * {
+            scrollbar-width: thin;
+            scrollbar-color: var(--dash-scrollbar-thumb) var(--dash-scrollbar-track);
+        }
+
+        body.adray-dashboard *::-webkit-scrollbar {
+            width: var(--dash-scrollbar-size);
+            height: var(--dash-scrollbar-size);
+        }
+
+        body.adray-dashboard *::-webkit-scrollbar-track {
+            background: var(--dash-scrollbar-track);
+            border-radius: 999px;
+        }
+
+        body.adray-dashboard *::-webkit-scrollbar-thumb {
+            background: var(--dash-scrollbar-thumb);
+            border-radius: 999px;
+            border: 1px solid transparent;
+            background-clip: padding-box;
+        }
+
+        body.adray-dashboard *::-webkit-scrollbar-thumb:hover {
+            background: var(--dash-scrollbar-thumb-hover);
         }
 
         body.adray-dashboard::before {
@@ -789,7 +820,7 @@
             -webkit-overflow-scrolling: touch;
             padding-right: 0.25rem;
             scrollbar-width: thin;
-            scrollbar-color: rgba(202, 138, 229, 0.38) transparent;
+            scrollbar-color: var(--dash-scrollbar-thumb) var(--dash-scrollbar-track);
         }
 
         #feed-container {
@@ -809,17 +840,17 @@
         }
 
         .live-feed-scroll-wrap::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
+            width: var(--dash-scrollbar-size);
+            height: var(--dash-scrollbar-size);
         }
 
         .live-feed-scroll-wrap::-webkit-scrollbar-thumb {
-            background: rgba(202, 138, 229, 0.38);
+            background: var(--dash-scrollbar-thumb);
             border-radius: 999px;
         }
 
         .live-feed-scroll-wrap::-webkit-scrollbar-track {
-            background: transparent;
+            background: var(--dash-scrollbar-track);
         }
 
         .live-feed-scrollbar {
@@ -828,10 +859,10 @@
             top: 1rem;
             right: 0.42rem;
             bottom: 1rem;
-            width: 12px;
+            width: var(--dash-scrollbar-size);
             border-radius: 999px;
-            background: rgba(255, 255, 255, 0.06);
-            box-shadow: inset 0 0 0 1px rgba(126, 240, 200, 0.1);
+            background: var(--dash-scrollbar-track);
+            box-shadow: inset 0 0 0 1px rgba(181, 92, 255, 0.12);
             opacity: 0;
             transform: translateX(4px);
             transition: opacity 160ms ease, transform 160ms ease;
@@ -848,13 +879,13 @@
 
         .live-feed-scroll-thumb {
             position: absolute;
-            left: 2px;
-            right: 2px;
+            left: 1px;
+            right: 1px;
             top: 0;
             min-height: 42px;
             border-radius: 999px;
-            background: linear-gradient(180deg, rgba(126, 240, 200, 0.95) 0%, rgba(106, 223, 187, 0.78) 100%);
-            box-shadow: 0 4px 16px rgba(126, 240, 200, 0.28);
+            background: linear-gradient(180deg, rgba(197, 132, 255, 0.96) 0%, rgba(181, 92, 255, 0.82) 100%);
+            box-shadow: 0 4px 14px rgba(181, 92, 255, 0.24);
             cursor: grab;
             transition: background 120ms ease;
             touch-action: none;
@@ -863,7 +894,7 @@
 
         .live-feed-scroll-thumb.is-dragging {
             cursor: grabbing;
-            background: linear-gradient(180deg, rgba(153, 245, 215, 0.98) 0%, rgba(126, 240, 200, 0.88) 100%);
+            background: linear-gradient(180deg, rgba(214, 167, 255, 0.98) 0%, rgba(181, 92, 255, 0.9) 100%);
         }
 
         .live-feed-scrollbar.is-hidden {
@@ -944,14 +975,14 @@
         .complete-orders-scroll::-webkit-scrollbar,
         #session-detail-orders::-webkit-scrollbar,
         #session-detail-timeline::-webkit-scrollbar {
-            width: 9px;
-            height: 9px;
+            width: var(--dash-scrollbar-size);
+            height: var(--dash-scrollbar-size);
         }
 
         .complete-orders-scroll::-webkit-scrollbar-thumb,
         #session-detail-orders::-webkit-scrollbar-thumb,
         #session-detail-timeline::-webkit-scrollbar-thumb {
-            background: rgba(202, 138, 229, 0.35);
+            background: var(--dash-scrollbar-thumb);
             border-radius: 999px;
         }
 
@@ -1127,12 +1158,12 @@
 
         .attribution-journey-history::-webkit-scrollbar,
         .attribution-journey-focus::-webkit-scrollbar {
-            width: 8px;
+            width: var(--dash-scrollbar-size);
         }
 
         .attribution-journey-history::-webkit-scrollbar-thumb,
         .attribution-journey-focus::-webkit-scrollbar-thumb {
-            background: rgba(202, 138, 229, 0.35);
+            background: var(--dash-scrollbar-thumb);
             border-radius: 999px;
         }
 
@@ -1372,11 +1403,11 @@
         }
 
         .journey-timeline::-webkit-scrollbar {
-            width: 8px;
+            width: var(--dash-scrollbar-size);
         }
 
         .journey-timeline::-webkit-scrollbar-thumb {
-            background: rgba(202, 138, 229, 0.34);
+            background: var(--dash-scrollbar-thumb);
             border-radius: 999px;
         }
 
@@ -2211,18 +2242,18 @@
         }
 
         .metric-carousel-viewport::-webkit-scrollbar {
-            height: 8px;
+            height: var(--dash-scrollbar-size);
         }
         .metric-carousel-viewport::-webkit-scrollbar-track {
-            background: var(--dash-panel-soft);
-            border-radius: 8px;
+            background: var(--dash-scrollbar-track);
+            border-radius: 999px;
         }
         .metric-carousel-viewport::-webkit-scrollbar-thumb {
-            background: var(--dash-soft);
-            border-radius: 8px;
+            background: var(--dash-scrollbar-thumb);
+            border-radius: 999px;
         }
         .metric-carousel-viewport::-webkit-scrollbar-thumb:hover {
-            background: var(--dash-accent);
+            background: var(--dash-scrollbar-thumb-hover);
         }
 
         .metric-card-slide {
@@ -2298,10 +2329,10 @@
             color: var(--dash-text) !important;
         }
         #ue-content::-webkit-scrollbar {
-            width: 10px;
+            width: var(--dash-scrollbar-size);
         }
         #ue-content::-webkit-scrollbar-thumb {
-            background: rgba(202, 138, 229, 0.35);
+            background: var(--dash-scrollbar-thumb);
             border-radius: 999px;
         }
         @keyframes slideIn {
