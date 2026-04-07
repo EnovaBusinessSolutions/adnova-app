@@ -777,16 +777,21 @@
         }
 
         #feed-container {
-            flex: 1 1 auto;
+            flex: 1 1 0%;
+            height: 0;
             min-height: 0;
-            max-height: none;
-            overflow-y: scroll;
+            max-height: 100%;
+            overflow-x: hidden;
+            overflow-y: auto;
+            padding-right: 0.35rem;
+            touch-action: pan-y;
         }
 
         #feed-container {
-            overflow-y: scroll !important;
+            overflow-y: auto !important;
             overscroll-behavior: contain;
-            scrollbar-gutter: stable;
+            overscroll-behavior-y: contain;
+            scrollbar-gutter: stable both-edges;
             -webkit-overflow-scrolling: touch;
             scrollbar-width: thin;
             scrollbar-color: rgba(126, 240, 200, 0.55) rgba(255, 255, 255, 0.04);
