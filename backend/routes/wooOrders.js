@@ -4,6 +4,44 @@ const router = express.Router();
 const prisma = require('../utils/prismaClient');
 const { sendToAllPlatforms } = require('../services/capiFanout');
 const { hashPII } = require('../utils/encryption');
+const eventBus = require('../utils/eventBus');
+
+function isSchemaDriftError(error) {
+  if (!error) return false;
+  if (error.code === 'P2022') return true;
+  const msg = String(error.message || '').toLowerCase();
+  return msg.includes('column') && msg.includes('does not exist');
+}
+
+function normalizeAccountId(value) {
+  if (!value) return null;
+  const raw = String(value).trim().toLowerCase();
+  if (!raw) return null;
+
+  try {
+    const host = new URL(raw.includes('://') ? raw : `https://${raw}`).hostname;
+    return host.replace(/^www\./, '');
+  } catch (_) {
+    return raw.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+  }
+}
+
+function parseAllowedAccountIds() {
+  const raw = String(process.env.ADRAY_ALLOWED_ACCOUNT_IDS || '').trim();
+  if (!raw) return null;
+  const values = raw
+    .split(',')
+    .map((item) => normalizeAccountId(item) || String(item || '').trim().toLowerCase())
+    .filter(Boolean);
+  return values.length ? new Set(values) : null;
+}
+
+function isAccountAllowed(accountId) {
+  const allowed = parseAllowedAccountIds();
+  if (!allowed) return true;
+  const normalized = normalizeAccountId(accountId) || String(accountId || '').trim().toLowerCase();
+  return normalized ? allowed.has(normalized) : false;
+}
 
 function normalizeWooChannel(payload = {}) {
   const utmSource = String(payload.utm_source || '').trim().toLowerCase();
@@ -11,19 +49,22 @@ function normalizeWooChannel(payload = {}) {
   const wooSourceLabel = String(payload.woo_source_label || '').trim().toLowerCase();
   const wooSourceType = String(payload.woo_source_type || '').trim().toLowerCase();
 
-  if (utmSource === 'google') return 'google';
+  const isPaidGoogle = utmMedium === 'cpc' || utmMedium === 'paid_search' || payload.gclid || wooSourceLabel.includes('cpc') || wooSourceLabel.includes('ads');
+
+  if (utmSource === 'google') return isPaidGoogle ? 'google' : 'organic';
   if (utmSource === 'facebook' || utmSource === 'instagram') return 'meta';
   if (utmSource === 'tiktok') return 'tiktok';
   if (utmSource === 'yahoo' || utmSource === 'bing') return 'other';
 
   if (utmMedium === 'paid_search') return 'google';
+  if (utmMedium === 'organic') return 'organic';
   if (utmMedium === 'paid_social') {
     if (utmSource === 'tiktok') return 'tiktok';
     return 'meta';
   }
 
   if (wooSourceLabel.includes('google')) {
-    return 'google';
+    return isPaidGoogle ? 'google' : 'organic';
   }
   if (wooSourceLabel.includes('yahoo') || wooSourceLabel.includes('bing') || wooSourceLabel.includes('referido')) {
     return 'other';
@@ -44,6 +85,20 @@ function normalizeWooChannel(payload = {}) {
 function parseFloatSafe(value) {
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseIntSafe(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
+
+function parseBooleanSafe(value) {
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return false;
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+  return false;
 }
 
 function hasExplicitTimezone(value) {
@@ -95,6 +150,41 @@ function parseWooOrderCreatedAt(payload = {}) {
   return new Date();
 }
 
+async function resolveOrdersCountFallback({ prismaClient, accountId, customerId, emailHash }) {
+  const or = [];
+  if (customerId) or.push({ customerId });
+  if (emailHash) or.push({ emailHash });
+  if (!or.length) return null;
+
+  const historicalCount = await prismaClient.order.count({
+    where: {
+      accountId,
+      OR: or,
+    }
+  });
+
+  return historicalCount + 1;
+}
+
+async function persistWooEvent(prismaClient, payload) {
+  try {
+    await prismaClient.event.create({ data: payload.enriched });
+    return true;
+  } catch (error1) {
+    if (!isSchemaDriftError(error1)) throw error1;
+  }
+
+  try {
+    await prismaClient.event.create({ data: payload.legacy });
+    return true;
+  } catch (error2) {
+    if (!isSchemaDriftError(error2)) throw error2;
+  }
+
+  await prismaClient.event.create({ data: payload.minimal });
+  return true;
+}
+
 function normalizeCustomerDisplayName(...values) {
   const invalidTokens = new Set(['unknown', 'undefined', 'null', 'n/a', 'none', '-']);
 
@@ -110,15 +200,21 @@ function normalizeCustomerDisplayName(...values) {
 }
 
 router.post('/woo/orders-sync', async (req, res) => {
+  let step = 'init';
   try {
     const payload = req.body || {};
-    const accountId = String(payload.account_id || '').trim();
+    const accountId = normalizeAccountId(payload.account_id);
     const orderId = String(payload.order_id || '').trim();
 
     if (!accountId || !orderId) {
       return res.status(400).json({ success: false, error: 'account_id and order_id are required' });
     }
 
+    if (!isAccountAllowed(accountId)) {
+      return res.json({ success: true, ignored: true, reason: 'account_not_allowed', accountId, orderId });
+    }
+
+    step = 'account_upsert';
     await prisma.account.upsert({
       where: { accountId },
       create: {
@@ -129,6 +225,7 @@ router.post('/woo/orders-sync', async (req, res) => {
       update: {},
     });
 
+    step = 'checkout_lookup';
     const checkoutToken = payload.checkout_token ? String(payload.checkout_token) : null;
     const checkoutMap = checkoutToken
       ? await prisma.checkoutSessionMap.findUnique({ where: { checkoutToken } })
@@ -156,11 +253,23 @@ router.post('/woo/orders-sync', async (req, res) => {
       ttclid: payload.ttclid || null,
       woo_source_label: payload.woo_source_label || null,
       woo_source_type: payload.woo_source_type || null,
+      woo_session_source: payload.woo_session_source || null,
+      raw_source: payload.raw_source || null,
+      collected_at: payload.collected_at || null,
       customer_name: customerDisplayName,
       customer_first_name: payload.customer_first_name || null,
       customer_last_name: payload.customer_last_name || null,
       billing_company: payload.billing_company || null,
     };
+
+    const customerId = payload.customer_id ? String(payload.customer_id) : null;
+    const incomingOrdersCount = parseIntSafe(payload.orders_count);
+    const resolvedOrdersCount = incomingOrdersCount ?? await resolveOrdersCountFallback({
+      prismaClient: prisma,
+      accountId,
+      customerId,
+      emailHash,
+    });
 
     const orderData = {
       orderNumber: String(payload.order_number || payload.order_id),
@@ -168,7 +277,7 @@ router.post('/woo/orders-sync', async (req, res) => {
       checkoutToken,
       userKey: payload.user_key || (checkoutMap ? checkoutMap.userKey : null),
       sessionId: payload.session_id || (checkoutMap ? checkoutMap.sessionId : null),
-      customerId: payload.customer_id ? String(payload.customer_id) : null,
+      customerId,
       emailHash,
       phoneHash,
       revenue: parseFloatSafe(payload.revenue),
@@ -176,6 +285,9 @@ router.post('/woo/orders-sync', async (req, res) => {
       discountTotal: parseFloatSafe(payload.discount_total),
       shippingTotal: parseFloatSafe(payload.shipping_total),
       taxTotal: parseFloatSafe(payload.tax_total),
+      refundAmount: parseFloatSafe(payload.refund_amount),
+      chargebackFlag: parseBooleanSafe(payload.chargeback_flag),
+      ordersCount: resolvedOrdersCount,
       currency: String(payload.currency || 'MXN'),
       lineItems: Array.isArray(payload.items) ? payload.items : [],
       attributedChannel,
@@ -190,13 +302,113 @@ router.post('/woo/orders-sync', async (req, res) => {
       platformCreatedAt: parseWooOrderCreatedAt(payload),
     };
 
-    const order = await prisma.order.upsert({
-      where: { orderId },
-      create: {
-        orderId,
-        ...orderData,
+    step = 'order_upsert';
+    let order;
+    try {
+      order = await prisma.order.upsert({
+        where: { orderId },
+        create: {
+          orderId,
+          ...orderData,
+        },
+        update: orderData,
+      });
+    } catch (orderUpsertError) {
+      if (!isSchemaDriftError(orderUpsertError)) throw orderUpsertError;
+
+      const fallbackOrderData = { ...orderData };
+      delete fallbackOrderData.refundAmount;
+      delete fallbackOrderData.chargebackFlag;
+      delete fallbackOrderData.ordersCount;
+
+      order = await prisma.order.upsert({
+        where: { orderId },
+        create: {
+          orderId,
+          ...fallbackOrderData,
+        },
+        update: fallbackOrderData,
+      });
+    }
+
+    // Emit realtime dashboard signal for Woo sync events.
+    // Skip emitting to the live dashboard if it's an old historic order from a backfill sync.
+    const platformCreatedAtObj = order.platformCreatedAt ? new Date(order.platformCreatedAt).getTime() : new Date().getTime();
+    const isRecentOrder = (new Date().getTime() - platformCreatedAtObj) < (1000 * 60 * 60 * 24); // 24 hours
+
+    if (isRecentOrder) {
+      eventBus.emit('event', {
+        type: 'WEBHOOK',
+        accountId,
+        sessionId: order.sessionId || null,
+        userKey: order.userKey || null,
+        eventId: order.eventId || null,
+        payload: {
+          eventName: 'purchase',
+          platform: 'woocommerce',
+          orderId: order.orderId,
+          revenue: order.revenue,
+          currency: order.currency,
+          rawSource: payload.raw_source || 'api',
+          matchType: order.sessionId ? 'deterministic' : 'probabilistic',
+          confidenceScore: Number(order.confidenceScore || 0),
+          collectedAt: new Date().toISOString(),
+          timestamp: order.platformCreatedAt ? new Date(order.platformCreatedAt).toISOString() : new Date().toISOString(),
+          source: 'woo_orders_sync',
+        }
+      });
+    }
+
+    const rawSource = payload.raw_source || 'api';
+    const matchType = order.sessionId ? 'deterministic' : 'probabilistic';
+    const confidenceScore = Number(order.confidenceScore || 0);
+    const persistedEventId = randomUUID();
+
+    await persistWooEvent(prisma, {
+      enriched: {
+        eventId: persistedEventId,
+        accountId,
+        sessionId: order.sessionId || `woo_${order.orderId}`,
+        userKey: order.userKey || 'unknown',
+        eventName: 'purchase',
+        pageType: 'checkout',
+        checkoutToken: order.checkoutToken || null,
+        orderId: order.orderId,
+        rawSource,
+        matchType,
+        confidenceScore,
+        revenue: order.revenue,
+        currency: order.currency,
+        items: Array.isArray(payload.items) ? payload.items : [],
+        rawPayload: payload,
+        collectedAt: new Date(),
+        browserReceivedAt: payload.collected_at ? new Date(payload.collected_at) : null,
+        serverReceivedAt: new Date(),
       },
-      update: orderData,
+      legacy: {
+        eventId: persistedEventId,
+        accountId,
+        sessionId: order.sessionId || `woo_${order.orderId}`,
+        userKey: order.userKey || 'unknown',
+        eventName: 'purchase',
+        checkoutToken: order.checkoutToken || null,
+        orderId: order.orderId,
+        revenue: order.revenue,
+        currency: order.currency,
+        items: Array.isArray(payload.items) ? payload.items : [],
+        rawPayload: payload,
+        browserReceivedAt: payload.collected_at ? new Date(payload.collected_at) : null,
+        serverReceivedAt: new Date(),
+      },
+      minimal: {
+        eventId: persistedEventId,
+        accountId,
+        sessionId: order.sessionId || `woo_${order.orderId}`,
+        userKey: order.userKey || 'unknown',
+        eventName: 'purchase',
+        rawPayload: payload,
+        serverReceivedAt: new Date(),
+      }
     });
 
     // Fire-and-forget: keep sync endpoint fast while still pushing conversions.
@@ -210,8 +422,8 @@ router.post('/woo/orders-sync', async (req, res) => {
 
     res.json({ success: true, orderId: order.orderId, attributedChannel: order.attributedChannel });
   } catch (error) {
-    console.error('[Woo Orders Sync] Error:', error);
-    res.status(500).json({ success: false, error: 'Internal Server Error' });
+    console.error(`[Woo Orders Sync] Error at step '${step}':`, error);
+    res.status(500).json({ success: false, error: 'Internal Server Error', step });
   }
 });
 

@@ -1,2 +1,7 @@
+<<<<<<< Updated upstream
+:HL["/landing/_next/static/chunks/15yid8f.1zi1..css","style"]
+0:{"tree":{"name":"","param":null,"prefetchHints":16,"slots":{"children":{"name":"/_not-found","param":null,"prefetchHints":0,"slots":{"children":{"name":"__PAGE__","param":null,"prefetchHints":0,"slots":null}}}}},"staleTime":300,"buildId":"AOaG90KAsrs8w2ae67K7_"}
+=======
 :HL["/landing/_next/static/chunks/0_meed57g0.kz.css","style"]
 0:{"tree":{"name":"","param":null,"prefetchHints":16,"slots":{"children":{"name":"/_not-found","param":null,"prefetchHints":0,"slots":{"children":{"name":"__PAGE__","param":null,"prefetchHints":0,"slots":null}}}}},"staleTime":300,"buildId":"PVcGDyZfVAx7--kgiFgeM"}
+>>>>>>> Stashed changes

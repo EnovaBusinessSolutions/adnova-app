@@ -12,6 +12,10 @@ const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
 const CODE_LIFETIME_MS = 10 * 60 * 1000;
 const ACCESS_TOKEN_LIFETIME_MS = 60 * 60 * 1000;
 const REFRESH_TOKEN_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+const TOKEN_EXCHANGE_GRANTS = new Set([
+  'urn:ietf:params:oauth:grant-type:token-exchange',
+  'token_exchange',
+]);
 
 function generateToken() {
   return crypto.randomBytes(32).toString('hex');
@@ -28,6 +32,35 @@ function verifyPkce(codeVerifier, codeChallenge, method) {
     return hash === codeChallenge;
   }
   return codeVerifier === codeChallenge;
+}
+
+function parseScopes(scopeValue) {
+  if (!scopeValue) return null;
+  const parsed = String(scopeValue)
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return parsed.length ? parsed : null;
+}
+
+function filterAllowedScopes(requestedScopes, allowedScopes) {
+  const allowed = new Set((allowedScopes || []).filter(Boolean));
+  if (!requestedScopes?.length) return Array.from(allowed);
+  return requestedScopes.filter((scope) => allowed.has(scope));
+}
+
+function isGrantAllowed(client, grantType) {
+  const allowed = Array.isArray(client?.grantsAllowed) && client.grantsAllowed.length
+    ? client.grantsAllowed
+    : ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:token-exchange'];
+  return allowed.includes(grantType);
+}
+
+function resolveAuthenticatedUserId(req) {
+  if (req?.isAuthenticated?.() && req.user?._id) return req.user._id;
+  if (req?.user?._id) return req.user._id;
+  if (req?.session?.passport?.user) return req.session.passport.user;
+  return null;
 }
 
 /**
@@ -113,9 +146,18 @@ router.get('/authorize', async (req, res) => {
  * POST /oauth/token
  * Exchange authorization code for tokens, or refresh an access token.
  */
-router.post('/token', express.urlencoded({ extended: false }), async (req, res) => {
+router.post('/token', express.urlencoded({ extended: false }), express.json(), async (req, res) => {
   try {
-    const { grant_type, code, redirect_uri, client_id, client_secret, refresh_token, code_verifier } = req.body;
+    const {
+      grant_type,
+      code,
+      redirect_uri,
+      client_id,
+      client_secret,
+      refresh_token,
+      code_verifier,
+      scope,
+    } = req.body;
 
     if (grant_type === 'authorization_code') {
       if (!code || !redirect_uri || !client_id) {
@@ -128,6 +170,9 @@ router.post('/token', express.urlencoded({ extended: false }), async (req, res) 
       const client = await OAuthClient.findOne({ clientId: client_id, active: true });
       if (!client) {
         return res.status(401).json({ error: 'invalid_client' });
+      }
+      if (!isGrantAllowed(client, 'authorization_code')) {
+        return res.status(400).json({ error: 'unauthorized_client' });
       }
 
       if (client_secret && client.clientSecret !== client_secret) {
@@ -199,6 +244,14 @@ router.post('/token', express.urlencoded({ extended: false }), async (req, res) 
         return res.status(400).json({ error: 'invalid_grant', error_description: 'Refresh token expired or invalid.' });
       }
 
+      const client = await OAuthClient.findOne({ clientId: client_id, active: true }).lean();
+      if (!client) {
+        return res.status(401).json({ error: 'invalid_client' });
+      }
+      if (!isGrantAllowed(client, 'refresh_token')) {
+        return res.status(400).json({ error: 'unauthorized_client' });
+      }
+
       existing.revoked = true;
       await existing.save();
 
@@ -222,6 +275,65 @@ router.post('/token', express.urlencoded({ extended: false }), async (req, res) 
         expires_in: Math.floor(ACCESS_TOKEN_LIFETIME_MS / 1000),
         refresh_token: newRefreshToken,
         scope: existing.scopes.join(' '),
+      });
+    }
+
+    if (TOKEN_EXCHANGE_GRANTS.has(grant_type)) {
+      if (!client_id) {
+        return res.status(400).json({
+          error: 'invalid_request',
+          error_description: 'client_id is required.',
+        });
+      }
+
+      const client = await OAuthClient.findOne({ clientId: client_id, active: true });
+      if (!client) {
+        return res.status(401).json({ error: 'invalid_client' });
+      }
+      if (!isGrantAllowed(client, 'urn:ietf:params:oauth:grant-type:token-exchange')) {
+        return res.status(400).json({ error: 'unauthorized_client' });
+      }
+      if (client_secret && client.clientSecret !== client_secret) {
+        return res.status(401).json({ error: 'invalid_client' });
+      }
+
+      const userId = resolveAuthenticatedUserId(req);
+      if (!userId) {
+        return res.status(401).json({
+          error: 'invalid_grant',
+          error_description: 'A valid authenticated Adray session is required for token exchange.',
+        });
+      }
+
+      const requestedScopes = parseScopes(scope);
+      const grantedScopes = filterAllowedScopes(requestedScopes, client.scopes);
+      if (!grantedScopes.length) {
+        return res.status(400).json({
+          error: 'invalid_scope',
+          error_description: 'No permitted scopes requested for this client.',
+        });
+      }
+
+      const accessToken = generateToken();
+      const newRefreshToken = generateToken();
+      const now = new Date();
+      await OAuthToken.create({
+        accessToken,
+        refreshToken: newRefreshToken,
+        userId,
+        clientId: client_id,
+        scopes: grantedScopes,
+        accessTokenExpiresAt: new Date(now.getTime() + ACCESS_TOKEN_LIFETIME_MS),
+        refreshTokenExpiresAt: new Date(now.getTime() + REFRESH_TOKEN_LIFETIME_MS),
+      });
+
+      return res.json({
+        access_token: accessToken,
+        issued_token_type: 'urn:ietf:params:oauth:token-type:access_token',
+        token_type: 'Bearer',
+        expires_in: Math.floor(ACCESS_TOKEN_LIFETIME_MS / 1000),
+        refresh_token: newRefreshToken,
+        scope: grantedScopes.join(' '),
       });
     }
 

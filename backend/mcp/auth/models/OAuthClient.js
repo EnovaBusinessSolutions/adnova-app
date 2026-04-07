@@ -10,6 +10,10 @@ const OAuthClientSchema = new Schema(
     name: { type: String, required: true },
     redirectUris: { type: [String], default: [] },
     scopes: { type: [String], default: ['read:ads_performance', 'read:shopify_orders'] },
+    grantsAllowed: {
+      type: [String],
+      default: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:token-exchange'],
+    },
     active: { type: Boolean, default: true },
   },
   { collection: 'oauth_clients', timestamps: true }

@@ -6,24 +6,6 @@
   <title>Recuperar contraseña - Adray</title>
 
   <link rel="stylesheet" href="recuperar.css" />
-
-  <!-- ✅ Turnstile: site key para recover.js -->
-  <meta name="turnstile-site-key" content="0x4AAAAAACMV4omG2rQgADlG" />
-
-  <!-- ✅ Turnstile (EXPLÍCITO) -->
-  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
-
-  <style>
-    /* Contenedor del widget */
-    #turnstile-wrap{
-      margin-top: 14px;
-      margin-bottom: 10px;
-      display: flex;
-      justify-content: center;
-      width: 100%;
-    }
-    #turnstile-wrap > div { transform-origin: top center; }
-  </style>
 </head>
 
 <body>
@@ -36,12 +18,6 @@
     <form id="recoverForm" autocomplete="off">
       <div class="input-block">
         <input type="email" id="email" placeholder="Correo electrónico" required />
-      </div>
-
-      <!-- ✅ Turnstile (SIEMPRE) -->
-      <div id="turnstile-wrap">
-        <!-- Slot vacío: lo renderiza recover.js -->
-        <div id="cf-turnstile-slot"></div>
       </div>
 
       <div class="button-block">

@@ -78,6 +78,7 @@ model IdentityGraph {
   customerId      String?  @map("customer_id")
   emailHash       String?  @map("email_hash")
   phoneHash       String?  @map("phone_hash")
+  ipHash          String?  @map("ip_hash")
   fbp             String?
   fbc             String?
   fbclid          String?
@@ -102,6 +103,7 @@ model Session {
   sessionId      String   @unique @map("session_id")
   accountId      String   @map("account_id")
   userKey        String   @map("user_key")
+  ga4SessionSource String? @map("ga4_session_source")
   utmSource      String?  @map("utm_source")
   utmMedium      String?  @map("utm_medium")
   utmCampaign    String?  @map("utm_campaign")
@@ -109,6 +111,7 @@ model Session {
   utmTerm        String?  @map("utm_term")
   referrer       String?
   landingPageUrl String?  @map("landing_page_url")
+  ipHash         String?  @map("ip_hash")
   fbclid         String?
   gclid          String?
   ttclid         String?
@@ -116,6 +119,7 @@ model Session {
   fbc            String?
   isFirstTouch   Boolean  @map("is_first_touch")
   startedAt      DateTime @default(now()) @map("started_at")
+  sessionEndAt   DateTime? @map("session_end_at")
   lastEventAt    DateTime @default(now()) @updatedAt @map("last_event_at")
 
   account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
@@ -154,10 +158,15 @@ model Event {
   cartValue         Float?    @map("cart_value")
   checkoutToken     String?   @map("checkout_token")
   orderId           String?   @map("order_id")
+  rawSource         String?   @map("raw_source")
+  matchType         String?   @map("match_type")
+  confidenceScore   Float?    @map("confidence_score")
+  ipHash            String?   @map("ip_hash")
   revenue           Float?
   currency          String?
   items             Json?
   rawPayload        Json      @map("raw_payload")
+  collectedAt       DateTime? @map("collected_at")
   browserReceivedAt DateTime? @map("browser_received_at")
   serverReceivedAt  DateTime? @map("server_received_at")
   createdAt         DateTime  @default(now()) @map("created_at")
@@ -183,6 +192,9 @@ model Order {
   discountTotal         Float    @map("discount_total")
   shippingTotal         Float    @map("shipping_total")
   taxTotal              Float    @map("tax_total")
+  refundAmount          Float    @default(0) @map("refund_amount")
+  chargebackFlag        Boolean  @default(false) @map("chargeback_flag")
+  ordersCount           Int?     @map("orders_count")
   currency              String
   lineItems             Json     @map("line_items")
   attributedChannel     String?  @map("attributed_channel")

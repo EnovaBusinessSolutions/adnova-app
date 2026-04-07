@@ -291,6 +291,7 @@ router.post('/accounts/selection', requireAuth, express.json(), async (req, res)
  * ========================================================================= */
 router.get('/accounts', requireAuth, async (req, res) => {
   try {
+    const includeAll = String(req.query.all || req.query.include_all || '0') === '1';
     const ga = await GoogleAccount.findOne({
       $or: [{ user: req.user._id }, { userId: req.user._id }],
     })
@@ -332,14 +333,14 @@ router.get('/accounts', requireAuth, async (req, res) => {
 
     // Filtrar por selección si existe
     let filtered = accounts;
-    if (selected.length > 0) {
+    if (!includeAll && selected.length > 0) {
       const allow = new Set(selected);
       filtered = accounts.filter(a => allow.has(normId(a.id)));
     }
 
     // defaultCustomerId
     let defaultCustomerId = normId(ga?.defaultCustomerId || '');
-    if (selected.length > 0 && defaultCustomerId && !selected.includes(defaultCustomerId)) {
+    if (!includeAll && selected.length > 0 && defaultCustomerId && !selected.includes(defaultCustomerId)) {
       defaultCustomerId = '';
     }
     if (!defaultCustomerId) {
@@ -358,6 +359,7 @@ router.get('/accounts', requireAuth, async (req, res) => {
       accounts: filtered,
       defaultCustomerId: defaultCustomerId || null,
       requiredSelection,
+      selectedCustomerIds: selected,
     });
   } catch (err) {
     logger.error('google/ads/accounts error', err?.response?.data || err);

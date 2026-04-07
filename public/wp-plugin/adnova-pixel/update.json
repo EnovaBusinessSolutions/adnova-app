@@ -1,0 +1,8 @@
+{
+  "version": "1.2.3",
+  "homepage": "https://adray-app-staging-german.onrender.com/",
+  "download_url": "https://adray-app-staging-german.onrender.com/wp-plugin/adnova-pixel/adnova-pixel.zip",
+  "tested": "6.4.3",
+  "requires": "5.6",
+  "requires_php": "7.4"
+}
