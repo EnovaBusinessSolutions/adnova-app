@@ -26,6 +26,11 @@ const {
   generateSignalPdfForUser,
 } = require('./signalPdfBuilder');
 
+const {
+  encodeSignalPayload,
+  isEncodedSignalPayloadBuildableForPdf,
+} = require('./signalEncoder');
+
 let OpenAI = null;
 try {
   OpenAI = require('openai');
@@ -604,19 +609,30 @@ function isSignalPayloadBuildableForPdf(signalPayload) {
 function deriveSignalReadinessFromAi(ai = {}, fallbackSignalPayload = null) {
   const status = safeStr(ai?.status).trim().toLowerCase();
   const stage = safeStr(ai?.stage).trim().toLowerCase();
-  const signalPayload = ai?.signalPayload || fallbackSignalPayload || null;
+  const signalPayload =
+    ai?.signal?.payload ||
+    ai?.signalPayload ||
+    fallbackSignalPayload ||
+    null;
+  const encodedPayload =
+    ai?.signal?.encodedPayload ||
+    ai?.encodedPayload ||
+    null;
   const payloadBuildable = isSignalPayloadBuildableForPdf(signalPayload);
+  const encodedPayloadBuildable = isEncodedSignalPayloadBuildableForPdf(encodedPayload);
 
   const signalComplete =
     status === 'done' &&
     stage === 'completed' &&
-    payloadBuildable;
+    encodedPayloadBuildable;
 
   const signalValidForPdf = signalComplete;
 
   return {
     signalPayload,
+    encodedPayload,
     payloadBuildable,
+    encodedPayloadBuildable,
     signalComplete,
     signalValidForPdf,
     signalReadyForPdf: signalValidForPdf,
@@ -1596,7 +1612,7 @@ async function enrichWithOpenAI(base) {
   }
 }
 
-async function buildSignalPdfArtifact(userId, root, signalPayload) {
+async function buildSignalPdfArtifact(userId, root, signalPayload, encodedPayload = null) {
   const user = await User.findById(userId)
     .select('name companyName workspaceName businessName email')
     .lean()
@@ -1606,6 +1622,7 @@ async function buildSignalPdfArtifact(userId, root, signalPayload) {
     userId,
     root,
     signalPayload,
+    encodedPayload,
     user,
   });
 }
@@ -1695,6 +1712,7 @@ function buildResultFromRoot(root, fallback = {}) {
   );
 
   const signalPayload = readiness.signalPayload;
+  const encodedPayload = readiness.encodedPayload;
   const signalReadyForPdf = readiness.signalReadyForPdf;
   const signalComplete = readiness.signalComplete;
   const signalValidForPdf = readiness.signalValidForPdf;
@@ -1732,7 +1750,7 @@ function buildResultFromRoot(root, fallback = {}) {
     ok: true,
     root,
     unifiedBase: state?.unifiedBase || fallback.unifiedBase || null,
-    encodedPayload: state?.encodedPayload || fallback.encodedPayload || null,
+    encodedPayload: encodedPayload || fallback.encodedPayload || null,
     signalPayload,
     pdf,
     data: {
@@ -1745,12 +1763,12 @@ function buildResultFromRoot(root, fallback = {}) {
       storageRangeDays: toNum(state?.storageRangeDays) || fallback.storageRangeDays || null,
       usedOpenAI: !!state?.usedOpenAI,
       model: state?.model || null,
-      hasEncodedPayload: !!state?.encodedPayload,
+      hasEncodedPayload: !!encodedPayload,
       hasSignal: !!signalPayload,
       signalComplete,
       signalValidForPdf,
       signalReadyForPdf,
-      providerAgnostic: !!state?.encodedPayload?.providerAgnostic,
+      providerAgnostic: !!encodedPayload?.providerAgnostic,
 
       usableSources: Array.isArray(state?.usableSources) ? state.usableSources : (fallback.usableSources || []),
       pendingConnectedSources: Array.isArray(state?.pendingConnectedSources) ? state.pendingConnectedSources : (fallback.pendingConnectedSources || []),
@@ -1830,6 +1848,12 @@ async function markContextStale(userId, reason = 'source_updated', extra = {}) {
           unifiedBase: null,
           encodedPayload: null,
           signalPayload: null,
+          signal: {
+            ...(prevAi?.signal || {}),
+            payload: null,
+            encodedPayload: null,
+            unifiedBase: null,
+          },
           sourceFingerprint: null,
           sourceSnapshots: null,
 
@@ -1928,6 +1952,12 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       unifiedBase: null,
       encodedPayload: null,
       signalPayload: null,
+      signal: {
+        ...(currentAi?.signal || {}),
+        payload: null,
+        encodedPayload: null,
+        unifiedBase: null,
+      },
       sourceFingerprint: null,
       usedOpenAI: false,
       model: null,
@@ -2117,6 +2147,15 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       usableSources,
       pendingConnectedSources,
       error: null,
+      unifiedBase: null,
+      encodedPayload: null,
+      signalPayload: null,
+      signal: {
+        ...(currentAi?.signal || {}),
+        payload: null,
+        encodedPayload: null,
+        unifiedBase: null,
+      },
         pdf: emptyPdfState({
         status: 'idle',
         stage: 'idle',
@@ -2201,6 +2240,12 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       unifiedBase: null,
       encodedPayload: null,
       signalPayload: null,
+      signal: {
+        ...(currentAi?.signal || {}),
+        payload: null,
+        encodedPayload: null,
+        unifiedBase: null,
+      },
       sourceFingerprint: null,
         pdf: emptyPdfState({
         status: 'idle',
@@ -2284,6 +2329,12 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     unifiedBase: null,
     encodedPayload: null,
     signalPayload: null,
+    signal: {
+      ...(currentAi?.signal || {}),
+      payload: null,
+      encodedPayload: null,
+      unifiedBase: null,
+    },
     sourceFingerprint: null,
     pdf: emptyPdfState({
       status: 'idle',
@@ -2374,6 +2425,12 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     error: null,
     encodedPayload: null,
     signalPayload: null,
+    signal: {
+      ...(currentAi?.signal || {}),
+      payload: null,
+      encodedPayload: null,
+      unifiedBase: null,
+    },
     sourceFingerprint: null,
     pdf: emptyPdfState({
       status: 'idle',
@@ -2542,8 +2599,15 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
 
   const encoded = await enrichWithOpenAI(unifiedBase);
   const signalPayload = encoded.payload;
+  const encodedSignalPayload = encodeSignalPayload({
+    signalPayload,
+    unifiedBase,
+    root: encodingResult?.root || latestRootForBase || initialRoot || null,
+    user: null,
+  });
+  const encodedSignalBuildable = isEncodedSignalPayloadBuildableForPdf(encodedSignalPayload);
 
-  if (!isSignalPayloadBuildableForPdf(signalPayload)) {
+  if (!encodedSignalBuildable) {
       const waitingValidResult = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
       ...(currentAi || {}),
       status: 'processing',
@@ -2559,8 +2623,14 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
       unifiedBase,
 
       // guardamos el draft, pero NO lo exponemos como signal final
-      encodedPayload: signalPayload,
+      encodedPayload: encodedSignalPayload,
       signalPayload: null,
+      signal: {
+        ...(currentAi?.signal || {}),
+        payload: null,
+        encodedPayload: encodedSignalPayload,
+        unifiedBase,
+      },
 
       sourceFingerprint: finalSourceFingerprint,
       currentSourcesSnapshot: finalSourcesSnapshot,
@@ -2603,7 +2673,7 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
         storageRangeDays,
         usedOpenAI: !!encoded.usedOpenAI,
         model: encoded.model || null,
-        hasSignal: true,
+        hasSignal: false,
         signalValidForPdf: false,
         sources: buildSignalSourcesPayload({
           sourcesStatus,
@@ -2632,7 +2702,7 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
   pendingConnectedSources,
   sources: sourcesStatus,
   unifiedBase,
-  encodedPayload: signalPayload,
+  encodedPayload: encodedSignalPayload,
   signalPayload: null,
 });
   }
@@ -2653,8 +2723,14 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
   error: null,
 
   unifiedBase,
-  encodedPayload: signalPayload,
+  encodedPayload: encodedSignalPayload,
   signalPayload,
+  signal: {
+    ...(currentAi?.signal || {}),
+    payload: signalPayload,
+    encodedPayload: encodedSignalPayload,
+    unifiedBase,
+  },
 
   sourceFingerprint: finalSourceFingerprint,
   currentSourcesSnapshot: finalSourcesSnapshot,
@@ -2731,7 +2807,7 @@ return buildResultFromRoot(freshRoot, {
   pendingConnectedSources,
   sources: sourcesStatus,
   unifiedBase,
-  encodedPayload: signalPayload,
+  encodedPayload: encodedSignalPayload,
   signalPayload,
 });
 }
@@ -2745,7 +2821,7 @@ async function buildPdfForUser(userId) {
   }
 
   let ai = root?.aiContext || {};
-  let signalPayload = ai?.signalPayload || ai?.encodedPayload || null;
+  let signalPayload = ai?.signal?.payload || ai?.signalPayload || null;
   let pdfState = ai?.pdf || {};
   let buildAttemptId = safeStr(ai?.buildAttemptId).trim() || await resolveSignalBuildAttemptId(userId, ai);
 
@@ -2783,7 +2859,7 @@ async function buildPdfForUser(userId) {
 
     root = rebuildResult?.root || await findRoot(userId);
     ai = root?.aiContext || {};
-    signalPayload = ai?.signalPayload || ai?.encodedPayload || null;
+    signalPayload = ai?.signal?.payload || ai?.signalPayload || null;
     pdfState = ai?.pdf || {};
     buildAttemptId = safeStr(ai?.buildAttemptId).trim() || await resolveSignalBuildAttemptId(userId, ai);
 
@@ -2793,7 +2869,8 @@ async function buildPdfForUser(userId) {
     currentSourceFingerprint =
       safeStr(ai?.currentSourceFingerprint || '').trim() || signalFingerprint || '';
 
-    if (safeStr(ai?.status) !== 'done' || !signalPayload) {
+    const rebuiltReadiness = deriveSignalReadinessFromAi(ai, null);
+    if (safeStr(ai?.status) !== 'done' || !rebuiltReadiness.signalReadyForPdf) {
       return buildResultFromRoot(root, {
         status: ai?.status || 'processing',
         progress: toNum(ai?.progress, 20),
@@ -2815,12 +2892,12 @@ async function buildPdfForUser(userId) {
         stage: 'failed',
         progress: 100,
         stale: true,
-        staleReason: readiness.payloadBuildable
+        staleReason: readiness.encodedPayloadBuildable
           ? 'signal_not_ready_for_pdf'
           : 'signal_not_valid_for_pdf',
         sourceFingerprint: currentSourceFingerprint || signalFingerprint || null,
         connectionFingerprint: currentConnectionFingerprint,
-        error: readiness.payloadBuildable
+        error: readiness.encodedPayloadBuildable
           ? 'MCP_CONTEXT_NOT_READY'
           : 'MCP_SIGNAL_NOT_VALID_FOR_PDF',
       },
@@ -2831,20 +2908,20 @@ async function buildPdfForUser(userId) {
         status: 'failed',
         stage: 'failed',
         progress: 100,
-        error: readiness.payloadBuildable
+        error: readiness.encodedPayloadBuildable
           ? 'MCP_CONTEXT_NOT_READY'
           : 'MCP_SIGNAL_NOT_VALID_FOR_PDF',
       });
     }
 
     const err = new Error(
-      readiness.payloadBuildable
+      readiness.encodedPayloadBuildable
         ? 'MCP_CONTEXT_NOT_READY'
         : 'MCP_SIGNAL_NOT_VALID_FOR_PDF'
     );
 
     err.code =
-      readiness.payloadBuildable
+      readiness.encodedPayloadBuildable
         ? 'MCP_CONTEXT_NOT_READY'
         : 'MCP_SIGNAL_NOT_VALID_FOR_PDF';
 
@@ -3074,7 +3151,12 @@ async function buildPdfForUser(userId) {
       });
     }
 
-    const pdfResult = await buildSignalPdfArtifact(userId, rootBeforePdf, signalPayload);
+    const pdfResult = await buildSignalPdfArtifact(
+      userId,
+      rootBeforePdf,
+      signalPayload,
+      readiness.encodedPayload || rootBeforePdf?.aiContext?.signal?.encodedPayload || rootBeforePdf?.aiContext?.encodedPayload || null
+    );
 
       const finalRoot = await updateRootAiContext(userId, (currentAi) => ({
       ...(currentAi || {}),
