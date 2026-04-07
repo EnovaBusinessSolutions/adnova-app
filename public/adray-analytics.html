@@ -1043,6 +1043,38 @@
             transition: border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
         }
 
+        .journey-event[data-tooltip] {
+            cursor: help;
+        }
+
+        .journey-event[data-tooltip]::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: calc(100% + 0.45rem);
+            left: 1rem;
+            max-width: min(18rem, calc(100vw - 4rem));
+            background-color: var(--dash-text);
+            color: var(--dash-panel);
+            padding: 0.5rem 0.7rem;
+            border-radius: 0.55rem;
+            font-size: 0.72rem;
+            font-weight: 500;
+            line-height: 1.4;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.16s ease;
+            z-index: 12;
+            box-shadow: 0 10px 22px rgba(0, 0, 0, 0.28);
+            text-transform: none;
+            letter-spacing: normal;
+            white-space: normal;
+        }
+
+        .journey-event[data-tooltip]:hover::after,
+        .journey-event[data-tooltip]:focus-within::after {
+            opacity: 1;
+        }
+
         .journey-event::before {
             content: "";
             position: absolute;
@@ -1251,6 +1283,146 @@
             border-radius: 0.9rem;
             background: rgba(225, 216, 243, 0.07);
             padding: 0.7rem;
+        }
+
+        .journey-session-story {
+            display: flex;
+            flex-direction: column;
+            gap: 0.9rem;
+        }
+
+        .journey-session-summary {
+            border: 1px solid rgba(202, 138, 229, 0.18);
+            border-radius: 0.95rem;
+            background: linear-gradient(135deg, rgba(76, 29, 149, 0.22), rgba(15, 23, 42, 0.72));
+            padding: 0.9rem;
+        }
+
+        .journey-session-summary-title {
+            color: rgba(244, 241, 255, 0.96);
+            font-size: 0.82rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .journey-session-summary-copy {
+            margin-top: 0.28rem;
+            color: rgba(225, 216, 243, 0.88);
+            font-size: 0.82rem;
+            line-height: 1.45;
+        }
+
+        .journey-session-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .journey-session-card {
+            border: 1px solid rgba(202, 138, 229, 0.18);
+            border-radius: 0.95rem;
+            background: rgba(24, 16, 38, 0.68);
+            padding: 0.85rem;
+            box-shadow: 0 12px 28px rgba(8, 5, 15, 0.22);
+        }
+
+        .journey-session-card-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        .journey-session-label {
+            color: rgba(244, 241, 255, 0.96);
+            font-size: 0.9rem;
+            font-weight: 700;
+        }
+
+        .journey-session-time {
+            color: rgba(199, 180, 228, 0.82);
+            font-size: 0.72rem;
+        }
+
+        .journey-session-touchpoint {
+            margin-top: 0.75rem;
+            border: 1px solid rgba(202, 138, 229, 0.22);
+            border-radius: 0.82rem;
+            padding: 0.7rem 0.78rem;
+            background: rgba(225, 216, 243, 0.06);
+        }
+
+        .journey-session-touchpoint-title {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            color: rgba(244, 241, 255, 0.96);
+            font-size: 0.86rem;
+            font-weight: 700;
+        }
+
+        .journey-session-touchpoint-sub {
+            display: block;
+            margin-top: 0.22rem;
+            color: rgba(214, 201, 236, 0.82);
+            font-size: 0.76rem;
+            line-height: 1.4;
+        }
+
+        .journey-session-kpis {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+            margin-top: 0.68rem;
+        }
+
+        .journey-session-copy {
+            margin-top: 0.7rem;
+            color: rgba(225, 216, 243, 0.82);
+            font-size: 0.8rem;
+            line-height: 1.48;
+        }
+
+        .journey-session-arrow {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            color: rgba(202, 138, 229, 0.88);
+            font-size: 0.72rem;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+
+        .journey-session-anchor {
+            border-color: rgba(134, 239, 172, 0.34);
+            background: linear-gradient(135deg, rgba(18, 74, 47, 0.3), rgba(15, 23, 42, 0.78));
+        }
+
+        .journey-session-card.is-google,
+        .journey-session-touchpoint.is-google {
+            border-color: rgba(251, 191, 36, 0.4);
+            background: linear-gradient(135deg, rgba(146, 64, 14, 0.26), rgba(15, 23, 42, 0.76));
+        }
+
+        .journey-session-card.is-meta,
+        .journey-session-touchpoint.is-meta {
+            border-color: rgba(96, 165, 250, 0.42);
+            background: linear-gradient(135deg, rgba(30, 64, 175, 0.24), rgba(15, 23, 42, 0.74));
+        }
+
+        .journey-session-card.is-tiktok,
+        .journey-session-touchpoint.is-tiktok {
+            border-color: rgba(45, 212, 191, 0.42);
+            background: linear-gradient(135deg, rgba(13, 148, 136, 0.24), rgba(15, 23, 42, 0.74));
+        }
+
+        .journey-session-card.is-organic,
+        .journey-session-touchpoint.is-organic {
+            border-color: rgba(134, 239, 172, 0.36);
+            background: linear-gradient(135deg, rgba(22, 101, 52, 0.22), rgba(15, 23, 42, 0.74));
         }
 
         .profile-priority-banner {
@@ -3192,11 +3364,21 @@
         }
 
         function resolveChannelTone(channel, platform) {
-            const key = String(channel + ' ' + platform).toLowerCase();        
-            if (key.includes('organic') || key.includes('referral') || key.includes('direct')) return 'is-organic';
-            if (key.includes('google') || key.includes('search')) return 'is-google';
-            if (key.includes('facebook') || key.includes('meta') || key.includes('instagram')) return 'is-meta';
-            if (key.includes('tiktok')) return 'is-tiktok';
+            const rawChannel = String(channel || '').trim().toLowerCase();
+            const normalizedChannel = normalizeAttributionChannel(rawChannel);
+            if (rawChannel.includes('other') || rawChannel.includes('unattributed')) return '';
+            if (normalizedChannel === 'organic') return 'is-organic';
+            if (normalizedChannel === 'google') return 'is-google';
+            if (normalizedChannel === 'meta') return 'is-meta';
+            if (normalizedChannel === 'tiktok') return 'is-tiktok';
+
+            const rawPlatform = String(platform || '').trim().toLowerCase();
+            const normalizedPlatform = normalizeAttributionChannel(rawPlatform);
+            if (normalizedPlatform === 'organic') return 'is-organic';
+            if (normalizedPlatform === 'google') return 'is-google';
+            if (normalizedPlatform === 'meta') return 'is-meta';
+            if (normalizedPlatform === 'tiktok') return 'is-tiktok';
+            return '';
         }
 
         function scoreJourneySignal(purchase = {}) {
@@ -3393,14 +3575,16 @@
                     fullTime: timeStr,
                     originalName: originalEventName,
                     detailLines,
+                    tooltip: `${describeJourneyTone(tone)} ${originalEventName}${pagePath && pagePath !== '-' ? ` on ${pagePath}` : ''}`.trim(),
                     tone,
                 };
             });
         }
 
-        function buildPurchaseTimelineEvents(purchase = {}) {
+        function buildPurchaseTimelineEvents(purchase = {}, options = {}) {
             const tone = resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform);
-            const landing = normalizeJourneyPath(purchase.landingPageUrl || purchase.attributionDebug?.payloadPageUrl || purchase.pageUrl || '');
+            const landingInfo = options.landingInfo || resolvePurchaseLandingInfo(purchase, options.events || []);
+            const landing = landingInfo.landing;
             const campaign = purchase.attributedCampaign || purchase.attributionDebug?.payloadUtmCampaign || '-';
             const clickId = purchase.attributedClickId || '-';
             const purchasedAt = formatRecentPurchaseDate(purchase);
@@ -3416,6 +3600,7 @@
                         `Campaign: ${campaign}`,
                         `Click ID: ${clickId}`,
                     ],
+                    tooltip: `Primary attribution touchpoint. ${humanReadableChannel(purchase.attributedChannel || 'unattributed')} ${campaign && campaign !== '-' ? `campaign ${campaign}` : 'source'}${clickId && clickId !== '-' ? ` with click id ${shortenJourneyIdentifier(clickId)}` : ''}.`,
                     tone,
                 },
             ];
@@ -3428,6 +3613,7 @@
                     time: purchasedAt,
                     fullTime: purchasedAt,
                     detailLines: [`Page: ${landing}`],
+                    tooltip: `First landing page captured for this stitched journey from ${landingInfo.chosenSource || 'the stitched events'}.`,
                     tone,
                 });
             }
@@ -3442,10 +3628,429 @@
                     `Order: ${purchase.orderNumber || purchase.orderId || '-'}`,
                     `Revenue: ${formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN')}`,
                 ],
+                tooltip: 'Final conversion event used as the anchor for backward stitching.',
                 tone: 'is-organic',
             });
 
             return entries;
+        }
+
+        function getJourneyEventPayload(event = {}) {
+            if (event?.rawPayload && typeof event.rawPayload === 'object') return event.rawPayload;
+            if (event?.payload && typeof event.payload === 'object') return event.payload;
+            return {};
+        }
+
+        function formatJourneySpan(seconds) {
+            const value = Number(seconds || 0);
+            if (!Number.isFinite(value) || value <= 0) return '<1m';
+            if (value >= 86400) return `${Math.round(value / 86400)}d`;
+            if (value >= 3600) return `${Math.round(value / 3600)}h`;
+            return formatDurationCompact(value);
+        }
+
+        function describeJourneyTone(tone = '') {
+            if (tone === 'is-google') return 'Google touchpoint inferred for this event.';
+            if (tone === 'is-meta') return 'Meta touchpoint inferred for this event.';
+            if (tone === 'is-tiktok') return 'TikTok touchpoint inferred for this event.';
+            if (tone === 'is-organic') return 'Organic, direct, or referral touchpoint inferred for this event.';
+            return 'No clear channel was detected for this event yet.';
+        }
+
+        function shortenJourneyIdentifier(value = '') {
+            const raw = String(value || '').trim();
+            if (!raw) return '';
+            if (raw.length <= 10) return raw;
+            return `${raw.slice(0, 4)}...${raw.slice(-4)}`;
+        }
+
+        function resolvePurchaseLandingInfo(purchase = {}, events = []) {
+            const safeEvents = Array.isArray(events) ? events : [];
+            const firstEventWithPage = safeEvents.find((event) => {
+                const payload = getJourneyEventPayload(event);
+                return event?.pageUrl || event?.url || payload?.pageUrl || payload?.page_url || payload?.url;
+            }) || null;
+
+            const candidates = [
+                { label: 'purchase.landingPageUrl', value: purchase.landingPageUrl || '' },
+                { label: 'attributionDebug.payloadPageUrl', value: purchase.attributionDebug?.payloadPageUrl || '' },
+                { label: 'purchase.pageUrl', value: purchase.pageUrl || '' },
+                { label: 'first stitched event pageUrl', value: firstEventWithPage?.pageUrl || firstEventWithPage?.url || '' },
+                { label: 'first stitched payload pageUrl', value: (() => {
+                    const payload = getJourneyEventPayload(firstEventWithPage || {});
+                    return payload.pageUrl || payload.page_url || payload.url || '';
+                })() },
+            ];
+
+            const chosenCandidate = candidates.find((candidate) => String(candidate.value || '').trim()) || null;
+            const landing = chosenCandidate ? normalizeJourneyPath(chosenCandidate.value) : '-';
+            const landingDisplay = landing && landing !== '-' ? landing : 'No landing captured';
+            const orderRef = purchase.orderNumber || purchase.orderId || purchase.checkoutToken || 'unknown';
+
+            console.info('[Journey Landing]', {
+                orderRef,
+                chosenSource: chosenCandidate?.label || 'none',
+                landing: landingDisplay,
+                candidates: candidates.map((candidate) => ({
+                    source: candidate.label,
+                    value: candidate.value || null,
+                    normalizedPath: candidate.value ? normalizeJourneyPath(candidate.value) : null,
+                })),
+            });
+
+            return {
+                landing,
+                landingDisplay,
+                chosenSource: chosenCandidate?.label || '',
+            };
+        }
+
+        function resolveJourneyReferrerLabel(referrer = '') {
+            const value = String(referrer || '').trim();
+            if (!value) return '';
+            try {
+                return new URL(value).hostname.replace(/^www\./i, '');
+            } catch (_) {
+                return value;
+            }
+        }
+
+        function resolveJourneyTouchpoint({ payload = {}, purchase = {} } = {}) {
+            const utmSource = String(payload.utm_source || payload.utmSource || '').trim().toLowerCase();
+            const utmMedium = String(payload.utm_medium || payload.utmMedium || '').trim().toLowerCase();
+            const utmCampaign = String(payload.utm_campaign || payload.utmCampaign || '').trim();
+            const referrer = String(payload.referrer || payload.referer || '').trim();
+            const referrerLabel = resolveJourneyReferrerLabel(referrer);
+            const gclid = String(payload.gclid || '').trim();
+            const fbclid = String(payload.fbclid || payload.fbc || payload._fbc || '').trim();
+            const ttclid = String(payload.ttclid || '').trim();
+            const fallbackChannel = normalizeAttributionChannel(purchase.attributedChannel || purchase.attributedPlatform || '');
+            const fallbackCampaign = String(purchase.attributedCampaign || purchase.attributionDebug?.payloadUtmCampaign || '').trim();
+            const fallbackClickId = String(purchase.attributedClickId || '').trim();
+
+            let channelKey = 'organic';
+            let label = 'Direct';
+            let reason = 'No explicit campaign or click id was found in this session.';
+            let clickId = '';
+
+            if (fbclid) {
+                channelKey = 'meta';
+                label = 'Meta Ads';
+                reason = 'Matched by Meta click id.';
+                clickId = fbclid;
+            } else if (ttclid) {
+                channelKey = 'tiktok';
+                label = 'TikTok Ads';
+                reason = 'Matched by TikTok click id.';
+                clickId = ttclid;
+            } else if (gclid || (utmSource.includes('google') && /(cpc|paid|search|ads)/.test(utmMedium))) {
+                channelKey = 'google';
+                label = 'Google Ads';
+                reason = gclid ? 'Matched by Google click id.' : 'Paid Google UTM detected.';
+                clickId = gclid;
+            } else if (utmSource.includes('meta') || utmSource.includes('facebook') || utmSource.includes('instagram')) {
+                channelKey = 'meta';
+                label = /(organic|social)/.test(utmMedium) ? 'Meta Organic' : 'Meta Ads';
+                reason = 'Detected from Meta UTM source.';
+            } else if (utmSource.includes('tiktok')) {
+                channelKey = 'tiktok';
+                label = /(organic|social)/.test(utmMedium) ? 'TikTok Organic' : 'TikTok Ads';
+                reason = 'Detected from TikTok UTM source.';
+            } else if (utmSource.includes('google')) {
+                channelKey = /(cpc|paid|search|ads)/.test(utmMedium) ? 'google' : 'organic';
+                label = channelKey === 'google' ? 'Google Ads' : 'Google Organic';
+                reason = 'Detected from Google UTM source.';
+            } else if (referrerLabel.includes('google')) {
+                channelKey = 'organic';
+                label = 'Google Organic';
+                reason = `Referrer ${referrerLabel} indicates search traffic.`;
+            } else if (referrerLabel.includes('facebook') || referrerLabel.includes('instagram')) {
+                channelKey = 'organic';
+                label = 'Meta Organic';
+                reason = `Referrer ${referrerLabel} indicates social traffic.`;
+            } else if (referrerLabel.includes('tiktok')) {
+                channelKey = 'organic';
+                label = 'TikTok Organic';
+                reason = `Referrer ${referrerLabel} indicates social traffic.`;
+            } else if (utmSource) {
+                channelKey = normalizeAttributionChannel(utmSource);
+                label = humanReadableChannel(utmSource);
+                reason = `UTM source ${utmSource} was captured in this session.`;
+            } else if (referrerLabel) {
+                channelKey = 'organic';
+                label = 'Referral';
+                reason = `Referrer ${referrerLabel} stitched this session.`;
+            } else if (fallbackChannel && fallbackChannel !== 'other') {
+                channelKey = fallbackChannel;
+                label = `${humanReadableChannel(fallbackChannel)} inferred`;
+                reason = 'Inherited from the final attributed purchase when this session had no explicit source.';
+                clickId = fallbackClickId;
+            }
+
+            const campaign = utmCampaign || fallbackCampaign || '';
+            const tone = resolveChannelTone(channelKey, label) || '';
+            const icon = resolveChannelIcon(channelKey, label);
+            const subLabel = campaign
+                ? `Campaign: ${campaign}`
+                : clickId
+                    ? `Click ID: ${shortenJourneyIdentifier(clickId)}`
+                    : referrerLabel
+                        ? `Referrer: ${referrerLabel}`
+                        : 'No campaign metadata';
+
+            return {
+                channelKey,
+                label,
+                reason,
+                campaign,
+                clickId,
+                tone,
+                icon,
+                subLabel,
+            };
+        }
+
+        function summarizeJourneyGroupActions(events = []) {
+            const ordered = Array.from(new Set(
+                (Array.isArray(events) ? events : [])
+                    .map((event) => normalizeEventNameHuman(event.eventName || event.name))
+                    .filter(Boolean)
+            ));
+            return ordered.slice(0, 3);
+        }
+
+        function buildPurchaseSessionStory(purchase = {}) {
+            const availableEvents = Array.isArray(purchase.events)
+                ? purchase.events
+                : (Array.isArray(purchase.stitchedEvents) ? purchase.stitchedEvents : []);
+
+            const rawEvents = availableEvents
+                .map((event) => {
+                    const payload = getJourneyEventPayload(event);
+                    const eventTs = new Date(event.createdAt || event.collectedAt || purchase.platformCreatedAt || purchase.createdAt || 0).getTime();
+                    const pageUrl = event.pageUrl || event.url || payload.pageUrl || payload.page_url || payload.url || '';
+                    return {
+                        ...event,
+                        _ts: eventTs,
+                        _payload: payload,
+                        _pagePath: normalizeJourneyPath(pageUrl),
+                    };
+                })
+                .filter((event) => Number.isFinite(event._ts))
+                .sort((a, b) => a._ts - b._ts);
+
+            const dedupedEvents = dedupeAdjacentIdenticalEvents(rawEvents);
+            const groups = [];
+            const fallbackUserKey = String(purchase.userKey || '').trim();
+            const maxSessionGapMs = 30 * 60 * 1000;
+
+            dedupedEvents.forEach((event) => {
+                const sessionId = String(event.sessionId || '').trim();
+                const userKey = String(event.userKey || fallbackUserKey || '').trim();
+                const groupingKey = sessionId || (userKey ? `user:${userKey}` : 'anonymous');
+                const previous = groups[groups.length - 1];
+                const shouldStartNewGroup = !previous
+                    || previous.groupingKey !== groupingKey
+                    || (!sessionId && (event._ts - previous.lastTs) > maxSessionGapMs);
+
+                if (shouldStartNewGroup) {
+                    groups.push({
+                        groupingKey,
+                        sessionId,
+                        userKey,
+                        startedTs: event._ts,
+                        endedTs: event._ts,
+                        lastTs: event._ts,
+                        events: [event],
+                    });
+                    return;
+                }
+
+                previous.events.push(event);
+                previous.endedTs = event._ts;
+                previous.lastTs = event._ts;
+                if (!previous.sessionId && sessionId) previous.sessionId = sessionId;
+                if (!previous.userKey && userKey) previous.userKey = userKey;
+            });
+
+            const normalizedGroups = groups.map((group, index) => {
+                const firstEvent = group.events[0] || {};
+                const lastEvent = group.events[group.events.length - 1] || {};
+                const touchpointEvent = group.events.find((event) => {
+                    const payload = event._payload || {};
+                    return payload.fbclid || payload.fbc || payload._fbc || payload.gclid || payload.ttclid || payload.utm_source || payload.utmSource || payload.referrer || payload.referer;
+                }) || firstEvent;
+                const touchpoint = resolveJourneyTouchpoint({ payload: touchpointEvent._payload || {}, purchase });
+                const eventNames = summarizeJourneyGroupActions(group.events);
+                const entryPage = group.events.find((event) => event._pagePath && event._pagePath !== '-')?._pagePath || '-';
+                const exitPage = [...group.events].reverse().find((event) => event._pagePath && event._pagePath !== '-')?._pagePath || entryPage;
+                const eventCount = group.events.length;
+                const durationSeconds = Math.max(0, (group.endedTs - group.startedTs) / 1000);
+                const containsPurchase = group.events.some((event) => String(event.eventName || event.name || '').toLowerCase() === 'purchase');
+                const containsCheckout = group.events.some((event) => String(event.eventName || event.name || '').toLowerCase() === 'begin_checkout');
+                const containsCart = group.events.some((event) => String(event.eventName || event.name || '').toLowerCase() === 'add_to_cart');
+                const containsLogin = group.events.some((event) => /login/.test(String(event.eventName || event.name || '').toLowerCase()));
+
+                let actionCopy = 'Browsing and consideration.';
+                if (containsPurchase) actionCopy = 'Purchase completed in this session.';
+                else if (containsCheckout) actionCopy = 'Reached checkout in this session.';
+                else if (containsCart) actionCopy = 'Added product(s) to cart.';
+                else if (containsLogin) actionCopy = 'User identified with a login event.';
+
+                const stitchedCopy = `${touchpoint.label} brought the user to ${entryPage !== '-' ? entryPage : 'the site'}. ${actionCopy}`;
+
+                return {
+                    label: `Session ${index + 1}`,
+                    sessionId: group.sessionId,
+                    userKey: group.userKey,
+                    startedAt: new Date(group.startedTs).toISOString(),
+                    endedAt: new Date(group.endedTs).toISOString(),
+                    timeLabel: formatDateTimeMx(group.startedTs),
+                    durationLabel: formatJourneySpan(durationSeconds),
+                    eventCount,
+                    entryPage,
+                    exitPage,
+                    eventNames,
+                    containsPurchase,
+                    touchpoint,
+                    tone: touchpoint.tone || '',
+                    icon: touchpoint.icon || 'fa-solid fa-route',
+                    sessionIdShort: shortenJourneyIdentifier(group.sessionId),
+                    userKeyShort: shortenJourneyIdentifier(group.userKey),
+                    stitchedCopy,
+                };
+            });
+
+            const purchaseTimestamp = new Date(purchase.platformCreatedAt || purchase.createdAt || Date.now()).getTime();
+            const firstGroupTs = normalizedGroups[0]?.startedAt ? new Date(normalizedGroups[0].startedAt).getTime() : purchaseTimestamp;
+            const totalSpanSeconds = Math.max(0, (purchaseTimestamp - firstGroupTs) / 1000);
+            const channelTrail = normalizedGroups
+                .map((group) => group.touchpoint?.label || '')
+                .filter(Boolean)
+                .slice(0, 4);
+
+            return {
+                hasRealEvents: normalizedGroups.length > 0,
+                groups: normalizedGroups,
+                totalSessions: normalizedGroups.length || ((purchase.sessionId || purchase.orderId || purchase.checkoutToken) ? 1 : 0),
+                totalEvents: dedupedEvents.length,
+                totalSpanLabel: formatJourneySpan(totalSpanSeconds),
+                channelTrail,
+            };
+        }
+
+        function renderJourneySessionStory(story = {}, purchase = {}) {
+            const groups = Array.isArray(story.groups) ? story.groups : [];
+            const orderLabel = purchase.orderNumber || purchase.orderId || purchase.checkoutToken || '-';
+            const purchaseTime = formatRecentPurchaseDate(purchase);
+            const revenue = formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN');
+            const stitchedSummary = groups.length > 1
+                ? `Stitched backward from purchase #${orderLabel} across ${groups.length} sessions and ${Number(story.totalEvents || 0)} stitched events.`
+                : `Stitched backward from purchase #${orderLabel} using the strongest session and identity signals available.`;
+
+            if (!groups.length) {
+                return `
+                    <div class="journey-session-story">
+                        <div class="journey-session-summary">
+                            <p class="journey-session-summary-title">Conversion Story</p>
+                            <p class="journey-session-summary-copy">${escapeHtml(stitchedSummary)}</p>
+                            <div class="journey-meta-grid mt-3">
+                                <span class="journey-chip" data-tooltip="Revenue from the anchor purchase."><i class="fa-solid fa-sack-dollar"></i>${escapeHtml(revenue)}</span>
+                                <span class="journey-chip" data-tooltip="Time when the anchor purchase was recorded."><i class="fa-solid fa-clock"></i>${escapeHtml(purchaseTime)}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="journey-session-story">
+                    <div class="journey-session-summary">
+                        <p class="journey-session-summary-title">Conversion Story</p>
+                        <p class="journey-session-summary-copy">${escapeHtml(stitchedSummary)}</p>
+                        <div class="journey-meta-grid mt-3">
+                            <span class="journey-chip" data-tooltip="How many stitched sessions were linked to this conversion."><i class="fa-solid fa-layer-group"></i>${Number(story.totalSessions || 0)} sessions</span>
+                            <span class="journey-chip" data-tooltip="How many stitched events support the journey reconstruction."><i class="fa-solid fa-bolt"></i>${Number(story.totalEvents || 0)} events</span>
+                            <span class="journey-chip" data-tooltip="Elapsed time from the first stitched session to the purchase anchor."><i class="fa-solid fa-clock-rotate-left"></i>${escapeHtml(story.totalSpanLabel || '<1m')}</span>
+                            <span class="journey-chip" data-tooltip="Revenue from the final purchase anchor."><i class="fa-solid fa-sack-dollar"></i>${escapeHtml(revenue)}</span>
+                        </div>
+                    </div>
+                    <div class="journey-session-stack">
+                        ${groups.map((group, index) => {
+                            const nextGroup = groups[index + 1] || null;
+                            const gapLabel = nextGroup
+                                ? `returns ${formatJourneySpan(Math.max(0, (new Date(nextGroup.startedAt).getTime() - new Date(group.endedAt).getTime()) / 1000))} later`
+                                : 'purchase anchor';
+                            return `
+                                <article class="journey-session-card ${group.tone || ''}">
+                                    <div class="journey-session-card-head">
+                                        <span class="journey-session-label">${escapeHtml(group.label)}</span>
+                                        <span class="journey-session-time">${escapeHtml(group.timeLabel || '-')}</span>
+                                    </div>
+                                    <div class="journey-session-touchpoint ${group.tone || ''}" title="${escapeHtmlAttr(group.touchpoint?.reason || 'No source metadata')}" data-tooltip="${escapeHtmlAttr(group.touchpoint?.reason || 'No source metadata')}">
+                                        <span class="journey-session-touchpoint-title"><i class="${group.icon || 'fa-solid fa-route'}"></i>${escapeHtml(group.touchpoint?.label || 'Session touchpoint')}</span>
+                                        <span class="journey-session-touchpoint-sub">${escapeHtml(group.touchpoint?.subLabel || group.touchpoint?.reason || 'No source metadata')}</span>
+                                    </div>
+                                    <div class="journey-session-kpis">
+                                        <span class="journey-chip" data-tooltip="How many events were stitched inside this session block."><i class="fa-solid fa-wave-square"></i>${Number(group.eventCount || 0)} events</span>
+                                        <span class="journey-chip" data-tooltip="First page captured for this stitched session."><i class="fa-solid fa-door-open"></i>${escapeHtml(group.entryPage || '-')}</span>
+                                        <span class="journey-chip" data-tooltip="Observed duration of this stitched session block."><i class="fa-solid fa-timer"></i>${escapeHtml(group.durationLabel || '<1m')}</span>
+                                        ${group.sessionIdShort ? `<span class="journey-chip" data-tooltip="Session identifier shortened for readability."><i class="fa-solid fa-fingerprint"></i>${escapeHtml(group.sessionIdShort)}</span>` : ''}
+                                    </div>
+                                    <p class="journey-session-copy">${escapeHtml(group.stitchedCopy || '')}</p>
+                                    ${group.eventNames.length ? `<div class="journey-session-kpis">${group.eventNames.map((name) => `<span class="journey-chip" data-tooltip="Detected event inside this session block."><i class="fa-solid fa-check"></i>${escapeHtml(name)}</span>`).join('')}</div>` : ''}
+                                </article>
+                                <div class="journey-session-arrow">
+                                    <i class="fa-solid fa-arrow-down"></i>
+                                    <span>${escapeHtml(gapLabel)}</span>
+                                </div>
+                            `;
+                        }).join('')}
+                        <article class="journey-session-card journey-session-anchor">
+                            <div class="journey-session-card-head">
+                                <span class="journey-session-label">Purchase Anchor</span>
+                                <span class="journey-session-time">${escapeHtml(purchaseTime)}</span>
+                            </div>
+                            <div class="journey-session-touchpoint is-organic" title="Final conversion event used to anchor attribution and stitch backward." data-tooltip="Final conversion event used to anchor attribution and stitch backward.">
+                                <span class="journey-session-touchpoint-title"><i class="fa-solid fa-bag-shopping"></i>Order #${escapeHtml(orderLabel)}</span>
+                                <span class="journey-session-touchpoint-sub">${escapeHtml(revenue)} · ${escapeHtml(humanReadableChannel(purchase.attributedChannel || 'unattributed'))}</span>
+                            </div>
+                            <div class="journey-session-kpis">
+                                <span class="journey-chip" data-tooltip="Campaign attributed to the final purchase."><i class="fa-solid fa-bullhorn"></i>${escapeHtml(purchase.attributedCampaign || 'No campaign')}</span>
+                                ${purchase.attributedClickId ? `<span class="journey-chip" data-tooltip="Click identifier linked to the final attributed touchpoint."><i class="fa-solid fa-link"></i>${escapeHtml(shortenJourneyIdentifier(purchase.attributedClickId))}</span>` : ''}
+                            </div>
+                            <p class="journey-session-copy">This is the final conversion event. Attribution is resolved here, then the stitch walks backward through the sessions above.</p>
+                        </article>
+                    </div>
+                </div>
+            `;
+        }
+
+        function countPurchaseJourneySessions(purchase = {}) {
+            const story = buildPurchaseSessionStory(purchase);
+            return Number(story.totalSessions || 0);
+        }
+
+        function renderFocusedPurchaseJourneyCard(purchase = {}, displayName = '') {
+            const journeyData = buildMinimalJourneyNodesFromPurchase(purchase);
+            const sessionCount = Number(journeyData.sessionStory?.totalSessions || countPurchaseJourneySessions(purchase) || 0);
+            return `
+                <div class="journey-compact-card space-y-4">
+                    <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <span class="text-xs text-gray-500">${formatRecentPurchaseDate(purchase)}</span>
+                        <span class="journey-chip" data-tooltip="Resolved user or customer label for this stitched purchase journey."><i class="fa-solid fa-user"></i>${escapeHtml(journeyData.summary?.userName || displayName || 'Customer')}</span>
+                    </div>
+                    <div class="journey-meta-grid">
+                        <span class="journey-chip" data-tooltip="Confidence level of the stitched attribution for this purchase."><i class="fa-solid fa-percent"></i>${Number(journeyData.summary?.confidence || 0)}%</span>
+                        <span class="journey-chip" data-tooltip="Attributed campaign or the best campaign label recovered so far."><i class="fa-solid fa-bullhorn"></i>${escapeHtml(journeyData.summary?.sourceAd || 'No campaign')}</span>
+                        <span class="journey-chip" data-tooltip="Initial landing page captured for this stitched journey. Check console logs tagged [Journey Landing] for raw candidates."><i class="fa-solid fa-door-open"></i>${escapeHtml(journeyData.summary?.landing || 'No landing captured')}</span>
+                        <span class="journey-chip" data-tooltip="How many stitched sessions currently support this purchase path."><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
+                    </div>
+                    ${renderJourneySessionStory(journeyData.sessionStory, purchase)}
+                    ${renderTimelineModeToggle(selectedJourneyTimelineMode)}
+                    ${renderJourneyVerticalTimeline(journeyData.timelineEvents)}
+                </div>
+            `;
         }
 
         function renderJourneyVerticalTimeline(events = []) {
@@ -3457,7 +4062,7 @@
                 <div class="journey-timeline">
                     <div class="journey-timeline-sticky"><i class="fa-solid fa-arrows-up-down"></i>${events.length} events</div>
                     ${events.map((event) => `
-                        <article class="journey-event ${event.tone || ''}">
+                        <article class="journey-event ${event.tone || ''}" data-tooltip="${escapeHtmlAttr(event.tooltip || describeJourneyTone(event.tone || ''))}" title="${escapeHtmlAttr(event.tooltip || describeJourneyTone(event.tone || ''))}">
                             <div class="journey-event-head">
                                 <span class="journey-event-title"><span class="journey-event-icon" data-tooltip="${escapeHtmlAttr(event.tooltip || event.originalName || event.title || 'Event')}"><i class="${event.icon || 'fa-solid fa-circle'}"></i></span>${event.title || 'Event'}</span>
                             </div>
@@ -3529,11 +4134,14 @@
             const userName = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || '', 'Customer');
             const source = humanReadableChannel(purchase.attributedChannel);
             const sourceAd = purchase.attributedCampaign || 'No campaign';
-            const landing = normalizeJourneyPath(purchase.landingPageUrl || purchase.attributionDebug?.payloadPageUrl || purchase.pageUrl || '');
+            const availableEvents = Array.isArray(purchase.events) ? purchase.events : (Array.isArray(purchase.stitchedEvents) ? purchase.stitchedEvents : []);
+            const landingInfo = resolvePurchaseLandingInfo(purchase, availableEvents);
+            const landing = landingInfo.landingDisplay;
+            const sessionStory = buildPurchaseSessionStory(purchase);
             
             // If purchase includes real events, build timeline from those events
-            let timelineEvents = buildPurchaseTimelineEvents(purchase);
-            const availableEvents = purchase.events || purchase.stitchedEvents; if (Array.isArray(availableEvents) && availableEvents.length > 0) {
+            let timelineEvents = buildPurchaseTimelineEvents(purchase, { landingInfo, events: availableEvents });
+            if (Array.isArray(availableEvents) && availableEvents.length > 0) {
                 let realEvents = availableEvents
                     .map((event) => ({
                         ...event,
@@ -3575,7 +4183,7 @@
 
                         return {
                             icon: resolveEventIcon(event.eventName || event.name),
-                            tooltip: originalEventName || baseTitle,
+                            tooltip: `${describeJourneyTone(resolveChannelTone(event.utmSource || purchase.attributedChannel || '', purchase.attributedPlatform || null))} ${originalEventName || baseTitle}${pagePath && pagePath !== '-' ? ` on ${pagePath}` : ''}`.trim(),
                             title: durSeconds > 0 ? `${baseTitle} <span class="text-gray-400 text-[0.8rem]" style="margin-left: 0.5rem; font-weight: 500;">${formatDurationCompact(durSeconds)}</span>` : baseTitle,
                             time: displayTime,
                             fullTime: timeStr,
@@ -3598,6 +4206,7 @@
                 },
                 steps: [],
                 timelineEvents,
+                sessionStory,
                 purchaseBubble: hasPurchase ? formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN') : 'no revenue',
                 adTone: resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform),
             };
@@ -3940,21 +4549,11 @@
                 }
             } else {
                 const top = profileFilteredJourneys[0].purchase;
-                const topJourneyData = buildMinimalJourneyNodesFromPurchase(top);
-                focusEl.innerHTML = `
-                    <div class="journey-compact-card space-y-3">
-                        <div class="flex items-center justify-between gap-2 flex-wrap">
-                            <span class="text-xs text-gray-500">${formatRecentPurchaseDate(top)}</span>
-                            <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(topJourneyData.summary?.userName || (selectedProfile ? resolveProfileDisplayName(selectedProfile) : '') || 'Customer')}</span>
-                        </div>
-                        <div class="journey-meta-grid">
-                            <span class="journey-chip"><i class="fa-solid fa-percent"></i>${Number(topJourneyData.summary?.confidence || 0)}%</span>
-                            <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(topJourneyData.summary?.sourceAd || 'No campaign')}</span>
-                            <span class="journey-chip"><i class="fa-solid fa-door-open"></i>${escapeHtml(topJourneyData.summary?.landing || '-')}</span>
-                        </div>
-                        ${renderJourneyVerticalTimeline(topJourneyData.timelineEvents)}
-                    </div>
-                `;
+                focusEl.innerHTML = renderFocusedPurchaseJourneyCard(
+                    top,
+                    selectedProfile ? resolveProfileDisplayName(selectedProfile) : ''
+                );
+                wireTimelineModeToggle(focusEl);
             }
 
             historyEl.innerHTML = `
@@ -3980,6 +4579,7 @@
                     ${profileFilteredJourneys.slice(0, 40).map(({ purchase }, index) => {
                         const person = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || 'Customer');
                         const channel = humanReadableChannel(purchase.attributedChannel);
+                        const sessionCount = countPurchaseJourneySessions(purchase);
                         return `
                         <button type="button" class="journey-compact-card w-full text-left hover:opacity-95" data-journey-order-id="${escapeHtmlAttr(purchase.orderId || '')}">
                             <div class="flex items-center justify-between gap-2 flex-wrap">
@@ -3989,6 +4589,7 @@
                             <div class="mt-2 flex items-center gap-2 flex-wrap">
                                 <span class="journey-chip ${resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform)}"><i class="${resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform)}"></i>${escapeHtml(purchase.attributedChannel || 'unattributed')}</span>
                                 <span class="journey-chip"><i class="fa-solid fa-sack-dollar"></i>${formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN')}</span>
+                                <span class="journey-chip"><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
                             </div>
                         </button>`;
                     }).join('') || '<p class="text-sm text-gray-500">No stitched purchases for this profile yet.</p>'}
@@ -4031,21 +4632,8 @@
                     const orderId = button.getAttribute('data-journey-order-id') || '';
                     const row = profileFilteredJourneys.find((item) => String(item.purchase.orderId || '') === orderId);
                     if (!row) return;
-                    const focused = buildMinimalJourneyNodesFromPurchase(row.purchase);
-                    focusEl.innerHTML = `
-                        <div class="journey-compact-card space-y-3">
-                            <div class="flex items-center justify-between gap-2 flex-wrap">
-                                <span class="text-xs text-gray-500">${formatRecentPurchaseDate(row.purchase)}</span>
-                                <span class="journey-chip"><i class="fa-solid fa-user"></i>${escapeHtml(focused.summary?.userName || 'Customer')}</span>
-                            </div>
-                            <div class="journey-meta-grid">
-                                <span class="journey-chip"><i class="fa-solid fa-percent"></i>${Number(focused.summary?.confidence || 0)}%</span>
-                                <span class="journey-chip"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(focused.summary?.sourceAd || 'No campaign')}</span>
-                                <span class="journey-chip"><i class="fa-solid fa-door-open"></i>${escapeHtml(focused.summary?.landing || '-')}</span>
-                            </div>
-                            ${renderJourneyVerticalTimeline(focused.timelineEvents)}
-                        </div>
-                    `;
+                    focusEl.innerHTML = renderFocusedPurchaseJourneyCard(row.purchase);
+                    wireTimelineModeToggle(focusEl);
                 });
             });
         }
