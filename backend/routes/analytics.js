@@ -1358,6 +1358,115 @@ function getDomain(url) {
   }
 }
 
+function normalizeAttributionToken(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+}
+
+function includesAny(value, needles = []) {
+  const safe = normalizeAttributionToken(value);
+  if (!safe) return false;
+  return needles.some((needle) => safe.includes(normalizeAttributionToken(needle)));
+}
+
+function normalizeDisplayAttributionChannel(channelRaw, platformRaw = '') {
+  const channel = normalizeAttributionToken(channelRaw);
+  const platform = normalizeAttributionToken(platformRaw);
+  const combined = `${channel} ${platform}`.trim();
+
+  if (!combined || channel === 'unattributed' || channel === 'none') return 'unattributed';
+
+  if (includesAny(combined, ['tiktok', 'ttclid'])) return 'tiktok';
+  if (includesAny(combined, ['facebook', 'instagram', 'meta', 'fbclid'])) return 'meta';
+  if (includesAny(combined, ['google', 'adwords', 'gclid'])) return 'google';
+
+  if (channel === 'paid social') {
+    if (includesAny(platform, ['tiktok'])) return 'tiktok';
+    if (includesAny(platform, ['facebook', 'instagram', 'meta'])) return 'meta';
+    return 'paid social';
+  }
+
+  if (channel === 'paid search' || channel === 'cpc' || channel === 'ppc') {
+    if (includesAny(platform, ['google'])) return 'google';
+    return 'paid search';
+  }
+
+  if (channel === 'organic social') return 'organic social';
+  if (channel === 'organic search') return 'organic search';
+
+  if (includesAny(combined, ['email', 'newsletter', 'klaviyo', 'mailchimp', 'sendgrid', 'brevo', 'hubspot', 'activecampaign', 'convertkit'])) {
+    return 'email';
+  }
+
+  if (includesAny(combined, ['direct'])) return 'direct';
+
+  if (includesAny(combined, ['referral', 'partner', 'affiliate', 'hostinger', 'linktr', 'whatsapp', 'sms', 'text'])) {
+    return 'referral';
+  }
+
+  if (includesAny(combined, ['yahoo', 'bing', 'duckduckgo', 'baidu'])) {
+    return includesAny(channel, ['paid', 'cpc', 'ppc']) ? 'paid search' : 'organic search';
+  }
+
+  if (includesAny(combined, ['organic', 'seo'])) return 'organic';
+  if (includesAny(combined, ['social'])) return 'organic social';
+
+  return channel || platform || 'other';
+}
+
+function inferAttributionFromSignals({ source = '', medium = '', referrerDomain = '' } = {}) {
+  const src = normalizeAttributionToken(source);
+  const med = normalizeAttributionToken(medium);
+  const ref = normalizeAttributionToken(referrerDomain);
+  const combined = `${src} ${med} ${ref}`.trim();
+
+  if (!combined) return null;
+
+  const isPaid = includesAny(med, ['paid', 'cpc', 'ppc', 'ads', 'ad', 'paid search', 'paid social']);
+  const isEmail = includesAny(combined, ['email', 'newsletter', 'klaviyo', 'mailchimp', 'sendgrid', 'brevo', 'hubspot', 'activecampaign', 'convertkit']);
+
+  if (isEmail) {
+    return { channel: 'email', platform: src || 'email', confidence: 0.82 };
+  }
+
+  if (includesAny(combined, ['tiktok'])) {
+    return { channel: isPaid ? 'tiktok' : 'organic social', platform: 'tiktok', confidence: isPaid ? 0.9 : 0.76 };
+  }
+
+  if (includesAny(combined, ['facebook', 'instagram', 'meta'])) {
+    return { channel: isPaid ? 'meta' : 'organic social', platform: src || ref || 'meta', confidence: isPaid ? 0.9 : 0.76 };
+  }
+
+  if (includesAny(combined, ['google'])) {
+    return { channel: isPaid ? 'google' : 'organic search', platform: src || ref || 'google', confidence: isPaid ? 0.88 : 0.76 };
+  }
+
+  if (includesAny(combined, ['yahoo', 'bing', 'duckduckgo', 'baidu'])) {
+    return { channel: isPaid ? 'paid search' : 'organic search', platform: src || ref, confidence: isPaid ? 0.82 : 0.72 };
+  }
+
+  if (includesAny(combined, ['direct'])) {
+    return { channel: 'direct', platform: 'direct', confidence: 0.55 };
+  }
+
+  if (includesAny(combined, ['referral', 'partner', 'affiliate', 'hostinger', 'linktr'])) {
+    return { channel: 'referral', platform: src || ref, confidence: 0.68 };
+  }
+
+  if (includesAny(combined, ['social', 'twitter', 'x.com', 't.co', 'linkedin', 'pinterest'])) {
+    return { channel: 'organic social', platform: src || ref, confidence: 0.72 };
+  }
+
+  if (src) {
+    return { channel: src, platform: src, confidence: 0.6 };
+  }
+
+  return null;
+}
+
 function stitchSnapshotAttribution(snapshot = {}) {
   if (!snapshot || typeof snapshot !== 'object') {
     return { channel: 'unattributed', platform: null, confidence: 0.0, source: 'none' };
@@ -1365,8 +1474,8 @@ function stitchSnapshotAttribution(snapshot = {}) {
 
   if (snapshot.fbclid) {
     return {
-      channel: 'paid_social',
-      platform: 'facebook',
+      channel: 'meta',
+      platform: 'meta',
       clickId: snapshot.fbclid,
       campaign: snapshot.utm_campaign || null,
       adset: snapshot.utm_content || null,
@@ -1378,7 +1487,7 @@ function stitchSnapshotAttribution(snapshot = {}) {
 
   if (snapshot.gclid) {
     return {
-      channel: 'paid_search',
+      channel: 'google',
       platform: 'google',
       clickId: snapshot.gclid,
       campaign: snapshot.utm_campaign || null,
@@ -1391,7 +1500,7 @@ function stitchSnapshotAttribution(snapshot = {}) {
 
   if (snapshot.ttclid) {
     return {
-      channel: 'paid_social',
+      channel: 'tiktok',
       platform: 'tiktok',
       clickId: snapshot.ttclid,
       campaign: snapshot.utm_campaign || null,
@@ -1403,13 +1512,19 @@ function stitchSnapshotAttribution(snapshot = {}) {
   }
 
   if (snapshot.utm_source) {
+    const inferred = inferAttributionFromSignals({
+      source: snapshot.utm_source,
+      medium: snapshot.utm_medium,
+      referrerDomain: getDomain(snapshot.referrer || snapshot.referer || ''),
+    });
+
     return {
-      channel: snapshot.utm_medium || 'referral',
-      platform: snapshot.utm_source,
+      channel: inferred?.channel || normalizeDisplayAttributionChannel(snapshot.utm_medium || snapshot.utm_source, snapshot.utm_source),
+      platform: inferred?.platform || snapshot.utm_source,
       campaign: snapshot.utm_campaign || null,
       adset: snapshot.utm_content || null,
       ad: snapshot.utm_term || null,
-      confidence: 0.85,
+      confidence: Number(inferred?.confidence || 0.85),
       source: 'utm',
     };
   }
@@ -1419,11 +1534,11 @@ function stitchSnapshotAttribution(snapshot = {}) {
     if (!domain) {
       return { channel: 'unattributed', platform: null, confidence: 0.0, source: 'none' };
     }
-    if (['google.com', 'bing.com', 'yahoo.com'].some((d) => domain.includes(d))) {
-      return { channel: 'organic_search', platform: domain, confidence: 0.7, source: 'referrer' };
+    if (['google.com', 'bing.com', 'yahoo.com', 'duckduckgo.com', 'search.yahoo.com'].some((d) => domain.includes(d))) {
+      return { channel: 'organic search', platform: domain, confidence: 0.7, source: 'referrer' };
     }
-    if (['facebook.com', 'instagram.com', 't.co', 'twitter.com'].some((d) => domain.includes(d))) {
-      return { channel: 'organic_social', platform: domain, confidence: 0.7, source: 'referrer' };
+    if (['facebook.com', 'instagram.com', 't.co', 'twitter.com', 'x.com', 'linkedin.com', 'pinterest.com', 'tiktok.com'].some((d) => domain.includes(d))) {
+      return { channel: 'organic social', platform: domain, confidence: 0.7, source: 'referrer' };
     }
     return { channel: 'referral', platform: domain, confidence: 0.7, source: 'referrer' };
   }
@@ -1446,18 +1561,49 @@ function stitchSnapshotAttributionForAccount(snapshot = {}, accountId) {
   return attribution;
 }
 
-function normalizeChannelForStats(channelRaw) {
-  let ch = String(channelRaw || 'unattributed').toLowerCase();
-  
-  if (ch === 'facebook' || ch === 'instagram' || ch === 'paid_social') return 'meta';
-  if (ch === 'paid_search' || ch === 'google_ads' || ch === 'cpc') return 'google';
-  if (ch === 'organic_search' || ch === 'organic' || ch === 'google_organic') return 'organic';
-  
-  if (ch === 'meta' || ch === 'google' || ch === 'tiktok' || ch === 'organic' || ch === 'unattributed') {
-    return ch;
+function normalizeChannelForStats(channelRaw, platformRaw = '') {
+  const displayChannel = normalizeDisplayAttributionChannel(channelRaw, platformRaw);
+  const platform = normalizeAttributionToken(platformRaw);
+
+  if (displayChannel === 'meta') return 'meta';
+  if (displayChannel === 'google') return 'google';
+  if (displayChannel === 'tiktok') return 'tiktok';
+  if (displayChannel === 'organic' || displayChannel === 'organic search' || displayChannel === 'organic social') return 'organic';
+  if (displayChannel === 'direct') return 'direct';
+  if (displayChannel === 'referral') return 'referral';
+  if (displayChannel === 'email') return 'email';
+  if (displayChannel === 'paid social') {
+    if (includesAny(platform, ['tiktok'])) return 'tiktok';
+    if (includesAny(platform, ['facebook', 'instagram', 'meta'])) return 'meta';
+    return 'other';
   }
-  
+  if (displayChannel === 'paid search') {
+    if (includesAny(platform, ['google'])) return 'google';
+    return 'other';
+  }
+  if (displayChannel === 'unattributed') return 'unattributed';
   return 'other';
+}
+
+function isStoredGoogleOrganicFallback({ channel = '', snapshot = {}, wooSourceLabel = '' } = {}) {
+  if (normalizeAttributionToken(channel) !== 'google') return false;
+  const medium = normalizeAttributionToken(snapshot?.utm_medium || '');
+  const label = normalizeAttributionToken(wooSourceLabel || '');
+  const hasPaidSignal = includesAny(medium, ['cpc', 'paid search', 'ppc', 'ads', 'adwords'])
+    || includesAny(label, ['cpc', 'paid search', 'ppc', 'ads', 'adwords'])
+    || Boolean(snapshot?.gclid);
+  return !hasPaidSignal;
+}
+
+function resolveStoredDisplayAttribution({ channel = '', platform = '', snapshot = {}, wooSourceLabel = '' } = {}) {
+  if (isStoredGoogleOrganicFallback({ channel, snapshot, wooSourceLabel })) {
+    return 'organic search';
+  }
+
+  return normalizeDisplayAttributionChannel(
+    channel,
+    platform || snapshot?.utm_source || snapshot?.referrer || wooSourceLabel || ''
+  );
 }
 
 function compactSessionPath(timeline = []) {
@@ -1992,7 +2138,7 @@ function buildAttributionTouchpointsForAccount({ snapshots = [], sessions = [], 
 
 function resolveConversionAttribution({ model, touchpoints }) {
   const valid = touchpoints.filter((tp) => {
-    const ch = normalizeChannelForStats(tp?.attribution?.channel);
+    const ch = normalizeChannelForStats(tp?.attribution?.channel, tp?.attribution?.platform);
     return ch !== 'unattributed';
   });
 
@@ -2006,7 +2152,7 @@ function resolveConversionAttribution({ model, touchpoints }) {
 
   if (model === 'first_touch') {
     const first = valid[0].attribution;
-    const channel = normalizeChannelForStats(first.channel);
+    const channel = normalizeDisplayAttributionChannel(first.channel, first.platform);
     return {
       primary: {
         channel,
@@ -2027,7 +2173,7 @@ function resolveConversionAttribution({ model, touchpoints }) {
     const perTouch = 1 / valid.length;
     const splitMap = new Map();
     valid.forEach((tp) => {
-      const ch = normalizeChannelForStats(tp.attribution.channel);
+      const ch = normalizeDisplayAttributionChannel(tp.attribution.channel, tp.attribution.platform);
       splitMap.set(ch, Number(splitMap.get(ch) || 0) + perTouch);
     });
 
@@ -2055,7 +2201,7 @@ function resolveConversionAttribution({ model, touchpoints }) {
 
   if (model === 'meta' || model === 'google_ads') {
     const targetChannel = model === 'meta' ? 'meta' : 'google';
-    const specificTouch = valid.slice().reverse().find(t => normalizeChannelForStats(t.attribution.channel) === targetChannel);
+    const specificTouch = valid.slice().reverse().find(t => normalizeChannelForStats(t.attribution.channel, t.attribution.platform) === targetChannel);
     if (specificTouch) {
       const attr = specificTouch.attribution;
       return {
@@ -2082,7 +2228,7 @@ function resolveConversionAttribution({ model, touchpoints }) {
   }
 
   const last = valid[valid.length - 1].attribution;
-  const channel = normalizeChannelForStats(last.channel);
+  const channel = normalizeDisplayAttributionChannel(last.channel, last.platform);
   return {
     primary: {
       channel,
@@ -2148,98 +2294,44 @@ function deriveWooFallbackAttribution(rawPayload = {}) {
   const sourceType = String(rawPayload?.woo_source_type || '').trim().toLowerCase();
   const utmSource = String(rawPayload?.utm_source || '').trim().toLowerCase();
   const utmMedium = String(rawPayload?.utm_medium || '').trim().toLowerCase();
-  
-  const isPaidGoogle = utmMedium === 'cpc' || utmMedium === 'paid_search' || rawPayload?.gclid || sourceLabel.toLowerCase().includes('cpc') || sourceLabel.toLowerCase().includes('ads');
 
-  if (utmSource === 'google') {
+  const inferred = inferAttributionFromSignals({
+    source: utmSource || sourceLabel || sourceType,
+    medium: utmMedium || sourceType,
+    referrerDomain: sourceLabel,
+  });
+
+  if (inferred) {
     return {
-      channel: isPaidGoogle ? 'google' : 'organic',
-      platform: 'google',
-      confidence: 0.6,
+      channel: normalizeDisplayAttributionChannel(inferred.channel, inferred.platform || sourceLabel || utmSource || sourceType),
+      platform: inferred.platform || sourceLabel || utmSource || sourceType || null,
+      confidence: Math.max(0.5, Number(inferred.confidence || 0.55)),
       source: 'woo_fallback',
     };
   }
 
-  if (utmSource === 'facebook' || utmSource === 'instagram') {
-    return {
-      channel: 'meta',
-      platform: utmSource,
-      confidence: 0.6,
-      source: 'woo_fallback',
-    };
-  }
+  const normalizedFallback = normalizeDisplayAttributionChannel(
+    sourceType || sourceLabel || utmSource,
+    sourceLabel || utmSource || sourceType
+  );
 
-  if (utmSource === 'tiktok') {
+  if (normalizedFallback && normalizedFallback !== 'other' && normalizedFallback !== 'unattributed') {
     return {
-      channel: 'tiktok',
-      platform: 'tiktok',
-      confidence: 0.6,
-      source: 'woo_fallback',
-    };
-  }
-
-  if (sourceLabel) {
-    const normalized = sourceLabel.toLowerCase();
-    if (normalized.includes('google')) {
-      return {
-        channel: isPaidGoogle ? 'google' : 'organic',
-        platform: 'google',
-        confidence: 0.55,
-        source: 'woo_fallback',
-      };
-    }
-      if (normalized.includes('yahoo')) {
-        return {
-          channel: 'other',
-          platform: 'mx.search.yahoo.com',
-          confidence: 0.55,
-          source: 'woo_fallback',
-        };
-      }
-      if (normalized.includes('hostinger')) {
-        return {
-          channel: 'other',
-          platform: 'hpanel.hostinger.com',
-          confidence: 0.55,
-          source: 'woo_fallback',
-        };
-      }
-    if (normalized.includes('facebook') || normalized.includes('instagram')) {
-      return {
-        channel: 'meta',
-        platform: 'meta',
-        confidence: 0.55,
-        source: 'woo_fallback',
-      };
-    }
-    if (normalized.includes('tiktok')) {
-      return {
-        channel: 'tiktok',
-        platform: 'tiktok',
-        confidence: 0.55,
-        source: 'woo_fallback',
-      };
-    }
-    if (normalized.includes('directo') || normalized.includes('direct')) {
-      return {
-        channel: 'direct',
-        platform: 'direct',
-        confidence: 0.5,
-        source: 'woo_fallback',
-      };
-    }
-  }
-
-  if (sourceType === 'direct') {
-    return {
-      channel: 'direct',
-      platform: 'direct',
+      channel: normalizedFallback,
+      platform: sourceLabel || utmSource || sourceType || null,
       confidence: 0.5,
       source: 'woo_fallback',
     };
   }
 
-  return null;
+  return sourceType === 'direct'
+    ? {
+        channel: 'direct',
+        platform: 'direct',
+        confidence: 0.5,
+        source: 'woo_fallback',
+      }
+    : null;
 }
 
 // Use existing sessionGuard from index.js mount, assuming it's available or implemented here?
@@ -2430,6 +2522,9 @@ router.get('/:account_id', async (req, res) => {
       google: { revenue: 0, orders: 0 },
       tiktok: { revenue: 0, orders: 0 },
       organic: { revenue: 0, orders: 0 },
+      direct: { revenue: 0, orders: 0 },
+      referral: { revenue: 0, orders: 0 },
+      email: { revenue: 0, orders: 0 },
       other: { revenue: 0, orders: 0 },
       unattributed: { revenue: 0, orders: 0 }
     };
@@ -2458,8 +2553,15 @@ router.get('/:account_id', async (req, res) => {
       totalRevenue += rev;
 
       // Channel normalization
-      let ch = normalizeChannelForStats(order.attributedChannel);
-      if (ch === 'google' && !String(order.orderAttributionSnapshot?.utm_medium || '').match(/cpc|paid_search|ads/i) && !String(order.wooSourceLabel || '').match(/cpc|ads/i) && !order.orderAttributionSnapshot?.gclid) { ch = 'organic'; }
+      const orderDisplayChannel = resolveStoredDisplayAttribution({
+        channel: order.attributedChannel,
+        snapshot: order.attributionSnapshot || {},
+        wooSourceLabel: order?.attributionSnapshot?.woo_source_label || '',
+      });
+      const ch = normalizeChannelForStats(
+        orderDisplayChannel,
+        order?.attributionSnapshot?.utm_source || order?.attributionSnapshot?.referrer || order?.attributionSnapshot?.woo_source_label || ''
+      );
 
       if (channelStats[ch]) {
         channelStats[ch].revenue += rev;
@@ -2728,12 +2830,18 @@ router.get('/:account_id', async (req, res) => {
         woo_source_label: conv.wooSourceLabel,
         woo_source_type: conv.wooSourceType,
         utm_source: conv?.payloadSnapshot?.utm_source || conv?.orderAttributionSnapshot?.utm_source || null,
+        utm_medium: conv?.payloadSnapshot?.utm_medium || conv?.orderAttributionSnapshot?.utm_medium || null,
       });
 
       const orderStoredAttribution = (conv.source === 'orders' && conv.orderAttributedChannel && conv.orderAttributedChannel !== 'unattributed')
         ? {
             primary: {
-              channel: (conv.orderAttributedChannel === 'google' && !String(conv.orderAttributionSnapshot?.utm_medium || '').match(/cpc|paid_search|ads/i) && !String(conv.wooSourceLabel || '').match(/cpc|ads/i) && !conv.orderAttributionSnapshot?.gclid) ? 'organic' : normalizeChannelForStats(conv.orderAttributedChannel),
+              channel: resolveStoredDisplayAttribution({
+                channel: conv.orderAttributedChannel,
+                platform: conv?.orderAttributionSnapshot?.utm_source || conv?.wooSourceLabel || conv.orderAttributedChannel,
+                snapshot: conv.orderAttributionSnapshot || {},
+                wooSourceLabel: conv.wooSourceLabel || '',
+              }),
               platform: conv?.wooSourceLabel || conv?.orderAttributionSnapshot?.utm_source || conv.orderAttributedChannel,
               campaign: conv?.orderAttributionSnapshot?.utm_campaign || null,
               adset: conv?.orderAttributionSnapshot?.utm_content || null,
@@ -2742,7 +2850,15 @@ router.get('/:account_id', async (req, res) => {
               confidence: Number(conv.orderAttributionConfidence || 0.75),
               source: String(conv.orderAttributionModel || '').startsWith('woo_') ? 'woo_fallback' : 'orders_sync',
             },
-            splits: [{ channel: (conv.orderAttributedChannel === 'google' && !String(conv.orderAttributionSnapshot?.utm_medium || '').match(/cpc|paid_search|ads/i) && !String(conv.wooSourceLabel || '').match(/cpc|ads/i) && !conv.orderAttributionSnapshot?.gclid) ? 'organic' : normalizeChannelForStats(conv.orderAttributedChannel), weight: 1 }],
+            splits: [{
+              channel: resolveStoredDisplayAttribution({
+                channel: conv.orderAttributedChannel,
+                platform: conv?.orderAttributionSnapshot?.utm_source || conv?.wooSourceLabel || conv.orderAttributedChannel,
+                snapshot: conv.orderAttributionSnapshot || {},
+                wooSourceLabel: conv.wooSourceLabel || '',
+              }),
+              weight: 1,
+            }],
             isAttributed: true,
           }
         : null;
@@ -3071,7 +3187,7 @@ router.get('/:account_id', async (req, res) => {
         : [{ channel: 'unattributed', weight: 1 }];
 
       splits.forEach((split) => {
-        const ch = normalizeChannelForStats(split.channel);
+        const ch = normalizeChannelForStats(split.channel, split.platform || '');
         const weight = Number(split.weight || 0);
         const revenueShare = rev * weight;
 
@@ -5055,7 +5171,10 @@ router.get('/:account_id/users/:userKey/timeline', async (req, res) => {
     });
 
     const attributionStats = orders.reduce((acc, order) => {
-      const channel = normalizeChannelForStats(order?.attributedChannel || 'unattributed');
+      const channel = normalizeChannelForStats(
+        order?.attributedChannel || 'unattributed',
+        order?.attributedPlatform || order?.attributionSnapshot?.utm_source || order?.attributionSnapshot?.referrer || ''
+      );
       const revenue = Number(order?.revenue || 0);
       if (!acc[channel]) acc[channel] = { orders: 0, revenue: 0 };
       acc[channel].orders += 1;

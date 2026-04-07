@@ -3881,14 +3881,68 @@
             return first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
         }
 
-        function humanReadableChannel(channel) {
-            const value = String(channel || '').trim().toLowerCase();
+        function normalizeAttributionToken(value) {
+            return String(value || '')
+                .trim()
+                .toLowerCase()
+                .replace(/[_-]+/g, ' ')
+                .replace(/\s+/g, ' ');
+        }
+
+        function toTitleCaseWords(value = '') {
+            return String(value || '')
+                .split(' ')
+                .filter(Boolean)
+                .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+                .join(' ');
+        }
+
+        function humanizeAttributionPlatform(platform = '') {
+            const normalized = normalizeAttributionToken(platform);
+            if (!normalized || normalized === '-' || normalized === 'none' || normalized === 'direct') return '';
+
+            if (normalized.includes('google')) return 'Google';
+            if (normalized.includes('facebook') || normalized.includes('instagram') || normalized.includes('meta')) return 'Meta';
+            if (normalized.includes('tiktok')) return 'TikTok';
+            if (normalized.includes('yahoo')) return 'Yahoo';
+            if (normalized.includes('bing')) return 'Bing';
+            if (normalized.includes('duckduckgo')) return 'DuckDuckGo';
+            if (normalized.includes('hostinger')) return 'Hostinger';
+            if (normalized.includes('klaviyo')) return 'Klaviyo';
+            if (normalized.includes('mailchimp')) return 'Mailchimp';
+            if (normalized.includes('hubspot')) return 'HubSpot';
+            if (normalized.includes('linkedin')) return 'LinkedIn';
+            if (normalized.includes('pinterest')) return 'Pinterest';
+            if (normalized.includes('whatsapp')) return 'WhatsApp';
+            if (normalized.includes('referral')) return 'Referral';
+
+            const hostLike = normalized
+                .replace(/^https?:\/\//, '')
+                .replace(/^www\./, '')
+                .split('/')[0]
+                .trim();
+            const base = (hostLike.split('.')[0] || normalized).replace(/[-_]+/g, ' ');
+            return toTitleCaseWords(base);
+        }
+
+        function humanReadableChannel(channel, platform = '') {
+            const value = normalizeAttributionToken(channel);
+            const platformLabel = humanizeAttributionPlatform(platform);
             if (!value) return 'Channel';
-            if (value.includes('meta') || value.includes('facebook') || value.includes('instagram')) return 'Meta';
-            if (value.includes('google')) return 'Google';
-            if (value.includes('tiktok')) return 'TikTok';
-            if (value.includes('organic')) return 'Organic';
-            return value.charAt(0).toUpperCase() + value.slice(1);
+            if (value === 'unattributed' || value === 'none') return 'Unattributed';
+            if (value === 'multi touch') return 'Multi-touch';
+            if (value.includes('meta') || value.includes('facebook') || value.includes('instagram')) return 'Meta Ads';
+            if (value === 'google') return 'Google Ads';
+            if (value === 'paid search' || value === 'cpc' || value === 'ppc') return platformLabel ? `${platformLabel} Ads` : 'Paid Search';
+            if (value.includes('tiktok')) return 'TikTok Ads';
+            if (value === 'organic search') return platformLabel ? `${platformLabel} Search` : 'Organic Search';
+            if (value === 'organic social') return platformLabel ? `${platformLabel} Organic` : 'Organic Social';
+            if (value === 'organic') return platformLabel ? `${platformLabel} Organic` : 'Organic';
+            if (value === 'direct') return 'Direct';
+            if (value === 'referral') return platformLabel ? `${platformLabel} Referral` : 'Referral';
+            if (value === 'email') return platformLabel ? `${platformLabel} Email` : 'Email';
+            if (value === 'other') return platformLabel ? `${platformLabel} Other` : 'Other';
+            return toTitleCaseWords(value);
         }
 
         function humanReadableSessionLabel({ linkedUserLabel = '', sessionId = '' } = {}) {
@@ -3898,13 +3952,23 @@
             return 'Session';
         }
 
-        function normalizeAttributionChannel(channel) {
-            const value = String(channel || '').trim().toLowerCase();
-            if (value.includes('meta') || value.includes('facebook') || value.includes('instagram')) return 'meta';
-            if (value.includes('google') || value.includes('search') || value.includes('adwords')) return 'google';
-            if (value.includes('tiktok')) return 'tiktok';
-            if (value.includes('organic') || value.includes('direct') || value.includes('referral')) return 'organic';
-            return 'other';
+        function normalizeAttributionChannel(channel, platform = '') {
+            const value = normalizeAttributionToken(channel);
+            const platformValue = normalizeAttributionToken(platform);
+            const combined = `${value} ${platformValue}`.trim();
+            if (!combined || value === 'unattributed' || value === 'none') return 'unattributed';
+            if (combined.includes('tiktok') || combined.includes('ttclid')) return 'tiktok';
+            if (/(facebook|instagram|meta|fbclid)/.test(combined)) return 'meta';
+            if (/(google|adwords|gclid)/.test(combined)) return 'google';
+            if (value === 'paid search' || value === 'cpc' || value === 'ppc') return platformValue.includes('google') ? 'google' : 'other';
+            if (value === 'paid social') {
+                if (platformValue.includes('tiktok')) return 'tiktok';
+                if (/(facebook|instagram|meta)/.test(platformValue)) return 'meta';
+                return 'other';
+            }
+            if (value === 'organic search' || value === 'organic social') return 'organic';
+            if (/(organic|seo|direct|referral|email|newsletter|klaviyo|mailchimp|sendgrid|brevo|hubspot|activecampaign|convertkit|yahoo|bing|duckduckgo|baidu|hostinger|linktr|affiliate|partner|whatsapp|sms)/.test(combined)) return 'organic';
+            return value === 'other' ? 'other' : 'other';
         }
 
         function resolvePurchaseCustomerName(purchase = {}) {
@@ -4210,7 +4274,7 @@
 
         function resolveChannelTone(channel, platform) {
             const rawChannel = String(channel || '').trim().toLowerCase();
-            const normalizedChannel = normalizeAttributionChannel(rawChannel);
+            const normalizedChannel = normalizeAttributionChannel(rawChannel, platform || '');
             if (rawChannel.includes('other') || rawChannel.includes('unattributed')) return '';
             if (normalizedChannel === 'organic') return 'is-organic';
             if (normalizedChannel === 'google') return 'is-google';
@@ -4218,7 +4282,7 @@
             if (normalizedChannel === 'tiktok') return 'is-tiktok';
 
             const rawPlatform = String(platform || '').trim().toLowerCase();
-            const normalizedPlatform = normalizeAttributionChannel(rawPlatform);
+            const normalizedPlatform = normalizeAttributionChannel(rawPlatform, rawChannel);
             if (normalizedPlatform === 'organic') return 'is-organic';
             if (normalizedPlatform === 'google') return 'is-google';
             if (normalizedPlatform === 'meta') return 'is-meta';
@@ -4446,7 +4510,7 @@
                         `Campaign: ${campaign}`,
                         `Click ID: ${clickId}`,
                     ],
-                    tooltip: `Primary attribution touchpoint. ${humanReadableChannel(purchase.attributedChannel || 'unattributed')} ${campaign && campaign !== '-' ? `campaign ${campaign}` : 'source'}${clickId && clickId !== '-' ? ` with click id ${shortenJourneyIdentifier(clickId)}` : ''}.`,
+                    tooltip: `Primary attribution touchpoint. ${humanReadableChannel(purchase.attributedChannel || 'unattributed', purchase.attributedPlatform || '')} ${campaign && campaign !== '-' ? `campaign ${campaign}` : 'source'}${clickId && clickId !== '-' ? ` with click id ${shortenJourneyIdentifier(clickId)}` : ''}.`,
                     tone,
                 },
             ];
@@ -4570,7 +4634,7 @@
             const gclid = String(payload.gclid || '').trim();
             const fbclid = String(payload.fbclid || payload.fbc || payload._fbc || '').trim();
             const ttclid = String(payload.ttclid || '').trim();
-            const fallbackChannel = normalizeAttributionChannel(purchase.attributedChannel || purchase.attributedPlatform || '');
+            const fallbackChannel = normalizeAttributionChannel(purchase.attributedChannel || '', purchase.attributedPlatform || '');
             const fallbackCampaign = String(purchase.attributedCampaign || purchase.attributionDebug?.payloadUtmCampaign || '').trim();
             const fallbackClickId = String(purchase.attributedClickId || '').trim();
 
@@ -4620,7 +4684,7 @@
                 reason = `Referrer ${referrerLabel} indicates social traffic.`;
             } else if (utmSource) {
                 channelKey = normalizeAttributionChannel(utmSource);
-                label = humanReadableChannel(utmSource);
+                label = humanReadableChannel(utmSource, referrerLabel || utmSource);
                 reason = `UTM source ${utmSource} was captured in this session.`;
             } else if (referrerLabel) {
                 channelKey = 'organic';
@@ -4628,7 +4692,7 @@
                 reason = `Referrer ${referrerLabel} stitched this session.`;
             } else if (fallbackChannel && fallbackChannel !== 'other') {
                 channelKey = fallbackChannel;
-                label = `${humanReadableChannel(fallbackChannel)} inferred`;
+                label = `${humanReadableChannel(purchase.attributedChannel || fallbackChannel, purchase.attributedPlatform || '')} inferred`;
                 reason = 'Inherited from the final attributed purchase when this session had no explicit source.';
                 clickId = fallbackClickId;
             }
@@ -4984,7 +5048,7 @@
                             </div>
                             <div class="journey-session-touchpoint is-organic" title="Final conversion event used to anchor attribution and stitch backward." data-tooltip="Final conversion event used to anchor attribution and stitch backward.">
                                 <span class="journey-session-touchpoint-title"><i class="fa-solid fa-bag-shopping"></i>Order #${escapeHtml(orderLabel)}</span>
-                                <span class="journey-session-touchpoint-sub">${escapeHtml(revenue)} · ${escapeHtml(humanReadableChannel(purchase.attributedChannel || 'unattributed'))}</span>
+                                <span class="journey-session-touchpoint-sub">${escapeHtml(revenue)} · ${escapeHtml(humanReadableChannel(purchase.attributedChannel || 'unattributed', purchase.attributedPlatform || ''))}</span>
                             </div>
                             <div class="journey-session-kpis">
                                 <span class="journey-chip" data-tooltip="Campaign attributed to the final purchase."><i class="fa-solid fa-bullhorn"></i>${escapeHtml(purchase.attributedCampaign || 'No campaign')}</span>
@@ -5090,7 +5154,7 @@
                     leads,
                     confidence,
                     userName,
-                    source: humanReadableChannel(channel),
+                    source: humanReadableChannel(channel, platform),
                     sourceAd,
                     landing,
                 },
@@ -5105,7 +5169,7 @@
             const confidence = Math.round(Number(purchase.attributionConfidence || 0) * 100);
             const hasPurchase = Number(purchase.revenue || 0) > 0;
             const userName = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || '', 'Customer');
-            const source = humanReadableChannel(purchase.attributedChannel);
+            const source = humanReadableChannel(purchase.attributedChannel, purchase.attributedPlatform || '');
             const sourceAd = purchase.attributedCampaign || 'No campaign';
             const availableEvents = Array.isArray(purchase.events) ? purchase.events : (Array.isArray(purchase.stitchedEvents) ? purchase.stitchedEvents : []);
             const landingInfo = resolvePurchaseLandingInfo(purchase, availableEvents);
@@ -5443,7 +5507,7 @@
                         ${renderTimelineModeToggle(selectedJourneyTimelineMode)}
                         ${renderJourneyVerticalTimeline(journeyData.timelineEvents)}
                         <div class="flex items-center gap-2 flex-wrap">
-                            <span class="journey-chip ${resolveChannelTone(currentJourney.attribution?.channel, currentJourney.attribution?.platform)}" data-tooltip="Traffic source channel"><i class="fa-solid fa-bullseye"></i>${escapeHtml(currentJourney.attribution?.channel || 'unattributed')}</span>
+                            <span class="journey-chip ${resolveChannelTone(currentJourney.attribution?.channel, currentJourney.attribution?.platform)}" data-tooltip="Traffic source channel"><i class="fa-solid fa-bullseye"></i>${escapeHtml(humanReadableChannel(currentJourney.attribution?.channel || 'unattributed', currentJourney.attribution?.platform || ''))}</span>
                         </div>
                     </div>
                 `;
@@ -5470,7 +5534,7 @@
                 .map((p) => ({
                     purchase: p,
                     score: scoreJourneySignal(p),
-                    channelKey: normalizeAttributionChannel(p.attributedChannel || p.attributedPlatform || ''),
+                    channelKey: normalizeAttributionChannel(p.attributedChannel || '', p.attributedPlatform || ''),
                 }))
                 .sort((a, b) => {
                     const tsA = new Date(a.purchase.platformCreatedAt || a.purchase.createdAt || 0).getTime();
@@ -5583,7 +5647,7 @@
                 <div class="space-y-3 mt-3">
                     ${profileFilteredJourneys.slice(0, 40).map(({ purchase }, index) => {
                         const person = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || 'Customer');
-                        const channel = humanReadableChannel(purchase.attributedChannel);
+                        const channel = humanReadableChannel(purchase.attributedChannel, purchase.attributedPlatform || '');
                         const sessionCount = countPurchaseJourneySessions(purchase);
                         return `
                         <button type="button" class="journey-compact-card w-full text-left hover:opacity-95" data-journey-order-id="${escapeHtmlAttr(purchase.orderId || '')}">
@@ -5592,7 +5656,7 @@
                                 <span class="text-xs text-gray-500">${formatRecentPurchaseDate(purchase)}</span>
                             </div>
                             <div class="mt-2 flex items-center gap-2 flex-wrap">
-                                <span class="journey-chip ${resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform)}"><i class="${resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform)}"></i>${escapeHtml(purchase.attributedChannel || 'unattributed')}</span>
+                                <span class="journey-chip ${resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform)}"><i class="${resolveChannelIcon(purchase.attributedChannel, purchase.attributedPlatform)}"></i>${escapeHtml(humanReadableChannel(purchase.attributedChannel || 'unattributed', purchase.attributedPlatform || ''))}</span>
                                 <span class="journey-chip"><i class="fa-solid fa-sack-dollar"></i>${formatCurrencyWithCode(Number(purchase.revenue || 0), purchase.currency || 'MXN')}</span>
                                 <span class="journey-chip"><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
                             </div>
@@ -6155,8 +6219,13 @@
             updateRecommendedComparison(patterns);
             renderSessionComparison();
 
-            document.getElementById('session-detail-orders').innerHTML = orders.length
-                ? orders.map((order, index) => `
+            const displayOrders = orders.map((order) => ({
+                ...order,
+                attributedChannel: humanReadableChannel(order.attributedChannel || 'unattributed', order.attributedPlatform || ''),
+            }));
+
+            document.getElementById('session-detail-orders').innerHTML = displayOrders.length
+                ? displayOrders.map((order, index) => `
                     <div class="session-order-card rounded-lg p-3">
                         <div class="flex items-start justify-between gap-3">
                             <div>
@@ -6767,14 +6836,6 @@
             // Channel Metrics (Fix: API returns object, map to array)
             const channels = data.channels || {};
 
-            // Combine unattributed into other
-            if (channels.unattributed) {
-                if (!channels.other) channels.other = { revenue: 0, orders: 0 };
-                channels.other.revenue += channels.unattributed.revenue || 0;
-                channels.other.orders += channels.unattributed.orders || 0;
-                delete channels.unattributed;
-            }
-
             // Transform for chart
             const attributionData = Object.entries(channels).map(([key, val]) => ({
                 channel: key,
@@ -7281,6 +7342,17 @@ function renderRecentPurchases(purchases) {
                 if (p.attributedCampaign) {
                     attrText += ` · ${p.attributedCampaign}`;
                 }
+                const attrLabel = humanReadableChannel(attrChannel, attrPlatform);
+                if (Array.isArray(p.attributionSplits) && p.attributionSplits.length > 1) {
+                    attrText = p.attributionSplits
+                        .map((s) => `${humanReadableChannel(s.channel || 'unattributed', s.platform || '')}:${Math.round(Number(s.weight || 0) * 100)}%`)
+                        .join(' / ');
+                } else {
+                    attrText = `${attrLabel} · ${(attrConfidence * 100).toFixed(0)}%`;
+                    if (p.attributedCampaign) {
+                        attrText += ` · ${p.attributedCampaign}`;
+                    }
+                }
                 const debugBits = [];
                 if (p.attributionDebug?.wooSourceLabel) debugBits.push(`woo=${p.attributionDebug.wooSourceLabel}`);
                 if (p.attributionDebug?.payloadUtmSource) debugBits.push(`utm=${p.attributionDebug.payloadUtmSource}`);
@@ -7426,6 +7498,8 @@ function renderRecentPurchases(purchases) {
                 'klaviyo': 'fa-solid fa-envelope',
                 'organic': 'fa-solid fa-globe',
                 'direct': 'fa-solid fa-globe',
+                'referral': 'fa-solid fa-share-nodes',
+                'email': 'fa-solid fa-envelope',
                 'unattributed': 'fa-solid fa-question'
             };
             const colorsMap = {
@@ -7435,6 +7509,8 @@ function renderRecentPurchases(purchases) {
                 'klaviyo': 'rgba(123, 222, 187, 0.8)',
                 'organic': 'rgba(134, 239, 172, 0.8)',
                 'direct': 'rgba(134, 239, 172, 0.8)',
+                'referral': 'rgba(96, 165, 250, 0.82)',
+                'email': 'rgba(123, 222, 187, 0.82)',
                 'organic/direct': 'rgba(134, 239, 172, 0.8)',
                 'unattributed': 'rgba(156, 163, 175, 0.4)'
             };
@@ -7450,12 +7526,14 @@ function renderRecentPurchases(purchases) {
                 let cKey = channelRaw;
                 if (channelRaw.includes('organic') || channelRaw.includes('direct')) cKey = 'organic';
                 if (channelRaw.includes('facebook') || channelRaw.includes('meta') || channelRaw.includes('ig')) cKey = 'meta';
+                if (channelRaw.includes('referral')) cKey = 'referral';
+                if (channelRaw.includes('email')) cKey = 'email';
 
                 if (cKey === 'unattributed' && (stats.orders || 0) === 0) continue;
                 if ((stats.orders || 0) === 0 && (stats.revenue || 0) === 0) continue;
 
-                let displayName = channelRaw.toUpperCase();
-                if (cKey === 'organic') displayName = 'ORGANIC';
+                let displayName = humanReadableChannel(channelRaw).toUpperCase();
+                if (cKey === 'organic' && channelRaw === 'organic') displayName = 'ORGANIC';
 
                 labels.push(displayName);
                 values.push(stats.orders || 0);
@@ -8228,7 +8306,7 @@ function renderUserExplorer(data) {
                 '<p class="text-xs text-emerald-600 font-bold uppercase tracking-wider mb-1">' + timeStr + ' - Purchase (' + revStr + ')</p>' +
                 '<div class="bg-gray-50 rounded-lg p-3 text-sm text-gray-800 border border-gray-200">' +
                     '<p><strong>Order:</strong> #' + (o.orderNumber || o.orderId) + '</p>' +
-                    '<p><strong>Atribuci\u00f3n (\u00daltimo Clic):</strong> ' + (o.attributedChannel || 'unattributed') + '</p>' +
+                    '<p><strong>Atribuci\u00f3n (\u00daltimo Clic):</strong> ' + humanReadableChannel(o.attributedChannel || 'unattributed', o.attributedPlatform || '') + '</p>' +
                 '</div>' +
             '</div>';
         } else if (item.type === 'event') {
