@@ -247,7 +247,7 @@ function supportLine(email, align = 'center') {
   `;
 }
 
-function footerHtml(brand = 'Adray', privacyUrl = 'https://adray.ai/privacy') {
+function footerHtml(brand = 'Adray, Inc.', privacyUrl = 'https://adray.ai/privacy') {
   const year = new Date().getFullYear();
   return `© ${year} ${escapeHtml(brand)} · <a href="${escapeHtml(
     privacyUrl
