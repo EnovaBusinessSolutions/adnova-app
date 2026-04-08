@@ -1939,6 +1939,12 @@
             padding: 0.7rem;
         }
 
+        .journey-compact-card.is-active {
+            border-color: rgba(202, 138, 229, 0.48);
+            background: linear-gradient(180deg, rgba(76, 29, 149, 0.18), rgba(225, 216, 243, 0.08));
+            box-shadow: 0 0 0 1px rgba(202, 138, 229, 0.18);
+        }
+
         .journey-session-story {
             display: flex;
             flex-direction: column;
@@ -3060,6 +3066,7 @@
             profileKey: 'all',
             profileSearch: '',
             profileSort: 'orders',
+            selectedJourneyKey: '',
         };
         let selectedJourneyTimelineMode = 'condensed';
         let sessionExplorerState = {
@@ -5366,6 +5373,23 @@
             return normalized;
         }
 
+        function getPurchaseSelectionKey(purchase = {}) {
+            const orderId = String(purchase.orderId || '').trim();
+            if (orderId) return `order:${orderId}`;
+
+            const orderNumber = String(purchase.orderNumber || '').trim();
+            if (orderNumber) return `order-number:${orderNumber}`;
+
+            const checkoutToken = String(purchase.checkoutToken || '').trim();
+            if (checkoutToken) return `checkout:${checkoutToken}`;
+
+            const createdAt = String(purchase.platformCreatedAt || purchase.createdAt || '').trim();
+            const userKey = String(purchase.userKey || '').trim();
+            const customerId = String(purchase.customerId || '').trim();
+            const revenue = String(Number(purchase.revenue || 0));
+            return `fallback:${createdAt}:${userKey}:${customerId}:${revenue}`;
+        }
+
         function escapeInlineSingleQuotedJs(value) {
             return String(value || '')
                 .replace(/\\/g, '\\\\')
@@ -5496,6 +5520,7 @@
             }
 
             attributionJourneyState.profileKey = matched?.profileKey || 'all';
+            attributionJourneyState.selectedJourneyKey = '';
             if (matched?.customerDisplayName || safeFallbackName) {
                 attributionJourneyState.profileSearch = matched?.customerDisplayName || safeFallbackName;
             }
@@ -5566,6 +5591,7 @@
                     purchase: p,
                     score: scoreJourneySignal(p),
                     channelKey: normalizeAttributionChannel(p.attributedChannel || '', p.attributedPlatform || ''),
+                    selectionKey: getPurchaseSelectionKey(p),
                 }))
                 .sort((a, b) => {
                     const tsA = new Date(a.purchase.platformCreatedAt || a.purchase.createdAt || 0).getTime();
@@ -5623,6 +5649,7 @@
                 : byChannel;
 
             if (!byChannel.length) {
+                attributionJourneyState.selectedJourneyKey = '';
                 focusEl.innerHTML = '<p class="text-sm text-gray-500">No conversion journeys found in this date range.</p>';
                 historyEl.innerHTML = '<p class="text-sm text-gray-500">No WooCommerce conversion profiles found yet.</p>';
                 return;
@@ -5630,6 +5657,7 @@
 
             if (!profileFilteredJourneys.length) {
                 if (selectedProfile) {
+                    attributionJourneyState.selectedJourneyKey = '';
                     focusEl.innerHTML = `
                         <div class="journey-compact-card space-y-3">
                             <div class="flex items-center justify-between gap-2 flex-wrap">
@@ -5645,12 +5673,15 @@
                         </div>
                     `;
                 } else {
+                    attributionJourneyState.selectedJourneyKey = '';
                     focusEl.innerHTML = '<p class="text-sm text-gray-500">No stitched journeys for this filter.</p>';
                 }
             } else {
-                const top = profileFilteredJourneys[0].purchase;
+                const selectedRow = profileFilteredJourneys.find((row) => row.selectionKey === String(attributionJourneyState.selectedJourneyKey || ''))
+                    || profileFilteredJourneys[0];
+                attributionJourneyState.selectedJourneyKey = selectedRow?.selectionKey || '';
                 focusEl.innerHTML = renderFocusedPurchaseJourneyCard(
-                    top,
+                    selectedRow.purchase,
                     selectedProfile ? resolveProfileDisplayName(selectedProfile) : ''
                 );
                 wireTimelineModeToggle(focusEl);
@@ -5676,12 +5707,13 @@
                     </div>
                 </div>
                 <div class="space-y-3 mt-3">
-                    ${profileFilteredJourneys.slice(0, 40).map(({ purchase }, index) => {
+                    ${profileFilteredJourneys.slice(0, 40).map(({ purchase, selectionKey }, index) => {
                         const person = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || 'Customer');
                         const channel = humanReadableChannel(purchase.attributedChannel, purchase.attributedPlatform || '');
                         const sessionCount = countPurchaseJourneySessions(purchase);
+                        const isActive = selectionKey === String(attributionJourneyState.selectedJourneyKey || '');
                         return `
-                        <button type="button" class="journey-compact-card w-full text-left hover:opacity-95" data-journey-order-id="${escapeHtmlAttr(purchase.orderId || '')}">
+                        <button type="button" class="journey-compact-card ${isActive ? 'is-active' : ''} w-full text-left hover:opacity-95" data-journey-key="${escapeHtmlAttr(selectionKey)}">
                             <div class="flex items-center justify-between gap-2 flex-wrap">
                                 <p class="text-sm font-semibold text-gray-900">${escapeHtml(`${channel} ${index + 1} for ${person}`)}</p>
                                 <span class="text-xs text-gray-500">${formatRecentPurchaseDate(purchase)}</span>
@@ -5727,13 +5759,13 @@
                 });
             });
 
-            historyEl.querySelectorAll('[data-journey-order-id]').forEach((button) => {
+            historyEl.querySelectorAll('[data-journey-key]').forEach((button) => {
                 button.addEventListener('click', () => {
-                    const orderId = button.getAttribute('data-journey-order-id') || '';
-                    const row = profileFilteredJourneys.find((item) => String(item.purchase.orderId || '') === orderId);
+                    const selectionKey = button.getAttribute('data-journey-key') || '';
+                    const row = profileFilteredJourneys.find((item) => item.selectionKey === selectionKey);
                     if (!row) return;
-                    focusEl.innerHTML = renderFocusedPurchaseJourneyCard(row.purchase);
-                    wireTimelineModeToggle(focusEl);
+                    attributionJourneyState.selectedJourneyKey = row.selectionKey;
+                    renderAttributionJourneyPanel();
                 });
             });
         }
