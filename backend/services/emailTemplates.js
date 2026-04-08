@@ -52,7 +52,7 @@ const EMAIL_BRAND_ICON_PATH = resolveEmailBrandIconPath();
 function brandWordmark() {
   if (!EMAIL_BRAND_ICON_PATH) {
     return `
-      <div style="display:block;width:44px;height:44px;line-height:44px;font-size:0;">&nbsp;</div>
+      <div style="display:block;width:48px;height:48px;line-height:48px;font-size:0;">&nbsp;</div>
     `;
   }
 
@@ -63,9 +63,9 @@ function brandWordmark() {
           <img
             src="cid:${EMAIL_BRAND_ICON_CID}"
             alt="Adray"
-            width="44"
-            height="44"
-            style="display:block;width:44px;height:44px;border:0;outline:none;text-decoration:none;"
+            width="48"
+            height="48"
+            style="display:block;width:48px;height:48px;border:0;outline:none;text-decoration:none;"
           />
         </td>
       </tr>
