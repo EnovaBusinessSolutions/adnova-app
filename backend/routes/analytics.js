@@ -4171,6 +4171,10 @@ function extractEventIdentity(rawPayload) {
   };
 }
 
+function normalizeObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
 function extractOrderDeliveryStatus(order = {}) {
   const snapshot = normalizeObject(order?.attributionSnapshot);
   const fallbackStatus = normalizeObject(snapshot.deliveryStatus);
