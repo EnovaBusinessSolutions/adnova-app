@@ -933,6 +933,41 @@
             border-radius: 999px;
         }
 
+        .dashboard-load-more-wrap {
+            display: flex;
+            justify-content: center;
+            padding: 0.25rem 1rem 1rem;
+        }
+
+        .dashboard-load-more-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.45rem;
+            min-height: 2.5rem;
+            padding: 0.65rem 1rem;
+            border-radius: 999px;
+            border: 1px solid rgba(181, 92, 255, 0.24);
+            background: rgba(181, 92, 255, 0.1);
+            color: #f4e9ff;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+        }
+
+        .dashboard-load-more-btn:hover {
+            background: rgba(181, 92, 255, 0.16);
+            border-color: rgba(181, 92, 255, 0.34);
+            transform: translateY(-1px);
+        }
+
+        .dashboard-load-more-btn:disabled {
+            opacity: 0.65;
+            cursor: wait;
+            transform: none;
+        }
+
         .dashboard-top-row > * {
             min-width: 0;
             min-height: 0;
@@ -2451,7 +2486,7 @@
                         <option value="custom">Custom</option>
                     </select>
                 </div>
-                <input id="history-limit" type="hidden" value="all" />
+                <input id="history-limit" type="hidden" value="10" />
                 <div class="ops-control">
                     <label for="start-date" class="text-xs text-gray-500 mr-2">Start</label>
                     <input id="start-date" type="date" class="text-sm bg-transparent focus:outline-none" />
@@ -2829,6 +2864,9 @@
                             <div class="live-feed-scroll-thumb" id="live-feed-scroll-thumb"></div>
                         </div>
                     </div>
+                    <div class="dashboard-load-more-wrap">
+                        <button id="live-feed-load-more" type="button" class="dashboard-load-more-btn hidden">Load More</button>
+                    </div>
                 </div>
             </div>
 
@@ -3067,6 +3105,13 @@
         let attributionChartInstance = null;
         let attributionPieChartInstance = null;
         let recentPurchasesState = [];
+        const JOURNEY_HISTORY_PAGE_SIZE = 10;
+        const LIVE_FEED_PAGE_SIZE = 10;
+        const LIVE_FEED_BUFFER_LIMIT = 80;
+        let journeyHistoryVisibleCount = JOURNEY_HISTORY_PAGE_SIZE;
+        let journeyHistoryLoadInFlight = false;
+        let liveFeedVisibleCount = LIVE_FEED_PAGE_SIZE;
+        let liveFeedArchivedNodes = [];
         let metricCarouselIndex = 0;
         let metricCarouselVisible = 4;
         let wpUsersPollTimer = null;
@@ -5764,6 +5809,43 @@
             renderAttributionJourneyPanel();
         }
 
+        async function loadMoreJourneyHistory() {
+            if (journeyHistoryLoadInFlight) return;
+
+            const localAvailable = Array.isArray(recentPurchasesState) ? recentPurchasesState.length : 0;
+            if (localAvailable > journeyHistoryVisibleCount) {
+                journeyHistoryVisibleCount = Math.min(localAvailable, journeyHistoryVisibleCount + JOURNEY_HISTORY_PAGE_SIZE);
+                renderAttributionJourneyPanel();
+                return;
+            }
+
+            const currentLimit = getHistoryLimitValue();
+            if (currentLimit >= 400) return;
+
+            const nextLimit = Math.min(400, currentLimit + JOURNEY_HISTORY_PAGE_SIZE);
+            journeyHistoryLoadInFlight = true;
+            renderAttributionJourneyPanel();
+            setHistoryLimitValue(nextLimit);
+
+            try {
+                const data = await fetchAnalytics({
+                    recentLimitOverride: nextLimit,
+                    renderScope: 'journeys',
+                    quiet: true,
+                    alertOnError: false,
+                });
+
+                const nextAvailable = Array.isArray(data?.recentPurchases) ? data.recentPurchases.length : localAvailable;
+                journeyHistoryVisibleCount = Math.min(nextAvailable, journeyHistoryVisibleCount + JOURNEY_HISTORY_PAGE_SIZE);
+            } catch (error) {
+                console.warn('[Journey] Load more failed', error);
+                setHistoryLimitValue(currentLimit);
+            } finally {
+                journeyHistoryLoadInFlight = false;
+                renderAttributionJourneyPanel();
+            }
+        }
+
         function renderAttributionJourneyPanel() {
             const focusEl = document.getElementById('attribution-journey-focus');
             const historyEl = document.getElementById('attribution-journey-history');
@@ -5924,6 +6006,14 @@
                 wireTimelineModeToggle(focusEl);
             }
 
+            const visibleJourneyRows = profileFilteredJourneys.slice(0, Math.max(JOURNEY_HISTORY_PAGE_SIZE, journeyHistoryVisibleCount));
+            const requestedHistoryLimit = getHistoryLimitValue();
+            const canShowMoreJourneyRows = profileFilteredJourneys.length > visibleJourneyRows.length;
+            const canLoadMoreJourneyRowsRemotely =
+                !canShowMoreJourneyRows &&
+                recentPurchasesState.length >= requestedHistoryLimit &&
+                requestedHistoryLimit < 400;
+
             historyEl.innerHTML = `
                 <div class="space-y-3">
                     <div class="flex items-center gap-2 flex-wrap">
@@ -5944,7 +6034,7 @@
                     </div>
                 </div>
                 <div class="space-y-3 mt-3">
-                    ${profileFilteredJourneys.slice(0, 40).map(({ purchase, selectionKey }, index) => {
+                    ${visibleJourneyRows.map(({ purchase, selectionKey }, index) => {
                         const person = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || 'Customer');
                         const channel = humanReadableChannel(purchase.attributedChannel, purchase.attributedPlatform || '');
                         const sessionCount = countPurchaseJourneySessions(purchase);
@@ -5962,6 +6052,13 @@
                             </div>
                         </button>`;
                     }).join('') || '<p class="text-sm text-gray-500">No stitched purchases for this profile yet.</p>'}
+                    ${(canShowMoreJourneyRows || canLoadMoreJourneyRowsRemotely) ? `
+                        <div class="dashboard-load-more-wrap pt-2">
+                            <button id="journey-history-load-more" type="button" class="dashboard-load-more-btn" ${journeyHistoryLoadInFlight ? 'disabled' : ''}>
+                                ${journeyHistoryLoadInFlight ? 'Loading...' : 'Load More'}
+                            </button>
+                        </div>
+                    ` : ''}
                 </div>
             `;
 
@@ -6005,6 +6102,13 @@
                     renderAttributionJourneyPanel();
                 });
             });
+
+            const journeyHistoryLoadMoreButton = historyEl.querySelector('#journey-history-load-more');
+            if (journeyHistoryLoadMoreButton) {
+                journeyHistoryLoadMoreButton.addEventListener('click', () => {
+                    loadMoreJourneyHistory();
+                });
+            }
         }
 
         async function fetchWordPressUsersOnline(force = false) {
@@ -6149,7 +6253,7 @@
         }
 
         async function fetchSessionExplorerOverviewData() {
-            const res = await fetch(`/api/analytics/${currentShopId}/session-explorer?limit=12`);
+            const res = await fetch(`/api/analytics/${currentShopId}/session-explorer?limit=10`);
             if (!res.ok) throw new Error('Could not load explorer history');
             const data = await res.json();
             console.info('[Session Explorer] overview payload', {
@@ -7145,8 +7249,48 @@
             return `${cardsHtml}${longitudinalHtml}${sideNotes}`;
         }
 
+        function getHistoryLimitValue() {
+            const raw = String(document.getElementById('history-limit')?.value || JOURNEY_HISTORY_PAGE_SIZE).toLowerCase();
+            if (raw === 'all') return 400;
+            return Math.max(JOURNEY_HISTORY_PAGE_SIZE, Math.min(400, Number.parseInt(raw, 10) || JOURNEY_HISTORY_PAGE_SIZE));
+        }
+
+        function setHistoryLimitValue(limit) {
+            const field = document.getElementById('history-limit');
+            if (!field) return;
+            field.value = String(Math.max(JOURNEY_HISTORY_PAGE_SIZE, Math.min(400, Number(limit || JOURNEY_HISTORY_PAGE_SIZE))));
+        }
+
+        function buildAnalyticsQuery(recentLimitOverride = null) {
+            const preset = document.getElementById('date-preset')?.value || '30d';
+            const allTime = preset === 'all';
+            const startValue = document.getElementById('start-date')?.value || '';
+            const endValue = document.getElementById('end-date')?.value || '';
+            const historyLimit = recentLimitOverride != null ? String(recentLimitOverride) : String(getHistoryLimitValue());
+
+            const queryParams = new URLSearchParams();
+            queryParams.set('attribution_model', currentAttributionModel);
+            queryParams.set('recent_limit', historyLimit);
+
+            if (allTime) {
+                queryParams.set('all_time', '1');
+            } else {
+                const start = startValue ? new Date(`${startValue}T00:00:00`) : new Date();
+                const end = endValue ? new Date(`${endValue}T23:59:59`) : new Date();
+                queryParams.set('start', start.toISOString());
+                queryParams.set('end', end.toISOString());
+            }
+
+            return `?${queryParams.toString()}`;
+        }
+
         // --- FETCH ANALYTICS ---
-        async function fetchAnalytics() {
+        async function fetchAnalytics({
+            recentLimitOverride = null,
+            renderScope = 'full',
+            quiet = false,
+            alertOnError = true,
+        } = {}) {
             if (!currentShopId) {
                 logAnalyticsDebug('fetchAnalytics skipped because currentShopId is empty', {
                     currentShopId,
@@ -7161,48 +7305,44 @@
             const initialLoad = !hasRenderedInitialAnalytics;
 
             try {
-                setAnalyticsLoadingState(true, {
-                    mode: initialLoad ? 'boot' : 'refresh',
-                    title: initialLoad ? 'Loading attribution data' : 'Refreshing analytics',
-                    copy: initialLoad
-                        ? `Fetching metrics, journeys, and live signals for ${currentShopId}.`
-                        : `Updating the latest analytics for ${currentShopId}.`,
-                });
+                if (!quiet) {
+                    setAnalyticsLoadingState(true, {
+                        mode: initialLoad ? 'boot' : 'refresh',
+                        title: initialLoad ? 'Loading attribution data' : 'Refreshing analytics',
+                        copy: initialLoad
+                            ? `Fetching metrics, journeys, and live signals for ${currentShopId}.`
+                            : `Updating the latest analytics for ${currentShopId}.`,
+                    });
+                }
 
                 const modelSelect = document.getElementById('attribution-model');
                 if (modelSelect) {
                     currentAttributionModel = modelSelect.value || 'last_touch';
                 }
 
-                const preset = document.getElementById('date-preset')?.value || '30d';
-                const allTime = preset === 'all';
-                const startValue = document.getElementById('start-date')?.value || '';
-                const endValue = document.getElementById('end-date')?.value || '';
-                const historyLimit = document.getElementById('history-limit')?.value || 'all';
-                
-                const queryParams = new URLSearchParams();
-                queryParams.set('attribution_model', currentAttributionModel);
-                queryParams.set('recent_limit', historyLimit);
-
-                if (allTime) {
-                    queryParams.set('all_time', '1');
-                } else {
-                    const start = startValue ? new Date(`${startValue}T00:00:00`) : new Date();
-                    const end = endValue ? new Date(`${endValue}T23:59:59`) : new Date();
-                    queryParams.set('start', start.toISOString());
-                    queryParams.set('end', end.toISOString());
-                }
-
-                const query = `?${queryParams.toString()}`;
+                const query = buildAnalyticsQuery(recentLimitOverride);
                 logAnalyticsDebug('fetchAnalytics request', {
                     currentShopId,
                     query,
+                    renderScope,
                 });
                 const res = await fetch(`/api/analytics/${currentShopId}${query}`);
                 
                 if (!res.ok) throw new Error('Failed to fetch analytics');
                 
                 const data = await res.json();
+                if (renderScope === 'journeys') {
+                    recentPurchasesState = Array.isArray(data?.recentPurchases) ? data.recentPurchases.slice() : [];
+                    window.recentPurchasesState = recentPurchasesState;
+                    journeyHistoryVisibleCount = Math.min(
+                        Math.max(JOURNEY_HISTORY_PAGE_SIZE, journeyHistoryVisibleCount),
+                        Math.max(recentPurchasesState.length, JOURNEY_HISTORY_PAGE_SIZE)
+                    );
+                    renderDataEnrichment(recentPurchasesState);
+                    renderAttributionJourneyPanel();
+                    return data;
+                }
+
                 renderDashboard(data);
                 markAnalyticsReady();
                 fetchJourneyWooProfiles()
@@ -7213,10 +7353,13 @@
                         console.warn('[Journey] Background profile refresh failed', error);
                     });
 
+                return data;
+
             } catch (error) {
                 console.error('Analytics error:', error);
-                setAnalyticsLoadingState(false);
-                alert('Error loading analytics data');
+                if (!quiet) setAnalyticsLoadingState(false);
+                if (alertOnError) alert('Error loading analytics data');
+                throw error;
             } finally {
                 analyticsFetchInFlight = false;
             }
@@ -8129,6 +8272,11 @@ function renderDataEnrichment(purchases) {
 
 function renderRecentPurchases(purchases) {
             recentPurchasesState = Array.isArray(purchases) ? purchases.slice() : [];
+            window.recentPurchasesState = recentPurchasesState;
+            journeyHistoryVisibleCount = Math.min(
+                Math.max(JOURNEY_HISTORY_PAGE_SIZE, journeyHistoryVisibleCount),
+                Math.max(recentPurchasesState.length, JOURNEY_HISTORY_PAGE_SIZE)
+            );
 
             const container = document.getElementById('recent-purchases-list');
             if (!container) return;
@@ -8568,6 +8716,44 @@ function renderRecentPurchases(purchases) {
             scheduleLiveFeedScrollbarSync();
         }
 
+        function updateLiveFeedLoadMoreButton() {
+            const button = document.getElementById('live-feed-load-more');
+            if (!button) return;
+
+            const hiddenCount = liveFeedArchivedNodes.length;
+            if (hiddenCount <= 0) {
+                button.classList.add('hidden');
+                button.disabled = false;
+                button.textContent = 'Load More';
+                return;
+            }
+
+            button.classList.remove('hidden');
+            button.disabled = false;
+            button.textContent = `Load More (${hiddenCount} older)`;
+        }
+
+        function loadMoreLiveFeedEvents() {
+            const container = document.getElementById('feed-container');
+            const wrap = document.getElementById('live-feed-scroll-wrap');
+            if (!container || !wrap || !liveFeedArchivedNodes.length) return;
+
+            const previousScrollHeight = Number(wrap.scrollHeight || 0);
+            const batch = liveFeedArchivedNodes.splice(0, LIVE_FEED_PAGE_SIZE);
+            batch.forEach((node) => container.appendChild(node));
+            liveFeedVisibleCount += batch.length;
+            updateLiveFeedFilterVisuals();
+            updateLiveFeedLoadMoreButton();
+
+            requestAnimationFrame(() => {
+                const growth = Math.max(0, Number(wrap.scrollHeight || 0) - previousScrollHeight);
+                if (growth > 0) {
+                    wrap.scrollTop += growth;
+                }
+                scheduleLiveFeedScrollbarSync();
+            });
+        }
+
         function getLiveFeedScrollbarElements() {
             const wrap = document.getElementById('live-feed-scroll-wrap');
             const container = document.getElementById('feed-container');
@@ -8610,6 +8796,7 @@ function renderRecentPurchases(purchases) {
             const { wrap, container, rail, thumb } = getLiveFeedScrollbarElements();
             if (!wrap || !container || !rail || !thumb) return;
             if (wrap.dataset.scrollbarReady === '1') {
+                updateLiveFeedLoadMoreButton();
                 scheduleLiveFeedScrollbarSync();
                 return;
             }
@@ -8699,6 +8886,13 @@ function renderRecentPurchases(purchases) {
                 });
             });
 
+            const loadMoreButton = document.getElementById('live-feed-load-more');
+            if (loadMoreButton && !loadMoreButton.dataset.bound) {
+                loadMoreButton.dataset.bound = '1';
+                loadMoreButton.addEventListener('click', loadMoreLiveFeedEvents);
+            }
+
+            updateLiveFeedLoadMoreButton();
             scheduleLiveFeedScrollbarSync();
         }
 
@@ -8770,6 +8964,7 @@ function renderRecentPurchases(purchases) {
               const recentOrders = new Set();
 
             initializeLiveFeedScrollbar();
+            updateLiveFeedLoadMoreButton();
             scheduleLiveFeedScrollbarSync();
 
             evtSource.onopen = function() {
@@ -8935,11 +9130,18 @@ function renderRecentPurchases(purchases) {
                     }
                 }
 
-                // Limit feed size
-                if (container.children.length > 50) {
-                    container.lastElementChild.remove();
+                while (container.children.length > liveFeedVisibleCount) {
+                    const oldestVisible = container.lastElementChild;
+                    if (!oldestVisible || oldestVisible.id === 'feed-placeholder') break;
+                    liveFeedArchivedNodes.unshift(oldestVisible);
+                    oldestVisible.remove();
                 }
 
+                while ((liveFeedArchivedNodes.length + container.children.length) > LIVE_FEED_BUFFER_LIMIT) {
+                    liveFeedArchivedNodes.pop();
+                }
+
+                updateLiveFeedLoadMoreButton();
                 preserveLiveFeedPositionAfterPrepend(
                     wrap,
                     previousScrollTop,
