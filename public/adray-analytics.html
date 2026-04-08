@@ -7768,9 +7768,203 @@ function describeEnrichmentPlatform(platform = '') {
     return `This enriched payload was prepared for ${label}.`;
 }
 
-function describeEnrichmentSent(orderRef = '') {
-    const label = String(orderRef || '').trim() || 'This payload';
-    return `${label} was marked as sent from the enrichment pipeline and is ready for downstream matching or sync.`;
+function normalizeEnrichmentObject(value) {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function getEnrichmentPlatformLabel(platform = '') {
+    const key = String(platform || '').trim().toLowerCase();
+    if (key === 'meta') return 'Meta';
+    if (key === 'google') return 'Google';
+    if (key === 'tiktok') return 'TikTok';
+    return 'Platform';
+}
+
+function getEnrichmentStatusLabel(status = '') {
+    const key = String(status || '').trim().toLowerCase();
+    if (key === 'accepted') return 'Accepted';
+    if (key === 'sending') return 'Sending';
+    if (key === 'queued') return 'Queued';
+    if (key === 'failed') return 'Failed';
+    if (key === 'skipped') return 'Skipped';
+    return 'Pending receipt';
+}
+
+function getEnrichmentStatusTone(status = '') {
+    const key = String(status || '').trim().toLowerCase();
+    if (key === 'accepted') {
+        return {
+            icon: 'fa-solid fa-check',
+            color: '#7ef0c8',
+            border: 'rgba(126, 240, 200, 0.32)',
+            bg: 'rgba(126, 240, 200, 0.14)',
+        };
+    }
+    if (key === 'sending') {
+        return {
+            icon: 'fa-solid fa-arrows-rotate',
+            color: '#f3c77a',
+            border: 'rgba(243, 199, 122, 0.32)',
+            bg: 'rgba(243, 199, 122, 0.14)',
+        };
+    }
+    if (key === 'queued') {
+        return {
+            icon: 'fa-solid fa-hourglass-half',
+            color: '#c7b1ff',
+            border: 'rgba(199, 177, 255, 0.28)',
+            bg: 'rgba(199, 177, 255, 0.14)',
+        };
+    }
+    if (key === 'failed') {
+        return {
+            icon: 'fa-solid fa-triangle-exclamation',
+            color: '#ff8d8d',
+            border: 'rgba(255, 141, 141, 0.34)',
+            bg: 'rgba(255, 141, 141, 0.12)',
+        };
+    }
+    if (key === 'skipped') {
+        return {
+            icon: 'fa-solid fa-ban',
+            color: '#b7abc9',
+            border: 'rgba(183, 171, 201, 0.28)',
+            bg: 'rgba(183, 171, 201, 0.12)',
+        };
+    }
+    return {
+        icon: 'fa-regular fa-circle-question',
+        color: '#d8d0ec',
+        border: 'rgba(216, 208, 236, 0.2)',
+        bg: 'rgba(216, 208, 236, 0.08)',
+    };
+}
+
+function normalizeDeliveryStatusInfo(platform = '', rawInfo = {}, purchase = {}) {
+    const info = normalizeEnrichmentObject(rawInfo);
+    const platformKey = String(platform || info.platform || '').trim().toLowerCase();
+    const status = String(info.status || '').trim().toLowerCase() || 'unknown';
+    const isEventOnly = String(purchase?.source || '').toLowerCase() === 'events';
+
+    return {
+        platform: platformKey,
+        platformLabel: getEnrichmentPlatformLabel(platformKey),
+        status,
+        statusLabel: getEnrichmentStatusLabel(status),
+        configured: typeof info.configured === 'boolean' ? info.configured : null,
+        sent: Boolean(info.sent || status === 'accepted'),
+        reason: String(info.reason || '').trim(),
+        destinationId: info.destinationId || null,
+        configSource: info.configSource || null,
+        attempts: Number(info.attempts || 0) || null,
+        updatedAt: info.updatedAt || null,
+        queuedAt: info.queuedAt || null,
+        sendingAt: info.sendingAt || null,
+        acceptedAt: info.acceptedAt || null,
+        sentAt: info.sentAt || null,
+        failedAt: info.failedAt || null,
+        skippedAt: info.skippedAt || null,
+        responseSummary: normalizeEnrichmentObject(info.responseSummary),
+        verifiedBy: info.verifiedBy || null,
+        verificationHint: info.verificationHint || null,
+        testEventCode: info.testEventCode || null,
+        isEventOnly,
+    };
+}
+
+function buildEnrichmentPlatformStatuses(purchase = {}) {
+    const deliveryStatus = normalizeEnrichmentObject(purchase?.deliveryStatus);
+    const attributedText = `${purchase?.attributedPlatform || ''} ${purchase?.attributedChannel || ''}`.toLowerCase();
+    const platforms = ['meta', 'google'];
+    if (deliveryStatus.tiktok || attributedText.includes('tiktok')) platforms.push('tiktok');
+
+    return platforms.map((platform) => {
+        const rawInfo = normalizeEnrichmentObject(deliveryStatus[platform]);
+        if (Object.keys(rawInfo).length) {
+            return normalizeDeliveryStatusInfo(platform, rawInfo, purchase);
+        }
+
+        if (String(purchase?.source || '').toLowerCase() === 'events') {
+            return normalizeDeliveryStatusInfo(platform, {
+                status: 'skipped',
+                reason: 'This purchase was reconstructed from browser events only, so there is no order-level server delivery receipt.',
+                verifiedBy: 'event_only_purchase',
+            }, purchase);
+        }
+
+        return normalizeDeliveryStatusInfo(platform, {
+            status: 'unknown',
+            reason: 'No platform delivery receipt has been recorded for this order yet.',
+            verifiedBy: 'not_recorded',
+        }, purchase);
+    });
+}
+
+function summarizeEnrichmentStatuses(statuses = []) {
+    const labels = statuses
+        .filter((entry) => entry && entry.platformLabel)
+        .map((entry) => `${entry.platformLabel} ${entry.statusLabel.toLowerCase()}`);
+    return labels.join(' - ');
+}
+
+function resolveOverallEnrichmentStatus(statuses = []) {
+    const normalized = Array.isArray(statuses) ? statuses : [];
+    if (normalized.some((entry) => entry?.status === 'failed')) return 'failed';
+    if (normalized.some((entry) => entry?.status === 'sending')) return 'sending';
+    if (normalized.some((entry) => entry?.status === 'queued')) return 'queued';
+    if (normalized.some((entry) => entry?.status === 'accepted')) return 'accepted';
+    if (normalized.length && normalized.every((entry) => entry?.status === 'skipped')) return 'skipped';
+    return 'unknown';
+}
+
+function describeEnrichmentDelivery(statusInfo = {}, orderRef = '') {
+    const info = normalizeDeliveryStatusInfo(statusInfo.platform || '', statusInfo);
+    const summary = normalizeEnrichmentObject(info.responseSummary);
+    const timestamp =
+        info.acceptedAt ||
+        info.sentAt ||
+        info.failedAt ||
+        info.skippedAt ||
+        info.sendingAt ||
+        info.queuedAt ||
+        info.updatedAt ||
+        null;
+
+    const parts = [
+        `${info.platformLabel}: ${info.statusLabel}.`,
+    ];
+
+    if (orderRef) parts.push(`Order ${String(orderRef).trim()}.`);
+    if (info.reason) parts.push(info.reason.endsWith('.') ? info.reason : `${info.reason}.`);
+    if (timestamp) parts.push(`Updated ${formatDateTimeMx(timestamp)}.`);
+    if (info.destinationId) parts.push(`Destination: ${info.destinationId}.`);
+    if (info.configSource) parts.push(`Config source: ${String(info.configSource).replace(/_/g, ' ')}.`);
+    if (info.attempts) parts.push(`Attempts: ${info.attempts}.`);
+    if (summary.eventsReceived != null) parts.push(`Meta accepted ${summary.eventsReceived} event(s).`);
+    if (summary.fbtraceId) parts.push(`fbtrace_id: ${summary.fbtraceId}.`);
+    if (summary.resultsCount != null) parts.push(`Google uploaded ${summary.resultsCount} conversion(s).`);
+    if (summary.requestId) parts.push(`Request id: ${summary.requestId}.`);
+    if (summary.jobId) parts.push(`Job id: ${summary.jobId}.`);
+    if (summary.partialFailureMessage) parts.push(`Partial failure: ${summary.partialFailureMessage}.`);
+    if (info.testEventCode) parts.push(`Meta test_event_code: ${info.testEventCode}.`);
+    if (info.verifiedBy) parts.push(`Verified by ${String(info.verifiedBy).replace(/_/g, ' ')}.`);
+    if (info.verificationHint) parts.push(info.verificationHint.endsWith('.') ? info.verificationHint : `${info.verificationHint}.`);
+
+    return parts.join(' ');
+}
+
+function renderEnrichmentDeliveryBadges(statuses = [], orderRef = '') {
+    return (Array.isArray(statuses) ? statuses : []).map((entry) => {
+        const tone = getEnrichmentStatusTone(entry?.status);
+        const tooltip = escapeHtmlAttr(describeEnrichmentDelivery(entry, orderRef));
+        return `
+            <span data-tooltip="${tooltip}" class="inline-flex items-center gap-1 py-0.5 px-2 rounded-full text-[10px] sm:text-xs font-semibold mr-1.5 mb-1.5 cursor-help" style="background:${tone.bg}; color:${tone.color}; border:1px solid ${tone.border};">
+                <i class="${tone.icon} text-[10px]"></i>
+                ${escapeHtml(entry?.platformLabel || 'Platform')}
+                <span style="opacity:0.9;">${escapeHtml(entry?.statusLabel || 'Pending receipt')}</span>
+            </span>
+        `;
+    }).join('');
 }
 
 function renderDataEnrichment(purchases) {
@@ -7789,6 +7983,10 @@ function renderDataEnrichment(purchases) {
         let orderId = p.orderNumber || p.orderId || p.checkoutToken || '?';
         let platformText = String(p.attributedPlatform || 'Meta').toLowerCase();
         let displayPlatform = p.attributedPlatform || (p.attributedChannel === 'organic' ? 'CAPI Platform' : 'Meta Ads / CAPI');
+        const deliveryStatuses = buildEnrichmentPlatformStatuses(p);
+        const overallStatus = resolveOverallEnrichmentStatus(deliveryStatuses);
+        const overallTone = getEnrichmentStatusTone(overallStatus);
+        const overallSummary = summarizeEnrichmentStatuses(deliveryStatuses) || 'No delivery receipt recorded yet';
         
         let exactData = new Map();
         
@@ -7847,6 +8045,7 @@ function renderDataEnrichment(purchases) {
             const tooltip = escapeHtmlAttr(describeEnrichmentSignal(k, safeVal));
             return `<span data-tooltip="${tooltip}" class="inline-flex items-center py-0.5 px-1.5 rounded text-[10px] sm:text-xs font-medium bg-indigo-500 bg-opacity-20 text-indigo-200 border border-indigo-500 border-opacity-30 mr-1.5 mb-1.5 shadow-sm cursor-help transition-all hover:bg-opacity-40">${escapeHtml(k)}</span>`;
         }).join('');
+        const deliveryBadgesHtml = renderEnrichmentDeliveryBadges(deliveryStatuses, orderId);
 
         return '<div class="p-4 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between mb-3 shadow-sm hover:shadow transition-shadow" style="background-color: rgba(43, 31, 68, 0.6); border: 1px solid rgba(202, 138, 229, 0.15);">' +
             '<div class="flex flex-col w-full sm:pr-4">' +
@@ -7854,13 +8053,15 @@ function renderDataEnrichment(purchases) {
                     '<span class="text-sm font-bold cursor-help" data-tooltip="' + escapeHtmlAttr(`Enriched order payload for order ${orderId}.`) + '" style="color: #f8fafc !important;">Order #' + escapeHtml(orderId) + '</span>' +
                     '<span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full cursor-help" data-tooltip="' + escapeHtmlAttr(describeEnrichmentPlatform(displayPlatform)) + '" style="background-color: rgba(255,255,255,0.05); color: #CA8AE5;">Sync: ' + escapeHtml(displayPlatform) + '</span>' +
                 '</div>' +
+                '<div class="flex flex-wrap items-center mt-0.5 mb-1">' + deliveryBadgesHtml + '</div>' +
                 '<div class="flex flex-wrap items-center mt-1">' + tagsHtml + '</div>' +
             '</div>' +
             '<div class="flex-shrink-0 text-center sm:text-right mt-3 sm:mt-0 flex flex-row sm:flex-col items-center sm:items-end justify-between">' +
-                '<div class="w-8 h-8 rounded-full flex items-center justify-center mb-1" style="background-color: rgba(34, 197, 94, 0.1);">' +
-                    '<i class="fa-solid fa-check text-xs" style="color: #4ade80;"></i>' +
+                '<div class="w-8 h-8 rounded-full flex items-center justify-center mb-1" style="background-color: ' + overallTone.bg + '; border: 1px solid ' + overallTone.border + ';">' +
+                    '<i class="' + overallTone.icon + ' text-xs" style="color: ' + overallTone.color + ';"></i>' +
                 '</div>' +
-                '<span class="text-[10px] font-semibold uppercase tracking-wider ml-2 sm:ml-0 cursor-help" data-tooltip="' + escapeHtmlAttr(describeEnrichmentSent(`Order ${orderId}`)) + '" style="color: #4ade80;">Sent</span>' +
+                '<span class="text-[10px] font-semibold uppercase tracking-wider ml-2 sm:ml-0 cursor-help" data-tooltip="' + escapeHtmlAttr(overallSummary) + '" style="color: ' + overallTone.color + ';">' + escapeHtml(getEnrichmentStatusLabel(overallStatus)) + '</span>' +
+                '<span class="hidden sm:block text-[10px] mt-1 max-w-[180px] leading-tight" style="color: rgba(225, 216, 243, 0.68);">' + escapeHtml(overallSummary) + '</span>' +
             '</div>' +
         '</div>';
     });

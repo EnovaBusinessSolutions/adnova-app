@@ -3014,7 +3014,12 @@ router.get('/:account_id', async (req, res) => {
         sessionId: true,
         customerId: true,
         emailHash: true,
-        phoneHash: true
+        phoneHash: true,
+        capiSentMeta: true,
+        capiSentGoogle: true,
+        capiSentTiktok: true,
+        capiMetaResponse: true,
+        capiGoogleResponse: true,
       },
       orderBy: [
         { platformCreatedAt: 'desc' },
@@ -3308,6 +3313,7 @@ router.get('/:account_id', async (req, res) => {
       wooSourceType: order?.attributionSnapshot?.woo_source_type || null,
       customerName: extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload),
       payloadSnapshot: order.attributionSnapshot || null,
+      deliveryStatus: extractOrderDeliveryStatus(order),
     }));
 
     const conversionInputsFromEvents = purchaseEventsForModel.map((ev) => {
@@ -4162,6 +4168,44 @@ function extractEventIdentity(rawPayload) {
       payload.billing_company,
       payload.billingCompany,
     ]),
+  };
+}
+
+function extractOrderDeliveryStatus(order = {}) {
+  const snapshot = normalizeObject(order?.attributionSnapshot);
+  const fallbackStatus = normalizeObject(snapshot.deliveryStatus);
+
+  const buildStatus = (platform) => {
+    const lowerPlatform = String(platform || '').trim().toLowerCase();
+    const sentField =
+      lowerPlatform === 'meta' ? Boolean(order?.capiSentMeta)
+        : lowerPlatform === 'google' ? Boolean(order?.capiSentGoogle)
+          : Boolean(order?.capiSentTiktok);
+    const responseField =
+      lowerPlatform === 'meta' ? normalizeObject(order?.capiMetaResponse)
+        : lowerPlatform === 'google' ? normalizeObject(order?.capiGoogleResponse)
+          : {};
+    const fallbackField = normalizeObject(fallbackStatus[lowerPlatform]);
+    const merged = {
+      platform: lowerPlatform,
+      ...fallbackField,
+      ...responseField,
+    };
+    const status = String(merged.status || '').trim().toLowerCase() || (sentField ? 'accepted' : '');
+    if (!status && !Object.keys(merged).length && !sentField) return null;
+
+    return {
+      platform: lowerPlatform,
+      status: status || 'unknown',
+      sent: sentField || status === 'accepted',
+      ...merged,
+    };
+  };
+
+  return {
+    meta: buildStatus('meta'),
+    google: buildStatus('google'),
+    tiktok: buildStatus('tiktok'),
   };
 }
 
