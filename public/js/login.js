@@ -285,6 +285,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (user._id) sessionStorage.setItem('userId', user._id);
       if (user.shop) sessionStorage.setItem('shop', user.shop);
       if (user.email) sessionStorage.setItem('email', user.email);
+      if (user.name) sessionStorage.setItem('name', user.name);
 
       window.location.href = '/dashboard/';
       return;
