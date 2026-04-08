@@ -30,8 +30,6 @@ const mcpQueue = connection
     })
   : null;
 
-const LIVE_JOB_STATES = new Set(['waiting', 'active', 'delayed', 'prioritized']);
-
 function safeStr(v) {
   return v == null ? '' : String(v).trim();
 }
@@ -84,63 +82,6 @@ function buildCollectPayload({
   });
 }
 
-function buildCollectDedupeKey(payload = {}) {
-  const parts = [
-    'collect',
-    safeStr(payload.userId) || '-',
-    safeStr(payload.source) || '-',
-    safeStr(payload.product) || '-',
-    safeStr(payload.accountId) || '-',
-    safeStr(payload.propertyId) || '-',
-    safeStr(payload.metaAccountId) || '-',
-    payload.rangeDays == null ? '-' : String(payload.rangeDays),
-  ];
-
-  return parts.join(':');
-}
-
-function buildUniqueJobId(dedupeKey) {
-  return `${dedupeKey}:${Date.now()}`;
-}
-
-async function getExistingLiveJobByDedupeKey(dedupeKey) {
-  if (!mcpQueue || !dedupeKey) return null;
-
-  let existingJob = null;
-  try {
-    existingJob = await mcpQueue.getJob(dedupeKey);
-  } catch (_) {
-    existingJob = null;
-  }
-
-  if (!existingJob) return null;
-
-  let existingState = 'unknown';
-  try {
-    existingState = await existingJob.getState();
-  } catch (_) {
-    existingState = 'unknown';
-  }
-
-  if (LIVE_JOB_STATES.has(existingState)) {
-    existingJob.__reusedExisting = true;
-    existingJob.__dedupeKey = dedupeKey;
-    existingJob.__state = existingState;
-    return existingJob;
-  }
-
-  console.log('[mcpQueue] found historical job with same dedupeKey, will enqueue new one', {
-    queue: QUEUE_NAME,
-    prefix: BULLMQ_PREFIX,
-    id: existingJob.id,
-    name: existingJob.name,
-    state: existingState,
-    dedupeKey,
-  });
-
-  return null;
-}
-
 async function enqueueMcpCollect(input = {}) {
   if (!connection || !mcpQueue) {
     throw new Error('REDIS_NOT_CONFIGURED');
@@ -156,8 +97,6 @@ async function enqueueMcpCollect(input = {}) {
     throw new Error('MISSING_SOURCE');
   }
 
-  const dedupeKey = buildCollectDedupeKey(payload);
-
   console.log('[mcpQueue] enqueue request', {
     queue: QUEUE_NAME,
     prefix: BULLMQ_PREFIX,
@@ -166,12 +105,10 @@ async function enqueueMcpCollect(input = {}) {
     product: payload.product,
     accountId: payload.accountId,
     propertyId: payload.propertyId,
-    metaAccountId: payload.metaAccountId,
     rangeDays: payload.rangeDays,
     reason: payload.reason,
     trigger: payload.trigger,
     forceFull: payload.forceFull,
-    dedupeKey,
   });
 
   const countsBefore = await mcpQueue.getJobCounts(
@@ -180,32 +117,12 @@ async function enqueueMcpCollect(input = {}) {
     'completed',
     'failed',
     'delayed',
-    'paused',
-    'prioritized'
+    'paused'
   );
 
   console.log('[mcpQueue] counts before add', countsBefore);
 
-  const existingLiveJob = await getExistingLiveJobByDedupeKey(dedupeKey);
-
-  if (existingLiveJob) {
-    console.log('[mcpQueue] deduped live job', {
-      queue: QUEUE_NAME,
-      prefix: BULLMQ_PREFIX,
-      id: existingLiveJob.id,
-      name: existingLiveJob.name,
-      state: existingLiveJob.__state || 'unknown',
-      dedupeKey,
-      data: existingLiveJob.data,
-    });
-
-    return existingLiveJob;
-  }
-
-  const addOptions = {
-    jobId: buildUniqueJobId(dedupeKey),
-  };
-
+  const addOptions = {};
   if (payload.priority != null) {
     addOptions.priority = payload.priority;
   }
@@ -225,8 +142,7 @@ async function enqueueMcpCollect(input = {}) {
     'completed',
     'failed',
     'delayed',
-    'paused',
-    'prioritized'
+    'paused'
   );
 
   console.log('[mcpQueue] enqueued job', {
@@ -235,14 +151,10 @@ async function enqueueMcpCollect(input = {}) {
     id: job.id,
     name: job.name,
     state,
-    dedupeKey,
     data: payload,
   });
 
   console.log('[mcpQueue] counts after add', countsAfter);
-
-  job.__reusedExisting = false;
-  job.__dedupeKey = dedupeKey;
 
   return job;
 }
@@ -253,8 +165,6 @@ async function enqueueMcpCollectBestEffort(input = {}) {
     return {
       ok: true,
       jobId: job?.id || null,
-      dedupeKey: job?.__dedupeKey || null,
-      reusedExisting: !!job?.__reusedExisting,
     };
   } catch (err) {
     console.warn('[mcpQueue] enqueueMcpCollectBestEffort failed:', err?.message || err);
