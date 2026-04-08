@@ -94,7 +94,7 @@ function sectionKicker(text, align = 'center', color = '#C4B5FD', marginBottom =
 function titleBlock(text) {
   return `
     <div class="hero-title" style="
-      margin:0 0 8px 0;
+      margin:0 0 4px 0;
       font-size:42px;
       line-height:1.02;
       font-weight:900;
@@ -349,25 +349,25 @@ function wrapEmail({
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="card" style="border-collapse:separate;width:100%;max-width:720px;background:linear-gradient(180deg, rgba(15,12,25,0.98) 0%, rgba(8,9,14,1) 100%);border:1px solid rgba(255,255,255,0.08);border-radius:30px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,0.42);">
             <tr>
               <td style="padding:0;">
-                <div class="header-pad" style="padding:18px 26px 14px 26px;border-bottom:1px solid rgba(255,255,255,0.08);background:
-                  radial-gradient(circle at top left, rgba(181,92,255,0.20), transparent 34%),
-                  radial-gradient(circle at top right, rgba(79,227,193,0.10), transparent 24%),
-                  linear-gradient(180deg, rgba(18,15,31,0.98) 0%, rgba(12,12,22,0.96) 100%);
-                ">
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px 0;">
-                    <tr>
-                      <td valign="middle">
-                        ${brandWordmark()}
-                      </td>
-                    </tr>
-                  </table>
+                <div class="header-pad" style="padding:10px 26px 10px 26px;border-bottom:1px solid rgba(255,255,255,0.08);background:
+  radial-gradient(circle at top left, rgba(181,92,255,0.20), transparent 34%),
+  radial-gradient(circle at top right, rgba(79,227,193,0.10), transparent 24%),
+  linear-gradient(180deg, rgba(18,15,31,0.98) 0%, rgba(12,12,22,0.96) 100%);
+">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 4px 0;">
+    <tr>
+      <td valign="middle">
+        ${brandWordmark()}
+      </td>
+    </tr>
+  </table>
 
-                  <div style="text-align:center;padding:0;">
-                    ${sectionKicker(eyebrow, 'center', '#C4B5FD', 12)}
-                    ${titleBlock(heroTitle || title || 'Adray')}
-                    ${heroIntroHtml || ''}
-                  </div>
-                </div>
+  <div style="text-align:center;padding:0;margin:0;">
+    ${sectionKicker(eyebrow, 'center', '#C4B5FD', 12)}
+    ${titleBlock(heroTitle || title || 'Adray')}
+    ${heroIntroHtml || ''}
+  </div>
+</div>
               </td>
             </tr>
 
