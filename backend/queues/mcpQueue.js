@@ -82,6 +82,21 @@ function buildCollectPayload({
   });
 }
 
+function buildCollectDedupeKey(payload = {}) {
+  const parts = [
+    'collect',
+    safeStr(payload.userId) || '-',
+    safeStr(payload.source) || '-',
+    safeStr(payload.product) || '-',
+    safeStr(payload.accountId) || '-',
+    safeStr(payload.propertyId) || '-',
+    safeStr(payload.metaAccountId) || '-',
+    payload.rangeDays == null ? '-' : String(payload.rangeDays),
+  ];
+
+  return parts.join(':');
+}
+
 async function enqueueMcpCollect(input = {}) {
   if (!connection || !mcpQueue) {
     throw new Error('REDIS_NOT_CONFIGURED');
@@ -97,6 +112,8 @@ async function enqueueMcpCollect(input = {}) {
     throw new Error('MISSING_SOURCE');
   }
 
+  const dedupeKey = buildCollectDedupeKey(payload);
+
   console.log('[mcpQueue] enqueue request', {
     queue: QUEUE_NAME,
     prefix: BULLMQ_PREFIX,
@@ -105,10 +122,12 @@ async function enqueueMcpCollect(input = {}) {
     product: payload.product,
     accountId: payload.accountId,
     propertyId: payload.propertyId,
+    metaAccountId: payload.metaAccountId,
     rangeDays: payload.rangeDays,
     reason: payload.reason,
     trigger: payload.trigger,
     forceFull: payload.forceFull,
+    dedupeKey,
   });
 
   const countsBefore = await mcpQueue.getJobCounts(
@@ -122,7 +141,40 @@ async function enqueueMcpCollect(input = {}) {
 
   console.log('[mcpQueue] counts before add', countsBefore);
 
-  const addOptions = {};
+  let existingJob = null;
+  try {
+    existingJob = await mcpQueue.getJob(dedupeKey);
+  } catch (_) {
+    existingJob = null;
+  }
+
+  if (existingJob) {
+    let existingState = 'unknown';
+    try {
+      existingState = await existingJob.getState();
+    } catch (_) {
+      // noop
+    }
+
+    console.log('[mcpQueue] deduped existing job', {
+      queue: QUEUE_NAME,
+      prefix: BULLMQ_PREFIX,
+      id: existingJob.id,
+      name: existingJob.name,
+      state: existingState,
+      dedupeKey,
+      data: existingJob.data,
+    });
+
+    existingJob.__reusedExisting = true;
+    existingJob.__dedupeKey = dedupeKey;
+    return existingJob;
+  }
+
+  const addOptions = {
+    jobId: dedupeKey,
+  };
+
   if (payload.priority != null) {
     addOptions.priority = payload.priority;
   }
@@ -151,10 +203,14 @@ async function enqueueMcpCollect(input = {}) {
     id: job.id,
     name: job.name,
     state,
+    dedupeKey,
     data: payload,
   });
 
   console.log('[mcpQueue] counts after add', countsAfter);
+
+  job.__reusedExisting = false;
+  job.__dedupeKey = dedupeKey;
 
   return job;
 }
@@ -165,6 +221,8 @@ async function enqueueMcpCollectBestEffort(input = {}) {
     return {
       ok: true,
       jobId: job?.id || null,
+      dedupeKey: job?.__dedupeKey || null,
+      reusedExisting: !!job?.__reusedExisting,
     };
   } catch (err) {
     console.warn('[mcpQueue] enqueueMcpCollectBestEffort failed:', err?.message || err);
