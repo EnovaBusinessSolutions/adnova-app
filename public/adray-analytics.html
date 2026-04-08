@@ -4,6 +4,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AdRay Analytics Dashboard</title>
+    <script>
+        (function redirectStandaloneAnalyticsEntry() {
+            try {
+                if (window.self !== window.top) return;
+
+                const current = new URL(window.location.href);
+                const target = new URL('/dashboard/attribution', window.location.origin);
+
+                current.searchParams.forEach((value, key) => {
+                    if (key === 'embedded') return;
+                    target.searchParams.append(key, value);
+                });
+
+                window.location.replace(target.toString());
+            } catch (error) {
+                // Keep the embedded file available even if redirect logic fails.
+            }
+        })();
+    </script>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Chart.js -->
