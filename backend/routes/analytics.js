@@ -4190,13 +4190,14 @@ function extractOrderDeliveryStatus(order = {}) {
         : lowerPlatform === 'google' ? normalizeObject(order?.capiGoogleResponse)
           : {};
     const fallbackField = normalizeObject(fallbackStatus[lowerPlatform]);
+    const hasRecordedFields = Object.keys(fallbackField).length > 0 || Object.keys(responseField).length > 0;
     const merged = {
       platform: lowerPlatform,
       ...fallbackField,
       ...responseField,
     };
     const status = String(merged.status || '').trim().toLowerCase() || (sentField ? 'accepted' : '');
-    if (!status && !Object.keys(merged).length && !sentField) return null;
+    if (!status && !hasRecordedFields && !sentField) return null;
 
     return {
       platform: lowerPlatform,

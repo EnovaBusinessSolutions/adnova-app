@@ -7787,7 +7787,7 @@ function getEnrichmentStatusLabel(status = '') {
     if (key === 'queued') return 'Queued';
     if (key === 'failed') return 'Failed';
     if (key === 'skipped') return 'Skipped';
-    return 'Pending receipt';
+    return 'Not recorded';
 }
 
 function getEnrichmentStatusTone(status = '') {
@@ -7872,11 +7872,51 @@ function normalizeDeliveryStatusInfo(platform = '', rawInfo = {}, purchase = {})
     };
 }
 
+function purchaseHasPlatformSignals(purchase = {}, platform = '') {
+    const platformKey = String(platform || '').trim().toLowerCase();
+    const attributedText = `${purchase?.attributedPlatform || ''} ${purchase?.attributedChannel || ''}`.toLowerCase();
+    const events = Array.isArray(purchase?.events)
+        ? purchase.events
+        : (Array.isArray(purchase?.stitchedEvents) ? purchase.stitchedEvents : []);
+    const eventHas = (predicate) => events.some((entry) => {
+        const item = entry && typeof entry === 'object' ? entry : {};
+        return predicate(item);
+    });
+
+    if (platformKey === 'meta') {
+        return (
+            /(meta|facebook|instagram)/.test(attributedText) ||
+            eventHas((item) => Boolean(item.fbp || item.fbc)) ||
+            String(purchase?.attributedClickId || '').toLowerCase().startsWith('fb')
+        );
+    }
+
+    if (platformKey === 'google') {
+        return (
+            /google/.test(attributedText) ||
+            eventHas((item) => Boolean(item.gclid)) ||
+            Boolean(purchase?.gclid)
+        );
+    }
+
+    if (platformKey === 'tiktok') {
+        return (
+            /tiktok/.test(attributedText) ||
+            eventHas((item) => Boolean(item.ttclid)) ||
+            Boolean(purchase?.ttclid)
+        );
+    }
+
+    return false;
+}
+
 function buildEnrichmentPlatformStatuses(purchase = {}) {
     const deliveryStatus = normalizeEnrichmentObject(purchase?.deliveryStatus);
-    const attributedText = `${purchase?.attributedPlatform || ''} ${purchase?.attributedChannel || ''}`.toLowerCase();
-    const platforms = ['meta', 'google'];
-    if (deliveryStatus.tiktok || attributedText.includes('tiktok')) platforms.push('tiktok');
+    const candidates = ['meta', 'google', 'tiktok'];
+    const platforms = candidates.filter((platform) => {
+        const rawInfo = normalizeEnrichmentObject(deliveryStatus[platform]);
+        return Object.keys(rawInfo).length > 0 || purchaseHasPlatformSignals(purchase, platform);
+    });
 
     return platforms.map((platform) => {
         const rawInfo = normalizeEnrichmentObject(deliveryStatus[platform]);
@@ -7894,7 +7934,7 @@ function buildEnrichmentPlatformStatuses(purchase = {}) {
 
         return normalizeDeliveryStatusInfo(platform, {
             status: 'unknown',
-            reason: 'No platform delivery receipt has been recorded for this order yet.',
+            reason: 'No platform delivery receipt has been recorded for this order yet. This usually means the order predates receipt tracking or the sync has not written back a receipt yet.',
             verifiedBy: 'not_recorded',
         }, purchase);
     });
@@ -7961,7 +8001,7 @@ function renderEnrichmentDeliveryBadges(statuses = [], orderRef = '') {
             <span data-tooltip="${tooltip}" class="inline-flex items-center gap-1 py-0.5 px-2 rounded-full text-[10px] sm:text-xs font-semibold mr-1.5 mb-1.5 cursor-help" style="background:${tone.bg}; color:${tone.color}; border:1px solid ${tone.border};">
                 <i class="${tone.icon} text-[10px]"></i>
                 ${escapeHtml(entry?.platformLabel || 'Platform')}
-                <span style="opacity:0.9;">${escapeHtml(entry?.statusLabel || 'Pending receipt')}</span>
+                <span style="opacity:0.9;">${escapeHtml(entry?.statusLabel || 'Not recorded')}</span>
             </span>
         `;
     }).join('');
