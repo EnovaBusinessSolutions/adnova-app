@@ -4533,7 +4533,9 @@
             const tone = resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform);
             const landingInfo = options.landingInfo || resolvePurchaseLandingInfo(purchase, options.events || []);
             const landing = landingInfo.landing;
-            const campaign = resolveAttributedCampaignLabel(purchase);
+            const sourceDescriptor = resolveAttributedSourceDescriptor(purchase);
+            const campaign = sourceDescriptor.label;
+            const sourceTypeLabel = humanReadableAttributionLabelType(sourceDescriptor.type);
             const clickId = purchase.attributedClickId || '-';
             const purchasedAt = formatRecentPurchaseDate(purchase);
 
@@ -4545,10 +4547,10 @@
                     time: purchasedAt,
                     fullTime: purchasedAt,
                     detailLines: [
-                        `Campaign: ${campaign}`,
+                        `Attributed ${sourceTypeLabel}: ${campaign}`,
                         `Click ID: ${clickId}`,
                     ],
-                    tooltip: `Primary attribution touchpoint. ${humanReadableChannel(purchase.attributedChannel || 'unattributed', purchase.attributedPlatform || '')} ${campaign && campaign !== 'No campaign' ? `campaign ${campaign}` : 'source'}${clickId && clickId !== '-' ? ` with click id ${shortenJourneyIdentifier(clickId)}` : ''}.`,
+                    tooltip: `Primary attribution touchpoint. ${humanReadableChannel(purchase.attributedChannel || 'unattributed', purchase.attributedPlatform || '')} ${campaign && campaign !== 'No campaign' ? `${sourceTypeLabel} ${campaign}` : 'source'}${clickId && clickId !== '-' ? ` with click id ${shortenJourneyIdentifier(clickId)}` : ''}.`,
                     tone,
                 },
             ];
@@ -4673,7 +4675,8 @@
             const fbclid = String(payload.fbclid || payload.fbc || payload._fbc || '').trim();
             const ttclid = String(payload.ttclid || '').trim();
             const fallbackChannel = normalizeAttributionChannel(purchase.attributedChannel || '', purchase.attributedPlatform || '');
-            const fallbackCampaign = String(resolveAttributedCampaignLabel(purchase) || '').trim();
+            const fallbackSource = resolveAttributedSourceDescriptor(purchase);
+            const fallbackCampaign = String(fallbackSource.label || '').trim();
             const fallbackClickId = String(purchase.attributedClickId || '').trim();
 
             let channelKey = 'organic';
@@ -4736,10 +4739,13 @@
             }
 
             const campaign = utmCampaign || fallbackCampaign || '';
+            const campaignSourceType = utmCampaign
+                ? 'campaign'
+                : (fallbackSource.type || 'campaign');
             const tone = resolveChannelTone(channelKey, label) || '';
             const icon = resolveChannelIcon(channelKey, label);
             const subLabel = campaign
-                ? `Campaign: ${campaign}`
+                ? `Attributed ${humanReadableAttributionLabelType(campaignSourceType)}: ${campaign}`
                 : clickId
                     ? `Click ID: ${shortenJourneyIdentifier(clickId)}`
                     : referrerLabel
@@ -4755,6 +4761,7 @@
                 referrerLabel,
                 utmSource,
                 utmMedium,
+                sourceType: campaignSourceType,
                 tone,
                 icon,
                 subLabel,
@@ -4766,6 +4773,7 @@
             const sessionLabel = String(options.sessionLabel || group.label || 'This session').trim();
             const entryPage = group.entryPage && group.entryPage !== '-' ? group.entryPage : '';
             const campaign = String(touchpoint.campaign || '').trim();
+            const sourceTypeLabel = humanReadableAttributionLabelType(touchpoint.sourceType || 'campaign');
             const clickId = String(touchpoint.clickId || '').trim();
             const referrerLabel = String(touchpoint.referrerLabel || '').trim();
             const channelLabel = String(touchpoint.label || 'Direct').trim();
@@ -4774,11 +4782,11 @@
 
             let intro = `${sessionLabel} opened directly because no new ad click or campaign was captured before the return`;
             if (clickId && campaign) {
-                intro = `${sessionLabel} opened after a ${channelLabel} click from campaign ${campaign} (${shortenJourneyIdentifier(clickId)})`;
+                intro = `${sessionLabel} opened after a ${channelLabel} click from ${sourceTypeLabel} ${campaign} (${shortenJourneyIdentifier(clickId)})`;
             } else if (clickId) {
                 intro = `${sessionLabel} opened after a ${channelLabel} click (${shortenJourneyIdentifier(clickId)})`;
             } else if (campaign) {
-                intro = `${sessionLabel} opened through ${channelLabel} campaign ${campaign}`;
+                intro = `${sessionLabel} opened through ${channelLabel} ${sourceTypeLabel} ${campaign}`;
             } else if (referrerLabel) {
                 intro = `${sessionLabel} opened from ${channelLabel} traffic coming from ${referrerLabel}`;
             } else if (lowerLabel.includes('direct')) {
@@ -7022,6 +7030,15 @@
             return false;
         }
 
+        function sanitizeAttributionLabel(value = '') {
+            const raw = String(value || '').trim();
+            if (!raw) return '';
+            if (['-', 'n/a', 'na', 'none', 'null', 'undefined', 'unknown', 'not set'].includes(raw.toLowerCase())) {
+                return '';
+            }
+            return raw;
+        }
+
         function findPaidMediaCampaignMatch({ channel = '', platform = '', campaign = '', adset = '', ad = '' } = {}) {
             const platformKey = normalizeAttributionChannel(channel || platform || '', platform || channel || '');
             if (platformKey !== 'meta' && platformKey !== 'google' && platformKey !== 'tiktok') return null;
@@ -7046,38 +7063,64 @@
             }) || null;
         }
 
-        function resolveAttributedCampaignLabel(purchase = {}) {
+        function resolveAttributedSourceDescriptor(purchase = {}) {
             const channel = purchase?.attributedChannel || '';
             const platform = purchase?.attributedPlatform || '';
             const rawCampaign = String(purchase?.attributedCampaign || purchase?.attributionDebug?.payloadUtmCampaign || '').trim();
             const rawAdset = String(purchase?.attributedAdset || '').trim();
             const rawAd = String(purchase?.attributedAd || '').trim();
+            const rawCampaignLabel = sanitizeAttributionLabel(purchase?.attributedCampaignLabel || '');
+            const rawAdsetLabel = sanitizeAttributionLabel(purchase?.attributedAdsetLabel || '');
+            const rawAdLabel = sanitizeAttributionLabel(purchase?.attributedAdLabel || '');
 
-            const readableDirect = [rawAd, rawAdset, rawCampaign].find((value) => value && !isOpaqueAttributionIdentifier(value));
+            const typedCandidates = [
+                { type: 'ad', label: rawAdLabel || (!isOpaqueAttributionIdentifier(rawAd) ? sanitizeAttributionLabel(rawAd) : '') },
+                { type: 'adset', label: rawAdsetLabel || (!isOpaqueAttributionIdentifier(rawAdset) ? sanitizeAttributionLabel(rawAdset) : '') },
+                { type: 'campaign', label: rawCampaignLabel || (!isOpaqueAttributionIdentifier(rawCampaign) ? sanitizeAttributionLabel(rawCampaign) : '') },
+            ].filter((entry) => entry.label);
+
             const matchedCampaign = findPaidMediaCampaignMatch({
                 channel,
                 platform,
-                campaign: rawCampaign,
-                adset: rawAdset,
-                ad: rawAd,
+                campaign: rawCampaignLabel || rawCampaign,
+                adset: rawAdsetLabel || rawAdset,
+                ad: rawAdLabel || rawAd,
             });
 
-            if (readableDirect) {
+            if (typedCandidates[0]) {
+                const readableDirect = typedCandidates[0];
                 if (matchedCampaign?.name) {
-                    const directNormalized = normalizePaidMediaCampaignLookupValue(readableDirect);
+                    const directNormalized = normalizePaidMediaCampaignLookupValue(readableDirect.label);
                     const matchedNormalized = normalizePaidMediaCampaignLookupValue(matchedCampaign.name || '');
                     if (matchedNormalized && directNormalized !== matchedNormalized) {
-                        return `${readableDirect} · ${matchedCampaign.name}`;
+                        return {
+                            type: readableDirect.type,
+                            label: `${readableDirect.label} · ${matchedCampaign.name}`,
+                        };
                     }
                 }
                 return readableDirect;
             }
 
-            if (matchedCampaign?.name) return String(matchedCampaign.name).trim();
-            if (rawCampaign) return rawCampaign;
-            if (rawAdset) return rawAdset;
-            if (rawAd) return rawAd;
-            return 'No campaign';
+            if (matchedCampaign?.name) return { type: 'campaign', label: String(matchedCampaign.name).trim() };
+            if (rawCampaignLabel) return { type: 'campaign', label: rawCampaignLabel };
+            if (rawAdsetLabel) return { type: 'adset', label: rawAdsetLabel };
+            if (rawAdLabel) return { type: 'ad', label: rawAdLabel };
+            if (rawCampaign) return { type: 'campaign', label: rawCampaign };
+            if (rawAdset) return { type: 'adset', label: rawAdset };
+            if (rawAd) return { type: 'ad', label: rawAd };
+            return { type: 'campaign', label: 'No campaign' };
+        }
+
+        function resolveAttributedCampaignLabel(purchase = {}) {
+            return resolveAttributedSourceDescriptor(purchase).label || 'No campaign';
+        }
+
+        function humanReadableAttributionLabelType(type = '') {
+            const normalized = String(type || '').trim().toLowerCase();
+            if (normalized === 'ad') return 'ad';
+            if (normalized === 'adset') return 'ad set';
+            return 'campaign';
         }
 
         async function ensurePaidMediaSelector(platform, sourceState) {
@@ -7520,8 +7563,9 @@ function renderRecentPurchases(purchases) {
                 if (p.attributionSource === 'orders_sync' && p.attributedPlatform) {
                     attrText = p.attributedPlatform;
                 }
-                if (p.attributedCampaign) {
-                    attrText += ` · ${p.attributedCampaign}`;
+                const resolvedCampaignLabel = resolveAttributedCampaignLabel(p);
+                if (resolvedCampaignLabel && resolvedCampaignLabel !== 'No campaign') {
+                    attrText += ` · ${resolvedCampaignLabel}`;
                 }
                 const attrLabel = humanReadableChannel(attrChannel, attrPlatform);
                 if (Array.isArray(p.attributionSplits) && p.attributionSplits.length > 1) {
@@ -7530,15 +7574,15 @@ function renderRecentPurchases(purchases) {
                         .join(' / ');
                 } else {
                     attrText = `${attrLabel} · ${(attrConfidence * 100).toFixed(0)}%`;
-                    if (p.attributedCampaign) {
-                        attrText += ` · ${p.attributedCampaign}`;
+                    if (resolvedCampaignLabel && resolvedCampaignLabel !== 'No campaign') {
+                        attrText += ` · ${resolvedCampaignLabel}`;
                     }
                 }
                 const debugBits = [];
                 if (p.attributionDebug?.wooSourceLabel) debugBits.push(`woo=${p.attributionDebug.wooSourceLabel}`);
                 if (p.attributionDebug?.payloadUtmSource) debugBits.push(`utm=${p.attributionDebug.payloadUtmSource}`);
                 if (p.attributionDebug?.payloadReferrer) debugBits.push(`ref=${p.attributionDebug.payloadReferrer}`);
-                if (p.attributedCampaign) debugBits.push(`campaign=${p.attributedCampaign}`);
+                if (p.attributedCampaignLabel || p.attributedCampaign) debugBits.push(`campaign=${p.attributedCampaignLabel || p.attributedCampaign}`);
                 if (p.attributedClickId) debugBits.push(`click=${p.attributedClickId}`);
                 const debugTitle = debugBits.length ? ` title="${debugBits.join(' | ')}"` : '';
                 const debugText = debugBits.length ? debugBits.join(' | ') : '-';

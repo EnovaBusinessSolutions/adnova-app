@@ -77,6 +77,9 @@ const ROUTE_RESPONSE_CACHE = new Map();
 const ROUTE_CACHE_MAX_ENTRIES = 300;
 const PAID_MEDIA_SYNC_DEBOUNCE = new Map();
 const PAID_MEDIA_SYNC_DEBOUNCE_MS = 10 * 60 * 1000;
+const ATTRIBUTION_LABEL_CACHE = new Map();
+const ATTRIBUTION_LABEL_CACHE_MAX_ENTRIES = 500;
+const ATTRIBUTION_LABEL_CACHE_TTL_MS = 30 * 60 * 1000;
 
 function parseAllowedAccountIds() {
   const raw = String(process.env.ADRAY_ALLOWED_ACCOUNT_IDS || '').trim();
@@ -566,6 +569,610 @@ function buildPaidMediaSourceSummary({ sourceState, payload, snapshotId, revenue
       roasDelta: toFiniteNumberOrNull(payload?.last7_vs_prev7?.roas_diff),
       campaigns: payload?.top_campaigns || [],
     };
+}
+
+function readAttributionLabelCache(cacheKey) {
+  const entry = ATTRIBUTION_LABEL_CACHE.get(cacheKey);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    ATTRIBUTION_LABEL_CACHE.delete(cacheKey);
+    return null;
+  }
+  return entry.payload;
+}
+
+function writeAttributionLabelCache(cacheKey, payload, ttlMs = ATTRIBUTION_LABEL_CACHE_TTL_MS) {
+  if (!cacheKey) return;
+  ATTRIBUTION_LABEL_CACHE.set(cacheKey, {
+    payload,
+    expiresAt: Date.now() + ttlMs,
+  });
+
+  if (ATTRIBUTION_LABEL_CACHE.size <= ATTRIBUTION_LABEL_CACHE_MAX_ENTRIES) return;
+
+  const now = Date.now();
+  for (const [key, value] of ATTRIBUTION_LABEL_CACHE.entries()) {
+    if (value.expiresAt <= now) ATTRIBUTION_LABEL_CACHE.delete(key);
+  }
+
+  if (ATTRIBUTION_LABEL_CACHE.size > ATTRIBUTION_LABEL_CACHE_MAX_ENTRIES) {
+    const toDelete = ATTRIBUTION_LABEL_CACHE.size - ATTRIBUTION_LABEL_CACHE_MAX_ENTRIES;
+    let deleted = 0;
+    for (const key of ATTRIBUTION_LABEL_CACHE.keys()) {
+      ATTRIBUTION_LABEL_CACHE.delete(key);
+      deleted += 1;
+      if (deleted >= toDelete) break;
+    }
+  }
+}
+
+function normalizeAttributionLookupValue(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^act_/, '')
+    .replace(/^customers\//, '')
+    .replace(/-/g, '')
+    .replace(/[^\w.]+/g, '');
+}
+
+function isOpaqueAttributionIdentifier(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return false;
+  const compact = raw.replace(/[^\da-z]/gi, '');
+  if (/^\d{8,}$/.test(raw.replace(/[^\d]/g, ''))) return true;
+  if (/^[a-f0-9]{16,}$/i.test(compact)) return true;
+  return false;
+}
+
+function sanitizeReadableAttributionLabel(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  if (['-', 'n/a', 'na', 'none', 'null', 'undefined', 'unknown', 'not set'].includes(raw.toLowerCase())) {
+    return null;
+  }
+  if (isOpaqueAttributionIdentifier(raw)) return null;
+  return raw;
+}
+
+function appendUniqueValue(list, value, { readable = false } = {}) {
+  if (!Array.isArray(list)) return;
+  const normalized = readable
+    ? sanitizeReadableAttributionLabel(value)
+    : String(value || '').trim();
+  if (!normalized) return;
+  if (!list.some((entry) => String(entry || '').trim().toLowerCase() === normalized.toLowerCase())) {
+    list.push(normalized);
+  }
+}
+
+function getObjectStringValue(source, key) {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return null;
+  const value = source[key];
+  if (value == null) return null;
+  if (typeof value === 'string' || typeof value === 'number') return String(value).trim();
+  return null;
+}
+
+function collectAttributionSignalObjects({ purchase = {}, stitchedEvents = [] } = {}) {
+  const objects = [];
+
+  const pushObject = (value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    objects.push(value);
+  };
+
+  pushObject(purchase);
+  pushObject(purchase.orderAttributionSnapshot);
+  pushObject(purchase.payloadSnapshot);
+
+  (Array.isArray(stitchedEvents) ? stitchedEvents : []).forEach((event) => {
+    pushObject(event);
+    const rawPayload = event?.rawPayload && typeof event.rawPayload === 'object'
+      ? event.rawPayload
+      : event?.payload && typeof event.payload === 'object'
+        ? event.payload
+        : null;
+    pushObject(rawPayload);
+    pushObject(rawPayload?.user_data);
+    pushObject(rawPayload?.attribution);
+    pushObject(rawPayload?.attribution_data);
+    pushObject(rawPayload?.source_data);
+    pushObject(rawPayload?.sourceData);
+    pushObject(rawPayload?.traffic_source);
+    pushObject(rawPayload?.trafficSource);
+    pushObject(rawPayload?.campaign);
+    pushObject(rawPayload?.adset);
+    pushObject(rawPayload?.adGroup);
+    pushObject(rawPayload?.ad_group);
+    pushObject(rawPayload?.ad);
+    pushObject(rawPayload?.creative);
+    pushObject(rawPayload?.meta);
+    pushObject(rawPayload?.google);
+  });
+
+  return objects;
+}
+
+function collectReadableAttributionCandidates({ purchase = {}, stitchedEvents = [] } = {}) {
+  const signalObjects = collectAttributionSignalObjects({ purchase, stitchedEvents });
+  const campaignLabels = [];
+  const adsetLabels = [];
+  const adLabels = [];
+  const campaignIds = [];
+  const adsetIds = [];
+  const adIds = [];
+  const gclids = [];
+  const fbclids = [];
+  const ttclids = [];
+
+  const appendRawLabelOrId = (value, labels, ids) => {
+    const raw = String(value || '').trim();
+    if (!raw) return;
+    if (sanitizeReadableAttributionLabel(raw)) appendUniqueValue(labels, raw, { readable: true });
+    else appendUniqueValue(ids, raw);
+  };
+
+  appendRawLabelOrId(purchase?.attributedCampaignLabel, campaignLabels, campaignIds);
+  appendRawLabelOrId(purchase?.attributedAdsetLabel, adsetLabels, adsetIds);
+  appendRawLabelOrId(purchase?.attributedAdLabel, adLabels, adIds);
+  appendRawLabelOrId(purchase?.attributedCampaign, campaignLabels, campaignIds);
+  appendRawLabelOrId(purchase?.attributedAdset, adsetLabels, adsetIds);
+  appendRawLabelOrId(purchase?.attributedAd, adLabels, adIds);
+
+  [
+    purchase?.attributedClickId,
+    purchase?.orderAttributionSnapshot?.gclid,
+    purchase?.payloadSnapshot?.gclid,
+  ].forEach((value) => appendUniqueValue(gclids, value));
+  [
+    purchase?.orderAttributionSnapshot?.fbclid,
+    purchase?.payloadSnapshot?.fbclid,
+    purchase?.payloadSnapshot?.fbc,
+  ].forEach((value) => appendUniqueValue(fbclids, value));
+  [
+    purchase?.orderAttributionSnapshot?.ttclid,
+    purchase?.payloadSnapshot?.ttclid,
+  ].forEach((value) => appendUniqueValue(ttclids, value));
+
+  const campaignLabelKeys = [
+    'campaign_name',
+    'campaignName',
+    'utm_campaign_name',
+    'utmCampaignName',
+    'meta_campaign_name',
+    'metaCampaignName',
+    'google_campaign_name',
+    'googleCampaignName',
+    'campaign_label',
+    'campaignLabel',
+    'source_name',
+  ];
+  const campaignIdKeys = [
+    'campaign_id',
+    'campaignId',
+    'meta_campaign_id',
+    'metaCampaignId',
+    'google_campaign_id',
+    'googleCampaignId',
+  ];
+  const adsetLabelKeys = [
+    'adset_name',
+    'adsetName',
+    'ad_group_name',
+    'adGroupName',
+    'adgroup_name',
+    'adGroupLabel',
+    'google_adgroup_name',
+    'googleAdGroupName',
+  ];
+  const adsetIdKeys = [
+    'adset_id',
+    'adsetId',
+    'ad_group_id',
+    'adGroupId',
+    'adgroup_id',
+    'google_adgroup_id',
+    'googleAdGroupId',
+  ];
+  const adLabelKeys = [
+    'ad_name',
+    'adName',
+    'creative_name',
+    'creativeName',
+    'google_ad_name',
+    'googleAdName',
+    'ad_label',
+    'adLabel',
+  ];
+  const adIdKeys = [
+    'ad_id',
+    'adId',
+    'creative_id',
+    'creativeId',
+    'google_ad_id',
+    'googleAdId',
+  ];
+
+  signalObjects.forEach((obj) => {
+    campaignLabelKeys.forEach((key) => appendUniqueValue(campaignLabels, getObjectStringValue(obj, key), { readable: true }));
+    campaignIdKeys.forEach((key) => appendUniqueValue(campaignIds, getObjectStringValue(obj, key)));
+    adsetLabelKeys.forEach((key) => appendUniqueValue(adsetLabels, getObjectStringValue(obj, key), { readable: true }));
+    adsetIdKeys.forEach((key) => appendUniqueValue(adsetIds, getObjectStringValue(obj, key)));
+    adLabelKeys.forEach((key) => appendUniqueValue(adLabels, getObjectStringValue(obj, key), { readable: true }));
+    adIdKeys.forEach((key) => appendUniqueValue(adIds, getObjectStringValue(obj, key)));
+    appendUniqueValue(gclids, getObjectStringValue(obj, 'gclid'));
+    appendUniqueValue(fbclids, getObjectStringValue(obj, 'fbclid'));
+    appendUniqueValue(fbclids, getObjectStringValue(obj, 'fbc'));
+    appendUniqueValue(fbclids, getObjectStringValue(obj, '_fbc'));
+    appendUniqueValue(ttclids, getObjectStringValue(obj, 'ttclid'));
+  });
+
+  return {
+    campaignLabels,
+    adsetLabels,
+    adLabels,
+    campaignIds,
+    adsetIds,
+    adIds,
+    gclids,
+    fbclids,
+    ttclids,
+  };
+}
+
+function findPaidMediaCampaignLabelFromSummary({ paidMedia = {}, channel = '', campaignIds = [], campaignLabels = [] } = {}) {
+  const channelKey = normalizeChannelForStats(channel, channel);
+  const rows = channelKey === 'meta'
+    ? (Array.isArray(paidMedia?.meta?.campaigns) ? paidMedia.meta.campaigns : [])
+    : channelKey === 'google'
+      ? (Array.isArray(paidMedia?.google?.campaigns) ? paidMedia.google.campaigns : [])
+      : [];
+  if (!rows.length) return null;
+
+  const candidates = new Set(
+    [...campaignIds, ...campaignLabels]
+      .map((value) => normalizeAttributionLookupValue(value))
+      .filter(Boolean)
+  );
+  if (!candidates.size) return null;
+
+  const row = rows.find((entry) => {
+    const id = normalizeAttributionLookupValue(entry?.id || entry?.campaign_id || '');
+    const name = normalizeAttributionLookupValue(entry?.name || entry?.campaign_name || '');
+    return (id && candidates.has(id)) || (name && candidates.has(name));
+  });
+
+  return sanitizeReadableAttributionLabel(row?.name || row?.campaign_name || '');
+}
+
+async function buildMetaAttributionLookupContext({ userId, paidMedia = {} } = {}) {
+  if (!MetaAccount || !userId) return null;
+
+  const doc = await MetaAccount.findOne({
+    $or: [{ user: userId }, { userId }],
+  })
+    .select('+access_token +token +longlivedToken +accessToken +longLivedToken selectedAccountIds defaultAccountId ad_accounts adAccounts')
+    .lean()
+    .catch(() => null);
+
+  if (!doc) return null;
+
+  const accessToken =
+    doc?.access_token ||
+    doc?.token ||
+    doc?.longlivedToken ||
+    doc?.accessToken ||
+    doc?.longLivedToken ||
+    null;
+  if (!accessToken) return null;
+
+  const adAccounts = Array.isArray(doc?.ad_accounts)
+    ? doc.ad_accounts
+    : Array.isArray(doc?.adAccounts)
+      ? doc.adAccounts
+      : [];
+
+  const selectedAccountId = Array.isArray(doc?.selectedAccountIds) && doc.selectedAccountIds.length
+    ? normalizeMetaAccountId(doc.selectedAccountIds[0])
+    : null;
+  const defaultAccountId = normalizeMetaAccountId(doc?.defaultAccountId);
+  const listedAccountId = normalizeMetaAccountId(adAccounts?.[0]?.id || adAccounts?.[0]?.account_id || null);
+  const accountId = normalizeMetaAccountId(paidMedia?.meta?.connectedResourceId || selectedAccountId || defaultAccountId || listedAccountId);
+  if (!accountId) return null;
+
+  return {
+    accessToken,
+    accountId,
+    graphBase: `https://graph.facebook.com/${process.env.FACEBOOK_API_VERSION || 'v23.0'}`,
+    appSecretProof: buildMetaAppSecretProof(accessToken),
+  };
+}
+
+async function fetchMetaAttributionEntityById(context, entityType, entityId) {
+  const normalizedId = String(entityId || '').trim();
+  if (!context || !entityType || !normalizedId) return null;
+
+  const cacheKey = `meta:${entityType}:${normalizedId}`;
+  const cached = readAttributionLabelCache(cacheKey);
+  if (cached) return cached;
+
+  let fields = 'id,name';
+  if (entityType === 'ad') fields = 'id,name,adset{id,name,campaign{id,name}}';
+  if (entityType === 'adset') fields = 'id,name,campaign{id,name}';
+
+  try {
+    const response = await axios.get(`${context.graphBase}/${normalizedId}`, {
+      params: {
+        access_token: context.accessToken,
+        ...(context.appSecretProof ? { appsecret_proof: context.appSecretProof } : {}),
+        fields,
+      },
+      timeout: 15000,
+    });
+
+    const payload = response?.data || {};
+    const result = {
+      campaignLabel: sanitizeReadableAttributionLabel(
+        payload?.campaign?.name || payload?.adset?.campaign?.name || (entityType === 'campaign' ? payload?.name : '')
+      ),
+      adsetLabel: sanitizeReadableAttributionLabel(
+        payload?.adset?.name || (entityType === 'adset' ? payload?.name : '')
+      ),
+      adLabel: sanitizeReadableAttributionLabel(entityType === 'ad' ? payload?.name : ''),
+    };
+    writeAttributionLabelCache(cacheKey, result);
+    return result;
+  } catch (error) {
+    const fallback = {};
+    writeAttributionLabelCache(cacheKey, fallback, 5 * 60 * 1000);
+    console.warn('[Attribution Labels] Meta lookup failed', {
+      entityType,
+      entityId: normalizedId,
+      status: error?.response?.status || null,
+      message: error?.message || String(error),
+    });
+    return fallback;
+  }
+}
+
+function escapeGaqlString(value = '') {
+  return String(value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+async function buildGoogleAttributionLookupContext({ userId, paidMedia = {} } = {}) {
+  if (!GoogleAccount || !googleAdsService?.searchGAQLStream || !userId) return null;
+
+  const googleDoc = await GoogleAccount.findOne({
+    $or: [{ user: userId }, { userId }],
+  })
+    .select('+accessToken +refreshToken selectedCustomerIds defaultCustomerId customers ad_accounts')
+    .lean()
+    .catch(() => null);
+
+  if (!googleDoc) return null;
+
+  const selectedCustomerId = Array.isArray(googleDoc?.selectedCustomerIds) && googleDoc.selectedCustomerIds.length
+    ? normalizeGoogleCustomerId(googleDoc.selectedCustomerIds[0])
+    : null;
+  const defaultCustomerId = normalizeGoogleCustomerId(googleDoc?.defaultCustomerId);
+  const customerList = Array.isArray(googleDoc?.ad_accounts) && googleDoc.ad_accounts.length
+    ? googleDoc.ad_accounts
+    : (Array.isArray(googleDoc?.customers) ? googleDoc.customers : []);
+  const listedCustomerId = normalizeGoogleCustomerId(customerList?.[0]?.id || null);
+  const customerId = normalizeGoogleCustomerId(
+    paidMedia?.google?.connectedResourceId || selectedCustomerId || defaultCustomerId || listedCustomerId
+  );
+  if (!customerId) return null;
+
+  return {
+    googleDoc,
+    customerId,
+  };
+}
+
+async function fetchGoogleAttributionEntityByQuery(context, cacheKey, query) {
+  if (!context || !cacheKey || !query) return null;
+
+  const cached = readAttributionLabelCache(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const rows = await googleAdsService.searchGAQLStream(context.googleDoc, context.customerId, query);
+    const first = Array.isArray(rows) ? rows[0] || null : null;
+    const result = {
+      campaignLabel: sanitizeReadableAttributionLabel(first?.campaign?.name || first?.campaign?.campaignName || ''),
+      adsetLabel: sanitizeReadableAttributionLabel(first?.adGroup?.name || first?.ad_group?.name || ''),
+      adLabel: sanitizeReadableAttributionLabel(first?.adGroupAd?.ad?.name || first?.ad_group_ad?.ad?.name || ''),
+    };
+    writeAttributionLabelCache(cacheKey, result);
+    return result;
+  } catch (error) {
+    const fallback = {};
+    writeAttributionLabelCache(cacheKey, fallback, 5 * 60 * 1000);
+    console.warn('[Attribution Labels] Google lookup failed', {
+      cacheKey,
+      customerId: context?.customerId || null,
+      status: error?.status || error?.response?.status || null,
+      message: error?.message || String(error),
+    });
+    return fallback;
+  }
+}
+
+function mergeReadableAttributionLabels(base = {}, incoming = {}) {
+  return {
+    campaignLabel: base.campaignLabel || incoming.campaignLabel || null,
+    adsetLabel: base.adsetLabel || incoming.adsetLabel || null,
+    adLabel: base.adLabel || incoming.adLabel || null,
+  };
+}
+
+function pickBestAttributionDisplayLabel(labels = {}) {
+  return labels.adLabel || labels.adsetLabel || labels.campaignLabel || null;
+}
+
+function createAttributionLabelResolver({ userId = null, paidMedia = {} } = {}) {
+  let metaContextPromise = null;
+  let googleContextPromise = null;
+
+  const getMetaContext = async () => {
+    if (!metaContextPromise) {
+      metaContextPromise = buildMetaAttributionLookupContext({ userId, paidMedia });
+    }
+    return metaContextPromise;
+  };
+
+  const getGoogleContext = async () => {
+    if (!googleContextPromise) {
+      googleContextPromise = buildGoogleAttributionLookupContext({ userId, paidMedia });
+    }
+    return googleContextPromise;
+  };
+
+  return {
+    async resolveForPurchase({ purchase = {}, stitchedEvents = [] } = {}) {
+      const channelKey = normalizeChannelForStats(purchase?.attributedChannel || '', purchase?.attributedPlatform || '');
+      const candidates = collectReadableAttributionCandidates({ purchase, stitchedEvents });
+
+      let labels = {
+        campaignLabel: candidates.campaignLabels[0] || null,
+        adsetLabel: candidates.adsetLabels[0] || null,
+        adLabel: candidates.adLabels[0] || null,
+      };
+
+      const summaryCampaignLabel = findPaidMediaCampaignLabelFromSummary({
+        paidMedia,
+        channel: channelKey,
+        campaignIds: candidates.campaignIds,
+        campaignLabels: candidates.campaignLabels,
+      });
+      if (!labels.campaignLabel && summaryCampaignLabel) {
+        labels.campaignLabel = summaryCampaignLabel;
+      }
+
+      if (channelKey === 'meta') {
+        const metaContext = await getMetaContext();
+        if (metaContext) {
+          const metaLookupResults = await Promise.all([
+            ...candidates.adIds.slice(0, 2).map((id) => fetchMetaAttributionEntityById(metaContext, 'ad', id)),
+            ...candidates.adsetIds.slice(0, 2).map((id) => fetchMetaAttributionEntityById(metaContext, 'adset', id)),
+            ...candidates.campaignIds.slice(0, 2).map((id) => fetchMetaAttributionEntityById(metaContext, 'campaign', id)),
+          ]);
+
+          metaLookupResults.forEach((result) => {
+            labels = mergeReadableAttributionLabels(labels, result || {});
+          });
+        }
+      }
+
+      if (channelKey === 'google') {
+        const googleContext = await getGoogleContext();
+        if (googleContext) {
+          const googleQueries = [];
+
+          candidates.adIds.slice(0, 2).forEach((id) => {
+            const normalizedId = String(id || '').replace(/[^\d]/g, '');
+            if (!normalizedId) return;
+            googleQueries.push(
+              fetchGoogleAttributionEntityByQuery(
+                googleContext,
+                `google:ad:${googleContext.customerId}:${normalizedId}`,
+                `
+                  SELECT
+                    campaign.id,
+                    campaign.name,
+                    ad_group.id,
+                    ad_group.name
+                  FROM ad_group_ad
+                  WHERE ad_group_ad.ad.id = ${normalizedId}
+                  LIMIT 1
+                `
+              )
+            );
+          });
+
+          candidates.adsetIds.slice(0, 2).forEach((id) => {
+            const normalizedId = String(id || '').replace(/[^\d]/g, '');
+            if (!normalizedId) return;
+            googleQueries.push(
+              fetchGoogleAttributionEntityByQuery(
+                googleContext,
+                `google:adgroup:${googleContext.customerId}:${normalizedId}`,
+                `
+                  SELECT
+                    campaign.id,
+                    campaign.name,
+                    ad_group.id,
+                    ad_group.name
+                  FROM ad_group
+                  WHERE ad_group.id = ${normalizedId}
+                  LIMIT 1
+                `
+              )
+            );
+          });
+
+          candidates.campaignIds.slice(0, 2).forEach((id) => {
+            const normalizedId = String(id || '').replace(/[^\d]/g, '');
+            if (!normalizedId) return;
+            googleQueries.push(
+              fetchGoogleAttributionEntityByQuery(
+                googleContext,
+                `google:campaign:${googleContext.customerId}:${normalizedId}`,
+                `
+                  SELECT
+                    campaign.id,
+                    campaign.name
+                  FROM campaign
+                  WHERE campaign.id = ${normalizedId}
+                  LIMIT 1
+                `
+              )
+            );
+          });
+
+          const primaryCreatedAt = purchase?.createdAt || purchase?.platformCreatedAt || new Date();
+          const gclidWindowEnd = formatYmd(primaryCreatedAt);
+          const gclidWindowStart = formatYmd(subDays(primaryCreatedAt instanceof Date ? primaryCreatedAt : new Date(primaryCreatedAt), 90));
+
+          candidates.gclids.slice(0, 2).forEach((gclid) => {
+            const safeGclid = escapeGaqlString(gclid);
+            if (!safeGclid) return;
+            googleQueries.push(
+              fetchGoogleAttributionEntityByQuery(
+                googleContext,
+                `google:gclid:${googleContext.customerId}:${safeGclid}:${gclidWindowStart}:${gclidWindowEnd}`,
+                `
+                  SELECT
+                    click_view.gclid,
+                    campaign.id,
+                    campaign.name,
+                    ad_group.id,
+                    ad_group.name
+                  FROM click_view
+                  WHERE segments.date BETWEEN '${gclidWindowStart}' AND '${gclidWindowEnd}'
+                    AND click_view.gclid = '${safeGclid}'
+                  ORDER BY segments.date DESC
+                  LIMIT 1
+                `
+              )
+            );
+          });
+
+          const googleLookupResults = await Promise.all(googleQueries);
+          googleLookupResults.forEach((result) => {
+            labels = mergeReadableAttributionLabels(labels, result || {});
+          });
+        }
+      }
+
+      return {
+        ...labels,
+        displayLabel: pickBestAttributionDisplayLabel(labels),
+      };
+    },
+  };
 }
 
 function formatYmd(dateValue) {
@@ -2473,12 +3080,14 @@ router.get('/:account_id', async (req, res) => {
       blended: { spend: 0, revenue: 0, roas: null, currency: null },
     };
 
+    const requestUserId = req.user?._id || req.user?.id || null;
+
     try {
       paidMedia = await buildPaidMediaSummary({
         accountId: account_id,
         domain: accountRecord?.domain || account_id,
         platformConnections,
-        fallbackUserId: req.user?._id || req.user?.id || null,
+        fallbackUserId: requestUserId,
         startDate,
         endDate,
       });
@@ -2488,6 +3097,11 @@ router.get('/:account_id', async (req, res) => {
         error: String(paidMediaError?.message || paidMediaError),
       });
     }
+
+    const attributionLabelResolver = createAttributionLabelResolver({
+      userId: requestUserId,
+      paidMedia,
+    });
 
     // 3. Fetch Events in range (for pixel activity visibility)
     const groupedEvents = await prisma.event.groupBy({
@@ -3162,10 +3776,22 @@ router.get('/:account_id', async (req, res) => {
           userAgent: ev?.rawPayload?.user_data?.client_user_agent || ev?.rawPayload?.client_user_agent || ev?.rawPayload?.user_agent || null,
         }));
 
+      const readableAttribution = await attributionLabelResolver.resolveForPurchase({
+        purchase: conv,
+        stitchedEvents,
+      });
+
       return {
         ...conv,
         items: normalizedItems,
+        attributedCampaignLabel: readableAttribution.campaignLabel || null,
+        attributedAdsetLabel: readableAttribution.adsetLabel || null,
+        attributedAdLabel: readableAttribution.adLabel || null,
         events: journeyEvents,
+        attributionDebug: {
+          ...(conv.attributionDebug || {}),
+          resolvedAttributionLabel: readableAttribution.displayLabel || null,
+        },
       };
     }));
 
