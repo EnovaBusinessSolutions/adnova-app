@@ -1733,6 +1733,14 @@
             text-align: center;
         }
 
+        .journey-event.post-purchase-marker .journey-event-title {
+            color: rgba(134, 239, 172, 0.96);
+        }
+
+        .journey-event.post-purchase-marker .journey-event-detail {
+            color: rgba(220, 252, 231, 0.88);
+        }
+
         .journey-session-marker {
             position: relative;
             display: flex;
@@ -4984,6 +4992,20 @@
                         sessionLabel,
                     }));
                 const attributionSentence = buildJourneySessionAttributionSentence(group);
+                const lastPurchaseIndex = (() => {
+                    for (let cursor = sessionEvents.length - 1; cursor >= 0; cursor -= 1) {
+                        if (String(sessionEvents[cursor]?.rawEventName || '').trim().toLowerCase() === 'purchase') {
+                            return cursor;
+                        }
+                    }
+                    return -1;
+                })();
+                const mainSessionEvents = lastPurchaseIndex >= 0
+                    ? sessionEvents.slice(0, lastPurchaseIndex + 1)
+                    : sessionEvents;
+                const postPurchaseEvents = lastPurchaseIndex >= 0
+                    ? sessionEvents.slice(lastPurchaseIndex + 1)
+                    : [];
 
                 timeline.push({
                     type: 'session_marker',
@@ -4998,7 +5020,25 @@
                     detailLines: [attributionSentence],
                     copy: attributionSentence,
                 });
-                timeline.push(...sessionEvents);
+                timeline.push(...mainSessionEvents);
+
+                if (postPurchaseEvents.length) {
+                    const firstPostPurchaseEvent = postPurchaseEvents[0] || {};
+                    timeline.push({
+                        type: 'post_purchase_marker',
+                        kindClass: 'session-gap post-purchase-marker',
+                        label: 'Post-purchase confirmation',
+                        title: 'Post-purchase confirmation',
+                        originalName: 'Post-purchase confirmation',
+                        time: firstPostPurchaseEvent.fullTime || firstPostPurchaseEvent.time || group.timeLabel || '-',
+                        fullTime: firstPostPurchaseEvent.fullTime || firstPostPurchaseEvent.time || group.timeLabel || '-',
+                        icon: 'fa-solid fa-receipt',
+                        detailLines: [
+                            `${postPurchaseEvents.length} confirmation event${postPurchaseEvents.length === 1 ? '' : 's'} captured after the purchase, usually thank-you page activity, order confirmation loads, or browser follow-up signals.`,
+                        ],
+                    });
+                    timeline.push(...postPurchaseEvents);
+                }
 
                 const nextGroup = groups[index + 1] || null;
                 if (nextGroup) {
@@ -5138,7 +5178,11 @@
                 return '<p class="text-sm text-gray-500">Not enough journey events yet.</p>';
             }
 
-            const actualEventCount = events.filter((event) => event.type !== 'session_marker' && event.type !== 'session_gap').length;
+            const actualEventCount = events.filter((event) =>
+                event.type !== 'session_marker'
+                && event.type !== 'session_gap'
+                && event.type !== 'post_purchase_marker'
+            ).length;
 
             return `
                 <div class="journey-timeline">
@@ -5260,6 +5304,7 @@
                                 time: '-',
                                 fullTime: '-',
                                 originalName: 'Condensed events',
+                                rawEventName: '__condensed__',
                                 detailLines: event._detailLines || [],
                                 tone: '',
                                 sessionGroupIndex: Number(event._sessionGroupIndex),
@@ -5300,6 +5345,7 @@
                             time: displayTime,
                             fullTime: timeStr,
                             originalName: originalEventName,
+                            rawEventName: rawName,
                             detailLines,
                             tone: resolveChannelTone(event.utmSource || purchase.attributedChannel || '', purchase.attributedPlatform || null),
                             sessionGroupIndex: Number(event._sessionGroupIndex),
