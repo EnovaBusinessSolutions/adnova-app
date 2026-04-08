@@ -4533,7 +4533,7 @@
             const tone = resolveChannelTone(purchase.attributedChannel, purchase.attributedPlatform);
             const landingInfo = options.landingInfo || resolvePurchaseLandingInfo(purchase, options.events || []);
             const landing = landingInfo.landing;
-            const campaign = purchase.attributedCampaign || purchase.attributionDebug?.payloadUtmCampaign || '-';
+            const campaign = resolveAttributedCampaignLabel(purchase);
             const clickId = purchase.attributedClickId || '-';
             const purchasedAt = formatRecentPurchaseDate(purchase);
 
@@ -4548,7 +4548,7 @@
                         `Campaign: ${campaign}`,
                         `Click ID: ${clickId}`,
                     ],
-                    tooltip: `Primary attribution touchpoint. ${humanReadableChannel(purchase.attributedChannel || 'unattributed', purchase.attributedPlatform || '')} ${campaign && campaign !== '-' ? `campaign ${campaign}` : 'source'}${clickId && clickId !== '-' ? ` with click id ${shortenJourneyIdentifier(clickId)}` : ''}.`,
+                    tooltip: `Primary attribution touchpoint. ${humanReadableChannel(purchase.attributedChannel || 'unattributed', purchase.attributedPlatform || '')} ${campaign && campaign !== 'No campaign' ? `campaign ${campaign}` : 'source'}${clickId && clickId !== '-' ? ` with click id ${shortenJourneyIdentifier(clickId)}` : ''}.`,
                     tone,
                 },
             ];
@@ -4673,7 +4673,7 @@
             const fbclid = String(payload.fbclid || payload.fbc || payload._fbc || '').trim();
             const ttclid = String(payload.ttclid || '').trim();
             const fallbackChannel = normalizeAttributionChannel(purchase.attributedChannel || '', purchase.attributedPlatform || '');
-            const fallbackCampaign = String(purchase.attributedCampaign || purchase.attributionDebug?.payloadUtmCampaign || '').trim();
+            const fallbackCampaign = String(resolveAttributedCampaignLabel(purchase) || '').trim();
             const fallbackClickId = String(purchase.attributedClickId || '').trim();
 
             let channelKey = 'organic';
@@ -5089,7 +5089,7 @@
                                 <span class="journey-session-touchpoint-sub">${escapeHtml(revenue)} · ${escapeHtml(humanReadableChannel(purchase.attributedChannel || 'unattributed', purchase.attributedPlatform || ''))}</span>
                             </div>
                             <div class="journey-session-kpis">
-                                <span class="journey-chip" data-tooltip="Campaign attributed to the final purchase."><i class="fa-solid fa-bullhorn"></i>${escapeHtml(purchase.attributedCampaign || 'No campaign')}</span>
+                                <span class="journey-chip" data-tooltip="Campaign attributed to the final purchase."><i class="fa-solid fa-bullhorn"></i>${escapeHtml(resolveAttributedCampaignLabel(purchase))}</span>
                                 ${purchase.attributedClickId ? `<span class="journey-chip" data-tooltip="Click identifier linked to the final attributed touchpoint."><i class="fa-solid fa-link"></i>${escapeHtml(shortenJourneyIdentifier(purchase.attributedClickId))}</span>` : ''}
                             </div>
                             <p class="journey-session-copy">This is the final conversion event. Attribution is resolved here, then the stitch walks backward through the sessions above.</p>
@@ -5208,7 +5208,7 @@
             const hasPurchase = Number(purchase.revenue || 0) > 0;
             const userName = humanReadablePersonName(resolvePurchaseCustomerName(purchase) || '', 'Customer');
             const source = humanReadableChannel(purchase.attributedChannel, purchase.attributedPlatform || '');
-            const sourceAd = purchase.attributedCampaign || 'No campaign';
+            const sourceAd = resolveAttributedCampaignLabel(purchase);
             const availableEvents = Array.isArray(purchase.events) ? purchase.events : (Array.isArray(purchase.stitchedEvents) ? purchase.stitchedEvents : []);
             const landingInfo = resolvePurchaseLandingInfo(purchase, availableEvents);
             const landing = landingInfo.landingDisplay;
@@ -7003,6 +7003,81 @@
             if (campaignName) return campaignName;
             if (campaignId) return campaignId;
             return 'No dominant campaign';
+        }
+
+        function normalizePaidMediaCampaignLookupValue(value = '') {
+            return String(value || '')
+                .trim()
+                .toLowerCase()
+                .replace(/^act_/, '')
+                .replace(/[^\w.-]+/g, '');
+        }
+
+        function isOpaqueAttributionIdentifier(value = '') {
+            const raw = String(value || '').trim();
+            if (!raw) return false;
+            const compact = raw.replace(/[^\da-z]/gi, '');
+            if (/^\d{8,}$/.test(raw)) return true;
+            if (/^[a-f0-9]{16,}$/i.test(compact)) return true;
+            return false;
+        }
+
+        function findPaidMediaCampaignMatch({ channel = '', platform = '', campaign = '', adset = '', ad = '' } = {}) {
+            const platformKey = normalizeAttributionChannel(channel || platform || '', platform || channel || '');
+            if (platformKey !== 'meta' && platformKey !== 'google' && platformKey !== 'tiktok') return null;
+
+            const rows = Array.isArray(globalPaidMediaCampaigns)
+                ? globalPaidMediaCampaigns.filter((row) => String(row?._platform || '').trim().toLowerCase() === platformKey)
+                : [];
+            if (!rows.length) return null;
+
+            const candidates = [campaign, adset, ad]
+                .map((value) => String(value || '').trim())
+                .filter(Boolean);
+            if (!candidates.length) return null;
+
+            const normalizedCandidates = new Set(candidates.map((value) => normalizePaidMediaCampaignLookupValue(value)).filter(Boolean));
+            if (!normalizedCandidates.size) return null;
+
+            return rows.find((row) => {
+                const rowId = normalizePaidMediaCampaignLookupValue(row?.id || row?.campaign_id || '');
+                const rowName = normalizePaidMediaCampaignLookupValue(row?.name || row?.campaign_name || '');
+                return (rowId && normalizedCandidates.has(rowId)) || (rowName && normalizedCandidates.has(rowName));
+            }) || null;
+        }
+
+        function resolveAttributedCampaignLabel(purchase = {}) {
+            const channel = purchase?.attributedChannel || '';
+            const platform = purchase?.attributedPlatform || '';
+            const rawCampaign = String(purchase?.attributedCampaign || purchase?.attributionDebug?.payloadUtmCampaign || '').trim();
+            const rawAdset = String(purchase?.attributedAdset || '').trim();
+            const rawAd = String(purchase?.attributedAd || '').trim();
+
+            const readableDirect = [rawAd, rawAdset, rawCampaign].find((value) => value && !isOpaqueAttributionIdentifier(value));
+            const matchedCampaign = findPaidMediaCampaignMatch({
+                channel,
+                platform,
+                campaign: rawCampaign,
+                adset: rawAdset,
+                ad: rawAd,
+            });
+
+            if (readableDirect) {
+                if (matchedCampaign?.name) {
+                    const directNormalized = normalizePaidMediaCampaignLookupValue(readableDirect);
+                    const matchedNormalized = normalizePaidMediaCampaignLookupValue(matchedCampaign.name || '');
+                    if (matchedNormalized && directNormalized !== matchedNormalized) {
+                        return `${readableDirect} · ${matchedCampaign.name}`;
+                    }
+                }
+                return readableDirect;
+            }
+
+            if (matchedCampaign?.name) return String(matchedCampaign.name).trim();
+            if (rawCampaign) return rawCampaign;
+            if (rawAdset) return rawAdset;
+            if (rawAd) return rawAd;
+            return 'No campaign';
         }
 
         async function ensurePaidMediaSelector(platform, sourceState) {
