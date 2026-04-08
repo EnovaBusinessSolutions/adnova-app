@@ -5195,9 +5195,124 @@
             return Number(story.totalSessions || 0);
         }
 
+        function buildPurchaseTrackedUtmHistory(purchase = {}) {
+            const events = Array.isArray(purchase.events) ? purchase.events : (Array.isArray(purchase.stitchedEvents) ? purchase.stitchedEvents : []);
+            const sessionMap = new Map();
+            const anchorSessionId = String(purchase.sessionId || '').trim();
+
+            const ensureSession = (sessionId, fallback = {}) => {
+                const safeSessionId = String(sessionId || '').trim();
+                if (!safeSessionId) return null;
+
+                if (!sessionMap.has(safeSessionId)) {
+                    sessionMap.set(safeSessionId, {
+                        sessionId: safeSessionId,
+                        startedAt: fallback.startedAt || null,
+                        lastEventAt: fallback.lastEventAt || null,
+                        isCurrentSession: anchorSessionId ? safeSessionId === anchorSessionId : false,
+                        urlsMap: new Map(),
+                    });
+                }
+
+                const current = sessionMap.get(safeSessionId);
+                if (fallback.startedAt && !current.startedAt) current.startedAt = fallback.startedAt;
+                if (fallback.lastEventAt) current.lastEventAt = fallback.lastEventAt;
+                return current;
+            };
+
+            const addEntry = (sessionId, entry, fallback = {}) => {
+                const group = ensureSession(sessionId || fallback.sessionId, fallback);
+                if (!group) return;
+
+                const normalized = normalizeTrackedHistoryEntry(entry, {
+                    sessionId: group.sessionId,
+                    capturedAt: fallback.capturedAt || null,
+                    url: fallback.url || null,
+                    utmSource: fallback.utmSource || null,
+                    utmMedium: fallback.utmMedium || null,
+                    utmCampaign: fallback.utmCampaign || null,
+                    utmContent: fallback.utmContent || null,
+                    utmTerm: fallback.utmTerm || null,
+                    ga4SessionSource: fallback.ga4SessionSource || null,
+                    fbclid: fallback.fbclid || null,
+                    gclid: fallback.gclid || null,
+                    ttclid: fallback.ttclid || null,
+                    clickId: fallback.clickId || null,
+                });
+                if (!normalized) return;
+
+                const key = normalized.url;
+                const previous = group.urlsMap.get(key);
+                if (!previous) {
+                    group.urlsMap.set(key, normalized);
+                    return;
+                }
+
+                const prevTs = new Date(previous.capturedAt || 0).getTime();
+                const nextTs = new Date(normalized.capturedAt || 0).getTime();
+                if (nextTs && (!prevTs || nextTs < prevTs)) {
+                    group.urlsMap.set(key, normalized);
+                }
+            };
+
+            events.forEach((event) => {
+                const sessionId = String(event.sessionId || '').trim();
+                const fallback = {
+                    sessionId,
+                    startedAt: event.createdAt || event.collectedAt || null,
+                    lastEventAt: event.createdAt || event.collectedAt || null,
+                    capturedAt: event.createdAt || event.collectedAt || null,
+                    url: event.pageUrl || null,
+                    utmSource: event.utmSource || null,
+                    utmMedium: event.utmMedium || null,
+                    utmCampaign: event.utmCampaign || null,
+                    utmContent: event.utmContent || null,
+                    utmTerm: event.utmTerm || null,
+                    ga4SessionSource: event.ga4SessionSource || null,
+                    fbclid: event.fbclid || null,
+                    gclid: event.gclid || null,
+                    ttclid: event.ttclid || null,
+                    clickId: event.clickId || null,
+                };
+
+                addEntry(sessionId, { url: event.utmEntryUrl || null }, fallback);
+                addEntry(sessionId, { url: event.pageUrl || null }, fallback);
+
+                parseTrackedHistoryArray(event.utmSessionHistory).forEach((entry) => addEntry(sessionId, entry, fallback));
+                parseTrackedHistoryArray(event.utmBrowserHistory).forEach((entry) => addEntry(sessionId, entry, fallback));
+            });
+
+            const sessions = Array.from(sessionMap.values())
+                .map((group) => {
+                    const urls = Array.from(group.urlsMap.values())
+                        .sort((a, b) => new Date(a.capturedAt || 0).getTime() - new Date(b.capturedAt || 0).getTime());
+
+                    return {
+                        sessionId: group.sessionId,
+                        startedAt: group.startedAt || null,
+                        lastEventAt: group.lastEventAt || null,
+                        isCurrentSession: group.isCurrentSession,
+                        touchCount: urls.length,
+                        urls,
+                    };
+                })
+                .filter((group) => group.touchCount > 0)
+                .sort((a, b) => {
+                    if (a.isCurrentSession !== b.isCurrentSession) return a.isCurrentSession ? -1 : 1;
+                    return new Date(b.startedAt || b.lastEventAt || 0).getTime() - new Date(a.startedAt || a.lastEventAt || 0).getTime();
+                });
+
+            return {
+                totalUrls: sessions.reduce((sum, session) => sum + Number(session.touchCount || 0), 0),
+                sessionCount: sessions.length,
+                sessions,
+            };
+        }
+
         function renderFocusedPurchaseJourneyCard(purchase = {}, displayName = '') {
             const journeyData = buildMinimalJourneyNodesFromPurchase(purchase, selectedJourneyTimelineMode);
             const sessionCount = Number(journeyData.sessionStory?.totalSessions || countPurchaseJourneySessions(purchase) || 0);
+            const purchaseUtmHistory = buildPurchaseTrackedUtmHistory(purchase);
             return `
                 <div class="journey-compact-card space-y-4">
                     <div class="flex items-center justify-between gap-2 flex-wrap">
@@ -5209,6 +5324,10 @@
                         <span class="journey-chip" data-tooltip="Attributed campaign or the best campaign label recovered so far."><i class="fa-solid fa-bullhorn"></i>${escapeHtml(journeyData.summary?.sourceAd || 'No campaign')}</span>
                         <span class="journey-chip" data-tooltip="Initial landing page captured for this stitched journey."><i class="fa-solid fa-door-open"></i>${escapeHtml(journeyData.summary?.landing || 'No landing captured')}</span>
                         <span class="journey-chip" data-tooltip="How many stitched sessions currently support this purchase path."><i class="fa-solid fa-layer-group"></i>${sessionCount} sessions</span>
+                    </div>
+                    <div>
+                        <p class="font-medium text-gray-900 mb-1">UTM URL history for this journey</p>
+                        ${renderTrackedUtmHistory(purchaseUtmHistory, { emptyMessage: 'No UTM URLs have been captured yet for this selected journey.' })}
                     </div>
                     ${renderTimelineModeToggle(selectedJourneyTimelineMode)}
                     ${renderJourneyVerticalTimeline(journeyData.timelineEvents)}
@@ -6272,10 +6391,108 @@
             return parts.join(' · ') || 'Tracked UTM touch';
         }
 
-        function renderTrackedUtmHistory(history = {}) {
+        function normalizeTrackedHistoryUrl(value) {
+            const raw = String(value || '').trim();
+            if (!raw) return null;
+
+            try {
+                const parsed = new URL(raw, window.location.origin);
+                parsed.hash = '';
+                return parsed.toString();
+            } catch (_) {
+                return raw.split('#')[0] || null;
+            }
+        }
+
+        function trackedHistoryHasSignals(url) {
+            const normalized = normalizeTrackedHistoryUrl(url);
+            if (!normalized) return false;
+
+            try {
+                const parsed = new URL(normalized, window.location.origin);
+                const params = parsed.searchParams;
+                return [
+                    'utm_source',
+                    'utm_medium',
+                    'utm_campaign',
+                    'utm_content',
+                    'utm_term',
+                    'fbclid',
+                    'gclid',
+                    'ttclid',
+                    'ga4_session_source',
+                ].some((key) => params.has(key) && params.get(key));
+            } catch (_) {
+                return false;
+            }
+        }
+
+        function parseTrackedHistoryArray(value) {
+            if (Array.isArray(value)) return value;
+            if (typeof value !== 'string' || !value.trim()) return [];
+
+            try {
+                const parsed = JSON.parse(value);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (_) {
+                return [];
+            }
+        }
+
+        function normalizeTrackedHistoryEntry(entry = {}, fallback = {}) {
+            const url = normalizeTrackedHistoryUrl(
+                entry.url
+                || entry.page_url
+                || entry.pageUrl
+                || entry.u
+                || fallback.url
+                || ''
+            );
+
+            if (!url || !trackedHistoryHasSignals(url)) return null;
+
+            let parsed;
+            try {
+                parsed = new URL(url, window.location.origin);
+            } catch (_) {
+                parsed = null;
+            }
+
+            const params = parsed ? parsed.searchParams : new URLSearchParams();
+            const clickId = String(
+                entry.click_id
+                || entry.clickId
+                || entry.fbclid
+                || entry.gclid
+                || entry.ttclid
+                || params.get('fbclid')
+                || params.get('gclid')
+                || params.get('ttclid')
+                || fallback.clickId
+                || ''
+            ).trim();
+
+            return {
+                sessionId: String(entry.session_id || entry.sessionId || fallback.sessionId || '').trim() || null,
+                capturedAt: String(entry.captured_at || entry.capturedAt || entry.ts || fallback.capturedAt || '').trim() || null,
+                url,
+                utmSource: String(entry.utm_source || entry.utmSource || params.get('utm_source') || fallback.utmSource || '').trim() || null,
+                utmMedium: String(entry.utm_medium || entry.utmMedium || params.get('utm_medium') || fallback.utmMedium || '').trim() || null,
+                utmCampaign: String(entry.utm_campaign || entry.utmCampaign || params.get('utm_campaign') || fallback.utmCampaign || '').trim() || null,
+                utmContent: String(entry.utm_content || entry.utmContent || params.get('utm_content') || fallback.utmContent || '').trim() || null,
+                utmTerm: String(entry.utm_term || entry.utmTerm || params.get('utm_term') || fallback.utmTerm || '').trim() || null,
+                ga4SessionSource: String(entry.ga4_session_source || entry.ga4SessionSource || params.get('ga4_session_source') || fallback.ga4SessionSource || '').trim() || null,
+                fbclid: String(entry.fbclid || params.get('fbclid') || fallback.fbclid || '').trim() || null,
+                gclid: String(entry.gclid || params.get('gclid') || fallback.gclid || '').trim() || null,
+                ttclid: String(entry.ttclid || params.get('ttclid') || fallback.ttclid || '').trim() || null,
+                clickId: clickId || null,
+            };
+        }
+
+        function renderTrackedUtmHistory(history = {}, options = {}) {
             const sessions = Array.isArray(history.sessions) ? history.sessions : [];
             if (!sessions.length) {
-                return '<p class="text-xs text-gray-500">No UTM URLs have been captured yet for this recognized user.</p>';
+                return `<p class="text-xs text-gray-500">${escapeHtml(options.emptyMessage || 'No UTM URLs have been captured yet for this recognized user.')}</p>`;
             }
 
             return `
