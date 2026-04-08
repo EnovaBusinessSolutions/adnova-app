@@ -460,6 +460,108 @@ final class Adnova_Pixel_Plugin {
         echo '<script>window.adnova_user_data=' . wp_json_encode($payload) . ';</script>' . "\n";
     }
 
+    private static function sanitize_utm_history_url($value) {
+        $raw = is_string($value) ? trim($value) : '';
+        if ($raw === '') {
+            return null;
+        }
+
+        $sanitized = esc_url_raw(substr($raw, 0, 600));
+        return $sanitized !== '' ? $sanitized : null;
+    }
+
+    private static function normalize_utm_history_array($value, $limit = 6) {
+        if (is_string($value) && $value !== '') {
+            $decoded = json_decode($value, true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $value = $decoded;
+            }
+        }
+
+        if (!is_array($value)) {
+            return array();
+        }
+
+        $entries = array();
+        foreach ($value as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $url = self::sanitize_utm_history_url(
+                isset($entry['url']) ? $entry['url'] : (
+                    isset($entry['page_url']) ? $entry['page_url'] : (
+                        isset($entry['pageUrl']) ? $entry['pageUrl'] : (
+                            isset($entry['u']) ? $entry['u'] : ''
+                        )
+                    )
+                )
+            );
+
+            if (!$url) {
+                continue;
+            }
+
+            $entries[] = array(
+                'session_id' => isset($entry['session_id']) ? sanitize_text_field($entry['session_id']) : (isset($entry['sessionId']) ? sanitize_text_field($entry['sessionId']) : null),
+                'captured_at' => isset($entry['captured_at']) ? sanitize_text_field($entry['captured_at']) : (isset($entry['capturedAt']) ? sanitize_text_field($entry['capturedAt']) : null),
+                'url' => $url,
+                'utm_source' => isset($entry['utm_source']) ? sanitize_text_field($entry['utm_source']) : (isset($entry['utmSource']) ? sanitize_text_field($entry['utmSource']) : null),
+                'utm_medium' => isset($entry['utm_medium']) ? sanitize_text_field($entry['utm_medium']) : (isset($entry['utmMedium']) ? sanitize_text_field($entry['utmMedium']) : null),
+                'utm_campaign' => isset($entry['utm_campaign']) ? sanitize_text_field($entry['utm_campaign']) : (isset($entry['utmCampaign']) ? sanitize_text_field($entry['utmCampaign']) : null),
+                'utm_content' => isset($entry['utm_content']) ? sanitize_text_field($entry['utm_content']) : (isset($entry['utmContent']) ? sanitize_text_field($entry['utmContent']) : null),
+                'utm_term' => isset($entry['utm_term']) ? sanitize_text_field($entry['utm_term']) : (isset($entry['utmTerm']) ? sanitize_text_field($entry['utmTerm']) : null),
+                'ga4_session_source' => isset($entry['ga4_session_source']) ? sanitize_text_field($entry['ga4_session_source']) : (isset($entry['ga4SessionSource']) ? sanitize_text_field($entry['ga4SessionSource']) : null),
+                'fbclid' => isset($entry['fbclid']) ? sanitize_text_field($entry['fbclid']) : null,
+                'gclid' => isset($entry['gclid']) ? sanitize_text_field($entry['gclid']) : null,
+                'ttclid' => isset($entry['ttclid']) ? sanitize_text_field($entry['ttclid']) : null,
+            );
+        }
+
+        if (empty($entries)) {
+            return array();
+        }
+
+        $deduped = array();
+        foreach ($entries as $item) {
+            $key = (isset($item['session_id']) && $item['session_id'] ? $item['session_id'] : 'global') . '::' . $item['url'];
+            $deduped[$key] = $item;
+        }
+
+        $entries = array_values($deduped);
+        $limit = max(1, min(10, (int) $limit));
+        if (count($entries) > $limit) {
+            $entries = array_slice($entries, -$limit);
+        }
+
+        return array_values($entries);
+    }
+
+    private static function read_utm_history_cookie($cookie_name, $limit = 6) {
+        if (!isset($_COOKIE[$cookie_name])) {
+            return array();
+        }
+
+        $raw = rawurldecode((string) wp_unslash($_COOKIE[$cookie_name]));
+        return self::normalize_utm_history_array($raw, $limit);
+    }
+
+    private static function get_cookie_attribution_context() {
+        $entry_url = null;
+        if (isset($_COOKIE['__adray_utm_entry_url'])) {
+            $entry_url = self::sanitize_utm_history_url(rawurldecode((string) wp_unslash($_COOKIE['__adray_utm_entry_url'])));
+        }
+
+        $session_history = self::read_utm_history_cookie('__adray_utm_session_history', 6);
+        $browser_history = self::read_utm_history_cookie('__adray_utm_browser_history', 6);
+
+        return array(
+            'utm_entry_url' => $entry_url ? $entry_url : null,
+            'utm_session_history' => !empty($session_history) ? $session_history : null,
+            'utm_browser_history' => !empty($browser_history) ? $browser_history : null,
+        );
+    }
+
     private static function get_order_attribution_data($order) {
         if (!$order) {
             return array();
@@ -506,6 +608,11 @@ final class Adnova_Pixel_Plugin {
             $meta[$key] = $value !== '' ? sanitize_text_field($value) : null;
         }
 
+        $cookie_context = self::get_cookie_attribution_context();
+        $stored_entry_url = self::sanitize_utm_history_url((string) $order->get_meta('_adray_utm_entry_url', true));
+        $stored_session_history = self::normalize_utm_history_array($order->get_meta('_adray_utm_session_history', true), 6);
+        $stored_browser_history = self::normalize_utm_history_array($order->get_meta('_adray_utm_browser_history', true), 6);
+
         $source_label = null;
         $source_type = isset($meta['woo_source_type']) && $meta['woo_source_type']
             ? strtolower($meta['woo_source_type'])
@@ -538,6 +645,9 @@ final class Adnova_Pixel_Plugin {
         }
 
         $meta['woo_source_label'] = sanitize_text_field($source_label);
+        $meta['utm_entry_url'] = $stored_entry_url ? $stored_entry_url : (isset($cookie_context['utm_entry_url']) ? $cookie_context['utm_entry_url'] : null);
+        $meta['utm_session_history'] = !empty($stored_session_history) ? $stored_session_history : (isset($cookie_context['utm_session_history']) ? $cookie_context['utm_session_history'] : null);
+        $meta['utm_browser_history'] = !empty($stored_browser_history) ? $stored_browser_history : (isset($cookie_context['utm_browser_history']) ? $cookie_context['utm_browser_history'] : null);
 
         return $meta;
     }
@@ -583,6 +693,16 @@ final class Adnova_Pixel_Plugin {
             }
             if (isset($_COOKIE['__adray_visitor_id'])) {
                 $order->update_meta_data('_adray_visitor_id', sanitize_text_field(wp_unslash($_COOKIE['__adray_visitor_id'])));
+            }
+            $utm_context = self::get_cookie_attribution_context();
+            if (!empty($utm_context['utm_entry_url'])) {
+                $order->update_meta_data('_adray_utm_entry_url', $utm_context['utm_entry_url']);
+            }
+            if (!empty($utm_context['utm_session_history'])) {
+                $order->update_meta_data('_adray_utm_session_history', $utm_context['utm_session_history']);
+            }
+            if (!empty($utm_context['utm_browser_history'])) {
+                $order->update_meta_data('_adray_utm_browser_history', $utm_context['utm_browser_history']);
             }
             $order->save();
         }
@@ -833,6 +953,9 @@ final class Adnova_Pixel_Plugin {
             'woo_source_label' => isset($order_data['woo_source_label']) ? $order_data['woo_source_label'] : null,
             'woo_source_type'  => isset($order_data['woo_source_type']) ? $order_data['woo_source_type'] : null,
             'woo_session_source' => isset($order_data['woo_session_source']) ? $order_data['woo_session_source'] : null,
+            'utm_entry_url'   => isset($order_data['utm_entry_url']) ? $order_data['utm_entry_url'] : null,
+            'utm_session_history' => isset($order_data['utm_session_history']) ? $order_data['utm_session_history'] : null,
+            'utm_browser_history' => isset($order_data['utm_browser_history']) ? $order_data['utm_browser_history'] : null,
         ));
 
         $order->update_meta_data('_adnova_purchase_sent', gmdate('c'));
@@ -937,6 +1060,9 @@ final class Adnova_Pixel_Plugin {
             'woo_source_label' => isset($order_data['woo_source_label']) ? $order_data['woo_source_label'] : null,
             'woo_source_type' => isset($order_data['woo_source_type']) ? $order_data['woo_source_type'] : null,
             'woo_session_source' => isset($order_data['woo_session_source']) ? $order_data['woo_session_source'] : null,
+            'utm_entry_url' => isset($order_data['utm_entry_url']) ? $order_data['utm_entry_url'] : null,
+            'utm_session_history' => isset($order_data['utm_session_history']) ? $order_data['utm_session_history'] : null,
+            'utm_browser_history' => isset($order_data['utm_browser_history']) ? $order_data['utm_browser_history'] : null,
         );
 
         // Use non-blocking to avoid WordPress hanging if backend is slow/unresponsive
@@ -991,6 +1117,7 @@ final class Adnova_Pixel_Plugin {
      */
     private static function send_server_side_event($event_name, array $extra = array()) {
         $site_id = self::get_site_id();
+        $utm_context = self::get_cookie_attribution_context();
 
         $payload = array_merge(
             array(
@@ -1000,6 +1127,7 @@ final class Adnova_Pixel_Plugin {
                 'page_url'   => home_url('/'),
                 'raw_source' => 'plugin_server',
             ),
+            $utm_context,
             $extra
         );
 

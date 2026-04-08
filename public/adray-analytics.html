@@ -6259,6 +6259,53 @@
             focusJourneyProfile({ sessionId });
         }
 
+        function describeTrackedUtmEntry(entry = {}) {
+            const sourceMedium = [entry.utmSource, entry.utmMedium].filter(Boolean).join(' / ');
+            const campaign = String(entry.utmCampaign || '').trim();
+            const clickId = String(entry.clickId || entry.fbclid || entry.gclid || entry.ttclid || '').trim();
+            const parts = [];
+
+            if (sourceMedium) parts.push(sourceMedium);
+            if (campaign) parts.push(campaign);
+            if (clickId) parts.push(`click ${shortenJourneyIdentifier(clickId)}`);
+
+            return parts.join(' · ') || 'Tracked UTM touch';
+        }
+
+        function renderTrackedUtmHistory(history = {}) {
+            const sessions = Array.isArray(history.sessions) ? history.sessions : [];
+            if (!sessions.length) {
+                return '<p class="text-xs text-gray-500">No UTM URLs have been captured yet for this recognized user.</p>';
+            }
+
+            return `
+                <div class="space-y-3 mt-3">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="journey-chip"><i class="fa-solid fa-link"></i>${Number(history.totalUrls || 0)} UTM URLs</span>
+                        <span class="journey-chip"><i class="fa-solid fa-layer-group"></i>${Number(history.sessionCount || 0)} sessions</span>
+                    </div>
+                    ${sessions.slice(0, 6).map((session, index) => `
+                        <div class="session-side-card rounded-xl p-3">
+                            <div class="flex items-center justify-between gap-2 flex-wrap">
+                                <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">${session.isCurrentSession ? 'Current session' : `Linked session ${index + 1}`}</p>
+                                <span class="text-[11px] text-gray-500">${formatDateTimeMx(session.startedAt || session.lastEventAt)}</span>
+                            </div>
+                            <div class="mt-2 space-y-2">
+                                ${Array.isArray(session.urls) ? session.urls.slice(0, 4).map((entry) => `
+                                    <div class="rounded-lg border border-white/10 bg-white/5 p-2">
+                                        <p class="text-[11px] text-gray-400">${escapeHtml(describeTrackedUtmEntry(entry))}</p>
+                                        <a href="${escapeHtmlAttr(entry.url || '#')}" target="_blank" rel="noopener noreferrer" class="block mt-1 text-xs break-all text-indigo-200 hover:underline">${escapeHtml(entry.url || '-')}</a>
+                                        <p class="text-[11px] text-gray-500 mt-1">${formatDateTimeMx(entry.capturedAt || session.startedAt || session.lastEventAt)}</p>
+                                    </div>
+                                `).join('') : ''}
+                                ${Number(session.touchCount || 0) > 4 ? `<p class="text-[11px] text-gray-500">+${Number(session.touchCount || 0) - 4} more tracked URLs in this session.</p>` : ''}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+        }
+
         function renderSessionDetail(data) {
             const session = data.session || {};
             const metrics = data.metrics || {};
@@ -6270,6 +6317,7 @@
             const timeline = Array.isArray(data.timeline) ? data.timeline : [];
             const pages = Array.isArray(journey.pages) ? journey.pages : [];
             const products = Array.isArray(journey.products) ? journey.products : [];
+            const utmHistory = data.utmHistory || {};
 
             console.info('[Session Explorer] render session detail', {
                 sessionId: session.sessionId || null,
@@ -6341,8 +6389,9 @@
                 <p><strong>IP Hash:</strong> ${session.ipHash ? `${String(session.ipHash).slice(0, 10)}...` : '-'}</p>
                 <p><strong>Funnel:</strong> PV ${metrics.pageViews || 0} · VI ${metrics.viewItem || 0} · ATC ${metrics.addToCart || 0} · BC ${metrics.beginCheckout || 0} · P ${metrics.purchase || 0}</p>
                 <p><strong>Other sessions from the same user:</strong> ${patterns.peerSessionCount || 0}</p>
-                <p><strong>Sessions trazadas totales:</strong> ${patterns.totalTrackedSessions || ((patterns.peerSessionCount || 0) + 1)}</p>
+                <p><strong>Total stitched sessions:</strong> ${patterns.totalTrackedSessions || ((patterns.peerSessionCount || 0) + 1)}</p>
                 <p><strong>Historical profile orders:</strong> ${profile.historicalOrderCount || 0}</p>
+                <p><strong>Tracked UTM URLs:</strong> ${Number(utmHistory.totalUrls || 0)} across ${Number(utmHistory.sessionCount || 0)} sessions</p>
             `;
 
             document.getElementById('session-detail-attribution').innerHTML = `
@@ -6350,15 +6399,19 @@
                 <p><strong>Platform:</strong> ${journey.attribution?.platform || '-'}</p>
                 <p><strong>Campaign:</strong> ${journey.attribution?.campaign || '-'}</p>
                 <p><strong>Click ID:</strong> ${journey.attribution?.clickId || '-'}</p>
-                <p><strong>Confianza:</strong> ${formatPercent(journey.attribution?.confidence || 0)}</p>
-                <p><strong>Fuente:</strong> ${journey.attribution?.source || 'none'}</p>
+                <p><strong>Confidence:</strong> ${formatPercent(journey.attribution?.confidence || 0)}</p>
+                <p><strong>Source:</strong> ${journey.attribution?.source || 'none'}</p>
                 <p><strong>Checkout Tokens:</strong> ${Array.isArray(journey.checkoutTokens) && journey.checkoutTokens.length ? journey.checkoutTokens.join(', ') : '-'}</p>
+                <div>
+                    <p class="font-medium text-gray-900 mb-1">Recognized UTM URL history</p>
+                    ${renderTrackedUtmHistory(utmHistory)}
+                </div>
             `;
 
             document.getElementById('session-detail-journey').innerHTML = `
                 <div>
-                    <p><strong>Entrada:</strong> ${journey.entryPage || '-'}</p>
-                    <p><strong>Salida:</strong> ${journey.exitPage || '-'}</p>
+                    <p><strong>Entry:</strong> ${journey.entryPage || '-'}</p>
+                    <p><strong>Exit:</strong> ${journey.exitPage || '-'}</p>
                 </div>
                 <div>
                     <p class="font-medium text-gray-900 mb-1">Highlighted pages</p>

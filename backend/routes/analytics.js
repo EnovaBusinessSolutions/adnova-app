@@ -4156,6 +4156,292 @@ function extractEventIdentity(rawPayload) {
   };
 }
 
+function normalizeTrackedUtmUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+
+  try {
+    const parsed = new URL(raw, 'https://adray.ai');
+    parsed.hash = '';
+    return parsed.toString().slice(0, 900) || null;
+  } catch (_) {
+    return raw.split('#')[0].slice(0, 900) || null;
+  }
+}
+
+function isTrackedUtmUrl(value) {
+  const normalized = normalizeTrackedUtmUrl(value);
+  if (!normalized) return false;
+
+  try {
+    const parsed = new URL(normalized, 'https://adray.ai');
+    const params = parsed.searchParams;
+    return [
+      'utm_source',
+      'utm_medium',
+      'utm_campaign',
+      'utm_content',
+      'utm_term',
+      'fbclid',
+      'gclid',
+      'ttclid',
+      'ga4_session_source',
+    ].some((key) => params.has(key) && params.get(key));
+  } catch (_) {
+    return false;
+  }
+}
+
+function parseTrackedUtmHistoryArray(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return [];
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function normalizeTrackedUtmEntry(entry, fallback = {}) {
+  if (!entry || typeof entry !== 'object') return null;
+
+  const url = normalizeTrackedUtmUrl(
+    entry.url
+    || entry.page_url
+    || entry.pageUrl
+    || entry.u
+    || fallback.url
+    || ''
+  );
+
+  if (!url || !isTrackedUtmUrl(url)) return null;
+
+  let parsed;
+  try {
+    parsed = new URL(url, 'https://adray.ai');
+  } catch (_) {
+    parsed = null;
+  }
+
+  const params = parsed ? parsed.searchParams : new URLSearchParams();
+  const clickId = String(
+    entry.click_id
+    || entry.clickId
+    || entry.fbclid
+    || entry.gclid
+    || entry.ttclid
+    || params.get('fbclid')
+    || params.get('gclid')
+    || params.get('ttclid')
+    || ''
+  ).trim();
+
+  return {
+    sessionId: String(entry.session_id || entry.sessionId || fallback.sessionId || '').trim() || null,
+    capturedAt: String(entry.captured_at || entry.capturedAt || entry.ts || fallback.capturedAt || '').trim() || null,
+    url,
+    utmSource: String(entry.utm_source || entry.utmSource || params.get('utm_source') || '').trim() || null,
+    utmMedium: String(entry.utm_medium || entry.utmMedium || params.get('utm_medium') || '').trim() || null,
+    utmCampaign: String(entry.utm_campaign || entry.utmCampaign || params.get('utm_campaign') || '').trim() || null,
+    utmContent: String(entry.utm_content || entry.utmContent || params.get('utm_content') || '').trim() || null,
+    utmTerm: String(entry.utm_term || entry.utmTerm || params.get('utm_term') || '').trim() || null,
+    ga4SessionSource: String(entry.ga4_session_source || entry.ga4SessionSource || params.get('ga4_session_source') || '').trim() || null,
+    fbclid: String(entry.fbclid || params.get('fbclid') || '').trim() || null,
+    gclid: String(entry.gclid || params.get('gclid') || '').trim() || null,
+    ttclid: String(entry.ttclid || params.get('ttclid') || '').trim() || null,
+    clickId: clickId || null,
+    sourceType: String(entry.source_type || entry.sourceType || fallback.sourceType || 'captured_url').trim() || 'captured_url',
+  };
+}
+
+function extractTrackedUtmEntriesFromPayload(rawPayload, fallback = {}) {
+  const payload = rawPayload && typeof rawPayload === 'object'
+    ? rawPayload
+    : {};
+
+  const touches = [];
+  const pushTouch = (entry) => {
+    const normalized = normalizeTrackedUtmEntry(entry, fallback);
+    if (normalized) touches.push(normalized);
+  };
+
+  [
+    { url: payload.utm_entry_url, sourceType: 'utm_entry_url' },
+    { url: payload.page_url || payload.pageUrl || payload.url, sourceType: 'page_url' },
+    { url: payload.landing_page_url || payload.landingPageUrl, sourceType: 'landing_page_url' },
+  ].forEach((entry) => pushTouch(entry));
+
+  [
+    payload.utm_session_history,
+    payload.utm_browser_history,
+    payload.utm_touch_history,
+    payload.utm_url_history,
+  ].forEach((historyValue) => {
+    parseTrackedUtmHistoryArray(historyValue).forEach((entry) => pushTouch(entry));
+  });
+
+  const deduped = new Map();
+  touches.forEach((item) => {
+    const key = `${item.sessionId || fallback.sessionId || 'global'}::${item.url}`;
+    const previous = deduped.get(key);
+    if (!previous) {
+      deduped.set(key, item);
+      return;
+    }
+
+    const prevTs = new Date(previous.capturedAt || 0).getTime();
+    const nextTs = new Date(item.capturedAt || 0).getTime();
+    if (nextTs && (!prevTs || nextTs < prevTs)) {
+      deduped.set(key, item);
+    }
+  });
+
+  return Array.from(deduped.values())
+    .sort((a, b) => new Date(a.capturedAt || 0).getTime() - new Date(b.capturedAt || 0).getTime());
+}
+
+function buildRecognizedUserTrackedUtmHistory({ currentSession = {}, peerSessions = [], currentEvents = [], peerEvents = [] }) {
+  const sessionMap = new Map();
+
+  const ensureSessionGroup = (session, isCurrentSession = false) => {
+    const sessionId = String(session?.sessionId || '').trim();
+    if (!sessionId) return null;
+
+    if (!sessionMap.has(sessionId)) {
+      sessionMap.set(sessionId, {
+        sessionId,
+        startedAt: session?.startedAt || null,
+        lastEventAt: session?.lastEventAt || session?.sessionEndAt || null,
+        landingPageUrl: session?.landingPageUrl || null,
+        utmSource: session?.utmSource || null,
+        utmMedium: session?.utmMedium || null,
+        utmCampaign: session?.utmCampaign || null,
+        isCurrentSession: Boolean(isCurrentSession),
+        urlMap: new Map(),
+      });
+    } else if (isCurrentSession) {
+      sessionMap.get(sessionId).isCurrentSession = true;
+    }
+
+    return sessionMap.get(sessionId);
+  };
+
+  ensureSessionGroup(currentSession, true);
+  peerSessions.forEach((session) => ensureSessionGroup(session, false));
+
+  const addTouchToSession = (sessionId, touch, fallbackMeta = {}) => {
+    const effectiveSessionId = String(touch?.sessionId || sessionId || '').trim();
+    if (!effectiveSessionId || !touch?.url) return;
+
+    const group = ensureSessionGroup({
+      sessionId: effectiveSessionId,
+      startedAt: fallbackMeta.startedAt || null,
+      lastEventAt: fallbackMeta.lastEventAt || null,
+      landingPageUrl: fallbackMeta.landingPageUrl || null,
+      utmSource: fallbackMeta.utmSource || null,
+      utmMedium: fallbackMeta.utmMedium || null,
+      utmCampaign: fallbackMeta.utmCampaign || null,
+    }, effectiveSessionId === String(currentSession?.sessionId || '').trim());
+
+    if (!group) return;
+
+    const key = touch.url;
+    const previous = group.urlMap.get(key);
+    if (!previous) {
+      group.urlMap.set(key, touch);
+      return;
+    }
+
+    const prevTs = new Date(previous.capturedAt || 0).getTime();
+    const nextTs = new Date(touch.capturedAt || 0).getTime();
+    if (nextTs && (!prevTs || nextTs < prevTs)) {
+      group.urlMap.set(key, touch);
+    }
+  };
+
+  const allEventRows = [
+    ...currentEvents.map((event) => ({
+      sessionId: event.sessionId || currentSession?.sessionId || null,
+      createdAt: event.createdAt || event.collectedAt || null,
+      pageUrl: event.pageUrl || null,
+      rawPayload: event.rawPayload || null,
+    })),
+    ...peerEvents.map((event) => ({
+      sessionId: event.sessionId || null,
+      createdAt: event.createdAt || event.collectedAt || null,
+      pageUrl: event.pageUrl || null,
+      rawPayload: event.rawPayload || null,
+    })),
+  ];
+
+  allEventRows.forEach((event) => {
+    const sessionId = String(event.sessionId || '').trim();
+    if (!sessionId) return;
+    const group = ensureSessionGroup({ sessionId }, sessionId === String(currentSession?.sessionId || '').trim());
+    const touches = extractTrackedUtmEntriesFromPayload(event.rawPayload || {}, {
+      sessionId,
+      capturedAt: event.createdAt || null,
+      url: event.pageUrl || null,
+      sourceType: 'event_payload',
+    });
+
+    touches.forEach((touch) => addTouchToSession(sessionId, touch, group || {}));
+  });
+
+  Array.from(sessionMap.values()).forEach((group) => {
+    if (group.urlMap.size === 0 && isTrackedUtmUrl(group.landingPageUrl || '')) {
+      const fallbackTouch = normalizeTrackedUtmEntry({
+        url: group.landingPageUrl,
+        session_id: group.sessionId,
+        captured_at: group.startedAt || group.lastEventAt || null,
+        utm_source: group.utmSource,
+        utm_medium: group.utmMedium,
+        utm_campaign: group.utmCampaign,
+        source_type: 'session_landing',
+      }, {
+        sessionId: group.sessionId,
+        capturedAt: group.startedAt || group.lastEventAt || null,
+      });
+      if (fallbackTouch) addTouchToSession(group.sessionId, fallbackTouch, group);
+    }
+  });
+
+  const sessions = Array.from(sessionMap.values())
+    .map((group) => {
+      const urls = Array.from(group.urlMap.values())
+        .sort((a, b) => new Date(a.capturedAt || 0).getTime() - new Date(b.capturedAt || 0).getTime());
+
+      return {
+        sessionId: group.sessionId,
+        startedAt: group.startedAt || null,
+        lastEventAt: group.lastEventAt || null,
+        landingPageUrl: group.landingPageUrl || null,
+        utmSource: group.utmSource || null,
+        utmMedium: group.utmMedium || null,
+        utmCampaign: group.utmCampaign || null,
+        isCurrentSession: Boolean(group.isCurrentSession),
+        touchCount: urls.length,
+        entryUrl: urls[0]?.url || null,
+        urls,
+      };
+    })
+    .filter((group) => group.touchCount > 0)
+    .sort((a, b) => {
+      if (a.isCurrentSession !== b.isCurrentSession) return a.isCurrentSession ? -1 : 1;
+      return new Date(b.startedAt || b.lastEventAt || 0).getTime() - new Date(a.startedAt || a.lastEventAt || 0).getTime();
+    });
+
+  const totalUrls = sessions.reduce((sum, group) => sum + Number(group.touchCount || 0), 0);
+
+  return {
+    totalUrls,
+    sessionCount: sessions.length,
+    sessions,
+  };
+}
+
 function buildIdentityProfileDescriptor({ customerId, emailHash, phoneHash, userKey, customerDisplayName }) {
   const normalizedCustomerId = normalizeWooCustomerId(customerId);
   const normalizedCustomerDisplayName = normalizeCustomerDisplayName(customerDisplayName);
@@ -5411,6 +5697,8 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
             startedAt: true,
             lastEventAt: true,
             landingPageUrl: true,
+            utmSource: true,
+            utmMedium: true,
             utmCampaign: true,
             userKey: true,
           },
@@ -5428,6 +5716,24 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
             sessionId: { in: peerSessionIds },
           },
           _count: { _all: true },
+        })
+      : [];
+
+    const peerTrackedUtmEvents = peerSessionIds.length
+      ? await prisma.event.findMany({
+          where: {
+            accountId: account_id,
+            sessionId: { in: peerSessionIds },
+          },
+          select: {
+            sessionId: true,
+            createdAt: true,
+            collectedAt: true,
+            pageUrl: true,
+            rawPayload: true,
+          },
+          orderBy: { createdAt: 'asc' },
+          take: 1500,
         })
       : [];
 
@@ -5552,6 +5858,12 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
     const attributedTouchpoint = stitchSnapshotAttributionForAccount(toSnapshotFromSession(session) || {}, account_id);
     const pageUrlsInOrder = timeline.map((item) => item.pageUrl).filter(Boolean);
     const currentPath = compactSessionPath(timeline);
+    const utmHistory = buildRecognizedUserTrackedUtmHistory({
+      currentSession: session,
+      peerSessions,
+      currentEvents: events,
+      peerEvents: peerTrackedUtmEvents,
+    });
     const patterns = buildBehaviorPatternSummary({
       currentSession: session,
       currentMetrics: metrics,
@@ -5624,6 +5936,7 @@ router.get('/:account_id/sessions/:session_id', async (req, res) => {
         historicalOrderCount: identityContext.historicalOrders.length,
       },
       identifiedUser: identityContext.identifiedUser,
+      utmHistory,
       loginEvents: identityContext.loginEvents,
       peers: normalizedPeerSessions.map((item) => {
         const counts = peerEventCounts.get(item.sessionId) || {};
