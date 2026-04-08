@@ -52,7 +52,7 @@ const EMAIL_BRAND_ICON_PATH = resolveEmailBrandIconPath();
 function brandWordmark() {
   if (!EMAIL_BRAND_ICON_PATH) {
     return `
-      <div style="display:block;width:48px;height:48px;line-height:48px;font-size:0;">&nbsp;</div>
+      <div style="display:block;width:58px;height:58px;line-height:58px;font-size:0;">&nbsp;</div>
     `;
   }
 
@@ -63,9 +63,9 @@ function brandWordmark() {
           <img
             src="cid:${EMAIL_BRAND_ICON_CID}"
             alt="Adray"
-            width="48"
-            height="48"
-            style="display:block;width:48px;height:48px;border:0;outline:none;text-decoration:none;"
+            width="58"
+            height="58"
+            style="display:block;width:58px;height:58px;border:0;outline:none;text-decoration:none;"
           />
         </td>
       </tr>
@@ -485,7 +485,7 @@ function welcomeEmail({
       bodyHtml: `
         ${buildBulletList(
           [
-            'Sign in to your AdRay workspace',
+            'Sign in to your Adray workspace',
             'Complete onboarding and account setup',
             'Connect your marketing data sources',
             'Start analyzing your data with confidence',
