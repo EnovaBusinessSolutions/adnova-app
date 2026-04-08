@@ -4398,10 +4398,15 @@
             if (key === 'view_item') return 'View Product';
             if (key === 'add_to_cart') return 'Add to Cart';
             if (key === 'begin_checkout') return 'Begin Checkout';
-            if (key === 'purchase') return 'Purchase';
+            if (isPurchaseJourneyEventName(key)) return 'Purchase';
             if (key === 'user_logged_in' || key === 'user_login' || key === 'login') return 'Login';
             if (key === 'lead' || key === 'generate_lead') return 'Lead';
             return key ? key.replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase()) : 'Event';
+        }
+
+        function isPurchaseJourneyEventName(rawName = '') {
+            const key = String(rawName || '').trim().toLowerCase();
+            return ['purchase', 'order_completed', 'checkout_completed', 'order_create', 'orders_create'].includes(key);
         }
 
         function formatDurationCompact(seconds) {
@@ -4418,7 +4423,21 @@
                 return { events: sorted, dropped: 0 };
             }
 
-            const keyEventNames = new Set(['view_item', 'add_to_cart', 'begin_checkout', 'purchase', 'user_logged_in', 'user_login', 'login', 'lead', 'generate_lead']);
+            const keyEventNames = new Set([
+                'view_item',
+                'add_to_cart',
+                'begin_checkout',
+                'purchase',
+                'order_completed',
+                'checkout_completed',
+                'order_create',
+                'orders_create',
+                'user_logged_in',
+                'user_login',
+                'login',
+                'lead',
+                'generate_lead'
+            ]);
             const selectedIndexes = new Set([0, sorted.length - 1]);
             const pageViewIndexes = [];
 
@@ -4835,6 +4854,7 @@
             const availableEvents = Array.isArray(purchase.events)
                 ? purchase.events
                 : (Array.isArray(purchase.stitchedEvents) ? purchase.stitchedEvents : []);
+            const purchaseTimestamp = new Date(purchase.platformCreatedAt || purchase.createdAt || Date.now()).getTime();
 
             const rawEvents = availableEvents
                 .map((event) => {
@@ -4898,7 +4918,8 @@
                 const exitPage = [...group.events].reverse().find((event) => event._pagePath && event._pagePath !== '-')?._pagePath || entryPage;
                 const eventCount = group.events.length;
                 const durationSeconds = Math.max(0, (group.endedTs - group.startedTs) / 1000);
-                const containsPurchase = group.events.some((event) => String(event.eventName || event.name || '').toLowerCase() === 'purchase');
+                const lastPurchaseEvent = [...group.events].reverse().find((event) => isPurchaseJourneyEventName(event.eventName || event.name || '')) || null;
+                const containsPurchase = Boolean(lastPurchaseEvent);
                 const containsCheckout = group.events.some((event) => String(event.eventName || event.name || '').toLowerCase() === 'begin_checkout');
                 const containsCart = group.events.some((event) => String(event.eventName || event.name || '').toLowerCase() === 'add_to_cart');
                 const containsLogin = group.events.some((event) => /login/.test(String(event.eventName || event.name || '').toLowerCase()));
@@ -4929,6 +4950,10 @@
                     exitPage,
                     eventNames,
                     containsPurchase,
+                    purchaseAt: lastPurchaseEvent
+                        ? new Date(lastPurchaseEvent._ts).toISOString()
+                        : (index === groups.length - 1 && Number.isFinite(purchaseTimestamp) ? new Date(purchaseTimestamp).toISOString() : null),
+                    isPurchaseAnchorSession: index === groups.length - 1,
                     touchpoint,
                     tone: touchpoint.tone || '',
                     icon: touchpoint.icon || 'fa-solid fa-route',
@@ -4939,7 +4964,6 @@
                 };
             });
 
-            const purchaseTimestamp = new Date(purchase.platformCreatedAt || purchase.createdAt || Date.now()).getTime();
             const firstGroupTs = normalizedGroups[0]?.startedAt ? new Date(normalizedGroups[0].startedAt).getTime() : purchaseTimestamp;
             const totalSpanSeconds = Math.max(0, (purchaseTimestamp - firstGroupTs) / 1000);
             const channelTrail = normalizedGroups
@@ -4992,20 +5016,39 @@
                         sessionLabel,
                     }));
                 const attributionSentence = buildJourneySessionAttributionSentence(group);
-                const lastPurchaseIndex = (() => {
-                    for (let cursor = sessionEvents.length - 1; cursor >= 0; cursor -= 1) {
-                        if (String(sessionEvents[cursor]?.rawEventName || '').trim().toLowerCase() === 'purchase') {
-                            return cursor;
-                        }
+                const purchaseTs = group.purchaseAt ? new Date(group.purchaseAt).getTime() : NaN;
+                const mainSessionEvents = [];
+                const postPurchaseEvents = [];
+
+                sessionEvents.forEach((event) => {
+                    const eventTs = Number(event.rawTs || 0);
+                    if (Number.isFinite(purchaseTs) && purchaseTs > 0 && Number.isFinite(eventTs) && eventTs > purchaseTs && !isPurchaseJourneyEventName(event.rawEventName || '')) {
+                        postPurchaseEvents.push(event);
+                    } else {
+                        mainSessionEvents.push(event);
                     }
-                    return -1;
-                })();
-                const mainSessionEvents = lastPurchaseIndex >= 0
-                    ? sessionEvents.slice(0, lastPurchaseIndex + 1)
-                    : sessionEvents;
-                const postPurchaseEvents = lastPurchaseIndex >= 0
-                    ? sessionEvents.slice(lastPurchaseIndex + 1)
-                    : [];
+                });
+
+                const hasVisiblePurchase = [...mainSessionEvents, ...postPurchaseEvents].some((event) =>
+                    isPurchaseJourneyEventName(event.rawEventName || '')
+                );
+
+                if ((group.containsPurchase || group.isPurchaseAnchorSession) && !hasVisiblePurchase) {
+                    mainSessionEvents.push({
+                        type: 'synthetic_purchase',
+                        kindClass: 'synthetic-purchase',
+                        sessionLabel,
+                        icon: 'fa-solid fa-bag-shopping',
+                        title: 'Purchase',
+                        originalName: 'Purchase',
+                        time: formatDateTimeMx(group.purchaseAt || group.endedAt || group.startedAt || null),
+                        fullTime: formatDateTimeMx(group.purchaseAt || group.endedAt || group.startedAt || null),
+                        rawEventName: 'purchase',
+                        rawTs: Number.isFinite(purchaseTs) && purchaseTs > 0 ? purchaseTs : new Date(group.endedAt || group.startedAt || 0).getTime(),
+                        detailLines: ['Purchase anchor confirmed for this session, even if the raw browser event was condensed or not available in the visible timeline.'],
+                        tone: 'is-organic',
+                    });
+                }
 
                 timeline.push({
                     type: 'session_marker',
@@ -5305,6 +5348,7 @@
                                 fullTime: '-',
                                 originalName: 'Condensed events',
                                 rawEventName: '__condensed__',
+                                rawTs: Number(event._ts || 0),
                                 detailLines: event._detailLines || [],
                                 tone: '',
                                 sessionGroupIndex: Number(event._sessionGroupIndex),
@@ -5346,6 +5390,7 @@
                             fullTime: timeStr,
                             originalName: originalEventName,
                             rawEventName: rawName,
+                            rawTs: Number(event._ts || 0),
                             detailLines,
                             tone: resolveChannelTone(event.utmSource || purchase.attributedChannel || '', purchase.attributedPlatform || null),
                             sessionGroupIndex: Number(event._sessionGroupIndex),
