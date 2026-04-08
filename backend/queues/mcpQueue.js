@@ -30,6 +30,8 @@ const mcpQueue = connection
     })
   : null;
 
+const LIVE_JOB_STATES = new Set(['waiting', 'active', 'delayed', 'prioritized']);
+
 function safeStr(v) {
   return v == null ? '' : String(v).trim();
 }
@@ -97,6 +99,48 @@ function buildCollectDedupeKey(payload = {}) {
   return parts.join(':');
 }
 
+function buildUniqueJobId(dedupeKey) {
+  return `${dedupeKey}:${Date.now()}`;
+}
+
+async function getExistingLiveJobByDedupeKey(dedupeKey) {
+  if (!mcpQueue || !dedupeKey) return null;
+
+  let existingJob = null;
+  try {
+    existingJob = await mcpQueue.getJob(dedupeKey);
+  } catch (_) {
+    existingJob = null;
+  }
+
+  if (!existingJob) return null;
+
+  let existingState = 'unknown';
+  try {
+    existingState = await existingJob.getState();
+  } catch (_) {
+    existingState = 'unknown';
+  }
+
+  if (LIVE_JOB_STATES.has(existingState)) {
+    existingJob.__reusedExisting = true;
+    existingJob.__dedupeKey = dedupeKey;
+    existingJob.__state = existingState;
+    return existingJob;
+  }
+
+  console.log('[mcpQueue] found historical job with same dedupeKey, will enqueue new one', {
+    queue: QUEUE_NAME,
+    prefix: BULLMQ_PREFIX,
+    id: existingJob.id,
+    name: existingJob.name,
+    state: existingState,
+    dedupeKey,
+  });
+
+  return null;
+}
+
 async function enqueueMcpCollect(input = {}) {
   if (!connection || !mcpQueue) {
     throw new Error('REDIS_NOT_CONFIGURED');
@@ -136,43 +180,30 @@ async function enqueueMcpCollect(input = {}) {
     'completed',
     'failed',
     'delayed',
-    'paused'
+    'paused',
+    'prioritized'
   );
 
   console.log('[mcpQueue] counts before add', countsBefore);
 
-  let existingJob = null;
-  try {
-    existingJob = await mcpQueue.getJob(dedupeKey);
-  } catch (_) {
-    existingJob = null;
-  }
+  const existingLiveJob = await getExistingLiveJobByDedupeKey(dedupeKey);
 
-  if (existingJob) {
-    let existingState = 'unknown';
-    try {
-      existingState = await existingJob.getState();
-    } catch (_) {
-      // noop
-    }
-
-    console.log('[mcpQueue] deduped existing job', {
+  if (existingLiveJob) {
+    console.log('[mcpQueue] deduped live job', {
       queue: QUEUE_NAME,
       prefix: BULLMQ_PREFIX,
-      id: existingJob.id,
-      name: existingJob.name,
-      state: existingState,
+      id: existingLiveJob.id,
+      name: existingLiveJob.name,
+      state: existingLiveJob.__state || 'unknown',
       dedupeKey,
-      data: existingJob.data,
+      data: existingLiveJob.data,
     });
 
-    existingJob.__reusedExisting = true;
-    existingJob.__dedupeKey = dedupeKey;
-    return existingJob;
+    return existingLiveJob;
   }
 
   const addOptions = {
-    jobId: dedupeKey,
+    jobId: buildUniqueJobId(dedupeKey),
   };
 
   if (payload.priority != null) {
@@ -194,7 +225,8 @@ async function enqueueMcpCollect(input = {}) {
     'completed',
     'failed',
     'delayed',
-    'paused'
+    'paused',
+    'prioritized'
   );
 
   console.log('[mcpQueue] enqueued job', {
