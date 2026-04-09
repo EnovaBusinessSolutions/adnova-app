@@ -2,6 +2,7 @@ const prisma = require('../utils/prismaClient');
 const User = require('../models/User');
 const GoogleAccount = require('../models/GoogleAccount');
 const MetaAccount = require('../models/MetaAccount');
+const McpData = require('../models/McpData');
 const ShopConnections = require('../models/ShopConnections');
 const PixelSelection = require('../models/PixelSelection');
 const { decrypt } = require('../utils/encryption');
@@ -22,6 +23,20 @@ function isSchemaDriftError(error) {
 
 function normalizeObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function uniqueStrings(values = []) {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [values])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function escapeRegex(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function isLikelyEncryptedToken(value) {
@@ -53,6 +68,33 @@ function buildShopLookupCandidates(accountId) {
   return Array.from(values).filter(Boolean);
 }
 
+function buildNormalizedShopCandidates(accountId) {
+  return uniqueStrings(
+    buildShopLookupCandidates(accountId)
+      .map((value) => normalizeShopDomain(value))
+      .filter(Boolean)
+  );
+}
+
+function extractRootSourceShopCandidates(sources = {}) {
+  const root = normalizeObject(sources);
+  return uniqueStrings(
+    [
+      root?.metaAds?.name,
+      root?.googleAds?.name,
+      root?.ga4?.name,
+      root?.shopify?.name,
+      root?.shopify?.shop,
+      root?.website?.name,
+      root?.website?.domain,
+      root?.store?.name,
+      root?.store?.domain,
+    ]
+      .map((value) => normalizeShopDomain(value))
+      .filter(Boolean)
+  );
+}
+
 function extractOrderSignalPresence(order = {}) {
   const snapshot = normalizeObject(order?.attributionSnapshot);
   return {
@@ -73,8 +115,52 @@ function logFanout(orderId, platform, stage, details = {}) {
   });
 }
 
+async function resolveUserIdFromMcpRootByShop(accountId) {
+  const normalizedShopCandidates = buildNormalizedShopCandidates(accountId);
+  if (!McpData || !normalizedShopCandidates.length) return null;
+
+  const patterns = normalizedShopCandidates.map((value) => new RegExp(escapeRegex(value), 'i'));
+  const orClauses = [];
+  patterns.forEach((pattern) => {
+    orClauses.push({ 'sources.metaAds.name': pattern });
+    orClauses.push({ 'sources.googleAds.name': pattern });
+    orClauses.push({ 'sources.ga4.name': pattern });
+    orClauses.push({ 'sources.shopify.name': pattern });
+    orClauses.push({ 'sources.shopify.shop': pattern });
+    orClauses.push({ 'sources.website.name': pattern });
+    orClauses.push({ 'sources.website.domain': pattern });
+    orClauses.push({ 'sources.store.name': pattern });
+    orClauses.push({ 'sources.store.domain': pattern });
+  });
+
+  const docs = await McpData.find({
+    kind: 'root',
+    latestSnapshotId: { $ne: null },
+    $or: orClauses,
+  })
+    .select('userId sources updatedAt createdAt')
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .limit(25)
+    .lean()
+    .catch(() => []);
+
+  for (const doc of docs) {
+    const rootShops = extractRootSourceShopCandidates(doc?.sources);
+    const matchedShop = rootShops.find((shop) => normalizedShopCandidates.includes(shop));
+    if (doc?.userId && matchedShop) {
+      return {
+        userId: doc.userId,
+        matchedShop,
+      };
+    }
+  }
+
+  return null;
+}
+
 async function resolveUserForAccountId(accountId) {
   const shopCandidates = buildShopLookupCandidates(accountId);
+  const normalizedShopCandidates = buildNormalizedShopCandidates(accountId);
 
   if (ShopConnections && shopCandidates.length) {
     const shopConnection = await ShopConnections.findOne({
@@ -90,7 +176,20 @@ async function resolveUserForAccountId(accountId) {
         .select('_id shop email')
         .lean()
         .catch(() => null);
-      if (matchedUser?._id) return matchedUser;
+      if (matchedUser?._id) {
+        const resolvedUser = {
+          ...matchedUser,
+          resolutionSource: 'shop_connection',
+          matchedShop: normalizeShopDomain(shopConnection?.shop || matchedUser?.shop || '') || null,
+        };
+        console.log('[CAPI Fanout][USER_RESOLUTION]', {
+          accountId: String(accountId || '').trim() || null,
+          userId: String(resolvedUser?._id || '') || null,
+          resolutionSource: resolvedUser.resolutionSource,
+          matchedShop: resolvedUser.matchedShop,
+        });
+        return resolvedUser;
+      }
     }
   }
 
@@ -104,7 +203,69 @@ async function resolveUserForAccountId(accountId) {
     .lean()
     .catch(() => null);
 
-  return user || null;
+  if (user?._id) {
+    const resolvedUser = {
+      ...user,
+      resolutionSource: 'user_shop',
+      matchedShop:
+        normalizedShopCandidates.find((candidate) => candidate === normalizeShopDomain(user?.shop || ''))
+        || normalizeShopDomain(user?.shop || '')
+        || null,
+    };
+    console.log('[CAPI Fanout][USER_RESOLUTION]', {
+      accountId: String(accountId || '').trim() || null,
+      userId: String(resolvedUser?._id || '') || null,
+      resolutionSource: resolvedUser.resolutionSource,
+      matchedShop: resolvedUser.matchedShop,
+    });
+    return resolvedUser;
+  }
+
+  const rootMatch = await resolveUserIdFromMcpRootByShop(accountId);
+  if (rootMatch?.userId) {
+    const rootUser = await User.findById(rootMatch.userId)
+      .select('_id shop email')
+      .lean()
+      .catch(() => null);
+
+    if (rootUser?._id) {
+      const resolvedUser = {
+        ...rootUser,
+        resolutionSource: 'mcp_root_shop',
+        matchedShop: rootMatch.matchedShop || normalizeShopDomain(rootUser?.shop || '') || null,
+      };
+      console.log('[CAPI Fanout][USER_RESOLUTION]', {
+        accountId: String(accountId || '').trim() || null,
+        userId: String(resolvedUser?._id || '') || null,
+        resolutionSource: resolvedUser.resolutionSource,
+        matchedShop: resolvedUser.matchedShop,
+      });
+      return resolvedUser;
+    }
+
+    const resolvedUser = {
+      _id: rootMatch.userId,
+      shop: rootMatch.matchedShop || null,
+      email: null,
+      resolutionSource: 'mcp_root_shop',
+      matchedShop: rootMatch.matchedShop || null,
+    };
+    console.log('[CAPI Fanout][USER_RESOLUTION]', {
+      accountId: String(accountId || '').trim() || null,
+      userId: String(resolvedUser?._id || '') || null,
+      resolutionSource: resolvedUser.resolutionSource,
+      matchedShop: resolvedUser.matchedShop,
+    });
+    return resolvedUser;
+  }
+
+  console.log('[CAPI Fanout][USER_RESOLUTION]', {
+    accountId: String(accountId || '').trim() || null,
+    userId: null,
+    resolutionSource: 'not_found',
+    matchedShop: null,
+  });
+  return null;
 }
 
 async function findPixelSelectionByProvider({ provider, userId = null, metaField = '', normalizedAccountId = '' }) {
@@ -127,6 +288,90 @@ async function findPixelSelectionByProvider({ provider, userId = null, metaField
   }
 
   return null;
+}
+
+async function ensurePlatformConnectionBackfill({
+  orderId,
+  accountId,
+  platform,
+  accessToken,
+  pixelId = null,
+  adAccountId = null,
+  source = null,
+}) {
+  const normalizedPlatform = String(platform || '').trim().toUpperCase();
+  const normalizedAccountId = String(accountId || '').trim();
+  const normalizedAccessToken = String(accessToken || '').trim();
+  const normalizedPixelId = String(pixelId || '').trim() || null;
+  const normalizedAdAccountId = String(adAccountId || '').trim() || null;
+
+  if (!normalizedPlatform || !normalizedAccountId || !normalizedAccessToken) return false;
+
+  try {
+    await prisma.account.upsert({
+      where: { accountId: normalizedAccountId },
+      create: {
+        accountId: normalizedAccountId,
+        domain: normalizedAccountId,
+        platform: 'WOOCOMMERCE',
+      },
+      update: {
+        domain: normalizedAccountId,
+      },
+    });
+
+    const existing = await prisma.platformConnection.findFirst({
+      where: { accountId: normalizedAccountId, platform: normalizedPlatform },
+    });
+
+    if (existing) {
+      await prisma.platformConnection.update({
+        where: { id: existing.id },
+        data: {
+          accessToken: normalizedAccessToken,
+          pixelId: normalizedPixelId,
+          adAccountId: normalizedAdAccountId,
+          status: 'ACTIVE',
+        },
+      });
+
+      logFanout(orderId, normalizedPlatform.toLowerCase(), 'connection_backfill', {
+        action: 'updated',
+        accountId: normalizedAccountId,
+        adAccountId: normalizedAdAccountId,
+        pixelId: normalizedPixelId,
+        source,
+      });
+      return true;
+    }
+
+    await prisma.platformConnection.create({
+      data: {
+        accountId: normalizedAccountId,
+        platform: normalizedPlatform,
+        accessToken: normalizedAccessToken,
+        pixelId: normalizedPixelId,
+        adAccountId: normalizedAdAccountId,
+        status: 'ACTIVE',
+      },
+    });
+
+    logFanout(orderId, normalizedPlatform.toLowerCase(), 'connection_backfill', {
+      action: 'created',
+      accountId: normalizedAccountId,
+      adAccountId: normalizedAdAccountId,
+      pixelId: normalizedPixelId,
+      source,
+    });
+    return true;
+  } catch (error) {
+    logFanout(orderId, normalizedPlatform.toLowerCase(), 'connection_backfill_failed', {
+      accountId: normalizedAccountId,
+      source,
+      reason: error?.message || String(error),
+    });
+    return false;
+  }
 }
 
 function platformLabel(platform) {
@@ -293,6 +538,11 @@ async function resolveMetaConfig(accountId) {
     normalizedAccountId: normalizedMetaAccountId,
   });
   const resolvedPixelId = conn?.pixelId || pixelSel?.selectedId || null;
+  const userId = user?._id ? String(user._id) : null;
+  const userResolutionSource = user?.resolutionSource || null;
+  const resolvedAdAccountId =
+    normalizedMetaAccountId
+    || normalizeMetaAccountId(pixelSel?.meta?.adAccountId || '');
 
   if (connAccessToken && resolvedPixelId) {
     return {
@@ -302,6 +552,9 @@ async function resolveMetaConfig(accountId) {
       destinationId: resolvedPixelId,
       configSource: conn?.pixelId ? 'prisma_platform_connection' : 'prisma_connection_plus_pixel_selection',
       testEventCode: process.env.META_CAPI_TEST_CODE || null,
+      userId,
+      userResolutionSource,
+      resolvedAdAccountId,
     };
   }
 
@@ -311,11 +564,11 @@ async function resolveMetaConfig(accountId) {
 
   const metaAccount = await MetaAccount.loadForUserWithTokens(user._id).lean();
   const accessToken =
-    metaAccount?.longLivedToken ||
-    metaAccount?.longlivedToken ||
-    metaAccount?.access_token ||
-    metaAccount?.accessToken ||
-    metaAccount?.token ||
+    maybeDecryptToken(metaAccount?.longLivedToken) ||
+    maybeDecryptToken(metaAccount?.longlivedToken) ||
+    maybeDecryptToken(metaAccount?.access_token) ||
+    maybeDecryptToken(metaAccount?.accessToken) ||
+    maybeDecryptToken(metaAccount?.token) ||
     null;
 
   if (!accessToken) {
@@ -327,6 +580,13 @@ async function resolveMetaConfig(accountId) {
     return { ok: false, reason: 'No Meta pixel selected for this account' };
   }
 
+  const fallbackResolvedAdAccountId =
+    resolvedAdAccountId
+    || normalizeMetaAccountId(metaAccount?.defaultAccountId || '')
+    || normalizeMetaAccountId(Array.isArray(metaAccount?.selectedAccountIds) ? metaAccount.selectedAccountIds[0] : '')
+    || normalizeMetaAccountId(metaAccount?.ad_accounts?.[0]?.account_id || metaAccount?.ad_accounts?.[0]?.id || '')
+    || normalizeMetaAccountId(metaAccount?.adAccounts?.[0]?.account_id || metaAccount?.adAccounts?.[0]?.id || '');
+
   return {
     ok: true,
     accessToken,
@@ -334,6 +594,9 @@ async function resolveMetaConfig(accountId) {
     destinationId: pixelId,
     configSource: 'mongo_fallback',
     testEventCode: process.env.META_CAPI_TEST_CODE || null,
+    userId,
+    userResolutionSource,
+    resolvedAdAccountId: fallbackResolvedAdAccountId,
   };
 }
 
@@ -352,16 +615,21 @@ async function resolveGoogleConfig(accountId) {
     normalizedAccountId: normalizedCustomerId,
   });
   const resolvedConversionAction = String(conn?.pixelId || pixelSel?.selectedId || '').trim() || null;
+  const userId = user?._id ? String(user._id) : null;
+  const userResolutionSource = user?.resolutionSource || null;
+  const connAccessToken = maybeDecryptToken(conn?.accessToken);
 
-  if (conn?.accessToken && conn?.adAccountId && resolvedConversionAction) {
+  if (connAccessToken && conn?.adAccountId && resolvedConversionAction) {
     return {
       ok: true,
-      accessToken: conn.accessToken,
+      accessToken: connAccessToken,
       refreshToken: null,
       adAccountId: normalizedCustomerId || conn.adAccountId,
       conversionAction: resolvedConversionAction,
       configSource: conn?.pixelId ? 'prisma_platform_connection' : 'prisma_connection_plus_pixel_selection',
       destinationId: normalizedCustomerId || conn.adAccountId,
+      userId,
+      userResolutionSource,
     };
   }
 
@@ -393,12 +661,14 @@ async function resolveGoogleConfig(accountId) {
 
   return {
     ok: true,
-    accessToken: ga.accessToken || null,
-    refreshToken: ga.refreshToken || null,
+    accessToken: maybeDecryptToken(ga.accessToken) || ga.accessToken || null,
+    refreshToken: maybeDecryptToken(ga.refreshToken) || ga.refreshToken || null,
     adAccountId: googleCustomerId,
     conversionAction: resolvedConversionAction,
     configSource: 'mongo_google_account_plus_pixel_selection',
     destinationId: googleCustomerId,
+    userId,
+    userResolutionSource,
   };
 }
 
@@ -421,6 +691,9 @@ async function sendToMeta(order) {
     reason: config.reason || null,
     configSource: config.configSource || null,
     destinationId: config.destinationId || null,
+    resolvedAdAccountId: config.resolvedAdAccountId || null,
+    userId: config.userId || null,
+    userResolutionSource: config.userResolutionSource || null,
     hasAccessToken: Boolean(config.accessToken),
     hasPixelId: Boolean(config.pixelId),
   });
@@ -452,6 +725,18 @@ async function sendToMeta(order) {
       ? 'Verify this order in Meta Events Manager Test Events with the same test_event_code.'
       : 'Verify this order in Meta Events Manager and deduplicate with the event_id.',
   });
+
+  if (!String(config.configSource || '').startsWith('prisma_')) {
+    await ensurePlatformConnectionBackfill({
+      orderId: order.orderId,
+      accountId: order.accountId,
+      platform: 'META',
+      accessToken: config.accessToken,
+      pixelId: config.pixelId,
+      adAccountId: config.resolvedAdAccountId,
+      source: config.configSource,
+    });
+  }
 
   const result = await withRetry(async () => {
     logFanout(order.orderId, 'meta', 'send_attempt', {
@@ -536,6 +821,9 @@ async function sendToGoogle(order) {
     reason: config.reason || null,
     configSource: config.configSource || null,
     destinationId: config.destinationId || null,
+    adAccountId: config.adAccountId || null,
+    userId: config.userId || null,
+    userResolutionSource: config.userResolutionSource || null,
     hasAccessToken: Boolean(config.accessToken),
     hasRefreshToken: Boolean(config.refreshToken),
     hasConversionAction: Boolean(config.conversionAction),
@@ -565,6 +853,18 @@ async function sendToGoogle(order) {
     verifiedBy: 'google_ads_request',
     verificationHint: 'Verify this upload in Google Ads offline conversion diagnostics using the request id or job metadata.',
   });
+
+  if (!String(config.configSource || '').startsWith('prisma_')) {
+    await ensurePlatformConnectionBackfill({
+      orderId: order.orderId,
+      accountId: order.accountId,
+      platform: 'GOOGLE',
+      accessToken: config.accessToken,
+      pixelId: config.conversionAction,
+      adAccountId: config.adAccountId,
+      source: config.configSource,
+    });
+  }
 
   const result = await withRetry(async () => {
     logFanout(order.orderId, 'google', 'send_attempt', {
