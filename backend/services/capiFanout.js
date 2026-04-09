@@ -7,6 +7,7 @@ const ShopConnections = require('../models/ShopConnections');
 const PixelSelection = require('../models/PixelSelection');
 const { decrypt } = require('../utils/encryption');
 const {
+  listAuthorizedAnalyticsShopsForUser,
   normalizeGoogleCustomerId,
   normalizeMetaAccountId,
   normalizeShopDomain,
@@ -158,6 +159,83 @@ async function resolveUserIdFromMcpRootByShop(accountId) {
   return null;
 }
 
+async function resolveUserIdByAuthorizedShopScan(accountId) {
+  const normalizedShopCandidates = buildNormalizedShopCandidates(accountId);
+  if (!normalizedShopCandidates.length) return null;
+
+  const [metaCandidates, googleCandidates] = await Promise.all([
+    MetaAccount.find({})
+      .select('user userId updatedAt')
+      .sort({ updatedAt: -1 })
+      .limit(100)
+      .lean()
+      .catch(() => []),
+    GoogleAccount.find({})
+      .select('user userId updatedAt')
+      .sort({ updatedAt: -1 })
+      .limit(100)
+      .lean()
+      .catch(() => []),
+  ]);
+
+  const candidateUserIds = uniqueStrings(
+    [...metaCandidates, ...googleCandidates]
+      .map((doc) => doc?.userId || doc?.user)
+      .filter(Boolean)
+  );
+
+  for (const candidateUserId of candidateUserIds) {
+    try {
+      const access = await listAuthorizedAnalyticsShopsForUser(candidateUserId);
+      const matchedShop = (Array.isArray(access?.shops) ? access.shops : [])
+        .map((entry) => normalizeShopDomain(entry?.shop || ''))
+        .find((shop) => normalizedShopCandidates.includes(shop));
+
+      if (matchedShop) {
+        return {
+          userId: candidateUserId,
+          matchedShop,
+          defaultShop: normalizeShopDomain(access?.defaultShop || '') || null,
+        };
+      }
+    } catch (_) {
+      // best-effort fallback only
+    }
+  }
+
+  return null;
+}
+
+async function maybePersistResolvedUserShop(user, matchedShop, resolutionSource, accountId) {
+  const userId = user?._id ? String(user._id) : null;
+  const normalizedMatchedShop = normalizeShopDomain(matchedShop || accountId || '');
+  const currentShop = normalizeShopDomain(user?.shop || '');
+  if (!userId || !normalizedMatchedShop || currentShop) return false;
+
+  try {
+    await User.updateOne(
+      { _id: userId, $or: [{ shop: { $exists: false } }, { shop: null }, { shop: '' }] },
+      { $set: { shop: normalizedMatchedShop } }
+    );
+    console.log('[CAPI Fanout][SHOP_BACKFILL]', {
+      accountId: String(accountId || '').trim() || null,
+      userId,
+      matchedShop: normalizedMatchedShop,
+      resolutionSource,
+    });
+    return true;
+  } catch (error) {
+    console.warn('[CAPI Fanout][SHOP_BACKFILL_FAILED]', {
+      accountId: String(accountId || '').trim() || null,
+      userId,
+      matchedShop: normalizedMatchedShop,
+      resolutionSource,
+      reason: error?.message || String(error),
+    });
+    return false;
+  }
+}
+
 async function resolveUserForAccountId(accountId) {
   const shopCandidates = buildShopLookupCandidates(accountId);
   const normalizedShopCandidates = buildNormalizedShopCandidates(accountId);
@@ -182,6 +260,12 @@ async function resolveUserForAccountId(accountId) {
           resolutionSource: 'shop_connection',
           matchedShop: normalizeShopDomain(shopConnection?.shop || matchedUser?.shop || '') || null,
         };
+        void maybePersistResolvedUserShop(
+          matchedUser,
+          resolvedUser.matchedShop,
+          resolvedUser.resolutionSource,
+          accountId
+        );
         console.log('[CAPI Fanout][USER_RESOLUTION]', {
           accountId: String(accountId || '').trim() || null,
           userId: String(resolvedUser?._id || '') || null,
@@ -212,6 +296,12 @@ async function resolveUserForAccountId(accountId) {
         || normalizeShopDomain(user?.shop || '')
         || null,
     };
+    void maybePersistResolvedUserShop(
+      user,
+      resolvedUser.matchedShop,
+      resolvedUser.resolutionSource,
+      accountId
+    );
     console.log('[CAPI Fanout][USER_RESOLUTION]', {
       accountId: String(accountId || '').trim() || null,
       userId: String(resolvedUser?._id || '') || null,
@@ -234,6 +324,12 @@ async function resolveUserForAccountId(accountId) {
         resolutionSource: 'mcp_root_shop',
         matchedShop: rootMatch.matchedShop || normalizeShopDomain(rootUser?.shop || '') || null,
       };
+      void maybePersistResolvedUserShop(
+        rootUser,
+        resolvedUser.matchedShop,
+        resolvedUser.resolutionSource,
+        accountId
+      );
       console.log('[CAPI Fanout][USER_RESOLUTION]', {
         accountId: String(accountId || '').trim() || null,
         userId: String(resolvedUser?._id || '') || null,
@@ -257,6 +353,39 @@ async function resolveUserForAccountId(accountId) {
       matchedShop: resolvedUser.matchedShop,
     });
     return resolvedUser;
+  }
+
+  const analyticsAuthorizedMatch = await resolveUserIdByAuthorizedShopScan(accountId);
+  if (analyticsAuthorizedMatch?.userId) {
+    const authorizedUser = await User.findById(analyticsAuthorizedMatch.userId)
+      .select('_id shop email')
+      .lean()
+      .catch(() => null);
+
+    if (authorizedUser?._id) {
+      const resolvedUser = {
+        ...authorizedUser,
+        resolutionSource: 'authorized_shop_scan',
+        matchedShop:
+          analyticsAuthorizedMatch.matchedShop
+          || analyticsAuthorizedMatch.defaultShop
+          || normalizeShopDomain(authorizedUser?.shop || '')
+          || null,
+      };
+      void maybePersistResolvedUserShop(
+        authorizedUser,
+        resolvedUser.matchedShop,
+        resolvedUser.resolutionSource,
+        accountId
+      );
+      console.log('[CAPI Fanout][USER_RESOLUTION]', {
+        accountId: String(accountId || '').trim() || null,
+        userId: String(resolvedUser?._id || '') || null,
+        resolutionSource: resolvedUser.resolutionSource,
+        matchedShop: resolvedUser.matchedShop,
+      });
+      return resolvedUser;
+    }
   }
 
   console.log('[CAPI Fanout][USER_RESOLUTION]', {
