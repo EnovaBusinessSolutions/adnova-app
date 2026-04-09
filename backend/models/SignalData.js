@@ -137,6 +137,7 @@ const SignalSourcesSchema = new Schema(
     connectedSources: { type: [String], default: [] },
     usableSources: { type: [String], default: [] },
     pendingConnectedSources: { type: [String], default: [] },
+    degradedConnectedSources: { type: [String], default: [] },
     failedSources: { type: [String], default: [] },
 
     sourceSnapshots: { type: Schema.Types.Mixed, default: null },
@@ -324,6 +325,7 @@ function normalizeBasePayload(payload = {}) {
       connectedSources: uniqStrings(cleaned?.sources?.connectedSources || [], 25),
       usableSources: uniqStrings(cleaned?.sources?.usableSources || [], 25),
       pendingConnectedSources: uniqStrings(cleaned?.sources?.pendingConnectedSources || [], 25),
+      degradedConnectedSources: uniqStrings(cleaned?.sources?.degradedConnectedSources || [], 25),
       failedSources: uniqStrings(cleaned?.sources?.failedSources || [], 25),
       sourceSnapshots: cleaned?.sources?.sourceSnapshots || null,
       sourcesStatus: buildSourcesStatusSummary(cleaned?.sources?.sourcesStatus || {}),
@@ -419,6 +421,7 @@ function normalizePatchPayload(patch = {}) {
       connectedSources: uniqStrings(current.connectedSources || [], 25),
       usableSources: uniqStrings(current.usableSources || [], 25),
       pendingConnectedSources: uniqStrings(current.pendingConnectedSources || [], 25),
+      degradedConnectedSources: uniqStrings(current.degradedConnectedSources || [], 25),
       failedSources: uniqStrings(current.failedSources || [], 25),
       sourceSnapshots: current.sourceSnapshots || null,
       sourcesStatus: buildSourcesStatusSummary(current.sourcesStatus || {}),

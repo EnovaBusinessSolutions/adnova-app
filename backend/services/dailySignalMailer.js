@@ -218,7 +218,7 @@ function buildEmailHtml({
         <span style="color:#ffffff;font-weight:700;">ChatGPT, Claude, Gemini, Grok, Copilot or DeepSeek</span>.
       </p>
       <p style="margin:0 0 16px 0;">
-        Once it is inside your AI chatbot, you can ask questions about your campaigns, spend, strategy, optimization ideas, reporting, budget allocation and recommended changes to implement.
+        Once your data is in your AI chatbot, you can ask questions about your campaigns, spend, strategy, optimization opportunities, reporting, budget allocation, and recommended actions.
       </p>
       <p style="margin:0 0 16px 0;">
         Not sure where to start? Try this prompt:
@@ -358,7 +358,7 @@ function buildEmailHtml({
               <tr>
                 <td style="padding:18px 28px 26px 28px;border-top:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.02);">
                   <div style="font-size:12px;line-height:22px;color:#8fa0bd;">
-                    This email was generated automatically by Adray AI. Your updated PDF report is attached to this message.
+                    This email was generated automatically by Adray, Inc. Your updated Signal is attached to this message.
                   </div>
                 </td>
               </tr>
