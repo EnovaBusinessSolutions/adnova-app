@@ -1124,16 +1124,85 @@ async function findSourceChunksFull(userId, source, snapshotId, datasetPrefix) {
     .filter((doc) => !allowed || allowed.has(String(doc?.dataset || '')));
 }
 
-async function findBestSnapshotIdForSource(userId, source, preferredSnapshotId) {
-  const preferred = safeStr(preferredSnapshotId);
-  const prefix = getSourceDatasetPrefix(source);
+async function listRecentSnapshotIdsForSource(userId, source, datasetPrefix, limit = 8) {
+  const docs = await McpData.find({
+    userId,
+    kind: 'chunk',
+    source,
+    dataset: { $regex: `^${datasetPrefix.replace('.', '\\.')}` },
+  })
+    .select({ snapshotId: 1, updatedAt: 1, createdAt: 1 })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .lean();
 
-  if (preferred) {
-    const preferredDocs = await findSourceChunkMeta(userId, source, preferred, prefix);
-    if (preferredDocs.length > 0) return preferred;
+  const out = [];
+  const seen = new Set();
+
+  for (const doc of docs) {
+    const snapshotId = safeStr(doc?.snapshotId).trim();
+    if (!snapshotId || seen.has(snapshotId)) continue;
+    seen.add(snapshotId);
+    out.push(snapshotId);
+    if (out.length >= limit) break;
   }
 
-  return await findLatestSnapshotId(userId, source);
+  return out;
+}
+
+async function findBestSnapshotStateForSource(userId, source, preferredSnapshotId) {
+  const preferred = safeStr(preferredSnapshotId).trim();
+  const prefix = getSourceDatasetPrefix(source);
+  const recentSnapshotIds = await listRecentSnapshotIdsForSource(userId, source, prefix);
+  const candidateSnapshotIds = uniqStrings([
+    preferred,
+    ...recentSnapshotIds,
+  ], 12);
+
+  let fallback = null;
+
+  for (const snapshotId of candidateSnapshotIds) {
+    const chunkMeta = await findSourceChunkMeta(userId, source, snapshotId, prefix);
+    if (!chunkMeta.length) continue;
+
+    const usability = evaluateSourceUsability(source, chunkMeta);
+    if (!fallback) {
+      fallback = {
+        snapshotId,
+        chunkMeta,
+        usability,
+        selectionReason: snapshotId === preferred ? 'preferred_with_chunks' : 'latest_with_chunks',
+      };
+    }
+
+    if (usability.usable) {
+      return {
+        snapshotId,
+        chunkMeta,
+        usability,
+        selectionReason: snapshotId === preferred ? 'preferred_usable' : 'latest_usable',
+      };
+    }
+  }
+
+  if (fallback) return fallback;
+
+  const latestSnapshotId = await findLatestSnapshotId(userId, source);
+  if (!latestSnapshotId) {
+    return {
+      snapshotId: null,
+      chunkMeta: [],
+      usability: evaluateSourceUsability(source, []),
+      selectionReason: 'none',
+    };
+  }
+
+  const chunkMeta = await findSourceChunkMeta(userId, source, latestSnapshotId, prefix);
+  return {
+    snapshotId: latestSnapshotId,
+    chunkMeta,
+    usability: evaluateSourceUsability(source, chunkMeta),
+    selectionReason: 'latest_fallback',
+  };
 }
 
 async function loadBestSourceState(userId, root, source, preferredSnapshotId, options = {}) {
@@ -1144,14 +1213,11 @@ async function loadBestSourceState(userId, root, source, preferredSnapshotId, op
   const connected = sourceLooksConnected(root, source);
   const rootReady = sourceLooksReady(root, source);
 
-  const snapshotId = await findBestSnapshotIdForSource(userId, source, preferredSnapshotId);
-
-  const chunkMeta = snapshotId
-    ? await findSourceChunkMeta(userId, source, snapshotId, prefix)
-    : [];
-
+  const bestSnapshot = await findBestSnapshotStateForSource(userId, source, preferredSnapshotId);
+  const snapshotId = bestSnapshot?.snapshotId || null;
+  const chunkMeta = Array.isArray(bestSnapshot?.chunkMeta) ? bestSnapshot.chunkMeta : [];
   const hasChunks = chunkMeta.length > 0;
-  const usability = evaluateSourceUsability(source, chunkMeta);
+  const usability = bestSnapshot?.usability || evaluateSourceUsability(source, chunkMeta);
   const usable = !!usability.usable;
   const ready = rootReady || usable;
 
@@ -1173,6 +1239,7 @@ async function loadBestSourceState(userId, root, source, preferredSnapshotId, op
     ready,
     usable,
     rootState,
+    snapshotSelectionReason: bestSnapshot?.selectionReason || null,
     datasetNames: usability.datasetNames,
     missingRequired: usability.missingRequired,
     hasAnyOptional: usability.hasAnyOptional,
