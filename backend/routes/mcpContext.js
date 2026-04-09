@@ -14,6 +14,10 @@ const {
   buildPdfForUser,
   buildResultFromRoot,
 } = require('../services/mcpContextBuilder');
+const {
+  logMcpContext,
+  toErrorMeta,
+} = require('../utils/mcpContextLog');
 
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
 
@@ -232,6 +236,16 @@ router.post('/build', async (req, res) => {
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
+    logMcpContext('info', 'mcpContext.route', 'build.request', {
+      userId: String(userId),
+      snapshotId: safeStr(req.body?.snapshotId) || null,
+      contextRangeDays: req.body?.contextRangeDays || null,
+      forceRebuild: !!req.body?.forceRebuild,
+      reason: safeStr(req.body?.reason) || 'manual_build',
+      trigger: safeStr(req.body?.trigger) || 'manual_api',
+      currentBuildAttemptId: safeStr(root?.aiContext?.buildAttemptId) || null,
+      currentSourceFingerprint: safeStr(root?.aiContext?.currentSourceFingerprint) || null,
+    });
 
     const result = await buildUnifiedContextForUser(userId, {
       explicitSnapshotId: safeStr(req.body?.snapshotId) || null,
@@ -253,6 +267,17 @@ router.post('/build', async (req, res) => {
 
     setNoCacheHeaders(res);
     const resultData = result?.data || {};
+    logMcpContext('info', 'mcpContext.route', 'build.response', {
+      userId: String(userId),
+      buildAttemptId: resultData?.buildAttemptId || null,
+      status: resultData?.status || null,
+      stage: resultData?.stage || null,
+      progress: resultData?.progress || null,
+      signalComplete: !!resultData?.signalComplete,
+      signalReadyForPdf: !!resultData?.signalReadyForPdf,
+      pendingConnectedSources: resultData?.pendingConnectedSources || [],
+      shouldPoll: !!resultData?.actions?.shouldPoll,
+    });
 
     if (resultData?.actions?.shouldPoll) {
       return res.status(202).json({ ok: true, data: resultData });
@@ -261,6 +286,10 @@ router.post('/build', async (req, res) => {
     return res.json({ ok: true, data: resultData });
   } catch (e) {
     console.error('[mcp/context/build] error:', e);
+    logMcpContext('error', 'mcpContext.route', 'build.error', {
+      userId: String(req.user?._id || ''),
+      error: toErrorMeta(e),
+    });
 
     const code = e?.code || e?.message || 'MCP_CONTEXT_BUILD_FAILED';
 
@@ -295,6 +324,13 @@ router.post('/pdf/build', async (req, res) => {
     if (!root) {
       return res.status(404).json({ ok: false, error: 'MCP_ROOT_NOT_FOUND' });
     }
+    logMcpContext('info', 'mcpContext.route', 'pdf_build.request', {
+      userId: String(userId),
+      forceRebuild: !!req.body?.forceRebuild,
+      currentBuildAttemptId: safeStr(root?.aiContext?.buildAttemptId) || null,
+      currentSourceFingerprint: safeStr(root?.aiContext?.currentSourceFingerprint) || null,
+      pdfStatus: safeStr(root?.aiContext?.pdf?.status) || null,
+    });
 
     const statusData = buildResultFromRoot(root)?.data || null;
 
@@ -318,6 +354,16 @@ router.post('/pdf/build', async (req, res) => {
 
     const result = await buildPdfForUser(userId);
     const resultData = result?.data || null;
+    logMcpContext('info', 'mcpContext.route', 'pdf_build.response', {
+      userId: String(userId),
+      buildAttemptId: resultData?.buildAttemptId || null,
+      status: resultData?.status || null,
+      stage: resultData?.stage || null,
+      progress: resultData?.progress || null,
+      pdfStatus: resultData?.pdf?.status || null,
+      canDownloadPdf: !!resultData?.canDownloadPdf,
+      shouldPoll: !!resultData?.actions?.shouldPoll,
+    });
 
     setNoCacheHeaders(res);
 
@@ -330,6 +376,10 @@ router.post('/pdf/build', async (req, res) => {
     return res.json({ ok: true, data: finalPayload });
   } catch (e) {
     console.error('[mcp/context/pdf/build] error:', e);
+    logMcpContext('error', 'mcpContext.route', 'pdf_build.error', {
+      userId: String(userId || ''),
+      error: toErrorMeta(e),
+    });
 
     const code = e?.code || e?.message || 'MCP_SIGNAL_PDF_BUILD_FAILED';
 
@@ -372,6 +422,18 @@ router.get('/status', async (req, res) => {
     });
 
     const payload = buildResultFromRoot(root)?.data || null;
+    logMcpContext('debug', 'mcpContext.route', 'status.response', {
+      userId: String(userId),
+      buildAttemptId: payload?.buildAttemptId || null,
+      status: payload?.status || null,
+      stage: payload?.stage || null,
+      progress: payload?.progress || null,
+      signalComplete: !!payload?.signalComplete,
+      signalReadyForPdf: !!payload?.signalReadyForPdf,
+      pendingConnectedSources: payload?.pendingConnectedSources || [],
+      canGeneratePdf: !!payload?.canGeneratePdf,
+      canDownloadPdf: !!payload?.canDownloadPdf,
+    });
     setNoCacheHeaders(res);
 
     return res.json({
@@ -408,6 +470,10 @@ router.get('/status', async (req, res) => {
     });
   } catch (e) {
     console.error('[mcp/context/status] error:', e);
+    logMcpContext('error', 'mcpContext.route', 'status.error', {
+      userId: String(req.user?._id || ''),
+      error: toErrorMeta(e),
+    });
     return res.status(500).json({ ok: false, error: 'MCP_CONTEXT_STATUS_FAILED' });
   }
 });
@@ -531,6 +597,15 @@ router.get('/pdf/status', async (req, res) => {
     }
 
     const statusData = buildResultFromRoot(root)?.data || null;
+    logMcpContext('debug', 'mcpContext.route', 'pdf_status.response', {
+      userId: String(userId),
+      buildAttemptId: statusData?.buildAttemptId || null,
+      pdfStatus: statusData?.pdf?.status || null,
+      pdfReady: !!statusData?.pdfReady,
+      pdfProcessing: !!statusData?.pdfProcessing,
+      canDownloadPdf: !!statusData?.canDownloadPdf,
+      pendingConnectedSources: statusData?.pendingConnectedSources || [],
+    });
     setNoCacheHeaders(res);
 
     return res.json({
@@ -558,6 +633,10 @@ router.get('/pdf/status', async (req, res) => {
     });
   } catch (e) {
     console.error('[mcp/context/pdf/status] error:', e);
+    logMcpContext('error', 'mcpContext.route', 'pdf_status.error', {
+      userId: String(req.user?._id || ''),
+      error: toErrorMeta(e),
+    });
     return res.status(500).json({ ok: false, error: 'MCP_SIGNAL_PDF_STATUS_FAILED' });
   }
 });

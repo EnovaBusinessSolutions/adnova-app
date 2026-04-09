@@ -30,6 +30,11 @@ const {
   encodeSignalPayload,
   isEncodedSignalPayloadBuildableForPdf,
 } = require('./signalEncoder');
+const {
+  logMcpContext,
+  summarizeSourcesStatus,
+  toErrorMeta,
+} = require('../utils/mcpContextLog');
 
 let OpenAI = null;
 try {
@@ -137,6 +142,8 @@ function getStorageRangeDaysFromRoot(root) {
 
 function emptyPdfState(extra = {}) {
   return {
+    generationId: null,
+    signalGenerationId: null,
     status: 'idle',
     stage: 'idle',
     progress: 0,
@@ -146,6 +153,7 @@ function emptyPdfState(extra = {}) {
     localPath: null,
     downloadUrl: null,
     generatedAt: null,
+    invalidatedAt: null,
     sizeBytes: 0,
     pageCount: null,
     renderer: null,
@@ -159,6 +167,242 @@ function emptyPdfState(extra = {}) {
     staleReason: null,
     ...extra,
   };
+}
+
+function emptySignalState(extra = {}) {
+  return {
+    generationId: null,
+    status: 'idle',
+    stage: 'idle',
+    progress: 0,
+    sourceFingerprint: null,
+    sourcesSnapshot: null,
+    startedAt: null,
+    finishedAt: null,
+    generatedAt: null,
+    invalidatedAt: null,
+    staleReason: null,
+    version: 1,
+    error: null,
+    model: null,
+    usedOpenAI: false,
+    contextRangeDays: null,
+    storageRangeDays: null,
+    snapshotId: null,
+    unifiedBase: null,
+    encodedPayload: null,
+    payload: null,
+    ...extra,
+  };
+}
+
+function mergeSignalState(currentAi = {}, patch = {}) {
+  return emptySignalState({
+    ...(currentAi?.signal || {}),
+    ...patch,
+  });
+}
+
+function mergePdfState(currentAi = {}, patch = {}) {
+  return emptyPdfState({
+    ...(currentAi?.pdf || {}),
+    ...patch,
+  });
+}
+
+function normalizeSignalArtifactForPersistence(signal = {}, fallbackAi = {}) {
+  const nextSignal = emptySignalState(signal || {});
+  const nextGeneratedAt = nextSignal.generatedAt || nextSignal.finishedAt || null;
+  const nextFinishedAt =
+    nextSignal.finishedAt ||
+    nextSignal.generatedAt ||
+    fallbackAi?.finishedAt ||
+    null;
+
+  return {
+    ...nextSignal,
+    generatedAt: nextGeneratedAt,
+    finishedAt: nextSignal.status === 'ready' ? nextFinishedAt : (nextSignal.finishedAt || null),
+  };
+}
+
+function normalizePdfArtifactForPersistence(pdf = {}) {
+  const nextPdf = emptyPdfState(pdf || {});
+  const nextGeneratedAt = nextPdf.generatedAt || nextPdf.finishedAt || null;
+  const nextFinishedAt = nextPdf.finishedAt || nextPdf.generatedAt || null;
+  const nextProcessingStartedAt =
+    nextPdf.processingStartedAt ||
+    nextPdf.startedAt ||
+    null;
+  const nextProcessingHeartbeatAt =
+    nextPdf.processingHeartbeatAt ||
+    nextProcessingStartedAt ||
+    null;
+
+  return {
+    ...nextPdf,
+    generatedAt: nextGeneratedAt,
+    finishedAt: nextFinishedAt,
+    processingStartedAt: nextProcessingStartedAt,
+    processingHeartbeatAt: nextProcessingHeartbeatAt,
+  };
+}
+
+function deriveLegacyCompatFromFormalArtifacts(ai = {}) {
+  const signal = normalizeSignalArtifactForPersistence(ai?.signal || {}, ai);
+  const pdf = normalizePdfArtifactForPersistence(ai?.pdf || {});
+  const signalStage = safeStr(signal?.stage).trim();
+  const aiStage = safeStr(ai?.stage).trim();
+  const signalPayload = signal?.payload || null;
+  const encodedPayload = signal?.encodedPayload || null;
+  const payloadBuildable = isSignalPayloadBuildableForPdf(signalPayload);
+  const encodedPayloadBuildable = isEncodedSignalPayloadBuildableForPdf(encodedPayload);
+  const hasAnySignalPayload = !!(signalPayload || encodedPayload);
+  const signalComplete = signal.status === 'ready' && hasAnySignalPayload;
+  const signalValidForPdf =
+    signal.status === 'ready' &&
+    (payloadBuildable || encodedPayloadBuildable);
+  const signalReadyForPdf = signalComplete && signalValidForPdf;
+
+  let status = 'idle';
+  if (signal.status === 'processing' || signal.status === 'queued') {
+    status = 'processing';
+  } else if (signal.status === 'ready') {
+    status = 'done';
+  } else if (signal.status === 'failed' || signal.status === 'error') {
+    status = 'error';
+  }
+
+  return {
+    signal,
+    pdf,
+    status,
+    stage:
+      (signalStage && signalStage !== 'idle'
+        ? signalStage
+        : (aiStage || signalStage)) || 'idle',
+    progress: toNum(signal?.progress, ai?.progress || 0),
+    startedAt: signal?.startedAt || ai?.startedAt || null,
+    finishedAt:
+      signal.status === 'ready' || signal.status === 'failed'
+        ? (signal?.finishedAt || signal?.generatedAt || ai?.finishedAt || null)
+        : null,
+    snapshotId: signal?.snapshotId || ai?.snapshotId || null,
+    contextRangeDays:
+      toNum(signal?.contextRangeDays) ||
+      toNum(ai?.contextRangeDays) ||
+      null,
+    storageRangeDays:
+      toNum(signal?.storageRangeDays) ||
+      toNum(ai?.storageRangeDays) ||
+      null,
+    unifiedBase:
+      signal?.unifiedBase !== undefined
+        ? signal.unifiedBase
+        : (ai?.unifiedBase || null),
+    encodedPayload:
+      signal?.encodedPayload !== undefined
+        ? signal.encodedPayload
+        : (ai?.encodedPayload || null),
+    signalPayload:
+      signal?.payload !== undefined
+        ? signal.payload
+        : (ai?.signalPayload || null),
+    usedOpenAI:
+      signal?.usedOpenAI != null
+        ? !!signal.usedOpenAI
+        : !!ai?.usedOpenAI,
+    model: signal?.model || ai?.model || null,
+    sourceFingerprint: signal?.sourceFingerprint || ai?.sourceFingerprint || null,
+    signalComplete,
+    signalValidForPdf,
+    signalReadyForPdf,
+  };
+}
+
+function harmonizeAiContextForPersistence(nextAi = {}) {
+  const compat = deriveLegacyCompatFromFormalArtifacts(nextAi);
+  const sourcesStatus = nextAi?.sourcesStatus || null;
+  const usableSources = uniqStringsSafe([
+    ...(Array.isArray(nextAi?.usableSources) ? nextAi.usableSources : []),
+    ...deriveSourceNamesByFlagFromState(sourcesStatus, 'usable'),
+  ]);
+  const pendingConnectedSources = uniqStringsSafe([
+    ...(Array.isArray(nextAi?.pendingConnectedSources) ? nextAi.pendingConnectedSources : []),
+    ...deriveSourceNamesByFlagFromState(sourcesStatus, 'pending'),
+    ...Object.entries(sourcesStatus || {})
+      .filter(([, sourceState]) => {
+        if (!sourceState?.connected) return false;
+        return !!sourceState?.blocksBuild;
+      })
+      .map(([name]) => name),
+  ]);
+  const degradedConnectedSources = uniqStringsSafe([
+    ...(Array.isArray(nextAi?.degradedConnectedSources) ? nextAi.degradedConnectedSources : []),
+    ...Object.entries(sourcesStatus || {})
+      .filter(([, sourceState]) => !!sourceState?.degradedButBuildable)
+      .map(([name]) => name),
+  ]);
+  const failedSources = uniqStringsSafe([
+    ...(Array.isArray(nextAi?.failedSources) ? nextAi.failedSources : []),
+    ...deriveSourceNamesWithErrorFromState(sourcesStatus),
+  ]);
+
+  return {
+    ...nextAi,
+    status: compat.status,
+    stage: compat.stage,
+    progress: compat.progress,
+    startedAt: compat.startedAt,
+    finishedAt: compat.finishedAt,
+    snapshotId: compat.snapshotId,
+    contextRangeDays: compat.contextRangeDays,
+    storageRangeDays: compat.storageRangeDays,
+    unifiedBase: compat.unifiedBase,
+    encodedPayload: compat.encodedPayload,
+    signalPayload: compat.signalPayload,
+    usedOpenAI: compat.usedOpenAI,
+    model: compat.model,
+    sourceFingerprint: compat.sourceFingerprint,
+    signalComplete: compat.signalComplete,
+    signalValidForPdf: compat.signalValidForPdf,
+    signalReadyForPdf: compat.signalReadyForPdf,
+    usableSources,
+    pendingConnectedSources,
+    degradedConnectedSources,
+    failedSources,
+    signal: compat.signal,
+    pdf: compat.pdf,
+  };
+}
+
+function deriveFailedSources(sourcesStatus = null) {
+  return uniqStrings(
+    Object.entries(sourcesStatus || {})
+      .filter(([, state]) => !!state?.lastError)
+      .map(([sourceName]) => sourceName),
+    25
+  );
+}
+
+function buildAiSourceCollections({
+  sourcesStatus = null,
+  usableSources = [],
+  pendingConnectedSources = [],
+  degradedConnectedSources = [],
+} = {}) {
+  return {
+    sourcesStatus: sourcesStatus || null,
+    usableSources: uniqStrings(usableSources || [], 25),
+    pendingConnectedSources: uniqStrings(pendingConnectedSources || [], 25),
+    degradedConnectedSources: uniqStrings(degradedConnectedSources || [], 25),
+    failedSources: deriveFailedSources(sourcesStatus),
+  };
+}
+
+function makePdfGenerationId(buildAttemptId) {
+  const clean = safeStr(buildAttemptId).trim();
+  return clean ? `${clean}:pdf` : makeBuildAttemptId();
 }
 
 function makeBuildAttemptId() {
@@ -583,6 +827,7 @@ function evaluateSourceUsability(source, chunks) {
 
   return {
     usable,
+    hasChunks,
     datasetNames: Array.from(datasetNames),
     missingRequired,
     hasAnyOptional,
@@ -607,8 +852,9 @@ function isSignalPayloadBuildableForPdf(signalPayload) {
 }
 
 function deriveSignalReadinessFromAi(ai = {}, fallbackSignalPayload = null) {
-  const status = safeStr(ai?.status).trim().toLowerCase();
-  const stage = safeStr(ai?.stage).trim().toLowerCase();
+  const signalStatus = safeStr(ai?.signal?.status).trim().toLowerCase();
+  const legacyStatus = safeStr(ai?.status).trim().toLowerCase();
+  const legacyStage = safeStr(ai?.stage).trim().toLowerCase();
   const signalPayload =
     ai?.signal?.payload ||
     ai?.signalPayload ||
@@ -621,15 +867,31 @@ function deriveSignalReadinessFromAi(ai = {}, fallbackSignalPayload = null) {
   const payloadBuildable = isSignalPayloadBuildableForPdf(signalPayload);
   const encodedPayloadBuildable = isEncodedSignalPayloadBuildableForPdf(encodedPayload);
   const hasBuildablePayload = encodedPayloadBuildable || payloadBuildable;
+  const hasAnySignalPayload = !!(encodedPayload || signalPayload);
 
-  const signalComplete =
-    status === 'done' &&
-    stage === 'completed' &&
-    !!(encodedPayload || signalPayload);
+  const formalSignalComplete =
+    signalStatus === 'ready' &&
+    hasAnySignalPayload;
+
+  const legacySignalComplete =
+    legacyStatus === 'done' &&
+    legacyStage === 'completed' &&
+    hasAnySignalPayload;
+
+  const signalComplete = formalSignalComplete || legacySignalComplete;
 
   const signalValidForPdf =
-    !!ai?.signalValidForPdf ||
-    (signalComplete && hasBuildablePayload);
+    typeof ai?.signalValidForPdf === 'boolean'
+      ? ai.signalValidForPdf
+      : (
+        (formalSignalComplete || legacySignalComplete) &&
+        hasBuildablePayload
+      );
+
+  const signalReadyForPdf =
+    formalSignalComplete &&
+    signalValidForPdf &&
+    hasBuildablePayload;
 
   return {
     signalPayload,
@@ -638,7 +900,7 @@ function deriveSignalReadinessFromAi(ai = {}, fallbackSignalPayload = null) {
     encodedPayloadBuildable,
     signalComplete,
     signalValidForPdf,
-    signalReadyForPdf: signalValidForPdf && hasBuildablePayload,
+    signalReadyForPdf,
   };
 }
 
@@ -666,6 +928,7 @@ function buildSignalSourcesPayload({
   sourceSnapshots = null,
   usableSources = [],
   pendingConnectedSources = [],
+  degradedConnectedSources = [],
 } = {}) {
   const connectedSources = [];
   const failedSources = [];
@@ -680,12 +943,14 @@ function buildSignalSourcesPayload({
     ...connectedSources,
     ...usableSources,
     ...pendingConnectedSources,
+    ...degradedConnectedSources,
   ], 25);
 
   return {
     connectedSources: connectedFinal,
     usableSources: uniqStrings(usableSources || [], 25),
     pendingConnectedSources: uniqStrings(pendingConnectedSources || [], 25),
+    degradedConnectedSources: uniqStrings(degradedConnectedSources || [], 25),
     failedSources: uniqStrings(failedSources || [], 25),
     sourceSnapshots: sourceSnapshots || null,
     sourcesStatus: sourcesStatus || null,
@@ -911,6 +1176,67 @@ async function loadBestSourceState(userId, root, source, preferredSnapshotId, op
     datasetNames: usability.datasetNames,
     missingRequired: usability.missingRequired,
     hasAnyOptional: usability.hasAnyOptional,
+    hasUsablePartialData: !!usability.hasChunks,
+  };
+}
+
+function classifySourceBuildState(state, { hasAnyUsableSources = false } = {}) {
+  const connected = !!state?.connected;
+  const usable = !!state?.usable;
+  const failed = !!state?.rootState?.lastError;
+  const hasChunks = !!state?.hasChunks || toNum(state?.chunkCount, 0) > 0;
+
+  if (failed) {
+    return {
+      readinessCategory: 'failed',
+      pending: false,
+      failed: true,
+      degradedButBuildable: false,
+      blocksBuild: false,
+      degradeReason: null,
+    };
+  }
+
+  if (usable) {
+    return {
+      readinessCategory: 'usable',
+      pending: false,
+      failed: false,
+      degradedButBuildable: false,
+      blocksBuild: false,
+      degradeReason: null,
+    };
+  }
+
+  if (connected && hasAnyUsableSources) {
+    return {
+      readinessCategory: 'degraded_but_buildable',
+      pending: false,
+      failed: false,
+      degradedButBuildable: true,
+      blocksBuild: false,
+      degradeReason: hasChunks ? 'partial_data_available' : 'other_sources_are_buildable',
+    };
+  }
+
+  if (connected) {
+    return {
+      readinessCategory: 'pending',
+      pending: true,
+      failed: false,
+      degradedButBuildable: false,
+      blocksBuild: true,
+      degradeReason: null,
+    };
+  }
+
+  return {
+    readinessCategory: 'idle',
+    pending: false,
+    failed: false,
+    degradedButBuildable: false,
+    blocksBuild: false,
+    degradeReason: null,
   };
 }
 
@@ -926,17 +1252,56 @@ function getCandidateSources(root, sourceStatesByName) {
   return Array.from(set);
 }
 
-function sourceStateSummaryForStatus(state) {
+function sourceStateSummaryForStatus(state, options = {}) {
+  const blockingReasons = [];
+  const missingRequired = Array.isArray(state?.missingRequired) ? state.missingRequired : [];
+  const hasAnyOptional = !!state?.hasAnyOptional;
+  const chunkCount = toNum(state?.chunkCount, 0);
+  const connected = !!state?.connected;
+  const usable = !!state?.usable;
+  const classification = classifySourceBuildState(state, options);
+
+  if (classification.pending && chunkCount === 0) {
+    blockingReasons.push('waiting_for_first_chunk');
+  }
+  if (missingRequired.length > 0) {
+    blockingReasons.push('missing_required_datasets');
+  }
+  if ((classification.pending || classification.degradedButBuildable) && !hasAnyOptional) {
+    blockingReasons.push('missing_optional_dataset_family');
+  }
+  if (state?.rootState?.lastError) {
+    blockingReasons.push('source_error');
+  }
+  if (classification.degradedButBuildable) {
+    blockingReasons.push('degraded_but_buildable');
+  }
+
+  let pendingReason = null;
+  if (state?.rootState?.lastError) pendingReason = 'source_error';
+  else if (missingRequired.length > 0) pendingReason = 'missing_required_datasets';
+  else if ((classification.pending || classification.degradedButBuildable) && !hasAnyOptional) pendingReason = 'missing_optional_dataset_family';
+  else if (classification.pending && chunkCount === 0) pendingReason = 'waiting_for_first_chunk';
+  else if (classification.degradedButBuildable) pendingReason = classification.degradeReason || 'degraded_but_buildable';
+
   return {
-    connected: !!state?.connected,
+    connected,
     rootReady: !!state?.rootReady,
     ready: !!state?.ready,
-    usable: !!state?.usable,
+    usable,
     snapshotId: state?.snapshotId || null,
-    chunkCount: toNum(state?.chunkCount, 0),
+    chunkCount,
     datasets: Array.isArray(state?.datasetNames) ? state.datasetNames : [],
-    missingRequired: Array.isArray(state?.missingRequired) ? state.missingRequired : [],
-    hasAnyOptional: !!state?.hasAnyOptional,
+    missingRequired,
+    hasAnyOptional,
+    lastError: state?.rootState?.lastError || null,
+    pendingReason,
+    blockingReasons,
+    readinessCategory: classification.readinessCategory,
+    pending: classification.pending,
+    failed: classification.failed,
+    degradedButBuildable: classification.degradedButBuildable,
+    blocksBuild: classification.blocksBuild,
   };
 }
 
@@ -961,10 +1326,15 @@ async function waitForBuildableSources(userId, root, explicitSnapshotId, timeout
     const candidateSources = getCandidateSources(lastRoot, bySource);
 
     const usableSources = candidateSources.filter((src) => !!bySource[src]?.usable);
-    const pendingConnectedSources = candidateSources.filter((src) => {
-      const s = bySource[src];
-      return !!s?.connected && !s?.usable;
-    });
+    const hasAnyUsableSources = usableSources.length > 0;
+    const classifiedBySource = Object.fromEntries(
+      candidateSources.map((src) => [
+        src,
+        classifySourceBuildState(bySource[src], { hasAnyUsableSources }),
+      ])
+    );
+    const pendingConnectedSources = candidateSources.filter((src) => !!classifiedBySource[src]?.pending);
+    const degradedConnectedSources = candidateSources.filter((src) => !!classifiedBySource[src]?.degradedButBuildable);
 
     const shouldWaitForPendingConnectedSources =
   pendingConnectedSources.length > 0;
@@ -974,9 +1344,11 @@ if (usableSources.length > 0 && !shouldWaitForPendingConnectedSources) {
     root: lastRoot,
     preferredGlobalSnapshotId: preferredGlobalSnapshotId || null,
     sourceStates: bySource,
+    classifiedBySource,
     candidateSources,
     usableSources,
     pendingConnectedSources,
+    degradedConnectedSources,
     timedOut: false,
   };
 }
@@ -1002,18 +1374,25 @@ if (usableSources.length > 0 && !shouldWaitForPendingConnectedSources) {
   const bySource = Object.fromEntries(fallbackStatesArr.map((x) => [x.source, x]));
   const candidateSources = getCandidateSources(fallbackRoot, bySource);
   const usableSources = candidateSources.filter((src) => !!bySource[src]?.usable);
-  const pendingConnectedSources = candidateSources.filter((src) => {
-    const s = bySource[src];
-    return !!s?.connected && !s?.usable;
-  });
+  const hasAnyUsableSources = usableSources.length > 0;
+  const classifiedBySource = Object.fromEntries(
+    candidateSources.map((src) => [
+      src,
+      classifySourceBuildState(bySource[src], { hasAnyUsableSources }),
+    ])
+  );
+  const pendingConnectedSources = candidateSources.filter((src) => !!classifiedBySource[src]?.pending);
+  const degradedConnectedSources = candidateSources.filter((src) => !!classifiedBySource[src]?.degradedButBuildable);
 
   return {
     root: fallbackRoot,
     preferredGlobalSnapshotId: safeStr(explicitSnapshotId) || safeStr(fallbackRoot?.latestSnapshotId) || null,
     sourceStates: bySource,
+    classifiedBySource,
     candidateSources,
     usableSources,
     pendingConnectedSources,
+    degradedConnectedSources,
     timedOut: true,
   };
 }
@@ -1677,9 +2056,11 @@ async function updateRootAiContext(userId, updater) {
     return root;
   }
 
+  const harmonizedAi = harmonizeAiContextForPersistence(nextAi);
+
   return McpData.findByIdAndUpdate(
     root._id,
-    { $set: { aiContext: nextAi } },
+    { $set: { aiContext: harmonizedAi } },
     { new: true }
   ).lean();
 }
@@ -1715,9 +2096,11 @@ async function updateRootAiContextForAttempt(userId, attemptId, updater) {
     return { skipped: true, reason: 'NOOP', root };
   }
 
+  const harmonizedAi = harmonizeAiContextForPersistence(nextAi);
+
   const updated = await McpData.findByIdAndUpdate(
     root._id,
-    { $set: { aiContext: nextAi } },
+    { $set: { aiContext: harmonizedAi } },
     { new: true }
   ).lean();
 
@@ -1770,6 +2153,63 @@ function normalizePdfArtifactForRuntime(pdf = {}) {
   };
 }
 
+function normalizeSignalArtifactForRuntime(signal = {}, ai = {}, fallback = {}) {
+  const rawStatus = safeStr(signal?.status).trim().toLowerCase();
+  const legacyStatus = safeStr(ai?.status).trim().toLowerCase();
+  const normalizedStatus =
+    rawStatus === 'queued'
+      ? 'processing'
+      : rawStatus || (
+        legacyStatus === 'done'
+          ? 'ready'
+          : legacyStatus === 'error'
+            ? 'failed'
+            : legacyStatus || 'idle'
+      );
+
+  return {
+    status: normalizedStatus,
+    stage: safeStr(signal?.stage || ai?.stage || fallback?.stage || 'idle').trim() || 'idle',
+    progress: toNum(
+      signal?.progress,
+      ai?.progress != null
+        ? ai.progress
+        : (fallback?.progress || 0)
+    ),
+    generationId: signal?.generationId || ai?.buildAttemptId || null,
+    signalRunId: ai?.signalRunId || signal?.generationId || null,
+    sourceFingerprint:
+      safeStr(signal?.sourceFingerprint || ai?.sourceFingerprint || '').trim() || null,
+    connectionFingerprint:
+      safeStr(ai?.connectionFingerprint || '').trim() || null,
+    startedAt: signal?.startedAt || ai?.startedAt || null,
+    finishedAt: signal?.finishedAt || signal?.generatedAt || ai?.finishedAt || null,
+    generatedAt: signal?.generatedAt || null,
+    invalidatedAt: signal?.invalidatedAt || null,
+    staleReason: signal?.staleReason || ai?.staleReason || null,
+    error: signal?.error || ai?.error || null,
+    payload: signal?.payload || ai?.signalPayload || fallback?.signalPayload || null,
+    encodedPayload: signal?.encodedPayload || ai?.encodedPayload || fallback?.encodedPayload || null,
+    unifiedBase: signal?.unifiedBase || ai?.unifiedBase || null,
+    model: signal?.model || ai?.model || null,
+    usedOpenAI:
+      signal?.usedOpenAI != null
+        ? !!signal.usedOpenAI
+        : !!ai?.usedOpenAI,
+    snapshotId: signal?.snapshotId || ai?.snapshotId || fallback?.snapshotId || null,
+    contextRangeDays:
+      toNum(signal?.contextRangeDays) ||
+      toNum(ai?.contextRangeDays) ||
+      fallback?.contextRangeDays ||
+      null,
+    storageRangeDays:
+      toNum(signal?.storageRangeDays) ||
+      toNum(ai?.storageRangeDays) ||
+      fallback?.storageRangeDays ||
+      null,
+  };
+}
+
 function toLegacyUiMode(runtime) {
   const signalStatus = safeStr(runtime?.signal?.status).trim().toLowerCase();
   const pdfStatus = safeStr(runtime?.pdf?.status).trim().toLowerCase();
@@ -1811,13 +2251,20 @@ function buildCanonicalRuntimeFromRoot(root, fallback = {}) {
   const ai = root?.aiContext || {};
   const readiness = deriveSignalReadinessFromAi(ai, fallback.signalPayload || null);
 
-  const signalPayload = readiness.signalPayload || null;
-  const encodedPayload = readiness.encodedPayload || fallback.encodedPayload || null;
-
+  const rawSignal = normalizeSignalArtifactForRuntime(ai?.signal || {}, ai, fallback);
+  const signalPayload = rawSignal.payload || readiness.signalPayload || null;
+  const encodedPayload = rawSignal.encodedPayload || readiness.encodedPayload || fallback.encodedPayload || null;
   const rawPdf = normalizePdfArtifactForRuntime(ai?.pdf || emptyPdfState());
   const currentConnectionFingerprint = buildConnectionFingerprint(root || {});
-  const signalConnectionFingerprint = deriveConnectionFingerprintFromAi(ai) || null;
-  const signalSourceFingerprint = deriveSignalFingerprintFromAi(ai) || null;
+  const signalConnectionFingerprint =
+    rawSignal.connectionFingerprint ||
+    deriveConnectionFingerprintFromAi(ai) ||
+    currentConnectionFingerprint ||
+    null;
+  const signalSourceFingerprint =
+    rawSignal.sourceFingerprint ||
+    deriveSignalFingerprintFromAi(ai) ||
+    null;
 
   const currentSourceFingerprint =
     safeStr(ai?.currentSourceFingerprint || '').trim() ||
@@ -1838,24 +2285,19 @@ function buildCanonicalRuntimeFromRoot(root, fallback = {}) {
     ...deriveSourceNamesByFlagFromState(effectiveSourcesStatus, 'usable'),
   ]);
 
+  const degradedConnectedSources = uniqStringsSafe([
+    ...(Array.isArray(ai?.degradedConnectedSources) ? ai.degradedConnectedSources : []),
+    ...Object.entries(effectiveSourcesStatus || {})
+      .filter(([, sourceState]) => !!sourceState?.degradedButBuildable)
+      .map(([name]) => name),
+  ]);
+
   const pendingConnectedSources = uniqStringsSafe([
     ...(Array.isArray(ai?.pendingConnectedSources) ? ai.pendingConnectedSources : []),
-    ...Object.entries(root?.sources || {})
-      .filter(([name, sourceState]) => {
-        if (!sourceState?.connected) return false;
-
-        const statusState = effectiveSourcesStatus?.[name] || null;
-        const statusUsable = !!statusState?.usable;
-        const aiUsable = usableSources.includes(name);
-
-        return !statusUsable && !aiUsable;
-      })
-      .map(([name]) => name),
     ...Object.entries(effectiveSourcesStatus || {})
-      .filter(([name, sourceState]) => {
+      .filter(([, sourceState]) => {
         if (!sourceState?.connected) return false;
-        if (sourceState?.usable) return false;
-        return !usableSources.includes(name);
+        return !!sourceState?.pending || !!sourceState?.blocksBuild;
       })
       .map(([name]) => name),
   ]);
@@ -1882,17 +2324,24 @@ function buildCanonicalRuntimeFromRoot(root, fallback = {}) {
     !!signalLooksStaleByFingerprint ||
     !!signalLooksStaleByConnection;
 
-    const signalRawStatus = safeStr(ai?.status).trim().toLowerCase();
+    const signalRawStatus = safeStr(rawSignal?.status).trim().toLowerCase();
+  const legacySignalStatus = safeStr(ai?.status).trim().toLowerCase();
   let signalStatus = 'idle';
 
   if (signalRawStatus === 'processing') {
     signalStatus = 'processing';
   } else if (signalRawStatus === 'failed' || signalRawStatus === 'error') {
     signalStatus = 'failed';
-  } else if (hasPendingConnectedSources) {
-    signalStatus = 'processing';
   } else if (staleSignal && (signalPayload || encodedPayload)) {
     signalStatus = 'stale';
+  } else if (signalRawStatus === 'ready') {
+    signalStatus = 'ready';
+  } else if (legacySignalStatus === 'processing') {
+    signalStatus = 'processing';
+  } else if (legacySignalStatus === 'failed' || legacySignalStatus === 'error') {
+    signalStatus = 'failed';
+  } else if (hasPendingConnectedSources) {
+    signalStatus = 'processing';
   } else if (readiness.signalReadyForPdf) {
     signalStatus = 'ready';
   } else {
@@ -1937,13 +2386,14 @@ function buildCanonicalRuntimeFromRoot(root, fallback = {}) {
     pdfStatus = 'idle';
   }
 
-    const canRetrySignal =
+  const canRetrySignal =
     signalStatus === 'failed' ||
     signalStatus === 'stale' ||
     (signalStatus === 'idle' && (connectedSources.length > 0 || usableSources.length > 0));
 
   const canGeneratePdf =
     signalStatus === 'ready' &&
+    !!readiness.signalReadyForPdf &&
     !hasPendingConnectedSources &&
     pdfStatus !== 'ready' &&
     pdfStatus !== 'processing';
@@ -2027,6 +2477,7 @@ function buildCanonicalRuntimeFromRoot(root, fallback = {}) {
       connected: connectedSources,
       usable: usableSources,
       pending: pendingConnectedSources,
+      degraded: degradedConnectedSources,
       failed: failedSources,
             changedSinceLastSignal:
         hasPendingConnectedSources ||
@@ -2039,20 +2490,23 @@ function buildCanonicalRuntimeFromRoot(root, fallback = {}) {
 
     signal: {
       status: signalStatus,
-      stage: safeStr(ai?.stage || fallback?.stage || 'idle').trim() || 'idle',
-      progress: toNum(ai?.progress, fallback?.progress || 0),
-      buildAttemptId: ai?.buildAttemptId || null,
-      signalRunId: ai?.signalRunId || null,
+      stage: rawSignal.stage || 'idle',
+      progress: toNum(rawSignal.progress, fallback?.progress || 0),
+      buildAttemptId: rawSignal.generationId || ai?.buildAttemptId || null,
+      signalRunId: rawSignal.signalRunId || null,
       sourceFingerprint: signalSourceFingerprint,
       connectionFingerprint: signalConnectionFingerprint,
-      startedAt: ai?.startedAt || null,
-      finishedAt: ai?.finishedAt || null,
-      error: ai?.error || null,
+      startedAt: rawSignal.startedAt || null,
+      finishedAt: rawSignal.finishedAt || null,
+      error: rawSignal.error || null,
       payload: signalPayload,
       encodedPayload,
       complete: signalStatus === 'ready' && !!readiness.signalComplete,
       validForPdf: signalStatus === 'ready' && !!readiness.signalValidForPdf,
-      buildableForPdf: signalStatus === 'ready' && !!readiness.signalReadyForPdf,
+      buildableForPdf:
+        signalStatus === 'ready' &&
+        !!readiness.signalComplete &&
+        !!readiness.signalReadyForPdf,
     },
 
     pdf: {
@@ -2066,6 +2520,7 @@ function buildCanonicalRuntimeFromRoot(root, fallback = {}) {
       connectionFingerprint: rawPdf?.connectionFingerprint || null,
       dependsOnSignalAttemptId: ai?.buildAttemptId || null,
       startedAt: rawPdf?.processingStartedAt || null,
+      processingHeartbeatAt: rawPdf?.processingHeartbeatAt || rawPdf?.processingStartedAt || null,
       finishedAt: rawPdf?.generatedAt || null,
       error: pdfStatus === 'failed' ? (rawPdf?.error || null) : null,
       fileName: pdfStatus === 'ready' ? rawPdf?.fileName || null : null,
@@ -2161,6 +2616,7 @@ function buildResultFromRoot(root, fallback = {}) {
       connectedSources: runtime?.effectiveSources?.connected || [],
       usableSources: runtime?.effectiveSources?.usable || [],
       pendingConnectedSources: runtime?.effectiveSources?.pending || [],
+      degradedConnectedSources: runtime?.effectiveSources?.degraded || [],
       failedSources: runtime?.effectiveSources?.failed || [],
 
       sourceFingerprint: runtime?.signal?.sourceFingerprint || null,
@@ -2206,7 +2662,7 @@ function buildResultFromRoot(root, fallback = {}) {
         sourceFingerprint: runtime?.pdf?.sourceFingerprint || null,
         connectionFingerprint: runtime?.pdf?.connectionFingerprint || null,
         processingStartedAt: runtime?.pdf?.startedAt || null,
-        processingHeartbeatAt: runtime?.pdf?.startedAt || null,
+        processingHeartbeatAt: runtime?.pdf?.processingHeartbeatAt || runtime?.pdf?.startedAt || null,
         stale: runtime?.pdf?.status === 'stale',
         staleReason: runtime?.pdf?.staleReason || null,
         error: runtime?.pdf?.error || null,
@@ -2230,56 +2686,69 @@ async function markContextStale(userId, reason = 'source_updated', extra = {}) {
     storageRangeDays: prevAi?.storageRangeDays || root?.aiContext?.unifiedBase?.contextWindow?.storageRangeDays || null,
     unifiedBase: prevAi?.unifiedBase || null,
   });
+  const nextSignal = mergeSignalState(prevAi, {
+    generationId: null,
+    status: 'idle',
+    stage: 'idle',
+    progress: 0,
+    sourceFingerprint: null,
+    sourcesSnapshot: null,
+    invalidatedAt: new Date(),
+    staleReason: safeStr(reason) || 'source_updated',
+    error: null,
+    payload: null,
+    encodedPayload: null,
+    unifiedBase: null,
+  });
+  const nextPdf = emptyPdfState({
+    generationId: null,
+    signalGenerationId: null,
+    connectionFingerprint: nextConnectionFingerprint,
+    sourceFingerprint: effectiveSourceContext.fingerprint,
+    invalidatedAt: new Date(),
+    stale: true,
+    staleReason: safeStr(reason) || 'source_updated',
+  });
+
+  const nextAi = harmonizeAiContextForPersistence({
+    ...prevAi,
+    status: 'idle',
+    stage: 'awaiting_rebuild',
+    progress: 0,
+    buildAttemptId: null,
+    signalRunId: null,
+    staleReason: safeStr(reason) || 'source_updated',
+    staleAt: nowIso(),
+    error: null,
+
+    unifiedBase: null,
+    encodedPayload: null,
+    signalPayload: null,
+    signal: nextSignal,
+    sourceFingerprint: null,
+    sourceSnapshots: null,
+
+    connectionFingerprint: nextConnectionFingerprint,
+
+    currentSourcesSnapshot: effectiveSourceContext.snapshot,
+    currentSourceFingerprint: effectiveSourceContext.fingerprint,
+
+    needsSignalRebuild: true,
+    needsPdfRebuild: true,
+
+    signalComplete: false,
+    signalValidForPdf: false,
+    signalReadyForPdf: false,
+
+    pdf: nextPdf,
+
+    ...extra,
+  });
 
   return McpData.findByIdAndUpdate(
     root._id,
     {
-      $set: {
-        aiContext: {
-          ...prevAi,
-          status: 'idle',
-          stage: 'awaiting_rebuild',
-          progress: 0,
-          buildAttemptId: null,
-          signalRunId: null,
-          staleReason: safeStr(reason) || 'source_updated',
-          staleAt: nowIso(),
-          error: null,
-
-          unifiedBase: null,
-          encodedPayload: null,
-          signalPayload: null,
-          signal: {
-            ...(prevAi?.signal || {}),
-            payload: null,
-            encodedPayload: null,
-            unifiedBase: null,
-          },
-          sourceFingerprint: null,
-          sourceSnapshots: null,
-
-          connectionFingerprint: nextConnectionFingerprint,
-
-          currentSourcesSnapshot: effectiveSourceContext.snapshot,
-          currentSourceFingerprint: effectiveSourceContext.fingerprint,
-
-          needsSignalRebuild: true,
-          needsPdfRebuild: true,
-
-          signalComplete: false,
-          signalValidForPdf: false,
-          signalReadyForPdf: false,
-
-          pdf: emptyPdfState({
-            connectionFingerprint: nextConnectionFingerprint,
-            sourceFingerprint: effectiveSourceContext.fingerprint,
-            stale: true,
-            staleReason: safeStr(reason) || 'source_updated',
-          }),
-
-          ...extra,
-        },
-      },
+      $set: { aiContext: nextAi },
     },
     { new: true }
   ).lean();
@@ -2305,8 +2774,29 @@ async function buildUnifiedContextForUser(userId, options = {}) {
   }
 
   const initialConnectionFingerprint = buildConnectionFingerprint(initialRoot);
+  logMcpContext('info', 'mcpContext.builder', 'build.start', {
+    userId: String(userId),
+    explicitSnapshotId: safeStr(explicitSnapshotId) || null,
+    requestedContextRangeDays: requestedContextRangeDays || null,
+    timeoutMs,
+    markProcessing: !!markProcessing,
+    forceRebuild: !!forceRebuild,
+    reason: safeStr(reason) || null,
+    requestedBy: safeStr(requestedBy) || 'system',
+    trigger: safeStr(trigger) || 'system',
+    latestSnapshotId: safeStr(initialRoot?.latestSnapshotId) || null,
+    currentBuildAttemptId: safeStr(initialRoot?.aiContext?.buildAttemptId) || null,
+    currentSourceFingerprint: safeStr(initialRoot?.aiContext?.currentSourceFingerprint) || null,
+    connectionFingerprint: initialConnectionFingerprint,
+  });
 
   if (!forceRebuild && isRecentProcessingState(initialRoot?.aiContext)) {
+    logMcpContext('info', 'mcpContext.builder', 'build.reuse_recent_processing', {
+      userId: String(userId),
+      buildAttemptId: safeStr(initialRoot?.aiContext?.buildAttemptId) || null,
+      stage: safeStr(initialRoot?.aiContext?.stage) || null,
+      progress: toNum(initialRoot?.aiContext?.progress, 0),
+    });
     return buildResultFromRoot(initialRoot, {
       status: initialRoot?.aiContext?.status || 'processing',
       progress: toNum(initialRoot?.aiContext?.progress, 10),
@@ -2333,6 +2823,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     storageRangeDays,
     unifiedBase: initialRoot?.aiContext?.unifiedBase || null,
   });
+  const initialSourceCollections = buildAiSourceCollections();
 
   if (markProcessing) {
         await updateRootAiContext(userId, (currentAi) => ({
@@ -2353,12 +2844,28 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       unifiedBase: null,
       encodedPayload: null,
       signalPayload: null,
-      signal: {
-        ...(currentAi?.signal || {}),
+      signal: mergeSignalState(currentAi, {
+        generationId: attemptId,
+        status: 'processing',
+        stage: 'waiting_for_sources',
+        progress: 10,
+        sourceFingerprint: initialEffectiveSourceContext.fingerprint,
+        sourcesSnapshot: initialEffectiveSourceContext.snapshot,
+        startedAt,
+        finishedAt: null,
+        generatedAt: null,
+        invalidatedAt: null,
+        staleReason: 'rebuild_in_progress',
+        error: null,
+        model: null,
+        usedOpenAI: false,
+        contextRangeDays,
+        storageRangeDays,
+        snapshotId: preferredSnapshotId,
         payload: null,
         encodedPayload: null,
         unifiedBase: null,
-      },
+      }),
       sourceFingerprint: null,
       usedOpenAI: false,
       model: null,
@@ -2377,15 +2884,16 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       invalidatedByAttemptId: attemptId,
 
       connectionFingerprint: initialConnectionFingerprint,
-      usableSources: [],
-      pendingConnectedSources: [],
-      sourcesStatus: null,
+      ...initialSourceCollections,
       pdf: emptyPdfState({
+        generationId: makePdfGenerationId(attemptId),
+        signalGenerationId: attemptId,
         status: 'idle',
         stage: 'waiting_for_sources',
         progress: 0,
         connectionFingerprint: initialConnectionFingerprint,
         sourceFingerprint: initialEffectiveSourceContext.fingerprint,
+        invalidatedAt: new Date(),
         stale: true,
         staleReason: 'rebuild_in_progress',
       }),
@@ -2419,6 +2927,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       sourceSnapshots: null,
       usableSources: [],
       pendingConnectedSources: [],
+      degradedConnectedSources: [],
     }),
     pdf: {
       status: 'idle',
@@ -2436,6 +2945,24 @@ async function buildUnifiedContextForUser(userId, options = {}) {
 
   const readyState = await waitForBuildableSources(userId, initialRoot, explicitSnapshotId, timeoutMs);
   const effectiveRoot = readyState?.root || await findRoot(userId);
+  logMcpContext('info', 'mcpContext.builder', 'build.sources_evaluated', {
+    userId: String(userId),
+    buildAttemptId: attemptId,
+    snapshotId: safeStr(readyState?.preferredGlobalSnapshotId) || preferredSnapshotId || null,
+    timedOut: !!readyState?.timedOut,
+    usableSources: readyState?.usableSources || [],
+    pendingConnectedSources: readyState?.pendingConnectedSources || [],
+    sourcesStatus: summarizeSourcesStatus(
+      Object.fromEntries(
+        Object.entries(readyState?.sourceStates || {}).map(([sourceName, state]) => [
+          sourceName,
+          sourceStateSummaryForStatus(state, {
+            hasAnyUsableSources: (readyState?.usableSources || []).length > 0,
+          }),
+        ])
+      )
+    ),
+  });
 
   if (safeStr(effectiveRoot?.aiContext?.buildAttemptId).trim() !== attemptId) {
     await safeSignalRunFail(userId, attemptId, {
@@ -2494,17 +3021,24 @@ async function buildUnifiedContextForUser(userId, options = {}) {
 
   const usableSources = readyState?.usableSources || [];
   const pendingConnectedSources = readyState?.pendingConnectedSources || [];
+  const degradedConnectedSources = readyState?.degradedConnectedSources || [];
 
   const hasAnyBuildable =
     metaChunks.length > 0 ||
     googleChunks.length > 0 ||
     ga4Chunks.length > 0;
 
-    const sourcesStatus = {
-    metaAds: sourceStateSummaryForStatus(hydratedMetaState),
-    googleAds: sourceStateSummaryForStatus(hydratedGoogleState),
-    ga4: sourceStateSummaryForStatus(hydratedGa4State),
+  const sourcesStatus = {
+    metaAds: sourceStateSummaryForStatus(hydratedMetaState, { hasAnyUsableSources: usableSources.length > 0 }),
+    googleAds: sourceStateSummaryForStatus(hydratedGoogleState, { hasAnyUsableSources: usableSources.length > 0 }),
+    ga4: sourceStateSummaryForStatus(hydratedGa4State, { hasAnyUsableSources: usableSources.length > 0 }),
   };
+  const aiSourceCollections = buildAiSourceCollections({
+    sourcesStatus,
+    usableSources,
+    pendingConnectedSources,
+    degradedConnectedSources,
+  });
 
   const effectiveSourceContext = buildEffectiveSourceContext({
     root: effectiveRootForChunks,
@@ -2522,6 +3056,20 @@ async function buildUnifiedContextForUser(userId, options = {}) {
   const effectiveConnectionFingerprint = buildConnectionFingerprint(effectiveRootForChunks);
 
   if (!hasAnyBuildable && pendingConnectedSources.length > 0) {
+    logMcpContext('warn', 'mcpContext.builder', 'build.blocked_by_pending_connected_sources', {
+      userId: String(userId),
+      buildAttemptId: attemptId,
+      snapshotId:
+        sourceSnapshots.metaAds ||
+        sourceSnapshots.googleAds ||
+        sourceSnapshots.ga4 ||
+        preferredSnapshotId ||
+        null,
+      usableSources,
+      pendingConnectedSources,
+      sourcesStatus: summarizeSourcesStatus(sourcesStatus),
+      timedOut: !!readyState?.timedOut,
+    });
     const waitResult = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
       ...(currentAi || {}),
       status: 'processing',
@@ -2544,25 +3092,42 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       currentSourceFingerprint: effectiveSourceContext.fingerprint,
       needsSignalRebuild: true,
       needsPdfRebuild: true,
-      sourcesStatus,
-      usableSources,
-      pendingConnectedSources,
+      ...aiSourceCollections,
       error: null,
       unifiedBase: null,
       encodedPayload: null,
       signalPayload: null,
-      signal: {
-        ...(currentAi?.signal || {}),
+      signal: mergeSignalState(currentAi, {
+        generationId: attemptId,
+        status: 'processing',
+        stage: 'waiting_for_connected_sources',
+        progress: 20,
+        sourceFingerprint: effectiveSourceContext.fingerprint,
+        sourcesSnapshot: effectiveSourceContext.snapshot,
+        snapshotId:
+          sourceSnapshots.metaAds ||
+          sourceSnapshots.googleAds ||
+          sourceSnapshots.ga4 ||
+          preferredSnapshotId ||
+          null,
+        contextRangeDays,
+        storageRangeDays,
         payload: null,
         encodedPayload: null,
         unifiedBase: null,
-      },
+        invalidatedAt: null,
+        staleReason: 'waiting_for_connected_sources',
+        error: null,
+      }),
         pdf: emptyPdfState({
+        generationId: makePdfGenerationId(attemptId),
+        signalGenerationId: attemptId,
         status: 'idle',
         stage: 'idle',
         progress: 0,
         connectionFingerprint: effectiveConnectionFingerprint,
         sourceFingerprint: effectiveSourceContext.fingerprint,
+        invalidatedAt: new Date(),
         stale: true,
         staleReason: 'waiting_for_connected_sources',
       }),
@@ -2589,6 +3154,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
           sourceSnapshots,
           usableSources,
           pendingConnectedSources,
+          degradedConnectedSources,
         }),
         meta: {
           timedOut: !!readyState?.timedOut,
@@ -2613,6 +3179,20 @@ async function buildUnifiedContextForUser(userId, options = {}) {
   }
 
   if (!hasAnyBuildable) {
+    logMcpContext('warn', 'mcpContext.builder', 'build.no_usable_sources', {
+      userId: String(userId),
+      buildAttemptId: attemptId,
+      snapshotId:
+        sourceSnapshots.metaAds ||
+        sourceSnapshots.googleAds ||
+        sourceSnapshots.ga4 ||
+        preferredSnapshotId ||
+        null,
+      usableSources,
+      pendingConnectedSources,
+      sourcesStatus: summarizeSourcesStatus(sourcesStatus),
+      timedOut: !!readyState?.timedOut,
+    });
     await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
       ...(currentAi || {}),
       status: 'error',
@@ -2634,26 +3214,43 @@ async function buildUnifiedContextForUser(userId, options = {}) {
       currentSourceFingerprint: effectiveSourceContext.fingerprint,
       needsSignalRebuild: true,
       needsPdfRebuild: true,
-      sourcesStatus,
-      usableSources,
-      pendingConnectedSources,
+      ...aiSourceCollections,
       error: 'MCP_CONTEXT_NO_USABLE_SOURCES',
       unifiedBase: null,
       encodedPayload: null,
       signalPayload: null,
-      signal: {
-        ...(currentAi?.signal || {}),
+      signal: mergeSignalState(currentAi, {
+        generationId: attemptId,
+        status: 'failed',
+        stage: 'failed',
+        progress: 100,
+        sourceFingerprint: effectiveSourceContext.fingerprint,
+        sourcesSnapshot: effectiveSourceContext.snapshot,
+        snapshotId:
+          sourceSnapshots.metaAds ||
+          sourceSnapshots.googleAds ||
+          sourceSnapshots.ga4 ||
+          preferredSnapshotId ||
+          null,
+        contextRangeDays,
+        storageRangeDays,
         payload: null,
         encodedPayload: null,
         unifiedBase: null,
-      },
+        invalidatedAt: null,
+        staleReason: 'no_usable_sources',
+        error: 'MCP_CONTEXT_NO_USABLE_SOURCES',
+      }),
       sourceFingerprint: null,
         pdf: emptyPdfState({
+        generationId: makePdfGenerationId(attemptId),
+        signalGenerationId: attemptId,
         status: 'idle',
         stage: 'idle',
         progress: 0,
         connectionFingerprint: effectiveConnectionFingerprint,
         sourceFingerprint: effectiveSourceContext.fingerprint,
+        invalidatedAt: new Date(),
         stale: true,
         staleReason: 'no_usable_sources',
       }),
@@ -2678,6 +3275,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
         sourceSnapshots,
         usableSources,
         pendingConnectedSources,
+        degradedConnectedSources,
       }),
       meta: {
         timedOut: !!readyState?.timedOut,
@@ -2698,6 +3296,20 @@ async function buildUnifiedContextForUser(userId, options = {}) {
   }
 
   if (pendingConnectedSources.length > 0) {
+  logMcpContext('warn', 'mcpContext.builder', 'build.partial_wait_for_pending_sources', {
+    userId: String(userId),
+    buildAttemptId: attemptId,
+    snapshotId:
+      sourceSnapshots.metaAds ||
+      sourceSnapshots.googleAds ||
+      sourceSnapshots.ga4 ||
+      preferredSnapshotId ||
+      null,
+    usableSources,
+    pendingConnectedSources,
+    sourcesStatus: summarizeSourcesStatus(sourcesStatus),
+    timedOut: !!readyState?.timedOut,
+  });
   const partialWait = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
     ...(currentAi || {}),
     status: 'processing',
@@ -2720,9 +3332,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     currentSourceFingerprint: effectiveSourceContext.fingerprint,
     needsSignalRebuild: true,
     needsPdfRebuild: true,
-    sourcesStatus,
-    usableSources,
-    pendingConnectedSources,
+    ...aiSourceCollections,
     error: null,
     signalComplete: false,
     signalValidForPdf: false,
@@ -2730,19 +3340,40 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     unifiedBase: null,
     encodedPayload: null,
     signalPayload: null,
-    signal: {
-      ...(currentAi?.signal || {}),
+    signal: mergeSignalState(currentAi, {
+      generationId: attemptId,
+      status: 'processing',
+      stage: 'waiting_for_connected_sources',
+      progress: usableSources.length > 0 ? 55 : 30,
+      sourceFingerprint: effectiveSourceContext.fingerprint,
+      sourcesSnapshot: effectiveSourceContext.snapshot,
+      snapshotId:
+        sourceSnapshots.metaAds ||
+        sourceSnapshots.googleAds ||
+        sourceSnapshots.ga4 ||
+        preferredSnapshotId ||
+        null,
+      contextRangeDays,
+      storageRangeDays,
       payload: null,
       encodedPayload: null,
       unifiedBase: null,
-    },
+      invalidatedAt: null,
+      staleReason: usableSources.length > 0
+        ? 'waiting_for_additional_connected_sources'
+        : 'waiting_for_connected_sources',
+      error: null,
+    }),
     sourceFingerprint: null,
     pdf: emptyPdfState({
+      generationId: makePdfGenerationId(attemptId),
+      signalGenerationId: attemptId,
       status: 'idle',
       stage: 'idle',
       progress: 0,
       connectionFingerprint: effectiveConnectionFingerprint,
       sourceFingerprint: effectiveSourceContext.fingerprint,
+      invalidatedAt: new Date(),
       stale: true,
       staleReason: usableSources.length > 0
         ? 'waiting_for_additional_connected_sources'
@@ -2772,6 +3403,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
         sourceSnapshots,
         usableSources,
         pendingConnectedSources,
+        degradedConnectedSources,
       }),
       meta: {
         timedOut: !!readyState?.timedOut,
@@ -2820,25 +3452,42 @@ async function buildUnifiedContextForUser(userId, options = {}) {
     currentSourceFingerprint: effectiveSourceContext.fingerprint,
     needsSignalRebuild: true,
     needsPdfRebuild: true,
-    sourcesStatus,
-    usableSources,
-    pendingConnectedSources,
+    ...aiSourceCollections,
     error: null,
     encodedPayload: null,
     signalPayload: null,
-    signal: {
-      ...(currentAi?.signal || {}),
+    signal: mergeSignalState(currentAi, {
+      generationId: attemptId,
+      status: 'processing',
+      stage: 'compacting_sources',
+      progress: 35,
+      sourceFingerprint: effectiveSourceContext.fingerprint,
+      sourcesSnapshot: effectiveSourceContext.snapshot,
+      snapshotId:
+        sourceSnapshots.metaAds ||
+        sourceSnapshots.googleAds ||
+        sourceSnapshots.ga4 ||
+        preferredSnapshotId ||
+        null,
+      contextRangeDays,
+      storageRangeDays,
       payload: null,
       encodedPayload: null,
       unifiedBase: null,
-    },
+      invalidatedAt: null,
+      staleReason: 'compacting_sources',
+      error: null,
+    }),
     sourceFingerprint: null,
     pdf: emptyPdfState({
+      generationId: makePdfGenerationId(attemptId),
+      signalGenerationId: attemptId,
       status: 'idle',
       stage: 'idle',
       progress: 0,
       connectionFingerprint: effectiveConnectionFingerprint,
       sourceFingerprint: effectiveSourceContext.fingerprint,
+      invalidatedAt: new Date(),
       stale: true,
       staleReason: 'compacting_sources',
     }),
@@ -2865,6 +3514,7 @@ async function buildUnifiedContextForUser(userId, options = {}) {
         sourceSnapshots,
         usableSources,
         pendingConnectedSources,
+        degradedConnectedSources,
       }),
       meta: {
         timedOut: !!readyState?.timedOut,
@@ -2933,6 +3583,15 @@ const finalEffectiveSourceContext = buildEffectiveSourceContext({
 const finalSourcesSnapshot = finalEffectiveSourceContext.snapshot;
 const finalSourceFingerprint = finalEffectiveSourceContext.fingerprint;
 const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase);
+  logMcpContext('info', 'mcpContext.builder', 'build.unified_base_ready', {
+    userId: String(userId),
+    buildAttemptId: attemptId,
+    snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+    usableSources,
+    sourceSnapshots,
+    sourceFingerprint: finalSourceFingerprint,
+    connectionFingerprint: finalConnectionFingerprint,
+  });
 
     const encodingResult = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
     ...(currentAi || {}),
@@ -2956,18 +3615,39 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
     needsSignalRebuild: false,
     needsPdfRebuild: true,
 
-    sourcesStatus,
-    usableSources,
-    pendingConnectedSources,
+    ...aiSourceCollections,
     error: null,
+    signalComplete: false,
+    signalValidForPdf: false,
+    signalReadyForPdf: false,
     pdf: emptyPdfState({
+      generationId: makePdfGenerationId(attemptId),
+      signalGenerationId: attemptId,
       status: 'idle',
       stage: 'idle',
       progress: 0,
       sourceFingerprint: finalSourceFingerprint,
       connectionFingerprint: finalConnectionFingerprint,
+      invalidatedAt: new Date(),
       stale: true,
       staleReason: 'encoding_signal',
+    }),
+    signal: mergeSignalState(currentAi, {
+      generationId: attemptId,
+      status: 'processing',
+      stage: 'encoding_signal',
+      progress: 65,
+      sourceFingerprint: finalSourceFingerprint,
+      sourcesSnapshot: finalSourcesSnapshot,
+      snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+      contextRangeDays,
+      storageRangeDays: finalStorageRangeDays,
+      unifiedBase,
+      payload: null,
+      encodedPayload: null,
+      invalidatedAt: null,
+      staleReason: 'encoding_signal',
+      error: null,
     }),
   }));
 
@@ -2989,6 +3669,7 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
         sourceSnapshots,
         usableSources,
         pendingConnectedSources,
+        degradedConnectedSources,
       }),
       meta: {
         timedOut: !!readyState?.timedOut,
@@ -3009,6 +3690,17 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
   const encodedSignalBuildable = isEncodedSignalPayloadBuildableForPdf(encodedSignalPayload);
 
   if (!encodedSignalBuildable) {
+      logMcpContext('warn', 'mcpContext.builder', 'build.invalid_signal_payload', {
+      userId: String(userId),
+      buildAttemptId: attemptId,
+      snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+      sourceFingerprint: finalSourceFingerprint,
+      connectionFingerprint: finalConnectionFingerprint,
+      usedOpenAI: !!encoded.usedOpenAI,
+      model: encoded.model || null,
+      usableSources,
+      pendingConnectedSources,
+    });
       const waitingValidResult = await updateRootAiContextForAttempt(userId, attemptId, (currentAi) => ({
       ...(currentAi || {}),
       status: 'processing',
@@ -3043,9 +3735,7 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
 
       usedOpenAI: !!encoded.usedOpenAI,
       model: encoded.model || null,
-      sourcesStatus,
-      usableSources,
-      pendingConnectedSources,
+      ...aiSourceCollections,
       error: null,
 
       signalComplete: false,
@@ -3053,13 +3743,35 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
       signalReadyForPdf: false,
 
       pdf: emptyPdfState({
+        generationId: makePdfGenerationId(attemptId),
+        signalGenerationId: attemptId,
         status: 'idle',
         stage: 'idle',
         progress: 0,
         sourceFingerprint: finalSourceFingerprint,
         connectionFingerprint: finalConnectionFingerprint,
+        invalidatedAt: new Date(),
         stale: true,
         staleReason: 'waiting_for_valid_signal',
+      }),
+      signal: mergeSignalState(currentAi, {
+        generationId: attemptId,
+        status: 'processing',
+        stage: 'waiting_for_valid_signal',
+        progress: 72,
+        sourceFingerprint: finalSourceFingerprint,
+        sourcesSnapshot: finalSourcesSnapshot,
+        snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+        contextRangeDays,
+        storageRangeDays: finalStorageRangeDays,
+        unifiedBase,
+        payload: null,
+        encodedPayload: encodedSignalPayload,
+        invalidatedAt: null,
+        staleReason: 'waiting_for_valid_signal',
+        error: null,
+        usedOpenAI: !!encoded.usedOpenAI,
+        model: encoded.model || null,
       }),
     }));
 
@@ -3081,6 +3793,7 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
           sourceSnapshots,
           usableSources,
           pendingConnectedSources,
+          degradedConnectedSources,
         }),
         meta: {
           timedOut: !!readyState?.timedOut,
@@ -3126,12 +3839,6 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
   unifiedBase,
   encodedPayload: encodedSignalPayload,
   signalPayload,
-  signal: {
-    ...(currentAi?.signal || {}),
-    payload: signalPayload,
-    encodedPayload: encodedSignalPayload,
-    unifiedBase,
-  },
 
   sourceFingerprint: finalSourceFingerprint,
   currentSourcesSnapshot: finalSourcesSnapshot,
@@ -3140,9 +3847,7 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
 
   usedOpenAI: !!encoded.usedOpenAI,
   model: encoded.model || null,
-  sourcesStatus,
-  usableSources,
-  pendingConnectedSources,
+  ...aiSourceCollections,
 
   signalComplete: true,
   signalValidForPdf: true,
@@ -3156,12 +3861,37 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
   lastInvalidatedAt: null,
   invalidatedByAttemptId: null,
 
+  signal: mergeSignalState(currentAi, {
+    generationId: attemptId,
+    status: 'ready',
+    stage: 'completed',
+    progress: 100,
+    sourceFingerprint: finalSourceFingerprint,
+    sourcesSnapshot: finalSourcesSnapshot,
+    startedAt: currentAi?.startedAt || startedAt,
+    finishedAt: finishedAtIso,
+    generatedAt: finishedAtIso,
+    invalidatedAt: null,
+    staleReason: null,
+    error: null,
+    model: encoded.model || null,
+    usedOpenAI: !!encoded.usedOpenAI,
+    contextRangeDays,
+    storageRangeDays: finalStorageRangeDays,
+    snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+    payload: signalPayload,
+    encodedPayload: encodedSignalPayload,
+    unifiedBase,
+  }),
   pdf: emptyPdfState({
+    generationId: makePdfGenerationId(attemptId),
+    signalGenerationId: attemptId,
     status: 'idle',
     stage: 'idle',
     progress: 0,
     sourceFingerprint: finalSourceFingerprint,
     connectionFingerprint: finalConnectionFingerprint,
+    invalidatedAt: new Date(),
     stale: true,
     staleReason: 'pdf_pending_for_current_signal',
   }),
@@ -3186,6 +3916,7 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
     sourceSnapshots,
     usableSources,
     pendingConnectedSources,
+    degradedConnectedSources,
   }),
   meta: {
     timedOut: !!readyState?.timedOut,
@@ -3197,6 +3928,18 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
   }
 
   const freshRoot = finalUpdate?.root || await findRoot(userId);
+logMcpContext('info', 'mcpContext.builder', 'build.completed', {
+  userId: String(userId),
+  buildAttemptId: attemptId,
+  snapshotId: unifiedBase?.snapshotId || preferredSnapshotId || null,
+  sourceFingerprint: finalSourceFingerprint,
+  connectionFingerprint: finalConnectionFingerprint,
+  usedOpenAI: !!encoded.usedOpenAI,
+  model: encoded.model || null,
+  usableSources,
+  pendingConnectedSources,
+  sourcesStatus: summarizeSourcesStatus(sourcesStatus),
+});
 return buildResultFromRoot(freshRoot, {
   status: 'done',
   progress: 100,
@@ -3231,6 +3974,15 @@ async function buildPdfForUser(userId) {
   let signalFingerprint = deriveSignalFingerprintFromAi(ai);
   let currentSourceFingerprint =
     safeStr(ai?.currentSourceFingerprint || '').trim() || signalFingerprint || '';
+  logMcpContext('info', 'mcpContext.builder', 'pdf.start', {
+    userId: String(userId),
+    buildAttemptId,
+    signalFingerprint: signalFingerprint || null,
+    currentSourceFingerprint: currentSourceFingerprint || null,
+    currentConnectionFingerprint,
+    signalConnectionFingerprint: signalConnectionFingerprint || null,
+    pdfStatus: safeStr(pdfState?.status) || null,
+  });
 
   const signalLooksStaleByFingerprint =
     !!currentSourceFingerprint &&
@@ -3243,6 +3995,14 @@ async function buildPdfForUser(userId) {
     : [];
 
   if (runtimePendingConnectedSources.length > 0) {
+    logMcpContext('warn', 'mcpContext.builder', 'pdf.blocked_by_pending_connected_sources', {
+      userId: String(userId),
+      buildAttemptId,
+      pendingConnectedSources: runtimePendingConnectedSources,
+      currentSourceFingerprint: currentSourceFingerprint || null,
+      signalFingerprint: signalFingerprint || null,
+      currentConnectionFingerprint,
+    });
     const rebuildResult = await buildUnifiedContextForUser(userId, {
       forceRebuild: true,
       reason: 'pending_connected_sources_before_pdf',
@@ -3266,6 +4026,16 @@ async function buildPdfForUser(userId) {
     !!signalLooksStaleByFingerprint || !!signalLooksStaleByConnection;
 
   if (signalLooksStale) {
+    logMcpContext('warn', 'mcpContext.builder', 'pdf.signal_stale_detected', {
+      userId: String(userId),
+      buildAttemptId,
+      signalLooksStaleByFingerprint,
+      signalLooksStaleByConnection,
+      currentSourceFingerprint: currentSourceFingerprint || null,
+      signalFingerprint: signalFingerprint || null,
+      currentConnectionFingerprint,
+      signalConnectionFingerprint: signalConnectionFingerprint || null,
+    });
     await markContextStale(userId, 'source_state_changed', {
       rebuildRequestedAt: nowIso(),
       rebuildRequestedBy: 'pdf_guard',
@@ -3304,11 +4074,24 @@ async function buildPdfForUser(userId) {
   signalPayload = readiness.signalPayload || signalPayload;
 
   if (!readiness.signalReadyForPdf) {
+    logMcpContext('warn', 'mcpContext.builder', 'pdf.signal_not_ready', {
+      userId: String(userId),
+      buildAttemptId,
+      signalReadyForPdf: !!readiness.signalReadyForPdf,
+      signalValidForPdf: !!readiness.signalValidForPdf,
+      payloadBuildable: !!readiness.payloadBuildable,
+      encodedPayloadBuildable: !!readiness.encodedPayloadBuildable,
+      signalComplete: !!readiness.signalComplete,
+      currentSourceFingerprint: currentSourceFingerprint || null,
+      signalFingerprint: signalFingerprint || null,
+    });
         await updateRootAiContext(userId, (currentAi) => ({
       ...(currentAi || {}),
       needsPdfRebuild: true,
       pdf: {
-        ...(currentAi?.pdf || emptyPdfState()),
+        ...mergePdfState(currentAi),
+        generationId: makePdfGenerationId(buildAttemptId),
+        signalGenerationId: buildAttemptId || null,
         status: 'failed',
         stage: 'failed',
         progress: 100,
@@ -3364,13 +4147,23 @@ async function buildPdfForUser(userId) {
     pdfFileExists(pdfState);
 
   if (pdfIsAligned) {
+    logMcpContext('info', 'mcpContext.builder', 'pdf.already_ready', {
+      userId: String(userId),
+      buildAttemptId,
+      currentSourceFingerprint: currentSourceFingerprint || null,
+      signalFingerprint: signalFingerprint || null,
+      pdfFingerprint: pdfFingerprint || null,
+      currentConnectionFingerprint,
+      pdfConnectionFingerprint: safeStr(pdfState?.connectionFingerprint) || null,
+    });
          await updateRootAiContext(userId, (currentAi) => ({
       ...(currentAi || {}),
       needsSignalRebuild: false,
       needsPdfRebuild: false,
       pdf: {
-        ...(currentAi?.pdf || emptyPdfState()),
-        ...(pdfState || {}),
+        ...mergePdfState(currentAi, pdfState || {}),
+        generationId: makePdfGenerationId(buildAttemptId),
+        signalGenerationId: buildAttemptId || null,
         status: 'ready',
         stage: 'ready',
         progress: 100,
@@ -3410,11 +4203,13 @@ async function buildPdfForUser(userId) {
     await updateRootAiContext(userId, (currentAi) => ({
       ...(currentAi || {}),
       needsPdfRebuild: true,
-      pdf: {
-        ...(currentAi?.pdf || emptyPdfState()),
-        status: 'failed',
-        stage: 'failed',
-        progress: 100,
+        pdf: {
+          ...mergePdfState(currentAi),
+          generationId: makePdfGenerationId(buildAttemptId),
+          signalGenerationId: buildAttemptId || null,
+          status: 'failed',
+          stage: 'failed',
+          progress: 100,
         stale: true,
         staleReason: 'PDF_FILE_NOT_FOUND',
         error: 'MCP_SIGNAL_PDF_FILE_NOT_FOUND',
@@ -3464,6 +4259,14 @@ async function buildPdfForUser(userId) {
     }
 
     if (isRecentPdfProcessingState(pdfState)) {
+      logMcpContext('info', 'mcpContext.builder', 'pdf.processing_recent', {
+        userId: String(userId),
+        buildAttemptId,
+        currentSourceFingerprint: currentSourceFingerprint || null,
+        signalFingerprint: signalFingerprint || null,
+        pdfStage: pdfState?.stage || null,
+        pdfProgress: toNum(pdfState?.progress, 0),
+      });
       if (buildAttemptId) {
         await safeSignalPdfState(userId, buildAttemptId, {
           status: 'processing',
@@ -3507,6 +4310,13 @@ async function buildPdfForUser(userId) {
     root = await findRoot(userId);
     ai = root?.aiContext || {};
     pdfState = ai?.pdf || {};
+    logMcpContext('warn', 'mcpContext.builder', 'pdf.processing_stale', {
+      userId: String(userId),
+      buildAttemptId,
+      currentSourceFingerprint: currentSourceFingerprint || null,
+      signalFingerprint: signalFingerprint || null,
+      currentConnectionFingerprint,
+    });
   }
 
     await updateRootAiContext(userId, (currentAi) => ({
@@ -3518,7 +4328,9 @@ async function buildPdfForUser(userId) {
     needsSignalRebuild: false,
     needsPdfRebuild: true,
     pdf: {
-      ...(currentAi?.pdf || emptyPdfState()),
+      ...mergePdfState(currentAi),
+      generationId: makePdfGenerationId(buildAttemptId),
+      signalGenerationId: buildAttemptId || null,
       status: 'processing',
       stage: 'building_document',
       progress: 15,
@@ -3543,13 +4355,22 @@ async function buildPdfForUser(userId) {
 
   try {
     const rootBeforePdf = await findRoot(userId);
+    logMcpContext('info', 'mcpContext.builder', 'pdf.rendering_started', {
+      userId: String(userId),
+      buildAttemptId,
+      currentSourceFingerprint: currentSourceFingerprint || null,
+      signalFingerprint: signalFingerprint || null,
+      currentConnectionFingerprint,
+    });
 
       await updateRootAiContext(userId, (currentAi) => ({
       ...(currentAi || {}),
       needsSignalRebuild: false,
       needsPdfRebuild: true,
       pdf: {
-        ...(currentAi?.pdf || emptyPdfState()),
+        ...mergePdfState(currentAi),
+        generationId: makePdfGenerationId(buildAttemptId),
+        signalGenerationId: buildAttemptId || null,
         status: 'processing',
         stage: 'building_document',
         progress: 45,
@@ -3588,7 +4409,9 @@ async function buildPdfForUser(userId) {
       needsSignalRebuild: false,
       needsPdfRebuild: false,
       pdf: {
-        ...(currentAi?.pdf || emptyPdfState()),
+        ...mergePdfState(currentAi),
+        generationId: makePdfGenerationId(buildAttemptId),
+        signalGenerationId: buildAttemptId || null,
         status: 'ready',
         stage: 'ready',
         progress: 100,
@@ -3630,6 +4453,17 @@ async function buildPdfForUser(userId) {
       });
     }
 
+    logMcpContext('info', 'mcpContext.builder', 'pdf.completed', {
+      userId: String(userId),
+      buildAttemptId,
+      currentSourceFingerprint: currentSourceFingerprint || null,
+      signalFingerprint: signalFingerprint || null,
+      currentConnectionFingerprint,
+      fileName: pdfResult?.fileName || null,
+      sizeBytes: toNum(pdfResult?.sizeBytes, 0),
+      pageCount: toNum(pdfResult?.pageCount, 0) || null,
+      renderer: pdfResult?.renderer || null,
+    });
     return buildResultFromRoot(finalRoot || await findRoot(userId), {
       status: 'done',
       progress: 100,
@@ -3637,6 +4471,14 @@ async function buildPdfForUser(userId) {
     });
   } catch (pdfErr) {
     console.error('[mcpContextBuilder] PDF generation failed:', pdfErr?.message || pdfErr);
+    logMcpContext('error', 'mcpContext.builder', 'pdf.failed', {
+      userId: String(userId),
+      buildAttemptId,
+      currentSourceFingerprint: currentSourceFingerprint || null,
+      signalFingerprint: signalFingerprint || null,
+      currentConnectionFingerprint,
+      error: toErrorMeta(pdfErr),
+    });
 
       const failRoot = await updateRootAiContext(userId, (currentAi) => ({
       ...(currentAi || {}),
@@ -3647,7 +4489,9 @@ async function buildPdfForUser(userId) {
       needsSignalRebuild: false,
       needsPdfRebuild: true,
       pdf: {
-        ...(currentAi?.pdf || emptyPdfState()),
+        ...mergePdfState(currentAi),
+        generationId: makePdfGenerationId(buildAttemptId),
+        signalGenerationId: buildAttemptId || null,
         status: 'failed',
         stage: 'failed',
         progress: 100,
