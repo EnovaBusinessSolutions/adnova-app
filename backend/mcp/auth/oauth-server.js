@@ -11,11 +11,12 @@ const OAuthToken = require('./models/OAuthToken');
 const APP_URL = (process.env.APP_URL || 'https://adray.ai').replace(/\/$/, '');
 const CODE_LIFETIME_MS = 10 * 60 * 1000;
 const ACCESS_TOKEN_LIFETIME_MS = 60 * 60 * 1000;
-const REFRESH_TOKEN_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+const REFRESH_TOKEN_LIFETIME_MS = 180 * 24 * 60 * 60 * 1000;
 const TOKEN_EXCHANGE_GRANTS = new Set([
   'urn:ietf:params:oauth:grant-type:token-exchange',
   'token_exchange',
 ]);
+const DEFAULT_CHATGPT_REDIRECT_PATTERNS = ['https://chat.openai.com/aip/*/oauth/callback'];
 
 function generateToken() {
   return crypto.randomBytes(32).toString('hex');
@@ -56,6 +57,51 @@ function isGrantAllowed(client, grantType) {
   return allowed.includes(grantType);
 }
 
+function normalizeRedirectUri(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return { ok: false, reason: 'empty', value: null };
+  try {
+    const parsed = new URL(trimmed);
+    return { ok: true, value: parsed.toString() };
+  } catch {
+    return { ok: false, reason: 'malformed', value: null };
+  }
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function wildcardPatternToRegex(pattern) {
+  const escaped = escapeRegex(pattern).replace(/\\\*/g, '.*');
+  return new RegExp(`^${escaped}$`);
+}
+
+function isRedirectUriAllowed(client, normalizedRedirectUri) {
+  const exactUris = Array.isArray(client?.redirectUris)
+    ? client.redirectUris.map((u) => normalizeRedirectUri(u).value).filter(Boolean)
+    : [];
+  const patternUris = Array.isArray(client?.redirectUriPatterns) && client.redirectUriPatterns.length
+    ? client.redirectUriPatterns
+    : DEFAULT_CHATGPT_REDIRECT_PATTERNS;
+
+  if (!exactUris.length && !patternUris.length) return true;
+  if (exactUris.includes(normalizedRedirectUri)) return true;
+
+  for (const pattern of patternUris) {
+    if (!pattern || !String(pattern).trim()) continue;
+    const normalizedPattern = String(pattern).trim();
+    try {
+      if (wildcardPatternToRegex(normalizedPattern).test(normalizedRedirectUri)) {
+        return true;
+      }
+    } catch {
+      // Ignore invalid patterns to prevent breaking all auth flows.
+    }
+  }
+  return false;
+}
+
 function resolveAuthenticatedUserId(req) {
   if (req?.isAuthenticated?.() && req.user?._id) return req.user._id;
   if (req?.user?._id) return req.user._id;
@@ -93,16 +139,32 @@ router.get('/authorize', async (req, res) => {
         error_description: 'client_id and redirect_uri are required.',
       });
     }
+    const normalizedRedirect = normalizeRedirectUri(redirect_uri);
+    if (!normalizedRedirect.ok) {
+      console.warn('[oauth/authorize] invalid redirect_uri format', {
+        clientId: client_id || null,
+        reason: normalizedRedirect.reason,
+      });
+      return res.status(400).json({
+        error: 'invalid_redirect_uri',
+        error_description: 'Malformed redirect_uri.',
+      });
+    }
 
     const client = await OAuthClient.findOne({ clientId: client_id, active: true });
     if (!client) {
+      console.warn('[oauth/authorize] unknown client_id', { clientId: client_id || null });
       return res.status(400).json({
         error: 'invalid_client',
         error_description: 'Unknown client_id.',
       });
     }
 
-    if (client.redirectUris.length > 0 && !client.redirectUris.includes(redirect_uri)) {
+    if (!isRedirectUriAllowed(client, normalizedRedirect.value)) {
+      console.warn('[oauth/authorize] redirect_uri not allowed', {
+        clientId: client_id,
+        redirectUri: normalizedRedirect.value,
+      });
       return res.status(400).json({
         error: 'invalid_redirect_uri',
         error_description: 'redirect_uri not registered for this client.',
@@ -124,14 +186,14 @@ router.get('/authorize', async (req, res) => {
       code,
       userId,
       clientId: client_id,
-      redirectUri: redirect_uri,
+      redirectUri: normalizedRedirect.value,
       scopes: requestedScopes,
       codeChallenge: code_challenge || null,
       codeChallengeMethod: code_challenge_method || null,
       expiresAt: new Date(Date.now() + CODE_LIFETIME_MS),
     });
 
-    const url = new URL(redirect_uri);
+    const url = new URL(normalizedRedirect.value);
     url.searchParams.set('code', code);
     if (state) url.searchParams.set('state', state);
 
@@ -166,6 +228,13 @@ router.post('/token', express.urlencoded({ extended: false }), express.json(), a
           error_description: 'code, redirect_uri, and client_id are required.',
         });
       }
+      const normalizedRedirect = normalizeRedirectUri(redirect_uri);
+      if (!normalizedRedirect.ok) {
+        return res.status(400).json({
+          error: 'invalid_grant',
+          error_description: 'Malformed redirect_uri.',
+        });
+      }
 
       const client = await OAuthClient.findOne({ clientId: client_id, active: true });
       if (!client) {
@@ -190,7 +259,16 @@ router.post('/token', express.urlencoded({ extended: false }), express.json(), a
         return res.status(400).json({ error: 'invalid_grant', error_description: 'Code expired or invalid.' });
       }
 
-      if (authCode.redirectUri !== redirect_uri) {
+      const normalizedAuthCodeRedirect = normalizeRedirectUri(authCode.redirectUri);
+      const storedRedirect = normalizedAuthCodeRedirect.ok
+        ? normalizedAuthCodeRedirect.value
+        : String(authCode.redirectUri || '').trim();
+      if (storedRedirect !== normalizedRedirect.value) {
+        console.warn('[oauth/token] redirect_uri mismatch', {
+          clientId: client_id,
+          expectedRedirectUri: storedRedirect,
+          receivedRedirectUri: normalizedRedirect.value,
+        });
         return res.status(400).json({ error: 'invalid_grant', error_description: 'redirect_uri mismatch.' });
       }
 

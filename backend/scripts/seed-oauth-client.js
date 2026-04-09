@@ -10,6 +10,7 @@
  *   MCP_OAUTH_CLIENT_ID - client_id (default: adray-mcp-client)
  *   MCP_OAUTH_CLIENT_SECRET - client_secret (requerido, min 16 chars)
  *   MCP_OAUTH_REDIRECT_URIS - redirect_uri separados por coma (opcional)
+ *   MCP_OAUTH_REDIRECT_PATTERNS - patrones wildcard separados por coma (opcional)
  */
 
 const path = require('path');
@@ -22,6 +23,9 @@ const clientSecret = process.env.MCP_OAUTH_CLIENT_SECRET;
 const redirectUris = process.env.MCP_OAUTH_REDIRECT_URIS
   ? process.env.MCP_OAUTH_REDIRECT_URIS.split(',').map((s) => s.trim()).filter(Boolean)
   : [];
+const redirectUriPatterns = process.env.MCP_OAUTH_REDIRECT_PATTERNS
+  ? process.env.MCP_OAUTH_REDIRECT_PATTERNS.split(',').map((s) => s.trim()).filter(Boolean)
+  : ['https://chat.openai.com/aip/*/oauth/callback'];
 
 if (!clientSecret || clientSecret.length < 16) {
   console.error('Error: MCP_OAUTH_CLIENT_SECRET debe tener al menos 16 caracteres.');
@@ -41,6 +45,7 @@ const OAuthClientSchema = new mongoose.Schema(
     clientSecret: { type: String, required: true },
     name: { type: String, required: true },
     redirectUris: { type: [String], default: [] },
+    redirectUriPatterns: { type: [String], default: [] },
     scopes: { type: [String], default: ['read:ads_performance', 'read:shopify_orders'] },
     grantsAllowed: {
       type: [String],
@@ -64,6 +69,7 @@ async function main() {
           $set: {
             clientSecret,
             redirectUris,
+            redirectUriPatterns,
             active: true,
             grantsAllowed: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:token-exchange'],
           },
@@ -76,6 +82,7 @@ async function main() {
         clientSecret,
         name: 'Adray MCP / GPT Client',
         redirectUris,
+        redirectUriPatterns,
         scopes: ['read:ads_performance', 'read:shopify_orders'],
         grantsAllowed: ['authorization_code', 'refresh_token', 'urn:ietf:params:oauth:grant-type:token-exchange'],
         active: true,
@@ -86,7 +93,12 @@ async function main() {
     if (redirectUris.length) {
       console.log('Redirect URIs:', redirectUris.join(', '));
     } else {
-      console.log('Redirect URIs: (vacío = acepta cualquiera para pruebas)');
+      console.log('Redirect URIs: (vacío)');
+    }
+    if (redirectUriPatterns.length) {
+      console.log('Redirect URI patterns:', redirectUriPatterns.join(', '));
+    } else {
+      console.log('Redirect URI patterns: (vacío)');
     }
     console.log('');
     console.log('Para probar OAuth:');
