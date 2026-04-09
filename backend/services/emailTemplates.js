@@ -1,5 +1,12 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
+const LEGAL_BRAND_NAME = 'Adray, Inc.';
+const EMAIL_BRAND_ICON_FILENAME = 'adray-icon.png';
+const EMAIL_BRAND_ICON_CID = 'adray-logo';
+
 function escapeHtml(s = '') {
   return String(s)
     .replaceAll('&', '&amp;')
@@ -25,32 +32,41 @@ function safeUrl(url = '') {
   return s;
 }
 
-function brandMarkSvg(size = 22) {
-  return `
-    <svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
-      <path d="M12 2.75L13.94 8.06L19.25 10L13.94 11.94L12 17.25L10.06 11.94L4.75 10L10.06 8.06L12 2.75Z" fill="#B55CFF"/>
-    </svg>
-  `;
+function resolveEmailBrandIconPath() {
+  const candidatePaths = [
+    path.join(__dirname, '../public/branding', EMAIL_BRAND_ICON_FILENAME),
+    path.join(__dirname, '../public/assets', EMAIL_BRAND_ICON_FILENAME),
+  ];
+
+  for (const absPath of candidatePaths) {
+    try {
+      if (fs.existsSync(absPath)) return absPath;
+    } catch (_) {}
+  }
+
+  return null;
 }
 
+const EMAIL_BRAND_ICON_PATH = resolveEmailBrandIconPath();
+
 function brandWordmark() {
+  if (!EMAIL_BRAND_ICON_PATH) {
+    return `
+      <div style="display:block;width:58px;height:58px;line-height:58px;font-size:0;">&nbsp;</div>
+    `;
+  }
+
   return `
     <table role="presentation" cellpadding="0" cellspacing="0" border="0">
       <tr>
-        <td valign="middle" style="padding-right:10px;">
-          ${brandMarkSvg(18)}
-        </td>
         <td valign="middle">
-          <div style="
-            font-size:13px;
-            line-height:13px;
-            letter-spacing:.20em;
-            font-weight:900;
-            color:#F8F7FF;
-            text-transform:uppercase;
-          ">
-            ADRAY
-          </div>
+          <img
+            src="cid:${EMAIL_BRAND_ICON_CID}"
+            alt="Adray"
+            width="58"
+            height="58"
+            style="display:block;width:58px;height:58px;border:0;outline:none;text-decoration:none;"
+          />
         </td>
       </tr>
     </table>
@@ -78,7 +94,7 @@ function sectionKicker(text, align = 'center', color = '#C4B5FD', marginBottom =
 function titleBlock(text) {
   return `
     <div class="hero-title" style="
-      margin:0 0 14px 0;
+      margin:0 0 4px 0;
       font-size:42px;
       line-height:1.02;
       font-weight:900;
@@ -247,11 +263,25 @@ function supportLine(email, align = 'center') {
   `;
 }
 
-function footerHtml(brand = 'Adray', privacyUrl = 'https://adray.ai/privacy') {
+function footerHtml(brand = LEGAL_BRAND_NAME, privacyUrl = 'https://adray.ai/privacy') {
   const year = new Date().getFullYear();
   return `© ${year} ${escapeHtml(brand)} · <a href="${escapeHtml(
     privacyUrl
   )}" style="color:#C4B5FD;text-decoration:none;font-weight:700;">Privacy Policy</a>`;
+}
+
+function getEmailInlineAttachments() {
+  if (!EMAIL_BRAND_ICON_PATH) return [];
+
+  return [
+    {
+      filename: EMAIL_BRAND_ICON_FILENAME,
+      path: EMAIL_BRAND_ICON_PATH,
+      cid: EMAIL_BRAND_ICON_CID,
+      contentDisposition: 'inline',
+      contentType: 'image/png',
+    },
+  ];
 }
 
 function wrapEmail({
@@ -292,7 +322,7 @@ function wrapEmail({
     @media screen and (max-width: 600px) {
       .card { width:100% !important; border-radius:24px !important; }
       .shell-pad { padding:22px 10px !important; }
-      .header-pad { padding:24px 20px 18px 20px !important; }
+      .header-pad { padding:18px 20px 14px 20px !important; }
       .body-pad { padding:20px 16px 10px 16px !important; }
       .footer-pad { padding:16px 20px 22px 20px !important; }
       .hero-title { font-size:34px !important; line-height:1.04 !important; }
@@ -319,25 +349,25 @@ function wrapEmail({
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" class="card" style="border-collapse:separate;width:100%;max-width:720px;background:linear-gradient(180deg, rgba(15,12,25,0.98) 0%, rgba(8,9,14,1) 100%);border:1px solid rgba(255,255,255,0.08);border-radius:30px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,0.42);">
             <tr>
               <td style="padding:0;">
-                <div class="header-pad" style="padding:22px 26px 18px 26px;border-bottom:1px solid rgba(255,255,255,0.08);background:
-                  radial-gradient(circle at top left, rgba(181,92,255,0.20), transparent 34%),
-                  radial-gradient(circle at top right, rgba(79,227,193,0.10), transparent 24%),
-                  linear-gradient(180deg, rgba(18,15,31,0.98) 0%, rgba(12,12,22,0.96) 100%);
-                ">
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 26px 0;">
-                    <tr>
-                      <td valign="middle">
-                        ${brandWordmark()}
-                      </td>
-                    </tr>
-                  </table>
+                <div class="header-pad" style="padding:10px 26px 10px 26px;border-bottom:1px solid rgba(255,255,255,0.08);background:
+  radial-gradient(circle at top left, rgba(181,92,255,0.20), transparent 34%),
+  radial-gradient(circle at top right, rgba(79,227,193,0.10), transparent 24%),
+  linear-gradient(180deg, rgba(18,15,31,0.98) 0%, rgba(12,12,22,0.96) 100%);
+">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 4px 0;">
+    <tr>
+      <td valign="middle">
+        ${brandWordmark()}
+      </td>
+    </tr>
+  </table>
 
-                  <div style="text-align:center;padding:6px 0 4px 0;">
-                    ${sectionKicker(eyebrow, 'center', '#C4B5FD', 12)}
-                    ${titleBlock(heroTitle || title || 'Adray')}
-                    ${heroIntroHtml || ''}
-                  </div>
-                </div>
+  <div style="text-align:center;padding:0;margin:0;">
+    ${sectionKicker(eyebrow, 'center', '#C4B5FD', 12)}
+    ${titleBlock(heroTitle || title || 'Adray')}
+    ${heroIntroHtml || ''}
+  </div>
+</div>
               </td>
             </tr>
 
@@ -421,7 +451,7 @@ function verifyEmail({
     heroTitle: 'Confirm your email',
     heroIntroHtml,
     contentHtml,
-    footerHtml: footerHtml(brand, privacyUrl),
+    footerHtml: footerHtml(LEGAL_BRAND_NAME, privacyUrl),
   });
 }
 
@@ -455,7 +485,7 @@ function welcomeEmail({
       bodyHtml: `
         ${buildBulletList(
           [
-            'Sign in to your AdRay workspace',
+            'Sign in to your Adray workspace',
             'Complete onboarding and account setup',
             'Connect your marketing data sources',
             'Start analyzing your data with confidence',
@@ -472,7 +502,7 @@ function welcomeEmail({
       bodyHtml: `
         ${textBlock(`Everything is set up—connect your data and start exploring your signals.`, 16, 'left', '#D7E0F3', 15, 25)}
         <div class="mobile-full mobile-center" style="text-align:left;">
-          ${ctaButton(loginUrl, 'Go to AdRay')}
+          ${ctaButton(loginUrl, 'Go to Adray')}
         </div>
       `,
       marginBottom: 16,
@@ -498,7 +528,7 @@ function welcomeEmail({
     heroTitle: `Welcome to ${brand}`,
     heroIntroHtml,
     contentHtml,
-    footerHtml: footerHtml(brand, privacyUrl),
+    footerHtml: footerHtml(LEGAL_BRAND_NAME, privacyUrl),
   });
 }
 
@@ -555,7 +585,7 @@ function resetPasswordEmail({
     heroTitle: 'Reset your password',
     heroIntroHtml,
     contentHtml,
-    footerHtml: footerHtml(brand, privacyUrl),
+    footerHtml: footerHtml(LEGAL_BRAND_NAME, privacyUrl),
   });
 }
 
@@ -612,7 +642,7 @@ function auditReadyEmail({
     heroTitle: 'Your audit is ready',
     heroIntroHtml,
     contentHtml,
-    footerHtml: footerHtml(brand, privacyUrl),
+    footerHtml: footerHtml(LEGAL_BRAND_NAME, privacyUrl),
   });
 }
 
@@ -683,7 +713,7 @@ function dailyFollowupCallEmail({
     heroTitle: 'Let’s get you fully set up',
     heroIntroHtml,
     contentHtml,
-    footerHtml: footerHtml(brand, privacyUrl),
+    footerHtml: footerHtml(LEGAL_BRAND_NAME, privacyUrl),
   });
 }
 
@@ -693,4 +723,5 @@ module.exports = {
   verifyEmail,
   auditReadyEmail,
   dailyFollowupCallEmail,
+  getEmailInlineAttachments,
 };

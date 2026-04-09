@@ -2,6 +2,7 @@
 
 const { Queue } = require('bullmq');
 const IORedis = require('ioredis');
+const { logMcpContext, toErrorMeta } = require('../utils/mcpContextLog');
 
 const REDIS_URL = process.env.REDIS_URL || '';
 const QUEUE_NAME = process.env.MCP_QUEUE_NAME || 'mcp-collect';
@@ -97,7 +98,7 @@ async function enqueueMcpCollect(input = {}) {
     throw new Error('MISSING_SOURCE');
   }
 
-  console.log('[mcpQueue] enqueue request', {
+  logMcpContext('info', 'mcpQueue', 'enqueue.request', {
     queue: QUEUE_NAME,
     prefix: BULLMQ_PREFIX,
     userId: payload.userId,
@@ -120,7 +121,10 @@ async function enqueueMcpCollect(input = {}) {
     'paused'
   );
 
-  console.log('[mcpQueue] counts before add', countsBefore);
+  logMcpContext('debug', 'mcpQueue', 'enqueue.counts_before', {
+    queue: QUEUE_NAME,
+    counts: countsBefore,
+  });
 
   const addOptions = {};
   if (payload.priority != null) {
@@ -145,7 +149,7 @@ async function enqueueMcpCollect(input = {}) {
     'paused'
   );
 
-  console.log('[mcpQueue] enqueued job', {
+  logMcpContext('info', 'mcpQueue', 'enqueue.success', {
     queue: QUEUE_NAME,
     prefix: BULLMQ_PREFIX,
     id: job.id,
@@ -154,7 +158,10 @@ async function enqueueMcpCollect(input = {}) {
     data: payload,
   });
 
-  console.log('[mcpQueue] counts after add', countsAfter);
+  logMcpContext('debug', 'mcpQueue', 'enqueue.counts_after', {
+    queue: QUEUE_NAME,
+    counts: countsAfter,
+  });
 
   return job;
 }
@@ -167,7 +174,10 @@ async function enqueueMcpCollectBestEffort(input = {}) {
       jobId: job?.id || null,
     };
   } catch (err) {
-    console.warn('[mcpQueue] enqueueMcpCollectBestEffort failed:', err?.message || err);
+    logMcpContext('warn', 'mcpQueue', 'enqueue.failed', {
+      input,
+      error: toErrorMeta(err),
+    });
     return {
       ok: false,
       error: err?.message || 'ENQUEUE_FAILED',

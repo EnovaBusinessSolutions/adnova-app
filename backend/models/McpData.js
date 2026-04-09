@@ -136,6 +136,10 @@ const PdfArtifactSchema = new Schema(
 
     // relación fuerte con el Signal que lo originó
     signalGenerationId: { type: String, default: null },
+    connectionFingerprint: { type: String, default: null },
+    processingStartedAt: { type: Date, default: null },
+    processingHeartbeatAt: { type: Date, default: null },
+    stale: { type: Boolean, default: false },
 
     fileName: { type: String, default: null },
     mimeType: { type: String, default: 'application/pdf' },
@@ -435,8 +439,6 @@ function normalizeChunkPayload({
 
 function buildRootSetOnInsert(userId, now) {
   return {
-    userId,
-    kind: 'root',
     createdAt: now,
   };
 }
