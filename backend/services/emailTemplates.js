@@ -485,7 +485,7 @@ function welcomeEmail({
       bodyHtml: `
         ${buildBulletList(
           [
-            'Sign in to your AdRay workspace',
+            'Sign in to your Adray workspace',
             'Complete onboarding and account setup',
             'Connect your marketing data sources',
             'Start analyzing your data with confidence',
@@ -502,7 +502,7 @@ function welcomeEmail({
       bodyHtml: `
         ${textBlock(`Everything is set up—connect your data and start exploring your signals.`, 16, 'left', '#D7E0F3', 15, 25)}
         <div class="mobile-full mobile-center" style="text-align:left;">
-          ${ctaButton(loginUrl, 'Go to AdRay')}
+          ${ctaButton(loginUrl, 'Go to Adray')}
         </div>
       `,
       marginBottom: 16,
