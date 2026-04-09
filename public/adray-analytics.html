@@ -4980,6 +4980,17 @@
                 if (!previous.userKey && userKey) previous.userKey = userKey;
             });
 
+            const purchaseSignalGroupIndexes = groups.reduce((indexes, group, index) => {
+                const hasPurchaseSignal = group.events.some((event) =>
+                    isPurchaseJourneyEventName(event.eventName || event.name || '')
+                );
+                if (hasPurchaseSignal) indexes.push(index);
+                return indexes;
+            }, []);
+            const terminalPurchaseGroupIndex = purchaseSignalGroupIndexes.length
+                ? purchaseSignalGroupIndexes[purchaseSignalGroupIndexes.length - 1]
+                : Math.max(0, groups.length - 1);
+
             const normalizedGroups = groups.map((group, index) => {
                 const firstEvent = group.events[0] || {};
                 const lastEvent = group.events[group.events.length - 1] || {};
@@ -4995,12 +5006,14 @@
                 const durationSeconds = Math.max(0, (group.endedTs - group.startedTs) / 1000);
                 const lastPurchaseEvent = [...group.events].reverse().find((event) => isPurchaseJourneyEventName(event.eventName || event.name || '')) || null;
                 const containsPurchase = Boolean(lastPurchaseEvent);
+                const isTerminalPurchaseGroup = index === terminalPurchaseGroupIndex;
                 const containsCheckout = group.events.some((event) => String(event.eventName || event.name || '').toLowerCase() === 'begin_checkout');
                 const containsCart = group.events.some((event) => String(event.eventName || event.name || '').toLowerCase() === 'add_to_cart');
                 const containsLogin = group.events.some((event) => /login/.test(String(event.eventName || event.name || '').toLowerCase()));
 
                 let actionCopy = 'Browsing and consideration.';
-                if (containsPurchase) actionCopy = 'Purchase completed in this session.';
+                if (containsPurchase && isTerminalPurchaseGroup) actionCopy = 'Purchase completed in this session.';
+                else if (containsPurchase) actionCopy = 'Purchase signal continued into a later session before the final order was confirmed.';
                 else if (containsCheckout) actionCopy = 'Reached checkout in this session.';
                 else if (containsCart) actionCopy = 'Added product(s) to cart.';
                 else if (containsLogin) actionCopy = 'User identified with a login event.';
@@ -5027,8 +5040,9 @@
                     containsPurchase,
                     purchaseAt: lastPurchaseEvent
                         ? new Date(lastPurchaseEvent._ts).toISOString()
-                        : (index === groups.length - 1 && Number.isFinite(purchaseTimestamp) ? new Date(purchaseTimestamp).toISOString() : null),
-                    isPurchaseAnchorSession: index === groups.length - 1,
+                        : (isTerminalPurchaseGroup && Number.isFinite(purchaseTimestamp) ? new Date(purchaseTimestamp).toISOString() : null),
+                    isPurchaseAnchorSession: isTerminalPurchaseGroup && !containsPurchase,
+                    isTerminalPurchaseGroup,
                     touchpoint,
                     tone: touchpoint.tone || '',
                     icon: touchpoint.icon || 'fa-solid fa-route',
@@ -5081,6 +5095,12 @@
             if (!baseEvents.length || !groups.length) return baseEvents;
 
             const timeline = [];
+            const lastPurchaseSignalIndex = groups.reduce((lastIndex, group, index) => {
+                if (group?.containsPurchase || group?.isPurchaseAnchorSession || group?.purchaseAt) {
+                    return index;
+                }
+                return lastIndex;
+            }, -1);
 
             groups.forEach((group, index) => {
                 const sessionLabel = group.label || `Session ${index + 1}`;
@@ -5107,8 +5127,9 @@
                 const hasVisiblePurchase = [...mainSessionEvents, ...postPurchaseEvents].some((event) =>
                     isPurchaseJourneyEventName(event.rawEventName || '')
                 );
+                const hasLaterPurchaseSignal = lastPurchaseSignalIndex > index;
 
-                if ((group.containsPurchase || group.isPurchaseAnchorSession) && !hasVisiblePurchase) {
+                if (!hasVisiblePurchase && (group.isPurchaseAnchorSession || (group.containsPurchase && !hasLaterPurchaseSignal))) {
                     mainSessionEvents.push({
                         type: 'synthetic_purchase',
                         kindClass: 'synthetic-purchase',
