@@ -3076,6 +3076,7 @@
             profileSort: 'orders',
             selectedJourneyKey: '',
         };
+        const HISTORY_PAGE_SIZE = 20;
         let selectedJourneyTimelineMode = 'condensed';
         let sessionExplorerState = {
             mode: 'overview',
@@ -3177,6 +3178,25 @@
             if (startInput) startInput.value = formatDateInputValue(start);
             if (endInput) endInput.value = formatDateInputValue(end);
             onDatePresetChange();
+        }
+
+        function getHistoryLimitValue() {
+            const rawValue = document.getElementById('history-limit')?.value || '';
+            const parsed = Number.parseInt(String(rawValue || '').trim(), 10);
+            return Number.isFinite(parsed) && parsed > 0 ? parsed : HISTORY_PAGE_SIZE;
+        }
+
+        function setHistoryLimitValue(value) {
+            const input = document.getElementById('history-limit');
+            if (!input) return;
+            const normalized = Math.max(HISTORY_PAGE_SIZE, Number.parseInt(String(value || HISTORY_PAGE_SIZE), 10) || HISTORY_PAGE_SIZE);
+            input.value = String(normalized);
+        }
+
+        async function loadMoreJourneyHistory() {
+            if (analyticsFetchInFlight) return;
+            setHistoryLimitValue(getHistoryLimitValue() + HISTORY_PAGE_SIZE);
+            await fetchAnalytics();
         }
 
         function onDatePresetChange() {
@@ -5920,6 +5940,8 @@
             const profileFilteredJourneys = selectedProfile
                 ? byChannel.filter(({ purchase }) => selectedProfileMatcher(purchase))
                 : byChannel;
+            const currentHistoryLimit = getHistoryLimitValue();
+            const canLoadMoreJourneys = rankedJourneys.length >= currentHistoryLimit;
 
             if (!byChannel.length) {
                 attributionJourneyState.selectedJourneyKey = '';
@@ -5980,7 +6002,7 @@
                     </div>
                 </div>
                 <div class="space-y-3 mt-3">
-                    ${profileFilteredJourneys.slice(0, 20).map(({ purchase, selectionKey }) => {
+                    ${profileFilteredJourneys.slice(0, currentHistoryLimit).map(({ purchase, selectionKey }) => {
                         const identity = resolvePurchaseDisplayIdentity(purchase);
                         const sessionCount = countPurchaseJourneySessions(purchase);
                         const isActive = selectionKey === String(attributionJourneyState.selectedJourneyKey || '');
@@ -6000,6 +6022,15 @@
                             </div>
                         </button>`;
                     }).join('') || '<p class="text-sm text-gray-500">No stitched purchases for this profile yet.</p>'}
+                    ${canLoadMoreJourneys ? `
+                        <button
+                            type="button"
+                            id="journey-load-more"
+                            class="w-full rounded-2xl border border-[#4B3668] bg-[rgba(28,22,40,0.86)] px-4 py-3 text-sm font-semibold text-[#E9DBFF] transition hover:border-[#6B4E95] hover:bg-[rgba(36,28,52,0.95)]"
+                        >
+                            Load More
+                        </button>
+                    ` : ''}
                 </div>
             `;
 
@@ -6043,6 +6074,13 @@
                     renderAttributionJourneyPanel();
                 });
             });
+
+            const loadMoreButton = historyEl.querySelector('#journey-load-more');
+            if (loadMoreButton) {
+                loadMoreButton.addEventListener('click', async () => {
+                    await loadMoreJourneyHistory();
+                });
+            }
         }
 
         async function fetchWordPressUsersOnline(force = false) {
