@@ -531,6 +531,19 @@ function summarizeGoogleResponse(data = {}) {
   };
 }
 
+function summarizePlatformError(data = {}) {
+  const payload = normalizeObject(data);
+  const nestedError = normalizeObject(payload.error);
+  return {
+    message: nestedError.message || payload.message || null,
+    code: nestedError.code || payload.code || null,
+    type: nestedError.type || payload.type || null,
+    subcode: nestedError.error_subcode || payload.error_subcode || null,
+    fbtraceId: payload.fbtrace_id || nestedError.fbtrace_id || null,
+    requestId: payload.requestId || payload.request_id || null,
+  };
+}
+
 function isSkippableMetaReason(reason = '') {
   const message = String(reason || '').toLowerCase();
   return [
@@ -880,7 +893,9 @@ async function sendToMeta(order) {
     });
 
     if (!response?.success) {
-      throw new Error(response?.reason || 'Meta CAPI call failed');
+      const err = new Error(response?.reason || 'Meta CAPI call failed');
+      err.responseData = response?.data || null;
+      throw err;
     }
 
     return response.data || {};
@@ -888,6 +903,7 @@ async function sendToMeta(order) {
 
   if (!result.success) {
     const errorMessage = result.error?.message || String(result.error || 'Meta CAPI call failed');
+    const responseSummary = summarizePlatformError(result.error?.responseData || {});
     await updateOrderDeliveryStatus(order.orderId, 'meta', {
       status: 'failed',
       failedAt: new Date().toISOString(),
@@ -897,12 +913,15 @@ async function sendToMeta(order) {
       destinationId: config.destinationId,
       configSource: config.configSource,
       testEventCode: config.testEventCode || null,
+      responseSummary,
       verifiedBy: 'meta_capi_error',
       verificationHint: 'Check Meta Events Manager diagnostics or the CAPI response payload for the failure reason.',
     });
     logFanout(order.orderId, 'meta', 'failed', {
       reason: errorMessage,
       attempts: result.attempts,
+      responseSummary,
+      rawResponse: result.error?.responseData || null,
     });
     return { success: false, status: 'failed', reason: errorMessage };
   }
@@ -957,6 +976,14 @@ async function sendToGoogle(order) {
     hasRefreshToken: Boolean(config.refreshToken),
     hasConversionAction: Boolean(config.conversionAction),
   });
+  if (String(config.reason || '').toLowerCase().includes('missing developer token')) {
+    logFanout(order.orderId, 'google', 'env_missing', {
+      envVar: 'GOOGLE_ADS_DEVELOPER_TOKEN',
+      accountId: order.accountId || null,
+      userId: config.userId || null,
+      userResolutionSource: config.userResolutionSource || null,
+    });
+  }
   if (!config.ok) {
     await updateOrderDeliveryStatus(order.orderId, 'google', {
       status: isSkippableGoogleReason(config.reason) ? 'skipped' : 'failed',

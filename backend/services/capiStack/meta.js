@@ -72,13 +72,30 @@ async function sendConversion(order, config) {
   if (testEventCode) body.test_event_code = testEventCode;
 
   // ── POST ───────────────────────────────────────────────────────────────────
-  const url      = `${FB_CAPI_BASE}/${pixelId}/events`;
-  const response = await axios.post(url, body, {
-    headers: { 'Content-Type': 'application/json' },
-    timeout: 15000,
-  });
+  const url = `${FB_CAPI_BASE}/${pixelId}/events`;
 
-  return { success: true, data: response.data };
+  try {
+    const response = await axios.post(url, body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 15000,
+    });
+
+    return { success: true, data: response.data };
+  } catch (error) {
+    const responseData = error?.response?.data || null;
+    const message =
+      responseData?.error?.message ||
+      responseData?.message ||
+      error?.message ||
+      'Meta CAPI request failed';
+
+    console.error('[Meta CAPI Error]', responseData || message);
+    return {
+      success: false,
+      reason: message,
+      data: responseData,
+    };
+  }
 }
 
 module.exports = { sendConversion };
