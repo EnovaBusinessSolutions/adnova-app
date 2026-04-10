@@ -15,6 +15,10 @@ const User = require('../models/User');
 const {
   rebuildUnifiedContextForUser,
 } = require('../services/mcpContextBuilder');
+const {
+  logMcpContext,
+  toErrorMeta,
+} = require('../utils/mcpContextLog');
 
 /* =========================
  * ENV + Connections
@@ -649,7 +653,7 @@ async function saveCollectorDatasets({ userId, snapshotId, datasets }) {
       stats: enrichedStats,
     });
 
-    console.log('[mcpWorker] chunk upserted', {
+    logMcpContext('info', 'mcpWorker', 'chunk.upserted', {
       userId: String(userId),
       snapshotId,
       dataset: ds?.dataset,
@@ -676,7 +680,7 @@ async function finalizeRootFromCollector({
     stats: buildRootStatsFromDatasetSummary(datasetSummary),
   });
 
-  console.log('[mcpWorker] root enriched', {
+  logMcpContext('info', 'mcpWorker', 'root.enriched', {
     userId: String(userId),
     snapshotId,
     source: extractedRoot.sourceName,
@@ -692,7 +696,7 @@ async function triggerSignalRebuildAfterCollect({
   contextRangeDays,
 }) {
   try {
-    console.log('[mcpWorker] signal rebuild:start', {
+    logMcpContext('info', 'mcpWorker', 'signal_rebuild.start', {
       userId: String(userId),
       source,
       snapshotId,
@@ -708,7 +712,7 @@ async function triggerSignalRebuildAfterCollect({
       trigger: `worker:${String(source || 'unknown')}`,
     });
 
-    console.log('[mcpWorker] signal rebuild:done', {
+    logMcpContext('info', 'mcpWorker', 'signal_rebuild.done', {
       userId: String(userId),
       source,
       snapshotId,
@@ -725,11 +729,11 @@ async function triggerSignalRebuildAfterCollect({
 
     return rebuild;
   } catch (err) {
-    console.error('[mcpWorker] signal rebuild failed', {
+    logMcpContext('error', 'mcpWorker', 'signal_rebuild.failed', {
       userId: String(userId),
       source,
       snapshotId,
-      error: err?.message || err,
+      error: toErrorMeta(err),
     });
     throw err;
   }
@@ -748,7 +752,7 @@ async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
   const storageDays = await resolveStorageRangeDays(userId, storageRangeDays);
   const contextDays = await resolveContextRangeDaysByPlan(userId, contextRangeDays);
 
-  console.log('[mcpWorker] runMetaJob:start', {
+  logMcpContext('info', 'mcpWorker', 'meta_collect.start', {
     userId: String(userId),
     snapshotId,
     storageRangeDays: storageDays,
@@ -760,7 +764,7 @@ async function runMetaJob({ userId, storageRangeDays, contextRangeDays }) {
     contextRangeDays: contextDays,
   });
 
-  console.log('[mcpWorker] collectMeta:result', {
+  logMcpContext('info', 'mcpWorker', 'meta_collect.result', {
     userId: String(userId),
     ok: !!r?.ok,
     reason: r?.reason || null,
@@ -838,7 +842,7 @@ async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, acc
   const storageDays = await resolveStorageRangeDays(userId, storageRangeDays);
   const contextDays = await resolveContextRangeDaysByPlan(userId, contextRangeDays);
 
-  console.log('[mcpWorker] runGoogleAdsJob:start', {
+  logMcpContext('info', 'mcpWorker', 'google_collect.start', {
     userId: String(userId),
     snapshotId,
     storageRangeDays: storageDays,
@@ -851,7 +855,7 @@ async function runGoogleAdsJob({ userId, storageRangeDays, contextRangeDays, acc
     account_id: safeString(accountId) || undefined,
   });
 
-  console.log('[mcpWorker] collectGoogle:result', {
+  logMcpContext('info', 'mcpWorker', 'google_collect.result', {
     userId: String(userId),
     ok: !!r?.ok,
     reason: r?.reason || null,
@@ -927,7 +931,7 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
   const storageDays = await resolveStorageRangeDays(userId, storageRangeDays);
   const contextDays = await resolveContextRangeDaysByPlan(userId, contextRangeDays);
 
-  console.log('[mcpWorker] runGa4Job:start', {
+  logMcpContext('info', 'mcpWorker', 'ga4_collect.start', {
     userId: String(userId),
     snapshotId,
     storageRangeDays: storageDays,
@@ -940,7 +944,7 @@ async function runGa4Job({ userId, storageRangeDays, contextRangeDays, propertyI
     property_id: safeString(propertyId) || undefined,
   });
 
-  console.log('[mcpWorker] collectGA4:result', {
+  logMcpContext('info', 'mcpWorker', 'ga4_collect.result', {
     userId: String(userId),
     ok: !!r?.ok,
     reason: r?.reason || null,
@@ -1045,7 +1049,7 @@ async function boot() {
         propertyId,
       } = job.data || {};
 
-      console.log('[mcpWorker] job received', {
+      logMcpContext('info', 'mcpWorker', 'job.received', {
         id: job?.id,
         name: job?.name,
         data: job?.data || null,
@@ -1096,19 +1100,31 @@ async function boot() {
   );
 
   worker.on('active', (job) => {
-    console.log('[mcpWorker] active', job.id, job.data);
+    logMcpContext('info', 'mcpWorker', 'job.active', {
+      id: job?.id,
+      data: job?.data || null,
+    });
   });
 
   worker.on('completed', (job, result) => {
-    console.log('[mcpWorker] completed', job.id, result);
+    logMcpContext('info', 'mcpWorker', 'job.completed', {
+      id: job?.id,
+      result: result || null,
+    });
   });
 
   worker.on('failed', (job, err) => {
-    console.error('[mcpWorker] failed', job?.id, err?.message || err);
+    logMcpContext('error', 'mcpWorker', 'job.failed', {
+      id: job?.id,
+      data: job?.data || null,
+      error: toErrorMeta(err),
+    });
   });
 
   worker.on('error', (err) => {
-    console.error('[mcpWorker] worker error', err?.message || err);
+    logMcpContext('error', 'mcpWorker', 'worker.error', {
+      error: toErrorMeta(err),
+    });
   });
 
   setInterval(() => {
