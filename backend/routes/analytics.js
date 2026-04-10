@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
+const archiver = require('archiver');
 const crypto = require('crypto');
 const prisma = require('../utils/prismaClient');
 const { startOfDay, endOfDay, subDays, eachDayOfInterval, format } = require('date-fns');
@@ -2544,12 +2545,18 @@ function normalizeLineItems(items) {
   const arr = Array.isArray(items) ? items : [];
   return arr.map((item) => ({
     id: String(item?.product_id || item?.productId || item?.id || item?.variant_id || item?.variantId || ''),
+    productId: String(item?.product_id || item?.productId || item?.id || ''),
+    variantId: String(item?.variant_id || item?.variantId || ''),
+    sku: String(item?.sku || item?.product_sku || item?.productSku || ''),
     name: String(item?.name || item?.title || 'Producto'),
     quantity: Number(item?.quantity || item?.qty || 1),
     price: Number(item?.price || item?.unit_price || item?.unitPrice || 0),
+    subtotal: toFiniteNumberOrNull(item?.subtotal ?? item?.line_subtotal ?? item?.lineSubtotal),
     lineTotal: Number(
       item?.line_total ?? item?.lineTotal ?? item?.total ?? item?.final_line_price ?? item?.finalLinePrice ?? 0
     ),
+    currency: String(item?.currency || item?.currency_code || item?.currencyCode || ''),
+    rawItem: item && typeof item === 'object' ? item : null,
   }));
 }
 
@@ -2949,7 +2956,7 @@ function deriveWooFallbackAttribution(rawPayload = {}) {
  * GET /api/analytics/:account_id
  * Returns core dashboard metrics: Revenue, Orders, Attribution Breakdown
  */
-router.get('/:account_id', async (req, res) => {
+const getAnalyticsDashboardHandler = async (req, res) => {
   try {
     const { account_id } = req.params;
     const { start, end } = req.query;
@@ -3001,6 +3008,13 @@ router.get('/:account_id', async (req, res) => {
         createdAt: true,
         platformCreatedAt: true,
         revenue: true,
+        subtotal: true,
+        discountTotal: true,
+        shippingTotal: true,
+        taxTotal: true,
+        refundAmount: true,
+        chargebackFlag: true,
+        ordersCount: true,
         currency: true,
         attributedChannel: true,
         attributionSnapshot: true,
@@ -3015,6 +3029,7 @@ router.get('/:account_id', async (req, res) => {
         customerId: true,
         emailHash: true,
         phoneHash: true,
+        eventId: true,
         capiSentMeta: true,
         capiSentGoogle: true,
         capiSentTiktok: true,
@@ -3086,6 +3101,7 @@ router.get('/:account_id', async (req, res) => {
     };
 
     const requestUserId = req.user?._id || req.user?.id || null;
+    const warnings = [];
 
     try {
       paidMedia = await buildPaidMediaSummary({
@@ -3303,12 +3319,20 @@ router.get('/:account_id', async (req, res) => {
       phoneHash: order.phoneHash || null,
       browserFingerprintHash: hashBrowserId(order?.attributionSnapshot?.browser_id || null),
       revenue: Number(order.revenue || 0),
+      subtotal: Number(order.subtotal || 0),
+      discountTotal: Number(order.discountTotal || 0),
+      shippingTotal: Number(order.shippingTotal || 0),
+      taxTotal: Number(order.taxTotal || 0),
+      refundAmount: Number(order.refundAmount || 0),
+      chargebackFlag: Boolean(order.chargebackFlag),
+      ordersCount: Number.isFinite(Number(order.ordersCount)) ? Number(order.ordersCount) : null,
       currency: order.currency || 'MXN',
       items: normalizeLineItems(order.lineItems),
       orderAttributedChannel: order.attributedChannel || null,
       orderAttributionSnapshot: order.attributionSnapshot || null,
       orderAttributionConfidence: Number(order.confidenceScore || 0),
       orderAttributionModel: order.attributionModel || null,
+      eventId: order.eventId || null,
       wooSourceLabel: order?.attributionSnapshot?.woo_source_label || null,
       wooSourceType: order?.attributionSnapshot?.woo_source_type || null,
       customerName: extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload),
@@ -3321,6 +3345,7 @@ router.get('/:account_id', async (req, res) => {
       return {
         source: 'events',
         createdAt: ev.createdAt,
+        storedAt: ev.createdAt,
         orderId: ev.orderId || null,
         orderNumber: null,
         checkoutToken: ev.checkoutToken || null,
@@ -3331,8 +3356,16 @@ router.get('/:account_id', async (req, res) => {
         phoneHash: eventIdentity.phoneHash || null,
         browserFingerprintHash: eventIdentity.browserFingerprintHash || null,
         revenue: Number(ev.revenue || 0),
+        subtotal: null,
+        discountTotal: null,
+        shippingTotal: null,
+        taxTotal: null,
+        refundAmount: null,
+        chargebackFlag: null,
+        ordersCount: null,
         currency: ev.currency || 'MXN',
         items: [],
+        eventId: null,
         payloadSnapshot: {
           utm_source: ev?.rawPayload?.utm_source || null,
           utm_medium: ev?.rawPayload?.utm_medium || null,
@@ -3636,8 +3669,19 @@ router.get('/:account_id', async (req, res) => {
           eventName: true,
           createdAt: true,
           collectedAt: true,
+          browserReceivedAt: true,
+          serverReceivedAt: true,
+          pageType: true,
           pageUrl: true,
           productId: true,
+          variantId: true,
+          cartId: true,
+          cartValue: true,
+          rawSource: true,
+          matchType: true,
+          confidenceScore: true,
+          revenue: true,
+          currency: true,
           orderId: true,
           checkoutToken: true,
           sessionId: true,
@@ -3730,8 +3774,19 @@ router.get('/:account_id', async (req, res) => {
               eventName: true,
               createdAt: true,
               collectedAt: true,
+              browserReceivedAt: true,
+              serverReceivedAt: true,
+              pageType: true,
               pageUrl: true,
               productId: true,
+              variantId: true,
+              cartId: true,
+              cartValue: true,
+              rawSource: true,
+              matchType: true,
+              confidenceScore: true,
+              revenue: true,
+              currency: true,
               orderId: true,
               checkoutToken: true,
               sessionId: true,
@@ -3765,9 +3820,20 @@ router.get('/:account_id', async (req, res) => {
           eventName: ev.eventName,
           createdAt: ev.createdAt,
           collectedAt: ev.collectedAt || null,
+          browserReceivedAt: ev.browserReceivedAt || null,
+          serverReceivedAt: ev.serverReceivedAt || null,
           sessionId: ev.sessionId || null,
+          pageType: ev.pageType || null,
           pageUrl: ev.pageUrl || null,
           productId: ev.productId || null,
+          variantId: ev.variantId || null,
+          cartId: ev.cartId || null,
+          cartValue: ev.cartValue ?? null,
+          rawSource: ev.rawSource || null,
+          matchType: ev.matchType || null,
+          confidenceScore: toFiniteNumberOrNull(ev.confidenceScore),
+          revenue: toFiniteNumberOrNull(ev.revenue),
+          currency: ev.currency || null,
           productName: ev?.rawPayload?.product_name || ev?.rawPayload?.item_name || ev?.rawPayload?.name || null,
           itemId: ev?.rawPayload?.item_id || ev?.rawPayload?.product_id || null,
           utmSource: ev?.rawPayload?.utm_source || null,
@@ -3779,9 +3845,11 @@ router.get('/:account_id', async (req, res) => {
           utmEntryUrl: ev?.rawPayload?.utm_entry_url || null,
           utmSessionHistory: ev?.rawPayload?.utm_session_history || null,
           utmBrowserHistory: ev?.rawPayload?.utm_browser_history || null,
+          referrer: ev?.rawPayload?.referrer || ev?.rawPayload?.referer || null,
           checkoutToken: ev.checkoutToken || null,
           orderId: ev.orderId || null,
           fbp: ev?.rawPayload?.fbp || ev?.rawPayload?._fbp || ev?.rawPayload?.user_data?.fbp || null,
+          fbclid: ev?.rawPayload?.fbclid || null,
           fbc: ev?.rawPayload?.fbc || ev?.rawPayload?._fbc || ev?.rawPayload?.user_data?.fbc || null,
           ttclid: ev?.rawPayload?.ttclid || ev?.rawPayload?.user_data?.ttclid || null,
           gclid: ev?.rawPayload?.gclid || ev?.rawPayload?.user_data?.gclid || null,
@@ -3798,6 +3866,7 @@ router.get('/:account_id', async (req, res) => {
 
       return {
         ...conv,
+        selectionKey: getAnalyticsPurchaseSelectionKey(conv),
         items: normalizedItems,
         attributedCampaignLabel: readableAttribution.campaignLabel || null,
         attributedAdsetLabel: readableAttribution.adsetLabel || null,
@@ -4020,6 +4089,885 @@ router.get('/:account_id', async (req, res) => {
       });
     }
     res.status(500).json({ error: 'Internal Server Error' });
+  }
+};
+
+router.get('/:account_id', getAnalyticsDashboardHandler);
+
+const EXPORT_PREVIEW_PAGE_SIZE = 20;
+const EXPORT_MAX_SELECTIONS = 200;
+const EXPORT_MAX_RECENT_PURCHASES = 400;
+
+function getAnalyticsPurchaseSelectionKey(purchase = {}) {
+  const orderId = String(purchase.orderId || '').trim();
+  if (orderId) return `order:${orderId}`;
+
+  const orderNumber = String(purchase.orderNumber || '').trim();
+  if (orderNumber) return `order-number:${orderNumber}`;
+
+  const checkoutToken = String(purchase.checkoutToken || '').trim();
+  if (checkoutToken) return `checkout:${checkoutToken}`;
+
+  const createdAt = String(purchase.platformCreatedAt || purchase.createdAt || '').trim();
+  const userKey = String(purchase.userKey || '').trim();
+  const customerId = String(purchase.customerId || '').trim();
+  const revenue = String(Number(purchase.revenue || 0));
+  return `fallback:${createdAt}:${userKey}:${customerId}:${revenue}`;
+}
+
+function resolveAnalyticsPurchaseCustomerName(purchase = {}) {
+  const directCandidates = [
+    purchase.customerName,
+    purchase.customerDisplayName,
+    purchase.displayName,
+    purchase.billingName,
+    purchase.shippingName,
+    [purchase.billingFirstName, purchase.billingLastName].filter(Boolean).join(' ').trim(),
+    [purchase.customerFirstName, purchase.customerLastName].filter(Boolean).join(' ').trim(),
+    [purchase.firstName, purchase.lastName].filter(Boolean).join(' ').trim(),
+  ];
+
+  const directHit = directCandidates.find((value) => String(value || '').trim());
+  if (directHit) return String(directHit || '').trim();
+
+  const events = Array.isArray(purchase.events) ? purchase.events : [];
+  for (const event of events) {
+    const hit = [
+      event?.customerName,
+      event?.customerDisplayName,
+      event?.customerEmail,
+    ].find((value) => String(value || '').trim());
+    if (hit) return String(hit || '').trim();
+  }
+
+  return '';
+}
+
+function resolveAnalyticsPurchaseCustomerEmail(purchase = {}) {
+  const directCandidates = [
+    purchase.customerEmail,
+    purchase.email,
+    purchase.billingEmail,
+    purchase.shippingEmail,
+    purchase.userEmail,
+  ];
+
+  const directHit = directCandidates.find((value) => String(value || '').trim());
+  if (directHit) return String(directHit || '').trim().toLowerCase();
+
+  const events = Array.isArray(purchase.events) ? purchase.events : [];
+  for (const event of events) {
+    const eventHit = [
+      event?.customerEmail,
+      event?.email,
+      event?.userEmail,
+    ].find((value) => String(value || '').trim());
+    if (eventHit) return String(eventHit || '').trim().toLowerCase();
+  }
+
+  return '';
+}
+
+function normalizeAnalyticsExportPath(urlLike) {
+  if (!urlLike) return '-';
+  try {
+    return new URL(urlLike, 'https://adray.ai').pathname || '-';
+  } catch (_) {
+    return String(urlLike || '-').trim() || '-';
+  }
+}
+
+function shortenAnalyticsIdentifier(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (raw.length <= 10) return raw;
+  return `${raw.slice(0, 4)}...${raw.slice(-4)}`;
+}
+
+function normalizeAnalyticsAttributionLabelType(type = '') {
+  const value = String(type || '').trim().toLowerCase();
+  if (value === 'ad') return 'ad';
+  if (value === 'adset') return 'ad set';
+  if (value === 'click') return 'click';
+  return 'campaign';
+}
+
+function humanizeAnalyticsChannel(channel = '', platform = '') {
+  const normalized = normalizeChannelForStats(channel, platform);
+  if (normalized === 'meta') return 'Meta Ads';
+  if (normalized === 'google') return 'Google Ads';
+  if (normalized === 'tiktok') return 'TikTok Ads';
+  if (normalized === 'organic') return 'Organic';
+  if (normalized === 'direct') return 'Direct';
+  if (normalized === 'referral') return 'Referral';
+  if (normalized === 'email') return 'Email';
+  if (normalized === 'unattributed') return 'Unattributed';
+  return 'Other';
+}
+
+function isAnalyticsPurchaseJourneyEventName(rawName = '') {
+  return PURCHASE_ALIASES.includes(String(rawName || '').trim().toLowerCase());
+}
+
+function resolveAnalyticsJourneyReferrerLabel(referrer = '') {
+  const value = String(referrer || '').trim();
+  if (!value) return '';
+  try {
+    return new URL(value).hostname.replace(/^www\./i, '');
+  } catch (_) {
+    return value;
+  }
+}
+
+function resolveAnalyticsAttributedSourceDescriptor(purchase = {}) {
+  const campaignLabel = String(purchase.attributedCampaignLabel || purchase.attributedCampaign || '').trim();
+  const adsetLabel = String(purchase.attributedAdsetLabel || purchase.attributedAdset || '').trim();
+  const adLabel = String(purchase.attributedAdLabel || purchase.attributedAd || '').trim();
+  const clickId = String(purchase.attributedClickId || '').trim();
+
+  if (adLabel) return { label: adLabel, type: 'ad' };
+  if (adsetLabel) return { label: adsetLabel, type: 'adset' };
+  if (campaignLabel) return { label: campaignLabel, type: 'campaign' };
+  if (clickId) return { label: shortenAnalyticsIdentifier(clickId), type: 'click' };
+  return { label: 'No campaign', type: 'campaign' };
+}
+
+function dedupeAdjacentAnalyticsJourneyEvents(eventsArray = []) {
+  if (!Array.isArray(eventsArray) || eventsArray.length === 0) return [];
+  const result = [];
+  let current = eventsArray[0];
+
+  for (let index = 1; index < eventsArray.length; index += 1) {
+    const next = eventsArray[index];
+    const currentName = String(current.eventName || '').trim().toLowerCase();
+    const nextName = String(next.eventName || '').trim().toLowerCase();
+    const currentPath = normalizeAnalyticsExportPath(current.pageUrl || '');
+    const nextPath = normalizeAnalyticsExportPath(next.pageUrl || '');
+
+    if (currentName === nextName && currentPath === nextPath) continue;
+
+    result.push(current);
+    current = next;
+  }
+
+  result.push(current);
+  return result;
+}
+
+function resolveAnalyticsJourneyTouchpoint({ event = {}, purchase = {} } = {}) {
+  const utmSource = String(event.utmSource || '').trim().toLowerCase();
+  const utmMedium = String(event.utmMedium || '').trim().toLowerCase();
+  const utmCampaign = String(event.utmCampaign || '').trim();
+  const referrer = String(event.referrer || '').trim();
+  const referrerLabel = resolveAnalyticsJourneyReferrerLabel(referrer);
+  const gclid = String(event.gclid || '').trim();
+  const metaClickId = String(event.fbclid || event.fbc || event.clickId || '').trim();
+  const ttclid = String(event.ttclid || '').trim();
+  const fallbackChannel = normalizeChannelForStats(purchase.attributedChannel || '', purchase.attributedPlatform || '');
+  const fallbackSource = resolveAnalyticsAttributedSourceDescriptor(purchase);
+  const fallbackCampaign = String(fallbackSource.label || '').trim();
+  const fallbackClickId = String(purchase.attributedClickId || '').trim();
+
+  let channelKey = 'direct';
+  let label = 'Direct';
+  let reason = 'No explicit campaign or click id was found in this session.';
+  let clickId = '';
+
+  if (metaClickId) {
+    channelKey = 'meta';
+    label = 'Meta Ads';
+    reason = 'Matched by Meta click id.';
+    clickId = metaClickId;
+  } else if (ttclid) {
+    channelKey = 'tiktok';
+    label = 'TikTok Ads';
+    reason = 'Matched by TikTok click id.';
+    clickId = ttclid;
+  } else if (gclid || (utmSource.includes('google') && /(cpc|paid|search|ads)/.test(utmMedium))) {
+    channelKey = 'google';
+    label = 'Google Ads';
+    reason = gclid ? 'Matched by Google click id.' : 'Paid Google UTM detected.';
+    clickId = gclid;
+  } else if (utmSource.includes('meta') || utmSource.includes('facebook') || utmSource.includes('instagram')) {
+    channelKey = 'meta';
+    label = /(organic|social)/.test(utmMedium) ? 'Meta Organic' : 'Meta Ads';
+    reason = 'Detected from Meta UTM source.';
+  } else if (utmSource.includes('tiktok')) {
+    channelKey = 'tiktok';
+    label = /(organic|social)/.test(utmMedium) ? 'TikTok Organic' : 'TikTok Ads';
+    reason = 'Detected from TikTok UTM source.';
+  } else if (utmSource.includes('google')) {
+    channelKey = /(cpc|paid|search|ads)/.test(utmMedium) ? 'google' : 'organic';
+    label = channelKey === 'google' ? 'Google Ads' : 'Google Organic';
+    reason = 'Detected from Google UTM source.';
+  } else if (referrerLabel.includes('google')) {
+    channelKey = 'organic';
+    label = 'Google Organic';
+    reason = `Referrer ${referrerLabel} indicates search traffic.`;
+  } else if (referrerLabel.includes('facebook') || referrerLabel.includes('instagram')) {
+    channelKey = 'organic';
+    label = 'Meta Organic';
+    reason = `Referrer ${referrerLabel} indicates social traffic.`;
+  } else if (referrerLabel.includes('tiktok')) {
+    channelKey = 'organic';
+    label = 'TikTok Organic';
+    reason = `Referrer ${referrerLabel} indicates social traffic.`;
+  } else if (utmSource) {
+    channelKey = normalizeChannelForStats(utmSource, utmMedium || utmSource);
+    label = humanizeAnalyticsChannel(utmSource, utmMedium || utmSource);
+    reason = `UTM source ${utmSource} was captured in this session.`;
+  } else if (referrerLabel) {
+    channelKey = 'referral';
+    label = 'Referral';
+    reason = `Referrer ${referrerLabel} stitched this session.`;
+  } else if (fallbackChannel && fallbackChannel !== 'other' && fallbackChannel !== 'unattributed') {
+    channelKey = fallbackChannel;
+    label = `${humanizeAnalyticsChannel(purchase.attributedChannel || fallbackChannel, purchase.attributedPlatform || '')} inferred`;
+    reason = 'Inherited from the final attributed purchase when this session had no explicit source.';
+    clickId = fallbackClickId;
+  }
+
+  const campaign = utmCampaign || fallbackCampaign || '';
+  const sourceType = utmCampaign ? 'campaign' : (fallbackSource.type || 'campaign');
+  const subLabel = campaign
+    ? `Attributed ${normalizeAnalyticsAttributionLabelType(sourceType)}: ${campaign}`
+    : clickId
+      ? `Click ID: ${shortenAnalyticsIdentifier(clickId)}`
+      : referrerLabel
+        ? `Referrer: ${referrerLabel}`
+        : 'No campaign metadata';
+
+  return {
+    channelKey,
+    label,
+    reason,
+    campaign,
+    clickId,
+    referrerLabel,
+    utmSource: utmSource || null,
+    utmMedium: utmMedium || null,
+    utmCampaign: utmCampaign || null,
+    utmContent: event.utmContent || null,
+    utmTerm: event.utmTerm || null,
+    ga4SessionSource: event.ga4SessionSource || null,
+    gclid: event.gclid || null,
+    fbp: event.fbp || null,
+    fbc: event.fbc || null,
+    ttclid: event.ttclid || null,
+    sourceType,
+    subLabel,
+  };
+}
+
+function buildAnalyticsJourneySessionSentence(group = {}) {
+  const touchpoint = group.touchpoint || {};
+  const sessionLabel = String(group.label || 'This session').trim();
+  const entryPage = group.entryPage && group.entryPage !== '-' ? group.entryPage : '';
+  const campaign = String(touchpoint.campaign || '').trim();
+  const sourceTypeLabel = normalizeAnalyticsAttributionLabelType(touchpoint.sourceType || 'campaign');
+  const clickId = String(touchpoint.clickId || '').trim();
+  const referrerLabel = String(touchpoint.referrerLabel || '').trim();
+  const channelLabel = String(touchpoint.label || 'Direct').trim();
+  const actionCopy = String(group.actionCopy || '').trim();
+  const lowerLabel = channelLabel.toLowerCase();
+
+  let intro = `${sessionLabel} opened directly because no new ad click or campaign was captured before the return`;
+  if (clickId && campaign) {
+    intro = `${sessionLabel} opened after a ${channelLabel} click from ${sourceTypeLabel} ${campaign} (${shortenAnalyticsIdentifier(clickId)})`;
+  } else if (clickId) {
+    intro = `${sessionLabel} opened after a ${channelLabel} click (${shortenAnalyticsIdentifier(clickId)})`;
+  } else if (campaign) {
+    intro = `${sessionLabel} opened through ${channelLabel} ${sourceTypeLabel} ${campaign}`;
+  } else if (referrerLabel) {
+    intro = `${sessionLabel} opened from ${channelLabel} traffic coming from ${referrerLabel}`;
+  } else if (lowerLabel.includes('direct')) {
+    intro = `${sessionLabel} opened directly because no new ad click or campaign was captured before the return`;
+  } else if (lowerLabel.includes('referral')) {
+    intro = `${sessionLabel} opened from a referral source`;
+  } else if (lowerLabel.includes('organic')) {
+    intro = `${sessionLabel} opened through ${channelLabel} with no paid click id captured`;
+  } else if (lowerLabel.includes('inferred')) {
+    intro = `${sessionLabel} was inferred from the final purchase attribution when this session had no fresh source metadata`;
+  } else {
+    intro = `${sessionLabel} opened through ${channelLabel}`;
+  }
+
+  const landingCopy = entryPage ? `, landing on ${entryPage}` : ', returning to the site';
+  const actionSentence = actionCopy ? ` ${actionCopy}` : '';
+  return `${intro}${landingCopy}.${actionSentence}`.trim();
+}
+
+function buildAnalyticsPurchaseSessionGroups(purchase = {}) {
+  const availableEvents = Array.isArray(purchase.events) ? purchase.events : [];
+  const purchaseTimestamp = new Date(purchase.platformCreatedAt || purchase.createdAt || Date.now()).getTime();
+  const fallbackUserKey = String(purchase.userKey || '').trim();
+  const maxSessionGapMs = 30 * 60 * 1000;
+
+  const rawEvents = availableEvents
+    .map((event) => ({
+      ...event,
+      _ts: new Date(event.createdAt || event.collectedAt || purchase.platformCreatedAt || purchase.createdAt || 0).getTime(),
+      _pagePath: normalizeAnalyticsExportPath(event.pageUrl || ''),
+    }))
+    .filter((event) => Number.isFinite(event._ts))
+    .sort((a, b) => a._ts - b._ts);
+
+  const dedupedEvents = dedupeAdjacentAnalyticsJourneyEvents(rawEvents);
+  const groups = [];
+
+  dedupedEvents.forEach((event) => {
+    const sessionId = String(event.sessionId || '').trim();
+    const userKey = String(event.userKey || fallbackUserKey || '').trim();
+    const groupingKey = sessionId || (userKey ? `user:${userKey}` : 'anonymous');
+    const previous = groups[groups.length - 1];
+    const shouldStartNewGroup = !previous
+      || previous.groupingKey !== groupingKey
+      || (!sessionId && (event._ts - previous.lastTs) > maxSessionGapMs);
+
+    if (shouldStartNewGroup) {
+      groups.push({
+        groupingKey,
+        sessionId,
+        userKey,
+        startedTs: event._ts,
+        endedTs: event._ts,
+        lastTs: event._ts,
+        events: [event],
+      });
+      return;
+    }
+
+    previous.events.push(event);
+    previous.endedTs = event._ts;
+    previous.lastTs = event._ts;
+    if (!previous.sessionId && sessionId) previous.sessionId = sessionId;
+    if (!previous.userKey && userKey) previous.userKey = userKey;
+  });
+
+  const purchaseSignalGroupIndexes = groups.reduce((indexes, group, index) => {
+    if (group.events.some((event) => isAnalyticsPurchaseJourneyEventName(event.eventName || ''))) {
+      indexes.push(index);
+    }
+    return indexes;
+  }, []);
+
+  const terminalPurchaseGroupIndex = purchaseSignalGroupIndexes.length
+    ? purchaseSignalGroupIndexes[purchaseSignalGroupIndexes.length - 1]
+    : Math.max(0, groups.length - 1);
+
+  return groups.map((group, index) => {
+    const firstEvent = group.events[0] || {};
+    const lastEvent = group.events[group.events.length - 1] || {};
+    const touchpointEvent = group.events.find((event) => (
+      event.fbc || event.gclid || event.ttclid || event.utmSource || event.referrer
+    )) || firstEvent;
+    const touchpoint = resolveAnalyticsJourneyTouchpoint({ event: touchpointEvent, purchase });
+    const entryEvent = group.events.find((event) => event._pagePath && event._pagePath !== '-') || firstEvent;
+    const exitEvent = [...group.events].reverse().find((event) => event._pagePath && event._pagePath !== '-') || lastEvent;
+    const purchaseEventCount = group.events.filter((event) => isAnalyticsPurchaseJourneyEventName(event.eventName || '')).length;
+    const containsPurchase = purchaseEventCount > 0;
+    const isTerminalPurchaseGroup = index === terminalPurchaseGroupIndex;
+    const containsCheckout = group.events.some((event) => String(event.eventName || '').toLowerCase() === 'begin_checkout');
+    const containsCart = group.events.some((event) => String(event.eventName || '').toLowerCase() === 'add_to_cart');
+    const containsLogin = group.events.some((event) => /login/.test(String(event.eventName || '').toLowerCase()));
+
+    let actionCopy = 'Browsing and consideration.';
+    if (containsPurchase && isTerminalPurchaseGroup) actionCopy = 'Purchase completed in this session.';
+    else if (containsPurchase) actionCopy = 'Purchase signal continued into a later session before the final order was confirmed.';
+    else if (containsCheckout) actionCopy = 'Reached checkout in this session.';
+    else if (containsCart) actionCopy = 'Added product(s) to cart.';
+    else if (containsLogin) actionCopy = 'User identified with a login event.';
+
+    const sessionGroup = {
+      label: `Session ${index + 1}`,
+      sessionId: group.sessionId || null,
+      userKey: group.userKey || null,
+      sessionIndex: index + 1,
+      startedAt: new Date(group.startedTs).toISOString(),
+      endedAt: new Date(group.endedTs).toISOString(),
+      eventCount: group.events.length,
+      purchaseEventCount,
+      entryPage: normalizeAnalyticsExportPath(entryEvent.pageUrl || ''),
+      exitPage: normalizeAnalyticsExportPath(exitEvent.pageUrl || ''),
+      landingPageUrl: entryEvent.pageUrl || null,
+      touchpoint,
+      actionCopy,
+      containsPurchase,
+      isTerminalPurchaseGroup,
+      purchaseAt: containsPurchase
+        ? new Date(group.events[group.events.length - 1]._ts).toISOString()
+        : (isTerminalPurchaseGroup && Number.isFinite(purchaseTimestamp) ? new Date(purchaseTimestamp).toISOString() : null),
+    };
+
+    sessionGroup.sourceExplanation = buildAnalyticsJourneySessionSentence(sessionGroup);
+    return sessionGroup;
+  });
+}
+
+function resolveAnalyticsPurchaseLandingPage(purchase = {}) {
+  const events = Array.isArray(purchase.events) ? purchase.events : [];
+  const firstWithPage = events.find((event) => String(event.pageUrl || '').trim());
+  return normalizeAnalyticsExportPath(firstWithPage?.pageUrl || purchase.pageUrl || purchase.landingPageUrl || '');
+}
+
+function buildAnalyticsExportCandidate(purchase = {}) {
+  const sessions = buildAnalyticsPurchaseSessionGroups(purchase);
+  return {
+    selectionKey: getAnalyticsPurchaseSelectionKey(purchase),
+    orderId: purchase.orderId || null,
+    orderNumber: purchase.orderNumber || null,
+    checkoutToken: purchase.checkoutToken || null,
+    customerName: resolveAnalyticsPurchaseCustomerName(purchase) || 'Customer',
+    customerEmail: resolveAnalyticsPurchaseCustomerEmail(purchase) || null,
+    revenue: Number(purchase.revenue || 0),
+    currency: purchase.currency || 'MXN',
+    channel: normalizeChannelForStats(purchase.attributedChannel || '', purchase.attributedPlatform || ''),
+    platform: purchase.attributedPlatform || null,
+    channelLabel: humanizeAnalyticsChannel(purchase.attributedChannel || '', purchase.attributedPlatform || ''),
+    date: purchase.platformCreatedAt || purchase.createdAt || null,
+    sessionCount: sessions.length,
+    eventCount: Array.isArray(purchase.events) ? purchase.events.length : 0,
+  };
+}
+
+function filterAnalyticsExportPurchases(purchases = [], { search = '', channel = 'all' } = {}) {
+  const normalizedSearch = String(search || '').trim().toLowerCase();
+  const normalizedChannel = String(channel || 'all').trim().toLowerCase();
+
+  return (Array.isArray(purchases) ? purchases : []).filter((purchase) => {
+    const purchaseChannel = normalizeChannelForStats(purchase.attributedChannel || '', purchase.attributedPlatform || '');
+    if (normalizedChannel && normalizedChannel !== 'all' && purchaseChannel !== normalizedChannel) {
+      return false;
+    }
+
+    if (!normalizedSearch) return true;
+
+    const haystack = [
+      getAnalyticsPurchaseSelectionKey(purchase),
+      purchase.orderId,
+      purchase.orderNumber,
+      purchase.checkoutToken,
+      resolveAnalyticsPurchaseCustomerName(purchase),
+      resolveAnalyticsPurchaseCustomerEmail(purchase),
+      purchase.attributedCampaignLabel,
+      purchase.attributedCampaign,
+    ]
+      .map((value) => String(value || '').toLowerCase())
+      .join(' ');
+
+    return haystack.includes(normalizedSearch);
+  });
+}
+
+function toCsvCell(value) {
+  if (value === null || value === undefined) return '';
+  const raw = String(value);
+  if (/[",\r\n]/.test(raw)) return `"${raw.replace(/"/g, '""')}"`;
+  return raw;
+}
+
+function buildCsvString(columns = [], rows = []) {
+  const header = columns.map((column) => toCsvCell(column)).join(',');
+  const lines = [header];
+
+  (Array.isArray(rows) ? rows : []).forEach((row) => {
+    lines.push(columns.map((column) => toCsvCell(row?.[column])).join(','));
+  });
+
+  return `${lines.join('\r\n')}\r\n`;
+}
+
+function safeJsonStringify(value) {
+  try {
+    return JSON.stringify(value ?? null);
+  } catch (_) {
+    return '';
+  }
+}
+
+function buildAnalyticsBaseQueryFromInput(input = {}) {
+  const query = {};
+  if (input.start) query.start = input.start;
+  if (input.end) query.end = input.end;
+  if (String(input.all_time || input.allTime || '0') === '1' || input.allTime === true) {
+    query.all_time = '1';
+  }
+  if (input.attribution_model || input.attributionModel) {
+    query.attribution_model = String(input.attribution_model || input.attributionModel);
+  }
+  return query;
+}
+
+function buildAnalyticsInternalOriginalUrl(accountId, query = {}) {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === '') return;
+    params.set(key, String(value));
+  });
+  const suffix = params.toString();
+  return `/api/analytics/${encodeURIComponent(accountId)}${suffix ? `?${suffix}` : ''}`;
+}
+
+async function invokeAnalyticsDashboardPayloadForExport({ accountId, user, query = {} } = {}) {
+  return new Promise((resolve, reject) => {
+    const fakeReq = {
+      params: { account_id: accountId },
+      query,
+      user: user || null,
+      headers: {},
+      originalUrl: buildAnalyticsInternalOriginalUrl(accountId, query),
+    };
+
+    const fakeRes = {
+      statusCode: 200,
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      json(payload) {
+        if (this.statusCode >= 400) {
+          reject(new Error(payload?.error || 'Analytics export payload failed'));
+          return this;
+        }
+        resolve(payload);
+        return this;
+      },
+    };
+
+    Promise.resolve(getAnalyticsDashboardHandler(fakeReq, fakeRes)).catch(reject);
+  });
+}
+
+function buildAnalyticsExportRows({ accountId, purchases = [] } = {}) {
+  const ordersRows = [];
+  const sessionsRows = [];
+  const eventsRows = [];
+  const itemsRows = [];
+
+  (Array.isArray(purchases) ? purchases : []).forEach((purchase) => {
+    const selectionKey = getAnalyticsPurchaseSelectionKey(purchase);
+    const sessionGroups = buildAnalyticsPurchaseSessionGroups(purchase);
+    const customerName = resolveAnalyticsPurchaseCustomerName(purchase);
+    const customerEmail = resolveAnalyticsPurchaseCustomerEmail(purchase);
+    const deliveryStatus = normalizeObject(purchase.deliveryStatus);
+    const metaStatus = normalizeObject(deliveryStatus.meta);
+    const googleStatus = normalizeObject(deliveryStatus.google);
+    const tiktokStatus = normalizeObject(deliveryStatus.tiktok);
+
+    ordersRows.push({
+      selection_key: selectionKey,
+      shop: accountId,
+      account_id: accountId,
+      source: purchase.source || null,
+      order_id: purchase.orderId || null,
+      order_number: purchase.orderNumber || null,
+      checkout_token: purchase.checkoutToken || null,
+      platform_created_at: purchase.platformCreatedAt || purchase.createdAt || null,
+      stored_at: purchase.storedAt || purchase.createdAt || null,
+      revenue: Number(purchase.revenue || 0),
+      currency: purchase.currency || 'MXN',
+      subtotal: purchase.subtotal ?? null,
+      discount_total: purchase.discountTotal ?? null,
+      shipping_total: purchase.shippingTotal ?? null,
+      tax_total: purchase.taxTotal ?? null,
+      refund_amount: purchase.refundAmount ?? null,
+      chargeback_flag: purchase.chargebackFlag ?? null,
+      customer_id: purchase.customerId || null,
+      customer_name: customerName || null,
+      customer_email_resolved: customerEmail || null,
+      email_hash: purchase.emailHash || null,
+      phone_hash: purchase.phoneHash || null,
+      user_key: purchase.userKey || null,
+      session_id: purchase.sessionId || null,
+      orders_count: purchase.ordersCount ?? null,
+      attributed_channel: purchase.attributedChannel || null,
+      attributed_platform: purchase.attributedPlatform || null,
+      attributed_campaign: purchase.attributedCampaign || null,
+      attributed_campaign_label: purchase.attributedCampaignLabel || null,
+      attributed_adset: purchase.attributedAdset || null,
+      attributed_adset_label: purchase.attributedAdsetLabel || null,
+      attributed_ad: purchase.attributedAd || null,
+      attributed_ad_label: purchase.attributedAdLabel || null,
+      attributed_click_id: purchase.attributedClickId || null,
+      attribution_model: purchase.attributionModel || null,
+      attribution_confidence: purchase.attributionConfidence ?? null,
+      attribution_source: purchase.attributionSource || null,
+      resolved_attribution_label: purchase?.attributionDebug?.resolvedAttributionLabel || null,
+      woo_source_label: purchase.wooSourceLabel || null,
+      woo_source_type: purchase.wooSourceType || null,
+      landing_page: resolveAnalyticsPurchaseLandingPage(purchase),
+      stitched_session_count: sessionGroups.length,
+      stitched_event_count: Array.isArray(purchase.events) ? purchase.events.length : 0,
+      meta_status: metaStatus.status || null,
+      meta_reason: metaStatus.reason || null,
+      google_status: googleStatus.status || null,
+      google_reason: googleStatus.reason || null,
+      tiktok_status: tiktokStatus.status || null,
+      tiktok_reason: tiktokStatus.reason || null,
+      delivery_status_json: safeJsonStringify(purchase.deliveryStatus || null),
+      attribution_snapshot_json: safeJsonStringify(purchase.orderAttributionSnapshot || purchase.payloadSnapshot || null),
+    });
+
+    sessionGroups.forEach((group) => {
+      sessionsRows.push({
+        selection_key: selectionKey,
+        order_id: purchase.orderId || null,
+        order_number: purchase.orderNumber || null,
+        session_id: group.sessionId || null,
+        session_index: group.sessionIndex,
+        started_at_inferred: group.startedAt || null,
+        ended_at_inferred: group.endedAt || null,
+        event_count: group.eventCount,
+        purchase_event_count: group.purchaseEventCount,
+        entry_page: group.entryPage || null,
+        exit_page: group.exitPage || null,
+        landing_page_url: group.landingPageUrl || null,
+        utm_source: group.touchpoint?.utmSource || null,
+        utm_medium: group.touchpoint?.utmMedium || null,
+        utm_campaign: group.touchpoint?.utmCampaign || group.touchpoint?.campaign || null,
+        utm_content: group.touchpoint?.utmContent || null,
+        utm_term: group.touchpoint?.utmTerm || null,
+        ga4_session_source: group.touchpoint?.ga4SessionSource || null,
+        referrer: group.touchpoint?.referrerLabel || null,
+        gclid: group.touchpoint?.gclid || null,
+        fbp: group.touchpoint?.fbp || null,
+        fbc: group.touchpoint?.fbc || null,
+        ttclid: group.touchpoint?.ttclid || null,
+        source_explanation: group.sourceExplanation || null,
+      });
+    });
+
+    const events = Array.isArray(purchase.events) ? purchase.events : [];
+    events.forEach((event, index) => {
+      eventsRows.push({
+        selection_key: selectionKey,
+        order_id: purchase.orderId || null,
+        order_number: purchase.orderNumber || null,
+        session_id: event.sessionId || null,
+        event_index: index + 1,
+        event_id: event.eventId || null,
+        event_name: event.eventName || null,
+        event_bucket: resolveEventBucket(event.eventName || ''),
+        created_at: event.createdAt || null,
+        collected_at: event.collectedAt || null,
+        browser_received_at: event.browserReceivedAt || null,
+        server_received_at: event.serverReceivedAt || null,
+        page_url: event.pageUrl || null,
+        page_type: event.pageType || null,
+        product_id: event.productId || null,
+        variant_id: event.variantId || null,
+        product_name: event.productName || null,
+        item_id: event.itemId || null,
+        cart_id: event.cartId || null,
+        cart_value: event.cartValue ?? null,
+        revenue: event.revenue ?? null,
+        currency: event.currency || null,
+        raw_source: event.rawSource || null,
+        match_type: event.matchType || null,
+        confidence_score: event.confidenceScore ?? null,
+        utm_source: event.utmSource || null,
+        utm_medium: event.utmMedium || null,
+        utm_campaign: event.utmCampaign || null,
+        utm_content: event.utmContent || null,
+        utm_term: event.utmTerm || null,
+        ga4_session_source: event.ga4SessionSource || null,
+        utm_entry_url: event.utmEntryUrl || null,
+        utm_session_history_json: safeJsonStringify(event.utmSessionHistory || null),
+        utm_browser_history_json: safeJsonStringify(event.utmBrowserHistory || null),
+        gclid: event.gclid || null,
+        fbp: event.fbp || null,
+        fbc: event.fbc || null,
+        ttclid: event.ttclid || null,
+        click_id: event.clickId || null,
+        customer_email: event.customerEmail || customerEmail || null,
+        client_ip: event.clientIp || null,
+        user_agent: event.userAgent || null,
+      });
+    });
+
+    const items = Array.isArray(purchase.items) ? purchase.items : [];
+    items.forEach((item, index) => {
+      itemsRows.push({
+        selection_key: selectionKey,
+        order_id: purchase.orderId || null,
+        order_number: purchase.orderNumber || null,
+        item_index: index + 1,
+        product_id: item.productId || item.id || null,
+        variant_id: item.variantId || null,
+        sku: item.sku || null,
+        name: item.name || null,
+        quantity: item.quantity ?? null,
+        price: item.price ?? null,
+        subtotal: item.subtotal ?? null,
+        total: item.lineTotal ?? null,
+        currency: item.currency || purchase.currency || 'MXN',
+        raw_item_json: safeJsonStringify(item.rawItem || item),
+      });
+    });
+  });
+
+  return { ordersRows, sessionsRows, eventsRows, itemsRows };
+}
+
+const EXPORT_ORDERS_COLUMNS = [
+  'selection_key', 'shop', 'account_id', 'source', 'order_id', 'order_number', 'checkout_token',
+  'platform_created_at', 'stored_at', 'revenue', 'currency', 'subtotal', 'discount_total',
+  'shipping_total', 'tax_total', 'refund_amount', 'chargeback_flag', 'customer_id', 'customer_name',
+  'customer_email_resolved', 'email_hash', 'phone_hash', 'user_key', 'session_id', 'orders_count',
+  'attributed_channel', 'attributed_platform', 'attributed_campaign', 'attributed_campaign_label',
+  'attributed_adset', 'attributed_adset_label', 'attributed_ad', 'attributed_ad_label',
+  'attributed_click_id', 'attribution_model', 'attribution_confidence', 'attribution_source',
+  'resolved_attribution_label', 'woo_source_label', 'woo_source_type', 'landing_page',
+  'stitched_session_count', 'stitched_event_count', 'meta_status', 'meta_reason', 'google_status',
+  'google_reason', 'tiktok_status', 'tiktok_reason', 'delivery_status_json', 'attribution_snapshot_json',
+];
+
+const EXPORT_SESSIONS_COLUMNS = [
+  'selection_key', 'order_id', 'order_number', 'session_id', 'session_index', 'started_at_inferred',
+  'ended_at_inferred', 'event_count', 'purchase_event_count', 'entry_page', 'exit_page',
+  'landing_page_url', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
+  'ga4_session_source', 'referrer', 'gclid', 'fbp', 'fbc', 'ttclid', 'source_explanation',
+];
+
+const EXPORT_EVENTS_COLUMNS = [
+  'selection_key', 'order_id', 'order_number', 'session_id', 'event_index', 'event_id', 'event_name',
+  'event_bucket', 'created_at', 'collected_at', 'browser_received_at', 'server_received_at', 'page_url',
+  'page_type', 'product_id', 'variant_id', 'product_name', 'item_id', 'cart_id', 'cart_value',
+  'revenue', 'currency', 'raw_source', 'match_type', 'confidence_score', 'utm_source', 'utm_medium',
+  'utm_campaign', 'utm_content', 'utm_term', 'ga4_session_source', 'utm_entry_url',
+  'utm_session_history_json', 'utm_browser_history_json', 'gclid', 'fbp', 'fbc', 'ttclid', 'click_id',
+  'customer_email', 'client_ip', 'user_agent',
+];
+
+const EXPORT_ITEMS_COLUMNS = [
+  'selection_key', 'order_id', 'order_number', 'item_index', 'product_id', 'variant_id', 'sku',
+  'name', 'quantity', 'price', 'subtotal', 'total', 'currency', 'raw_item_json',
+];
+
+router.get('/:account_id/export/candidates', async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const search = String(req.query.search || '').trim();
+    const channel = String(req.query.channel || 'all').trim();
+    const offset = Math.max(0, Number.parseInt(String(req.query.offset || '0'), 10) || 0);
+    const limit = Math.max(1, Math.min(100, Number.parseInt(String(req.query.limit || EXPORT_PREVIEW_PAGE_SIZE), 10) || EXPORT_PREVIEW_PAGE_SIZE));
+    const analyticsQuery = {
+      ...buildAnalyticsBaseQueryFromInput(req.query),
+      recent_limit: String(EXPORT_MAX_RECENT_PURCHASES),
+    };
+
+    const payload = await invokeAnalyticsDashboardPayloadForExport({
+      accountId: account_id,
+      user: req.user,
+      query: analyticsQuery,
+    });
+
+    const filtered = filterAnalyticsExportPurchases(payload?.recentPurchases || [], { search, channel });
+    const items = filtered.slice(offset, offset + limit).map((purchase) => buildAnalyticsExportCandidate(purchase));
+
+    return res.json({
+      ok: true,
+      total: filtered.length,
+      offset,
+      limit,
+      items,
+    });
+  } catch (error) {
+    console.error('[Analytics Export] Candidates error:', error);
+    return res.status(500).json({ ok: false, error: 'Failed to load export candidates' });
+  }
+});
+
+router.post('/:account_id/export/download', async (req, res) => {
+  try {
+    const { account_id } = req.params;
+    const selectionKeys = Array.isArray(req.body?.selectionKeys)
+      ? req.body.selectionKeys.map((value) => String(value || '').trim()).filter(Boolean)
+      : [];
+    const include = normalizeObject(req.body?.include);
+    const format = String(req.body?.format || 'csv_zip').trim().toLowerCase();
+
+    if (format !== 'csv_zip') {
+      return res.status(400).json({ ok: false, error: 'Unsupported export format' });
+    }
+
+    if (!selectionKeys.length) {
+      return res.status(400).json({ ok: false, error: 'At least one selection key is required' });
+    }
+
+    if (selectionKeys.length > EXPORT_MAX_SELECTIONS) {
+      return res.status(400).json({
+        ok: false,
+        error: `You can export up to ${EXPORT_MAX_SELECTIONS} journeys at a time`,
+      });
+    }
+
+    const analyticsQuery = {
+      ...buildAnalyticsBaseQueryFromInput(req.body || {}),
+      recent_limit: String(EXPORT_MAX_RECENT_PURCHASES),
+    };
+
+    const payload = await invokeAnalyticsDashboardPayloadForExport({
+      accountId: account_id,
+      user: req.user,
+      query: analyticsQuery,
+    });
+
+    const purchaseMap = new Map(
+      (Array.isArray(payload?.recentPurchases) ? payload.recentPurchases : []).map((purchase) => [
+        getAnalyticsPurchaseSelectionKey(purchase),
+        purchase,
+      ])
+    );
+
+    const missing = selectionKeys.filter((key) => !purchaseMap.has(key));
+    if (missing.length) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Some selected journeys are no longer available in the current filtered window',
+        missingSelectionKeys: missing,
+      });
+    }
+
+    const selectedPurchases = selectionKeys.map((key) => purchaseMap.get(key)).filter(Boolean);
+    const { ordersRows, sessionsRows, eventsRows, itemsRows } = buildAnalyticsExportRows({
+      accountId: account_id,
+      purchases: selectedPurchases,
+    });
+
+    const includeOrders = include.orders !== false;
+    const includeSessions = include.sessions !== false;
+    const includeEvents = include.events !== false;
+    const includeItems = include.items !== false;
+    const filename = `adray-attribution-export-${account_id}-${new Date().toISOString().slice(0, 10)}.zip`;
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.on('error', (error) => {
+      console.error('[Analytics Export] ZIP error:', error);
+      if (!res.headersSent) {
+        res.status(500).json({ ok: false, error: 'Failed to generate export ZIP' });
+        return;
+      }
+      res.destroy(error);
+    });
+
+    archive.pipe(res);
+
+    if (includeOrders) archive.append(buildCsvString(EXPORT_ORDERS_COLUMNS, ordersRows), { name: 'orders.csv' });
+    if (includeSessions) archive.append(buildCsvString(EXPORT_SESSIONS_COLUMNS, sessionsRows), { name: 'sessions.csv' });
+    if (includeEvents) archive.append(buildCsvString(EXPORT_EVENTS_COLUMNS, eventsRows), { name: 'events.csv' });
+    if (includeItems) archive.append(buildCsvString(EXPORT_ITEMS_COLUMNS, itemsRows), { name: 'items.csv' });
+
+    await archive.finalize();
+  } catch (error) {
+    console.error('[Analytics Export] Download error:', error);
+    if (!res.headersSent) {
+      return res.status(500).json({ ok: false, error: 'Failed to download export' });
+    }
+    res.destroy(error);
   }
 });
 

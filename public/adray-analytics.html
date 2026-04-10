@@ -495,6 +495,221 @@
             border-color: rgba(181, 92, 255, 0.34);
         }
 
+        .ops-secondary-btn {
+            border: 1px solid rgba(181, 92, 255, 0.18);
+            border-radius: 18px;
+            background: rgba(44, 37, 48, 0.52);
+            color: #f4edff;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+        }
+
+        .ops-secondary-btn:hover {
+            background: rgba(58, 47, 68, 0.72);
+            border-color: rgba(181, 92, 255, 0.32);
+        }
+
+        .journey-export-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.55rem;
+            border-radius: 14px;
+            border: 1px solid rgba(181, 92, 255, 0.22);
+            background: rgba(44, 37, 48, 0.58);
+            color: #f4edff;
+            padding: 0.7rem 0.95rem;
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: 0.01em;
+            transition: background 0.18s ease, border-color 0.18s ease, transform 0.18s ease;
+        }
+
+        .journey-export-btn:hover {
+            background: rgba(63, 50, 76, 0.82);
+            border-color: rgba(181, 92, 255, 0.34);
+            transform: translateY(-1px);
+        }
+
+        .journey-export-btn[disabled] {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .export-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 2147483645;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+
+        .export-modal.is-open {
+            display: flex;
+        }
+
+        .export-modal-backdrop {
+            position: absolute;
+            inset: 0;
+            background: rgba(5, 5, 8, 0.78);
+            backdrop-filter: blur(8px);
+        }
+
+        .export-modal-panel {
+            position: relative;
+            z-index: 1;
+            width: min(980px, calc(100vw - 2rem));
+            max-height: calc(100vh - 2rem);
+            overflow: hidden;
+            border-radius: 28px;
+            border: 1px solid rgba(181, 92, 255, 0.18);
+            background: linear-gradient(180deg, rgba(21, 16, 29, 0.98) 0%, rgba(12, 10, 18, 0.98) 100%);
+            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+        }
+
+        .export-modal-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 1rem;
+            padding: 1.4rem 1.5rem 1rem;
+            border-bottom: 1px solid rgba(181, 92, 255, 0.12);
+        }
+
+        .export-modal-body {
+            padding: 1.2rem 1.5rem 1.5rem;
+            max-height: calc(100vh - 10rem);
+            overflow-y: auto;
+        }
+
+        .export-modal-close {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 2.2rem;
+            height: 2.2rem;
+            border-radius: 999px;
+            border: 1px solid rgba(181, 92, 255, 0.18);
+            background: rgba(44, 37, 48, 0.5);
+            color: #f4edff;
+        }
+
+        .export-toolbar {
+            display: grid;
+            grid-template-columns: minmax(0, 1.4fr) minmax(180px, 0.7fr) auto auto;
+            gap: 0.75rem;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .export-input,
+        .export-select {
+            width: 100%;
+            border-radius: 14px;
+            border: 1px solid rgba(181, 92, 255, 0.18);
+            background: rgba(44, 37, 48, 0.5);
+            color: #f4edff;
+            padding: 0.85rem 0.95rem;
+            outline: none;
+        }
+
+        .export-input::placeholder {
+            color: rgba(216, 205, 232, 0.62);
+        }
+
+        .export-hint {
+            color: #b9a8d2;
+            font-size: 0.82rem;
+        }
+
+        .export-results {
+            display: grid;
+            gap: 0.75rem;
+        }
+
+        .export-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.9rem;
+            border-radius: 20px;
+            border: 1px solid rgba(181, 92, 255, 0.12);
+            background: rgba(27, 22, 37, 0.86);
+            padding: 1rem;
+        }
+
+        .export-item.is-selected {
+            border-color: rgba(181, 92, 255, 0.34);
+            background: linear-gradient(180deg, rgba(42, 31, 53, 0.92) 0%, rgba(28, 23, 38, 0.94) 100%);
+        }
+
+        .export-item-main {
+            min-width: 0;
+            flex: 1;
+        }
+
+        .export-item-title {
+            color: #f7f1ff;
+            font-size: 0.98rem;
+            font-weight: 700;
+        }
+
+        .export-item-subtitle {
+            color: #b9a8d2;
+            font-size: 0.82rem;
+            margin-top: 0.28rem;
+        }
+
+        .export-item-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.7rem;
+        }
+
+        .export-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            border-radius: 999px;
+            border: 1px solid rgba(181, 92, 255, 0.18);
+            background: rgba(61, 48, 73, 0.44);
+            color: #ebdcff;
+            padding: 0.38rem 0.7rem;
+            font-size: 0.76rem;
+            font-weight: 600;
+        }
+
+        .export-footer {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid rgba(181, 92, 255, 0.12);
+        }
+
+        .export-empty {
+            border-radius: 18px;
+            border: 1px dashed rgba(181, 92, 255, 0.18);
+            background: rgba(22, 18, 30, 0.78);
+            color: #b9a8d2;
+            padding: 1rem;
+            text-align: center;
+        }
+
+        @media (max-width: 840px) {
+            .export-toolbar {
+                grid-template-columns: 1fr;
+            }
+
+            .export-footer {
+                flex-direction: column;
+                align-items: stretch;
+            }
+        }
+
         .live-feed-badge {
             background: rgba(126, 240, 200, 0.14) !important;
             border: 1px solid rgba(126, 240, 200, 0.55) !important;
@@ -2454,6 +2669,9 @@
                 <button onclick="fetchAnalytics()" class="ops-refresh-btn inline-flex items-center px-4 py-2 shadow-sm text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
                     <i class="fas fa-sync-alt mr-2"></i> Refresh
                 </button>
+                <button onclick="openExportModal()" class="ops-secondary-btn inline-flex items-center px-4 py-2 shadow-sm text-sm font-medium focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                    <i class="fa-solid fa-file-arrow-down mr-2"></i> Export data
+                </button>
             </div>
         </div>
 
@@ -3041,6 +3259,23 @@
 
 </main>
 
+    <div id="export-modal" class="export-modal" aria-hidden="true">
+        <div class="export-modal-backdrop" onclick="closeExportModal()"></div>
+        <div class="export-modal-panel" role="dialog" aria-modal="true" aria-labelledby="export-modal-title">
+            <div class="export-modal-header">
+                <div>
+                    <p class="panel-kicker mb-1">Data Export</p>
+                    <h3 id="export-modal-title" class="panel-title text-lg leading-6 font-medium text-gray-900">Export historical journeys</h3>
+                    <p class="panel-subtitle text-sm mb-0">Download the currently filtered historical orders, stitched sessions, events, attribution, and line items as CSV files inside a ZIP.</p>
+                </div>
+                <button type="button" class="export-modal-close" onclick="closeExportModal()" aria-label="Close export modal">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div id="export-modal-body" class="export-modal-body"></div>
+        </div>
+    </div>
+
     <!-- Data Enrichment Modal -->
     <script>
         let currentShopId = null;
@@ -3048,6 +3283,23 @@
         let attributionChartInstance = null;
         let attributionPieChartInstance = null;
         let recentPurchasesState = [];
+        let exportModalState = {
+            open: false,
+            loading: false,
+            downloading: false,
+            search: '',
+            channel: 'all',
+            offset: 0,
+            limit: 20,
+            total: 0,
+            items: [],
+            selectedKeys: new Set(),
+        };
+        window.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape' && exportModalState.open) {
+                closeExportModal();
+            }
+        });
         let metricCarouselIndex = 0;
         let metricCarouselVisible = 4;
         let wpUsersPollTimer = null;
@@ -5409,6 +5661,7 @@
             const journeyData = buildMinimalJourneyNodesFromPurchase(purchase, selectedJourneyTimelineMode);
             const sessionCount = Number(journeyData.sessionStory?.totalSessions || countPurchaseJourneySessions(purchase) || 0);
             const purchaseUtmHistory = buildPurchaseTrackedUtmHistory(purchase);
+            const selectionKey = purchase.selectionKey || getPurchaseSelectionKey(purchase);
             return `
                 <div class="journey-compact-card space-y-4">
                     <div class="flex items-center justify-between gap-2 flex-wrap">
@@ -5424,6 +5677,12 @@
                     <div>
                         <p class="font-medium text-gray-900 mb-1">UTM URL history for this journey</p>
                         ${renderTrackedUtmHistory(purchaseUtmHistory, { emptyMessage: 'No UTM URLs have been captured yet for this selected journey.' })}
+                    </div>
+                    <div class="flex items-center justify-end">
+                        <button type="button" class="journey-export-btn" onclick="downloadSingleJourneyCsv('${escapeInlineSingleQuotedJs(selectionKey)}')">
+                            <i class="fa-solid fa-file-arrow-down"></i>
+                            Download CSV
+                        </button>
                     </div>
                     ${renderTimelineModeToggle(selectedJourneyTimelineMode)}
                     ${renderJourneyVerticalTimeline(journeyData.timelineEvents)}
@@ -5688,6 +5947,9 @@
         }
 
         function getPurchaseSelectionKey(purchase = {}) {
+            const selectionKey = String(purchase.selectionKey || '').trim();
+            if (selectionKey) return selectionKey;
+
             const orderId = String(purchase.orderId || '').trim();
             if (orderId) return `order:${orderId}`;
 
@@ -5708,6 +5970,295 @@
             return String(value || '')
                 .replace(/\\/g, '\\\\')
                 .replace(/'/g, "\\'");
+        }
+
+        function buildExportAnalyticsQueryParams() {
+            const params = new URLSearchParams();
+            const modelSelect = document.getElementById('attribution-model');
+            const preset = document.getElementById('date-preset')?.value || '30d';
+            const startValue = document.getElementById('start-date')?.value || '';
+            const endValue = document.getElementById('end-date')?.value || '';
+            const allTime = preset === 'all';
+            const selectedModel = modelSelect?.value || currentAttributionModel || 'last_touch';
+
+            params.set('attribution_model', selectedModel);
+
+            if (allTime) {
+                params.set('all_time', '1');
+            } else {
+                const start = startValue ? new Date(`${startValue}T00:00:00`) : new Date();
+                const end = endValue ? new Date(`${endValue}T23:59:59`) : new Date();
+                params.set('start', start.toISOString());
+                params.set('end', end.toISOString());
+            }
+
+            return params;
+        }
+
+        function setExportModalOpen(nextOpen) {
+            const modal = document.getElementById('export-modal');
+            if (!modal) return;
+
+            exportModalState.open = Boolean(nextOpen);
+            modal.classList.toggle('is-open', exportModalState.open);
+            modal.setAttribute('aria-hidden', exportModalState.open ? 'false' : 'true');
+            document.body.style.overflow = exportModalState.open ? 'hidden' : '';
+        }
+
+        function openExportModal() {
+            if (!currentShopId) {
+                alert('Store is still loading. Try again in a moment.');
+                return;
+            }
+
+            exportModalState.search = '';
+            exportModalState.channel = 'all';
+            exportModalState.offset = 0;
+            exportModalState.total = 0;
+            exportModalState.items = [];
+            exportModalState.selectedKeys = new Set();
+            setExportModalOpen(true);
+            renderExportModal();
+            fetchExportCandidates({ reset: true });
+        }
+
+        function closeExportModal() {
+            setExportModalOpen(false);
+        }
+
+        function onExportSearchInput(value) {
+            exportModalState.search = String(value || '');
+            fetchExportCandidates({ reset: true });
+        }
+
+        function onExportChannelChange(value) {
+            exportModalState.channel = String(value || 'all');
+            fetchExportCandidates({ reset: true });
+        }
+
+        function toggleExportSelection(selectionKey, checked) {
+            const nextKey = String(selectionKey || '').trim();
+            if (!nextKey) return;
+
+            if (checked) {
+                if (exportModalState.selectedKeys.size >= 200) {
+                    alert('You can export up to 200 journeys at a time.');
+                    renderExportModal();
+                    return;
+                }
+                exportModalState.selectedKeys.add(nextKey);
+            } else {
+                exportModalState.selectedKeys.delete(nextKey);
+            }
+
+            renderExportModal();
+        }
+
+        function selectVisibleExportCandidates() {
+            const keys = exportModalState.items.map((item) => String(item.selectionKey || '').trim()).filter(Boolean);
+            keys.forEach((key) => {
+                if (exportModalState.selectedKeys.size < 200) {
+                    exportModalState.selectedKeys.add(key);
+                }
+            });
+            renderExportModal();
+        }
+
+        function clearExportSelections() {
+            exportModalState.selectedKeys = new Set();
+            renderExportModal();
+        }
+
+        async function fetchExportCandidates({ reset = false } = {}) {
+            if (!currentShopId || exportModalState.loading) return;
+
+            exportModalState.loading = true;
+            if (reset) {
+                exportModalState.offset = 0;
+                exportModalState.items = [];
+            }
+            renderExportModal();
+
+            try {
+                const params = buildExportAnalyticsQueryParams();
+                params.set('search', exportModalState.search || '');
+                params.set('channel', exportModalState.channel || 'all');
+                params.set('offset', String(reset ? 0 : exportModalState.items.length));
+                params.set('limit', String(exportModalState.limit || 20));
+
+                const res = await fetch(`/api/analytics/${currentShopId}/export/candidates?${params.toString()}`);
+                if (!res.ok) throw new Error(`status_${res.status}`);
+
+                const data = await res.json();
+                const items = Array.isArray(data.items) ? data.items : [];
+                exportModalState.total = Number(data.total || 0);
+                exportModalState.offset = Number(data.offset || 0);
+                exportModalState.items = reset ? items : [...exportModalState.items, ...items];
+            } catch (error) {
+                console.error('[Export] Failed to load candidates', error);
+                alert('Could not load export candidates.');
+            } finally {
+                exportModalState.loading = false;
+                renderExportModal();
+            }
+        }
+
+        function renderExportModal() {
+            const body = document.getElementById('export-modal-body');
+            if (!body || !exportModalState.open) return;
+
+            const selectedCount = exportModalState.selectedKeys.size;
+            const hasMore = exportModalState.items.length < exportModalState.total;
+
+            body.innerHTML = `
+                <div class="export-toolbar">
+                    <input
+                        type="text"
+                        class="export-input"
+                        placeholder="Search by name, email, order number, or order id"
+                        value="${escapeHtmlAttr(exportModalState.search || '')}"
+                        oninput="onExportSearchInput(this.value)"
+                    >
+                    <select class="export-select" onchange="onExportChannelChange(this.value)">
+                        <option value="all" ${exportModalState.channel === 'all' ? 'selected' : ''}>All channels</option>
+                        <option value="meta" ${exportModalState.channel === 'meta' ? 'selected' : ''}>Meta</option>
+                        <option value="google" ${exportModalState.channel === 'google' ? 'selected' : ''}>Google</option>
+                        <option value="tiktok" ${exportModalState.channel === 'tiktok' ? 'selected' : ''}>TikTok</option>
+                        <option value="organic" ${exportModalState.channel === 'organic' ? 'selected' : ''}>Organic</option>
+                        <option value="direct" ${exportModalState.channel === 'direct' ? 'selected' : ''}>Direct</option>
+                        <option value="other" ${exportModalState.channel === 'other' ? 'selected' : ''}>Other</option>
+                    </select>
+                    <button type="button" class="ops-secondary-btn inline-flex items-center justify-center px-4 py-3 text-sm font-medium" onclick="selectVisibleExportCandidates()">
+                        Select page
+                    </button>
+                    <button type="button" class="ops-secondary-btn inline-flex items-center justify-center px-4 py-3 text-sm font-medium" onclick="clearExportSelections()">
+                        Clear
+                    </button>
+                </div>
+                <p class="export-hint mb-4">
+                    Current window: ${escapeHtml(currentShopId || '')} · ${escapeHtml((document.getElementById('date-preset')?.value || '30d').toUpperCase())} · ${escapeHtml((document.getElementById('attribution-model')?.value || currentAttributionModel || 'last_touch').replace(/_/g, ' '))}
+                </p>
+                <div class="export-results">
+                    ${exportModalState.loading && !exportModalState.items.length ? '<div class="export-empty">Loading export candidates…</div>' : ''}
+                    ${!exportModalState.loading && !exportModalState.items.length ? '<div class="export-empty">No journeys match the current filters.</div>' : ''}
+                    ${exportModalState.items.map((item) => {
+                        const selectionKey = String(item.selectionKey || '');
+                        const isSelected = exportModalState.selectedKeys.has(selectionKey);
+                        const tone = resolveChannelTone(item.channel || '', item.platform || '') || '';
+                        return `
+                            <label class="export-item ${isSelected ? 'is-selected' : ''}">
+                                <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="toggleExportSelection('${escapeInlineSingleQuotedJs(selectionKey)}', this.checked)">
+                                <div class="export-item-main">
+                                    <div class="flex items-center justify-between gap-3 flex-wrap">
+                                        <div class="min-w-0">
+                                            <p class="export-item-title truncate">${escapeHtml(item.customerName || 'Customer')}</p>
+                                            <p class="export-item-subtitle truncate">${escapeHtml(item.customerEmail || item.orderNumber || item.orderId || item.checkoutToken || 'No identifier')}</p>
+                                        </div>
+                                        <span class="text-xs text-gray-500">${escapeHtml(formatRecentPurchaseDate({ platformCreatedAt: item.date, createdAt: item.date }))}</span>
+                                    </div>
+                                    <div class="export-item-meta">
+                                        <span class="export-chip ${tone}"><i class="fa-solid fa-bullhorn"></i>${escapeHtml(item.channelLabel || 'Other')}</span>
+                                        <span class="export-chip"><i class="fa-solid fa-sack-dollar"></i>${escapeHtml(formatCurrencyWithCode(Number(item.revenue || 0), item.currency || 'MXN'))}</span>
+                                        <span class="export-chip"><i class="fa-solid fa-layer-group"></i>${Number(item.sessionCount || 0)} sessions</span>
+                                        <span class="export-chip"><i class="fa-solid fa-wave-square"></i>${Number(item.eventCount || 0)} events</span>
+                                    </div>
+                                </div>
+                            </label>
+                        `;
+                    }).join('')}
+                </div>
+                <div class="export-footer">
+                    <p class="export-hint">${selectedCount} selected of ${exportModalState.total} matching journeys</p>
+                    <div class="flex items-center gap-3 flex-wrap">
+                        ${hasMore ? `<button type="button" class="ops-secondary-btn inline-flex items-center px-4 py-3 text-sm font-medium" onclick="fetchExportCandidates()">Load more</button>` : ''}
+                        <button type="button" class="ops-refresh-btn inline-flex items-center px-4 py-3 text-sm font-medium" onclick="downloadExportSelection()" ${selectedCount ? '' : 'disabled'}>
+                            <i class="fa-solid fa-file-arrow-down mr-2"></i>
+                            ${exportModalState.downloading ? 'Preparing ZIP…' : 'Download CSV'}
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function requestExportDownload(selectionKeys = []) {
+            if (!currentShopId) {
+                alert('Store is still loading. Try again in a moment.');
+                return;
+            }
+
+            const keys = Array.isArray(selectionKeys) ? selectionKeys.map((value) => String(value || '').trim()).filter(Boolean) : [];
+            if (!keys.length) {
+                alert('Select at least one journey to export.');
+                return;
+            }
+
+            const body = {
+                selectionKeys: keys,
+                format: 'csv_zip',
+                include: {
+                    orders: true,
+                    sessions: true,
+                    events: true,
+                    items: true,
+                },
+            };
+
+            const params = buildExportAnalyticsQueryParams();
+            params.forEach((value, key) => {
+                if (key === 'all_time') body.allTime = value === '1';
+                else if (key === 'attribution_model') body.attributionModel = value;
+                else if (key === 'start') body.start = value;
+                else if (key === 'end') body.end = value;
+            });
+
+            const res = await fetch(`/api/analytics/${currentShopId}/export/download`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+
+            if (!res.ok) {
+                const errorPayload = await res.json().catch(() => ({}));
+                throw new Error(errorPayload.error || `status_${res.status}`);
+            }
+
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const disposition = res.headers.get('Content-Disposition') || '';
+            const fileNameMatch = disposition.match(/filename=\"?([^"]+)\"?/i);
+            const fileName = fileNameMatch?.[1] || `adray-attribution-export-${currentShopId}.zip`;
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = fileName;
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        async function downloadExportSelection() {
+            if (exportModalState.downloading) return;
+            exportModalState.downloading = true;
+            renderExportModal();
+
+            try {
+                await requestExportDownload(Array.from(exportModalState.selectedKeys));
+            } catch (error) {
+                console.error('[Export] Download failed', error);
+                alert('Could not download the export.');
+            } finally {
+                exportModalState.downloading = false;
+                renderExportModal();
+            }
+        }
+
+        async function downloadSingleJourneyCsv(selectionKey) {
+            try {
+                await requestExportDownload([selectionKey]);
+            } catch (error) {
+                console.error('[Export] Single journey download failed', error);
+                alert('Could not download this journey.');
+            }
         }
 
         function rebuildJourneyProfileLookup(profiles = []) {
