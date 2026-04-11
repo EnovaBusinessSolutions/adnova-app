@@ -4236,6 +4236,14 @@ function resolveAnalyticsJourneyReferrerLabel(referrer = '') {
   }
 }
 
+function normalizeAnalyticsComparableHost(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^www\./, '')
+    .replace(/^m\./, '');
+}
+
 function sanitizeAnalyticsMarketingValue(value) {
   const normalized = String(value || '').replace(/\s+/g, ' ').trim();
   if (!normalized) return null;
@@ -4347,7 +4355,15 @@ function resolveAnalyticsJourneyTouchpoint({ event = {}, purchase = {} } = {}) {
   const utmMedium = String(event.utmMedium || '').trim().toLowerCase();
   const utmCampaign = sanitizeAnalyticsMarketingValue(event.utmCampaign || '');
   const referrer = String(event.referrer || '').trim();
-  const referrerLabel = resolveAnalyticsJourneyReferrerLabel(referrer);
+  let referrerLabel = resolveAnalyticsJourneyReferrerLabel(referrer);
+  const pageDomain = resolveAnalyticsJourneyReferrerLabel(event.pageUrl || '');
+  if (
+    referrerLabel
+    && pageDomain
+    && normalizeAnalyticsComparableHost(referrerLabel) === normalizeAnalyticsComparableHost(pageDomain)
+  ) {
+    referrerLabel = '';
+  }
   const gclid = String(event.gclid || '').trim();
   const metaClickId = String(event.fbclid || event.fbc || event.clickId || '').trim();
   const ttclid = String(event.ttclid || '').trim();
@@ -4643,6 +4659,18 @@ function buildSyntheticAnalyticsPurchaseEvent(purchase = {}, events = []) {
   };
 }
 
+function rankAnalyticsExportEventWithinTimestamp(event = {}, canonicalPurchaseKey = '') {
+  const stableKey = getAnalyticsJourneyEventStableKey(event);
+  if (canonicalPurchaseKey && stableKey === canonicalPurchaseKey) return 100;
+
+  const eventName = String(event.eventName || '').trim().toLowerCase();
+  if (eventName === 'purchase') return 90;
+  if (eventName === 'begin_checkout') return 60;
+  if (eventName === 'add_to_cart') return 50;
+  if (eventName === 'page_view') return 10;
+  return 20;
+}
+
 function finalizeAnalyticsExportEvents(events = [], purchase = {}) {
   const sorted = (Array.isArray(events) ? events : [])
     .map((event) => ({
@@ -4685,9 +4713,23 @@ function finalizeAnalyticsExportEvents(events = [], purchase = {}) {
       })[0]
     : buildSyntheticAnalyticsPurchaseEvent(purchase, deduped);
 
-  return [...otherEvents, canonicalPurchase]
-    .map(({ _ts, ...event }) => event)
-    .sort((a, b) => new Date(a.createdAt || a.collectedAt || 0).getTime() - new Date(b.createdAt || b.collectedAt || 0).getTime());
+  const canonicalPurchaseKey = getAnalyticsJourneyEventStableKey(canonicalPurchase);
+  const timeline = [...otherEvents, canonicalPurchase]
+    .sort((a, b) => {
+      const timeDelta = Number(a._ts || 0) - Number(b._ts || 0);
+      if (timeDelta !== 0) return timeDelta;
+
+      const rankDelta = rankAnalyticsExportEventWithinTimestamp(a, canonicalPurchaseKey)
+        - rankAnalyticsExportEventWithinTimestamp(b, canonicalPurchaseKey);
+      if (rankDelta !== 0) return rankDelta;
+
+      return getAnalyticsJourneyEventStableKey(a).localeCompare(getAnalyticsJourneyEventStableKey(b));
+    });
+
+  const purchaseIndex = timeline.findIndex((event) => getAnalyticsJourneyEventStableKey(event) === canonicalPurchaseKey);
+  const trimmedTimeline = purchaseIndex >= 0 ? timeline.slice(0, purchaseIndex + 1) : timeline;
+
+  return trimmedTimeline.map(({ _ts, ...event }) => event);
 }
 
 function buildAnalyticsPurchaseSessionGroups(purchase = {}) {
@@ -4959,6 +5001,37 @@ function pushAnalyticsMapArray(map, key, value) {
   map.get(normalized).push(value);
 }
 
+function reconcileAnalyticsLineItemsToOrderSubtotal(purchase = {}, items = []) {
+  const orderSubtotal = toFiniteNumberOrNull(purchase.subtotal);
+  if (!Array.isArray(items) || !items.length || orderSubtotal === null) return Array.isArray(items) ? items : [];
+
+  const normalizedItems = items.map((item) => ({ ...item }));
+  const currentSubtotal = normalizedItems.reduce((sum, item) => (
+    sum + toFiniteNumber(item.lineTotal ?? item.subtotal ?? 0, 0)
+  ), 0);
+  const roundedDelta = Number((orderSubtotal - currentSubtotal).toFixed(2));
+
+  if (Math.abs(roundedDelta) < 0.01) return normalizedItems;
+
+  const maxAllowedDelta = Math.max(2, normalizedItems.length * 0.5, Math.abs(orderSubtotal) * 0.02);
+  if (Math.abs(roundedDelta) > maxAllowedDelta) return normalizedItems;
+
+  let targetIndex = 0;
+  let bestValue = -Infinity;
+  normalizedItems.forEach((item, index) => {
+    const value = toFiniteNumber(item.lineTotal ?? item.subtotal ?? item.price ?? 0, 0);
+    if (value > bestValue) {
+      bestValue = value;
+      targetIndex = index;
+    }
+  });
+
+  const target = normalizedItems[targetIndex];
+  target.subtotal = Number((toFiniteNumber(target.subtotal ?? target.lineTotal ?? 0, 0) + roundedDelta).toFixed(2));
+  target.lineTotal = Number((toFiniteNumber(target.lineTotal ?? target.subtotal ?? 0, 0) + roundedDelta).toFixed(2));
+  return normalizedItems;
+}
+
 async function buildAnalyticsExportStitchContext({ accountId, purchases = [], journeyStitchLookbackMs } = {}) {
   const selectedPurchases = (Array.isArray(purchases) ? purchases : []).map((purchase) => ({ ...purchase }));
   const recentOrderIds = Array.from(new Set(selectedPurchases.map((purchase) => purchase.orderId).filter(Boolean)));
@@ -5132,14 +5205,16 @@ async function buildAnalyticsExportStitchContext({ accountId, purchases = [], jo
 
 function resolveAnalyticsDetailedPurchaseItems(purchase = {}, stitchContext = {}) {
   const directItems = normalizeLineItems(purchase.items);
-  if (directItems.length) return directItems;
+  if (directItems.length) {
+    return reconcileAnalyticsLineItemsToOrderSubtotal(purchase, directItems);
+  }
 
   const candidates = [
     ...(stitchContext.purchaseDetailsByOrderId?.get(String(purchase.orderId || '')) || []),
     ...(stitchContext.purchaseDetailsByCheckoutToken?.get(String(purchase.checkoutToken || '')) || []),
   ];
 
-  if (!candidates.length) return directItems;
+  if (!candidates.length) return reconcileAnalyticsLineItemsToOrderSubtotal(purchase, directItems);
 
   const purchaseTs = new Date(purchase.platformCreatedAt || purchase.createdAt || 0).getTime();
   const detail = [...candidates]
@@ -5150,7 +5225,8 @@ function resolveAnalyticsDetailedPurchaseItems(purchase = {}, stitchContext = {}
       return deltaA - deltaB;
     })[0];
 
-  return detail ? normalizeLineItems(detail.items) : directItems;
+  const resolvedItems = detail ? normalizeLineItems(detail.items) : directItems;
+  return reconcileAnalyticsLineItemsToOrderSubtotal(purchase, resolvedItems);
 }
 
 async function buildAnalyticsStitchedEventsForExportPurchase({ accountId, purchase, stitchContext = {}, journeyStitchLookbackMs } = {}) {
@@ -7853,5 +7929,7 @@ module.exports.__testables = {
   normalizeAnalyticsExportPlatformValue,
   resolveAnalyticsExportResolvedAttributionLabel,
   normalizeAnalyticsExportChannelValue,
+  reconcileAnalyticsLineItemsToOrderSubtotal,
+  resolveAnalyticsJourneyTouchpoint,
 };
 

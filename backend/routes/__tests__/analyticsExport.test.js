@@ -14,6 +14,8 @@ const {
   normalizeAnalyticsExportPlatformValue,
   resolveAnalyticsExportResolvedAttributionLabel,
   normalizeAnalyticsExportChannelValue,
+  reconcileAnalyticsLineItemsToOrderSubtotal,
+  resolveAnalyticsJourneyTouchpoint,
 } = analyticsRouter.__testables;
 
 describe('analytics export helpers', () => {
@@ -30,6 +32,22 @@ describe('analytics export helpers', () => {
     expect(items).toHaveLength(1);
     expect(items[0].subtotal).toBeCloseTo(2978.88, 2);
     expect(items[0].lineTotal).toBeCloseTo(2978.88, 2);
+  });
+
+  test('reconcileAnalyticsLineItemsToOrderSubtotal adjusts minor rounding delta to match order subtotal', () => {
+    const reconciled = reconcileAnalyticsLineItemsToOrderSubtotal(
+      { subtotal: 10101.65 },
+      normalizeLineItems([
+        { product_id: '41974', quantity: 96, price: 31.03, name: 'A' },
+        { product_id: '41910', quantity: 96, price: 31.03, name: 'B' },
+        { product_id: '65490', quantity: 96, price: 31.03, name: 'C' },
+        { product_id: '39728', quantity: 13, price: 26.39, name: 'D' },
+        { product_id: '43983', quantity: 32, price: 25.65, name: 'E' },
+      ])
+    );
+
+    const total = reconciled.reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
+    expect(total).toBeCloseTo(10101.65, 2);
   });
 
   test('finalizeAnalyticsExportEvents keeps one canonical purchase event', () => {
@@ -92,6 +110,52 @@ describe('analytics export helpers', () => {
     const purchaseEvents = events.filter((event) => event.eventName === 'purchase');
     expect(purchaseEvents).toHaveLength(1);
     expect(purchaseEvents[0].eventId).toBe('purchase-pixel');
+    expect(events[events.length - 1].eventId).toBe('purchase-pixel');
+  });
+
+  test('finalizeAnalyticsExportEvents trims post-purchase noise from the exported journey', () => {
+    const purchase = {
+      orderId: '66542',
+      checkoutToken: 'token-1',
+      sessionId: 'session-main',
+      revenue: 11717.91,
+      currency: 'MXN',
+      platformCreatedAt: '2026-04-10T21:19:54.000Z',
+      createdAt: '2026-04-10T21:19:56.000Z',
+    };
+
+    const events = finalizeAnalyticsExportEvents([
+      {
+        eventId: 'pv-1',
+        eventName: 'page_view',
+        createdAt: '2026-04-10T21:16:51.000Z',
+        sessionId: 'session-main',
+        pageUrl: 'https://shogun.mx/',
+        rawSource: 'pixel',
+      },
+      {
+        eventId: 'purchase-pixel',
+        eventName: 'purchase',
+        createdAt: '2026-04-10T21:20:02.000Z',
+        sessionId: 'session-main',
+        orderId: '66542',
+        checkoutToken: 'token-1',
+        pageUrl: 'https://shogun.mx/checkout-2/order-received/66542/',
+        rawSource: 'pixel',
+        matchType: 'deterministic',
+        confidenceScore: 0.98,
+      },
+      {
+        eventId: 'post-1',
+        eventName: 'begin_checkout',
+        createdAt: '2026-04-10T21:21:43.000Z',
+        sessionId: 'session-main',
+        pageUrl: 'https://shogun.mx/checkout-2/',
+        rawSource: 'pixel',
+      },
+    ], purchase);
+
+    expect(events.map((event) => event.eventId)).toEqual(['pv-1', 'purchase-pixel']);
   });
 
   test('finalizeAnalyticsExportEvents injects a synthetic purchase anchor when none exists', () => {
@@ -142,5 +206,22 @@ describe('analytics export helpers', () => {
     expect(normalizeAnalyticsExportChannelValue(purchase)).toBe('organic');
     expect(normalizeAnalyticsExportPlatformValue(purchase.attributedPlatform, purchase.wooSourceLabel)).toBe('google');
     expect(resolveAnalyticsExportResolvedAttributionLabel(purchase)).toBe('Google Organic');
+  });
+
+  test('resolveAnalyticsJourneyTouchpoint ignores self-referrers for the session export', () => {
+    const touchpoint = resolveAnalyticsJourneyTouchpoint({
+      event: {
+        pageUrl: 'https://shogun.mx/',
+        referrer: 'https://shogun.mx/',
+        fbc: 'fb.1.abc',
+      },
+      purchase: {
+        attributedChannel: 'meta',
+        attributedPlatform: 'meta',
+      },
+    });
+
+    expect(touchpoint.referrerLabel).toBe('');
+    expect(touchpoint.label).toBe('Meta Ads');
   });
 });
