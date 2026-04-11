@@ -14,6 +14,7 @@ const {
   normalizeAnalyticsExportPlatformValue,
   resolveAnalyticsExportResolvedAttributionLabel,
   normalizeAnalyticsExportChannelValue,
+  formatAnalyticsCsvDecimal,
   reconcileAnalyticsLineItemsToOrderSubtotal,
   resolveAnalyticsJourneyTouchpoint,
 } = analyticsRouter.__testables;
@@ -48,6 +49,12 @@ describe('analytics export helpers', () => {
 
     const total = reconciled.reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
     expect(total).toBeCloseTo(10101.65, 2);
+  });
+
+  test('formatAnalyticsCsvDecimal removes floating point artifacts for money columns', () => {
+    expect(formatAnalyticsCsvDecimal(26137.35000000002)).toBe('26137.35');
+    expect(formatAnalyticsCsvDecimal('30319.36')).toBe('30319.36');
+    expect(formatAnalyticsCsvDecimal(null)).toBeNull();
   });
 
   test('finalizeAnalyticsExportEvents keeps one canonical purchase event', () => {

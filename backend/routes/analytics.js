@@ -4908,6 +4908,13 @@ function toCsvCell(value) {
   return raw;
 }
 
+function formatAnalyticsCsvDecimal(value, decimals = 2) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = toFiniteNumberOrNull(value);
+  if (parsed === null) return value;
+  return parsed.toFixed(decimals);
+}
+
 function buildCsvString(columns = [], rows = []) {
   const header = columns.map((column) => toCsvCell(column)).join(',');
   const lines = [header];
@@ -5407,13 +5414,13 @@ async function buildAnalyticsExportRows({ accountId, purchases = [], query = {} 
       checkout_token: purchase.checkoutToken || null,
       platform_created_at: purchase.platformCreatedAt || purchase.createdAt || null,
       stored_at: purchase.storedAt || purchase.createdAt || null,
-      revenue: Number(purchase.revenue || 0),
+      revenue: formatAnalyticsCsvDecimal(purchase.revenue ?? 0),
       currency: purchase.currency || 'MXN',
-      subtotal: purchase.subtotal ?? null,
-      discount_total: purchase.discountTotal ?? null,
-      shipping_total: purchase.shippingTotal ?? null,
-      tax_total: purchase.taxTotal ?? null,
-      refund_amount: purchase.refundAmount ?? null,
+      subtotal: formatAnalyticsCsvDecimal(purchase.subtotal ?? null),
+      discount_total: formatAnalyticsCsvDecimal(purchase.discountTotal ?? null),
+      shipping_total: formatAnalyticsCsvDecimal(purchase.shippingTotal ?? null),
+      tax_total: formatAnalyticsCsvDecimal(purchase.taxTotal ?? null),
+      refund_amount: formatAnalyticsCsvDecimal(purchase.refundAmount ?? null),
       chargeback_flag: purchase.chargebackFlag ?? null,
       customer_id: purchase.customerId || null,
       customer_name: customerName || null,
@@ -5502,8 +5509,8 @@ async function buildAnalyticsExportRows({ accountId, purchases = [], query = {} 
         product_name: event.productName || null,
         item_id: event.itemId || null,
         cart_id: event.cartId || null,
-        cart_value: event.cartValue ?? null,
-        revenue: event.revenue ?? null,
+        cart_value: formatAnalyticsCsvDecimal(event.cartValue ?? null),
+        revenue: formatAnalyticsCsvDecimal(event.revenue ?? null),
         currency: event.currency || null,
         raw_source: event.rawSource || null,
         match_type: event.matchType || null,
@@ -5540,9 +5547,9 @@ async function buildAnalyticsExportRows({ accountId, purchases = [], query = {} 
         sku: item.sku || null,
         name: item.name || null,
         quantity: item.quantity ?? null,
-        price: item.price ?? null,
-        subtotal: item.subtotal ?? null,
-        total: item.lineTotal ?? null,
+        price: formatAnalyticsCsvDecimal(item.price ?? null),
+        subtotal: formatAnalyticsCsvDecimal(item.subtotal ?? null),
+        total: formatAnalyticsCsvDecimal(item.lineTotal ?? null),
         currency: item.currency || purchase.currency || 'MXN',
         raw_item_json: safeJsonStringify(item.rawItem || item),
       });
@@ -7929,6 +7936,7 @@ module.exports.__testables = {
   normalizeAnalyticsExportPlatformValue,
   resolveAnalyticsExportResolvedAttributionLabel,
   normalizeAnalyticsExportChannelValue,
+  formatAnalyticsCsvDecimal,
   reconcileAnalyticsLineItemsToOrderSubtotal,
   resolveAnalyticsJourneyTouchpoint,
 };
