@@ -2543,21 +2543,38 @@ function buildBehaviorPatternSummary({ currentSession, currentMetrics, peerSessi
 
 function normalizeLineItems(items) {
   const arr = Array.isArray(items) ? items : [];
-  return arr.map((item) => ({
-    id: String(item?.product_id || item?.productId || item?.id || item?.variant_id || item?.variantId || ''),
-    productId: String(item?.product_id || item?.productId || item?.id || ''),
-    variantId: String(item?.variant_id || item?.variantId || ''),
-    sku: String(item?.sku || item?.product_sku || item?.productSku || ''),
-    name: String(item?.name || item?.title || 'Producto'),
-    quantity: Number(item?.quantity || item?.qty || 1),
-    price: Number(item?.price || item?.unit_price || item?.unitPrice || 0),
-    subtotal: toFiniteNumberOrNull(item?.subtotal ?? item?.line_subtotal ?? item?.lineSubtotal),
-    lineTotal: Number(
-      item?.line_total ?? item?.lineTotal ?? item?.total ?? item?.final_line_price ?? item?.finalLinePrice ?? 0
-    ),
-    currency: String(item?.currency || item?.currency_code || item?.currencyCode || ''),
-    rawItem: item && typeof item === 'object' ? item : null,
-  }));
+  return arr.map((item) => {
+    const quantity = toFiniteNumber(item?.quantity ?? item?.qty, 1);
+    const price = toFiniteNumberOrNull(item?.price ?? item?.unit_price ?? item?.unitPrice);
+    let subtotal = toFiniteNumberOrNull(item?.subtotal ?? item?.line_subtotal ?? item?.lineSubtotal);
+    let lineTotal = toFiniteNumberOrNull(
+      item?.line_total ?? item?.lineTotal ?? item?.total ?? item?.final_line_price ?? item?.finalLinePrice
+    );
+
+    if (subtotal === null && price !== null) {
+      subtotal = Number((quantity * price).toFixed(2));
+    }
+
+    if (lineTotal === null && subtotal !== null) {
+      lineTotal = subtotal;
+    } else if (lineTotal === null && price !== null) {
+      lineTotal = Number((quantity * price).toFixed(2));
+    }
+
+    return {
+      id: String(item?.product_id || item?.productId || item?.id || item?.variant_id || item?.variantId || ''),
+      productId: String(item?.product_id || item?.productId || item?.id || ''),
+      variantId: String(item?.variant_id || item?.variantId || ''),
+      sku: String(item?.sku || item?.product_sku || item?.productSku || ''),
+      name: String(item?.name || item?.title || 'Producto'),
+      quantity,
+      price: price ?? 0,
+      subtotal,
+      lineTotal,
+      currency: String(item?.currency || item?.currency_code || item?.currencyCode || ''),
+      rawItem: item && typeof item === 'object' ? item : null,
+    };
+  });
 }
 
 function buildProductAffinityFromOrders(orders = []) {
@@ -3319,12 +3336,12 @@ const getAnalyticsDashboardHandler = async (req, res) => {
       phoneHash: order.phoneHash || null,
       browserFingerprintHash: hashBrowserId(order?.attributionSnapshot?.browser_id || null),
       revenue: Number(order.revenue || 0),
-      subtotal: Number(order.subtotal || 0),
-      discountTotal: Number(order.discountTotal || 0),
-      shippingTotal: Number(order.shippingTotal || 0),
-      taxTotal: Number(order.taxTotal || 0),
-      refundAmount: Number(order.refundAmount || 0),
-      chargebackFlag: Boolean(order.chargebackFlag),
+      subtotal: toFiniteNumberOrNull(order.subtotal),
+      discountTotal: toFiniteNumberOrNull(order.discountTotal),
+      shippingTotal: toFiniteNumberOrNull(order.shippingTotal),
+      taxTotal: toFiniteNumberOrNull(order.taxTotal),
+      refundAmount: toFiniteNumberOrNull(order.refundAmount),
+      chargebackFlag: typeof order.chargebackFlag === 'boolean' ? order.chargebackFlag : null,
       ordersCount: Number.isFinite(Number(order.ordersCount)) ? Number(order.ordersCount) : null,
       currency: order.currency || 'MXN',
       items: normalizeLineItems(order.lineItems),
@@ -4219,10 +4236,81 @@ function resolveAnalyticsJourneyReferrerLabel(referrer = '') {
   }
 }
 
+function sanitizeAnalyticsMarketingValue(value) {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!normalized) return null;
+
+  const token = normalizeAttributionToken(normalized);
+  if (!token) return null;
+  if (['unknown', 'null', 'undefined', 'n/a', 'none', '-', 'no campaign'].includes(token)) return null;
+  if (/^[\/\\|]+$/.test(normalized)) return null;
+  return normalized;
+}
+
+function normalizeAnalyticsExportPlatformValue(...candidates) {
+  const combined = candidates
+    .map((value) => normalizeAttributionToken(value))
+    .filter(Boolean)
+    .join(' ');
+
+  if (!combined) return null;
+  if (includesAny(combined, ['facebook', 'instagram', 'meta', 'fbclid', 'm.facebook.com'])) return 'meta';
+  if (includesAny(combined, ['google', 'adwords', 'gclid', 'google.com'])) return 'google';
+  if (includesAny(combined, ['tiktok', 'ttclid'])) return 'tiktok';
+  if (includesAny(combined, ['email', 'newsletter', 'klaviyo', 'mailchimp', 'sendgrid', 'brevo', 'hubspot'])) return 'email';
+  if (includesAny(combined, ['direct'])) return 'direct';
+  if (includesAny(combined, ['organic', 'seo'])) return 'organic';
+  if (includesAny(combined, ['referral', 'affiliate', 'partner'])) return 'referral';
+
+  const firstCandidate = candidates
+    .map((value) => sanitizeAnalyticsMarketingValue(value))
+    .find(Boolean);
+
+  return firstCandidate ? normalizeAttributionToken(firstCandidate).replace(/\s+/g, '_') : null;
+}
+
+function resolveAnalyticsExportResolvedAttributionLabel(purchase = {}) {
+  const prioritizedLabels = [
+    purchase.attributedAdLabel,
+    purchase.attributedAd,
+    purchase.attributedAdsetLabel,
+    purchase.attributedAdset,
+    purchase.attributedCampaignLabel,
+    purchase.attributedCampaign,
+    purchase?.attributionDebug?.resolvedAttributionLabel,
+  ]
+    .map((value) => sanitizeAnalyticsMarketingValue(value))
+    .filter(Boolean);
+
+  if (prioritizedLabels.length) return prioritizedLabels[0];
+
+  const clickId = sanitizeAnalyticsMarketingValue(purchase.attributedClickId);
+  if (clickId) {
+    const platformLabel = humanizeAnalyticsChannel(purchase.attributedChannel || '', purchase.attributedPlatform || '');
+    return `${platformLabel} click ${shortenAnalyticsIdentifier(clickId)}`.trim();
+  }
+
+  const wooSourceLabel = sanitizeAnalyticsMarketingValue(purchase.wooSourceLabel);
+  const wooSourceType = normalizeAttributionToken(purchase.wooSourceType || '');
+  if (wooSourceType === 'organic' && normalizeAnalyticsExportPlatformValue(purchase.attributedPlatform, purchase.wooSourceLabel) === 'google') {
+    return 'Google Organic';
+  }
+  if (wooSourceType === 'organic') {
+    return `${humanizeAnalyticsChannel('organic', purchase.attributedPlatform || purchase.wooSourceLabel || '')}`.trim();
+  }
+  if (wooSourceLabel) {
+    const channelLabel = humanizeAnalyticsChannel(purchase.attributedChannel || '', purchase.attributedPlatform || purchase.wooSourceLabel || '');
+    return `${channelLabel} via ${wooSourceLabel}`.trim();
+  }
+
+  const channelLabel = humanizeAnalyticsChannel(purchase.attributedChannel || '', purchase.attributedPlatform || '');
+  return sanitizeAnalyticsMarketingValue(channelLabel) || 'No campaign';
+}
+
 function resolveAnalyticsAttributedSourceDescriptor(purchase = {}) {
-  const campaignLabel = String(purchase.attributedCampaignLabel || purchase.attributedCampaign || '').trim();
-  const adsetLabel = String(purchase.attributedAdsetLabel || purchase.attributedAdset || '').trim();
-  const adLabel = String(purchase.attributedAdLabel || purchase.attributedAd || '').trim();
+  const campaignLabel = sanitizeAnalyticsMarketingValue(purchase.attributedCampaignLabel || purchase.attributedCampaign || '');
+  const adsetLabel = sanitizeAnalyticsMarketingValue(purchase.attributedAdsetLabel || purchase.attributedAdset || '');
+  const adLabel = sanitizeAnalyticsMarketingValue(purchase.attributedAdLabel || purchase.attributedAd || '');
   const clickId = String(purchase.attributedClickId || '').trim();
 
   if (adLabel) return { label: adLabel, type: 'ad' };
@@ -4257,7 +4345,7 @@ function dedupeAdjacentAnalyticsJourneyEvents(eventsArray = []) {
 function resolveAnalyticsJourneyTouchpoint({ event = {}, purchase = {} } = {}) {
   const utmSource = String(event.utmSource || '').trim().toLowerCase();
   const utmMedium = String(event.utmMedium || '').trim().toLowerCase();
-  const utmCampaign = String(event.utmCampaign || '').trim();
+  const utmCampaign = sanitizeAnalyticsMarketingValue(event.utmCampaign || '');
   const referrer = String(event.referrer || '').trim();
   const referrerLabel = resolveAnalyticsJourneyReferrerLabel(referrer);
   const gclid = String(event.gclid || '').trim();
@@ -4265,7 +4353,7 @@ function resolveAnalyticsJourneyTouchpoint({ event = {}, purchase = {} } = {}) {
   const ttclid = String(event.ttclid || '').trim();
   const fallbackChannel = normalizeChannelForStats(purchase.attributedChannel || '', purchase.attributedPlatform || '');
   const fallbackSource = resolveAnalyticsAttributedSourceDescriptor(purchase);
-  const fallbackCampaign = String(fallbackSource.label || '').trim();
+  const fallbackCampaign = sanitizeAnalyticsMarketingValue(fallbackSource.label || '');
   const fallbackClickId = String(purchase.attributedClickId || '').trim();
 
   let channelKey = 'direct';
@@ -4327,7 +4415,7 @@ function resolveAnalyticsJourneyTouchpoint({ event = {}, purchase = {} } = {}) {
     clickId = fallbackClickId;
   }
 
-  const campaign = utmCampaign || fallbackCampaign || '';
+  const campaign = sanitizeAnalyticsMarketingValue(utmCampaign || fallbackCampaign || '');
   const sourceType = utmCampaign ? 'campaign' : (fallbackSource.type || 'campaign');
   const subLabel = campaign
     ? `Attributed ${normalizeAnalyticsAttributionLabelType(sourceType)}: ${campaign}`
@@ -4397,6 +4485,211 @@ function buildAnalyticsJourneySessionSentence(group = {}) {
   return `${intro}${landingCopy}.${actionSentence}`.trim();
 }
 
+const ANALYTICS_JOURNEY_EVENT_SELECT = {
+  eventId: true,
+  eventName: true,
+  createdAt: true,
+  collectedAt: true,
+  browserReceivedAt: true,
+  serverReceivedAt: true,
+  pageType: true,
+  pageUrl: true,
+  productId: true,
+  variantId: true,
+  cartId: true,
+  cartValue: true,
+  rawSource: true,
+  matchType: true,
+  confidenceScore: true,
+  revenue: true,
+  currency: true,
+  orderId: true,
+  checkoutToken: true,
+  sessionId: true,
+  userKey: true,
+  rawPayload: true,
+};
+
+function getAnalyticsJourneyEventStableKey(event = {}) {
+  const eventId = String(event.eventId || '').trim();
+  if (eventId) return eventId;
+  const createdAt = new Date(event.createdAt || event.collectedAt || 0).toISOString();
+  return [
+    String(event.eventName || '').trim().toLowerCase(),
+    createdAt,
+    String(event.sessionId || '').trim(),
+    String(event.orderId || '').trim(),
+    String(event.checkoutToken || '').trim(),
+    String(event.pageUrl || '').trim(),
+    String(event.rawSource || '').trim(),
+  ].join('::');
+}
+
+function mapAnalyticsJourneyEventRecord(ev = {}) {
+  return {
+    eventId: ev.eventId || null,
+    eventName: ev.eventName || null,
+    createdAt: ev.createdAt || null,
+    collectedAt: ev.collectedAt || null,
+    browserReceivedAt: ev.browserReceivedAt || null,
+    serverReceivedAt: ev.serverReceivedAt || null,
+    sessionId: ev.sessionId || null,
+    userKey: ev.userKey || null,
+    pageType: ev.pageType || null,
+    pageUrl: ev.pageUrl || null,
+    productId: ev.productId || null,
+    variantId: ev.variantId || null,
+    cartId: ev.cartId || null,
+    cartValue: ev.cartValue ?? null,
+    rawSource: ev.rawSource || null,
+    matchType: ev.matchType || null,
+    confidenceScore: toFiniteNumberOrNull(ev.confidenceScore),
+    revenue: toFiniteNumberOrNull(ev.revenue),
+    currency: ev.currency || null,
+    productName: ev?.rawPayload?.product_name || ev?.rawPayload?.item_name || ev?.rawPayload?.name || null,
+    itemId: ev?.rawPayload?.item_id || ev?.rawPayload?.product_id || null,
+    utmSource: ev?.rawPayload?.utm_source || null,
+    utmMedium: ev?.rawPayload?.utm_medium || null,
+    utmCampaign: ev?.rawPayload?.utm_campaign || null,
+    utmContent: ev?.rawPayload?.utm_content || null,
+    utmTerm: ev?.rawPayload?.utm_term || null,
+    ga4SessionSource: ev?.rawPayload?.ga4_session_source || null,
+    utmEntryUrl: ev?.rawPayload?.utm_entry_url || null,
+    utmSessionHistory: ev?.rawPayload?.utm_session_history || null,
+    utmBrowserHistory: ev?.rawPayload?.utm_browser_history || null,
+    referrer: ev?.rawPayload?.referrer || ev?.rawPayload?.referer || null,
+    checkoutToken: ev.checkoutToken || null,
+    orderId: ev.orderId || null,
+    fbp: ev?.rawPayload?.fbp || ev?.rawPayload?._fbp || ev?.rawPayload?.user_data?.fbp || null,
+    fbclid: ev?.rawPayload?.fbclid || null,
+    fbc: ev?.rawPayload?.fbc || ev?.rawPayload?._fbc || ev?.rawPayload?.user_data?.fbc || null,
+    ttclid: ev?.rawPayload?.ttclid || ev?.rawPayload?.user_data?.ttclid || null,
+    gclid: ev?.rawPayload?.gclid || ev?.rawPayload?.user_data?.gclid || null,
+    clickId: ev?.rawPayload?.click_id || null,
+    customerEmail: ev?.rawPayload?.user_data?.em || ev?.rawPayload?.customer_email || ev?.rawPayload?.user_email || ev?.rawPayload?.email || null,
+    clientIp: ev?.rawPayload?.user_data?.client_ip_address || ev?.rawPayload?.client_ip_address || ev?.rawPayload?.client_ip || ev?.rawPayload?.ip || null,
+    userAgent: ev?.rawPayload?.user_data?.client_user_agent || ev?.rawPayload?.client_user_agent || ev?.rawPayload?.user_agent || null,
+  };
+}
+
+function scoreAnalyticsPurchaseEvent(event = {}, purchase = {}) {
+  let score = 0;
+  const pageUrl = String(event.pageUrl || '').toLowerCase();
+  const rawSource = normalizeAttributionToken(event.rawSource || '');
+  const matchType = normalizeAttributionToken(event.matchType || '');
+
+  if (pageUrl.includes('/order-received/')) score += 400;
+  if (rawSource === 'pixel') score += 300;
+  if (rawSource === 'plugin_server') score += 180;
+  if (rawSource === 'plugin_order_sync') score += 120;
+  if (matchType === 'deterministic') score += 120;
+  if (matchType === 'probabilistic') score += 40;
+  if (event.pageUrl) score += 50;
+  if (event.sessionId && purchase.sessionId && String(event.sessionId) === String(purchase.sessionId)) score += 80;
+  score += Math.round(Number(event.confidenceScore || 0) * 100);
+  return score;
+}
+
+function buildSyntheticAnalyticsPurchaseEvent(purchase = {}, events = []) {
+  const fallbackEvent = [...(Array.isArray(events) ? events : [])]
+    .reverse()
+    .find((event) => String(event.pageUrl || '').trim())
+    || (Array.isArray(events) ? events[events.length - 1] : null)
+    || {};
+
+  return {
+    eventId: `synthetic-purchase:${getAnalyticsPurchaseSelectionKey(purchase)}`,
+    eventName: 'purchase',
+    createdAt: purchase.platformCreatedAt || purchase.createdAt || fallbackEvent.createdAt || new Date().toISOString(),
+    collectedAt: purchase.platformCreatedAt || purchase.createdAt || fallbackEvent.collectedAt || null,
+    browserReceivedAt: fallbackEvent.browserReceivedAt || null,
+    serverReceivedAt: fallbackEvent.serverReceivedAt || null,
+    sessionId: purchase.sessionId || fallbackEvent.sessionId || null,
+    userKey: purchase.userKey || fallbackEvent.userKey || null,
+    pageType: fallbackEvent.pageType || null,
+    pageUrl: fallbackEvent.pageUrl || null,
+    productId: null,
+    variantId: null,
+    cartId: fallbackEvent.cartId || null,
+    cartValue: fallbackEvent.cartValue ?? null,
+    rawSource: 'order_anchor',
+    matchType: 'synthetic',
+    confidenceScore: Number(purchase.attributionConfidence || 0.5),
+    revenue: toFiniteNumberOrNull(purchase.revenue),
+    currency: purchase.currency || fallbackEvent.currency || 'MXN',
+    productName: null,
+    itemId: null,
+    utmSource: fallbackEvent.utmSource || null,
+    utmMedium: fallbackEvent.utmMedium || null,
+    utmCampaign: fallbackEvent.utmCampaign || null,
+    utmContent: fallbackEvent.utmContent || null,
+    utmTerm: fallbackEvent.utmTerm || null,
+    ga4SessionSource: fallbackEvent.ga4SessionSource || null,
+    utmEntryUrl: fallbackEvent.utmEntryUrl || null,
+    utmSessionHistory: fallbackEvent.utmSessionHistory || null,
+    utmBrowserHistory: fallbackEvent.utmBrowserHistory || null,
+    referrer: fallbackEvent.referrer || null,
+    checkoutToken: purchase.checkoutToken || fallbackEvent.checkoutToken || null,
+    orderId: purchase.orderId || fallbackEvent.orderId || null,
+    fbp: fallbackEvent.fbp || null,
+    fbclid: fallbackEvent.fbclid || null,
+    fbc: fallbackEvent.fbc || null,
+    ttclid: fallbackEvent.ttclid || null,
+    gclid: fallbackEvent.gclid || null,
+    clickId: fallbackEvent.clickId || null,
+    customerEmail: resolveAnalyticsPurchaseCustomerEmail(purchase) || fallbackEvent.customerEmail || null,
+    clientIp: fallbackEvent.clientIp || null,
+    userAgent: fallbackEvent.userAgent || null,
+  };
+}
+
+function finalizeAnalyticsExportEvents(events = [], purchase = {}) {
+  const sorted = (Array.isArray(events) ? events : [])
+    .map((event) => ({
+      ...event,
+      _ts: new Date(event.createdAt || event.collectedAt || purchase.platformCreatedAt || purchase.createdAt || 0).getTime(),
+    }))
+    .filter((event) => Number.isFinite(event._ts))
+    .sort((a, b) => a._ts - b._ts);
+
+  const seenKeys = new Set();
+  const deduped = [];
+  sorted.forEach((event) => {
+    const stableKey = getAnalyticsJourneyEventStableKey(event);
+    if (seenKeys.has(stableKey)) return;
+    seenKeys.add(stableKey);
+    deduped.push(event);
+  });
+
+  const matchingPurchaseEvents = [];
+  const otherEvents = [];
+
+  deduped.forEach((event) => {
+    if (!isAnalyticsPurchaseJourneyEventName(event.eventName || '')) {
+      otherEvents.push(event);
+      return;
+    }
+
+    const conflictsWithOrder = purchase.orderId && event.orderId && String(event.orderId) !== String(purchase.orderId);
+    const conflictsWithCheckout = purchase.checkoutToken && event.checkoutToken && String(event.checkoutToken) !== String(purchase.checkoutToken);
+    if (conflictsWithOrder || conflictsWithCheckout) return;
+
+    matchingPurchaseEvents.push(event);
+  });
+
+  const canonicalPurchase = matchingPurchaseEvents.length
+    ? [...matchingPurchaseEvents].sort((a, b) => {
+        const scoreDelta = scoreAnalyticsPurchaseEvent(b, purchase) - scoreAnalyticsPurchaseEvent(a, purchase);
+        if (scoreDelta !== 0) return scoreDelta;
+        return new Date(b.createdAt || b.collectedAt || 0).getTime() - new Date(a.createdAt || a.collectedAt || 0).getTime();
+      })[0]
+    : buildSyntheticAnalyticsPurchaseEvent(purchase, deduped);
+
+  return [...otherEvents, canonicalPurchase]
+    .map(({ _ts, ...event }) => event)
+    .sort((a, b) => new Date(a.createdAt || a.collectedAt || 0).getTime() - new Date(b.createdAt || b.collectedAt || 0).getTime());
+}
+
 function buildAnalyticsPurchaseSessionGroups(purchase = {}) {
   const availableEvents = Array.isArray(purchase.events) ? purchase.events : [];
   const purchaseTimestamp = new Date(purchase.platformCreatedAt || purchase.createdAt || Date.now()).getTime();
@@ -4412,10 +4705,9 @@ function buildAnalyticsPurchaseSessionGroups(purchase = {}) {
     .filter((event) => Number.isFinite(event._ts))
     .sort((a, b) => a._ts - b._ts);
 
-  const dedupedEvents = dedupeAdjacentAnalyticsJourneyEvents(rawEvents);
   const groups = [];
 
-  dedupedEvents.forEach((event) => {
+  rawEvents.forEach((event) => {
     const sessionId = String(event.sessionId || '').trim();
     const userKey = String(event.userKey || fallbackUserKey || '').trim();
     const groupingKey = sessionId || (userKey ? `user:${userKey}` : 'anonymous');
@@ -4512,6 +4804,14 @@ function resolveAnalyticsPurchaseLandingPage(purchase = {}) {
 
 function buildAnalyticsExportCandidate(purchase = {}) {
   const sessions = buildAnalyticsPurchaseSessionGroups(purchase);
+  const channel = normalizeAnalyticsExportChannelValue(purchase);
+  const platform = normalizeAnalyticsExportPlatformValue(
+    purchase.attributedPlatform,
+    purchase.wooSourceLabel,
+    purchase?.orderAttributionSnapshot?.utm_source,
+    purchase?.payloadSnapshot?.utm_source,
+    channel
+  );
   return {
     selectionKey: getAnalyticsPurchaseSelectionKey(purchase),
     orderId: purchase.orderId || null,
@@ -4521,9 +4821,9 @@ function buildAnalyticsExportCandidate(purchase = {}) {
     customerEmail: resolveAnalyticsPurchaseCustomerEmail(purchase) || null,
     revenue: Number(purchase.revenue || 0),
     currency: purchase.currency || 'MXN',
-    channel: normalizeChannelForStats(purchase.attributedChannel || '', purchase.attributedPlatform || ''),
-    platform: purchase.attributedPlatform || null,
-    channelLabel: humanizeAnalyticsChannel(purchase.attributedChannel || '', purchase.attributedPlatform || ''),
+    channel,
+    platform,
+    channelLabel: humanizeAnalyticsChannel(channel, platform || ''),
     date: purchase.platformCreatedAt || purchase.createdAt || null,
     sessionCount: sessions.length,
     eventCount: Array.isArray(purchase.events) ? purchase.events.length : 0,
@@ -4535,7 +4835,7 @@ function filterAnalyticsExportPurchases(purchases = [], { search = '', channel =
   const normalizedChannel = String(channel || 'all').trim().toLowerCase();
 
   return (Array.isArray(purchases) ? purchases : []).filter((purchase) => {
-    const purchaseChannel = normalizeChannelForStats(purchase.attributedChannel || '', purchase.attributedPlatform || '');
+    const purchaseChannel = normalizeAnalyticsExportChannelValue(purchase);
     if (normalizedChannel && normalizedChannel !== 'all' && purchaseChannel !== normalizedChannel) {
       return false;
     }
@@ -4598,6 +4898,20 @@ function buildAnalyticsBaseQueryFromInput(input = {}) {
   return query;
 }
 
+function resolveAnalyticsJourneyLookbackMs(input = {}) {
+  const allTime = String(input.all_time || input.allTime || '0') === '1' || input.allTime === true;
+  const start = input.start ? new Date(input.start) : null;
+  const end = input.end ? new Date(input.end) : null;
+
+  const periodDays = allTime
+    ? 365
+    : (start && end && Number.isFinite(start.getTime()) && Number.isFinite(end.getTime()))
+      ? Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1)
+      : 30;
+
+  return Math.max(JOURNEY_STITCH_LOOKBACK_DAYS, Math.min(365, periodDays)) * 24 * 60 * 60 * 1000;
+}
+
 function buildAnalyticsInternalOriginalUrl(accountId, query = {}) {
   const params = new URLSearchParams();
   Object.entries(query).forEach(([key, value]) => {
@@ -4638,13 +4952,366 @@ async function invokeAnalyticsDashboardPayloadForExport({ accountId, user, query
   });
 }
 
-function buildAnalyticsExportRows({ accountId, purchases = [] } = {}) {
+function pushAnalyticsMapArray(map, key, value) {
+  const normalized = String(key || '').trim();
+  if (!normalized) return;
+  if (!map.has(normalized)) map.set(normalized, []);
+  map.get(normalized).push(value);
+}
+
+async function buildAnalyticsExportStitchContext({ accountId, purchases = [], journeyStitchLookbackMs } = {}) {
+  const selectedPurchases = (Array.isArray(purchases) ? purchases : []).map((purchase) => ({ ...purchase }));
+  const recentOrderIds = Array.from(new Set(selectedPurchases.map((purchase) => purchase.orderId).filter(Boolean)));
+
+  if (recentOrderIds.length > 0) {
+    const resolvingEvents = await prisma.event.findMany({
+      where: { accountId, orderId: { in: recentOrderIds } },
+      select: { orderId: true, sessionId: true, userKey: true },
+      orderBy: { createdAt: 'asc' },
+      take: Math.max(500, recentOrderIds.length * 8),
+    });
+
+    const sessionByOrder = new Map();
+    const userKeyByOrder = new Map();
+    for (const ev of resolvingEvents) {
+      if (ev.sessionId && !sessionByOrder.has(ev.orderId)) sessionByOrder.set(ev.orderId, ev.sessionId);
+      if (ev.userKey && !userKeyByOrder.has(ev.orderId)) userKeyByOrder.set(ev.orderId, ev.userKey);
+    }
+
+    for (const purchase of selectedPurchases) {
+      if (!purchase.sessionId && sessionByOrder.has(purchase.orderId)) purchase.sessionId = sessionByOrder.get(purchase.orderId);
+      if (!purchase.userKey && userKeyByOrder.has(purchase.orderId)) purchase.userKey = userKeyByOrder.get(purchase.orderId);
+    }
+  }
+
+  const recentCheckoutTokens = Array.from(new Set(selectedPurchases.map((purchase) => purchase.checkoutToken).filter(Boolean)));
+  let recentSessionIds = Array.from(new Set(selectedPurchases.map((purchase) => purchase.sessionId).filter(Boolean)));
+  let recentUserKeys = Array.from(new Set(selectedPurchases.map((purchase) => purchase.userKey).filter(Boolean)));
+  const recentCustomerIds = Array.from(new Set(selectedPurchases.map((purchase) => purchase.customerId).filter(Boolean)));
+  const recentEmailHashes = Array.from(new Set(selectedPurchases.map((purchase) => purchase.emailHash).filter(Boolean)));
+  const recentPhoneHashes = Array.from(new Set(selectedPurchases.map((purchase) => purchase.phoneHash).filter(Boolean)));
+  const recentFingerprintHashes = Array.from(new Set(selectedPurchases.map((purchase) => purchase.browserFingerprintHash).filter(Boolean)));
+
+  const recentConversionTimes = selectedPurchases
+    .map((purchase) => new Date(purchase.createdAt || purchase.platformCreatedAt || 0).getTime())
+    .filter((timestamp) => Number.isFinite(timestamp));
+
+  if (recentConversionTimes.length) {
+    const earliestTs = Math.min(...recentConversionTimes) - journeyStitchLookbackMs;
+    const latestTs = Math.max(...recentConversionTimes) + (60 * 60 * 1000);
+    const identityClauses = buildIdentityOrClauses({
+      userKeys: recentUserKeys,
+      customerIds: recentCustomerIds,
+      emailHashes: recentEmailHashes,
+      phoneHashes: recentPhoneHashes,
+      fingerprintHashes: recentFingerprintHashes,
+    });
+
+    if (identityClauses.length) {
+      const identityRowsForJourney = await prisma.identityGraph.findMany({
+        where: {
+          accountId,
+          OR: identityClauses,
+        },
+        select: {
+          userKey: true,
+          fingerprintHash: true,
+        },
+        take: 4000,
+      });
+
+      const graphUserKeys = identityRowsForJourney.map((row) => row.userKey).filter(Boolean);
+      recentUserKeys = Array.from(new Set([...recentUserKeys, ...graphUserKeys]));
+
+      if (recentUserKeys.length) {
+        const sessionsByIdentity = await prisma.session.findMany({
+          where: {
+            accountId,
+            userKey: { in: recentUserKeys },
+            startedAt: {
+              gte: new Date(earliestTs),
+              lte: new Date(latestTs),
+            },
+          },
+          select: {
+            sessionId: true,
+          },
+          take: 4000,
+        });
+        const graphSessionIds = sessionsByIdentity.map((row) => row.sessionId).filter(Boolean);
+        recentSessionIds = Array.from(new Set([...recentSessionIds, ...graphSessionIds]));
+      }
+    }
+  }
+
+  const journeyEventOrFilters = [];
+  if (recentOrderIds.length) journeyEventOrFilters.push({ orderId: { in: recentOrderIds } });
+  if (recentCheckoutTokens.length) journeyEventOrFilters.push({ checkoutToken: { in: recentCheckoutTokens } });
+  if (recentSessionIds.length) journeyEventOrFilters.push({ sessionId: { in: recentSessionIds } });
+  if (recentUserKeys.length) journeyEventOrFilters.push({ userKey: { in: recentUserKeys } });
+
+  const eventsByOrderId = new Map();
+  const eventsByCheckoutToken = new Map();
+  const eventsBySessionId = new Map();
+  const eventsByUserKey = new Map();
+  const eventsByCustomerId = new Map();
+
+  if (journeyEventOrFilters.length && recentConversionTimes.length) {
+    const earliestTs = Math.min(...recentConversionTimes) - journeyStitchLookbackMs;
+    const latestTs = Math.max(...recentConversionTimes) + (60 * 60 * 1000);
+    const stitchedCandidateEvents = await prisma.event.findMany({
+      where: {
+        accountId,
+        createdAt: {
+          gte: new Date(earliestTs),
+          lte: new Date(latestTs),
+        },
+        OR: journeyEventOrFilters,
+      },
+      select: ANALYTICS_JOURNEY_EVENT_SELECT,
+      orderBy: { createdAt: 'asc' },
+      take: 20000,
+    });
+
+    for (const ev of stitchedCandidateEvents) {
+      const evTs = new Date(ev.createdAt).getTime();
+      if (!Number.isFinite(evTs)) continue;
+      ev._evTs = evTs;
+      pushAnalyticsMapArray(eventsByOrderId, ev.orderId, ev);
+      pushAnalyticsMapArray(eventsByCheckoutToken, ev.checkoutToken, ev);
+      pushAnalyticsMapArray(eventsBySessionId, ev.sessionId, ev);
+      pushAnalyticsMapArray(eventsByUserKey, ev.userKey, ev);
+
+      const eventIdentity = extractEventIdentity(ev.rawPayload || {});
+      if (eventIdentity.customerId) {
+        pushAnalyticsMapArray(eventsByCustomerId, eventIdentity.customerId, ev);
+      }
+    }
+  }
+
+  const detailedFilters = [];
+  if (recentOrderIds.length) detailedFilters.push({ orderId: { in: recentOrderIds } });
+  if (recentCheckoutTokens.length) detailedFilters.push({ checkoutToken: { in: recentCheckoutTokens } });
+
+  const detailedPurchases = detailedFilters.length
+    ? await prisma.event.findMany({
+        where: {
+          accountId,
+          eventName: { in: PURCHASE_ALIASES },
+          OR: detailedFilters,
+        },
+        select: {
+          createdAt: true,
+          orderId: true,
+          checkoutToken: true,
+          items: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: Math.max(500, selectedPurchases.length * 6),
+      })
+    : [];
+
+  const purchaseDetailsByOrderId = new Map();
+  const purchaseDetailsByCheckoutToken = new Map();
+  detailedPurchases.forEach((detail) => {
+    pushAnalyticsMapArray(purchaseDetailsByOrderId, detail.orderId, detail);
+    pushAnalyticsMapArray(purchaseDetailsByCheckoutToken, detail.checkoutToken, detail);
+  });
+
+  return {
+    purchases: selectedPurchases,
+    eventsByOrderId,
+    eventsByCheckoutToken,
+    eventsBySessionId,
+    eventsByUserKey,
+    eventsByCustomerId,
+    purchaseDetailsByOrderId,
+    purchaseDetailsByCheckoutToken,
+  };
+}
+
+function resolveAnalyticsDetailedPurchaseItems(purchase = {}, stitchContext = {}) {
+  const directItems = normalizeLineItems(purchase.items);
+  if (directItems.length) return directItems;
+
+  const candidates = [
+    ...(stitchContext.purchaseDetailsByOrderId?.get(String(purchase.orderId || '')) || []),
+    ...(stitchContext.purchaseDetailsByCheckoutToken?.get(String(purchase.checkoutToken || '')) || []),
+  ];
+
+  if (!candidates.length) return directItems;
+
+  const purchaseTs = new Date(purchase.platformCreatedAt || purchase.createdAt || 0).getTime();
+  const detail = [...candidates]
+    .filter((candidate) => Array.isArray(candidate.items) && candidate.items.length)
+    .sort((a, b) => {
+      const deltaA = Math.abs(new Date(a.createdAt || 0).getTime() - purchaseTs);
+      const deltaB = Math.abs(new Date(b.createdAt || 0).getTime() - purchaseTs);
+      return deltaA - deltaB;
+    })[0];
+
+  return detail ? normalizeLineItems(detail.items) : directItems;
+}
+
+async function buildAnalyticsStitchedEventsForExportPurchase({ accountId, purchase, stitchContext = {}, journeyStitchLookbackMs } = {}) {
+  const purchaseTimestamp = new Date(purchase.createdAt || purchase.platformCreatedAt || 0).getTime();
+  if (!Number.isFinite(purchaseTimestamp)) {
+    return Array.isArray(purchase.events) ? purchase.events : [];
+  }
+
+  const earliestTs = purchaseTimestamp - journeyStitchLookbackMs;
+  const latestTs = purchaseTimestamp + (15 * 60 * 1000);
+  const purchaseEventCandidates = [
+    ...(stitchContext.eventsByOrderId?.get(String(purchase.orderId || '')) || []),
+    ...(stitchContext.eventsByCheckoutToken?.get(String(purchase.checkoutToken || '')) || []),
+  ];
+
+  const inferredSessionId = purchase.sessionId || purchaseEventCandidates.find((event) => event.sessionId)?.sessionId;
+  const inferredUserKey = purchase.userKey || purchaseEventCandidates.find((event) => event.userKey)?.userKey;
+
+  const rawStitched = [
+    ...(stitchContext.eventsByOrderId?.get(String(purchase.orderId || '')) || []),
+    ...(stitchContext.eventsByCheckoutToken?.get(String(purchase.checkoutToken || '')) || []),
+    ...(inferredSessionId ? (stitchContext.eventsBySessionId?.get(String(inferredSessionId)) || []) : []),
+    ...(inferredUserKey ? (stitchContext.eventsByUserKey?.get(String(inferredUserKey)) || []) : []),
+    ...(purchase.customerId ? (stitchContext.eventsByCustomerId?.get(String(purchase.customerId)) || []) : []),
+  ];
+
+  const uniqueEventsMap = new Map();
+  for (const event of rawStitched) {
+    const eventTs = Number(event._evTs || new Date(event.createdAt || 0).getTime());
+    if (!Number.isFinite(eventTs) || eventTs < earliestTs || eventTs > latestTs) continue;
+    const stableKey = getAnalyticsJourneyEventStableKey(event);
+    if (!uniqueEventsMap.has(stableKey)) uniqueEventsMap.set(stableKey, event);
+  }
+
+  let stitchedEvents = Array.from(uniqueEventsMap.values())
+    .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
+
+  if (stitchedEvents.length <= 2 && purchase.customerId) {
+    try {
+      const customerLinkedEvents = await prisma.event.findMany({
+        where: {
+          accountId,
+          createdAt: {
+            gte: new Date(earliestTs),
+            lte: new Date(latestTs),
+          },
+          OR: [
+            { rawPayload: { path: ['customer_id'], equals: String(purchase.customerId) } },
+            { rawPayload: { path: ['customerId'], equals: String(purchase.customerId) } },
+          ],
+        },
+        select: ANALYTICS_JOURNEY_EVENT_SELECT,
+        orderBy: { createdAt: 'asc' },
+        take: 500,
+      });
+
+      customerLinkedEvents.forEach((event) => {
+        const stableKey = getAnalyticsJourneyEventStableKey(event);
+        if (!uniqueEventsMap.has(stableKey)) uniqueEventsMap.set(stableKey, event);
+      });
+
+      stitchedEvents = Array.from(uniqueEventsMap.values())
+        .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
+    } catch (_) {
+      // Keep the primary stitched timeline if JSON-path lookup is unavailable.
+    }
+  }
+
+  return stitchedEvents.map((event) => mapAnalyticsJourneyEventRecord(event));
+}
+
+function normalizeAnalyticsExportChannelValue(purchase = {}) {
+  const normalized = normalizeChannelForStats(purchase.attributedChannel || '', purchase.attributedPlatform || purchase.wooSourceLabel || '');
+  const platform = normalizeAnalyticsExportPlatformValue(
+    purchase.attributedPlatform,
+    purchase.wooSourceLabel,
+    purchase?.orderAttributionSnapshot?.utm_source,
+    purchase?.payloadSnapshot?.utm_source
+  );
+  const wooSourceType = normalizeAttributionToken(purchase.wooSourceType || '');
+  const hasPaidSignal = Boolean(
+    sanitizeAnalyticsMarketingValue(purchase.attributedCampaign)
+    || sanitizeAnalyticsMarketingValue(purchase.attributedCampaignLabel)
+    || sanitizeAnalyticsMarketingValue(purchase.attributedAdset)
+    || sanitizeAnalyticsMarketingValue(purchase.attributedAdsetLabel)
+    || sanitizeAnalyticsMarketingValue(purchase.attributedAd)
+    || sanitizeAnalyticsMarketingValue(purchase.attributedAdLabel)
+    || sanitizeAnalyticsMarketingValue(purchase.attributedClickId)
+  );
+
+  if (!hasPaidSignal && wooSourceType === 'organic') return 'organic';
+  if (!hasPaidSignal && normalized === 'google' && platform === 'google' && includesAny(purchase.wooSourceLabel || '', ['organic', 'orgánico'])) {
+    return 'organic';
+  }
+
+  return normalized || 'other';
+}
+
+async function prepareAnalyticsPurchasesForExport({ accountId, purchases = [], query = {} } = {}) {
+  const journeyStitchLookbackMs = resolveAnalyticsJourneyLookbackMs(query);
+  const stitchContext = await buildAnalyticsExportStitchContext({
+    accountId,
+    purchases,
+    journeyStitchLookbackMs,
+  });
+
+  const preparedPurchases = await Promise.all((stitchContext.purchases || []).map(async (purchase) => {
+    const fullEvents = await buildAnalyticsStitchedEventsForExportPurchase({
+      accountId,
+      purchase,
+      stitchContext,
+      journeyStitchLookbackMs,
+    });
+
+    const exportChannel = normalizeAnalyticsExportChannelValue(purchase);
+    const exportPlatform = normalizeAnalyticsExportPlatformValue(
+      purchase.attributedPlatform,
+      purchase.wooSourceLabel,
+      purchase?.orderAttributionSnapshot?.utm_source,
+      purchase?.payloadSnapshot?.utm_source,
+      exportChannel
+    );
+
+    const exportReadyPurchase = {
+      ...purchase,
+      items: resolveAnalyticsDetailedPurchaseItems(purchase, stitchContext),
+      events: finalizeAnalyticsExportEvents(fullEvents.length ? fullEvents : (Array.isArray(purchase.events) ? purchase.events : []), purchase),
+      attributedChannel: exportChannel,
+      attributedPlatform: exportPlatform,
+      attributedCampaign: sanitizeAnalyticsMarketingValue(purchase.attributedCampaign || ''),
+      attributedCampaignLabel: sanitizeAnalyticsMarketingValue(purchase.attributedCampaignLabel || ''),
+      attributedAdset: sanitizeAnalyticsMarketingValue(purchase.attributedAdset || ''),
+      attributedAdsetLabel: sanitizeAnalyticsMarketingValue(purchase.attributedAdsetLabel || ''),
+      attributedAd: sanitizeAnalyticsMarketingValue(purchase.attributedAd || ''),
+      attributedAdLabel: sanitizeAnalyticsMarketingValue(purchase.attributedAdLabel || ''),
+      attributedClickId: String(purchase.attributedClickId || '').trim() || null,
+      attributionDebug: {
+        ...(purchase.attributionDebug || {}),
+        resolvedAttributionLabel: resolveAnalyticsExportResolvedAttributionLabel({
+          ...purchase,
+          attributedChannel: exportChannel,
+          attributedPlatform: exportPlatform,
+        }),
+      },
+    };
+
+    return exportReadyPurchase;
+  }));
+
+  return preparedPurchases;
+}
+
+async function buildAnalyticsExportRows({ accountId, purchases = [], query = {} } = {}) {
   const ordersRows = [];
   const sessionsRows = [];
   const eventsRows = [];
   const itemsRows = [];
 
-  (Array.isArray(purchases) ? purchases : []).forEach((purchase) => {
+  const exportPurchases = await prepareAnalyticsPurchasesForExport({ accountId, purchases, query });
+
+  (Array.isArray(exportPurchases) ? exportPurchases : []).forEach((purchase) => {
     const selectionKey = getAnalyticsPurchaseSelectionKey(purchase);
     const sessionGroups = buildAnalyticsPurchaseSessionGroups(purchase);
     const customerName = resolveAnalyticsPurchaseCustomerName(purchase);
@@ -4724,9 +5391,9 @@ function buildAnalyticsExportRows({ accountId, purchases = [] } = {}) {
         landing_page_url: group.landingPageUrl || null,
         utm_source: group.touchpoint?.utmSource || null,
         utm_medium: group.touchpoint?.utmMedium || null,
-        utm_campaign: group.touchpoint?.utmCampaign || group.touchpoint?.campaign || null,
-        utm_content: group.touchpoint?.utmContent || null,
-        utm_term: group.touchpoint?.utmTerm || null,
+        utm_campaign: sanitizeAnalyticsMarketingValue(group.touchpoint?.utmCampaign) || null,
+        utm_content: sanitizeAnalyticsMarketingValue(group.touchpoint?.utmContent) || null,
+        utm_term: sanitizeAnalyticsMarketingValue(group.touchpoint?.utmTerm) || null,
         ga4_session_source: group.touchpoint?.ga4SessionSource || null,
         referrer: group.touchpoint?.referrerLabel || null,
         gclid: group.touchpoint?.gclid || null,
@@ -4930,9 +5597,10 @@ router.post('/:account_id/export/download', async (req, res) => {
     }
 
     const selectedPurchases = selectionKeys.map((key) => purchaseMap.get(key)).filter(Boolean);
-    const { ordersRows, sessionsRows, eventsRows, itemsRows } = buildAnalyticsExportRows({
+    const { ordersRows, sessionsRows, eventsRows, itemsRows } = await buildAnalyticsExportRows({
       accountId: account_id,
       purchases: selectedPurchases,
+      query: req.body || {},
     });
 
     const includeOrders = include.orders !== false;
@@ -7179,4 +7847,11 @@ router.get('/:account_id/users/:userKey/timeline', async (req, res) => {
 });
 
 module.exports = router;
+module.exports.__testables = {
+  normalizeLineItems,
+  finalizeAnalyticsExportEvents,
+  normalizeAnalyticsExportPlatformValue,
+  resolveAnalyticsExportResolvedAttributionLabel,
+  normalizeAnalyticsExportChannelValue,
+};
 
