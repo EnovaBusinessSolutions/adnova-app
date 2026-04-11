@@ -100,6 +100,70 @@ function normalizeIncomingEventName(value) {
   return normalized;
 }
 
+function getHeaderValue(req, headerNames = []) {
+  for (const headerName of headerNames) {
+    const raw = req?.headers?.[headerName];
+    if (typeof raw === 'string' && raw.trim()) return raw.trim();
+    if (Array.isArray(raw) && raw.length) {
+      const first = String(raw[0] || '').trim();
+      if (first) return first;
+    }
+  }
+  return '';
+}
+
+function normalizeClientIp(rawValue) {
+  const raw = String(rawValue || '').trim();
+  if (!raw) return null;
+
+  const first = raw.split(',')[0].trim();
+  if (!first) return null;
+
+  let normalized = first.replace(/^\[|\]$/g, '');
+  if (normalized.startsWith('::ffff:')) {
+    normalized = normalized.slice('::ffff:'.length);
+  }
+
+  if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(normalized)) {
+    normalized = normalized.replace(/:\d+$/, '');
+  }
+
+  return normalized || null;
+}
+
+function resolveTrustedClientIp(req, payload = {}) {
+  const candidates = [
+    getHeaderValue(req, ['cf-connecting-ip', 'true-client-ip', 'x-real-ip', 'fastly-client-ip']),
+    getHeaderValue(req, ['x-forwarded-for']),
+    req?.ip,
+    payload?.client_ip_address,
+    payload?.client_ip,
+    payload?.ip,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeClientIp(candidate);
+    if (normalized) return normalized;
+  }
+
+  return null;
+}
+
+function resolveRequestUserAgent(req, payload = {}) {
+  const explicit = String(payload.user_agent || '').trim();
+  if (explicit) return explicit;
+
+  const fromHeader = getHeaderValue(req, ['user-agent']);
+  return fromHeader || null;
+}
+
+function parseOptionalNumber(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string' && !value.trim()) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function parseAllowedAccountIds() {
   const raw = String(process.env.ADRAY_ALLOWED_ACCOUNT_IDS || '').trim();
   if (!raw) return null;
@@ -126,12 +190,52 @@ router.post('/', async (req, res) => {
   let step = 'init';
   try {
     step = 'parse_payload';
-    const payload = req.body;
+    const payload = req.body && typeof req.body === 'object' ? { ...req.body } : {};
     const normalizedEventName = normalizeIncomingEventName(payload.event_name);
     // Support both account_id (new universal) and shop_id (legacy Shopify)
     const accountId = normalizeAccountId(payload.account_id || payload.shop_id);
     const platform = payload.platform || 'custom';
+    const resolvedClientIp = resolveTrustedClientIp(req, payload);
+    const resolvedUserAgent = resolveRequestUserAgent(req, payload);
+
+    if (resolvedClientIp) {
+      payload.ip = resolvedClientIp;
+      payload.client_ip = resolvedClientIp;
+      payload.client_ip_address = resolvedClientIp;
+    }
+    if (resolvedUserAgent && !payload.user_agent) {
+      payload.user_agent = resolvedUserAgent;
+    }
+    if (!payload.user_data || typeof payload.user_data !== 'object' || Array.isArray(payload.user_data)) {
+      payload.user_data = {};
+    }
+    if (resolvedClientIp && !payload.user_data.client_ip_address) {
+      payload.user_data.client_ip_address = resolvedClientIp;
+    }
+    if (resolvedUserAgent && !payload.user_data.client_user_agent) {
+      payload.user_data.client_user_agent = resolvedUserAgent;
+    }
+    if (payload.fbp && !payload.user_data.fbp) payload.user_data.fbp = payload.fbp;
+    if (payload.fbc && !payload.user_data.fbc) payload.user_data.fbc = payload.fbc;
+    if (payload.gclid && !payload.user_data.gclid) payload.user_data.gclid = payload.gclid;
+    if (payload.fbclid && !payload.user_data.fbclid) payload.user_data.fbclid = payload.fbclid;
+
     console.log(`\n[AdRay Collect] Received event '${normalizedEventName}' for account: ${accountId} (platform: ${platform})`);
+    if (normalizedEventName === 'begin_checkout' || normalizedEventName === 'purchase') {
+      console.log('[AdRay Collect][signal_context]', {
+        accountId,
+        eventName: normalizedEventName,
+        rawSource: payload.raw_source || 'pixel',
+        clientIp: resolvedClientIp || null,
+        hasUserAgent: Boolean(resolvedUserAgent),
+        hasFbp: Boolean(payload.fbp),
+        hasFbc: Boolean(payload.fbc),
+        hasFbclid: Boolean(payload.fbclid),
+        hasGclid: Boolean(payload.gclid),
+        hasTtclid: Boolean(payload.ttclid),
+        hasUtmHistory: Boolean(payload.utm_session_history || payload.utm_browser_history),
+      });
+    }
 
     step = 'validate_account';
     if (!accountId) {
@@ -159,8 +263,7 @@ router.post('/', async (req, res) => {
 
     // 1. Identity Resolution (Reads/Sets Cookie)
     step = 'identity_resolution';
-    if (!payload.ip) payload.ip = req.ip;
-    const ipHash = payload.ip ? hashPII(payload.ip) : null;
+    const ipHash = resolvedClientIp ? hashPII(resolvedClientIp) : null;
     const cookieUserKey = req.cookies ? req.cookies._adray_uid : null;
     let identity;
     try {
@@ -218,7 +321,7 @@ router.post('/', async (req, res) => {
         confidenceScore: identity.confidenceScore,
         collectedAt: new Date().toISOString(),
         productId: payload.product_id || null,
-        cartValue: payload.cart_value ? parseFloat(payload.cart_value) : null,
+        cartValue: parseOptionalNumber(payload.cart_value),
         checkoutToken: payload.checkout_token || null,
         orderId: payload.order_id || null,
       }
@@ -236,7 +339,15 @@ router.post('/', async (req, res) => {
         referrer: payload.referrer,
         fbclid: payload.fbclid,
         gclid: payload.gclid,
-        ttclid: payload.ttclid
+        ttclid: payload.ttclid,
+        fbp: payload.fbp || null,
+        fbc: payload.fbc || null,
+        utm_entry_url: payload.utm_entry_url || null,
+        utm_session_history: payload.utm_session_history || null,
+        utm_browser_history: payload.utm_browser_history || null,
+        landing_page_url: payload.landing_page_url || null,
+        client_ip_address: resolvedClientIp || null,
+        user_agent: resolvedUserAgent || null,
       };
 
       const expiresAt = new Date();
@@ -275,14 +386,14 @@ router.post('/', async (req, res) => {
       productId: payload.product_id,
       variantId: payload.variant_id,
       cartId: payload.cart_id,
-      cartValue: payload.cart_value ? parseFloat(payload.cart_value) : null,
+      cartValue: parseOptionalNumber(payload.cart_value),
       checkoutToken: payload.checkout_token,
       orderId: payload.order_id,
       rawSource: payload.raw_source || 'pixel',
       matchType: identity.matchType || null,
       confidenceScore: identity.confidenceScore,
       ipHash,
-      revenue: payload.revenue ? parseFloat(payload.revenue) : null,
+      revenue: parseOptionalNumber(payload.revenue),
       currency: payload.currency,
       items: payload.items || null,
       rawPayload: payload,
@@ -302,10 +413,10 @@ router.post('/', async (req, res) => {
       productId: payload.product_id,
       variantId: payload.variant_id,
       cartId: payload.cart_id,
-      cartValue: payload.cart_value ? parseFloat(payload.cart_value) : null,
+      cartValue: parseOptionalNumber(payload.cart_value),
       checkoutToken: payload.checkout_token,
       orderId: payload.order_id,
-      revenue: payload.revenue ? parseFloat(payload.revenue) : null,
+      revenue: parseOptionalNumber(payload.revenue),
       currency: payload.currency,
       items: payload.items || null,
       rawPayload: payload,
@@ -381,6 +492,10 @@ router.post('/', async (req, res) => {
       // Only merge utms if they exist in payload
       ...(payload.utm_source ? { utmSource: payload.utm_source } : {}),
       ...(payload.fbclid ? { fbclid: payload.fbclid } : {}),
+      ...(payload.gclid ? { gclid: payload.gclid } : {}),
+      ...(payload.ttclid ? { ttclid: payload.ttclid } : {}),
+      ...(payload.fbp ? { fbp: payload.fbp } : {}),
+      ...(payload.fbc ? { fbc: payload.fbc } : {}),
       ...(ga4SessionSource ? { ga4SessionSource } : {})
     };
 

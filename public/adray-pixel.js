@@ -663,6 +663,29 @@
     return typeof url === 'string' && /\/checkout(\?|$|\/)/i.test(url);
   }
 
+  function parseAmountFromText(text) {
+    if (!text) return null;
+    var cleaned = String(text)
+      .replace(/\s+/g, '')
+      .replace(/[^0-9,.-]/g, '');
+
+    if (!cleaned) return null;
+
+    var normalized = cleaned;
+    if (cleaned.indexOf(',') > -1 && cleaned.indexOf('.') > -1) {
+      if (cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.')) {
+        normalized = cleaned.replace(/\./g, '').replace(',', '.');
+      } else {
+        normalized = cleaned.replace(/,/g, '');
+      }
+    } else if (cleaned.indexOf(',') > -1) {
+      normalized = cleaned.replace(',', '.');
+    }
+
+    var value = Number(normalized);
+    return Number.isFinite(value) ? value : null;
+  }
+
   function detectProductName(sourceEl = null) {
     try {
       const shopifyTitle = window.ShopifyAnalytics?.meta?.product?.title;
@@ -722,6 +745,105 @@
       const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute('content') || '';
       if (ogTitle.trim()) return ogTitle.trim();
     } catch (_) {}
+
+    return null;
+  }
+
+  function detectProductPrice(sourceEl = null) {
+    var priceSelectors = [
+      '[data-product_price]',
+      '[data-product-price]',
+      '[data-price]',
+      '.price .amount',
+      '.price .woocommerce-Price-amount',
+      '.product-price .amount',
+      '.product__price .amount',
+      '.woocommerce-Price-amount',
+      '.amount'
+    ];
+
+    var containers = [];
+    if (sourceEl && sourceEl.closest) {
+      containers = [
+        sourceEl.closest('[data-product_price]'),
+        sourceEl.closest('[data-product-price]'),
+        sourceEl.closest('[data-price]'),
+        sourceEl.closest('.product'),
+        sourceEl.closest('.product-card'),
+        sourceEl.closest('.product-item'),
+        sourceEl.closest('form')
+      ].filter(Boolean);
+    }
+
+    function detectFromNode(node) {
+      if (!node) return null;
+      try {
+        var directData = node.getAttribute && (
+          node.getAttribute('data-product_price') ||
+          node.getAttribute('data-product-price') ||
+          node.getAttribute('data-price')
+        );
+        var directPrice = parseAmountFromText(directData || '');
+        if (directPrice !== null) return directPrice;
+      } catch (_) {}
+
+      for (var i = 0; i < priceSelectors.length; i++) {
+        try {
+          var candidate = node.matches && node.matches(priceSelectors[i]) ? node : node.querySelector(priceSelectors[i]);
+          if (!candidate) continue;
+          var dataValue = candidate.getAttribute && (
+            candidate.getAttribute('data-product_price') ||
+            candidate.getAttribute('data-product-price') ||
+            candidate.getAttribute('data-price')
+          );
+          var textValue = dataValue || candidate.textContent || '';
+          var parsed = parseAmountFromText(textValue);
+          if (parsed !== null) return parsed;
+        } catch (_) {}
+      }
+
+      return null;
+    }
+
+    for (var c = 0; c < containers.length; c++) {
+      var containerPrice = detectFromNode(containers[c]);
+      if (containerPrice !== null) return containerPrice;
+    }
+
+    for (var j = 0; j < priceSelectors.length; j++) {
+      try {
+        var el = document.querySelector(priceSelectors[j]);
+        var parsed = detectFromNode(el);
+        if (parsed !== null) return parsed;
+      } catch (_) {}
+    }
+
+    return null;
+  }
+
+  function detectCartValue(sourceEl = null, quantity = 1) {
+    var cartTotalSelectors = [
+      '.cart_totals .order-total .amount',
+      '.cart_totals .cart-subtotal .amount',
+      '.woocommerce-mini-cart__total .amount',
+      '.widget_shopping_cart_content .total .amount',
+      '.mini-cart-total .amount',
+      '.site-header-cart .amount'
+    ];
+
+    for (var i = 0; i < cartTotalSelectors.length; i++) {
+      try {
+        var cartEl = document.querySelector(cartTotalSelectors[i]);
+        if (!cartEl) continue;
+        var cartTotal = parseAmountFromText(cartEl.textContent || '');
+        if (cartTotal !== null) return cartTotal;
+      } catch (_) {}
+    }
+
+    var productPrice = detectProductPrice(sourceEl);
+    var normalizedQty = Number(quantity);
+    if (!Number.isFinite(normalizedQty) || normalizedQty <= 0) normalizedQty = 1;
+    if (productPrice !== null) return Number((productPrice * normalizedQty).toFixed(2));
 
     return null;
   }
@@ -832,7 +954,8 @@
       sendEvent("add_to_cart", {
         product_id: productId ? String(productId) : null,
         product_name: productName ? String(productName) : (detectProductName(buttonEl) || null),
-        quantity: quantity
+        quantity: quantity,
+        cart_value: detectCartValue(buttonEl, quantity)
       });
     });
   }
@@ -852,11 +975,15 @@
         const xhrUrl = this.__adray_url || '';
         if (isShopifyCartAddUrl(xhrUrl)) {
           sendEvent("add_to_cart", {
-            cart_value: null
+            cart_value: detectCartValue(null, 1)
           });
         }
         if (isWooCartAddUrl(xhrUrl)) {
-          sendEvent('add_to_cart', getProductContext());
+          const ctx = getProductContext();
+          sendEvent('add_to_cart', {
+            ...ctx,
+            cart_value: detectCartValue(null, 1)
+          });
         }
         if (isCheckoutUrl(xhrUrl)) {
           sendEvent("begin_checkout", {
@@ -881,7 +1008,8 @@
         sendEvent('add_to_cart', {
           product_id: productId ? String(productId) : null,
           product_name: detectProductName(form),
-          quantity: Number.isFinite(qty) ? qty : 1
+          quantity: Number.isFinite(qty) ? qty : 1,
+          cart_value: detectCartValue(form, qty)
         });
       }
 
@@ -892,7 +1020,8 @@
         sendEvent('add_to_cart', {
           product_id: wcProductId ? String(wcProductId) : (ctx.product_id || null),
           product_name: ctx.product_name || null,
-          quantity: Number.isFinite(wcQty) ? wcQty : 1
+          quantity: Number.isFinite(wcQty) ? wcQty : 1,
+          cart_value: detectCartValue(form, wcQty)
         });
       }
 
@@ -930,7 +1059,11 @@
         isWooCartAddUrl(formAction);
 
       if (likelyWooAddToCart) {
-        sendEvent('add_to_cart', getProductContext(el));
+        const ctx = getProductContext(el);
+        sendEvent('add_to_cart', {
+          ...ctx,
+          cart_value: detectCartValue(el, 1)
+        });
       }
 
       if (likelyCheckout) {
