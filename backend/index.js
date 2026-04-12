@@ -1462,7 +1462,16 @@ app.use("/api/shopConnection", require("./routes/shopConnection"));
 app.use("/api", subscribeRouter);
 
 // EstÃ¡ticos (pÃºblicos)
-// Landing Next (export en public/landing: /_next, rutas, etc.)
+// Landing Next: el export usa rutas absolutas /landing/_next/..., /landing/images/...
+// (assetPrefix). Montar explícitamente bajo /landing para que no dependa del fallthrough
+// entre varios express.static.
+app.use(
+  "/landing",
+  express.static(LANDING_PUBLIC, {
+    maxAge: process.env.NODE_ENV === "production" ? "1d" : 0,
+  })
+);
+// Misma carpeta en raíz: /pricing, /_next/... sin prefijo /landing (por si el HTML lo pide así)
 app.use(
   express.static(LANDING_PUBLIC, {
     maxAge: process.env.NODE_ENV === "production" ? "1d" : 0,
