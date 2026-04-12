@@ -22,7 +22,8 @@ db.oauth_clients.insertOne({
   clientId: "adray-gpt-client",
   clientSecret: "tu_secret_seguro_min_32_chars",
   name: "Adray GPT / MCP Client",
-  redirectUris: ["https://chat.openai.com/aip/*"],  // ChatGPT usa URLs dinámicas
+  redirectUris: [],
+  redirectUriPatterns: ["https://chat.openai.com/aip/*/oauth/callback"], // recomendado para ChatGPT
   scopes: ["read:ads_performance", "read:shopify_orders"],
   active: true
 });
@@ -30,8 +31,9 @@ db.oauth_clients.insertOne({
 
 Para **ChatGPT Custom GPT**, el `redirect_uri` debe coincidir con lo que ChatGPT envía. ChatGPT suele usar `https://chat.openai.com/aip/{app_id}/oauth/callback`. Opciones:
 
-- Dejar `redirectUris` **vacío** (`[]`) para aceptar cualquier `redirect_uri` (menos seguro, útil para pruebas).
-- O configurar el valor exacto que ChatGPT muestre en su panel de OAuth.
+- Configurar `redirectUriPatterns` con `https://chat.openai.com/aip/*/oauth/callback` (recomendado).
+- Configurar `redirectUris` con valores exactos (máxima seguridad, más frágil).
+- Dejar `redirectUris` vacío sigue siendo compatible, pero no es recomendable sin patrones.
 
 ---
 
@@ -75,6 +77,12 @@ Para **ChatGPT Custom GPT**, el `redirect_uri` debe coincidir con lo que ChatGPT
      "scope": "read:ads_performance read:shopify_orders"
    }
    ```
+
+Notas importantes:
+
+- El `code` de autorización es de un solo uso y de corta vida (aprox. 10 minutos).
+- `redirect_uri` en `/oauth/token` debe ser exactamente la misma del `authorize` (mismo callback final, no la URL completa de `/oauth/authorize`).
+- El `refresh_token` tiene vida larga (actualmente 180 días) y es el que evita pedir login constantemente.
 
 6. **Refrescar** cuando caduque:
    ```bash
@@ -276,6 +284,9 @@ Para clientes compatibles con MCP (por ejemplo Claude Desktop):
 | `ACCOUNT_NOT_CONNECTED` | No hay Meta/Google/Shopify conectado para ese usuario |
 | `DATE_RANGE_TOO_LARGE` | Rango > 365 días |
 | `INVALID_PARAMETERS` | Faltan parámetros requeridos o formato incorrecto |
+| `invalid_client` | `client_id` no existe o está inactivo en `oauth_clients` |
+| `invalid_redirect_uri` | `redirect_uri` malformado o fuera de allowlist/patrones |
+| `invalid_grant` (`redirect_uri mismatch`) | El `redirect_uri` enviado al token no coincide con el guardado al emitir el `code` |
 
 ---
 

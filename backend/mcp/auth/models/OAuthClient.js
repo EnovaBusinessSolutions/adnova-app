@@ -9,6 +9,7 @@ const OAuthClientSchema = new Schema(
     clientSecret: { type: String, required: true },
     name: { type: String, required: true },
     redirectUris: { type: [String], default: [] },
+    redirectUriPatterns: { type: [String], default: [] },
     scopes: { type: [String], default: ['read:ads_performance', 'read:shopify_orders'] },
     grantsAllowed: {
       type: [String],
