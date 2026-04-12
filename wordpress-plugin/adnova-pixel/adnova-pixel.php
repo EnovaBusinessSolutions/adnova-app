@@ -410,6 +410,40 @@ final class Adnova_Pixel_Plugin {
         );
     }
 
+    private static function build_order_items_payload($order) {
+        if (!$order) {
+            return array();
+        }
+
+        $items = array();
+        foreach ($order->get_items() as $item) {
+            $product = $item->get_product();
+            $quantity = max(1, (int) $item->get_quantity());
+            $product_id = method_exists($item, 'get_product_id') ? (int) $item->get_product_id() : 0;
+            $variant_id = method_exists($item, 'get_variation_id') ? (int) $item->get_variation_id() : 0;
+            $fallback_product_id = $product ? (int) $product->get_id() : 0;
+            $resolved_product_id = $product_id > 0 ? $product_id : $fallback_product_id;
+            $line_total = (float) $item->get_total();
+            $subtotal = method_exists($item, 'get_subtotal') ? (float) $item->get_subtotal() : $line_total;
+            $unit_price = $quantity > 0 ? round($line_total / $quantity, 2) : round($line_total, 2);
+            $sku = $product && method_exists($product, 'get_sku') ? (string) $product->get_sku() : '';
+
+            $items[] = array(
+                'id' => $resolved_product_id > 0 ? (string) $resolved_product_id : ($variant_id > 0 ? (string) $variant_id : null),
+                'product_id' => $resolved_product_id > 0 ? (string) $resolved_product_id : null,
+                'variant_id' => $variant_id > 0 ? (string) $variant_id : null,
+                'sku' => $sku !== '' ? $sku : null,
+                'name' => $item->get_name(),
+                'quantity' => $quantity,
+                'price' => $unit_price,
+                'subtotal' => round($subtotal, 2),
+                'line_total' => round($line_total, 2),
+            );
+        }
+
+        return $items;
+    }
+
     private static function get_logged_in_customer_payload() {
         if (is_admin() || !is_user_logged_in()) {
             return null;
@@ -546,6 +580,63 @@ final class Adnova_Pixel_Plugin {
         return self::normalize_utm_history_array($raw, $limit);
     }
 
+    private static function get_request_client_ip() {
+        $header_candidates = array(
+            'HTTP_CF_CONNECTING_IP',
+            'HTTP_TRUE_CLIENT_IP',
+            'HTTP_X_REAL_IP',
+            'HTTP_X_FORWARDED_FOR',
+            'REMOTE_ADDR',
+        );
+
+        foreach ($header_candidates as $header_key) {
+            if (!isset($_SERVER[$header_key])) {
+                continue;
+            }
+
+            $raw = trim((string) wp_unslash($_SERVER[$header_key]));
+            if ($raw === '') {
+                continue;
+            }
+
+            $candidate = trim(explode(',', $raw)[0]);
+            $candidate = preg_replace('/^\[|\]$/', '', $candidate);
+            if (strpos($candidate, '::ffff:') === 0) {
+                $candidate = substr($candidate, 7);
+            }
+            if (preg_match('/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/', $candidate)) {
+                $candidate = preg_replace('/:\d+$/', '', $candidate);
+            }
+
+            $candidate = sanitize_text_field($candidate);
+            if ($candidate !== '') {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static function get_request_user_agent() {
+        if (!isset($_SERVER['HTTP_USER_AGENT'])) {
+            return null;
+        }
+
+        $ua = sanitize_text_field(substr((string) wp_unslash($_SERVER['HTTP_USER_AGENT']), 0, 500));
+        return $ua !== '' ? $ua : null;
+    }
+
+    private static function get_request_signal_context() {
+        $client_ip = self::get_request_client_ip();
+        $user_agent = self::get_request_user_agent();
+
+        return array(
+            'client_ip' => $client_ip,
+            'client_ip_address' => $client_ip,
+            'user_agent' => $user_agent,
+        );
+    }
+
     private static function get_cookie_attribution_context() {
         $entry_url = null;
         if (isset($_COOKIE['__adray_utm_entry_url'])) {
@@ -559,6 +650,8 @@ final class Adnova_Pixel_Plugin {
             'utm_entry_url' => $entry_url ? $entry_url : null,
             'utm_session_history' => !empty($session_history) ? $session_history : null,
             'utm_browser_history' => !empty($browser_history) ? $browser_history : null,
+            'fbp' => isset($_COOKIE['_fbp']) ? sanitize_text_field(wp_unslash($_COOKIE['_fbp'])) : null,
+            'fbc' => isset($_COOKIE['_fbc']) ? sanitize_text_field(wp_unslash($_COOKIE['_fbc'])) : null,
         );
     }
 
@@ -577,6 +670,10 @@ final class Adnova_Pixel_Plugin {
             'gclid'        => self::get_order_meta_first($order, array('_wc_order_attribution_gclid', 'wc_order_attribution_gclid', '_gclid')),
             'fbclid'       => self::get_order_meta_first($order, array('_wc_order_attribution_fbclid', 'wc_order_attribution_fbclid', '_fbclid')),
             'ttclid'       => self::get_order_meta_first($order, array('_wc_order_attribution_ttclid', 'wc_order_attribution_ttclid', '_ttclid')),
+            'fbp'          => self::get_order_meta_first($order, array('_adray_fbp')),
+            'fbc'          => self::get_order_meta_first($order, array('_adray_fbc')),
+            'client_ip_address' => self::get_order_meta_first($order, array('_adray_client_ip_address')),
+            'user_agent'   => self::get_order_meta_first($order, array('_adray_user_agent')),
             'woo_source_type' => self::get_order_meta_first($order, array('_wc_order_attribution_source_type', 'wc_order_attribution_source_type')),
             'woo_session_source' => self::get_order_meta_first($order, array('_wc_order_attribution_session_source', 'wc_order_attribution_session_source')),
         );
@@ -609,6 +706,7 @@ final class Adnova_Pixel_Plugin {
         }
 
         $cookie_context = self::get_cookie_attribution_context();
+        $request_context = self::get_request_signal_context();
         $stored_entry_url = self::sanitize_utm_history_url((string) $order->get_meta('_adray_utm_entry_url', true));
         $stored_session_history = self::normalize_utm_history_array($order->get_meta('_adray_utm_session_history', true), 6);
         $stored_browser_history = self::normalize_utm_history_array($order->get_meta('_adray_utm_browser_history', true), 6);
@@ -648,6 +746,18 @@ final class Adnova_Pixel_Plugin {
         $meta['utm_entry_url'] = $stored_entry_url ? $stored_entry_url : (isset($cookie_context['utm_entry_url']) ? $cookie_context['utm_entry_url'] : null);
         $meta['utm_session_history'] = !empty($stored_session_history) ? $stored_session_history : (isset($cookie_context['utm_session_history']) ? $cookie_context['utm_session_history'] : null);
         $meta['utm_browser_history'] = !empty($stored_browser_history) ? $stored_browser_history : (isset($cookie_context['utm_browser_history']) ? $cookie_context['utm_browser_history'] : null);
+        if (!$meta['fbp'] && !empty($cookie_context['fbp'])) {
+            $meta['fbp'] = $cookie_context['fbp'];
+        }
+        if (!$meta['fbc'] && !empty($cookie_context['fbc'])) {
+            $meta['fbc'] = $cookie_context['fbc'];
+        }
+        if (!$meta['client_ip_address'] && !empty($request_context['client_ip_address'])) {
+            $meta['client_ip_address'] = $request_context['client_ip_address'];
+        }
+        if (!$meta['user_agent'] && !empty($request_context['user_agent'])) {
+            $meta['user_agent'] = $request_context['user_agent'];
+        }
 
         return $meta;
     }
@@ -703,6 +813,19 @@ final class Adnova_Pixel_Plugin {
             }
             if (!empty($utm_context['utm_browser_history'])) {
                 $order->update_meta_data('_adray_utm_browser_history', $utm_context['utm_browser_history']);
+            }
+            if (!empty($utm_context['fbp'])) {
+                $order->update_meta_data('_adray_fbp', $utm_context['fbp']);
+            }
+            if (!empty($utm_context['fbc'])) {
+                $order->update_meta_data('_adray_fbc', $utm_context['fbc']);
+            }
+            $request_context = self::get_request_signal_context();
+            if (!empty($request_context['client_ip_address'])) {
+                $order->update_meta_data('_adray_client_ip_address', $request_context['client_ip_address']);
+            }
+            if (!empty($request_context['user_agent'])) {
+                $order->update_meta_data('_adray_user_agent', $request_context['user_agent']);
             }
             $order->save();
         }
@@ -893,19 +1016,6 @@ final class Adnova_Pixel_Plugin {
 
         $already_sent = (bool) $order->get_meta('_adnova_purchase_sent', true);
 
-        // Build items list
-        $items = array();
-        foreach ($order->get_items() as $item) {
-            $product  = $item->get_product();
-            $qty      = max(1, (int) $item->get_quantity());
-            $items[]  = array(
-                'id'       => $product ? (string) $product->get_id() : null,
-                'name'     => $item->get_name(),
-                'quantity' => $qty,
-                'price'    => round((float) $item->get_total() / $qty, 2),
-            );
-        }
-
         $attribution_data = self::get_order_attribution_data($order);
 
         $order_data = array_merge(
@@ -914,7 +1024,7 @@ final class Adnova_Pixel_Plugin {
                 'revenue'        => (float) $order->get_total(),
                 'currency'       => $order->get_currency(),
                 'checkout_token' => $order->get_cart_hash(),
-                'items'          => $items,
+                'items'          => self::build_order_items_payload($order),
             ),
             $attribution_data
         );
@@ -950,6 +1060,11 @@ final class Adnova_Pixel_Plugin {
             'gclid'          => isset($order_data['gclid']) ? $order_data['gclid'] : null,
             'fbclid'         => isset($order_data['fbclid']) ? $order_data['fbclid'] : null,
             'ttclid'         => isset($order_data['ttclid']) ? $order_data['ttclid'] : null,
+            'fbp'            => isset($order_data['fbp']) ? $order_data['fbp'] : null,
+            'fbc'            => isset($order_data['fbc']) ? $order_data['fbc'] : null,
+            'client_ip'      => isset($order_data['client_ip_address']) ? $order_data['client_ip_address'] : null,
+            'client_ip_address' => isset($order_data['client_ip_address']) ? $order_data['client_ip_address'] : null,
+            'user_agent'     => isset($order_data['user_agent']) ? $order_data['user_agent'] : null,
             'woo_source_label' => isset($order_data['woo_source_label']) ? $order_data['woo_source_label'] : null,
             'woo_source_type'  => isset($order_data['woo_source_type']) ? $order_data['woo_source_type'] : null,
             'woo_session_source' => isset($order_data['woo_session_source']) ? $order_data['woo_session_source'] : null,
@@ -981,25 +1096,13 @@ final class Adnova_Pixel_Plugin {
         }
 
         if (!$order_data) {
-            $items = array();
-            foreach ($order->get_items() as $item) {
-                $product  = $item->get_product();
-                $qty      = max(1, (int) $item->get_quantity());
-                $items[]  = array(
-                    'id'       => $product ? (string) $product->get_id() : null,
-                    'name'     => $item->get_name(),
-                    'quantity' => $qty,
-                    'price'    => round((float) $item->get_total() / $qty, 2),
-                );
-            }
-
             $order_data = array_merge(
                 array(
                     'order_id'       => (string) $order_id,
                     'revenue'        => (float) $order->get_total(),
                     'currency'       => $order->get_currency(),
                     'checkout_token' => $order->get_cart_hash(),
-                    'items'          => $items,
+                    'items'          => self::build_order_items_payload($order),
                 ),
                 self::get_order_attribution_data($order)
             );
@@ -1057,6 +1160,11 @@ final class Adnova_Pixel_Plugin {
             'gclid' => isset($order_data['gclid']) ? $order_data['gclid'] : null,
             'fbclid' => isset($order_data['fbclid']) ? $order_data['fbclid'] : null,
             'ttclid' => isset($order_data['ttclid']) ? $order_data['ttclid'] : null,
+            'fbp' => isset($order_data['fbp']) ? $order_data['fbp'] : null,
+            'fbc' => isset($order_data['fbc']) ? $order_data['fbc'] : null,
+            'client_ip' => isset($order_data['client_ip_address']) ? $order_data['client_ip_address'] : null,
+            'client_ip_address' => isset($order_data['client_ip_address']) ? $order_data['client_ip_address'] : null,
+            'user_agent' => isset($order_data['user_agent']) ? $order_data['user_agent'] : null,
             'woo_source_label' => isset($order_data['woo_source_label']) ? $order_data['woo_source_label'] : null,
             'woo_source_type' => isset($order_data['woo_source_type']) ? $order_data['woo_source_type'] : null,
             'woo_session_source' => isset($order_data['woo_session_source']) ? $order_data['woo_session_source'] : null,
@@ -1118,6 +1226,7 @@ final class Adnova_Pixel_Plugin {
     private static function send_server_side_event($event_name, array $extra = array()) {
         $site_id = self::get_site_id();
         $utm_context = self::get_cookie_attribution_context();
+        $request_context = self::get_request_signal_context();
 
         $payload = array_merge(
             array(
@@ -1128,6 +1237,7 @@ final class Adnova_Pixel_Plugin {
                 'raw_source' => 'plugin_server',
             ),
             $utm_context,
+            $request_context,
             $extra
         );
 

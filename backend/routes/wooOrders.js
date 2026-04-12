@@ -48,9 +48,13 @@ function normalizeWooChannel(payload = {}) {
   const utmMedium = String(payload.utm_medium || '').trim().toLowerCase();
   const wooSourceLabel = String(payload.woo_source_label || '').trim().toLowerCase();
   const wooSourceType = String(payload.woo_source_type || '').trim().toLowerCase();
+  const referrer = String(payload.referrer || '').trim().toLowerCase();
 
   const isPaidGoogle = utmMedium === 'cpc' || utmMedium === 'paid_search' || payload.gclid || wooSourceLabel.includes('cpc') || wooSourceLabel.includes('ads');
 
+  if (payload.gclid) return 'google';
+  if (payload.fbclid || payload.fbc) return 'meta';
+  if (payload.ttclid) return 'tiktok';
   if (utmSource === 'google') return isPaidGoogle ? 'google' : 'organic';
   if (utmSource === 'facebook' || utmSource === 'instagram') return 'meta';
   if (utmSource === 'tiktok') return 'tiktok';
@@ -73,6 +77,15 @@ function normalizeWooChannel(payload = {}) {
     return 'meta';
   }
   if (wooSourceLabel.includes('tiktok')) {
+    return 'tiktok';
+  }
+  if (referrer.includes('google.')) {
+    return 'organic';
+  }
+  if (referrer.includes('facebook.') || referrer.includes('instagram.')) {
+    return 'meta';
+  }
+  if (referrer.includes('tiktok.')) {
     return 'tiktok';
   }
   if (wooSourceLabel.includes('directo') || wooSourceType === 'direct') {
@@ -211,6 +224,118 @@ function normalizeCustomerDisplayName(...values) {
   return null;
 }
 
+function normalizeObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function parseTrackedHistoryArray(value) {
+  if (!value) return [];
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      value = parsed;
+    } catch (_) {
+      return [];
+    }
+  }
+  return Array.isArray(value) ? value : [];
+}
+
+function normalizeTrackedHistoryEntry(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  const rawUrl = String(entry.url || entry.page_url || entry.pageUrl || entry.u || '').trim();
+  if (!rawUrl) return null;
+
+  let params = null;
+  try {
+    params = new URL(rawUrl, 'https://placeholder.local').searchParams;
+  } catch (_) {
+    params = new URLSearchParams();
+  }
+
+  const normalized = {
+    url: rawUrl,
+    captured_at: String(entry.captured_at || entry.capturedAt || entry.ts || '').trim() || null,
+    utm_source: String(entry.utm_source || entry.utmSource || params.get('utm_source') || '').trim() || null,
+    utm_medium: String(entry.utm_medium || entry.utmMedium || params.get('utm_medium') || '').trim() || null,
+    utm_campaign: String(entry.utm_campaign || entry.utmCampaign || params.get('utm_campaign') || '').trim() || null,
+    utm_content: String(entry.utm_content || entry.utmContent || params.get('utm_content') || '').trim() || null,
+    utm_term: String(entry.utm_term || entry.utmTerm || params.get('utm_term') || '').trim() || null,
+    ga4_session_source: String(entry.ga4_session_source || entry.ga4SessionSource || params.get('ga4_session_source') || '').trim() || null,
+    fbclid: String(entry.fbclid || params.get('fbclid') || '').trim() || null,
+    gclid: String(entry.gclid || params.get('gclid') || '').trim() || null,
+    ttclid: String(entry.ttclid || params.get('ttclid') || '').trim() || null,
+  };
+
+  const hasSignals = normalized.utm_source
+    || normalized.utm_medium
+    || normalized.utm_campaign
+    || normalized.utm_content
+    || normalized.utm_term
+    || normalized.ga4_session_source
+    || normalized.fbclid
+    || normalized.gclid
+    || normalized.ttclid;
+
+  return hasSignals ? normalized : null;
+}
+
+function pickLatestTrackedHistoryEntry(...historySources) {
+  const entries = historySources
+    .flatMap((source) => parseTrackedHistoryArray(source))
+    .map((entry) => normalizeTrackedHistoryEntry(entry))
+    .filter(Boolean);
+
+  if (!entries.length) return null;
+
+  entries.sort((left, right) => {
+    const leftTs = new Date(left.captured_at || 0).getTime();
+    const rightTs = new Date(right.captured_at || 0).getTime();
+    return leftTs - rightTs;
+  });
+
+  return entries[entries.length - 1] || null;
+}
+
+function resolveWooAttributionContext(payload = {}, checkoutSnapshot = {}) {
+  const normalizedPayload = normalizeObject(payload);
+  const normalizedCheckout = normalizeObject(checkoutSnapshot);
+  const latestHistoryEntry = pickLatestTrackedHistoryEntry(
+    normalizedPayload.utm_session_history,
+    normalizedPayload.utm_browser_history,
+    normalizedCheckout.utm_session_history,
+    normalizedCheckout.utm_browser_history
+  );
+
+  const payloadSessionHistory = parseTrackedHistoryArray(normalizedPayload.utm_session_history);
+  const payloadBrowserHistory = parseTrackedHistoryArray(normalizedPayload.utm_browser_history);
+  const checkoutSessionHistory = parseTrackedHistoryArray(normalizedCheckout.utm_session_history);
+  const checkoutBrowserHistory = parseTrackedHistoryArray(normalizedCheckout.utm_browser_history);
+
+  return {
+    utm_source: normalizedPayload.utm_source || normalizedCheckout.utm_source || latestHistoryEntry?.utm_source || null,
+    utm_medium: normalizedPayload.utm_medium || normalizedCheckout.utm_medium || latestHistoryEntry?.utm_medium || null,
+    utm_campaign: normalizedPayload.utm_campaign || normalizedCheckout.utm_campaign || latestHistoryEntry?.utm_campaign || null,
+    utm_content: normalizedPayload.utm_content || normalizedCheckout.utm_content || latestHistoryEntry?.utm_content || null,
+    utm_term: normalizedPayload.utm_term || normalizedCheckout.utm_term || latestHistoryEntry?.utm_term || null,
+    referrer: normalizedPayload.referrer || normalizedCheckout.referrer || null,
+    gclid: normalizedPayload.gclid || normalizedCheckout.gclid || latestHistoryEntry?.gclid || null,
+    fbclid: normalizedPayload.fbclid || normalizedCheckout.fbclid || latestHistoryEntry?.fbclid || null,
+    ttclid: normalizedPayload.ttclid || normalizedCheckout.ttclid || latestHistoryEntry?.ttclid || null,
+    fbp: normalizedPayload.fbp || normalizedCheckout.fbp || null,
+    fbc: normalizedPayload.fbc || normalizedCheckout.fbc || null,
+    woo_source_label: normalizedPayload.woo_source_label || normalizedCheckout.woo_source_label || null,
+    woo_source_type: normalizedPayload.woo_source_type || normalizedCheckout.woo_source_type || null,
+    woo_session_source: normalizedPayload.woo_session_source || normalizedCheckout.woo_session_source || null,
+    utm_entry_url: normalizedPayload.utm_entry_url || normalizedCheckout.utm_entry_url || latestHistoryEntry?.url || null,
+    utm_session_history: payloadSessionHistory.length ? payloadSessionHistory : (checkoutSessionHistory.length ? checkoutSessionHistory : null),
+    utm_browser_history: payloadBrowserHistory.length ? payloadBrowserHistory : (checkoutBrowserHistory.length ? checkoutBrowserHistory : null),
+    landing_page_url: normalizedPayload.landing_page_url || normalizedCheckout.landing_page_url || latestHistoryEntry?.url || null,
+    client_ip_address: normalizedPayload.client_ip_address || normalizedPayload.client_ip || normalizedCheckout.client_ip_address || normalizedCheckout.client_ip || null,
+    user_agent: normalizedPayload.user_agent || normalizedCheckout.user_agent || null,
+  };
+}
+
 router.post('/woo/orders-sync', async (req, res) => {
   let step = 'init';
   try {
@@ -242,8 +367,17 @@ router.post('/woo/orders-sync', async (req, res) => {
     const checkoutMap = checkoutToken
       ? await prisma.checkoutSessionMap.findUnique({ where: { checkoutToken } })
       : null;
+    const checkoutSnapshot = normalizeObject(checkoutMap?.attributionSnapshot);
+    const attributionContext = resolveWooAttributionContext(payload, checkoutSnapshot);
+    const normalizedPayload = {
+      ...payload,
+      ...attributionContext,
+      client_ip: attributionContext.client_ip_address || payload.client_ip || null,
+      client_ip_address: attributionContext.client_ip_address || payload.client_ip_address || null,
+      user_agent: attributionContext.user_agent || payload.user_agent || null,
+    };
 
-    const attributedChannel = normalizeWooChannel(payload);
+    const attributedChannel = normalizeWooChannel(normalizedPayload);
     const customerDisplayName = normalizeCustomerDisplayName(
       payload.customer_name,
       [payload.customer_first_name, payload.customer_last_name].filter(Boolean).join(' '),
@@ -274,18 +408,26 @@ router.post('/woo/orders-sync', async (req, res) => {
 
     const attributionSnapshot = {
       browser_id: browserId,
-      utm_source: payload.utm_source || null,
-      utm_medium: payload.utm_medium || null,
-      utm_campaign: payload.utm_campaign || null,
-      utm_content: payload.utm_content || null,
-      utm_term: payload.utm_term || null,
-      referrer: payload.referrer || null,
-      gclid: payload.gclid || null,
-      fbclid: payload.fbclid || null,
-      ttclid: payload.ttclid || null,
-      woo_source_label: payload.woo_source_label || null,
-      woo_source_type: payload.woo_source_type || null,
-      woo_session_source: payload.woo_session_source || null,
+      utm_source: attributionContext.utm_source || null,
+      utm_medium: attributionContext.utm_medium || null,
+      utm_campaign: attributionContext.utm_campaign || null,
+      utm_content: attributionContext.utm_content || null,
+      utm_term: attributionContext.utm_term || null,
+      referrer: attributionContext.referrer || null,
+      gclid: attributionContext.gclid || null,
+      fbclid: attributionContext.fbclid || null,
+      ttclid: attributionContext.ttclid || null,
+      fbp: attributionContext.fbp || null,
+      fbc: attributionContext.fbc || null,
+      woo_source_label: attributionContext.woo_source_label || null,
+      woo_source_type: attributionContext.woo_source_type || null,
+      woo_session_source: attributionContext.woo_session_source || null,
+      utm_entry_url: attributionContext.utm_entry_url || null,
+      utm_session_history: attributionContext.utm_session_history || null,
+      utm_browser_history: attributionContext.utm_browser_history || null,
+      landing_page_url: attributionContext.landing_page_url || null,
+      client_ip_address: attributionContext.client_ip_address || null,
+      user_agent: attributionContext.user_agent || null,
       raw_source: payload.raw_source || null,
       collected_at: payload.collected_at || null,
       customer_name: customerDisplayName,
@@ -323,16 +465,32 @@ router.post('/woo/orders-sync', async (req, res) => {
       currency: String(payload.currency || 'MXN'),
       lineItems: Array.isArray(payload.items) ? payload.items : [],
       attributedChannel,
-      attributedCampaign: payload.utm_campaign || null,
-      attributedAdset: payload.utm_content || null,
-      attributedAd: payload.utm_term || null,
-      attributedClickId: payload.gclid || payload.fbclid || payload.ttclid || null,
+      attributedCampaign: attributionContext.utm_campaign || null,
+      attributedAdset: attributionContext.utm_content || null,
+      attributedAd: attributionContext.utm_term || null,
+      attributedClickId: attributionContext.gclid || attributionContext.fbclid || attributionContext.fbc || attributionContext.ttclid || null,
       attributionModel: attributedChannel === 'unattributed' ? 'woo_direct' : 'woo_fallback',
       attributionSnapshot,
       confidenceScore: attributedChannel === 'unattributed' ? 0.4 : 0.75,
       eventId: checkoutMap ? checkoutMap.eventId : randomUUID(),
       platformCreatedAt: parseWooOrderCreatedAt(payload),
     };
+
+    console.log('[Woo Orders Sync][attribution_context]', {
+      accountId,
+      orderId,
+      attributedChannel,
+      hasCheckoutMap: Boolean(checkoutMap),
+      hasUtmCampaign: Boolean(attributionContext.utm_campaign),
+      hasUtmHistory: Boolean(attributionContext.utm_session_history || attributionContext.utm_browser_history),
+      hasGclid: Boolean(attributionContext.gclid),
+      hasFbclid: Boolean(attributionContext.fbclid),
+      hasFbp: Boolean(attributionContext.fbp),
+      hasFbc: Boolean(attributionContext.fbc),
+      hasClientIp: Boolean(attributionContext.client_ip_address),
+      hasUserAgent: Boolean(attributionContext.user_agent),
+      lineItemCount: Array.isArray(payload.items) ? payload.items.length : 0,
+    });
 
     step = 'order_upsert';
     let order;
@@ -412,7 +570,7 @@ router.post('/woo/orders-sync', async (req, res) => {
         revenue: order.revenue,
         currency: order.currency,
         items: Array.isArray(payload.items) ? payload.items : [],
-        rawPayload: payload,
+        rawPayload: normalizedPayload,
         collectedAt: new Date(),
         browserReceivedAt: payload.collected_at ? new Date(payload.collected_at) : null,
         serverReceivedAt: new Date(),
@@ -428,7 +586,7 @@ router.post('/woo/orders-sync', async (req, res) => {
         revenue: order.revenue,
         currency: order.currency,
         items: Array.isArray(payload.items) ? payload.items : [],
-        rawPayload: payload,
+        rawPayload: normalizedPayload,
         browserReceivedAt: payload.collected_at ? new Date(payload.collected_at) : null,
         serverReceivedAt: new Date(),
       },
@@ -438,7 +596,7 @@ router.post('/woo/orders-sync', async (req, res) => {
         sessionId: order.sessionId || `woo_${order.orderId}`,
         userKey: order.userKey || 'unknown',
         eventName: 'purchase',
-        rawPayload: payload,
+        rawPayload: normalizedPayload,
         serverReceivedAt: new Date(),
       }
     });

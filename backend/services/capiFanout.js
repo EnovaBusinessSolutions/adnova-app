@@ -2,7 +2,16 @@ const prisma = require('../utils/prismaClient');
 const User = require('../models/User');
 const GoogleAccount = require('../models/GoogleAccount');
 const MetaAccount = require('../models/MetaAccount');
+const McpData = require('../models/McpData');
+const ShopConnections = require('../models/ShopConnections');
 const PixelSelection = require('../models/PixelSelection');
+const { decrypt } = require('../utils/encryption');
+const {
+  listAuthorizedAnalyticsShopsForUser,
+  normalizeGoogleCustomerId,
+  normalizeMetaAccountId,
+  normalizeShopDomain,
+} = require('./analyticsAccess');
 const googleStack = require('./capiStack/google');
 const metaStack = require('./capiStack/meta');
 
@@ -15,6 +24,483 @@ function isSchemaDriftError(error) {
 
 function normalizeObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function uniqueStrings(values = []) {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [values])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function escapeRegex(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isLikelyEncryptedToken(value) {
+  if (!value || typeof value !== 'string') return false;
+  const parts = value.split(':');
+  return parts.length === 3 && parts.every((part) => /^[0-9a-fA-F]+$/.test(part));
+}
+
+function maybeDecryptToken(value) {
+  const token = String(value || '').trim();
+  if (!token) return null;
+  if (!isLikelyEncryptedToken(token)) return token;
+  return decrypt(token) || null;
+}
+
+function buildShopLookupCandidates(accountId) {
+  const raw = String(accountId || '').trim();
+  const normalized = normalizeShopDomain(raw);
+  const values = new Set([raw, normalized].filter(Boolean));
+
+  if (normalized) {
+    values.add(`www.${normalized}`);
+    values.add(`https://${normalized}`);
+    values.add(`http://${normalized}`);
+    values.add(`https://www.${normalized}`);
+    values.add(`http://www.${normalized}`);
+  }
+
+  return Array.from(values).filter(Boolean);
+}
+
+function buildNormalizedShopCandidates(accountId) {
+  return uniqueStrings(
+    buildShopLookupCandidates(accountId)
+      .map((value) => normalizeShopDomain(value))
+      .filter(Boolean)
+  );
+}
+
+function extractRootSourceShopCandidates(sources = {}) {
+  const root = normalizeObject(sources);
+  return uniqueStrings(
+    [
+      root?.metaAds?.name,
+      root?.googleAds?.name,
+      root?.ga4?.name,
+      root?.shopify?.name,
+      root?.shopify?.shop,
+      root?.website?.name,
+      root?.website?.domain,
+      root?.store?.name,
+      root?.store?.domain,
+    ]
+      .map((value) => normalizeShopDomain(value))
+      .filter(Boolean)
+  );
+}
+
+function extractOrderSignalPresence(order = {}) {
+  const snapshot = normalizeObject(order?.attributionSnapshot);
+  return {
+    hasEmailHash: Boolean(order?.emailHash),
+    hasPhoneHash: Boolean(order?.phoneHash),
+    hasMetaClickId: Boolean(snapshot?.fbclid || snapshot?.fbc || snapshot?._fbc || order?.attributedClickId),
+    hasGoogleClickId: Boolean(order?.gclid || order?.attributedClickId || snapshot?.gclid || snapshot?.click_id),
+    attributedChannel: String(order?.attributedChannel || '').trim() || null,
+    attributedPlatform: String(order?.attributedPlatform || '').trim() || null,
+  };
+}
+
+function logFanout(orderId, platform, stage, details = {}) {
+  const safeDetails = details && typeof details === 'object' ? details : { value: details };
+  console.log(`[CAPI Fanout][${String(platform || 'platform').toUpperCase()}][${stage}]`, {
+    orderId: String(orderId || '').trim() || null,
+    ...safeDetails,
+  });
+}
+
+async function resolveUserIdFromMcpRootByShop(accountId) {
+  const normalizedShopCandidates = buildNormalizedShopCandidates(accountId);
+  if (!McpData || !normalizedShopCandidates.length) return null;
+
+  const patterns = normalizedShopCandidates.map((value) => new RegExp(escapeRegex(value), 'i'));
+  const orClauses = [];
+  patterns.forEach((pattern) => {
+    orClauses.push({ 'sources.metaAds.name': pattern });
+    orClauses.push({ 'sources.googleAds.name': pattern });
+    orClauses.push({ 'sources.ga4.name': pattern });
+    orClauses.push({ 'sources.shopify.name': pattern });
+    orClauses.push({ 'sources.shopify.shop': pattern });
+    orClauses.push({ 'sources.website.name': pattern });
+    orClauses.push({ 'sources.website.domain': pattern });
+    orClauses.push({ 'sources.store.name': pattern });
+    orClauses.push({ 'sources.store.domain': pattern });
+  });
+
+  const docs = await McpData.find({
+    kind: 'root',
+    latestSnapshotId: { $ne: null },
+    $or: orClauses,
+  })
+    .select('userId sources updatedAt createdAt')
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .limit(25)
+    .lean()
+    .catch(() => []);
+
+  for (const doc of docs) {
+    const rootShops = extractRootSourceShopCandidates(doc?.sources);
+    const matchedShop = rootShops.find((shop) => normalizedShopCandidates.includes(shop));
+    if (doc?.userId && matchedShop) {
+      return {
+        userId: doc.userId,
+        matchedShop,
+      };
+    }
+  }
+
+  return null;
+}
+
+async function resolveUserIdByAuthorizedShopScan(accountId) {
+  const normalizedShopCandidates = buildNormalizedShopCandidates(accountId);
+  if (!normalizedShopCandidates.length) return null;
+
+  const [metaCandidates, googleCandidates] = await Promise.all([
+    MetaAccount.find({})
+      .select('user userId updatedAt')
+      .sort({ updatedAt: -1 })
+      .limit(100)
+      .lean()
+      .catch(() => []),
+    GoogleAccount.find({})
+      .select('user userId updatedAt')
+      .sort({ updatedAt: -1 })
+      .limit(100)
+      .lean()
+      .catch(() => []),
+  ]);
+
+  const candidateUserIds = uniqueStrings(
+    [...metaCandidates, ...googleCandidates]
+      .map((doc) => doc?.userId || doc?.user)
+      .filter(Boolean)
+  );
+
+  for (const candidateUserId of candidateUserIds) {
+    try {
+      const access = await listAuthorizedAnalyticsShopsForUser(candidateUserId);
+      const matchedShop = (Array.isArray(access?.shops) ? access.shops : [])
+        .map((entry) => normalizeShopDomain(entry?.shop || ''))
+        .find((shop) => normalizedShopCandidates.includes(shop));
+
+      if (matchedShop) {
+        return {
+          userId: candidateUserId,
+          matchedShop,
+          defaultShop: normalizeShopDomain(access?.defaultShop || '') || null,
+        };
+      }
+    } catch (_) {
+      // best-effort fallback only
+    }
+  }
+
+  return null;
+}
+
+async function maybePersistResolvedUserShop(user, matchedShop, resolutionSource, accountId) {
+  const userId = user?._id ? String(user._id) : null;
+  const normalizedMatchedShop = normalizeShopDomain(matchedShop || accountId || '');
+  const currentShop = normalizeShopDomain(user?.shop || '');
+  if (!userId || !normalizedMatchedShop || currentShop) return false;
+
+  try {
+    await User.updateOne(
+      { _id: userId, $or: [{ shop: { $exists: false } }, { shop: null }, { shop: '' }] },
+      { $set: { shop: normalizedMatchedShop } }
+    );
+    console.log('[CAPI Fanout][SHOP_BACKFILL]', {
+      accountId: String(accountId || '').trim() || null,
+      userId,
+      matchedShop: normalizedMatchedShop,
+      resolutionSource,
+    });
+    return true;
+  } catch (error) {
+    console.warn('[CAPI Fanout][SHOP_BACKFILL_FAILED]', {
+      accountId: String(accountId || '').trim() || null,
+      userId,
+      matchedShop: normalizedMatchedShop,
+      resolutionSource,
+      reason: error?.message || String(error),
+    });
+    return false;
+  }
+}
+
+async function resolveUserForAccountId(accountId) {
+  const shopCandidates = buildShopLookupCandidates(accountId);
+  const normalizedShopCandidates = buildNormalizedShopCandidates(accountId);
+
+  if (ShopConnections && shopCandidates.length) {
+    const shopConnection = await ShopConnections.findOne({
+      shop: { $in: shopCandidates },
+      matchedToUserId: { $ne: null },
+    })
+      .select('matchedToUserId shop')
+      .lean()
+      .catch(() => null);
+
+    if (shopConnection?.matchedToUserId) {
+      const matchedUser = await User.findById(shopConnection.matchedToUserId)
+        .select('_id shop email')
+        .lean()
+        .catch(() => null);
+      if (matchedUser?._id) {
+        const resolvedUser = {
+          ...matchedUser,
+          resolutionSource: 'shop_connection',
+          matchedShop: normalizeShopDomain(shopConnection?.shop || matchedUser?.shop || '') || null,
+        };
+        void maybePersistResolvedUserShop(
+          matchedUser,
+          resolvedUser.matchedShop,
+          resolvedUser.resolutionSource,
+          accountId
+        );
+        console.log('[CAPI Fanout][USER_RESOLUTION]', {
+          accountId: String(accountId || '').trim() || null,
+          userId: String(resolvedUser?._id || '') || null,
+          resolutionSource: resolvedUser.resolutionSource,
+          matchedShop: resolvedUser.matchedShop,
+        });
+        return resolvedUser;
+      }
+    }
+  }
+
+  const user = await User.findOne({
+    $or: [
+      { shop: { $in: shopCandidates } },
+      { email: { $in: shopCandidates.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean) } },
+    ],
+  })
+    .select('_id shop email')
+    .lean()
+    .catch(() => null);
+
+  if (user?._id) {
+    const resolvedUser = {
+      ...user,
+      resolutionSource: 'user_shop',
+      matchedShop:
+        normalizedShopCandidates.find((candidate) => candidate === normalizeShopDomain(user?.shop || ''))
+        || normalizeShopDomain(user?.shop || '')
+        || null,
+    };
+    void maybePersistResolvedUserShop(
+      user,
+      resolvedUser.matchedShop,
+      resolvedUser.resolutionSource,
+      accountId
+    );
+    console.log('[CAPI Fanout][USER_RESOLUTION]', {
+      accountId: String(accountId || '').trim() || null,
+      userId: String(resolvedUser?._id || '') || null,
+      resolutionSource: resolvedUser.resolutionSource,
+      matchedShop: resolvedUser.matchedShop,
+    });
+    return resolvedUser;
+  }
+
+  const rootMatch = await resolveUserIdFromMcpRootByShop(accountId);
+  if (rootMatch?.userId) {
+    const rootUser = await User.findById(rootMatch.userId)
+      .select('_id shop email')
+      .lean()
+      .catch(() => null);
+
+    if (rootUser?._id) {
+      const resolvedUser = {
+        ...rootUser,
+        resolutionSource: 'mcp_root_shop',
+        matchedShop: rootMatch.matchedShop || normalizeShopDomain(rootUser?.shop || '') || null,
+      };
+      void maybePersistResolvedUserShop(
+        rootUser,
+        resolvedUser.matchedShop,
+        resolvedUser.resolutionSource,
+        accountId
+      );
+      console.log('[CAPI Fanout][USER_RESOLUTION]', {
+        accountId: String(accountId || '').trim() || null,
+        userId: String(resolvedUser?._id || '') || null,
+        resolutionSource: resolvedUser.resolutionSource,
+        matchedShop: resolvedUser.matchedShop,
+      });
+      return resolvedUser;
+    }
+
+    const resolvedUser = {
+      _id: rootMatch.userId,
+      shop: rootMatch.matchedShop || null,
+      email: null,
+      resolutionSource: 'mcp_root_shop',
+      matchedShop: rootMatch.matchedShop || null,
+    };
+    console.log('[CAPI Fanout][USER_RESOLUTION]', {
+      accountId: String(accountId || '').trim() || null,
+      userId: String(resolvedUser?._id || '') || null,
+      resolutionSource: resolvedUser.resolutionSource,
+      matchedShop: resolvedUser.matchedShop,
+    });
+    return resolvedUser;
+  }
+
+  const analyticsAuthorizedMatch = await resolveUserIdByAuthorizedShopScan(accountId);
+  if (analyticsAuthorizedMatch?.userId) {
+    const authorizedUser = await User.findById(analyticsAuthorizedMatch.userId)
+      .select('_id shop email')
+      .lean()
+      .catch(() => null);
+
+    if (authorizedUser?._id) {
+      const resolvedUser = {
+        ...authorizedUser,
+        resolutionSource: 'authorized_shop_scan',
+        matchedShop:
+          analyticsAuthorizedMatch.matchedShop
+          || analyticsAuthorizedMatch.defaultShop
+          || normalizeShopDomain(authorizedUser?.shop || '')
+          || null,
+      };
+      void maybePersistResolvedUserShop(
+        authorizedUser,
+        resolvedUser.matchedShop,
+        resolvedUser.resolutionSource,
+        accountId
+      );
+      console.log('[CAPI Fanout][USER_RESOLUTION]', {
+        accountId: String(accountId || '').trim() || null,
+        userId: String(resolvedUser?._id || '') || null,
+        resolutionSource: resolvedUser.resolutionSource,
+        matchedShop: resolvedUser.matchedShop,
+      });
+      return resolvedUser;
+    }
+  }
+
+  console.log('[CAPI Fanout][USER_RESOLUTION]', {
+    accountId: String(accountId || '').trim() || null,
+    userId: null,
+    resolutionSource: 'not_found',
+    matchedShop: null,
+  });
+  return null;
+}
+
+async function findPixelSelectionByProvider({ provider, userId = null, metaField = '', normalizedAccountId = '' }) {
+  if (userId) {
+    const byUser = await PixelSelection.findOne({
+      $or: [{ userId }, { user: userId }],
+      provider,
+    }).lean().catch(() => null);
+
+    if (byUser?.selectedId) return byUser;
+  }
+
+  if (metaField && normalizedAccountId) {
+    const byAccount = await PixelSelection.findOne({
+      provider,
+      [`meta.${metaField}`]: normalizedAccountId,
+    }).lean().catch(() => null);
+
+    if (byAccount?.selectedId) return byAccount;
+  }
+
+  return null;
+}
+
+async function ensurePlatformConnectionBackfill({
+  orderId,
+  accountId,
+  platform,
+  accessToken,
+  pixelId = null,
+  adAccountId = null,
+  source = null,
+}) {
+  const normalizedPlatform = String(platform || '').trim().toUpperCase();
+  const normalizedAccountId = String(accountId || '').trim();
+  const normalizedAccessToken = String(accessToken || '').trim();
+  const normalizedPixelId = String(pixelId || '').trim() || null;
+  const normalizedAdAccountId = String(adAccountId || '').trim() || null;
+
+  if (!normalizedPlatform || !normalizedAccountId || !normalizedAccessToken) return false;
+
+  try {
+    await prisma.account.upsert({
+      where: { accountId: normalizedAccountId },
+      create: {
+        accountId: normalizedAccountId,
+        domain: normalizedAccountId,
+        platform: 'WOOCOMMERCE',
+      },
+      update: {
+        domain: normalizedAccountId,
+      },
+    });
+
+    const existing = await prisma.platformConnection.findFirst({
+      where: { accountId: normalizedAccountId, platform: normalizedPlatform },
+    });
+
+    if (existing) {
+      await prisma.platformConnection.update({
+        where: { id: existing.id },
+        data: {
+          accessToken: normalizedAccessToken,
+          pixelId: normalizedPixelId,
+          adAccountId: normalizedAdAccountId,
+          status: 'ACTIVE',
+        },
+      });
+
+      logFanout(orderId, normalizedPlatform.toLowerCase(), 'connection_backfill', {
+        action: 'updated',
+        accountId: normalizedAccountId,
+        adAccountId: normalizedAdAccountId,
+        pixelId: normalizedPixelId,
+        source,
+      });
+      return true;
+    }
+
+    await prisma.platformConnection.create({
+      data: {
+        accountId: normalizedAccountId,
+        platform: normalizedPlatform,
+        accessToken: normalizedAccessToken,
+        pixelId: normalizedPixelId,
+        adAccountId: normalizedAdAccountId,
+        status: 'ACTIVE',
+      },
+    });
+
+    logFanout(orderId, normalizedPlatform.toLowerCase(), 'connection_backfill', {
+      action: 'created',
+      accountId: normalizedAccountId,
+      adAccountId: normalizedAdAccountId,
+      pixelId: normalizedPixelId,
+      source,
+    });
+    return true;
+  } catch (error) {
+    logFanout(orderId, normalizedPlatform.toLowerCase(), 'connection_backfill_failed', {
+      accountId: normalizedAccountId,
+      source,
+      reason: error?.message || String(error),
+    });
+    return false;
+  }
 }
 
 function platformLabel(platform) {
@@ -42,6 +528,19 @@ function summarizeGoogleResponse(data = {}) {
     jobId: data?.jobId || null,
     requestId: data?.requestId || data?.responseMetadata?.requestId || null,
     partialFailureMessage: data?.partialFailureError?.message || null,
+  };
+}
+
+function summarizePlatformError(data = {}) {
+  const payload = normalizeObject(data);
+  const nestedError = normalizeObject(payload.error);
+  return {
+    message: nestedError.message || payload.message || null,
+    code: nestedError.code || payload.code || null,
+    type: nestedError.type || payload.type || null,
+    subcode: nestedError.error_subcode || payload.error_subcode || null,
+    fbtraceId: payload.fbtrace_id || nestedError.fbtrace_id || null,
+    requestId: payload.requestId || payload.request_id || null,
   };
 }
 
@@ -171,21 +670,35 @@ async function resolveMetaConfig(accountId) {
   const conn = await prisma.platformConnection.findFirst({
     where: { accountId, platform: 'META', status: 'ACTIVE' },
   }).catch(() => null);
+  const connAccessToken = maybeDecryptToken(conn?.accessToken);
+  const normalizedMetaAccountId = normalizeMetaAccountId(conn?.adAccountId || '');
+  const user = await resolveUserForAccountId(accountId);
+  const pixelSel = await findPixelSelectionByProvider({
+    provider: 'meta',
+    userId: user?._id || null,
+    metaField: 'adAccountId',
+    normalizedAccountId: normalizedMetaAccountId,
+  });
+  const resolvedPixelId = conn?.pixelId || pixelSel?.selectedId || null;
+  const userId = user?._id ? String(user._id) : null;
+  const userResolutionSource = user?.resolutionSource || null;
+  const resolvedAdAccountId =
+    normalizedMetaAccountId
+    || normalizeMetaAccountId(pixelSel?.meta?.adAccountId || '');
 
-  if (conn?.accessToken && conn?.pixelId) {
+  if (connAccessToken && resolvedPixelId) {
     return {
       ok: true,
-      accessToken: conn.accessToken,
-      pixelId: conn.pixelId,
-      destinationId: conn.pixelId,
-      configSource: 'prisma_platform_connection',
+      accessToken: connAccessToken,
+      pixelId: resolvedPixelId,
+      destinationId: resolvedPixelId,
+      configSource: conn?.pixelId ? 'prisma_platform_connection' : 'prisma_connection_plus_pixel_selection',
       testEventCode: process.env.META_CAPI_TEST_CODE || null,
+      userId,
+      userResolutionSource,
+      resolvedAdAccountId,
     };
   }
-
-  const user = await User.findOne({
-    $or: [{ shop: accountId }, { email: accountId }],
-  }).lean();
 
   if (!user) {
     return { ok: false, reason: 'No User / PlatformConnection found for Meta CAPI' };
@@ -193,26 +706,28 @@ async function resolveMetaConfig(accountId) {
 
   const metaAccount = await MetaAccount.loadForUserWithTokens(user._id).lean();
   const accessToken =
-    metaAccount?.longLivedToken ||
-    metaAccount?.longlivedToken ||
-    metaAccount?.access_token ||
-    metaAccount?.accessToken ||
-    metaAccount?.token ||
+    maybeDecryptToken(metaAccount?.longLivedToken) ||
+    maybeDecryptToken(metaAccount?.longlivedToken) ||
+    maybeDecryptToken(metaAccount?.access_token) ||
+    maybeDecryptToken(metaAccount?.accessToken) ||
+    maybeDecryptToken(metaAccount?.token) ||
     null;
 
   if (!accessToken) {
     return { ok: false, reason: 'No Meta access token' };
   }
 
-  const pixelSel = await PixelSelection.findOne({
-    $or: [{ userId: user._id }, { user: user._id }],
-    provider: 'meta',
-  }).lean();
-
-  const pixelId = pixelSel?.selectedId || null;
+  const pixelId = resolvedPixelId || null;
   if (!pixelId) {
     return { ok: false, reason: 'No Meta pixel selected for this account' };
   }
+
+  const fallbackResolvedAdAccountId =
+    resolvedAdAccountId
+    || normalizeMetaAccountId(metaAccount?.defaultAccountId || '')
+    || normalizeMetaAccountId(Array.isArray(metaAccount?.selectedAccountIds) ? metaAccount.selectedAccountIds[0] : '')
+    || normalizeMetaAccountId(metaAccount?.ad_accounts?.[0]?.account_id || metaAccount?.ad_accounts?.[0]?.id || '')
+    || normalizeMetaAccountId(metaAccount?.adAccounts?.[0]?.account_id || metaAccount?.adAccounts?.[0]?.id || '');
 
   return {
     ok: true,
@@ -221,6 +736,9 @@ async function resolveMetaConfig(accountId) {
     destinationId: pixelId,
     configSource: 'mongo_fallback',
     testEventCode: process.env.META_CAPI_TEST_CODE || null,
+    userId,
+    userResolutionSource,
+    resolvedAdAccountId: fallbackResolvedAdAccountId,
   };
 }
 
@@ -230,19 +748,33 @@ async function resolveGoogleConfig(accountId) {
   const conn = await prisma.platformConnection.findFirst({
     where: { accountId, platform: 'GOOGLE', status: 'ACTIVE' },
   }).catch(() => null);
+  const normalizedCustomerId = normalizeGoogleCustomerId(conn?.adAccountId || '');
+  const user = await resolveUserForAccountId(accountId);
+  const pixelSel = await findPixelSelectionByProvider({
+    provider: 'google_ads',
+    userId: user?._id || null,
+    metaField: 'customerId',
+    normalizedAccountId: normalizedCustomerId,
+  });
+  const resolvedConversionAction = String(conn?.pixelId || pixelSel?.selectedId || '').trim() || null;
+  const userId = user?._id ? String(user._id) : null;
+  const userResolutionSource = user?.resolutionSource || null;
+  const connAccessToken = maybeDecryptToken(conn?.accessToken);
 
-  if (conn?.accessToken && conn?.adAccountId) {
+  if (connAccessToken && conn?.adAccountId && resolvedConversionAction) {
     return {
       ok: true,
-      accessToken: conn.accessToken,
+      accessToken: connAccessToken,
       refreshToken: null,
-      adAccountId: conn.adAccountId,
-      configSource: 'prisma_platform_connection',
-      destinationId: conn.adAccountId,
+      adAccountId: normalizedCustomerId || conn.adAccountId,
+      conversionAction: resolvedConversionAction,
+      configSource: conn?.pixelId ? 'prisma_platform_connection' : 'prisma_connection_plus_pixel_selection',
+      destinationId: normalizedCustomerId || conn.adAccountId,
+      userId,
+      userResolutionSource,
     };
   }
 
-  const user = await User.findOne({ shop: accountId }).lean();
   if (!user) {
     return { ok: false, reason: 'User not found' };
   }
@@ -250,24 +782,43 @@ async function resolveGoogleConfig(accountId) {
   const ga = await GoogleAccount.findOne({
     $or: [{ user: user._id }, { userId: user._id }]
   })
-    .select('+accessToken +refreshToken defaultCustomerId')
+    .select('+accessToken +refreshToken defaultCustomerId selectedCustomerIds customers ad_accounts')
     .lean();
 
-  if (!ga || !ga.defaultCustomerId) {
+  const googleCustomerId = normalizeGoogleCustomerId(
+    pixelSel?.meta?.customerId
+    || (Array.isArray(ga?.selectedCustomerIds) ? ga.selectedCustomerIds[0] : '')
+    || ga?.defaultCustomerId
+    || ga?.customers?.[0]?.id
+    || ga?.ad_accounts?.[0]?.id
+  );
+
+  if (!ga || !googleCustomerId) {
     return { ok: false, reason: 'No Google Ads account connected' };
+  }
+
+  if (!resolvedConversionAction) {
+    return { ok: false, reason: 'No valid Google conversion action configured' };
   }
 
   return {
     ok: true,
-    accessToken: ga.accessToken || null,
-    refreshToken: ga.refreshToken || null,
-    adAccountId: ga.defaultCustomerId,
-    configSource: 'mongo_google_account',
-    destinationId: ga.defaultCustomerId,
+    accessToken: maybeDecryptToken(ga.accessToken) || ga.accessToken || null,
+    refreshToken: maybeDecryptToken(ga.refreshToken) || ga.refreshToken || null,
+    adAccountId: googleCustomerId,
+    conversionAction: resolvedConversionAction,
+    configSource: 'mongo_google_account_plus_pixel_selection',
+    destinationId: googleCustomerId,
+    userId,
+    userResolutionSource,
   };
 }
 
 async function sendToMeta(order) {
+  logFanout(order.orderId, 'meta', 'queue', {
+    accountId: order.accountId || null,
+    ...extractOrderSignalPresence(order),
+  });
   await updateOrderDeliveryStatus(order.orderId, 'meta', {
     status: 'queued',
     queuedAt: new Date().toISOString(),
@@ -276,6 +827,18 @@ async function sendToMeta(order) {
   });
 
   const config = await resolveMetaConfig(order.accountId);
+  logFanout(order.orderId, 'meta', 'config', {
+    accountId: order.accountId || null,
+    ok: config.ok,
+    reason: config.reason || null,
+    configSource: config.configSource || null,
+    destinationId: config.destinationId || null,
+    resolvedAdAccountId: config.resolvedAdAccountId || null,
+    userId: config.userId || null,
+    userResolutionSource: config.userResolutionSource || null,
+    hasAccessToken: Boolean(config.accessToken),
+    hasPixelId: Boolean(config.pixelId),
+  });
   if (!config.ok) {
     await updateOrderDeliveryStatus(order.orderId, 'meta', {
       status: isSkippableMetaReason(config.reason) ? 'skipped' : 'failed',
@@ -285,6 +848,9 @@ async function sendToMeta(order) {
       configured: false,
       verifiedBy: 'config_gate',
       verificationHint: 'Meta delivery was not attempted because the account is not fully configured for CAPI.',
+    });
+    logFanout(order.orderId, 'meta', isSkippableMetaReason(config.reason) ? 'skipped' : 'failed', {
+      reason: config.reason,
     });
     return { success: false, status: isSkippableMetaReason(config.reason) ? 'skipped' : 'failed', reason: config.reason };
   }
@@ -302,7 +868,24 @@ async function sendToMeta(order) {
       : 'Verify this order in Meta Events Manager and deduplicate with the event_id.',
   });
 
+  if (!String(config.configSource || '').startsWith('prisma_')) {
+    await ensurePlatformConnectionBackfill({
+      orderId: order.orderId,
+      accountId: order.accountId,
+      platform: 'META',
+      accessToken: config.accessToken,
+      pixelId: config.pixelId,
+      adAccountId: config.resolvedAdAccountId,
+      source: config.configSource,
+    });
+  }
+
   const result = await withRetry(async () => {
+    logFanout(order.orderId, 'meta', 'send_attempt', {
+      accountId: order.accountId || null,
+      destinationId: config.destinationId || null,
+      configSource: config.configSource || null,
+    });
     const response = await metaStack.sendConversion(order, {
       accessToken: config.accessToken,
       pixelId: config.pixelId,
@@ -310,7 +893,9 @@ async function sendToMeta(order) {
     });
 
     if (!response?.success) {
-      throw new Error(response?.reason || 'Meta CAPI call failed');
+      const err = new Error(response?.reason || 'Meta CAPI call failed');
+      err.responseData = response?.data || null;
+      throw err;
     }
 
     return response.data || {};
@@ -318,6 +903,7 @@ async function sendToMeta(order) {
 
   if (!result.success) {
     const errorMessage = result.error?.message || String(result.error || 'Meta CAPI call failed');
+    const responseSummary = summarizePlatformError(result.error?.responseData || {});
     await updateOrderDeliveryStatus(order.orderId, 'meta', {
       status: 'failed',
       failedAt: new Date().toISOString(),
@@ -327,8 +913,15 @@ async function sendToMeta(order) {
       destinationId: config.destinationId,
       configSource: config.configSource,
       testEventCode: config.testEventCode || null,
+      responseSummary,
       verifiedBy: 'meta_capi_error',
       verificationHint: 'Check Meta Events Manager diagnostics or the CAPI response payload for the failure reason.',
+    });
+    logFanout(order.orderId, 'meta', 'failed', {
+      reason: errorMessage,
+      attempts: result.attempts,
+      responseSummary,
+      rawResponse: result.error?.responseData || null,
     });
     return { success: false, status: 'failed', reason: errorMessage };
   }
@@ -348,11 +941,20 @@ async function sendToMeta(order) {
       ? 'Meta accepted this event. Confirm it in Test Events using the same test_event_code.'
       : 'Meta accepted this event. Confirm it in Events Manager with the event_id and fbtrace_id.',
   });
+  logFanout(order.orderId, 'meta', 'accepted', {
+    attempts: result.attempts,
+    destinationId: config.destinationId || null,
+    responseSummary: summarizeMetaResponse(result.value),
+  });
 
   return { success: true, status: 'accepted', response: result.value };
 }
 
 async function sendToGoogle(order) {
+  logFanout(order.orderId, 'google', 'queue', {
+    accountId: order.accountId || null,
+    ...extractOrderSignalPresence(order),
+  });
   await updateOrderDeliveryStatus(order.orderId, 'google', {
     status: 'queued',
     queuedAt: new Date().toISOString(),
@@ -361,6 +963,27 @@ async function sendToGoogle(order) {
   });
 
   const config = await resolveGoogleConfig(order.accountId);
+  logFanout(order.orderId, 'google', 'config', {
+    accountId: order.accountId || null,
+    ok: config.ok,
+    reason: config.reason || null,
+    configSource: config.configSource || null,
+    destinationId: config.destinationId || null,
+    adAccountId: config.adAccountId || null,
+    userId: config.userId || null,
+    userResolutionSource: config.userResolutionSource || null,
+    hasAccessToken: Boolean(config.accessToken),
+    hasRefreshToken: Boolean(config.refreshToken),
+    hasConversionAction: Boolean(config.conversionAction),
+  });
+  if (String(config.reason || '').toLowerCase().includes('missing developer token')) {
+    logFanout(order.orderId, 'google', 'env_missing', {
+      envVar: 'GOOGLE_ADS_DEVELOPER_TOKEN',
+      accountId: order.accountId || null,
+      userId: config.userId || null,
+      userResolutionSource: config.userResolutionSource || null,
+    });
+  }
   if (!config.ok) {
     await updateOrderDeliveryStatus(order.orderId, 'google', {
       status: isSkippableGoogleReason(config.reason) ? 'skipped' : 'failed',
@@ -370,6 +993,9 @@ async function sendToGoogle(order) {
       configured: false,
       verifiedBy: 'config_gate',
       verificationHint: 'Google delivery was not attempted because the Ads account is not fully configured.',
+    });
+    logFanout(order.orderId, 'google', isSkippableGoogleReason(config.reason) ? 'skipped' : 'failed', {
+      reason: config.reason,
     });
     return { success: false, status: isSkippableGoogleReason(config.reason) ? 'skipped' : 'failed', reason: config.reason };
   }
@@ -384,12 +1010,31 @@ async function sendToGoogle(order) {
     verificationHint: 'Verify this upload in Google Ads offline conversion diagnostics using the request id or job metadata.',
   });
 
+  if (!String(config.configSource || '').startsWith('prisma_')) {
+    await ensurePlatformConnectionBackfill({
+      orderId: order.orderId,
+      accountId: order.accountId,
+      platform: 'GOOGLE',
+      accessToken: config.accessToken,
+      pixelId: config.conversionAction,
+      adAccountId: config.adAccountId,
+      source: config.configSource,
+    });
+  }
+
   const result = await withRetry(async () => {
+    logFanout(order.orderId, 'google', 'send_attempt', {
+      accountId: order.accountId || null,
+      destinationId: config.destinationId || null,
+      conversionAction: config.conversionAction || null,
+      configSource: config.configSource || null,
+    });
     const response = await googleStack.sendConversion(order, {
       accessToken: config.accessToken,
       refreshToken: config.refreshToken,
       adAccountId: config.adAccountId,
-      pixelId: null,
+      pixelId: config.conversionAction || null,
+      conversionAction: config.conversionAction || null,
     });
 
     if (!response?.success) {
@@ -418,6 +1063,10 @@ async function sendToGoogle(order) {
         ? 'Google delivery was skipped because the purchase did not have a valid upload key such as GCLID.'
         : 'Check the Google Ads response for partial failures or diagnostic errors.',
     });
+    logFanout(order.orderId, 'google', isSkippableGoogleReason(errorMessage) ? 'skipped' : 'failed', {
+      reason: errorMessage,
+      attempts: result.attempts,
+    });
     return { success: false, status: isSkippableGoogleReason(errorMessage) ? 'skipped' : 'failed', reason: errorMessage };
   }
 
@@ -432,6 +1081,12 @@ async function sendToGoogle(order) {
     responseSummary: summarizeGoogleResponse(result.value),
     verifiedBy: 'google_ads_upload_response',
     verificationHint: 'Google accepted this upload. Confirm it in the offline conversions diagnostics with the request id.',
+  });
+  logFanout(order.orderId, 'google', 'accepted', {
+    attempts: result.attempts,
+    destinationId: config.destinationId || null,
+    conversionAction: config.conversionAction || null,
+    responseSummary: summarizeGoogleResponse(result.value),
   });
 
   return { success: true, status: 'accepted', response: result.value };
@@ -464,11 +1119,25 @@ async function sendToAllPlatforms(orderId) {
     return null;
   }
 
+  logFanout(order.orderId, 'all', 'start', {
+    accountId: order.accountId || null,
+    ...extractOrderSignalPresence(order),
+  });
+
   const results = {
     meta: await sendToMeta(order),
     google: await sendToGoogle(order),
     tiktok: await maybeMarkTikTokUnsupported(order),
   };
+
+  logFanout(order.orderId, 'all', 'complete', {
+    accountId: order.accountId || null,
+    results: {
+      meta: results.meta?.status || null,
+      google: results.google?.status || null,
+      tiktok: results.tiktok?.status || null,
+    },
+  });
 
   return results;
 }
