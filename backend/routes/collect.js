@@ -131,22 +131,112 @@ function normalizeClientIp(rawValue) {
   return normalized || null;
 }
 
+function splitAndNormalizeClientIps(rawValue) {
+  const raw = String(rawValue || '').trim();
+  if (!raw) return [];
+
+  return raw
+    .split(',')
+    .map((part) => normalizeClientIp(part))
+    .filter(Boolean);
+}
+
+function isPrivateOrLocalIp(ip) {
+  const value = String(ip || '').trim().toLowerCase();
+  if (!value) return true;
+
+  if (value.includes(':')) {
+    return value === '::1' || value.startsWith('fc') || value.startsWith('fd') || value.startsWith('fe80');
+  }
+
+  const parts = value.split('.').map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part) || part < 0 || part > 255)) {
+    return true;
+  }
+
+  const [a, b] = parts;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+
+  return false;
+}
+
+function isLikelyCloudflareIp(ip) {
+  const value = String(ip || '').trim();
+  if (!value || value.includes(':')) return false;
+
+  const parts = value.split('.').map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isFinite(part) || part < 0 || part > 255)) {
+    return false;
+  }
+
+  const [a, b] = parts;
+  if (a === 172 && b >= 64 && b <= 71) return true;
+  if (a === 162 && b === 158) return true;
+  if (a === 198 && b === 41) return true;
+  if (a === 104 && b >= 16 && b <= 31) return true;
+  if (a === 173 && b === 245) return true;
+  if (a === 188 && b === 114) return true;
+  if (a === 190 && b === 93) return true;
+  if (a === 197 && b === 234) return true;
+
+  return false;
+}
+
+function pickBestClientIp(candidates = []) {
+  const normalized = Array.from(
+    new Set(
+      (Array.isArray(candidates) ? candidates : [candidates])
+        .flatMap((candidate) => splitAndNormalizeClientIps(candidate))
+        .filter(Boolean)
+    )
+  );
+
+  if (!normalized.length) return null;
+
+  const nonProxyPublic = normalized.find((ip) => !isPrivateOrLocalIp(ip) && !isLikelyCloudflareIp(ip));
+  if (nonProxyPublic) return nonProxyPublic;
+
+  const publicIp = normalized.find((ip) => !isPrivateOrLocalIp(ip));
+  if (publicIp) return publicIp;
+
+  return normalized[0] || null;
+}
+
 function resolveTrustedClientIp(req, payload = {}) {
-  const candidates = [
-    getHeaderValue(req, ['cf-connecting-ip', 'true-client-ip', 'x-real-ip', 'fastly-client-ip']),
-    getHeaderValue(req, ['x-forwarded-for']),
+  const candidates = [];
+
+  ['cf-connecting-ip', 'true-client-ip', 'x-real-ip', 'fastly-client-ip', 'x-client-ip', 'x-cluster-client-ip'].forEach((headerName) => {
+    const value = getHeaderValue(req, [headerName]);
+    if (value) candidates.push(value);
+  });
+
+  const xff = getHeaderValue(req, ['x-forwarded-for', 'x-original-forwarded-for', 'forwarded-for']);
+  if (xff) candidates.push(xff);
+
+  const forwarded = getHeaderValue(req, ['forwarded']);
+  if (forwarded) {
+    const forwardedMatches = String(forwarded)
+      .split(',')
+      .map((entry) => {
+        const match = entry.match(/for="?([^;\s,"]+)"?/i);
+        return match ? match[1] : null;
+      })
+      .filter(Boolean);
+    candidates.push(...forwardedMatches);
+  }
+
+  candidates.push(
     req?.ip,
     payload?.client_ip_address,
     payload?.client_ip,
     payload?.ip,
-  ];
+  );
 
-  for (const candidate of candidates) {
-    const normalized = normalizeClientIp(candidate);
-    if (normalized) return normalized;
-  }
-
-  return null;
+  return pickBestClientIp(candidates);
 }
 
 function resolveRequestUserAgent(req, payload = {}) {
@@ -172,6 +262,10 @@ function parseAllowedAccountIds() {
     .map((item) => normalizeAccountId(item) || String(item || '').trim().toLowerCase())
     .filter(Boolean);
   return values.length ? new Set(values) : null;
+}
+
+function isOrderReceivedUrl(value) {
+  return /\/order-received(?:\/|\?|$)/i.test(String(value || ''));
 }
 
 function isAccountAllowed(accountId) {
@@ -219,6 +313,14 @@ router.post('/', async (req, res) => {
     if (payload.fbc && !payload.user_data.fbc) payload.user_data.fbc = payload.fbc;
     if (payload.gclid && !payload.user_data.gclid) payload.user_data.gclid = payload.gclid;
     if (payload.fbclid && !payload.user_data.fbclid) payload.user_data.fbclid = payload.fbclid;
+    if (!payload.click_id) {
+      payload.click_id = payload.gclid || payload.fbclid || payload.ttclid || payload.fbc || null;
+    }
+
+    const normalizedGa4Source = deriveGa4SessionSource(payload);
+    if (!payload.ga4_session_source && normalizedGa4Source) {
+      payload.ga4_session_source = normalizedGa4Source;
+    }
 
     console.log(`\n[AdRay Collect] Received event '${normalizedEventName}' for account: ${accountId} (platform: ${platform})`);
     if (normalizedEventName === 'begin_checkout' || normalizedEventName === 'purchase') {
@@ -246,6 +348,10 @@ router.post('/', async (req, res) => {
     if (!isAccountAllowed(accountId)) {
       console.info(`[AdRay Collect] Ignored event for non-allowed account: ${accountId}`);
       return res.json({ success: true, ignored: true, reason: 'account_not_allowed', accountId });
+    }
+
+    if (normalizedEventName === 'begin_checkout' && isOrderReceivedUrl(payload.page_url)) {
+      return res.json({ success: true, ignored: true, reason: 'begin_checkout_on_order_received' });
     }
 
     // 0. Ensure Account exists in DB (auto-provision for new accounts)
@@ -278,7 +384,7 @@ router.post('/', async (req, res) => {
       };
     }
     const userKey = identity.userKey;
-    const ga4SessionSource = deriveGa4SessionSource(payload);
+    const ga4SessionSource = payload.ga4_session_source || deriveGa4SessionSource(payload);
     console.log(`[AdRay Collect] Resolved UserKey: ${userKey} (IsNew: ${identity.isNew}, Confidence: ${identity.confidenceScore})`);
 
     // 2. Generate Event ID

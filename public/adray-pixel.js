@@ -544,6 +544,7 @@
     if (path.includes('/products/')) return 'product';
     if (path.includes('/collections/')) return 'collection';
     if (path.includes('/cart')) return 'cart';
+    if (isOrderReceivedUrl(path)) return 'confirmation';
     if (path.includes('/checkout')) return 'checkout';
     
     // WooCommerce patterns
@@ -552,6 +553,7 @@
     if (document.body.classList.contains('woocommerce-shop') || 
         document.body.classList.contains('archive')) return 'collection';
     if (document.body.classList.contains('woocommerce-cart')) return 'cart';
+    if (document.body.classList.contains('woocommerce-order-received')) return 'confirmation';
     if (document.body.classList.contains('woocommerce-checkout')) return 'checkout';
     
     return 'other';
@@ -595,6 +597,7 @@
     sentEventMap.set(dedupKey, now);
 
     const payload = {
+      timestamp: new Date().toISOString(),
       account_id: getAccountId(),
       session_id: getOrCreateSessionId(),
       browser_id: getOrCreateBrowserId(),
@@ -609,6 +612,7 @@
       fbclid: getAttributionParam('fbclid'),
       gclid: getAttributionParam('gclid'),
       ttclid: getAttributionParam('ttclid'),
+      click_id: getAttributionParam('gclid') || getAttributionParam('fbclid') || getAttributionParam('ttclid') || null,
       utm_source: getAttributionParam('utm_source'),
       utm_medium: getAttributionParam('utm_medium'),
       utm_campaign: getAttributionParam('utm_campaign'),
@@ -660,7 +664,65 @@
   }
 
   function isCheckoutUrl(url) {
-    return typeof url === 'string' && /\/checkout(\?|$|\/)/i.test(url);
+    if (typeof url !== 'string') return false;
+    if (isOrderReceivedUrl(url)) return false;
+    return /\/checkout(\?|$|\/)/i.test(url);
+  }
+
+  function isOrderReceivedUrl(url) {
+    return typeof url === 'string' && /\/order-received(?:\/|\?|$)/i.test(url);
+  }
+
+  function resolveBeginCheckoutToken(eventData = {}) {
+    return eventData.checkout_token
+      || getCookie('woocommerce_cart_hash')
+      || getCookie('cart')
+      || getCookie('cart_sig')
+      || null;
+  }
+
+  function shouldSendBeginCheckout(checkoutToken, contextUrl) {
+    var url = String(contextUrl || window.location.href || '');
+    if (isOrderReceivedUrl(url)) return false;
+
+    var pathKey = '/';
+    try {
+      pathKey = (new URL(url, window.location.origin).pathname || '/').toLowerCase().replace(/\/+$/, '') || '/';
+    } catch (_) {
+      pathKey = url.toLowerCase();
+    }
+
+    var tokenKey = String(checkoutToken || '').trim();
+    var dedupKey = tokenKey ? ('token:' + tokenKey) : ('path:' + pathKey);
+    var storageKey = '__adray_begin_checkout_lock_v2';
+    var now = Date.now();
+    var lock = safeJsonParse(safeStorageGet(window.sessionStorage, storageKey), null);
+
+    if (lock && lock.key === dedupKey) {
+      var lockAge = now - Number(lock.ts || 0);
+      if (Number.isFinite(lockAge) && lockAge >= 0 && lockAge < (30 * 60 * 1000)) {
+        return false;
+      }
+    }
+
+    safeStorageSet(window.sessionStorage, storageKey, JSON.stringify({ key: dedupKey, ts: now }));
+    return true;
+  }
+
+  function trackBeginCheckout(eventData = {}, contextUrl = '') {
+    var checkoutToken = resolveBeginCheckoutToken(eventData);
+    if (!shouldSendBeginCheckout(checkoutToken, contextUrl)) return;
+
+    var payload = {
+      ...eventData,
+      checkout_token: checkoutToken,
+    };
+
+    if (payload.cart_value === undefined || payload.cart_value === null || payload.cart_value === '') {
+      payload.cart_value = detectCartValue(null, 1);
+    }
+
+    sendEvent('begin_checkout', payload);
   }
 
   function parseAmountFromText(text) {
@@ -920,9 +982,9 @@
 
     // Shopify begin checkout (AJAX/cart endpoints)
     if (isCheckoutUrl(url)) {
-      sendEvent("begin_checkout", {
+      trackBeginCheckout({
         checkout_token: getCookie('cart') || getCookie('cart_sig') || null
-      });
+      }, url);
     }
     
     // WooCommerce: REST + wc-ajax + add-to-cart endpoints
@@ -986,9 +1048,9 @@
           });
         }
         if (isCheckoutUrl(xhrUrl)) {
-          sendEvent("begin_checkout", {
+          trackBeginCheckout({
             checkout_token: getCookie('cart') || getCookie('cart_sig') || null
-          });
+          }, xhrUrl);
         }
       });
       return origSend.apply(this, arguments);
@@ -1026,9 +1088,9 @@
       }
 
       if (isCheckoutUrl(action)) {
-        sendEvent('begin_checkout', {
+        trackBeginCheckout({
           checkout_token: getCookie('cart') || getCookie('cart_sig') || null
-        });
+        }, action);
       }
     } catch (_) {}
   }, true);
@@ -1067,27 +1129,27 @@
       }
 
       if (likelyCheckout) {
-        sendEvent('begin_checkout', {
+        trackBeginCheckout({
           checkout_token: getCookie('cart') || getCookie('cart_sig') || null
-        });
+        }, href || formAction || window.location.href);
       }
     } catch (_) {}
   }, true);
 
   // 4. WooCommerce: Checkout begin detection
   if (detectPlatform() === 'woocommerce' && detectPageType() === 'checkout') {
-    sendEvent("begin_checkout", {
+    trackBeginCheckout({
       checkout_token: getCookie('woocommerce_cart_hash') || null
-    });
+    }, window.location.href);
   }
 
   setupCheckoutIdentityBlurTracking();
 
   // 4.1 Shopify: checkout page hit detection (if script is present there)
   if (detectPlatform() === 'shopify' && isCheckoutUrl(window.location.pathname)) {
-    sendEvent("begin_checkout", {
+    trackBeginCheckout({
       checkout_token: getCookie('cart') || getCookie('cart_sig') || null
-    });
+    }, window.location.href);
   }
 
   // 4.2 WooCommerce: stitch logged-in customers to the current browser session.

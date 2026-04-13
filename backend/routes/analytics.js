@@ -3870,7 +3870,7 @@ const getAnalyticsDashboardHandler = async (req, res) => {
           fbc: ev?.rawPayload?.fbc || ev?.rawPayload?._fbc || ev?.rawPayload?.user_data?.fbc || null,
           ttclid: ev?.rawPayload?.ttclid || ev?.rawPayload?.user_data?.ttclid || null,
           gclid: ev?.rawPayload?.gclid || ev?.rawPayload?.user_data?.gclid || null,
-          clickId: ev?.rawPayload?.click_id || null,
+          clickId: ev?.rawPayload?.click_id || ev?.rawPayload?.gclid || ev?.rawPayload?.fbclid || ev?.rawPayload?.ttclid || ev?.rawPayload?.fbc || null,
           customerEmail: ev?.rawPayload?.user_data?.em || ev?.rawPayload?.customer_email || ev?.rawPayload?.user_email || ev?.rawPayload?.email || null,
           clientIp: ev?.rawPayload?.user_data?.client_ip_address || ev?.rawPayload?.client_ip_address || ev?.rawPayload?.client_ip || ev?.rawPayload?.ip || null,
           userAgent: ev?.rawPayload?.user_data?.client_user_agent || ev?.rawPayload?.client_user_agent || ev?.rawPayload?.user_agent || null,
@@ -4517,6 +4517,7 @@ const ANALYTICS_JOURNEY_EVENT_SELECT = {
   rawSource: true,
   matchType: true,
   confidenceScore: true,
+  ipHash: true,
   revenue: true,
   currency: true,
   orderId: true,
@@ -4560,6 +4561,7 @@ function mapAnalyticsJourneyEventRecord(ev = {}) {
     rawSource: ev.rawSource || null,
     matchType: ev.matchType || null,
     confidenceScore: toFiniteNumberOrNull(ev.confidenceScore),
+    ipHash: ev.ipHash || null,
     revenue: toFiniteNumberOrNull(ev.revenue),
     currency: ev.currency || null,
     productName: ev?.rawPayload?.product_name || ev?.rawPayload?.item_name || ev?.rawPayload?.name || null,
@@ -4581,7 +4583,7 @@ function mapAnalyticsJourneyEventRecord(ev = {}) {
     fbc: ev?.rawPayload?.fbc || ev?.rawPayload?._fbc || ev?.rawPayload?.user_data?.fbc || null,
     ttclid: ev?.rawPayload?.ttclid || ev?.rawPayload?.user_data?.ttclid || null,
     gclid: ev?.rawPayload?.gclid || ev?.rawPayload?.user_data?.gclid || null,
-    clickId: ev?.rawPayload?.click_id || null,
+    clickId: ev?.rawPayload?.click_id || ev?.rawPayload?.gclid || ev?.rawPayload?.fbclid || ev?.rawPayload?.ttclid || ev?.rawPayload?.fbc || null,
     customerEmail: ev?.rawPayload?.user_data?.em || ev?.rawPayload?.customer_email || ev?.rawPayload?.user_email || ev?.rawPayload?.email || null,
     clientIp: ev?.rawPayload?.user_data?.client_ip_address || ev?.rawPayload?.client_ip_address || ev?.rawPayload?.client_ip || ev?.rawPayload?.ip || null,
     userAgent: ev?.rawPayload?.user_data?.client_user_agent || ev?.rawPayload?.client_user_agent || ev?.rawPayload?.user_agent || null,
@@ -5524,6 +5526,7 @@ async function buildAnalyticsExportRows({ accountId, purchases = [], query = {} 
         utm_entry_url: event.utmEntryUrl || null,
         utm_session_history_json: safeJsonStringify(event.utmSessionHistory || null),
         utm_browser_history_json: safeJsonStringify(event.utmBrowserHistory || null),
+        fbclid: event.fbclid || null,
         gclid: event.gclid || null,
         fbp: event.fbp || null,
         fbc: event.fbc || null,
@@ -5531,6 +5534,7 @@ async function buildAnalyticsExportRows({ accountId, purchases = [], query = {} 
         click_id: event.clickId || null,
         customer_email: event.customerEmail || customerEmail || null,
         client_ip: event.clientIp || null,
+        ip_hash: event.ipHash || null,
         user_agent: event.userAgent || null,
       });
     });
@@ -5585,8 +5589,8 @@ const EXPORT_EVENTS_COLUMNS = [
   'page_type', 'product_id', 'variant_id', 'product_name', 'item_id', 'cart_id', 'cart_value',
   'revenue', 'currency', 'raw_source', 'match_type', 'confidence_score', 'utm_source', 'utm_medium',
   'utm_campaign', 'utm_content', 'utm_term', 'ga4_session_source', 'utm_entry_url',
-  'utm_session_history_json', 'utm_browser_history_json', 'gclid', 'fbp', 'fbc', 'ttclid', 'click_id',
-  'customer_email', 'client_ip', 'user_agent',
+  'utm_session_history_json', 'utm_browser_history_json', 'fbclid', 'gclid', 'fbp', 'fbc', 'ttclid', 'click_id',
+  'customer_email', 'client_ip', 'ip_hash', 'user_agent',
 ];
 
 const EXPORT_ITEMS_COLUMNS = [
