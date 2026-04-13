@@ -4419,6 +4419,8 @@ function resolveAnalyticsJourneyTouchpoint({ event = {}, purchase = {} } = {}) {
   const metaClickId = String(event.fbclid || event.fbc || '').trim();
   const ttclid = String(event.ttclid || '').trim();
   const genericClickId = String(event.clickId || '').trim();
+  const isPaidUtmMedium = /(cpc|ppc|paid|ads?|sponsored|cpv|cpa|social_paid|paid_social)/.test(utmMedium);
+  const isOrganicUtmMedium = /(organic|seo)/.test(utmMedium) || (/social/.test(utmMedium) && !isPaidUtmMedium);
   const hasPaidGoogleUtm = utmSource.includes('google') && /(cpc|paid|search|ads)/.test(utmMedium);
   const hasPaidMetaUtm = utmSource.includes('meta') || utmSource.includes('facebook') || utmSource.includes('instagram');
   const fallbackChannel = normalizeChannelForStats(purchase.attributedChannel || '', purchase.attributedPlatform || '');
@@ -4448,11 +4450,11 @@ function resolveAnalyticsJourneyTouchpoint({ event = {}, purchase = {} } = {}) {
     clickId = ttclid;
   } else if (hasPaidMetaUtm) {
     channelKey = 'meta';
-    label = /(organic|social)/.test(utmMedium) ? 'Meta Organic' : 'Meta Ads';
+    label = isOrganicUtmMedium ? 'Meta Organic' : 'Meta Ads';
     reason = 'Detected from Meta UTM source.';
   } else if (utmSource.includes('tiktok')) {
     channelKey = 'tiktok';
-    label = /(organic|social)/.test(utmMedium) ? 'TikTok Organic' : 'TikTok Ads';
+    label = isOrganicUtmMedium ? 'TikTok Organic' : 'TikTok Ads';
     reason = 'Detected from TikTok UTM source.';
   } else if (utmSource.includes('google')) {
     channelKey = /(cpc|paid|search|ads)/.test(utmMedium) ? 'google' : 'organic';
