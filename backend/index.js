@@ -10,6 +10,13 @@ require("dotenv").config();
   process.env.APP_URL = withProto.replace(/\/$/, "");
 })();
 
+// Desarrollo local: si no hay APP_URL ni RENDER_EXTERNAL_URL, evitar fallback duro a adray.ai.
+(function bootstrapLocalAppUrl() {
+  if (String(process.env.APP_URL || "").trim()) return;
+  const port = String(process.env.PORT || "3000").trim() || "3000";
+  process.env.APP_URL = `http://localhost:${port}`;
+})();
+
 const express = require("express");
 const session = require("express-session");
 const ConnectMongo = require("connect-mongo"); // â NEW (Node 22 safe)
@@ -46,6 +53,23 @@ const TURNSTILE_SECRET = String(
   ""
 ).trim();
 
+function isLocalDevRequest(req) {
+  const host = String(req.headers?.host || req.headers?.["x-forwarded-host"] || "").toLowerCase();
+  return (
+    host.includes("localhost") ||
+    host.includes("127.0.0.1") ||
+    host.includes("[::1]")
+  );
+}
+
+function requestBaseUrl(req) {
+  const protoHeader = String(req.headers?.["x-forwarded-proto"] || "").split(",")[0].trim();
+  const hostHeader = String(req.headers?.["x-forwarded-host"] || req.headers?.host || "").split(",")[0].trim();
+  const proto = protoHeader || req.protocol || "http";
+  if (!hostHeader) return null;
+  return `${proto}://${hostHeader}`;
+}
+
 async function verifyTurnstile(token, remoteip) {
   const normalizedToken = String(token || "").trim();
 
@@ -81,6 +105,7 @@ async function verifyTurnstile(token, remoteip) {
 }
 
 async function requireTurnstileAlways(req, res, next) {
+  if (isLocalDevRequest(req)) return next();
   if (!TURNSTILE_SECRET) return next();
 
   const token =
@@ -499,6 +524,7 @@ app.post("/api/register", requireTurnstileAlways, async (req, res) => {
         toEmail: user.email,
         token: verifyToken,
         name: user.name,
+        baseUrl: isLocalDevRequest(req) ? requestBaseUrl(req) : undefined,
       });
     } catch (mailErr) {
       console.error(
@@ -597,7 +623,7 @@ app.post(["/api/login", "/api/auth/login", "/login"], async (req, res, next) => 
     }
 
     const risk = riskGet(req, email);
-    if (risk.requiresCaptcha) {
+    if (risk.requiresCaptcha && !isLocalDevRequest(req)) {
       const token =
         String(req.body?.turnstileToken || "").trim() ||
         String(req.body?.["cf-turnstile-response"] || "").trim() ||
@@ -1154,7 +1180,17 @@ app.get("/", (req, res) => {
 // Compat: la landing antigua (saas-landing) exponĂ­a /start
 app.get("/start", (_req, res) => res.redirect(302, "/"));
 
-app.get(["/login", "/getstarted", "/confirmation"], (_req, res) => {
+app.get(["/login", "/getstarted", "/confirmation"], (req, res) => {
+  if (isLocalDevRequest(req)) {
+    const fileByRoute = {
+      "/login": "../public/login.html",
+      "/getstarted": "../public/register.html",
+      "/confirmation": "../public/confirmation.html",
+    };
+    const target = fileByRoute[req.path];
+    if (target) return res.sendFile(path.join(__dirname, target));
+  }
+
   res.sendFile(path.join(__dirname, "../public/login-v2/index.html"));
 });
 
