@@ -4416,8 +4416,11 @@ function resolveAnalyticsJourneyTouchpoint({ event = {}, purchase = {} } = {}) {
     referrerLabel = '';
   }
   const gclid = String(event.gclid || '').trim();
-  const metaClickId = String(event.fbclid || event.fbc || event.clickId || '').trim();
+  const metaClickId = String(event.fbclid || event.fbc || '').trim();
   const ttclid = String(event.ttclid || '').trim();
+  const genericClickId = String(event.clickId || '').trim();
+  const hasPaidGoogleUtm = utmSource.includes('google') && /(cpc|paid|search|ads)/.test(utmMedium);
+  const hasPaidMetaUtm = utmSource.includes('meta') || utmSource.includes('facebook') || utmSource.includes('instagram');
   const fallbackChannel = normalizeChannelForStats(purchase.attributedChannel || '', purchase.attributedPlatform || '');
   const fallbackSource = resolveAnalyticsAttributedSourceDescriptor(purchase);
   const fallbackCampaign = sanitizeAnalyticsMarketingValue(fallbackSource.label || '');
@@ -4428,22 +4431,22 @@ function resolveAnalyticsJourneyTouchpoint({ event = {}, purchase = {} } = {}) {
   let reason = 'No explicit campaign or click id was found in this session.';
   let clickId = '';
 
-  if (metaClickId) {
+  if (gclid || hasPaidGoogleUtm) {
+    channelKey = 'google';
+    label = 'Google Ads';
+    reason = gclid ? 'Matched by Google click id.' : 'Paid Google UTM detected.';
+    clickId = gclid || (hasPaidGoogleUtm ? genericClickId : '');
+  } else if (metaClickId || (genericClickId && hasPaidMetaUtm)) {
     channelKey = 'meta';
     label = 'Meta Ads';
-    reason = 'Matched by Meta click id.';
-    clickId = metaClickId;
+    reason = metaClickId ? 'Matched by Meta click id.' : 'Detected from Meta campaign click id.';
+    clickId = metaClickId || genericClickId;
   } else if (ttclid) {
     channelKey = 'tiktok';
     label = 'TikTok Ads';
     reason = 'Matched by TikTok click id.';
     clickId = ttclid;
-  } else if (gclid || (utmSource.includes('google') && /(cpc|paid|search|ads)/.test(utmMedium))) {
-    channelKey = 'google';
-    label = 'Google Ads';
-    reason = gclid ? 'Matched by Google click id.' : 'Paid Google UTM detected.';
-    clickId = gclid;
-  } else if (utmSource.includes('meta') || utmSource.includes('facebook') || utmSource.includes('instagram')) {
+  } else if (hasPaidMetaUtm) {
     channelKey = 'meta';
     label = /(organic|social)/.test(utmMedium) ? 'Meta Organic' : 'Meta Ads';
     reason = 'Detected from Meta UTM source.';
