@@ -5811,6 +5811,13 @@ function firstTruthyString(candidates = []) {
   return null;
 }
 
+function normalizeEmailPreview(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (['unknown', 'undefined', 'null', 'n/a', 'none', '-'].includes(normalized)) return null;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) ? normalized : null;
+}
+
 function normalizeWooCustomerId(value) {
   const normalized = String(value || '').trim();
   if (!normalized) return null;
@@ -5852,6 +5859,29 @@ function extractOrderCustomerDisplayName(attributionSnapshot) {
     snapshot.billing_company,
     snapshot.billingCompany,
   ]);
+}
+
+function extractOrderCustomerEmailPreview(attributionSnapshot) {
+  const snapshot = attributionSnapshot && typeof attributionSnapshot === 'object'
+    ? attributionSnapshot
+    : {};
+
+  const customer = snapshot.customer && typeof snapshot.customer === 'object' ? snapshot.customer : {};
+  const billing = snapshot.billing && typeof snapshot.billing === 'object' ? snapshot.billing : {};
+
+  return normalizeEmailPreview(
+    snapshot.customer_email
+    || snapshot.customerEmail
+    || snapshot.email
+    || snapshot.user_email
+    || snapshot.userEmail
+    || snapshot.billing_email
+    || snapshot.billingEmail
+    || customer.email
+    || customer.customer_email
+    || customer.customerEmail
+    || billing.email
+  );
 }
 
 function extractOrderCustomerId(attributionSnapshot) {
@@ -6279,16 +6309,25 @@ function buildRecognizedUserTrackedUtmHistory({ currentSession = {}, peerSession
   };
 }
 
-function buildIdentityProfileDescriptor({ customerId, emailHash, phoneHash, userKey, customerDisplayName }) {
+function buildIdentityProfileDescriptor({ customerId, emailHash, phoneHash, userKey, customerDisplayName, emailPreview }) {
   const normalizedCustomerId = normalizeWooCustomerId(customerId);
   const normalizedCustomerDisplayName = normalizeCustomerDisplayName(customerDisplayName);
+  const normalizedEmailPreview = normalizeEmailPreview(emailPreview);
+
+  const buildReadableWooProfileLabel = () => {
+    if (!normalizedCustomerId) return null;
+    if (normalizedCustomerDisplayName) return `${normalizedCustomerDisplayName} · Woo #${normalizedCustomerId}`;
+    if (normalizedEmailPreview) return `${normalizedEmailPreview} · Woo #${normalizedCustomerId}`;
+    return null;
+  };
 
   if (normalizedCustomerId) {
     return {
       profileKey: `customer:${normalizedCustomerId}`,
       profileType: 'woocommerce_customer',
       customerDisplayName: normalizedCustomerDisplayName,
-      profileLabel: normalizedCustomerDisplayName ? `${normalizedCustomerDisplayName} · Woo #${normalizedCustomerId}` : `Woo customer #${normalizedCustomerId}`,
+      customerEmailPreview: normalizedEmailPreview,
+      profileLabel: buildReadableWooProfileLabel() || `Woo customer #${normalizedCustomerId}`,
     };
   }
 
@@ -6495,9 +6534,15 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
     : [];
 
   const resolvedCustomerDisplayName = historicalOrders
-    .map((order) => extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload))
+    .map((order) => extractOrderCustomerDisplayName(order.attributionSnapshot))
     .find(Boolean)
     || latestIdentitySignal?.customerDisplayName
+    || null;
+
+  const resolvedCustomerEmailPreview = historicalOrders
+    .map((order) => extractOrderCustomerEmailPreview(order.attributionSnapshot))
+    .find(Boolean)
+    || latestIdentitySignal?.emailPreview
     || null;
 
   const profileDescriptor = buildIdentityProfileDescriptor({
@@ -6506,6 +6551,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
     phoneHash: finalPhoneHashes[0] || null,
     userKey: finalUserKeys[0] || sessionUserKey || null,
     customerDisplayName: resolvedCustomerDisplayName,
+    emailPreview: resolvedCustomerEmailPreview,
   });
 
   return {
@@ -6518,7 +6564,7 @@ async function resolveSessionIdentityContext({ accountId, sessionId, sessionUser
     identifiedUser: {
       customerId: finalCustomerIds[0] || latestIdentitySignal?.customerId || null,
       customerDisplayName: resolvedCustomerDisplayName,
-      emailPreview: latestIdentitySignal?.emailPreview || null,
+      emailPreview: resolvedCustomerEmailPreview,
       phonePreview: latestIdentitySignal?.phonePreview || null,
       loginCount: loginEvents.length,
       lastLoginAt: loginEvents.length ? loginEvents[loginEvents.length - 1].createdAt : null,
@@ -6872,6 +6918,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
             orderNumber: true,
             revenue: true,
             currency: true,
+            attributionSnapshot: true,
             createdAt: true,
             platformCreatedAt: true,
             attributedChannel: true
@@ -6910,6 +6957,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           profileType: descriptor.profileType,
           profileLabel: descriptor.profileLabel,
           customerDisplayName: descriptor.customerDisplayName || null,
+          customerEmailPreview: descriptor.customerEmailPreview || null,
           customerId: descriptor.profileType === 'woocommerce_customer'
             ? String(descriptor.profileKey || '').replace(/^customer:/, '')
             : null,
@@ -6933,6 +6981,12 @@ router.get('/:account_id/session-explorer', async (req, res) => {
           profile.profileLabel = `${descriptor.customerDisplayName} · Woo #${profile.customerId}`;
         }
       }
+      if (descriptor.customerEmailPreview && !profile.customerEmailPreview) {
+        profile.customerEmailPreview = descriptor.customerEmailPreview;
+        if (!profile.customerDisplayName && profile.customerId) {
+          profile.profileLabel = `${descriptor.customerEmailPreview} · Woo #${profile.customerId}`;
+        }
+      }
       return profile;
     };
 
@@ -6940,13 +6994,15 @@ router.get('/:account_id/session-explorer', async (req, res) => {
     historicalOrders.forEach((order) => {
       const resolvedUserKey = order.userKey || checkoutByToken.get(order.checkoutToken || '')?.userKey || null;
       const identity = resolvedUserKey ? (identityByUserKey.get(resolvedUserKey) || {}) : {};
-      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload) || identity.customerDisplayName || null;
+      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot) || identity.customerDisplayName || null;
+      const customerEmailPreview = extractOrderCustomerEmailPreview(order.attributionSnapshot) || null;
       const signal = {
         customerId: order.customerId || null,
         emailHash: order.emailHash || null,
         phoneHash: order.phoneHash || null,
         userKey: resolvedUserKey,
         customerDisplayName,
+        emailPreview: customerEmailPreview,
       };
       if (order.sessionId && !orderSignalBySessionId.has(order.sessionId)) {
         orderSignalBySessionId.set(order.sessionId, signal);
@@ -6961,6 +7017,7 @@ router.get('/:account_id/session-explorer', async (req, res) => {
         phoneHash: identity.phoneHash || null,
         userKey: session.userKey,
         customerDisplayName: identity.customerDisplayName || null,
+        emailPreview: identity.emailPreview || null,
       });
       const profile = ensureProfile(descriptor);
       profile.sessionCount += 1;
@@ -6981,13 +7038,15 @@ router.get('/:account_id/session-explorer', async (req, res) => {
     historicalOrders.forEach((order) => {
       const bridgedUserKey = order.userKey || checkoutByToken.get(order.checkoutToken || '')?.userKey || null;
       const identity = bridgedUserKey ? (identityByUserKey.get(bridgedUserKey) || {}) : {};
-      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload) || identity.customerDisplayName || null;
+      const customerDisplayName = extractOrderCustomerDisplayName(order.attributionSnapshot) || identity.customerDisplayName || null;
+      const customerEmailPreview = extractOrderCustomerEmailPreview(order.attributionSnapshot) || null;
       const descriptor = buildIdentityProfileDescriptor({
         customerId: order.customerId || identity.customerId || null,
         emailHash: order.emailHash || identity.emailHash || null,
         phoneHash: order.phoneHash || identity.phoneHash || null,
         userKey: bridgedUserKey || null,
         customerDisplayName,
+        emailPreview: customerEmailPreview,
       });
       const profile = ensureProfile(descriptor);
       profile.orderCount += 1;
@@ -7092,12 +7151,20 @@ router.get('/:account_id/session-explorer', async (req, res) => {
       if (profile.profileType !== 'woocommerce_customer') return profile;
       const customerId = String(profile.customerId || '').trim();
       const displayName = profile.customerDisplayName || (customerId ? customerDisplayNames[customerId] || null : null);
+      const emailPreview = normalizeEmailPreview(profile.customerEmailPreview || null);
+      const resolvedLabel = displayName
+        ? `${displayName} · Woo #${customerId}`
+        : (emailPreview ? `${emailPreview} · Woo #${customerId}` : null);
+
+      if (!resolvedLabel) return null;
+
       return {
         ...profile,
         customerDisplayName: displayName,
-        profileLabel: displayName ? `${displayName} · Woo #${customerId}` : profile.profileLabel,
+        customerEmailPreview: emailPreview,
+        profileLabel: resolvedLabel,
       };
-    });
+    }).filter(Boolean);
 
     const serializedProfiles = hydratedProfiles
       .slice(0, limit);
@@ -7927,13 +7994,15 @@ router.get('/:account_id/users/:userKey/timeline', async (req, res) => {
 
     // Since customer name might be in order's attributionSnapshot, let's try to extract it
     let customerName = null;
+    let customerEmailPreview = null;
     let customerEmailHash = identity?.emailHash || null;
     let customerPhoneHash = identity?.phoneHash || null;
 
     for (const order of orders) {
        if (!customerName) {
-           customerName = extractOrderCustomerDisplayName(order.attributionSnapshot) || extractOrderCustomerDisplayName(order.rawPayload?.billing || {});
+         customerName = extractOrderCustomerDisplayName(order.attributionSnapshot);
        }
+       if (!customerEmailPreview) customerEmailPreview = extractOrderCustomerEmailPreview(order.attributionSnapshot);
        if (order.emailHash && !customerEmailHash) customerEmailHash = order.emailHash;
        if (order.phoneHash && !customerPhoneHash) customerPhoneHash = order.phoneHash;
     }
@@ -7944,6 +8013,7 @@ router.get('/:account_id/users/:userKey/timeline', async (req, res) => {
       phoneHash: finalPhoneHashes[0] || null,
       userKey: finalUserKeys[0] || userKey || null,
       customerDisplayName: customerName,
+      emailPreview: customerEmailPreview,
     });
 
     const attributionStats = orders.reduce((acc, order) => {

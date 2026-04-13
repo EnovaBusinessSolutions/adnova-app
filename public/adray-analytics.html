@@ -6010,6 +6010,35 @@
             return normalized;
         }
 
+        function normalizeEmailPreview(value) {
+            const normalized = String(value || '').trim().toLowerCase();
+            if (!normalized) return '';
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) return '';
+            return normalized;
+        }
+
+        function isWooPlaceholderLabel(value) {
+            const normalized = String(value || '').trim().toLowerCase();
+            if (!normalized) return true;
+            return /^woo\s*customer\s*#/.test(normalized)
+                || /^woo\s*#/.test(normalized)
+                || normalized === 'woo customer';
+        }
+
+        function hasReadableWooProfileIdentity(profile = {}) {
+            const customerId = normalizeCustomerId(profile.customerId);
+            if (!customerId) return false;
+
+            const displayName = String(profile.customerDisplayName || '').trim();
+            const emailPreview = normalizeEmailPreview(profile.customerEmailPreview || profile.emailPreview || '');
+            const profileLabel = String(profile.profileLabel || '').trim();
+
+            if (displayName) return true;
+            if (emailPreview) return true;
+            if (profileLabel && !isWooPlaceholderLabel(profileLabel)) return true;
+            return false;
+        }
+
         function getPurchaseSelectionKey(purchase = {}) {
             const selectionKey = String(purchase.selectionKey || '').trim();
             if (selectionKey) return selectionKey;
@@ -6393,7 +6422,9 @@
                 if (!res.ok) throw new Error(`status_${res.status}`);
                 const data = await res.json();
                 const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
-                wooProfilesState.profiles = profiles.filter((profile) => String(profile.profileType || '').toLowerCase() === 'woocommerce_customer');
+                wooProfilesState.profiles = profiles
+                    .filter((profile) => String(profile.profileType || '').toLowerCase() === 'woocommerce_customer')
+                    .filter((profile) => hasReadableWooProfileIdentity(profile));
                 rebuildJourneyProfileLookup(wooProfilesState.profiles);
                 wooProfilesState.loadedAt = Date.now();
             } catch (error) {
@@ -6569,28 +6600,50 @@
                 ? rankedJourneys
                 : rankedJourneys.filter((row) => row.channelKey === attributionJourneyState.channel);
 
-            const recentCustomerNamesById = new Map();
+            const recentCustomerIdentityById = new Map();
             rankedJourneys.forEach(({ purchase }) => {
                 const customerId = normalizeCustomerId(purchase?.customerId);
                 const resolvedName = resolvePurchaseCustomerName(purchase);
-                if (customerId && resolvedName && !recentCustomerNamesById.has(customerId)) {
-                    recentCustomerNamesById.set(customerId, resolvedName);
+                const resolvedEmail = resolvePurchaseCustomerEmail(purchase);
+                if (!customerId) return;
+
+                if (!recentCustomerIdentityById.has(customerId)) {
+                    recentCustomerIdentityById.set(customerId, {
+                        name: resolvedName || '',
+                        email: resolvedEmail || '',
+                    });
+                    return;
                 }
+
+                const previous = recentCustomerIdentityById.get(customerId) || {};
+                if (!previous.name && resolvedName) previous.name = resolvedName;
+                if (!previous.email && resolvedEmail) previous.email = resolvedEmail;
+                recentCustomerIdentityById.set(customerId, previous);
             });
 
             const resolveProfileDisplayName = (profile = {}) => {
                 const customerId = normalizeCustomerId(profile.customerId);
+                const recentIdentity = customerId ? (recentCustomerIdentityById.get(customerId) || {}) : {};
+                const recentName = String(recentIdentity.name || '').trim();
+                const recentEmail = normalizeEmailPreview(recentIdentity.email || '');
+                const profileEmail = normalizeEmailPreview(profile.customerEmailPreview || profile.emailPreview || '');
+                const profileLabel = String(profile.profileLabel || '').trim();
+
                 return profile.customerDisplayName
-                    || (customerId ? recentCustomerNamesById.get(customerId) || null : null)
-                    || profile.profileLabel
-                    || (customerId ? `Woo #${customerId}` : 'Woo customer');
+                    || recentName
+                    || profileEmail
+                    || recentEmail
+                    || (profileLabel && !isWooPlaceholderLabel(profileLabel) ? profileLabel : null)
+                    || '';
             };
 
             const allWooProfiles = Array.isArray(wooProfilesState.profiles) ? wooProfilesState.profiles : [];
             const normalizedSearch = normalizeProfileName(attributionJourneyState.profileSearch || '');
             const visibleProfilesBase = allWooProfiles.filter((profile) => {
+                if (!hasReadableWooProfileIdentity(profile)) return false;
                 if (!normalizedSearch) return true;
                 const resolvedLabel = resolveProfileDisplayName(profile);
+                if (!resolvedLabel) return false;
                 const label = normalizeProfileName(resolvedLabel || '');
                 const customerId = normalizeCustomerId(profile.customerId);
                 return label.includes(normalizedSearch) || customerId.includes(normalizedSearch);
