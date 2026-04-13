@@ -301,7 +301,7 @@
   }
 
   function persistAttributionParams() {
-    var keys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'gclid', 'ttclid', 'ga4_session_source'];
+    var keys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'gclid', 'ttclid', 'wbraid', 'gbraid', 'msclkid', 'fbc', 'ga4_session_source'];
     var changed = false;
 
     keys.forEach(function(key) {
@@ -596,6 +596,15 @@
     if (now - last < EVENT_TTL_MS) return;
     sentEventMap.set(dedupKey, now);
 
+    var fbclid = getAttributionParam('fbclid');
+    var gclid = getAttributionParam('gclid');
+    var ttclid = getAttributionParam('ttclid');
+    var wbraid = getAttributionParam('wbraid');
+    var gbraid = getAttributionParam('gbraid');
+    var msclkid = getAttributionParam('msclkid');
+    var fbp = getCookie('_fbp');
+    var fbc = getAttributionParam('fbc') || getCookie('_fbc');
+
     const payload = {
       timestamp: new Date().toISOString(),
       account_id: getAccountId(),
@@ -609,10 +618,13 @@
       user_agent: navigator.userAgent,
       language: navigator.language,
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      fbclid: getAttributionParam('fbclid'),
-      gclid: getAttributionParam('gclid'),
-      ttclid: getAttributionParam('ttclid'),
-      click_id: getAttributionParam('gclid') || getAttributionParam('fbclid') || getAttributionParam('ttclid') || null,
+      fbclid,
+      gclid,
+      ttclid,
+      wbraid,
+      gbraid,
+      msclkid,
+      click_id: gclid || wbraid || gbraid || fbclid || ttclid || msclkid || fbc || null,
       utm_source: getAttributionParam('utm_source'),
       utm_medium: getAttributionParam('utm_medium'),
       utm_campaign: getAttributionParam('utm_campaign'),
@@ -620,8 +632,8 @@
       utm_term: getAttributionParam('utm_term'),
       ga4_session_source: getAttributionParam('ga4_session_source'),
       referrer: document.referrer,
-      fbp: getCookie('_fbp'),
-      fbc: getCookie('_fbc'),
+      fbp,
+      fbc,
       ...buildTrackedHistoryContext(),
       ...getUserIdentityContext(),
       ...eventData
@@ -999,7 +1011,11 @@
              cart_value: data.totals?.total_price ? parseFloat(data.totals.total_price) / 100 : null
          });
        } catch (e) {
-         sendEvent('add_to_cart', getProductContext());
+         const ctx = getProductContext();
+         sendEvent('add_to_cart', {
+           ...ctx,
+           cart_value: detectCartValue(null, 1)
+         });
        }
     }
     
@@ -1136,21 +1152,14 @@
     } catch (_) {}
   }, true);
 
-  // 4. WooCommerce: Checkout begin detection
-  if (detectPlatform() === 'woocommerce' && detectPageType() === 'checkout') {
+  // 4. Checkout page hit detection (platform-agnostic fallback).
+  if (detectPageType() === 'checkout' && !isOrderReceivedUrl(window.location.pathname)) {
     trackBeginCheckout({
-      checkout_token: getCookie('woocommerce_cart_hash') || null
+      checkout_token: getCookie('woocommerce_cart_hash') || getCookie('cart') || getCookie('cart_sig') || null
     }, window.location.href);
   }
 
   setupCheckoutIdentityBlurTracking();
-
-  // 4.1 Shopify: checkout page hit detection (if script is present there)
-  if (detectPlatform() === 'shopify' && isCheckoutUrl(window.location.pathname)) {
-    trackBeginCheckout({
-      checkout_token: getCookie('cart') || getCookie('cart_sig') || null
-    }, window.location.href);
-  }
 
   // 4.2 WooCommerce: stitch logged-in customers to the current browser session.
   function tryTrackWooLogout() {

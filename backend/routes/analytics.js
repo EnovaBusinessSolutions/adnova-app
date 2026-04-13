@@ -724,7 +724,13 @@ function collectReadableAttributionCandidates({ purchase = {}, stitchedEvents = 
   [
     purchase?.attributedClickId,
     purchase?.orderAttributionSnapshot?.gclid,
+    purchase?.orderAttributionSnapshot?.wbraid,
+    purchase?.orderAttributionSnapshot?.gbraid,
+    purchase?.orderAttributionSnapshot?.msclkid,
     purchase?.payloadSnapshot?.gclid,
+    purchase?.payloadSnapshot?.wbraid,
+    purchase?.payloadSnapshot?.gbraid,
+    purchase?.payloadSnapshot?.msclkid,
   ].forEach((value) => appendUniqueValue(gclids, value));
   [
     purchase?.orderAttributionSnapshot?.fbclid,
@@ -803,6 +809,9 @@ function collectReadableAttributionCandidates({ purchase = {}, stitchedEvents = 
     adLabelKeys.forEach((key) => appendUniqueValue(adLabels, getObjectStringValue(obj, key), { readable: true }));
     adIdKeys.forEach((key) => appendUniqueValue(adIds, getObjectStringValue(obj, key)));
     appendUniqueValue(gclids, getObjectStringValue(obj, 'gclid'));
+    appendUniqueValue(gclids, getObjectStringValue(obj, 'wbraid'));
+    appendUniqueValue(gclids, getObjectStringValue(obj, 'gbraid'));
+    appendUniqueValue(gclids, getObjectStringValue(obj, 'msclkid'));
     appendUniqueValue(fbclids, getObjectStringValue(obj, 'fbclid'));
     appendUniqueValue(fbclids, getObjectStringValue(obj, 'fbc'));
     appendUniqueValue(fbclids, getObjectStringValue(obj, '_fbc'));
@@ -2080,11 +2089,12 @@ function stitchSnapshotAttribution(snapshot = {}) {
     return { channel: 'unattributed', platform: null, confidence: 0.0, source: 'none' };
   }
 
-  if (snapshot.fbclid) {
+  const metaClickId = snapshot.fbclid || snapshot.fbc || snapshot._fbc || null;
+  if (metaClickId) {
     return {
       channel: 'meta',
       platform: 'meta',
-      clickId: snapshot.fbclid,
+      clickId: metaClickId,
       campaign: snapshot.utm_campaign || null,
       adset: snapshot.utm_content || null,
       ad: snapshot.utm_term || null,
@@ -2093,11 +2103,25 @@ function stitchSnapshotAttribution(snapshot = {}) {
     };
   }
 
-  if (snapshot.gclid) {
+  const googleClickId = snapshot.gclid || snapshot.wbraid || snapshot.gbraid || null;
+  if (googleClickId) {
     return {
       channel: 'google',
       platform: 'google',
-      clickId: snapshot.gclid,
+      clickId: googleClickId,
+      campaign: snapshot.utm_campaign || null,
+      adset: snapshot.utm_content || null,
+      ad: snapshot.utm_term || null,
+      confidence: 1.0,
+      source: 'click_id',
+    };
+  }
+
+  if (snapshot.msclkid) {
+    return {
+      channel: 'paid search',
+      platform: 'microsoft ads',
+      clickId: snapshot.msclkid,
       campaign: snapshot.utm_campaign || null,
       adset: snapshot.utm_content || null,
       ad: snapshot.utm_term || null,
@@ -3516,7 +3540,15 @@ const getAnalyticsDashboardHandler = async (req, res) => {
               campaign: conv?.orderAttributionSnapshot?.utm_campaign || null,
               adset: conv?.orderAttributionSnapshot?.utm_content || null,
               ad: conv?.orderAttributionSnapshot?.utm_term || null,
-              clickId: conv?.orderAttributionSnapshot?.gclid || conv?.orderAttributionSnapshot?.fbclid || conv?.orderAttributionSnapshot?.ttclid || null,
+              clickId: conv?.orderAttributionSnapshot?.gclid
+                || conv?.orderAttributionSnapshot?.wbraid
+                || conv?.orderAttributionSnapshot?.gbraid
+                || conv?.orderAttributionSnapshot?.fbclid
+                || conv?.orderAttributionSnapshot?.ttclid
+                || conv?.orderAttributionSnapshot?.msclkid
+                || conv?.orderAttributionSnapshot?.fbc
+                || conv?.orderAttributionSnapshot?._fbc
+                || null,
               confidence: Number(conv.orderAttributionConfidence || 0.75),
               source: String(conv.orderAttributionModel || '').startsWith('woo_') ? 'woo_fallback' : 'orders_sync',
             },
@@ -3870,7 +3902,19 @@ const getAnalyticsDashboardHandler = async (req, res) => {
           fbc: ev?.rawPayload?.fbc || ev?.rawPayload?._fbc || ev?.rawPayload?.user_data?.fbc || null,
           ttclid: ev?.rawPayload?.ttclid || ev?.rawPayload?.user_data?.ttclid || null,
           gclid: ev?.rawPayload?.gclid || ev?.rawPayload?.user_data?.gclid || null,
-          clickId: ev?.rawPayload?.click_id || ev?.rawPayload?.gclid || ev?.rawPayload?.fbclid || ev?.rawPayload?.ttclid || ev?.rawPayload?.fbc || null,
+          wbraid: ev?.rawPayload?.wbraid || ev?.rawPayload?.user_data?.wbraid || null,
+          gbraid: ev?.rawPayload?.gbraid || ev?.rawPayload?.user_data?.gbraid || null,
+          msclkid: ev?.rawPayload?.msclkid || ev?.rawPayload?.user_data?.msclkid || null,
+          clickId: ev?.rawPayload?.click_id
+            || ev?.rawPayload?.gclid
+            || ev?.rawPayload?.wbraid
+            || ev?.rawPayload?.gbraid
+            || ev?.rawPayload?.fbclid
+            || ev?.rawPayload?.ttclid
+            || ev?.rawPayload?.msclkid
+            || ev?.rawPayload?.fbc
+            || ev?.rawPayload?._fbc
+            || null,
           customerEmail: ev?.rawPayload?.user_data?.em || ev?.rawPayload?.customer_email || ev?.rawPayload?.user_email || ev?.rawPayload?.email || null,
           clientIp: ev?.rawPayload?.user_data?.client_ip_address || ev?.rawPayload?.client_ip_address || ev?.rawPayload?.client_ip || ev?.rawPayload?.ip || null,
           userAgent: ev?.rawPayload?.user_data?.client_user_agent || ev?.rawPayload?.client_user_agent || ev?.rawPayload?.user_agent || null,
@@ -4583,7 +4627,19 @@ function mapAnalyticsJourneyEventRecord(ev = {}) {
     fbc: ev?.rawPayload?.fbc || ev?.rawPayload?._fbc || ev?.rawPayload?.user_data?.fbc || null,
     ttclid: ev?.rawPayload?.ttclid || ev?.rawPayload?.user_data?.ttclid || null,
     gclid: ev?.rawPayload?.gclid || ev?.rawPayload?.user_data?.gclid || null,
-    clickId: ev?.rawPayload?.click_id || ev?.rawPayload?.gclid || ev?.rawPayload?.fbclid || ev?.rawPayload?.ttclid || ev?.rawPayload?.fbc || null,
+    wbraid: ev?.rawPayload?.wbraid || ev?.rawPayload?.user_data?.wbraid || null,
+    gbraid: ev?.rawPayload?.gbraid || ev?.rawPayload?.user_data?.gbraid || null,
+    msclkid: ev?.rawPayload?.msclkid || ev?.rawPayload?.user_data?.msclkid || null,
+    clickId: ev?.rawPayload?.click_id
+      || ev?.rawPayload?.gclid
+      || ev?.rawPayload?.wbraid
+      || ev?.rawPayload?.gbraid
+      || ev?.rawPayload?.fbclid
+      || ev?.rawPayload?.ttclid
+      || ev?.rawPayload?.msclkid
+      || ev?.rawPayload?.fbc
+      || ev?.rawPayload?._fbc
+      || null,
     customerEmail: ev?.rawPayload?.user_data?.em || ev?.rawPayload?.customer_email || ev?.rawPayload?.user_email || ev?.rawPayload?.email || null,
     clientIp: ev?.rawPayload?.user_data?.client_ip_address || ev?.rawPayload?.client_ip_address || ev?.rawPayload?.client_ip || ev?.rawPayload?.ip || null,
     userAgent: ev?.rawPayload?.user_data?.client_user_agent || ev?.rawPayload?.client_user_agent || ev?.rawPayload?.user_agent || null,
@@ -5528,6 +5584,9 @@ async function buildAnalyticsExportRows({ accountId, purchases = [], query = {} 
         utm_browser_history_json: safeJsonStringify(event.utmBrowserHistory || null),
         fbclid: event.fbclid || null,
         gclid: event.gclid || null,
+        wbraid: event.wbraid || null,
+        gbraid: event.gbraid || null,
+        msclkid: event.msclkid || null,
         fbp: event.fbp || null,
         fbc: event.fbc || null,
         ttclid: event.ttclid || null,
@@ -5589,7 +5648,7 @@ const EXPORT_EVENTS_COLUMNS = [
   'page_type', 'product_id', 'variant_id', 'product_name', 'item_id', 'cart_id', 'cart_value',
   'revenue', 'currency', 'raw_source', 'match_type', 'confidence_score', 'utm_source', 'utm_medium',
   'utm_campaign', 'utm_content', 'utm_term', 'ga4_session_source', 'utm_entry_url',
-  'utm_session_history_json', 'utm_browser_history_json', 'fbclid', 'gclid', 'fbp', 'fbc', 'ttclid', 'click_id',
+  'utm_session_history_json', 'utm_browser_history_json', 'fbclid', 'gclid', 'wbraid', 'gbraid', 'msclkid', 'fbp', 'fbc', 'ttclid', 'click_id',
   'customer_email', 'client_ip', 'ip_hash', 'user_agent',
 ];
 
@@ -5945,6 +6004,10 @@ function isTrackedUtmUrl(value) {
       'utm_term',
       'fbclid',
       'gclid',
+      'wbraid',
+      'gbraid',
+      'msclkid',
+      'fbc',
       'ttclid',
       'ga4_session_source',
     ].some((key) => params.has(key) && params.get(key));
@@ -5992,9 +6055,18 @@ function normalizeTrackedUtmEntry(entry, fallback = {}) {
     || entry.clickId
     || entry.fbclid
     || entry.gclid
+    || entry.wbraid
+    || entry.gbraid
+    || entry.msclkid
+    || entry.fbc
+    || entry._fbc
     || entry.ttclid
     || params.get('fbclid')
     || params.get('gclid')
+    || params.get('wbraid')
+    || params.get('gbraid')
+    || params.get('msclkid')
+    || params.get('fbc')
     || params.get('ttclid')
     || ''
   ).trim();
@@ -6011,6 +6083,10 @@ function normalizeTrackedUtmEntry(entry, fallback = {}) {
     ga4SessionSource: String(entry.ga4_session_source || entry.ga4SessionSource || params.get('ga4_session_source') || '').trim() || null,
     fbclid: String(entry.fbclid || params.get('fbclid') || '').trim() || null,
     gclid: String(entry.gclid || params.get('gclid') || '').trim() || null,
+    wbraid: String(entry.wbraid || params.get('wbraid') || '').trim() || null,
+    gbraid: String(entry.gbraid || params.get('gbraid') || '').trim() || null,
+    msclkid: String(entry.msclkid || params.get('msclkid') || '').trim() || null,
+    fbc: String(entry.fbc || entry._fbc || params.get('fbc') || '').trim() || null,
     ttclid: String(entry.ttclid || params.get('ttclid') || '').trim() || null,
     clickId: clickId || null,
     sourceType: String(entry.source_type || entry.sourceType || fallback.sourceType || 'captured_url').trim() || 'captured_url',

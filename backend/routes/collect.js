@@ -312,9 +312,12 @@ router.post('/', async (req, res) => {
     if (payload.fbp && !payload.user_data.fbp) payload.user_data.fbp = payload.fbp;
     if (payload.fbc && !payload.user_data.fbc) payload.user_data.fbc = payload.fbc;
     if (payload.gclid && !payload.user_data.gclid) payload.user_data.gclid = payload.gclid;
+    if (payload.wbraid && !payload.user_data.wbraid) payload.user_data.wbraid = payload.wbraid;
+    if (payload.gbraid && !payload.user_data.gbraid) payload.user_data.gbraid = payload.gbraid;
+    if (payload.msclkid && !payload.user_data.msclkid) payload.user_data.msclkid = payload.msclkid;
     if (payload.fbclid && !payload.user_data.fbclid) payload.user_data.fbclid = payload.fbclid;
     if (!payload.click_id) {
-      payload.click_id = payload.gclid || payload.fbclid || payload.ttclid || payload.fbc || null;
+      payload.click_id = payload.gclid || payload.wbraid || payload.gbraid || payload.fbclid || payload.ttclid || payload.msclkid || payload.fbc || null;
     }
 
     const normalizedGa4Source = deriveGa4SessionSource(payload);
