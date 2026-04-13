@@ -228,6 +228,11 @@ function encodeSignalPayload({ signalPayload, unifiedBase, root, user }) {
       risk_flags: uniqStrings(payload?.risk_flags || negatives || [], 12),
       prompt_hints: uniqStrings(payload?.prompt_hints || [], 20),
       channel_story: toSerializable(payload?.channel_story || null, null),
+      structured_signal: toSerializable({
+        meta: payload?.meta || null,
+        daily_index: payload?.daily_index || [],
+        campaigns: payload?.campaigns || [],
+      }, null),
     },
 
     blocks: {
