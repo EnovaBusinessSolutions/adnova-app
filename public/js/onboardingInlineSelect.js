@@ -985,7 +985,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
             <div class="asm-title" id="asm-title">Select accounts</div>
             <div class="asm-sub" id="asm-sub">Select up to ${MAX_SELECT} account per type.</div>
           </div>
-          <button class="asm-x" id="asm-close" aria-label="Cerrar">✕</button>
+          <button class="asm-x" id="asm-close" aria-label="Close">✕</button>
         </div>
 
         <div class="asm-body">
@@ -1079,10 +1079,10 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       <div class="asm-panel" role="dialog" aria-modal="true">
         <div class="asm-head">
           <div>
-            <div class="asm-title" id="pxm-title">Seleccionar pixel</div>
-            <div class="asm-sub" id="pxm-sub">Selecciona 1 opción para continuar.</div>
+            <div class="asm-title" id="pxm-title">Select pixel</div>
+            <div class="asm-sub" id="pxm-sub">Select 1 option to continue.</div>
           </div>
-          <button class="asm-x" id="pxm-close" aria-label="Cerrar">✕</button>
+          <button class="asm-x" id="pxm-close" aria-label="Close">✕</button>
         </div>
 
         <div class="asm-body">
@@ -1100,8 +1100,8 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
         </div>
 
         <div class="asm-footer">
-          <button class="asm-btn" id="pxm-cancel">Cancelar</button>
-          <button class="asm-btn asm-btn-primary" id="pxm-save">Guardar selección</button>
+          <button class="asm-btn" id="pxm-cancel">Cancel</button>
+          <button class="asm-btn asm-btn-primary" id="pxm-save">Save selection</button>
         </div>
       </div>
     `;
@@ -1353,11 +1353,11 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
 
     if (reached)
       _hint(
-        `Límite alcanzado: solo puedes seleccionar ${MAX_SELECT} cuenta.`,
+        `Limit reached: you can only select ${MAX_SELECT} account.`,
         'warn',
         'account-select-modal'
       );
-    else _hint(`Selecciona hasta ${MAX_SELECT} cuenta por tipo.`, 'info', 'account-select-modal');
+    else _hint(`Select up to ${MAX_SELECT} account per type.`, 'info', 'account-select-modal');
 
     // Wizard Step A: habilitar por selección del tipo requerido
     if (ASM.flow.next === 'metaPixel' && ASM.flow.step === 'A') {
@@ -1379,7 +1379,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       _hideEl(err);
     }
 
-    _hint(`Selecciona hasta ${MAX_SELECT} cuenta por tipo.`, 'info', 'account-select-modal');
+    _hint(`Select up to ${MAX_SELECT} account per type.`, 'info', 'account-select-modal');
 
     const metaTitle = _el('asm-meta-title');
     const metaList = _el('asm-meta-list');
@@ -1404,7 +1404,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
           if (checked) {
             if (set.size >= MAX_SELECT) {
               cbEl.checked = false;
-              return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuenta.`, 'warn', 'account-select-modal');
+              return _hint(`You can only select up to ${MAX_SELECT} account.`, 'warn', 'account-select-modal');
             }
             set.clear();
             set.add(val);
@@ -1432,7 +1432,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
       ASM.data.googleAds.forEach((a) => {
         const id = normGadsId(a.id || a.customerId || a.customer_id || '');
         const displayName =
-          a.name || a.descriptiveName || a.descriptive_name || `Cuenta ${id}`;
+          a.name || a.descriptiveName || a.descriptive_name || `Account ${id}`;
         const isChecked = ASM.sel.googleAds.has(id);
 
         const chip = _chip(displayName, id, 'googleAds', isChecked, (checked, val, kind, cbEl) => {
@@ -1440,7 +1440,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
           if (checked) {
             if (set.size >= MAX_SELECT) {
               cbEl.checked = false;
-              return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuenta.`, 'warn', 'account-select-modal');
+              return _hint(`You can only select up to ${MAX_SELECT} account.`, 'warn', 'account-select-modal');
             }
             set.clear();
             set.add(val);
@@ -1483,7 +1483,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
           if (checked) {
             if (_countFor(kind) >= MAX_SELECT) {
               cbEl.checked = false;
-              return _hint(`Solo puedes seleccionar hasta ${MAX_SELECT} cuenta.`, 'warn', 'account-select-modal');
+              return _hint(`You can only select up to ${MAX_SELECT} account.`, 'warn', 'account-select-modal');
             }
             set.clear();
             set.add(val); // ✅ SOLO RAW
@@ -1503,7 +1503,7 @@ await _post('/api/onboarding/reset', { source: 'asm', target });
     }
 
     if (!ASM.visible.meta && !ASM.visible.googleAds && !ASM.visible.googleGa) {
-      _hint('No hay cuentas suficientes para seleccionar (o solo existe 1 cuenta por tipo).', 'info', 'account-select-modal');
+      _hint('There are not enough accounts to select (or there is only 1 account per type).', 'info', 'account-select-modal');
     }
 
     if (ASM.flow.next === 'metaPixel' && ASM.flow.step === 'A') {
@@ -2008,11 +2008,11 @@ function _canSaveGoogleConversion() {
         // Step A: Continue -> save meta account -> load pixels -> Step B
         if (ASM.flow.step === 'A') {
           if (ASM.sel.meta.size === 0) {
-            return _hint('Selecciona una cuenta de Meta para continuar.', 'warn', 'account-select-modal');
+            return _hint('Select a Meta Ads account to continue.', 'warn', 'account-select-modal');
           }
 
           const originalText = saveBtn.textContent;
-          saveBtn.textContent = 'Cargando…';
+          saveBtn.textContent = 'Loading...';
           saveBtn.disabled = true;
 
           try {
@@ -2029,18 +2029,18 @@ function _canSaveGoogleConversion() {
             _setAccountWizardStep('B');
             _renderMetaPixelRecommendedBox();
 
-            saveBtn.textContent = 'Guardar selección';
+            saveBtn.textContent = 'Save selection';
             saveBtn.disabled = false;
             return;
           } catch (e) {
             console.error('metaPixel wizard continue error', e);
             const box = _el('asm-error');
             if (box) {
-              box.textContent = 'Ocurrió un error al continuar. Intenta de nuevo.';
+              box.textContent = 'Something went wrong while continuing. Please try again.';
               _showEl(box);
             }
             _hint('', 'info', 'account-select-modal');
-            saveBtn.textContent = originalText || 'Continuar';
+            saveBtn.textContent = originalText || 'Continue';
             saveBtn.disabled = false;
             return;
           }
@@ -2111,11 +2111,11 @@ function _canSaveGoogleConversion() {
         // Step A: Continue -> save customer -> load conversions -> Step B
         if (ASM.flow.step === 'A') {
           if (ASM.sel.googleAds.size === 0) {
-            return _hint('Selecciona una cuenta de Google Ads para continuar.', 'warn', 'account-select-modal');
+            return _hint('Select a Google Ads account to continue.', 'warn', 'account-select-modal');
           }
 
           const originalText = saveBtn.textContent;
-          saveBtn.textContent = 'Cargando…';
+          saveBtn.textContent = 'Loading...';
           saveBtn.disabled = true;
 
           try {
@@ -2128,18 +2128,18 @@ function _canSaveGoogleConversion() {
             _setAccountWizardStep('B');
             _renderGoogleConversionRecommendedBox();
 
-            saveBtn.textContent = 'Guardar selección';
+            saveBtn.textContent = 'Save selection';
             saveBtn.disabled = false;
             return;
           } catch (e) {
             console.error('googleConversion wizard continue error', e);
             const box = _el('asm-error');
             if (box) {
-              box.textContent = 'Ocurrió un error al continuar. Intenta de nuevo.';
+              box.textContent = 'Something went wrong while continuing. Please try again.';
               _showEl(box);
             }
             _hint('', 'info', 'account-select-modal');
-            saveBtn.textContent = originalText || 'Continuar';
+            saveBtn.textContent = originalText || 'Continue';
             saveBtn.disabled = false;
             return;
           }
@@ -2180,12 +2180,12 @@ function _canSaveGoogleConversion() {
     }
 
     // ✅ Normal mode (cuentas)
-    saveBtn.textContent = 'Guardar selección';
+    saveBtn.textContent = 'Save selection';
     saveBtn.onclick = async () => {
       if (!_canSaveAccounts()) return;
 
       const originalText = saveBtn.textContent;
-      saveBtn.textContent = 'Guardando…';
+      saveBtn.textContent = 'Saving...';
       saveBtn.disabled = true;
 
       try {
@@ -2250,12 +2250,12 @@ function _canSaveGoogleConversion() {
 
         const box = _el('asm-error');
         if (box) {
-          box.textContent = 'Ocurrió un error guardando tu selección. Intenta de nuevo.';
+          box.textContent = 'Something went wrong while saving your selection. Please try again.';
           _showEl(box);
         }
         _hint('', 'info', 'account-select-modal');
 
-        saveBtn.textContent = originalText || 'Guardar selección';
+        saveBtn.textContent = originalText || 'Save selection';
         _enableSave(_canSaveAccounts(), 'asm-save');
       }
     };
@@ -2284,7 +2284,7 @@ function _canSaveGoogleConversion() {
 
     if (!ASM.data.googleConversions.length) {
       _hideEl(gWrap);
-      _hint('No encontramos conversiones.', 'warn', 'pixel-select-modal');
+      _hint("We couldn't find any conversions.", 'warn', 'pixel-select-modal');
       return;
     }
 
@@ -2308,7 +2308,7 @@ function _canSaveGoogleConversion() {
         if (checked) {
           if (set.size >= MAX_SELECT) {
             cbEl.checked = false;
-            return _hint('Solo puedes seleccionar 1 opción.', 'warn', 'pixel-select-modal');
+            return _hint('You can only select 1 option.', 'warn', 'pixel-select-modal');
           }
           set.clear();
           set.add(val);
@@ -2334,13 +2334,13 @@ function _canSaveGoogleConversion() {
       saveBtn.onclick = async () => {
         try {
           if (!_canSaveGoogleConversion()) {
-            return _hint('Selecciona 1 conversión para continuar.', 'warn', 'pixel-select-modal');
+            return _hint('Select 1 conversion to continue.', 'warn', 'pixel-select-modal');
           }
           await _saveGoogleConversionSelectionAndClose(modal);
         } catch (e) {
           console.error('legacy pixel modal save error', e);
           if (err) {
-            err.textContent = 'Ocurrió un error guardando tu selección.';
+            err.textContent = 'Something went wrong while saving your selection.';
             _showEl(err);
           }
         }
