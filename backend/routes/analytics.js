@@ -4158,6 +4158,13 @@ router.get('/:account_id', getAnalyticsDashboardHandler);
 const EXPORT_PREVIEW_PAGE_SIZE = 20;
 const EXPORT_MAX_SELECTIONS = 200;
 const EXPORT_MAX_RECENT_PURCHASES = 400;
+const EXPORT_STRICT_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const EXPORT_STRICT_FORWARD_MS = 2 * 60 * 60 * 1000;
+
+function resolveAnalyticsExportStitchScope(input = {}) {
+  const raw = String(input.stitch_scope || input.stitchScope || '').trim().toLowerCase();
+  return raw === 'full' ? 'full' : 'strict';
+}
 
 function getAnalyticsPurchaseSelectionKey(purchase = {}) {
   const orderId = String(purchase.orderId || '').trim();
@@ -5097,8 +5104,9 @@ function reconcileAnalyticsLineItemsToOrderSubtotal(purchase = {}, items = []) {
   return normalizedItems;
 }
 
-async function buildAnalyticsExportStitchContext({ accountId, purchases = [], journeyStitchLookbackMs } = {}) {
+async function buildAnalyticsExportStitchContext({ accountId, purchases = [], journeyStitchLookbackMs, stitchScope = 'strict' } = {}) {
   const selectedPurchases = (Array.isArray(purchases) ? purchases : []).map((purchase) => ({ ...purchase }));
+  const effectiveScope = stitchScope === 'full' ? 'full' : 'strict';
   const recentOrderIds = Array.from(new Set(selectedPurchases.map((purchase) => purchase.orderId).filter(Boolean)));
 
   if (recentOrderIds.length > 0) {
@@ -5134,7 +5142,7 @@ async function buildAnalyticsExportStitchContext({ accountId, purchases = [], jo
     .map((purchase) => new Date(purchase.createdAt || purchase.platformCreatedAt || 0).getTime())
     .filter((timestamp) => Number.isFinite(timestamp));
 
-  if (recentConversionTimes.length) {
+  if (recentConversionTimes.length && effectiveScope === 'full') {
     const earliestTs = Math.min(...recentConversionTimes) - journeyStitchLookbackMs;
     const latestTs = Math.max(...recentConversionTimes) + (60 * 60 * 1000);
     const identityClauses = buildIdentityOrClauses({
@@ -5186,7 +5194,7 @@ async function buildAnalyticsExportStitchContext({ accountId, purchases = [], jo
   if (recentOrderIds.length) journeyEventOrFilters.push({ orderId: { in: recentOrderIds } });
   if (recentCheckoutTokens.length) journeyEventOrFilters.push({ checkoutToken: { in: recentCheckoutTokens } });
   if (recentSessionIds.length) journeyEventOrFilters.push({ sessionId: { in: recentSessionIds } });
-  if (recentUserKeys.length) journeyEventOrFilters.push({ userKey: { in: recentUserKeys } });
+  if (effectiveScope === 'full' && recentUserKeys.length) journeyEventOrFilters.push({ userKey: { in: recentUserKeys } });
 
   const eventsByOrderId = new Map();
   const eventsByCheckoutToken = new Map();
@@ -5195,8 +5203,12 @@ async function buildAnalyticsExportStitchContext({ accountId, purchases = [], jo
   const eventsByCustomerId = new Map();
 
   if (journeyEventOrFilters.length && recentConversionTimes.length) {
-    const earliestTs = Math.min(...recentConversionTimes) - journeyStitchLookbackMs;
-    const latestTs = Math.max(...recentConversionTimes) + (60 * 60 * 1000);
+    const earliestTs = effectiveScope === 'full'
+      ? (Math.min(...recentConversionTimes) - journeyStitchLookbackMs)
+      : (Math.min(...recentConversionTimes) - EXPORT_STRICT_LOOKBACK_MS);
+    const latestTs = effectiveScope === 'full'
+      ? (Math.max(...recentConversionTimes) + (60 * 60 * 1000))
+      : (Math.max(...recentConversionTimes) + EXPORT_STRICT_FORWARD_MS);
     const stitchedCandidateEvents = await prisma.event.findMany({
       where: {
         accountId,
@@ -5294,14 +5306,20 @@ function resolveAnalyticsDetailedPurchaseItems(purchase = {}, stitchContext = {}
   return reconcileAnalyticsLineItemsToOrderSubtotal(purchase, resolvedItems);
 }
 
-async function buildAnalyticsStitchedEventsForExportPurchase({ accountId, purchase, stitchContext = {}, journeyStitchLookbackMs } = {}) {
+async function buildAnalyticsStitchedEventsForExportPurchase({ accountId, purchase, stitchContext = {}, journeyStitchLookbackMs, stitchScope = 'strict' } = {}) {
   const purchaseTimestamp = new Date(purchase.createdAt || purchase.platformCreatedAt || 0).getTime();
   if (!Number.isFinite(purchaseTimestamp)) {
     return Array.isArray(purchase.events) ? purchase.events : [];
   }
 
-  const earliestTs = purchaseTimestamp - journeyStitchLookbackMs;
-  const latestTs = purchaseTimestamp + (15 * 60 * 1000);
+  const effectiveScope = stitchScope === 'full' ? 'full' : 'strict';
+
+  const earliestTs = effectiveScope === 'full'
+    ? (purchaseTimestamp - journeyStitchLookbackMs)
+    : (purchaseTimestamp - EXPORT_STRICT_LOOKBACK_MS);
+  const latestTs = effectiveScope === 'full'
+    ? (purchaseTimestamp + (15 * 60 * 1000))
+    : (purchaseTimestamp + EXPORT_STRICT_FORWARD_MS);
   const purchaseEventCandidates = [
     ...(stitchContext.eventsByOrderId?.get(String(purchase.orderId || '')) || []),
     ...(stitchContext.eventsByCheckoutToken?.get(String(purchase.checkoutToken || '')) || []),
@@ -5314,8 +5332,8 @@ async function buildAnalyticsStitchedEventsForExportPurchase({ accountId, purcha
     ...(stitchContext.eventsByOrderId?.get(String(purchase.orderId || '')) || []),
     ...(stitchContext.eventsByCheckoutToken?.get(String(purchase.checkoutToken || '')) || []),
     ...(inferredSessionId ? (stitchContext.eventsBySessionId?.get(String(inferredSessionId)) || []) : []),
-    ...(inferredUserKey ? (stitchContext.eventsByUserKey?.get(String(inferredUserKey)) || []) : []),
-    ...(purchase.customerId ? (stitchContext.eventsByCustomerId?.get(String(purchase.customerId)) || []) : []),
+    ...(effectiveScope === 'full' && inferredUserKey ? (stitchContext.eventsByUserKey?.get(String(inferredUserKey)) || []) : []),
+    ...(effectiveScope === 'full' && purchase.customerId ? (stitchContext.eventsByCustomerId?.get(String(purchase.customerId)) || []) : []),
   ];
 
   const uniqueEventsMap = new Map();
@@ -5329,7 +5347,7 @@ async function buildAnalyticsStitchedEventsForExportPurchase({ accountId, purcha
   let stitchedEvents = Array.from(uniqueEventsMap.values())
     .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime());
 
-  if (stitchedEvents.length <= 2 && purchase.customerId) {
+  if (effectiveScope === 'full' && stitchedEvents.length <= 2 && purchase.customerId) {
     try {
       const customerLinkedEvents = await prisma.event.findMany({
         where: {
@@ -5392,10 +5410,12 @@ function normalizeAnalyticsExportChannelValue(purchase = {}) {
 
 async function prepareAnalyticsPurchasesForExport({ accountId, purchases = [], query = {} } = {}) {
   const journeyStitchLookbackMs = resolveAnalyticsJourneyLookbackMs(query);
+  const stitchScope = resolveAnalyticsExportStitchScope(query);
   const stitchContext = await buildAnalyticsExportStitchContext({
     accountId,
     purchases,
     journeyStitchLookbackMs,
+    stitchScope,
   });
 
   const preparedPurchases = await Promise.all((stitchContext.purchases || []).map(async (purchase) => {
@@ -5404,7 +5424,12 @@ async function prepareAnalyticsPurchasesForExport({ accountId, purchases = [], q
       purchase,
       stitchContext,
       journeyStitchLookbackMs,
+      stitchScope,
     });
+
+    const eventsForExport = fullEvents.length
+      ? fullEvents
+      : (stitchScope === 'full' ? (Array.isArray(purchase.events) ? purchase.events : []) : []);
 
     const exportChannel = normalizeAnalyticsExportChannelValue(purchase);
     const exportPlatform = normalizeAnalyticsExportPlatformValue(
@@ -5418,7 +5443,7 @@ async function prepareAnalyticsPurchasesForExport({ accountId, purchases = [], q
     const exportReadyPurchase = {
       ...purchase,
       items: resolveAnalyticsDetailedPurchaseItems(purchase, stitchContext),
-      events: finalizeAnalyticsExportEvents(fullEvents.length ? fullEvents : (Array.isArray(purchase.events) ? purchase.events : []), purchase),
+      events: finalizeAnalyticsExportEvents(eventsForExport, purchase),
       attributedChannel: exportChannel,
       attributedPlatform: exportPlatform,
       attributedCampaign: sanitizeAnalyticsMarketingValue(purchase.attributedCampaign || ''),
@@ -5430,6 +5455,7 @@ async function prepareAnalyticsPurchasesForExport({ accountId, purchases = [], q
       attributedClickId: String(purchase.attributedClickId || '').trim() || null,
       attributionDebug: {
         ...(purchase.attributionDebug || {}),
+        exportStitchScope: stitchScope,
         resolvedAttributionLabel: resolveAnalyticsExportResolvedAttributionLabel({
           ...purchase,
           attributedChannel: exportChannel,
@@ -5718,6 +5744,7 @@ router.post('/:account_id/export/download', async (req, res) => {
     const analyticsQuery = {
       ...buildAnalyticsBaseQueryFromInput(req.body || {}),
       recent_limit: String(EXPORT_MAX_RECENT_PURCHASES),
+      stitch_scope: resolveAnalyticsExportStitchScope(req.body || {}),
     };
 
     const payload = await invokeAnalyticsDashboardPayloadForExport({
@@ -5746,7 +5773,7 @@ router.post('/:account_id/export/download', async (req, res) => {
     const { ordersRows, sessionsRows, eventsRows, itemsRows } = await buildAnalyticsExportRows({
       accountId: account_id,
       purchases: selectedPurchases,
-      query: req.body || {},
+      query: analyticsQuery,
     });
 
     const includeOrders = include.orders !== false;
