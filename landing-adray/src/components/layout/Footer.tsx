@@ -54,7 +54,7 @@ export default function Footer() {
                             Install free. Connect in 2 minutes. Start getting answers.
                         </p>
                         <div className="flex items-center justify-center">
-                            <Button variant="primary" size="lg" href="/getstarted">
+                            <Button variant="primary" size="lg" href="/login">
                                 Get Started Free
                             </Button>
                         </div>

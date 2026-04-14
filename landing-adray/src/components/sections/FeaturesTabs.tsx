@@ -23,7 +23,7 @@ const tabs = [
         description:
             "Your platforms report what they want you to see. Adray computes what\u2019s true \u2014 ROAS on net revenue, blended CAC against verified new customers, anomaly flags, and campaign-level truth. Structured for AI to read.",
         tags: ["Structured", "Normalized", "Compressed", "AI-Ready"],
-        cta: { label: "Get Started", href: "/getstarted" },
+        cta: { label: "Get Started", href: "/login" },
         image: pub("/images/Connect.zip%20-%204.png"),
     },
     {
@@ -39,7 +39,7 @@ const tabs = [
         description:
             "Meta, Google, and GA4 measure differently, attribute differently, and report differently. Adray speaks all three languages \u2014 then translates them into one reconciled view before your AI sees a single number. No more conflicting metrics. No more platform bias.",
         tags: ["Meta", "Google", "GA4"],
-        cta: { label: "Get Started", href: "/getstarted" },
+        cta: { label: "Get Started", href: "/login" },
         image: pub("/images/1d9ow-ra20u.webm"),
     },
     {
@@ -55,7 +55,7 @@ const tabs = [
         description:
             "Want even richer data? Install the Adray pixel and your attribution gets significantly deeper. Server-side events, first-party identity, deduplication, session stitching \u2014 all flowing back into your Signal. Works on any website. Two clicks via Google Tag Manager, or paste a single script.",
         tags: ["Server-Side", "First-Party", "Deduplication", "Session Stitching"],
-        cta: { label: "Get Started", href: "/getstarted" },
+        cta: { label: "Get Started", href: "/login" },
         image: pub("/images/The Adray Intelligence Pixel.png"),
     },
 ];

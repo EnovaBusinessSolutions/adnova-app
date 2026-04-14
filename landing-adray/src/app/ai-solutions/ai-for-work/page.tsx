@@ -91,7 +91,7 @@ export default function AIForWorkPage() {
                         animate={{ opacity: 1 }}
                         transition={{ duration: 0.7, delay: 0.4, ease }}
                     >
-                        <Button variant="primary" size="lg" href="/getstarted">
+                        <Button variant="primary" size="lg" href="/login">
                             Get Started
                         </Button>
                     </motion.div>

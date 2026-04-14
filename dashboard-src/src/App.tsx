@@ -1,5 +1,5 @@
 // dashboard-src/src/App.tsx
-import { Suspense, lazy, useEffect, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -23,11 +23,10 @@ import LastStep from "./pages/LastStep";
 import ChatGptMcp from "./pages/ChatGptMcp";
 import ClaudeMcp from "./pages/ClaudeMcp";
 import GeminiMcp from "./pages/GeminiMcp";
+import AttributionEmbed from "./pages/AttributionEmbed";
 
 // ✅ NUEVO: Panel interno (equipo)
 import InternalAdmin from "./pages/InternalAdmin";
-
-const Attribution = lazy(() => import("./pages/Attribution"));
 
 const queryClient = new QueryClient();
 
@@ -307,20 +306,7 @@ function AppRoutes() {
       <Route path="generate-audit" element={<GenerateAudit />} />
       <Route path="settings" element={<Settings />} />
       <Route path="studio" element={<Studio />} />
-      <Route
-        path="attribution"
-        element={
-          <Suspense
-            fallback={
-              <div className="flex min-h-[70vh] items-center justify-center px-6 text-sm text-white/65">
-                Loading attribution dashboard...
-              </div>
-            }
-          >
-            <Attribution />
-          </Suspense>
-        }
-      />
+      <Route path="attribution" element={<AttributionEmbed />} />
 
       {/* ✅ ALIAS / COMPAT */}
       <Route path="audits" element={<SiteAudit />} />
