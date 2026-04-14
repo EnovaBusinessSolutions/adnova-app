@@ -59,6 +59,12 @@ function toNum(v, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function round2(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+}
+
 function clampInt(n, min, max) {
   const x = Number(n || 0);
   if (!Number.isFinite(x)) return min;
@@ -1468,6 +1474,8 @@ function buildMetaContext(chunks, contextRangeDays) {
   if (!chunks?.length) return null;
 
   return {
+    dailyDataset: chunks.find((chunk) => chunk?.dataset === 'meta.daily_trends_ai') || null,
+    rankedDataset: chunks.find((chunk) => chunk?.dataset === 'meta.campaigns_ranked') || null,
     full: formatMetaForLlm({
       datasets: chunks,
       contextRangeDays,
@@ -1487,6 +1495,8 @@ function buildGoogleAdsContext(chunks, contextRangeDays) {
   if (!chunks?.length) return null;
 
   return {
+    dailyDataset: chunks.find((chunk) => chunk?.dataset === 'google.daily_trends_ai') || null,
+    rankedDataset: chunks.find((chunk) => chunk?.dataset === 'google.campaigns_ranked') || null,
     full: formatGoogleAdsForLlm({
       datasets: chunks,
       contextRangeDays,
@@ -1506,6 +1516,7 @@ function buildGa4Context(chunks, contextRangeDays) {
   if (!chunks?.length) return null;
 
   return {
+    dailyDataset: chunks.find((chunk) => chunk?.dataset === 'ga4.daily_trends_ai') || null,
     full: formatGa4ForLlm({
       datasets: chunks,
       contextRangeDays,
@@ -1643,6 +1654,637 @@ function buildUnifiedBaseContext({
       googleAds: googlePack ? { full: googlePack.full, mini: googlePack.mini } : null,
       ga4: ga4Pack ? { full: ga4Pack.full, mini: ga4Pack.mini } : null,
     },
+  };
+}
+
+function isIsoDay(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(safeStr(value).trim());
+}
+
+function pickWorkspaceName({ signalPayload, unifiedBase, root }) {
+  return (
+    safeStr(signalPayload?.workspaceName).trim() ||
+    safeStr(root?.workspaceName).trim() ||
+    safeStr(unifiedBase?.sources?.metaAds?.name).trim() ||
+    safeStr(unifiedBase?.sources?.googleAds?.name).trim() ||
+    safeStr(unifiedBase?.sources?.ga4?.name).trim() ||
+    'Adray Workspace'
+  );
+}
+
+function collectStructuredSourceFlags(unifiedBase) {
+  const sources = unifiedBase?.sources || {};
+  const out = {
+    meta: {
+      connected: !!sources?.metaAds?.connected,
+      usable: !!sources?.metaAds?.usable,
+      currency: safeStr(sources?.metaAds?.currency).trim() || null,
+      timezone: safeStr(sources?.metaAds?.timezone).trim() || null,
+      snapshotId: safeStr(sources?.metaAds?.snapshotId).trim() || null,
+    },
+    google: {
+      connected: !!sources?.googleAds?.connected,
+      usable: !!sources?.googleAds?.usable,
+      currency: safeStr(sources?.googleAds?.currency).trim() || null,
+      timezone: safeStr(sources?.googleAds?.timezone).trim() || null,
+      snapshotId: safeStr(sources?.googleAds?.snapshotId).trim() || null,
+    },
+    ga4: {
+      connected: !!sources?.ga4?.connected,
+      usable: !!sources?.ga4?.usable,
+      currency: safeStr(sources?.ga4?.currency).trim() || null,
+      timezone: safeStr(sources?.ga4?.timezone).trim() || null,
+      snapshotId: safeStr(sources?.ga4?.snapshotId).trim() || null,
+    },
+  };
+
+  return out;
+}
+
+function pickStableValue(values = []) {
+  const unique = uniqStrings(values.filter(Boolean), 10);
+  return unique.length === 1 ? unique[0] : null;
+}
+
+function deriveCapabilityTier(usablePlatforms = []) {
+  const usable = uniqStrings(usablePlatforms, 10);
+  const hasAds = usable.includes('meta') || usable.includes('google');
+  const hasGa4 = usable.includes('ga4');
+
+  if (hasAds && hasGa4) return 3;
+  if (usable.length >= 2) return 2;
+  if (usable.length === 1) return 1;
+  return null;
+}
+
+function buildMetaDailyRows(metaPack) {
+  const totals = Array.isArray(metaPack?.dailyDataset?.data?.totals_by_day)
+    ? metaPack.dailyDataset.data.totals_by_day
+    : [];
+
+  return totals
+    .filter((row) => isIsoDay(row?.date))
+    .map((row) => {
+      const spend = toNum(row?.kpis?.spend, null);
+      const impressions = toNum(row?.kpis?.impressions, null);
+      const clicks = toNum(row?.kpis?.clicks, null);
+      const purchases = toNum(row?.kpis?.purchases, null);
+      const purchaseValue = toNum(row?.kpis?.purchase_value, null);
+
+      return {
+        date: row.date,
+        platform: 'meta',
+        spend: spend == null ? null : round2(spend),
+        impressions: impressions == null ? null : round2(impressions),
+        clicks: clicks == null ? null : round2(clicks),
+        ctr: impressions > 0 ? round2((clicks / impressions) * 100) : null,
+        cpc: clicks > 0 ? round2(spend / clicks) : null,
+        cpm: impressions > 0 ? round2((spend / impressions) * 1000) : null,
+        conversions: purchases == null ? null : round2(purchases),
+        conversion_value: purchaseValue == null ? null : round2(purchaseValue),
+        roas_platform: spend > 0 ? round2(purchaseValue / spend) : null,
+        sessions: null,
+        users: null,
+        engagement_rate: null,
+        ga4_revenue: null,
+        blended_spend: null,
+        blended_ctr: null,
+        blended_cpc: null,
+        platform_spend_share: null,
+      };
+    });
+}
+
+function buildGoogleDailyRows(googlePack) {
+  const totals = Array.isArray(googlePack?.dailyDataset?.data?.totals_by_day)
+    ? googlePack.dailyDataset.data.totals_by_day
+    : [];
+
+  return totals
+    .filter((row) => isIsoDay(row?.date))
+    .map((row) => {
+      const spend = toNum(row?.kpis?.spend, null);
+      const impressions = toNum(row?.kpis?.impressions, null);
+      const clicks = toNum(row?.kpis?.clicks, null);
+      const conversions = toNum(row?.kpis?.conversions, null);
+      const conversionValue = toNum(row?.kpis?.conversion_value, null);
+
+      return {
+        date: row.date,
+        platform: 'google',
+        spend: spend == null ? null : round2(spend),
+        impressions: impressions == null ? null : round2(impressions),
+        clicks: clicks == null ? null : round2(clicks),
+        ctr: impressions > 0 ? round2((clicks / impressions) * 100) : null,
+        cpc: clicks > 0 ? round2(spend / clicks) : null,
+        cpm: impressions > 0 ? round2((spend / impressions) * 1000) : null,
+        conversions: conversions == null ? null : round2(conversions),
+        conversion_value: conversionValue == null ? null : round2(conversionValue),
+        roas_platform: spend > 0 ? round2(conversionValue / spend) : null,
+        sessions: null,
+        users: null,
+        engagement_rate: null,
+        ga4_revenue: null,
+        blended_spend: null,
+        blended_ctr: null,
+        blended_cpc: null,
+        platform_spend_share: null,
+      };
+    });
+}
+
+function buildGa4DailyRows(ga4Pack) {
+  const totals = Array.isArray(ga4Pack?.dailyDataset?.data?.totals_by_day)
+    ? ga4Pack.dailyDataset.data.totals_by_day
+    : [];
+
+  return totals
+    .filter((row) => isIsoDay(row?.date))
+    .map((row) => {
+      const sessions = toNum(row?.kpis?.sessions, null);
+      const users = toNum(row?.kpis?.users, null);
+      const conversions = toNum(row?.kpis?.conversions, null);
+      const revenue = toNum(row?.kpis?.revenue, null);
+      const engagementRate = toNum(row?.kpis?.engagementRate, null);
+
+      return {
+        date: row.date,
+        platform: 'ga4',
+        spend: null,
+        impressions: null,
+        clicks: null,
+        ctr: null,
+        cpc: null,
+        cpm: null,
+        conversions: conversions == null ? null : round2(conversions),
+        conversion_value: null,
+        roas_platform: null,
+        sessions: sessions == null ? null : round2(sessions),
+        users: users == null ? null : round2(users),
+        engagement_rate: engagementRate == null ? null : round2(engagementRate),
+        ga4_revenue: revenue == null ? null : round2(revenue),
+        blended_spend: null,
+        blended_ctr: null,
+        blended_cpc: null,
+        platform_spend_share: null,
+      };
+    });
+}
+
+function buildBlendedDailyRows(dailyRows, usablePlatforms) {
+  if (!Array.isArray(dailyRows) || uniqStrings(usablePlatforms, 10).length < 2) return [];
+
+  const byDate = new Map();
+  for (const row of dailyRows) {
+    if (!isIsoDay(row?.date)) continue;
+    if (safeStr(row?.platform).trim() === 'blended') continue;
+    if (!byDate.has(row.date)) byDate.set(row.date, []);
+    byDate.get(row.date).push(row);
+  }
+
+  const out = [];
+
+  for (const [date, rows] of Array.from(byDate.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+    const adsRows = rows.filter((row) => row.platform === 'meta' || row.platform === 'google');
+    const totalSpend = adsRows.reduce((sum, row) => sum + toNum(row?.spend), 0);
+    const totalImpressions = adsRows.reduce((sum, row) => sum + toNum(row?.impressions), 0);
+    const totalClicks = adsRows.reduce((sum, row) => sum + toNum(row?.clicks), 0);
+    const totalSessions = rows.reduce((sum, row) => sum + toNum(row?.sessions), 0);
+    const totalUsers = rows.reduce((sum, row) => sum + toNum(row?.users), 0);
+
+    const spendShare = totalSpend > 0
+      ? rows.reduce((acc, row) => {
+        if (row.platform === 'blended') return acc;
+        const spend = toNum(row?.spend, null);
+        acc[row.platform] = spend == null ? null : round2(spend / totalSpend);
+        return acc;
+      }, {})
+      : null;
+
+    out.push({
+      date,
+      platform: 'blended',
+      spend: null,
+      impressions: totalImpressions > 0 ? round2(totalImpressions) : null,
+      clicks: totalClicks > 0 ? round2(totalClicks) : null,
+      ctr: null,
+      cpc: null,
+      cpm: null,
+      conversions: null,
+      conversion_value: null,
+      roas_platform: null,
+      sessions: totalSessions > 0 ? round2(totalSessions) : null,
+      users: totalUsers > 0 ? round2(totalUsers) : null,
+      engagement_rate: null,
+      ga4_revenue: null,
+      blended_spend: adsRows.length > 0 ? round2(totalSpend) : null,
+      blended_ctr: totalImpressions > 0 ? round2((totalClicks / totalImpressions) * 100) : null,
+      blended_cpc: totalClicks > 0 ? round2(totalSpend / totalClicks) : null,
+      platform_spend_share: spendShare,
+    });
+  }
+
+  return out;
+}
+
+function normalizePctDelta(current, previous) {
+  const cur = Number(current);
+  const prev = Number(previous);
+
+  if (!Number.isFinite(cur) || !Number.isFinite(prev)) return null;
+  if (prev <= 0) return null;
+
+  return round2(((cur - prev) / prev) * 100);
+}
+
+function aggregateCampaignWindow(rows, fromDate, toDate, platform) {
+  const windowRows = (Array.isArray(rows) ? rows : []).filter((row) => {
+    const date = safeStr(row?.date).trim();
+    if (!isIsoDay(date)) return false;
+    if (fromDate && date < fromDate) return false;
+    if (toDate && date > toDate) return false;
+    return true;
+  });
+
+  if (windowRows.length === 0) return null;
+
+  const spend = windowRows.reduce((sum, row) => sum + toNum(row?.kpis?.spend), 0);
+  const impressions = windowRows.reduce((sum, row) => sum + toNum(row?.kpis?.impressions), 0);
+  const clicks = windowRows.reduce((sum, row) => sum + toNum(row?.kpis?.clicks), 0);
+  const conversions = platform === 'meta'
+    ? windowRows.reduce((sum, row) => sum + toNum(row?.kpis?.purchases), 0)
+    : windowRows.reduce((sum, row) => sum + toNum(row?.kpis?.conversions), 0);
+  const conversionValue = platform === 'meta'
+    ? windowRows.reduce((sum, row) => sum + toNum(row?.kpis?.purchase_value), 0)
+    : windowRows.reduce((sum, row) => sum + toNum(row?.kpis?.conversion_value), 0);
+
+  return {
+    spend: round2(spend),
+    impressions: round2(impressions),
+    clicks: round2(clicks),
+    ctr: impressions > 0 ? round2((clicks / impressions) * 100) : null,
+    cpc: clicks > 0 ? round2(spend / clicks) : null,
+    cpm: impressions > 0 ? round2((spend / impressions) * 1000) : null,
+    conversions: round2(conversions),
+    conversion_value: round2(conversionValue),
+    roas_platform: spend > 0 ? round2(conversionValue / spend) : null,
+  };
+}
+
+function getContextWindowEnd(unifiedBase, metaPack, googlePack) {
+  const candidates = [
+    metaPack?.dailyDataset?.data?.meta?.range?.to,
+    googlePack?.dailyDataset?.data?.meta?.range?.to,
+    unifiedBase?.inputs?.meta?.full?.meta?.range?.to,
+    unifiedBase?.inputs?.googleAds?.full?.meta?.range?.to,
+  ];
+
+  for (const value of candidates) {
+    if (isIsoDay(value)) return value;
+  }
+
+  return null;
+}
+
+function addDaysIso(date, deltaDays) {
+  if (!isIsoDay(date)) return null;
+  const utc = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(utc.getTime())) return null;
+  utc.setUTCDate(utc.getUTCDate() + Number(deltaDays || 0));
+  return utc.toISOString().slice(0, 10);
+}
+
+function aggregateCampaignRowsById(campaignRows = []) {
+  const grouped = new Map();
+
+  for (const row of Array.isArray(campaignRows) ? campaignRows : []) {
+    const campaignId = safeStr(row?.campaign_id).trim();
+    const campaignName = safeStr(row?.campaign_name || row?.name).trim();
+    if (!campaignId && !campaignName) continue;
+
+    const key = campaignId || `name:${campaignName.toLowerCase()}`;
+    const existing = grouped.get(key) || [];
+    existing.push(row);
+    grouped.set(key, existing);
+  }
+
+  return grouped;
+}
+
+function deriveBudgetMeta(platform, campaign) {
+  if (platform !== 'meta') {
+    return {
+      budget_type: null,
+      budget_amount: null,
+    };
+  }
+
+  const dailyBudget = toNum(campaign?.budget?.daily, null);
+  const lifetimeBudget = toNum(campaign?.budget?.lifetime, null);
+
+  if (dailyBudget != null) {
+    return {
+      budget_type: 'daily',
+      budget_amount: round2(dailyBudget),
+    };
+  }
+
+  if (lifetimeBudget != null) {
+    return {
+      budget_type: 'lifetime',
+      budget_amount: round2(lifetimeBudget),
+    };
+  }
+
+  return {
+    budget_type: null,
+    budget_amount: null,
+  };
+}
+
+function buildCampaignRecord({
+  platform,
+  campaign,
+  campaignDailyRows,
+  contextEnd,
+  all60Fallback,
+}) {
+  const budgetMeta = deriveBudgetMeta(platform, campaign);
+
+  const last7 = contextEnd
+    ? aggregateCampaignWindow(campaignDailyRows, addDaysIso(contextEnd, -6), contextEnd, platform)
+    : null;
+  const prev7 = contextEnd
+    ? aggregateCampaignWindow(campaignDailyRows, addDaysIso(contextEnd, -13), addDaysIso(contextEnd, -7), platform)
+    : null;
+  const last30 = contextEnd
+    ? aggregateCampaignWindow(campaignDailyRows, addDaysIso(contextEnd, -29), contextEnd, platform)
+    : null;
+  const prev30 = contextEnd
+    ? aggregateCampaignWindow(campaignDailyRows, addDaysIso(contextEnd, -59), addDaysIso(contextEnd, -30), platform)
+    : null;
+
+  return {
+    campaign_id: safeStr(campaign?.campaign_id).trim() || null,
+    campaign_name: safeStr(campaign?.campaign_name || campaign?.name).trim() || null,
+    platform,
+    objective: safeStr(campaign?.objective_norm || campaign?.objective).trim() || null,
+    status: safeStr(campaign?.status).trim() || null,
+    budget_type: budgetMeta.budget_type,
+    budget_amount: budgetMeta.budget_amount,
+    last_7: last7,
+    last_30: last30,
+    all_60: all60Fallback,
+    wow_spend_pct: last7 && prev7 ? normalizePctDelta(last7.spend, prev7.spend) : null,
+    wow_roas_pct:
+      last7?.roas_platform != null && prev7?.roas_platform != null
+        ? normalizePctDelta(last7.roas_platform, prev7.roas_platform)
+        : null,
+    mom_spend_pct: last30 && prev30 ? normalizePctDelta(last30.spend, prev30.spend) : null,
+    mom_roas_pct:
+      last30?.roas_platform != null && prev30?.roas_platform != null
+        ? normalizePctDelta(last30.roas_platform, prev30.roas_platform)
+        : null,
+    efficiency_rank_7d: null,
+    spend_share_pct: null,
+    anomaly_flag: null,
+  };
+}
+
+function buildMetaCampaigns(metaPack, contextEnd) {
+  const rankedCampaigns = Array.isArray(metaPack?.rankedDataset?.data?.campaigns_ranked)
+    ? metaPack.rankedDataset.data.campaigns_ranked
+    : [];
+  const campaignRowsById = aggregateCampaignRowsById(metaPack?.dailyDataset?.data?.campaigns_daily || []);
+
+  return rankedCampaigns
+    .map((campaign) => {
+      const key =
+        safeStr(campaign?.campaign_id).trim() ||
+        `name:${safeStr(campaign?.name).trim().toLowerCase()}`;
+      const campaignDailyRows = campaignRowsById.get(key) || [];
+
+      const all60Fallback = {
+        spend: round2(campaign?.kpis?.spend),
+        impressions: round2(campaign?.kpis?.impressions),
+        clicks: round2(campaign?.kpis?.clicks),
+        ctr: round2(campaign?.kpis?.ctr),
+        cpc: round2(campaign?.kpis?.cpc),
+        cpm: round2(campaign?.kpis?.cpm),
+        conversions: round2(campaign?.kpis?.purchases),
+        conversion_value: round2(campaign?.kpis?.purchase_value),
+        roas_platform: round2(campaign?.kpis?.roas),
+      };
+
+      return buildCampaignRecord({
+        platform: 'meta',
+        campaign,
+        campaignDailyRows,
+        contextEnd,
+        all60Fallback,
+      });
+    })
+    .filter((campaign) => campaign.campaign_id || campaign.campaign_name);
+}
+
+function buildGoogleCampaigns(googlePack, contextEnd) {
+  const rankedCampaigns = Array.isArray(googlePack?.rankedDataset?.data?.campaigns_ranked)
+    ? googlePack.rankedDataset.data.campaigns_ranked
+    : [];
+  const campaignRowsById = aggregateCampaignRowsById(googlePack?.dailyDataset?.data?.campaigns_daily || []);
+
+  return rankedCampaigns
+    .map((campaign) => {
+      const key =
+        safeStr(campaign?.campaign_id).trim() ||
+        `name:${safeStr(campaign?.name).trim().toLowerCase()}`;
+      const campaignDailyRows = campaignRowsById.get(key) || [];
+
+      const all60Fallback = {
+        spend: round2(campaign?.kpis?.spend),
+        impressions: round2(campaign?.kpis?.impressions),
+        clicks: round2(campaign?.kpis?.clicks),
+        ctr: round2(campaign?.kpis?.ctr),
+        cpc: round2(campaign?.kpis?.cpc),
+        cpm: round2(campaign?.kpis?.cpm),
+        conversions: round2(campaign?.kpis?.conversions),
+        conversion_value: round2(campaign?.kpis?.conversion_value),
+        roas_platform: round2(campaign?.kpis?.roas),
+      };
+
+      return buildCampaignRecord({
+        platform: 'google',
+        campaign,
+        campaignDailyRows,
+        contextEnd,
+        all60Fallback,
+      });
+    })
+    .filter((campaign) => campaign.campaign_id || campaign.campaign_name);
+}
+
+function applyCampaignDerivedFields(campaigns) {
+  const next = Array.isArray(campaigns)
+    ? campaigns.map((campaign) => ({ ...campaign }))
+    : [];
+
+  for (const platform of ['meta', 'google']) {
+    const platformRows = next.filter((campaign) => campaign.platform === platform);
+    const totalSpend = platformRows.reduce((sum, campaign) => sum + toNum(campaign?.all_60?.spend), 0);
+
+    const rankedForEfficiency = platformRows
+      .filter((campaign) => toNum(campaign?.last_7?.spend) > 0 && campaign?.last_7?.roas_platform != null)
+      .slice()
+      .sort((a, b) => {
+        const roasDiff = toNum(b?.last_7?.roas_platform) - toNum(a?.last_7?.roas_platform);
+        if (Math.abs(roasDiff) > 0.0001) return roasDiff;
+        return toNum(b?.last_7?.spend) - toNum(a?.last_7?.spend);
+      });
+
+    const rankMap = new Map(
+      rankedForEfficiency.map((campaign, index) => [campaign.campaign_id || campaign.campaign_name, index + 1])
+    );
+
+    for (const campaign of platformRows) {
+      const key = campaign.campaign_id || campaign.campaign_name;
+      campaign.efficiency_rank_7d = rankMap.get(key) || null;
+      campaign.spend_share_pct =
+        totalSpend > 0 && campaign?.all_60?.spend != null
+          ? round2((campaign.all_60.spend / totalSpend) * 100)
+          : null;
+    }
+  }
+
+  return next;
+}
+
+function buildCampaignsSchema({ metaPack, googlePack, unifiedBase }) {
+  const contextEnd = getContextWindowEnd(unifiedBase, metaPack, googlePack);
+  const campaigns = [
+    ...(metaPack?.rankedDataset ? buildMetaCampaigns(metaPack, contextEnd) : []),
+    ...(googlePack?.rankedDataset ? buildGoogleCampaigns(googlePack, contextEnd) : []),
+  ];
+
+  return applyCampaignDerivedFields(campaigns)
+    .sort((a, b) => {
+      const spendDiff = toNum(b?.all_60?.spend) - toNum(a?.all_60?.spend);
+      if (Math.abs(spendDiff) > 0.0001) return spendDiff;
+      return safeStr(a?.campaign_name).localeCompare(safeStr(b?.campaign_name));
+    });
+}
+
+function buildStructuredSignalSchema({
+  signalPayload,
+  unifiedBase,
+  root,
+  metaPack,
+  googlePack,
+  ga4Pack,
+  sourceFingerprint = null,
+  connectionFingerprint = null,
+}) {
+  const sourceFlags = collectStructuredSourceFlags(unifiedBase);
+  const connectedPlatforms = Object.entries(sourceFlags)
+    .filter(([, state]) => !!state?.connected)
+    .map(([platform]) => platform);
+  const usablePlatforms = Object.entries(sourceFlags)
+    .filter(([, state]) => !!state?.usable)
+    .map(([platform]) => platform);
+
+  const dailyRows = [
+    ...(sourceFlags.meta.usable ? buildMetaDailyRows(metaPack) : []),
+    ...(sourceFlags.google.usable ? buildGoogleDailyRows(googlePack) : []),
+    ...(sourceFlags.ga4.usable ? buildGa4DailyRows(ga4Pack) : []),
+  ];
+
+  const blendedRows = buildBlendedDailyRows(dailyRows, usablePlatforms);
+  const orderedPlatforms = ['meta', 'google', 'ga4', 'blended'];
+  const dailyIndex = [...dailyRows, ...blendedRows].sort((a, b) => {
+    const dateCompare = safeStr(a?.date).localeCompare(safeStr(b?.date));
+    if (dateCompare !== 0) return dateCompare;
+    return orderedPlatforms.indexOf(a?.platform) - orderedPlatforms.indexOf(b?.platform);
+  });
+
+  const uniqueDates = uniqStrings(
+    dailyRows
+      .map((row) => safeStr(row?.date).trim())
+      .filter(Boolean),
+    1000
+  ).sort((a, b) => a.localeCompare(b));
+
+  const accountCurrency = pickStableValue(
+    usablePlatforms.map((platform) => sourceFlags?.[platform]?.currency)
+  );
+  const timezone = pickStableValue(
+    usablePlatforms.map((platform) => sourceFlags?.[platform]?.timezone)
+  );
+
+  const sourceSnapshots = {
+    meta: sourceFlags.meta.snapshotId,
+    google: sourceFlags.google.snapshotId,
+    ga4: sourceFlags.ga4.snapshotId,
+  };
+
+  const campaigns = buildCampaignsSchema({
+    metaPack,
+    googlePack,
+    unifiedBase,
+  });
+
+  return {
+    meta: {
+      workspace_name: pickWorkspaceName({ signalPayload, unifiedBase, root }),
+      snapshot_generated_at:
+        safeStr(signalPayload?.generatedAt).trim() ||
+        safeStr(unifiedBase?.generatedAt).trim() ||
+        nowIso(),
+      data_window_start: uniqueDates[0] || null,
+      data_window_end: uniqueDates[uniqueDates.length - 1] || null,
+      days_of_data: uniqueDates.length > 0 ? uniqueDates.length : null,
+      connected_sources: connectedPlatforms,
+      capability_tier: deriveCapabilityTier(usablePlatforms),
+      account_currency: accountCurrency,
+      timezone,
+      source_fingerprint: safeStr(sourceFingerprint).trim() || null,
+      connection_fingerprint: safeStr(connectionFingerprint).trim() || null,
+      source_snapshots: sourceSnapshots,
+      schema_version: 'adray.signal_schema.v1.phase2',
+    },
+    daily_index: dailyIndex,
+    campaigns,
+  };
+}
+
+function appendStructuredSignalSchema({
+  signalPayload,
+  unifiedBase,
+  root,
+  metaPack,
+  googlePack,
+  ga4Pack,
+  sourceFingerprint = null,
+  connectionFingerprint = null,
+}) {
+  const basePayload = signalPayload && typeof signalPayload === 'object'
+    ? JSON.parse(JSON.stringify(signalPayload))
+    : {};
+
+  const structured = buildStructuredSignalSchema({
+    signalPayload: basePayload,
+    unifiedBase,
+    root,
+    metaPack,
+    googlePack,
+    ga4Pack,
+    sourceFingerprint,
+    connectionFingerprint,
+  });
+
+  return {
+    ...basePayload,
+    meta: structured.meta,
+    daily_index: structured.daily_index,
+    campaigns: structured.campaigns,
   };
 }
 
@@ -3747,7 +4389,16 @@ const finalConnectionFingerprint = buildConnectionFingerprint(latestRootForBase)
   }
 
   const encoded = await enrichWithOpenAI(unifiedBase);
-  const signalPayload = encoded.payload;
+  const signalPayload = appendStructuredSignalSchema({
+    signalPayload: encoded.payload,
+    unifiedBase,
+    root: encodingResult?.root || latestRootForBase || initialRoot || null,
+    metaPack,
+    googlePack,
+    ga4Pack,
+    sourceFingerprint: finalSourceFingerprint,
+    connectionFingerprint: finalConnectionFingerprint,
+  });
   const encodedSignalPayload = encodeSignalPayload({
     signalPayload,
     unifiedBase,
