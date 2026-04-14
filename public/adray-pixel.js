@@ -1503,5 +1503,89 @@
   window.AdRay.getPlatform = detectPlatform;
   window.AdRay.version = '2.0';
 
+  // ============================================================
+  // 7. Microsoft Clarity integration (temporary infra scaffold)
+  //    Provides immediate session recordings while the self-hosted
+  //    rrweb pipeline is built in parallel. Will be replaced by
+  //    the native recording system (Phase 2 of behavioral roadmap).
+  //    To enable: set data-clarity-id="YOUR_PROJECT_ID" on the
+  //    adray-pixel script tag, or define window.AdRayClarityId.
+  // ============================================================
+  (function initClarity() {
+    // Resolve the Clarity project ID from the script tag or a global.
+    var clarityId = null;
+    try {
+      var scripts = document.querySelectorAll(
+        'script[src*="adray-pixel"], script[src*="pixel.js"][data-account-id]'
+      );
+      for (var i = 0; i < scripts.length; i++) {
+        var cid = scripts[i].getAttribute('data-clarity-id');
+        if (cid && cid.trim()) { clarityId = cid.trim(); break; }
+      }
+      if (!clarityId && window.AdRayClarityId) clarityId = String(window.AdRayClarityId).trim();
+    } catch (_) {}
+
+    if (!clarityId) return; // Clarity disabled — no project ID configured
+
+    // Inject the Clarity snippet asynchronously.
+    try {
+      (function(c,l,a,r,i,t,y){
+        c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+        t=l.createElement(r);t.async=1;t.src='https://www.clarity.ms/tag/'+i;
+        y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+      })(window, document, 'clarity', 'script', clarityId);
+    } catch (_) { return; }
+
+    // Poll until clarity() is available, then identify and tag the session.
+    var waited = 0;
+    var maxWait = 10000;
+    var poll = setInterval(function() {
+      waited += 250;
+      if (waited > maxWait) { clearInterval(poll); return; }
+      if (typeof window.clarity !== 'function') return;
+      clearInterval(poll);
+
+      var accountId  = getAccountId();
+      var sessionId  = getOrCreateSessionId();
+      var userKey    = getCookie('_adray_uid') || '';
+
+      // Identify — links the Clarity recording to the AdRay identity graph.
+      try { window.clarity('identify', userKey || sessionId, sessionId); } catch (_) {}
+
+      // Custom tags — searchable/filterable in the Clarity dashboard.
+      var tagPairs = [
+        ['adray_session_id',   sessionId],
+        ['adray_account_id',   accountId],
+        ['adray_platform',     detectPlatform()],
+        ['adray_page_type',    detectPageType()],
+        ['utm_source',         getAttributionParam('utm_source')],
+        ['utm_medium',         getAttributionParam('utm_medium')],
+        ['utm_campaign',       getAttributionParam('utm_campaign')],
+        ['has_gclid',          getAttributionParam('gclid') ? 'true' : 'false'],
+        ['has_fbclid',         getAttributionParam('fbclid') ? 'true' : 'false'],
+      ];
+      tagPairs.forEach(function(pair) {
+        try {
+          if (pair[1]) window.clarity('set', pair[0], String(pair[1]));
+        } catch (_) {}
+      });
+
+      // Capture the playback URL from Clarity and persist it to the session.
+      // This enables the "▶ Ver grabación" button in the Session Explorer.
+      try {
+        window.clarity('metadata', function(playbackUrl, isNew, clarityUserId, claritySessionId) {
+          if (!playbackUrl || !claritySessionId) return;
+          try {
+            sendEvent('clarity_session_linked', {
+              clarity_playback_url: playbackUrl,
+              clarity_session_id:   claritySessionId,
+              clarity_user_id:      clarityUserId || null,
+            });
+          } catch (_) {}
+        });
+      } catch (_) {}
+    }, 250);
+  })();
+
 })();
 

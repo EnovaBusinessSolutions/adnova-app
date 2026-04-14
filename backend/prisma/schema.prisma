@@ -117,10 +117,12 @@ model Session {
   ttclid         String?
   fbp            String?
   fbc            String?
-  isFirstTouch   Boolean  @map("is_first_touch")
-  startedAt      DateTime @default(now()) @map("started_at")
-  sessionEndAt   DateTime? @map("session_end_at")
-  lastEventAt    DateTime @default(now()) @updatedAt @map("last_event_at")
+  isFirstTouch       Boolean   @map("is_first_touch")
+  startedAt          DateTime  @default(now()) @map("started_at")
+  sessionEndAt       DateTime? @map("session_end_at")
+  lastEventAt        DateTime  @default(now()) @updatedAt @map("last_event_at")
+  claritySessionId   String?   @map("clarity_session_id")
+  clarityPlaybackUrl String?   @map("clarity_playback_url")
 
   account Account @relation(fields: [accountId], references: [accountId], onDelete: Cascade)
 

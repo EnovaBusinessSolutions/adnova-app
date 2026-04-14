@@ -1,0 +1,350 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ======= FONTS ======= */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,500;700;800&display=swap');
+
+/* ================================================================================
+   THEME TOKENS
+   ================================================================================ */
+
+@layer base {
+  :root {
+    /* Deep dark theme */
+    --background: 280 15% 4%;
+    --foreground: 280 10% 98%;
+
+    --card: 280 20% 6%;
+    --card-foreground: 280 10% 98%;
+
+    --popover: 280 20% 6%;
+    --popover-foreground: 280 10% 98%;
+
+    /* Brand */
+    --primary: 280 70% 60%;
+    --primary-foreground: 280 15% 6%;
+    --primary-glow: 280 80% 70%;
+
+    --secondary: 270 85% 75%;
+    --secondary-foreground: 280 15% 6%;
+    --secondary-glow: 270 85% 85%;
+
+    /* Accents & neutrals */
+    --accent-purple: 285 60% 55%;
+    --accent-purple-foreground: 280 10% 98%;
+    --muted: 280 15% 12%;
+    --muted-foreground: 280 8% 65%;
+    --accent: 280 15% 12%;
+    --accent-foreground: 280 10% 98%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 280 10% 98%;
+
+    --border: 280 15% 15%;
+    --input: 280 15% 12%;
+    --ring: 280 70% 45%;
+
+    /* Gradients */
+    --gradient-hero: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--secondary)) 50%, hsl(285 80% 60%) 100%);
+    --gradient-card: linear-gradient(145deg, hsl(var(--card)) 0%, hsl(280 20% 8%) 50%, hsl(var(--card)) 100%);
+    --gradient-border: linear-gradient(90deg, hsl(var(--primary) / 0.5) 0%, hsl(var(--secondary) / 0.3) 50%, hsl(var(--primary) / 0.5) 100%);
+
+    /* Glow & shadow */
+    --glow-primary: 0 0 50px hsl(var(--primary-glow) / 0.4), 0 0 100px hsl(var(--primary-glow) / 0.2);
+    --glow-secondary: 0 0 50px hsl(var(--secondary-glow) / 0.4), 0 0 100px hsl(var(--secondary-glow) / 0.2);
+    --shadow-elevated: 0 25px 50px -12px hsl(280 30% 2% / 0.9), 0 10px 25px -5px hsl(var(--primary) / 0.1);
+
+    /* Motion */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+
+    --radius: 0.75rem;
+
+    /* Sidebar */
+    --sidebar-background: 280 20% 8%;
+    --sidebar-foreground: 280 10% 95%;
+    --sidebar-primary: 280 70% 45%;
+    --sidebar-primary-foreground: 280 15% 6%;
+    --sidebar-accent: 280 15% 15%;
+    --sidebar-accent-foreground: 280 10% 95%;
+    --sidebar-border: 280 15% 15%;
+    --sidebar-ring: 280 70% 45%;
+
+    /* ===== HERO scale (Clear hierarchy) ===== */
+    --hero-h1: clamp(2.6rem, 1.2rem + 4.2vw, 4.8rem);
+    --hero-h2: clamp(1.125rem, 0.8rem + 1vw, 1.5rem);
+    --hero-lede: clamp(1rem, 0.85rem + 0.4vw, 1.125rem);
+
+    --section-title: clamp(2rem, 1.1rem + 2.5vw, 3rem);
+
+    /* Fonts */
+    --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+      Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji",
+      "Segoe UI Emoji", "Segoe UI Symbol";
+    --font-display: "Space Grotesk", "Inter", ui-sans-serif, system-ui;
+    --font-headline: "Inter Tight", "Inter", ui-sans-serif, system-ui;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+}
+
+html, body {
+  font-family: var(--font-sans);
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body { @apply bg-background text-foreground; }
+
+@layer components {
+  .bg-gradient-dark {
+    background: linear-gradient(180deg, #0a0612 0%, #030308 100%);
+  }
+
+  .bg-gradient-hero {
+    background: var(--gradient-hero);
+  }
+
+  .bg-gradient-card {
+    background: var(--gradient-card);
+  }
+
+  .transition-smooth {
+    transition: var(--transition-smooth);
+  }
+
+  .transition-bounce {
+    transition: var(--transition-bounce);
+  }
+
+  .glow-primary {
+    box-shadow: var(--glow-primary);
+  }
+
+  .glow-secondary {
+    box-shadow: var(--glow-secondary);
+  }
+
+  .shadow-elevated {
+    box-shadow: var(--shadow-elevated);
+  }
+
+  .bg-animated-gradient {
+    background: linear-gradient(
+      135deg,
+      #0a0612 0%,
+      #150a28 25%,
+      #0a0612 50%,
+      #0f0820 75%,
+      #0a0612 100%
+    );
+    background-size: 400% 400%;
+    animation: gradient-shift 15s ease infinite;
+  }
+
+  @keyframes gradient-shift {
+    0%, 100% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+  }
+
+  @keyframes float {
+    0%, 100% {
+      transform: translateY(0px);
+    }
+    50% {
+      transform: translateY(-20px);
+    }
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% {
+      opacity: 0.3;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.6;
+      transform: scale(1.1);
+    }
+  }
+
+  @keyframes ai-node-pulse {
+    0%, 100% {
+      opacity: 0.4;
+      transform: scale(1);
+      box-shadow: 
+        0 0 10px 4px hsl(var(--primary) / 0.3),
+        0 0 20px 6px hsl(var(--primary) / 0.15),
+        inset 0 0 5px hsl(var(--primary) / 0.4);
+    }
+    50% {
+      opacity: 0.6;
+      transform: scale(1.1);
+      box-shadow: 
+        0 0 15px 8px hsl(var(--primary) / 0.4),
+        0 0 30px 10px hsl(var(--primary) / 0.2),
+        inset 0 0 8px hsl(var(--primary) / 0.5);
+    }
+  }
+
+  @keyframes ai-node-secondary {
+    0%, 100% {
+      opacity: 0.3;
+      transform: scale(1);
+      box-shadow: 
+        0 0 8px 3px hsl(var(--secondary) / 0.25),
+        0 0 15px 5px hsl(var(--secondary) / 0.12);
+    }
+    50% {
+      opacity: 0.5;
+      transform: scale(1.08);
+      box-shadow: 
+        0 0 12px 6px hsl(var(--secondary) / 0.35),
+        0 0 25px 9px hsl(var(--secondary) / 0.18);
+    }
+  }
+
+  @keyframes ai-line-draw {
+    0% {
+      stroke-dashoffset: 1000;
+      opacity: 0.15;
+    }
+    50% {
+      stroke-dashoffset: 0;
+      opacity: 0.4;
+    }
+    100% {
+      stroke-dashoffset: -1000;
+      opacity: 0.15;
+    }
+  }
+
+  @keyframes ai-line-glow {
+    0%, 100% {
+      filter: drop-shadow(0 0 1px hsl(var(--primary) / 0.3));
+    }
+    50% {
+      filter: drop-shadow(0 0 3px hsl(var(--primary) / 0.4));
+    }
+  }
+
+  @keyframes data-particle {
+    0% {
+      transform: translateY(0) translateX(0) scale(0);
+      opacity: 0;
+    }
+    10% {
+      opacity: 0.8;
+      transform: translateY(-10vh) translateX(5vw) scale(1);
+    }
+    50% {
+      opacity: 0.6;
+      transform: translateY(-50vh) translateX(-5vw) scale(0.8);
+    }
+    90% {
+      opacity: 0.4;
+      transform: translateY(-90vh) translateX(10vw) scale(0.5);
+    }
+    100% {
+      transform: translateY(-100vh) translateX(-10vw) scale(0);
+      opacity: 0;
+    }
+  }
+
+@keyframes color-shift {
+  0%, 100% {
+    color: hsl(var(--primary));
+  }
+  50% {
+    color: hsl(var(--foreground));
+  }
+}
+
+@keyframes badge-glow {
+    0%, 100% {
+      box-shadow: 
+        0 0 12px 3px hsl(var(--primary) / 0.25),
+        0 0 25px 6px hsl(var(--primary) / 0.12),
+        inset 0 0 10px hsl(var(--primary) / 0.2);
+      transform: scale(1);
+    }
+    50% {
+      box-shadow: 
+        0 0 18px 5px hsl(var(--primary) / 0.35),
+        0 0 35px 8px hsl(var(--primary) / 0.18),
+        inset 0 0 12px hsl(var(--primary) / 0.25);
+      transform: scale(1.02);
+    }
+  }
+
+  @keyframes badge-pulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.85;
+    }
+  }
+
+  .animate-float {
+    animation: float 6s ease-in-out infinite;
+  }
+
+  .animate-pulse-glow {
+    animation: pulse-glow 4s ease-in-out infinite;
+  }
+
+  .animate-ai-node {
+    animation: ai-node-pulse 3s ease-in-out infinite;
+  }
+
+  .animate-ai-node-secondary {
+    animation: ai-node-secondary 3.5s ease-in-out infinite;
+  }
+
+  .animate-data-particle {
+    animation: data-particle 8s ease-in-out infinite;
+  }
+
+  .animate-badge-glow {
+    animation: badge-glow 2.5s ease-in-out infinite, badge-pulse 2.5s ease-in-out infinite;
+  }
+
+
+  .text-hero-h1 {
+    font-size: var(--hero-h1);
+    font-family: var(--font-headline);
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+
+  .text-hero-h2 {
+    font-size: var(--hero-h2);
+    font-family: var(--font-display);
+    font-weight: 600;
+    line-height: 1.4;
+  }
+
+  .text-hero-lede {
+    font-size: var(--hero-lede);
+    line-height: 1.6;
+  }
+
+  .text-section-title {
+    font-size: var(--section-title);
+    font-family: var(--font-headline);
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+  }
+}
